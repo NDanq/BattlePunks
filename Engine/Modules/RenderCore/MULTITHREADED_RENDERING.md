@@ -368,8 +368,6 @@ serially today.
    - Shared and safe: the constant-buffer ring's `AllocateCB` claims with an
      atomic; the pipeline cache is read under a shared lock and matched on
      the whole key.
-   - Not done for D3D12: phase 1's per-draw savings (it still packs the core
-     blocks from strings on the render thread).
 
    Verified on Windows (RTX 2080 Ti): RenderCore's GPU smoke test on D3D12
    634/0, the parallel capture byte-identical to the serial ones, the D3D12
@@ -416,6 +414,47 @@ serially today.
    about 1.3 ms: the render thread was waiting on the fence for only ~0.4 ms
    of its frame, and is now bound by its own recording. A frame that keeps the
    GPU busier gains as Vulkan's did.
+
+   D3D12 phase 1, the per-draw savings, as Vulkan's (`D3D12DrawCaches`, one
+   for the frame list and one per recording context):
+   - `DrawObject` packs the ViewParameters and Transform blocks once, as floats
+     on each shader resource (`D3D12ShaderResource::CoreBlocks`, by
+     `GDICorePack`), instead of seven named `SetUniform`s per shader per draw.
+   - The view block is uploaded once per view (while its bytes are unchanged),
+     the material block (b2) once per change by serial, as the scene and skin
+     blocks already were; only the transform is every draw's.
+   - The last pipeline key is remembered: a draw with the same key skips the
+     hash, the cache's lock and the map.
+   - What the list has bound -- pipeline, each root CBV and table -- is
+     remembered and not set again; forgotten whenever a list is (re)opened, and
+     the pipeline after an in-frame compute dispatch. A material texture slot
+     holding the same resource as last time is skipped whole.
+   - Texture lookups are `static_cast`s (every texture this backend makes is a
+     `D3D12TextureResource`), and a shader's texture 0 is found when set, not
+     per draw.
+   Verified: RenderCore's GPU smoke test on D3D12 634/0, the debug layer
+   silent; its 24 dumped captures (`NIMBLE_SMOKE_DUMP`) byte-identical to
+   the build before.
+
+   And a fix outside GDI that parallel recording had been paying for:
+   `JobSystem::Wait` yielded 64 times, then slept a millisecond at a time, so
+   the render thread waiting on a pass's chunks woke a millisecond or more
+   after they were done (profiled: chunks finished in 0.6 ms, `ParallelFor`
+   returned at 1.6). It now yields for up to `WAIT_YIELD_US` (1 ms) of wall
+   time before sleeping. Every backend's parallel passes gain from it.
+
+   | LightLab GpuTest, D3D12, RelWithDebInfo, two runs each | before phase 1 | phase 1 | phase 1 + Wait |
+   |---|---|---|---|
+   | serial: stages / per draw | 8.2-8.4 ms / 4.0-4.1 us | 2.4 ms / 1.16 us | 2.4 ms |
+   | serial: Shadows (~1,500 draws) | 5.6-5.7 ms | 1.55 ms | 1.56-1.58 ms |
+   | Auto: stages / Shadows | 4.9 / 2.2 ms | 2.8 / 2.0 ms | 1.5 / 0.75 ms |
+   | Auto: render thread | 6.3-6.4 ms | 4.3 ms | 3.0 ms |
+   | frame (wall) | 7.4 ms | 5.4 ms | 5.0 ms |
+
+   The frame no longer follows the render thread: on D3D12 it holds at
+   exactly 5.0 ms of wall time (Vulkan, the same run: 3.8 ms), with the
+   game thread at 1 ms and the GPU under 1. Something on D3D12's side --
+   the present, most likely -- paces it; not yet found.
 
    Metal: its recording contexts were not written (no macOS here); the gate
    says "not implemented yet", and Metal records serially.

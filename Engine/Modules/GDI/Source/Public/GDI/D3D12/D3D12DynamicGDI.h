@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "Public/GDI/GDI.h"
+#include "Public/GDI/D3D12/D3D12PipelineCache.h"
 
 class D3D12Device;
 class D3D12CommandManager;
@@ -75,11 +76,17 @@ public:
 };
 
 /**
- * The scene and skin blocks' last uploads (BindDrawState): each reused while
- * its serial and the ring's epoch are unchanged, so it is uploaded once per
- * change, not per draw. The driver keeps one; each recording context its own.
+ * What BindDrawState remembers between draws, so a draw redoes only what
+ * changed (MULTITHREADED_RENDERING.md, phase 1). The driver keeps one for the
+ * frame list; each recording context its own.
+ *
+ * Uploads: the view, material, scene and skin blocks' last, each reused while
+ * its contents (view) or serial (the rest) and the ring's epoch are unchanged.
+ * The pipeline: the last key looked up and what it found. Bound: what the list
+ * has set, by root parameter, so an unchanged one is not set again --
+ * forgotten whenever the list is (re)opened or its pipeline set elsewhere.
  */
-struct D3D12BlockUploads
+struct D3D12DrawCaches
 {
     uint64_t SceneAddress = 0;   // D3D12_GPU_VIRTUAL_ADDRESS
     uint64_t SceneSerial  = ~0ull;
@@ -87,8 +94,27 @@ struct D3D12BlockUploads
     uint64_t SkinAddress[2] = {};   // the palette, the frame before's
     uint64_t SkinSerial[2]  = { ~0ull, ~0ull };
     uint64_t SkinEpoch[2]   = { ~0ull, ~0ull };
+    uint64_t MaterialAddress = 0;   // a material draw's b2
+    uint64_t MaterialSerial  = ~0ull;
+    uint64_t MaterialEpoch   = ~0ull;
+    uint64_t ViewAddress = 0;
+    uint64_t ViewEpoch   = ~0ull;
+    alignas(16) float View[40] = {};   // as uploaded, clip z remapped
 
-    void Forget() { *this = D3D12BlockUploads(); }
+    D3D12PipelineCache::PipelineKey PipelineKey;
+    ID3D12PipelineState*            Pipeline = nullptr;
+
+    ID3D12PipelineState* BoundPipeline = nullptr;
+    uint64_t             BoundRoot[RP_Count] = {};   // a CBV's address or a table's GPU handle; 0: not known
+    GDITextureResource*  BoundTextures[GDI_MATERIAL_TEXTURE_SLOTS] = {};   // what BoundRoot's material tables came from
+
+    void ForgetBound()
+    {
+        BoundPipeline = nullptr;
+        for(uint64_t& Each : BoundRoot) { Each = 0; }
+        for(GDITextureResource*& Each : BoundTextures) { Each = nullptr; }
+    }
+    void Forget() { *this = D3D12DrawCaches(); }
 };
 
 /**
@@ -111,7 +137,7 @@ struct D3D12DrawInputs
     const std::vector<uint8_t>* Blocks    = nullptr;   // [4], as GDIRecordingContext::MaterialBlocks
     const uint64_t*             Serials   = nullptr;   // [4]
     GDITextureResource* const*  Textures  = nullptr;   // [GDI_MATERIAL_TEXTURE_SLOTS]
-    D3D12BlockUploads*          Uploads   = nullptr;
+    D3D12DrawCaches*            Caches    = nullptr;
 
     GDIBuffer*                 InstanceBuffer     = nullptr;
     uint32_t                   InstanceCount      = 0;
@@ -357,8 +383,8 @@ private:
     D3D12CurrentStateData*    CurrentStateData = nullptr;
     uint32_t                  FramesInFlightCount = 1;   // [Rendering] FramesInFlight, read at Allocate
 
-    /* The render thread's draws' block uploads (a recording context keeps its own). */
-    D3D12BlockUploads         BlockUploads;
+    /* The frame list's draws' caches (a recording context keeps its own). */
+    D3D12DrawCaches           DrawCaches;
 
     /* Parallel passes' contexts, made on first need and kept (D3D12RecordingContext.cpp). */
     std::vector<D3D12RecordingContext*> RecordingContexts;

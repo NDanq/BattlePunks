@@ -113,6 +113,7 @@ bool D3D12DynamicGDI::DispatchCompute(GDIShader* InShader, const void* InParams,
     std::memset(Params.MappedPtr, 0, ParamBytes);
     if(InParamBytes > 0) { std::memcpy(Params.MappedPtr, InParams, InParamBytes); }
     Record(CurrentStateData->CurrentCmd, GetListSerial(), Params.GPUAddress);
+    DrawCaches.BoundPipeline = nullptr;   // the compute pipeline replaced the graphics one on the list
     return true;
 }
 

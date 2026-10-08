@@ -3,6 +3,7 @@
 #include "Public/Core/CoreMemoryPool.h"   // SystemAlignedAlloc for the ring
 
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -802,13 +803,15 @@ void JobSystem::Wait(const JobHandle InHandle)
 
     ++GWaitDepth;
 
-    uint32_t Spins = 0;
+    using Clock = std::chrono::steady_clock;
+    Clock::time_point YieldUntil{};
+    bool              bYielding = false;
     while(!IsComplete(InHandle))
     {
         if(TryRunOneJob())
         {
             Pimpl->StolenByWaiters.fetch_add(1, std::memory_order_relaxed);
-            Spins = 0;
+            bYielding = false;
             continue;
         }
 
@@ -819,9 +822,20 @@ void JobSystem::Wait(const JobHandle InHandle)
          *
          * KNOWINGLY THE CRUDE PART. The principled fix is a completion signal per
          * slot, and there are 4096 of them; the fix engines reach for is fibers,
-         * which the header rules out. Revisit with a profile, not before.
+         * which the header rules out.
+         *
+         * Yield for up to WAIT_YIELD_MS of wall time before sleeping, not a count
+         * of yields: a sleep is at least a millisecond and often more (the OS
+         * timer), so a wait that ends sooner -- a parallel pass's chunks, a
+         * fraction of a millisecond -- paid a whole one. Profiled on D3D12's
+         * parallel shadows: chunks done in 0.6 ms, ParallelFor back at 1.6.
          */
-        if(++Spins < 64)
+        if(!bYielding)
+        {
+            YieldUntil = Clock::now() + std::chrono::microseconds(WAIT_YIELD_US);
+            bYielding  = true;
+        }
+        if(Clock::now() < YieldUntil)
         {
             Threads::Yield();
         }

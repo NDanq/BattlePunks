@@ -11,7 +11,7 @@
  * MULTITHREADED_RENDERING.md, phase 2): one thread's chunk of the pass, recorded
  * into its own direct command list.
  *
- * Everything a draw writes is its own -- the list, the block uploads' cache,
+ * Everything a draw writes is its own -- the list, the draw caches,
  * the blend and depth states, the core blocks -- so contexts record at once.
  * What they share is read-only while the pass is open (the device, the root
  * signature, the shaders, meshes and textures), locked (the pipeline cache), or
@@ -28,7 +28,7 @@ class D3D12RecordingContext : public GDIRecordingContext
 public:
     Microsoft::WRL::ComPtr<ID3D12CommandAllocator>    Allocators[GDI_FRAMES_IN_FLIGHT_MAX];
     Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> List;
-    D3D12BlockUploads                                 Uploads;
+    D3D12DrawCaches                                   Caches;
     IBlendStateDesc                                   Blend;
     EColorMask                                        ColorMask = EColM_RGBA;
     IDepthStateDesc                                   Depth;
