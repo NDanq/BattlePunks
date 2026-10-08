@@ -111,6 +111,7 @@ void VulkanDynamicGDI::BeginRendering()
     // submission is guaranteed done here — safe to reclaim last frame's descriptor
     // sets and to destroy resources released while that frame was in flight.
     VkCommandBuffer Cmd = CommandManager->BeginFrame();
+    ForgetBoundDrawState();   // a command buffer begun: nothing bound in it yet
     if(DescAlloc) DescAlloc->Reset();
     DrainDeferredDestruction();
     CompletedTimelineValue = RenderTimelineCounter;   // what BeginReadback's readbacks wait on
@@ -247,6 +248,7 @@ void VulkanDynamicGDI::Clear(uint InClearMode, EngineCore::Color InClearColor, f
     }
     ClearRect.layerCount = 1;
 
+    CloseDrawPredicate();   // conditional rendering would skip the clear
     vkCmdClearAttachments(CurrentStateData->CurrentCmd, NumClears, ClearAtts, 1, &ClearRect);
 }
 
