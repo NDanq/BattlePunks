@@ -252,8 +252,8 @@ endif()
 # worlds and prefabs, as the editor does, and a Client or Server cooks each
 # one itself the first time it loads it (and again when the source changes),
 # into Intermediate/Cooked/ beside the executable -- so a development build
-# never waits on a manual cook. Shipping reads only what was cooked ahead
-# (the editor's console: cook <world>, cook prefabs). See GameCore's
+# never waits on a manual cook. Shipping reads only what was cooked ahead,
+# into <project>/Cooked/ (the editor's Build > Cook Content). See GameCore's
 # WorldPackage.h (LoadContentWorld).
 #
 # WITH_UNCOOKED is that switch in code, 1 or 0, PUBLIC on EngineCore below.
@@ -477,6 +477,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/GameModule.cpp
         Source/Private/NimbleEngine/Level.cpp
         Source/Private/NimbleEngine/SaveGame.cpp
+        Source/Private/NimbleEngine/WorldList.cpp
         Source/Private/NimbleEngine/SaveGameFormat.h
         Source/Private/NimbleEngine/Input.cpp
         Source/Private/NimbleEngine/InputInternal.h
@@ -497,6 +498,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/GameState.h
         Source/Public/NimbleEngine/PlayerState.h
         Source/Public/NimbleEngine/SaveGame.h
+        Source/Public/NimbleEngine/WorldList.h
         Source/Public/NimbleEngine/NimbleEngineTypes.h
         Source/Public/NimbleEngine/Input.h
         Source/Public/NimbleEngine/InputRouter.h

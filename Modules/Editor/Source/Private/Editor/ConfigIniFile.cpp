@@ -198,4 +198,100 @@ QList<QPair<QString, QString>> ConfigIniFile::GetKeys() const
     return Out;
 }
 
+QList<ConfigIniFile::Section> ConfigIniFile::GetSections(const QString& InPrefix) const
+{
+    QList<Section> Out;
+    for(const QPair<QString, int>& Header : Sections)
+    {
+        if(!Header.first.startsWith(InPrefix, Qt::CaseInsensitive))
+        {
+            continue;
+        }
+        /* A section written twice is one, as Core reads it. */
+        Section* Into = nullptr;
+        for(Section& Each : Out)
+        {
+            if(Same(Each.Name, Header.first)) { Into = &Each; }
+        }
+        if(!Into)
+        {
+            Out.append(Section{ Header.first, {} });
+            Into = &Out.back();
+        }
+        for(const KeyLine& Key : Keys)
+        {
+            if(Key.Line > Header.second && Same(Key.Section, Header.first))
+            {
+                bool bReplaced = false;
+                for(QPair<QString, QString>& Existing : Into->Keys)
+                {
+                    if(Same(Existing.first, Key.Key)) { Existing.second = Key.Value; bReplaced = true; }
+                }
+                if(!bReplaced) { Into->Keys.append({ Key.Key, Key.Value }); }
+            }
+        }
+    }
+    return Out;
+}
+
+void ConfigIniFile::ReplaceSections(const QString& InPrefix, const QList<Section>& InSections)
+{
+    const auto IsBlankOrComment = [](const QString& InLine)
+    {
+        const QString Line = InLine.trimmed();
+        return Line.isEmpty() || Line.startsWith(QLatin1Char(';')) || Line.startsWith(QLatin1Char('#'));
+    };
+
+    /* Each old section's lines: its header to its last key, so the comments
+     * and blank lines above the next section stay. Last first, so earlier
+     * line numbers hold. */
+    int InsertAt = -1;
+    for(int Index = Sections.size() - 1; Index >= 0; --Index)
+    {
+        if(!Sections[Index].first.startsWith(InPrefix, Qt::CaseInsensitive))
+        {
+            continue;
+        }
+        const int Header = Sections[Index].second;
+        int End = Index + 1 < Sections.size() ? Sections[Index + 1].second - 1 : int(Lines.size()) - 1;
+        while(End > Header && IsBlankOrComment(Lines[End]))
+        {
+            --End;
+        }
+        /* And the blank lines after it, which separated it from what follows. */
+        while(End + 1 < Lines.size() && Lines[End + 1].trimmed().isEmpty())
+        {
+            ++End;
+        }
+        Lines.erase(Lines.begin() + Header, Lines.begin() + End + 1);
+        InsertAt = Header;
+    }
+
+    QStringList Block;
+    for(const Section& Each : InSections)
+    {
+        Block.append(QLatin1Char('[') + Each.Name + QLatin1Char(']'));
+        for(const QPair<QString, QString>& Key : Each.Keys)
+        {
+            Block.append(Key.first + QLatin1Char('=') + QuoteIfNeeded(Key.second));
+        }
+        Block.append(QString());
+    }
+
+    if(InsertAt < 0)
+    {
+        if(!Lines.isEmpty() && !Lines.back().trimmed().isEmpty())
+        {
+            Lines.append(QString());
+        }
+        InsertAt = int(Lines.size());
+        if(!Block.isEmpty()) { Block.removeLast(); }   // no blank line at the very end
+    }
+    for(int Index = 0; Index < Block.size(); ++Index)
+    {
+        Lines.insert(InsertAt + Index, Block[Index]);
+    }
+    Index();
+}
+
 #endif // WITH_EDITOR

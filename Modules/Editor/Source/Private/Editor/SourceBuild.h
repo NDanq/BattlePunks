@@ -17,6 +17,9 @@
  * The game module (shadow-copied, so rebuilt while loaded), its launcher and
  * its dedicated server -- never the engine DLLs and editor,
  * which this process holds locked.
+ *
+ * StartCommand runs any cmake command line the same way -- Build Project's
+ * `cmake --preset` and `cmake --build --preset` in the game's own folder.
  */
 class SourceBuild : public QObject
 {
@@ -31,6 +34,14 @@ public:
      * build (GetTarget): the game module. */
     bool Start(const QStringList& InTargets);
 
+    /* `cmake <InArgs>` in InWorkingDir, named InLabel (GetTarget). With MSVC
+     * outside a developer prompt, vcvarsall first, as Start. False, logged,
+     * if already running or unable to start. */
+    bool StartCommand(const QStringList& InArgs, const QString& InWorkingDir, const QString& InLabel);
+
+    /* The cmake this editor was configured with. */
+    static QString GetCMakeCommand();
+
     /* Kills the running build; Finished follows with bInSucceeded false. */
     void Cancel();
 
@@ -42,6 +53,8 @@ public:
 signals:
     void Started(const QString& InTarget);
     void Finished(bool bInSucceeded, const QString& InTarget);
+    /* Each line of the tool's output, as logged. */
+    void OutputLine(const QString& InLine);
 
 private:
     void OnOutput();

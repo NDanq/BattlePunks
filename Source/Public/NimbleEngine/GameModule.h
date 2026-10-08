@@ -21,15 +21,17 @@ namespace NimbleEngine
     class ILevel;
 
     /*
-     * A GAME, AS A LIBRARY: levels, modes, states and systems live in a module
-     * DLL so both the game's launcher and the editor's Play-in-Editor can load
-     * it by name (GameModuleHost). As an IModule it gets the ABI check and:
+     * A GAME, AS A LIBRARY: modes, states and systems live in a module DLL so
+     * both the game's launcher and the editor's Play-in-Editor can load it by
+     * name (GameModuleHost). As an IModule it gets the ABI check and:
      *
-     *   OnStartup   RegisterLevel every level (saves and the start level are
-     *               resolved by name)
+     *   OnStartup   RegisterGameMode every mode (WorldList.h); the project's
+     *               [World_*] list names them
      *   OnShutdown  unregister them; the registry points into this DLL
      *
-     * The host unloads the level before the module.
+     * Its levels are not its own: one per world in the project's list, made
+     * by the host once the module has started. The host unloads the level
+     * before the module.
      *
      * The editor also loads the module briefly, without playing, to read the
      * script declarations it registers (ScriptLibrary.h, ComponentScript.h).
@@ -39,9 +41,6 @@ namespace NimbleEngine
      */
     class IGameModule : public EngineCore::IModule
     {
-    public:
-        /* Opened when [Game] StartLevel names none. Owned by the module. */
-        virtual ILevel* GetStartLevel() = 0;
     };
 
     /* Export added by NIMBLE_IMPLEMENT_GAME_MODULE: casts IModule* to
@@ -50,7 +49,9 @@ namespace NimbleEngine
     using GameModuleCastFn = IGameModule* (*)(EngineCore::IModule*);
 
     /*
-     * Loads a game module from beside the executable and finds its start level.
+     * Loads a game module from beside the executable, then registers a level
+     * for each world the project lists (RegisterWorldLevels) and finds the
+     * start one.
      * File watching is OFF: reloading under a live World would leave dangling
      * system and delegate pointers. Main thread only.
      */
@@ -64,10 +65,12 @@ namespace NimbleEngine
         GameModuleHost& operator=(const GameModuleHost&) = delete;
 
         /* [Game] Module, else InDefaultName. Unloads any previous module. False,
-         * logged, if missing, ABI-mismatched or not a game module. */
+         * logged, if missing, ABI-mismatched or not a game module. Registers
+         * the world list's levels on success. */
         bool Load(const std::string& InDefaultName);
 
-        /* Null-safe. Unload the level first -- see IGameModule. */
+        /* Null-safe; unregisters the world list's levels. Unload the level
+         * first -- see IGameModule. */
         void Unload();
 
         bool         IsLoaded() const { return Game != nullptr; }
@@ -76,7 +79,8 @@ namespace NimbleEngine
         /* The name that was loaded, e.g. "SandboxGame". Empty if none. */
         const std::string& GetModuleName() const { return ModuleName; }
 
-        /* [Game] StartLevel if registered, else GetStartLevel(); may be null. */
+        /* [Game] StartLevel if it is a listed world, else the first listed;
+         * null if the project lists none. */
         ILevel* ResolveStartLevel() const;
 
         /* The renderer a loaded module's shader cache is mounted into: Load

@@ -63,8 +63,6 @@ NIMBLE_CONFIG_STRING(GUserDataName, "Application", "UserDataName", "", nullptr);
 /* 0 runs unlimited; SetFrameRateLimit is the runtime half. */
 NIMBLE_CONFIG_INT(GFrameRateLimit, "Display", "FrameRateLimit", 60, nullptr);
 
-/* [Scripting] StartupScript is the session's -- see GameSession.cpp. */
-
 using namespace EngineCore;
 
 namespace
@@ -634,7 +632,8 @@ namespace NimbleEngine
                 Level = Game.ResolveStartLevel();
                 if(!Level)
                 {
-                    CORE_LOG_ERROR("Game module '" + Game.GetModuleName() + "' has no start level")
+                    CORE_LOG_ERROR("Game module '" + Game.GetModuleName() + "' has no start level: the project lists no worlds "
+                                   "(Config/DefaultEngine.ini [World_*], Project Settings > Worlds)")
                 }
             }
 

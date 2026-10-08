@@ -4,6 +4,7 @@
 
 #include "Public/NimbleEngine/Level.h"
 #include "Public/NimbleEngine/SaveGame.h"
+#include "Public/NimbleEngine/WorldList.h"
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreMemory.h"
@@ -84,6 +85,9 @@ namespace NimbleEngine
         ModuleName = Name;
         CORE_LOG("GameModuleHost: loaded game module '" + Name + "' " + Modules->GetModuleVersionString(Name))
 
+        /* Now that its modes are registered: a level per listed world. */
+        RegisterWorldLevels();
+
         /* Its cooked materials: a file layer the renderer owns, not the DLL. */
         if(Rendering)
         {
@@ -99,6 +103,7 @@ namespace NimbleEngine
             return;
         }
         Game = nullptr;
+        UnregisterWorldLevels();
         if(Rendering)
         {
             Rendering->UnmountShaderCache(ModuleName.c_str());
@@ -123,8 +128,9 @@ namespace NimbleEngine
                 return Found;
             }
             CORE_LOG_WARN(std::string("GameModuleHost: [Game] StartLevel '") + Named
-                          + "' is not a registered level; using the module's start level")
+                          + "' is not a listed world; using the first in Project Settings > Worlds")
         }
-        return Game->GetStartLevel();
+        const std::vector<WorldEntry> Worlds = ReadWorldList();
+        return Worlds.empty() ? nullptr : FindLevelByName(Worlds.front().Name.c_str());
     }
 }

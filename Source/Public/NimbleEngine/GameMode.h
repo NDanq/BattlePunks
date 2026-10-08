@@ -10,6 +10,7 @@
 namespace NimbleEngine
 {
     class GameSession;
+    class GameState;
 
     /*
      * Per-frame values a game is told, with no pointers into engine state. The
@@ -86,6 +87,20 @@ namespace NimbleEngine
         /* After the last tick; World and Renderer still valid. Runs whenever
          * OnLoad was called, even if it failed. Must unbind what OnLoad bound. */
         virtual void OnUnload() {}
+
+        /* The state this mode uses, or nullptr. Owned by the mode; reset by
+         * the engine before OnStart. */
+        virtual GameState* GetGameState() { return nullptr; }
+
+        /*
+         * A saved game is about to be restored into this World (load-from-save
+         * only). The world file, OnLoad and the startup script have all run,
+         * and the save holds its own copies of their entities: destroy what
+         * should not be doubled -- usually everything (outside a tick,
+         * DestroyEntity is immediate). Re-point cached handles in
+         * OnPostLoadSave.
+         */
+        virtual void OnPrepareForLoadedGame() {}
 
         // === Rules ==============================================================
 

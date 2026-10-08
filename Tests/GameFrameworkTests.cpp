@@ -29,6 +29,7 @@
 #include "Public/NimbleEngine/NimbleEngine.h"
 #include "Public/NimbleEngine/PlayerState.h"
 #include "Public/NimbleEngine/SaveGame.h"
+#include "Public/NimbleEngine/WorldList.h"
 #include "Public/RenderCore/Renderer.h"
 #include "Public/UI/UISystem.h"
 
@@ -312,8 +313,6 @@ namespace
         std::FILE* File = std::fopen("FrameworkStartup.lua", "w");
         std::fputs("StartupRan = (StartupRan or 0) + 1\n", File);
         std::fclose(File);
-        EngineCore::LoadConfigText("[Scripting]\nStartupScript = FrameworkStartup.lua\n");
-
         Fixture F;
         TestLevel Level;
 
@@ -324,10 +323,14 @@ namespace
 
         Level.StartupScript = nullptr;
         F.Session->LoadLevel(Level);
-        Expect(F.Scripts.RunString("assert(StartupRan == 1)", "startup-2"), "nullptr runs [Scripting] StartupScript");
+        Expect(F.Scripts.RunString("assert(StartupRan == nil)", "startup-2"), "nullptr runs none either: no project-wide script");
         F.Session->UnloadLevel();
 
-        EngineCore::LoadConfigText("[Scripting]\nStartupScript = \n");
+        Level.StartupScript = "FrameworkStartup.lua";
+        F.Session->LoadLevel(Level);
+        Expect(F.Scripts.RunString("assert(StartupRan == 1)", "startup-3"), "the level's own script runs");
+        F.Session->UnloadLevel();
+
         std::remove("FrameworkStartup.lua");
     }
 
@@ -395,6 +398,54 @@ static void TestLevelByWorldFile()
 
     UnregisterLevel(Yard);
     UnregisterLevel(Code);
+}
+
+/* Worlds come from the config's [World_*] list; modes are registered by name. */
+static void TestWorldList()
+{
+    std::printf("[world list]\n");
+
+    class ListMode : public IGameMode
+    {
+    public:
+        void OnTick(const FrameContext&) override {}
+    };
+    RegisterGameMode<ListMode>("ListMode");
+    Expect(HasGameMode("listmode"), "a registered mode is found by name, any case");
+
+    EngineCore::LoadConfigText("[World_ListYard]\nFile = Content/Levels/ListYard.nmworld\nGameMode = ListMode\n"
+                               "StartupScript = Scripts/Yard.lua\nCook = false\n"
+                               "[World_ListBare]\nFile = Content/Levels/ListBare.nmworld\n"
+                               "[World_ListNoFile]\nGameMode = ListMode\n");
+    const std::vector<WorldEntry> Worlds = ReadWorldList();
+    const WorldEntry* Yard = nullptr;
+    const WorldEntry* Bare = nullptr;
+    bool bNoFile = false;
+    for(const WorldEntry& Each : Worlds)
+    {
+        if(Each.Name == "ListYard") { Yard = &Each; }
+        if(Each.Name == "ListBare") { Bare = &Each; }
+        bNoFile |= Each.Name == "ListNoFile";
+    }
+    Expect(Yard && Yard->File == "Content/Levels/ListYard.nmworld" && Yard->GameMode == "ListMode",
+           "a world's section gives its name, file and mode");
+    Expect(Yard && Yard->StartupScript == "Scripts/Yard.lua" && !Yard->bCook, "a world's own startup script, and Cook=false read");
+    Expect(Bare && Bare->StartupScript.empty() && Bare->bCook, "absent keys default: no script, cooked");
+    Expect(!bNoFile, "a world with no File is left out");
+    Expect(Yard && Bare && Yard < Bare, "the list keeps file order");
+
+    RegisterWorldLevels();
+    ILevel* YardLevel = FindLevelByName("ListYard");
+    Expect(YardLevel != nullptr, "each listed world is registered as a level");
+    Expect(FindLevelByWorldFile("content/levels/listyard.nmworld") == YardLevel, "and found by its world file");
+    Expect(YardLevel && YardLevel->GetStartupScript() && std::string(YardLevel->GetStartupScript()) == "Scripts/Yard.lua",
+           "the level runs the world's startup script");
+    Expect(FindLevelByName("ListNoFile") == nullptr, "a world with no file is no level");
+
+    UnregisterWorldLevels();
+    Expect(FindLevelByName("ListYard") == nullptr, "unregistering drops the world levels");
+    UnregisterGameMode("ListMode");
+    Expect(!HasGameMode("ListMode"), "an unregistered mode is gone");
 }
 
 // === Networking, without a session ============================================
@@ -855,6 +906,7 @@ int main()
     TestStartupScript();
     TestSave();
     TestLevelByWorldFile();
+    TestWorldList();
     TestSessionUI();
     TestConsole();
     TestNetworkingStandalone();

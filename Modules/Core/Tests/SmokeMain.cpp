@@ -1588,6 +1588,27 @@ static void TestConfigCallbacks()
         ConfigVar LateVar(EConfigType::CT_Int, "Smoke", "LateVar", MakeConfigInt(0), nullptr);
         Expect(LateVar.GetInt() == 42, "a var registered after its file was loaded is back-filled from the retained entry");
     }
+
+    // Sections as list items: every entry under a prefix, in file order, uncapped.
+    const std::string LongValue(300, 'x');
+    LoadConfigText("[SmokeList_B]\nFile = b\n[SmokeList_A]\nFile = " + LongValue + "\nCook = false\n[SmokeListOther]\nFile = c\n");
+    std::vector<std::string> Seen;
+    ConfigForEachEntry("smokelist_", [](const char* InSection, const char* InKey, const char* InValue, void* InUser)
+    {
+        static_cast<std::vector<std::string>*>(InUser)->push_back(std::string(InSection) + "." + InKey + "=" + InValue);
+    }, &Seen);
+    Expect(Seen.size() == 3, "ConfigForEachEntry visits only the sections with the prefix");
+    Expect(Seen.size() == 3 && Seen[0] == "SmokeList_B.File=b" && Seen[2] == "SmokeList_A.Cook=false",
+           "ConfigForEachEntry keeps file order");
+    Expect(Seen.size() == 3 && Seen[1] == "SmokeList_A.File=" + LongValue, "ConfigForEachEntry values are not capped");
+
+    ConfigRemoveEntries("SmokeList_");
+    Seen.clear();
+    ConfigForEachEntry("SmokeList", [](const char* InSection, const char*, const char*, void* InUser)
+    {
+        static_cast<std::vector<std::string>*>(InUser)->push_back(InSection);
+    }, &Seen);
+    Expect(Seen.size() == 1 && Seen[0] == "SmokeListOther", "ConfigRemoveEntries forgets only the prefixed sections");
 }
 
 static void TestConfigFile()
