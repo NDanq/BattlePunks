@@ -5,6 +5,8 @@
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/ComponentPool.h"
+#include "Public/GameCore/Components/AudioListenerComponent.h"
+#include "Public/GameCore/Components/AudioSourceComponent.h"
 #include "Public/GameCore/Components/NetComponent.h"
 #include "Public/GameCore/Components/PhysicsConstraintComponent.h"
 #include "Public/GameCore/Components/RigidBodyComponent.h"
@@ -21,6 +23,7 @@
  */
 NIMBLE_CONFIG_BOOL(GModulesNetCore, "Modules", "NetCore", WITH_NETCORE != 0, nullptr);
 NIMBLE_CONFIG_BOOL(GModulesJoltPhysics, "Modules", "JoltPhysics", WITH_JOLTPHYSICS != 0, nullptr);
+NIMBLE_CONFIG_BOOL(GModulesAudio, "Modules", "Audio", WITH_AUDIO != 0, nullptr);
 
 /*
  * Components whose module this build compiled out: GameCore keeps them, so
@@ -74,6 +77,15 @@ namespace NimbleEngine
         }
 #endif
 
+#if !WITH_AUDIO
+        const size_t Sources = CountOf(InWorld, GameCore::AudioSourceComponent::StaticType().ID);
+        if(Sources > 0)
+        {
+            Warn(InContext, Sources, "Audio Source", "Audio", "NIMBLE_WITH_AUDIO", "they will be silent");
+            bWarned = true;
+        }
+#endif
+
 #if !WITH_NETCORE
         const size_t Networked = CountOf(InWorld, GameCore::NetComponent::StaticType().ID);
         if(Networked > 0)
@@ -99,6 +111,7 @@ namespace NimbleEngine
         };
         Check(GModulesNetCore.GetBool(), WITH_NETCORE != 0, "NetCore", "NIMBLE_WITH_NETCORE");
         Check(GModulesJoltPhysics.GetBool(), WITH_JOLTPHYSICS != 0, "JoltPhysics", "NIMBLE_WITH_JOLTPHYSICS");
+        Check(GModulesAudio.GetBool(), WITH_AUDIO != 0, "Audio", "NIMBLE_WITH_AUDIO");
         return bWarned;
     }
 
@@ -112,6 +125,10 @@ namespace NimbleEngine
 #endif
 #if !WITH_NETCORE
         if(InType == GameCore::NetComponent::StaticType().ID) { return true; }
+#endif
+#if !WITH_AUDIO
+        if(InType == GameCore::AudioSourceComponent::StaticType().ID
+           || InType == GameCore::AudioListenerComponent::StaticType().ID) { return true; }
 #endif
         return false;
     }

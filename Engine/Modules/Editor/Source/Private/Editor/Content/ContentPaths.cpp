@@ -17,6 +17,9 @@
 #include "Public/RenderCore/SkeletonAsset.h"
 #include "Public/RenderCore/TextureAsset.h"
 #include "Public/RenderCore/RenderTargetAsset.h"
+#if WITH_AUDIO
+#include "Public/Audio/SoundAsset.h"
+#endif
 #include "Private/Editor/Graph/GraphAssets.h"
 
 namespace EditorContent
@@ -135,6 +138,16 @@ namespace EditorContent
         return InPath.endsWith(QStringLiteral(".nmtexture"), Qt::CaseInsensitive) ? ToRuntimePath(InPath) : QString();
     }
 
+    QStringList ListSoundPaths()
+    {
+        return ListGraphs(&SoundPathFor);
+    }
+
+    QString SoundPathFor(const QString& InPath)
+    {
+        return InPath.endsWith(QStringLiteral(".nmsound"), Qt::CaseInsensitive) ? ToRuntimePath(InPath) : QString();
+    }
+
     QStringList ListParticleSystemPaths()
     {
         return ListGraphs(&ParticleSystemPathFor);
@@ -225,6 +238,9 @@ namespace EditorContent
             RenderCore::SkeletonAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::AnimClipAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::AnimStateAssetCache::Invalidate(Runtime.toStdString());
+#if WITH_AUDIO
+            Audio::SoundAssetCache::Invalidate(Runtime.toStdString());
+#endif
         }
     }
 
@@ -245,6 +261,9 @@ namespace EditorContent
             RenderCore::SkeletonAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::AnimClipAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::AnimStateAssetCache::Invalidate(Runtime.toStdString());
+#if WITH_AUDIO
+            Audio::SoundAssetCache::Invalidate(Runtime.toStdString());
+#endif
         }
     }
 }

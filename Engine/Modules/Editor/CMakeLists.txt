@@ -266,6 +266,10 @@ target_link_libraries(NimbleEditor PRIVATE
 if(TARGET NetCore)
     target_link_libraries(NimbleEditor PRIVATE NetCore::NetCore)
 endif()
+# Sound import and preview (Content/AssetImport.cpp), when the module is built.
+if(TARGET Audio)
+    target_link_libraries(NimbleEditor PRIVATE Audio::Audio)
+endif()
 
 # === Import tests =================================================================
 # Runs from Binaries, where NimbleEditor's windeployqt put Qt (hence the dependency).
@@ -402,6 +406,16 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     add_dependencies(NimbleEditorParticleTests NimbleEditor)
     add_test(NAME Editor.Particles COMMAND NimbleEditorParticleTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorParticleTests>")
+
+    # The tests compile the editor's own sources, sound import among them.
+    if(TARGET Audio)
+        foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorImportTests NimbleEditorLightingTests NimbleEditorDocumentTests
+                NimbleEditorProjectTests NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests)
+            if(TARGET ${NM_EDITOR_TEST})
+                target_link_libraries(${NM_EDITOR_TEST} PRIVATE Audio::Audio)
+            endif()
+        endforeach()
+    endif()
 endif()
 
 # === Engine content ===========================================================

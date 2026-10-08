@@ -23,6 +23,9 @@
 #include "Public/RenderCore/SkeletonAsset.h"
 #include "Public/RenderCore/TextureCompression.h"
 #include "Private/Editor/Content/GltfImporter.h"
+#if WITH_AUDIO
+#include "Public/Audio/SoundAsset.h"
+#endif
 
 namespace EditorContent
 {
@@ -36,11 +39,22 @@ namespace EditorContent
         /* What a skeleton's and a clip's recorded settings add to the mesh options'. */
         const char* const SKELETON_PART_SETTING = "Part=Skeleton\n";
         const char* const CLIP_SETTING_KEY      = "Animation";
+        const char* const SOUND_EXTENSION   = ".nmsound";
 
         /* Where an embedded image's source points: the glTF, then which image. */
         const char* const EMBEDDED_IMAGE_MARK = "#image";
 
         QStringList MeshSuffixes() { return { QStringLiteral("gltf"), QStringLiteral("glb") }; }
+
+        /* What miniaudio decodes; none without the module. */
+        QStringList SoundSuffixes()
+        {
+#if WITH_AUDIO
+            return { QStringLiteral("wav"), QStringLiteral("flac"), QStringLiteral("mp3"), QStringLiteral("ogg") };
+#else
+            return {};
+#endif
+        }
 
         QStringList ImageSuffixes()
         {
@@ -449,9 +463,20 @@ namespace EditorContent
                 OutInfo = Clip.ImportInfo;
                 OutKind = EImportKind::Mesh;
             }
+#if WITH_AUDIO
+            else if(InAssetPath.endsWith(QString::fromLatin1(SOUND_EXTENSION), Qt::CaseInsensitive))
+            {
+                Audio::SoundData Sound;
+                bRead = Audio::SerializeSound(Ar, Sound);
+                OutInfo.SourcePath = Sound.Import.SourcePath;
+                OutInfo.SourceTime = Sound.Import.SourceTime;
+                OutInfo.Settings   = Sound.Import.Settings;
+                OutKind = EImportKind::Sound;
+            }
+#endif
             if(!bRead)
             {
-                OutError = QStringLiteral("%1: not a mesh, texture, skeleton or clip this editor can read").arg(QFileInfo(InAssetPath).fileName());
+                OutError = QStringLiteral("%1: not a mesh, texture, skeleton, clip or sound this editor can read").arg(QFileInfo(InAssetPath).fileName());
                 return false;
             }
             if(OutInfo.IsEmpty())
@@ -477,6 +502,7 @@ namespace EditorContent
         const QString Suffix = QFileInfo(InPath).suffix().toLower();
         if(MeshSuffixes().contains(Suffix))  { return EImportKind::Mesh; }
         if(ImageSuffixes().contains(Suffix)) { return EImportKind::Texture; }
+        if(SoundSuffixes().contains(Suffix)) { return EImportKind::Sound; }
         return EImportKind::None;
     }
 
@@ -488,8 +514,13 @@ namespace EditorContent
             for(const QString& Suffix : InSuffixes) { Out << QStringLiteral("*.%1").arg(Suffix); }
             return Out.join(QLatin1Char(' '));
         };
-        return QStringLiteral("Importable Files (%1 %2);;glTF Meshes (%1);;Images (%2);;All Files (*)")
-               .arg(Patterns(MeshSuffixes()), Patterns(ImageSuffixes()));
+        if(SoundSuffixes().isEmpty())
+        {
+            return QStringLiteral("Importable Files (%1 %2);;glTF Meshes (%1);;Images (%2);;All Files (*)")
+                   .arg(Patterns(MeshSuffixes()), Patterns(ImageSuffixes()));
+        }
+        return QStringLiteral("Importable Files (%1 %2 %3);;glTF Meshes (%1);;Images (%2);;Sounds (%3);;All Files (*)")
+               .arg(Patterns(MeshSuffixes()), Patterns(ImageSuffixes()), Patterns(SoundSuffixes()));
     }
 
     QString GetAssetExtension(const EImportKind InKind)
@@ -498,6 +529,7 @@ namespace EditorContent
         {
             case EImportKind::Mesh:    return QString::fromLatin1(MESH_EXTENSION);
             case EImportKind::Texture: return QString::fromLatin1(TEXTURE_EXTENSION);
+            case EImportKind::Sound:   return QString::fromLatin1(SOUND_EXTENSION);
             case EImportKind::None:    break;
         }
         return QString();
@@ -759,6 +791,72 @@ namespace EditorContent
         return Result;
     }
 
+    ImportResult ImportSound(const QString& InSource, const QString& InDestFolder, const QString& InBaseName,
+                             const QString& InProjectRoot)
+    {
+        ImportResult Result;
+#if WITH_AUDIO
+        const QString OutPath = QDir(InDestFolder).absoluteFilePath(SanitizeName(InBaseName) + QString::fromLatin1(SOUND_EXTENSION));
+
+        Audio::SoundData Sound;
+        std::string Error;
+        if(!Audio::ImportSoundFile(QFileInfo(InSource).absoluteFilePath().toStdString(), Sound, Error))
+        {
+            Result.Message = QStringLiteral("%1: %2").arg(QFileInfo(InSource).fileName(), QString::fromStdString(Error));
+            return Result;
+        }
+
+        /* Replacing a sound: its settings, cooked again from the new source. */
+        bool bKeptSettings = false;
+        if(QFile Existing(OutPath); Existing.open(QIODevice::ReadOnly))
+        {
+            const QByteArray Bytes = Existing.readAll();
+            EngineCore::Archive Old = EngineCore::Archive::ForReading(std::vector<uint8_t>(Bytes.begin(), Bytes.end()));
+            Audio::SoundData Previous;
+            if(Audio::SerializeSound(Old, Previous))
+            {
+                Sound.Settings = Previous.Settings;
+                if(!Audio::CookSound(Sound, Error))
+                {
+                    Result.Message = QStringLiteral("%1: %2").arg(QFileInfo(InSource).fileName(), QString::fromStdString(Error));
+                    return Result;
+                }
+                bKeptSettings = true;
+            }
+        }
+
+        const RenderCore::AssetImportInfo Info = MakeImportInfo(InSource, InProjectRoot, QString());
+        Sound.Import.SourcePath = Info.SourcePath;
+        Sound.Import.SourceTime = Info.SourceTime;
+        Sound.Import.Settings   = Info.Settings;
+
+        EngineCore::Archive Ar = EngineCore::Archive::ForWriting();
+        QString WriteError;
+        if(!Audio::SerializeSound(Ar, Sound) || !WriteArchive(OutPath, Ar, WriteError))
+        {
+            Result.Message = WriteError.isEmpty() ? QStringLiteral("%1: cannot be written").arg(QFileInfo(OutPath).fileName()) : WriteError;
+            return Result;
+        }
+
+        const Audio::CookedSound& Cooked = Sound.Cooked;
+        Result.bOK = true;
+        Result.Written << OutPath;
+        Result.Message = QStringLiteral("%1: %2 s %3 sound, %4 channel(s), %5 Hz, %6%7")
+                         .arg(QFileInfo(InSource).fileName())
+                         .arg(Cooked.GetDuration(), 0, 'f', 2)
+                         .arg(QString::fromLatin1(Audio::GetSoundSourceFormatName(Sound.SourceFormat)))
+                         .arg(Cooked.Channels).arg(Cooked.SampleRate)
+                         .arg(QString::fromLatin1(Audio::GetSoundLoadModeName(Cooked.Mode)))
+                         .arg(bKeptSettings ? QStringLiteral(" (its settings kept)") : QString());
+#else
+        (void)InDestFolder;
+        (void)InBaseName;
+        (void)InProjectRoot;
+        Result.Message = QStringLiteral("%1: sounds need the Audio module (NIMBLE_WITH_AUDIO=OFF)").arg(QFileInfo(InSource).fileName());
+#endif
+        return Result;
+    }
+
     ImportResult Reimport(const QString& InAssetPath, const QString& InProjectRoot)
     {
         ImportResult Result;
@@ -806,6 +904,10 @@ namespace EditorContent
         if(Kind == EImportKind::Texture)
         {
             return ImportTexture(Source, Folder, Base, TextureImportOptions::FromSettings(Settings), InProjectRoot);
+        }
+        if(Kind == EImportKind::Sound)
+        {
+            return ImportSound(Source, Folder, Base, InProjectRoot);
         }
 
         /* Same options, over this one file (a split mesh finds its part

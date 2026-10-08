@@ -646,6 +646,66 @@ static void TestNotifyEffects()
     Expect(SerializeAnimClip(Out, Plain), "a clip without effects saves");
 }
 
+namespace
+{
+    struct HeardSound
+    {
+        int                 Count = 0;
+        std::string         Sound;
+        EngineCore::Vector3 At;
+    };
+}
+
+static void TestNotifySounds()
+{
+    std::printf("[notify sounds]\n");
+    AnimClipData Clip = MakeClip();
+    AnimNotify Step;
+    Step.Name  = "Step";
+    Step.Time  = 0.5f;
+    Step.Bone  = "Hand";
+    Step.Sound = "Content/Sounds/A/Rather/Long/Path/To/Show/It/Is/Not/Cut/Short/Footstep_Gravel_Left.nmsound";
+    Clip.Notifies = { Step, { "Quiet", 0.7f } };
+    const std::string Path = std::string(SCRATCH) + "Arm_Step.nmanim";
+    SaveAnimClipFile(Path, Clip);
+    AnimClipData Back;
+    Expect(LoadAnimClipFile(Path, Back) && Back.Notifies.size() == 2 && Back.Notifies[0].Sound == Step.Sound
+           && Back.Notifies[1].Sound.empty(), "a notify keeps its sound (ANTF v3), and one without stays without");
+    AnimClipAssetCache::Invalidate(Path);
+
+    GameCore::World World;
+    AnimationSystem* System = AnimationSystem::Attach(World);
+    HeardSound Heard;
+    System->SetSoundSink([](const char* InSound, const EngineCore::Vector3& InAt, void* InUserData)
+    {
+        auto& Into = *static_cast<HeardSound*>(InUserData);
+        ++Into.Count;
+        Into.Sound = InSound;
+        Into.At    = InAt;
+    }, &Heard);
+
+    GameCore::Entity Actor = World.CreateEntity();
+    GameCore::TransformComponent Transform;
+    Transform.Position = EngineCore::Vector3(0.0, 0.0, 500.0);
+    Actor.AddComponent(Transform);
+    RenderComponent Render;
+    std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%sArm.nmmesh", SCRATCH);
+    Actor.AddComponent(Render);
+    AnimationComponent Animation;
+    std::snprintf(Animation.Animation, sizeof(Animation.Animation), "%s", Path.c_str());
+    Actor.AddComponent(Animation);
+
+    World.Tick(0.8f);
+    Expect(Heard.Count == 1, "passing both notifies plays only the one with a sound");
+    Expect(Heard.Sound == Step.Sound, "the whole path, however long");
+    Expect(std::fabs(Heard.At.GetZ() - 500.0) < 0.5 && Heard.At.GetX() > 50.0, "at its bone, in the world");
+
+    System->SetSoundSink(nullptr, nullptr);
+    World.Tick(1.0f);
+    Expect(Heard.Count == 1, "with no sink, a notify's sound is ignored");
+    AnimationSystem::Detach(World);
+}
+
 /* An animated arm at InPosition in InWorld. */
 static GameCore::Entity SpawnArm(GameCore::World& InWorld, const EngineCore::Vector3& InPosition)
 {
@@ -887,6 +947,7 @@ int main()
     TestSocket();
     TestRootMotion();
     TestNotifyEffects();
+    TestNotifySounds();
     TestBudget();
     TestPosedBounds();
     TestHeadless();

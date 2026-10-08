@@ -160,6 +160,7 @@ game_stage(Scripts "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_SCRIPT_FILES})
 file(GLOB_RECURSE GAME_CONTENT_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmmesh"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmtexture"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmsound"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.pp.nmgraph"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmrt2d"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmrt3d"

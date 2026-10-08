@@ -24,6 +24,7 @@
 #include "Private/Editor/EditorTheme.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/SettingsDialog.h"
+#include "Public/NimbleEngine/AudioFacade.h"
 #include "Public/NimbleEngine/GameSession.h"
 
 /*
@@ -132,6 +133,9 @@ int main(int argc, char* argv[])
      * (MULTITHREADED_RENDERING.md) find it by GetJobSystem(). */
     EngineCore::JobSystem Jobs;
     EngineCore::SetJobSystem(&Jobs);
+    /* Before any Play session or preview can make a sound; no device just
+     * leaves the editor silent. */
+    NimbleEngine::StartAudio();
 
     int Result = 0;
     {
@@ -147,6 +151,9 @@ int main(int argc, char* argv[])
     }
     Jobs.WaitForIdle();
     EngineCore::SetJobSystem(nullptr);
+
+    /* The window and every Play session are gone, and their voices with them. */
+    NimbleEngine::StopAudio();
 
     EditorLog::Uninstall();
     EngineCore::CloseRunLog();
