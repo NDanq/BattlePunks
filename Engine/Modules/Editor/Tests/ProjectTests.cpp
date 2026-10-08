@@ -14,6 +14,7 @@
 #include <QProcess>
 #include <QTemporaryDir>
 
+#include "Private/Editor/ConfigIniFile.h"
 #include "Private/Editor/Project/ProjectTemplate.h"
 
 using namespace EditorProject;
@@ -72,7 +73,7 @@ static void TestCreate(const QDir& InRoot)
 
     for(const char* Expected : { "CMakeLists.txt", "CMakePresets.json", ".gitignore", "README.md",
                                  "AsteroidsGame.cpp", "Config/DefaultEngine.ini", "Scripts/Main.lua", "Docs/GettingStarted.md",
-                                 "Content/Materials/.gitkeep", "Content/Prefabs/.gitkeep", "Content/Levels/.gitkeep" })
+                                 "Content/Materials/.gitkeep", "Content/Prefabs/.gitkeep", "Content/Levels/Asteroids.nmworld" })
     {
         const bool bThere = QFileInfo(Project.filePath(QString::fromLatin1(Expected))).isFile();
         Expect(bThere && Files.contains(QString::fromLatin1(Expected)), Expected);
@@ -98,6 +99,14 @@ static void TestCreate(const QDir& InRoot)
     Expect(Game.contains(QStringLiteral("class AsteroidsGameMode : public NimbleEngine::IGameMode")), "the game mode is named for the game");
     Expect(Game.contains(QStringLiteral("class AsteroidsGameState : public NimbleEngine::GameState")), "and the game state");
     Expect(Game.contains(QStringLiteral("NIMBLE_IMPLEMENT_GAME_MODULE(AsteroidsGameModule, \"AsteroidsGame\")")), "the module is AsteroidsGame");
+    Expect(Game.contains(QStringLiteral("RegisterGameMode<AsteroidsGameMode>(\"Asteroids\")")), "it registers the mode by the game's name");
+
+    /* The world list, not C++, makes the start world a level. */
+    const QString Ini = ReadText(Project.filePath(QStringLiteral("Config/DefaultEngine.ini")));
+    Expect(Ini.contains(QStringLiteral("[World_Asteroids]\nFile=Content/Levels/Asteroids.nmworld\nGameMode=Asteroids\n"
+                                       "StartupScript=Scripts/Main.lua")),
+           "the config lists the start world, naming the mode and its startup script");
+    Expect(!Ini.contains(QStringLiteral("[Scripting]")), "there is no project-wide startup script");
 
     const QString Config = ReadText(Project.filePath(QStringLiteral("Config/DefaultEngine.ini")));
     Expect(Config.contains(QStringLiteral("Module=AsteroidsGame")) && Config.contains(QStringLiteral("StartLevel=Asteroids")),
@@ -183,6 +192,49 @@ static void TestScriptMatchesEditor(const QDir& InRoot)
     Expect(ListFiles(ScriptParent).size() == Files.size(), "and writes nothing");
 }
 
+/* Project Settings > Worlds rewrites the [World_*] sections as a list. */
+static void TestWorldSections(const QDir& InRoot)
+{
+    std::printf("[world sections]\n");
+    const QString Path = InRoot.filePath(QStringLiteral("Worlds.ini"));
+    {
+        QFile Out(Path);
+        Out.open(QIODevice::WriteOnly);
+        Out.write("[Game]\nStartLevel=A\n\n; the worlds\n[World_A]\nFile=Content/Levels/A.nmworld\nGameMode=Arena\n\n"
+                  "[World_B]\nFile=Content/Levels/B.nmworld\nCook=false\n\n; keep me\n[Scripting]\nStartupScript=Main.lua\n");
+    }
+
+    ConfigIniFile File;
+    Expect(File.Load(Path), "the file loads");
+    const QList<ConfigIniFile::Section> Read = File.GetSections(QStringLiteral("world_"));
+    Expect(Read.size() == 2 && Read[0].Name == QStringLiteral("World_A") && Read[1].Name == QStringLiteral("World_B"),
+           "the world sections are read in order");
+    Expect(Read.size() == 2 && Read[0].Keys.size() == 2 && Read[0].Keys[1].second == QStringLiteral("Arena"),
+           "with their keys");
+
+    ConfigIniFile::Section C;
+    C.Name = QStringLiteral("World_C");
+    C.Keys = { { QStringLiteral("File"), QStringLiteral("Content/Levels/C.nmworld") }, { QStringLiteral("GameMode"), QString() } };
+    QList<ConfigIniFile::Section> Next = { C, Read[0] };
+    File.ReplaceSections(QStringLiteral("World_"), Next);
+    Expect(File.Save(Path), "the file saves");
+
+    ConfigIniFile Again;
+    Again.Load(Path);
+    const QList<ConfigIniFile::Section> Written = Again.GetSections(QStringLiteral("World_"));
+    Expect(Written.size() == 2 && Written[0].Name == QStringLiteral("World_C") && Written[1].Name == QStringLiteral("World_A"),
+           "the list is replaced, in its new order, B gone");
+    bool bFound = false;
+    Expect(Again.Get(QStringLiteral("World_C"), QStringLiteral("GameMode"), &bFound).isEmpty() && bFound,
+           "an empty value is written, not dropped");
+    Expect(Again.Get(QStringLiteral("Scripting"), QStringLiteral("StartupScript")) == QStringLiteral("Main.lua")
+           && Again.Get(QStringLiteral("Game"), QStringLiteral("StartLevel")) == QStringLiteral("A"),
+           "other sections are untouched");
+    const QString Text = ReadText(Path);
+    Expect(Text.contains(QStringLiteral("; the worlds\n[World_C]")), "written where the old list was, its comment above it kept");
+    Expect(Text.contains(QStringLiteral("; keep me\n[Scripting]")), "the next section's comment is kept");
+}
+
 int main(int argc, char** argv)
 {
     QCoreApplication App(argc, argv);
@@ -195,6 +247,7 @@ int main(int argc, char** argv)
     TestEngineDir();
     TestCreate(Root);
     TestScriptMatchesEditor(Root);
+    TestWorldSections(Root);
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

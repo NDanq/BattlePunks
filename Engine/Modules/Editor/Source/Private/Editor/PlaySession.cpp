@@ -88,19 +88,20 @@ bool PlaySession::Start(const std::string& InOpenWorld)
         return false;
     }
 
-    /* The level of the world that is open, if one loads it; else [Game] StartLevel. */
+    /* The level of the world that is open, if the project lists it; else [Game] StartLevel. */
     NimbleEngine::ILevel* Level = NimbleEngine::FindLevelByWorldFile(InOpenWorld.c_str());
     if(!Level)
     {
         Level = Game->ResolveStartLevel();
         if(Level && !InOpenWorld.empty())
         {
-            CORE_LOG("[PIE] no level loads " + InOpenWorld + "; playing the start level")
+            CORE_LOG_WARN("[PIE] " + InOpenWorld + " is not in the project's world list; playing the start level "
+                          "(add it in Project Settings > Worlds to play it)")
         }
     }
     if(!Level)
     {
-        CORE_LOG_ERROR("[PIE] game module '" + Game->GetModuleName() + "' has no start level")
+        CORE_LOG_ERROR("[PIE] nothing to play: the project lists no worlds (Project Settings > Worlds)")
         Stop();
         return false;
     }

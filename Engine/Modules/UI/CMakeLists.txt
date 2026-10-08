@@ -58,10 +58,11 @@ nimble_add_module(UI SHARED
 # Private/ includes, and stb (External/stb, compiled into UIFont.cpp only).
 target_include_directories(UI PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source ${CMAKE_CURRENT_SOURCE_DIR}/External/stb)
 
-# XML is the editor's: a game reads only cooked documents. PRIVATE: no public
-# header includes pugixml.hpp.
-if(NIMBLE_WITH_EDITOR AND TARGET PugiXml::PugiXml)
-    target_link_libraries(UI PRIVATE PugiXml::PugiXml)
+# XML is read by every build but Shipping (WITH_UNCOOKED): the editor, and a
+# Debug or RelWithDebInfo game run uncooked. PRIVATE: no public header
+# includes pugixml.hpp.
+if(TARGET PugiXml::PugiXml)
+    target_link_libraries(UI PRIVATE $<$<NOT:$<CONFIG:Shipping>>:PugiXml::PugiXml>)
 endif()
 
 source_group("UI" FILES ${UI_SOURCES})

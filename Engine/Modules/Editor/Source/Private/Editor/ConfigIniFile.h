@@ -33,6 +33,24 @@ public:
     /* Every Section / Key pair in the file, in file order. */
     QList<QPair<QString, QString>> GetKeys() const;
 
+    /* A section as a list item: its name and its keys, in order. */
+    struct Section
+    {
+        QString                        Name;
+        QList<QPair<QString, QString>> Keys;
+    };
+
+    /* Every section whose name starts with InPrefix (case-insensitive), with
+     * its keys, in file order -- [World_*], say. */
+    QList<Section> GetSections(const QString& InPrefix) const;
+
+    /*
+     * Every section starting with InPrefix replaced by InSections, in their
+     * order: written where the first of the old ones was (comments above it
+     * kept), else at the end. A comment inside an old section goes with it.
+     */
+    void ReplaceSections(const QString& InPrefix, const QList<Section>& InSections);
+
     const QString& GetError() const { return Error; }
 
 private:

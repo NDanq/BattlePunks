@@ -1,5 +1,6 @@
 #include "Public/Core/CoreConfig.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cerrno>
 #include <cstdio>
@@ -813,6 +814,37 @@ void ConfigWarnUnclaimedEntries()
         const std::string Qualified = Entry.Section.empty() ? Entry.Key : (Entry.Section + "." + Entry.Key);
         CORE_LOG_WARN("CoreConfig: '" + Qualified + "' was set in a config file but never matched a declared config var")
     }
+}
+
+void ConfigForEachEntry(const char* InSectionPrefix, const ConfigEntryFn InFn, void* InUserData)
+{
+    if(!GConfigEntries || !InFn) return;
+
+    const size_t PrefixLength = InSectionPrefix ? std::strlen(InSectionPrefix) : 0;
+    /* By index: the callback may load config, growing the vector. */
+    for(size_t Index = 0; Index < GConfigEntries->size(); ++Index)
+    {
+        ConfigEntry& Entry = (*GConfigEntries)[Index];
+        if(Entry.Section.size() < PrefixLength
+           || !EqualsIgnoreCase(Entry.Section.substr(0, PrefixLength), std::string(InSectionPrefix, PrefixLength)))
+        {
+            continue;
+        }
+        Entry.bClaimed = true;
+        const std::string Section = Entry.Section, Key = Entry.Key, Value = Entry.Value;
+        InFn(Section.c_str(), Key.c_str(), Value.c_str(), InUserData);
+    }
+}
+
+void ConfigRemoveEntries(const char* InSectionPrefix)
+{
+    if(!GConfigEntries) return;
+
+    const std::string Prefix = InSectionPrefix ? InSectionPrefix : "";
+    GConfigEntries->erase(std::remove_if(GConfigEntries->begin(), GConfigEntries->end(), [&Prefix](const ConfigEntry& InEntry)
+    {
+        return InEntry.Section.size() >= Prefix.size() && EqualsIgnoreCase(InEntry.Section.substr(0, Prefix.size()), Prefix);
+    }), GConfigEntries->end());
 }
 
 // ============================================================================

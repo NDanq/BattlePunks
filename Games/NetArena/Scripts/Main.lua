@@ -1,6 +1,6 @@
--- NetArena's startup script ([Scripting] StartupScript in
--- Config/DefaultEngine.ini), run on every level load after the level has built
--- its scene -- on every process: the server and each client alike. The Net
+-- NetArena's startup script ([World_NetArena] StartupScript in
+-- Config/DefaultEngine.ini), run on every load of the world after its mode has
+-- loaded -- on every process: the server and each client alike. The Net
 -- library says which one this is (networking starts before the level loads).
 --
 -- The capsules and their RPC are C++ (NetArenaGame.cpp); from Lua the same

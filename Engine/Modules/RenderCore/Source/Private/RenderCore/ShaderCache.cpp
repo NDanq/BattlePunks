@@ -9,6 +9,7 @@ namespace RenderCore
         constexpr uint32_t TAG_HEADER = EngineCore::MakeArchiveTag('N','M','S','C');
         constexpr uint32_t TAG_BLOB   = EngineCore::MakeArchiveTag('B','L','O','B');
         constexpr uint32_t TAG_FILE   = EngineCore::MakeArchiveTag('F','I','L','E');
+        constexpr uint32_t TAG_HASHED = EngineCore::MakeArchiveTag('F','H','S','H');
 
         uint64_t Fnv1a64(const std::vector<uint8_t>& InBytes)
         {
@@ -73,6 +74,22 @@ namespace RenderCore
                     return false;
                 }
                 if(!Ar.HasError()) { Result.Files[Path] = Found->second; }
+                continue;
+            }
+
+            if(Ar.OpenChunk(TAG_HASHED, ChunkVersion))
+            {
+                uint64_t PathHash = 0;
+                uint64_t Hash     = 0;
+                Ar << PathHash << Hash;
+                Ar.CloseChunk();
+                const auto Found = Blobs.find(Hash);
+                if(!Ar.HasError() && Found == Blobs.end())
+                {
+                    OutError = "a hashed path names content the cache does not hold";
+                    return false;
+                }
+                if(!Ar.HasError()) { Result.HashedFiles[PathHash] = Found->second; }
                 continue;
             }
 

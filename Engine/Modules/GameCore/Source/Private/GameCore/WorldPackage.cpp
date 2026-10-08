@@ -1,5 +1,6 @@
 #include "Public/GameCore/WorldPackage.h"
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -11,6 +12,7 @@
 #include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldSerializer.h"
 #include "Public/Core/CoreConfig.h"
+#include "Public/Core/CoreFileProvider.h"
 
 #if WITH_UNCOOKED && !WITH_EDITOR
 #include <filesystem>
@@ -898,12 +900,25 @@ PrefabInstanceID RefreshPrefabInstance(World& InWorld, const PrefabInstanceID In
 EWorldFileFormat DetectWorldFileFormat(const char* InPath)
 {
     if(!InPath) { return EWorldFileFormat::Unknown; }
-    EngineCore::FileHandle Handle = EngineCore::appFileOpenRead(InPath);
-    if(!Handle) { return EWorldFileFormat::Unknown; }
 
+    /* Through the file provider, as the load itself reads: a packaged game's
+     * worlds and prefabs are only in its content pack (CorePack.h). */
     uint8_t Head[64];
-    const size_t Count = EngineCore::appFileRead(Handle, Head, sizeof(Head));
-    EngineCore::appFileClose(Handle);
+    size_t  Count = 0;
+    std::vector<uint8_t> Bytes;
+    EngineCore::IFileProvider* Provider = EngineCore::GetFileProvider();
+    if(Provider && Provider->Exists(InPath) && Provider->ReadAll(InPath, Bytes))
+    {
+        Count = std::min(Bytes.size(), sizeof(Head));
+        std::memcpy(Head, Bytes.data(), Count);
+    }
+    else
+    {
+        EngineCore::FileHandle Handle = EngineCore::appFileOpenRead(InPath);
+        if(!Handle) { return EWorldFileFormat::Unknown; }
+        Count = EngineCore::appFileRead(Handle, Head, sizeof(Head));
+        EngineCore::appFileClose(Handle);
+    }
 
     size_t Index = 0;
     if(Count >= 3 && Head[0] == 0xEF && Head[1] == 0xBB && Head[2] == 0xBF) { Index = 3; }   // UTF-8 BOM
@@ -1141,16 +1156,6 @@ bool CookWorldFile(const char* InSourcePath, const char* InCookedPath)
 
 namespace
 {
-#if !WITH_UNCOOKED
-    /* The cooked twin a Shipping build reads: a world's "<folder>/Cooked/<file>". */
-    std::string ShippingWorldPath(const std::string& InSource)
-    {
-        const size_t Slash = InSource.find_last_of("/\\");
-        return Slash == std::string::npos ? "Cooked/" + InSource
-                                          : InSource.substr(0, Slash + 1) + "Cooked/" + InSource.substr(Slash + 1);
-    }
-#endif
-
 #if WITH_UNCOOKED && !WITH_EDITOR
     namespace fs = std::filesystem;
 
@@ -1202,18 +1207,53 @@ namespace
 #endif
 }
 
+#if WITH_UNCOOKED
+namespace
+{
+    std::string& UncookedRoot()
+    {
+        static std::string* Root = new std::string();   // leaked: read during shutdown
+        return *Root;
+    }
+
+    /* InSource under the uncooked root, if it is set and has it; else empty. */
+    std::string UncookedSource(const std::string& InSource)
+    {
+        if(UncookedRoot().empty() || InSource.empty()) { return std::string(); }
+        std::error_code Error;
+        const std::filesystem::path Path = std::filesystem::u8path(UncookedRoot()) / std::filesystem::u8path(InSource);
+        if(!std::filesystem::is_regular_file(Path, Error)) { return std::string(); }
+        const auto PathU8 = Path.generic_u8string();
+        return std::string(PathU8.begin(), PathU8.end());
+    }
+}
+
+void SetUncookedContentRoot(const std::string& InRoot)
+{
+    UncookedRoot() = InRoot;
+}
+
+const std::string& GetUncookedContentRoot()
+{
+    return UncookedRoot();
+}
+#endif
+
 std::string ResolveContentWorld(const char* InSourcePath)
 {
     const std::string Source = InSourcePath ? InSourcePath : "";
 #if WITH_EDITOR
     return Source;
 #elif WITH_UNCOOKED
+    /* Run uncooked: the project's own file, raw. */
+    const std::string Raw = UncookedSource(Source);
+    if(!Raw.empty()) { return Raw; }
     if(DetectWorldFileFormat(Source.c_str()) != EWorldFileFormat::Text || !GContentCookOnLoad.GetBool()) { return Source; }
     const fs::path Folder = fs::u8path(EntityFolderFor(Source));
     return CookOnLoad(Source, &Folder, &CookWorldFile, "world");
 #else
-    /* A binary file at the source path (a game that ships it there) is fine as it is. */
-    return DetectWorldFileFormat(Source.c_str()) == EWorldFileFormat::Binary ? Source : ShippingWorldPath(Source);
+    /* Shipping: the cooked world is staged at its source path (from <project>/Saved/Cooked/). */
+    return Source;
 #endif
 }
 
@@ -1221,12 +1261,14 @@ std::string ResolveContentPrefab(const char* InSourcePath)
 {
     const std::string Source = InSourcePath ? InSourcePath : "";
 #if WITH_UNCOOKED && !WITH_EDITOR
+    const std::string Raw = UncookedSource(Source);
+    if(!Raw.empty()) { return Raw; }
     if(DetectWorldFileFormat(Source.c_str()) == EWorldFileFormat::Text && GContentCookOnLoad.GetBool())
     {
         return CookOnLoad(Source, nullptr, &CookPrefabFile, "prefab");
     }
 #endif
-    /* Editor: the source. Shipping: the cooked prefab is staged at the same path. */
+    /* Editor: the source. Shipping: the cooked prefab is staged at its source path. */
     return Source;
 }
 

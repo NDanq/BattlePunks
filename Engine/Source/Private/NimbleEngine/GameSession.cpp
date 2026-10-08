@@ -33,10 +33,6 @@
 #include "Private/NimbleEngine/InputInternal.h"
 #include "Private/NimbleEngine/SaveGameFormat.h"
 
-/* Lua file run on every level load, after IGameMode::OnLoad (see LoadLevel).
- * Empty skips it. */
-NIMBLE_CONFIG_STRING(GStartupScript, "Scripting", "StartupScript", "", nullptr);
-
 /* "stat physics": the level's simulation -- bodies, contacts, step times --
  * in the stats panel over the viewport (Renderer::SetStatText). The editor's
  * console and the game's toggle it with "stat physics". */
@@ -223,10 +219,6 @@ namespace NimbleEngine
          * is logged, not fatal. Re-run per load: spawned entities died with the
          * old World. */
         const char* StartupScriptPath = InLevel.GetStartupScript();
-        if(StartupScriptPath == nullptr)
-        {
-            StartupScriptPath = GStartupScript.GetString();
-        }
         if(StartupScriptPath && StartupScriptPath[0] != '\0')
         {
             Scripts.RunFile(StartupScriptPath);

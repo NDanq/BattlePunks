@@ -2,8 +2,7 @@
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/GameState.h"
-#include "Public/NimbleEngine/Level.h"
-#include "Public/NimbleEngine/SaveGame.h"
+#include "Public/NimbleEngine/WorldList.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
@@ -12,7 +11,6 @@
 #include "Public/RenderCore/RenderComponents.h"
 
 #include <cstdio>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -20,11 +18,13 @@
  * @PROJECT_NAME@Game: the game, built as a module library loaded by name by
  * the @PROJECT_NAME@ launcher (the engine's) and the editor's Play-in-Editor.
  *
- *   @PROJECT_NAME@Level       builds the scene from native prefabs; owns the
- *                             mode and the state.
- *   @PROJECT_NAME@GameMode    the rules: ticked once per frame.
+ *   @PROJECT_NAME@GameMode    the rules for Content/Levels/@PROJECT_NAME@.nmworld:
+ *                             places the native prefabs, ticked once per
+ *                             frame; owns the state.
  *   @PROJECT_NAME@GameState   what a save keeps, reset on every level start.
- *   @PROJECT_NAME@GameModule  registers the level; [Game] StartLevel names it.
+ *   @PROJECT_NAME@GameModule  registers the mode. Config/DefaultEngine.ini's
+ *                             [World_@PROJECT_NAME@] names it (Project
+ *                             Settings > Worlds), and [Game] StartLevel that.
  *
  * Games/Sandbox/SandboxGame.cpp shows the rest: input, systems, collision,
  * scripting, saves.
@@ -70,7 +70,7 @@ GAMECORE_DEFINE_NATIVE_PREFAB(Player, "@PROJECT_NAME@.Player", &BuildPlayer)
 
 // === State ==================================================================
 
-/* Owned by the level, used by the mode. OnReset puts back the starting
+/* Owned by the mode. OnReset puts back the starting
  * values; Serialize saves the same fields. Keep the two in step. */
 class @PROJECT_NAME@GameState : public NimbleEngine::GameState
 {
@@ -94,15 +94,22 @@ public:
 
 // === Mode ===================================================================
 
-/* The rules. Nothing is spawned here: the level builds the scene. */
+/* The rules, for Content/Levels/@PROJECT_NAME@.nmworld ([World_@PROJECT_NAME@]
+ * in Config/DefaultEngine.ini names this mode). The world is loaded before
+ * OnLoad: place what it does not hold, register systems. */
 class @PROJECT_NAME@GameMode : public NimbleEngine::IGameMode
 {
 public:
-    explicit @PROJECT_NAME@GameMode(@PROJECT_NAME@GameState& InState) : State(&InState) {}
-
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
         Session = &InSession;
+        GameCore::World& World = InSession.GetWorld();
+
+        /* Centred in the default 1280 x 720 view; +Y runs down from the top.
+         * Place these in the world in the editor instead and delete them here. */
+        World.SpawnPrefab("native:@PROJECT_NAME@.Camera");
+        World.SpawnPrefab("native:@PROJECT_NAME@.Player",
+                          Placed(EngineCore::Vector3(640.0, 360.0, 0.0), EngineCore::Vector3(32.0, 32.0, 1.0)));
         return true;
     }
 
@@ -116,49 +123,23 @@ public:
      * window access. */
     void OnTick(const NimbleEngine::FrameContext& InFrame) override
     {
-        State->ElapsedSeconds += InFrame.DeltaSeconds;
+        State.ElapsedSeconds += InFrame.DeltaSeconds;
     }
 
     void OnUnload() override
     {
         char Elapsed[32];
-        std::snprintf(Elapsed, sizeof(Elapsed), "%.2f", State->ElapsedSeconds);
+        std::snprintf(Elapsed, sizeof(Elapsed), "%.2f", State.ElapsedSeconds);
         CORE_LOG("[@PROJECT_NAME@] game stopping after " + std::string(Elapsed) + "s")
         Session = nullptr;
     }
 
-private:
-    /* Stashed in OnLoad: GetWorld(), RequestQuit(). */
-    NimbleEngine::GameSession* Session = nullptr;
-    @PROJECT_NAME@GameState*   State   = nullptr;
-};
-
-// === Level ==================================================================
-
-/* The scene: places the native prefabs, owns the mode and the state. */
-class @PROJECT_NAME@Level : public NimbleEngine::ILevel
-{
-public:
-    const char* GetName() const override { return "@PROJECT_NAME@"; }
-
-    bool OnLoad(NimbleEngine::GameSession& /*InSession*/) override
-    {
-        /* GetWorld(), not InSession.GetWorld() (Level.h). */
-        GameCore::World& World = GetWorld();
-
-        /* Centred in the default 1280 x 720 view; +Y runs down from the top. */
-        World.SpawnPrefab("native:@PROJECT_NAME@.Camera");
-        World.SpawnPrefab("native:@PROJECT_NAME@.Player",
-                          Placed(EngineCore::Vector3(640.0, 360.0, 0.0), EngineCore::Vector3(32.0, 32.0, 1.0)));
-
-        Mode.emplace(State);
-        return true;
-    }
+    NimbleEngine::GameState* GetGameState() override { return &State; }
 
     /* Empties the World before a save is restored, or the scene is doubled. */
     void OnPrepareForLoadedGame() override
     {
-        GameCore::World& World = GetWorld();
+        GameCore::World& World = Session->GetWorld();
 
         /* Collect, then destroy: ForEachEntity forbids destroying inside it. */
         std::vector<GameCore::EntityID> Doomed;
@@ -173,18 +154,15 @@ public:
         }
     }
 
-    NimbleEngine::IGameMode* GetGameMode() override { return Mode ? &*Mode : nullptr; }
-
-    NimbleEngine::GameState* GetGameState() override { return &State; }
-
 private:
-    @PROJECT_NAME@GameState                 State;
-    std::optional<@PROJECT_NAME@GameMode>   Mode;
+    /* Stashed in OnLoad: GetWorld(), RequestQuit(). */
+    NimbleEngine::GameSession* Session = nullptr;
+    @PROJECT_NAME@GameState    State;
 };
 
 // === Module =================================================================
 
-/* Owns the level, so it lives exactly as long as its code. */
+/* Registers the mode; the project's world list names it. */
 class @PROJECT_NAME@GameModule : public NimbleEngine::IGameModule
 {
 public:
@@ -193,21 +171,15 @@ public:
 
     bool OnStartup(const EngineCore::ModuleReloadState* /*InPrev*/) override
     {
-        /* Saves and [Game] StartLevel resolve levels by name. */
-        NimbleEngine::RegisterLevel(Level);
+        NimbleEngine::RegisterGameMode<@PROJECT_NAME@GameMode>("@PROJECT_NAME@");
         return true;
     }
 
     void OnShutdown(EngineCore::ModuleReloadState& /*OutState*/) override
     {
-        /* The registry holds a bare pointer, and this image is about to go. */
-        NimbleEngine::UnregisterLevel(Level);
+        /* The registry holds this image's functions, and it is about to go. */
+        NimbleEngine::UnregisterGameMode("@PROJECT_NAME@");
     }
-
-    NimbleEngine::ILevel* GetStartLevel() override { return &Level; }
-
-private:
-    @PROJECT_NAME@Level Level;
 };
 
 NIMBLE_IMPLEMENT_GAME_MODULE(@PROJECT_NAME@GameModule, "@PROJECT_NAME@Game")

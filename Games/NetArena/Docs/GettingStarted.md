@@ -75,15 +75,17 @@ Open `NetArenaGame.cpp`. Four classes, top to bottom:
   the game thread; `Session->GetWorld()` is the scene, `Session->RequestQuit()`
   ends the game. Cache entity IDs in `OnLoad`, and find them again in
   `OnPostLoadSave` after a save is restored.
-- **`NetArenaLevel`** -- builds the scene in `OnLoad` (spawn prefabs,
-  register systems) and owns the mode and state. Its name, `"NetArena"`,
-  is `[Game] StartLevel` in the config.
-- **`NetArenaGameModule`** -- registers the level. A second level is a
-  second `ILevel` class, registered beside the first.
+- **`NetArenaGameModule`** -- registers the mode by name
+  (`RegisterGameMode<NetArenaGameMode>("NetArena")`).
+
+Worlds are not declared in C++: `[World_NetArena]` in `Config/DefaultEngine.ini`
+(Project Settings > Worlds) names the world file and its mode, and
+`[Game] StartLevel` names the world the game starts in. A second level is a
+second world in that list; a second set of rules is a second registered mode.
 
 Per-entity logic that runs every frame belongs in a system rather than the
 mode: `World.RegisterSystem("NetArena.Move", GameCore::TP_PrePhysics, &MoveSystem, &Context)`
-in the level's `OnLoad` (see `DriveMarkerSystem` in `Games/Sandbox/SandboxGame.cpp`).
+in the mode's `OnLoad` (see `DriveMarkerSystem` in `Games/Sandbox/SandboxGame.cpp`).
 
 There is no `main()` to write: the `NetArena` executable is the
 engine's launcher (`nimble_add_game_launcher` in `CMakeLists.txt`), which
@@ -131,7 +133,7 @@ it. The keys that matter first:
 | `[Display] RHI` | 2 | Renderer: 0 Null (headless), 2 Vulkan, 4 D3D12 |
 | `[Application] Title` | NetArena | Window title |
 | `[Game] StartLevel` | NetArena | A registered level's name |
-| `[Scripting] StartupScript` | Scripts/Main.lua | Empty skips scripting |
+| `[World_<Name>] StartupScript` | Scripts/Main.lua | That world's startup script; absent runs none |
 
 A game declares its own keys in C++, in the same file:
 
@@ -141,14 +143,14 @@ NIMBLE_CONFIG_INT(GLives, "NetArena", "Lives", 3, nullptr);   // [NetArena] Live
 
 ## 7. Shipping a client build
 
-A client build cannot read text prefabs or text levels. Before building a
-`client-*` preset, in the editor's Console:
+A Shipping client build cannot read text prefabs or text levels. Before
+building a `client-shipping` preset, run **Build > Cook Content** in the editor
+(or let **Build > Build Project** cook and compile together): the worlds ticked
+in Project Settings > Worlds, every prefab and UI document go to
+`Saved/Cooked/<their path>`.
 
-- `cook prefabs` writes binary prefabs to `Cooked/Content/Prefabs/`;
-- `cook` (with the level open and saved) writes its binary twin to
-  `Content/Levels/Cooked/`.
-
-The client build stages those instead; commit them with the game. A level
+The client build stages those instead. `Saved/` is made on each machine and
+not tracked: cook again after a fresh checkout (Build Project does it for you). A level
 that loads a world file reads the cooked one in a game build, as
 `Games/Sandbox`'s BrickBreaker does. Material graphs cook themselves during
 the build.

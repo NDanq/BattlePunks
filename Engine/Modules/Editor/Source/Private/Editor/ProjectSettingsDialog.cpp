@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <climits>
+#include <cstring>
 #include <iterator>
 #include <map>
 #include <string>
@@ -12,8 +13,11 @@
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QDirIterator>
 #include <QDoubleSpinBox>
+#include <QFileDialog>
 #include <QFileInfo>
+#include <QHeaderView>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -23,18 +27,60 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSpinBox>
+#include <QRegularExpression>
 #include <QStackedWidget>
+#include <QTableWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
 
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
+#include "Public/NimbleEngine/WorldList.h"
+
+#include "Private/Editor/Content/ContentPaths.h"
+#include "Private/Editor/Graph/GraphAssets.h"
 
 #include "EditorProject.h"
 
 namespace
 {
     const char* const ProjectPageName = "Project";
+    const char* const WorldsPageName  = "Worlds";
+
+    /* The Worlds table's columns. */
+    enum EWorldColumn { WC_Name = 0, WC_File, WC_Mode, WC_Script, WC_Cook, WC_Count };
+
+    /* The startup script choice that is not a path. */
+    const char* const NoScriptText      = "(none)";
+    const char* const NoModeText        = "(none)";
+
+    /* A level name a save holds (63 characters), and a section name. */
+    constexpr int MaxWorldName = 63;
+
+    /* The project's Lua files (runtime path, disk path): a world's startup
+     * script choices. */
+    QList<QPair<QString, QString>> EditorProjectScripts()
+    {
+        QList<QPair<QString, QString>> Out;
+        const QString Root = EditorGraphs::GetProjectRoot();
+        QDirIterator It(Root, { QStringLiteral("*.lua") }, QDir::Files, QDirIterator::Subdirectories);
+        while(It.hasNext())
+        {
+            const QString File    = It.next();
+            const QString Runtime = EditorContent::ToRuntimePath(File);
+            bool bIgnored = Runtime.isEmpty() || Runtime.startsWith(QStringLiteral("Engine/")) || Runtime.startsWith(QStringLiteral("Saved/"));
+            for(const QString& Part : QDir(Root).relativeFilePath(File).split(QLatin1Char('/')))
+            {
+                bIgnored |= EditorGraphs::IsIgnoredFolder(Part);
+            }
+            if(!bIgnored)
+            {
+                Out.append({ Runtime, File });
+            }
+        }
+        std::sort(Out.begin(), Out.end());
+        return Out;
+    }
 
     /* On the Project page, so not repeated on their section's. */
     struct ProjectKey
@@ -46,8 +92,7 @@ namespace
     const ProjectKey ProjectKeys[] = {
         { "Application", "Title",         "Title" },
         { "Game",        "Module",        "Game module" },
-        { "Game",        "StartLevel",    "Start level" },
-        { "Scripting",   "StartupScript", "Startup script" },
+        { "Game",        "StartLevel",    "Start world" },
     };
 
     /* Also on the Project page, under their own heading: build-time switches
@@ -97,6 +142,8 @@ namespace
         const char* Tip;
     };
     const KeyLabel KeyLabels[] = {
+        { "Game",    "StartLevel",        "Start world",
+          "The world the game starts in: a name from the Worlds page. Empty starts the first listed" },
         { "Shadows", "Enabled",           "Draw shadows",
           "Off: every light draws unshadowed, whatever its Cast Shadows says" },
         { "Shadows", "Resolution",        "Shadow map size",
@@ -249,6 +296,7 @@ ProjectSettingsDialog::ProjectSettingsDialog(QWidget* InParent)
     connect(Pages, &QListWidget::currentRowChanged, Stack, &QStackedWidget::setCurrentIndex);
 
     BuildProjectPage();
+    BuildWorldsPage();
     BuildSectionPages();
     Pages->setCurrentRow(0);
 
@@ -334,13 +382,330 @@ void ProjectSettingsDialog::BuildProjectPage()
     static_cast<QVBoxLayout*>(Page->layout())->insertWidget(2, Where);
 }
 
+void ProjectSettingsDialog::ShowWorlds()
+{
+    for(int Index = 0; Index < Pages->count(); ++Index)
+    {
+        if(Pages->item(Index)->text() == QLatin1String(WorldsPageName))
+        {
+            Pages->setCurrentRow(Index);
+            return;
+        }
+    }
+}
+
+void ProjectSettingsDialog::BuildWorldsPage()
+{
+    QFormLayout* Form = nullptr;
+    QWidget*     Page = AddPage(QString::fromLatin1(WorldsPageName), Form);
+    auto*        Column = static_cast<QVBoxLayout*>(Page->layout());
+
+    auto* Note = new QLabel(QStringLiteral(
+        "<p>The project's worlds. Each is a level, named here: what <b>Start world</b>, saves, the console's "
+        "<tt>open</tt> and <tt>Game.OpenLevel</tt> name. It loads its world file, then runs its <b>game mode</b> "
+        "(rules the game module registers) and its own <b>startup script</b>, if it names one. Play plays the open world if it is listed.</p>"
+        "<p><b>Cook</b>: Build &gt; Build Project cooks and packages it; unticked, it stays out of the game.</p>"), Page);
+    Note->setWordWrap(true);
+    Column->insertWidget(1, Note);
+
+    Worlds = new QTableWidget(0, WC_Count, Page);
+    Worlds->setHorizontalHeaderLabels({ QStringLiteral("Name"), QStringLiteral("World file"), QStringLiteral("Game mode"),
+                                        QStringLiteral("Startup script"), QStringLiteral("Cook") });
+    Worlds->horizontalHeader()->setSectionResizeMode(WC_Name, QHeaderView::ResizeToContents);
+    Worlds->horizontalHeader()->setSectionResizeMode(WC_File, QHeaderView::Stretch);
+    Worlds->horizontalHeader()->setSectionResizeMode(WC_Mode, QHeaderView::ResizeToContents);
+    Worlds->horizontalHeader()->setSectionResizeMode(WC_Script, QHeaderView::ResizeToContents);
+    Worlds->horizontalHeader()->setSectionResizeMode(WC_Cook, QHeaderView::ResizeToContents);
+    Worlds->verticalHeader()->setVisible(false);
+    Worlds->setSelectionBehavior(QAbstractItemView::SelectRows);
+    Worlds->setSelectionMode(QAbstractItemView::SingleSelection);
+    Worlds->setMinimumHeight(220);
+    Column->insertWidget(2, Worlds, 1);
+
+    auto* Buttons = new QHBoxLayout();
+    const auto AddButton = [this, Buttons](const QString& InText, const QString& InTip)
+    {
+        auto* Button = new QPushButton(InText, this);
+        Button->setToolTip(InTip);
+        Buttons->addWidget(Button);
+        return Button;
+    };
+    QPushButton* Add      = AddButton(QStringLiteral("Add World..."), QStringLiteral("Add a .nmworld from the project's Content"));
+    QPushButton* AddOpen  = AddButton(QStringLiteral("Add Open World"), QStringLiteral("Add the world open in the editor"));
+    QPushButton* Browse   = AddButton(QStringLiteral("Change File..."), QStringLiteral("Point the selected world at another file"));
+    QPushButton* Remove   = AddButton(QStringLiteral("Remove"), QStringLiteral("Take the selected world out of the project (its file stays)"));
+    QPushButton* Up       = AddButton(QStringLiteral("Up"), QStringLiteral("Move the selected world up"));
+    QPushButton* Down     = AddButton(QStringLiteral("Down"), QStringLiteral("Move the selected world down"));
+    Buttons->addStretch(1);
+    Column->insertLayout(3, Buttons);
+
+    const auto PickWorld = [this]() -> QString
+    {
+        const QString Root = EditorGraphs::GetProjectRoot();
+        const QString Start = QDir(Root).exists(QStringLiteral("Content/Levels")) ? QDir(Root).filePath(QStringLiteral("Content/Levels")) : Root;
+        const QString Picked = QFileDialog::getOpenFileName(this, QStringLiteral("World"), Start, QStringLiteral("Worlds (*.nmworld)"));
+        if(Picked.isEmpty())
+        {
+            return QString();
+        }
+        const QString Runtime = EditorContent::ToRuntimePath(Picked);
+        if(Runtime.isEmpty() || Runtime.startsWith(QStringLiteral("Engine/")) || Runtime.startsWith(QStringLiteral("Saved/")))
+        {
+            QMessageBox::warning(this, windowTitle(), QStringLiteral("%1\nis not one of the project's own worlds (under %2, not cooked).")
+                                 .arg(QDir::toNativeSeparators(Picked), QDir::toNativeSeparators(Root)));
+            return QString();
+        }
+        return Runtime;
+    };
+
+    connect(Add, &QPushButton::clicked, this, [this, PickWorld]()
+    {
+        const QString Runtime = PickWorld();
+        if(!Runtime.isEmpty()) { AddWorld(Runtime); }
+    });
+    connect(AddOpen, &QPushButton::clicked, this, [this]()
+    {
+        if(OpenWorld.isEmpty())
+        {
+            QMessageBox::information(this, windowTitle(), QStringLiteral("No saved world is open in the editor."));
+            return;
+        }
+        AddWorld(OpenWorld);
+    });
+    connect(Browse, &QPushButton::clicked, this, [this, PickWorld]()
+    {
+        const int Row = Worlds->currentRow();
+        if(Row < 0) { return; }
+        const QString Runtime = PickWorld();
+        if(!Runtime.isEmpty()) { Worlds->item(Row, WC_File)->setText(Runtime); }
+    });
+    connect(Remove, &QPushButton::clicked, this, [this]()
+    {
+        const int Row = Worlds->currentRow();
+        if(Row >= 0)
+        {
+            Worlds->removeRow(Row);
+            RefreshStartLevelChoices();
+        }
+    });
+    const auto Move = [this](const int InBy)
+    {
+        const int Row = Worlds->currentRow();
+        const int To  = Row + InBy;
+        if(Row < 0 || To < 0 || To >= Worlds->rowCount())
+        {
+            return;
+        }
+        /* Rebuilt from the sections: cell widgets do not move with takeItem. */
+        QList<ConfigIniFile::Section> Sections = ReadWorlds();
+        Sections.swapItemsAt(Row, To);
+        Worlds->setRowCount(0);
+        for(const ConfigIniFile::Section& Each : Sections) { AddWorldRow(Each); }
+        Worlds->selectRow(To);
+        RefreshStartLevelChoices();
+    };
+    connect(Up,   &QPushButton::clicked, this, [Move]() { Move(-1); });
+    connect(Down, &QPushButton::clicked, this, [Move]() { Move(+1); });
+
+    for(const ConfigIniFile::Section& Each : File.GetSections(QLatin1String(NimbleEngine::WORLD_SECTION_PREFIX)))
+    {
+        AddWorldRow(Each);
+    }
+    WorldsBaseline = ReadWorlds();
+    connect(Worlds, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* InItem)
+    {
+        if(InItem && InItem->column() == WC_Name) { RefreshStartLevelChoices(); }
+    });
+    RefreshStartLevelChoices();
+}
+
+void ProjectSettingsDialog::AddWorldRow(const ConfigIniFile::Section& InSection)
+{
+    QString File, Mode, Script;
+    bool    bCook = true;
+    for(const QPair<QString, QString>& Key : InSection.Keys)
+    {
+        if(Same(Key.first, "File"))               { File = Key.second; }
+        else if(Same(Key.first, "GameMode"))      { Mode = Key.second; }
+        else if(Same(Key.first, "StartupScript")) { Script = Key.second; }
+        else if(Same(Key.first, "Cook"))
+        {
+            const QString V = Key.second.trimmed().toLower();
+            bCook = !(V == QStringLiteral("false") || V == QStringLiteral("0") || V == QStringLiteral("no") || V == QStringLiteral("off"));
+        }
+    }
+
+    const QSignalBlocker Quiet(Worlds);
+    const int Row = Worlds->rowCount();
+    Worlds->insertRow(Row);
+
+    const QString Name = InSection.Name.mid(int(std::strlen(NimbleEngine::WORLD_SECTION_PREFIX)));
+    Worlds->setItem(Row, WC_Name, new QTableWidgetItem(Name));
+    Worlds->setItem(Row, WC_File, new QTableWidgetItem(File));
+
+    /* Modes the game module registers -- loaded for authoring, so known here. */
+    auto* ModeChoice = new QComboBox(Worlds);
+    ModeChoice->setEditable(true);
+    ModeChoice->addItem(QString::fromLatin1(NoModeText));
+    for(size_t Index = 0; Index < NimbleEngine::GetGameModeCount(); ++Index)
+    {
+        ModeChoice->addItem(QString::fromUtf8(NimbleEngine::GetGameModeName(Index)));
+    }
+    ModeChoice->setCurrentText(Mode.isEmpty() ? QString::fromLatin1(NoModeText) : Mode);
+    ModeChoice->setToolTip(QStringLiteral("The rules: a game mode the game module registers (RegisterGameMode). "
+                                          "Listed: those the loaded module has"));
+    Worlds->setCellWidget(Row, WC_Mode, ModeChoice);
+
+    auto* ScriptChoice = new QComboBox(Worlds);
+    ScriptChoice->setEditable(true);
+    ScriptChoice->addItem(QString::fromLatin1(NoScriptText));
+    for(const QPair<QString, QString>& Lua : EditorProjectScripts())
+    {
+        ScriptChoice->addItem(Lua.first);
+    }
+    ScriptChoice->setCurrentText(Script.isEmpty() ? QString::fromLatin1(NoScriptText) : Script);
+    ScriptChoice->setToolTip(QStringLiteral("The Lua file run once the world and its mode are loaded (bundle-relative, "
+                                            "\"Scripts/Main.lua\"), or none"));
+    Worlds->setCellWidget(Row, WC_Script, ScriptChoice);
+
+    auto* Cook = new QTableWidgetItem();
+    Cook->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+    Cook->setCheckState(bCook ? Qt::Checked : Qt::Unchecked);
+    Cook->setToolTip(QStringLiteral("Cooked and packaged by Build > Build Project"));
+    Worlds->setItem(Row, WC_Cook, Cook);
+}
+
+void ProjectSettingsDialog::AddWorld(const QString& InRuntimePath)
+{
+    for(const ConfigIniFile::Section& Each : ReadWorlds())
+    {
+        for(const QPair<QString, QString>& Key : Each.Keys)
+        {
+            if(Same(Key.first, "File") && Key.second.compare(InRuntimePath, Qt::CaseInsensitive) == 0)
+            {
+                QMessageBox::information(this, windowTitle(), QStringLiteral("%1 is already listed.").arg(InRuntimePath));
+                return;
+            }
+        }
+    }
+
+    /* Named for its file, as a section name allows; unique. */
+    QString Base = QFileInfo(InRuntimePath).completeBaseName();
+    Base.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9_]")), QStringLiteral("_"));
+    Base = Base.left(MaxWorldName - 3);
+    if(Base.isEmpty()) { Base = QStringLiteral("World"); }
+    QString Name = Base;
+    const QList<ConfigIniFile::Section> Existing = ReadWorlds();
+    const auto Taken = [&Existing](const QString& InName)
+    {
+        for(const ConfigIniFile::Section& Each : Existing)
+        {
+            if(Each.Name.compare(QLatin1String(NimbleEngine::WORLD_SECTION_PREFIX) + InName, Qt::CaseInsensitive) == 0) { return true; }
+        }
+        return false;
+    };
+    for(int Suffix = 2; Taken(Name); ++Suffix)
+    {
+        Name = Base + QString::number(Suffix);
+    }
+
+    ConfigIniFile::Section Section;
+    Section.Name = QLatin1String(NimbleEngine::WORLD_SECTION_PREFIX) + Name;
+    Section.Keys = { { QStringLiteral("File"), InRuntimePath }, { QStringLiteral("Cook"), QStringLiteral("true") } };
+    AddWorldRow(Section);
+    Worlds->selectRow(Worlds->rowCount() - 1);
+    RefreshStartLevelChoices();
+}
+
+QList<ConfigIniFile::Section> ProjectSettingsDialog::ReadWorlds() const
+{
+    QList<ConfigIniFile::Section> Out;
+    for(int Row = 0; Row < Worlds->rowCount(); ++Row)
+    {
+        ConfigIniFile::Section Section;
+        Section.Name = QLatin1String(NimbleEngine::WORLD_SECTION_PREFIX) + Worlds->item(Row, WC_Name)->text().trimmed();
+        Section.Keys.append({ QStringLiteral("File"), Worlds->item(Row, WC_File)->text().trimmed() });
+
+        const QString Mode = static_cast<QComboBox*>(Worlds->cellWidget(Row, WC_Mode))->currentText().trimmed();
+        if(!Mode.isEmpty() && Mode != QLatin1String(NoModeText))
+        {
+            Section.Keys.append({ QStringLiteral("GameMode"), Mode });
+        }
+
+        const QString Script = static_cast<QComboBox*>(Worlds->cellWidget(Row, WC_Script))->currentText().trimmed();
+        if(!Script.isEmpty() && Script != QLatin1String(NoScriptText))
+        {
+            Section.Keys.append({ QStringLiteral("StartupScript"), Script });
+        }
+
+        Section.Keys.append({ QStringLiteral("Cook"), Worlds->item(Row, WC_Cook)->checkState() == Qt::Checked
+                                                     ? QStringLiteral("true") : QStringLiteral("false") });
+        Out.append(Section);
+    }
+    return Out;
+}
+
+QString ProjectSettingsDialog::ValidateWorlds() const
+{
+    static const QRegularExpression NameRule(QStringLiteral("^[A-Za-z0-9_]+$"));
+    const QString Root = EditorGraphs::GetProjectRoot();
+    QStringList Problems;
+    QStringList Seen;
+    for(int Row = 0; Row < Worlds->rowCount(); ++Row)
+    {
+        const QString Name = Worlds->item(Row, WC_Name)->text().trimmed();
+        const QString File = Worlds->item(Row, WC_File)->text().trimmed();
+        const QString Which = QStringLiteral("Row %1").arg(Row + 1);
+        if(!NameRule.match(Name).hasMatch())
+        {
+            Problems << QStringLiteral("%1: the name '%2' must be letters, digits and _").arg(Which, Name);
+        }
+        else if(Name.size() > MaxWorldName)
+        {
+            Problems << QStringLiteral("%1: '%2' is longer than %3 characters (what a save holds)").arg(Which, Name).arg(MaxWorldName);
+        }
+        else if(Seen.contains(Name, Qt::CaseInsensitive))
+        {
+            Problems << QStringLiteral("%1: '%2' is listed twice").arg(Which, Name);
+        }
+        Seen << Name;
+
+        if(File.isEmpty())
+        {
+            Problems << QStringLiteral("%1 (%2): no world file").arg(Which, Name);
+        }
+        else if(!QFileInfo::exists(QDir(Root).filePath(File)))
+        {
+            Problems << QStringLiteral("%1 (%2): %3 does not exist in the project").arg(Which, Name, File);
+        }
+    }
+    return Problems.join(QLatin1Char('\n'));
+}
+
+void ProjectSettingsDialog::RefreshStartLevelChoices()
+{
+    if(!StartLevelChoice || !Worlds)
+    {
+        return;
+    }
+    const QString Current = StartLevelChoice->currentText();
+    const QSignalBlocker Quiet(StartLevelChoice);
+    StartLevelChoice->clear();
+    for(int Row = 0; Row < Worlds->rowCount(); ++Row)
+    {
+        StartLevelChoice->addItem(Worlds->item(Row, WC_Name)->text().trimmed());
+    }
+    StartLevelChoice->setCurrentText(Current);
+}
+
 void ProjectSettingsDialog::BuildSectionPages()
 {
     /* Section (as first spelled) -> keys, from the registry and the file. */
     std::map<QString, QPair<QString, QStringList>> Sections;   // lowercased -> (name, keys)
     const auto Note = [&Sections](const QString& InSection, const QString& InKey)
     {
-        if(InSection.isEmpty() || Same(InSection, "Editor") || IsProjectKey(InSection, InKey))
+        if(InSection.isEmpty() || Same(InSection, "Editor") || Same(InSection, "Build") || IsProjectKey(InSection, InKey)
+           || InSection.startsWith(QLatin1String(NimbleEngine::WORLD_SECTION_PREFIX), Qt::CaseInsensitive))
         {
             return;
         }
@@ -402,7 +767,18 @@ void ProjectSettingsDialog::AddRow(QFormLayout* InForm, const QString& InSection
     const QString Default   = Var ? QString::fromStdString(Var->DefaultToString()) : QString();
 
     QWidget* Field = nullptr;
-    if(const ChoiceList* Choices = Var ? FindChoices(InSection, InKey) : nullptr)
+    if(Same(InSection, "Game") && Same(InKey, "StartLevel"))
+    {
+        /* One of the Worlds page's names (RefreshStartLevelChoices); empty: the first. */
+        auto* Combo = new QComboBox(this);
+        Combo->setEditable(true);
+        Combo->setInsertPolicy(QComboBox::NoInsert);
+        StartLevelChoice = Combo;
+        R.Show = [Combo](const QString& InText) { Combo->setCurrentText(InText); };
+        R.Read = [Combo]() { return Combo->currentText().trimmed(); };
+        Field = Combo;
+    }
+    else if(const ChoiceList* Choices = Var ? FindChoices(InSection, InKey) : nullptr)
     {
         auto* Combo = new QComboBox(this);
         for(int Index = 0; Index < Choices->Count; ++Index)
@@ -576,6 +952,31 @@ bool ProjectSettingsDialog::ConfirmModuleChanges()
 
 bool ProjectSettingsDialog::Apply()
 {
+    /* The world list is saved whole or not at all. */
+    const QList<ConfigIniFile::Section> WorldSections = ReadWorlds();
+    const bool bWorldsChanged = WorldSections.size() != WorldsBaseline.size()
+        || [&]()
+           {
+               for(int Index = 0; Index < WorldSections.size(); ++Index)
+               {
+                   if(WorldSections[Index].Name != WorldsBaseline[Index].Name || WorldSections[Index].Keys != WorldsBaseline[Index].Keys)
+                   {
+                       return true;
+                   }
+               }
+               return false;
+           }();
+    if(bWorldsChanged)
+    {
+        const QString Problems = ValidateWorlds();
+        if(!Problems.isEmpty())
+        {
+            ShowWorlds();
+            QMessageBox::warning(this, windowTitle(), QStringLiteral("The world list cannot be saved:\n%1").arg(Problems));
+            return false;
+        }
+    }
+
     /* A module switch is a native rebuild, not a setting: asked first. Other
      * changes apply either way. */
     const bool bModulesConfirmed = ConfirmModuleChanges();
@@ -609,6 +1010,28 @@ bool ProjectSettingsDialog::Apply()
         {
             ModulesChanged << QStringLiteral("%1 = %2").arg(Path, Text);
         }
+    }
+
+    if(bWorldsChanged)
+    {
+        File.ReplaceSections(QLatin1String(NimbleEngine::WORLD_SECTION_PREFIX), WorldSections);
+        WorldsBaseline = WorldSections;
+
+        /* In this process too: the next Play makes its levels from these. */
+        std::string Text;
+        QStringList Names;
+        for(const ConfigIniFile::Section& Each : WorldSections)
+        {
+            Text += "[" + ToStd(Each.Name) + "]\n";
+            for(const QPair<QString, QString>& Key : Each.Keys)
+            {
+                Text += ToStd(Key.first) + "=" + ToStd(Key.second) + "\n";
+            }
+            Names << Each.Name.mid(int(std::strlen(NimbleEngine::WORLD_SECTION_PREFIX)));
+        }
+        EngineCore::ConfigRemoveEntries(NimbleEngine::WORLD_SECTION_PREFIX);
+        EngineCore::LoadConfigText(Text);
+        Changed << QStringLiteral("Worlds = %1").arg(Names.isEmpty() ? QStringLiteral("(none)") : Names.join(QStringLiteral(", ")));
     }
 
     if(!Rejected.isEmpty())

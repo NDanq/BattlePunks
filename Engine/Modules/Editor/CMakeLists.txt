@@ -68,6 +68,12 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/SettingsDialog.h
         Source/Private/Editor/SourceBuild.cpp
         Source/Private/Editor/SourceBuild.h
+        Source/Private/Editor/Build/ContentCook.cpp
+        Source/Private/Editor/Build/ContentCook.h
+        Source/Private/Editor/Build/ProjectBuild.cpp
+        Source/Private/Editor/Build/ProjectBuild.h
+        Source/Private/Editor/Build/ProjectBuildDialog.cpp
+        Source/Private/Editor/Build/ProjectBuildDialog.h
         Source/Private/Editor/Graph/GraphAssets.cpp
         Source/Private/Editor/Graph/GraphAssets.h
         Source/Private/Editor/Graph/GraphDetailsPanel.cpp
@@ -310,7 +316,9 @@ if(NIMBLEEDITOR_BUILD_TESTS)
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorDocumentTests>")
 
     # File > New Project from the real template, into a temporary folder.
-    add_executable(NimbleEditorProjectTests Tests/ProjectTests.cpp ${NIMBLE_EDITOR_PROJECT_SOURCES})
+    # And Project Settings' world list, as ConfigIniFile writes it.
+    add_executable(NimbleEditorProjectTests Tests/ProjectTests.cpp ${NIMBLE_EDITOR_PROJECT_SOURCES}
+            Source/Private/Editor/ConfigIniFile.cpp Source/Private/Editor/ConfigIniFile.h)
     target_include_directories(NimbleEditorProjectTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
     target_link_libraries(NimbleEditorProjectTests PRIVATE EngineCore::EngineCore Qt6::Core)
     set_target_properties(NimbleEditorProjectTests PROPERTIES FOLDER "Editor")
