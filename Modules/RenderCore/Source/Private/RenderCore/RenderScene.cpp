@@ -112,12 +112,17 @@ namespace RenderCore
         uint64_t                                               StaticBuilds = 0;   // lifetime captures
 
         /*
-         * OCCLUSION CULLING (RENDERPIPELINE.md): the main view's query set,
-         * made on first use and remade larger when a frame wanted more
-         * queries than it holds; the last round's answers; and what the last
-         * frame did, for RenderStats.
+         * OCCLUSION CULLING (RENDERPIPELINE.md): the main view's query sets,
+         * one per frame the GPU may run behind (GDIGetFramesInFlight), taken
+         * in turn: a set's answers are read when it comes round again, its
+         * round finished by then without waiting for it. Each is made on
+         * first use and remade larger when a frame wanted more queries than
+         * it holds. Then the answers read, and what the last frame did, for
+         * RenderStats.
          */
-        GDIOcclusionQueries* Occlusion        = nullptr;
+        GDIOcclusionQueries* Occlusion[RenderProxy::OCCLUSION_SETS_MAX] = {};
+        uint32_t             OcclusionSets    = 1;
+        uint32_t             OcclusionAt      = 0;   // this frame's set
         uint32_t             OcclusionWanted  = 0;
         std::vector<uint8_t> OcclusionAnswers;
         uint64_t             LastOccluded     = 0;
@@ -134,20 +139,32 @@ namespace RenderCore
                 ReleaseOcclusion();
                 return nullptr;
             }
-            if(!Occlusion || OcclusionWanted > Occlusion->GetCapacity())
+            const uint32_t Sets = std::clamp<uint32_t>(GDIGetFramesInFlight(), 1, RenderProxy::OCCLUSION_SETS_MAX);
+            if(Sets != OcclusionSets)
             {
-                uint32_t Capacity = Occlusion ? Occlusion->GetCapacity() : OCCLUSION_QUERIES_MIN;
-                while(Capacity < OcclusionWanted && Capacity < OCCLUSION_QUERIES_MAX) { Capacity *= 2; }
-                ReleaseOcclusion();   // its answers with it: one frame without CPU culling
-                Occlusion = GDICreateOcclusionQueries(Capacity);
+                ReleaseOcclusion();
+                OcclusionSets = Sets;
             }
-            return Occlusion;
+            OcclusionAt = (OcclusionAt + 1) % OcclusionSets;
+            GDIOcclusionQueries*& Set = Occlusion[OcclusionAt];
+            if(!Set || OcclusionWanted > Set->GetCapacity())
+            {
+                uint32_t Capacity = Set ? Set->GetCapacity() : OCCLUSION_QUERIES_MIN;
+                while(Capacity < OcclusionWanted && Capacity < OCCLUSION_QUERIES_MAX) { Capacity *= 2; }
+                if(Set) { Set->Release(); }   // its answers with it: a frame without CPU culling
+                Set = GDICreateOcclusionQueries(Capacity);
+            }
+            return Set;
         }
 
         void ReleaseOcclusion()
         {
-            if(Occlusion) { Occlusion->Release(); }
-            Occlusion = nullptr;
+            for(GDIOcclusionQueries*& Set : Occlusion)
+            {
+                if(Set) { Set->Release(); }
+                Set = nullptr;
+            }
+            OcclusionAt  = 0;
             LastOccluded = LastQueries = 0;
         }
 
@@ -200,8 +217,8 @@ namespace RenderCore
         {
             InContext.BeginSceneDraws();
 
-            /* The last round's answers -- complete, as its block has finished --
-             * then this round's queries. Without answers nothing is hidden on
+            /* This set's last round's answers -- complete, as its block has
+             * finished (FramesInFlight blocks back) -- then this round's queries. Without answers nothing is hidden on
              * the CPU; the GPU still skips what this frame's find hidden. */
             const bool bOcclusion = InOcclusion != nullptr;
             const bool bAnswers   = bOcclusion && GDIReadOcclusionResults(InOcclusion, OcclusionAnswers);
@@ -288,14 +305,16 @@ namespace RenderCore
 
             for(RenderProxy* Proxy : Proxies)
             {
-                /* Its query last round, read before anything can skip it: an
-                 * index is only good for the round it was given in. */
-                int32_t LastQuery = -1;
+                /* Its query in this set's last round, read before anything can
+                 * skip it: an index is only good for the set and round it was
+                 * given in. */
+                int32_t  LastQuery = -1;
+                int32_t* Query     = bOcclusion ? &Proxy->OcclusionQueries[OcclusionAt] : nullptr;
                 if(bOcclusion)
                 {
-                    LastQuery = Proxy->OcclusionQuery;
-                    Proxy->OcclusionQuery = -1;
-                    Proxy->bOccluded      = false;
+                    LastQuery        = *Query;
+                    *Query           = -1;
+                    Proxy->bOccluded = false;
                 }
                 if(!Proxy->IsVisible() || Excluded(Proxy))
                 {
@@ -349,8 +368,8 @@ namespace RenderCore
                     const double Pad = (Bounds.Max - Bounds.Min).GetLength() * 0.01 + 1e-3;
                     const EngineCore::Vector3 Grow(Pad, Pad, Pad);
                     ++OcclusionWantedNow;
-                    Proxy->OcclusionQuery = InContext.AddOcclusionQuery(GameCore::AABB(Bounds.Min - Grow, Bounds.Max + Grow));
-                    Proxy->bOccluded      = Proxy->OcclusionQuery >= 0 && bAnswers && LastQuery >= 0
+                    *Query           = InContext.AddOcclusionQuery(GameCore::AABB(Bounds.Min - Grow, Bounds.Max + Grow));
+                    Proxy->bOccluded = *Query >= 0 && bAnswers && LastQuery >= 0
                                          && size_t(LastQuery) < OcclusionAnswers.size() && OcclusionAnswers[size_t(LastQuery)] == 0;
                 }
                 /* Only the main view's answers: a capture sees from elsewhere. */
@@ -360,7 +379,7 @@ namespace RenderCore
                 }
                 else
                 {
-                    InContext.SetDrawOcclusion(bPredicate ? Proxy->OcclusionQuery : -1);
+                    InContext.SetDrawOcclusion(bPredicate && Query ? *Query : -1);
                     if(Proxy->IsStatic())
                     {
                         StaticDrawList& List = ListFor(Proxy, Generation);
@@ -961,8 +980,9 @@ namespace RenderCore
          * everything below nests under it (RENDERPIPELINE.md, "Draw events"). */
         InContext.BeginDrawEvent("Scene");
 
-        /* "stat frame": the last GDI block's GPU times, to the scene that wrote
-         * them (they are complete only now), and this block's own, if shown. */
+        /* "stat frame": the GPU times of the GDI block the frames in flight
+         * back, to the scene that wrote them (they are complete only now),
+         * and this block's own, if shown. */
         const StatUnitSnapshot Stats = GetStatUnit();
         {
             float GpuMs[RGT_Count];

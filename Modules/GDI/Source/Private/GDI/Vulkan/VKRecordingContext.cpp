@@ -79,38 +79,45 @@ bool VulkanDynamicGDI::BeginParallelPass(const uint32_t InChunks, GDIRecordingCo
     {
         return false;
     }
-    const VkDevice Dev = DeviceObj->GetDevice();
+    const VkDevice Dev  = DeviceObj->GetDevice();
+    const uint32_t Slot = FrameSlot;
 
-    /* The contexts, made on first need and kept. */
+    /* The contexts, made on first need and kept; each one's resources for
+     * this frame slot likewise. */
     while(RecordingContexts.size() < InChunks)
     {
-        auto* Context = new VKRecordingContext();
+        RecordingContexts.push_back(new VKRecordingContext());
+    }
+    for(uint32_t Chunk = 0; Chunk < InChunks; ++Chunk)
+    {
+        VKRecordingContext::FrameResources& Frame = RecordingContexts[Chunk]->Frames[Slot];
+        if(Frame.DescAlloc) continue;
         VkCommandPoolCreateInfo PoolInfo{};
         PoolInfo.sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         PoolInfo.flags            = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
         PoolInfo.queueFamilyIndex = DeviceObj->GetGraphicsQueueFamily();
-        Context->DescAlloc = new VKDescriptorAllocator();
-        if(vkCreateCommandPool(Dev, &PoolInfo, nullptr, &Context->Pool) != VK_SUCCESS || !Context->DescAlloc->Initialize(DeviceObj))
+        auto* Alloc = new VKDescriptorAllocator();
+        if(vkCreateCommandPool(Dev, &PoolInfo, nullptr, &Frame.Pool) != VK_SUCCESS || !Alloc->Initialize(DeviceObj))
         {
             GDI_LOG("[VulkanDynamicGDI] a recording context could not be made; recording serially")
-            if(Context->Pool != VK_NULL_HANDLE) { vkDestroyCommandPool(Dev, Context->Pool, nullptr); }
-            Context->DescAlloc->Shutdown();
-            delete Context->DescAlloc;
-            delete Context;
+            if(Frame.Pool != VK_NULL_HANDLE) { vkDestroyCommandPool(Dev, Frame.Pool, nullptr); }
+            Frame.Pool = VK_NULL_HANDLE;
+            Alloc->Shutdown();
+            delete Alloc;
             return false;
         }
-        RecordingContexts.push_back(Context);
+        Frame.DescAlloc = Alloc;
     }
 
     /* A secondary for each chunk, allocated before anything is recorded: a
      * failure here leaves the frame as it was. */
     for(uint32_t Chunk = 0; Chunk < InChunks; ++Chunk)
     {
-        VKRecordingContext& Context = *RecordingContexts[Chunk];
-        if(Context.NextBuffer < Context.Buffers.size()) continue;
+        VKRecordingContext::FrameResources& Frame = RecordingContexts[Chunk]->Frames[Slot];
+        if(Frame.NextBuffer < Frame.Buffers.size()) continue;
         VkCommandBufferAllocateInfo Alloc{};
         Alloc.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        Alloc.commandPool        = Context.Pool;
+        Alloc.commandPool        = Frame.Pool;
         Alloc.level              = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
         Alloc.commandBufferCount = 1;
         VkCommandBuffer Buffer = VK_NULL_HANDLE;
@@ -119,7 +126,7 @@ bool VulkanDynamicGDI::BeginParallelPass(const uint32_t InChunks, GDIRecordingCo
             GDI_LOG("[VulkanDynamicGDI] vkAllocateCommandBuffers failed for a recording context; recording serially")
             return false;
         }
-        Context.Buffers.push_back(Buffer);
+        Frame.Buffers.push_back(Buffer);
     }
 
     /* The secondaries continue the primary's rendering: it is reopened for
@@ -151,7 +158,9 @@ bool VulkanDynamicGDI::BeginParallelPass(const uint32_t InChunks, GDIRecordingCo
     for(uint32_t Chunk = 0; Chunk < InChunks; ++Chunk)
     {
         VKRecordingContext& Context = *RecordingContexts[Chunk];
-        Context.Cmd = Context.Buffers[Context.NextBuffer++];
+        VKRecordingContext::FrameResources& Frame = Context.Frames[Slot];
+        Context.Cmd       = Frame.Buffers[Frame.NextBuffer++];
+        Context.DescAlloc = Frame.DescAlloc;
         vkBeginCommandBuffer(Context.Cmd, &Begin);
         Context.Caches.ForgetBound();
 
@@ -225,14 +234,16 @@ void VulkanDynamicGDI::EndParallelPass()
     bParallelPass  = false;
 }
 
-void VulkanDynamicGDI::ResetRecordingContexts()
+void VulkanDynamicGDI::ResetRecordingContexts(const uint32_t InSlot)
 {
     if(!DeviceObj || !DeviceObj->IsValid()) return;
     for(VKRecordingContext* Context : RecordingContexts)
     {
-        vkResetCommandPool(DeviceObj->GetDevice(), Context->Pool, 0);
-        Context->NextBuffer = 0;
-        Context->DescAlloc->Reset();
+        VKRecordingContext::FrameResources& Frame = Context->Frames[InSlot];
+        if(!Frame.DescAlloc) continue;
+        vkResetCommandPool(DeviceObj->GetDevice(), Frame.Pool, 0);
+        Frame.NextBuffer = 0;
+        Frame.DescAlloc->Reset();
         Context->Caches.ForgetBound();
     }
 }
@@ -241,11 +252,14 @@ void VulkanDynamicGDI::DestroyRecordingContexts()
 {
     for(VKRecordingContext* Context : RecordingContexts)
     {
-        if(DeviceObj && DeviceObj->IsValid() && Context->Pool != VK_NULL_HANDLE)
+        for(VKRecordingContext::FrameResources& Frame : Context->Frames)
         {
-            vkDestroyCommandPool(DeviceObj->GetDevice(), Context->Pool, nullptr);
+            if(DeviceObj && DeviceObj->IsValid() && Frame.Pool != VK_NULL_HANDLE)
+            {
+                vkDestroyCommandPool(DeviceObj->GetDevice(), Frame.Pool, nullptr);
+            }
+            if(Frame.DescAlloc) { Frame.DescAlloc->Shutdown(); delete Frame.DescAlloc; }
         }
-        if(Context->DescAlloc) { Context->DescAlloc->Shutdown(); delete Context->DescAlloc; }
         delete Context;
     }
     RecordingContexts.clear();

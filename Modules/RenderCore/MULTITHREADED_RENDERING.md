@@ -1,6 +1,6 @@
 # Multithreaded rendering: plan
 
-Status: **phases 0 (measure and gate), 1 (per-draw cost), 2 (GDI recording contexts) and 3 (parallel issue: Base Pass and Shadows) done; phase 4 next.** Recording draws on several
+Status: **phases 0 (measure and gate), 1 (per-draw cost), 2 (GDI recording contexts), 3 (parallel issue: Base Pass and Shadows) and 4 (frames in flight, Vulkan) done; D3D12 and Metal recording contexts not done.** Recording draws on several
 threads when the backend can: the Base Pass first, then the Shadows views.
 This note is why, what stands in the way, and in what order.
 
@@ -301,10 +301,57 @@ serially today.
      resolving once per frame instead of per stage, are what is left there.
    - GpuTest's frame is now bound by waiting for the GPU (`wait_ms` 8-10
      of 10): the CPU's next win is phase 4's frames in flight.
-4. **D3D12, then frames in flight.** D3D12 direct command lists (barriers on
-   the primary list). Separately, more than one frame in flight -- a command
-   pool, fence, descriptor pool and ring per frame -- so the CPU records a
-   frame while the GPU draws the last.
+4. **Frames in flight** -- done (Vulkan). **D3D12 parallel recording -- not
+   done.**
+
+   Frames in flight: `[Rendering] FramesInFlight` (1-3, default 2, read
+   when the device is made) lets the CPU record frame N+1 while the GPU
+   draws frame N. Before it, the render thread submitted a frame and then,
+   at the next `BeginRendering`, waited on its fence for most of the GPU's
+   frame (GpuTest: 3-5 ms a frame of a ~4.6 ms GPU frame). What became per
+   frame slot, each reused only after that slot's fence is waited:
+   - `VKCommandManager`: a command pool, primary buffer and fence per slot;
+     `EndRendering` advances; `FlushForReadback` stays on its slot (its wait
+     covers every earlier submission, so it still drains everything).
+   - The descriptor allocators -- pools and uniform ring -- the driver's and
+     each recording context's, and the contexts' secondary pools. Allocator
+     epochs come from one counter, so a draw cache keyed by an epoch never
+     takes another allocator's sets or offsets.
+   - Timestamps: a query range per slot, read when the slot comes round.
+   - Dynamic meshes: a region of the buffers per slot (`GDIMesh::UpdateDynamic`
+     writes the recording slot's).
+   - Deferred destruction: each handle tagged with the frame that may use it,
+     destroyed once that frame has finished.
+   - "Done" for readbacks and occlusion answers is the timeline semaphore's
+     value (`IsSubmissionDone`), not "the previous frame".
+   RenderCore: the main view keeps an occlusion query set per frame in
+   flight (`GDIGetFramesInFlight`), used in turn, each proxy remembering its
+   query index per set; answers arrive that many frames late. "stat frame"
+   gives each block's GPU times to the scene that timed that block, found by
+   its rendering serial. Material previews and target readbacks are
+   delivered up to `FramesInFlight` frames after they are drawn.
+
+   Verified: every smoke test passes with 1 and with 2 frames in flight
+   (RenderCore's on Vulkan 634/0, on Null 464/0; GDI 75/75); occlusion
+   culling hides the same boxes with the same pixels; the validation layer
+   reports only the two pre-existing messages.
+
+   | LightLab GpuTest, RelWithDebInfo, Auto parallel recording | 1 in flight | 2 in flight |
+   |---|---|---|
+   | occlusion on: frame / render / wait | 9.7 / 9.1 / 8.6 ms (one run of two: 19.8 ms, an outlier) | 5.3-5.4 / 4.7-4.8 / 4.3-4.4 ms |
+   | occlusion off: frame / render / wait | 10.5-10.9 / 9.8-10.2 / 9.2-9.6 ms | 6.3-6.5 / 5.7-5.8 / 5.2-5.4 ms |
+   | stages CPU | 3.6-4.0 ms | 3.5-3.8 ms |
+   | occluded proxies a frame | 303 | 302-303 |
+
+   The street in the editor barely moves (Debug 21 -> 19 ms a frame,
+   RelWithDebInfo pinned at the editor's ~16 ms): there the frame is the
+   present, ~10.7 ms blocked on the swap, not the render thread.
+
+   D3D12: its recording contexts (command lists, a descriptor heap slice per
+   context) were not written. This machine has no Windows SDK or `d3d12.h`,
+   so they could neither be compiled nor run; the gate still says "not
+   implemented yet" there, and D3D12 records serially with one frame in
+   flight. Metal likewise.
 
 ## Risks
 

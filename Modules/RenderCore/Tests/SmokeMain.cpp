@@ -1418,6 +1418,13 @@ static void TestMaterialsOnGpu()
             Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
             Rend.WaitForPreviousFrame();
         };
+        /* The frame that draws a preview, then as many as the GPU may run
+         * behind ([Rendering] FramesInFlight, 3 at most): its readback has
+         * finished. */
+        const auto SettlePreviews = [&]
+        {
+            for(int Each = 0; Each < 4; ++Each) { DrawFrame(); }
+        };
         DrawFrame();
 
         const std::vector<std::string> Layers_ = Layers.GetLayerNames();
@@ -1441,8 +1448,7 @@ static void TestMaterialsOnGpu()
         {
             Each.Request = Rend.RequestMaterialPreview(Each.Material, 64, EngineCore::Color(255, 255, 255, 255));
         }
-        DrawFrame();
-        DrawFrame();
+        SettlePreviews();
         for(Check& Each : Checks)
         {
             EngineCore::Image Pixels;
@@ -1536,8 +1542,7 @@ static void TestMaterialsOnGpu()
             SetLogHandler(&BlockLogHandler);
             const uint64_t Request = Rend.RequestMaterialPreview("Content/Materials/Textured.material.nmgraph", 64,
                                                                  EngineCore::Color(255, 255, 255, 255));
-            DrawFrame();
-            DrawFrame();
+            SettlePreviews();
             SetLogHandler(GPreviousLogHandler);
             const bool bBlocks = GBlockDecodes == 0;
             EngineCore::Image Pixels;
@@ -1583,8 +1588,7 @@ static void TestMaterialsOnGpu()
             InPreview.Width  = 96;
             InPreview.Height = 64;
             const uint64_t Request = Rend.RequestMeshPreview(InPreview);
-            DrawFrame();
-            DrawFrame();
+            SettlePreviews();
             return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, OutError) && OutPixels.GetWidth() == 96;
         };
         const auto Pixel = [](const EngineCore::Image& InPixels, const int InX, const int InY, int (&OutRgb)[3])

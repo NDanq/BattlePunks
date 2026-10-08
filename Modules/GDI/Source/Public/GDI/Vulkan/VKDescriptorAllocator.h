@@ -22,7 +22,7 @@ struct VKUBOAllocation
  *
  *   1. Descriptor set allocation
  *      A ring of growable VkDescriptorPools (reset-semantics, no FREE_DESCRIPTOR_SET_BIT).
- *      Reset() reclaims all sets allocated during the previous frame.
+ *      Reset() reclaims all sets allocated during its last frame.
  *      Pool sizes cover UNIFORM_BUFFER (up to 4 per set) and
  *      COMBINED_IMAGE_SAMPLER (up to 2 per set).
  *
@@ -48,7 +48,8 @@ public:
     /**
      * vkResetDescriptorPool all pools, restart from pool 0.
      * Also rewinds the UBO ring offset to 0.
-     * Call once at frame start (BeginRendering already does this via GSync).
+     * Call once the GPU is done with the allocator's last frame (BeginRendering:
+     * one allocator per frame in flight, reset after its slot's fence).
      */
     void Reset();
 
@@ -72,7 +73,7 @@ public:
 
     inline bool IsValid() const { return !Pools.empty(); }
 
-    /** Bumped by Reset(): an allocation from an older epoch is stale. */
+    /** New at each Reset(), and unique among every allocator: an allocation from another epoch is stale. */
     inline uint64_t GetEpoch() const { return Epoch; }
 
 private:

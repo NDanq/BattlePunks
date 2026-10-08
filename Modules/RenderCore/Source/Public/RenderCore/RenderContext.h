@@ -385,8 +385,9 @@ namespace RenderCore
                                const EngineCore::Color* InClearBottom = nullptr);
 
         /* RenderScene::Render's, right after GDIBeginRendering: hands back the
-         * previous GDI block's stage times (ms per ERenderGpuTimer, -1 where
-         * not timed) and the scene that wrote them -- null if none did -- and
+         * stage times (ms per ERenderGpuTimer, -1 where not timed) of the GDI
+         * block GDIGetFramesInFlight() back -- the latest the GPU has surely
+         * finished -- and the scene that wrote them, null if none did; and
          * notes InOwner as this block's, if bInTime and the backend can time. */
         const void* BeginTimedBlock(const void* InOwner, bool bInTime, float (&OutGpuMs)[RGT_Count]);
 

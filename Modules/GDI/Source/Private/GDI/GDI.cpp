@@ -553,6 +553,11 @@ uint64_t GDIGetRenderingSerial()
     return GDynamicGDI ? GDynamicGDI->RenderingSerial : 0;
 }
 
+uint32_t GDIGetFramesInFlight()
+{
+    return GDynamicGDI ? GDynamicGDI->FramesInFlight : 1;
+}
+
 GDIMesh* GDICreateDynamicMesh(const uint32_t InMaxVertices, const uint32_t InMaxIndices)
 {
     if(!GDynamicGDI || InMaxVertices == 0 || InMaxIndices == 0) return nullptr;
@@ -561,15 +566,16 @@ GDIMesh* GDICreateDynamicMesh(const uint32_t InMaxVertices, const uint32_t InMax
 
 bool GDIUpdateDynamicMesh(GDIMesh* InMesh, const GDIMeshDesc& InDesc)
 {
-    return GDynamicGDI && InMesh && InMesh->UpdateDynamic(InDesc, GDynamicGDI->RenderingSerial);
+    return GDynamicGDI && InMesh && InMesh->UpdateDynamic(InDesc, GDynamicGDI->RenderingSerial, GDynamicGDI->FrameSlot);
 }
 
-bool GDIMesh::UpdateDynamic(const GDIMeshDesc& InDesc, const uint64_t InRenderingSerial)
+bool GDIMesh::UpdateDynamic(const GDIMeshDesc& InDesc, const uint64_t InRenderingSerial, const uint32_t InFrameSlot)
 {
     if(!bDynamic || !GDIValidateMeshDesc(InDesc, true)) return false;
 
-    /* A new block: the previous one's draws have finished (every backend
-     * waits for them before recording again), so start over. */
+    /* A new block: the frame slot's region was last written FramesInFlight
+     * blocks ago, whose draws have finished (the backend waited for them
+     * before recording this one), so start it over. */
     if(InRenderingSerial != DynamicSerial)
     {
         DynamicSerial     = InRenderingSerial;
@@ -581,10 +587,13 @@ bool GDIMesh::UpdateDynamic(const GDIMeshDesc& InDesc, const uint64_t InRenderin
     {
         return false;
     }
-    if(!WriteDynamic(InDesc, DynamicNextVertex, DynamicNextIndex)) return false;
+    /* The slot's region of the buffers (the backend allocated one per frame in flight). */
+    const uint32_t RegionVertex = InFrameSlot * DynamicVertexCapacity;
+    const uint32_t RegionIndex  = InFrameSlot * DynamicIndexCapacity;
+    if(!WriteDynamic(InDesc, RegionVertex + DynamicNextVertex, RegionIndex + DynamicNextIndex)) return false;
 
-    DynamicBaseVertex       = DynamicNextVertex;
-    DynamicBaseIndex        = DynamicNextIndex;
+    DynamicBaseVertex       = RegionVertex + DynamicNextVertex;
+    DynamicBaseIndex        = RegionIndex + DynamicNextIndex;
     DynamicNextVertex      += InDesc.NumVertices;
     DynamicNextIndex       += InDesc.NumIndices;
     RenderData.NumVertices  = InDesc.NumVertices * 3;   // position floats, as everywhere

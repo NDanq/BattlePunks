@@ -469,9 +469,9 @@ public:
     /**
      * GPU timestamps, for timing GPU work ("stat frame"). Within one
      * BeginRendering/EndRendering block, WriteGPUTimestamp(i) records the time
-     * the GPU reaches that point, for i below GDI_GPU_TIMESTAMP_MAX. The block
-     * is complete by the next BeginRendering (one frame in flight), so from
-     * then until the next one GetPreviousGPUTimestamps gives the previous
+     * the GPU reaches that point, for i below GDI_GPU_TIMESTAMP_MAX. A block is
+     * complete by the BeginRendering GDIGetFramesInFlight() blocks after it,
+     * so from then until the next one GetPreviousGPUTimestamps gives that
      * block's: OutMilliseconds[i] for each bit i of the returned mask, on one
      * GPU clock (only differences mean anything). A backend that cannot
      * time -- the default -- writes nothing and returns 0.
@@ -730,6 +730,14 @@ protected:
      * when it changes. */
     uint64_t              RenderingSerial = 0;
 
+    /* Frames the backend lets the GPU run behind the CPU, and which of them
+     * the open block records (Vulkan's command slots; 1 and 0 elsewhere): a
+     * dynamic mesh keeps a region of its buffers per frame in flight. Set by
+     * the backend at Allocate and BeginRendering. */
+    uint32_t              FramesInFlight = 1;
+    uint32_t              FrameSlot      = 0;
+    friend uint32_t GDIGetFramesInFlight();
+
     friend void GDISetViewport(uint, uint, uint, uint);
     friend void GDIBeginRendering();
     friend void GDISetScissorRect(uint, uint, uint, uint);
@@ -817,6 +825,12 @@ bool GDIUpdateDynamicMesh(GDIMesh* InMesh, const GDIMeshDesc& InDesc);
 /* How many BeginRendering blocks have begun: a dynamic mesh's appends are
  * per block. */
 uint64_t GDIGetRenderingSerial();
+
+/* How many BeginRendering blocks the GPU may still be running when the next
+ * begins (1 without a driver): what the CPU writes for a block -- a query
+ * set's answers, a dynamic mesh's region -- it may reuse only that many
+ * blocks later. Vulkan's is [Rendering] FramesInFlight. */
+uint32_t GDIGetFramesInFlight();
 
 /*
  * Scissor, in pixels of the current viewport from its TOP-LEFT (the way a

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "Public/GDI/Vulkan/VulkanDynamicGDI.h"
+#include "Public/GDI/Vulkan/VKCommandManager.h"
 
 class VKDescriptorAllocator;
 
@@ -19,18 +20,25 @@ class VKDescriptorAllocator;
  * What they share is read-only while the pass is open: the device, the pipeline
  * cache (locked), the shaders, meshes and textures.
  *
- * Kept by the driver across frames (VulkanDynamicGDI::RecordingContexts). Each
- * pass takes a fresh secondary from Pool; ResetRecordingContexts (BeginRendering,
- * once the frame's fence is waited) resets the pool and the allocator.
+ * Kept by the driver across frames (VulkanDynamicGDI::RecordingContexts), with
+ * a command pool and allocator per frame in flight (Frames, made on first
+ * need). Each pass takes a fresh secondary from the recording frame slot's
+ * pool; ResetRecordingContexts (BeginRendering, once that slot's fence is
+ * waited) resets the slot's pool and allocator.
  */
 class VKRecordingContext : public GDIRecordingContext
 {
 public:
-    VkCommandPool                Pool       = VK_NULL_HANDLE;
-    std::vector<VkCommandBuffer> Buffers;           // allocated from Pool: one a pass, reused each frame
-    size_t                       NextBuffer = 0;
+    struct FrameResources
+    {
+        VkCommandPool                Pool       = VK_NULL_HANDLE;
+        std::vector<VkCommandBuffer> Buffers;           // allocated from Pool: one a pass, reused each time round
+        size_t                       NextBuffer = 0;
+        VKDescriptorAllocator*       DescAlloc  = nullptr;
+    };
+    FrameResources               Frames[VK_FRAMES_IN_FLIGHT_MAX];
     VkCommandBuffer              Cmd        = VK_NULL_HANDLE;   // the open pass's
-    VKDescriptorAllocator*       DescAlloc  = nullptr;
+    VKDescriptorAllocator*       DescAlloc  = nullptr;          // the open pass's frame slot's
     VKDrawCaches                 Caches;
     VKBlendState                 Blend;
     VKDepthStencilState          Depth;
