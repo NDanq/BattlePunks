@@ -323,7 +323,7 @@ endif()
 # name them). Globbed, like Content/: the Prefab Editor makes these. Every build
 # but Shipping stages the text prefabs -- an Editor edits them, a Client or
 # Server cooks each the first time it loads it (NIMBLE_UNCOOKED_CONTENT);
-# Shipping stages the cooked ones from Cooked/Content/Prefabs/ -- made in the
+# Shipping stages the cooked ones from Saved/Cooked/Content/Prefabs/ -- made in the
 # editor with the console command `cook prefabs`.
 file(GLOB_RECURSE SANDBOX_PREFAB_SCRIPTS CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.lua"
@@ -332,12 +332,12 @@ file(GLOB_RECURSE SANDBOX_PREFAB_SCRIPTS CONFIGURE_DEPENDS
 if(NIMBLE_UNCOOKED_CONTENT)
     set(SANDBOX_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 else()
-    set(SANDBOX_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Cooked")
+    set(SANDBOX_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Saved/Cooked")
 endif()
 file(GLOB_RECURSE SANDBOX_PREFAB_ASSETS CONFIGURE_DEPENDS "${SANDBOX_PREFAB_ROOT}/Content/Prefabs/*.nmprefab")
 file(GLOB_RECURSE SANDBOX_PREFAB_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.nmprefab")
 if(NOT NIMBLE_UNCOOKED_CONTENT AND SANDBOX_PREFAB_SOURCES AND NOT SANDBOX_PREFAB_ASSETS)
-    message(WARNING "Sandbox: Content/Prefabs/ has prefabs but Cooked/Content/Prefabs/ has none; a Shipping build cannot read "
+    message(WARNING "Sandbox: Content/Prefabs/ has prefabs but Saved/Cooked/Content/Prefabs/ has none; a Shipping build cannot read "
                     "text prefabs. Cook them in the editor (console: cook prefabs).")
 endif()
 
@@ -388,18 +388,18 @@ endif()
 # the same relative path ("Content/UI/HUD.nmui", as GameSession::GetUI().Open
 # names one). As prefabs: an Editor target stages the XML it edits; a Client
 # or Server target cannot read XML, so it stages the cooked ones from
-# Cooked/Content/UI/ -- made in the editor with the console command `cook ui`.
+# Saved/Cooked/Content/UI/ -- made in the editor by Build > Cook Content.
 if(NIMBLE_TARGET STREQUAL "Editor")
     set(SANDBOX_UI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 else()
-    set(SANDBOX_UI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Cooked")
+    set(SANDBOX_UI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Saved/Cooked")
 endif()
 file(GLOB_RECURSE SANDBOX_UI_SCRIPTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/UI/*.lua"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/UI/*.ui.nmgraph")
 file(GLOB_RECURSE SANDBOX_UI_DOCUMENTS CONFIGURE_DEPENDS "${SANDBOX_UI_ROOT}/Content/UI/*.nmui")
 file(GLOB_RECURSE SANDBOX_UI_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/UI/*.nmui")
 if(NOT NIMBLE_TARGET STREQUAL "Editor" AND SANDBOX_UI_SOURCES AND NOT SANDBOX_UI_DOCUMENTS)
-    message(WARNING "Sandbox: Content/UI/ has documents but Cooked/Content/UI/ has none; a ${NIMBLE_TARGET} build cannot read "
+    message(WARNING "Sandbox: Content/UI/ has documents but Saved/Cooked/Content/UI/ has none; a ${NIMBLE_TARGET} build cannot read "
                     "XML. Cook them in the editor (console: cook ui).")
 endif()
 
@@ -446,7 +446,7 @@ endif()
 # Every build but Shipping stages the text worlds -- the .nmworld manifest and
 # the per-entity and per-instance files in the folder beside it -- which an
 # Editor edits and a Client or Server cooks the first time it loads one;
-# Shipping, the cooked ones from Cooked/ (the editor's Build > Cook Content).
+# Shipping, the cooked ones from Saved/Cooked/ (the editor's Build > Cook Content).
 # A world not listed, or not cooked, is not staged (nimble_project_worlds).
 nimble_project_worlds("${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini" "${CMAKE_CURRENT_SOURCE_DIR}"
         SANDBOX_LEVEL_FILES SANDBOX_LEVEL_ROOT)

@@ -71,7 +71,7 @@ uses it.
 | `ProjectSettingsDialog` + `ConfigIniFile` (private) | Edit > Project Settings: the project's `DefaultEngine.ini` as pages of settings, edited line by line so its comments stay |
 | `SettingsDialog` (private) | Edit > Editor Settings: the `[Editor]` config vars as a form, saved to the user's `EditorSettings.ini` |
 | `SourceBuild` (private) | Build > Compile Source: runs `cmake --build` on the editor's own build tree (`EditorBuildTree.h.in`) in the background, logging its output; any cmake command line too (`StartCommand`), for Build Project |
-| `Build/ContentCook`, `Build/ProjectBuild`, `Build/ProjectBuildDialog` (private) | Build > Cook Content and Build > Build Project: the project's content cooked into `Cooked/` with stats, and the game's Client preset configured and built |
+| `Build/ContentCook`, `Build/ProjectBuild`, `Build/ProjectBuildDialog` (private) | Build > Cook Content and Build > Build Project: the project's content cooked into `Saved/Cooked/` with stats, and the game's Client preset configured and built |
 | `AboutDialog` (private) | Help > About: the commit and build this editor came from (`EditorBuildInfo.h.in`, stamped by Core's `GitVersion.cmake` on every build), plus configuration, target, compiler, Qt and renderer; Copy to Clipboard for bug reports |
 | `ViewportPanel` | Navigation toolbar (view presets, framing, the Show menu, speed) over the viewport |
 | `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select (lights by their position), selection bounds, axis gizmo, light gizmos (a point light's sphere, a spot's cone, the sun's arrow, a scene capture probe's mirror rectangle and normal or its box and reach; all lights or the selected one, Show > Editor Gizmos > Light Gizmos), a perspective game camera's frustum |
@@ -581,8 +581,8 @@ registered:
 | `lighting <bake \| baked \| live>` | Build > Bake Lightmaps, or Show > Lighting > Baked / Live |
 | `screenshot <file.png>` | Save the viewport's next frame, without gizmos or debug lines (`Renderer::RequestSceneCapture`) |
 | `cook project` | As Build > Cook Content: the listed worlds, every prefab and UI document, with the stats |
-| `cook [world] [out]` | Cook a world file to binary -- by default the open world's saved file, to `<project>/Cooked/<its path>` |
-| `cook ui [out]`, `cook <doc.nmui> [out]` | Cook every UI document to `<project>/Cooked/Content/UI/` (what a Client build stages), or one |
+| `cook [world] [out]` | Cook a world file to binary -- by default the open world's saved file, to `<project>/Saved/Cooked/<its path>` |
+| `cook ui [out]`, `cook <doc.nmui> [out]` | Cook every UI document to `<project>/Saved/Cooked/Content/UI/` (what a Client build stages), or one |
 | `ui <path \| new \| close \| select <name> \| resolution <w>x<h> \| preview <on\|off> \| screenshot <file.png>>` | Open a `.nmui` in the UI Designer, make one, or drive the one in front -- from `--command` scripts too |
 | `compile [cancel]` | As Build > Compile Source, or cancel the build running |
 | `settings` | Open Edit > Editor Settings, and print where they are saved |
@@ -804,7 +804,7 @@ options kept in `[Build]` of `DefaultEngine.ini`.
 - **Configuration**: Debug, RelWithDebInfo or Shipping.
 - **Cook content** (`Build/ContentCook`): every node graph regenerated, the
   worlds Project Settings > Worlds ticks, every prefab and UI document --
-  into `<project>/Cooked/<their path>`. An unticked world's old cooked copy is
+  into `<project>/Saved/Cooked/<their path>`. An unticked world's old cooked copy is
   deleted. The cook reads saved files. When it ends, a table of **cook
   stats** -- per content type: cooked, failed, source size, cooked size, time
   -- and the same lines in the Console (`[Cook]`). A failed cook stops the
@@ -818,10 +818,26 @@ options kept in `[Build]` of `DefaultEngine.ini`.
 
 The game's CMake stages exactly the listed, ticked worlds
 (`nimble_project_worlds` in `Engine/cmake/NimbleProject.cmake`): the text
-worlds for every build but Shipping, the cooked ones from `Cooked/` for
+worlds for every build but Shipping, the cooked ones from `Saved/Cooked/` for
 Shipping. A Shipping build reads every asset at its own path.
 
 **Cook Content** is the same dialog's cook alone: it opens and cooks at once.
+
+### The Saved folder
+
+`<project>/Saved/` holds what the tools make, never source. The Content
+Browser and every content walk skip it (`EditorGraphs::IsIgnoredFolder`).
+
+- `Saved/Cooked/` -- cooked content, mirroring the source paths. Tracked in
+  git: a Shipping build stages it.
+- `Saved/Logs/` -- one log per run, the newest 10 of each kind kept, ignored
+  by git:
+  - `Editor-<time>.log`, every line of an editor session (`EngineCore::OpenRunLog`);
+  - `Cook-<time>.log` and `Build-<time>.log`, a cook or Build Project run's
+    whole output and stats (the dialog's status line names the file).
+
+A game run logs the same way beside its executable:
+`Binaries/<Platform>_<Config>[_Client]/Saved/Logs/<Module>[Server]-<time>.log`.
 
 ## Known limits
 

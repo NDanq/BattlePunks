@@ -52,7 +52,7 @@ namespace GameCore
      *              Shipping load path, with no manual cook. [Content]
      *              CookOnLoad=false reads the text source instead.
      *   Shipping   cooked ahead, at its own path: the editor's Build > Cook
-     *              Content writes <project>/Cooked/<source path>, and the
+     *              Content writes <project>/Saved/Cooked/<source path>, and the
      *              build stages that beside the executable.
      *
      * A source that is already binary is read as it is, in every build.

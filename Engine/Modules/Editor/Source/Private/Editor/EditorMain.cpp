@@ -19,6 +19,7 @@
 #include "Public/Editor/EditorContext.h"
 #include "Public/Editor/EditorLog.h"
 #include "Public/Editor/EditorMainWindow.h"
+#include "Private/Editor/Build/ContentCook.h"
 #include "Private/Editor/EditorTheme.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/SettingsDialog.h"
@@ -90,6 +91,12 @@ int main(int argc, char* argv[])
     /* Asset paths are relative to the exe's folder, as for the game hosts. */
     QDir::setCurrent(QCoreApplication::applicationDirPath());
 
+    /* This session's log: <project>/Saved/Logs/Editor-<time>.log (CoreLog.h). */
+    if(EngineCore::OpenRunLog(EditorCook::GetLogsDir(EditorGraphs::GetProjectRoot()).toUtf8().toStdString(), "Editor"))
+    {
+        CORE_LOG("[Editor] logging to " + EngineCore::GetRunLogPath())
+    }
+
     if(QFileInfo::exists(QStringLiteral("Config/DefaultEngine.ini")))
     {
         EngineCore::LoadConfigFile("Config/DefaultEngine.ini");
@@ -131,6 +138,7 @@ int main(int argc, char* argv[])
     }
 
     EditorLog::Uninstall();
+    EngineCore::CloseRunLog();
     return Result;
 }
 

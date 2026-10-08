@@ -165,7 +165,7 @@ game_stage(Content "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_CONTENT_FILES})
 # Content/Prefabs/: every build but Shipping stages the text prefabs -- an
 # Editor edits them, a Client or Server cooks each the first time it loads it
 # (NIMBLE_UNCOOKED_CONTENT); Shipping stages the cooked ones from
-# Cooked/Content/Prefabs/ -- made in the editor with the console's `cook prefabs`.
+# Saved/Cooked/Content/Prefabs/ -- made in the editor by Build > Cook Content.
 file(GLOB_RECURSE GAME_PREFAB_SCRIPTS CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.lua"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.script.nmgraph")
@@ -174,12 +174,12 @@ game_stage(PrefabScripts "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_PREFAB_SCRIPTS})
 if(NIMBLE_UNCOOKED_CONTENT)
     set(GAME_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 else()
-    set(GAME_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Cooked")
+    set(GAME_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Saved/Cooked")
 endif()
 file(GLOB_RECURSE GAME_PREFAB_FILES CONFIGURE_DEPENDS "${GAME_PREFAB_ROOT}/Content/Prefabs/*.nmprefab")
 file(GLOB_RECURSE GAME_PREFAB_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.nmprefab")
 if(NOT NIMBLE_UNCOOKED_CONTENT AND GAME_PREFAB_SOURCES AND NOT GAME_PREFAB_FILES)
-    message(WARNING "${GAME_NAME}: Content/Prefabs/ has prefabs but Cooked/Content/Prefabs/ has none; a Shipping "
+    message(WARNING "${GAME_NAME}: Content/Prefabs/ has prefabs but Saved/Cooked/Content/Prefabs/ has none; a Shipping "
                     "build cannot read text prefabs. Cook them in the editor (console: cook prefabs).")
 endif()
 game_stage(Prefabs "${GAME_PREFAB_ROOT}" ${GAME_PREFAB_FILES})
@@ -187,19 +187,19 @@ game_stage(Prefabs "${GAME_PREFAB_ROOT}" ${GAME_PREFAB_FILES})
 # Content/UI/: UI documents (Engine/Modules/UI/README.md) and the Lua beside
 # them. As prefabs: an Editor target stages the XML it edits; a Client or
 # Server target cannot read XML, so it stages the cooked ones from
-# Cooked/Content/UI/ -- made in the editor with the console's `cook ui`.
+# Saved/Cooked/Content/UI/ -- made in the editor by Build > Cook Content.
 file(GLOB_RECURSE GAME_UI_SCRIPTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/UI/*.lua")
 game_stage(UIScripts "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_UI_SCRIPTS})
 
 if(NIMBLE_TARGET STREQUAL "Editor")
     set(GAME_UI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 else()
-    set(GAME_UI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Cooked")
+    set(GAME_UI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Saved/Cooked")
 endif()
 file(GLOB_RECURSE GAME_UI_FILES CONFIGURE_DEPENDS "${GAME_UI_ROOT}/Content/UI/*.nmui")
 file(GLOB_RECURSE GAME_UI_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/UI/*.nmui")
 if(NOT NIMBLE_TARGET STREQUAL "Editor" AND GAME_UI_SOURCES AND NOT GAME_UI_FILES)
-    message(WARNING "${GAME_NAME}: Content/UI/ has documents but Cooked/Content/UI/ has none; a ${NIMBLE_TARGET} "
+    message(WARNING "${GAME_NAME}: Content/UI/ has documents but Saved/Cooked/Content/UI/ has none; a ${NIMBLE_TARGET} "
                     "build cannot read XML. Cook them in the editor (console: cook ui).")
 endif()
 game_stage(UI "${GAME_UI_ROOT}" ${GAME_UI_FILES})
@@ -221,7 +221,7 @@ endif()
 # ([World_*] in Config/DefaultEngine.ini), staged at the path a level loads
 # them by. Every build but Shipping stages the text worlds -- the .nmworld
 # manifest and the per-entity and per-instance files in the folder beside it;
-# Shipping, the cooked ones from Cooked/ (the editor's Build > Cook Content).
+# Shipping, the cooked ones from Saved/Cooked/ (the editor's Build > Cook Content).
 # A world not listed, or not cooked, is not staged (nimble_project_worlds).
 nimble_project_worlds("${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini" "${CMAKE_CURRENT_SOURCE_DIR}"
         GAME_LEVEL_FILES GAME_LEVEL_ROOT)

@@ -320,7 +320,21 @@ namespace NimbleEngine
         SetFileProvider(&LayeredAssets);
 
         ConfigLoadStats Stats;
-        if(!LoadConfigFile("Config/DefaultEngine.ini", &Stats))
+        const bool bConfigLoaded = LoadConfigFile("Config/DefaultEngine.ini", &Stats);
+
+        /* This run's log, beside the executable as a project's is beside it:
+         * Saved/Logs/<Module>[Server]-<time>.log (CoreLog.h). */
+        {
+            const ConfigVar* Module = ConfigFindVarByPath("Game.Module");
+            std::string Name = Module && Module->GetString()[0] ? Module->GetString() : GameModuleName;
+            if(Name.empty()) { Name = "Game"; }
+            if(Desc.bHeadless && Desc.NetMode == ENetMode::Server) { Name += "Server"; }
+            if(OpenRunLog("Saved/Logs", Name))
+            {
+                CORE_LOG("Logging to " + GetRunLogPath())
+            }
+        }
+        if(!bConfigLoaded)
         {
             CORE_LOG_WARN("No Config/DefaultEngine.ini Found")
         }
@@ -697,6 +711,7 @@ namespace NimbleEngine
         /* Unconditional -- null-safe and idempotent, so a failed Initialize()
          * still shuts SDL down. */
         Shutdown();
+        CloseRunLog();
     }
 
     void Application::Shutdown()

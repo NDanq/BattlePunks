@@ -147,7 +147,7 @@ A Shipping client build cannot read text prefabs or text levels. Before
 building a `client-shipping` preset, run **Build > Cook Content** in the editor
 (or let **Build > Build Project** cook and compile together): the worlds ticked
 in Project Settings > Worlds, every prefab and UI document go to
-`Cooked/<their path>`.
+`Saved/Cooked/<their path>`.
 
 The client build stages those instead; commit them with the game. A level
 that loads a world file reads the cooked one in a game build, as

@@ -15,7 +15,7 @@ code (`NetArenaGame.cpp`) only gives it behaviour.
 | `Content/Levels/NetArena.nmworld` | The level, below |
 | `Content/Prefabs/Pawn.nmprefab` | A player's capsule: Transform, Render (capsule mesh, `PawnColor` material), **Net**, NetArenaPawn |
 | `Content/Materials/PawnColor.material.nmgraph` | Lit, with a `BaseColor` parameter set per capsule |
-| `Cooked/Content/Levels/`, `Cooked/Content/Prefabs/` | Their binary forms, cooked ahead for **Shipping** builds (Build > Cook Content) |
+| `Saved/Cooked/Content/Levels/`, `Saved/Cooked/Content/Prefabs/` | Their binary forms, cooked ahead for **Shipping** builds (Build > Cook Content) |
 
 The level's entities:
 
@@ -83,7 +83,7 @@ GUIDE.md, section 8, explains the pattern.
    cook them themselves when they load them, so there is nothing to do while
    developing. A **Shipping** build reads only the cooked files. Before
    shipping, run **Build > Cook Content** in the editor: the listed worlds,
-   the prefabs and UI documents go to `Cooked/<their path>`.
+   the prefabs and UI documents go to `Saved/Cooked/<their path>`.
 
 ## Playing it
 

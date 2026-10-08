@@ -532,8 +532,8 @@ undo. The Prefab Editor needs a second World with its own selection and undo:
   (`RefreshPrefabInstance` in WorldPackage.h): respawned from the new version
   keeping GUIDs, name, placement, overrides, parent and loose children.
 - Cooking: `cook <file.nmprefab>` and `cook prefabs` (every project prefab to
-  `Cooked/`). Sandbox stages `Content/Prefabs/` beside the exe -- text for an
-  Editor target, `Cooked/Content/Prefabs/` for Client and Server.
+  `Saved/Cooked/`). Sandbox stages `Content/Prefabs/` beside the exe -- text for an
+  Editor target, `Saved/Cooked/Content/Prefabs/` for Client and Server.
 
 ### As built (phase 9)
 

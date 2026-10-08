@@ -168,7 +168,7 @@ loses every ball. `[BrickBreaker] RunSeconds` quits after a while.
 `[Game] StartLevel=Sandbox` brings back the older demo.
 
 Client and Server targets need cooked prefabs for `Brick` and `Ball` (`cook
-prefabs` in the editor writes `Cooked/Prefabs/`), as Sandbox's other
+prefabs` in the editor writes `Saved/Cooked/Content/Prefabs/`), as Sandbox's other
 `.nmprefab` files do.
 
 ## Networking

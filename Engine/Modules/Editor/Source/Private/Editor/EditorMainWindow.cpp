@@ -639,7 +639,7 @@ void EditorMainWindow::BuildBuildMenu()
 
     QAction* Cook = BuildMenu->addAction(QStringLiteral("C&ook Content"));
     Cook->setToolTip(QStringLiteral("Cook the worlds Project Settings > Worlds ticks, every prefab and UI document, and "
-                                    "regenerate the node graphs, into <project>/Cooked; shows the cook's stats"));
+                                    "regenerate the node graphs, into <project>/Saved/Cooked; shows the cook's stats"));
     connect(Cook, &QAction::triggered, this, &EditorMainWindow::CookContent);
 
     QAction* BakeLightmaps = BuildMenu->addAction(QStringLiteral("Bake &Lightmaps"));
@@ -1115,7 +1115,7 @@ void EditorMainWindow::RegisterConsoleCommands()
     });
 
     Console.Register(QStringLiteral("cook"), QStringLiteral("[project | world | prefab | prefabs | ui | doc.nmui] [out]"),
-                     QStringLiteral("Cook to binary, into <project>/Cooked/<its path>, which a game build stages: 'project' is "
+                     QStringLiteral("Cook to binary, into <project>/Saved/Cooked/<its path>, which a game build stages: 'project' is "
                                     "Build > Cook Content (the listed worlds, every prefab and UI document, with stats); "
                                     "'prefabs' and 'ui' every prefab or UI document; else one file (default: the open world)"),
                      [this](const QStringList& InArgs)
@@ -1134,9 +1134,20 @@ void EditorMainWindow::RegisterConsoleCommands()
 
         if(!InArgs.isEmpty() && InArgs[0] == QStringLiteral("project"))
         {
-            const EditorCook::CookStats Stats = EditorCook::CookProject();
+            const QString Root = EditorGraphs::GetProjectRoot();
+            QStringList Lines;
+            const EditorCook::CookStats Stats = EditorCook::CookProject(Root, [&Lines](const QString& InText) { Lines << InText; });
+            Lines << EditorCook::DescribeStats(Stats);
             for(const QString& Line : EditorCook::DescribeStats(Stats)) { Console.Print(Line); }
-            for(const QString& Failure : Stats.Failures) { Console.PrintError(Failure); }
+            for(const QString& Failure : Stats.Failures) { Console.PrintError(Failure); Lines << QStringLiteral("FAILED: ") + Failure; }
+
+            /* As Build > Cook Content's: this run's log in Saved/Logs. */
+            QFile RunLog(EditorCook::NewLogPath(Root, QStringLiteral("Cook")));
+            if(RunLog.open(QIODevice::WriteOnly | QIODevice::Text))
+            {
+                RunLog.write((Lines.join(QLatin1Char('\n')) + QLatin1Char('\n')).toUtf8());
+                Console.Print(QStringLiteral("Log: %1").arg(QDir::toNativeSeparators(RunLog.fileName())));
+            }
             return;
         }
 
@@ -1144,7 +1155,7 @@ void EditorMainWindow::RegisterConsoleCommands()
         if(!InArgs.isEmpty() && InArgs[0] == QStringLiteral("ui"))
         {
             const QString Root    = EditorGraphs::GetProjectRoot();
-            const QString OutRoot = InArgs.size() >= 2 ? InArgs[1] : QDir(Root).filePath(QStringLiteral("Cooked"));
+            const QString OutRoot = InArgs.size() >= 2 ? InArgs[1] : EditorCook::GetCookedRoot(Root);
             int Failed = 0;
             QString Errors;
             const int Cooked = EditorUI::CookAll(Root, OutRoot, Failed, Errors);
@@ -1178,7 +1189,7 @@ void EditorMainWindow::RegisterConsoleCommands()
         if(!InArgs.isEmpty() && InArgs[0] == QStringLiteral("prefabs"))
         {
             const QString Root = EditorGraphs::GetProjectRoot();
-            const QString OutRoot = InArgs.size() >= 2 ? InArgs[1] : QDir(Root).filePath(QStringLiteral("Cooked"));
+            const QString OutRoot = InArgs.size() >= 2 ? InArgs[1] : EditorCook::GetCookedRoot(Root);
             int Cooked = 0, Failed = 0;
             QDirIterator It(Root, { QStringLiteral("*.nmprefab") }, QDir::Files, QDirIterator::Subdirectories);
             while(It.hasNext())

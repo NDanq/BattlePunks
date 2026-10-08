@@ -59,6 +59,7 @@ Testing/
 # Smoke-test scratch and logs
 /SmokeScratch/
 /Logs/
+/Saved/Logs/
 *.log
 
 # Editors and OS

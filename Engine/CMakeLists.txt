@@ -253,7 +253,7 @@ endif()
 # one itself the first time it loads it (and again when the source changes),
 # into Intermediate/Cooked/ beside the executable -- so a development build
 # never waits on a manual cook. Shipping reads only what was cooked ahead,
-# into <project>/Cooked/ (the editor's Build > Cook Content). See GameCore's
+# into <project>/Saved/Cooked/ (the editor's Build > Cook Content). See GameCore's
 # WorldPackage.h (LoadContentWorld).
 #
 # WITH_UNCOOKED is that switch in code, 1 or 0, PUBLIC on EngineCore below.

@@ -6,6 +6,7 @@
 #include <functional>
 
 #include <QDialog>
+#include <QFile>
 #include <QString>
 
 #include "Private/Editor/Build/ContentCook.h"
@@ -29,6 +30,9 @@ class SourceBuild;
  *             into <project>/Cooked; its stats shown when it ends
  *   Compile   the game's Client preset (ProjectBuild.h), configured and built
  *             in its own tree; then its folder opens
+ *
+ * Every run writes its whole output -- the cook's lines and stats, cmake's --
+ * to <project>/Saved/Logs/Cook-<time>.log (cook only) or Build-<time>.log.
  *
  * The cook reads the saved files: unsaved edits are not in it. Closing the
  * dialog cancels a compile in progress.
@@ -84,6 +88,7 @@ private:
     EStep        Step    = EStep::Idle;
     QString      Preset;
     QString      CookSummary;
+    QFile        RunLog;   // this run's Saved/Logs file
 };
 
 #endif // WITH_EDITOR

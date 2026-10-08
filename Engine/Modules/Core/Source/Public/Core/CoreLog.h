@@ -53,6 +53,21 @@ namespace EngineCore
      */
     CORE_API void LogDispatch(LogVerbosity Verbosity, const char* Message);
     CORE_API void LogDispatch(LogVerbosity Verbosity, const std::string& Message);
+
+    /*
+     * RUN LOGS. While one is open, every dispatched message is also appended
+     * to it -- "HH:MM:SS.mmm [WARN] text" -- whatever handler is installed,
+     * from any thread, flushed per line so a crash keeps what led to it.
+     *
+     * OpenRunLog creates InDirectory and writes "<InName>-YYYY.MM.DD-HH.MM.SS.log"
+     * there (a project's Saved/Logs/), closing any log already open, then
+     * deletes all but the newest InKeep files named "<InName>-*.log". False if
+     * the file cannot be made; logging carries on without one.
+     */
+    CORE_API bool               OpenRunLog(const std::string& InDirectory, const std::string& InName, int InKeep = 10);
+    CORE_API void               CloseRunLog();
+    /* The open run log's path; empty if none. */
+    CORE_API const std::string& GetRunLogPath();
 }
 
 #define CORE_LOG(Message)       ::EngineCore::LogDispatch(::EngineCore::LogVerbosity::Log,     Message);

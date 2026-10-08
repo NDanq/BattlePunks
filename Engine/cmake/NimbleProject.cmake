@@ -87,9 +87,9 @@ endfunction()
 #                               .nmentity / .nmprefabinst files in the folder
 #                               of the same name beside it. <OutRoot> is
 #                               <ProjectDir>.
-#     Shipping                  the cooked world, <ProjectDir>/Cooked/<File>
+#     Shipping                  the cooked world, <ProjectDir>/Saved/Cooked/<File>
 #                               (the editor's Build > Cook Content). <OutRoot>
-#                               is <ProjectDir>/Cooked; a listed world not
+#                               is <ProjectDir>/Saved/Cooked; a listed world not
 #                               cooked yet is a warning.
 #
 #   A world left out of the list, or with Cook=false, is not staged at all.
@@ -98,7 +98,7 @@ function(nimble_project_worlds NM_CONFIG NM_PROJECT_DIR NM_OUT_FILES NM_OUT_ROOT
     if(NIMBLE_UNCOOKED_CONTENT)
         set(NM_ROOT "${NM_PROJECT_DIR}")
     else()
-        set(NM_ROOT "${NM_PROJECT_DIR}/Cooked")
+        set(NM_ROOT "${NM_PROJECT_DIR}/Saved/Cooked")
     endif()
     if(NOT EXISTS "${NM_CONFIG}")
         set(${NM_OUT_FILES} "" PARENT_SCOPE)

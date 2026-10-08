@@ -152,7 +152,7 @@ the first time they load it (again when it changes), into
 A **Shipping** build reads only content cooked ahead. **Build > Build
 Project** cooks and compiles it in one go (pick Shipping); **Build > Cook
 Content** only cooks: the worlds ticked in Project Settings > Worlds, every
-prefab and UI document, into `Cooked/<their path>`.
+prefab and UI document, into `Saved/Cooked/<their path>`.
 
 Shipping stages those instead; commit them with the game. A level loads its
 world by its source path, `GameCore::LoadContentWorld("Content/Levels/X.nmworld")`,

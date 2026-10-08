@@ -354,7 +354,7 @@ How it is used:
   file changes every round. A world with no bricks gets `DefaultWall()`.
 - **The build copies it.** The `SandboxStageLevels` target copies the listed
   worlds beside the executable at the same path: the text files for every
-  build but Shipping, the cooked `Cooked/Content/Levels/BrickBreaker.nmworld`
+  build but Shipping, the cooked `Saved/Cooked/Content/Levels/BrickBreaker.nmworld`
   for Shipping (`nimble_project_worlds`).
 
 The file is the thing to edit: open it in the editor (File > Open) and save it.
@@ -462,7 +462,7 @@ from spawning its demo entities here.
 - **Client and Server targets need cooked content.** `Brick` and `Ball` are
   text `.nmprefab` files and the level is a text world, which a Shipping
   build cannot read. Run **Build > Cook Content** in the editor (or **Build
-  > Build Project**, which cooks first) to write them into `Cooked/`.
+  > Build Project**, which cooks first) to write them into `Saved/Cooked/`.
 - **Tunnelling.** The ball moves in fixed steps of `Speed × dt`. At 60 fps in
   round 10 (820 px/s) a step is about 14 px, still less than a brick's height
   plus the ball's. A much lower frame rate or a very late round could step

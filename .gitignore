@@ -16,6 +16,10 @@
 # at it, do not start showing up as untracked output -- all but the tracked
 # NewProject scripts, which make a game without the editor.
 /Games/*/Binaries/
+
+# A log per editor, game, cook and build run (<project>/Saved/Logs/). Saved/Cooked/
+# beside it is tracked: a Shipping build stages it.
+/Games/*/Saved/Logs/
 /Engine/Binaries/*
 !/Engine/Binaries/NewProject.cmake
 !/Engine/Binaries/NewProject.sh
