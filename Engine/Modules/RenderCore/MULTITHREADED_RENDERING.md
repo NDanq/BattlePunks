@@ -1,6 +1,6 @@
 # Multithreaded rendering: plan
 
-Status: **phases 0 (measure and gate), 1 (per-draw cost), 2 (GDI recording contexts), 3 (parallel issue: Base Pass and Shadows) and 4 (frames in flight, Vulkan) done; D3D12 recording contexts done (one frame in flight); Metal's not done.** Recording draws on several
+Status: **phases 0 (measure and gate), 1 (per-draw cost), 2 (GDI recording contexts), 3 (parallel issue: Base Pass and Shadows) and 4 (frames in flight, Vulkan and D3D12) done; D3D12 recording contexts done; Metal's not done.** Recording draws on several
 threads when the backend can: the Base Pass first, then the Shadows views.
 This note is why, what stands in the way, and in what order.
 
@@ -301,8 +301,8 @@ serially today.
      resolving once per frame instead of per stage, are what is left there.
    - GpuTest's frame is now bound by waiting for the GPU (`wait_ms` 8-10
      of 10): the CPU's next win is phase 4's frames in flight.
-4. **Frames in flight** -- done (Vulkan). **D3D12 parallel recording --
-   done, one frame in flight.**
+4. **Frames in flight** -- done (Vulkan, then D3D12). **D3D12 parallel
+   recording -- done.**
 
    Frames in flight: `[Rendering] FramesInFlight` (1-3, default 2, read
    when the device is made) lets the CPU record frame N+1 while the GPU
@@ -369,7 +369,7 @@ serially today.
      atomic; the pipeline cache is read under a shared lock and matched on
      the whole key.
    - Not done for D3D12: phase 1's per-draw savings (it still packs the core
-     blocks from strings on the render thread) and frames in flight.
+     blocks from strings on the render thread).
 
    Verified on Windows (RTX 2080 Ti): RenderCore's GPU smoke test on D3D12
    634/0, the parallel capture byte-identical to the serial ones, the D3D12
@@ -382,6 +382,40 @@ serially today.
    | stages CPU | 8.4-8.5 ms | 4.9 ms |
    | Shadows CPU (~1,500 draws) | 5.7-5.9 ms | 2.2 ms |
    | Base Pass CPU (~110 draws: under ParallelMinDraws, serial) | 0.7 ms | 0.7 ms |
+
+   D3D12 frames in flight, as Vulkan's, per frame slot, each reused once its
+   slot's fence value is reached:
+   - `D3D12CommandManager`: a command allocator per slot (the one list resets
+     on any of them as soon as it has been executed) and the fence value the
+     slot's last submit signalled; `BeginFrame` waits only that. `EndRendering`
+     advances; `FlushForReadback` stays on its slot, so its wait covers every
+     earlier submission.
+   - The constant-buffer ring: a 4 MB region per slot in one buffer (the SRV
+     and sampler heaps are shared), its epoch bumped at each rewind.
+   - Each recording context's allocator; GPU timestamps' query range and
+     readback range; dynamic meshes' buffer region.
+   - Deferred destruction: each resource, query heap and SRV slot tagged with
+     the fence value of the frame being recorded, freed once it completes.
+   - Occlusion answers: readable once the fence value of the frame that
+     resolved them completes, not "from the next block".
+   - `[Rendering] FramesInFlight` moved from the Vulkan backend into GDI
+     (`GDIGetConfiguredFramesInFlight`), which both read.
+
+   Verified: RenderCore's GPU smoke test on D3D12 634/0 with 1, 2 and 3 frames
+   in flight, the parallel capture byte-identical each time, the debug layer
+   silent; GpuTest under the debug layer, silent; Null 464/0, GDI 75/75.
+
+   | LightLab GpuTest, D3D12, RelWithDebInfo, Auto, two runs each | 1 in flight | 2 in flight |
+   |---|---|---|
+   | frame / render | 6.9-7.0 / 6.0-6.1 ms | 6.6 / 5.7 ms |
+   | render thread outside its stages and queue | 1.0 ms | 0.6 ms |
+   | GPU | 1.3-1.4 ms | 1.3 ms |
+   | occluded proxies a frame | 300 | 300 |
+
+   A small win here because this machine's GPU (RTX 2080 Ti) draws GpuTest in
+   about 1.3 ms: the render thread was waiting on the fence for only ~0.4 ms
+   of its frame, and is now bound by its own recording. A frame that keeps the
+   GPU busier gains as Vulkan's did.
 
    Metal: its recording contexts were not written (no macOS here); the gate
    says "not implemented yet", and Metal records serially.

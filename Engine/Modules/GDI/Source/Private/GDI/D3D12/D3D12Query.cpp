@@ -2,7 +2,8 @@
  * D3D12DynamicGDI's occlusion queries (GDIQuery.h). A set is a binary
  * occlusion query heap and three buffers of a uint64 per query: Answers
  * (default heap), which ResolveQueryData fills and SetPredication reads;
- * Readback, a copy of it the CPU reads once the frame's fence has passed;
+ * Readback, a copy of it the CPU reads once its frame's fence value has
+ * completed (frames in flight: not necessarily by the next block);
  * and Ones, all 1, copied over the answers of queries never ended -- a
  * query never begun has nothing to resolve, and must not hide anything.
  *
@@ -74,11 +75,12 @@ public:
     D3D12_RESOURCE_STATES   AnswersState = D3D12_RESOURCE_STATE_COPY_DEST;
 
     /* This round: how many queries, which have ended, whether one is open,
-     * and the BeginRendering block it is in. Pending: resolved, not yet read. */
+     * and the fence value of the frame that resolves it (the CPU's copy is
+     * readable once it completes). Pending: resolved, not yet read. */
     uint32_t             Count      = 0;
     std::vector<uint8_t> Ended;
     int32_t              Open       = -1;
-    uint64_t             RoundBlock = 0;
+    uint64_t             DoneAt     = 0;
     bool                 bResolved  = false;
     bool                 bPending   = false;
 };
@@ -105,7 +107,7 @@ void D3D12DynamicGDI::ReleaseOcclusionQueries(D3D12OcclusionQueries* InSet)
     DeferRelease(InSet->Answers);
     DeferRelease(InSet->Readback);
     DeferRelease(InSet->Ones);
-    if(InSet->Heap) { DeferredQueryHeaps.push_back(InSet->Heap); }
+    DeferReleaseQueryHeap(InSet->Heap);
 }
 
 void D3D12DynamicGDI::BeginOcclusionRound(GDIOcclusionQueries* InSet, const uint32_t InCount)
@@ -117,7 +119,6 @@ void D3D12DynamicGDI::BeginOcclusionRound(GDIOcclusionQueries* InSet, const uint
     }
     Set->Count      = InCount;
     std::fill(Set->Ended.begin(), Set->Ended.end(), uint8_t(0));
-    Set->RoundBlock = RenderingBlocks;
     Set->bResolved  = false;
     Set->bPending   = false;
 }
@@ -180,6 +181,7 @@ void D3D12DynamicGDI::ResolveOcclusionQueries(GDIOcclusionQueries* InSet)
     List->CopyBufferRegion(Set->Readback.Get(), 0, Set->Answers.Get(), 0, UINT64(Set->Count) * sizeof(uint64_t));
     RecordTransition(List, Set->Answers.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PREDICATION);
     Set->AnswersState = D3D12_RESOURCE_STATE_PREDICATION;
+    Set->DoneAt       = GetRecordingFenceValue();
     Set->bResolved    = true;
     Set->bPending     = true;
 }
@@ -204,7 +206,7 @@ void D3D12DynamicGDI::SetOcclusionPredicate(GDIOcclusionQueries* InSet, const in
 bool D3D12DynamicGDI::ReadOcclusionResults(GDIOcclusionQueries* InSet, std::vector<uint8_t>& OutVisible)
 {
     auto* Set = static_cast<D3D12OcclusionQueries*>(InSet);
-    if(!Set->IsValid() || !Set->bPending || RenderingBlocks <= Set->RoundBlock)
+    if(!Set->IsValid() || !Set->bPending || !IsFrameComplete(Set->DoneAt))
     {
         return false;
     }

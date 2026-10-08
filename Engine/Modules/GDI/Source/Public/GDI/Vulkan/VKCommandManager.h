@@ -4,10 +4,12 @@
 #include <vulkan/vulkan.h>
 #include <cstdint>
 
+#include "Public/GDI/GDIDefinitions.h"
+
 class VKDevice;
 
 /* At most this many frames in flight ([Rendering] FramesInFlight). */
-constexpr uint32_t VK_FRAMES_IN_FLIGHT_MAX = 3;
+constexpr uint32_t VK_FRAMES_IN_FLIGHT_MAX = GDI_FRAMES_IN_FLIGHT_MAX;
 
 /**
  * The render thread's primary command buffers: one command pool, buffer and

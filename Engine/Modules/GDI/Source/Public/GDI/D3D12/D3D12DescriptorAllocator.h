@@ -26,9 +26,10 @@ struct D3D12CBAllocation
  *     per-draw descriptor copies.
  *   - A GPU-visible sampler heap holding one sampler per border/filter pair.
  *   - A persistently mapped upload buffer sub-allocated per draw for constant
- *     buffers and rewound by Reset() once the previous frame has executed.
- *     AllocateCB is safe from any thread (a parallel pass's recording contexts
- *     allocate at once); everything else is the render thread's.
+ *     buffers: a region per frame in flight, each rewound by Reset(Slot) once
+ *     the frame that last used it has executed. AllocateCB is safe from any
+ *     thread (a parallel pass's recording contexts allocate at once);
+ *     everything else is the render thread's.
  */
 class D3D12DescriptorAllocator
 {
@@ -38,11 +39,13 @@ public:
     D3D12DescriptorAllocator() = default;
     ~D3D12DescriptorAllocator() { Shutdown(); }
 
-    bool Initialize(D3D12Device* InDevice);
+    /** InSlots: the frames in flight, each with a region of the constant-buffer ring. */
+    bool Initialize(D3D12Device* InDevice, uint32_t InSlots = 1);
     void Shutdown();
 
-    /** Rewinds the constant-buffer ring. Only once the frame that used it has executed. */
-    void Reset();
+    /** Allocates from InSlot's region of the ring, rewound. Only once the frame
+     *  that last used that region has executed. */
+    void Reset(uint32_t InSlot = 0);
 
     /** Bumped by Reset(): an allocation from an older epoch is stale. */
     uint64_t GetEpoch() const { return Epoch; }
@@ -74,11 +77,14 @@ private:
 
     Microsoft::WRL::ComPtr<ID3D12Resource>          RingBuffer;
     uint8_t*                                        RingMapped = nullptr;
-    std::atomic<uint32_t>                           RingOffset{0};
+    std::atomic<uint32_t>                           RingOffset{0};   // absolute, within [RingBase, RingEnd)
+    uint32_t                                        RingBase   = 0;
+    uint32_t                                        RingEnd    = 0;
+    uint32_t                                        RingSlots  = 1;
     uint64_t                                        Epoch      = 0;
 
     static constexpr uint32_t kSRVCapacity  = 4096;
-    static constexpr uint32_t kRingCapacity = 4 * 1024 * 1024;   // shadow passes draw each caster once per view
+    static constexpr uint32_t kRingCapacity = 4 * 1024 * 1024;   // per slot: shadow passes draw each caster once per view
     static constexpr uint32_t kCBAlignment  = 256;
 };
 

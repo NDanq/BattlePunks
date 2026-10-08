@@ -1003,7 +1003,7 @@ it: a wall, terrain, a building. Each frame, for the main view only:
   drawn at all -- no draw queued, nothing extracted into the stages -- but its
   box is still queried. Answers come back once the GPU has finished their
   frame: the scene keeps a query set per frame in flight (`GDIGetFramesInFlight`,
-  Vulkan's `[Rendering] FramesInFlight`), used in turn, and reads a set's
+  Vulkan's and D3D12's `[Rendering] FramesInFlight`), used in turn, and reads a set's
   answers when it comes round again -- the frame before with one in flight,
   two frames back with two. When a proxy comes out from behind the occluder
   it is drawn again from then: a revealed object can pop in that many frames
@@ -1143,7 +1143,7 @@ around the capture and simulate loops, so a frame with none shows 0.00, not `-`.
 **Getting the results back:**
 - A GDI block (`GDIBeginRendering` to `GDIEndRendering`, one scene's render)
   is complete by the start of the block `GDIGetFramesInFlight()` after it
-  (1 on most backends; Vulkan's `[Rendering] FramesInFlight`, 2 by default).
+  (1 on most backends; Vulkan's and D3D12's `[Rendering] FramesInFlight`, 2 by default).
 - So `RenderScene::Render`, right after `GDIBeginRendering`, takes that
   block's times (`RenderContext::BeginTimedBlock`, which remembers each
   recent block's scene by its `GDIGetRenderingSerial`) and gives them to the

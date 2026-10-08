@@ -37,7 +37,7 @@ public:
      * layout's buffers in the upload heap, persistently mapped and written in
      * place by UpdateDynamic. False (nothing kept) on failure.
      */
-    bool InitDynamic(uint32_t InMaxVertices, uint32_t InMaxIndices);
+    bool InitDynamic(uint32_t InMaxVertices, uint32_t InMaxIndices, uint32_t InFramesInFlight = 1);
 
 protected:
     /** memcpy into the mapped buffers; nothing is in flight there (GDIMesh::UpdateDynamic). */

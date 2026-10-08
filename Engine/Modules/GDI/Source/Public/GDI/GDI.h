@@ -731,7 +731,7 @@ protected:
     uint64_t              RenderingSerial = 0;
 
     /* Frames the backend lets the GPU run behind the CPU, and which of them
-     * the open block records (Vulkan's command slots; 1 and 0 elsewhere): a
+     * the open block records (Vulkan's and D3D12's command slots; 1 and 0 elsewhere): a
      * dynamic mesh keeps a region of its buffers per frame in flight. Set by
      * the backend at Allocate and BeginRendering. */
     uint32_t              FramesInFlight = 1;
@@ -829,8 +829,12 @@ uint64_t GDIGetRenderingSerial();
 /* How many BeginRendering blocks the GPU may still be running when the next
  * begins (1 without a driver): what the CPU writes for a block -- a query
  * set's answers, a dynamic mesh's region -- it may reuse only that many
- * blocks later. Vulkan's is [Rendering] FramesInFlight. */
+ * blocks later. Vulkan's and D3D12's are [Rendering] FramesInFlight. */
 uint32_t GDIGetFramesInFlight();
+
+/* [Rendering] FramesInFlight, clamped to 1..GDI_FRAMES_IN_FLIGHT_MAX: what a
+ * backend that can run ahead reads when it makes its device. */
+uint32_t GDIGetConfiguredFramesInFlight();
 
 /*
  * Scissor, in pixels of the current viewport from its TOP-LEFT (the way a
