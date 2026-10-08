@@ -46,6 +46,7 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/RenderCore.cpp
         Source/Private/RenderCore/RenderThreadInternal.h
         Source/Private/RenderCore/RenderThread.cpp
+        Source/Private/RenderCore/ParallelRecording.cpp
         Source/Private/RenderCore/RenderCommand.cpp
         Source/Private/RenderCore/RenderContext.cpp
         Source/Private/RenderCore/DrawPolicy.h

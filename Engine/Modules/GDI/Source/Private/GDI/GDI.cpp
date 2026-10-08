@@ -855,6 +855,22 @@ bool GDISupportsOcclusionPredication()
     return GDISupportsOcclusionQueries() && GDynamicGDI->SupportsOcclusionPredication();
 }
 
+GDIParallelRecordingSupport GDIGetParallelRecordingSupport()
+{
+    if(!GDynamicGDI)
+    {
+        GDIParallelRecordingSupport None;
+        None.Reason = "no GDI driver";
+        return None;
+    }
+    return GDynamicGDI->GetParallelRecordingSupport();
+}
+
+bool GDISupportsParallelRecording()
+{
+    return GDIGetParallelRecordingSupport().bSupported;
+}
+
 GDIOcclusionQueries* GDICreateOcclusionQueries(const uint32_t InCapacity)
 {
     return GDISupportsOcclusionQueries() && InCapacity > 0 ? GDynamicGDI->CreateOcclusionQueries(InCapacity) : nullptr;

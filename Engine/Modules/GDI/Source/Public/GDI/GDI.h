@@ -222,6 +222,35 @@ public:
     GDIContextType          ContextType;
 };
 
+
+/**
+ * What a backend offers for recording draws on several threads (parallel
+ * command recording: Vulkan secondary command buffers, D3D12 command lists,
+ * Metal's parallel render encoder), for RenderCore's gate. Nothing records in
+ * parallel yet; this is the capability, not the switch ([Rendering]
+ * ParallelRecording decides that).
+ *
+ *   bSupported            chunks of draws may be recorded on other threads
+ *                         and executed in order on the frame's primary
+ *   bSerialOnly           the chunked path runs, but every chunk on the
+ *                         calling thread (Null: for headless tests)
+ *   bInheritedQueries     an occlusion query begun on the primary may stay
+ *                         open across executed chunks (Vulkan inheritedQueries)
+ *   bInheritedPredication a predicate begun on the primary applies inside
+ *                         chunks (Vulkan inheritedConditionalRendering)
+ *   Mechanism             how, for the log
+ *   Reason                why not, when !bSupported
+ */
+struct GDIParallelRecordingSupport
+{
+    bool        bSupported            = false;
+    bool        bSerialOnly           = false;
+    bool        bInheritedQueries     = false;
+    bool        bInheritedPredication = false;
+    const char* Mechanism             = "";
+    const char* Reason                = "";
+};
+
 class GDIDynamicDriver
 {
 public:
@@ -402,6 +431,18 @@ public:
      * SupportsOcclusionPredication: whether GDISetOcclusionPredicate skips
      * draws, or is ignored and they all draw.
      */
+    /**
+     * Parallel draw recording (GDIGetParallelRecordingSupport): whether this
+     * backend could record draws on several threads and execute them in
+     * order. A backend that cannot keeps this default.
+     */
+    virtual GDIParallelRecordingSupport GetParallelRecordingSupport() const
+    {
+        GDIParallelRecordingSupport Out;
+        Out.Reason = "this backend records every draw on one thread";
+        return Out;
+    }
+
     virtual bool                 SupportsOcclusionQueries() const { return false; }
     virtual bool                 SupportsOcclusionPredication() const { return false; }
     virtual GDIOcclusionQueries* CreateOcclusionQueries(uint32_t /*InCapacity*/) { return nullptr; }
@@ -849,6 +890,14 @@ uint64_t GDIGetPreviousGPUTimestamps(double* OutMilliseconds);   // GDI_GPU_TIME
  */
 bool                 GDISupportsOcclusionQueries();
 bool                 GDISupportsOcclusionPredication();
+
+/**
+ * Parallel draw recording (RenderCore's MULTITHREADED_RENDERING.md, "The
+ * gate"): what the backend and its device offer, decided at device creation.
+ * GDISupportsParallelRecording: bSupported. With no driver, nothing.
+ */
+GDIParallelRecordingSupport GDIGetParallelRecordingSupport();
+bool                 GDISupportsParallelRecording();
 GDIOcclusionQueries* GDICreateOcclusionQueries(uint32_t InCapacity);
 void                 GDIBeginOcclusionRound(GDIOcclusionQueries* InSet, uint32_t InCount);
 void                 GDIBeginOcclusionQuery(GDIOcclusionQueries* InSet, uint32_t InIndex);

@@ -237,9 +237,13 @@ bool LightLabBenchmark::Begin(const GameCore::EntityID InPlayer, const std::stri
         return false;
     }
     std::fprintf(File, "frame,leg,wall_s,dt_ms,frame_ms,game_ms,render_ms,"
-                       "gpu_prepass,gpu_basepass,gpu_ao,gpu_shadows,gpu_lighting,gpu_forward,gpu_post,gpu_total,gpu_capture,"
+                       "gpu_prepass,gpu_basepass,gpu_ao,gpu_shadows,gpu_lighting,gpu_forward,gpu_post,gpu_total,gpu_capture,gpu_particles,"
                        "draw_calls,proxies,culled,occluded,queries,static_drawn,"
-                       "anim_ms,anim_update_ms,anim_updated,anim_reduced,anim_skipped,anim_frozen,anim_offscreen,anim_parallel\n");
+                       "anim_ms,anim_update_ms,anim_updated,anim_reduced,anim_skipped,anim_frozen,anim_offscreen,anim_parallel,"
+                       "wait_ms,queue_ms,"
+                       "cpu_prepass,cpu_basepass,cpu_ao,cpu_shadows,cpu_lighting,cpu_forward,cpu_post,cpu_total,cpu_capture,cpu_particles,"
+                       "draws_prepass,draws_basepass,draws_ao,draws_shadows,draws_lighting,draws_forward,draws_post,draws_total,"
+                       "draws_capture,draws_particles\n");
     CORE_LOG("[LightLab] benchmark: recording to " + InCsvPath)
     return true;
 }
@@ -348,6 +352,14 @@ void LightLabBenchmark::Record(NimbleEngine::GameSession& InSession, const Nimbl
     std::fprintf(File, "%llu,%llu,%llu,%llu,%llu,%llu,", (unsigned long long)DrawCalls, (unsigned long long)Stats.ProxiesLive,
                  (unsigned long long)Stats.ProxiesCulledLastFrame, (unsigned long long)Stats.ProxiesOccludedLastFrame,
                  (unsigned long long)Stats.OcclusionQueriesLastFrame, (unsigned long long)Stats.StaticProxiesDrawn);
-    std::fprintf(File, "%.4f,%.4f,%u,%u,%u,%u,%u,%d\n", Anim.Milliseconds, Anim.UpdateMilliseconds, Anim.Updated, Anim.Reduced,
+    std::fprintf(File, "%.4f,%.4f,%u,%u,%u,%u,%u,%d,", Anim.Milliseconds, Anim.UpdateMilliseconds, Anim.Updated, Anim.Reduced,
                  Anim.Skipped, Anim.Frozen, Anim.Offscreen, Anim.bParallel ? 1 : 0);
+    /* The render thread's side (MULTITHREADED_RENDERING.md, phase 0): its wait,
+     * queueing, and per-stage time and draws. */
+    std::fprintf(File, "%.4f,%.4f,", Stats.WaitMs, Stats.QueueCpuMs);
+    for(uint32_t Timer = 0; Timer < RenderCore::RGT_Count; ++Timer) { std::fprintf(File, "%.4f,", Stats.CpuMs[Timer]); }
+    for(uint32_t Timer = 0; Timer < RenderCore::RGT_Count; ++Timer)
+    {
+        std::fprintf(File, Timer + 1 < RenderCore::RGT_Count ? "%d," : "%d\n", int(Stats.StageDraws[Timer]));
+    }
 }

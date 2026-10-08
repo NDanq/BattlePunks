@@ -233,6 +233,7 @@ public:
     /** Occlusion queries (VKQuery.cpp): a query pool and a host-visible result
      *  buffer per set; predication through VK_EXT_conditional_rendering. */
     bool                 SupportsOcclusionQueries() const override;
+    GDIParallelRecordingSupport GetParallelRecordingSupport() const override;
     bool                 SupportsOcclusionPredication() const override;
     GDIOcclusionQueries* CreateOcclusionQueries(uint32_t InCapacity) override;
     void                 BeginOcclusionRound(GDIOcclusionQueries* InSet, uint32_t InCount) override;

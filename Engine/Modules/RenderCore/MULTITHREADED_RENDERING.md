@@ -1,12 +1,15 @@
-# Multithreaded rendering: plan (future work)
+# Multithreaded rendering: plan
 
-Status: **not started.** Recording the Base Pass's draws on several threads,
-when the backend can. This note is why, what it would take, and in what order.
+Status: **phase 0 (measure and gate) done; phase 1 next.** Recording draws on several
+threads when the backend can: the Base Pass first, then the Shadows views.
+This note is why, what stands in the way, and in what order.
 
 ## The request
 
-- Check at launch whether the driver supports multithreaded rendering.
-- If it does, record the Base Pass's RenderProxy draws on several threads.
+- Check at launch whether the platform supports parallel draw recording, and
+  gate the feature on it.
+- If it does, record the RenderProxy draws of the big stages on several
+  threads.
 
 ## What it would buy
 
@@ -16,78 +19,205 @@ recording draws**. It does not touch:
 - GPU time (the same work reaches the GPU);
 - the game thread, culling, or the editor's 16 ms frame timer.
 
-It pays when `stat unit`'s **Render** is the longest bar *and* that time is
-draw recording -- typically thousands of draws a frame. Below roughly a
-thousand, the fork/join and the per-thread command buffers cost about what
-they save. As of October 2026 a RelWithDebInfo editor holds 60 fps (the frame
-timer's cap) with a ~3 ms GPU frame, so there may be nothing to win yet: measure
-first (phase 1).
+It pays when `stat unit`'s **Wait** is large -- the game thread waiting on
+the render thread -- *and* the render thread's time is draw recording,
+typically thousands of draws a frame. Below roughly a thousand, the fork/join
+and the per-thread command buffers cost about what they save.
 
-"Driver support" is a per-backend constant, not a runtime probe: Vulkan, D3D12
-and Metal can always record in parallel; OpenGL cannot. What launch decides is
-GDI's capability flag, the core count, and a config switch.
+**Measured (October 2026):** a dense street level -- about 3,000 draws a
+frame, from ~65 buildings of ~9 material sections each, drawn in the
+occluder pre-pass, the Base Pass and four shadow cascades -- on an Arc B390
+(Vulkan, Mesa):
+
+| Build | Render thread | Wait | GPU (Total) |
+|---|---|---|---|
+| RelWithDebInfo | 12.5-21 ms | 11.5-19 ms | 10-12 ms |
+| Debug | ~45 ms | ~45 ms | 7-9 ms |
+
+A fence-wait probe in `VKCommandManager::BeginFrame` read ~0.01 ms a frame,
+with no mid-frame flushes: the render thread is recording, not waiting on the
+GPU. Note the GPU is not far behind: once recording is fast, the GPU and the
+single frame in flight (below) are the next limit.
+
+**Baselines (phase 0)**, from `stat frame`'s render-thread columns
+(`RenderStats::CpuMs`, `StageDraws`, `QueueCpuMs`), Arc B390, Vulkan:
+
+| Level, build | Render | Shadows CPU (draws) | Base Pass CPU (draws) | PrePass CPU (draws) | Stages CPU | Queue | GPU Total |
+|---|---|---|---|---|---|---|---|
+| Street, RelWithDebInfo | 12.1-22.9 ms | 7.6-15.7 ms (1,857) | 2.7-4.5 ms (332) | 0.8-1.0 ms (111) | 11.4-21.9 ms | 0.2-0.3 ms | 8.1-9.1 ms |
+| Street, Debug | 35.9-37.0 ms | 24.4-24.9 ms (1,857) | 7.6-8.7 ms (332) | 1.6-1.7 ms (111) | 34.6-36.2 ms | 0.5 ms | 8.0-8.5 ms |
+| LightLab GpuTest, RelWithDebInfo client, occlusion on | 15.1 ms | 6.9 ms (1,525) | 0.7 ms (109) | 2.0 ms (402) | 9.7 ms | 0.6 ms | 4.6 ms |
+| LightLab GpuTest, occlusion off | 16.0 ms | 7.1 ms (1,530) | 2.7 ms (398) | -- | 9.9 ms | 1.0 ms | 4.8 ms |
+
+(The GpuTest rows are means over its benchmark path, `gpu_test_perf.py`'s
+`occlusion` suite; the street's are two half-second windows from the
+`Player`'s start.) What it says:
+
+- **Shadows is the biggest single stage**: the casters drawn once per cascade
+  and local tile, 4-8 us of render thread a draw. It is a first target for
+  parallel recording, with the Base Pass -- not a second one.
+- **Per draw, the Base Pass is dearer** (~8 us in RelWithDebInfo): material
+  binds, more descriptors. Phase 1's per-draw work pays there most.
+- **Queueing is cheap** (0.2-1.0 ms): culling and building the draw lists is
+  not worth threading.
+- The render thread's time outside the stages (GpuTest: ~5 ms of 15) is
+  probes, captures, UI and the frame's bookkeeping: not draw recording.
+
+## The gate
+
+Decided once, at device creation, then switched per frame:
+
+1. **Backend capability**, `GDISupportsParallelRecording()`:
+
+   | Backend | Supported | Needs |
+   |---|---|---|
+   | Vulkan | when dynamic rendering is on (always, at API 1.3) | secondary command buffers (core); `VkCommandBufferInheritanceRenderingInfo` |
+   | D3D12 | always | direct command lists (bundles cannot set targets, barriers or queries) |
+   | Metal | always | `MTLParallelRenderCommandEncoder` |
+   | OpenGL | never | -- |
+   | Null | yes, run serially | lets headless tests exercise the chunked path |
+
+   On Vulkan, `inheritedQueries` and `inheritedConditionalRendering` are
+   enabled where the device has them. Neither is required: every occlusion
+   query and every draw predicate brackets one draw, so it is recorded inside
+   one secondary. They are reported, for later use.
+2. **Config**, `[Rendering] ParallelRecording = Auto | On | Off`. Off is the
+   single-threaded path, kept as the fallback and the pixel reference.
+3. **Worth it**: Auto goes parallel only for a stage over
+   `[Rendering] ParallelMinDraws` draws, with spare cores (the job system's
+   workers).
+
+The verdict, and why, is logged once at startup.
 
 ## Why it is expensive here
 
-`RenderContext::Impl::Issue` drives GDI's global immediate-mode API
-(`GDISetMaterialTexture`, `GDISetUniformBlock`, `Bind`, `GDIDrawObject`), and
-each backend keeps one `CurrentStateData` -- one command buffer, one set of
-bound state -- plus driver-wide bound shaders. Parallel recording needs:
+Every draw goes through one `RenderContext::Impl` and the global `GDynamicGDI`
+(one `CurrentStateData`: one command buffer, one set of bound state), and both
+are written on every draw.
 
-1. **A per-thread GDI recording context** in place of the globals: its own
-   bound state, uniform ring slice, descriptor pool and command buffer --
-   Vulkan secondary command buffers inside the primary's rendering, D3D12
-   extra command lists, Metal `MTLParallelRenderCommandEncoder`.
-2. **No shared mutable state on the draw path.** Shader uniforms are written
-   onto the shared `GDIShader` resources (`VKShaderResource::GetScalars`);
-   the pipeline cache and material caches need concurrent lookups.
-3. **A single-threaded fallback** for OpenGL, and whenever the flag is off.
-4. **Deterministic order and debugging:** secondaries executed in a fixed
-   order so captures and the pixel-for-pixel smoke tests are stable; draw
-   events (RENDERPIPELINE.md, "Draw events") per worker.
+**RenderCore** (`RenderContext.cpp`):
 
-## Cheaper first: the cost of one draw
+- `Impl` state: `BoundVertex`/`BoundPixel`, `MeshObject`/`ViewObject` and
+  their `GDITransform` (`Place`), `PlaceProjection`/`PlaceView` (per shadow
+  view), `OverrideBlock`, the `Scene` block.
+- `BindMaterial` writes the tint and baked-lighting bytes **into the cached
+  `Material::Block`**, shared by every draw of that material.
+- `GDIMesh::SetDrawRange` on a mesh shared by every draw of it.
+- Lazy caches that load or create on a miss, mid-issue: `FindMaterial`,
+  `FindMesh`, `FindTexture`, render targets, default and post shaders.
+- A captured static list is a vector of pre-resolved `DrawCommand`s copied
+  back into the stage policies each frame -- immutable, safe to read
+  concurrently, but not a unit of work: it is issued with everything else.
 
-`VulkanDynamicGDI::BindDrawState`, per draw:
+**GDI** (all backends' shared layer, `GDI.h`/`GDI.cpp`):
 
-- scans the pixel shader's uniforms **by name** (`StartsWith` over a
-  string-keyed map) to pick the descriptor layout group -- fixed per shader
-  pair;
-- allocates and writes a **new descriptor set** (`vkAllocateDescriptorSets` +
-  `vkUpdateDescriptorSets`);
-- repacks the ViewParameters/Transform blocks through **string lookups**.
+- `GDIDynamicDriver` holds the bound shaders, `MaterialBlocks[]` with serials,
+  `MaterialTextures[]`, the instance buffer and indirect arguments.
+- `DrawObject` → `UpdateCoreUniforms` writes ~14 ViewParameters/Transform
+  values **by string into the shared `GDIShader` resources**
+  (`VKShaderResource::Scalars`), then every user uniform the same way.
+- `GetShader<>()` inserts into `LoadedShaderMap` on a miss.
+- `GDIDrawEvent` bumps the plain global `GDebugGroupID`.
+- `GDIInRenderThread()` checks fire on any other thread.
 
-Caching the layout group and pipeline per shader pair, reusing descriptor sets
-for unchanged bindings, and pre-packing static draw lists' GPU state (they are
-already captured once: RENDERPIPELINE.md, "Static draw lists") cut every
-draw's cost on the one thread, with no threading risk, on every backend.
+**Vulkan** (`VulkanDynamicGDI.cpp`, `VKMesh.cpp`):
+
+- `VKMesh` keeps the `CurrentStateData` pointer it was made with and draws on
+  its `CurrentCmd`; it reads the instance buffer from the global driver.
+- `BindDrawState`, per draw: picks the descriptor layout group by
+  `StartsWith` scans (fixed per shader pair); hashes ~25 fields into a
+  pipeline key and looks it up (created on a miss, no lock, matched on the
+  64-bit hash alone); `vkAllocateDescriptorSets` and `vkUpdateDescriptorSets`;
+  re-uploads the view block (per view) and the transform block through string
+  lookups, 512+ bytes of ring; binds the pipeline and set with no redundancy
+  check.
+- One `VKDescriptorAllocator` (pools of 64 sets, one bump-pointer UBO ring), no
+  lock. A `VkDescriptorPool` must be externally synchronised anyway.
+- One command pool, one primary buffer, one fence: **one frame in flight.**
+- Mid-recording interruptions: the instanced-quad ring overflow calls
+  `FlushForReadback` (submit, wait, reopen); compute dispatches and the
+  occlusion round's reset and resolve close and reopen the rendering.
+
+**D3D12** mirrors it (`D3D12CurrentStateData`, one list and allocator, the
+same string packing and unlocked pipeline map and constant-buffer ring), but
+textures own their SRV slots for life, so there is no per-draw descriptor
+work.
+
+**Threads**: EngineCore's `JobSystem` (`CoreJob.h`: `ParallelFor`, groups,
+waits that work) exists, but **no host creates one** -- `GetJobSystem()` is
+null in the launcher and the editor, so animation and texture compression run
+serially today.
+
+## What has to hold for a parallel chunk
+
+- **Order**: draws in issue order within a chunk, chunks executed in order.
+  The Base Pass neither blends nor depends on order (coplanar ties aside);
+  back-to-front translucent stages do.
+- **After the occlusion resolve**: chunks run after `IssuePrePass` resolved
+  the queries; predicates are per draw.
+- **Targets on the primary**: barriers, clears, `vkCmdBeginRendering` (with
+  `VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT`, so no inline clears
+  inside it), stage timestamps and stage draw events stay on the render
+  thread. Each secondary sets its own viewport and scissor and balances its
+  own labels.
+- **Shadows**: views are independent (separate tiles, depth only), one
+  rendering per atlas; a view, or a run of views, is a chunk.
 
 ## Phases
 
-1. **Measure** (~an hour). RelWithDebInfo; `stat unit` (Render), `stat frame`
-   and the per-stage draw counts on LightLab and a stress level (thousands of
-   static and dynamic meshes). Add draw counts to the `stat unit` panel if
-   reading them is awkward. Exit: Render ms and Base Pass draw count per level.
-2. **Per-draw cost on one thread** (days, low risk). Layout/pipeline cache per
-   shader pair; descriptor reuse; pre-packed static draws. Exit: Base Pass
-   recording time per draw, before and after; smoke tests unchanged.
-3. **Parallel recording** (weeks) -- only if Render is still the bottleneck:
-   1. GDI: a recording-context interface and `GDISupportsParallelRecording()`;
-      Vulkan first (secondary command buffers, per-thread descriptor pools
-      and UBO ring slices, a concurrent pipeline cache).
-   2. RenderCore: a job pool; the Base Pass's Static then Dynamic lists split
-      into contiguous chunks per worker, executed in chunk order; a config
-      switch (`[Rendering] ParallelBasePass`) and the single-threaded path as
-      the fallback.
-   3. D3D12 (command lists), then Metal (parallel encoder). OpenGL stays
-      single-threaded.
+0. **Measure and gate** (1-2 days).
+   - Per-stage draw counts and per-stage render-thread CPU time, published in
+     `RenderStats` and shown by `stat frame`.
+   - A `JobSystem` created and registered by the launcher and the editor.
+   - `GDISupportsParallelRecording()` and the device's inheritance features;
+     `[Rendering] ParallelRecording`, `ParallelMinDraws`; the verdict logged.
+   - Baselines, Debug and RelWithDebInfo: LightLab's GpuTest benchmark and a
+     dense street level.
+   Exit: Render ms, per-stage draws and per-stage CPU ms per level; the gate
+   reports correctly on Vulkan and Null.
+1. **Per-draw cost on one thread** (3-5 days, low risk; also removes most
+   shared writes, so it is step zero for threading).
+   - Per-draw ViewParameters/Transform passed as packed values, not string
+     `SetUniform` writes into shared shaders.
+   - The view block uploaded once per view; the transform by push constant or
+     dynamic offset.
+   - Layout group and pipeline cached per shader pair; redundant binds
+     skipped; descriptor sets reused per material (or push descriptors).
+   - Material overrides packed into scratch, never into `Material::Block`.
+   Exit: render-thread ms per draw before and after; smoke tests unchanged.
+2. **GDI recording contexts** (1-2 weeks).
+   - A `GDIRecordingContext`: command buffer, bound state, predicate, label
+     depth, descriptor pool and UBO ring slice. The global API routes to a
+     thread-local current context, so call sites do not change;
+     `VKMesh::Draw` takes the context.
+   - The pipeline cache readable concurrently, keys compared in full,
+     pipelines warmed ahead so a worker never creates one.
+   - Lazy loads resolved into the `DrawCommand` while queueing, on the
+     render thread.
+   - No mid-chunk flush: the instance ring sized per chunk up front.
+   - `GDebugGroupID` atomic; the render-thread checks accept recording
+     workers.
+3. **Parallel issue in RenderCore** (~1 week).
+   - Base Pass: the primary clears, begins rendering for secondaries; the
+     Static then Dynamic issue order split into contiguous chunks; each job
+     records a secondary; the primary executes them in order.
+   - Then Shadows (a chunk per view or run of views, a rendering per atlas).
+   - The PrePass (it owns the queries) and the translucent stages stay
+     serial unless measurement says otherwise. Captures and probes take the
+     same path.
    Exit: identical smoke-test pixels with the switch on and off; Render ms
-   down on the stress level; clean under the Vulkan validation layer.
+   down on both levels; clean under the Vulkan validation layer.
+4. **D3D12, then frames in flight.** D3D12 direct command lists (barriers on
+   the primary list). Separately, more than one frame in flight -- a command
+   pool, fence, descriptor pool and ring per frame -- so the CPU records a
+   frame while the GPU draws the last.
 
 ## Risks
 
 - Threading bugs that show as flicker or a device loss, not a crash: keep the
   switch, and a validation-layer smoke run, from the first commit.
 - More memory: a command buffer, descriptor pool and UBO slice per worker.
-- Draw order: workers must not reorder within a chunk; Base Pass order only
-  matters for coplanar ties (it neither blends nor depends on order).
+- Determinism: shared scratch, or ties in sorting, can make the switch's two
+  sides differ by a pixel; the smoke test compares them exactly.
+- Debug builds: per-draw overhead dominates there; judge gains in
+  RelWithDebInfo, but keep Debug usable.

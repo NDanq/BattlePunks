@@ -100,6 +100,13 @@ public:
      *  them: what lets an occlusion query skip draws (GDISetOcclusionPredicate). */
     inline bool SupportsConditionalRendering() const { return bConditionalRendering; }
 
+    /** Secondary command buffers' inheritance features, enabled when the GPU
+     *  has them (parallel recording's gate, GDIParallelRecordingSupport):
+     *  an occlusion query, or conditional rendering, begun on the primary and
+     *  still in effect inside the secondaries it executes. */
+    inline bool SupportsInheritedQueries() const              { return bInheritedQueries; }
+    inline bool SupportsInheritedConditionalRendering() const { return bInheritedConditionalRendering; }
+
 private:
     bool PickPhysicalDevice();
     bool CreateLogicalDevice();
@@ -113,6 +120,8 @@ private:
     float               MaxSamplerAnisotropy    = 1.0f;    // samplerAnisotropy enabled: the device's limit
     bool                bGraphicsQueueCompute   = false;   // GraphicsQueueFamilyIndex has VK_QUEUE_COMPUTE_BIT
     bool                bConditionalRendering   = false;   // VK_EXT_conditional_rendering, enabled
+    bool                bInheritedQueries       = false;   // inheritedQueries, enabled
+    bool                bInheritedConditionalRendering = false;   // inheritedConditionalRendering, enabled
 
     VkPhysicalDeviceMemoryProperties MemoryProperties{};
 

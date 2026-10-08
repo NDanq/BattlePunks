@@ -543,6 +543,48 @@ namespace RenderCore
             }
         }
 
+        /* The render thread's side (RenderStats::CpuMs, StageDraws, QueueCpuMs):
+         * summed every frame, always, and averaged over the same half second. */
+        double  CpuSums[RGT_Count]    = {};
+        int     CpuSamples[RGT_Count] = {};
+        double  DrawSums[RGT_Count]   = {};
+        int     DrawSamples[RGT_Count] = {};
+        double  QueueSum              = 0.0;
+        int     QueueSamples          = 0;
+        int64_t CpuWindowStartNs      = 0;
+        float   CpuMs[RGT_Count]      = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+        int32_t StageDraws[RGT_Count] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+        float   QueueMs               = -1.0f;
+
+        void AddCpuTimes(const float (&InCpuMs)[RGT_Count], const int32_t (&InDraws)[RGT_Count], const float InQueueMs)
+        {
+            const int64_t Now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch()).count();
+            if(CpuWindowStartNs == 0) { CpuWindowStartNs = Now; }
+            for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer)
+            {
+                if(InCpuMs[Timer] >= 0.0f) { CpuSums[Timer] += InCpuMs[Timer]; ++CpuSamples[Timer]; }
+                if(InDraws[Timer] >= 0)    { DrawSums[Timer] += InDraws[Timer]; ++DrawSamples[Timer]; }
+            }
+            QueueSum += InQueueMs;
+            ++QueueSamples;
+            if(Now - CpuWindowStartNs >= 500'000'000)
+            {
+                for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer)
+                {
+                    CpuMs[Timer]      = CpuSamples[Timer] > 0 ? float(CpuSums[Timer] / CpuSamples[Timer]) : -1.0f;
+                    StageDraws[Timer] = DrawSamples[Timer] > 0 ? int32_t(DrawSums[Timer] / DrawSamples[Timer] + 0.5) : -1;
+                    CpuSums[Timer] = DrawSums[Timer] = 0.0;
+                    CpuSamples[Timer] = DrawSamples[Timer] = 0;
+                }
+                QueueMs = QueueSamples > 0 ? float(QueueSum / QueueSamples) : -1.0f;
+                QueueSum = 0.0;
+                QueueSamples = 0;
+                CpuWindowStartNs = Now;
+                if(bReportsStats) { SetReportedStageTimes(CpuMs, StageDraws, QueueMs); }
+            }
+        }
+
         void ClearGpuTimes()
         {
             for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer) { GpuSums[Timer] = 0.0; GpuSamples[Timer] = 0; GpuMs[Timer] = -1.0f; }
@@ -1067,7 +1109,9 @@ namespace RenderCore
         InContext.SetView(Drawn);
 
         GDIOcclusionQueries* Occlusion = P->PrepareOcclusion(Drawn);
+        const auto QueueStart = std::chrono::steady_clock::now();
         P->QueueDraws(InContext, Drawn, nullptr, VisibleCount, CulledCount, StaticCount, Occlusion);
+        const float QueueMs = float(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - QueueStart).count());
 
         /* The post process stack: the volumes' blend (WorldBridge), its
          * materials by stage and order, then the effects' settings. */
@@ -1088,6 +1132,12 @@ namespace RenderCore
         InContext.SetUnlit(P->ViewMode == ERenderViewMode::Unlit);
         InContext.RenderSceneStages(P->Targets, P->ClearColor, /*bInTimed*/ true, P->bClearGradient ? &P->ClearBottom : nullptr);
         InContext.SetUnlit(false);
+        {
+            float   CpuMs[RGT_Count];
+            int32_t Draws[RGT_Count];
+            InContext.GetStageCpuTimes(CpuMs, Draws);
+            P->AddCpuTimes(CpuMs, Draws, QueueMs);
+        }
         InContext.SetView(P->View);   // unjittered again, for what draws over the picture
 
         /* The targets this frame drew, for the view mode's list; one of them
@@ -1152,7 +1202,8 @@ namespace RenderCore
             std::string Text = Stats.bShow ? FormatStatUnit(Stats) : std::string();
             if(Stats.bShowFrame)
             {
-                Text += (Text.empty() ? "" : "\n\n") + FormatStatFrame(P->GpuMs, InContext.CanTimeGpu());
+                Text += (Text.empty() ? "" : "\n\n") + FormatStatFrame(P->GpuMs, P->CpuMs, P->StageDraws, P->QueueMs,
+                                                                         InContext.CanTimeGpu());
             }
             if(!Stats.Extra.empty())
             {
