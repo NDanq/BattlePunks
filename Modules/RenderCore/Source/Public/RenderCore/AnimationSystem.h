@@ -76,6 +76,16 @@ namespace RenderCore
          * the bone's model-space pose); false if there is no such bone. */
         bool GetBoneWorldPose(GameCore::EntityID InEntity, const char* InBone, GameCore::TransformPose& OutPose) const;
 
+        /*
+         * Who plays a notify's Sound (AnimNotify::Sound) where it fires -- at
+         * its bone, else its entity. RenderCore plays no sound itself:
+         * NimbleEngine's GameSession sets this to the level's AudioWorld.
+         * Unset (the default, or without the Audio module), a notify's sound
+         * is ignored. Called during Tick, on the game thread.
+         */
+        using SoundSinkFn = void (*)(const char* InSound, const EngineCore::Vector3& InAt, void* InUserData);
+        void SetSoundSink(SoundSinkFn InFn, void* InUserData) { SoundSink = InFn; SoundSinkUserData = InUserData; }
+
         /* Bumped whenever an instance is made or rebound: the editor's
          * pose-dependent views (sockets) look again. */
         uint64_t GetGeneration() const { return Generation; }
@@ -175,6 +185,8 @@ namespace RenderCore
         uint64_t                             ViewFrame  = ~0ull;
         Stats                                LastStats;
         std::vector<PendingEffect>           Pending;
+        SoundSinkFn                          SoundSink         = nullptr;
+        void*                                SoundSinkUserData = nullptr;
         std::vector<LiveEffect>              Effects;
         uint64_t                             PreparedFrame = ~0ull;
     };

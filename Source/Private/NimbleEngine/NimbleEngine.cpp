@@ -10,6 +10,7 @@
 #include <system_error>
 #include <vector>
 
+#include "Public/NimbleEngine/AudioFacade.h"
 #include "Public/NimbleEngine/GameModule.h"
 #include "Public/NimbleEngine/Level.h"
 
@@ -493,6 +494,13 @@ namespace NimbleEngine
         /* The game runs in this; the host lends it the two services above. */
         Session = EngineCore::Memory::Alloc<GameSession>(*this, *Scripts, *Rendering);
         Net     = EngineCore::Memory::Alloc<NetHost>();
+
+        /* Sound, unless headless (a dedicated server has no one to hear it).
+         * No device is not a failure: the game runs silently. */
+        if(!Desc.bHeadless)
+        {
+            StartAudio();
+        }
         return true;
     }
 
@@ -801,6 +809,9 @@ namespace NimbleEngine
             EngineCore::Memory::Dealloc(Session);
             Session = nullptr;
         }
+
+        /* After the session: its levels' Worlds, and their voices, are gone. */
+        StopAudio();
 
         if(Scripts)
         {

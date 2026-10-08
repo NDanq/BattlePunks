@@ -54,7 +54,8 @@ namespace GameCore
     /* Same field types as the Lua bindings. */
     using EPropertyType = EScriptFieldType;
 
-    enum EPropertyFlags : uint8_t
+    /* 16 bits: the asset hints filled the first 8. */
+    enum EPropertyFlags : uint16_t
     {
         PF_None     = 0,
         PF_ReadOnly = 1 << 0,   // shown, never written by a tool
@@ -67,6 +68,7 @@ namespace GameCore
         PF_AssetTexture  = 1 << 5,   // a texture asset (*.nmtexture), e.g. a Sky Light's HDRI
         PF_AssetParticleSystem = 1 << 6,   // a particle system (*.nmparticle; RenderCore's ParticleSystemAsset.h)
         PF_AssetAnimation = 1 << 7,   // an animation clip (*.nmanim) or anim state (*.nmanimstate; RenderCore's ANIMATION.md)
+        PF_AssetSound    = 1 << 8,   // a sound (*.nmsound; the Audio module's SoundAsset.h)
     };
 
     enum : size_t
@@ -84,7 +86,7 @@ namespace GameCore
     {
         char          Name[COMPONENT_PROPERTY_NAME_MAX] = {};
         EPropertyType Type   = EPropertyType::Float;
-        uint8_t       Flags  = PF_None;
+        uint16_t      Flags  = PF_None;
         uint32_t      Offset = 0;   // from the start of the component, Owner header included
         uint32_t      Size   = 0;   // sizeof the member; a FixedString's buffer size including the NUL
 
@@ -187,13 +189,13 @@ namespace GameCore
             : Owner(InOwner), Parent(InParent) {}
 
         template<typename TField>
-        void Field(const char* InName, TField TElement::* InMember, const uint8_t InFlags = PF_None)
+        void Field(const char* InName, TField TElement::* InMember, const uint16_t InFlags = PF_None)
         {
             const TElement Probe{};
             AddMember(InName, Probe, &(Probe.*InMember), uint32_t(sizeof(TField)), ScriptFieldTypeOf<TField>::Value, InFlags);
         }
 
-        void Flag(const char* InName, uint8_t TElement::* InMember, const uint8_t InFlags = PF_None)
+        void Flag(const char* InName, uint8_t TElement::* InMember, const uint16_t InFlags = PF_None)
         {
             const TElement Probe{};
             AddMember(InName, Probe, &(Probe.*InMember), uint32_t(sizeof(uint8_t)), EPropertyType::Flag, InFlags);
@@ -201,7 +203,7 @@ namespace GameCore
 
         /* One element of an array member of the struct, as its own field. */
         template<typename TPart, size_t N>
-        void Element(const char* InName, TPart (TElement::* InArray)[N], const size_t InIndex, const uint8_t InFlags = PF_None)
+        void Element(const char* InName, TPart (TElement::* InArray)[N], const size_t InIndex, const uint16_t InFlags = PF_None)
         {
             if(InIndex >= N)
             {
@@ -214,7 +216,7 @@ namespace GameCore
 
     private:
         void AddMember(const char* InName, const TElement& InProbe, const void* InField, const uint32_t InSize,
-                       const EPropertyType InType, const uint8_t InFlags)
+                       const EPropertyType InType, const uint16_t InFlags)
         {
             const uint32_t Offset = uint32_t(reinterpret_cast<const char*>(InField) - reinterpret_cast<const char*>(&InProbe));
             if(ComponentPropertyEntry* Entry = Owner.AddAt(InName, Offset, InSize, InType, InFlags))
@@ -233,7 +235,7 @@ namespace GameCore
     {
     public:
         template<typename TField>
-        void Field(const char* InName, TField T::* InMember, const uint8_t InFlags = PF_None)
+        void Field(const char* InName, TField T::* InMember, const uint16_t InFlags = PF_None)
         {
             Add(InName, InMember, ScriptFieldTypeOf<TField>::Value, InFlags);
         }
@@ -245,7 +247,7 @@ namespace GameCore
          *     Props.Choice("Source", &CollisionComponent::Source, "Bounds component|Render component mesh");
          */
         template<typename TField>
-        void Choice(const char* InName, TField T::* InMember, const char* InLabels, const uint8_t InFlags = PF_None)
+        void Choice(const char* InName, TField T::* InMember, const char* InLabels, const uint16_t InFlags = PF_None)
         {
             static_assert(std::is_same<TField, uint8_t>::value || std::is_same<TField, int32_t>::value,
                           "a choice is a uint8_t or int32_t field");
@@ -265,7 +267,7 @@ namespace GameCore
         }
 
         /* A uint8_t 0/1 flag, shown as a checkbox rather than a number. */
-        void Flag(const char* InName, uint8_t T::* InMember, const uint8_t InFlags = PF_None)
+        void Flag(const char* InName, uint8_t T::* InMember, const uint16_t InFlags = PF_None)
         {
             Add(InName, InMember, EPropertyType::Flag, InFlags);
         }
@@ -273,7 +275,7 @@ namespace GameCore
         /* One element of an array member, as its own field: a list of slots
          * (RenderComponent's materials) without an array property type. */
         template<typename TElement, size_t N>
-        void Element(const char* InName, TElement (T::* InArray)[N], const size_t InIndex, const uint8_t InFlags = PF_None)
+        void Element(const char* InName, TElement (T::* InArray)[N], const size_t InIndex, const uint16_t InFlags = PF_None)
         {
             if(InIndex >= N)
             {
@@ -289,7 +291,7 @@ namespace GameCore
         /* A whole array member as one property, which a tool shows as a list
          * whose entries can be added and removed (ComponentPropertyEntry). */
         template<typename TElement, size_t N>
-        void Array(const char* InName, TElement (T::* InArray)[N], const uint8_t InFlags = PF_None)
+        void Array(const char* InName, TElement (T::* InArray)[N], const uint16_t InFlags = PF_None)
         {
             static_assert(N > 0 && N <= 0xFFFF, "an array property holds 1 to 65535 elements");
             const T Probe{};
@@ -310,7 +312,7 @@ namespace GameCore
          * from the default.
          */
         template<typename TElement, size_t N, typename FBody>
-        void StructArray(const char* InName, TElement (T::* InArray)[N], FBody&& InBody, const uint8_t InFlags = PF_None)
+        void StructArray(const char* InName, TElement (T::* InArray)[N], FBody&& InBody, const uint16_t InFlags = PF_None)
         {
             static_assert(N > 0 && N <= 0xFFFF, "an array property holds 1 to 65535 elements");
             const T Probe{};
@@ -365,7 +367,7 @@ namespace GameCore
         }
 
         template<typename TField>
-        void Add(const char* InName, TField T::* InMember, const EPropertyType InType, const uint8_t InFlags)
+        void Add(const char* InName, TField T::* InMember, const EPropertyType InType, const uint16_t InFlags)
         {
             /* Measured on a default-constructed instance. */
             const T Probe{};
@@ -375,7 +377,7 @@ namespace GameCore
         }
 
         ComponentPropertyEntry* AddAt(const char* InName, const uint32_t InOffset, const uint32_t InSize,
-                                      const EPropertyType InType, const uint8_t InFlags)
+                                      const EPropertyType InType, const uint16_t InFlags)
         {
             size_t Length = 0;
             while(InName != nullptr && InName[Length] != '\0') { ++Length; }

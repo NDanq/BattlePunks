@@ -100,6 +100,7 @@ namespace
     const ProjectKey ModuleKeys[] = {
         { "Modules", "NetCore",     "Networking (NetCore)" },
         { "Modules", "JoltPhysics", "Physics (JoltPhysics)" },
+        { "Modules", "Audio",       "Sound (Audio)" },
     };
 
     /* Ints that are really a choice. The same numbering as DefaultEngine.ini's
@@ -182,6 +183,9 @@ namespace
         { "Modules", "JoltPhysics",       "Physics (JoltPhysics)",
           "Build the game with rigid-body physics on Jolt: Rigid Body and Physics Constraint components simulate. "
           "Off, they load but do not move. Takes effect at the game's next build" },
+        { "Modules", "Audio",             "Sound (Audio)",
+          "Build the game with sound on miniaudio: Audio Source and Audio Listener components, the Audio script "
+          "library and .nmsound assets. Off, they load but are silent. Takes effect at the game's next build" },
     };
 
     bool Same(const QString& InA, const char* InB);
@@ -353,7 +357,8 @@ void ProjectSettingsDialog::BuildProjectPage()
     auto* ModulesNote = new QLabel(QStringLiteral(
         "Optional engine modules the game builds with. A change applies at the game's next build, which "
         "re-configures from this file: close the editor, build, and start it again. This editor was built "
-        "with networking %1 and physics %2.").arg(OnOff(WITH_NETCORE != 0), OnOff(WITH_JOLTPHYSICS != 0)), Page);
+        "with networking %1, physics %2 and sound %3.").arg(OnOff(WITH_NETCORE != 0), OnOff(WITH_JOLTPHYSICS != 0),
+                                                            OnOff(WITH_AUDIO != 0)), Page);
     ModulesNote->setWordWrap(true);
     Form->addRow(ModulesNote);
     for(const ProjectKey& P : ModuleKeys)

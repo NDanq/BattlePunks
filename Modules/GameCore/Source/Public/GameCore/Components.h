@@ -13,6 +13,8 @@
  * This header includes them all. Include a single component's header when
  * that is all a file needs.
  */
+#include "Public/GameCore/Components/AudioListenerComponent.h"
+#include "Public/GameCore/Components/AudioSourceComponent.h"
 #include "Public/GameCore/Components/BoundsComponent.h"
 #include "Public/GameCore/Components/CollisionComponent.h"
 #include "Public/GameCore/Components/NetComponent.h"
