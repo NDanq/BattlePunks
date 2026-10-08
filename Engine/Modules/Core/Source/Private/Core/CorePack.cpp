@@ -16,6 +16,30 @@ namespace
     constexpr uint32_t PACK_MAGIC   = 0x4B41504Eu;   // "NPAK" read as little-endian bytes
     constexpr uint16_t PACK_VERSION = 1;
     constexpr uint16_t PF_Names     = 1;
+    constexpr uint16_t PF_Scrambled = 2;
+
+    /* The scramble's seed. Not a secret worth the name: it only keeps a
+     * pack's text out of a hex viewer. */
+    constexpr uint64_t SCRAMBLE_KEY = 0x4E696D626C655041ull;   // "NimblePA"
+
+    /* XORs InSize bytes with a splitmix64 stream seeded by the blob's file
+     * offset: the same call scrambles and unscrambles. */
+    void Scramble(uint8_t* InOutData, const size_t InSize, const uint64_t InOffset)
+    {
+        uint64_t State = SCRAMBLE_KEY ^ (InOffset * 0x9E3779B97F4A7C15ull);
+        for(size_t Index = 0; Index < InSize; Index += 8)
+        {
+            State += 0x9E3779B97F4A7C15ull;
+            uint64_t Word = State;
+            Word = (Word ^ (Word >> 30)) * 0xBF58476D1CE4E5B9ull;
+            Word = (Word ^ (Word >> 27)) * 0x94D049BB133111EBull;
+            Word ^= Word >> 31;
+            for(size_t Byte = 0; Byte < 8 && Index + Byte < InSize; ++Byte)
+            {
+                InOutData[Index + Byte] ^= uint8_t(Word >> (8 * Byte));
+            }
+        }
+    }
 
     uint64_t Fnv1a64(const uint8_t* InData, const size_t InSize)
     {
@@ -92,7 +116,7 @@ uint64_t HashPackPath(const std::string& InPath)
 }
 
 bool WritePackFile(const std::string& InFile, const std::string& InName, const std::vector<PackInput>& InEntries,
-                   const bool bInNames, std::string* OutError)
+                   const bool bInNames, const bool bInScramble, std::string* OutError)
 {
     const auto Fail = [OutError](const std::string& InWhy)
     {
@@ -141,7 +165,7 @@ bool WritePackFile(const std::string& InFile, const std::string& InName, const s
     std::vector<uint8_t> Head;
     Put(Head, PACK_MAGIC, 4);
     Put(Head, PACK_VERSION, 2);
-    Put(Head, bInNames ? PF_Names : 0, 2);
+    Put(Head, (bInNames ? PF_Names : 0) | (bInScramble ? PF_Scrambled : 0), 2);
     PutString(Head, InName);
 
     /* Offsets are known once the tables' size is: measure them first. */
@@ -153,9 +177,11 @@ bool WritePackFile(const std::string& InFile, const std::string& InName, const s
     }
     uint64_t Offset = uint64_t(Head.size() + BlobTable + Tail);
 
+    std::vector<uint64_t> BlobOffsets;
     Put(Head, Blobs.size(), 4);
     for(const std::vector<uint8_t>* Bytes : Blobs)
     {
+        BlobOffsets.push_back(Offset);
         Put(Head, Offset, 8);
         Put(Head, Bytes->size(), 8);
         Offset += Bytes->size();
@@ -183,8 +209,16 @@ bool WritePackFile(const std::string& InFile, const std::string& InName, const s
         return Fail("cannot write " + Temporary);
     }
     bool bWritten = appFileWrite(File, Head.data(), Head.size()) == Head.size();
-    for(const std::vector<uint8_t>* Bytes : Blobs)
+    std::vector<uint8_t> Scrambled;
+    for(size_t Index = 0; Index < Blobs.size(); ++Index)
     {
+        const std::vector<uint8_t>* Bytes = Blobs[Index];
+        if(bInScramble)
+        {
+            Scrambled = *Bytes;
+            Scramble(Scrambled.data(), Scrambled.size(), BlobOffsets[Index]);
+            Bytes = &Scrambled;
+        }
         bWritten = bWritten && (Bytes->empty() || appFileWrite(File, Bytes->data(), Bytes->size()) == Bytes->size());
     }
     appFileClose(File);
@@ -256,7 +290,7 @@ std::shared_ptr<PackFileProvider> PackFileProvider::Load(std::vector<uint8_t> In
         OutError = "the pack is truncated or malformed";
         return nullptr;
     }
-    (void)Flags;
+    Pack->bScrambled = (Flags & PF_Scrambled) != 0;
     return Pack;
 }
 
@@ -269,6 +303,10 @@ bool PackFileProvider::ReadAll(const std::string& InPath, std::vector<uint8_t>& 
     }
     const Blob& Each = Blobs[Found->second];
     OutBytes.assign(Data.begin() + std::ptrdiff_t(Each.Offset), Data.begin() + std::ptrdiff_t(Each.Offset + Each.Size));
+    if(bScrambled)
+    {
+        Scramble(OutBytes.data(), OutBytes.size(), Each.Offset);
+    }
     return true;
 }
 
@@ -294,6 +332,22 @@ std::vector<std::pair<uint64_t, std::string>> PackFileProvider::ListEntries() co
     }
     std::sort(Out.begin(), Out.end());
     return Out;
+}
+
+bool HashedMemoryProvider::ReadAll(const std::string& InPath, std::vector<uint8_t>& OutBytes)
+{
+    const auto Found = Files.find(HashPackPath(InPath));
+    if(Found == Files.end() || !Found->second)
+    {
+        return false;
+    }
+    OutBytes = *Found->second;
+    return true;
+}
+
+bool HashedMemoryProvider::Exists(const std::string& InPath)
+{
+    return Files.count(HashPackPath(InPath)) != 0;
 }
 
 int MountPackFiles(IFileProvider& InProvider, const std::string& InDirectory)
@@ -335,7 +389,7 @@ int MountPackFiles(IFileProvider& InProvider, const std::string& InDirectory)
             continue;
         }
         CORE_LOG("Content pack " + Path + ": " + std::to_string(Pack->GetEntryCount()) + " file(s)"
-                 + (Pack->HasNames() ? ", with names" : ""))
+                 + (Pack->HasNames() ? ", with names" : "") + (Pack->IsScrambled() ? ", scrambled" : ""))
         ++Mounted;
     }
     return Mounted;

@@ -1,7 +1,7 @@
 /*
  * NimblePak: makes and lists content packs (Core's CorePack.h).
  *
- *   NimblePak pack <manifest> <out.nmpak> <name> [--names]
+ *   NimblePak pack <manifest> <out.nmpak> <name> [--names] [--strip] [--scramble]
  *   NimblePak list <pack.nmpak>
  *
  * A manifest is one entry per line, tab separated -- what the build writes
@@ -13,6 +13,14 @@
  * --names keeps each path in the pack (a debug-info build's); without it the
  * pack holds only their hashes. `list` prints each entry's hash, size, and
  * path where the pack carries it.
+ *
+ * --strip (a Shipping build's) packs what the game runs, not what a person
+ * reads: a .lua file, and a script or UI graph's generated Lua, as stripped
+ * Lua bytecode -- no comments, local names or line numbers -- and a .ini
+ * without its comment and blank lines.
+ *
+ * --scramble (a Shipping build's) XORs each entry's bytes (CorePack.h), so
+ * what content names inside itself does not show in a hex viewer.
  */
 
 #include <algorithm>
@@ -23,6 +31,13 @@
 
 #include "Public/Core/CorePack.h"
 #include "Public/Core/CorePlatform.h"
+#include "Public/GameCore/GraphText.h"
+
+extern "C"
+{
+#include "lua.h"
+#include "lauxlib.h"
+}
 
 namespace
 {
@@ -32,6 +47,92 @@ namespace
     {
         const auto Text = InPath.generic_u8string();
         return std::string(Text.begin(), Text.end());
+    }
+
+    bool EndsWith(const std::string& InText, const char* InSuffix)
+    {
+        const std::string Suffix = InSuffix;
+        if(InText.size() < Suffix.size()) { return false; }
+        for(size_t Index = 0; Index < Suffix.size(); ++Index)
+        {
+            const char Char = InText[InText.size() - Suffix.size() + Index];
+            if((Char >= 'A' && Char <= 'Z' ? char(Char - 'A' + 'a') : Char) != Suffix[Index]) { return false; }
+        }
+        return true;
+    }
+
+    int WriteChunk(lua_State*, const void* InData, const size_t InSize, void* InOut)
+    {
+        auto* Out = static_cast<std::vector<uint8_t>*>(InOut);
+        Out->insert(Out->end(), static_cast<const uint8_t*>(InData), static_cast<const uint8_t*>(InData) + InSize);
+        return 0;
+    }
+
+    /* InSource compiled and dumped stripped. False, with the reason, if it does not compile. */
+    bool CompileLua(const std::string& InSource, const std::string& InName, std::vector<uint8_t>& OutBytes, std::string& OutError)
+    {
+        lua_State* State = luaL_newstate();
+        if(!State) { OutError = "out of memory"; return false; }
+        bool bOk = luaL_loadbuffer(State, InSource.data(), InSource.size(), ("=" + InName).c_str()) == LUA_OK;
+        if(bOk)
+        {
+            OutBytes.clear();
+            bOk = lua_dump(State, &WriteChunk, &OutBytes, 1) == 0;
+            if(!bOk) { OutError = "lua_dump failed"; }
+        }
+        else
+        {
+            OutError = lua_tostring(State, -1);
+        }
+        lua_close(State);
+        return bOk;
+    }
+
+    /* A Shipping pack's form of one file; false only for a script that does not compile. */
+    bool Strip(EngineCore::PackInput& InOut)
+    {
+        const std::string Text(InOut.Bytes.begin(), InOut.Bytes.end());
+        std::string Lua, Error;
+        if(EndsWith(InOut.Path, ".lua"))
+        {
+            Lua = Text;
+        }
+        else if(EndsWith(InOut.Path, ".script.nmgraph") || EndsWith(InOut.Path, ".ui.nmgraph"))
+        {
+            if(!GameCore::ExtractGraphGeneratedCode(Text, ".lua", Lua))
+            {
+                std::fprintf(stderr, "NimblePak: %s has no generated Lua (save it in the editor); packed as it is\n", InOut.Path.c_str());
+                return true;
+            }
+        }
+        else if(EndsWith(InOut.Path, ".ini"))
+        {
+            std::string Kept;
+            size_t Start = 0;
+            while(Start < Text.size())
+            {
+                size_t End = Text.find('\n', Start);
+                if(End == std::string::npos) { End = Text.size(); }
+                const std::string Line = Text.substr(Start, End - Start);
+                Start = End + 1;
+                const size_t First = Line.find_first_not_of(" \t\r");
+                if(First == std::string::npos || Line[First] == ';' || Line[First] == '#') { continue; }
+                Kept += Line + "\n";
+            }
+            InOut.Bytes.assign(Kept.begin(), Kept.end());
+            return true;
+        }
+        else
+        {
+            return true;
+        }
+
+        if(!CompileLua(Lua, "?", InOut.Bytes, Error))
+        {
+            std::fprintf(stderr, "NimblePak: %s does not compile: %s\n", InOut.Path.c_str(), Error.c_str());
+            return false;
+        }
+        return true;
     }
 
     bool ReadManifest(const std::string& InManifest, std::vector<EngineCore::PackInput>& OutInputs)
@@ -106,23 +207,31 @@ namespace
         return true;
     }
 
-    int Pack(const std::string& InManifest, const std::string& InOut, const std::string& InName, const bool bInNames)
+    int Pack(const std::string& InManifest, const std::string& InOut, const std::string& InName, const bool bInNames,
+             const bool bInStrip, const bool bInScramble)
     {
         std::vector<EngineCore::PackInput> Inputs;
         if(!ReadManifest(InManifest, Inputs)) { return 1; }
+        if(bInStrip)
+        {
+            for(EngineCore::PackInput& Input : Inputs)
+            {
+                if(!Strip(Input)) { return 1; }
+            }
+        }
 
         std::error_code Error;
         fs::create_directories(fs::u8path(InOut).parent_path(), Error);
         std::string Why;
-        if(!EngineCore::WritePackFile(InOut, InName, Inputs, bInNames, &Why))
+        if(!EngineCore::WritePackFile(InOut, InName, Inputs, bInNames, bInScramble, &Why))
         {
             std::fprintf(stderr, "NimblePak: %s: %s\n", InOut.c_str(), Why.c_str());
             return 1;
         }
         size_t Bytes = 0;
         for(const EngineCore::PackInput& Input : Inputs) { Bytes += Input.Bytes.size(); }
-        std::printf("NimblePak: %s -- %zu file(s), %zu bytes of content%s\n", InOut.c_str(), Inputs.size(), Bytes,
-                    bInNames ? ", with names" : "");
+        std::printf("NimblePak: %s -- %zu file(s), %zu bytes of content%s%s%s\n", InOut.c_str(), Inputs.size(), Bytes,
+                    bInNames ? ", with names" : "", bInStrip ? ", stripped" : "", bInScramble ? ", scrambled" : "");
         return 0;
     }
 
@@ -137,8 +246,8 @@ namespace
             std::fprintf(stderr, "NimblePak: %s: %s\n", InPack.c_str(), Why.empty() ? "cannot read" : Why.c_str());
             return 1;
         }
-        std::printf("%s: pack '%s', %zu file(s)%s\n", InPack.c_str(), Pack->GetName().c_str(), Pack->GetEntryCount(),
-                    Pack->HasNames() ? "" : " (no names: a Shipping pack)");
+        std::printf("%s: pack '%s', %zu file(s)%s%s\n", InPack.c_str(), Pack->GetName().c_str(), Pack->GetEntryCount(),
+                    Pack->HasNames() ? "" : " (no names: a Shipping pack)", Pack->IsScrambled() ? ", scrambled" : "");
         for(const auto& Entry : Pack->ListEntries())
         {
             std::printf("  %016llx  %s\n", static_cast<unsigned long long>(Entry.first), Entry.second.c_str());
@@ -153,13 +262,15 @@ int main(int argc, char** argv)
     if(Args.size() >= 4 && Args[0] == "pack")
     {
         const bool bNames = std::find(Args.begin(), Args.end(), "--names") != Args.end();
-        return Pack(Args[1], Args[2], Args[3], bNames);
+        const bool bStrip    = std::find(Args.begin(), Args.end(), "--strip") != Args.end();
+        const bool bScramble = std::find(Args.begin(), Args.end(), "--scramble") != Args.end();
+        return Pack(Args[1], Args[2], Args[3], bNames, bStrip, bScramble);
     }
     if(Args.size() == 2 && Args[0] == "list")
     {
         return List(Args[1]);
     }
-    std::fprintf(stderr, "usage: NimblePak pack <manifest> <out.nmpak> <name> [--names]\n"
+    std::fprintf(stderr, "usage: NimblePak pack <manifest> <out.nmpak> <name> [--names] [--strip] [--scramble]\n"
                          "       NimblePak list <pack.nmpak>\n");
     return 2;
 }

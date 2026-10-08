@@ -1,6 +1,7 @@
 #ifndef GAMECORE_SCRIPTENGINE_H
 #define GAMECORE_SCRIPTENGINE_H
 
+#include <cstddef>
 #include <cstdint>
 
 #include "Public/GameCore/EntityID.h"
@@ -111,6 +112,9 @@ namespace GameCore
         uint32_t GetErrorCount() const;
 
     private:
+        /* Loads InSize bytes of source or bytecode as one chunk and runs it. */
+        bool RunBuffer(const char* InSource, size_t InSize, const char* InChunkName);
+
         struct Impl;
         Impl* P;
     };

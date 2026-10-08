@@ -263,7 +263,10 @@ namespace GameCore
             const char Each = InPath[Length - ExtLength + Index];
             bGraph = (Each >= 'A' && Each <= 'Z' ? char(Each - 'A' + 'a') : Each) == GRAPH_EXTENSION[Index];
         }
-        if(bGraph)
+        /* A Shipping pack holds a script graph as the stripped bytecode of
+         * its Lua (NimblePak), which loads as any chunk does. */
+        const bool bBytecode = Text.compare(0, std::strlen(LUA_SIGNATURE), LUA_SIGNATURE) == 0;
+        if(bGraph && !bBytecode)
         {
             if(!ExtractGraphGeneratedCode(Text, ".lua", OutSource))
             {
@@ -497,7 +500,8 @@ namespace GameCore
             return false;
         }
 
-        return RunString(Source.c_str(), InPath);
+        /* By its size: a Shipping pack's script is bytecode, NULs and all. */
+        return RunBuffer(Source.data(), Source.size(), InPath);
     }
 
     bool ScriptEngine::RunString(const char* InSource, const char* InChunkName)
@@ -507,11 +511,15 @@ namespace GameCore
             GAMECORE_LOG_ERROR("RunString called before Initialize(); ignoring")
             return false;
         }
+        return RunBuffer(InSource, std::strlen(InSource), InChunkName);
+    }
 
+    bool ScriptEngine::RunBuffer(const char* InSource, const size_t InSize, const char* InChunkName)
+    {
         LuaStackGuard Guard(P->State);
 
         const std::string ChunkLabel = InChunkName ? (std::string("@") + InChunkName) : std::string("=(RunString)");
-        if(luaL_loadbuffer(P->State, InSource, std::strlen(InSource), ChunkLabel.c_str()) != LUA_OK)
+        if(luaL_loadbuffer(P->State, InSource, InSize, ChunkLabel.c_str()) != LUA_OK)
         {
             const char* ErrorText = lua_tostring(P->State, -1);
             GAMECORE_LOG_ERROR(std::string("Lua load error (") + (InChunkName ? InChunkName : "?") + "): "
