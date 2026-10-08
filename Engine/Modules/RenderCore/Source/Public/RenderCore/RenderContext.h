@@ -401,6 +401,9 @@ namespace RenderCore
          * counted) -- what RenderStats::CpuMs and StageDraws average. */
         void GetStageCpuTimes(float (&OutCpuMs)[RGT_Count], int32_t (&OutDraws)[RGT_Count]) const;
 
+        /* Stages recorded in parallel chunks so far (MULTITHREADED_RENDERING.md, phase 3). */
+        uint64_t GetParallelPassCount() const;
+
         /* Both DrawMesh overloads: bInEvery puts InSlots[0] in every slot. */
         bool DrawMeshSections(const RenderTransform& InTransform, const char* InMeshPath, EngineCore::Color InTint,
                               const char* const* InSlots, uint32_t InSlotCount, bool bInEvery,

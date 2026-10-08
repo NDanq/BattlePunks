@@ -29,6 +29,7 @@
 #include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/Core/CoreImage.h"
+#include "Public/Core/CoreJob.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CorePlatform.h"
 #include "Public/Core/CoreThread.h"
@@ -2763,6 +2764,146 @@ static void TestShadowsOnGpu()
         Rend.Shutdown();
     }
     if(Enabled) { Enabled->SetFromString("1"); }
+    SetFileProvider(PreviousProvider);
+}
+#endif // WITH_EDITOR
+
+#if WITH_EDITOR
+/*
+ * Parallel draw recording on the GPU (NIMBLE_SMOKE_GPU=Vulkan;
+ * MULTITHREADED_RENDERING.md, phase 3): a floor and a grid of boxes under a
+ * cascaded sun, captured with [Rendering] ParallelRecording Off and On. The
+ * chunks record the same draws in the same order into secondaries, so the
+ * two images are the same byte for byte, and only the On capture counts
+ * parallel passes.
+ */
+static void TestParallelRecordingOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[parallel recording on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[parallel recording on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    /* Workers before the renderer, so the gate sees somewhere to run chunks. */
+    EngineCore::JobSystem Jobs(4);
+    EngineCore::JobSystem* PreviousJobs = EngineCore::GetJobSystem();
+    EngineCore::SetJobSystem(&Jobs);
+
+    ConfigVar* ModeVar  = ConfigFindVarByPath("Rendering.ParallelRecording");
+    ConfigVar* MinDraws = ConfigFindVarByPath("Rendering.ParallelMinDraws");
+    Expect(ModeVar != nullptr && MinDraws != nullptr, "[Rendering] ParallelRecording and ParallelMinDraws are config vars");
+
+    Renderer Rend;
+    const bool bInit = ModeVar && MinDraws && Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = RenderView::MakePerspective(Viewport, Vector3(0.0, 1400.0, -1600.0), Vector3(0.0, -1400.0, 1600.0),
+                                                            50.0f, 10.0f, 8000.0f);
+        Rend.SetViewOverride(&View);
+        GameCore::World World;
+        Rend.BindWorld(World);
+
+        const auto Placed = [&World](const std::string& InName, const Vector3& InPosition, const Vector3& InRotation, const Vector3& InScale)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName.c_str());
+            GameCore::TransformComponent Transform;
+            Transform.Position = InPosition;
+            Transform.Rotation = InRotation;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            return Each;
+        };
+        const auto Mesh = [](const char* InPath)
+        {
+            RenderComponent Render;
+            std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", InPath);
+            return Render;
+        };
+
+        Placed("Floor", Vector3(), Vector3(), Vector3(4000.0, 1.0, 4000.0)).AddComponent(Mesh("Engine/Content/Meshes/Plane.nmmesh"));
+        for(int Z = 0; Z < 20; ++Z)
+        {
+            for(int X = 0; X < 20; ++X)
+            {
+                const double Height = 30.0 + 10.0 * ((X * 7 + Z * 3) % 9);
+                Placed("Box" + std::to_string(Z * 20 + X), Vector3(-1520.0 + X * 160.0, Height * 0.5, -1520.0 + Z * 160.0),
+                       Vector3(0.0, (X + Z) * 9.0, 0.0), Vector3(60.0, Height, 60.0))
+                    .AddComponent(Mesh("Engine/Content/Meshes/Box.nmmesh"));
+            }
+        }
+        DirectionalLightComponent SunInit;
+        SunInit.ShadowTechnique = LST_Cascaded;
+        SunInit.ShadowDistance  = 5000.0f;
+        Placed("Sun", Vector3(), Vector3(50.0, 60.0, 0.0), Vector3(1.0, 1.0, 1.0)).AddComponent(SunInit);
+        Placed("Sky", Vector3(), Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(SkyLightComponent());
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](EngineCore::Image& OutPixels)
+        {
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            const uint64_t Request = Rend.RequestSceneCapture();
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto Passes = [&Rend]() { RenderStats Stats; Rend.GetStats(Stats); return Stats.ParallelPasses; };
+        const auto Differing = [](const EngineCore::Image& InA, const EngineCore::Image& InB)
+        {
+            int Out = 0;
+            for(int Y = 0; Y < int(InA.GetHeight()); ++Y)
+            {
+                Out += std::memcmp(InA.GetData() + InA.GetStride() * Y, InB.GetData() + InB.GetStride() * Y,
+                                   InA.GetWidth() * BytesPerPixel(InA.GetFormat())) != 0 ? 1 : 0;
+            }
+            return Out;
+        };
+
+        EngineCore::Image Serial, Parallel, SerialAgain;
+        ModeVar->SetString("Off");
+        const uint64_t PassesBefore = Passes();
+        const bool bSerial = Capture(Serial);
+        const uint64_t PassesSerial = Passes();
+        ModeVar->SetString("On");
+        MinDraws->SetFromString("1");
+        const bool bParallel = Capture(Parallel);
+        const uint64_t PassesParallel = Passes();
+        ModeVar->SetString("Off");
+        const bool bSerialAgain = Capture(SerialAgain);
+        std::printf("    parallel passes: %llu off, %llu on\n", (unsigned long long)(PassesSerial - PassesBefore),
+                    (unsigned long long)(PassesParallel - PassesSerial));
+        Expect(bSerial && bParallel && bSerialAgain, "the scene is captured with parallel recording off, on and off again");
+        Expect(PassesSerial == PassesBefore, "Off records no stage in parallel");
+        Expect(PassesParallel > PassesSerial, "On records the base pass and the shadows in parallel");
+        if(bSerial && bParallel && bSerialAgain)
+        {
+            const int Rows = Differing(Serial, Parallel);
+            std::printf("    rows differing serial vs parallel: %d, serial vs serial: %d\n", Rows, Differing(Serial, SerialAgain));
+            Expect(Differing(Serial, SerialAgain) == 0, "the scene captures the same twice (the comparison means something)");
+            Expect(Rows == 0, "recorded in parallel, the image is the same byte for byte");
+        }
+
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    if(ModeVar)  { ModeVar->SetString("Auto"); }
+    if(MinDraws) { MinDraws->SetFromString("256"); }
+    EngineCore::SetJobSystem(PreviousJobs);
     SetFileProvider(PreviousProvider);
 }
 #endif // WITH_EDITOR
@@ -6205,6 +6346,7 @@ int main()
     TestMaterials();
     TestMaterialsOnGpu();
     TestShadowsOnGpu();
+    TestParallelRecordingOnGpu();
     TestPostProcessOnGpu();
     TestBloomHdrOnGpu();
     TestParticlesOnGpu();

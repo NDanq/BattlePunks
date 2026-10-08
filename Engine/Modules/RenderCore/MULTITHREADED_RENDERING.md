@@ -1,6 +1,6 @@
 # Multithreaded rendering: plan
 
-Status: **phases 0 (measure and gate), 1 (per-draw cost) and 2 (GDI recording contexts) done; phase 3 next.** Recording draws on several
+Status: **phases 0 (measure and gate), 1 (per-draw cost), 2 (GDI recording contexts) and 3 (parallel issue: Base Pass and Shadows) done; phase 4 next.** Recording draws on several
 threads when the backend can: the Base Pass first, then the Shadows views.
 This note is why, what stands in the way, and in what order.
 
@@ -249,16 +249,58 @@ serially today.
    Moved to phase 3: resolving RenderCore's lazy loads before a parallel
    stage, and per-context issue scratch (material overrides, the mesh and
    view objects, `Material::Block`).
-3. **Parallel issue in RenderCore** (~1 week).
-   - Base Pass: the primary clears, begins rendering for secondaries; the
-     Static then Dynamic issue order split into contiguous chunks; each job
-     records a secondary; the primary executes them in order.
-   - Then Shadows (a chunk per view or run of views, a rendering per atlas).
-   - The PrePass (it owns the queries) and the translucent stages stay
-     serial unless measurement says otherwise. Captures and probes take the
-     same path.
-   Exit: identical smoke-test pixels with the switch on and off; Render ms
-   down on both levels; clean under the Vulkan validation layer.
+3. **Parallel issue in RenderCore** -- done (Vulkan; Null runs the chunks
+   serially). What there is (RenderContext.cpp):
+   - `IssueInParallel`: given a stage's draws in issue order (Static, then
+     Dynamic, then Stationary -- the serial order), the gate's verdict for
+     that many draws, it resolves what the draws would otherwise load lazily
+     on the render thread (`ResolveForParallel`: meshes, materials and their
+     textures, the lightmap, each material's pass), splits the list into
+     contiguous chunks of at least 32 draws (at most one per thread, the
+     render thread included, and `GDI_PARALLEL_CHUNKS_MAX`), opens a GDI parallel pass and records
+     each chunk on the job system (`ParallelFor`); the pass executes them in
+     chunk order, so the command stream is the serial one's.
+   - Per worker issue scratch (`RenderIssueScratch`, thread-local): the
+     material block and overrides, the mesh object, the draw label state --
+     what the serial path kept on `RenderContext::Impl`.
+   - Base Pass: tried first; anything it cannot take (a draw that is not
+     resolvable) falls back to the serial issue, whole.
+   - Shadows: per atlas, one rendering; the views' casters form one list,
+     a chunk switching viewport and view matrices where its view changes.
+     Falls back to the serial per-view loop the same way.
+   - The PrePass (it owns the queries), the translucent stages, captures and
+     probes stay serial: below the threshold, or not measured to matter.
+   - `[Rendering] ParallelRecording` and `ParallelMinDraws` are read again
+     when they change (the console, an ini reload), not only at startup.
+     `ParallelMinDraws` defaults to 256; `RenderStats::ParallelPasses`
+     counts the passes recorded.
+
+   Verified: RenderCore's GPU smoke test renders a floor and 400 boxes under
+   a cascaded sun with the switch off, on (two parallel passes a frame) and
+   off again: the three images are identical byte for byte. All smoke tests
+   pass on Vulkan and Null; the validation layer reports only the two
+   messages it did before phase 0 (`vkCmdDraw-None-09600` in the shadows
+   test, `vkDestroyDevice-device-05137` at teardown).
+
+   | Level, build | Stages CPU Off -> Auto | Shadows | Base Pass | Frame |
+   |---|---|---|---|---|
+   | Street, RelWithDebInfo | 5.3-5.5 -> 4.2-4.3 ms | 2.7-2.8 -> 1.9 ms | 2.0-2.1 -> 1.7 ms | editor's 60 fps timer both ways; render 5.7-6.0 -> 4.9-5.0 ms |
+   | Street, Debug | 16.0-16.1 -> 5.4-5.9 ms | 7.7 -> 2.3-2.5 ms | 7.0 -> 2.0 ms | 28.5-28.6 -> 17.3-18.2 ms |
+   | GpuTest, occlusion on | 4.55 -> 3.58 ms | 3.30 -> 2.22 ms | 0.46 -> 0.48 ms (108 draws: serial) | 10.3 -> 9.6 ms |
+   | GpuTest, occlusion off | 5.10 -> 3.94 ms | 3.29 -> 2.27 ms | 1.63 -> 1.40 ms (409) | 11.75 -> 10.75 ms |
+
+   (Arc B390, 15 workers; the street two half-second windows, GpuTest the
+   mean of two benchmark runs each. The Debug street's Off column is slower
+   than phase 1's table: that build had been rebuilt with phase 2's
+   explicit-input draw path.) What it says:
+   - Debug gains most: there the per-draw work dominates and divides.
+   - In RelWithDebInfo a stage's chunks are short (32-150 draws, tens of
+     microseconds each): what remains is serial -- the resolve, the
+     fork and join, `vkCmdExecuteCommands` and re-opening the rendering --
+     about 1 ms of the 2 the Shadows still take. Fewer, larger chunks, and
+     resolving once per frame instead of per stage, are what is left there.
+   - GpuTest's frame is now bound by waiting for the GPU (`wait_ms` 8-10
+     of 10): the CPU's next win is phase 4's frames in flight.
 4. **D3D12, then frames in flight.** D3D12 direct command lists (barriers on
    the primary list). Separately, more than one frame in flight -- a command
    pool, fence, descriptor pool and ring per frame -- so the CPU records a
