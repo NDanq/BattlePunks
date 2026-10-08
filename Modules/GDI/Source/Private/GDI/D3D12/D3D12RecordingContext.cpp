@@ -82,26 +82,40 @@ bool D3D12DynamicGDI::BeginParallelPass(const uint32_t InChunks, GDIRecordingCon
     {
         return false;
     }
-    ID3D12Device* Dev = DeviceObj->GetDevice();
+    ID3D12Device*  Dev  = DeviceObj->GetDevice();
+    const uint32_t Slot = FrameSlot;
 
-    /* The contexts, made on first need and kept; a list is made open, and
-     * closed here so each pass can reopen it. */
+    /* The contexts, made on first need and kept, and each one's allocator for
+     * this frame slot likewise; a list is made open, and closed here so each
+     * pass can reopen it. */
     while(RecordingContexts.size() < InChunks)
     {
-        auto* Context = new D3D12RecordingContext();
-        if(FAILED(Dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&Context->Allocator)))
-           || FAILED(Dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, Context->Allocator.Get(), nullptr,
-                                            IID_PPV_ARGS(&Context->List))))
+        RecordingContexts.push_back(new D3D12RecordingContext());
+    }
+    for(uint32_t Chunk = 0; Chunk < InChunks; ++Chunk)
+    {
+        D3D12RecordingContext& Context = *RecordingContexts[Chunk];
+        const std::string Name = "Recording Context " + std::to_string(Chunk);
+        if(!Context.Allocators[Slot])
         {
-            GDI_LOG("[D3D12DynamicGDI] a recording context could not be made; recording serially")
-            delete Context;
-            return false;
+            if(FAILED(Dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&Context.Allocators[Slot]))))
+            {
+                GDI_LOG("[D3D12DynamicGDI] a recording context's allocator could not be made; recording serially")
+                return false;
+            }
+            D3D12Util::SetObjectName(Context.Allocators[Slot].Get(), Name + " Allocator " + std::to_string(Slot));
         }
-        Context->List->Close();
-        const std::string Name = "Recording Context " + std::to_string(RecordingContexts.size());
-        D3D12Util::SetObjectName(Context->Allocator.Get(), Name + " Allocator");
-        D3D12Util::SetObjectName(Context->List.Get(), Name);
-        RecordingContexts.push_back(Context);
+        if(!Context.List)
+        {
+            if(FAILED(Dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, Context.Allocators[Slot].Get(), nullptr,
+                                             IID_PPV_ARGS(&Context.List))))
+            {
+                GDI_LOG("[D3D12DynamicGDI] a recording context's list could not be made; recording serially")
+                return false;
+            }
+            Context.List->Close();
+            D3D12Util::SetObjectName(Context.List.Get(), Name);
+        }
     }
 
     /* Every chunk's list reopened before anything is recorded: a failure here
@@ -109,7 +123,7 @@ bool D3D12DynamicGDI::BeginParallelPass(const uint32_t InChunks, GDIRecordingCon
     for(uint32_t Chunk = 0; Chunk < InChunks; ++Chunk)
     {
         D3D12RecordingContext& Context = *RecordingContexts[Chunk];
-        if(FAILED(Context.List->Reset(Context.Allocator.Get(), nullptr)))
+        if(FAILED(Context.List->Reset(Context.Allocators[Slot].Get(), nullptr)))
         {
             GDI_LOG("[D3D12DynamicGDI] a recording context's list could not be reset; recording serially")
             for(uint32_t Open = 0; Open < Chunk; ++Open) { RecordingContexts[Open]->List->Close(); }
@@ -219,11 +233,11 @@ void D3D12DynamicGDI::EndParallelPass()
     bParallelPass  = false;
 }
 
-void D3D12DynamicGDI::ResetRecordingContexts()
+void D3D12DynamicGDI::ResetRecordingContexts(const uint32_t InSlot)
 {
     for(D3D12RecordingContext* Context : RecordingContexts)
     {
-        Context->Allocator->Reset();
+        if(Context->Allocators[InSlot]) { Context->Allocators[InSlot]->Reset(); }
     }
 }
 

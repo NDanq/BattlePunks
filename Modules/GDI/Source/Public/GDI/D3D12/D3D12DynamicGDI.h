@@ -303,12 +303,21 @@ public:
 
     /**
      * GL callers release resources straight after the draw that uses them, while
-     * the list referencing them is still open or in flight. These hold them until
-     * the next frame-fence wait proves the GPU is done with them.
+     * the list referencing them is still open or in flight. These hold them,
+     * each tagged with the fence value of the frame being recorded (which covers
+     * every frame in flight before it), until that frame has finished.
      */
     void DeferRelease(Microsoft::WRL::ComPtr<ID3D12Resource> InResource);
     void DeferFreeSRV(uint32_t InSlot);
-    void DrainDeferredDestruction();
+    void DeferReleaseQueryHeap(Microsoft::WRL::ComPtr<ID3D12QueryHeap> InHeap);
+
+    /** Frees what is queued above for frames that have finished (all of it, after a full wait). */
+    void DrainDeferredDestruction(bool bInAll = false);
+
+    /** The fence value the frame being recorded will signal (D3D12CommandManager). */
+    uint64_t GetRecordingFenceValue() const;
+    /** Whether the frame that signals InValue has finished on the GPU (no wait). */
+    bool     IsFrameComplete(uint64_t InValue) const;
 
     inline D3D12Device*              GetDeviceObj()      const { return DeviceObj; }
     inline D3D12CommandManager*      GetCommandManager() const { return CommandManager; }
@@ -333,8 +342,9 @@ private:
      *  list opened mid-rendering (a chunk's, the frame list's second half). */
     void BindActiveTargets(ID3D12GraphicsCommandList* InList) const;
 
-    /** BeginRendering, after its fence wait: each recording context's allocator rewound. */
-    void ResetRecordingContexts();
+    /** BeginRendering, after its slot's fence wait: each recording context's
+     *  allocator for frame slot InSlot rewound. */
+    void ResetRecordingContexts(uint32_t InSlot);
     void DestroyRecordingContexts();
 
     D3D12Device*              DeviceObj        = nullptr;
@@ -345,6 +355,7 @@ private:
     D3D12PipelineCache*       PipelineCache    = nullptr;
     D3D12DescriptorAllocator* DescAlloc        = nullptr;
     D3D12CurrentStateData*    CurrentStateData = nullptr;
+    uint32_t                  FramesInFlightCount = 1;   // [Rendering] FramesInFlight, read at Allocate
 
     /* The render thread's draws' block uploads (a recording context keeps its own). */
     D3D12BlockUploads         BlockUploads;
@@ -364,33 +375,36 @@ private:
 
     std::unordered_set<D3D12RenderTarget*>             LiveRenderTargets;
 
-    std::vector<Microsoft::WRL::ComPtr<ID3D12Resource>> DeferredResources;
-    std::vector<Microsoft::WRL::ComPtr<ID3D12QueryHeap>> DeferredQueryHeaps;   // released occlusion query sets'
+    /* Deferred destruction (render thread only), each entry tagged with the
+     * fence value after which nothing uses it; queued in that order. */
+    struct DeferredResource  { Microsoft::WRL::ComPtr<ID3D12Resource>  Resource; uint64_t DoneAt; };
+    struct DeferredQueryHeap { Microsoft::WRL::ComPtr<ID3D12QueryHeap> Heap;     uint64_t DoneAt; };
+    struct DeferredSRV       { uint32_t Slot; uint64_t DoneAt; };
+    std::vector<DeferredResource>  DeferredResources;
+    std::vector<DeferredQueryHeap> DeferredQueryHeaps;   // released occlusion query sets'
+    std::vector<DeferredSRV>       DeferredSRVs;
 
     /* GDISetOcclusionPredicate's: the draws after it are predicated on it. */
     D3D12OcclusionQueries*       PredicateSet   = nullptr;
     int32_t                      PredicateIndex = -1;
 
-    /* BeginRendering blocks begun: a round's answers are readable from the
-     * block after its own, whose BeginRendering waited its fence. */
-    uint64_t                     RenderingBlocks = 0;
-
     /*
      * GPU timestamps (GDIDynamicDriver::WriteGPUTimestamp), render thread only:
-     * a heap of GDI_GPU_TIMESTAMP_MAX, resolved into TimestampReadback by each
-     * submit and read at the next BeginRendering, after its fence is waited.
+     * a heap of GDI_GPU_TIMESTAMP_MAX per frame slot (queries [Slot * MAX,
+     * (Slot + 1) * MAX)), each slot's resolved into its range of
+     * TimestampReadback by the submits of its block, and read at the
+     * BeginRendering that reuses the slot, after its fence is waited.
      */
     Microsoft::WRL::ComPtr<ID3D12QueryHeap> TimestampHeap;
     Microsoft::WRL::ComPtr<ID3D12Resource>  TimestampReadback;
     double   TimestampTicksPerMs = 0.0;
-    uint64_t TimestampsWritten   = 0;   // this block's, by index
-    uint64_t TimestampsResolved  = 0;   // resolved by a submit, not yet read
-    uint64_t PreviousTimestamps  = 0;   // the previous block's, read back
+    uint64_t TimestampsWritten[GDI_FRAMES_IN_FLIGHT_MAX]  = {};   // each slot's block's, by index
+    uint64_t TimestampsResolved[GDI_FRAMES_IN_FLIGHT_MAX] = {};   // resolved by a submit, not yet read
+    uint64_t PreviousTimestamps  = 0;   // the last block read back's
     double   PreviousTimestampMs[GDI_GPU_TIMESTAMP_MAX] = {};
     void CreateTimestampHeap();
     void ResolveTimestamps(ID3D12GraphicsCommandList* InList);
-    void CollectTimestamps();
-    std::vector<uint32_t>                               DeferredSRVs;
+    void CollectTimestamps(uint32_t InSlot);
 };
 
 #endif //CORECLIENT_D3D12DYNAMICGDI_H

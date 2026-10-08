@@ -335,6 +335,7 @@ constexpr unsigned GDI_MAX_COLOR_TARGETS        = 5;
 
 /* Chunks one parallel pass records at most (GDIBeginParallelPass). */
 constexpr unsigned GDI_PARALLEL_CHUNKS_MAX      = 32;
+constexpr unsigned GDI_FRAMES_IN_FLIGHT_MAX     = 3;    // [Rendering] FramesInFlight's ceiling (GDIGetConfiguredFramesInFlight)
 
 /*
  * A compute dispatch's bindings (GDIDispatchCompute): its parameters as a

@@ -69,6 +69,18 @@ NIMBLE_CONFIG_BOOL(GShaderDebug, "Shaders", "ShaderDebug", true, nullptr);
 NIMBLE_CONFIG_BOOL(GShaderPDB, "Shaders", "ShaderPDB", false, nullptr);
 NIMBLE_CONFIG_STRING(GShaderPDBDir, "Shaders", "PDBDir", "", nullptr);
 
+/* [Rendering] FramesInFlight: how many frames the CPU may record ahead of
+ * the GPU (RenderCore's MULTITHREADED_RENDERING.md, phase 4). 1 waits for
+ * each frame before recording the next; 2 records frame N+1 while the GPU
+ * draws frame N. Read when the device is made (Vulkan, D3D12). */
+NIMBLE_CONFIG_INT(GFramesInFlight, "Rendering", "FramesInFlight", 2, nullptr);
+
+uint32_t GDIGetConfiguredFramesInFlight()
+{
+    const int Value = GFramesInFlight.GetInt();
+    return Value < 1 ? 1u : (Value > int(GDI_FRAMES_IN_FLIGHT_MAX) ? GDI_FRAMES_IN_FLIGHT_MAX : uint32_t(Value));
+}
+
 bool GDIShaderDebugEnabled()
 {
     return GShaderDebug.GetBool();

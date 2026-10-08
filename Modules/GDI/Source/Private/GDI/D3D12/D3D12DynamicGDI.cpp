@@ -66,8 +66,15 @@ void D3D12DynamicGDI::Allocate()
         return;
     }
 
+    /* [Rendering] FramesInFlight (GDI.cpp): the command allocators, the
+     * constant-buffer ring's regions, timestamps and dynamic meshes' regions
+     * are per frame slot, each reused once its slot's fence is waited. */
+    FramesInFlightCount = GDIGetConfiguredFramesInFlight();
+    FramesInFlight      = FramesInFlightCount;
+    FrameSlot           = 0;
+
     CommandManager = new D3D12CommandManager();
-    if(!CommandManager->Initialize(DeviceObj))
+    if(!CommandManager->Initialize(DeviceObj, FramesInFlightCount))
     {
         GDI_LOG("[D3D12DynamicGDI] CommandManager init failed.")
         return;
@@ -89,7 +96,7 @@ void D3D12DynamicGDI::Allocate()
     }
 
     DescAlloc = new D3D12DescriptorAllocator();
-    if(!DescAlloc->Initialize(DeviceObj))
+    if(!DescAlloc->Initialize(DeviceObj, FramesInFlightCount))
     {
         GDI_LOG("[D3D12DynamicGDI] DescriptorAllocator init failed.")
         return;
@@ -104,7 +111,8 @@ void D3D12DynamicGDI::Allocate()
     CreateTimestampHeap();
 
     bInitialized = true;
-    GDI_LOG("[D3D12DynamicGDI] Allocate complete.")
+    GDI_LOG("[D3D12DynamicGDI] Allocate complete: " + std::to_string(FramesInFlightCount)
+            + " frame(s) in flight ([Rendering] FramesInFlight).")
 }
 
 void D3D12DynamicGDI::Destroy()
@@ -135,7 +143,7 @@ void D3D12DynamicGDI::Destroy()
     if(ScreenMesh)  { ScreenMesh->Release();  delete ScreenMesh;  ScreenMesh  = nullptr; }
     if(NullTexture) { NullTexture->Release(); delete NullTexture; NullTexture = nullptr; }
 
-    DrainDeferredDestruction();
+    DrainDeferredDestruction(true);
 
     for(auto& Entry : Swapchains) { Entry.second->Shutdown(); delete Entry.second; }
     Swapchains.clear();
@@ -358,28 +366,50 @@ void D3D12DynamicGDI::ReleaseRenderTarget(GDIRenderTarget* InRenderTarget)
     if(InRenderTarget) InRenderTarget->Release();
 }
 
+uint64_t D3D12DynamicGDI::GetRecordingFenceValue() const
+{
+    return CommandManager ? CommandManager->GetNextFenceValue() : 0;
+}
+
+bool D3D12DynamicGDI::IsFrameComplete(const uint64_t InValue) const
+{
+    return !CommandManager || CommandManager->IsComplete(InValue);
+}
+
 void D3D12DynamicGDI::DeferRelease(Microsoft::WRL::ComPtr<ID3D12Resource> InResource)
 {
-    if(InResource) DeferredResources.push_back(std::move(InResource));
+    if(InResource) DeferredResources.push_back({ std::move(InResource), GetRecordingFenceValue() });
 }
 
 void D3D12DynamicGDI::DeferFreeSRV(uint32_t InSlot)
 {
-    DeferredSRVs.push_back(InSlot);
+    DeferredSRVs.push_back({ InSlot, GetRecordingFenceValue() });
 }
 
-void D3D12DynamicGDI::DrainDeferredDestruction()
+void D3D12DynamicGDI::DeferReleaseQueryHeap(Microsoft::WRL::ComPtr<ID3D12QueryHeap> InHeap)
 {
-    DeferredResources.clear();
-    DeferredQueryHeaps.clear();
-    if(DescAlloc)
+    if(InHeap) DeferredQueryHeaps.push_back({ std::move(InHeap), GetRecordingFenceValue() });
+}
+
+void D3D12DynamicGDI::DrainDeferredDestruction(const bool bInAll)
+{
+    /* Each queue in the order released, so in DoneAt order: what has finished is a prefix. */
+    const auto Done = [this, bInAll](const uint64_t InDoneAt) { return bInAll || IsFrameComplete(InDoneAt); };
+    size_t Count = 0;
+    while(Count < DeferredResources.size() && Done(DeferredResources[Count].DoneAt)) { ++Count; }
+    DeferredResources.erase(DeferredResources.begin(), DeferredResources.begin() + ptrdiff_t(Count));
+
+    Count = 0;
+    while(Count < DeferredQueryHeaps.size() && Done(DeferredQueryHeaps[Count].DoneAt)) { ++Count; }
+    DeferredQueryHeaps.erase(DeferredQueryHeaps.begin(), DeferredQueryHeaps.begin() + ptrdiff_t(Count));
+
+    Count = 0;
+    while(Count < DeferredSRVs.size() && Done(DeferredSRVs[Count].DoneAt))
     {
-        for(uint32_t Slot : DeferredSRVs)
-        {
-            DescAlloc->FreeSRV(Slot);
-        }
+        if(DescAlloc) { DescAlloc->FreeSRV(DeferredSRVs[Count].Slot); }
+        ++Count;
     }
-    DeferredSRVs.clear();
+    DeferredSRVs.erase(DeferredSRVs.begin(), DeferredSRVs.begin() + ptrdiff_t(Count));
 }
 
 void D3D12DynamicGDI::FlushForReadback(bool bResumeActiveRegion)
@@ -395,9 +425,10 @@ void D3D12DynamicGDI::FlushForReadback(bool bResumeActiveRegion)
 
     SubmitFrame();
 
-    // BeginFrame waits for the submit above, so deferred releases are safe to drop too.
+    // BeginFrame stays on this slot and waits for the submit above -- and so for
+    // every frame before it -- so deferred releases are all safe to drop too.
     ID3D12GraphicsCommandList* List = CommandManager->BeginFrame();
-    DrainDeferredDestruction();
+    DrainDeferredDestruction(true);
 
     CurrentStateData->CurrentCmd         = List;
     FrameListSerial                      = AllocateListSerial();
@@ -519,7 +550,7 @@ GDIMesh* D3D12DynamicGDI::CreateDynamicMesh(const uint32_t InMaxVertices, const 
     if(!DeviceObj || !CurrentStateData) return nullptr;
 
     auto* Mesh = new D3D12Mesh(DeviceObj, CurrentStateData);
-    if(!Mesh->InitDynamic(InMaxVertices, InMaxIndices))
+    if(!Mesh->InitDynamic(InMaxVertices, InMaxIndices, FramesInFlightCount))
     {
         delete Mesh;
         return nullptr;

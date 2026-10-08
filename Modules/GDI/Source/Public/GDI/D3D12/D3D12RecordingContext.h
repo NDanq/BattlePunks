@@ -17,14 +17,16 @@
  * signature, the shaders, meshes and textures), locked (the pipeline cache), or
  * claimed atomically (the constant-buffer ring).
  *
- * Kept by the driver across frames (D3D12DynamicGDI::RecordingContexts). Each
- * pass reopens the list on the context's allocator, which keeps every pass's
- * commands until BeginRendering rewinds it, after the frame fence's wait.
+ * Kept by the driver across frames (D3D12DynamicGDI::RecordingContexts), with
+ * an allocator per frame in flight (made on first need). Each pass reopens the
+ * list on the recording slot's allocator, which keeps every pass's commands
+ * until the BeginRendering that reuses the slot rewinds it, after its fence's
+ * wait. The list itself is free to reset as soon as it has been executed.
  */
 class D3D12RecordingContext : public GDIRecordingContext
 {
 public:
-    Microsoft::WRL::ComPtr<ID3D12CommandAllocator>    Allocator;
+    Microsoft::WRL::ComPtr<ID3D12CommandAllocator>    Allocators[GDI_FRAMES_IN_FLIGHT_MAX];
     Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> List;
     D3D12BlockUploads                                 Uploads;
     IBlendStateDesc                                   Blend;

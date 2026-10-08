@@ -26,14 +26,7 @@
 #include <string>
 #include <unordered_map>
 #include "Public/Core/CoreString.h"
-#include "Public/Core/CoreConfig.h"
 #include <algorithm>
-
-/* [Rendering] FramesInFlight: how many frames the CPU may record ahead of
- * the GPU (RenderCore's MULTITHREADED_RENDERING.md, phase 4). 1 waits for
- * each frame before recording the next; 2 records frame N+1 while the GPU
- * draws frame N. Read when the device is made. */
-NIMBLE_CONFIG_INT(GVulkanFramesInFlight, "Rendering", "FramesInFlight", 2, nullptr);
 
 // At global scope, not inside a module namespace, so these are wider than the
 // usual directive -- contained only because nothing includes a .cpp.
@@ -195,7 +188,7 @@ void VulkanDynamicGDI::Allocate()
         return;
     }
 
-    FramesInFlightCount = uint32_t(std::clamp(GVulkanFramesInFlight.GetInt(), 1, int(VK_FRAMES_IN_FLIGHT_MAX)));
+    FramesInFlightCount = GDIGetConfiguredFramesInFlight();   // [Rendering] FramesInFlight (GDI.cpp)
     FramesInFlight      = FramesInFlightCount;
     FrameSlot           = 0;
     CommandManager = new VKCommandManager();

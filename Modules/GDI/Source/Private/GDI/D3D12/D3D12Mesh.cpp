@@ -108,18 +108,22 @@ void D3D12Mesh::InitResource()
     ApplyDebugName();
 }
 
-bool D3D12Mesh::InitDynamic(const uint32_t InMaxVertices, const uint32_t InMaxIndices)
+bool D3D12Mesh::InitDynamic(const uint32_t InMaxVertices, const uint32_t InMaxIndices, const uint32_t InFramesInFlight)
 {
     if(!Device || !Device->IsValid() || bResourcesValid) return false;
     MakeDynamic(InMaxVertices, InMaxIndices);
 
-    PositionBytes = InMaxVertices * 3 * sizeof(float);
-    TexCoordBytes = InMaxVertices * 2 * sizeof(float);
-    IndexBytes    = InMaxIndices * sizeof(uint32_t);
+    // A region of that capacity per frame in flight: GDIMesh::UpdateDynamic writes
+    // the recording slot's, which the GPU finished reading before the block began.
+    const uint32_t Regions  = InFramesInFlight < 1 ? 1u : InFramesInFlight;
+    const uint32_t Vertices = InMaxVertices * Regions;
+    PositionBytes = Vertices * 3 * sizeof(float);
+    TexCoordBytes = Vertices * 2 * sizeof(float);
+    IndexBytes    = InMaxIndices * Regions * sizeof(uint32_t);
 
     Microsoft::WRL::ComPtr<ID3D12Resource>* Buffers[6] = { std::addressof(PositionBuffer), std::addressof(TexCoordBuffer), std::addressof(NormalBuffer),
                                                            std::addressof(ColorBuffer), std::addressof(UV1Buffer), std::addressof(IndexBuffer) };
-    const UINT Bytes[6] = { PositionBytes, TexCoordBytes, PositionBytes, InMaxVertices * 4 * UINT(sizeof(float)),
+    const UINT Bytes[6] = { PositionBytes, TexCoordBytes, PositionBytes, Vertices * 4 * UINT(sizeof(float)),
                             TexCoordBytes, IndexBytes };
     const D3D12_RANGE NoRead{ 0, 0 };
     for(int At = 0; At < 6; ++At)
