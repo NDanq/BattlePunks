@@ -85,7 +85,8 @@ void LogDispatch(const LogVerbosity Verbosity, const char* Message)
         {
             std::chrono::milliseconds Millis{};
             const std::tm Local = LocalNow(&Millis);
-            std::fprintf(GRunLog, "%02d:%02d:%02d.%03d [%s] %s\n", Local.tm_hour, Local.tm_min, Local.tm_sec,
+            std::fprintf(GRunLog, "%04d-%02d-%02d %02d:%02d:%02d.%03d [%s] %s\n", Local.tm_year + 1900, Local.tm_mon + 1,
+                         Local.tm_mday, Local.tm_hour, Local.tm_min, Local.tm_sec,
                          int(Millis.count()), VerbosityTag(Verbosity), Message ? Message : "");
             std::fflush(GRunLog);
         }
@@ -152,6 +153,11 @@ bool OpenRunLog(const std::string& InDirectory, const std::string& InName, const
     {
         return false;
     }
+    /* When the run began, before its first line. */
+    std::fprintf(Opened, "%s log, started %04d-%02d-%02d %02d:%02d:%02d\n", InName.c_str(), Local.tm_year + 1900,
+                 Local.tm_mon + 1, Local.tm_mday, Local.tm_hour, Local.tm_min, Local.tm_sec);
+    std::fflush(Opened);
+
     std::lock_guard<std::mutex> Lock(RunLogMutex());
     GRunLog = Opened;
     RunLogPath() = FilePath;

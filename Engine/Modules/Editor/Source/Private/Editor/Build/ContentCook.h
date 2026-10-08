@@ -71,6 +71,13 @@ namespace EditorCook
      * (as EngineCore::OpenRunLog). */
     QString NewLogPath(const QString& InProjectRoot, const QString& InKind, int InKeep = 10);
 
+    /* "2026-10-07 18:16:28.121 ": what starts each line of a run log, as
+     * EngineCore's run logs do. */
+    QString LogStamp();
+
+    /* A run log's first line: "<InKind> log, started <date> <time>". */
+    QString LogHeader(const QString& InKind);
+
     /* The cooked path for a runtime path ("Content/Levels/A.nmworld"). */
     QString GetCookedPath(const QString& InProjectRoot, const QString& InRuntimePath);
 
