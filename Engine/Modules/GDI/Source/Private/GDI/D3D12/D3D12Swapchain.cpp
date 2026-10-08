@@ -41,6 +41,7 @@ bool D3D12Swapchain::Initialize(D3D12Device* InDevice, EngineCore::WindowHandle 
     Desc.Scaling          = DXGI_SCALING_STRETCH;
     Desc.SwapEffect       = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     Desc.AlphaMode        = DXGI_ALPHA_MODE_IGNORE;
+    Desc.Flags            = kSwapChainFlags;
 
     ComPtr<IDXGISwapChain1> SwapChain1;
     const HRESULT Result = GDIPlatform::appD3D12CreateSwapChain(Device->GetFactory(), Device->GetQueue(),
@@ -51,8 +52,13 @@ bool D3D12Swapchain::Initialize(D3D12Device* InDevice, EngineCore::WindowHandle 
         return false;
     }
 
+    /* Signalled while DXGI will take another frame without blocking
+     * (PresentFrame polls it); one frame queued at most. */
+    SwapChain->SetMaximumFrameLatency(1);
+    FrameLatencyWaitable = SwapChain->GetFrameLatencyWaitableObject();
+
     if(!CreateBackBufferViews())        return false;
-    if(!UICommands.Initialize(Device))  return false;
+    if(!UICommands.Initialize(Device, kBufferCount)) return false;
     if(!CreateBlitPipeline())
     {
         GDI_LOG_ERROR("[D3D12Swapchain] Blit pipeline failed to build; presents will be skipped.")
@@ -65,6 +71,7 @@ void D3D12Swapchain::Shutdown()
 {
     UICommands.Shutdown();
     ReleaseBackBuffers();
+    if(FrameLatencyWaitable) { CloseHandle(FrameLatencyWaitable); FrameLatencyWaitable = nullptr; }
     BackBufferRTVs.Reset();
     QuadVertexBuffer.Reset();
     BlitSRVHeap.Reset();
@@ -118,7 +125,7 @@ bool D3D12Swapchain::ResizeIfNeeded()
     UICommands.WaitForCompletion();
     ReleaseBackBuffers();
 
-    if(FAILED(SwapChain->ResizeBuffers(kBufferCount, NewWidth, NewHeight, Format, 0)))
+    if(FAILED(SwapChain->ResizeBuffers(kBufferCount, NewWidth, NewHeight, Format, kSwapChainFlags)))
     {
         GDI_LOG_ERROR("[D3D12Swapchain] ResizeBuffers failed.")
         return false;
@@ -188,9 +195,10 @@ bool D3D12Swapchain::CreateBlitPipeline()
 
     D3D12_DESCRIPTOR_HEAP_DESC HeapDesc{};
     HeapDesc.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-    HeapDesc.NumDescriptors = 1;
+    HeapDesc.NumDescriptors = kBufferCount;   // a slot's own: one present's SRV, rewritten when the slot comes round
     HeapDesc.Flags          = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     if(FAILED(Dev->CreateDescriptorHeap(&HeapDesc, IID_PPV_ARGS(&BlitSRVHeap)))) return false;
+    BlitSRVIncrement = Dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
     // Interleaved {pos3, uv2}. The swapchain's top row is NDC +1 and the RT's
     // row 0 its top (GDI.h): v = 0 at NDC +1 copies the rows as they are.
@@ -258,12 +266,17 @@ void D3D12Swapchain::PresentFrame(D3D12RenderTarget* InMainRT)
 
     if(!ResizeIfNeeded()) return;
 
-    // Waits for the previous present, so rewriting the one SRV below is safe.
+    // Waits for the present that last used this slot -- kBufferCount presents
+    // back -- so rewriting its SRV below is safe.
     ID3D12GraphicsCommandList* List = UICommands.BeginFrame();
     if(!List) return;
 
     ID3D12Device* Dev = Device->GetDevice();
-    Dev->CreateShaderResourceView(InMainRT->GetResource(), nullptr, BlitSRVHeap->GetCPUDescriptorHandleForHeapStart());
+    D3D12_CPU_DESCRIPTOR_HANDLE SRVCpu = BlitSRVHeap->GetCPUDescriptorHandleForHeapStart();
+    D3D12_GPU_DESCRIPTOR_HANDLE SRVGpu = BlitSRVHeap->GetGPUDescriptorHandleForHeapStart();
+    SRVCpu.ptr += SIZE_T(UICommands.GetSlot()) * BlitSRVIncrement;
+    SRVGpu.ptr += UINT64(UICommands.GetSlot()) * BlitSRVIncrement;
+    Dev->CreateShaderResourceView(InMainRT->GetResource(), nullptr, SRVCpu);
 
     const UINT BackIndex = SwapChain->GetCurrentBackBufferIndex();
     ID3D12Resource* BackBuffer = BackBuffers[BackIndex].Get();
@@ -282,7 +295,7 @@ void D3D12Swapchain::PresentFrame(D3D12RenderTarget* InMainRT)
     List->SetGraphicsRootSignature(BlitRootSignature.Get());
     ID3D12DescriptorHeap* Heaps[] = { BlitSRVHeap.Get() };
     List->SetDescriptorHeaps(1, Heaps);
-    List->SetGraphicsRootDescriptorTable(0, BlitSRVHeap->GetGPUDescriptorHandleForHeapStart());
+    List->SetGraphicsRootDescriptorTable(0, SRVGpu);
     List->SetPipelineState(BlitPipeline.Get());
     List->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     List->IASetVertexBuffers(0, 1, &QuadView);
@@ -296,10 +309,19 @@ void D3D12Swapchain::PresentFrame(D3D12RenderTarget* InMainRT)
     std::lock_guard<std::mutex> QueueLock(Device->GetQueueMutex());
     if(InMainRT->GetSubmittedState() != D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) return;
 
-    UICommands.SubmitLocked();
+    /* DXGI not ready for another frame: this one is not presented (the list is
+     * dropped, as above), the next present shows a newer one. Polled, never
+     * waited: a wait here is the game loop held to DXGI's pace. Taken last,
+     * just before the Present it pays for -- a signal taken and not presented
+     * is never given back, and presenting would stop. */
+    if(FrameLatencyWaitable && WaitForSingleObjectEx(FrameLatencyWaitable, 0, FALSE) != WAIT_OBJECT_0) return;
 
-    // Sync interval 0 on a flip-discard chain replaces a queued frame rather than
-    // waiting a vblank for it -- the MAILBOX behaviour the Vulkan backend prefers.
+    UICommands.SubmitLocked();
+    UICommands.Advance();   // a dropped list (above) stays on its slot, to be rewound by the next BeginFrame
+
+    // Sync interval 0: no vblank wait. On its own that still blocked whenever
+    // DXGI's queue was full; the waitable poll above is what makes this the
+    // MAILBOX behaviour the Vulkan backend prefers.
     const HRESULT Result = SwapChain->Present(0, 0);
     if(Result == DXGI_ERROR_DEVICE_REMOVED || Result == DXGI_ERROR_DEVICE_RESET)
     {

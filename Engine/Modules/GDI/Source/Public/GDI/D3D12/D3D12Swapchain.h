@@ -19,6 +19,17 @@ class D3D12RenderTarget;
  * UI-thread-owned flip-model swapchain plus a self-contained Screen.vsh/.fsh
  * blit: the render thread's pipeline cache targets the RT format and is not
  * safe to touch from this thread.
+ *
+ * A present's command allocator and blit SRV are one of kBufferCount slots, so
+ * a present waits only for the one that last used its slot -- not the previous
+ * present, which the GPU runs behind the render thread's frames still queued
+ * ahead of it.
+ *
+ * Presents never block (the MAILBOX behaviour the Vulkan backend prefers): the
+ * chain's frame-latency waitable object says whether DXGI will take another
+ * frame now, and when it will not, this one is not presented -- the next
+ * present shows a newer frame. A blocking Present held a fast game loop to
+ * DXGI's pace (GpuTest: 5.0 ms a frame on D3D12, 3.8 on Vulkan).
  */
 class D3D12Swapchain
 {
@@ -49,6 +60,8 @@ private:
     EngineCore::WindowHandle                            Window;
 
     Microsoft::WRL::ComPtr<IDXGISwapChain3>             SwapChain;
+    HANDLE                                              FrameLatencyWaitable = nullptr;   // the chain's; closed at Shutdown
+    static constexpr UINT                               kSwapChainFlags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
     DXGI_FORMAT                                         Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     uint32_t                                            Width  = 0;
     uint32_t                                            Height = 0;
@@ -61,7 +74,8 @@ private:
 
     Microsoft::WRL::ComPtr<ID3D12RootSignature>         BlitRootSignature;
     Microsoft::WRL::ComPtr<ID3D12PipelineState>         BlitPipeline;
-    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap>        BlitSRVHeap;
+    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap>        BlitSRVHeap;   // a descriptor per UICommands slot
+    UINT                                                BlitSRVIncrement = 0;
     Microsoft::WRL::ComPtr<ID3D12Resource>              QuadVertexBuffer;
     D3D12_VERTEX_BUFFER_VIEW                            QuadView{};
 };

@@ -451,10 +451,22 @@ serially today.
    | Auto: render thread | 6.3-6.4 ms | 4.3 ms | 3.0 ms |
    | frame (wall) | 7.4 ms | 5.4 ms | 5.0 ms |
 
-   The frame no longer follows the render thread: on D3D12 it holds at
-   exactly 5.0 ms of wall time (Vulkan, the same run: 3.8 ms), with the
-   game thread at 1 ms and the GPU under 1. Something on D3D12's side --
-   the present, most likely -- paces it; not yet found.
+   The frame then held at 5.0 ms of wall time on D3D12 (Vulkan: 3.8-3.9),
+   whatever the render thread did: the present, on the game thread between
+   waiting for the render thread and kicking the next frame, took 1.1 ms
+   against Vulkan's 0.25. Profiled inside it: 0.85 ms was the UI command
+   list waiting for the previous present to finish on the GPU (one
+   allocator, one blit SRV); given a slot per back buffer, the time moved
+   into Present itself -- sync interval 0 without tearing still blocks when
+   DXGI's queue is full. The swapchain is now frame-latency waitable: the
+   present polls it, and a frame DXGI cannot take yet is not presented (the
+   next present shows a newer one) -- the MAILBOX behaviour Vulkan uses.
+   Present 1.1 -> 0.14 ms.
+
+   | GpuTest, D3D12, RelWithDebInfo, Auto, two runs | before | after |
+   |---|---|---|
+   | frame (wall) | 5.0 ms | 3.7 ms |
+   | Vulkan, the same build | 3.8-3.9 ms | 3.9 ms |
 
    Metal: its recording contexts were not written (no macOS here); the gate
    says "not implemented yet", and Metal records serially.
