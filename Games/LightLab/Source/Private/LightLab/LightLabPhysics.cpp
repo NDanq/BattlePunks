@@ -199,8 +199,9 @@ namespace
      * box -- drawn by children made of the engine's meshes: a Box body, cabin
      * and bumpers, Sphere headlights, and four Cylinder wheels on their sides
      * (WheelFL, WheelFR, WheelRL, WheelRR; the Vehicle finds them by name and
-     * reads their size from the mesh), each with a Box spoke so its spin shows.
-     * The root is unscaled, so the wheels' positions are in world units.
+     * reads their size from the mesh), each with a Box spoke so its spin shows,
+     * and an engine sound on the root. The root is unscaled, so the wheels'
+     * positions are in world units.
      */
     GameCore::Entity BuildVehicle(GameCore::World& InWorld, const GameCore::TransformPose& InAt, const char* InName)
     {
@@ -235,6 +236,19 @@ namespace
         Vehicle.MaxPitchRollAngle   = 60.0f;
         Vehicle.HandBrake           = 1.0f;   // parked until someone drives it
         Root.AddComponent(Vehicle);
+
+        /* The engine: a looping idle (Tools/make_engine_loop_sound.py), heard
+         * from the buggy, that the prefab's script pitches with the revs and
+         * turns up with the throttle (Scripts/EngineSound.script.nmgraph). */
+        GameCore::AudioSourceComponent Engine;
+        Engine.SetSound("Content/Sounds/EngineLoop.nmsound");
+        Engine.bOverride   = 1;
+        Engine.bLoop       = 1;
+        Engine.bSpatial    = 1;
+        Engine.Bus         = GameCore::ASB_SFX;
+        Engine.MinDistance = 400.0f;
+        Engine.MaxDistance = 8000.0f;
+        Root.AddComponent(Engine);
 
         const Tint Paint   = Colour(0.78f, 0.12f, 0.08f, 0.35f, 0.4f);
         const Tint Glass   = Colour(0.08f, 0.1f, 0.13f, 0.08f, 0.7f);
@@ -282,6 +296,7 @@ namespace
         GameCore::PrefabAsset Asset;
         const bool bCaptured = GameCore::CapturePrefab(Scratch, Root.GetID(), Asset);
         Asset.SetName("Vehicle");
+        Asset.SetScriptPath("Scripts/EngineSound.script.nmgraph");
         if(bCaptured && GameCore::SavePrefabFile(InPath.c_str(), Asset))
         {
             CORE_LOG("[PhysicsLab] exported the buggy to " + InPath)
