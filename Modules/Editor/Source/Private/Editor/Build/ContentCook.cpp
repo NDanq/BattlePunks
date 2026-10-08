@@ -149,6 +149,16 @@ namespace EditorCook
         return QStringLiteral("%1 MB").arg(double(InBytes) / (1024.0 * 1024.0), 0, 'f', 2);
     }
 
+    QString LogStamp()
+    {
+        return QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz "));
+    }
+
+    QString LogHeader(const QString& InKind)
+    {
+        return QStringLiteral("%1 log, started %2").arg(InKind, QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
+    }
+
     CookStats CookProject(const QString& InProjectRoot, const std::function<void(const QString&)>& InProgress)
     {
         CookStats Stats;

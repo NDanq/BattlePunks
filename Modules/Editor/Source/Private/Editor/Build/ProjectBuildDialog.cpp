@@ -21,7 +21,6 @@
 #include <QPushButton>
 #include <QScrollBar>
 #include <QTableWidget>
-#include <QTime>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -252,7 +251,7 @@ void ProjectBuildDialog::Log(const QString& InLine)
 {
     if(RunLog.isOpen())
     {
-        RunLog.write((QTime::currentTime().toString(QStringLiteral("HH:mm:ss.zzz ")) + InLine + QLatin1Char('\n')).toUtf8());
+        RunLog.write((EditorCook::LogStamp() + InLine + QLatin1Char('\n')).toUtf8());
         RunLog.flush();
     }
     Output->appendPlainText(InLine);
@@ -289,8 +288,13 @@ void ProjectBuildDialog::Run(const bool bInCook, const bool bInCompile)
 
     /* This run's log. */
     RunLog.close();
-    RunLog.setFileName(EditorCook::NewLogPath(ProjectRoot, bInCompile ? QStringLiteral("Build") : QStringLiteral("Cook")));
-    if(!RunLog.open(QIODevice::WriteOnly | QIODevice::Text))
+    const QString Kind = bInCompile ? QStringLiteral("Build") : QStringLiteral("Cook");
+    RunLog.setFileName(EditorCook::NewLogPath(ProjectRoot, Kind));
+    if(RunLog.open(QIODevice::WriteOnly | QIODevice::Text))
+    {
+        RunLog.write((EditorCook::LogHeader(Kind) + QLatin1Char('\n')).toUtf8());
+    }
+    else
     {
         CORE_LOG_WARN("[Build] could not write the run log " + ToStd(RunLog.fileName()))
     }

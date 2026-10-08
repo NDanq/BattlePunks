@@ -1135,11 +1135,11 @@ void EditorMainWindow::RegisterConsoleCommands()
         if(!InArgs.isEmpty() && InArgs[0] == QStringLiteral("project"))
         {
             const QString Root = EditorGraphs::GetProjectRoot();
-            QStringList Lines;
-            const EditorCook::CookStats Stats = EditorCook::CookProject(Root, [&Lines](const QString& InText) { Lines << InText; });
-            Lines << EditorCook::DescribeStats(Stats);
-            for(const QString& Line : EditorCook::DescribeStats(Stats)) { Console.Print(Line); }
-            for(const QString& Failure : Stats.Failures) { Console.PrintError(Failure); Lines << QStringLiteral("FAILED: ") + Failure; }
+            QStringList Lines = { EditorCook::LogHeader(QStringLiteral("Cook")) };
+            const auto Stamped = [&Lines](const QString& InText) { Lines << EditorCook::LogStamp() + InText; };
+            const EditorCook::CookStats Stats = EditorCook::CookProject(Root, Stamped);
+            for(const QString& Line : EditorCook::DescribeStats(Stats)) { Console.Print(Line); Stamped(Line); }
+            for(const QString& Failure : Stats.Failures) { Console.PrintError(Failure); Stamped(QStringLiteral("FAILED: ") + Failure); }
 
             /* As Build > Cook Content's: this run's log in Saved/Logs. */
             QFile RunLog(EditorCook::NewLogPath(Root, QStringLiteral("Cook")));

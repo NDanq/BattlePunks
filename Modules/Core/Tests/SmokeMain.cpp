@@ -117,6 +117,13 @@ static void TestLogging()
     std::vector<uint8_t> Bytes;
     Expect(appFileReadAll(RunLog, Bytes) && std::string(Bytes.begin(), Bytes.end()).find("[WARN] into the run log") != std::string::npos,
            "the run log holds the line, with its verbosity");
+    {
+        const std::string Text(Bytes.begin(), Bytes.end());
+        const size_t Line = Text.find('\n') + 1;   // the line after the header
+        Expect(Text.compare(0, 22, "SmokeRun log, started ") == 0, "a run log opens with when the run started");
+        Expect(Text.size() > Line + 24 && Text[Line + 4] == '-' && Text[Line + 7] == '-' && Text[Line + 10] == ' '
+               && Text[Line + 13] == ':' && Text[Line + 19] == '.', "each line starts with its date and time");
+    }
     Expect(!appFileExists(LogDir + "/SmokeRun-2000.01.01-00.00.00.log") && appFileExists(LogDir + "/SmokeRun-2000.01.02-00.00.00.log")
            && appFileExists(LogDir + "/Other-2000.01.01-00.00.00.log"), "only the newest logs of its own name are kept");
 }

@@ -56,7 +56,8 @@ namespace EngineCore
 
     /*
      * RUN LOGS. While one is open, every dispatched message is also appended
-     * to it -- "HH:MM:SS.mmm [WARN] text" -- whatever handler is installed,
+     * to it -- "YYYY-MM-DD HH:MM:SS.mmm [WARN] text", under a header saying
+     * when the run started -- whatever handler is installed,
      * from any thread, flushed per line so a crash keeps what led to it.
      *
      * OpenRunLog creates InDirectory and writes "<InName>-YYYY.MM.DD-HH.MM.SS.log"
