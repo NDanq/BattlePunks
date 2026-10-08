@@ -304,21 +304,11 @@ void EditorMainWindow::BuildMenus()
 
     File->addSeparator();
 
-    QAction* New = File->addAction(QStringLiteral("&New Scene"));
+    QAction* New = File->addAction(QStringLiteral("&New World"));
     New->setShortcut(QKeySequence::New);
     connect(New, &QAction::triggered, this, [this]()
     {
-        Level.NewScene();
-        CurrentPath.clear();
-        UpdateTitle();
-    });
-
-    QAction* SandboxScene = File->addAction(QStringLiteral("New &Sandbox Scene"));
-    SandboxScene->setToolTip(QStringLiteral("The Sandbox level as it stands once loaded: Marker, Camera and Scripted"));
-    connect(SandboxScene, &QAction::triggered, this, [this]()
-    {
-        Level.CreateSandboxScene();
-        Viewport->ApplySandboxView();
+        Level.NewWorld();
         CurrentPath.clear();
         UpdateTitle();
     });
@@ -338,7 +328,7 @@ void EditorMainWindow::BuildMenus()
     connect(SaveAs, &QAction::triggered, this, &EditorMainWindow::SaveWorldAs);
 
     /* Save stays: it writes the edited World, which a run never touches. */
-    SceneActions = { New, SandboxScene, Open };
+    SceneActions = { New, Open };
 
     File->addSeparator();
 
@@ -1610,7 +1600,7 @@ void EditorMainWindow::RegisterConsoleCommands()
         Window->resize(800, 600);
 
         auto* Document = new EditorDocument(Window);
-        Document->CreateSandboxScene();
+        Document->NewWorld();
         Document->CreateEntity(QStringLiteral("TestQuad"), EngineCore::Vector3(200.0, 200.0, 0.0), [](const GameCore::Entity& InEntity)
         {
             InEntity.GetComponent<GameCore::TransformComponent>()->Scale = EngineCore::Vector3(240.0, 240.0, 1.0);
@@ -1639,12 +1629,7 @@ void EditorMainWindow::RegisterConsoleCommands()
         const QString Which = InArgs.isEmpty() ? QString() : InArgs.front().toLower();
         if(Which == QStringLiteral("new"))
         {
-            Level.NewScene();
-        }
-        else if(Which == QStringLiteral("sandbox"))
-        {
-            Level.CreateSandboxScene();
-            Viewport->ApplySandboxView();
+            Level.NewWorld();
         }
         else
         {
@@ -1857,7 +1842,7 @@ void EditorMainWindow::StartRenderer()
     }
     else
     {
-        Level.CreateSandboxScene();
+        Level.NewWorld();
         Viewport->ApplySandboxView();
     }
     UpdateTitle();
