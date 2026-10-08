@@ -18,7 +18,9 @@
 # Engine/Tools/NimblePak, beside that game's executable.
 #
 # A pack stores paths only as hashes. A debug-info build's (anything but
-# Shipping) also keeps the path behind each, for `NimblePak list` and logs.
+# Shipping) also keeps the path behind each, for `NimblePak list` and logs; a
+# Shipping build's instead strips its scripts to bytecode and its config of
+# comments, and scrambles every entry's bytes (NimblePak --strip --scramble).
 #
 # Single-config only, as the staging it replaces: a pack needs one runtime
 # directory to land in.
@@ -64,8 +66,11 @@ function(nimble_package_game)
         message(FATAL_ERROR "nimble_package_game(TARGET <game> RUNTIME_DIR <dir>): packaging needs a single-config build")
     endif()
 
-    set(NP_NAMES "")
-    if(NOT CMAKE_BUILD_TYPE STREQUAL "Shipping")
+    # Debug-info builds keep each path; Shipping strips what a person reads
+    # (Lua to stripped bytecode, .ini comments) and scrambles the rest.
+    if(CMAKE_BUILD_TYPE STREQUAL "Shipping")
+        set(NP_NAMES --strip --scramble)
+    else()
         set(NP_NAMES "--names")
     endif()
 

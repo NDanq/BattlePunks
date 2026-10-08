@@ -25,9 +25,15 @@
  * RelWithDebInfo) also carries the path behind each hash, for tools and logs
  * (HasNames, FindName); a Shipping pack does not.
  *
+ * A Shipping pack is also SCRAMBLED: each blob XORed with a keystream seeded
+ * from its offset, so the paths content names inside itself (a world's
+ * prefabs, a material's textures, a script's literals) do not show in a hex
+ * viewer either. Undone on read; it deters casual inspection, not a
+ * determined one -- the key is in the engine.
+ *
  * Content is stored once however many paths name it. Little-endian:
  *
- *   u32 'NPAK'  u16 version  u16 flags (1: names)
+ *   u32 'NPAK'  u16 version  u16 flags (1: names, 2: scrambled)
  *   string name                       (u32 length + UTF-8)
  *   u32 blobs   { u64 offset, u64 size }        from the start of the file
  *   u32 entries { u64 path hash, u32 blob }     sorted by hash
@@ -49,10 +55,11 @@ namespace EngineCore
     };
 
     /* Writes InEntries to InFile as pack InName. bInNames: keep each path
-     * (a debug-info build's pack). False, with OutError, if two paths hash
-     * alike or the file cannot be written. */
+     * (a debug-info build's pack); bInScramble: scramble the content (a
+     * Shipping build's). False, with OutError, if two paths hash alike or the
+     * file cannot be written. */
     CORE_API bool WritePackFile(const std::string& InFile, const std::string& InName, const std::vector<PackInput>& InEntries,
-                                bool bInNames, std::string* OutError = nullptr);
+                                bool bInNames, bool bInScramble, std::string* OutError = nullptr);
 
     class CORE_API PackFileProvider : public IFileProvider
     {
@@ -66,6 +73,7 @@ namespace EngineCore
         const std::string& GetName() const { return Name; }
         size_t             GetEntryCount() const { return Entries.size(); }
         bool               HasNames() const { return !Names.empty(); }
+        bool               IsScrambled() const { return bScrambled; }
 
         /* The path behind InHash as it was packed, if this pack carries names;
          * else null. */
@@ -88,10 +96,27 @@ namespace EngineCore
         std::vector<Blob>                      Blobs;
         std::unordered_map<uint64_t, uint32_t> Entries;   // path hash -> blob
         std::unordered_map<uint64_t, std::string> Names;
+        bool                                   bScrambled = false;
+    };
+
+    /* Read-only files in memory keyed by HashPackPath, not by name: a shader
+     * cache cooked for Shipping (RenderCore's ShaderCache.h). */
+    class CORE_API HashedMemoryProvider : public IFileProvider
+    {
+    public:
+        using FileBytes = std::shared_ptr<const std::vector<uint8_t>>;
+        explicit HashedMemoryProvider(std::unordered_map<uint64_t, FileBytes> InFiles) : Files(std::move(InFiles)) {}
+
+        bool ReadAll(const std::string& InPath, std::vector<uint8_t>& OutBytes) override;
+        bool Exists (const std::string& InPath) override;
+        size_t GetFileCount() const { return Files.size(); }
+
+    private:
+        std::unordered_map<uint64_t, FileBytes> Files;
     };
 
     /*
-     * Every <InDirectory>/*.nmpak, read from disk and mounted on InProvider
+     * Every "<InDirectory>/<name>.nmpak", read from disk and mounted on InProvider
      * as "Pack:<file name>": Engine.nmpak first, then the rest by name, so a
      * game's pack overrides the engine's. Returns how many mounted; a pack
      * that will not read is logged and skipped.

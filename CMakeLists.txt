@@ -799,7 +799,7 @@ endif()
 # Makes and lists content packs (Tools/NimblePak.cpp; cmake/NimblePack.cmake
 # runs it for a packaged build). Beside EngineCore, whose library it uses.
 add_executable(NimblePak Tools/NimblePak.cpp)
-target_link_libraries(NimblePak PRIVATE EngineCore::EngineCore)
+target_link_libraries(NimblePak PRIVATE EngineCore::EngineCore GameCore Lua::Lua)
 set_target_properties(NimblePak PROPERTIES FOLDER "Engine")
 
 # === Editor ================================================================

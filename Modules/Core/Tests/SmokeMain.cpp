@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <atomic>
 #include <thread>
@@ -2807,10 +2808,10 @@ static void TestPack()
     };
     appCreateDirectories("SmokeScratch/Paks");
     std::string Error;
-    Expect(WritePackFile("SmokeScratch/Paks/Named.nmpak", "Named", Inputs, true, &Error), "a pack with names is written");
-    Expect(WritePackFile("SmokeScratch/Paks/Bare.nmpak", "Bare", Inputs, false, &Error), "a pack without names is written");
+    Expect(WritePackFile("SmokeScratch/Paks/Named.nmpak", "Named", Inputs, true, false, &Error), "a pack with names is written");
+    Expect(WritePackFile("SmokeScratch/Paks/Bare.nmpak", "Bare", Inputs, false, true, &Error), "a pack without names is written");
     std::vector<PackInput> Twice = { { "Content/A.bin", Shared }, { "content/a.bin", Shared } };
-    Expect(!WritePackFile("SmokeScratch/Paks/Twice.nmpak", "Twice", Twice, false, &Error), "a path twice is refused");
+    Expect(!WritePackFile("SmokeScratch/Paks/Twice.nmpak", "Twice", Twice, false, false, &Error), "a path twice is refused");
 
     std::vector<uint8_t> NamedBytes, BareBytes;
     appFileReadAll("SmokeScratch/Paks/Named.nmpak", NamedBytes);
@@ -2818,6 +2819,7 @@ static void TestPack()
     const std::string BareText(BareBytes.begin(), BareBytes.end());
     Expect(BareText.find("Content") == std::string::npos && BareText.find("DefaultEngine") == std::string::npos
            && BareText.find("content") == std::string::npos, "a pack without names holds no path text");
+    Expect(BareText.find("x=1") == std::string::npos, "a scrambled pack's content does not show");
     Expect(BareBytes.size() < NamedBytes.size() && BareBytes.size() < 200, "shared content is stored once");
 
     std::shared_ptr<PackFileProvider> Named = PackFileProvider::Load(NamedBytes, Error);
@@ -2825,6 +2827,9 @@ static void TestPack()
     Expect(Named && Bare && Named->GetEntryCount() == 3 && Bare->GetEntryCount() == 3, "both packs load, three entries each");
     std::vector<uint8_t> Out;
     Expect(Bare && Bare->ReadAll("content/b.BIN", Out) && Out == Shared, "an entry reads back by its path, any case");
+    Expect(Bare && Bare->IsScrambled() && Named && !Named->IsScrambled()
+           && Bare->ReadAll("Config/DefaultEngine.ini", Out) && std::string(Out.begin(), Out.end()) == "x=1",
+           "a scrambled pack reads back as it was packed");
     Expect(Bare && !Bare->Exists("Content/C.bin"), "a path not packed is not there");
     Expect(Named && Named->HasNames() && Named->FindName(HashPackPath("Config/DefaultEngine.ini"))
            && *Named->FindName(HashPackPath("Config/DefaultEngine.ini")) == "Config/DefaultEngine.ini",
@@ -2832,6 +2837,12 @@ static void TestPack()
     Expect(Bare && !Bare->HasNames() && !Bare->FindName(HashPackPath("Content/A.bin")), "a shipping pack names nothing");
     std::vector<uint8_t> Garbage = { 'N', 'O', 'P', 'E' };
     Expect(!PackFileProvider::Load(Garbage, Error), "something else is not a pack");
+
+    std::unordered_map<uint64_t, HashedMemoryProvider::FileBytes> Hashed;
+    Hashed[HashPackPath("Shaders/Cooked/Vulkan/A@0.fsh.spv")] = std::make_shared<const std::vector<uint8_t>>(Shared);
+    HashedMemoryProvider ByHash(std::move(Hashed));
+    Expect(ByHash.Exists("shaders/cooked/vulkan/a@0.fsh.spv") && ByHash.ReadAll("Shaders/Cooked/Vulkan/A@0.fsh.spv", Out)
+           && Out == Shared && !ByHash.Exists("Shaders/Cooked/Vulkan/B@0.fsh.spv"), "a hashed provider answers by path, holding none");
 
     FilesystemProvider Disk;
     LayeredFileProvider Layered(&Disk, false);

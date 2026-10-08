@@ -5,6 +5,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "Public/RenderCore/RenderCoreAPI.h"
@@ -24,8 +25,12 @@
  *   'NMSC' v1  string Module, string Platform, u32 MaterialTemplateVersion
  *   'BLOB' v1  u64 Hash, u32 Size, Size bytes          one per distinct content
  *   'FILE' v1  string Path, u64 Hash                   one per path
+ *   'FHSH' v1  u64 PathHash, u64 Hash                  one per path, instead,
+ *                                                      in a Shipping cache
  *
- * Hash is FNV-1a 64 of the bytes; a mismatch fails the read.
+ * Hash is FNV-1a 64 of the bytes; a mismatch fails the read. PathHash is
+ * EngineCore::HashPackPath: a Shipping cache (-hash-paths) names nothing, and
+ * mounts as a HashedMemoryProvider.
  */
 namespace RenderCore
 {
@@ -35,6 +40,8 @@ namespace RenderCore
         std::string Platform;
         uint32_t    TemplateVersion = 0;
         std::map<std::string, std::shared_ptr<const std::vector<uint8_t>>> Files;
+        /* A Shipping cache's ('FHSH'): by EngineCore::HashPackPath only. */
+        std::unordered_map<uint64_t, std::shared_ptr<const std::vector<uint8_t>>> HashedFiles;
     };
 
     /* False, with OutError, for a malformed or corrupt cache. */

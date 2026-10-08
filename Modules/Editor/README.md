@@ -821,7 +821,10 @@ options kept in `[Build]` of `DefaultEngine.ini`.
   worlds, prefabs and UI, shaders -- and no loose content
   (`Engine/cmake/NimblePack.cmake`, Core's `CorePack.h`). A pack's index
   stores only path hashes; Debug and RelWithDebInfo packs also keep each path,
-  which `NimblePak list Paks/Game.nmpak` prints.
+  which `NimblePak list Paks/Game.nmpak` prints. A Shipping build's packs
+  name nothing anywhere: scripts and script graphs are stripped Lua
+  bytecode, the config has no comments, shader caches index by hash, and
+  every entry is scrambled, so no asset path shows even inside content.
 
 The game's CMake stages exactly the listed, ticked worlds
 (`nimble_project_worlds` in `Engine/cmake/NimbleProject.cmake`): the text
