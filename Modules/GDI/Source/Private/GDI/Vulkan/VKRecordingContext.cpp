@@ -4,7 +4,7 @@
 #include "Public/GDI/Vulkan/VKMesh.h"
 #include "Public/GDI/Vulkan/VKRenderTarget.h"
 #include "Public/GDI/Vulkan/VKShader.h"
-#include "Private/GDI/Vulkan/VKCorePack.h"
+#include "Private/GDI/GDICorePack.h"
 #include "Public/GDI/GDILog.h"
 
 /*
@@ -323,12 +323,12 @@ void VulkanDynamicGDI::RecordDrawObject(GDIRecordingContext* InContext, GDIViewO
      * them: in a context they are read, never written. */
     if(InView)
     {
-        VKCorePack::PackCoreView(InView, Context.Core.View);
+        GDICorePack::PackCoreView(InView, Context.Core.View);
         Context.Core.bView = true;
     }
     if(InObject->Transform)
     {
-        VKCorePack::PackCoreTransform(InObject->Transform, Context.Core.Transform);
+        GDICorePack::PackCoreTransform(InObject->Transform, Context.Core.Transform);
         Context.Core.bTransform = true;
     }
 

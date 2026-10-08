@@ -21,6 +21,8 @@ class D3D12PipelineCache;
 class D3D12DescriptorAllocator;
 class D3D12ShaderResource;
 class D3D12TextureResource;
+class D3D12OcclusionQueries;
+class D3D12RecordingContext;
 
 /* D3D12 needs nothing from the host beyond the window the driver already holds. */
 class D3D12GDIContext : public GDIContext
@@ -65,9 +67,72 @@ public:
 
     // PIX events opened in the current list; a mid-frame flush resets it.
     int                         DebugEventDepth     = 0;
+    // Their names, outermost first: a parallel pass's split closes and reopens them.
+    std::vector<std::string>    DebugEventNames;
 
     D3D12ShaderResource*        BoundVS             = nullptr;
     D3D12ShaderResource*        BoundPS             = nullptr;
+};
+
+/**
+ * The scene and skin blocks' last uploads (BindDrawState): each reused while
+ * its serial and the ring's epoch are unchanged, so it is uploaded once per
+ * change, not per draw. The driver keeps one; each recording context its own.
+ */
+struct D3D12BlockUploads
+{
+    uint64_t SceneAddress = 0;   // D3D12_GPU_VIRTUAL_ADDRESS
+    uint64_t SceneSerial  = ~0ull;
+    uint64_t SceneEpoch   = ~0ull;
+    uint64_t SkinAddress[2] = {};   // the palette, the frame before's
+    uint64_t SkinSerial[2]  = { ~0ull, ~0ull };
+    uint64_t SkinEpoch[2]   = { ~0ull, ~0ull };
+
+    void Forget() { *this = D3D12BlockUploads(); }
+};
+
+/**
+ * Everything one draw reads (D3D12Mesh::Record, BindDrawState), so the
+ * render thread's draws and a recording context's share no mutable state
+ * (RenderCore's MULTITHREADED_RENDERING.md, phase 2). The render thread's come
+ * from the driver (MakeDrawInputs); a context's from itself.
+ */
+struct D3D12DrawInputs
+{
+    ID3D12GraphicsCommandList* List       = nullptr;
+    /* The list's serial for D3D12Buffer's state tracking; 0 in a recording
+     * context, whose buffers are not transitioned: a buffer decays to COMMON
+     * between ExecuteCommandLists calls and is promoted on first read. */
+    uint64_t                   ListSerial = 0;
+
+    D3D12ShaderResource*        VS        = nullptr;
+    D3D12ShaderResource*        PS        = nullptr;
+    bool                        bMaterial = false;
+    const std::vector<uint8_t>* Blocks    = nullptr;   // [4], as GDIRecordingContext::MaterialBlocks
+    const uint64_t*             Serials   = nullptr;   // [4]
+    GDITextureResource* const*  Textures  = nullptr;   // [GDI_MATERIAL_TEXTURE_SLOTS]
+    D3D12BlockUploads*          Uploads   = nullptr;
+
+    GDIBuffer*                 InstanceBuffer     = nullptr;
+    uint32_t                   InstanceCount      = 0;
+    GDIBuffer*                 IndirectArgs       = nullptr;
+    uint32_t                   IndirectArgsOffset = 0;
+
+    const IBlendStateDesc*     Blend     = nullptr;
+    EColorMask                 ColorMask = EColM_RGBA;
+    const IDepthStateDesc*     Depth     = nullptr;
+
+    D3D12OcclusionQueries*     PredicateSet   = nullptr;
+    int32_t                    PredicateIndex = -1;
+
+    /* The core blocks, packed (GDICorePack); null: from the pixel shader's
+     * scalars, as UpdateCoreUniforms left them. */
+    const float*               CoreView      = nullptr;   // [40]
+    const float*               CoreTransform = nullptr;   // [36]
+
+    /* GDISetDrawRange's in a context (0 and 0: the mesh's own). */
+    uint32_t                   DrawFirst = 0;
+    uint32_t                   DrawCount = 0;
 };
 
 /**
@@ -153,17 +218,29 @@ public:
      * SetPredication -- core at every feature level. */
     bool                 SupportsOcclusionQueries() const override { return DeviceObj != nullptr; }
 
-    /* Direct command lists, one per chunk, executed in order (bundles cannot
-     * set targets, barriers or queries), are how D3D12 will record in
-     * parallel; its recording contexts are not written yet
-     * (MULTITHREADED_RENDERING.md, phase 4), so it says no. */
+    /* Parallel passes (D3D12RecordingContext.cpp): a direct command list per
+     * chunk (bundles cannot clear, query or set targets), executed in chunk
+     * order between the frame list's halves. Nothing is inherited: each chunk
+     * list binds its own targets and state, and predicates its own draws. */
     GDIParallelRecordingSupport GetParallelRecordingSupport() const override
     {
         GDIParallelRecordingSupport Out;
-        Out.Mechanism = "direct command lists";
-        Out.Reason    = "D3D12's recording contexts are not implemented yet";
+        Out.bSupported = DeviceObj != nullptr;
+        Out.Mechanism  = "direct command lists";
+        Out.Reason     = Out.bSupported ? "" : "no D3D12 device";
         return Out;
     }
+    bool BeginParallelPass(uint32_t InChunks, GDIRecordingContext** OutContexts) override;
+    void EndParallelPass() override;
+    void RecordDepthState(GDIRecordingContext* InContext, IDepthStateDesc InDesc) override;
+    void RecordBlendState(GDIRecordingContext* InContext, IBlendStateDesc InDesc) override;
+    void RecordStencilState(GDIRecordingContext* InContext, IStencilStateDesc InDesc) override;
+    void RecordColorMask(GDIRecordingContext* InContext, EColorMask InMask) override;
+    void RecordViewport(GDIRecordingContext* InContext, uint InX, uint InY, uint InWidth, uint InHeight) override;
+    void RecordScissorRect(GDIRecordingContext* InContext, uint InX, uint InY, uint InWidth, uint InHeight) override;
+    void RecordDrawObject(GDIRecordingContext* InContext, class GDIViewObject* InObject, class GDIView* InView) override;
+    void RecordBeginDrawEvent(GDIRecordingContext* InContext, const std::string& InName) override;
+    void RecordEndDrawEvent(GDIRecordingContext* InContext) override;
     bool                 SupportsOcclusionPredication() const override { return DeviceObj != nullptr; }
     GDIOcclusionQueries* CreateOcclusionQueries(uint32_t InCapacity) override;
     void                 BeginOcclusionRound(GDIOcclusionQueries* InSet, uint32_t InCount) override;
@@ -176,10 +253,16 @@ public:
     /** D3D12OcclusionQueries::Release: its heap and buffers, freed once the GPU is done. */
     void ReleaseOcclusionQueries(class D3D12OcclusionQueries* InSet);
 
-    /** D3D12Mesh::Draw, around its draw: predicates it on GDISetOcclusionPredicate's
-     *  query, if one is set; true if it did, to pass to EndDrawPredicate. */
-    bool BeginDrawPredicate(ID3D12GraphicsCommandList* InList);
-    void EndDrawPredicate(ID3D12GraphicsCommandList* InList, bool bInBegun);
+    /** D3D12Mesh::Record, around its draw: predicates it on InSet's query InIndex,
+     *  if set; true if it did, to pass to EndDrawPredicate. */
+    static bool BeginDrawPredicate(ID3D12GraphicsCommandList* InList, D3D12OcclusionQueries* InSet, int32_t InIndex);
+    static void EndDrawPredicate(ID3D12GraphicsCommandList* InList, bool bInBegun);
+
+    /** InSet if its query InIndex can predicate a draw now (resolved); else null. */
+    static D3D12OcclusionQueries* UsablePredicate(GDIOcclusionQueries* InSet, int32_t InIndex);
+
+    /** GDISetOcclusionPredicate's set as the render thread has it: a parallel pass's starting predicate. */
+    GDIOcclusionQueries* ImmediatePredicateSet() const;
 
     /**
      * The open frame list's serial, new each time a frame list is opened
@@ -204,8 +287,13 @@ public:
     /** Records a full copy Src -> Dst; both are left in PIXEL_SHADER_RESOURCE. */
     void RecordResolve(D3D12RenderTarget* Src, D3D12RenderTarget* Dst);
 
-    /** Binds pipeline, constant buffers and textures for the next draw. Called by D3D12Mesh::Draw. */
-    bool BindDrawState(GDIMesh* InMesh, bool bIsInstanced);
+    /** The render thread's next draw's inputs, from the driver's state. False if
+     *  nothing is open to draw into. */
+    bool MakeDrawInputs(D3D12DrawInputs& OutIn);
+
+    /** Binds pipeline, constant buffers and textures for InIn's draw of InMesh
+     *  into InIn.List. The render thread, or a thread recording a chunk. */
+    bool BindDrawState(const D3D12DrawInputs& InIn, GDIMesh* InMesh, bool bIsInstanced);
 
     /** While set, PresentToWindow skips: the offscreen RTs are being recreated. Cleared by EndRendering. */
     inline void SetResizing(bool b) { bResizing.store(b); }
@@ -241,6 +329,14 @@ private:
     /** Closes and submits the frame list, publishing each RT's state atomically with the submit. */
     void SubmitFrame();
 
+    /** Records the bound colours and depth, viewport and scissor into InList: a
+     *  list opened mid-rendering (a chunk's, the frame list's second half). */
+    void BindActiveTargets(ID3D12GraphicsCommandList* InList) const;
+
+    /** BeginRendering, after its fence wait: each recording context's allocator rewound. */
+    void ResetRecordingContexts();
+    void DestroyRecordingContexts();
+
     D3D12Device*              DeviceObj        = nullptr;
     D3D12CommandManager*      CommandManager   = nullptr;
     /** One per presented window, keyed by its native handle. UI thread only
@@ -250,15 +346,13 @@ private:
     D3D12DescriptorAllocator* DescAlloc        = nullptr;
     D3D12CurrentStateData*    CurrentStateData = nullptr;
 
-    /* The scene block's last upload, reused while its serial and the ring's
-     * epoch are unchanged: it is set once per scene, not per draw. */
-    uint64_t                  SceneBlockUploadAddress = 0;   // D3D12_GPU_VIRTUAL_ADDRESS
-    uint64_t                  SceneBlockUploadSerial = ~0ull;
-    uint64_t                  SceneBlockUploadEpoch  = ~0ull;
-    /* The skin block the same way: unchanged since its last upload, reused. */
-    uint64_t                  SkinBlockUploadAddress[2] = {};                 // D3D12_GPU_VIRTUAL_ADDRESS; the palette, the frame before's
-    uint64_t                  SkinBlockUploadSerial[2]  = { ~0ull, ~0ull };
-    uint64_t                  SkinBlockUploadEpoch[2]   = { ~0ull, ~0ull };
+    /* The render thread's draws' block uploads (a recording context keeps its own). */
+    D3D12BlockUploads         BlockUploads;
+
+    /* Parallel passes' contexts, made on first need and kept (D3D12RecordingContext.cpp). */
+    std::vector<D3D12RecordingContext*> RecordingContexts;
+    uint32_t                  ParallelChunks = 0;
+    bool                      bParallelPass  = false;
 
     GDIMesh*                  ScreenMesh       = nullptr;
     D3D12TextureResource*     NullTexture      = nullptr;
@@ -274,7 +368,7 @@ private:
     std::vector<Microsoft::WRL::ComPtr<ID3D12QueryHeap>> DeferredQueryHeaps;   // released occlusion query sets'
 
     /* GDISetOcclusionPredicate's: the draws after it are predicated on it. */
-    class D3D12OcclusionQueries* PredicateSet   = nullptr;
+    D3D12OcclusionQueries*       PredicateSet   = nullptr;
     int32_t                      PredicateIndex = -1;
 
     /* BeginRendering blocks begun: a round's answers are readable from the

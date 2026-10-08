@@ -1,5 +1,5 @@
-#ifndef CORECLIENT_VKCOREPACK_H
-#define CORECLIENT_VKCOREPACK_H
+#ifndef CORECLIENT_GDICOREPACK_H
+#define CORECLIENT_GDICOREPACK_H
 
 #include "Public/GDI/GDIView.h"
 
@@ -8,12 +8,13 @@
 /*
  * The core uniform blocks packed as the shaders read them (std140), with no
  * string per value (MULTITHREADED_RENDERING.md, phase 1): DrawObject's and a
- * recording context's RecordDrawObject's (phase 2).
+ * recording context's RecordDrawObject's (phase 2). Vulkan's and D3D12's
+ * alike: D3D12's HLSL is cross-compiled from the same SPIR-V.
  */
-namespace VKCorePack
+namespace GDICorePack
 {
     /* std140 mat4 from Matrix4x4's row-major doubles: column-major floats,
-     * transposed as VKShaderResource::SetUniform(Matrix4x4) stores them. */
+     * transposed as each backend's SetUniform(Matrix4x4) stores them. */
     inline void MatrixToStd140(const Matrix4x4& InMatrix, float* OutColumns)
     {
         for(int Row = 0; Row < 4; ++Row)
@@ -53,7 +54,7 @@ namespace VKCorePack
         MatrixToStd140(InTransform->bHasPrevModel ? InTransform->PrevModel : Model, OutTransform + 20);
     }
 
-    /* The camera's GL projection to Vulkan's clip z (see PackViewParamsUBO). */
+    /* The camera's GL projection to clip z in [0, 1], Vulkan's and D3D12's. */
     inline void RemapClipZ(float* InOutView)
     {
         for(int Col = 0; Col < 4; ++Col)
@@ -66,4 +67,4 @@ namespace VKCorePack
 
 }
 
-#endif //CORECLIENT_VKCOREPACK_H
+#endif //CORECLIENT_GDICOREPACK_H

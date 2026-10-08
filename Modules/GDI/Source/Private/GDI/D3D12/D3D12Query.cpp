@@ -184,12 +184,21 @@ void D3D12DynamicGDI::ResolveOcclusionQueries(GDIOcclusionQueries* InSet)
     Set->bPending     = true;
 }
 
-void D3D12DynamicGDI::SetOcclusionPredicate(GDIOcclusionQueries* InSet, const int32_t InIndex)
+D3D12OcclusionQueries* D3D12DynamicGDI::UsablePredicate(GDIOcclusionQueries* InSet, const int32_t InIndex)
 {
     auto* Set = static_cast<D3D12OcclusionQueries*>(InSet);
-    const bool bUsable = Set && Set->IsValid() && Set->bResolved && InIndex >= 0 && uint32_t(InIndex) < Set->Count;
-    PredicateSet   = bUsable ? Set : nullptr;
-    PredicateIndex = bUsable ? InIndex : -1;
+    return Set && Set->IsValid() && Set->bResolved && InIndex >= 0 && uint32_t(InIndex) < Set->Count ? Set : nullptr;
+}
+
+GDIOcclusionQueries* D3D12DynamicGDI::ImmediatePredicateSet() const
+{
+    return PredicateSet;
+}
+
+void D3D12DynamicGDI::SetOcclusionPredicate(GDIOcclusionQueries* InSet, const int32_t InIndex)
+{
+    PredicateSet   = UsablePredicate(InSet, InIndex);
+    PredicateIndex = PredicateSet ? InIndex : -1;
 }
 
 bool D3D12DynamicGDI::ReadOcclusionResults(GDIOcclusionQueries* InSet, std::vector<uint8_t>& OutVisible)
@@ -217,14 +226,14 @@ bool D3D12DynamicGDI::ReadOcclusionResults(GDIOcclusionQueries* InSet, std::vect
     return true;
 }
 
-bool D3D12DynamicGDI::BeginDrawPredicate(ID3D12GraphicsCommandList* InList)
+bool D3D12DynamicGDI::BeginDrawPredicate(ID3D12GraphicsCommandList* InList, D3D12OcclusionQueries* InSet, const int32_t InIndex)
 {
-    if(!PredicateSet || PredicateIndex < 0 || !InList)
+    if(!InSet || InIndex < 0 || !InList)
     {
         return false;
     }
     /* Skipped when its answer is 0: nothing passed. */
-    InList->SetPredication(PredicateSet->Answers.Get(), UINT64(PredicateIndex) * sizeof(uint64_t), D3D12_PREDICATION_OP_EQUAL_ZERO);
+    InList->SetPredication(InSet->Answers.Get(), UINT64(InIndex) * sizeof(uint64_t), D3D12_PREDICATION_OP_EQUAL_ZERO);
     return true;
 }
 

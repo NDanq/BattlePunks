@@ -12,7 +12,7 @@
 #include "Public/GDI/Vulkan/VKTexture.h"
 #include "Public/GDI/Vulkan/VKMesh.h"
 #include "Private/GDI/Vulkan/VKTransientOps.h"
-#include "Private/GDI/Vulkan/VKCorePack.h"
+#include "Private/GDI/GDICorePack.h"
 #include "Public/GDI/GDIShader.h"
 #include "Public/GDI/GDIView.h"
 
@@ -1282,7 +1282,7 @@ bool VulkanDynamicGDI::BindDrawState(const VKDrawInputs& In, GDIMesh* InMesh, bo
         if(Core && Core->bView)
         {
             std::memcpy(View, Core->View, sizeof(View));
-            VKCorePack::RemapClipZ(View);
+            GDICorePack::RemapClipZ(View);
         }
         else
         {
@@ -1589,8 +1589,8 @@ void VulkanDynamicGDI::DrawObject(GDIViewObject* InObject, GDIView* InView)
      * user uniforms still go through by name. */
     alignas(16) float View[40];
     alignas(16) float Transform[36];
-    if(InView) { VKCorePack::PackCoreView(InView, View); }
-    if(InObject->Transform) { VKCorePack::PackCoreTransform(InObject->Transform, Transform); }
+    if(InView) { GDICorePack::PackCoreView(InView, View); }
+    if(InObject->Transform) { GDICorePack::PackCoreTransform(InObject->Transform, Transform); }
     for(GDIShader* Shader : { static_cast<GDIShader*>(BoundVertexShader), static_cast<GDIShader*>(BoundPixelShader) })
     {
         if(!Shader || !Shader->Resource) continue;

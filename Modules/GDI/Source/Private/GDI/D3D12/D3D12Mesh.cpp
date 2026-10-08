@@ -245,24 +245,33 @@ void D3D12Mesh::Draw()
 {
     if(!bResourcesValid || !StateData || !StateData->CurrentCmd) return;
 
+    // Every draw binds state here, including a direct Mesh->Draw() that bypasses DrawObject.
+    auto* GDI = static_cast<D3D12DynamicGDI*>(GDynamicGDI);
+    D3D12DrawInputs In;
+    if(!GDI || !GDI->MakeDrawInputs(In)) return;
+    Record(In);
+}
+
+void D3D12Mesh::Record(const D3D12DrawInputs& InIn)
+{
+    if(!bResourcesValid || !InIn.List) return;
+
     const UINT VertexCount = RenderData.NumVertices / 3;
     if(VertexCount == 0) return;
 
-    // Every draw binds state here, including a direct Mesh->Draw() that bypasses DrawObject.
-    auto* GDI = dynamic_cast<D3D12DynamicGDI*>(GDynamicGDI);
-    if(!GDI || !GDI->BindDrawState(this, IsInstanced())) return;
+    auto* GDI = static_cast<D3D12DynamicGDI*>(GDynamicGDI);
+    if(!GDI || !GDI->BindDrawState(InIn, this, IsInstanced())) return;
 
-    ID3D12GraphicsCommandList* List = StateData->CurrentCmd;
+    ID3D12GraphicsCommandList* List = InIn.List;
 
     /* Skipped on the GPU if GDISetOcclusionPredicate's query found nothing:
      * predication round whichever draw this records, and off again after. */
     struct PredicateScope
     {
-        D3D12DynamicGDI*           Driver;
         ID3D12GraphicsCommandList* List;
         bool                       bBegun;
-        ~PredicateScope() { Driver->EndDrawPredicate(List, bBegun); }
-    } Predicate{ GDI, List, GDI->BeginDrawPredicate(List) };
+        ~PredicateScope() { D3D12DynamicGDI::EndDrawPredicate(List, bBegun); }
+    } Predicate{ List, D3D12DynamicGDI::BeginDrawPredicate(List, InIn.PredicateSet, InIn.PredicateIndex) };
 
     D3D12_VERTEX_BUFFER_VIEW Views[2]{};
     Views[0].BufferLocation = PositionBuffer->GetGPUVirtualAddress();
@@ -276,7 +285,17 @@ void D3D12Mesh::Draw()
     if(IndexBuffer)
     {
         uint32_t First = 0, Count = 0;
-        GetClampedDrawRange(First, Count);
+        if(InIn.DrawCount > 0)
+        {
+            // A recording context's range: the draw's own, as the mesh may be drawn on other threads.
+            const uint32_t Total = RenderData.NumIndices;
+            First = InIn.DrawFirst < Total ? InIn.DrawFirst : Total;
+            Count = InIn.DrawCount < Total - First ? InIn.DrawCount : Total - First;
+        }
+        else
+        {
+            GetClampedDrawRange(First, Count);
+        }
         if(Count == 0) return;
 
         D3D12_VERTEX_BUFFER_VIEW MeshViews[3]{};
@@ -310,26 +329,27 @@ void D3D12Mesh::Draw()
         List->IASetIndexBuffer(&IndexView);
 
         // Instanced (GDISetInstanceBuffer): vertex layout 3 reads slot 5 per instance.
+        // A recording context's list (ListSerial 0) leaves buffers to implicit promotion (D3D12DrawInputs).
         UINT Instances = 1;
-        if(auto* Instance = static_cast<D3D12Buffer*>(GDI->GetInstanceBuffer()))
+        if(auto* Instance = static_cast<D3D12Buffer*>(InIn.InstanceBuffer))
         {
             if(!Instance->IsValid()) return;
-            Instance->Transition(List, GDI->GetListSerial(), Instance->GetDrawReadState());
+            if(InIn.ListSerial != 0) { Instance->Transition(List, InIn.ListSerial, Instance->GetDrawReadState()); }
 
             D3D12_VERTEX_BUFFER_VIEW InstanceView{};
             InstanceView.BufferLocation = Instance->GetResource()->GetGPUVirtualAddress();
             InstanceView.SizeInBytes    = Instance->GetSize();
             InstanceView.StrideInBytes  = GDI_INSTANCE_STRIDE;
             List->IASetVertexBuffers(5, 1, &InstanceView);
-            Instances = GDI->GetInstanceCount();
+            Instances = InIn.InstanceCount;
 
             // Indirect (GDISetIndirectArgs): the counts and range from a buffer the GPU wrote.
-            if(auto* Args = static_cast<D3D12Buffer*>(GDI->GetIndirectArgs()))
+            if(auto* Args = static_cast<D3D12Buffer*>(InIn.IndirectArgs))
             {
                 if(!Args->IsValid() || !GDI->GetPipelineCache()->GetDrawIndexedSignature()) return;
-                Args->Transition(List, GDI->GetListSerial(), Args->GetDrawReadState());
+                if(InIn.ListSerial != 0) { Args->Transition(List, InIn.ListSerial, Args->GetDrawReadState()); }
                 List->ExecuteIndirect(GDI->GetPipelineCache()->GetDrawIndexedSignature(), 1, Args->GetResource(),
-                                      GDI->GetIndirectArgsOffset(), nullptr, 0);
+                                      InIn.IndirectArgsOffset, nullptr, 0);
                 return;
             }
         }

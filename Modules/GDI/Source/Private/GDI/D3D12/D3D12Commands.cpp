@@ -106,6 +106,7 @@ void D3D12DynamicGDI::BeginRendering()
     ID3D12GraphicsCommandList* List = CommandManager->BeginFrame();
     if(!List) return;
     if(DescAlloc) DescAlloc->Reset();
+    ResetRecordingContexts();   // their lists ran in the frame just waited
     DrainDeferredDestruction();
     CollectTimestamps();   // the previous block's, complete now its fence is waited
     ++RenderingBlocks;     // and the previous block's occlusion answers with them
@@ -117,6 +118,7 @@ void D3D12DynamicGDI::BeginRendering()
     CurrentStateData->ActiveDepth        = nullptr;
     CurrentStateData->bRenderingActive   = false;
     CurrentStateData->DebugEventDepth    = 0;
+    CurrentStateData->DebugEventNames.clear();
 
     PrepareCommandList(List);
 }
@@ -241,6 +243,7 @@ void D3D12DynamicGDI::BeginDrawEvent(const std::string& EventName)
     // Metadata 1 is PIX's ANSI-string encoding, readable without WinPixEventRuntime.
     CurrentStateData->CurrentCmd->BeginEvent(1, EventName.c_str(), UINT(EventName.size() + 1));
     ++CurrentStateData->DebugEventDepth;
+    CurrentStateData->DebugEventNames.push_back(EventName);
 }
 
 void D3D12DynamicGDI::EndDrawEvent()
@@ -252,6 +255,7 @@ void D3D12DynamicGDI::EndDrawEvent()
 
     CurrentStateData->CurrentCmd->EndEvent();
     --CurrentStateData->DebugEventDepth;
+    CurrentStateData->DebugEventNames.pop_back();
 }
 
 #pragma endregion

@@ -1,6 +1,6 @@
 # Multithreaded rendering: plan
 
-Status: **phases 0 (measure and gate), 1 (per-draw cost), 2 (GDI recording contexts), 3 (parallel issue: Base Pass and Shadows) and 4 (frames in flight, Vulkan) done; D3D12 and Metal recording contexts not done.** Recording draws on several
+Status: **phases 0 (measure and gate), 1 (per-draw cost), 2 (GDI recording contexts), 3 (parallel issue: Base Pass and Shadows) and 4 (frames in flight, Vulkan) done; D3D12 recording contexts done (one frame in flight); Metal's not done.** Recording draws on several
 threads when the backend can: the Base Pass first, then the Shadows views.
 This note is why, what stands in the way, and in what order.
 
@@ -204,9 +204,9 @@ serially today.
    Smoke tests pixel-identical; the Vulkan validation layer reports nothing
    new. Still per Base Pass draw (~6 us): material binding -- the pipeline
    lookup on each material switch, texture lookups, the 4 KB scene block
-   compared each draw -- spread thin; parallel recording divides it. D3D12
-   keeps its string path (it is not compiled on Linux): its turn comes with
-   phase 4.
+   compared each draw -- spread thin; parallel recording divides it. D3D12's
+   render thread keeps its string path; its recording contexts pack the
+   blocks (phase 4).
 2. **GDI recording contexts** -- done (Vulkan, Null). What there is:
    - `GDIRecordingContext` (GDI.h): one thread's draw state -- bound shaders,
      the material, scene and skin blocks with their serials, the material
@@ -238,8 +238,8 @@ serially today.
      pass is open.
    - Null: contexts that count their draws, folded into its stats at the
      pass's end in chunk order; the chunks run wherever the caller runs them.
-   - D3D12 and Metal report "not implemented yet" at the gate until their
-     contexts exist (phase 4).
+   - D3D12: a direct command list per context (below, under phase 4).
+     Metal reports "not implemented yet" at the gate until its contexts exist.
    Verified: GDISmokeTest records four chunks on four threads at once on
    Null -- each thread's state its own, the driver's untouched until the
    pass ends, every draw counted; the single-threaded path, refactored onto
@@ -301,8 +301,8 @@ serially today.
      resolving once per frame instead of per stage, are what is left there.
    - GpuTest's frame is now bound by waiting for the GPU (`wait_ms` 8-10
      of 10): the CPU's next win is phase 4's frames in flight.
-4. **Frames in flight** -- done (Vulkan). **D3D12 parallel recording -- not
-   done.**
+4. **Frames in flight** -- done (Vulkan). **D3D12 parallel recording --
+   done, one frame in flight.**
 
    Frames in flight: `[Rendering] FramesInFlight` (1-3, default 2, read
    when the device is made) lets the CPU record frame N+1 while the GPU
@@ -347,11 +347,44 @@ serially today.
    RelWithDebInfo pinned at the editor's ~16 ms): there the frame is the
    present, ~10.7 ms blocked on the swap, not the render thread.
 
-   D3D12: its recording contexts (command lists, a descriptor heap slice per
-   context) were not written. This machine has no Windows SDK or `d3d12.h`,
-   so they could neither be compiled nor run; the gate still says "not
-   implemented yet" there, and D3D12 records serially with one frame in
-   flight. Metal likewise.
+   D3D12 parallel recording (`D3D12RecordingContext.cpp`): each context
+   records a direct command list of its own -- bundles cannot clear, query or
+   set targets -- on an allocator it keeps, rewound at `BeginRendering` after
+   the frame fence's wait. A list inherits nothing, so each binds the heaps,
+   root signature, targets, viewport and scissor as the frame list has them,
+   then its pipelines, blocks and predicates draw by draw. `EndParallelPass`
+   splits the frame list round the chunks: its first half executes, then the
+   chunks in one more `ExecuteCommandLists` call, and it reopens on the same
+   allocator (`D3D12CommandManager::Resume`) with its targets and PIX events
+   as they were; the frame fence behind `EndRendering`'s submit covers all of
+   it. The separate calls matter: a buffer decays to COMMON between them, so
+   the instance and indirect-argument buffers a chunk reads are promoted
+   implicitly, with no barrier from a thread that cannot track their state.
+   - The draw path takes explicit inputs (`D3D12DrawInputs`) as Vulkan's
+     does: `D3D12Mesh::Record` and `BindDrawState` read nothing mutable the
+     render thread owns. The core blocks come packed (`GDICorePack`, shared
+     with Vulkan, byte for byte what the string path writes); the scene and
+     skin uploads' cache is per context (`D3D12BlockUploads`).
+   - Shared and safe: the constant-buffer ring's `AllocateCB` claims with an
+     atomic; the pipeline cache is read under a shared lock and matched on
+     the whole key.
+   - Not done for D3D12: phase 1's per-draw savings (it still packs the core
+     blocks from strings on the render thread) and frames in flight.
+
+   Verified on Windows (RTX 2080 Ti): RenderCore's GPU smoke test on D3D12
+   634/0, the parallel capture byte-identical to the serial ones, the D3D12
+   debug layer silent; GpuTest 300 frames under the debug layer with
+   `ParallelRecording=On`, silent.
+
+   | LightLab GpuTest, D3D12, RelWithDebInfo, two runs each | Off | Auto |
+   |---|---|---|
+   | frame / render | 11.3-11.6 / 10.3-10.6 ms | 7.4 / 6.4 ms |
+   | stages CPU | 8.4-8.5 ms | 4.9 ms |
+   | Shadows CPU (~1,500 draws) | 5.7-5.9 ms | 2.2 ms |
+   | Base Pass CPU (~110 draws: under ParallelMinDraws, serial) | 0.7 ms | 0.7 ms |
+
+   Metal: its recording contexts were not written (no macOS here); the gate
+   says "not implemented yet", and Metal records serially.
 
 ## Risks
 
