@@ -207,8 +207,38 @@ else()
     set(NIMBLE_JOLTPHYSICS_DEFINE 0)
 endif()
 
+# === Audio =================================================================
+# Audio (Modules/Audio): sound on the vendored miniaudio -- an output device
+# and mixer with buses, .nmsound assets, and GameCore's Audio Source and Audio
+# Listener components heard in 3D. ON by default; a game that wants no sound
+# turns it off, in its config file (Project Settings > Project > Modules):
+#
+#     [Modules]
+#     Audio=false
+#
+# or in its CMakeLists before adding the engine:
+#
+#     set(NIMBLE_WITH_AUDIO OFF CACHE BOOL "" FORCE)
+#
+# Off, nothing of miniaudio is compiled. The components still exist
+# (GameCore), so levels and prefabs carrying them load, edit and save; they
+# are silent, and loading one says so (WarnInactiveModuleComponents).
+# NimbleEngine/AudioFacade.h answers "unavailable" and the Audio script
+# library's calls do nothing.
+#
+# ONE PER CONFIGURE, like WITH_NETCORE: a PUBLIC definition on EngineCore
+# (below). Always 1 or 0.
+option(NIMBLE_WITH_AUDIO "Build the Audio module (off: the game is silent)" ON)
+nimble_project_module(Audio NIMBLE_WITH_AUDIO "Build the Audio module (off: the game is silent)")
+
+if(NIMBLE_WITH_AUDIO)
+    set(NIMBLE_AUDIO_DEFINE 1)
+else()
+    set(NIMBLE_AUDIO_DEFINE 0)
+endif()
+
 message(STATUS "NimbleEngine: target ${NIMBLE_TARGET} (WITH_EDITOR=${NIMBLE_WITH_EDITOR}, WITH_NETCORE=${NIMBLE_NETCORE_DEFINE}, "
-               "WITH_JOLTPHYSICS=${NIMBLE_JOLTPHYSICS_DEFINE})")
+               "WITH_JOLTPHYSICS=${NIMBLE_JOLTPHYSICS_DEFINE}, WITH_AUDIO=${NIMBLE_AUDIO_DEFINE})")
 
 # === Configurations ========================================================
 #   Debug            unoptimised, full debug info.
@@ -404,6 +434,7 @@ target_compile_definitions(EngineCore PUBLIC
         WITH_EDITOR=${NIMBLE_WITH_EDITOR}
         WITH_NETCORE=${NIMBLE_NETCORE_DEFINE}
         WITH_JOLTPHYSICS=${NIMBLE_JOLTPHYSICS_DEFINE}
+        WITH_AUDIO=${NIMBLE_AUDIO_DEFINE}
         NIMBLE_SHIPPING=$<IF:$<CONFIG:Shipping>,1,0>
         WITH_UNCOOKED=$<IF:$<CONFIG:Shipping>,0,1>)
 
@@ -467,6 +498,14 @@ if(NIMBLE_WITH_JOLTPHYSICS AND TARGET GameCore
     add_subdirectory(Modules/JoltPhysics)
 endif()
 
+# Audio: sound, when NIMBLE_WITH_AUDIO is on (the Audio block above). After
+# GameCore, whose components it plays, and before NimbleEngine, which attaches
+# it to each level's World.
+if(NIMBLE_WITH_AUDIO AND TARGET GameCore
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/Audio/CMakeLists.txt")
+    add_subdirectory(Modules/Audio)
+endif()
+
 # UI: in-game interfaces from XML documents (Modules/UI/README.md). After
 # RenderCore, whose UI draw list it paints into, and before NimbleEngine,
 # which owns a game session's UISystem.
@@ -520,6 +559,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/InputInternal.h
         Source/Private/NimbleEngine/InputRouter.cpp
         Source/Private/NimbleEngine/CollisionMeshes.cpp
+        Source/Private/NimbleEngine/AudioFacade.cpp
         Source/Private/NimbleEngine/NetFacade.cpp
         Source/Private/NimbleEngine/NetHost.cpp
         Source/Private/NimbleEngine/NetScript.cpp
@@ -539,6 +579,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/NimbleEngineTypes.h
         Source/Public/NimbleEngine/Input.h
         Source/Public/NimbleEngine/InputRouter.h
+        Source/Public/NimbleEngine/AudioFacade.h
         Source/Public/NimbleEngine/NetFacade.h
         Source/Public/NimbleEngine/NetHost.h
         Source/Public/NimbleEngine/PhysicsFacade.h
@@ -601,6 +642,13 @@ endif()
 # and NimbleEngine/PhysicsFacade.h, so turning it off breaks no game.
 if(TARGET JoltPhysics)
     target_link_libraries(NimbleEngine PRIVATE JoltPhysics::JoltPhysics)
+endif()
+
+# PRIVATE, as JoltPhysics: a game reaches sound through GameCore's components,
+# the Audio script library and NimbleEngine/AudioFacade.h, so turning it off
+# breaks no game.
+if(TARGET Audio)
+    target_link_libraries(NimbleEngine PRIVATE Audio::Audio)
 endif()
 
 # A session's UISystem (GameSession::GetUI) is game-facing: PUBLIC.
@@ -670,6 +718,17 @@ if(NIMBLEENGINE_BUILD_TESTS)
         add_test(NAME NimbleEngine.PhysicsTests COMMAND NimbleEnginePhysicsTests
                  WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEnginePhysicsTests>")
         set_tests_properties(NimbleEngine.PhysicsTests PROPERTIES TIMEOUT 120 LABELS "smoke")
+    endif()
+
+    # Sound from scripts: the Audio library, Audio Source from Lua, and the
+    # PhysicsLab engine-sound graph. Only with the module (NIMBLE_WITH_AUDIO).
+    if(TARGET Audio AND TARGET NodeGraph AND AUDIO_BUILD_TESTS)
+        add_executable(NimbleEngineAudioScriptTests Tests/AudioScriptTests.cpp)
+        target_link_libraries(NimbleEngineAudioScriptTests PRIVATE NimbleEngine::NimbleEngine Audio::Audio NodeGraph::NodeGraph)
+        set_target_properties(NimbleEngineAudioScriptTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
+        add_test(NAME NimbleEngine.AudioScriptTests COMMAND NimbleEngineAudioScriptTests
+                 WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineAudioScriptTests>")
+        set_tests_properties(NimbleEngine.AudioScriptTests PROPERTIES TIMEOUT 120 LABELS "smoke")
     endif()
 endif()
 

@@ -28,6 +28,13 @@
 #if WITH_JOLTPHYSICS
 #include "Public/JoltPhysics/PhysicsWorld.h"
 #endif
+#if WITH_AUDIO
+#include "Public/Audio/AudioDevice.h"
+#include "Public/Audio/AudioWorld.h"
+#include "Public/GameCore/TransformMath.h"
+#include "Public/RenderCore/AnimationSystem.h"
+#include "Public/RenderCore/Components/CameraComponent.h"
+#endif
 
 /* Chunk tags shared with SaveGame.cpp. */
 #include "Private/NimbleEngine/InputInternal.h"
@@ -37,6 +44,38 @@
  * in the stats panel over the viewport (Renderer::SetStatText). The editor's
  * console and the game's toggle it with "stat physics". */
 NIMBLE_CONFIG_BOOL(GStatsPhysics, "Stats", "Physics", false, nullptr);
+
+/* "stat audio": the level's sound -- voices, the listener, the device. */
+NIMBLE_CONFIG_BOOL(GStatsAudio, "Stats", "Audio", false, nullptr);
+
+#if WITH_AUDIO
+namespace
+{
+    /* The level heard from its active camera when it has no active Audio
+     * Listener: the first active Camera, as WorldBridge views through it. */
+    bool CameraListener(GameCore::World& InWorld, Audio::AudioListenerPose& OutPose, void* /*InUserData*/)
+    {
+        bool bFound = false;
+        InWorld.Each<RenderCore::CameraComponent>([&](GameCore::Entity InEntity, RenderCore::CameraComponent& InCamera)
+        {
+            if(bFound || !InCamera.bActive) { return; }
+            const GameCore::TransformPose Pose = InEntity.GetWorldPose();
+            const GameCore::Rotation3     Turn = GameCore::TransformMath::EulerToRotation(Pose.Rotation);
+            OutPose.Position = Pose.Position;
+            OutPose.Forward  = Turn * EngineCore::Vector3(0.0, 0.0, 1.0);
+            OutPose.Up       = Turn * EngineCore::Vector3(0.0, 1.0, 0.0);
+            bFound = true;
+        });
+        return bFound;
+    }
+
+    /* A clip's notify sound (footsteps), once where it fired. */
+    void PlayNotifySound(const char* InSound, const EngineCore::Vector3& InAt, void* InUserData)
+    {
+        static_cast<Audio::AudioWorld*>(InUserData)->PlaySoundAt(InSound, InAt);
+    }
+}
+#endif
 
 namespace NimbleEngine
 {
@@ -166,6 +205,25 @@ namespace NimbleEngine
                 EngineCore::Memory::Dealloc(Physics);
                 Physics = nullptr;
             }
+        }
+#endif
+#if WITH_AUDIO
+        /* Before OnLoad, so a level's AutoPlay sources start with it. A
+         * headless server has no device, and so no audio. */
+        LevelAudio = EngineCore::Memory::Alloc<Audio::AudioWorld>();
+        if(LevelAudio->Attach(*LevelWorld))
+        {
+            LevelAudio->SetListenerFallback(&CameraListener, nullptr);
+            /* Rendering.BindWorld above attached the animation system. */
+            if(RenderCore::AnimationSystem* Animation = RenderCore::AnimationSystem::Find(LevelWorld))
+            {
+                Animation->SetSoundSink(&PlayNotifySound, LevelAudio);
+            }
+        }
+        else
+        {
+            EngineCore::Memory::Dealloc(LevelAudio);
+            LevelAudio = nullptr;
         }
 #endif
         bInactiveChecked = false;
@@ -377,6 +435,23 @@ namespace NimbleEngine
                 Physics = nullptr;
             }
 #endif
+#if WITH_AUDIO
+            if(LevelAudio)
+            {
+                if(RenderCore::AnimationSystem* Animation = RenderCore::AnimationSystem::Find(LevelWorld))
+                {
+                    Animation->SetSoundSink(nullptr, nullptr);
+                }
+                LevelAudio->Detach();
+                EngineCore::Memory::Dealloc(LevelAudio);
+                LevelAudio = nullptr;
+            }
+#endif
+            if(bAudioStatShown)
+            {
+                Rendering.SetStatText("Audio", std::string());
+                bAudioStatShown = false;
+            }
 
             RemoveWorldSession(LevelWorld);
             QueuedPhases.clear();
@@ -523,6 +598,11 @@ namespace NimbleEngine
         if(bPaused == bInPaused) return;
         bPaused = bInPaused;
         CORE_LOG(bPaused ? "[Game] paused" : "[Game] resumed")
+#if WITH_AUDIO
+        /* The World stops ticking, so its sounds are held here; the UI's
+         * (PlaySound2D from a menu) keep the device. */
+        if(LevelAudio) { LevelAudio->SetPaused(bPaused); }
+#endif
     }
 
     void GameSession::Tick(const FrameContext& InFrame)
@@ -564,6 +644,7 @@ namespace NimbleEngine
         }
 
         PublishPhysicsStat();
+        PublishAudioStat();
 
         /* After the World: this frame's values, then layout, paint and submit
          * of whatever changed -- before the host's EndFrame renders. */
@@ -619,6 +700,50 @@ namespace NimbleEngine
 #endif
         Rendering.SetStatText("Physics", Text);
         bPhysicsStatShown = true;
+    }
+
+    void GameSession::PublishAudioStat()
+    {
+        if(!GStatsAudio.GetBool() || !LevelWorld)
+        {
+            if(bAudioStatShown)
+            {
+                Rendering.SetStatText("Audio", std::string());
+                bAudioStatShown = false;
+            }
+            return;
+        }
+
+        std::string Text;
+#if WITH_AUDIO
+        if(LevelAudio)
+        {
+            Audio::AudioWorldStats Stats;
+            LevelAudio->GetStats(Stats);
+            const Audio::AudioDevice&      Device   = Audio::AudioDevice::Get();
+            const Audio::AudioListenerPose Listener = LevelAudio->GetListener();
+            char Buffer[512];
+            std::snprintf(Buffer, sizeof(Buffer),
+                          "Sources   %6u\n"
+                          "  Playing %6u\n"
+                          "One-shots %6u\n"
+                          "Listener %.0f %.0f %.0f\n"
+                          "Device %u Hz %u ch%s",
+                          Stats.Sources, Stats.Playing, Stats.OneShots,
+                          Listener.Position.GetX(), Listener.Position.GetY(), Listener.Position.GetZ(),
+                          Device.GetSampleRate(), Device.GetChannels(),
+                          Device.IsOffline() ? " offline" : (LevelAudio->IsPaused() ? " paused" : ""));
+            Text = Buffer;
+        }
+        else
+        {
+            Text = "no output device";
+        }
+#else
+        Text = "not compiled in\n(NIMBLE_WITH_\n AUDIO=OFF)";
+#endif
+        Rendering.SetStatText("Audio", Text);
+        bAudioStatShown = true;
     }
 
     void GameSession::ResolveInput(GameCore::World& InWorld, float /*InDeltaSeconds*/, void* InUserData)

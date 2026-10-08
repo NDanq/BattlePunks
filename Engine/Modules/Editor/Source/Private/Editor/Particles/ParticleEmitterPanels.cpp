@@ -99,7 +99,7 @@ namespace
 
     template<typename TField>
     EmitterSetting Setting(const char* InName, TField ParticleEmitterDesc::* InMember, const char* InCategory, const uint8_t InTypes,
-                           const char* InTip, const uint8_t InFlags = GameCore::PF_None)
+                           const char* InTip, const uint16_t InFlags = GameCore::PF_None)
     {
         /* Measured on a default-constructed one, as ComponentPropertyBinder does. */
         static const ParticleEmitterDesc Probe{};

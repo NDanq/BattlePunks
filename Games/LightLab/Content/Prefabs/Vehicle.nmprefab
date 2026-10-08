@@ -1,7 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Prefab Format="1" Name="Vehicle" NextId="16">
+  <Script Path="Scripts/EngineSound.script.nmgraph" />
   <Tick Mode="Tick" />
   <Entity Id="1" Name="Vehicle">
+    <Component Type="Audio Source" Version="1">
+      <Sound Value="Content/Sounds/EngineLoop.nmsound" />
+      <Volume Value="1" />
+      <Pitch Value="1" />
+      <AutoPlay Value="true" />
+      <Override Value="true" />
+      <Loop Value="true" />
+      <Spatial Value="true" />
+      <Bus Value="2" />
+      <MinDistance Value="400" />
+      <MaxDistance Value="8000" />
+      <Rolloff Value="1" />
+      <DopplerFactor Value="1" />
+    </Component>
     <Component Type="Bounds" Version="1">
       <Local MinX="-85" MinY="-35" MinZ="-195" MaxX="85" MaxY="30" MaxZ="195" />
       <Static Value="false" />

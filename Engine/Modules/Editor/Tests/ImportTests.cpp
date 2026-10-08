@@ -24,6 +24,9 @@
 #include "Public/RenderCore/TextureAsset.h"
 #include "Private/Editor/Content/AssetImport.h"
 #include "Private/Editor/Content/LightmapUVs.h"
+#if WITH_AUDIO
+#include "Public/Audio/SoundAsset.h"
+#endif
 
 using namespace EditorContent;
 
@@ -503,6 +506,67 @@ static void TestTextureImport(const QDir& InRoot)
     Expect(!Missing.bOK, "a missing image fails");
 }
 
+#if WITH_AUDIO
+/* A 16-bit mono WAV of a 220 Hz sine, InSeconds long. */
+static void WriteWav(const QString& InPath, const double InSeconds)
+{
+    const uint32_t Rate = 22050, Frames = uint32_t(InSeconds * Rate), Data = Frames * 2;
+    QByteArray Out;
+    const auto U32 = [&Out](const uint32_t V) { for(int I = 0; I < 4; ++I) { Out.append(char(V >> (8 * I))); } };
+    const auto U16 = [&Out](const uint16_t V) { Out.append(char(V)); Out.append(char(V >> 8)); };
+    Out.append("RIFF"); U32(36 + Data); Out.append("WAVE");
+    Out.append("fmt "); U32(16); U16(1); U16(1); U32(Rate); U32(Rate * 2); U16(2); U16(16);
+    Out.append("data"); U32(Data);
+    for(uint32_t Frame = 0; Frame < Frames; ++Frame)
+    {
+        U16(uint16_t(int16_t(std::lround(0.5 * 32767.0 * std::sin(2.0 * 3.14159265358979 * 220.0 * Frame / Rate)))));
+    }
+    QFile File(InPath);
+    File.open(QIODevice::WriteOnly);
+    File.write(Out);
+}
+
+static bool ReadSound(const QString& InPath, Audio::SoundData& OutSound)
+{
+    return ReadAsset(InPath, OutSound, [](EngineCore::Archive& Ar, Audio::SoundData& Data) { return Audio::SerializeSound(Ar, Data); });
+}
+
+static void TestSoundImport(const QDir& InRoot)
+{
+    std::printf("Sound import\n");
+    Expect(ClassifySource(QStringLiteral("Engine.WAV")) == EImportKind::Sound, ".wav is a sound, case-insensitively");
+    Expect(ClassifySource(QStringLiteral("Music.ogg")) == EImportKind::Sound, ".ogg is a sound");
+    Expect(GetImportFileFilter().contains(QStringLiteral("*.flac")), "the file filter offers .flac");
+    Expect(GetAssetExtension(EImportKind::Sound) == QStringLiteral(".nmsound"), "sounds become .nmsound");
+
+    const QString Source  = InRoot.filePath(QStringLiteral("Source/Engine.wav"));
+    const QString Content = InRoot.filePath(QStringLiteral("Content/Sounds"));
+    InRoot.mkpath(QStringLiteral("Content/Sounds"));
+    WriteWav(Source, 1.0);
+
+    const ImportResult Result = ImportSound(Source, Content, QStringLiteral("EngineLoop"), InRoot.path());
+    Expect(Result.bOK && Result.Written.size() == 1, "a WAV imports");
+    const QString Asset = QDir(Content).filePath(QStringLiteral("EngineLoop.nmsound"));
+
+    Audio::SoundData Sound;
+    Expect(ReadSound(Asset, Sound), "the .nmsound loads");
+    Expect(Sound.IsCooked() && Sound.Cooked.Mode == Audio::ESoundLoadMode::Decompressed, "cooked, Decompressed");
+    Expect(Sound.Settings.bSpatial && Sound.Settings.Bus == Audio::EAudioBus::SFX, "short: a spatial SFX");
+    Expect(Sound.Import.SourcePath == "Source/Engine.wav", "its source recorded project-relative");
+
+    /* An author's settings survive a reimport from a changed source. */
+    Sound.Settings.bLoop  = true;
+    Sound.Settings.Volume = 0.4f;
+    Expect(Audio::SaveSoundFile(Asset.toStdString(), Sound), "settings changed and saved");
+    WriteWav(Source, 1.5);
+    const ImportResult Again = Reimport(Asset, InRoot.path());
+    Expect(Again.bOK, "it reimports");
+    Audio::SoundData After;
+    Expect(ReadSound(Asset, After) && After.Settings.bLoop && Near(After.Settings.Volume, 0.4f), "keeping its settings");
+    Expect(std::fabs(After.Cooked.GetDuration() - 1.5) < 0.01, "with the new source's length");
+}
+#endif
+
 int main(int argc, char** argv)
 {
     QCoreApplication App(argc, argv);   // image format plugins load through it
@@ -596,6 +660,9 @@ int main(int argc, char** argv)
     TestMeshImport(Root);
     TestTextureImport(Root);
     TestAnimationImport(Root);
+#if WITH_AUDIO
+    TestSoundImport(Root);
+#endif
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
