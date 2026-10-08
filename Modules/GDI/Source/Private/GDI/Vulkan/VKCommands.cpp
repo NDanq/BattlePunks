@@ -112,6 +112,7 @@ void VulkanDynamicGDI::BeginRendering()
     // sets and to destroy resources released while that frame was in flight.
     VkCommandBuffer Cmd = CommandManager->BeginFrame();
     ForgetBoundDrawState();   // a command buffer begun: nothing bound in it yet
+    ResetRecordingContexts();   // last frame's secondaries and rings, now done on the GPU
     if(DescAlloc) DescAlloc->Reset();
     DrainDeferredDestruction();
     CompletedTimelineValue = RenderTimelineCounter;   // what BeginReadback's readbacks wait on

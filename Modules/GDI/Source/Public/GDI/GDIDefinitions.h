@@ -333,6 +333,9 @@ constexpr int      GDI_OPENGL_MIN_MINOR         = 5;
  * its velocity. Each may have its own format. */
 constexpr unsigned GDI_MAX_COLOR_TARGETS        = 5;
 
+/* Chunks one parallel pass records at most (GDIBeginParallelPass). */
+constexpr unsigned GDI_PARALLEL_CHUNKS_MAX      = 32;
+
 /*
  * A compute dispatch's bindings (GDIDispatchCompute): its parameters as a
  * uniform block at binding 0, then its storage buffers at bindings 1, 2, ...

@@ -111,12 +111,14 @@ public:
 
     void AssignContext(GDIContext* InContext) override;
 
-    /* MTLParallelRenderCommandEncoder: a sub-encoder per chunk, executed in order. */
+    /* MTLParallelRenderCommandEncoder (a sub-encoder per chunk, executed in
+     * order) is how Metal will record in parallel; its recording contexts are
+     * not written yet, so it says no. */
     GDIParallelRecordingSupport GetParallelRecordingSupport() const override
     {
         GDIParallelRecordingSupport Out;
-        Out.bSupported = true;
-        Out.Mechanism  = "parallel render command encoder";
+        Out.Mechanism = "parallel render command encoder";
+        Out.Reason    = "Metal's recording contexts are not implemented yet";
         return Out;
     }
 

@@ -13,6 +13,7 @@
 
 #include "Public/GDI/GDI.h"
 #include "Public/GDI/Vulkan/VKPipelineCache.h"
+#include "Public/GDI/Vulkan/VKShader.h"
 
 // Qt types used by this file. These were arriving implicitly through
 // Public/Odessa.h until GDI stopped including application headers;
@@ -153,6 +154,141 @@ public:
     VkShaderModule          BoundFSModule       = VK_NULL_HANDLE;
 };
 
+/*
+ * What a draw reuses rather than rebuilds, allocates or binds again
+ * (MULTITHREADED_RENDERING.md, phases 1 and 2): one set for the render
+ * thread's primary command buffer, one per recording context.
+ *
+ *   LastPipelineKey/Fetch  the last pipeline lookup: the same key (a run of
+ *                          draws with one shader pair and state) skips the map
+ *   Bound*                 what the command buffer has bound: not bound again.
+ *                          Forgotten whenever a command buffer begins
+ *                          (FlushForReadback restarts the same handle, so the
+ *                          handle cannot tell)
+ *   ViewUpload*            the ViewParameters block's last upload: reused while
+ *                          its bytes and the ring's epoch are unchanged
+ *   BlockUpload*, Skin*    the material, scene and skin blocks', while their
+ *                          serials are
+ *   DescSets               descriptor sets by their contents, for the ring's
+ *                          epoch: the ring-backed blocks are dynamic uniform
+ *                          buffers, so draws differing only in their offsets
+ *                          share one set
+ *   *Predicate*            the conditional rendering held open (ApplyDrawPredicate)
+ */
+struct VKDrawCaches
+{
+    struct DescSetKey
+    {
+        VkDescriptorSetLayout Layout = VK_NULL_HANDLE;
+        VkBuffer              Buffers[6]  = {};
+        uint32_t              Ranges[6]   = {};
+        VkSampler             Samplers[GDI_MATERIAL_TEXTURE_SLOTS] = {};
+        VkImageView           Views[GDI_MATERIAL_TEXTURE_SLOTS]    = {};
+        bool operator==(const DescSetKey& InOther) const { return std::memcmp(this, &InOther, sizeof(DescSetKey)) == 0; }
+    };
+    struct DescSetKeyHash
+    {
+        size_t operator()(const DescSetKey& InKey) const
+        {
+            const uint64_t* Words = reinterpret_cast<const uint64_t*>(&InKey);
+            uint64_t Hash = 1469598103934665603ull;
+            for(size_t Index = 0; Index < sizeof(DescSetKey) / sizeof(uint64_t); ++Index)
+            {
+                Hash = (Hash ^ Words[Index]) * 1099511628211ull;
+                Hash ^= Hash >> 29;
+            }
+            return size_t(Hash);
+        }
+    };
+
+    /* A command buffer begun: nothing bound in it, no predicate open. */
+    void ForgetBound()
+    {
+        BoundPipeline       = VK_NULL_HANDLE;
+        BoundLayout         = VK_NULL_HANDLE;
+        BoundSet            = VK_NULL_HANDLE;
+        BoundOffsetCount    = 0;
+        bPredicateOpen      = false;
+        OpenPredicateBuffer = VK_NULL_HANDLE;
+        OpenPredicateOffset = 0;
+    }
+
+    VKPipelineCache::PipelineKey   LastPipelineKey{};
+    VKPipelineCache::PipelineFetch LastPipelineFetch{};
+    bool                           bLastPipelineValid = false;
+
+    VkPipeline              BoundPipeline    = VK_NULL_HANDLE;
+    VkPipelineLayout        BoundLayout      = VK_NULL_HANDLE;
+    VkDescriptorSet         BoundSet         = VK_NULL_HANDLE;
+    uint32_t                BoundOffsets[6]  = {};
+    uint32_t                BoundOffsetCount = 0;
+
+    alignas(16) float       ViewUploadBytes[40] = {};
+    VkBuffer                ViewUploadBuffer  = VK_NULL_HANDLE;
+    VkDeviceSize            ViewUploadOffset  = 0;
+    uint64_t                ViewUploadEpoch   = ~0ull;
+
+    /* [0] the material block, [1] the scene block. */
+    VkBuffer                BlockUploadBuffer[2] = { VK_NULL_HANDLE, VK_NULL_HANDLE };
+    VkDeviceSize            BlockUploadOffset[2] = {};
+    uint32_t                BlockUploadSize[2]   = {};
+    uint64_t                BlockUploadSerial[2] = { ~0ull, ~0ull };
+    uint64_t                BlockUploadEpoch[2]  = { ~0ull, ~0ull };
+    /* The skin blocks: the palette, the frame before's. */
+    VkBuffer                SkinBlockUploadBuffer[2] = { VK_NULL_HANDLE, VK_NULL_HANDLE };
+    VkDeviceSize            SkinBlockUploadOffset[2] = {};
+    uint32_t                SkinBlockUploadSize[2]   = {};
+    uint64_t                SkinBlockUploadSerial[2] = { ~0ull, ~0ull };
+    uint64_t                SkinBlockUploadEpoch[2]  = { ~0ull, ~0ull };
+
+    std::unordered_map<DescSetKey, VkDescriptorSet, DescSetKeyHash> DescSets;
+    uint64_t                DescSetsEpoch = ~0ull;
+
+    bool                    bPredicateOpen      = false;
+    VkBuffer                OpenPredicateBuffer = VK_NULL_HANDLE;
+    VkDeviceSize            OpenPredicateOffset = 0;
+};
+
+/*
+ * Everything one draw is recorded with: the render thread's own state and
+ * the frame's primary command buffer (VulkanDynamicGDI::MakeImmediateInputs),
+ * or a recording context's copies and its secondary. BindDrawState and
+ * VKMesh::Record read nothing else of the driver's but its shared, read-only
+ * pieces -- the device, the pipeline cache (locked), the null texture.
+ */
+struct VKDrawInputs
+{
+    VkCommandBuffer             Cmd = VK_NULL_HANDLE;
+    bool                        bRenderingActive = false;
+    GDIShader*                  VS = nullptr;
+    GDIShader*                  PS = nullptr;
+    VkShaderModule              VSModule = VK_NULL_HANDLE;
+    VkShaderModule              FSModule = VK_NULL_HANDLE;
+    const std::vector<uint8_t>* Blocks  = nullptr;        // [4], as GDIDynamicDriver::MaterialBlocks
+    const uint64_t*             Serials = nullptr;        // [4]
+    GDITextureResource* const*  Textures = nullptr;       // [GDI_MATERIAL_TEXTURE_SLOTS]
+    GDIBuffer*                  InstanceBuffer = nullptr;
+    uint32_t                    InstanceCount  = 0;
+    GDIBuffer*                  IndirectArgs   = nullptr;
+    uint32_t                    IndirectArgsOffset = 0;
+    const class VKBlendState*        Blend = nullptr;
+    const class VKDepthStencilState* Depth = nullptr;
+    bool                        bHasTarget = false;
+    VkFormat                    RTFormat   = VK_FORMAT_UNDEFINED;
+    uint32_t                    ColorCount = 1;
+    VkFormat                    ColorFormats[GDI_MAX_COLOR_TARGETS] = {};
+    VkFormat                    DepthFormat = VK_FORMAT_UNDEFINED;
+    class VKOcclusionQueries*   PredicateSet   = nullptr;
+    int32_t                     PredicateIndex = -1;
+    /* The draw's own core blocks (a context's); null: the bound shaders'. */
+    const VKShaderResource::CoreBlocks* Core = nullptr;
+    /* The draw's own index range (a context's); 0 and 0: the mesh's. */
+    uint32_t                    DrawFirst = 0;
+    uint32_t                    DrawCount = 0;
+    VKDrawCaches*               Caches = nullptr;
+    class VKDescriptorAllocator* Alloc = nullptr;
+};
+
 class VulkanDynamicGDI : public GDIDynamicDriver
 {
 public:
@@ -258,8 +394,9 @@ public:
      * none, and closed by CloseDrawPredicate before anything it would affect
      * (a clear) or that must not span it (the rendering's end, a query).
      */
-    void ApplyDrawPredicate(VkCommandBuffer InCmd);
-    void CloseDrawPredicate();
+    void ApplyDrawPredicate(const VKDrawInputs& InInputs);
+    void CloseDrawPredicate(VKDrawCaches& InCaches, VkCommandBuffer InCmd);
+    void CloseDrawPredicate();   // the render thread's
 
     /** Vulkan present path: UI thread acquires + blits the offscreen RT and presents. */
     void PresentToWindow(EngineCore::WindowHandle InWindow) override;
@@ -303,7 +440,32 @@ public:
      * DrawObject path and a direct Mesh->Draw() (layer compositing) — gets a bound
      * pipeline. Returns false (and binds nothing) if state is incomplete.
      */
-    bool BindDrawState(GDIMesh* InMesh, bool bIsInstanced);
+    bool BindDrawState(const VKDrawInputs& InInputs, GDIMesh* InMesh, bool bIsInstanced);
+
+    /** The render thread's draw inputs: its state, the frame's primary. */
+    void MakeImmediateInputs(VKDrawInputs& OutInputs);
+
+    /* Parallel passes (GDIBeginParallelPass): VKRecordingContext.cpp. */
+    bool BeginParallelPass(uint32_t InChunks, GDIRecordingContext** OutContexts) override;
+    void EndParallelPass() override;
+    void RecordDepthState(GDIRecordingContext* InContext, IDepthStateDesc InDesc) override;
+    void RecordBlendState(GDIRecordingContext* InContext, IBlendStateDesc InDesc) override;
+    void RecordStencilState(GDIRecordingContext* InContext, IStencilStateDesc InDesc) override;
+    void RecordColorMask(GDIRecordingContext* InContext, EColorMask InMask) override;
+    void RecordViewport(GDIRecordingContext* InContext, uint InX, uint InY, uint InWidth, uint InHeight) override;
+    void RecordScissorRect(GDIRecordingContext* InContext, uint InX, uint InY, uint InWidth, uint InHeight) override;
+    void RecordDrawObject(GDIRecordingContext* InContext, GDIViewObject* InObject, GDIView* InView) override;
+    void RecordBeginDrawEvent(GDIRecordingContext* InContext, const std::string& InName) override;
+    void RecordEndDrawEvent(GDIRecordingContext* InContext) override;
+    /* Each context's per-frame resources reset (BeginRendering, once the
+     * frame's fence is waited). */
+    void ResetRecordingContexts();
+    void DestroyRecordingContexts();
+    /* InSet's query InIndex if it can predicate a draw now (resolved this
+     * round, in range); else null (VKQuery.cpp). */
+    class VKOcclusionQueries* UsablePredicate(GDIOcclusionQueries* InSet, int32_t InIndex) const;
+    /* GDISetOcclusionPredicate's set, as GDI's type (VKQuery.cpp). */
+    GDIOcclusionQueries*      ImmediatePredicateSet() const;
 
     /**
      * Marks that render targets are being resized (render thread). While set, the
@@ -342,8 +504,13 @@ public:
     inline VKPipelineCache*         GetPipelineCache()   const { return PipelineCache; }
     inline VKDescriptorAllocator*   GetDescAlloc()       const { return DescAlloc; }
 
+    void ForgetBoundDrawState() { Immediate.ForgetBound(); }
+
 private:
     void EndActiveRenderingRegion();
+    /* vkCmdBeginRendering again on the active targets, every attachment
+     * loaded, with InFlags (a parallel pass's: secondaries' contents). */
+    void ReopenRendering(VkRenderingFlags InFlags);
 
     /** InWork(Cmd) outside the open rendering region, reopened after it (VKQuery.cpp). */
     template<typename WorkFn> void RecordOutsideRendering(WorkFn&& InWork);
@@ -356,10 +523,6 @@ private:
     /** GDISetOcclusionPredicate's: the draws after it are conditional on it. */
     class VKOcclusionQueries* PredicateSet   = nullptr;
     int32_t                   PredicateIndex = -1;
-    /** The conditional rendering ApplyDrawPredicate has open, if any. */
-    bool                      bPredicateOpen      = false;
-    VkBuffer                  OpenPredicateBuffer = VK_NULL_HANDLE;
-    VkDeviceSize              OpenPredicateOffset = 0;
 
     /** InWindow's swapchain, created and initialized on first use; null if that
      *  failed (retried on the next present). UI thread. */
@@ -377,90 +540,16 @@ private:
     VKDescriptorAllocator*  DescAlloc           = nullptr;
     VKCurrentStateData*     CurrentStateData    = nullptr;
 
-    /** The scene block's last upload, reused while its serial and the ring's
-     *  epoch are unchanged: it is set once per scene, not per draw. */
-    VkBuffer                SceneBlockUploadBuffer = VK_NULL_HANDLE;
-    VkDeviceSize            SceneBlockUploadOffset = 0;
-    uint64_t                SceneBlockUploadSerial = ~0ull;
-    uint64_t                SceneBlockUploadEpoch  = ~0ull;
-    /* The skin blocks the same way (the palette, the frame before's):
-     * unchanged since the last upload, reused. */
-    VkBuffer                SkinBlockUploadBuffer[2] = { VK_NULL_HANDLE, VK_NULL_HANDLE };
-    VkDeviceSize            SkinBlockUploadOffset[2] = {};
-    uint32_t                SkinBlockUploadSize[2]   = {};
-    uint64_t                SkinBlockUploadSerial[2] = { ~0ull, ~0ull };
-    uint64_t                SkinBlockUploadEpoch[2]  = { ~0ull, ~0ull };
 
-    /*
-     * The draw path's caches (MULTITHREADED_RENDERING.md, phase 1): what a
-     * draw would otherwise rebuild, allocate or bind again.
-     *
-     *   LastPipelineKey/Fetch  the last pipeline lookup: the same key (a run
-     *                          of draws with one shader pair and state) skips
-     *                          the hash and the map
-     *   Bound*                 what the command buffer has bound: a pipeline,
-     *                          set and offsets already bound are not bound again.
-     *                          Forgotten whenever a command buffer begins
-     *                          (ForgetBoundDrawState) -- FlushForReadback restarts
-     *                          the same handle, so the handle cannot tell
-     *   ViewUpload             the ViewParameters block's last upload: reused
-     *                          while its bytes and the ring's epoch are unchanged
-     *                          (one per view, not per draw)
-     *   MaterialBlockUpload*   the material block's, while its serial is
-     *   DescSets               descriptor sets by their contents, for the ring's
-     *                          epoch: the ring-backed blocks are dynamic uniform
-     *                          buffers, so draws differing only in their offsets
-     *                          -- every draw of a material, whatever its
-     *                          transform -- share one set
-     */
-    struct DescSetKey
-    {
-        VkDescriptorSetLayout Layout = VK_NULL_HANDLE;
-        VkBuffer              Buffers[6]  = {};
-        uint32_t              Ranges[6]   = {};
-        VkSampler             Samplers[GDI_MATERIAL_TEXTURE_SLOTS] = {};
-        VkImageView           Views[GDI_MATERIAL_TEXTURE_SLOTS]    = {};
-        bool operator==(const DescSetKey& InOther) const { return std::memcmp(this, &InOther, sizeof(DescSetKey)) == 0; }
-    };
-    struct DescSetKeyHash
-    {
-        size_t operator()(const DescSetKey& InKey) const
-        {
-            const uint64_t* Words = reinterpret_cast<const uint64_t*>(&InKey);
-            uint64_t Hash = 1469598103934665603ull;
-            for(size_t Index = 0; Index < sizeof(DescSetKey) / sizeof(uint64_t); ++Index)
-            {
-                Hash = (Hash ^ Words[Index]) * 1099511628211ull;
-                Hash ^= Hash >> 29;
-            }
-            return size_t(Hash);
-        }
-    };
-    void ForgetBoundDrawState();
+    /* The render thread's draw caches (VKDrawCaches): what its draws on the
+     * frame's primary command buffer reuse. */
+    VKDrawCaches            Immediate;
 
-    VKPipelineCache::PipelineKey   LastPipelineKey{};
-    VKPipelineCache::PipelineFetch LastPipelineFetch{};
-    bool                           bLastPipelineValid = false;
-
-    VkPipeline              BoundPipeline    = VK_NULL_HANDLE;
-    VkPipelineLayout        BoundLayout      = VK_NULL_HANDLE;
-    VkDescriptorSet         BoundSet         = VK_NULL_HANDLE;
-    uint32_t                BoundOffsets[6]  = {};
-    uint32_t                BoundOffsetCount = 0;
-
-    alignas(16) float       ViewUploadBytes[40] = {};
-    VkBuffer                ViewUploadBuffer  = VK_NULL_HANDLE;
-    VkDeviceSize            ViewUploadOffset  = 0;
-    uint64_t                ViewUploadEpoch   = ~0ull;
-
-    VkBuffer                MaterialBlockUploadBuffer = VK_NULL_HANDLE;
-    VkDeviceSize            MaterialBlockUploadOffset = 0;
-    uint32_t                MaterialBlockUploadSize   = 0;
-    uint64_t                MaterialBlockUploadSerial = ~0ull;
-    uint64_t                MaterialBlockUploadEpoch  = ~0ull;
-
-    std::unordered_map<DescSetKey, VkDescriptorSet, DescSetKeyHash> DescSets;
-    uint64_t                DescSetsEpoch = ~0ull;
+    /* The parallel passes' contexts (BeginParallelPass), made on first need
+     * and kept; ParallelChunks of them record the open pass. */
+    std::vector<class VKRecordingContext*> RecordingContexts;
+    uint32_t                ParallelChunks = 0;
+    bool                    bParallelPass  = false;
 
     /** Lazily-created full-screen NDC quad for DrawScreenQuadPrimitive. */
     GDIMesh*                ScreenMesh          = nullptr;

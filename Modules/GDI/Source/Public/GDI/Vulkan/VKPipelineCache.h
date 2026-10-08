@@ -2,6 +2,7 @@
 #define CORECLIENT_VKPIPELINECACHE_H
 
 #include <vulkan/vulkan.h>
+#include <shared_mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -126,6 +127,9 @@ public:
         VkPrimitiveTopology   Topology          = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     };
 
+    /* Every field of two keys equal (not their bytes: a key has padding). */
+    static bool KeysEqual(const PipelineKey& A, const PipelineKey& B);
+
     // -------------------------------------------------------------------
     // Result returned by GetOrCreateFull
     // -------------------------------------------------------------------
@@ -239,8 +243,13 @@ private:
     {
         VkPipeline             Pipeline = VK_NULL_HANDLE;
         EDescriptorLayoutGroup Group    = DLG_Base;
+        PipelineKey            Key;      // compared in full: two keys can share a hash
     };
-    std::unordered_map<uint64_t, PipelineEntry> PipelineEntries;
+    /* By the key's hash; several where hashes collide. Read concurrently by
+     * recording contexts (MULTITHREADED_RENDERING.md): EntriesLock shared for
+     * a lookup, exclusive for an insert. */
+    std::unordered_multimap<uint64_t, PipelineEntry> PipelineEntries;
+    mutable std::shared_mutex                         EntriesLock;
 
     // Compute: one layout per storage-buffer count (0..GDI_COMPUTE_MAX_STORAGE_BUFFERS),
     // made on first use; pipelines by module and count.
