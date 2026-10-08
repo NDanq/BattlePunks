@@ -111,7 +111,7 @@ OpenGLTextureResource::OpenGLTextureResource(const GLenum InInternalFormat, cons
         glGetFloatv(0x84FF /* GL_MAX_TEXTURE_MAX_ANISOTROPY */, &Limit);
         if(Limit > 1.0f)
         {
-            glTexParameterf(GL_TEXTURE_2D, 0x84FE /* GL_TEXTURE_MAX_ANISOTROPY */, std::min(GDIGetMaxAnisotropy(), float(Limit)));
+            glTexParameterf(GL_TEXTURE_2D, 0x84FE /* GL_TEXTURE_MAX_ANISOTROPY */, (std::min)(GDIGetMaxAnisotropy(), float(Limit)));   // (std::min): windows.h defines min
         }
     }
 
@@ -152,7 +152,7 @@ OpenGLTextureResource::OpenGLTextureResource(const EngineCore::Image* InLevels, 
         glGetFloatv(0x84FF /* GL_MAX_TEXTURE_MAX_ANISOTROPY */, &Limit);
         if(Limit > 1.0f)
         {
-            glTexParameterf(GL_TEXTURE_2D, 0x84FE /* GL_TEXTURE_MAX_ANISOTROPY */, std::min(GDIGetMaxAnisotropy(), float(Limit)));
+            glTexParameterf(GL_TEXTURE_2D, 0x84FE /* GL_TEXTURE_MAX_ANISOTROPY */, (std::min)(GDIGetMaxAnisotropy(), float(Limit)));   // (std::min): windows.h defines min
         }
     }
 
