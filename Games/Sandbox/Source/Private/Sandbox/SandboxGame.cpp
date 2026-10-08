@@ -3,7 +3,7 @@
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/GameState.h"
 #include "Public/NimbleEngine/Input.h"
-#include "Public/NimbleEngine/Level.h"
+#include "Public/NimbleEngine/WorldList.h"
 #include "Public/NimbleEngine/SaveGame.h"
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreGarbageCollector.h"
@@ -21,7 +21,6 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
-#include <optional>
 #include <vector>
 #include <string>
 
@@ -38,12 +37,13 @@
  * library -- what scripts and script graphs can call -- are in
  * SandboxScripting.cpp.
  *
- *   SandboxLevel      spawns Marker and Camera, registers the wrap system,
- *                     owns the mode and state.
- *   SandboxGameMode   moves Marker, reports, decides when to quit.
+ *   SandboxGameMode   spawns Marker and Camera into Content/Levels/Sandbox.nmworld,
+ *                     registers the wrap system, moves Marker, reports,
+ *                     decides when to quit; owns the state.
  *   SandboxGameState  elapsed time and tick counts.
- *   SandboxGameModule owns and registers the level, and BrickBreaker's
- *                     (BrickBreaker.cpp), the start level.
+ *   SandboxGameModule registers the mode, and BrickBreaker's
+ *                     (BrickBreaker.cpp). Config/DefaultEngine.ini's
+ *                     [World_*] sections name them.
  */
 
 /* A game-owned config var, in the same registry and .ini as the engine's.
@@ -59,7 +59,7 @@ static const char* const GSandboxSavePath = "Saves/Quick.nmsg";
 
 // === Native prefabs =========================================================
 // The level's C++ pieces, declared as prefabs ("native:Sandbox.Marker"):
-// SandboxLevel::OnLoad places them, and the editor lists them under World >
+// SandboxGameMode::OnLoad places them, and the editor lists them under World >
 // Native Prefabs. Where each stands, and how big, is its placement.
 
 namespace
@@ -202,7 +202,7 @@ namespace
     }
 
     /* OnOverlapBegin subscriber (World's collision delegate), bound in
-     * SandboxLevel::OnLoad and unbound in OnUnload: touching the hazard costs
+     * SandboxGameMode::OnLoad and unbound in OnUnload: touching the hazard costs
      * a point. Self is each side of the pair in turn, so this only answers
      * when Self is the hazard. */
     void OnHazardTouched(const GameCore::EntityID InSelf, const GameCore::EntityID InOther, void* InUserData)
@@ -217,7 +217,7 @@ namespace
                  + std::to_string(SandboxScripting::GetScore()))
     }
 
-    /* OnEntityCreated subscriber, bound in SandboxLevel::OnLoad and unbound in
+    /* OnEntityCreated subscriber, bound in SandboxGameMode::OnLoad and unbound in
      * OnUnload. Logs entities from both C++ and Scripts/Main.lua. */
     void OnEntityCreatedLogger(GameCore::EntityID InEntity, void* InUserData)
     {
@@ -226,7 +226,7 @@ namespace
     }
 }
 
-/* Owned by SandboxLevel, used by SandboxGameMode. OnReset zeroes everything. */
+/* Owned by SandboxGameMode. OnReset zeroes everything. */
 class SandboxGameState : public NimbleEngine::GameState
 {
 public:
@@ -263,22 +263,47 @@ public:
     uint64_t TicksThisSecond   = 0;
 };
 
-/* The mode calls back into the level in OnPostLoadSave. */
-class SandboxLevel;
-
 class SandboxGameMode : public NimbleEngine::IGameMode
 {
 public:
-    SandboxGameMode(SandboxLevel& InLevel, GameCore::EntityID InMarker, SandboxGameState& InState)
-        : OwningLevel(&InLevel), MarkerEntity(InMarker), State(&InState) {}
-
+    /* Content/Levels/Sandbox.nmworld is loaded (an empty world): the scene is
+     * prefab instances placed here, with the wrap system and the entity
+     * logger. */
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
         Session = &InSession;
-
         RunSeconds = double(GSandboxRunSeconds.GetInt());
 
-        /* Nothing spawned here: the level builds the scene, the mode is rules. */
+        GameCore::World& World = InSession.GetWorld();
+
+        /* First, not last: OnUnload pairs with OnLoad being called (GameMode.h). */
+        bLoaded = true;
+
+        /* Removed in OnUnload (Delegate.h's RELOAD note). */
+        EntityCreatedHandle = World.OnEntityCreated().Add(&OnEntityCreatedLogger, &World);
+
+        /* The native prefabs above. Off y=0: +Y runs up from the bottom edge
+         * in the ortho view, so a quad at y=0 would hang half off screen.
+         * MarkerEntity keeps only the root's id; the handle's World* is
+         * per-load. */
+        const GameCore::Entity Marker = World.SpawnPrefab("native:Sandbox.Marker",
+            Placed(EngineCore::Vector3(0.0, 360.0, 0.0), EngineCore::Vector3(32.0, 32.0, 1.0))).GetRoot();   // the unit quad, 32 x 32
+        MarkerEntity = Marker;
+
+        World.SpawnPrefab("native:Sandbox.Hazard",
+                          Placed(EngineCore::Vector3(1200.0, 360.0, 0.0), EngineCore::Vector3(40.0, 40.0, 40.0)));
+        HazardHandle = World.OnOverlapBegin().Add(&OnHazardTouched, &World);
+
+        /* Centres the view on Marker's path. */
+        World.SpawnPrefab("native:Sandbox.Camera");
+
+        /* ViewportWidth is read once; the wrap boundary need only be rough. */
+        SystemContext.Entity        = MarkerEntity;
+        SystemContext.ViewportWidth = 1280;
+        World.RegisterSystem("Sandbox.DriveMarker", GameCore::TP_PrePhysics,
+                             &DriveMarkerSystem, &SystemContext);
+        World.RegisterSystem("Sandbox.WrapMarker", GameCore::TP_PostPhysics,
+                             &WrapMarkerSystem, &SystemContext);
         return true;
     }
 
@@ -303,15 +328,15 @@ public:
     {
         /* Concurrent with the render thread: no renderer or window access.
          * The session has already checked this is the game thread. */
-        State->ElapsedSeconds += InFrame.DeltaSeconds;
-        SandboxScripting::SetElapsedSeconds(State->ElapsedSeconds);   // Sandbox.GetElapsed() in scripts
-        State->TicksThisSecond++;
+        State.ElapsedSeconds += InFrame.DeltaSeconds;
+        SandboxScripting::SetElapsedSeconds(State.ElapsedSeconds);   // Sandbox.GetElapsed() in scripts
+        State.TicksThisSecond++;
 
         /* Marker moves in Sandbox.DriveMarker, from its Input component. */
         GameCore::World& World = Session->GetWorld();
 
         /* The engine finishes this frame, then exits the loop. */
-        if(RunSeconds > 0.0 && State->ElapsedSeconds >= RunSeconds && Session)
+        if(RunSeconds > 0.0 && State.ElapsedSeconds >= RunSeconds && Session)
         {
             CORE_LOG("[Sandbox] RunSeconds reached; asking the engine to quit")
             Session->RequestQuit();
@@ -319,7 +344,7 @@ public:
 
         /* Save/load demo. Loading two seconds after the save makes Marker
          * visibly jump back. */
-        if(!GSandboxHasSaved && State->ElapsedSeconds >= 2.0)
+        if(!GSandboxHasSaved && State.ElapsedSeconds >= 2.0)
         {
             GSandboxHasSaved = true;
             SavedMarkerX = 0.0;
@@ -329,7 +354,7 @@ public:
                 SavedMarkerX = Marker->Position.GetX();
             }
 
-            CORE_LOG("[Sandbox] saving at t=" + Fixed2(State->ElapsedSeconds)
+            CORE_LOG("[Sandbox] saving at t=" + Fixed2(State.ElapsedSeconds)
                      + "s marker_x=" + Fixed2(SavedMarkerX))
 
             if(!NimbleEngine::SaveGameToFile(*Session, GSandboxSavePath))
@@ -338,11 +363,11 @@ public:
             }
         }
 
-        if(GSandboxHasSaved && !GSandboxHasLoaded && State->ElapsedSeconds >= 4.0)
+        if(GSandboxHasSaved && !GSandboxHasLoaded && State.ElapsedSeconds >= 4.0)
         {
             GSandboxHasLoaded = true;
 
-            CORE_LOG("[Sandbox] loading at t=" + Fixed2(State->ElapsedSeconds)
+            CORE_LOG("[Sandbox] loading at t=" + Fixed2(State.ElapsedSeconds)
                      + "s (expect elapsed and marker_x to jump back to the saved values)")
 
             /* Deferred to the next frame, so safe from inside OnTick. */
@@ -352,7 +377,7 @@ public:
             }
         }
 
-        if(State->ElapsedSeconds - State->LastReportSeconds >= 1.0)
+        if(State.ElapsedSeconds - State.LastReportSeconds >= 1.0)
         {
             const GameCore::TransformComponent* MarkerTransform =
                 World.GetEntity(MarkerEntity).GetComponent<GameCore::TransformComponent>();
@@ -369,9 +394,9 @@ public:
             RenderCore::RenderStats RenderStats;
             Session->GetRenderer().GetStats(RenderStats);
 
-            CORE_LOG("[Sandbox] t=" + Fixed2(State->ElapsedSeconds) + "s"
+            CORE_LOG("[Sandbox] t=" + Fixed2(State.ElapsedSeconds) + "s"
                      + " frame=" + Num(InFrame.FrameNumber)
-                     + " fps=" + Num(State->TicksThisSecond)
+                     + " fps=" + Num(State.TicksThisSecond)
                      + " dt=" + Fixed2(InFrame.DeltaSeconds * 1000.0) + "ms"
                      + " viewport=" + Num(uint64_t(InFrame.ViewportPixels.Width))
                      + "x" + Num(uint64_t(InFrame.ViewportPixels.Height))
@@ -382,95 +407,18 @@ public:
                      + " frames_rendered=" + Num(RenderStats.FramesRendered)
                      + " draw_calls=" + Num(RenderStats.DrawCalls))
 
-            State->LastReportSeconds = State->ElapsedSeconds;
-            State->TicksThisSecond   = 0;
+            State.LastReportSeconds = State.ElapsedSeconds;
+            State.TicksThisSecond   = 0;
         }
     }
 
-    /* Re-derives MarkerEntity by name: the restored Marker is a new entity. */
-    void OnPostLoadSave() override;
+    NimbleEngine::GameState* GetGameState() override { return &State; }
 
-    /* " steering=player" once the player has moved Marker, else " steering=auto". */
-    std::string DescribeSteering() const;
-
-    void OnUnload() override
-    {
-        /* Nothing to unbind: the level owns the delegate binding. */
-        CORE_LOG("[Sandbox] game stopping after " + Fixed2(State->ElapsedSeconds) + "s")
-        Session = nullptr;
-    }
-
-private:
-    /* Stashed in OnLoad for RequestQuit() and GetWorld(). */
-    NimbleEngine::GameSession* Session = nullptr;
-
-    double RunSeconds = 0.0;
-
-    /* For OnMarkerRestored: the level also holds a Marker handle. */
-    SandboxLevel* OwningLevel = nullptr;
-
-    /* From the level; re-derived in OnPostLoadSave. */
-    GameCore::EntityID MarkerEntity;
-    SandboxGameState*  State = nullptr;
-
-    /* Marker X at save time, logged on restore. */
-    double SavedMarkerX = 0.0;
-};
-
-/* The scene: spawns Marker and Camera, registers the wrap system, binds the
- * entity logger, and owns the mode and state. */
-class SandboxLevel : public NimbleEngine::ILevel
-{
-public:
-    const char* GetName() const override { return "Sandbox"; }
-
-    bool OnLoad(NimbleEngine::GameSession& InSession) override
-    {
-        (void)InSession;
-
-        /* GetWorld(), not InSession.GetWorld() (Level.h). */
-        GameCore::World& World = GetWorld();
-
-        /* First, not last: OnUnload pairs with OnLoad being called (Level.h). */
-        bLoaded = true;
-
-        /* Removed in OnUnload (Delegate.h's RELOAD note). */
-        EntityCreatedHandle = World.OnEntityCreated().Add(&OnEntityCreatedLogger, &World);
-
-        /* The level is prefab instances (the native prefabs above). Off y=0:
-         * +Y runs up from the bottom edge in the ortho view, so a quad at y=0
-         * would hang half off screen. MarkerEntity keeps only the root's id;
-         * the handle's World* is per-load. */
-        const GameCore::Entity Marker = World.SpawnPrefab("native:Sandbox.Marker",
-            Placed(EngineCore::Vector3(0.0, 360.0, 0.0), EngineCore::Vector3(32.0, 32.0, 1.0))).GetRoot();   // the unit quad, 32 x 32
-        MarkerEntity = Marker;
-
-        World.SpawnPrefab("native:Sandbox.Hazard",
-                          Placed(EngineCore::Vector3(1200.0, 360.0, 0.0), EngineCore::Vector3(40.0, 40.0, 40.0)));
-        HazardHandle = World.OnOverlapBegin().Add(&OnHazardTouched, &World);
-
-        /* Centres the view on Marker's path. */
-        World.SpawnPrefab("native:Sandbox.Camera");
-
-        /* ViewportWidth is read once; the wrap boundary need only be rough. */
-        SystemContext.Entity        = MarkerEntity;
-        SystemContext.ViewportWidth = 1280;
-        World.RegisterSystem("Sandbox.DriveMarker", GameCore::TP_PrePhysics,
-                             &DriveMarkerSystem, &SystemContext);
-        World.RegisterSystem("Sandbox.WrapMarker", GameCore::TP_PostPhysics,
-                             &WrapMarkerSystem, &SystemContext);
-
-        /* Here, not a member initialiser: needs MarkerEntity. */
-        Mode.emplace(*this, MarkerEntity, State);
-
-        return true;
-    }
-
-    /* Empties the World before a restore, or the scene is doubled (Level.h).
+    /* Empties the World before a restore, or the scene is doubled (GameMode.h).
      * Systems and delegate bindings belong to the World and stay. */
     void OnPrepareForLoadedGame() override
     {
-        GameCore::World& World = GetWorld();
+        GameCore::World& World = Session->GetWorld();
 
         /* Collect, then destroy: ForEachEntity forbids destroying inside it. */
         std::vector<GameCore::EntityID> Doomed;
@@ -484,7 +432,7 @@ public:
             World.DestroyEntity(Entity);
         }
 
-        /* Unset until OnMarkerRestored, which makes the system a no-op. */
+        /* Unset until OnPostLoadSave, which makes the system a no-op. */
         SystemContext.Entity = GameCore::InvalidEntityID();
         MarkerEntity         = GameCore::InvalidEntityID();
 
@@ -492,69 +440,59 @@ public:
                  + " entity/entities before restoring the save")
     }
 
+    /* Re-derives Marker by name: the restored Marker is a new entity, and the
+     * wrap system's copy is stale too -- else Marker silently stops wrapping. */
+    void OnPostLoadSave() override
+    {
+        const GameCore::EntityID Restored = Session->GetWorld().FindEntityByName("Marker");
+
+        CORE_LOG(std::string("[Sandbox] save restored; re-deriving Marker (old handle ")
+                 + (Session->GetWorld().IsAlive(MarkerEntity) ? "still alive" : "now dead")
+                 + ", new handle " + (Restored.IsSet() ? "found" : "MISSING") + ")")
+
+        MarkerEntity         = Restored;
+        SystemContext.Entity = Restored;
+    }
+
     void OnUnload() override
     {
         /* Pairs with OnLoad's Add; ~World warns about leftover bindings. */
-        if(OwnedWorldIsLive())
+        if(bLoaded)
         {
-            GetWorld().OnEntityCreated().Remove(EntityCreatedHandle);
-            GetWorld().OnOverlapBegin().Remove(HazardHandle);
+            Session->GetWorld().OnEntityCreated().Remove(EntityCreatedHandle);
+            Session->GetWorld().OnOverlapBegin().Remove(HazardHandle);
+            CORE_LOG("[Sandbox] game stopping after " + Fixed2(State.ElapsedSeconds) + "s")
         }
-    }
-
-    NimbleEngine::IGameMode* GetGameMode() override
-    {
-        return Mode ? &*Mode : nullptr;
-    }
-
-    NimbleEngine::GameState* GetGameState() override { return &State; }
-
-    /* Re-points the wrap system at the restored Marker (from the mode's
-     * OnPostLoadSave). Otherwise Marker silently stops wrapping. */
-    bool IsPlayerSteering() const { return SystemContext.bPlayerSteering; }
-
-    void OnMarkerRestored(const GameCore::EntityID InMarker)
-    {
-        MarkerEntity         = InMarker;
-        SystemContext.Entity = InMarker;
+        bLoaded = false;
+        Session = nullptr;
     }
 
 private:
-    /* OnLoad ran; guards OnUnload, since GetWorld() CORE_CHECKs. */
-    bool OwnedWorldIsLive() const { return bLoaded; }
+    /* " steering=player" once the player has moved Marker, else " steering=auto". */
+    std::string DescribeSteering() const
+    {
+        return SystemContext.bPlayerSteering ? " steering=player" : " steering=auto";
+    }
 
+    /* Stashed in OnLoad for RequestQuit() and GetWorld(). */
+    NimbleEngine::GameSession* Session = nullptr;
     bool                       bLoaded = false;
+
+    double RunSeconds = 0.0;
+
+    /* Re-derived in OnPostLoadSave. */
     GameCore::EntityID         MarkerEntity;
     GameCore::DelegateHandle   EntityCreatedHandle;
     GameCore::DelegateHandle   HazardHandle;
     SandboxMarkerSystemContext SystemContext;
+    SandboxGameState           State;
 
-    SandboxGameState                 State;
-    std::optional<SandboxGameMode>   Mode;
+    /* Marker X at save time, logged on restore. */
+    double SavedMarkerX = 0.0;
 };
 
-/* Out-of-line: needs SandboxLevel's definition. */
-std::string SandboxGameMode::DescribeSteering() const
-{
-    return OwningLevel->IsPlayerSteering() ? " steering=player" : " steering=auto";
-}
-
-/* Out-of-line: needs SandboxLevel's definition. */
-void SandboxGameMode::OnPostLoadSave()
-{
-    const GameCore::EntityID Restored = Session->GetWorld().FindEntityByName("Marker");
-
-    CORE_LOG(std::string("[Sandbox] save restored; re-deriving Marker (old handle ")
-             + (Session->GetWorld().IsAlive(MarkerEntity) ? "still alive" : "now dead")
-             + ", new handle " + (Restored.IsSet() ? "found" : "MISSING") + ")")
-
-    MarkerEntity = Restored;
-
-    /* The wrap system's copy is stale too. */
-    OwningLevel->OnMarkerRestored(Restored);
-}
-
-/* Owns the level, so it lives exactly as long as its code. */
+/* Registers the modes the project's world list names: this one, and
+ * BrickBreaker's (BrickBreaker.cpp). */
 class SandboxGameModule : public NimbleEngine::IGameModule
 {
 public:
@@ -563,24 +501,17 @@ public:
 
     bool OnStartup(const EngineCore::ModuleReloadState* /*InPrev*/) override
     {
-        /* Saves and [Game] StartLevel resolve levels by name. */
-        NimbleEngine::RegisterLevel(Level);
-        NimbleEngine::RegisterLevel(BrickBreaker::GetLevel());
+        NimbleEngine::RegisterGameMode<SandboxGameMode>("Sandbox");
+        BrickBreaker::RegisterGameMode();
         return true;
     }
 
     void OnShutdown(EngineCore::ModuleReloadState& /*OutState*/) override
     {
-        /* The registry holds a bare pointer, and this image is about to go. */
-        NimbleEngine::UnregisterLevel(BrickBreaker::GetLevel());
-        NimbleEngine::UnregisterLevel(Level);
+        /* The registry holds this image's functions, and it is about to go. */
+        BrickBreaker::UnregisterGameMode();
+        NimbleEngine::UnregisterGameMode("Sandbox");
     }
-
-    /* BrickBreaker (BrickBreaker.cpp); [Game] StartLevel=Sandbox for the demo below. */
-    NimbleEngine::ILevel* GetStartLevel() override { return &BrickBreaker::GetLevel(); }
-
-private:
-    SandboxLevel Level;
 };
 
 NIMBLE_IMPLEMENT_GAME_MODULE(SandboxGameModule, "SandboxGame")

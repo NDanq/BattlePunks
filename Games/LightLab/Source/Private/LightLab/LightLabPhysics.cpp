@@ -4,7 +4,6 @@
 #include <cmath>
 #include <cstdio>
 #include <deque>
-#include <optional>
 #include <string>
 
 #include "Public/Core/CoreConfig.h"
@@ -19,6 +18,7 @@
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/Input.h"
 #include "Public/NimbleEngine/Level.h"
+#include "Public/NimbleEngine/WorldList.h"
 #include "Public/NimbleEngine/PhysicsFacade.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/UI/UISystem.h"
@@ -49,16 +49,11 @@
  *                camera follows (LightLab.Drive, LightLab.Chase)
  *
  * Click to throw a ball from the camera (Throw), R puts everything back
- * (ResetLevel), Escape pauses. The level loads Content/Levels/PhysicsLab.nmworld
- * -- edit it in the editor -- or, without one, builds the same scene here;
- * [LightLab] ExportPhysicsLevel writes it out, which is how the file was made.
+ * (ResetLevel), Escape pauses. The scene is Content/Levels/PhysicsLab.nmworld
+ * -- [World_PhysicsLab], edited in the editor; this file is its mode.
  *
  * Coordinates are the engine's: centimetres, +Y up, the floor at y = 0.
  */
-
-/* An editor build only: when set, the level is built in code (not loaded) and
- * written to this path as a text world before the run starts. */
-NIMBLE_CONFIG_STRING(GLightLabExportPhysicsLevel, "LightLab", "ExportPhysicsLevel", "", nullptr);
 
 /* How hard a thrown ball leaves the camera, in world units a second. */
 NIMBLE_CONFIG_FLOAT(GLightLabThrowSpeed, "LightLab", "ThrowSpeed", 2600.0f, nullptr);
@@ -68,27 +63,18 @@ NIMBLE_CONFIG_FLOAT(GLightLabThrowSpeed, "LightLab", "ThrowSpeed", 2600.0f, null
  * console turns it on mid-run. */
 NIMBLE_CONFIG_BOOL(GLightLabAutoDrive, "LightLab", "AutoDrive", false, nullptr);
 
-/* Editor builds only, as ExportPhysicsLevel: the buggy built in code
+/* Editor builds only: the buggy built in code
  * (BuildVehicle) written to this path as a text prefab -- how
  * Content/Prefabs/Vehicle.nmprefab was made. */
 NIMBLE_CONFIG_STRING(GLightLabExportVehiclePrefab, "LightLab", "ExportVehiclePrefab", "", nullptr);
 
-/* Editor builds only: the level as loaded (with anything an older file lacked
- * added, such as the driving course) saved to this path as a text world. */
-NIMBLE_CONFIG_STRING(GLightLabSavePhysicsLevel, "LightLab", "SavePhysicsLevel", "", nullptr);
-
 namespace
 {
-    const char* const LevelFile = "Content/Levels/PhysicsLab.nmworld";
     const char* const PauseMenuPath = "Content/UI/PauseMenu.nmui";
 
     const char* const BoxMesh      = "Engine/Content/Meshes/Box.nmmesh";
     const char* const SphereMesh   = "Engine/Content/Meshes/Sphere.nmmesh";
-    const char* const PlaneMesh    = "Engine/Content/Meshes/Plane.nmmesh";
-    const char* const CapsuleMesh  = "Engine/Content/Meshes/Capsule.nmmesh";
     const char* const CylinderMesh = "Engine/Content/Meshes/Cylinder.nmmesh";
-    const char* const LatticeMesh  = "Content/Meshes/InsetLattice.nmmesh";
-    const char* const VehiclePrefab = "Content/Prefabs/Vehicle.nmprefab";
     const char* const PBR          = "Content/Materials/PBR.material.nmgraph";
     const char* const Glow         = "Content/Materials/Glow.material.nmgraph";
 
@@ -154,18 +140,6 @@ namespace
         return Entity;
     }
 
-    /* Level geometry: never moves, drawn from the static lists. */
-    GameCore::Entity SpawnStatic(GameCore::World& InWorld, const Piece& InPiece, const float InFriction = 0.5f)
-    {
-        const GameCore::Entity Entity = Spawn(InWorld, InPiece);
-        Entity.SetMobility(GameCore::EMobility::Static);
-        GameCore::RigidBodyComponent Body;
-        Body.Motion   = GameCore::RBM_Static;
-        Body.Friction = InFriction;
-        Entity.AddComponent(Body);
-        return Entity;
-    }
-
     GameCore::RigidBodyComponent* SpawnDynamic(GameCore::World& InWorld, const Piece& InPiece, GameCore::Entity* OutEntity = nullptr)
     {
         const GameCore::Entity Entity = Spawn(InWorld, InPiece);
@@ -207,296 +181,6 @@ namespace
     }
 
     // === The scene ================================================================
-
-    void SpawnGround(GameCore::World& InWorld)
-    {
-        /* The Plane mesh is flat: the body thickens below its surface. */
-        Piece Floor;
-        Floor.Name = "Floor"; Floor.Mesh = PlaneMesh; Floor.Scale = Vector3(8000.0, 1.0, 8000.0);
-        Floor.Look = Colour(0.62f, 0.63f, 0.66f, 0.85f); Floor.bCasts = false;
-        SpawnStatic(InWorld, Floor, 0.6f);
-    }
-
-    /* A pyramid of 21 crates and a tower of 10: stacking, and sleeping once settled. */
-    void SpawnStacks(GameCore::World& InWorld)
-    {
-        const double Size = 60.0;
-        for(int Row = 0; Row < 6; ++Row)
-        {
-            const int Count = 6 - Row;
-            for(int Index = 0; Index < Count; ++Index)
-            {
-                const double X = -1650.0 + (Index - (Count - 1) * 0.5) * (Size + 1.0);
-                const float  Shade = 0.55f + 0.07f * float(Row);
-                SpawnDynamic(InWorld, Box("PyramidCrate", Vector3(X, Size * 0.5 + Size * Row, -650.0), Vector3(Size, Size, Size),
-                                          Colour(Shade, 0.42f, 0.22f)));
-            }
-        }
-        for(int Level = 0; Level < 10; ++Level)
-        {
-            SpawnDynamic(InWorld, Box("TowerBlock", Vector3(-1650.0, 25.0 + 50.0 * Level, -150.0), Vector3(50.0, 50.0, 50.0),
-                                      Level % 2 ? Colour(0.85f, 0.85f, 0.82f) : Colour(0.2f, 0.45f, 0.75f)));
-        }
-    }
-
-    /* An arc of dominoes round a point, set off by a ball rolling down a ramp
-     * into the first. Each is thin along the arc, so it topples into the next. */
-    void SpawnDominoes(GameCore::World& InWorld)
-    {
-        const Vector3 Center(-650.0, 0.0, -300.0);
-        const double  Radius = 350.0;
-        const int     Count  = 22;
-        for(int Index = 0; Index < Count; ++Index)
-        {
-            const double Angle = 180.0 - 180.0 * Index / (Count - 1);   // round the far side, -X to +X
-            const double A = Angle * DegToRad;
-            const Vector3 At(Center.GetX() + Radius * std::cos(A), 45.0, Center.GetZ() + Radius * std::sin(A));
-            const float Hue = float(Index) / float(Count);
-            SpawnDynamic(InWorld, Box("Domino", At, Vector3(12.0, 90.0, 45.0),
-                                      Colour(0.9f - 0.6f * Hue, 0.3f + 0.4f * Hue, 0.35f + 0.5f * Hue, 0.4f),
-                                      Vector3(0.0, 270.0 - Angle, 0.0)));
-        }
-
-        /* The ramp runs down toward +Z, ending short of the first domino. */
-        const double Tilt = 15.0, Length = 520.0;
-        const Vector3 RampCenter(Center.GetX() - Radius, 62.0, Center.GetZ() - 75.0 - 0.5 * Length * std::cos(Tilt * DegToRad));
-        SpawnStatic(InWorld, Box("DominoRamp", RampCenter, Vector3(120.0, 20.0, Length), Colour(0.35f, 0.35f, 0.38f, 0.7f),
-                                 Vector3(Tilt, 0.0, 0.0)));
-        const double Up = 0.5 * Length * std::sin(Tilt * DegToRad) - 15.0;
-        SpawnDynamic(InWorld, Ball("DominoStarter", Vector3(RampCenter.GetX(), RampCenter.GetY() + Up + 50.0,
-                                                            RampCenter.GetZ() - 0.5 * Length * std::cos(Tilt * DegToRad) + 40.0),
-                                   25.0, Colour(0.95f, 0.8f, 0.15f, 0.3f)));
-    }
-
-    /* One slope, four materials let go at its top. */
-    void SpawnMaterials(GameCore::World& InWorld)
-    {
-        const double Tilt = 20.0, Length = 900.0;
-        const Vector3 Center(1300.0, 170.0, -700.0);
-        SpawnStatic(InWorld, Box("MaterialRamp", Center, Vector3(720.0, 20.0, Length), Colour(0.32f, 0.36f, 0.4f, 0.6f),
-                                 Vector3(Tilt, 0.0, 0.0)));
-
-        /* Along the slope's top, just above its surface. */
-        const double Along = -0.5 * Length + 90.0;
-        auto OnSlope = [&](const double InX, const double InLift)
-        {
-            const double T = Tilt * DegToRad;
-            return Vector3(InX, Center.GetY() - Along * std::sin(T) + 10.0 / std::cos(T) + InLift, Center.GetZ() + Along * std::cos(T));
-        };
-
-        GameCore::RigidBodyComponent* Bouncy = SpawnDynamic(InWorld, Ball("BouncyBall", OnSlope(1030.0, 40.0), 30.0, Colour(0.2f, 0.85f, 0.3f, 0.35f)));
-        Bouncy->Restitution = 0.95f;
-
-        GameCore::RigidBodyComponent* Steel = SpawnDynamic(InWorld, Ball("SteelBall", OnSlope(1210.0, 50.0), 40.0, Colour(0.8f, 0.8f, 0.82f, 0.15f, 1.0f)));
-        Steel->Mass = 400.0f;
-
-        GameCore::RigidBodyComponent* Ice = SpawnDynamic(InWorld, Box("IceBlock", OnSlope(1390.0, 30.0), Vector3(60.0, 60.0, 60.0),
-                                                                      Colour(0.65f, 0.85f, 1.0f, 0.1f), Vector3(Tilt, 0.0, 0.0)));
-        Ice->Friction = 0.0f;
-
-        GameCore::RigidBodyComponent* Rubber = SpawnDynamic(InWorld, Box("RubberBlock", OnSlope(1570.0, 30.0), Vector3(60.0, 60.0, 60.0),
-                                                                         Colour(0.85f, 0.15f, 0.12f, 0.9f), Vector3(Tilt, 0.0, 0.0)));
-        Rubber->Friction = 1.2f;
-    }
-
-    /* A static lattice cage (its triangles) catching a rain of balls, and
-     * dynamic hulls and primitives tumbling onto a tilted plank. */
-    void SpawnMeshes(GameCore::World& InWorld)
-    {
-        Piece Cage;
-        Cage.Name = "LatticeCage"; Cage.Mesh = LatticeMesh; Cage.Position = Vector3(0.0, 220.0, 1100.0);
-        Cage.Scale = Vector3(380.0, 380.0, 380.0); Cage.Rotation = Vector3(0.0, 20.0, 0.0);
-        Cage.Look = Colour(0.9f, 0.62f, 0.22f, 0.35f, 1.0f);
-        SpawnStatic(InWorld, Cage);   // Shape Auto, Static, not a primitive: its triangles
-
-        for(int Index = 0; Index < 12; ++Index)
-        {
-            const double X = -90.0 + 60.0 * double(Index % 4);
-            const double Z = 1040.0 + 60.0 * double((Index / 4) % 3);
-            GameCore::RigidBodyComponent* Body = SpawnDynamic(InWorld, Ball("RainBall", Vector3(X, 700.0 + 70.0 * Index, Z), 16.0,
-                                                                            Colour(0.15f + 0.06f * Index, 0.4f, 0.9f - 0.05f * Index, 0.3f)));
-            Body->bContinuous = 1;   // small and fast: no tunnelling through the bars
-        }
-
-        SpawnStatic(InWorld, Box("TumblePlank", Vector3(-550.0, 120.0, 1100.0), Vector3(500.0, 20.0, 300.0), Colour(0.45f, 0.38f, 0.3f, 0.8f),
-                                 Vector3(0.0, 0.0, -18.0)));
-
-        Piece Lattice;
-        Lattice.Name = "TumblingLattice"; Lattice.Mesh = LatticeMesh; Lattice.Position = Vector3(-620.0, 520.0, 1060.0);
-        Lattice.Scale = Vector3(110.0, 110.0, 110.0); Lattice.Rotation = Vector3(25.0, 10.0, 40.0);
-        Lattice.Look = Colour(0.75f, 0.75f, 0.8f, 0.3f, 1.0f);
-        SpawnDynamic(InWorld, Lattice);   // Shape Auto, Dynamic: its convex hull
-
-        Piece Capsule;
-        Capsule.Name = "TumblingCapsule"; Capsule.Mesh = CapsuleMesh; Capsule.Position = Vector3(-480.0, 650.0, 1180.0);
-        Capsule.Scale = Vector3(60.0, 90.0, 60.0); Capsule.Rotation = Vector3(0.0, 0.0, 70.0);
-        Capsule.Look = Colour(0.9f, 0.5f, 0.15f, 0.4f);
-        SpawnDynamic(InWorld, Capsule);
-
-        Piece Cylinder;
-        Cylinder.Name = "TumblingCylinder"; Cylinder.Mesh = CylinderMesh; Cylinder.Position = Vector3(-700.0, 780.0, 1000.0);
-        Cylinder.Scale = Vector3(80.0, 60.0, 80.0); Cylinder.Rotation = Vector3(60.0, 0.0, 10.0);
-        Cylinder.Look = Colour(0.3f, 0.75f, 0.7f, 0.4f);
-        SpawnDynamic(InWorld, Cylinder);
-    }
-
-    /* A Kinematic bar swept round by LightLab.Spin through a ring of crates. */
-    void SpawnSweeper(GameCore::World& InWorld)
-    {
-        const Vector3 Center(1400.0, 0.0, 1100.0);
-        GameCore::Entity Bar;
-        GameCore::RigidBodyComponent* Body = SpawnDynamic(InWorld, Box("Sweeper", Center + Vector3(0.0, 35.0, 0.0), Vector3(760.0, 50.0, 40.0),
-                                                                       Colour(0.95f, 0.75f, 0.1f, 0.4f, 0.6f)), &Bar);
-        Body->Motion = GameCore::RBM_Kinematic;
-
-        SpawnStatic(InWorld, Box("SweeperHub", Center + Vector3(0.0, 80.0, 0.0), Vector3(60.0, 160.0, 60.0), Colour(0.2f, 0.2f, 0.22f)));
-
-        for(int Index = 0; Index < 16; ++Index)
-        {
-            /* Clear of the bar where it starts, along X. */
-            const double Angle  = (25.0 + 130.0 * (Index % 8) / 7.0 + (Index >= 8 ? 180.0 : 0.0)) * DegToRad;
-            const double Radius = 140.0 + 55.0 * (Index % 4);
-            SpawnDynamic(InWorld, Box("SweptCrate", Vector3(Center.GetX() + Radius * std::cos(Angle), 22.0, Center.GetZ() + Radius * std::sin(Angle)),
-                                      Vector3(44.0, 44.0, 44.0), Colour(0.5f + 0.03f * Index, 0.3f, 0.6f - 0.02f * Index)));
-        }
-    }
-
-    /* A chain of six links on Point joints from a static anchor, ending in a
-     * heavy ball, held out sideways to swing down into a wall of crates; and
-     * a revolving door turning on a motorised Hinge. */
-    void SpawnJoints(GameCore::World& InWorld)
-    {
-        const Vector3 Anchor(-1550.0, 800.0, 1300.0);
-        SpawnStatic(InWorld, Box("WreckAnchor", Anchor, Vector3(40.0, 40.0, 40.0), Colour(0.2f, 0.2f, 0.22f)));
-        SpawnStatic(InWorld, Box("WreckGantry", Vector3(Anchor.GetX(), 0.5 * (Anchor.GetY() - 20.0), Anchor.GetZ() - 400.0),
-                                 Vector3(30.0, Anchor.GetY() - 20.0, 30.0), Colour(0.2f, 0.2f, 0.22f)));
-        SpawnStatic(InWorld, Box("WreckBeam", Vector3(Anchor.GetX(), Anchor.GetY() + 35.0, Anchor.GetZ() - 190.0),
-                                 Vector3(30.0, 30.0, 440.0), Colour(0.2f, 0.2f, 0.22f)));
-
-        char Name[32];
-        char Previous[32] = "WreckAnchor";
-        const int Links = 6;
-        for(int Index = 0; Index < Links; ++Index)
-        {
-            std::snprintf(Name, sizeof(Name), "WreckLink%d", Index);
-            GameCore::Entity Link;
-            GameCore::RigidBodyComponent* Body = SpawnDynamic(InWorld, Ball(Name, Anchor - Vector3(80.0 * (Index + 1), 0.0, 0.0), 18.0,
-                                                                            Colour(0.3f, 0.3f, 0.32f, 0.3f, 1.0f)), &Link);
-            Body->Mass = 15.0f;
-            GameCore::PhysicsConstraintComponent Joint;
-            Joint.Type  = GameCore::PCT_Point;
-            Joint.Pivot = Vector3(40.0, 0.0, 0.0);   // halfway back to the previous link (or the anchor)
-            std::snprintf(Joint.TargetName, sizeof(Joint.TargetName), "%s", Previous);
-            Link.AddComponent(Joint);
-            std::snprintf(Previous, sizeof(Previous), "%s", Name);
-        }
-
-        GameCore::Entity Wrecker;
-        GameCore::RigidBodyComponent* Heavy = SpawnDynamic(InWorld, Ball("WreckingBall", Anchor - Vector3(80.0 * Links + 110.0, 0.0, 0.0), 70.0,
-                                                                         Colour(0.15f, 0.15f, 0.16f, 0.25f, 1.0f)), &Wrecker);
-        Heavy->Mass = 900.0f;
-        GameCore::PhysicsConstraintComponent Hook;
-        Hook.Type  = GameCore::PCT_Point;
-        Hook.Pivot = Vector3(70.0, 0.0, 0.0);
-        std::snprintf(Hook.TargetName, sizeof(Hook.TargetName), "%s", Previous);
-        Wrecker.AddComponent(Hook);
-
-        /* The wall, where the ball comes through the bottom of its swing. */
-        for(int Row = 0; Row < 5; ++Row)
-        {
-            for(int Column = 0; Column < 4; ++Column)
-            {
-                SpawnDynamic(InWorld, Box("WallCrate", Vector3(Anchor.GetX() + 140.0, 30.0 + 60.0 * Row, Anchor.GetZ() - 90.0 + 60.0 * Column),
-                                          Vector3(58.0, 58.0, 58.0), (Row + Column) % 2 ? Colour(0.7f, 0.25f, 0.2f, 0.8f)
-                                                                                         : Colour(0.82f, 0.78f, 0.7f, 0.8f)));
-            }
-        }
-
-        /* The revolving door: one wide panel hinged to the world about Y
-         * through its middle, turned by its motor through a ring of balls. */
-        GameCore::Entity Door;
-        GameCore::RigidBodyComponent* DoorBody = SpawnDynamic(InWorld, Box("RevolvingDoor", Vector3(-750.0, 125.0, 1900.0), Vector3(420.0, 230.0, 16.0),
-                                                                           Colour(0.55f, 0.75f, 0.9f, 0.15f, 0.2f)), &Door);
-        DoorBody->Mass = 200.0f;
-        GameCore::PhysicsConstraintComponent Hinge;
-        Hinge.Type       = GameCore::PCT_Hinge;
-        Hinge.Axis       = Vector3(0.0, 1.0, 0.0);
-        Hinge.bMotor     = 1;
-        Hinge.MotorSpeed = 45.0f;
-        Door.AddComponent(Hinge);
-
-        for(int Index = 0; Index < 6; ++Index)
-        {
-            const double Angle = (30.0 + 60.0 * Index) * DegToRad;
-            SpawnDynamic(InWorld, Ball("DoorBall", Vector3(-750.0 + 150.0 * std::cos(Angle), 30.0, 1900.0 + 150.0 * std::sin(Angle)), 30.0,
-                                       Colour(0.9f, 0.9f, 0.3f, 0.3f)));
-        }
-    }
-
-    /* A Sensor pad: what enters is launched (LightLabPhysicsLevel::OnSensorEnter).
-     * Three balls start above it -- a fountain that keeps going. */
-    void SpawnJumpPad(GameCore::World& InWorld)
-    {
-        Piece Pad;
-        Pad.Name = "JumpPad"; Pad.Mesh = BoxMesh; Pad.Position = Vector3(0.0, 15.0, -1350.0);
-        Pad.Scale = Vector3(300.0, 30.0, 300.0); Pad.Material = Glow; Pad.bCasts = false;
-        const GameCore::Entity Entity = Spawn(InWorld, Pad);
-        Entity.SetMobility(GameCore::EMobility::Static);
-        GameCore::RigidBodyComponent Sensor;
-        Sensor.Motion  = GameCore::RBM_Static;
-        Sensor.bSensor = 1;
-        Entity.AddComponent(Sensor);
-
-        for(int Index = 0; Index < 3; ++Index)
-        {
-            SpawnDynamic(InWorld, Ball("FountainBall", Vector3(-80.0 + 80.0 * Index, 300.0 + 150.0 * Index, -1350.0), 25.0,
-                                       Colour(0.95f, 0.3f + 0.25f * Index, 0.6f, 0.3f)));
-        }
-    }
-
-    void SpawnLightsAndView(GameCore::World& InWorld)
-    {
-        const GameCore::Entity Sun = InWorld.CreateEntity("Sun");
-        GameCore::TransformComponent SunAt;
-        SunAt.Position = Vector3(0.0, 2000.0, 0.0);
-        SunAt.Rotation = Vector3(55.0, 30.0, 0.0);
-        Sun.AddComponent(SunAt);
-        RenderCore::DirectionalLightComponent Light;
-        Light.Color           = EngineCore::Color(255, 244, 225);
-        Light.Intensity       = 2.5f;
-        Light.bCastShadows    = 1;
-        Light.ShadowTechnique = RenderCore::LST_Cascaded;
-        Light.ShadowDistance  = 6000.0f;
-        Light.CascadeCount    = 4;
-        Sun.AddComponent(Light);
-
-        const GameCore::Entity Sky = InWorld.CreateEntity("Sky");
-        Sky.AddComponent<GameCore::TransformComponent>();
-        RenderCore::SkyLightComponent Fill;
-        Fill.SkyColor    = EngineCore::Color(120, 140, 175);
-        Fill.GroundColor = EngineCore::Color(70, 60, 50);
-        Fill.Intensity   = 0.6f;
-        Sky.AddComponent(Fill);
-
-        const GameCore::Entity Post = InWorld.CreateEntity("PostProcessGlobal");
-        Post.AddComponent<GameCore::TransformComponent>();
-        RenderCore::PostProcessComponent Everywhere;
-        std::snprintf(Everywhere.Stack, sizeof(Everywhere.Stack), "%s", "Content/PostProcess/Global.pp.nmgraph");
-        Post.AddComponent(Everywhere);
-
-        const GameCore::Entity Player = InWorld.CreateEntity("Player");
-        GameCore::TransformComponent View;
-        View.Position = Vector3(0.0, 1100.0, -2700.0);
-        View.Rotation = Vector3(22.0, 0.0, 0.0);
-        Player.AddComponent(View);
-        RenderCore::CameraComponent Camera;
-        Camera.Projection = RenderCore::CP_Perspective;
-        Camera.FovY       = 70.0f;
-        Camera.ZNear      = 5.0f;
-        Camera.ZFar       = 20000.0f;
-        Player.AddComponent(Camera);
-        Player.AddComponent<NimbleEngine::InputComponent>();
-    }
 
     // === The buggy ================================================================
 
@@ -589,21 +273,6 @@ namespace
         return Root;
     }
 
-    /* The buggy from its prefab file, or built here if that is missing. */
-    GameCore::EntityID SpawnVehicle(GameCore::World& InWorld, const GameCore::TransformPose& InAt, const char* InName)
-    {
-        const GameCore::PrefabInstance Instance = InWorld.SpawnPrefab(VehiclePrefab, InAt, InName);
-        if(Instance.IsValid())
-        {
-            /* InName names the instance; the root entity takes it too, for the Outliner. */
-            const GameCore::Entity Root = Instance.GetRoot();
-            Root.SetName(InName);
-            return Root.GetID();
-        }
-        CORE_LOG_WARN(std::string("[PhysicsLab] no ") + VehiclePrefab + "; building the buggy in code")
-        return BuildVehicle(InWorld, InAt, InName).GetID();
-    }
-
     /* [LightLab] ExportVehiclePrefab: BuildVehicle captured as a text prefab. */
     void ExportVehiclePrefab(const std::string& InPath)
     {
@@ -627,115 +296,6 @@ namespace
     }
 
     // === The driving course ========================================================
-
-    /* Something to drive over and through, down the right of the yard along
-     * +Z, the buggy parked at its start:
-     *   speed bumps      half-buried Cylinders across the lane
-     *   rough ground     a scatter of low Boxes the wheels ride over one by one
-     *   a jump           a ramp, then open ground to land on
-     *   cones            a slalom of light Cylinders, to knock down
-     *   a see-saw        a plank on a Hinge over a fulcrum: it tips as the buggy crosses
-     *   a bridge         up a ramp, along a narrow deck, down the other side
-     *   a crate wall     to drive through, last: light rubble pushed ahead of
-     *                    a heavy vehicle onto the next obstacle wedges under it */
-    void SpawnDrivingCourse(GameCore::World& InWorld)
-    {
-        const double X = 3000.0;
-        const Tint Concrete = Colour(0.5f, 0.5f, 0.52f, 0.85f);
-        const Tint Hazard   = Colour(0.95f, 0.55f, 0.05f, 0.5f);
-
-        const GameCore::Entity Marker = InWorld.CreateEntity("DrivingCourse");
-        GameCore::TransformComponent At;
-        At.Position = Vector3(X, 0.0, 0.0);
-        Marker.AddComponent(At);
-
-        for(int Index = 0; Index < 5; ++Index)
-        {
-            Piece Bump;
-            Bump.Name = "SpeedBump"; Bump.Mesh = CylinderMesh; Bump.Look = Hazard;
-            Bump.Position = Vector3(X, 0.0, -3200.0 + 120.0 * Index);
-            Bump.Rotation = Vector3(0.0, 0.0, 90.0);
-            Bump.Scale    = Vector3(36.0, 600.0, 36.0);
-            SpawnStatic(InWorld, Bump);
-        }
-
-        /* A fixed scatter (a small LCG), so every build lays it the same. */
-        uint32_t Seed = 12345u;
-        const auto Next = [&Seed]() { Seed = Seed * 1664525u + 1013904223u; return double(Seed >> 8) / double(1u << 24); };
-        for(int Index = 0; Index < 28; ++Index)
-        {
-            const double Height = 8.0 + 10.0 * Next();
-            SpawnStatic(InWorld, Box("Rock", Vector3(X - 260.0 + 520.0 * Next(), 0.5 * Height, -2450.0 + 400.0 * Next()),
-                                     Vector3(50.0 + 60.0 * Next(), Height, 50.0 + 60.0 * Next()), Concrete,
-                                     Vector3(0.0, 180.0 * Next(), 0.0)));
-        }
-
-        /* Rises 14 degrees toward +Z to a lip about 135 up. */
-        SpawnStatic(InWorld, Box("JumpRamp", Vector3(X, 62.0, -1600.0), Vector3(460.0, 20.0, 560.0), Hazard, Vector3(-14.0, 0.0, 0.0)));
-
-        for(int Index = 0; Index < 6; ++Index)
-        {
-            Piece Cone;
-            Cone.Name = "Cone"; Cone.Mesh = CylinderMesh; Cone.Look = Hazard;
-            Cone.Position = Vector3(X + (Index % 2 ? 140.0 : -140.0), 36.0, -650.0 + 130.0 * Index);
-            Cone.Scale    = Vector3(36.0, 70.0, 36.0);
-            GameCore::RigidBodyComponent* Body = SpawnDynamic(InWorld, Cone);
-            Body->Mass = 6.0f;
-        }
-
-        for(int Row = 0; Row < 3; ++Row)
-        {
-            for(int Column = 0; Column < 5; ++Column)
-            {
-                GameCore::RigidBodyComponent* Body =
-                    SpawnDynamic(InWorld, Box("CourseCrate", Vector3(X - 124.0 + 62.0 * Column, 30.0 + 61.0 * Row, 3720.0),
-                                              Vector3(60.0, 60.0, 60.0), (Row + Column) % 2 ? Colour(0.6f, 0.42f, 0.22f) : Colour(0.7f, 0.5f, 0.28f)));
-                Body->Mass = 25.0f;
-            }
-        }
-
-        /* The see-saw: the plank pivots about X on the fulcrum's top edge,
-         * starting tipped with its near end on the ground to drive onto. */
-        SpawnStatic(InWorld, Box("SeeSawFulcrum", Vector3(X, 25.0, 1450.0), Vector3(380.0, 50.0, 50.0), Concrete));
-        GameCore::Entity Plank;
-        GameCore::RigidBodyComponent* PlankBody =
-            SpawnDynamic(InWorld, Box("SeeSaw", Vector3(X, 59.0, 1450.0), Vector3(360.0, 16.0, 900.0), Hazard,
-                                      Vector3(-7.5, 0.0, 0.0)), &Plank);
-        PlankBody->Mass     = 250.0f;
-        PlankBody->Friction = 0.9f;
-        GameCore::PhysicsConstraintComponent Pivot;
-        Pivot.Type     = GameCore::PCT_Hinge;
-        Pivot.Axis     = Vector3(1.0, 0.0, 0.0);
-        Pivot.LimitMin = -13.0f;
-        Pivot.LimitMax = 13.0f;
-        Plank.AddComponent(Pivot);
-
-        /* The bridge: 13 degrees up, a deck 320 wide, 13 degrees down. */
-        SpawnStatic(InWorld, Box("BridgeRampUp",   Vector3(X, 58.0, 2400.0), Vector3(320.0, 20.0, 520.0), Concrete, Vector3(-13.0, 0.0, 0.0)));
-        SpawnStatic(InWorld, Box("BridgeDeck",     Vector3(X, 109.0, 2850.0), Vector3(320.0, 20.0, 400.0), Concrete));
-        SpawnStatic(InWorld, Box("BridgeRampDown", Vector3(X, 58.0, 3300.0), Vector3(320.0, 20.0, 520.0), Concrete, Vector3(13.0, 0.0, 0.0)));
-
-        /* The end, short of the floor's edge. */
-        SpawnStatic(InWorld, Box("CourseEnd", Vector3(X, 40.0, 3940.0), Vector3(900.0, 80.0, 60.0), Hazard));
-
-        GameCore::TransformPose Start;
-        Start.Position = Vector3(X, 80.0, -3550.0);
-        SpawnVehicle(InWorld, Start, "Buggy");
-    }
-
-    void BuildScene(GameCore::World& InWorld)
-    {
-        SpawnDrivingCourse(InWorld);
-        SpawnGround(InWorld);
-        SpawnStacks(InWorld);
-        SpawnDominoes(InWorld);
-        SpawnMaterials(InWorld);
-        SpawnMeshes(InWorld);
-        SpawnSweeper(InWorld);
-        SpawnJoints(InWorld);
-        SpawnJumpPad(InWorld);
-        SpawnLightsAndView(InWorld);
-    }
 
     // === Systems ==================================================================
 
@@ -840,12 +400,42 @@ namespace
 class LightLabPhysicsMode : public NimbleEngine::IGameMode
 {
 public:
-    LightLabPhysicsMode(NimbleEngine::ILevel& InLevel, const GameCore::EntityID InPlayer, DriveContext& InDrive)
-        : Level(InLevel), PlayerEntity(InPlayer), Drive(InDrive) {}
-
+    /* Content/Levels/PhysicsLab.nmworld is loaded: fly the Player, turn the
+     * Sweeper, answer the jump pad, drive the level's vehicle. */
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
         Session = &InSession;
+        GameCore::World& World = InSession.GetWorld();
+
+        const std::string VehicleExport = GLightLabExportVehiclePrefab.GetString();
+        if(!VehicleExport.empty())
+        {
+            ExportVehiclePrefab(VehicleExport);
+        }
+
+        PlayerEntity = World.FindEntityByName("Player");
+        if(!PlayerEntity.IsSet())
+        {
+            CORE_LOG_ERROR("[PhysicsLab] the world has no entity named Player; nothing to fly")
+        }
+        LightLabStartFly(World, PlayerEntity, Fly);
+
+        Spin.Sweeper = World.FindEntityByName("Sweeper");
+        World.RegisterSystem("LightLab.Spin", GameCore::TP_PrePhysics, &SpinSystem, &Spin);
+
+        JumpPad = World.FindEntityByName("JumpPad");
+        World.GetEvents().Subscribe("SensorEnter", &LightLabPhysicsMode::OnSensorEnter, this);
+
+        /* The world's vehicle, whatever it is called. */
+        World.Each<GameCore::VehicleComponent>([this](GameCore::Entity InEntity, GameCore::VehicleComponent&)
+        {
+            if(!Drive.Vehicle.IsSet()) { Drive.Vehicle = InEntity.GetID(); }
+        });
+        Drive.CourseX = double(World.GetEntity(Drive.Vehicle).GetWorldPose().Position.GetX());
+        Drive.Player  = PlayerEntity;
+        Drive.Fly     = &Fly;
+        World.RegisterSystem("LightLab.Drive", GameCore::TP_PrePhysics, &DriveSystem, &Drive);
+        World.RegisterSystem("LightLab.Chase", GameCore::TP_PostUpdate, &ChaseSystem, &Drive);
         return true;
     }
 
@@ -885,7 +475,7 @@ public:
             if(Input->WasPressed("ResetLevel"))
             {
                 CORE_LOG("[PhysicsLab] reset")
-                Session->RequestLevel(Level);
+                Session->RequestLevel(*Session->GetLevel());
             }
         }
 
@@ -914,11 +504,34 @@ public:
 
     void OnUnload() override
     {
+        if(Session)
+        {
+            Session->GetWorld().GetEvents().UnsubscribeAll(this);
+        }
         Session = nullptr;
         Thrown.clear();
     }
 
 private:
+    /* The jump pad: whatever enters leaves upward at LaunchSpeed, keeping
+     * half its way across. */
+    static void OnSensorEnter(const GameCore::EventID /*InEvent*/, const GameCore::EventArgs& InArgs, void* InUserData)
+    {
+        auto* Self = static_cast<LightLabPhysicsMode*>(InUserData);
+        if(InArgs.Count < 2 || InArgs.Args[0].Type != GameCore::EventArg::ET_Entity
+           || GameCore::EntityID::Unpack(InArgs.Args[0].Entity) != Self->JumpPad)
+        {
+            return;
+        }
+
+        GameCore::Entity Other = Self->Session->GetWorld().GetEntity(GameCore::EntityID::Unpack(InArgs.Args[1].Entity));
+        if(GameCore::RigidBodyComponent* Body = Other.GetComponent<GameCore::RigidBodyComponent>())
+        {
+            const Vector3 Was = Body->LinearVelocity;
+            Body->SetLinearVelocity(Vector3(0.5 * Was.GetX(), LaunchSpeed, 0.5 * Was.GetZ()));
+        }
+    }
+
     /* A ball from just ahead of the camera, along the view. */
     void Throw(GameCore::World& InWorld)
     {
@@ -982,170 +595,26 @@ private:
         Session->SetPaused(true);
     }
 
-    NimbleEngine::ILevel&        Level;
     NimbleEngine::GameSession*   Session = nullptr;
     GameCore::EntityID           PlayerEntity;
-    DriveContext&                Drive;
+    GameCore::EntityID           JumpPad;
+    LightLabFlyContext           Fly;
+    SpinContext                  Spin;
+    DriveContext                 Drive;
     std::deque<GameCore::EntityID> Thrown;
     double ElapsedSeconds    = 0.0;
     double LastReportSeconds = 0.0;
 };
 
-// === The level ====================================================================
-
-class LightLabPhysicsLevel : public NimbleEngine::ILevel
-{
-public:
-    const char* GetName() const override      { return "PhysicsLab"; }
-    const char* GetWorldFile() const override { return LevelFile; }
-    const char* GetStartupScript() const override { return ""; }
-
-    bool OnLoad(NimbleEngine::GameSession& InSession) override
-    {
-        (void)InSession;
-        GameCore::World& World = GetWorld();
-        Spin  = SpinContext();
-        Drive = DriveContext();
-
-        const std::string VehicleExport = GLightLabExportVehiclePrefab.GetString();
-        if(!VehicleExport.empty())
-        {
-            ExportVehiclePrefab(VehicleExport);
-        }
-
-        const std::string Export = GLightLabExportPhysicsLevel.GetString();
-        if(!Export.empty() || !LoadLevelFile(World))
-        {
-            BuildScene(World);
-            if(!Export.empty())
-            {
-                ExportLevel(World, Export);
-            }
-        }
-        else if(!World.FindEntityByName("DrivingCourse").IsSet())
-        {
-            /* A file from before the driving course: it is added here, and
-             * kept once the level is saved (the editor, or SavePhysicsLevel). */
-            SpawnDrivingCourse(World);
-            CORE_LOG("[PhysicsLab] added the driving course to a level saved without it")
-        }
-
-        const std::string Save = GLightLabSavePhysicsLevel.GetString();
-        if(!Save.empty())
-        {
-            ExportLevel(World, Save);
-        }
-
-        const GameCore::EntityID Player = World.FindEntityByName("Player");
-        if(!Player.IsSet())
-        {
-            CORE_LOG_ERROR("[PhysicsLab] the level has no entity named Player; nothing to fly")
-        }
-        LightLabStartFly(World, Player, Fly);
-
-        Spin.Sweeper = World.FindEntityByName("Sweeper");
-        World.RegisterSystem("LightLab.Spin", GameCore::TP_PrePhysics, &SpinSystem, &Spin);
-
-        JumpPad = World.FindEntityByName("JumpPad");
-        World.GetEvents().Subscribe("SensorEnter", &LightLabPhysicsLevel::OnSensorEnter, this);
-
-        /* The level's vehicle, whatever it is called. */
-        World.Each<GameCore::VehicleComponent>([this](GameCore::Entity InEntity, GameCore::VehicleComponent&)
-        {
-            if(!Drive.Vehicle.IsSet()) { Drive.Vehicle = InEntity.GetID(); }
-        });
-        Drive.CourseX = double(World.GetEntity(Drive.Vehicle).GetWorldPose().Position.GetX());
-        Drive.Player  = Player;
-        Drive.Fly     = &Fly;
-        World.RegisterSystem("LightLab.Drive", GameCore::TP_PrePhysics, &DriveSystem, &Drive);
-        World.RegisterSystem("LightLab.Chase", GameCore::TP_PostUpdate, &ChaseSystem, &Drive);
-
-        Mode.emplace(*this, Player, Drive);
-        return true;
-    }
-
-    void OnUnload() override
-    {
-        GetWorld().GetEvents().UnsubscribeAll(this);
-        Mode.reset();
-    }
-
-    NimbleEngine::IGameMode* GetGameMode() override { return Mode ? &*Mode : nullptr; }
-
-private:
-    /* The jump pad: whatever enters leaves upward at LaunchSpeed, keeping
-     * half its way across. */
-    static void OnSensorEnter(const GameCore::EventID /*InEvent*/, const GameCore::EventArgs& InArgs, void* InUserData)
-    {
-        auto* Self = static_cast<LightLabPhysicsLevel*>(InUserData);
-        if(InArgs.Count < 2 || InArgs.Args[0].Type != GameCore::EventArg::ET_Entity
-           || GameCore::EntityID::Unpack(InArgs.Args[0].Entity) != Self->JumpPad)
-        {
-            return;
-        }
-
-        GameCore::Entity Other = Self->GetWorld().GetEntity(GameCore::EntityID::Unpack(InArgs.Args[1].Entity));
-        if(GameCore::RigidBodyComponent* Body = Other.GetComponent<GameCore::RigidBodyComponent>())
-        {
-            const Vector3 Was = Body->LinearVelocity;
-            Body->SetLinearVelocity(Vector3(0.5 * Was.GetX(), LaunchSpeed, 0.5 * Was.GetZ()));
-        }
-    }
-
-    bool LoadLevelFile(GameCore::World& InWorld)
-    {
-        const std::string Path = GameCore::ResolveContentWorld(LevelFile);
-        if(GameCore::DetectWorldFileFormat(Path.c_str()) == GameCore::EWorldFileFormat::Unknown)
-        {
-            CORE_LOG("[PhysicsLab] no " + Path + "; building the level in code")
-            return false;
-        }
-        if(GameCore::LoadWorldFile(Path.c_str(), InWorld))
-        {
-            CORE_LOG("[PhysicsLab] loaded " + Path)
-            return true;
-        }
-        CORE_LOG_WARN("[PhysicsLab] could not read " + Path + "; building the level in code")
-        InWorld.ForEachEntity([](const GameCore::EntityID InEntity, void* InUserData)
-        {
-            static_cast<std::deque<GameCore::EntityID>*>(InUserData)->push_back(InEntity);
-        }, &Doomed);
-        for(const GameCore::EntityID Each : Doomed) { InWorld.DestroyEntity(Each); }
-        Doomed.clear();
-        return false;
-    }
-
-    void ExportLevel(GameCore::World& InWorld, const std::string& InPath)
-    {
-#if WITH_EDITOR
-        InWorld.RefreshSpatialIndex();
-        if(GameCore::SaveWorldPackage(InPath.c_str(), InWorld))
-        {
-            CORE_LOG("[PhysicsLab] exported the level to " + InPath)
-        }
-        else
-        {
-            CORE_LOG_ERROR("[PhysicsLab] could not export the level to " + InPath)
-        }
-#else
-        (void)InWorld;
-        CORE_LOG_WARN("[PhysicsLab] ExportPhysicsLevel needs an editor build (" + InPath + " not written)")
-#endif
-    }
-
-    LightLabFlyContext                 Fly;
-    SpinContext                        Spin;
-    DriveContext                       Drive;
-    GameCore::EntityID                 JumpPad;
-    std::deque<GameCore::EntityID>     Doomed;
-    std::optional<LightLabPhysicsMode> Mode;
-};
-
 namespace LightLabPhysics
 {
-    NimbleEngine::ILevel& GetLevel()
+    void RegisterGameMode()
     {
-        static LightLabPhysicsLevel Level;
-        return Level;
+        NimbleEngine::RegisterGameMode<LightLabPhysicsMode>("PhysicsLab");
+    }
+
+    void UnregisterGameMode()
+    {
+        NimbleEngine::UnregisterGameMode("PhysicsLab");
     }
 }

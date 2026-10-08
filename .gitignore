@@ -16,6 +16,11 @@
 # at it, do not start showing up as untracked output -- all but the tracked
 # NewProject scripts, which make a game without the editor.
 /Games/*/Binaries/
+
+# What the tools make on each machine, never source: cooked content
+# (Saved/Cooked/, from the editor's Build > Cook Content) and a log per editor,
+# game, cook and build run (Saved/Logs/).
+/Games/*/Saved/
 /Engine/Binaries/*
 !/Engine/Binaries/NewProject.cmake
 !/Engine/Binaries/NewProject.sh

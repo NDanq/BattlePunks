@@ -18,6 +18,7 @@ class DetailsPanel;
 class EditorContext;
 class EditorDocument;
 class OutlinerPanel;
+class ProjectBuildDialog;
 class QAction;
 class QLabel;
 class SDLInputProbe;
@@ -70,10 +71,14 @@ private:
     void OnPlayStateChanged(bool bInPlaying);
     void StartPlay();
     void CompileSource();
+    /* Build > Cook Content: Build Project's dialog, cooking at once. */
     void CookContent();
+    /* Build > Build Project: cook and compile the game (ProjectBuildDialog). */
+    ProjectBuildDialog* OpenBuildProject();
     /* InPage: a page to open on ("Play"); empty keeps the first. */
     void OpenSettings(const QString& InPage = QString());
-    void OpenProjectSettings();
+    /* bInWorlds: at the Worlds page. */
+    void OpenProjectSettings(bool bInWorlds = false);
     void OnCompileFinished(bool bInSucceeded);
     void StartRenderer();
     void UpdateTitle();

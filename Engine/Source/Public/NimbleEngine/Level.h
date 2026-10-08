@@ -23,6 +23,10 @@ namespace NimbleEngine
      *
      * Full sequence: GameSession::LoadLevel. A level does not tick; register a
      * World system for per-frame work. Not NE_API; GetWorld() is annotated.
+     *
+     * An engine type: a game's levels are the worlds its project lists
+     * (WorldList.h), each loading its file and then its IGameMode. Games
+     * write modes, not levels; Application::Exec and tests use ILevel itself.
      */
     class ILevel
     {
@@ -37,8 +41,9 @@ namespace NimbleEngine
         virtual const char* GetName() const = 0;
 
         /* The world file OnLoad loads ("Content/Levels/X.nmworld", runtime
-         * relative), if it loads one: how the editor's Play starts the level
-         * of the world that is open (FindLevelByWorldFile). nullptr: none. */
+         * relative) -- a listed world's [World_*] File: how the editor's Play
+         * starts the level of the world that is open (FindLevelByWorldFile).
+         * nullptr: none. */
         virtual const char* GetWorldFile() const { return nullptr; }
 
         /* Populate the World. False aborts the load (OnUnload still runs).
@@ -73,9 +78,8 @@ namespace NimbleEngine
          * before IGameMode::OnStart. */
         virtual GameState* GetGameState() { return nullptr; }
 
-        /* The Lua file run after IGameMode::OnLoad. nullptr runs [Scripting]
-         * StartupScript, as every level did before; "" runs none, for a level
-         * whose scene is all its own. */
+        /* The Lua file run after IGameMode::OnLoad -- a listed world's
+         * [World_*] StartupScript. nullptr or "" runs none. */
         virtual const char* GetStartupScript() const { return nullptr; }
 
         /* This level's World, from the start of OnLoad to the end of OnUnload;

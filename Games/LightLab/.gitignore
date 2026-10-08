@@ -1,6 +1,7 @@
 # Binaries/ is the runtime layout: every engine and game library, and staged
 # copies of Config/, Scripts/ and Content/. All generated; the originals here
-# are the tracked source. Cooked/ is NOT ignored: a Client build stages it.
+# are the tracked source. Saved/ is generated on each machine -- cooked content
+# (Build > Cook Content) and a log per run -- so it is not tracked either.
 
 # Runtime layout and build trees
 /Binaries/
@@ -34,8 +35,9 @@ Testing/
 *.spv
 *.cso
 
-# Logs
+# Logs, and Saved/: cooked content and a log per run, made on each machine
 /Logs/
+/Saved/
 *.log
 
 # Editors and OS

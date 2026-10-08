@@ -234,6 +234,15 @@ function(_nimble_add_launcher NM_TARGET NM_MODULE NM_GAME_NAME NM_SOURCES)
     target_compile_definitions(${NM_TARGET} PRIVATE
             "NIMBLE_GAME_MODULE=\"${NM_MODULE}\""
             "NIMBLE_GAME_NAME=\"${NM_GAME_NAME}\"")
+    # Where -uncooked reads the project's raw files: the game's folder (this
+    # is called from its CMakeLists). Never in Shipping, which cannot run
+    # uncooked and should not carry a source path. NIMBLE_RUN_UNCOOKED makes
+    # running uncooked the build's default (-cooked turns it off).
+    target_compile_definitions(${NM_TARGET} PRIVATE
+            "$<$<NOT:$<CONFIG:Shipping>>:NIMBLE_PROJECT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\">")
+    if(NIMBLE_RUN_UNCOOKED)
+        target_compile_definitions(${NM_TARGET} PRIVATE "$<$<NOT:$<CONFIG:Shipping>>:NIMBLE_RUN_UNCOOKED=1>")
+    endif()
     add_dependencies(${NM_TARGET} ${NM_MODULE})
 
     # One link: NimbleEngine brings its include directory, cxx_std_17 and

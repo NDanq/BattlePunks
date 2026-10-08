@@ -16,11 +16,13 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <atomic>
 #include <thread>
 #include <chrono>
 #include <utility>
+#include <filesystem>
 
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreFileProvider.h"
@@ -31,6 +33,7 @@
 #include "Public/Core/CoreMemory.h"
 #include "Public/Core/CoreMemoryPool.h"
 #include "Public/Core/CoreModuleManager.h"
+#include "Public/Core/CorePack.h"
 #include "Public/Core/CorePointer.h"
 #include "Public/Core/CorePlatform.h"
 #include "Public/Core/CoreQueue.h"
@@ -93,6 +96,36 @@ static void TestLogging()
     GHandlerCalls = 0;
     CORE_CHECK(true, "should not fire")
     Expect(GHandlerCalls == 0, "a passing CORE_CHECK is silent");
+
+    // A run log gets every line beside the handler, and keeps only the newest.
+    const std::string LogDir = "SmokeScratch/Logs";
+    {
+        std::error_code Ignored;
+        std::filesystem::remove_all(LogDir, Ignored);   // a previous run's logs would count against the kept
+    }
+    appCreateDirectories(LogDir);
+    for(const char* Stale : { "SmokeRun-2000.01.01-00.00.00.log", "SmokeRun-2000.01.02-00.00.00.log", "Other-2000.01.01-00.00.00.log" })
+    {
+        if(FileHandle Handle = appFileOpenWrite(LogDir + "/" + Stale)) { appFileClose(Handle); }
+    }
+    GHandlerCalls = 0;
+    Expect(OpenRunLog(LogDir, "SmokeRun", 2), "a run log opens");
+    const std::string RunLog = GetRunLogPath();
+    CORE_LOG_WARN("into the run log")
+    CloseRunLog();
+    Expect(GHandlerCalls == 1 && GetRunLogPath().empty(), "the handler still hears it, and closing forgets the path");
+    std::vector<uint8_t> Bytes;
+    Expect(appFileReadAll(RunLog, Bytes) && std::string(Bytes.begin(), Bytes.end()).find("[WARN] into the run log") != std::string::npos,
+           "the run log holds the line, with its verbosity");
+    {
+        const std::string Text(Bytes.begin(), Bytes.end());
+        const size_t Line = Text.find('\n') + 1;   // the line after the header
+        Expect(Text.compare(0, 22, "SmokeRun log, started ") == 0, "a run log opens with when the run started");
+        Expect(Text.size() > Line + 24 && Text[Line + 4] == '-' && Text[Line + 7] == '-' && Text[Line + 10] == ' '
+               && Text[Line + 13] == ':' && Text[Line + 19] == '.', "each line starts with its date and time");
+    }
+    Expect(!appFileExists(LogDir + "/SmokeRun-2000.01.01-00.00.00.log") && appFileExists(LogDir + "/SmokeRun-2000.01.02-00.00.00.log")
+           && appFileExists(LogDir + "/Other-2000.01.01-00.00.00.log"), "only the newest logs of its own name are kept");
 }
 
 // --- file seam ------------------------------------------------------------
@@ -1588,6 +1621,27 @@ static void TestConfigCallbacks()
         ConfigVar LateVar(EConfigType::CT_Int, "Smoke", "LateVar", MakeConfigInt(0), nullptr);
         Expect(LateVar.GetInt() == 42, "a var registered after its file was loaded is back-filled from the retained entry");
     }
+
+    // Sections as list items: every entry under a prefix, in file order, uncapped.
+    const std::string LongValue(300, 'x');
+    LoadConfigText("[SmokeList_B]\nFile = b\n[SmokeList_A]\nFile = " + LongValue + "\nCook = false\n[SmokeListOther]\nFile = c\n");
+    std::vector<std::string> Seen;
+    ConfigForEachEntry("smokelist_", [](const char* InSection, const char* InKey, const char* InValue, void* InUser)
+    {
+        static_cast<std::vector<std::string>*>(InUser)->push_back(std::string(InSection) + "." + InKey + "=" + InValue);
+    }, &Seen);
+    Expect(Seen.size() == 3, "ConfigForEachEntry visits only the sections with the prefix");
+    Expect(Seen.size() == 3 && Seen[0] == "SmokeList_B.File=b" && Seen[2] == "SmokeList_A.Cook=false",
+           "ConfigForEachEntry keeps file order");
+    Expect(Seen.size() == 3 && Seen[1] == "SmokeList_A.File=" + LongValue, "ConfigForEachEntry values are not capped");
+
+    ConfigRemoveEntries("SmokeList_");
+    Seen.clear();
+    ConfigForEachEntry("SmokeList", [](const char* InSection, const char*, const char*, void* InUser)
+    {
+        static_cast<std::vector<std::string>*>(InUser)->push_back(InSection);
+    }, &Seen);
+    Expect(Seen.size() == 1 && Seen[0] == "SmokeListOther", "ConfigRemoveEntries forgets only the prefixed sections");
 }
 
 static void TestConfigFile()
@@ -2748,11 +2802,67 @@ static void RunModuleTests()
 #endif
 }
 
+/* Content packs: hashed paths, content stored once, names only when asked. */
+static void TestPack()
+{
+    std::printf("[pack]\n");
+    Expect(HashPackPath("Content\\Levels/A.nmworld") == HashPackPath("./content/levels/a.nmworld"),
+           "a pack path hashes the same whatever its case and slashes");
+
+    const std::vector<uint8_t> Shared = { 1, 2, 3 };
+    std::vector<PackInput> Inputs = {
+        { "Content/A.bin", Shared }, { "Content/B.bin", Shared }, { "Config/DefaultEngine.ini", { 'x', '=', '1' } },
+    };
+    appCreateDirectories("SmokeScratch/Paks");
+    std::string Error;
+    Expect(WritePackFile("SmokeScratch/Paks/Named.nmpak", "Named", Inputs, true, false, &Error), "a pack with names is written");
+    Expect(WritePackFile("SmokeScratch/Paks/Bare.nmpak", "Bare", Inputs, false, true, &Error), "a pack without names is written");
+    std::vector<PackInput> Twice = { { "Content/A.bin", Shared }, { "content/a.bin", Shared } };
+    Expect(!WritePackFile("SmokeScratch/Paks/Twice.nmpak", "Twice", Twice, false, false, &Error), "a path twice is refused");
+
+    std::vector<uint8_t> NamedBytes, BareBytes;
+    appFileReadAll("SmokeScratch/Paks/Named.nmpak", NamedBytes);
+    appFileReadAll("SmokeScratch/Paks/Bare.nmpak", BareBytes);
+    const std::string BareText(BareBytes.begin(), BareBytes.end());
+    Expect(BareText.find("Content") == std::string::npos && BareText.find("DefaultEngine") == std::string::npos
+           && BareText.find("content") == std::string::npos, "a pack without names holds no path text");
+    Expect(BareText.find("x=1") == std::string::npos, "a scrambled pack's content does not show");
+    Expect(BareBytes.size() < NamedBytes.size() && BareBytes.size() < 200, "shared content is stored once");
+
+    std::shared_ptr<PackFileProvider> Named = PackFileProvider::Load(NamedBytes, Error);
+    std::shared_ptr<PackFileProvider> Bare  = PackFileProvider::Load(BareBytes, Error);
+    Expect(Named && Bare && Named->GetEntryCount() == 3 && Bare->GetEntryCount() == 3, "both packs load, three entries each");
+    std::vector<uint8_t> Out;
+    Expect(Bare && Bare->ReadAll("content/b.BIN", Out) && Out == Shared, "an entry reads back by its path, any case");
+    Expect(Bare && Bare->IsScrambled() && Named && !Named->IsScrambled()
+           && Bare->ReadAll("Config/DefaultEngine.ini", Out) && std::string(Out.begin(), Out.end()) == "x=1",
+           "a scrambled pack reads back as it was packed");
+    Expect(Bare && !Bare->Exists("Content/C.bin"), "a path not packed is not there");
+    Expect(Named && Named->HasNames() && Named->FindName(HashPackPath("Config/DefaultEngine.ini"))
+           && *Named->FindName(HashPackPath("Config/DefaultEngine.ini")) == "Config/DefaultEngine.ini",
+           "a debug pack names each hash");
+    Expect(Bare && !Bare->HasNames() && !Bare->FindName(HashPackPath("Content/A.bin")), "a shipping pack names nothing");
+    std::vector<uint8_t> Garbage = { 'N', 'O', 'P', 'E' };
+    Expect(!PackFileProvider::Load(Garbage, Error), "something else is not a pack");
+
+    std::unordered_map<uint64_t, HashedMemoryProvider::FileBytes> Hashed;
+    Hashed[HashPackPath("Shaders/Cooked/Vulkan/A@0.fsh.spv")] = std::make_shared<const std::vector<uint8_t>>(Shared);
+    HashedMemoryProvider ByHash(std::move(Hashed));
+    Expect(ByHash.Exists("shaders/cooked/vulkan/a@0.fsh.spv") && ByHash.ReadAll("Shaders/Cooked/Vulkan/A@0.fsh.spv", Out)
+           && Out == Shared && !ByHash.Exists("Shaders/Cooked/Vulkan/B@0.fsh.spv"), "a hashed provider answers by path, holding none");
+
+    FilesystemProvider Disk;
+    LayeredFileProvider Layered(&Disk, false);
+    Expect(MountPackFiles(Layered, "SmokeScratch/Paks") == 2, "every pack in a folder mounts");
+    Expect(Layered.ReadAll("Config/DefaultEngine.ini", Out) && Out.size() == 3, "a mounted pack answers the provider");
+}
+
 int main()
 {
     std::printf("EngineCore smoke test\n");
 
     TestLogging();
+    TestPack();
     TestFileSeam();
     TestFileMetadataSeam();
     TestDLLSeam();

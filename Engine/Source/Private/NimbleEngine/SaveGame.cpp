@@ -315,7 +315,7 @@ bool LoadGameFromFile(GameSession& InSession, const std::string& InPath)
     {
         /* Nothing is armed yet, so the running game is unchanged. */
         CORE_LOG_ERROR(std::string("LoadGameFromFile: no level is registered as '")
-                       + Header.LevelName + "'; call RegisterLevel for it before loading. "
+                       + Header.LevelName + "'; list its world in Project Settings > Worlds. "
                        "The running game is unchanged.")
         return false;
     }

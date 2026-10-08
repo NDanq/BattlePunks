@@ -68,19 +68,25 @@ Open `@PROJECT_NAME@Game.cpp`. Four classes, top to bottom:
   fields for saves. Add a field to both; once saves exist, bump
   `GetSerialVersion()` and read the new field behind
   `if(Ar.GetChunkVersion() >= 2)`.
-- **`@PROJECT_NAME@GameMode`** -- the rules. `OnTick` runs once per frame on
-  the game thread; `Session->GetWorld()` is the scene, `Session->RequestQuit()`
-  ends the game. Cache entity IDs in `OnLoad`, and find them again in
-  `OnPostLoadSave` after a save is restored.
-- **`@PROJECT_NAME@Level`** -- builds the scene in `OnLoad` (spawn prefabs,
-  register systems) and owns the mode and state. Its name, `"@PROJECT_NAME@"`,
-  is `[Game] StartLevel` in the config.
-- **`@PROJECT_NAME@GameModule`** -- registers the level. A second level is a
-  second `ILevel` class, registered beside the first.
+- **`@PROJECT_NAME@GameMode`** -- the rules for
+  `Content/Levels/@PROJECT_NAME@.nmworld`. The world is loaded before
+  `OnLoad`, which places what the world does not hold and registers systems.
+  `OnTick` runs once per frame on the game thread; `Session->GetWorld()` is
+  the scene, `Session->RequestQuit()` ends the game. Cache entity IDs in
+  `OnLoad`, and find them again in `OnPostLoadSave` after a save is restored.
+  It owns the state (`GetGameState`).
+- **`@PROJECT_NAME@GameModule`** -- registers the mode by name
+  (`RegisterGameMode<...>("@PROJECT_NAME@")`).
+
+Worlds are not declared in C++. Each is a `[World_<Name>]` section of
+`Config/DefaultEngine.ini` -- edited in the editor's **Edit > Project
+Settings > Worlds** -- naming its world file and the mode that runs it. A
+second level is a second world in that list; a second set of rules is a
+second registered mode. `[Game] StartLevel` names the world the game starts in.
 
 Per-entity logic that runs every frame belongs in a system rather than the
 mode: `World.RegisterSystem("@PROJECT_NAME@.Move", GameCore::TP_PrePhysics, &MoveSystem, &Context)`
-in the level's `OnLoad` (see `DriveMarkerSystem` in `Games/Sandbox/SandboxGame.cpp`).
+in the mode's `OnLoad` (see `DriveMarkerSystem` in `Games/Sandbox/SandboxGame.cpp`).
 
 There is no `main()` to write: the `@PROJECT_NAME@` executable is the
 engine's launcher (`nimble_add_game_launcher` in `CMakeLists.txt`), which
@@ -127,8 +133,8 @@ it. The keys that matter first:
 | `[Display] ResolutionX`, `ResolutionY` | 1280 x 720 | Window size |
 | `[Display] RHI` | 2 | Renderer: 0 Null (headless), 2 Vulkan, 4 D3D12 |
 | `[Application] Title` | @PROJECT_NAME@ | Window title |
-| `[Game] StartLevel` | @PROJECT_NAME@ | A registered level's name |
-| `[Scripting] StartupScript` | Scripts/Main.lua | Empty skips scripting |
+| `[Game] StartLevel` | @PROJECT_NAME@ | A listed world's name (`[World_<Name>]`) |
+| `[World_<Name>] StartupScript` | Scripts/Main.lua | That world's startup script; absent runs none |
 
 A game declares its own keys in C++, in the same file:
 
@@ -143,14 +149,13 @@ the text levels and prefabs, as the editor does, and cook each one themselves
 the first time they load it (again when it changes), into
 `Intermediate/Cooked/` beside the executable. Nothing to do while developing.
 
-A **Shipping** build reads only content cooked ahead. Before building
-`client-shipping`, in the editor's Console:
+A **Shipping** build reads only content cooked ahead. **Build > Build
+Project** cooks and compiles it in one go (pick Shipping); **Build > Cook
+Content** only cooks: the worlds ticked in Project Settings > Worlds, every
+prefab and UI document, into `Saved/Cooked/<their path>`.
 
-- `cook prefabs` writes binary prefabs to `Cooked/Content/Prefabs/`;
-- `cook` (with the level open and saved) writes its binary twin to
-  `Content/Levels/Cooked/`.
-
-Shipping stages those instead; commit them with the game. A level loads its
+Shipping stages those instead. `Saved/` is made on each machine and not
+tracked: cook again after a fresh checkout (Build Project does it for you). A level loads its
 world by its source path, `GameCore::LoadContentWorld("Content/Levels/X.nmworld")`,
 and every build reads the right file. Material graphs cook themselves during
 the build.

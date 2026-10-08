@@ -1,5 +1,5 @@
--- Sandbox's startup script ([Scripting] StartupScript), run on every level
--- load. Places prefab instances -- the level is made of them (Content/Prefabs/,
+-- The Sandbox world's startup script ([World_Sandbox] StartupScript), run on
+-- every load of it. Places prefab instances -- the level is made of them (Content/Prefabs/,
 -- and the native prefabs SandboxGame.cpp declares) -- and demonstrates the
 -- Events bus reaching a C++ subscriber, and the game's own script library and
 -- component (SandboxScripting.cpp).

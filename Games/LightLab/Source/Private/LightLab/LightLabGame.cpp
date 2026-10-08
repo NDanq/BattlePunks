@@ -3,15 +3,14 @@
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/Input.h"
 #include "Public/NimbleEngine/Level.h"
+#include "Public/NimbleEngine/WorldList.h"
 #include "Public/NimbleEngine/NetFacade.h"
-#include "Public/NimbleEngine/SaveGame.h"
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/NativePrefab.h"
 #include "Public/GameCore/World.h"
-#include "Public/GameCore/WorldPackage.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/Renderer.h"
 #include "Public/UI/UISystem.h"
@@ -23,7 +22,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -40,27 +38,29 @@
  * arch. T cycles the sun's technique, F toggles [Shadows] Enabled through its
  * config var, and R resets the level (every LightLab level).
  *
- * A second level, BakedLighting (the editor plays it while its world is open,
- * ILevel::GetWorldFile; a game, with [Game] StartLevel=BakedLighting), is baked
- * lighting's demo: a Cornell-style room whose static walls, boxes and lights
- * are baked (Build > Bake Lightmaps), with a dynamic ball swinging through it
- * lit by the light probes. L switches between the bake and live lighting,
- * through [Rendering] BakedLighting, in either level.
+ * A second world, BakedLighting (the editor plays it while it is open; a
+ * game, with [Game] StartLevel=BakedLighting), is baked lighting's demo: a
+ * Cornell-style room whose static walls, boxes and lights are baked (Build >
+ * Bake Lightmaps), with a dynamic ball swinging through it lit by the light
+ * probes. L switches between the bake and live lighting, through [Rendering]
+ * BakedLighting, in either world.
  *
- *   LightLabLevel      loads Content/Levels/LightLab.nmworld -- the yard, the lights and
- *                      the Player, as the editor saved them -- or, without one,
- *                      builds the same scene in code; registers the fly and
- *                      light-animation systems, owns the mode.
- *   LightLabBakedLevel loads Content/Levels/BakedLighting.nmworld; flies the
- *                      Player and swings the dynamic ball (Swinger).
- *   LightLabPhysics    the PhysicsLab level (LightLabPhysics.cpp): stacks,
+ * Each is a [World_*] in Config/DefaultEngine.ini naming its mode:
+ *
+ *   LightLabYardMode   Content/Levels/LightLab.nmworld -- the yard, the lights
+ *                      and the Player, as the editor saved them: flies the
+ *                      Player and animates the lights.
+ *   LightLabBakedMode  Content/Levels/BakedLighting.nmworld: flies the Player
+ *                      and swings the dynamic ball (Swinger).
+ *   LightLabPhysics    PhysicsLab's mode (LightLabPhysics.cpp): stacks,
  *                      dominoes, ramps, mesh colliders, joints and a jump
  *                      pad, simulated by the JoltPhysics module.
  *
  * Both turn the InsetLattice (inset shadows' demo cage) and drift it round
  * where it was placed, so its own shadow map follows a moving caster.
- *   LightLabGameMode   mouse capture, the T/F/L toggles, a periodic report.
- *   LightLabGameModule owns and registers both levels.
+ *   LightLabGameMode   what they share: mouse capture, the T/F/L toggles, a
+ *                      periodic report.
+ *   LightLabGameModule registers the three modes.
  *   LightLabAvatar     multiplayer: each connected player is an orb the others
  *                      see (LightLabServer, LightLab -connect=host:port).
  *
@@ -81,29 +81,7 @@ namespace
 
     /* Seconds between the mode's log reports. */
     constexpr double ReportIntervalSeconds = 5.0;
-
-    /* The level as the editor saves it. Its entities are found by name:
-     * Player, Sun, SweepSpot and OrbitLight drive the systems below. */
-    const char* const LevelFile = "Content/Levels/LightLab.nmworld";
-
-    /* Baked lighting's demo, made by Tools/make_baked_lighting_level.py and
-     * baked in the editor. Player, Sun and Swinger are found by name. */
-    const char* const BakedLevelFile = "Content/Levels/BakedLighting.nmworld";
-
-    const char* const BoxMesh    = "Engine/Content/Meshes/Box.nmmesh";
-    const char* const SphereMesh = "Engine/Content/Meshes/Sphere.nmmesh";
-    const char* const PlaneMesh  = "Engine/Content/Meshes/Plane.nmmesh";
-    const char* const CylinderMesh = "Engine/Content/Meshes/Cylinder.nmmesh";
-
-    /* A prefab from a file (Content/Prefabs): a Cylinder shaft on a Box base
-     * under a Box capital, 440 high, standing on its root. */
-    const char* const ColumnPrefab = "Content/Prefabs/Column.nmprefab";
 }
-
-/* An editor build only: when set, the level is built in code (not loaded) and
- * written to this path as a text world before the run starts -- how
- * Content/Levels/LightLab.nmworld was made. Relative to the executable. */
-NIMBLE_CONFIG_STRING(GLightLabExportLevel, "LightLab", "ExportLevel", "", nullptr);
 
 /* The pause menu's Settings page sets these (and [Shadows] Enabled,
  * [Rendering] BakedLighting) through its UI graph's Config nodes; an .ini
@@ -170,16 +148,6 @@ namespace
         Root.Add(Camera);
 
         Root.Add<NimbleEngine::InputComponent>();
-    }
-
-    GameCore::TransformPose Placed(const EngineCore::Vector3& InPosition, const EngineCore::Vector3& InScale,
-                                   const EngineCore::Vector3& InRotation = EngineCore::Vector3(0.0, 0.0, 0.0))
-    {
-        GameCore::TransformPose Pose;
-        Pose.Position = InPosition;
-        Pose.Rotation = InRotation;
-        Pose.Scale    = InScale;
-        return Pose;
     }
 }
 
@@ -397,41 +365,6 @@ namespace
         return true;
     }
 
-    /* InPath into InWorld -- in a game build, its cooked twin in
-     * Content/Levels/Cooked/. False, logged, if there is none or it cannot be read. */
-    bool LoadWorld(const char* InPath, GameCore::World& InWorld)
-    {
-        const std::string Path = GameCore::ResolveContentWorld(InPath);
-        if(GameCore::DetectWorldFileFormat(Path.c_str()) == GameCore::EWorldFileFormat::Unknown)
-        {
-            CORE_LOG("[LightLab] no " + Path)
-            return false;
-        }
-        if(!GameCore::LoadWorldFile(Path.c_str(), InWorld))
-        {
-            CORE_LOG_WARN("[LightLab] could not read " + Path)
-            return false;
-        }
-        CORE_LOG("[LightLab] loaded " + Path)
-        return true;
-    }
-
-    /* An entity with a Transform at InPosition/InRotation and one light
-     * component. Lights are made here rather than as native prefabs: each is
-     * configured differently, which a placement cannot express. */
-    template<typename TLight>
-    GameCore::Entity SpawnLight(GameCore::World& InWorld, const char* InName, const EngineCore::Vector3& InPosition,
-                                const EngineCore::Vector3& InRotation, const TLight& InLight)
-    {
-        const GameCore::Entity Light = InWorld.CreateEntity(InName);
-
-        GameCore::TransformComponent Transform;
-        Transform.Position = InPosition;
-        Transform.Rotation = InRotation;
-        Light.AddComponent(Transform);
-        Light.AddComponent(InLight);
-        return Light;
-    }
 }
 
 void LightLabStartFly(GameCore::World& InWorld, const GameCore::EntityID InPlayer, LightLabFlyContext& InContext)
@@ -460,15 +393,23 @@ namespace
     const char* const PauseMenuPath = "Content/UI/PauseMenu.nmui";
 }
 
+/* What every LightLab world shares: mouse capture, the T/F/L toggles, the
+ * pause menu, reset and a periodic report. Each world's mode (below) adds its
+ * own systems in OnLoad. */
 class LightLabGameMode : public NimbleEngine::IGameMode
 {
 public:
-    LightLabGameMode(const GameCore::EntityID InPlayer, const GameCore::EntityID InSun)
-        : PlayerEntity(InPlayer), SunEntity(InSun) {}
-
+    /* The world is loaded: its Player (flown) and Sun (T cycles it) by name. */
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
         Session = &InSession;
+        GameCore::World& World = InSession.GetWorld();
+        PlayerEntity = World.FindEntityByName("Player");
+        SunEntity    = World.FindEntityByName("Sun");
+        if(!PlayerEntity.IsSet())
+        {
+            CORE_LOG_ERROR("[LightLab] the world has no entity named Player; nothing to fly")
+        }
         return true;
     }
 
@@ -573,7 +514,7 @@ public:
         CORE_LOG("[LightLab] client " + std::to_string(InClient) + " left")
     }
 
-private:
+protected:
     /* Paused under the menu, the cursor free for it. Without the menu (a
      * Client build with nothing cooked) Escape only frees the mouse, as it
      * used to: a pause nothing can resume would be a hang. */
@@ -637,7 +578,7 @@ private:
     /* Stashed in OnLoad. */
     NimbleEngine::GameSession* Session = nullptr;
 
-    /* From the level. */
+    /* Found by name in OnLoad. */
     GameCore::EntityID PlayerEntity;
     GameCore::EntityID SunEntity;
 
@@ -646,56 +587,21 @@ private:
     uint64_t TicksSinceReport  = 0;
 };
 
-/* The scene: a floor, a yard of blocks and balls, every kind of light, and
- * the Player. Registers the fly and animation systems and owns the mode. */
-class LightLabLevel : public NimbleEngine::ILevel
+/* Content/Levels/LightLab.nmworld -- the yard, the lights and the Player, as
+ * the editor saved them: flies the Player and animates the lights. */
+class LightLabYardMode final : public LightLabGameMode
 {
 public:
-    const char* GetName() const override { return "LightLab"; }
-    const char* GetWorldFile() const override { return LevelFile; }
-
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
-        (void)InSession;
+        LightLabGameMode::OnLoad(InSession);
+        GameCore::World& World = InSession.GetWorld();
 
-        /* GetWorld(), not InSession.GetWorld() (Level.h). */
-        GameCore::World& World = GetWorld();
+        AnimateContext.SweepSpot    = World.FindEntityByName("SweepSpot");
+        AnimateContext.OrbitLight   = World.FindEntityByName("OrbitLight");
+        AnimateContext.TrailEmitter = World.FindEntityByName("TrailDemo");
 
-        /* The level object outlives a run (a second Play-in-Editor loads it
-         * again), so last run's system state goes first. */
-        FlyContext     = LightLabFlyContext();
-        AnimateContext = LightLabAnimateContext();
-
-        const std::string Export = GLightLabExportLevel.GetString();
-        if(!Export.empty() || !LoadLevelFile(World))
-        {
-            SpawnGeometry(World);
-            SpawnLights(World);
-            SpawnPostProcess(World);
-            SpawnPlayer(World);
-            if(!Export.empty())
-            {
-                ExportLevel(World, Export);
-            }
-        }
-
-        /* The scene's named entities, wherever they came from. */
-        const GameCore::EntityID Player = World.FindEntityByName("Player");
-        SunEntity                       = World.FindEntityByName("Sun");
-        AnimateContext.SweepSpot        = World.FindEntityByName("SweepSpot");
-        AnimateContext.OrbitLight       = World.FindEntityByName("OrbitLight");
-        AnimateContext.TrailEmitter     = World.FindEntityByName("TrailDemo");
-        if(!Player.IsSet())
-        {
-            CORE_LOG_ERROR("[LightLab] the level has no entity named Player; nothing to fly")
-        }
-
-        /* Start from where the level placed them. */
-        if(const GameCore::TransformComponent* View = World.GetEntity(Player).GetComponent<GameCore::TransformComponent>())
-        {
-            FlyContext.Pitch = std::clamp(double(View->Rotation.GetX()), -MaxPitch, MaxPitch);
-            FlyContext.Yaw   = double(View->Rotation.GetY());
-        }
+        /* Start from where the world placed them. */
         if(const GameCore::TransformComponent* Sweep = World.GetEntity(AnimateContext.SweepSpot).GetComponent<GameCore::TransformComponent>())
         {
             AnimateContext.SweepBaseYaw = double(Sweep->Rotation.GetY());
@@ -713,393 +619,31 @@ public:
             AnimateContext.TrailCenter = Trail->Position - EngineCore::Vector3(AnimateContext.TrailRadius, 0.0, 0.0);
         }
 
-        FlyContext.Player = Player;
-        World.RegisterSystem("LightLab.Fly", GameCore::TP_PrePhysics, &FlySystem, &FlyContext);
+        LightLabStartFly(World, PlayerEntity, FlyContext);
         World.RegisterSystem("LightLab.AnimateLights", GameCore::TP_PrePhysics, &AnimateLightsSystem, &AnimateContext);
         if(FindLattice(World, LatticeContext))
         {
             World.RegisterSystem("LightLab.TurnLattice", GameCore::TP_PrePhysics, &TurnLatticeSystem, &LatticeContext);
         }
-
-        /* Here, not a member initialiser: needs the Player and the Sun. */
-        Mode.emplace(Player, SunEntity);
-
         return true;
     }
 
-    NimbleEngine::IGameMode* GetGameMode() override
-    {
-        return Mode ? &*Mode : nullptr;
-    }
-
 private:
-    /* Content/Levels/LightLab.nmworld into InWorld, by its source path
-     * (GameCore::ResolveContentWorld, as BrickBreaker does). False (and
-     * InWorld emptied) if there is none or it cannot be read, so the level
-     * is built in code instead. */
-    bool LoadLevelFile(GameCore::World& InWorld)
-    {
-        const std::string Path = GameCore::ResolveContentWorld(LevelFile);
-        if(GameCore::DetectWorldFileFormat(Path.c_str()) == GameCore::EWorldFileFormat::Unknown)
-        {
-            CORE_LOG("[LightLab] no " + Path + "; building the level in code")
-            return false;
-        }
-        if(GameCore::LoadWorldFile(Path.c_str(), InWorld))
-        {
-            CORE_LOG("[LightLab] loaded " + Path)
-            return true;
-        }
-
-        CORE_LOG_WARN("[LightLab] could not read " + Path + "; building the level in code")
-        std::vector<GameCore::EntityID> Partial;
-        InWorld.ForEachEntity([](const GameCore::EntityID InEntity, void* InUserData)
-        {
-            static_cast<std::vector<GameCore::EntityID>*>(InUserData)->push_back(InEntity);
-        }, &Partial);
-        for(const GameCore::EntityID Each : Partial)
-        {
-            InWorld.DestroyEntity(Each);
-        }
-        return false;
-    }
-
-    /* [LightLab] ExportLevel: InWorld as a text world at InPath. */
-    void ExportLevel(GameCore::World& InWorld, const std::string& InPath)
-    {
-#if WITH_EDITOR
-        InWorld.RefreshSpatialIndex();
-        if(GameCore::SaveWorldPackage(InPath.c_str(), InWorld))
-        {
-            CORE_LOG("[LightLab] exported the level to " + InPath)
-        }
-        else
-        {
-            CORE_LOG_ERROR("[LightLab] could not export the level to " + InPath)
-        }
-#else
-        (void)InWorld;
-        CORE_LOG_WARN("[LightLab] ExportLevel needs an editor build (" + InPath + " not written)")
-#endif
-    }
-
-    /* A named entity with a Transform and a Render component drawing
-     * InMesh -- plain, not a native prefab instance, so a saved level does
-     * not need this module loaded to show it. */
-    static void SpawnShape(GameCore::World& InWorld, const char* InName, const char* InMesh, const bool bInCasts,
-                           const GameCore::TransformPose& InPose, const char* InMaterial = "")
-    {
-        const GameCore::Entity Shape = InWorld.CreateEntity(InName);
-        GameCore::TransformComponent Transform;
-        Transform.Position = InPose.Position;
-        Transform.Rotation = InPose.Rotation;
-        Transform.Scale    = InPose.Scale;
-        Shape.AddComponent(Transform);
-
-        RenderCore::RenderComponent Render;
-        std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", InMesh);
-        std::snprintf(Render.Materials[0], sizeof(Render.Materials[0]), "%s", InMaterial);
-        Render.bCastShadows = bInCasts ? 1 : 0;
-        Shape.AddComponent(Render);
-    }
-
-    /*
-     * A road flare standing in the yard: a red stick, a glowing ball for
-     * the flame (emissive far past 1, so Bloom spreads it), a red light it
-     * casts, and its smoke -- a Particle System of soft puffs, born red and
-     * blackening as they rise and spread (RenderCore's
-     * ParticleSystemComponent; Content/Particles/FlareSmoke.nmparticle,
-     * Content/Materials/Flare*.material.nmgraph).
-     */
-    static void SpawnFlare(GameCore::World& InWorld)
-    {
-        const EngineCore::Vector3 Base(-150.0, 0.0, -750.0);
-        SpawnShape(InWorld, "FlareStick", CylinderMesh, true,
-                   Placed(Base + EngineCore::Vector3(0.0, 70.0, 0.0), EngineCore::Vector3(16.0, 140.0, 16.0)),
-                   "Content/Materials/FlareBody.material.nmgraph");
-        SpawnShape(InWorld, "FlareFlame", SphereMesh, false,
-                   Placed(Base + EngineCore::Vector3(0.0, 152.0, 0.0), EngineCore::Vector3(30.0, 30.0, 30.0)),
-                   "Content/Materials/FlareFlame.material.nmgraph");
-
-        RenderCore::PointLightComponent Light;
-        Light.Color        = EngineCore::Color(255, 70, 35);
-        Light.Intensity    = 12.0f;
-        Light.Radius       = 700.0f;
-        Light.bCastShadows = 0;
-        SpawnLight(InWorld, "FlareLight", Base + EngineCore::Vector3(0.0, 175.0, 0.0), EngineCore::Vector3(0.0, 0.0, 0.0), Light);
-
-        const GameCore::Entity Smoke = InWorld.CreateEntity("FlareSmoke");
-        GameCore::TransformComponent Transform;
-        Transform.Position = Base + EngineCore::Vector3(0.0, 168.0, 0.0);
-        Smoke.AddComponent(Transform);
-        RenderCore::ParticleSystemComponent Particles;
-        std::snprintf(Particles.System, sizeof(Particles.System), "%s", "Content/Particles/FlareSmoke.nmparticle");
-        Smoke.AddComponent(Particles);
-    }
-
-    /* A Particle System running InSystem at InPosition, named InName. */
-    static RenderCore::ParticleSystemComponent* SpawnParticles(GameCore::World& InWorld, const char* InName,
-                                                               const EngineCore::Vector3& InPosition, const char* InSystem)
-    {
-        const GameCore::Entity Entity = InWorld.CreateEntity(InName);
-        GameCore::TransformComponent Transform;
-        Transform.Position = InPosition;
-        Entity.AddComponent(Transform);
-        RenderCore::ParticleSystemComponent Particles;
-        std::snprintf(Particles.System, sizeof(Particles.System), "%s", InSystem);
-        return Entity.AddComponent(Particles);
-    }
-
-    /*
-     * A sample of each particle type across the front of the yard
-     * (Content/Particles/; RenderCore's RENDERPIPELINE.md, "Particles"):
-     * sparks bursting in front of the left pillars, debris bursting by the ball,
-     * a laser strung between the right pillars (its Beam Target, set here,
-     * overrides the asset's own end), a ribbon trailing a point that
-     * AnimateLights flies round in a circle, and an explosion in front of the
-     * centre pillar: a fireball played from a sprite sheet (the Flipbook
-     * module; Content/Textures/ExplosionFlipbook.nmtexture, which
-     * Tools/make_flipbook_texture.py writes) with embers bursting out.
-     */
-    static void SpawnParticleDemos(GameCore::World& InWorld)
-    {
-        SpawnParticles(InWorld, "SparksDemo", EngineCore::Vector3(-650.0, 0.0, -820.0), "Content/Particles/Sparks.nmparticle");
-        SpawnParticles(InWorld, "DebrisDemo", EngineCore::Vector3(420.0, 0.0, -680.0), "Content/Particles/Debris.nmparticle");
-        if(RenderCore::ParticleSystemComponent* Laser =
-               SpawnParticles(InWorld, "LaserDemo", EngineCore::Vector3(425.0, 260.0, -1000.0), "Content/Particles/Laser.nmparticle"))
-        {
-            Laser->bUseBeamTarget = 1;
-            Laser->BeamTarget     = EngineCore::Vector3(775.0, 260.0, -1000.0);
-        }
-        SpawnParticles(InWorld, "TrailDemo", EngineCore::Vector3(-300.0, 140.0, -600.0), "Content/Particles/Trail.nmparticle");
-        SpawnParticles(InWorld, "ExplosionDemo", EngineCore::Vector3(160.0, 0.0, -860.0), "Content/Particles/Explosion.nmparticle");
-    }
-
-    /* The flying view, as LightLab.Player: above and behind the yard,
-     * looking down into it along +Z. */
-    static void SpawnPlayer(GameCore::World& InWorld)
-    {
-        const GameCore::Entity Player = InWorld.CreateEntity("Player");
-        GameCore::TransformComponent Transform;
-        Transform.Position = EngineCore::Vector3(0.0, 900.0, -1900.0);
-        Transform.Rotation = EngineCore::Vector3(25.0, 0.0, 0.0);
-        Player.AddComponent(Transform);
-
-        RenderCore::CameraComponent Camera;
-        Camera.Projection = RenderCore::CP_Perspective;
-        Camera.FovY       = 70.0f;
-        Camera.ZNear      = 5.0f;
-        Camera.ZFar       = 20000.0f;
-        Player.AddComponent(Camera);
-
-        Player.AddComponent<NimbleEngine::InputComponent>();
-    }
-
-    /* Post process volumes (Content/PostProcess): a soft glow and FXAA
-     * everywhere, and round the arch, depth of field and motion blur that
-     * blend in as the camera nears it. */
-    static void SpawnPostProcess(GameCore::World& InWorld)
-    {
-        const GameCore::Entity Global = InWorld.CreateEntity("PostProcessGlobal");
-        GameCore::TransformComponent Anywhere;
-        Global.AddComponent(Anywhere);
-        RenderCore::PostProcessComponent Everywhere;
-        std::snprintf(Everywhere.Stack, sizeof(Everywhere.Stack), "%s", "Content/PostProcess/Global.pp.nmgraph");
-        Global.AddComponent(Everywhere);
-
-        const GameCore::Entity Arch = InWorld.CreateEntity("PostProcessArch");
-        GameCore::TransformComponent AtArch;
-        AtArch.Position = EngineCore::Vector3(-350.0, 200.0, 400.0);
-        Arch.AddComponent(AtArch);
-        GameCore::BoundsComponent Volume;
-        Volume.Local = GameCore::AABB(EngineCore::Vector3(-300.0, -200.0, -250.0), EngineCore::Vector3(300.0, 250.0, 250.0));
-        Arch.AddComponent(Volume);
-        RenderCore::PostProcessComponent UnderArch;
-        std::snprintf(UnderArch.Stack, sizeof(UnderArch.Stack), "%s", "Content/PostProcess/Arch.pp.nmgraph");
-        UnderArch.Priority      = 1;
-        UnderArch.BlendDistance = 300.0f;
-        Arch.AddComponent(UnderArch);
-    }
-
-    /* Sizes are world units; a block of height H stands on the floor at
-     * y = H/2. The floor receives but never casts. */
-    void SpawnGeometry(GameCore::World& InWorld)
-    {
-        SpawnShape(InWorld, "Floor", PlaneMesh, false,
-                   Placed(EngineCore::Vector3(0.0, 0.0, 0.0), EngineCore::Vector3(6000.0, 1.0, 6000.0)));
-
-        /* The centre pillar the orbiting point light circles. */
-        SpawnShape(InWorld, "CentrePillar", BoxMesh, true,
-                   Placed(EngineCore::Vector3(0.0, 300.0, 0.0), EngineCore::Vector3(120.0, 600.0, 120.0)));
-
-        /* A long back wall and a side wall: big receivers for the sun's
-         * cascades and the spots. */
-        SpawnShape(InWorld, "BackWall", BoxMesh, true,
-                   Placed(EngineCore::Vector3(0.0, 150.0, 800.0), EngineCore::Vector3(1600.0, 300.0, 60.0)));
-        SpawnShape(InWorld, "SideWall", BoxMesh, true,
-                   Placed(EngineCore::Vector3(-900.0, 125.0, 100.0), EngineCore::Vector3(60.0, 250.0, 900.0)));
-
-        /* Crates of a few sizes, one turned. */
-        SpawnShape(InWorld, "Crate", BoxMesh, true,
-                   Placed(EngineCore::Vector3(420.0, 100.0, -300.0), EngineCore::Vector3(200.0, 200.0, 200.0)));
-        SpawnShape(InWorld, "Crate", BoxMesh, true,
-                   Placed(EngineCore::Vector3(-380.0, 75.0, -420.0), EngineCore::Vector3(150.0, 150.0, 150.0)));
-        SpawnShape(InWorld, "Crate", BoxMesh, true,
-                   Placed(EngineCore::Vector3(600.0, 50.0, 380.0), EngineCore::Vector3(300.0, 100.0, 150.0),
-                          EngineCore::Vector3(0.0, 30.0, 0.0)));
-
-        /* A row of thin pillars toward the front, for long sun shadows. */
-        for(int Index = 0; Index < 5; ++Index)
-        {
-            const double X = -800.0 + 400.0 * double(Index);
-            SpawnShape(InWorld, "Pillar", BoxMesh, true,
-                       Placed(EngineCore::Vector3(X, 200.0, -1000.0), EngineCore::Vector3(50.0, 400.0, 50.0)));
-        }
-
-        /* An arch: two posts and a lintel, for a shadow with a hole in it. */
-        SpawnShape(InWorld, "ArchPost", BoxMesh, true,
-                   Placed(EngineCore::Vector3(-500.0, 175.0, 400.0), EngineCore::Vector3(60.0, 350.0, 60.0)));
-        SpawnShape(InWorld, "ArchPost", BoxMesh, true,
-                   Placed(EngineCore::Vector3(-200.0, 175.0, 400.0), EngineCore::Vector3(60.0, 350.0, 60.0)));
-        SpawnShape(InWorld, "ArchLintel", BoxMesh, true,
-                   Placed(EngineCore::Vector3(-350.0, 380.0, 400.0), EngineCore::Vector3(420.0, 60.0, 80.0)));
-
-        /* Balls held off the floor, so each shadow lands apart from its caster. */
-        SpawnShape(InWorld, "Ball", SphereMesh, true,
-                   Placed(EngineCore::Vector3(-300.0, 260.0, -50.0), EngineCore::Vector3(200.0, 200.0, 200.0)));
-        SpawnShape(InWorld, "Ball", SphereMesh, true,
-                   Placed(EngineCore::Vector3(280.0, 320.0, 120.0), EngineCore::Vector3(140.0, 140.0, 140.0)),
-                   "Content/Materials/Glow.material.nmgraph");   // emissive: what Bloom spreads
-        SpawnShape(InWorld, "Ball", SphereMesh, true,
-                   Placed(EngineCore::Vector3(420.0, 260.0, -300.0), EngineCore::Vector3(90.0, 90.0, 90.0)));
-        SpawnShape(InWorld, "Ball", SphereMesh, true,
-                   Placed(EngineCore::Vector3(150.0, 60.0, -600.0), EngineCore::Vector3(120.0, 120.0, 120.0)));
-
-        SpawnFlare(InWorld);
-        SpawnParticleDemos(InWorld);
-
-        /* A colonnade down the right of the yard: instances of a prefab file,
-         * so a saved level keeps them as instances (.nmprefabinst) of it. */
-        for(int Index = 0; Index < 4; ++Index)
-        {
-            const double Z = -450.0 + 350.0 * double(Index);
-            if(!InWorld.SpawnPrefab(ColumnPrefab, Placed(EngineCore::Vector3(1000.0, 0.0, Z), EngineCore::Vector3(1.0, 1.0, 1.0)),
-                                    "Column").IsValid())
-            {
-                CORE_LOG_WARN(std::string("[LightLab] could not spawn ") + ColumnPrefab)
-                break;
-            }
-        }
-    }
-
-    void SpawnLights(GameCore::World& InWorld)
-    {
-        /* The sun, low enough for long shadows. Rotation (pitch, yaw, 0):
-         * pitch -50 points it 50 degrees below the horizon. */
-        RenderCore::DirectionalLightComponent Sun;
-        Sun.Color           = EngineCore::Color(255, 244, 225);
-        Sun.Intensity       = 2.0f;   // under the default 3, so the white floor does not clip and the spots read
-        Sun.bCastShadows    = 1;
-        Sun.ShadowTechnique = RenderCore::LST_Cascaded;
-        Sun.ShadowDistance  = 5000.0f;
-        Sun.CascadeCount    = 4;
-        SpawnLight(InWorld, "Sun", EngineCore::Vector3(0.0, 2000.0, 0.0),
-                               EngineCore::Vector3(50.0, 35.0, 0.0), Sun);
-
-        /* Ambient fill, so the shadowed side is not black. */
-        RenderCore::SkyLightComponent Sky;
-        Sky.SkyColor    = EngineCore::Color(120, 140, 175);
-        Sky.GroundColor = EngineCore::Color(70, 60, 50);
-        Sky.Intensity   = 0.5f;
-        SpawnLight(InWorld, "Sky", EngineCore::Vector3(0.0, 0.0, 0.0), EngineCore::Vector3(0.0, 0.0, 0.0), Sky);
-
-        /* A warm, fixed spot from the left, down onto the arch and the big ball. */
-        RenderCore::SpotLightComponent WarmSpot;
-        WarmSpot.Color           = EngineCore::Color(255, 200, 140);
-        WarmSpot.Intensity       = 14.0f;
-        WarmSpot.Range           = 1600.0f;
-        WarmSpot.InnerConeAngle  = 18.0f;
-        WarmSpot.OuterConeAngle  = 28.0f;
-        WarmSpot.bCastShadows    = 1;
-        WarmSpot.ShadowTechnique = RenderCore::LST_Standard;
-        SpawnLight(InWorld, "WarmSpot", EngineCore::Vector3(-900.0, 800.0, -300.0),
-                   EngineCore::Vector3(50.0, 45.0, 0.0), WarmSpot);
-
-        /* A cool spot from the front right, sweeping across the crates. */
-        RenderCore::SpotLightComponent SweepSpot;
-        SweepSpot.Color           = EngineCore::Color(190, 215, 255);
-        SweepSpot.Intensity       = 14.0f;
-        SweepSpot.Range           = 1800.0f;
-        SweepSpot.InnerConeAngle  = 14.0f;
-        SweepSpot.OuterConeAngle  = 22.0f;
-        SweepSpot.bCastShadows    = 1;
-        SweepSpot.ShadowTechnique = RenderCore::LST_Standard;
-        const double SweepBaseYaw = -20.0;
-        SpawnLight(InWorld, "SweepSpot", EngineCore::Vector3(700.0, 900.0, -900.0),
-                   EngineCore::Vector3(50.0, SweepBaseYaw, 0.0), SweepSpot);
-
-        /* An orange point light orbiting the centre pillar. Modulated: it
-         * lights unshadowed, and its shadow tints the result blue. */
-        RenderCore::PointLightComponent OrbitLight;
-        OrbitLight.Color           = EngineCore::Color(255, 170, 90);
-        OrbitLight.Intensity       = 10.0f;
-        OrbitLight.Radius          = 900.0f;
-        OrbitLight.bCastShadows    = 1;
-        OrbitLight.ShadowTechnique = RenderCore::LST_Modulated;
-        OrbitLight.ShadowTint      = EngineCore::Color(110, 135, 200);   // multiplies what it shades: a light tint is a soft shadow
-        const EngineCore::Vector3 OrbitCenter(0.0, 250.0, 0.0);
-        SpawnLight(InWorld, "OrbitLight", OrbitCenter + EngineCore::Vector3(350.0, 0.0, 0.0),
-                   EngineCore::Vector3(0.0, 0.0, 0.0), OrbitLight);
-
-        /* A dim magenta glow in the corner by the walls. No shadow: the
-         * cheap kind of light, for contrast. */
-        RenderCore::PointLightComponent Glow;
-        Glow.Color        = EngineCore::Color(220, 80, 255);
-        Glow.Intensity    = 4.0f;
-        Glow.Radius       = 600.0f;
-        Glow.bCastShadows = 0;
-        SpawnLight(InWorld, "Glow", EngineCore::Vector3(-750.0, 120.0, 650.0), EngineCore::Vector3(0.0, 0.0, 0.0), Glow);
-
-    }
-
-    GameCore::EntityID     SunEntity;
     LightLabFlyContext     FlyContext;
     LightLabAnimateContext AnimateContext;
     LightLabLatticeContext LatticeContext;
-
-    std::optional<LightLabGameMode> Mode;
 };
 
-/* Owns the level, so it lives exactly as long as its code. */
-/* Baked lighting's demo room (Content/Levels/BakedLighting.nmworld): no
- * scene in code -- without the file there is nothing to show. */
-class LightLabBakedLevel : public NimbleEngine::ILevel
+/* Baked lighting's demo room (Content/Levels/BakedLighting.nmworld, made by
+ * Tools/make_baked_lighting_level.py, then Build > Bake Lightmaps): flies the
+ * Player and swings the dynamic ball (Swinger). */
+class LightLabBakedMode final : public LightLabGameMode
 {
 public:
-    const char* GetName() const override { return "BakedLighting"; }
-    const char* GetWorldFile() const override { return BakedLevelFile; }
-
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
-        (void)InSession;
-        GameCore::World& World = GetWorld();
-        FlyContext   = LightLabFlyContext();
-        SwingContext = LightLabSwingContext();
-
-        if(!LoadWorld(BakedLevelFile, World))
-        {
-            CORE_LOG_ERROR("[LightLab] the BakedLighting level needs Content/Levels/BakedLighting.nmworld "
-                           "(Tools/make_baked_lighting_level.py, then Build > Bake Lightmaps)")
-            return false;
-        }
-
-        const GameCore::EntityID Player = World.FindEntityByName("Player");
-        if(const GameCore::TransformComponent* View = World.GetEntity(Player).GetComponent<GameCore::TransformComponent>())
-        {
-            FlyContext.Pitch = std::clamp(double(View->Rotation.GetX()), -MaxPitch, MaxPitch);
-            FlyContext.Yaw   = double(View->Rotation.GetY());
-        }
-        FlyContext.Player = Player;
+        LightLabGameMode::OnLoad(InSession);
+        GameCore::World& World = InSession.GetWorld();
 
         SwingContext.Swinger = World.FindEntityByName("Swinger");
         if(const GameCore::TransformComponent* Ball = World.GetEntity(SwingContext.Swinger).GetComponent<GameCore::TransformComponent>())
@@ -1107,28 +651,22 @@ public:
             SwingContext.Center = Ball->Position;
         }
 
-        World.RegisterSystem("LightLab.Fly", GameCore::TP_PrePhysics, &FlySystem, &FlyContext);
+        LightLabStartFly(World, PlayerEntity, FlyContext);
         World.RegisterSystem("LightLab.Swing", GameCore::TP_PrePhysics, &SwingSystem, &SwingContext);
         if(FindLattice(World, LatticeContext))
         {
             World.RegisterSystem("LightLab.TurnLattice", GameCore::TP_PrePhysics, &TurnLatticeSystem, &LatticeContext);
         }
-        Mode.emplace(Player, World.FindEntityByName("Sun"));
         return true;
     }
 
-    NimbleEngine::IGameMode* GetGameMode() override
-    {
-        return Mode ? &*Mode : nullptr;
-    }
-
 private:
-    LightLabFlyContext              FlyContext;
-    LightLabSwingContext            SwingContext;
-    LightLabLatticeContext          LatticeContext;
-    std::optional<LightLabGameMode> Mode;
+    LightLabFlyContext     FlyContext;
+    LightLabSwingContext   SwingContext;
+    LightLabLatticeContext LatticeContext;
 };
 
+/* Registers the modes the project's world list names (Config/DefaultEngine.ini). */
 class LightLabGameModule : public NimbleEngine::IGameModule
 {
 public:
@@ -1137,26 +675,19 @@ public:
 
     bool OnStartup(const EngineCore::ModuleReloadState* /*InPrev*/) override
     {
-        /* [Game] StartLevel resolves levels by name. */
-        NimbleEngine::RegisterLevel(Level);
-        NimbleEngine::RegisterLevel(BakedLevel);
-        NimbleEngine::RegisterLevel(LightLabPhysics::GetLevel());
+        NimbleEngine::RegisterGameMode<LightLabYardMode>("LightLab");
+        NimbleEngine::RegisterGameMode<LightLabBakedMode>("BakedLighting");
+        LightLabPhysics::RegisterGameMode();
         return true;
     }
 
     void OnShutdown(EngineCore::ModuleReloadState& /*OutState*/) override
     {
-        /* The registry holds a bare pointer, and this image is about to go. */
-        NimbleEngine::UnregisterLevel(Level);
-        NimbleEngine::UnregisterLevel(BakedLevel);
-        NimbleEngine::UnregisterLevel(LightLabPhysics::GetLevel());
+        /* The registry holds this image's functions, and it is about to go. */
+        LightLabPhysics::UnregisterGameMode();
+        NimbleEngine::UnregisterGameMode("BakedLighting");
+        NimbleEngine::UnregisterGameMode("LightLab");
     }
-
-    NimbleEngine::ILevel* GetStartLevel() override { return &Level; }
-
-private:
-    LightLabLevel      Level;
-    LightLabBakedLevel BakedLevel;
 };
 
 NIMBLE_IMPLEMENT_GAME_MODULE(LightLabGameModule, "LightLabGame")

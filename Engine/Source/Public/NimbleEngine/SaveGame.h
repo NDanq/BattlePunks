@@ -17,7 +17,7 @@ namespace NimbleEngine
      *
      * Loads are DEFERRED (RequestLevel; restored inside the next LoadLevel), so
      * loading from OnTick is safe. The level's OnLoad runs first: clear spawned
-     * entities in ILevel::OnPrepareForLoadedGame or the scene is doubled.
+     * entities in IGameMode::OnPrepareForLoadedGame or the scene is doubled.
      *
      * Game thread only.
      */
@@ -59,8 +59,8 @@ namespace NimbleEngine
      * level once, before any load, and unregister it before it is destroyed --
      * the registry holds bare pointers and owns nothing, as Exec does. A
      * duplicate name keeps the first and logs an error, since it would make
-     * saves ambiguous. Not a factory: creating levels on demand is the game's
-     * business.
+     * saves ambiguous. The host registers one per listed world
+     * (RegisterWorldLevels, WorldList.h); games do not call these.
      */
     NE_API void    RegisterLevel(ILevel& InLevel);
     NE_API void    UnregisterLevel(ILevel& InLevel);

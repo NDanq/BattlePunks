@@ -33,8 +33,9 @@ namespace UI
     UI_API std::vector<uint8_t> WriteUIBinary(const UIDocumentAsset& InAsset);
     UI_API bool ReadUIBinary(const std::vector<uint8_t>& InBytes, UIDocumentAsset& OutAsset, std::string* OutError = nullptr);
 
-#if WITH_EDITOR
-    /* The XML: read, and written deterministically -- the same asset always
+#if WITH_UNCOOKED
+    /* The XML -- the editor's, and a Debug or RelWithDebInfo game's run
+     * uncooked: read, and written deterministically -- the same asset always
      * writes the same bytes, attributes in the order read. */
     UI_API bool        ParseUIXml(const std::string& InText, UIDocumentAsset& OutAsset, std::string* OutError = nullptr);
     UI_API std::string WriteUIXml(const UIDocumentAsset& InAsset);
