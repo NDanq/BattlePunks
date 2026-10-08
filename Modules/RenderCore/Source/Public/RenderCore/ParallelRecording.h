@@ -18,8 +18,9 @@
  *   - [Rendering] ParallelMinDraws, the draws a stage needs before Auto
  *     splits it.
  *
- * The render thread evaluates it once GDI is up and logs the verdict. No
- * stage records in parallel yet: this is the switch the later phases read.
+ * The render thread evaluates it once GDI is up, and again when either
+ * setting changes, and logs the verdict; the Base Pass and Shadows read it
+ * (RenderContext's IssueInParallel).
  */
 
 namespace RenderCore
@@ -50,6 +51,11 @@ namespace RenderCore
     /* The verdict the render thread latched at startup (a default, disabled
      * state before it has); RenderStats reports it. */
     RENDERCORE_API ParallelRecordingState GetParallelRecordingState();
+
+    /* The render thread's, once a frame: if [Rendering] ParallelRecording or
+     * ParallelMinDraws changed since, evaluates the gate again, latches and
+     * logs it, and returns true. */
+    RENDERCORE_API bool TakeParallelRecordingChange();
     RENDERCORE_API void                   SetParallelRecordingState(const ParallelRecordingState& InState);
 }
 

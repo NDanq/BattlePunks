@@ -430,6 +430,7 @@ namespace RenderCore
         const ParallelRecordingState Parallel = GetParallelRecordingState();
         OutStats.bParallelRecordingAvailable = Parallel.bEnabled;
         OutStats.ParallelRecordingWorkers    = Parallel.Workers;
+        OutStats.ParallelPasses              = P->Context.GetParallelPassCount();
         GetStaticDrawStats(OutStats.StaticProxiesDrawn, OutStats.StaticListBuilds);
         GetOcclusionStats(OutStats.ProxiesOccludedLastFrame, OutStats.OcclusionQueriesLastFrame);
     }

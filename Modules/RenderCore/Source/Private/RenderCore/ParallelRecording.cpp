@@ -6,11 +6,23 @@
 #include "Public/GDI/GDI.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <mutex>
 
-NIMBLE_CONFIG_STRING(GRenderParallelRecording, "Rendering", "ParallelRecording", "Auto", nullptr);   // Auto | On | Off
-NIMBLE_CONFIG_INT(GRenderParallelMinDraws,     "Rendering", "ParallelMinDraws",  1000,   nullptr);
+namespace
+{
+    /* Set by either var's change (the console, an ini), taken by the render
+     * thread (TakeParallelRecordingChange), which evaluates the gate again. */
+    std::atomic<bool> GParallelRecordingChanged{false};
+    void OnParallelRecordingChanged(const EngineCore::ConfigVar&) { GParallelRecordingChanged.store(true); }
+}
+
+/* Auto | On | Off. ParallelMinDraws: Phase 1 left a draw at 1.5-6 us of the
+ * render thread, so a stage of a few hundred draws already costs more than a
+ * pass's fork and join (MULTITHREADED_RENDERING.md, phase 3). */
+NIMBLE_CONFIG_STRING(GRenderParallelRecording, "Rendering", "ParallelRecording", "Auto", &OnParallelRecordingChanged);
+NIMBLE_CONFIG_INT(GRenderParallelMinDraws,     "Rendering", "ParallelMinDraws",  256,    &OnParallelRecordingChanged);
 
 namespace RenderCore
 {
@@ -80,7 +92,7 @@ namespace RenderCore
             {
                 Line += ", for stages of " + std::to_string(Out.MinDraws) + "+ draws";
             }
-            Line += ". No stage records in parallel yet (MULTITHREADED_RENDERING.md).";
+            Line += " (the Base Pass and Shadows).";
         }
         else if(Out.Mode == EParallelRecordingMode::Off)
         {
@@ -105,6 +117,18 @@ namespace RenderCore
             return false;
         }
         return InState.Mode == EParallelRecordingMode::On || InDraws >= InState.MinDraws;
+    }
+
+    bool TakeParallelRecordingChange()
+    {
+        if(!GParallelRecordingChanged.exchange(false))
+        {
+            return false;
+        }
+        const ParallelRecordingState State = EvaluateParallelRecording();
+        SetParallelRecordingState(State);
+        CORE_LOG(State.Summary)
+        return true;
     }
 
     ParallelRecordingState GetParallelRecordingState()

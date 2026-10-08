@@ -207,6 +207,8 @@ namespace RenderCore
          * job workers they would run on. */
         bool     bParallelRecordingAvailable = false;
         uint32_t ParallelRecordingWorkers    = 0;
+        /* Stages recorded in parallel chunks, over the renderer's life. */
+        uint64_t ParallelPasses              = 0;
     };
 }
 
