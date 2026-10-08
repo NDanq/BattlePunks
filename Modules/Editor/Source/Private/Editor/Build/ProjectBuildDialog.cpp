@@ -21,6 +21,7 @@
 #include <QPushButton>
 #include <QScrollBar>
 #include <QTableWidget>
+#include <QTime>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -67,7 +68,7 @@ ProjectBuildDialog::ProjectBuildDialog(QWidget* InParent, std::function<void()> 
                                              "RelWithDebInfo cook what they load on first use as well"));
     Form->addRow(QStringLiteral("Configuration"), Configuration);
 
-    CookContent = new QCheckBox(QStringLiteral("Cook content (the ticked worlds, prefabs, UI, node graphs) into Cooked/"), OptionsBox);
+    CookContent = new QCheckBox(QStringLiteral("Cook content (the ticked worlds, prefabs, UI, node graphs) into Saved/Cooked/"), OptionsBox);
     CompileGame = new QCheckBox(QStringLiteral("Compile the game (the Client preset, in its own build tree)"), OptionsBox);
     OpenOutput  = new QCheckBox(QStringLiteral("Open the executable's folder when it is built"), OptionsBox);
     Form->addRow(QString(), CookContent);
@@ -234,6 +235,11 @@ void ProjectBuildDialog::SetRunning(const bool bInRunning)
 
 void ProjectBuildDialog::Log(const QString& InLine)
 {
+    if(RunLog.isOpen())
+    {
+        RunLog.write((QTime::currentTime().toString(QStringLiteral("HH:mm:ss.zzz ")) + InLine + QLatin1Char('\n')).toUtf8());
+        RunLog.flush();
+    }
     Output->appendPlainText(InLine);
     Output->verticalScrollBar()->setValue(Output->verticalScrollBar()->maximum());
 }
@@ -265,6 +271,19 @@ void ProjectBuildDialog::Run(const bool bInCook, const bool bInCompile)
     Stats->setVisible(false);
     CookSummary.clear();
     RefreshWorlds();
+
+    /* This run's log. */
+    RunLog.close();
+    RunLog.setFileName(EditorCook::NewLogPath(ProjectRoot, bInCompile ? QStringLiteral("Build") : QStringLiteral("Cook")));
+    if(!RunLog.open(QIODevice::WriteOnly | QIODevice::Text))
+    {
+        CORE_LOG_WARN("[Build] could not write the run log " + ToStd(RunLog.fileName()))
+    }
+    Log(QStringLiteral("== %1 %2, %3%4").arg(bInCook ? QStringLiteral("cook") : QString(),
+                                             bInCompile ? QStringLiteral("compile") : QString(),
+                                             QString::fromLatin1(EditorProjectBuild::GetConfigurationName(
+                                                 EditorProjectBuild::EConfiguration(Configuration->currentIndex()))),
+                                             QStringLiteral(" -- ") + QDir::toNativeSeparators(ProjectRoot)));
 
     if(bInCompile)
     {
@@ -446,6 +465,14 @@ void ProjectBuildDialog::Finish(const bool bInSucceeded, const QString& InSummar
     Log(bInSucceeded ? QStringLiteral("== done: ") + InSummary : QStringLiteral("== stopped: ") + InSummary);
     if(bInSucceeded) { CORE_LOG("[Build] " + ToStd(InSummary)) }
     else             { CORE_LOG_ERROR("[Build] " + ToStd(InSummary)) }
+
+    if(RunLog.isOpen())
+    {
+        RunLog.close();
+        Status->setText(Status->text() + QStringLiteral("<br><small>Log: %1</small>")
+                        .arg(QDir::toNativeSeparators(RunLog.fileName()).toHtmlEscaped()));
+        CORE_LOG("[Build] log: " + ToStd(RunLog.fileName()))
+    }
 }
 
 #endif // WITH_EDITOR

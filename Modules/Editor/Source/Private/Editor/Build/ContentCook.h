@@ -11,9 +11,13 @@
 /*
  * Build > Cook Content, and Build Project's cook step: the project's content
  * in the binary form a Shipping build reads, mirrored under
- * <project>/Cooked/<source path> -- the build stages that tree beside the
- * executable, where the game reads each asset at its own path
+ * <project>/Saved/Cooked/<source path> -- the build stages that tree beside
+ * the executable, where the game reads each asset at its own path
  * (GameCore::ResolveContentWorld / ResolveContentPrefab).
+ *
+ * <project>/Saved/ is what the tools make, never source: Cooked/, and Logs/
+ * -- the editor's session log, and one per cook and per Build Project run.
+ * The Content Browser and every content walk skip it.
  *
  *   Graphs    every node graph regenerated (EditorGraphs::RegenerateAll): the
  *             build cooks material graphs' saved code into shader caches
@@ -53,8 +57,19 @@ namespace EditorCook
         bool Succeeded() const { return GetFailedCount() == 0; }
     };
 
-    /* <InProjectRoot>/Cooked: where every cooked file goes. */
+    /* <InProjectRoot>/Saved: what the tools make. */
+    QString GetSavedRoot(const QString& InProjectRoot);
+
+    /* <InProjectRoot>/Saved/Cooked: where every cooked file goes. */
     QString GetCookedRoot(const QString& InProjectRoot);
+
+    /* <InProjectRoot>/Saved/Logs: a log per run. */
+    QString GetLogsDir(const QString& InProjectRoot);
+
+    /* A new run log's path, "<Logs>/<InKind>-YYYY.MM.DD-HH.MM.SS.log", its
+     * folder made, keeping only the newest InKeep - 1 older "<InKind>-*.log"
+     * (as EngineCore::OpenRunLog). */
+    QString NewLogPath(const QString& InProjectRoot, const QString& InKind, int InKeep = 10);
 
     /* The cooked path for a runtime path ("Content/Levels/A.nmworld"). */
     QString GetCookedPath(const QString& InProjectRoot, const QString& InRuntimePath);

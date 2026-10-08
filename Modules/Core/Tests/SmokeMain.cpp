@@ -93,6 +93,25 @@ static void TestLogging()
     GHandlerCalls = 0;
     CORE_CHECK(true, "should not fire")
     Expect(GHandlerCalls == 0, "a passing CORE_CHECK is silent");
+
+    // A run log gets every line beside the handler, and keeps only the newest.
+    const std::string LogDir = "SmokeScratch/Logs";
+    appCreateDirectories(LogDir);
+    for(const char* Stale : { "SmokeRun-2000.01.01-00.00.00.log", "SmokeRun-2000.01.02-00.00.00.log", "Other-2000.01.01-00.00.00.log" })
+    {
+        if(FileHandle Handle = appFileOpenWrite(LogDir + "/" + Stale)) { appFileClose(Handle); }
+    }
+    GHandlerCalls = 0;
+    Expect(OpenRunLog(LogDir, "SmokeRun", 2), "a run log opens");
+    const std::string RunLog = GetRunLogPath();
+    CORE_LOG_WARN("into the run log")
+    CloseRunLog();
+    Expect(GHandlerCalls == 1 && GetRunLogPath().empty(), "the handler still hears it, and closing forgets the path");
+    std::vector<uint8_t> Bytes;
+    Expect(appFileReadAll(RunLog, Bytes) && std::string(Bytes.begin(), Bytes.end()).find("[WARN] into the run log") != std::string::npos,
+           "the run log holds the line, with its verbosity");
+    Expect(!appFileExists(LogDir + "/SmokeRun-2000.01.01-00.00.00.log") && appFileExists(LogDir + "/SmokeRun-2000.01.02-00.00.00.log")
+           && appFileExists(LogDir + "/Other-2000.01.01-00.00.00.log"), "only the newest logs of its own name are kept");
 }
 
 // --- file seam ------------------------------------------------------------

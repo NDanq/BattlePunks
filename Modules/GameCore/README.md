@@ -768,7 +768,7 @@ A `.nmworld` is text or binary, told apart by its first bytes
 Content/Levels/Sandbox.nmworld               text: <World Format="1"> listing entity and instance GUIDs
 Content/Levels/Sandbox/<guid>.nmentity       text: one loose entity -- name, parent, components
 Content/Levels/Sandbox/<guid>.nmprefabinst   text: one prefab instance -- its prefab and what it changed
-Cooked/Content/Levels/Sandbox.nmworld        binary: what Shipping reads (CookWorldFile), staged at the source path
+Saved/Cooked/Content/Levels/Sandbox.nmworld        binary: what Shipping reads (CookWorldFile), staged at the source path
 ```
 
 **Prefab instances.** The manifest lists them beside the loose entities, as

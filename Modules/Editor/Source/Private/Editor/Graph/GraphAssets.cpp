@@ -267,10 +267,13 @@ namespace
 
     /* Build trees, binaries and version control hold no graphs worth
      * regenerating -- and thousands of files to walk. */
+    /* Not content: build output, and Saved/ -- cooked copies and logs the
+     * tools make (Build/ContentCook.h). */
     bool IsSkippedFolder(const QString& InName)
     {
         return InName.startsWith(QLatin1Char('.')) || InName.startsWith(QStringLiteral("cmake-build"))
-            || InName == QStringLiteral("Binaries") || InName == QStringLiteral("Build") || InName == QStringLiteral("build");
+            || InName == QStringLiteral("Binaries") || InName == QStringLiteral("Build") || InName == QStringLiteral("build")
+            || InName == QStringLiteral("Saved");
     }
 
     void FindGraphs(const QDir& InDir, QStringList& OutPaths)

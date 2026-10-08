@@ -1202,7 +1202,7 @@ std::string ResolveContentWorld(const char* InSourcePath)
     const fs::path Folder = fs::u8path(EntityFolderFor(Source));
     return CookOnLoad(Source, &Folder, &CookWorldFile, "world");
 #else
-    /* Shipping: the cooked world is staged at its source path (from <project>/Cooked/). */
+    /* Shipping: the cooked world is staged at its source path (from <project>/Saved/Cooked/). */
     return Source;
 #endif
 }

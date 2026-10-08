@@ -68,7 +68,7 @@ namespace
         {
             const QString File    = It.next();
             const QString Runtime = EditorContent::ToRuntimePath(File);
-            bool bIgnored = Runtime.isEmpty() || Runtime.startsWith(QStringLiteral("Engine/")) || Runtime.startsWith(QStringLiteral("Cooked/"));
+            bool bIgnored = Runtime.isEmpty() || Runtime.startsWith(QStringLiteral("Engine/")) || Runtime.startsWith(QStringLiteral("Saved/"));
             for(const QString& Part : QDir(Root).relativeFilePath(File).split(QLatin1Char('/')))
             {
                 bIgnored |= EditorGraphs::IsIgnoredFolder(Part);
@@ -434,8 +434,7 @@ void ProjectSettingsDialog::BuildWorldsPage()
             return QString();
         }
         const QString Runtime = EditorContent::ToRuntimePath(Picked);
-        if(Runtime.isEmpty() || Runtime.startsWith(QStringLiteral("Engine/")) || Runtime.contains(QStringLiteral("/Cooked/"))
-           || Runtime.startsWith(QStringLiteral("Cooked/")))
+        if(Runtime.isEmpty() || Runtime.startsWith(QStringLiteral("Engine/")) || Runtime.startsWith(QStringLiteral("Saved/")))
         {
             QMessageBox::warning(this, windowTitle(), QStringLiteral("%1\nis not one of the project's own worlds (under %2, not cooked).")
                                  .arg(QDir::toNativeSeparators(Picked), QDir::toNativeSeparators(Root)));

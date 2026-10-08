@@ -2,8 +2,10 @@
 
 #include "Private/Editor/Build/ContentCook.h"
 
+#include <algorithm>
 #include <string>
 
+#include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
 #include <QElapsedTimer>
@@ -46,7 +48,7 @@ namespace
     }
 
     /* The project's own files matching InPattern: not the cooked tree, not a
-     * build folder, not outside the project. Runtime path -> disk path. */
+     * build folder or Saved/, not outside the project. Runtime path -> disk path. */
     QList<QPair<QString, QString>> ProjectFiles(const QString& InRoot, const QString& InPattern)
     {
         QList<QPair<QString, QString>> Out;
@@ -105,9 +107,34 @@ namespace EditorCook
         return Failed;
     }
 
+    QString GetSavedRoot(const QString& InProjectRoot)
+    {
+        return QDir(InProjectRoot).filePath(QStringLiteral("Saved"));
+    }
+
     QString GetCookedRoot(const QString& InProjectRoot)
     {
-        return QDir(InProjectRoot).filePath(QStringLiteral("Cooked"));
+        return QDir(GetSavedRoot(InProjectRoot)).filePath(QStringLiteral("Cooked"));
+    }
+
+    QString GetLogsDir(const QString& InProjectRoot)
+    {
+        return QDir(GetSavedRoot(InProjectRoot)).filePath(QStringLiteral("Logs"));
+    }
+
+    QString NewLogPath(const QString& InProjectRoot, const QString& InKind, const int InKeep)
+    {
+        const QDir Logs(GetLogsDir(InProjectRoot));
+        QDir().mkpath(Logs.absolutePath());
+
+        /* The stamp sorts by name: oldest first. */
+        QStringList Older = Logs.entryList({ InKind + QStringLiteral("-*.log") }, QDir::Files, QDir::Name);
+        while(!Older.isEmpty() && Older.size() > std::max(InKeep - 1, 0))
+        {
+            QFile::remove(Logs.filePath(Older.takeFirst()));
+        }
+        return Logs.filePath(InKind + QLatin1Char('-') + QDateTime::currentDateTime().toString(QStringLiteral("yyyy.MM.dd-HH.mm.ss"))
+                             + QStringLiteral(".log"));
     }
 
     QString GetCookedPath(const QString& InProjectRoot, const QString& InRuntimePath)

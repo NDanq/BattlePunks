@@ -1235,8 +1235,8 @@ removing a field is not covered; that needs its own version branch.
 **Two formats, one extension.** Both are `.nmworld`; the first non-whitespace
 byte decides (`<` is text -- XML -- and anything else is a binary archive,
 which starts with its WRLD chunk tag). One extension means a level has one
-name whether a designer or the game opens it; the cooked copy lives in a
-`Cooked/` folder, not under a different suffix.
+name whether a designer or the game opens it; the cooked copy lives under
+the project's `Saved/Cooked/`, not under a different suffix.
 
 **Text layout.** `<Name>.nmworld` is a manifest -- `<World Format="1">`; its
 `<Settings>` (`WorldSettings.h`: today `<Lighting>`, baked lighting's, only
