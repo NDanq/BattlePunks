@@ -154,7 +154,8 @@ Project** cooks and compiles it in one go (pick Shipping); **Build > Cook
 Content** only cooks: the worlds ticked in Project Settings > Worlds, every
 prefab and UI document, into `Saved/Cooked/<their path>`.
 
-Shipping stages those instead; commit them with the game. A level loads its
+Shipping stages those instead. `Saved/` is made on each machine and not
+tracked: cook again after a fresh checkout (Build Project does it for you). A level loads its
 world by its source path, `GameCore::LoadContentWorld("Content/Levels/X.nmworld")`,
 and every build reads the right file. Material graphs cook themselves during
 the build.
