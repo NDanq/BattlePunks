@@ -48,15 +48,13 @@ SourceBuild::~SourceBuild()
     }
 }
 
+QString SourceBuild::GetCMakeCommand()
+{
+    return QStringLiteral(NIMBLEEDITOR_CMAKE_COMMAND);
+}
+
 bool SourceBuild::Start(const QStringList& InTargets)
 {
-    if(Process)
-    {
-        CORE_LOG_WARN("[Build] already building " + ToStd(Target))
-        return false;
-    }
-
-    const QString CMake    = QStringLiteral(NIMBLEEDITOR_CMAKE_COMMAND);
     const QString BuildDir = QStringLiteral(NIMBLEEDITOR_BUILD_DIR);
     if(!QDir(BuildDir).exists())
     {
@@ -75,9 +73,24 @@ bool SourceBuild::Start(const QStringList& InTargets)
 
     Args << InTargets;   // cmake 3.15+: several targets after one --target
 
+    /* The first target names the build: the game module. */
+    return StartCommand(Args, BuildDir, InTargets.first());
+}
+
+bool SourceBuild::StartCommand(const QStringList& InArgs, const QString& InWorkingDir, const QString& InLabel)
+{
+    if(Process)
+    {
+        CORE_LOG_WARN("[Build] already building " + ToStd(Target))
+        return false;
+    }
+
+    const QString CMake = GetCMakeCommand();
+    const QStringList& Args = InArgs;
+
     Process = new QProcess(this);
     Process->setProcessChannelMode(QProcess::MergedChannels);
-    Process->setWorkingDirectory(BuildDir);
+    Process->setWorkingDirectory(InWorkingDir);
     connect(Process, &QProcess::readyReadStandardOutput, this, &SourceBuild::OnOutput);
     connect(Process, &QProcess::finished, this, &SourceBuild::OnFinished);
     connect(Process, &QProcess::errorOccurred, this, [this](const QProcess::ProcessError InError)
@@ -90,7 +103,7 @@ bool SourceBuild::Start(const QStringList& InTargets)
         }
     });
 
-    Target     = InTargets.first();
+    Target     = InLabel;
     bCancelled = false;
     Pending.clear();
 
@@ -158,6 +171,8 @@ void SourceBuild::LogLine(const QString& InLine)
      * gcc "x.cpp:12:3: error:", and Ninja's own "FAILED:". */
     static const QRegularExpression Error(QStringLiteral(R"(:\s*(fatal\s+)?error\b)"));
     static const QRegularExpression Warning(QStringLiteral(R"(:\s*warning\b)"));
+
+    emit OutputLine(InLine);
 
     const std::string Line = "[Build] " + ToStd(InLine);
     if(InLine.startsWith(QStringLiteral("FAILED:")) || Error.match(InLine).hasMatch())

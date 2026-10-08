@@ -11,11 +11,13 @@
 
 #include "Private/Editor/ConfigIniFile.h"
 
+class QComboBox;
 class QDialogButtonBox;
 class QFormLayout;
 class QLabel;
 class QListWidget;
 class QStackedWidget;
+class QTableWidget;
 class QWidget;
 
 namespace EngineCore { class ConfigVar; }
@@ -28,10 +30,12 @@ namespace EngineCore { class ConfigVar; }
  * refreshes the staged copy; without a game, the staged copy. Line-by-line
  * (ConfigIniFile), changed values only.
  *
- * Pages: Project (title, module, start level, startup script, and the
- * optional engine modules -- [Modules], build-time); one per
- * config section (registered vars, outside [Editor], with reset; keys set
- * in the file shown bold); and unregistered keys as text.
+ * Pages: Project (title, module, start world, and the
+ * optional engine modules -- [Modules], build-time); Worlds (the project's
+ * [World_*] list, NimbleEngine/WorldList.h: every world a level, with its
+ * game mode, startup script and whether it is cooked); one per config
+ * section (registered vars, outside [Editor] and [Build], with reset; keys
+ * set in the file shown bold); and unregistered keys as text.
  *
  * Apply also sets the vars in-process; most take effect at startup or Play.
  */
@@ -44,6 +48,12 @@ public:
 
     /* The master copy if known, else the staged one (OutbIsSource false). */
     static QString GetProjectConfigPath(bool* OutbIsSource = nullptr);
+
+    /* Shows the Worlds page. */
+    void ShowWorlds();
+
+    /* The world open in the editor (runtime path): Worlds > Add Open World. */
+    void SetOpenWorld(const QString& InRuntimePath) { OpenWorld = InRuntimePath; }
 
 private:
     struct Row
@@ -58,7 +68,19 @@ private:
     };
 
     void     BuildProjectPage();
+    void     BuildWorldsPage();
     void     BuildSectionPages();
+
+    /* One row of the Worlds table, from a [World_*] section. */
+    void     AddWorldRow(const ConfigIniFile::Section& InSection);
+    /* A new row for a .nmworld (runtime path), named for it. */
+    void     AddWorld(const QString& InRuntimePath);
+    /* The table as [World_*] sections, in its order. */
+    QList<ConfigIniFile::Section> ReadWorlds() const;
+    /* Empty if the table can be saved, else why not. */
+    QString  ValidateWorlds() const;
+    /* [Game] StartLevel's choices: the table's names. */
+    void     RefreshStartLevelChoices();
     QWidget* AddPage(const QString& InName, QFormLayout*& OutForm);
     void     AddRow(QFormLayout* InForm, const QString& InSection, const QString& InKey, const QString& InLabel);
     /* False if the dialog should stay open: a module change not confirmed,
@@ -74,6 +96,10 @@ private:
     bool              bFileIsSource = false;
 
     std::vector<Row>  Rows;
+    QTableWidget*     Worlds = nullptr;
+    QList<ConfigIniFile::Section> WorldsBaseline;
+    QComboBox*        StartLevelChoice = nullptr;
+    QString           OpenWorld;
     QListWidget*      Pages = nullptr;
     QStackedWidget*   Stack = nullptr;
     QDialogButtonBox* Buttons = nullptr;

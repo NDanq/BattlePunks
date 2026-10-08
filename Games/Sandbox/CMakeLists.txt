@@ -440,26 +440,21 @@ elseif(SANDBOX_UI_COPIES)
 endif()
 
 # === Content/Levels/ =======================================================
-# Level files, staged at the same relative path beside the executable
-# ("Content/Levels/BrickBreaker.nmworld", as a level loads it). Every build but
-# Shipping stages the text worlds -- the .nmworld manifest and the per-entity
-# and per-instance files in the folder beside it -- which an Editor edits and a
-# Client or Server cooks the first time it loads one; Shipping, the cooked ones
-# from Content/Levels/Cooked/ (the editor's `cook` console command).
-if(NIMBLE_UNCOOKED_CONTENT)
-    file(GLOB_RECURSE SANDBOX_LEVEL_FILES CONFIGURE_DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/*.nmworld"
-            "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/*.nmentity"
-            "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/*.nmprefabinst")
-    list(FILTER SANDBOX_LEVEL_FILES EXCLUDE REGEX "/Content/Levels/Cooked/")
-else()
-    file(GLOB_RECURSE SANDBOX_LEVEL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/Cooked/*.nmworld")
-endif()
+# The worlds Project Settings > Worlds lists with Cook on ([World_*] in
+# Config/DefaultEngine.ini), staged at the same relative path beside the
+# executable ("Content/Levels/BrickBreaker.nmworld", as a level loads it).
+# Every build but Shipping stages the text worlds -- the .nmworld manifest and
+# the per-entity and per-instance files in the folder beside it -- which an
+# Editor edits and a Client or Server cooks the first time it loads one;
+# Shipping, the cooked ones from Cooked/ (the editor's Build > Cook Content).
+# A world not listed, or not cooked, is not staged (nimble_project_worlds).
+nimble_project_worlds("${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini" "${CMAKE_CURRENT_SOURCE_DIR}"
+        SANDBOX_LEVEL_FILES SANDBOX_LEVEL_ROOT)
 
 set(SANDBOX_LEVEL_OUTPUTS "")
 set(SANDBOX_LEVEL_COPIES "")
 foreach(SANDBOX_LEVEL_SRC ${SANDBOX_LEVEL_FILES})
-    file(RELATIVE_PATH SANDBOX_LEVEL_REL "${CMAKE_CURRENT_SOURCE_DIR}" "${SANDBOX_LEVEL_SRC}")
+    file(RELATIVE_PATH SANDBOX_LEVEL_REL "${SANDBOX_LEVEL_ROOT}" "${SANDBOX_LEVEL_SRC}")
     get_filename_component(SANDBOX_LEVEL_REL_DIR "${SANDBOX_LEVEL_REL}" DIRECTORY)
     list(APPEND SANDBOX_LEVEL_COPIES
             COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Sandbox>/${SANDBOX_LEVEL_REL_DIR}"

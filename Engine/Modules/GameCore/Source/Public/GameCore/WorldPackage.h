@@ -51,9 +51,9 @@ namespace GameCore
      *              again whenever the source is newer, and that is read -- the
      *              Shipping load path, with no manual cook. [Content]
      *              CookOnLoad=false reads the text source instead.
-     *   Shipping   cooked ahead: a world's "<folder>/Cooked/<file>" (the
-     *              editor's console: cook <world>), a prefab at its own path
-     *              (staged from <project>/Cooked/; cook prefabs).
+     *   Shipping   cooked ahead, at its own path: the editor's Build > Cook
+     *              Content writes <project>/Cooked/<source path>, and the
+     *              build stages that beside the executable.
      *
      * A source that is already binary is read as it is, in every build.
      */

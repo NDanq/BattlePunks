@@ -1141,16 +1141,6 @@ bool CookWorldFile(const char* InSourcePath, const char* InCookedPath)
 
 namespace
 {
-#if !WITH_UNCOOKED
-    /* The cooked twin a Shipping build reads: a world's "<folder>/Cooked/<file>". */
-    std::string ShippingWorldPath(const std::string& InSource)
-    {
-        const size_t Slash = InSource.find_last_of("/\\");
-        return Slash == std::string::npos ? "Cooked/" + InSource
-                                          : InSource.substr(0, Slash + 1) + "Cooked/" + InSource.substr(Slash + 1);
-    }
-#endif
-
 #if WITH_UNCOOKED && !WITH_EDITOR
     namespace fs = std::filesystem;
 
@@ -1212,8 +1202,8 @@ std::string ResolveContentWorld(const char* InSourcePath)
     const fs::path Folder = fs::u8path(EntityFolderFor(Source));
     return CookOnLoad(Source, &Folder, &CookWorldFile, "world");
 #else
-    /* A binary file at the source path (a game that ships it there) is fine as it is. */
-    return DetectWorldFileFormat(Source.c_str()) == EWorldFileFormat::Binary ? Source : ShippingWorldPath(Source);
+    /* Shipping: the cooked world is staged at its source path (from <project>/Cooked/). */
+    return Source;
 #endif
 }
 
@@ -1226,7 +1216,7 @@ std::string ResolveContentPrefab(const char* InSourcePath)
         return CookOnLoad(Source, nullptr, &CookPrefabFile, "prefab");
     }
 #endif
-    /* Editor: the source. Shipping: the cooked prefab is staged at the same path. */
+    /* Editor: the source. Shipping: the cooked prefab is staged at its source path. */
     return Source;
 }
 

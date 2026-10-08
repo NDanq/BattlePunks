@@ -5,11 +5,6 @@
 
 #include "Public/GameCore/ComponentType.h"
 
-namespace NimbleEngine
-{
-    class ILevel;
-}
-
 /*
  * "Brick": how many more hits a brick takes. BrickBreakerGameMode sets it by
  * row when it builds a wall -- 1 on the bottom row, one more for each row up --
@@ -25,13 +20,14 @@ struct SandboxBrickComponent
 
 /*
  * BrickBreaker: the game framework's example (Engine/Source/GAMEFRAMEWORK.md),
- * a level of SandboxGame and its start level. BrickBreaker.cpp has the rules;
- * SandboxGame.cpp's module registers the level.
+ * the mode of SandboxGame's start world ([World_BrickBreaker]).
+ * BrickBreaker.cpp has the rules; SandboxGame.cpp's module registers them.
  */
 namespace BrickBreaker
 {
-    /* The level, owned by BrickBreaker.cpp; lives as long as the module. */
-    NimbleEngine::ILevel& GetLevel();
+    /* As "BrickBreaker" (WorldList.h); from the module's OnStartup / OnShutdown. */
+    void RegisterGameMode();
+    void UnregisterGameMode();
 }
 
 #endif //SANDBOX_BRICKBREAKER_H

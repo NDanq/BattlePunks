@@ -62,6 +62,8 @@
 #include "Private/Editor/Prefab/PrefabEditorWindow.h"
 #include "Private/Editor/Project/NewProjectWizard.h"
 #include "Private/Editor/ProjectSettingsDialog.h"
+#include "Private/Editor/Build/ContentCook.h"
+#include "Private/Editor/Build/ProjectBuildDialog.h"
 #include "Private/Editor/WorldSettingsDialog.h"
 #include "Private/Editor/Lighting/BakeLightmaps.h"
 #include "Private/Editor/Lighting/LightBakeWorld.h"
@@ -406,7 +408,7 @@ void EditorMainWindow::BuildMenus()
 
     QAction* ProjectSettings = Edit->addAction(QStringLiteral("&Project Settings..."));
     ProjectSettings->setToolTip(QStringLiteral("The project's Config/DefaultEngine.ini: the game's and the engine's settings"));
-    connect(ProjectSettings, &QAction::triggered, this, &EditorMainWindow::OpenProjectSettings);
+    connect(ProjectSettings, &QAction::triggered, this, [this]() { OpenProjectSettings(); });
 
     QMenu* World = menuBar()->addMenu(QStringLiteral("&World"));
 
@@ -599,7 +601,7 @@ void EditorMainWindow::StartPlay()
         CORE_LOG("[Editor] the SDL input probe stops while playing: the game's input uses the viewport")
     }
 
-    /* The open world's level, if the game has one for it (ILevel::GetWorldFile). */
+    /* The open world's level, if the project lists it (Project Settings > Worlds). */
     if(!Context.StartPlay(CurrentPath.isEmpty() ? QString() : EditorContent::ToRuntimePath(CurrentPath)))
     {
         statusBar()->showMessage(QStringLiteral("Play failed -- see the Console"), 5000);
@@ -630,8 +632,14 @@ void EditorMainWindow::BuildBuildMenu()
 
     BuildMenu->addSeparator();
 
+    QAction* BuildProject = BuildMenu->addAction(QStringLiteral("&Build Project..."));
+    BuildProject->setToolTip(QStringLiteral("Cook the project's content and compile the game as a packaged build "
+                                            "(Debug, RelWithDebInfo or Shipping), then open its folder"));
+    connect(BuildProject, &QAction::triggered, this, [this]() { OpenBuildProject(); });
+
     QAction* Cook = BuildMenu->addAction(QStringLiteral("C&ook Content"));
-    Cook->setToolTip(QStringLiteral("Regenerate every node graph's code; cooking the rest of the content is not implemented yet"));
+    Cook->setToolTip(QStringLiteral("Cook the worlds Project Settings > Worlds ticks, every prefab and UI document, and "
+                                    "regenerate the node graphs, into <project>/Cooked; shows the cook's stats"));
     connect(Cook, &QAction::triggered, this, &EditorMainWindow::CookContent);
 
     QAction* BakeLightmaps = BuildMenu->addAction(QStringLiteral("Bake &Lightmaps"));
@@ -759,34 +767,41 @@ void EditorMainWindow::OpenSettings(const QString& InPage)
     Dialog->show();
 }
 
-void EditorMainWindow::OpenProjectSettings()
+void EditorMainWindow::OpenProjectSettings(const bool bInWorlds)
 {
     if(auto* Open = findChild<ProjectSettingsDialog*>())
     {
+        if(bInWorlds) { Open->ShowWorlds(); }
         Open->raise();
         Open->activateWindow();
         return;
     }
     auto* Dialog = new ProjectSettingsDialog(this);   // deletes itself on close
+    Dialog->SetOpenWorld(CurrentPath.isEmpty() ? QString() : EditorContent::ToRuntimePath(CurrentPath));
+    if(bInWorlds) { Dialog->ShowWorlds(); }
     Dialog->show();
 }
 
 void EditorMainWindow::CookContent()
 {
-    /* Only graph regeneration so far; the rest of cooking is undefined (the
-     * Console's `cook` does one world). */
-    QStringList Lines;
-    const int Failures = EditorGraphs::RegenerateAll(Lines);
-    for(const QString& Line : Lines) { CORE_LOG("[Build] " + std::string(Line.toUtf8().constData())) }
-    statusBar()->showMessage(Failures == 0 ? QStringLiteral("Node graphs regenerated")
-                                           : QStringLiteral("%1 node graph(s) failed -- see the Console").arg(Failures), 5000);
+    if(ProjectBuildDialog* Dialog = OpenBuildProject())
+    {
+        Dialog->RunCookOnly();
+    }
+}
 
-    CORE_LOG_WARN("[Build] cooking worlds and other content is not implemented yet; 'cook [world] [out]' in the Console cooks a single world")
-    QMessageBox::information(this, QStringLiteral("Cook Content"),
-                             QStringLiteral("Node graphs: %1 regenerated, %2 failed (details in the Console).\n\n"
-                                            "Cooking the rest of the project's content is not implemented yet. "
-                                            "The Console's cook command cooks a single world file to binary.")
-                             .arg(Lines.size() - Failures).arg(Failures));
+ProjectBuildDialog* EditorMainWindow::OpenBuildProject()
+{
+    /* One at a time: a second request raises the open one. */
+    if(auto* Open = findChild<ProjectBuildDialog*>())
+    {
+        Open->raise();
+        Open->activateWindow();
+        return Open;
+    }
+    auto* Dialog = new ProjectBuildDialog(this, [this]() { OpenProjectSettings(true); });   // deletes itself on close
+    Dialog->show();
+    return Dialog;
 }
 
 void EditorMainWindow::OnPlayStateChanged(const bool bInPlaying)
@@ -1099,11 +1114,32 @@ void EditorMainWindow::RegisterConsoleCommands()
         CompileSource();
     });
 
-    Console.Register(QStringLiteral("cook"), QStringLiteral("[world | prefab | prefabs | ui | doc.nmui] [out]"),
-                     QStringLiteral("Cook a world, prefab or UI document to binary (default: the open world, to Cooked/ beside it); "
-                                    "'prefabs' and 'ui' cook every prefab or UI document to <project>/Cooked/, which a Client build stages"),
+    Console.Register(QStringLiteral("cook"), QStringLiteral("[project | world | prefab | prefabs | ui | doc.nmui] [out]"),
+                     QStringLiteral("Cook to binary, into <project>/Cooked/<its path>, which a game build stages: 'project' is "
+                                    "Build > Cook Content (the listed worlds, every prefab and UI document, with stats); "
+                                    "'prefabs' and 'ui' every prefab or UI document; else one file (default: the open world)"),
                      [this](const QStringList& InArgs)
     {
+        /* A project file's cooked copy: the mirror Build > Cook Content writes. */
+        const auto DefaultOut = [](const QString& InSource)
+        {
+            const QString Runtime = EditorContent::ToRuntimePath(InSource);
+            if(!Runtime.isEmpty() && !Runtime.startsWith(QStringLiteral("Engine/")))
+            {
+                return EditorCook::GetCookedPath(EditorGraphs::GetProjectRoot(), Runtime);
+            }
+            const QFileInfo Info(InSource);
+            return Info.dir().filePath(QStringLiteral("Cooked/") + Info.fileName());
+        };
+
+        if(!InArgs.isEmpty() && InArgs[0] == QStringLiteral("project"))
+        {
+            const EditorCook::CookStats Stats = EditorCook::CookProject();
+            for(const QString& Line : EditorCook::DescribeStats(Stats)) { Console.Print(Line); }
+            for(const QString& Failure : Stats.Failures) { Console.PrintError(Failure); }
+            return;
+        }
+
         /* Every UI document in the project, to <out>/<its runtime path>. */
         if(!InArgs.isEmpty() && InArgs[0] == QStringLiteral("ui"))
         {
@@ -1120,7 +1156,7 @@ void EditorMainWindow::RegisterConsoleCommands()
         if(!InArgs.isEmpty() && InArgs[0].endsWith(QStringLiteral(".nmui"), Qt::CaseInsensitive))
         {
             const QFileInfo SourceInfo(InArgs[0]);
-            const QString Out = InArgs.size() >= 2 ? InArgs[1] : SourceInfo.dir().filePath(QStringLiteral("Cooked/") + SourceInfo.fileName());
+            const QString Out = InArgs.size() >= 2 ? InArgs[1] : DefaultOut(InArgs[0]);
             if(QFileInfo(Out).absoluteFilePath() == SourceInfo.absoluteFilePath())
             {
                 Console.PrintError(QStringLiteral("Refusing to cook a UI document over itself"));
@@ -1170,7 +1206,7 @@ void EditorMainWindow::RegisterConsoleCommands()
         if(!InArgs.isEmpty() && InArgs[0].endsWith(QStringLiteral(".nmprefab"), Qt::CaseInsensitive))
         {
             const QFileInfo SourceInfo(InArgs[0]);
-            const QString Out = InArgs.size() >= 2 ? InArgs[1] : SourceInfo.dir().filePath(QStringLiteral("Cooked/") + SourceInfo.fileName());
+            const QString Out = InArgs.size() >= 2 ? InArgs[1] : DefaultOut(InArgs[0]);
             if(QFileInfo(Out).absoluteFilePath() == SourceInfo.absoluteFilePath())
             {
                 Console.PrintError(QStringLiteral("Refusing to cook a prefab over itself"));
@@ -1196,9 +1232,7 @@ void EditorMainWindow::RegisterConsoleCommands()
             return;
         }
         const QFileInfo SourceInfo(Source);
-        const QString Out = InArgs.size() >= 2
-                          ? InArgs[1]
-                          : SourceInfo.dir().filePath(QStringLiteral("Cooked/") + SourceInfo.fileName());
+        const QString Out = InArgs.size() >= 2 ? InArgs[1] : DefaultOut(Source);
         if(QFileInfo(Out).absoluteFilePath() == SourceInfo.absoluteFilePath())
         {
             Console.PrintError(QStringLiteral("Refusing to cook a world over itself"));

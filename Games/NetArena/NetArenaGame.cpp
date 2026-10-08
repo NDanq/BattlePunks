@@ -2,9 +2,8 @@
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/Input.h"
-#include "Public/NimbleEngine/Level.h"
+#include "Public/NimbleEngine/WorldList.h"
 #include "Public/NimbleEngine/NetFacade.h"
-#include "Public/NimbleEngine/SaveGame.h"
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/ComponentReplication.h"
@@ -17,13 +16,11 @@
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/World.h"
-#include "Public/GameCore/WorldPackage.h"
 #include "Public/RenderCore/RenderComponents.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -85,13 +82,13 @@
  *   NetArenaPawnComponent     a capsule: its colour, and ServerMove.
  *   NetArenaSpawnComponent    a spawn point, authored in the level.
  *   NetArenaSpinnerComponent  turns its entity, on the server.
- *   NetArenaLevel             loads the world; registers the systems; owns the mode.
- *   NetArenaGameMode          sends this process's input, spawns capsules.
+ *   NetArenaGameMode          registers the systems, sends this process's
+ *                             input, spawns capsules. [World_NetArena] in
+ *                             Config/DefaultEngine.ini names it.
  */
 
 namespace
 {
-    const char* const LevelFile = "Content/Levels/NetArena.nmworld";
     const char* const PawnPrefab = "Content/Prefabs/Pawn.nmprefab";
 
     /* The arena: a square of this half-size around the origin. */
@@ -339,11 +336,21 @@ namespace
 class NetArenaGameMode : public NimbleEngine::IGameMode
 {
 public:
-    explicit NetArenaGameMode(const GameCore::EntityID InController) : Controller(InController) {}
-
+    /* The world (Content/Levels/NetArena.nmworld, every process the same
+     * file) is loaded: give it behaviour. */
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
         Session = &InSession;
+        GameCore::World& World = InSession.GetWorld();
+
+        /* This process's keys: the level's Controller (an Input component). */
+        Controller = World.FindEntityByName("Controller");
+        if(!Controller.IsSet())
+        {
+            CORE_LOG_WARN("[NetArena] the level has no entity named Controller; nobody can steer")
+        }
+
+        World.RegisterSystem("NetArena.Spin", GameCore::TP_PrePhysics, &SpinSystem);
         NimbleEngine::SetNetCorrectionHandler(&OnCorrection, this);
         return true;
     }
@@ -532,52 +539,9 @@ private:
     double              LastReport     = 0.0;
 };
 
-// === Level ==================================================================
-
-/* Loads Content/Levels/NetArena.nmworld -- every process the same file --
- * and gives it behaviour: the server-only systems and the mode. */
-class NetArenaLevel : public NimbleEngine::ILevel
-{
-public:
-    const char* GetName() const override      { return "NetArena"; }
-    /* The editor plays this level while that world is open. */
-    const char* GetWorldFile() const override { return LevelFile; }
-
-    bool OnLoad(NimbleEngine::GameSession& /*InSession*/) override
-    {
-        GameCore::World& World = GetWorld();
-
-        /* By its source path, in every build: the Editor reads the text it
-         * edits, a Debug or RelWithDebInfo Client or Server cooks it the first
-         * time, Shipping reads the copy cooked ahead (WorldPackage.h). */
-        if(!GameCore::LoadContentWorld(LevelFile, World))
-        {
-            CORE_LOG_ERROR(std::string("[NetArena] could not load ") + LevelFile)
-            return false;
-        }
-
-        /* This process's keys: the level's Controller (an Input component). */
-        const GameCore::EntityID Controller = World.FindEntityByName("Controller");
-        if(!Controller.IsSet())
-        {
-            CORE_LOG_WARN("[NetArena] the level has no entity named Controller; nobody can steer")
-        }
-
-        World.RegisterSystem("NetArena.Spin", GameCore::TP_PrePhysics, &SpinSystem);
-
-        Mode.emplace(Controller);
-        return true;
-    }
-
-    NimbleEngine::IGameMode* GetGameMode() override { return Mode ? &*Mode : nullptr; }
-
-private:
-    std::optional<NetArenaGameMode> Mode;
-};
-
 // === Module =================================================================
 
-/* Owns the level, so it lives exactly as long as its code. */
+/* Registers the mode the project's world list names. */
 class NetArenaGameModule : public NimbleEngine::IGameModule
 {
 public:
@@ -586,20 +550,15 @@ public:
 
     bool OnStartup(const EngineCore::ModuleReloadState* /*InPrev*/) override
     {
-        NimbleEngine::RegisterLevel(Level);
+        NimbleEngine::RegisterGameMode<NetArenaGameMode>("NetArena");
         return true;
     }
 
     void OnShutdown(EngineCore::ModuleReloadState& /*OutState*/) override
     {
-        /* The registry holds a bare pointer, and this image is about to go. */
-        NimbleEngine::UnregisterLevel(Level);
+        /* The registry holds this image's functions, and it is about to go. */
+        NimbleEngine::UnregisterGameMode("NetArena");
     }
-
-    NimbleEngine::ILevel* GetStartLevel() override { return &Level; }
-
-private:
-    NetArenaLevel Level;
 };
 
 NIMBLE_IMPLEMENT_GAME_MODULE(NetArenaGameModule, "NetArenaGame")

@@ -4,7 +4,7 @@
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/GameState.h"
 #include "Public/NimbleEngine/Input.h"
-#include "Public/NimbleEngine/Level.h"
+#include "Public/NimbleEngine/WorldList.h"
 #include "Public/NimbleEngine/PlayerState.h"
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
@@ -16,7 +16,6 @@
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/NativePrefab.h"
 #include "Public/GameCore/World.h"
-#include "Public/GameCore/WorldPackage.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/UI/UISystem.h"
 #include "Public/Sandbox/SandboxScripting.h"
@@ -51,11 +50,11 @@
  * last (Jump restarts), or RoundCleared once every brick is gone (then the
  * next round, a little faster).
  *
- * THE LAYOUT is Content/Levels/BrickBreaker.nmworld ([BrickBreaker] LevelFile): the
- * camera, the paddle, the ball and the first wall, editable in the editor.
- * Every later wall repeats the first one's bricks, hits included. Without the
- * file (or with LevelFile empty) the level builds the same layout in code
- * (SpawnDefaultLayout, DefaultWall), which is also what wrote the file.
+ * THE LAYOUT is Content/Levels/BrickBreaker.nmworld ([World_BrickBreaker] in
+ * Config/DefaultEngine.ini, which names this mode): the camera, the paddle,
+ * the ball and the first wall, editable in the editor. Every later wall
+ * repeats the first one's bricks, hits included; a file with no bricks gets
+ * DefaultWall.
  *
  * Controls are Sandbox's "Default" map (SandboxInput.cpp): MoveX steers, Jump
  * launches. [BrickBreaker] AutoPlay=1 plays by itself, for unattended runs;
@@ -64,7 +63,6 @@
 
 NIMBLE_CONFIG_INT(GBrickBreakerAutoPlay, "BrickBreaker", "AutoPlay", 0, nullptr);
 NIMBLE_CONFIG_INT(GBrickBreakerRunSeconds, "BrickBreaker", "RunSeconds", 0, nullptr);
-NIMBLE_CONFIG_STRING(GBrickBreakerLevelFile, "BrickBreaker", "LevelFile", "Content/Levels/BrickBreaker.nmworld", nullptr);
 
 // === The Brick component ====================================================
 
@@ -114,7 +112,6 @@ namespace
     constexpr double RoundClearedSeconds = 1.5;
 
     const char* const BrickPrefab = "Content/Prefabs/Brick.nmprefab";
-    const char* const BallPrefab  = "Content/Prefabs/Ball.nmprefab";
 
     /* Phases this game adds to the engine's WaitingToStart and GameOver. */
     namespace Phases
@@ -278,7 +275,24 @@ namespace
     class BrickBreakerGameMode : public NimbleEngine::IGameMode
     {
     public:
-        explicit BrickBreakerGameMode(BrickBreakerGameState& InState) : State(&InState) {}
+        BrickBreakerGameMode() : State(&OwnedState) {}
+
+        NimbleEngine::GameState* GetGameState() override { return &OwnedState; }
+
+        /* A restore brings its own copy of everything (GameMode.h). */
+        void OnPrepareForLoadedGame() override
+        {
+            GameCore::World& World = Session->GetWorld();
+            std::vector<GameCore::EntityID> Doomed;
+            World.ForEachEntity([](const GameCore::EntityID InEntity, void* InUserData)
+            {
+                static_cast<std::vector<GameCore::EntityID>*>(InUserData)->push_back(InEntity);
+            }, &Doomed);
+            for(const GameCore::EntityID Entity : Doomed)
+            {
+                World.DestroyEntity(Entity);
+            }
+        }
 
         bool OnLoad(NimbleEngine::GameSession& InSession) override
         {
@@ -290,7 +304,7 @@ namespace
             /* From the brick's script graph (Events.Emit("BrickBroken")). */
             BrickBrokenHandle = InSession.GetWorld().GetEvents().Subscribe("BrickBroken", &OnBrickBroken, this);
 
-            /* The World is as the level made it (before any restore): its
+            /* The World is as its file made it (before any restore): its
              * bricks are the wall every round rebuilds. */
             Wall = CaptureWall();
             bLevelHasWall = !Wall.empty();
@@ -508,6 +522,7 @@ namespace
         }
 
         NimbleEngine::GameSession* Session = nullptr;
+        BrickBreakerGameState      OwnedState;
         BrickBreakerGameState*     State   = nullptr;
         GameCore::EntityID         Player;
         GameCore::DelegateHandle   BrickBrokenHandle;
@@ -517,84 +532,14 @@ namespace
         double                     Elapsed    = 0.0;
         double                     RunSeconds = 0.0;
     };
-
-    // === The level ==============================================================
-
-    class BrickBreakerLevel : public NimbleEngine::ILevel
-    {
-    public:
-        BrickBreakerLevel() : Mode(State) {}
-
-        const char* GetName() const override { return "BrickBreaker"; }
-        const char* GetWorldFile() const override { return GBrickBreakerLevelFile.GetString(); }
-
-        /* The scene is all the level's own: not Sandbox's Scripts/Main.lua. */
-        const char* GetStartupScript() const override { return ""; }
-
-        bool OnLoad(NimbleEngine::GameSession& /*InSession*/) override
-        {
-            /* By its source path: the editor reads the text level, a Debug or
-             * RelWithDebInfo game cooks it the first time, Shipping reads the
-             * copy cooked ahead (GameCore::ResolveContentWorld). */
-            const std::string Source = GBrickBreakerLevelFile.GetString();
-            const std::string Path   = Source.empty() ? Source : GameCore::ResolveContentWorld(Source.c_str());
-            if(!Path.empty() && GameCore::DetectWorldFileFormat(Path.c_str()) != GameCore::EWorldFileFormat::Unknown)
-            {
-                if(GameCore::LoadWorldFile(Path.c_str(), GetWorld()))
-                {
-                    CORE_LOG("[BrickBreaker] layout from " + Path)
-                    return true;
-                }
-                CORE_LOG_ERROR("[BrickBreaker] could not load " + Path)
-                return false;
-            }
-            CORE_LOG("[BrickBreaker] no level file" + (Path.empty() ? std::string() : " at " + Path)
-                     + "; building the default layout")
-            return SpawnDefaultLayout();
-        }
-
-        /* What Content/Levels/BrickBreaker.nmworld holds, in code: camera, paddle,
-         * ball. The mode adds the default wall. */
-        bool SpawnDefaultLayout()
-        {
-            GameCore::World& World = GetWorld();
-            World.SpawnPrefab("native:Sandbox.Camera");
-            World.SpawnPrefab("native:BrickBreaker.Paddle", Placed(FieldWidth * 0.5, PaddleY, PaddleWidth, PaddleHeight));
-
-            if(!World.SpawnPrefab(BallPrefab, Placed(FieldWidth * 0.5, PaddleY + 20.0, BallSize, BallSize)).IsValid())
-            {
-                CORE_LOG_ERROR(std::string("[BrickBreaker] could not spawn ") + BallPrefab)
-                return false;
-            }
-            return true;
-        }
-
-        /* A restore brings its own copy of everything (Level.h). */
-        void OnPrepareForLoadedGame() override
-        {
-            std::vector<GameCore::EntityID> Doomed;
-            GetWorld().ForEachEntity([](const GameCore::EntityID InEntity, void* InUserData)
-            {
-                static_cast<std::vector<GameCore::EntityID>*>(InUserData)->push_back(InEntity);
-            }, &Doomed);
-            for(const GameCore::EntityID Entity : Doomed)
-            {
-                GetWorld().DestroyEntity(Entity);
-            }
-        }
-
-        NimbleEngine::IGameMode* GetGameMode() override  { return &Mode; }
-        NimbleEngine::GameState* GetGameState() override { return &State; }
-
-    private:
-        BrickBreakerGameState State;
-        BrickBreakerGameMode  Mode;
-    };
-
-    BrickBreakerLevel GLevel;
 }
 
-NimbleEngine::ILevel& BrickBreaker::GetLevel()
+void BrickBreaker::RegisterGameMode()
 {
-    return GLevel;
+    NimbleEngine::RegisterGameMode<BrickBreakerGameMode>("BrickBreaker");
+}
+
+void BrickBreaker::UnregisterGameMode()
+{
+    NimbleEngine::UnregisterGameMode("BrickBreaker");
 }

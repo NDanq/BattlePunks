@@ -1,5 +1,6 @@
 # ===========================================================================
-# NimbleProject.cmake -- the project's module choices, from its config file.
+# NimbleProject.cmake -- the project's module choices and world list, from its
+# config file.
 #
 # A game opts in or out of the optional engine modules in its own
 # Config/DefaultEngine.ini, the file the editor's Project Settings edits:
@@ -74,4 +75,102 @@ function(nimble_project_module NM_KEY NM_OPTION NM_DOC)
         message(STATUS "NimbleEngine: ${NM_OPTION}=${NM_ON}, from [Modules] ${NM_KEY} in ${NIMBLE_PROJECT_CONFIG}")
     endif()
     set(${NM_OPTION} ${NM_ON} CACHE BOOL "${NM_DOC}" FORCE)
+endfunction()
+
+# nimble_project_worlds(<ConfigFile> <ProjectDir> <OutFiles> <OutRoot>)
+#   The level files a build stages: the [World_*] sections of <ConfigFile>
+#   (Project Settings > Worlds; NimbleEngine/WorldList.h) whose Cook is not
+#   false. Each is staged at <its path relative to <OutRoot>> beside the
+#   executable -- the path the game loads it by.
+#
+#     NIMBLE_UNCOOKED_CONTENT   the text world: its .nmworld manifest and the
+#                               .nmentity / .nmprefabinst files in the folder
+#                               of the same name beside it. <OutRoot> is
+#                               <ProjectDir>.
+#     Shipping                  the cooked world, <ProjectDir>/Cooked/<File>
+#                               (the editor's Build > Cook Content). <OutRoot>
+#                               is <ProjectDir>/Cooked; a listed world not
+#                               cooked yet is a warning.
+#
+#   A world left out of the list, or with Cook=false, is not staged at all.
+function(nimble_project_worlds NM_CONFIG NM_PROJECT_DIR NM_OUT_FILES NM_OUT_ROOT)
+    set(NM_FILES "")
+    if(NIMBLE_UNCOOKED_CONTENT)
+        set(NM_ROOT "${NM_PROJECT_DIR}")
+    else()
+        set(NM_ROOT "${NM_PROJECT_DIR}/Cooked")
+    endif()
+    if(NOT EXISTS "${NM_CONFIG}")
+        set(${NM_OUT_FILES} "" PARENT_SCOPE)
+        set(${NM_OUT_ROOT} "${NM_ROOT}" PARENT_SCOPE)
+        return()
+    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${NM_CONFIG}")
+
+    # Section by section: name -> File, Cook.
+    file(STRINGS "${NM_CONFIG}" NM_LINES)
+    set(NM_WORLDS "")
+    set(NM_SECTION "")
+    foreach(NM_LINE IN LISTS NM_LINES)
+        string(STRIP "${NM_LINE}" NM_LINE)
+        if(NM_LINE MATCHES "^[;#]" OR NM_LINE STREQUAL "")
+            continue()
+        endif()
+        if(NM_LINE MATCHES "^\\[(.*)\\]")
+            string(STRIP "${CMAKE_MATCH_1}" NM_SECTION)
+            string(TOLOWER "${NM_SECTION}" NM_SECTION_LOWER)
+            if(NM_SECTION_LOWER MATCHES "^world_(.+)$")
+                set(NM_WORLD "${CMAKE_MATCH_1}")
+                if(NOT NM_WORLD IN_LIST NM_WORLDS)
+                    list(APPEND NM_WORLDS "${NM_WORLD}")
+                    set(NM_COOK_${NM_WORLD} "true")
+                endif()
+            else()
+                set(NM_WORLD "")
+            endif()
+            continue()
+        endif()
+        if(NM_WORLD AND NM_LINE MATCHES "^([^=]+)=(.*)$")
+            string(STRIP "${CMAKE_MATCH_1}" NM_KEY)
+            string(STRIP "${CMAKE_MATCH_2}" NM_VALUE)
+            string(REGEX REPLACE "^\"(.*)\"$" "\\1" NM_VALUE "${NM_VALUE}")
+            string(TOLOWER "${NM_KEY}" NM_KEY)
+            if(NM_KEY STREQUAL "file")
+                set(NM_FILE_${NM_WORLD} "${NM_VALUE}")
+            elseif(NM_KEY STREQUAL "cook")
+                string(TOLOWER "${NM_VALUE}" NM_COOK_${NM_WORLD})
+            endif()
+        endif()
+    endforeach()
+
+    foreach(NM_WORLD IN LISTS NM_WORLDS)
+        set(NM_FILE "${NM_FILE_${NM_WORLD}}")
+        if(NM_FILE STREQUAL "" OR NM_COOK_${NM_WORLD} MATCHES "^(false|0|no|off)$")
+            continue()
+        endif()
+        if(NIMBLE_UNCOOKED_CONTENT)
+            if(NOT EXISTS "${NM_PROJECT_DIR}/${NM_FILE}")
+                message(WARNING "${NM_CONFIG}: [World_${NM_WORLD}] File=${NM_FILE} does not exist; it is not staged")
+                continue()
+            endif()
+            list(APPEND NM_FILES "${NM_PROJECT_DIR}/${NM_FILE}")
+            get_filename_component(NM_DIR "${NM_PROJECT_DIR}/${NM_FILE}" DIRECTORY)
+            get_filename_component(NM_STEM "${NM_FILE}" NAME_WLE)
+            file(GLOB_RECURSE NM_ENTITIES CONFIGURE_DEPENDS
+                    "${NM_DIR}/${NM_STEM}/*.nmentity" "${NM_DIR}/${NM_STEM}/*.nmprefabinst")
+            list(APPEND NM_FILES ${NM_ENTITIES})
+        else()
+            # A configure dependency even while missing: a cook that makes it re-configures.
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${NM_ROOT}/${NM_FILE}")
+            if(EXISTS "${NM_ROOT}/${NM_FILE}")
+                list(APPEND NM_FILES "${NM_ROOT}/${NM_FILE}")
+            else()
+                message(WARNING "${NM_CONFIG}: [World_${NM_WORLD}] is not cooked (no ${NM_ROOT}/${NM_FILE}); a "
+                        "Shipping build cannot load it. Cook it in the editor: Build > Cook Content.")
+            endif()
+        endif()
+    endforeach()
+
+    set(${NM_OUT_FILES} "${NM_FILES}" PARENT_SCOPE)
+    set(${NM_OUT_ROOT} "${NM_ROOT}" PARENT_SCOPE)
 endfunction()
