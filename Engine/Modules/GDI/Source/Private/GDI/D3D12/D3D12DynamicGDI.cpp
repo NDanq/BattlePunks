@@ -10,6 +10,7 @@
 #include "Public/GDI/D3D12/D3D12Shader.h"
 #include "Public/GDI/D3D12/D3D12Texture.h"
 #include "Private/GDI/D3D12/D3D12TransientOps.h"
+#include "Private/GDI/GDICorePack.h"
 #include "Public/GDI/GDIShader.h"
 #include "Public/GDI/GDIView.h"
 
@@ -65,8 +66,15 @@ void D3D12DynamicGDI::Allocate()
         return;
     }
 
+    /* [Rendering] FramesInFlight (GDI.cpp): the command allocators, the
+     * constant-buffer ring's regions, timestamps and dynamic meshes' regions
+     * are per frame slot, each reused once its slot's fence is waited. */
+    FramesInFlightCount = GDIGetConfiguredFramesInFlight();
+    FramesInFlight      = FramesInFlightCount;
+    FrameSlot           = 0;
+
     CommandManager = new D3D12CommandManager();
-    if(!CommandManager->Initialize(DeviceObj))
+    if(!CommandManager->Initialize(DeviceObj, FramesInFlightCount))
     {
         GDI_LOG("[D3D12DynamicGDI] CommandManager init failed.")
         return;
@@ -88,7 +96,7 @@ void D3D12DynamicGDI::Allocate()
     }
 
     DescAlloc = new D3D12DescriptorAllocator();
-    if(!DescAlloc->Initialize(DeviceObj))
+    if(!DescAlloc->Initialize(DeviceObj, FramesInFlightCount))
     {
         GDI_LOG("[D3D12DynamicGDI] DescriptorAllocator init failed.")
         return;
@@ -103,7 +111,8 @@ void D3D12DynamicGDI::Allocate()
     CreateTimestampHeap();
 
     bInitialized = true;
-    GDI_LOG("[D3D12DynamicGDI] Allocate complete.")
+    GDI_LOG("[D3D12DynamicGDI] Allocate complete: " + std::to_string(FramesInFlightCount)
+            + " frame(s) in flight ([Rendering] FramesInFlight).")
 }
 
 void D3D12DynamicGDI::Destroy()
@@ -119,6 +128,7 @@ void D3D12DynamicGDI::Destroy()
     {
         DeviceObj->WaitIdle();
     }
+    DestroyRecordingContexts();
 
     if(GSync)
     {
@@ -133,7 +143,7 @@ void D3D12DynamicGDI::Destroy()
     if(ScreenMesh)  { ScreenMesh->Release();  delete ScreenMesh;  ScreenMesh  = nullptr; }
     if(NullTexture) { NullTexture->Release(); delete NullTexture; NullTexture = nullptr; }
 
-    DrainDeferredDestruction();
+    DrainDeferredDestruction(true);
 
     for(auto& Entry : Swapchains) { Entry.second->Shutdown(); delete Entry.second; }
     Swapchains.clear();
@@ -222,6 +232,7 @@ void D3D12DynamicGDI::PrepareCommandList(ID3D12GraphicsCommandList* InList)
     InList->SetDescriptorHeaps(2, Heaps);
     InList->SetGraphicsRootSignature(PipelineCache->GetRootSignature());
     InList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    if(CurrentStateData && InList == CurrentStateData->CurrentCmd) { DrawCaches.ForgetBound(); }   // a chunk's: BeginParallelPass
 }
 
 void D3D12DynamicGDI::SubmitFrame()
@@ -356,28 +367,50 @@ void D3D12DynamicGDI::ReleaseRenderTarget(GDIRenderTarget* InRenderTarget)
     if(InRenderTarget) InRenderTarget->Release();
 }
 
+uint64_t D3D12DynamicGDI::GetRecordingFenceValue() const
+{
+    return CommandManager ? CommandManager->GetNextFenceValue() : 0;
+}
+
+bool D3D12DynamicGDI::IsFrameComplete(const uint64_t InValue) const
+{
+    return !CommandManager || CommandManager->IsComplete(InValue);
+}
+
 void D3D12DynamicGDI::DeferRelease(Microsoft::WRL::ComPtr<ID3D12Resource> InResource)
 {
-    if(InResource) DeferredResources.push_back(std::move(InResource));
+    if(InResource) DeferredResources.push_back({ std::move(InResource), GetRecordingFenceValue() });
 }
 
 void D3D12DynamicGDI::DeferFreeSRV(uint32_t InSlot)
 {
-    DeferredSRVs.push_back(InSlot);
+    DeferredSRVs.push_back({ InSlot, GetRecordingFenceValue() });
 }
 
-void D3D12DynamicGDI::DrainDeferredDestruction()
+void D3D12DynamicGDI::DeferReleaseQueryHeap(Microsoft::WRL::ComPtr<ID3D12QueryHeap> InHeap)
 {
-    DeferredResources.clear();
-    DeferredQueryHeaps.clear();
-    if(DescAlloc)
+    if(InHeap) DeferredQueryHeaps.push_back({ std::move(InHeap), GetRecordingFenceValue() });
+}
+
+void D3D12DynamicGDI::DrainDeferredDestruction(const bool bInAll)
+{
+    /* Each queue in the order released, so in DoneAt order: what has finished is a prefix. */
+    const auto Done = [this, bInAll](const uint64_t InDoneAt) { return bInAll || IsFrameComplete(InDoneAt); };
+    size_t Count = 0;
+    while(Count < DeferredResources.size() && Done(DeferredResources[Count].DoneAt)) { ++Count; }
+    DeferredResources.erase(DeferredResources.begin(), DeferredResources.begin() + ptrdiff_t(Count));
+
+    Count = 0;
+    while(Count < DeferredQueryHeaps.size() && Done(DeferredQueryHeaps[Count].DoneAt)) { ++Count; }
+    DeferredQueryHeaps.erase(DeferredQueryHeaps.begin(), DeferredQueryHeaps.begin() + ptrdiff_t(Count));
+
+    Count = 0;
+    while(Count < DeferredSRVs.size() && Done(DeferredSRVs[Count].DoneAt))
     {
-        for(uint32_t Slot : DeferredSRVs)
-        {
-            DescAlloc->FreeSRV(Slot);
-        }
+        if(DescAlloc) { DescAlloc->FreeSRV(DeferredSRVs[Count].Slot); }
+        ++Count;
     }
-    DeferredSRVs.clear();
+    DeferredSRVs.erase(DeferredSRVs.begin(), DeferredSRVs.begin() + ptrdiff_t(Count));
 }
 
 void D3D12DynamicGDI::FlushForReadback(bool bResumeActiveRegion)
@@ -393,9 +426,10 @@ void D3D12DynamicGDI::FlushForReadback(bool bResumeActiveRegion)
 
     SubmitFrame();
 
-    // BeginFrame waits for the submit above, so deferred releases are safe to drop too.
+    // BeginFrame stays on this slot and waits for the submit above -- and so for
+    // every frame before it -- so deferred releases are all safe to drop too.
     ID3D12GraphicsCommandList* List = CommandManager->BeginFrame();
-    DrainDeferredDestruction();
+    DrainDeferredDestruction(true);
 
     CurrentStateData->CurrentCmd         = List;
     FrameListSerial                      = AllocateListSerial();
@@ -404,6 +438,7 @@ void D3D12DynamicGDI::FlushForReadback(bool bResumeActiveRegion)
     CurrentStateData->ActiveDepth        = nullptr;
     CurrentStateData->bRenderingActive   = false;
     CurrentStateData->DebugEventDepth    = 0;
+    CurrentStateData->DebugEventNames.clear();
     if(!List) return;
 
     PrepareCommandList(List);
@@ -516,7 +551,7 @@ GDIMesh* D3D12DynamicGDI::CreateDynamicMesh(const uint32_t InMaxVertices, const 
     if(!DeviceObj || !CurrentStateData) return nullptr;
 
     auto* Mesh = new D3D12Mesh(DeviceObj, CurrentStateData);
-    if(!Mesh->InitDynamic(InMaxVertices, InMaxIndices))
+    if(!Mesh->InitDynamic(InMaxVertices, InMaxIndices, FramesInFlightCount))
     {
         delete Mesh;
         return nullptr;
@@ -715,29 +750,61 @@ namespace
     }
 }
 
-bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
+bool D3D12DynamicGDI::MakeDrawInputs(D3D12DrawInputs& OutIn)
 {
     if(!CurrentStateData || !CurrentStateData->bRenderingActive || !CurrentStateData->CurrentCmd) return false;
-    if(!InMesh || !PipelineCache || !DescAlloc || !CurrentStateData->ActiveRenderTarget) return false;
+    OutIn = D3D12DrawInputs();
+    OutIn.List               = CurrentStateData->CurrentCmd;
+    OutIn.ListSerial         = FrameListSerial;
+    OutIn.VS                 = CurrentStateData->BoundVS;
+    OutIn.PS                 = CurrentStateData->BoundPS;
+    OutIn.bMaterial          = IsMaterialDraw();
+    OutIn.Blocks             = MaterialBlocks;
+    OutIn.Serials            = MaterialBlockSerials;
+    OutIn.Textures           = MaterialTextures;
+    OutIn.Caches             = &DrawCaches;
+    OutIn.InstanceBuffer     = GetInstanceBuffer();
+    OutIn.InstanceCount      = GetInstanceCount();
+    OutIn.IndirectArgs       = GetIndirectArgs();
+    OutIn.IndirectArgsOffset = GetIndirectArgsOffset();
+    OutIn.Blend              = &CurrentStateData->BlendState;
+    OutIn.ColorMask          = CurrentStateData->ColorMask;
+    OutIn.Depth              = &CurrentStateData->DepthState;
+    OutIn.PredicateSet       = PredicateSet;
+    OutIn.PredicateIndex     = PredicateIndex;
+    if(const D3D12ShaderResource* PS = CurrentStateData->BoundPS)
+    {
+        const D3D12ShaderResource::CoreBlocks& Core = PS->GetCoreBlocks();
+        OutIn.CoreView      = Core.bView ? Core.View : nullptr;
+        OutIn.CoreTransform = Core.bTransform ? Core.Transform : nullptr;
+    }
+    return true;
+}
 
-    D3D12ShaderResource* VSRes = CurrentStateData->BoundVS;
-    D3D12ShaderResource* PSRes = CurrentStateData->BoundPS;
+bool D3D12DynamicGDI::BindDrawState(const D3D12DrawInputs& InIn, GDIMesh* InMesh, bool bIsInstanced)
+{
+    if(!InIn.List || !InMesh || !PipelineCache || !DescAlloc || !CurrentStateData || !CurrentStateData->ActiveRenderTarget) return false;
+
+    D3D12ShaderResource* VSRes = InIn.VS;
+    D3D12ShaderResource* PSRes = InIn.PS;
     if(!VSRes || !PSRes) return false;
 
-    const IBlendStateDesc& Blend = CurrentStateData->BlendState;
+    const IBlendStateDesc& Blend = *InIn.Blend;
+    const IDepthStateDesc& Depth = *InIn.Depth;
 
     D3D12PipelineCache::PipelineKey Key;
     Key.VertexShaderID = VSRes->GetID();
     Key.PixelShaderID  = PSRes->GetID();
     // 3: an indexed mesh drawn instanced from GDISetInstanceBuffer's buffer.
     // 4: a skinned mesh, its bone streams in slots 6 and 7 (never instanced).
-    Key.VertexLayoutID = InMesh->IsIndexed() ? (GetInstanceBuffer() ? 3u : (InMesh->IsSkinned() ? 4u : 2u)) : (bIsInstanced ? 1u : 0u);
+    Key.VertexLayoutID = InMesh->IsIndexed() ? (InIn.InstanceBuffer ? 3u : (InMesh->IsSkinned() ? 4u : 2u)) : (bIsInstanced ? 1u : 0u);
     Key.BlendEnable    = Blend.bBlend ? TRUE : FALSE;
     Key.SrcBlend       = DecodeBlendFactor(Blend.Source);
     Key.DestBlend      = DecodeBlendFactor(Blend.Dest);
     Key.BlendOp        = DecodeBlendOp(Blend.Op);
     Key.BlendOpAlpha   = DecodeBlendOp(Blend.AlphaOp);
-    Key.WriteMask      = DecodeColorMask(CurrentStateData->ColorMask);
+    Key.WriteMask      = DecodeColorMask(InIn.ColorMask);
+    /* The bound targets are the render thread's, unchanged while a pass records. */
     Key.RTFormat       = CurrentStateData->ActiveRenderTarget->GetFormat();
     Key.ColorCount     = CurrentStateData->ActiveColorCount > 0 ? CurrentStateData->ActiveColorCount : 1u;
     for(uint32_t Index = 0; Index < GDI_MAX_COLOR_TARGETS; ++Index)
@@ -746,18 +813,44 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
         Key.ColorFormats[Index] = Each ? Each->GetFormat() : DXGI_FORMAT_UNKNOWN;
     }
     Key.DSVFormat      = CurrentStateData->ActiveDepth ? CurrentStateData->ActiveDepth->GetDepthFormat() : DXGI_FORMAT_UNKNOWN;
-    Key.DepthEnable    = CurrentStateData->DepthState.bDepthTest ? TRUE : FALSE;
-    Key.DepthWrite     = CurrentStateData->DepthState.bDepthMask ? TRUE : FALSE;
-    Key.DepthFunc      = DecodeCompareFunc(CurrentStateData->DepthState.DepthMode);
+    Key.DepthEnable    = Depth.bDepthTest ? TRUE : FALSE;
+    Key.DepthWrite     = Depth.bDepthMask ? TRUE : FALSE;
+    Key.DepthFunc      = DecodeCompareFunc(Depth.DepthMode);
 
-    ID3D12PipelineState* Pipeline = PipelineCache->GetOrCreate(Key, VSRes, PSRes);
+    D3D12DrawCaches& Caches = *InIn.Caches;
+    ID3D12GraphicsCommandList* List = InIn.List;
+
+    /* The pipeline: the last key's again, or looked up (hashed, under the cache's lock). */
+    if(!Caches.Pipeline || !(Caches.PipelineKey == Key))
+    {
+        Caches.Pipeline    = PipelineCache->GetOrCreate(Key, VSRes, PSRes);
+        Caches.PipelineKey = Key;
+    }
+    ID3D12PipelineState* Pipeline = Caches.Pipeline;
     if(!Pipeline) return false;
 
+    // A root CBV or table set only if it differs from what the list has.
+    const auto SetCBV = [List, &Caches](const UINT InParam, const uint64_t InAddress)
+    {
+        if(Caches.BoundRoot[InParam] == InAddress) return;
+        List->SetGraphicsRootConstantBufferView(InParam, InAddress);
+        Caches.BoundRoot[InParam] = InAddress;
+    };
+    const auto SetTable = [List, &Caches](const UINT InParam, const D3D12_GPU_DESCRIPTOR_HANDLE InHandle)
+    {
+        if(Caches.BoundRoot[InParam] == InHandle.ptr) return;
+        List->SetGraphicsRootDescriptorTable(InParam, InHandle);
+        Caches.BoundRoot[InParam] = InHandle.ptr;
+    };
+
     // Both stages carry identical core uniforms; the PS copy also has the custom ones.
+    // In a recording context they are only read: its core blocks come packed (InIn.Core*).
     const ScalarMap& Scalars = PSRes->GetScalars();
 
     static constexpr uint32_t kCustomBytes = 256;
-    const bool bMaterial = IsMaterialDraw();
+    const bool bMaterial = InIn.bMaterial;
+    const std::vector<uint8_t>* Blocks = InIn.Blocks;
+    const uint64_t Epoch = DescAlloc->GetEpoch();
 
     /* A cbuffer is read in 256-byte units; the material layout's blocks are
      * raw bytes (GDISetUniformBlock), rounded up, never empty. */
@@ -765,112 +858,128 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     {
         return InBlock.empty() ? 256u : uint32_t((InBlock.size() + 255) & ~size_t(255));
     };
-    const uint32_t CustomBytes = bMaterial ? BlockBytes(MaterialBlocks[0]) : kCustomBytes;
 
-    const D3D12CBAllocation VP     = DescAlloc->AllocateCB(160);
-    const D3D12CBAllocation TR     = DescAlloc->AllocateCB(kTransformBytes);
-    const D3D12CBAllocation Custom = DescAlloc->AllocateCB(CustomBytes);
-    if(!VP.MappedPtr || !TR.MappedPtr || !Custom.MappedPtr) return false;
+    /* The view block, as the shaders read it (clip z remapped): uploaded once
+     * per view, while its bytes are unchanged. */
+    alignas(16) float View[40];
+    if(InIn.CoreView)
+    {
+        memcpy(View, InIn.CoreView, sizeof(View));
+        GDICorePack::RemapClipZ(View);
+    }
+    else
+    {
+        PackViewParams(Scalars, View);
+    }
+    if(Caches.ViewEpoch != Epoch || Caches.ViewAddress == 0 || memcmp(Caches.View, View, sizeof(View)) != 0)
+    {
+        const D3D12CBAllocation VP = DescAlloc->AllocateCB(160);
+        if(!VP.MappedPtr) return false;
+        memcpy(VP.MappedPtr, View, sizeof(View));
+        memcpy(Caches.View, View, sizeof(View));
+        Caches.ViewAddress = VP.GPUAddress;
+        Caches.ViewEpoch   = Epoch;
+    }
 
-    PackViewParams(Scalars, VP.MappedPtr);
-    PackTransform(Scalars, TR.MappedPtr);
+    /* The transform: every draw's own. */
+    const D3D12CBAllocation TR = DescAlloc->AllocateCB(kTransformBytes);
+    if(!TR.MappedPtr) return false;
+    if(InIn.CoreTransform) { memcpy(TR.MappedPtr, InIn.CoreTransform, kTransformBytes); }
+    else                   { PackTransform(Scalars, TR.MappedPtr); }
 
-    D3D12CBAllocation Scene{};
+    /* b2: a material draw's block once per change (by serial), as the scene's
+     * and the skin's; anything else's custom scalars every draw. */
+    uint64_t CustomAddress = 0;
     if(bMaterial)
     {
-        const bool bReuseScene = SceneBlockUploadSerial == MaterialBlockSerials[1]
-                                 && SceneBlockUploadEpoch == DescAlloc->GetEpoch()
-                                 && SceneBlockUploadAddress != 0;
-        if(bReuseScene)
+        const auto Upload = [this, &BlockBytes](const std::vector<uint8_t>& InBlock, const uint32_t InBytes,
+                                                uint64_t& OutAddress) -> bool
         {
-            Scene.GPUAddress = SceneBlockUploadAddress;
+            const D3D12CBAllocation At = DescAlloc->AllocateCB(InBytes);
+            if(!At.MappedPtr) return false;
+            memset(At.MappedPtr, 0, InBytes);
+            if(!InBlock.empty()) memcpy(At.MappedPtr, InBlock.data(), InBlock.size());
+            OutAddress = At.GPUAddress;
+            return true;
+        };
+        if(Caches.MaterialSerial != InIn.Serials[0] || Caches.MaterialEpoch != Epoch || Caches.MaterialAddress == 0)
+        {
+            if(!Upload(Blocks[0], BlockBytes(Blocks[0]), Caches.MaterialAddress)) return false;
+            Caches.MaterialSerial = InIn.Serials[0];
+            Caches.MaterialEpoch  = Epoch;
         }
-        else
+        CustomAddress = Caches.MaterialAddress;
+
+        if(Caches.SceneSerial != InIn.Serials[1] || Caches.SceneEpoch != Epoch || Caches.SceneAddress == 0)
         {
-            Scene = DescAlloc->AllocateCB(BlockBytes(MaterialBlocks[1]));
-            if(!Scene.MappedPtr) return false;
-        }
-        for(int b = 0; b < 2; ++b)
-        {
-            if(b == 1 && bReuseScene) continue;
-            void* Dst = b == 0 ? Custom.MappedPtr : Scene.MappedPtr;
-            memset(Dst, 0, BlockBytes(MaterialBlocks[b]));
-            if(!MaterialBlocks[b].empty()) memcpy(Dst, MaterialBlocks[b].data(), MaterialBlocks[b].size());
-        }
-        if(!bReuseScene)
-        {
-            SceneBlockUploadAddress = Scene.GPUAddress;
-            SceneBlockUploadSerial = MaterialBlockSerials[1];
-            SceneBlockUploadEpoch  = DescAlloc->GetEpoch();
+            if(!Upload(Blocks[1], BlockBytes(Blocks[1]), Caches.SceneAddress)) return false;
+            Caches.SceneSerial = InIn.Serials[1];
+            Caches.SceneEpoch  = Epoch;
         }
 
         /* The skin blocks (b12, b13): the last palette set and the frame
-         * before's, each uploaded once per change. */
+         * before's. A skinned shader declares the whole palette: upload all of it. */
         for(uint32_t SkinIndex = 0; SkinIndex < 2; ++SkinIndex)
         {
-            const std::vector<uint8_t>& Bytes = MaterialBlocks[2 + SkinIndex];
-            if(SkinBlockUploadSerial[SkinIndex] == MaterialBlockSerials[2 + SkinIndex] && SkinBlockUploadEpoch[SkinIndex] == DescAlloc->GetEpoch()
-               && SkinBlockUploadAddress[SkinIndex] != 0)
+            const std::vector<uint8_t>& Bytes = Blocks[2 + SkinIndex];
+            if(Caches.SkinSerial[SkinIndex] == InIn.Serials[2 + SkinIndex] && Caches.SkinEpoch[SkinIndex] == Epoch
+               && Caches.SkinAddress[SkinIndex] != 0)
             {
                 continue;
             }
-            /* A skinned shader declares the whole palette: upload all of it. */
-            const uint32_t SkinBytes = Bytes.empty() ? 256u : GDI_SKIN_BLOCK_MAX_BYTES;
-            const D3D12CBAllocation Skin = DescAlloc->AllocateCB(SkinBytes);
-            if(!Skin.MappedPtr) return false;
-            memset(Skin.MappedPtr, 0, SkinBytes);
-            if(!Bytes.empty()) memcpy(Skin.MappedPtr, Bytes.data(), Bytes.size());
-            SkinBlockUploadAddress[SkinIndex] = Skin.GPUAddress;
-            SkinBlockUploadSerial[SkinIndex]  = MaterialBlockSerials[2 + SkinIndex];
-            SkinBlockUploadEpoch[SkinIndex]   = DescAlloc->GetEpoch();
+            if(!Upload(Bytes, Bytes.empty() ? 256u : GDI_SKIN_BLOCK_MAX_BYTES, Caches.SkinAddress[SkinIndex])) return false;
+            Caches.SkinSerial[SkinIndex] = InIn.Serials[2 + SkinIndex];
+            Caches.SkinEpoch[SkinIndex]  = Epoch;
         }
     }
     else
     {
+        const D3D12CBAllocation Custom = DescAlloc->AllocateCB(kCustomBytes);
+        if(!Custom.MappedPtr) return false;
         PackCustom(Scalars, Custom.MappedPtr, kCustomBytes);
+        CustomAddress = Custom.GPUAddress;
     }
 
-    GDITextureResource* TexRes = nullptr;
-    for(const auto& Entry : PSRes->GetTextures())
-    {
-        if(Entry.second.Index == 0)
-        {
-            TexRes = Entry.second.Resource;
-            break;
-        }
-    }
-    auto* Texture = dynamic_cast<D3D12TextureResource*>(TexRes);
+    // Every texture resource this backend makes is a D3D12TextureResource.
+    auto* Texture = static_cast<D3D12TextureResource*>(PSRes->GetTexture0());
     if(!Texture || Texture->GetSRVSlot() == UINT32_MAX) Texture = NullTexture;
     if(!Texture || Texture->GetSRVSlot() == UINT32_MAX) return false;
 
-    const D3D12_GPU_DESCRIPTOR_HANDLE SRV     = DescAlloc->GetSRVGPUHandle(Texture->GetSRVSlot());
-    const D3D12_GPU_DESCRIPTOR_HANDLE Sampler = DescAlloc->GetSamplerGPUHandle(Texture->GetBorder(), Texture->GetFilter());
-
-    ID3D12GraphicsCommandList* List = CurrentStateData->CurrentCmd;
-    List->SetPipelineState(Pipeline);
-    List->SetGraphicsRootConstantBufferView(RP_ViewParameters, VP.GPUAddress);
-    List->SetGraphicsRootConstantBufferView(RP_Transform,      TR.GPUAddress);
-    List->SetGraphicsRootConstantBufferView(RP_Custom,         Custom.GPUAddress);
+    if(Caches.BoundPipeline != Pipeline)
+    {
+        List->SetPipelineState(Pipeline);
+        Caches.BoundPipeline = Pipeline;
+    }
+    SetCBV(RP_ViewParameters, Caches.ViewAddress);
+    SetCBV(RP_Transform,      TR.GPUAddress);
+    SetCBV(RP_Custom,         CustomAddress);
 
     // Shaders sample at t2 or t3 depending on whether they declare a custom
     // cbuffer; binding the one texture to both saves re-deriving which.
-    List->SetGraphicsRootDescriptorTable(RP_Texture2, SRV);
-    List->SetGraphicsRootDescriptorTable(RP_Texture3, SRV);
-    List->SetGraphicsRootDescriptorTable(RP_Sampler2, Sampler);
-    List->SetGraphicsRootDescriptorTable(RP_Sampler3, Sampler);
+    const D3D12_GPU_DESCRIPTOR_HANDLE SRV     = DescAlloc->GetSRVGPUHandle(Texture->GetSRVSlot());
+    const D3D12_GPU_DESCRIPTOR_HANDLE Sampler = DescAlloc->GetSamplerGPUHandle(Texture->GetBorder(), Texture->GetFilter());
+    SetTable(RP_Texture2, SRV);
+    SetTable(RP_Texture3, SRV);
+    SetTable(RP_Sampler2, Sampler);
+    SetTable(RP_Sampler3, Sampler);
 
     if(bMaterial)
     {
-        List->SetGraphicsRootConstantBufferView(RP_Scene, Scene.GPUAddress);
-        List->SetGraphicsRootConstantBufferView(RP_Skin,     SkinBlockUploadAddress[0]);
-        List->SetGraphicsRootConstantBufferView(RP_PrevSkin, SkinBlockUploadAddress[1]);
+        SetCBV(RP_Scene,    Caches.SceneAddress);
+        SetCBV(RP_Skin,     Caches.SkinAddress[0]);
+        SetCBV(RP_PrevSkin, Caches.SkinAddress[1]);
         for(uint32_t Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot)
         {
-            auto* SlotTexture = dynamic_cast<D3D12TextureResource*>(MaterialTextures[Slot]);
+            /* The same resource as the list has bound: its tables are already
+             * these (any reopened list forgets them, so a resource replaced
+             * since -- a resize goes through a flush -- is bound again). */
+            GDITextureResource* Resource = InIn.Textures[Slot];
+            if(Resource && Resource == Caches.BoundTextures[Slot]) continue;
+            auto* SlotTexture = static_cast<D3D12TextureResource*>(Resource);
             if(!SlotTexture || SlotTexture->GetSRVSlot() == UINT32_MAX) SlotTexture = NullTexture;
-            List->SetGraphicsRootDescriptorTable(RP_MaterialTexture0 + Slot, DescAlloc->GetSRVGPUHandle(SlotTexture->GetSRVSlot()));
-            List->SetGraphicsRootDescriptorTable(RP_MaterialSampler0 + Slot,
-                                                 DescAlloc->GetSamplerGPUHandle(SlotTexture->GetBorder(), SlotTexture->GetFilter()));
+            SetTable(RP_MaterialTexture0 + Slot, DescAlloc->GetSRVGPUHandle(SlotTexture->GetSRVSlot()));
+            SetTable(RP_MaterialSampler0 + Slot, DescAlloc->GetSamplerGPUHandle(SlotTexture->GetBorder(), SlotTexture->GetFilter()));
+            Caches.BoundTextures[Slot] = Resource;
         }
     }
     return true;
@@ -880,8 +989,30 @@ void D3D12DynamicGDI::DrawObject(GDIViewObject* InObject, GDIView* InView)
 {
     if(!InObject || !InObject->Mesh) return;
 
-    if(BoundVertexShader) BoundVertexShader->UpdateCoreUniforms(InView, InObject->Transform);
-    if(BoundPixelShader)  BoundPixelShader->UpdateCoreUniforms(InView, InObject->Transform);
+    /* The core blocks, packed once as BindDrawState uploads them, onto both
+     * shaders -- what UpdateCoreUniforms' seven named scalars each held, with
+     * no string per value (MULTITHREADED_RENDERING.md, phase 1). A shader's
+     * user uniforms still go through by name. */
+    alignas(16) float View[40];
+    alignas(16) float Transform[36];
+    if(InView) { GDICorePack::PackCoreView(InView, View); }
+    if(InObject->Transform) { GDICorePack::PackCoreTransform(InObject->Transform, Transform); }
+    for(GDIShader* Shader : { static_cast<GDIShader*>(BoundVertexShader), static_cast<GDIShader*>(BoundPixelShader) })
+    {
+        if(!Shader || !Shader->Resource) continue;
+        D3D12ShaderResource::CoreBlocks& Core = static_cast<D3D12ShaderResource*>(Shader->Resource)->GetCoreBlocks();
+        if(InView)
+        {
+            memcpy(Core.View, View, sizeof(View));
+            Core.bView = true;
+        }
+        if(InObject->Transform)
+        {
+            memcpy(Core.Transform, Transform, sizeof(Transform));
+            Core.bTransform = true;
+        }
+        Shader->UpdateUserDefinedUniforms();
+    }
 
     InObject->Mesh->Draw();
 }

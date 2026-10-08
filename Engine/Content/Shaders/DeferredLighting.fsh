@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // DeferredLighting.fsh -- the Lighting stage (RenderCore/RENDERPIPELINE.md):
 // one full-screen pass over the G-buffer the Base Pass wrote, drawn with the
 // shared full-screen vertex shader (MaterialDefault, Fullscreen input) and the

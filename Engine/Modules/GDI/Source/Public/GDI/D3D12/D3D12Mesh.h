@@ -8,6 +8,7 @@
 
 class D3D12Device;
 class D3D12CurrentStateData;
+struct D3D12DrawInputs;
 
 /**
  * Position (slot 0) and texcoord (slot 1) live in default-heap buffers.
@@ -24,6 +25,10 @@ public:
     void Release() override;
     void Draw() override;
 
+    /** The draw itself, from InIn alone: Draw()'s, with the driver's state, and a
+     *  recording context's (RecordDrawObject), on its own thread and list. */
+    void Record(const D3D12DrawInputs& InIn);
+
     /** Names each of its buffers, "<name> Positions" and so on. */
     void SetDebugName(const std::string& InName) override;
 
@@ -32,7 +37,7 @@ public:
      * layout's buffers in the upload heap, persistently mapped and written in
      * place by UpdateDynamic. False (nothing kept) on failure.
      */
-    bool InitDynamic(uint32_t InMaxVertices, uint32_t InMaxIndices);
+    bool InitDynamic(uint32_t InMaxVertices, uint32_t InMaxIndices, uint32_t InFramesInFlight = 1);
 
 protected:
     /** memcpy into the mapped buffers; nothing is in flight there (GDIMesh::UpdateDynamic). */

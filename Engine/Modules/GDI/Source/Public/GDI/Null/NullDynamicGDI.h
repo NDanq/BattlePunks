@@ -65,6 +65,8 @@ struct NullGDIStats
     uint32_t LastDispatchBuffers   = 0;
     uint32_t LastDispatchParamBytes = 0;
     uint64_t InstancedDrawCalls    = 0;   // draws with GDISetInstanceBuffer's buffer set
+    uint64_t ParallelPasses        = 0;   // GDIBeginParallelPass ... GDIEndParallelPass, done
+    uint64_t ParallelChunks        = 0;   // their chunks, over every pass
     uint32_t LastInstanceCount     = 0;
     uint64_t OcclusionRounds       = 0;
     uint64_t OcclusionQueries      = 0;   // ended, over every round
@@ -161,6 +163,13 @@ public:
 
     void DrawObject(class GDIViewObject*, class GDIView*) override;
 
+    /* Parallel passes: contexts that count their draws as DrawObject does,
+     * folded into Stats at the pass's end in chunk order. Serial: the chunks
+     * run wherever the caller runs them, and record nothing. */
+    bool BeginParallelPass(uint32_t InChunks, GDIRecordingContext** OutContexts) override;
+    void EndParallelPass() override;
+    void RecordDrawObject(GDIRecordingContext* InContext, class GDIViewObject* InObject, class GDIView* InView) override;
+
     void BeginDrawEvent(const std::string& EventName) override;
     bool HasDrawEvents() const override { return false; }
 
@@ -202,6 +211,16 @@ public:
      * otherwise), so a caller's culling runs without a GPU. Predicates are
      * counted; every draw is a no-op anyway. */
     bool                 SupportsOcclusionQueries() const override { return true; }
+
+    /* The chunked path, every chunk on the calling thread: headless tests run it. */
+    GDIParallelRecordingSupport GetParallelRecordingSupport() const override
+    {
+        GDIParallelRecordingSupport Out;
+        Out.bSupported  = true;
+        Out.bSerialOnly = true;
+        Out.Mechanism   = "serial chunks (Null backend)";
+        return Out;
+    }
     bool                 SupportsOcclusionPredication() const override { return true; }
     GDIOcclusionQueries* CreateOcclusionQueries(uint32_t InCapacity) override;
     void                 BeginOcclusionRound(GDIOcclusionQueries* InSet, uint32_t InCount) override;
@@ -217,6 +236,14 @@ private:
     NullGDIStats Stats;
     bool         bOcclusionAnswer = true;
     bool         bPredicated      = false;
+
+    struct NullRecordingContext : public GDIRecordingContext
+    {
+        uint64_t Draws = 0, Predicated = 0, Instanced = 0;
+        uint32_t LastInstanceCount = 0;
+    };
+    std::vector<NullRecordingContext*> Contexts;   // made on first need, kept
+    uint32_t     OpenChunks = 0;
 };
 
 #endif //CORECLIENT_NULLDYNAMICGDI_H

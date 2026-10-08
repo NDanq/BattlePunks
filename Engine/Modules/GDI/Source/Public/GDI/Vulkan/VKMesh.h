@@ -46,9 +46,10 @@ public:
     /**
      * Make this a dynamic mesh (GDICreateDynamicMesh) instead: every stream of
      * the indexed layout in host-visible, persistently mapped memory, written
-     * in place by UpdateDynamic. False (nothing allocated) on failure.
+     * in place by UpdateDynamic, InFrames regions of that size (one per frame
+     * in flight). False (nothing allocated) on failure.
      */
-    bool InitDynamic(uint32_t InMaxVertices, uint32_t InMaxIndices);
+    bool InitDynamic(uint32_t InMaxVertices, uint32_t InMaxIndices, uint32_t InFrames = 1);
 
     /** Destroy all VkBuffers + memory, free CPU-side render data. */
     void Release() override;
@@ -61,9 +62,12 @@ public:
      * Binds vertex buffers at bindings 0-2 and calls vkCmdDraw[Instanced].
      */
     void Draw() override;
+    /* Draw's body with explicit inputs: the render thread's (Draw), or a
+     * recording context's (VulkanDynamicGDI::RecordDrawObject). */
+    void Record(const struct VKDrawInputs& InInputs);
 
 protected:
-    /** memcpy into the mapped streams; nothing is in flight there (GDIMesh::UpdateDynamic). */
+    /** memcpy into the mapped streams; the GPU is done with that region (GDIMesh::UpdateDynamic). */
     bool WriteDynamic(const GDIMeshDesc& InDesc, uint32_t InBaseVertex, uint32_t InBaseIndex) override;
 
     /**

@@ -5,6 +5,7 @@
 #include <wrl/client.h>
 
 #include <cstdint>
+#include <shared_mutex>
 #include <unordered_map>
 
 #include "Public/GDI/GDIDefinitions.h"
@@ -89,6 +90,8 @@ public:
         BOOL                    DepthEnable     = FALSE;
         BOOL                    DepthWrite      = FALSE;
         D3D12_COMPARISON_FUNC   DepthFunc       = D3D12_COMPARISON_FUNC_LESS;
+
+        bool operator==(const PipelineKey& InOther) const;
     };
 
     D3D12PipelineCache()  = default;
@@ -97,7 +100,8 @@ public:
     bool Initialize(D3D12Device* InDevice);
     void Shutdown();
 
-    /** Null if either shader is missing bytecode or PSO creation fails. Failures are cached too. */
+    /** Null if either shader is missing bytecode or PSO creation fails. Failures are cached too.
+     *  Any thread: a parallel pass's recording contexts look pipelines up at once (shared lock). */
     ID3D12PipelineState* GetOrCreate(const PipelineKey& Key, const D3D12ShaderResource* VS, const D3D12ShaderResource* PS);
 
     /** InCS's compute pipeline, made on first use; null (and cached) if creation fails. */
@@ -120,7 +124,14 @@ private:
 
     D3D12Device*                                    Device = nullptr;
     Microsoft::WRL::ComPtr<ID3D12RootSignature>     RootSignature;
-    std::unordered_map<uint64_t, Microsoft::WRL::ComPtr<ID3D12PipelineState>> Pipelines;
+    /* By the key's hash, each entry matched on its whole key: a hash alone can collide. */
+    struct PipelineEntry
+    {
+        PipelineKey                                 Key;
+        Microsoft::WRL::ComPtr<ID3D12PipelineState> Pipeline;
+    };
+    std::unordered_multimap<uint64_t, PipelineEntry> Pipelines;
+    mutable std::shared_mutex                        PipelinesLock;
 
     Microsoft::WRL::ComPtr<ID3D12RootSignature>     ComputeRootSignature;
     Microsoft::WRL::ComPtr<ID3D12CommandSignature>  DrawIndexedSignature;

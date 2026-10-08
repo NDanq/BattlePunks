@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // PPScreenReflections.fsh -- screen-space reflections (RenderCore/RENDERPIPELINE.md,
 // "Screen-space reflections"), between the Lighting stage and the image-based
 // lighting pass, which blends them over the probes' specular.

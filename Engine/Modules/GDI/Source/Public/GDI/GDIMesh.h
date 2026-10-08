@@ -186,8 +186,10 @@ public:
      * InMaxVertices / InMaxIndices and are written in place by the CPU, so it
      * keeps no RenderData copy. Within one BeginRendering block each update
      * APPENDS behind the last -- draws recorded earlier in the block still read
-     * their own data at submit -- and the next block starts again at 0 (every
-     * backend waits for the previous submission before recording). The draws
+     * their own data at submit -- and the next block starts again at 0. With
+     * frames in flight (GDIGetFramesInFlight) the backend's buffers hold a
+     * region of that capacity per frame, each block writing its slot's, which
+     * the GPU finished reading before the block began. The draws
      * after an update read that update's data, by range (SetDrawRange) as for
      * any indexed mesh.
      *
@@ -198,7 +200,7 @@ public:
     inline bool     IsDynamic()                 const { return bDynamic; }
     inline uint32_t GetDynamicVertexCapacity()  const { return DynamicVertexCapacity; }
     inline uint32_t GetDynamicIndexCapacity()   const { return DynamicIndexCapacity; }
-    bool            UpdateDynamic(const GDIMeshDesc& InDesc, uint64_t InRenderingSerial);   // GDI.cpp
+    bool            UpdateDynamic(const GDIMeshDesc& InDesc, uint64_t InRenderingSerial, uint32_t InFrameSlot = 0);   // GDI.cpp
 
     /* Index range for the next Draw() of an indexed mesh (clamped; count 0 =
      * all), so sections can draw with different shaders. */
@@ -234,7 +236,8 @@ protected:
     }
 
     /* A backend's dynamic mesh calls this from its constructor, before
-     * allocating the capacity in its own buffers. */
+     * allocating the capacity -- times its frames in flight -- in its own
+     * buffers. */
     inline void MakeDynamic(const uint32_t InMaxVertices, const uint32_t InMaxIndices)
     {
         bDynamic              = true;

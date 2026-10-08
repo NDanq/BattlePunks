@@ -385,14 +385,25 @@ namespace RenderCore
                                const EngineCore::Color* InClearBottom = nullptr);
 
         /* RenderScene::Render's, right after GDIBeginRendering: hands back the
-         * previous GDI block's stage times (ms per ERenderGpuTimer, -1 where
-         * not timed) and the scene that wrote them -- null if none did -- and
+         * stage times (ms per ERenderGpuTimer, -1 where not timed) of the GDI
+         * block GDIGetFramesInFlight() back -- the latest the GPU has surely
+         * finished -- and the scene that wrote them, null if none did; and
          * notes InOwner as this block's, if bInTime and the backend can time. */
         const void* BeginTimedBlock(const void* InOwner, bool bInTime, float (&OutGpuMs)[RGT_Count]);
 
         /* InTimer's start (or end) timestamp, outside RenderSceneStages (the
-         * scene captures' span); nothing unless this block is timed. */
+         * scene captures' span); nothing unless this block is timed. The
+         * render thread's time for the span is measured either way
+         * (GetStageCpuTimes). */
         void WriteGpuTimestamp(ERenderGpuTimer InTimer, bool bInEnd);
+
+        /* The last timed RenderSceneStages' render-thread milliseconds per
+         * ERenderGpuTimer (-1: did not run) and its draws per span (-1: not
+         * counted) -- what RenderStats::CpuMs and StageDraws average. */
+        void GetStageCpuTimes(float (&OutCpuMs)[RGT_Count], int32_t (&OutDraws)[RGT_Count]) const;
+
+        /* Stages recorded in parallel chunks so far (MULTITHREADED_RENDERING.md, phase 3). */
+        uint64_t GetParallelPassCount() const;
 
         /* Both DrawMesh overloads: bInEvery puts InSlots[0] in every slot. */
         bool DrawMeshSections(const RenderTransform& InTransform, const char* InMeshPath, EngineCore::Color InTint,

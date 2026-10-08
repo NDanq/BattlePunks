@@ -14,6 +14,7 @@
 #include <QFileInfo>
 
 #include "Public/Core/CoreConfig.h"
+#include "Public/Core/CoreJob.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/Editor/EditorContext.h"
@@ -125,6 +126,13 @@ int main(int argc, char* argv[])
         }
     }
 
+    /* The job pool (CoreJob.h): physical cores less one, alive before the
+     * window loads any module (the game's, at edit or Play) and until the last
+     * has unloaded -- module teardown drops a module's queued jobs through it.
+     * Animation, texture compression and parallel draw recording
+     * (MULTITHREADED_RENDERING.md) find it by GetJobSystem(). */
+    EngineCore::JobSystem Jobs;
+    EngineCore::SetJobSystem(&Jobs);
     /* Before any Play session or preview can make a sound; no device just
      * leaves the editor silent. */
     NimbleEngine::StartAudio();
@@ -141,6 +149,8 @@ int main(int argc, char* argv[])
 
         Result = App.exec();
     }
+    Jobs.WaitForIdle();
+    EngineCore::SetJobSystem(nullptr);
 
     /* The window and every Play session are gone, and their voices with them. */
     NimbleEngine::StopAudio();

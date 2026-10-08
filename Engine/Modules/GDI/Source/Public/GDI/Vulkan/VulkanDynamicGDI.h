@@ -3,6 +3,8 @@
 
 #include <vulkan/vulkan.h>
 #include "Public/GDI/Vulkan/GDIVulkanPlatform.h"
+#include <cstring>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -10,6 +12,9 @@
 #include <atomic>
 
 #include "Public/GDI/GDI.h"
+#include "Public/GDI/Vulkan/VKCommandManager.h"
+#include "Public/GDI/Vulkan/VKPipelineCache.h"
+#include "Public/GDI/Vulkan/VKShader.h"
 
 // Qt types used by this file. These were arriving implicitly through
 // Public/Odessa.h until GDI stopped including application headers;
@@ -150,6 +155,141 @@ public:
     VkShaderModule          BoundFSModule       = VK_NULL_HANDLE;
 };
 
+/*
+ * What a draw reuses rather than rebuilds, allocates or binds again
+ * (MULTITHREADED_RENDERING.md, phases 1 and 2): one set for the render
+ * thread's primary command buffer, one per recording context.
+ *
+ *   LastPipelineKey/Fetch  the last pipeline lookup: the same key (a run of
+ *                          draws with one shader pair and state) skips the map
+ *   Bound*                 what the command buffer has bound: not bound again.
+ *                          Forgotten whenever a command buffer begins
+ *                          (FlushForReadback restarts the same handle, so the
+ *                          handle cannot tell)
+ *   ViewUpload*            the ViewParameters block's last upload: reused while
+ *                          its bytes and the ring's epoch are unchanged
+ *   BlockUpload*, Skin*    the material, scene and skin blocks', while their
+ *                          serials are
+ *   DescSets               descriptor sets by their contents, for the ring's
+ *                          epoch: the ring-backed blocks are dynamic uniform
+ *                          buffers, so draws differing only in their offsets
+ *                          share one set
+ *   *Predicate*            the conditional rendering held open (ApplyDrawPredicate)
+ */
+struct VKDrawCaches
+{
+    struct DescSetKey
+    {
+        VkDescriptorSetLayout Layout = VK_NULL_HANDLE;
+        VkBuffer              Buffers[6]  = {};
+        uint32_t              Ranges[6]   = {};
+        VkSampler             Samplers[GDI_MATERIAL_TEXTURE_SLOTS] = {};
+        VkImageView           Views[GDI_MATERIAL_TEXTURE_SLOTS]    = {};
+        bool operator==(const DescSetKey& InOther) const { return std::memcmp(this, &InOther, sizeof(DescSetKey)) == 0; }
+    };
+    struct DescSetKeyHash
+    {
+        size_t operator()(const DescSetKey& InKey) const
+        {
+            const uint64_t* Words = reinterpret_cast<const uint64_t*>(&InKey);
+            uint64_t Hash = 1469598103934665603ull;
+            for(size_t Index = 0; Index < sizeof(DescSetKey) / sizeof(uint64_t); ++Index)
+            {
+                Hash = (Hash ^ Words[Index]) * 1099511628211ull;
+                Hash ^= Hash >> 29;
+            }
+            return size_t(Hash);
+        }
+    };
+
+    /* A command buffer begun: nothing bound in it, no predicate open. */
+    void ForgetBound()
+    {
+        BoundPipeline       = VK_NULL_HANDLE;
+        BoundLayout         = VK_NULL_HANDLE;
+        BoundSet            = VK_NULL_HANDLE;
+        BoundOffsetCount    = 0;
+        bPredicateOpen      = false;
+        OpenPredicateBuffer = VK_NULL_HANDLE;
+        OpenPredicateOffset = 0;
+    }
+
+    VKPipelineCache::PipelineKey   LastPipelineKey{};
+    VKPipelineCache::PipelineFetch LastPipelineFetch{};
+    bool                           bLastPipelineValid = false;
+
+    VkPipeline              BoundPipeline    = VK_NULL_HANDLE;
+    VkPipelineLayout        BoundLayout      = VK_NULL_HANDLE;
+    VkDescriptorSet         BoundSet         = VK_NULL_HANDLE;
+    uint32_t                BoundOffsets[6]  = {};
+    uint32_t                BoundOffsetCount = 0;
+
+    alignas(16) float       ViewUploadBytes[40] = {};
+    VkBuffer                ViewUploadBuffer  = VK_NULL_HANDLE;
+    VkDeviceSize            ViewUploadOffset  = 0;
+    uint64_t                ViewUploadEpoch   = ~0ull;
+
+    /* [0] the material block, [1] the scene block. */
+    VkBuffer                BlockUploadBuffer[2] = { VK_NULL_HANDLE, VK_NULL_HANDLE };
+    VkDeviceSize            BlockUploadOffset[2] = {};
+    uint32_t                BlockUploadSize[2]   = {};
+    uint64_t                BlockUploadSerial[2] = { ~0ull, ~0ull };
+    uint64_t                BlockUploadEpoch[2]  = { ~0ull, ~0ull };
+    /* The skin blocks: the palette, the frame before's. */
+    VkBuffer                SkinBlockUploadBuffer[2] = { VK_NULL_HANDLE, VK_NULL_HANDLE };
+    VkDeviceSize            SkinBlockUploadOffset[2] = {};
+    uint32_t                SkinBlockUploadSize[2]   = {};
+    uint64_t                SkinBlockUploadSerial[2] = { ~0ull, ~0ull };
+    uint64_t                SkinBlockUploadEpoch[2]  = { ~0ull, ~0ull };
+
+    std::unordered_map<DescSetKey, VkDescriptorSet, DescSetKeyHash> DescSets;
+    uint64_t                DescSetsEpoch = ~0ull;
+
+    bool                    bPredicateOpen      = false;
+    VkBuffer                OpenPredicateBuffer = VK_NULL_HANDLE;
+    VkDeviceSize            OpenPredicateOffset = 0;
+};
+
+/*
+ * Everything one draw is recorded with: the render thread's own state and
+ * the frame's primary command buffer (VulkanDynamicGDI::MakeImmediateInputs),
+ * or a recording context's copies and its secondary. BindDrawState and
+ * VKMesh::Record read nothing else of the driver's but its shared, read-only
+ * pieces -- the device, the pipeline cache (locked), the null texture.
+ */
+struct VKDrawInputs
+{
+    VkCommandBuffer             Cmd = VK_NULL_HANDLE;
+    bool                        bRenderingActive = false;
+    GDIShader*                  VS = nullptr;
+    GDIShader*                  PS = nullptr;
+    VkShaderModule              VSModule = VK_NULL_HANDLE;
+    VkShaderModule              FSModule = VK_NULL_HANDLE;
+    const std::vector<uint8_t>* Blocks  = nullptr;        // [4], as GDIDynamicDriver::MaterialBlocks
+    const uint64_t*             Serials = nullptr;        // [4]
+    GDITextureResource* const*  Textures = nullptr;       // [GDI_MATERIAL_TEXTURE_SLOTS]
+    GDIBuffer*                  InstanceBuffer = nullptr;
+    uint32_t                    InstanceCount  = 0;
+    GDIBuffer*                  IndirectArgs   = nullptr;
+    uint32_t                    IndirectArgsOffset = 0;
+    const class VKBlendState*        Blend = nullptr;
+    const class VKDepthStencilState* Depth = nullptr;
+    bool                        bHasTarget = false;
+    VkFormat                    RTFormat   = VK_FORMAT_UNDEFINED;
+    uint32_t                    ColorCount = 1;
+    VkFormat                    ColorFormats[GDI_MAX_COLOR_TARGETS] = {};
+    VkFormat                    DepthFormat = VK_FORMAT_UNDEFINED;
+    class VKOcclusionQueries*   PredicateSet   = nullptr;
+    int32_t                     PredicateIndex = -1;
+    /* The draw's own core blocks (a context's); null: the bound shaders'. */
+    const VKShaderResource::CoreBlocks* Core = nullptr;
+    /* The draw's own index range (a context's); 0 and 0: the mesh's. */
+    uint32_t                    DrawFirst = 0;
+    uint32_t                    DrawCount = 0;
+    VKDrawCaches*               Caches = nullptr;
+    class VKDescriptorAllocator* Alloc = nullptr;
+};
+
 class VulkanDynamicGDI : public GDIDynamicDriver
 {
 public:
@@ -233,6 +373,7 @@ public:
     /** Occlusion queries (VKQuery.cpp): a query pool and a host-visible result
      *  buffer per set; predication through VK_EXT_conditional_rendering. */
     bool                 SupportsOcclusionQueries() const override;
+    GDIParallelRecordingSupport GetParallelRecordingSupport() const override;
     bool                 SupportsOcclusionPredication() const override;
     GDIOcclusionQueries* CreateOcclusionQueries(uint32_t InCapacity) override;
     void                 BeginOcclusionRound(GDIOcclusionQueries* InSet, uint32_t InCount) override;
@@ -246,12 +387,17 @@ public:
     void ReleaseOcclusionQueries(class VKOcclusionQueries* InSet);
 
     /**
-     * VKMesh::Draw, around its vkCmdDraw*: begins conditional rendering on
-     * GDISetOcclusionPredicate's query, if one is set and the device can;
-     * true if it did, to pass to EndDrawPredicate.
+     * Puts the draw about to be recorded under GDISetOcclusionPredicate's
+     * predicate (VKMesh::Draw). Conditional rendering is held open across
+     * consecutive draws with the same predicate -- an entity's sections share
+     * its query, and begun and ended round each draw it cost the driver ~2.7 us
+     * a draw -- switched when the predicate changes, ended for a draw with
+     * none, and closed by CloseDrawPredicate before anything it would affect
+     * (a clear) or that must not span it (the rendering's end, a query).
      */
-    bool BeginDrawPredicate(VkCommandBuffer InCmd);
-    void EndDrawPredicate(VkCommandBuffer InCmd, bool bInBegun);
+    void ApplyDrawPredicate(const VKDrawInputs& InInputs);
+    void CloseDrawPredicate(VKDrawCaches& InCaches, VkCommandBuffer InCmd);
+    void CloseDrawPredicate();   // the render thread's
 
     /** Vulkan present path: UI thread acquires + blits the offscreen RT and presents. */
     void PresentToWindow(EngineCore::WindowHandle InWindow) override;
@@ -286,7 +432,9 @@ public:
      * Backs VKRenderTarget::BeginReadback.
      */
     bool RecordReadback(class VKRenderTarget* Src, VkBuffer Dst, uint64_t& OutDoneAt);
-    bool IsSubmissionDone(uint64_t InDoneAt) const { return InDoneAt <= CompletedTimelineValue; }
+    /* Whether the frame that signals InDoneAt has finished on the GPU: from
+     * what the fences have shown, else the timeline semaphore itself. */
+    bool IsSubmissionDone(uint64_t InDoneAt);
 
     /**
      * Build the pipeline + descriptor set for the current GDI state and bind them
@@ -295,7 +443,32 @@ public:
      * DrawObject path and a direct Mesh->Draw() (layer compositing) — gets a bound
      * pipeline. Returns false (and binds nothing) if state is incomplete.
      */
-    bool BindDrawState(GDIMesh* InMesh, bool bIsInstanced);
+    bool BindDrawState(const VKDrawInputs& InInputs, GDIMesh* InMesh, bool bIsInstanced);
+
+    /** The render thread's draw inputs: its state, the frame's primary. */
+    void MakeImmediateInputs(VKDrawInputs& OutInputs);
+
+    /* Parallel passes (GDIBeginParallelPass): VKRecordingContext.cpp. */
+    bool BeginParallelPass(uint32_t InChunks, GDIRecordingContext** OutContexts) override;
+    void EndParallelPass() override;
+    void RecordDepthState(GDIRecordingContext* InContext, IDepthStateDesc InDesc) override;
+    void RecordBlendState(GDIRecordingContext* InContext, IBlendStateDesc InDesc) override;
+    void RecordStencilState(GDIRecordingContext* InContext, IStencilStateDesc InDesc) override;
+    void RecordColorMask(GDIRecordingContext* InContext, EColorMask InMask) override;
+    void RecordViewport(GDIRecordingContext* InContext, uint InX, uint InY, uint InWidth, uint InHeight) override;
+    void RecordScissorRect(GDIRecordingContext* InContext, uint InX, uint InY, uint InWidth, uint InHeight) override;
+    void RecordDrawObject(GDIRecordingContext* InContext, GDIViewObject* InObject, GDIView* InView) override;
+    void RecordBeginDrawEvent(GDIRecordingContext* InContext, const std::string& InName) override;
+    void RecordEndDrawEvent(GDIRecordingContext* InContext) override;
+    /* Each context's resources for frame slot InSlot reset (BeginRendering,
+     * once the slot's fence is waited). */
+    void ResetRecordingContexts(uint32_t InSlot);
+    void DestroyRecordingContexts();
+    /* InSet's query InIndex if it can predicate a draw now (resolved this
+     * round, in range); else null (VKQuery.cpp). */
+    class VKOcclusionQueries* UsablePredicate(GDIOcclusionQueries* InSet, int32_t InIndex) const;
+    /* GDISetOcclusionPredicate's set, as GDI's type (VKQuery.cpp). */
+    GDIOcclusionQueries*      ImmediatePredicateSet() const;
 
     /**
      * Marks that render targets are being resized (render thread). While set, the
@@ -321,21 +494,28 @@ public:
      * texture/mesh immediately after the draw that uses it (e.g. QCanvasLayer::Restore's
      * temp texture in the flood-fill path) — legal on GL, but on Vulkan the handles
      * are still referenced by the open (or in-flight) frame command buffer, and
-     * destroying them invalidates it. Handles queued here are destroyed only after
-     * the next frame-fence wait proves all prior submits completed.
+     * destroying them invalidates it. Each handle queued here is tagged with the
+     * frame being recorded (RenderTimelineCounter + 1, which covers every frame
+     * in flight before it) and destroyed once that frame has finished.
      */
     void DeferDestroyImage(VkImage InImage, VkDeviceMemory InMemory, VkImageView InView, VkSampler InSampler);
     void DeferDestroyBuffer(VkBuffer InBuffer, VkDeviceMemory InMemory);
-    /** Destroy everything queued above. Caller must guarantee the GPU no longer references them. */
-    void DrainDeferredDestruction();
+    /** Destroy what is queued above for frames up to InDoneAt (all of it by default). Caller
+     *  must guarantee the GPU has finished those frames. */
+    void DrainDeferredDestruction(uint64_t InDoneAt = ~0ull);
 
     inline VKDevice*                GetDeviceObj()       const { return DeviceObj; }
     inline VKCommandManager*        GetCommandManager()  const { return CommandManager; }
     inline VKPipelineCache*         GetPipelineCache()   const { return PipelineCache; }
     inline VKDescriptorAllocator*   GetDescAlloc()       const { return DescAlloc; }
 
+    void ForgetBoundDrawState() { Immediate.ForgetBound(); }
+
 private:
     void EndActiveRenderingRegion();
+    /* vkCmdBeginRendering again on the active targets, every attachment
+     * loaded, with InFlags (a parallel pass's: secondaries' contents). */
+    void ReopenRendering(VkRenderingFlags InFlags);
 
     /** InWork(Cmd) outside the open rendering region, reopened after it (VKQuery.cpp). */
     template<typename WorkFn> void RecordOutsideRendering(WorkFn&& InWork);
@@ -362,22 +542,23 @@ private:
      *  (and Destroy, once the UI thread no longer presents). */
     std::vector<std::pair<void*, VKSwapchain*>> Swapchains;
     VKPipelineCache*        PipelineCache       = nullptr;
+    /* One per frame in flight (FramesInFlight), each reset once its slot's
+     * fence is waited; DescAlloc is the slot being recorded's. */
+    VKDescriptorAllocator*  DescAllocs[VK_FRAMES_IN_FLIGHT_MAX] = {};
     VKDescriptorAllocator*  DescAlloc           = nullptr;
+    uint32_t                FramesInFlightCount = 1;   // [Rendering] FramesInFlight, read at Allocate
     VKCurrentStateData*     CurrentStateData    = nullptr;
 
-    /** The scene block's last upload, reused while its serial and the ring's
-     *  epoch are unchanged: it is set once per scene, not per draw. */
-    VkBuffer                SceneBlockUploadBuffer = VK_NULL_HANDLE;
-    VkDeviceSize            SceneBlockUploadOffset = 0;
-    uint64_t                SceneBlockUploadSerial = ~0ull;
-    uint64_t                SceneBlockUploadEpoch  = ~0ull;
-    /* The skin blocks the same way (the palette, the frame before's):
-     * unchanged since the last upload, reused. */
-    VkBuffer                SkinBlockUploadBuffer[2] = { VK_NULL_HANDLE, VK_NULL_HANDLE };
-    VkDeviceSize            SkinBlockUploadOffset[2] = {};
-    uint32_t                SkinBlockUploadSize[2]   = {};
-    uint64_t                SkinBlockUploadSerial[2] = { ~0ull, ~0ull };
-    uint64_t                SkinBlockUploadEpoch[2]  = { ~0ull, ~0ull };
+
+    /* The render thread's draw caches (VKDrawCaches): what its draws on the
+     * frame's primary command buffer reuse. */
+    VKDrawCaches            Immediate;
+
+    /* The parallel passes' contexts (BeginParallelPass), made on first need
+     * and kept; ParallelChunks of them record the open pass. */
+    std::vector<class VKRecordingContext*> RecordingContexts;
+    uint32_t                ParallelChunks = 0;
+    bool                    bParallelPass  = false;
 
     /** Lazily-created full-screen NDC quad for DrawScreenQuadPrimitive. */
     GDIMesh*                ScreenMesh          = nullptr;
@@ -398,18 +579,19 @@ private:
 
     /*
      * GPU timestamps (GDIDynamicDriver::WriteGPUTimestamp), render thread
-     * only. One pool of GDI_GPU_TIMESTAMP_MAX, reset at each BeginRendering
-     * after the previous block's are read back -- its fence has just been
-     * waited, so they are complete. Null if the graphics queue cannot time.
+     * only. One pool of GDI_GPU_TIMESTAMP_MAX per frame slot (queries
+     * [Slot * MAX, (Slot + 1) * MAX)); a slot's are read back at the
+     * BeginRendering that reuses it -- its fence has just been waited, so
+     * they are complete -- then reset. Null if the queue cannot time.
      */
     VkQueryPool TimestampPool      = VK_NULL_HANDLE;
     double      TimestampPeriodNs  = 0.0;                         // nanoseconds per tick
     uint64_t    TimestampValidMask = 0;                           // the queue's timestampValidBits
-    uint64_t    TimestampsWritten  = 0;                           // this block's, by index
+    uint64_t    TimestampsWritten[VK_FRAMES_IN_FLIGHT_MAX] = {};  // each slot's last block's, by index
     uint64_t    PreviousTimestamps = 0;                           // the previous block's, read back
     double      PreviousTimestampMs[GDI_GPU_TIMESTAMP_MAX] = {};
     void CreateTimestampPool();
-    void CollectTimestamps();
+    void CollectTimestamps(uint32_t InSlot);
 
     // Set by RT resize (render thread), cleared by EndRendering; read by the
     // UI-thread present to skip frames while targets are being recreated.
@@ -419,13 +601,15 @@ private:
     // SetRenderTarget all run on the render thread).
     std::unordered_set<VKRenderTarget*>  LiveRenderTargets;
 
-    // Deferred-destruction queues (render thread only). Drained after each
-    // frame-fence wait (BeginRendering / FlushForReadback) and at Destroy.
-    struct DeferredImage  { VkImage Image; VkDeviceMemory Memory; VkImageView View; VkSampler Sampler; };
-    struct DeferredBuffer { VkBuffer Buffer; VkDeviceMemory Memory; };
-    std::vector<DeferredImage>  DeferredImages;
-    std::vector<DeferredBuffer> DeferredBuffers;
-    std::vector<VkQueryPool>    DeferredQueryPools;   // released occlusion query sets'
+    // Deferred-destruction queues (render thread only), each entry tagged with
+    // the frame that may still use it. Drained after each frame-fence wait
+    // (BeginRendering: what has finished; FlushForReadback: all) and at Destroy.
+    struct DeferredImage     { VkImage Image; VkDeviceMemory Memory; VkImageView View; VkSampler Sampler; uint64_t DoneAt; };
+    struct DeferredBuffer    { VkBuffer Buffer; VkDeviceMemory Memory; uint64_t DoneAt; };
+    struct DeferredQueryPool { VkQueryPool Pool; uint64_t DoneAt; };
+    std::vector<DeferredImage>     DeferredImages;
+    std::vector<DeferredBuffer>    DeferredBuffers;
+    std::vector<DeferredQueryPool> DeferredQueryPools;   // released occlusion query sets'
 };
 
 #endif //CORECLIENT_VULKANDYNAMICGDI_H

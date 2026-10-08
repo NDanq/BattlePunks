@@ -17,6 +17,7 @@
 // Public/Odessa.h until GDI stopped including application headers;
 // they are explicit now, and each one disappears as its type converts.
 #include <string>
+#include <atomic>
 #include <unordered_map>
 #include <vector>
 
@@ -222,6 +223,89 @@ public:
     GDIContextType          ContextType;
 };
 
+
+/**
+ * What a backend offers for recording draws on several threads (parallel
+ * command recording: Vulkan secondary command buffers, D3D12 command lists,
+ * Metal's parallel render encoder), for RenderCore's gate. Nothing records in
+ * parallel yet; this is the capability, not the switch ([Rendering]
+ * ParallelRecording decides that).
+ *
+ *   bSupported            chunks of draws may be recorded on other threads
+ *                         and executed in order on the frame's primary
+ *   bSerialOnly           the chunked path runs, but every chunk on the
+ *                         calling thread (Null: for headless tests)
+ *   bInheritedQueries     an occlusion query begun on the primary may stay
+ *                         open across executed chunks (Vulkan inheritedQueries)
+ *   bInheritedPredication a predicate begun on the primary applies inside
+ *                         chunks (Vulkan inheritedConditionalRendering)
+ *   Mechanism             how, for the log
+ *   Reason                why not, when !bSupported
+ */
+struct GDIParallelRecordingSupport
+{
+    bool        bSupported            = false;
+    bool        bSerialOnly           = false;
+    bool        bInheritedQueries     = false;
+    bool        bInheritedPredication = false;
+    const char* Mechanism             = "";
+    const char* Reason                = "";
+};
+
+class GDIOcclusionQueries;
+class GDIBuffer;
+
+/**
+ * One thread's draw state while it records a chunk of a parallel pass
+ * (GDIBeginParallelPass; RenderCore's MULTITHREADED_RENDERING.md, phase 2).
+ *
+ * While a context is current on a thread (GDISetCurrentRecording), the draw
+ * path's GDI* setters -- GDISetBoundShader, GDISetUniformBlock,
+ * GDISetMaterialTexture, the depth, blend, stencil and colour-mask states,
+ * GDISetViewport and the scissor, GDISetInstanceBuffer, GDISetIndirectArgs,
+ * GDISetOcclusionPredicate, GDISetDrawRange -- write into it instead of the
+ * driver, and GDIDrawObject records into its own command buffer. So several
+ * threads record at once, each into its own context, with no shared state.
+ * Anything else (render targets, clears, queries, dispatches, resources) is
+ * the render thread's alone, outside the pass.
+ *
+ * The backend's subclass adds its command buffer and caches. A context starts
+ * each pass with the driver's state as it was at GDIBeginParallelPass.
+ */
+class GDIRecordingContext
+{
+public:
+    virtual ~GDIRecordingContext() = default;
+
+    GDIShader*            BoundVertexShader = nullptr;
+    GDIShader*            BoundPixelShader  = nullptr;
+    /* [0] material, [1] scene, [2] skin, [3] previous skin, as the driver's. */
+    std::vector<uint8_t>  MaterialBlocks[4];
+    uint64_t              MaterialBlockSerials[4] = {};
+    GDITextureResource*   MaterialTextures[GDI_MATERIAL_TEXTURE_SLOTS] = {};
+    GDIBuffer*            InstanceBuffer     = nullptr;
+    uint32_t              InstanceCount      = 0;
+    GDIBuffer*            IndirectArgs       = nullptr;
+    uint32_t              IndirectArgsOffset = 0;
+    GDIOcclusionQueries*  PredicateSet       = nullptr;
+    int32_t               PredicateIndex     = -1;
+    uint                  ViewportX = 0, ViewportY = 0, ViewportWidth = 0, ViewportHeight = 0;
+    /* GDISetDrawRange's: in a context the range belongs to the draw, not to
+     * the mesh, which other threads may be drawing (0 and 0: the mesh's own). */
+    uint32_t              DrawFirst = 0;
+    uint32_t              DrawCount = 0;
+    /* Which of the pass's contexts: its chunk, executed in this order. */
+    uint32_t              Index = 0;
+    /* Draws recorded into it this pass. */
+    uint32_t              DrawsRecorded = 0;
+};
+
+/* GDISetUniformBlock's storage, shared by the driver and recording contexts:
+ * InData into the block InBinding names, its serial bumped if the bytes
+ * changed. False for a binding that is not a block. */
+bool GDIStoreUniformBlock(std::vector<uint8_t> (&InOutBlocks)[4], uint64_t (&InOutSerials)[4], uint InBinding,
+                          const void* InData, uint InSize);
+
 class GDIDynamicDriver
 {
 public:
@@ -385,9 +469,9 @@ public:
     /**
      * GPU timestamps, for timing GPU work ("stat frame"). Within one
      * BeginRendering/EndRendering block, WriteGPUTimestamp(i) records the time
-     * the GPU reaches that point, for i below GDI_GPU_TIMESTAMP_MAX. The block
-     * is complete by the next BeginRendering (one frame in flight), so from
-     * then until the next one GetPreviousGPUTimestamps gives the previous
+     * the GPU reaches that point, for i below GDI_GPU_TIMESTAMP_MAX. A block is
+     * complete by the BeginRendering GDIGetFramesInFlight() blocks after it,
+     * so from then until the next one GetPreviousGPUTimestamps gives that
      * block's: OutMilliseconds[i] for each bit i of the returned mask, on one
      * GPU clock (only differences mean anything). A backend that cannot
      * time -- the default -- writes nothing and returns 0.
@@ -402,6 +486,37 @@ public:
      * SupportsOcclusionPredication: whether GDISetOcclusionPredicate skips
      * draws, or is ignored and they all draw.
      */
+    /**
+     * Parallel draw recording (GDIGetParallelRecordingSupport): whether this
+     * backend could record draws on several threads and execute them in
+     * order. A backend that cannot keeps this default.
+     */
+    virtual GDIParallelRecordingSupport GetParallelRecordingSupport() const
+    {
+        GDIParallelRecordingSupport Out;
+        Out.Reason = "this backend records every draw on one thread";
+        return Out;
+    }
+
+    /**
+     * Parallel passes (GDIBeginParallelPass). A backend that records in
+     * parallel makes InChunks contexts recording inside the bound targets'
+     * rendering and returns them; EndParallelPass executes them in order and
+     * reopens the rendering as before. The Record* hooks are the GDI* setters
+     * while a context is current. Defaults: no parallel passes.
+     */
+    virtual bool BeginParallelPass(uint32_t /*InChunks*/, GDIRecordingContext** /*OutContexts*/) { return false; }
+    virtual void EndParallelPass() {}
+    virtual void RecordDepthState(GDIRecordingContext* /*InContext*/, IDepthStateDesc /*InDesc*/) {}
+    virtual void RecordBlendState(GDIRecordingContext* /*InContext*/, IBlendStateDesc /*InDesc*/) {}
+    virtual void RecordStencilState(GDIRecordingContext* /*InContext*/, IStencilStateDesc /*InDesc*/) {}
+    virtual void RecordColorMask(GDIRecordingContext* /*InContext*/, EColorMask /*InMask*/) {}
+    virtual void RecordViewport(GDIRecordingContext* /*InContext*/, uint, uint, uint, uint) {}
+    virtual void RecordScissorRect(GDIRecordingContext* /*InContext*/, uint, uint, uint, uint) {}
+    virtual void RecordDrawObject(GDIRecordingContext* /*InContext*/, class GDIViewObject* /*InObject*/, class GDIView* /*InView*/) {}
+    virtual void RecordBeginDrawEvent(GDIRecordingContext* /*InContext*/, const std::string& /*InName*/) {}
+    virtual void RecordEndDrawEvent(GDIRecordingContext* /*InContext*/) {}
+
     virtual bool                 SupportsOcclusionQueries() const { return false; }
     virtual bool                 SupportsOcclusionPredication() const { return false; }
     virtual GDIOcclusionQueries* CreateOcclusionQueries(uint32_t /*InCapacity*/) { return nullptr; }
@@ -615,6 +730,14 @@ protected:
      * when it changes. */
     uint64_t              RenderingSerial = 0;
 
+    /* Frames the backend lets the GPU run behind the CPU, and which of them
+     * the open block records (Vulkan's and D3D12's command slots; 1 and 0 elsewhere): a
+     * dynamic mesh keeps a region of its buffers per frame in flight. Set by
+     * the backend at Allocate and BeginRendering. */
+    uint32_t              FramesInFlight = 1;
+    uint32_t              FrameSlot      = 0;
+    friend uint32_t GDIGetFramesInFlight();
+
     friend void GDISetViewport(uint, uint, uint, uint);
     friend void GDIBeginRendering();
     friend void GDISetScissorRect(uint, uint, uint, uint);
@@ -702,6 +825,16 @@ bool GDIUpdateDynamicMesh(GDIMesh* InMesh, const GDIMeshDesc& InDesc);
 /* How many BeginRendering blocks have begun: a dynamic mesh's appends are
  * per block. */
 uint64_t GDIGetRenderingSerial();
+
+/* How many BeginRendering blocks the GPU may still be running when the next
+ * begins (1 without a driver): what the CPU writes for a block -- a query
+ * set's answers, a dynamic mesh's region -- it may reuse only that many
+ * blocks later. Vulkan's and D3D12's are [Rendering] FramesInFlight. */
+uint32_t GDIGetFramesInFlight();
+
+/* [Rendering] FramesInFlight, clamped to 1..GDI_FRAMES_IN_FLIGHT_MAX: what a
+ * backend that can run ahead reads when it makes its device. */
+uint32_t GDIGetConfiguredFramesInFlight();
 
 /*
  * Scissor, in pixels of the current viewport from its TOP-LEFT (the way a
@@ -849,6 +982,36 @@ uint64_t GDIGetPreviousGPUTimestamps(double* OutMilliseconds);   // GDI_GPU_TIME
  */
 bool                 GDISupportsOcclusionQueries();
 bool                 GDISupportsOcclusionPredication();
+
+/**
+ * Parallel draw recording (RenderCore's MULTITHREADED_RENDERING.md, "The
+ * gate"): what the backend and its device offer, decided at device creation.
+ * GDISupportsParallelRecording: bSupported. With no driver, nothing.
+ */
+GDIParallelRecordingSupport GDIGetParallelRecordingSupport();
+bool                 GDISupportsParallelRecording();
+
+/**
+ * A parallel pass (render thread), inside the bound render targets: false
+ * (nothing begun) where the backend cannot -- issue serially. Otherwise
+ * OutContexts[0..InChunks) are recording; each thread recording a chunk makes
+ * its context current (GDISetCurrentRecording), issues its draws through the
+ * usual GDI* setters and GDIDrawObject, and clears it. GDIEndParallelPass,
+ * once every chunk is recorded, executes them in chunk order where the pass
+ * began; the render thread's own state is as before the pass, but what is
+ * bound in the command buffer is not (backends forget it). No clears,
+ * render-target changes, queries or dispatches between begin and end.
+ * InChunks at most GDI_PARALLEL_CHUNKS_MAX.
+ */
+bool                 GDIBeginParallelPass(uint32_t InChunks, GDIRecordingContext** OutContexts);
+void                 GDIEndParallelPass();
+/* The calling thread's recording context, null for none (the render thread's
+ * own state). Thread-local. */
+void                 GDISetCurrentRecording(GDIRecordingContext* InContext);
+GDIRecordingContext* GDIGetCurrentRecording();
+/* The index range InMesh's next draw uses: in a recording context, the
+ * draw's own (the mesh may be shared); else GDIMesh::SetDrawRange. */
+void                 GDISetDrawRange(GDIMesh* InMesh, uint32_t InFirst, uint32_t InCount);
 GDIOcclusionQueries* GDICreateOcclusionQueries(uint32_t InCapacity);
 void                 GDIBeginOcclusionRound(GDIOcclusionQueries* InSet, uint32_t InCount);
 void                 GDIBeginOcclusionQuery(GDIOcclusionQueries* InSet, uint32_t InIndex);
@@ -885,7 +1048,7 @@ void GDISetDebugName(GDIMesh* InMesh, const std::string& InName);
 void GDISetDebugName(GDIBuffer* InBuffer, const std::string& InName);
 void GDISetDebugName(GDITextureResource* InTexture, const std::string& InName);
 
-extern int GDebugGroupID;
+extern std::atomic<int> GDebugGroupID;   // bumped by every thread's draw events
 
 /* A named region of GPU work for capture tools (RenderDoc, PIX, Xcode): begun
  * here, ended when it goes out of scope; regions nest. Render thread only. */

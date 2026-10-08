@@ -29,6 +29,7 @@
 #include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/Core/CoreImage.h"
+#include "Public/Core/CoreJob.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CorePlatform.h"
 #include "Public/Core/CoreThread.h"
@@ -40,6 +41,7 @@
 #include "Public/GameCore/World.h"
 #include "Public/RenderCore/MaterialDescription.h"
 #include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/ParallelRecording.h"
 #include "Public/RenderCore/PostProcessStack.h"
 #include "Public/RenderCore/RenderCommand.h"
 #include "Public/RenderCore/RenderComponents.h"
@@ -489,17 +491,71 @@ static void TestStatUnit()
             RenderStats Null;
             Rend.GetStats(Null);
             Expect(Null.GpuMs[RGT_Total] < 0.0f && Null.GpuMs[RGT_BasePass] < 0.0f, "the Null backend times no GPU work");
+            Expect(Null.QueueCpuMs >= 0.0f && Null.StageDraws[RGT_Total] >= 0,
+                   "but the render thread's queueing and the stages' draws are measured on every backend");
+
+            /* Parallel draw recording's gate (ParallelRecording.h): Null runs
+             * the chunks serially, so it is available without workers. */
+            Expect(Null.bParallelRecordingAvailable, "the gate finds parallel recording available on Null (serial chunks)");
+            const ParallelRecordingState Auto = EvaluateParallelRecording();
+            Expect(Auto.bBackend && Auto.bSerialOnly && Auto.bEnabled && Auto.Mode == EParallelRecordingMode::Auto,
+                   "Auto by default, the backend able, serially");
+            Expect(!ShouldRecordInParallel(Auto, Auto.MinDraws - 1) && ShouldRecordInParallel(Auto, Auto.MinDraws),
+                   "Auto splits a stage from ParallelMinDraws draws, not below");
+            if(ConfigVar* ModeVar = ConfigFindVarByPath("Rendering.ParallelRecording"))
+            {
+                ModeVar->SetString("off");
+                const ParallelRecordingState Off = EvaluateParallelRecording();
+                Expect(!Off.bEnabled && !ShouldRecordInParallel(Off, 100000), "ParallelRecording=Off (any case) turns it off");
+                ModeVar->SetString("On");
+                const ParallelRecordingState On = EvaluateParallelRecording();
+                Expect(On.bEnabled && ShouldRecordInParallel(On, 1) && !ShouldRecordInParallel(On, 0),
+                       "On splits any stage with draws");
+                ModeVar->SetString("Auto");
+            }
+            else
+            {
+                Expect(false, "[Rendering] ParallelRecording exists");
+            }
             FrameVar->SetBool(false);
         }
         Rend.Shutdown();
     }
 
-    float Times[RGT_Count] = { 0.01f, 0.5f, -1.0f, 1.25f, 0.2f, 0.05f, 0.75f, 2.8f, 0.6f, 0.3f };
-    const std::string FrameText = FormatStatFrame(Times, true);
-    Expect(FrameText == "GPU            ms\nPrePass      0.01\nBasePass     0.50\nAO              -\nShadows      1.25\n"
-                        "Lighting     0.20\nForward      0.05\nPostProcess  0.75\nTotal        2.80\nCaptures     0.60\nParticles    0.30",
-           "stat frame's text, a line per stage, the scene captures and particles after the total");
-    Expect(FormatStatFrame(Times, false) == "GPU: not timed on this backend", "and a line saying so where the GPU is not timed");
+    const float   Times[RGT_Count] = { 0.01f, 0.5f, -1.0f, 1.25f, 0.2f, 0.05f, 0.75f, 2.8f, 0.6f, 0.3f };
+    const float   Cpu[RGT_Count]   = { 0.12f, 3.5f, 0.02f, 4.25f, 0.1f, 0.4f, 0.6f, 9.1f, 1.5f, 0.05f };
+    const int32_t Draws[RGT_Count] = { 80, 1200, -1, 1800, 1, 24, 6, 3111, -1, -1 };
+    const std::string FrameText = FormatStatFrame(Times, Cpu, Draws, 2.25f, true);
+    Expect(FrameText ==
+                        "Stage       GPU ms CPU ms  Draws\n"
+                        "PrePass       0.01   0.12     80\n"
+                        "BasePass      0.50   3.50   1200\n"
+                        "AO               -   0.02      -\n"
+                        "Shadows       1.25   4.25   1800\n"
+                        "Lighting      0.20   0.10      1\n"
+                        "Forward       0.05   0.40     24\n"
+                        "PostProcess   0.75   0.60      6\n"
+                        "Total         2.80   9.10   3111\n"
+                        "Captures      0.60   1.50      -\n"
+                        "Particles     0.30   0.05      -\n"
+                        "Queue            -   2.25      -",
+           "stat frame's text: a line per stage with GPU ms, render-thread ms and draws, captures and particles after "
+           "the total, then the queueing");
+    Expect(FormatStatFrame(Times, Cpu, Draws, 2.25f, false) ==
+                        "Stage       GPU ms CPU ms  Draws\n"
+                        "PrePass          -   0.12     80\n"
+                        "BasePass         -   3.50   1200\n"
+                        "AO               -   0.02      -\n"
+                        "Shadows          -   4.25   1800\n"
+                        "Lighting         -   0.10      1\n"
+                        "Forward          -   0.40     24\n"
+                        "PostProcess      -   0.60      6\n"
+                        "Total            -   9.10   3111\n"
+                        "Captures         -   1.50      -\n"
+                        "Particles        -   0.05      -\n"
+                        "Queue            -   2.25      -\n"
+                        "GPU: not timed on this backend",
+           "and where the GPU is not timed, its column empty and a line saying so");
 }
 
 /*
@@ -1362,6 +1418,13 @@ static void TestMaterialsOnGpu()
             Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
             Rend.WaitForPreviousFrame();
         };
+        /* The frame that draws a preview, then as many as the GPU may run
+         * behind ([Rendering] FramesInFlight, 3 at most): its readback has
+         * finished. */
+        const auto SettlePreviews = [&]
+        {
+            for(int Each = 0; Each < 4; ++Each) { DrawFrame(); }
+        };
         DrawFrame();
 
         const std::vector<std::string> Layers_ = Layers.GetLayerNames();
@@ -1385,8 +1448,7 @@ static void TestMaterialsOnGpu()
         {
             Each.Request = Rend.RequestMaterialPreview(Each.Material, 64, EngineCore::Color(255, 255, 255, 255));
         }
-        DrawFrame();
-        DrawFrame();
+        SettlePreviews();
         for(Check& Each : Checks)
         {
             EngineCore::Image Pixels;
@@ -1480,8 +1542,7 @@ static void TestMaterialsOnGpu()
             SetLogHandler(&BlockLogHandler);
             const uint64_t Request = Rend.RequestMaterialPreview("Content/Materials/Textured.material.nmgraph", 64,
                                                                  EngineCore::Color(255, 255, 255, 255));
-            DrawFrame();
-            DrawFrame();
+            SettlePreviews();
             SetLogHandler(GPreviousLogHandler);
             const bool bBlocks = GBlockDecodes == 0;
             EngineCore::Image Pixels;
@@ -1527,8 +1588,7 @@ static void TestMaterialsOnGpu()
             InPreview.Width  = 96;
             InPreview.Height = 64;
             const uint64_t Request = Rend.RequestMeshPreview(InPreview);
-            DrawFrame();
-            DrawFrame();
+            SettlePreviews();
             return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, OutError) && OutPixels.GetWidth() == 96;
         };
         const auto Pixel = [](const EngineCore::Image& InPixels, const int InX, const int InY, int (&OutRgb)[3])
@@ -2708,6 +2768,146 @@ static void TestShadowsOnGpu()
         Rend.Shutdown();
     }
     if(Enabled) { Enabled->SetFromString("1"); }
+    SetFileProvider(PreviousProvider);
+}
+#endif // WITH_EDITOR
+
+#if WITH_EDITOR
+/*
+ * Parallel draw recording on the GPU (NIMBLE_SMOKE_GPU=Vulkan;
+ * MULTITHREADED_RENDERING.md, phase 3): a floor and a grid of boxes under a
+ * cascaded sun, captured with [Rendering] ParallelRecording Off and On. The
+ * chunks record the same draws in the same order into secondaries, so the
+ * two images are the same byte for byte, and only the On capture counts
+ * parallel passes.
+ */
+static void TestParallelRecordingOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[parallel recording on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[parallel recording on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    /* Workers before the renderer, so the gate sees somewhere to run chunks. */
+    EngineCore::JobSystem Jobs(4);
+    EngineCore::JobSystem* PreviousJobs = EngineCore::GetJobSystem();
+    EngineCore::SetJobSystem(&Jobs);
+
+    ConfigVar* ModeVar  = ConfigFindVarByPath("Rendering.ParallelRecording");
+    ConfigVar* MinDraws = ConfigFindVarByPath("Rendering.ParallelMinDraws");
+    Expect(ModeVar != nullptr && MinDraws != nullptr, "[Rendering] ParallelRecording and ParallelMinDraws are config vars");
+
+    Renderer Rend;
+    const bool bInit = ModeVar && MinDraws && Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = RenderView::MakePerspective(Viewport, Vector3(0.0, 1400.0, -1600.0), Vector3(0.0, -1400.0, 1600.0),
+                                                            50.0f, 10.0f, 8000.0f);
+        Rend.SetViewOverride(&View);
+        GameCore::World World;
+        Rend.BindWorld(World);
+
+        const auto Placed = [&World](const std::string& InName, const Vector3& InPosition, const Vector3& InRotation, const Vector3& InScale)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName.c_str());
+            GameCore::TransformComponent Transform;
+            Transform.Position = InPosition;
+            Transform.Rotation = InRotation;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            return Each;
+        };
+        const auto Mesh = [](const char* InPath)
+        {
+            RenderComponent Render;
+            std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", InPath);
+            return Render;
+        };
+
+        Placed("Floor", Vector3(), Vector3(), Vector3(4000.0, 1.0, 4000.0)).AddComponent(Mesh("Engine/Content/Meshes/Plane.nmmesh"));
+        for(int Z = 0; Z < 20; ++Z)
+        {
+            for(int X = 0; X < 20; ++X)
+            {
+                const double Height = 30.0 + 10.0 * ((X * 7 + Z * 3) % 9);
+                Placed("Box" + std::to_string(Z * 20 + X), Vector3(-1520.0 + X * 160.0, Height * 0.5, -1520.0 + Z * 160.0),
+                       Vector3(0.0, (X + Z) * 9.0, 0.0), Vector3(60.0, Height, 60.0))
+                    .AddComponent(Mesh("Engine/Content/Meshes/Box.nmmesh"));
+            }
+        }
+        DirectionalLightComponent SunInit;
+        SunInit.ShadowTechnique = LST_Cascaded;
+        SunInit.ShadowDistance  = 5000.0f;
+        Placed("Sun", Vector3(), Vector3(50.0, 60.0, 0.0), Vector3(1.0, 1.0, 1.0)).AddComponent(SunInit);
+        Placed("Sky", Vector3(), Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(SkyLightComponent());
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](EngineCore::Image& OutPixels)
+        {
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            const uint64_t Request = Rend.RequestSceneCapture();
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto Passes = [&Rend]() { RenderStats Stats; Rend.GetStats(Stats); return Stats.ParallelPasses; };
+        const auto Differing = [](const EngineCore::Image& InA, const EngineCore::Image& InB)
+        {
+            int Out = 0;
+            for(int Y = 0; Y < int(InA.GetHeight()); ++Y)
+            {
+                Out += std::memcmp(InA.GetData() + InA.GetStride() * Y, InB.GetData() + InB.GetStride() * Y,
+                                   InA.GetWidth() * BytesPerPixel(InA.GetFormat())) != 0 ? 1 : 0;
+            }
+            return Out;
+        };
+
+        EngineCore::Image Serial, Parallel, SerialAgain;
+        ModeVar->SetString("Off");
+        const uint64_t PassesBefore = Passes();
+        const bool bSerial = Capture(Serial);
+        const uint64_t PassesSerial = Passes();
+        ModeVar->SetString("On");
+        MinDraws->SetFromString("1");
+        const bool bParallel = Capture(Parallel);
+        const uint64_t PassesParallel = Passes();
+        ModeVar->SetString("Off");
+        const bool bSerialAgain = Capture(SerialAgain);
+        std::printf("    parallel passes: %llu off, %llu on\n", (unsigned long long)(PassesSerial - PassesBefore),
+                    (unsigned long long)(PassesParallel - PassesSerial));
+        Expect(bSerial && bParallel && bSerialAgain, "the scene is captured with parallel recording off, on and off again");
+        Expect(PassesSerial == PassesBefore, "Off records no stage in parallel");
+        Expect(PassesParallel > PassesSerial, "On records the base pass and the shadows in parallel");
+        if(bSerial && bParallel && bSerialAgain)
+        {
+            const int Rows = Differing(Serial, Parallel);
+            std::printf("    rows differing serial vs parallel: %d, serial vs serial: %d\n", Rows, Differing(Serial, SerialAgain));
+            Expect(Differing(Serial, SerialAgain) == 0, "the scene captures the same twice (the comparison means something)");
+            Expect(Rows == 0, "recorded in parallel, the image is the same byte for byte");
+        }
+
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    if(ModeVar)  { ModeVar->SetString("Auto"); }
+    if(MinDraws) { MinDraws->SetFromString("256"); }
+    EngineCore::SetJobSystem(PreviousJobs);
     SetFileProvider(PreviousProvider);
 }
 #endif // WITH_EDITOR
@@ -6150,6 +6350,7 @@ int main()
     TestMaterials();
     TestMaterialsOnGpu();
     TestShadowsOnGpu();
+    TestParallelRecordingOnGpu();
     TestPostProcessOnGpu();
     TestBloomHdrOnGpu();
     TestParticlesOnGpu();

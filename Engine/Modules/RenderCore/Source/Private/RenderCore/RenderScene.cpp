@@ -112,12 +112,17 @@ namespace RenderCore
         uint64_t                                               StaticBuilds = 0;   // lifetime captures
 
         /*
-         * OCCLUSION CULLING (RENDERPIPELINE.md): the main view's query set,
-         * made on first use and remade larger when a frame wanted more
-         * queries than it holds; the last round's answers; and what the last
-         * frame did, for RenderStats.
+         * OCCLUSION CULLING (RENDERPIPELINE.md): the main view's query sets,
+         * one per frame the GPU may run behind (GDIGetFramesInFlight), taken
+         * in turn: a set's answers are read when it comes round again, its
+         * round finished by then without waiting for it. Each is made on
+         * first use and remade larger when a frame wanted more queries than
+         * it holds. Then the answers read, and what the last frame did, for
+         * RenderStats.
          */
-        GDIOcclusionQueries* Occlusion        = nullptr;
+        GDIOcclusionQueries* Occlusion[RenderProxy::OCCLUSION_SETS_MAX] = {};
+        uint32_t             OcclusionSets    = 1;
+        uint32_t             OcclusionAt      = 0;   // this frame's set
         uint32_t             OcclusionWanted  = 0;
         std::vector<uint8_t> OcclusionAnswers;
         uint64_t             LastOccluded     = 0;
@@ -134,20 +139,32 @@ namespace RenderCore
                 ReleaseOcclusion();
                 return nullptr;
             }
-            if(!Occlusion || OcclusionWanted > Occlusion->GetCapacity())
+            const uint32_t Sets = std::clamp<uint32_t>(GDIGetFramesInFlight(), 1, RenderProxy::OCCLUSION_SETS_MAX);
+            if(Sets != OcclusionSets)
             {
-                uint32_t Capacity = Occlusion ? Occlusion->GetCapacity() : OCCLUSION_QUERIES_MIN;
-                while(Capacity < OcclusionWanted && Capacity < OCCLUSION_QUERIES_MAX) { Capacity *= 2; }
-                ReleaseOcclusion();   // its answers with it: one frame without CPU culling
-                Occlusion = GDICreateOcclusionQueries(Capacity);
+                ReleaseOcclusion();
+                OcclusionSets = Sets;
             }
-            return Occlusion;
+            OcclusionAt = (OcclusionAt + 1) % OcclusionSets;
+            GDIOcclusionQueries*& Set = Occlusion[OcclusionAt];
+            if(!Set || OcclusionWanted > Set->GetCapacity())
+            {
+                uint32_t Capacity = Set ? Set->GetCapacity() : OCCLUSION_QUERIES_MIN;
+                while(Capacity < OcclusionWanted && Capacity < OCCLUSION_QUERIES_MAX) { Capacity *= 2; }
+                if(Set) { Set->Release(); }   // its answers with it: a frame without CPU culling
+                Set = GDICreateOcclusionQueries(Capacity);
+            }
+            return Set;
         }
 
         void ReleaseOcclusion()
         {
-            if(Occlusion) { Occlusion->Release(); }
-            Occlusion = nullptr;
+            for(GDIOcclusionQueries*& Set : Occlusion)
+            {
+                if(Set) { Set->Release(); }
+                Set = nullptr;
+            }
+            OcclusionAt  = 0;
             LastOccluded = LastQueries = 0;
         }
 
@@ -200,8 +217,8 @@ namespace RenderCore
         {
             InContext.BeginSceneDraws();
 
-            /* The last round's answers -- complete, as its block has finished --
-             * then this round's queries. Without answers nothing is hidden on
+            /* This set's last round's answers -- complete, as its block has
+             * finished (FramesInFlight blocks back) -- then this round's queries. Without answers nothing is hidden on
              * the CPU; the GPU still skips what this frame's find hidden. */
             const bool bOcclusion = InOcclusion != nullptr;
             const bool bAnswers   = bOcclusion && GDIReadOcclusionResults(InOcclusion, OcclusionAnswers);
@@ -288,14 +305,16 @@ namespace RenderCore
 
             for(RenderProxy* Proxy : Proxies)
             {
-                /* Its query last round, read before anything can skip it: an
-                 * index is only good for the round it was given in. */
-                int32_t LastQuery = -1;
+                /* Its query in this set's last round, read before anything can
+                 * skip it: an index is only good for the set and round it was
+                 * given in. */
+                int32_t  LastQuery = -1;
+                int32_t* Query     = bOcclusion ? &Proxy->OcclusionQueries[OcclusionAt] : nullptr;
                 if(bOcclusion)
                 {
-                    LastQuery = Proxy->OcclusionQuery;
-                    Proxy->OcclusionQuery = -1;
-                    Proxy->bOccluded      = false;
+                    LastQuery        = *Query;
+                    *Query           = -1;
+                    Proxy->bOccluded = false;
                 }
                 if(!Proxy->IsVisible() || Excluded(Proxy))
                 {
@@ -349,8 +368,8 @@ namespace RenderCore
                     const double Pad = (Bounds.Max - Bounds.Min).GetLength() * 0.01 + 1e-3;
                     const EngineCore::Vector3 Grow(Pad, Pad, Pad);
                     ++OcclusionWantedNow;
-                    Proxy->OcclusionQuery = InContext.AddOcclusionQuery(GameCore::AABB(Bounds.Min - Grow, Bounds.Max + Grow));
-                    Proxy->bOccluded      = Proxy->OcclusionQuery >= 0 && bAnswers && LastQuery >= 0
+                    *Query           = InContext.AddOcclusionQuery(GameCore::AABB(Bounds.Min - Grow, Bounds.Max + Grow));
+                    Proxy->bOccluded = *Query >= 0 && bAnswers && LastQuery >= 0
                                          && size_t(LastQuery) < OcclusionAnswers.size() && OcclusionAnswers[size_t(LastQuery)] == 0;
                 }
                 /* Only the main view's answers: a capture sees from elsewhere. */
@@ -360,7 +379,7 @@ namespace RenderCore
                 }
                 else
                 {
-                    InContext.SetDrawOcclusion(bPredicate ? Proxy->OcclusionQuery : -1);
+                    InContext.SetDrawOcclusion(bPredicate && Query ? *Query : -1);
                     if(Proxy->IsStatic())
                     {
                         StaticDrawList& List = ListFor(Proxy, Generation);
@@ -540,6 +559,48 @@ namespace RenderCore
                 }
                 GpuWindowStartNs = Now;
                 if(bReportsStats) { SetReportedGpuTimes(GpuMs); }
+            }
+        }
+
+        /* The render thread's side (RenderStats::CpuMs, StageDraws, QueueCpuMs):
+         * summed every frame, always, and averaged over the same half second. */
+        double  CpuSums[RGT_Count]    = {};
+        int     CpuSamples[RGT_Count] = {};
+        double  DrawSums[RGT_Count]   = {};
+        int     DrawSamples[RGT_Count] = {};
+        double  QueueSum              = 0.0;
+        int     QueueSamples          = 0;
+        int64_t CpuWindowStartNs      = 0;
+        float   CpuMs[RGT_Count]      = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+        int32_t StageDraws[RGT_Count] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+        float   QueueMs               = -1.0f;
+
+        void AddCpuTimes(const float (&InCpuMs)[RGT_Count], const int32_t (&InDraws)[RGT_Count], const float InQueueMs)
+        {
+            const int64_t Now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch()).count();
+            if(CpuWindowStartNs == 0) { CpuWindowStartNs = Now; }
+            for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer)
+            {
+                if(InCpuMs[Timer] >= 0.0f) { CpuSums[Timer] += InCpuMs[Timer]; ++CpuSamples[Timer]; }
+                if(InDraws[Timer] >= 0)    { DrawSums[Timer] += InDraws[Timer]; ++DrawSamples[Timer]; }
+            }
+            QueueSum += InQueueMs;
+            ++QueueSamples;
+            if(Now - CpuWindowStartNs >= 500'000'000)
+            {
+                for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer)
+                {
+                    CpuMs[Timer]      = CpuSamples[Timer] > 0 ? float(CpuSums[Timer] / CpuSamples[Timer]) : -1.0f;
+                    StageDraws[Timer] = DrawSamples[Timer] > 0 ? int32_t(DrawSums[Timer] / DrawSamples[Timer] + 0.5) : -1;
+                    CpuSums[Timer] = DrawSums[Timer] = 0.0;
+                    CpuSamples[Timer] = DrawSamples[Timer] = 0;
+                }
+                QueueMs = QueueSamples > 0 ? float(QueueSum / QueueSamples) : -1.0f;
+                QueueSum = 0.0;
+                QueueSamples = 0;
+                CpuWindowStartNs = Now;
+                if(bReportsStats) { SetReportedStageTimes(CpuMs, StageDraws, QueueMs); }
             }
         }
 
@@ -919,8 +980,9 @@ namespace RenderCore
          * everything below nests under it (RENDERPIPELINE.md, "Draw events"). */
         InContext.BeginDrawEvent("Scene");
 
-        /* "stat frame": the last GDI block's GPU times, to the scene that wrote
-         * them (they are complete only now), and this block's own, if shown. */
+        /* "stat frame": the GPU times of the GDI block the frames in flight
+         * back, to the scene that wrote them (they are complete only now),
+         * and this block's own, if shown. */
         const StatUnitSnapshot Stats = GetStatUnit();
         {
             float GpuMs[RGT_Count];
@@ -1067,7 +1129,9 @@ namespace RenderCore
         InContext.SetView(Drawn);
 
         GDIOcclusionQueries* Occlusion = P->PrepareOcclusion(Drawn);
+        const auto QueueStart = std::chrono::steady_clock::now();
         P->QueueDraws(InContext, Drawn, nullptr, VisibleCount, CulledCount, StaticCount, Occlusion);
+        const float QueueMs = float(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - QueueStart).count());
 
         /* The post process stack: the volumes' blend (WorldBridge), its
          * materials by stage and order, then the effects' settings. */
@@ -1088,6 +1152,12 @@ namespace RenderCore
         InContext.SetUnlit(P->ViewMode == ERenderViewMode::Unlit);
         InContext.RenderSceneStages(P->Targets, P->ClearColor, /*bInTimed*/ true, P->bClearGradient ? &P->ClearBottom : nullptr);
         InContext.SetUnlit(false);
+        {
+            float   CpuMs[RGT_Count];
+            int32_t Draws[RGT_Count];
+            InContext.GetStageCpuTimes(CpuMs, Draws);
+            P->AddCpuTimes(CpuMs, Draws, QueueMs);
+        }
         InContext.SetView(P->View);   // unjittered again, for what draws over the picture
 
         /* The targets this frame drew, for the view mode's list; one of them
@@ -1152,7 +1222,8 @@ namespace RenderCore
             std::string Text = Stats.bShow ? FormatStatUnit(Stats) : std::string();
             if(Stats.bShowFrame)
             {
-                Text += (Text.empty() ? "" : "\n\n") + FormatStatFrame(P->GpuMs, InContext.CanTimeGpu());
+                Text += (Text.empty() ? "" : "\n\n") + FormatStatFrame(P->GpuMs, P->CpuMs, P->StageDraws, P->QueueMs,
+                                                                         InContext.CanTimeGpu());
             }
             if(!Stats.Extra.empty())
             {

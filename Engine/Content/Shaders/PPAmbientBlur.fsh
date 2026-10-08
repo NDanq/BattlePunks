@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // PPAmbientBlur.fsh -- ambient occlusion's blur: a 4 x 4 average at half
 // resolution, each tap weighted by how near its depth is to this pixel's, so
 // occlusion does not bleed across a silhouette onto what is behind it.

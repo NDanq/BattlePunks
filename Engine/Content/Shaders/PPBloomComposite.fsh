@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // PPBloomComposite.fsh -- Bloom, the end: the scene plus the half-resolution
 // glow (the top of the chain, EncodeBloom'd), times intensity and tint.
 

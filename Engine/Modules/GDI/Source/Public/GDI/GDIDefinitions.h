@@ -324,9 +324,18 @@ constexpr unsigned GDI_MATERIAL_BLOCK_MAX_BYTES = 1024;
 /* The scene block carries the frame's lights and shadow matrices: larger. */
 constexpr unsigned GDI_SCENE_BLOCK_MAX_BYTES    = 4096;
 
+/* The OpenGL backend's minimum: a 4.5 core context. Every shader declares
+ * "#version 450" (Vulkan's SPIR-V is compiled from the same source). */
+constexpr int      GDI_OPENGL_MIN_MAJOR         = 4;
+constexpr int      GDI_OPENGL_MIN_MINOR         = 5;
+
 /* Colour targets one pass can write (GDISetRenderTargets): a G-buffer's and
  * its velocity. Each may have its own format. */
 constexpr unsigned GDI_MAX_COLOR_TARGETS        = 5;
+
+/* Chunks one parallel pass records at most (GDIBeginParallelPass). */
+constexpr unsigned GDI_PARALLEL_CHUNKS_MAX      = 32;
+constexpr unsigned GDI_FRAMES_IN_FLIGHT_MAX     = 3;    // [Rendering] FramesInFlight's ceiling (GDIGetConfiguredFramesInFlight)
 
 /*
  * A compute dispatch's bindings (GDIDispatchCompute): its parameters as a

@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // PPDofBlur.fsh -- Depth of Field, 2 of 3: a 16-tap disc at half resolution,
 // as wide as the pixel's own circle of confusion. A tap counts only as far as
 // its own circle reaches back to this pixel, so sharp foreground does not

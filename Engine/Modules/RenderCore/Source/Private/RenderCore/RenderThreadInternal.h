@@ -80,14 +80,22 @@ namespace RenderCore
     RENDERCORE_API std::string FormatStatUnit(const StatUnitSnapshot& InSnapshot);
 
     /* "stat frame"'s text: a heading, then a line per ERenderGpuTimer with its
-     * milliseconds ("-" where InGpuMs is negative: not timed); one line saying
-     * so if this backend cannot time the GPU. */
-    RENDERCORE_API std::string FormatStatFrame(const float* InGpuMs, bool bInSupported);
+     * GPU milliseconds, the render thread's milliseconds and its draws ("-"
+     * where negative: not timed or not counted; the GPU column all "-", with a
+     * line saying so, where this backend cannot time the GPU), then the
+     * render thread's culling and queueing (InQueueMs). Any array may be null. */
+    RENDERCORE_API std::string FormatStatFrame(const float* InGpuMs, const float* InCpuMs, const int32_t* InDraws,
+                                               float InQueueMs, bool bInGpuSupported);
 
     /* The stats-reporting scene's GPU times, for RenderThread::GetStats
      * (RenderStats::GpuMs): RGT_Count of them. */
     void SetReportedGpuTimes(const float* InGpuMs);
     void GetReportedGpuTimes(float* OutGpuMs);
+
+    /* Its render-thread side (RenderStats::CpuMs, StageDraws: RGT_Count each;
+     * QueueCpuMs). */
+    void SetReportedStageTimes(const float* InCpuMs, const int32_t* InDraws, float InQueueMs);
+    void GetReportedStageTimes(float* OutCpuMs, int32_t* OutDraws, float& OutQueueMs);
 }
 
 #endif //RENDERCORE_RENDERTHREADINTERNAL_H

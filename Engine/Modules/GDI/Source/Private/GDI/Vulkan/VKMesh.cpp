@@ -316,20 +316,22 @@ void VKMesh::InitResource()
     ApplyDebugName();
 }
 
-bool VKMesh::InitDynamic(const uint32_t InMaxVertices, const uint32_t InMaxIndices)
+bool VKMesh::InitDynamic(const uint32_t InMaxVertices, const uint32_t InMaxIndices, const uint32_t InFrames)
 {
     if(!Device || !Device->IsValid() || bResourcesValid) return false;
     MakeDynamic(InMaxVertices, InMaxIndices);
 
+    /* A region of the capacity per frame in flight: UpdateDynamic writes the recording frame's. */
     struct Stream { VkBuffer& Buffer; VkDeviceMemory& Memory; void*& Mapped; VkDeviceSize Bytes; VkBufferUsageFlags Usage; };
-    const VkDeviceSize V = InMaxVertices;
+    const VkDeviceSize Frames = InFrames > 0 ? InFrames : 1;
+    const VkDeviceSize V      = VkDeviceSize(InMaxVertices) * Frames;
     Stream Streams[] = {
         { PositionBuffer,    PositionMemory,    PositionMapped,    V * 3 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT },
         { TexCoordBuffer,    TexCoordMemory,    TexCoordMapped,    V * 2 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT },
         { NormalBuffer,      NormalMemory,      NormalMapped,      V * 3 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT },
         { VertexColorBuffer, VertexColorMemory, VertexColorMapped, V * 4 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT },
         { UV1Buffer,         UV1Memory,         UV1Mapped,         V * 2 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT },
-        { IndexBuffer,       IndexMemory,       IndexMapped,       VkDeviceSize(InMaxIndices) * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT },
+        { IndexBuffer,       IndexMemory,       IndexMapped,       VkDeviceSize(InMaxIndices) * Frames * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT },
     };
     for(Stream& Each : Streams)
     {
@@ -452,8 +454,18 @@ void VKMesh::Release()
 void VKMesh::Draw()
 {
     if(!bResourcesValid || !StateData) return;
+    auto* GDI = dynamic_cast<VulkanDynamicGDI*>(GDynamicGDI);
+    if(!GDI) return;
+    VKDrawInputs Inputs;
+    GDI->MakeImmediateInputs(Inputs);
+    Record(Inputs);
+}
 
-    const VkCommandBuffer Cmd = StateData->CurrentCmd;
+void VKMesh::Record(const VKDrawInputs& In)
+{
+    if(!bResourcesValid) return;
+
+    const VkCommandBuffer Cmd = In.Cmd;
     if(Cmd == VK_NULL_HANDLE) return;
 
     // RenderData.NumVertices is total position-float count; divide by 3 for actual vertex count.
@@ -464,21 +476,16 @@ void VKMesh::Draw()
     // happen for EVERY draw — including a direct Mesh->Draw() (layer compositing /
     // LayerBlit), which does not go through DrawObject. If state is incomplete, skip
     // the draw rather than issue vkCmdDraw with no pipeline bound.
-    auto* GDI = dynamic_cast<VulkanDynamicGDI*>(GDynamicGDI);
-    if(GDI && !GDI->BindDrawState(this, IsInstanced()))
+    auto* GDI = static_cast<VulkanDynamicGDI*>(GDynamicGDI);
+    if(!GDI->BindDrawState(In, this, IsInstanced()))
     {
         return;
     }
 
     /* Skipped on the GPU if GDISetOcclusionPredicate's query found nothing:
-     * conditional rendering round whichever draw this records. */
-    struct PredicateScope
-    {
-        VulkanDynamicGDI* Driver;
-        VkCommandBuffer   Cmd;
-        bool              bBegun;
-        ~PredicateScope() { if(Driver) { Driver->EndDrawPredicate(Cmd, bBegun); } }
-    } Predicate{ GDI, Cmd, GDI && GDI->BeginDrawPredicate(Cmd) };
+     * this draw under its conditional rendering (held open while the next
+     * draws share the predicate; VulkanDynamicGDI::ApplyDrawPredicate). */
+    GDI->ApplyDrawPredicate(In);
 
     // Bind position (binding 0) and texcoord (binding 1) buffers.
     const VkBuffer     Buffers[2] = { PositionBuffer, TexCoordBuffer };
@@ -489,7 +496,17 @@ void VKMesh::Draw()
     {
         // Vertex layout 2 (VKPipelineCache): normals at binding 2, colours at 3, UV1 at 4.
         uint32_t First = 0, Count = 0;
-        GetClampedDrawRange(First, Count);
+        if(In.DrawCount > 0)
+        {
+            /* The draw's own range (a recording context's), clamped as the mesh's is. */
+            const uint32_t Total = RenderData.NumIndices;
+            First = In.DrawFirst < Total ? In.DrawFirst : Total;
+            Count = In.DrawCount < Total - First ? In.DrawCount : Total - First;
+        }
+        else
+        {
+            GetClampedDrawRange(First, Count);
+        }
         if(Count == 0 || NormalBuffer == VK_NULL_HANDLE || VertexColorBuffer == VK_NULL_HANDLE || UV1Buffer == VK_NULL_HANDLE) return;
 
         const VkBuffer     MeshBuffers[3] = { NormalBuffer, VertexColorBuffer, UV1Buffer };
@@ -506,20 +523,19 @@ void VKMesh::Draw()
 
         // Instanced (GDISetInstanceBuffer): vertex layout 3 reads binding 5 per instance.
         uint32_t Instances = 1;
-        auto* Driver = static_cast<VulkanDynamicGDI*>(GDynamicGDI);
-        if(auto* Instance = static_cast<VKBuffer*>(Driver->GetInstanceBuffer()))
+        if(auto* Instance = static_cast<VKBuffer*>(In.InstanceBuffer))
         {
             if(!Instance->IsValid()) return;
             const VkBuffer     InstanceBuffer = Instance->GetBuffer();
             const VkDeviceSize InstanceOffset = 0;
             vkCmdBindVertexBuffers(Cmd, 5, 1, &InstanceBuffer, &InstanceOffset);
-            Instances = Driver->GetInstanceCount();
+            Instances = In.InstanceCount;
 
             // Indirect (GDISetIndirectArgs): the counts and range from a buffer the GPU wrote.
-            if(auto* Args = static_cast<VKBuffer*>(Driver->GetIndirectArgs()))
+            if(auto* Args = static_cast<VKBuffer*>(In.IndirectArgs))
             {
                 if(!Args->IsValid()) return;
-                vkCmdDrawIndexedIndirect(Cmd, Args->GetBuffer(), Driver->GetIndirectArgsOffset(), 1, GDI_INDIRECT_ARGS_STRIDE);
+                vkCmdDrawIndexedIndirect(Cmd, Args->GetBuffer(), In.IndirectArgsOffset, 1, GDI_INDIRECT_ARGS_STRIDE);
                 return;
             }
         }

@@ -12,8 +12,10 @@
  * first one.
  */
 
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <thread>
 #include <vector>
 #include <string>
 
@@ -24,6 +26,8 @@
 #include "Public/GDI/GDI.h"
 #include "Public/GDI/GDIRenderTarget.h"
 #include "Public/GDI/GDITexture.h"
+#include "Public/GDI/GDIView.h"
+#include "Public/GDI/GDIQuery.h"
 #include "Public/GDI/GDIDefinitions.h"
 #include "Public/GDI/Null/NullDynamicGDI.h"
 #include "Public/GDI/Shaders/Classes/UIShaders.h"
@@ -316,6 +320,112 @@ static void TestComputeAndInstancing()
     for(GDIBuffer* Each : { Storage, Zeroed, InstanceOnly, Instances }) { if(Each) Each->Release(); }
 }
 
+/*
+ * Parallel passes (GDIBeginParallelPass; RenderCore's MULTITHREADED_RENDERING.md,
+ * phase 2), on Null: four threads record at once, each through its own
+ * context. Each sees only its own state, the render thread's is untouched,
+ * nothing reaches the driver until the pass ends, and then every draw is
+ * counted as DrawObject counts it. (Expect is not thread-safe: the threads
+ * note what they saw, the checks run after they join.)
+ */
+static void TestParallelPasses()
+{
+    std::printf("[parallel passes]\n");
+    auto* Null = static_cast<NullDynamicGDI*>(GDynamicGDI);
+    const NullGDIStats Before = Null->GetStats();
+
+    const GDIParallelRecordingSupport Support = GDIGetParallelRecordingSupport();
+    Expect(Support.bSupported && Support.bSerialOnly, "Null supports parallel recording, its chunks serial");
+
+    GDIRecordingContext* Contexts[GDI_PARALLEL_CHUNKS_MAX] = {};
+    Expect(!GDIBeginParallelPass(0, Contexts) && !GDIBeginParallelPass(GDI_PARALLEL_CHUNKS_MAX + 1, Contexts),
+           "a pass of no chunks, or too many, is refused");
+
+    constexpr uint32_t Chunks = 4, DrawsPerChunk = 250;
+    GDIBuffer*           Instances = GDICreateBuffer(4 * GDI_INSTANCE_STRIDE, GDI_BU_Storage | GDI_BU_Instance);
+    GDIOcclusionQueries* Queries   = GDICreateOcclusionQueries(8);
+    Expect(GDIBeginParallelPass(Chunks, Contexts), "a parallel pass of four chunks begins");
+    Expect(!GDIBeginParallelPass(1, Contexts), "and no second one while it is open");
+
+    struct Seen
+    {
+        bool       bInRenderThread = false;
+        bool       bCurrent        = false;
+        bool       bNestedRefused  = false;
+        uint8_t    Block0          = 0;
+        GDIShader* VS              = nullptr;
+        uint       ViewportWidth   = 0;
+        uint32_t   DrawFirst       = 0;
+        uint32_t   Recorded        = 0;
+    } Results[Chunks];
+    std::vector<std::thread> Threads;
+    for(uint32_t Chunk = 0; Chunk < Chunks; ++Chunk)
+    {
+        Threads.emplace_back([&, Chunk]()
+        {
+            GDISetCurrentRecording(Contexts[Chunk]);
+            GDIRecordingContext* Dummy[1] = {};
+            Results[Chunk].bNestedRefused = !GDIBeginParallelPass(1, Dummy);
+            GDIViewObject Object{};
+            for(uint32_t Draw = 0; Draw < DrawsPerChunk; ++Draw)
+            {
+                uint8_t Bytes[16];
+                std::memset(Bytes, int(Chunk * 10 + Draw % 7), sizeof(Bytes));
+                GDISetBoundShader(reinterpret_cast<GDIShader*>(uintptr_t(0x1000) * (Chunk + 1)), nullptr);
+                GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, Bytes, sizeof(Bytes));
+                GDISetViewport(0, 0, 100 + Chunk, 50);
+                GDISetDrawRange(nullptr, Draw, 3);
+                GDISetOcclusionPredicate(Draw % 2 ? Queries : nullptr, Draw % 2 ? int32_t(Chunk) : -1);
+                const bool bLast = Chunk == 3 && Draw == DrawsPerChunk - 1;
+                GDISetInstanceBuffer(bLast ? Instances : nullptr, bLast ? 3 : 0);
+                GDIDrawObject(&Object);
+            }
+            Seen& Mine           = Results[Chunk];
+            Mine.bInRenderThread = GDIInRenderThread();
+            Mine.bCurrent        = GDIGetCurrentRecording() == Contexts[Chunk];
+            Mine.Block0          = Contexts[Chunk]->MaterialBlocks[0].empty() ? 0 : Contexts[Chunk]->MaterialBlocks[0][0];
+            Mine.VS              = Contexts[Chunk]->BoundVertexShader;
+            Mine.ViewportWidth   = Contexts[Chunk]->ViewportWidth;
+            Mine.DrawFirst       = Contexts[Chunk]->DrawFirst;
+            Mine.Recorded        = Contexts[Chunk]->DrawsRecorded;
+            GDISetCurrentRecording(nullptr);
+        });
+    }
+    for(std::thread& Each : Threads) { Each.join(); }
+
+    bool bAllOwn = true, bAllCounted = true, bAllRender = true, bAllNested = true;
+    for(uint32_t Chunk = 0; Chunk < Chunks; ++Chunk)
+    {
+        const Seen& Each = Results[Chunk];
+        bAllOwn = bAllOwn && Each.bCurrent && Each.Block0 == uint8_t(Chunk * 10 + (DrawsPerChunk - 1) % 7)
+               && Each.VS == reinterpret_cast<GDIShader*>(uintptr_t(0x1000) * (Chunk + 1))
+               && Each.ViewportWidth == 100 + Chunk && Each.DrawFirst == DrawsPerChunk - 1;
+        bAllCounted = bAllCounted && Each.Recorded == DrawsPerChunk;
+        bAllRender  = bAllRender && Each.bInRenderThread;
+        bAllNested  = bAllNested && Each.bNestedRefused;
+    }
+    Expect(bAllOwn, "each thread's setters wrote its own context: shaders, blocks, viewport, draw range");
+    Expect(bAllCounted, "each context counted its own draws");
+    Expect(bAllRender, "a thread recording a chunk counts as the render thread");
+    Expect(bAllNested, "a recording thread cannot begin a pass of its own");
+    Expect(GDIGetCurrentRecording() == nullptr, "the render thread has no context of its own");
+    Expect(Null->GetStats().DrawObjectCalls == Before.DrawObjectCalls && Null->GetStats().LastViewportWidth == Before.LastViewportWidth,
+           "nothing reached the driver's own state while the pass was open");
+
+    GDIEndParallelPass();
+    const NullGDIStats After = Null->GetStats();
+    Expect(After.DrawObjectCalls == Before.DrawObjectCalls + Chunks * DrawsPerChunk, "at the pass's end every chunk's draws are counted");
+    Expect(After.PredicatedDrawCalls == Before.PredicatedDrawCalls + Chunks * DrawsPerChunk / 2, "the predicated ones as predicated");
+    Expect(After.InstancedDrawCalls == Before.InstancedDrawCalls + 1 && After.LastInstanceCount == 3, "and the instanced one as instanced");
+    Expect(After.ParallelPasses == Before.ParallelPasses + 1 && After.ParallelChunks == Before.ParallelChunks + Chunks,
+           "one pass, four chunks");
+    Expect(GDIBeginParallelPass(2, Contexts), "a pass ended, the next can begin");
+    GDIEndParallelPass();
+
+    if(Instances) { Instances->Release(); }
+    if(Queries)   { Queries->Release(); }
+}
+
 static void TestRenderTargetManagerCycle()
 {
     std::printf("[render target manager]\n");
@@ -412,6 +522,7 @@ int main()
     TestComputeAndInstancing();
     TestRenderTargetManagerCycle();
     TestDrawObjectOverrides();
+    TestParallelPasses();
     TestRenderTargetDrawTexture();
     TestRelease();
 

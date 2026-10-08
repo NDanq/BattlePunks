@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // Sky.fsh -- the Sky Light's HDRI behind the scene, linear light (an HDR
 // scene's background; RENDERPIPELINE.md, "Image-based lighting"): each pixel
 // looks along its view ray. Without an HDRI, the sky and ground colours.

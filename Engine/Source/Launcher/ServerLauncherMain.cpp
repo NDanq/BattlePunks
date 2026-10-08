@@ -1,5 +1,6 @@
 #include "Public/NimbleEngine/NimbleEngine.h"
 #include "Public/Core/CoreGarbageCollector.h"
+#include "Public/Core/CoreJob.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -34,6 +35,11 @@ int main(int argc, char** argv)
 {
     std::printf("%s dedicated server -- Ctrl+C to stop\n", NIMBLE_GAME_NAME);
 
+    /* The job pool (CoreJob.h), as the game launcher's: alive before any module
+     * loads and until the last has unloaded. */
+    EngineCore::JobSystem Jobs;
+    EngineCore::SetJobSystem(&Jobs);
+
     {
         NimbleEngine::ApplicationDesc Desc;
         Desc.bHeadless = true;
@@ -54,6 +60,8 @@ int main(int argc, char** argv)
         App.SetConfigOverrides(std::move(Overrides));
         App.ExecGame(NIMBLE_GAME_MODULE);
     }
+    Jobs.WaitForIdle();
+    EngineCore::SetJobSystem(nullptr);
 
     const uint64_t Leaked = EngineCore::Memory::ReportLeaks();
     if(Leaked != 0)

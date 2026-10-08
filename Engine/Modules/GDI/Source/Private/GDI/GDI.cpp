@@ -54,13 +54,32 @@ GDIDynamicDriver*   GDynamicGDI = nullptr;
 GDISync*            GSync = nullptr;
 EngineCore::ThreadSafeQueue<GDIRenderCommandBase*> GRenderCommands;
 
-int GDebugGroupID = 0;
+std::atomic<int> GDebugGroupID{0};
+
+/* The calling thread's recording context (GDISetCurrentRecording): while set,
+ * the draw path's GDI* setters write into it, not the driver. */
+namespace
+{
+    thread_local GDIRecordingContext* GCurrentRecording = nullptr;
+}
 
 /* Edit > Editor Settings > Shaders (GDI.h). Here, not in the editor: GDI is
  * static in RenderCore alone, so these register once. */
 NIMBLE_CONFIG_BOOL(GShaderDebug, "Shaders", "ShaderDebug", true, nullptr);
 NIMBLE_CONFIG_BOOL(GShaderPDB, "Shaders", "ShaderPDB", false, nullptr);
 NIMBLE_CONFIG_STRING(GShaderPDBDir, "Shaders", "PDBDir", "", nullptr);
+
+/* [Rendering] FramesInFlight: how many frames the CPU may record ahead of
+ * the GPU (RenderCore's MULTITHREADED_RENDERING.md, phase 4). 1 waits for
+ * each frame before recording the next; 2 records frame N+1 while the GPU
+ * draws frame N. Read when the device is made (Vulkan, D3D12). */
+NIMBLE_CONFIG_INT(GFramesInFlight, "Rendering", "FramesInFlight", 2, nullptr);
+
+uint32_t GDIGetConfiguredFramesInFlight()
+{
+    const int Value = GFramesInFlight.GetInt();
+    return Value < 1 ? 1u : (Value > int(GDI_FRAMES_IN_FLIGHT_MAX) ? GDI_FRAMES_IN_FLIGHT_MAX : uint32_t(Value));
+}
 
 bool GDIShaderDebugEnabled()
 {
@@ -340,6 +359,12 @@ bool GDIMakeIndexedRenderData(const GDIMeshDesc& InDesc, GDIMesh::ORenderData& O
 
 void GDIDynamicDriver::SetUniformBlock(const uint InBinding, const void* InData, const uint InSize)
 {
+    GDIStoreUniformBlock(MaterialBlocks, MaterialBlockSerials, InBinding, InData, InSize);
+}
+
+bool GDIStoreUniformBlock(std::vector<uint8_t> (&MaterialBlocks)[4], uint64_t (&MaterialBlockSerials)[4], const uint InBinding,
+                          const void* InData, const uint InSize)
+{
     uint Index = 0, MaxBytes = 0;
     switch(InBinding)
     {
@@ -347,16 +372,17 @@ void GDIDynamicDriver::SetUniformBlock(const uint InBinding, const void* InData,
         case GDI_SCENE_BLOCK_BINDING:    Index = 1; MaxBytes = GDI_SCENE_BLOCK_MAX_BYTES;    break;
         case GDI_SKIN_BLOCK_BINDING:     Index = 2; MaxBytes = GDI_SKIN_BLOCK_MAX_BYTES;     break;
         case GDI_PREV_SKIN_BLOCK_BINDING: Index = 3; MaxBytes = GDI_SKIN_BLOCK_MAX_BYTES;    break;
-        default: return;
+        default: return false;
     }
     std::vector<uint8_t>& Block = MaterialBlocks[Index];
     const uint Size = InData ? (InSize < MaxBytes ? InSize : MaxBytes) : 0;
     const auto* Bytes = static_cast<const uint8_t*>(InData);
 
     /* Unchanged bytes keep the serial, so a backend reuses its upload. */
-    if(Block.size() == Size && (Size == 0 || memcmp(Block.data(), Bytes, Size) == 0)) return;
+    if(Block.size() == Size && (Size == 0 || memcmp(Block.data(), Bytes, Size) == 0)) return true;
     Block.assign(Bytes, Bytes + Size);
     ++MaterialBlockSerials[Index];
+    return true;
 }
 
 void GDIDynamicDriver::SetRenderTargets(GDIRenderTarget* const* InColors, const uint InCount, GDIRenderTarget* InDepthFrom)
@@ -425,6 +451,12 @@ IMPLEMENT_GDI_FUNCTION_BODY(void,
 void GDISetViewport(const uint InX, const uint InY, const uint InWidth, const uint InHeight)
 {
     if(!GDynamicGDI) return;
+    if(GDIRecordingContext* Rec = GCurrentRecording)
+    {
+        Rec->ViewportX = InX; Rec->ViewportY = InY; Rec->ViewportWidth = InWidth; Rec->ViewportHeight = InHeight;
+        GDynamicGDI->RecordViewport(Rec, InX, InY, InWidth, InHeight);
+        return;
+    }
     GDynamicGDI->ViewportX      = InX;
     GDynamicGDI->ViewportY      = InY;
     GDynamicGDI->ViewportWidth  = InWidth;
@@ -436,46 +468,59 @@ void GDISetScissorRect(const uint InX, const uint InY, const uint InWidth, const
 {
     if(!GDynamicGDI) return;
     const GDIDynamicDriver& D = *GDynamicGDI;
+    GDIRecordingContext* Rec = GCurrentRecording;
+    const uint VX = Rec ? Rec->ViewportX : D.ViewportX, VY = Rec ? Rec->ViewportY : D.ViewportY;
+    const uint VW = Rec ? Rec->ViewportWidth : D.ViewportWidth, VH = Rec ? Rec->ViewportHeight : D.ViewportHeight;
 
     /* Clipped to the viewport. InY counts down from its top, as the target's
      * rows do: every backend stores row 0 at the top. */
-    const uint Left   = InX < D.ViewportWidth ? InX : D.ViewportWidth;
-    const uint Top    = InY < D.ViewportHeight ? InY : D.ViewportHeight;
-    const uint Width  = InWidth < D.ViewportWidth - Left ? InWidth : D.ViewportWidth - Left;
-    const uint Height = InHeight < D.ViewportHeight - Top ? InHeight : D.ViewportHeight - Top;
-    GDynamicGDI->SetScissorRect(D.ViewportX + Left, D.ViewportY + Top, Width, Height);
+    const uint Left   = InX < VW ? InX : VW;
+    const uint Top    = InY < VH ? InY : VH;
+    const uint Width  = InWidth < VW - Left ? InWidth : VW - Left;
+    const uint Height = InHeight < VH - Top ? InHeight : VH - Top;
+    if(Rec) { GDynamicGDI->RecordScissorRect(Rec, VX + Left, VY + Top, Width, Height); }
+    else    { GDynamicGDI->SetScissorRect(VX + Left, VY + Top, Width, Height); }
 }
 
 void GDIClearScissorRect()
 {
     if(!GDynamicGDI) return;
+    if(GDIRecordingContext* Rec = GCurrentRecording)
+    {
+        GDynamicGDI->RecordScissorRect(Rec, Rec->ViewportX, Rec->ViewportY, Rec->ViewportWidth, Rec->ViewportHeight);
+        return;
+    }
     const GDIDynamicDriver& D = *GDynamicGDI;
     GDynamicGDI->SetScissorRect(D.ViewportX, D.ViewportY, D.ViewportWidth, D.ViewportHeight);
 }
 
-IMPLEMENT_GDI_FUNCTION_BODY(void,
-                            SetDepthState,
-                            (IDepthStateDesc InDepthState),
-                            ,
-                            (InDepthState))
+void GDISetDepthState(IDepthStateDesc InDepthState)
+{
+    if(!GDynamicGDI) return;
+    if(GDIRecordingContext* Rec = GCurrentRecording) { GDynamicGDI->RecordDepthState(Rec, InDepthState); return; }
+    GDynamicGDI->SetDepthState(InDepthState);
+}
 
-IMPLEMENT_GDI_FUNCTION_BODY(void,
-                            SetBlendState,
-                            (IBlendStateDesc InBlendState),
-                            ,
-                            (InBlendState))
+void GDISetBlendState(IBlendStateDesc InBlendState)
+{
+    if(!GDynamicGDI) return;
+    if(GDIRecordingContext* Rec = GCurrentRecording) { GDynamicGDI->RecordBlendState(Rec, InBlendState); return; }
+    GDynamicGDI->SetBlendState(InBlendState);
+}
 
-IMPLEMENT_GDI_FUNCTION_BODY(void,
-                            SetStencilState,
-                            (IStencilStateDesc InStencilState),
-                            ,
-                            (InStencilState))
+void GDISetStencilState(IStencilStateDesc InStencilState)
+{
+    if(!GDynamicGDI) return;
+    if(GDIRecordingContext* Rec = GCurrentRecording) { GDynamicGDI->RecordStencilState(Rec, InStencilState); return; }
+    GDynamicGDI->SetStencilState(InStencilState);
+}
 
-IMPLEMENT_GDI_FUNCTION_BODY(void,
-                            SetColorMask,
-                            (EColorMask InColorMask),
-                            ,
-                            (InColorMask))
+void GDISetColorMask(EColorMask InColorMask)
+{
+    if(!GDynamicGDI) return;
+    if(GDIRecordingContext* Rec = GCurrentRecording) { GDynamicGDI->RecordColorMask(Rec, InColorMask); return; }
+    GDynamicGDI->SetColorMask(InColorMask);
+}
 
 IMPLEMENT_GDI_FUNCTION_BODY_RET(GDIRenderTarget*,
                             CreateRenderTarget,
@@ -520,6 +565,11 @@ uint64_t GDIGetRenderingSerial()
     return GDynamicGDI ? GDynamicGDI->RenderingSerial : 0;
 }
 
+uint32_t GDIGetFramesInFlight()
+{
+    return GDynamicGDI ? GDynamicGDI->FramesInFlight : 1;
+}
+
 GDIMesh* GDICreateDynamicMesh(const uint32_t InMaxVertices, const uint32_t InMaxIndices)
 {
     if(!GDynamicGDI || InMaxVertices == 0 || InMaxIndices == 0) return nullptr;
@@ -528,15 +578,16 @@ GDIMesh* GDICreateDynamicMesh(const uint32_t InMaxVertices, const uint32_t InMax
 
 bool GDIUpdateDynamicMesh(GDIMesh* InMesh, const GDIMeshDesc& InDesc)
 {
-    return GDynamicGDI && InMesh && InMesh->UpdateDynamic(InDesc, GDynamicGDI->RenderingSerial);
+    return GDynamicGDI && InMesh && InMesh->UpdateDynamic(InDesc, GDynamicGDI->RenderingSerial, GDynamicGDI->FrameSlot);
 }
 
-bool GDIMesh::UpdateDynamic(const GDIMeshDesc& InDesc, const uint64_t InRenderingSerial)
+bool GDIMesh::UpdateDynamic(const GDIMeshDesc& InDesc, const uint64_t InRenderingSerial, const uint32_t InFrameSlot)
 {
     if(!bDynamic || !GDIValidateMeshDesc(InDesc, true)) return false;
 
-    /* A new block: the previous one's draws have finished (every backend
-     * waits for them before recording again), so start over. */
+    /* A new block: the frame slot's region was last written FramesInFlight
+     * blocks ago, whose draws have finished (the backend waited for them
+     * before recording this one), so start it over. */
     if(InRenderingSerial != DynamicSerial)
     {
         DynamicSerial     = InRenderingSerial;
@@ -548,10 +599,13 @@ bool GDIMesh::UpdateDynamic(const GDIMeshDesc& InDesc, const uint64_t InRenderin
     {
         return false;
     }
-    if(!WriteDynamic(InDesc, DynamicNextVertex, DynamicNextIndex)) return false;
+    /* The slot's region of the buffers (the backend allocated one per frame in flight). */
+    const uint32_t RegionVertex = InFrameSlot * DynamicVertexCapacity;
+    const uint32_t RegionIndex  = InFrameSlot * DynamicIndexCapacity;
+    if(!WriteDynamic(InDesc, RegionVertex + DynamicNextVertex, RegionIndex + DynamicNextIndex)) return false;
 
-    DynamicBaseVertex       = DynamicNextVertex;
-    DynamicBaseIndex        = DynamicNextIndex;
+    DynamicBaseVertex       = RegionVertex + DynamicNextVertex;
+    DynamicBaseIndex        = RegionIndex + DynamicNextIndex;
     DynamicNextVertex      += InDesc.NumVertices;
     DynamicNextIndex       += InDesc.NumIndices;
     RenderData.NumVertices  = InDesc.NumVertices * 3;   // position floats, as everywhere
@@ -571,17 +625,31 @@ IMPLEMENT_GDI_FUNCTION_BODY(void,
                             (), ,()
                             )
 
-IMPLEMENT_GDI_FUNCTION_BODY(void,
-                            DrawObject,
-                            (GDIViewObject* InViewObject),,
-                            (InViewObject)
-                            )
+void GDIDrawObject(GDIViewObject* InViewObject)
+{
+    if(!GDynamicGDI) return;
+    if(GDIRecordingContext* Rec = GCurrentRecording)
+    {
+        if(!InViewObject) return;
+        GDynamicGDI->RecordDrawObject(Rec, InViewObject, InViewObject->View);
+        ++Rec->DrawsRecorded;
+        return;
+    }
+    GDynamicGDI->DrawObject(InViewObject);   // null included: a backend decides (Null counts it)
+}
 
-IMPLEMENT_GDI_FUNCTION_BODY(void,
-                            DrawObject,
-                            (GDIViewObject* InViewObject, GDIView* InOverrideView),,
-                            (InViewObject, InOverrideView)
-)
+void GDIDrawObject(GDIViewObject* InViewObject, GDIView* InOverrideView)
+{
+    if(!GDynamicGDI) return;
+    if(GDIRecordingContext* Rec = GCurrentRecording)
+    {
+        if(!InViewObject) return;
+        GDynamicGDI->RecordDrawObject(Rec, InViewObject, InOverrideView);
+        ++Rec->DrawsRecorded;
+        return;
+    }
+    GDynamicGDI->DrawObject(InViewObject, InOverrideView);   // null included: a backend decides (Null counts it)
+}
 
 IMPLEMENT_GDI_FUNCTION_BODY_RET(GDIMesh*,
                             CreateQuadMesh,
@@ -604,17 +672,39 @@ IMPLEMENT_GDI_FUNCTION_BODY_RET(GDIMesh*,
                             (InDesc)
                             )
 
-IMPLEMENT_GDI_FUNCTION_BODY(void,
-                            SetBoundShader,
-                            (GDIShader* In_VS, GDIShader* In_PS), ,(In_VS, In_PS))
+void GDISetBoundShader(GDIShader* In_VS, GDIShader* In_PS)
+{
+    if(!GDynamicGDI) return;
+    if(GDIRecordingContext* Rec = GCurrentRecording)
+    {
+        Rec->BoundVertexShader = In_VS;
+        Rec->BoundPixelShader  = In_PS;
+        return;
+    }
+    GDynamicGDI->SetBoundShader(In_VS, In_PS);
+}
 
-IMPLEMENT_GDI_FUNCTION_BODY(void,
-                            SetUniformBlock,
-                            (uint InBinding, const void* InData, uint InSize), ,(InBinding, InData, InSize))
+void GDISetUniformBlock(uint InBinding, const void* InData, uint InSize)
+{
+    if(!GDynamicGDI) return;
+    if(GDIRecordingContext* Rec = GCurrentRecording)
+    {
+        GDIStoreUniformBlock(Rec->MaterialBlocks, Rec->MaterialBlockSerials, InBinding, InData, InSize);
+        return;
+    }
+    GDynamicGDI->SetUniformBlock(InBinding, InData, InSize);
+}
 
-IMPLEMENT_GDI_FUNCTION_BODY(void,
-                            SetMaterialTexture,
-                            (uint InSlot, GDITextureResource* InTexture), ,(InSlot, InTexture))
+void GDISetMaterialTexture(uint InSlot, GDITextureResource* InTexture)
+{
+    if(!GDynamicGDI) return;
+    if(GDIRecordingContext* Rec = GCurrentRecording)
+    {
+        if(InSlot < GDI_MATERIAL_TEXTURE_SLOTS) { Rec->MaterialTextures[InSlot] = InTexture; }
+        return;
+    }
+    GDynamicGDI->SetMaterialTexture(InSlot, InTexture);
+}
 
 IMPLEMENT_GDI_FUNCTION_BODY_RET(GDITextureResource*,
                             CreateTextureResource,
@@ -634,11 +724,13 @@ IMPLEMENT_GDI_FUNCTION_BODY_RET(GDITextureResource*,
                                 return,
                                 (InParent, InBorder, InFilter))
 
-IMPLEMENT_GDI_FUNCTION_BODY_RET(bool,
-                                InRenderThread,
-                                (),
-                                return,
-                                ())
+/* A thread recording a chunk of a parallel pass counts: it records render
+ * commands, on the render thread's behalf. */
+bool GDIInRenderThread()
+{
+    if(!GDynamicGDI) return false;
+    return GCurrentRecording != nullptr || GDynamicGDI->InRenderThread();
+}
 
 IMPLEMENT_GDI_FUNCTION_BODY(void,
                        RegisterTexture,
@@ -703,7 +795,8 @@ void GDIBeginDrawEvent(const std::string& InEventName)
     DrawEventsIssued().push_back(bIssue);
     if(bIssue)
     {
-        GDynamicGDI->BeginDrawEvent(InEventName);
+        if(GDIRecordingContext* Rec = GCurrentRecording) { GDynamicGDI->RecordBeginDrawEvent(Rec, InEventName); }
+        else                                             { GDynamicGDI->BeginDrawEvent(InEventName); }
     }
 }
 
@@ -718,7 +811,8 @@ void GDIEndDrawEvent()
     Issued.pop_back();
     if(bIssued && GDynamicGDI)
     {
-        GDynamicGDI->EndDrawEvent();
+        if(GDIRecordingContext* Rec = GCurrentRecording) { GDynamicGDI->RecordEndDrawEvent(Rec); }
+        else                                             { GDynamicGDI->EndDrawEvent(); }
     }
 }
 
@@ -809,6 +903,12 @@ void GDISetInstanceBuffer(GDIBuffer* InBuffer, const uint32_t InCount)
     const bool bValid = GDynamicGDI->SupportsCompute() && InBuffer && InCount > 0
                      && (InBuffer->GetUsage() & GDI_BU_Instance) != 0
                      && uint64_t(InCount) * GDI_INSTANCE_STRIDE <= InBuffer->GetSize();
+    if(GDIRecordingContext* Rec = GCurrentRecording)
+    {
+        Rec->InstanceBuffer = bValid ? InBuffer : nullptr;
+        Rec->InstanceCount  = bValid ? InCount : 0;
+        return;
+    }
     GDynamicGDI->InstanceBuffer = bValid ? InBuffer : nullptr;
     GDynamicGDI->InstanceCount  = bValid ? InCount : 0;
 }
@@ -823,6 +923,12 @@ void GDISetIndirectArgs(GDIBuffer* InArgs, const uint32_t InOffsetBytes)
     if(!GDynamicGDI) { return; }
     const bool bValid = GDynamicGDI->SupportsIndirectDraw() && InArgs && (InArgs->GetUsage() & GDI_BU_Indirect) != 0
                      && InOffsetBytes % 4 == 0 && uint64_t(InOffsetBytes) + GDI_INDIRECT_ARGS_STRIDE <= InArgs->GetSize();
+    if(GDIRecordingContext* Rec = GCurrentRecording)
+    {
+        Rec->IndirectArgs       = bValid ? InArgs : nullptr;
+        Rec->IndirectArgsOffset = bValid ? InOffsetBytes : 0;
+        return;
+    }
     GDynamicGDI->IndirectArgs       = bValid ? InArgs : nullptr;
     GDynamicGDI->IndirectArgsOffset = bValid ? InOffsetBytes : 0;
 }
@@ -853,6 +959,22 @@ bool GDISupportsOcclusionQueries()
 bool GDISupportsOcclusionPredication()
 {
     return GDISupportsOcclusionQueries() && GDynamicGDI->SupportsOcclusionPredication();
+}
+
+GDIParallelRecordingSupport GDIGetParallelRecordingSupport()
+{
+    if(!GDynamicGDI)
+    {
+        GDIParallelRecordingSupport None;
+        None.Reason = "no GDI driver";
+        return None;
+    }
+    return GDynamicGDI->GetParallelRecordingSupport();
+}
+
+bool GDISupportsParallelRecording()
+{
+    return GDIGetParallelRecordingSupport().bSupported;
 }
 
 GDIOcclusionQueries* GDICreateOcclusionQueries(const uint32_t InCapacity)
@@ -899,7 +1021,48 @@ void GDISetOcclusionPredicate(GDIOcclusionQueries* InSet, const int32_t InIndex)
         return;
     }
     const bool bSet = InSet && InIndex >= 0 && uint32_t(InIndex) < InSet->GetCapacity();
+    if(GDIRecordingContext* Rec = GCurrentRecording)
+    {
+        Rec->PredicateSet   = bSet ? InSet : nullptr;
+        Rec->PredicateIndex = bSet ? InIndex : -1;
+        return;
+    }
     GDynamicGDI->SetOcclusionPredicate(bSet ? InSet : nullptr, bSet ? InIndex : -1);
+}
+
+bool GDIBeginParallelPass(const uint32_t InChunks, GDIRecordingContext** OutContexts)
+{
+    if(!GDynamicGDI || !OutContexts || InChunks == 0 || InChunks > GDI_PARALLEL_CHUNKS_MAX || GCurrentRecording)
+    {
+        return false;
+    }
+    return GDynamicGDI->BeginParallelPass(InChunks, OutContexts);
+}
+
+void GDIEndParallelPass()
+{
+    if(GDynamicGDI && !GCurrentRecording) { GDynamicGDI->EndParallelPass(); }
+}
+
+void GDISetCurrentRecording(GDIRecordingContext* InContext)
+{
+    GCurrentRecording = InContext;
+}
+
+GDIRecordingContext* GDIGetCurrentRecording()
+{
+    return GCurrentRecording;
+}
+
+void GDISetDrawRange(GDIMesh* InMesh, const uint32_t InFirst, const uint32_t InCount)
+{
+    if(GDIRecordingContext* Rec = GCurrentRecording)
+    {
+        Rec->DrawFirst = InFirst;
+        Rec->DrawCount = InCount;
+        return;
+    }
+    if(InMesh) { InMesh->SetDrawRange(InFirst, InCount); }
 }
 
 bool GDIReadOcclusionResults(GDIOcclusionQueries* InSet, std::vector<uint8_t>& OutVisible)

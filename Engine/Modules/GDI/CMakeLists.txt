@@ -185,6 +185,7 @@ if(GDI_WITH_VULKAN)
             Source/Private/GDI/Vulkan/VKBuffer.cpp
             Source/Private/GDI/Vulkan/VKCompute.cpp
             Source/Private/GDI/Vulkan/VKQuery.cpp
+            Source/Private/GDI/Vulkan/VKRecordingContext.cpp
             Source/Private/GDI/Vulkan/VKSync.cpp
             Source/Private/GDI/Vulkan/VKDevice.cpp
             Source/Private/GDI/Vulkan/VKSwapchain.cpp
@@ -228,6 +229,7 @@ if(GDI_WITH_D3D12)
             Source/Private/GDI/D3D12/D3D12Buffer.cpp
             Source/Private/GDI/D3D12/D3D12Compute.cpp
             Source/Private/GDI/D3D12/D3D12Query.cpp
+            Source/Private/GDI/D3D12/D3D12RecordingContext.cpp
             Source/Private/GDI/D3D12/D3D12TransientOps.h
             Source/Public/GDI/D3D12/GDID3D12Platform.h
             Source/Public/GDI/D3D12/D3D12DynamicGDI.h
@@ -237,6 +239,7 @@ if(GDI_WITH_D3D12)
             Source/Public/GDI/D3D12/D3D12PipelineCache.h
             Source/Public/GDI/D3D12/D3D12DescriptorAllocator.h
             Source/Public/GDI/D3D12/D3D12RenderTarget.h
+            Source/Public/GDI/D3D12/D3D12RecordingContext.h
             Source/Public/GDI/D3D12/D3D12Texture.h
             Source/Public/GDI/D3D12/D3D12Mesh.h
             Source/Public/GDI/D3D12/D3D12Shader.h

@@ -413,12 +413,17 @@ bool VKPipelineCache::BuildLayouts()
     const VkShaderStageFlags kAllStages =
         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    // Helper lambdas for common binding descriptors.
+    // Helper lambdas for common binding descriptors. Every uniform buffer here
+    // lives in the per-frame ring, so each is DYNAMIC: a descriptor set names
+    // the ring's buffer and a range, and each draw binds it with its own
+    // offsets -- draws differing only in their blocks share a set
+    // (MULTITHREADED_RENDERING.md, phase 1). At most 6 per set, within
+    // maxDescriptorSetUniformBuffersDynamic's guaranteed 8.
     auto MakeUBO = [&](uint32_t Binding) -> VkDescriptorSetLayoutBinding
     {
         VkDescriptorSetLayoutBinding B{};
         B.binding         = Binding;
-        B.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        B.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
         B.descriptorCount = 1;
         B.stageFlags      = kAllStages;
         return B;
@@ -538,19 +543,38 @@ VKPipelineCache::PipelineFetch VKPipelineCache::GetOrCreateFull(const PipelineKe
     F.DescLayout = DescSetLayouts[Group];
 
     const uint64_t H = HashKey(Key);
-
-    auto It = PipelineEntries.find(H);
-    if(It != PipelineEntries.end())
+    const auto Find = [&]() -> VkPipeline
     {
-        F.Pipeline = It->second.Pipeline;
-        return F;
+        const auto Range = PipelineEntries.equal_range(H);
+        for(auto It = Range.first; It != Range.second; ++It)
+        {
+            if(KeysEqual(It->second.Key, Key)) { return It->second.Pipeline; }
+        }
+        return VK_NULL_HANDLE;
+    };
+    {
+        std::shared_lock<std::shared_mutex> Read(EntriesLock);
+        if(const VkPipeline Found = Find(); Found != VK_NULL_HANDLE)
+        {
+            F.Pipeline = Found;
+            return F;
+        }
     }
 
+    /* A miss: made under the exclusive lock, after looking again -- another
+     * thread may have made it meanwhile. */
+    std::unique_lock<std::shared_mutex> Write(EntriesLock);
+    if(const VkPipeline Found = Find(); Found != VK_NULL_HANDLE)
+    {
+        F.Pipeline = Found;
+        return F;
+    }
     VkPipeline New = CreatePipeline(Key);
     PipelineEntry Entry;
     Entry.Pipeline = New;
     Entry.Group    = Group;
-    PipelineEntries[H] = Entry;
+    Entry.Key      = Key;
+    PipelineEntries.emplace(H, Entry);
 
 #ifdef QT_DEBUG
     GDI_LOG("[VKPipelineCache] New pipeline: VS=0x" + GDIHex(reinterpret_cast<uintptr_t>(Key.VertexShader))
@@ -791,4 +815,23 @@ void VKPipelineCache::ForgetComputeModule(const VkShaderModule InModule)
         }
         It = ComputeModules.erase(It);
     }
+}
+
+bool VKPipelineCache::KeysEqual(const PipelineKey& A, const PipelineKey& B)
+{
+    if(A.VertexShader != B.VertexShader || A.FragmentShader != B.FragmentShader || A.VertexLayoutID != B.VertexLayoutID
+       || A.DescLayoutGroup != B.DescLayoutGroup || A.BlendEnable != B.BlendEnable || A.SrcColorBlend != B.SrcColorBlend
+       || A.DstColorBlend != B.DstColorBlend || A.SrcAlphaBlend != B.SrcAlphaBlend || A.DstAlphaBlend != B.DstAlphaBlend
+       || A.ColorBlendOp != B.ColorBlendOp || A.AlphaBlendOp != B.AlphaBlendOp || A.ColorWriteMask != B.ColorWriteMask
+       || A.DepthTestEnable != B.DepthTestEnable || A.DepthWriteEnable != B.DepthWriteEnable
+       || A.DepthCompareOp != B.DepthCompareOp || A.StencilTestEnable != B.StencilTestEnable || A.RTFormat != B.RTFormat
+       || A.ColorCount != B.ColorCount || A.DepthFormat != B.DepthFormat || A.Topology != B.Topology)
+    {
+        return false;
+    }
+    for(uint32_t Index = 0; Index < GDI_MAX_COLOR_TARGETS; ++Index)
+    {
+        if(A.ColorFormats[Index] != B.ColorFormats[Index]) { return false; }
+    }
+    return true;
 }

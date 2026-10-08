@@ -1,4 +1,5 @@
 #include "Public/RenderCore/RenderThread.h"
+#include "Public/RenderCore/ParallelRecording.h"
 
 #include <atomic>
 #include <chrono>
@@ -130,6 +131,14 @@ namespace RenderCore
              * and D3D12 record the thread FIRST, then can still fail (no
              * context, no device), so the driver must also say it finished. */
             const bool bOK = GDIInRenderThread() && GDynamicGDI && GDynamicGDI->IsInitialized();
+            if(bOK)
+            {
+                /* Parallel draw recording's gate, once the device is up and
+                 * knows what it supports (MULTITHREADED_RENDERING.md). */
+                const ParallelRecordingState Parallel = EvaluateParallelRecording();
+                SetParallelRecordingState(Parallel);
+                CORE_LOG(Parallel.Summary)
+            }
             bAllocateOK.store(bOK, std::memory_order_release);
             ReadyForUse.Signal();
 
@@ -417,6 +426,11 @@ namespace RenderCore
         OutStats.PresentMs              = Unit.PresentMs;
         OutStats.IdleMs                 = Unit.IdleMs;
         GetReportedGpuTimes(OutStats.GpuMs);
+        GetReportedStageTimes(OutStats.CpuMs, OutStats.StageDraws, OutStats.QueueCpuMs);
+        const ParallelRecordingState Parallel = GetParallelRecordingState();
+        OutStats.bParallelRecordingAvailable = Parallel.bEnabled;
+        OutStats.ParallelRecordingWorkers    = Parallel.Workers;
+        OutStats.ParallelPasses              = P->Context.GetParallelPassCount();
         GetStaticDrawStats(OutStats.StaticProxiesDrawn, OutStats.StaticListBuilds);
         GetOcclusionStats(OutStats.ProxiesOccludedLastFrame, OutStats.OcclusionQueriesLastFrame);
     }
@@ -525,26 +539,32 @@ namespace RenderCore
         return Text;
     }
 
-    std::string FormatStatFrame(const float* InGpuMs, const bool bInSupported)
+    std::string FormatStatFrame(const float* InGpuMs, const float* InCpuMs, const int32_t* InDraws, const float InQueueMs,
+                                const bool bInGpuSupported)
     {
-        if(!bInSupported)
+        const auto Column = [](char* OutText, const size_t InSize, const float InMs)
         {
-            return "GPU: not timed on this backend";
-        }
-        std::string Text = "GPU            ms";
+            if(InMs >= 0.0f) { std::snprintf(OutText, InSize, "%6.2f", double(InMs)); }
+            else             { std::snprintf(OutText, InSize, "     -"); }
+        };
+        std::string Text = "Stage       GPU ms CPU ms  Draws";
         for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer)
         {
-            char Line[48];
-            const char* Name = GetRenderGpuTimerName(ERenderGpuTimer(Timer));
-            if(InGpuMs && InGpuMs[Timer] >= 0.0f)
-            {
-                std::snprintf(Line, sizeof(Line), "\n%-11s %5.2f", Name, double(InGpuMs[Timer]));
-            }
-            else
-            {
-                std::snprintf(Line, sizeof(Line), "\n%-11s     -", Name);
-            }
+            char Gpu[16], Cpu[16], Draws[16], Line[64];
+            Column(Gpu, sizeof(Gpu), bInGpuSupported && InGpuMs ? InGpuMs[Timer] : -1.0f);
+            Column(Cpu, sizeof(Cpu), InCpuMs ? InCpuMs[Timer] : -1.0f);
+            if(InDraws && InDraws[Timer] >= 0) { std::snprintf(Draws, sizeof(Draws), "%6d", int(InDraws[Timer])); }
+            else                               { std::snprintf(Draws, sizeof(Draws), "     -"); }
+            std::snprintf(Line, sizeof(Line), "\n%-11s %s %s %s", GetRenderGpuTimerName(ERenderGpuTimer(Timer)), Gpu, Cpu, Draws);
             Text += Line;
+        }
+        char Queue[16], Line[64];
+        Column(Queue, sizeof(Queue), InQueueMs);
+        std::snprintf(Line, sizeof(Line), "\n%-11s      - %s      -", "Queue", Queue);
+        Text += Line;
+        if(!bInGpuSupported)
+        {
+            Text += "\nGPU: not timed on this backend";
         }
         return Text;
     }
@@ -565,5 +585,34 @@ namespace RenderCore
     {
         std::lock_guard<std::mutex> Lock(GReportedGpuLock);
         for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer) { OutGpuMs[Timer] = GReportedGpuMs[Timer]; }
+    }
+
+    namespace
+    {
+        float   GReportedCpuMs[RGT_Count] = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+        int32_t GReportedDraws[RGT_Count] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+        float   GReportedQueueMs          = -1.0f;
+    }
+
+    void SetReportedStageTimes(const float* InCpuMs, const int32_t* InDraws, const float InQueueMs)
+    {
+        std::lock_guard<std::mutex> Lock(GReportedGpuLock);
+        for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer)
+        {
+            GReportedCpuMs[Timer] = InCpuMs[Timer];
+            GReportedDraws[Timer] = InDraws[Timer];
+        }
+        GReportedQueueMs = InQueueMs;
+    }
+
+    void GetReportedStageTimes(float* OutCpuMs, int32_t* OutDraws, float& OutQueueMs)
+    {
+        std::lock_guard<std::mutex> Lock(GReportedGpuLock);
+        for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer)
+        {
+            OutCpuMs[Timer] = GReportedCpuMs[Timer];
+            OutDraws[Timer] = GReportedDraws[Timer];
+        }
+        OutQueueMs = GReportedQueueMs;
     }
 }

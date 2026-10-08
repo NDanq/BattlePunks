@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // PPTemporalAA.fsh -- temporal antialiasing's resolve (RenderCore/RENDERPIPELINE.md,
 // "Temporal antialiasing"): this frame's HDR scene colour, drawn with a sub-pixel
 // jitter, blended into the history -- every frame before it, reprojected -- so

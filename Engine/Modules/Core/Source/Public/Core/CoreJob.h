@@ -489,6 +489,11 @@ namespace EngineCore
          * naming this constant beats a corrupted stack in a worker. */
         enum : uint32_t { MAX_WAIT_DEPTH = 32 };
 
+        /* How long Wait yields, with nothing of its own to run, before it sleeps
+         * (a millisecond at least): about one sleep's worth, so a wait that ends
+         * within it costs no more than the sleep would have. */
+        enum : uint32_t { WAIT_YIELD_US = 1000 };
+
         /* Ring size: fixed, allocated once, a power of two so the wrap is a mask.
          * Dispatch past it runs inline. */
         enum : uint32_t { MAX_PENDING_JOBS = 4096 };

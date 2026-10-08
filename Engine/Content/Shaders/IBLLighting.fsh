@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // IBLLighting.fsh -- image-based lighting over the G-buffer, added to the
 // lit scene (RENDERPIPELINE.md, "Image-based lighting"): what the Lighting
 // stage's hemisphere ambient was, from the probes and the sky instead.

@@ -5,7 +5,7 @@
 #include "Public/GDI/GDI.h"
 #include "Public/GDI/GDILog.h"
 
-bool D3D12DescriptorAllocator::Initialize(D3D12Device* InDevice)
+bool D3D12DescriptorAllocator::Initialize(D3D12Device* InDevice, const uint32_t InSlots)
 {
     Device = InDevice;
     if(!Device || !Device->IsValid()) return false;
@@ -32,7 +32,8 @@ bool D3D12DescriptorAllocator::Initialize(D3D12Device* InDevice)
 
     if(!CreateSamplers()) return false;
 
-    RingBuffer = D3D12Ops::CreateBuffer(Device, kRingCapacity, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+    RingSlots  = InSlots < 1 ? 1u : InSlots;
+    RingBuffer = D3D12Ops::CreateBuffer(Device, UINT64(kRingCapacity) * RingSlots, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
     if(!RingBuffer) return false;
 
     const D3D12_RANGE NoRead{ 0, 0 };
@@ -43,7 +44,7 @@ bool D3D12DescriptorAllocator::Initialize(D3D12Device* InDevice)
         return false;
     }
     RingMapped = static_cast<uint8_t*>(Mapped);
-    RingOffset = 0;
+    Reset(0);
     return true;
 }
 
@@ -115,24 +116,33 @@ void D3D12DescriptorAllocator::Shutdown()
     Device     = nullptr;
 }
 
-void D3D12DescriptorAllocator::Reset()
+void D3D12DescriptorAllocator::Reset(const uint32_t InSlot)
 {
-    RingOffset = 0;
-    ++Epoch;
+    const uint32_t Slot = InSlot < RingSlots ? InSlot : 0u;
+    RingBase   = Slot * kRingCapacity;
+    RingEnd    = RingBase + kRingCapacity;
+    RingOffset = RingBase;
+    ++Epoch;   // an upload from another slot's region, or this one's last frame, is stale
 }
 
 D3D12CBAllocation D3D12DescriptorAllocator::AllocateCB(uint32_t Size)
 {
     D3D12CBAllocation Out;
     const uint32_t Aligned = (Size + kCBAlignment - 1) & ~(kCBAlignment - 1);
-    if(!RingMapped || RingOffset + Aligned > kRingCapacity)
+    if(!RingMapped || Aligned > kRingCapacity)
     {
         return Out;
     }
 
-    Out.GPUAddress = RingBuffer->GetGPUVirtualAddress() + RingOffset;
-    Out.MappedPtr  = RingMapped + RingOffset;
-    RingOffset += Aligned;
+    /* Claimed whole, by whichever thread gets there: past the region's end,
+     * nothing (the offset stays past it until Reset). */
+    const uint32_t Offset = RingOffset.fetch_add(Aligned, std::memory_order_relaxed);
+    if(Offset > RingEnd - Aligned)
+    {
+        return Out;
+    }
+    Out.GPUAddress = RingBuffer->GetGPUVirtualAddress() + Offset;
+    Out.MappedPtr  = RingMapped + Offset;
     return Out;
 }
 

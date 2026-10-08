@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // IBLSky.fsh -- the sky as a cube strip (6S x S, +X -X +Y -Y +Z -Z), for the
 // atlas's sky block (IBLCommon.glsl): the Sky Light's HDRI if it has one,
 // else its sky and ground colours, linear, times their intensity.

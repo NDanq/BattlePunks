@@ -58,12 +58,35 @@ public:
     inline const std::unordered_map<std::string, D3D12UniformValue>&   GetScalars()  const { return Scalars; }
     inline const std::unordered_map<std::string, D3D12TextureBinding>& GetTextures() const { return Textures; }
 
+    /** The texture bound at index 0 (the one a non-material draw samples); null if none.
+     *  Found again only when a texture is set, not per draw. */
+    inline GDITextureResource*                                          GetTexture0() const { return Texture0; }
+
+    /**
+     * The ViewParameters (160 bytes) and Transform (144) blocks as DrawObject
+     * packed them (GDICorePack: before the clip-z remap), as UpdateCoreUniforms'
+     * seven "ViewParameters.*" and "Transform.*" scalars held, without a string
+     * per value (MULTITHREADED_RENDERING.md, phase 1). bView / bTransform: set
+     * at least once; until then BindDrawState packs from the scalars.
+     */
+    struct CoreBlocks
+    {
+        alignas(16) float View[40]      = {};
+        alignas(16) float Transform[36] = {};
+        bool bView      = false;
+        bool bTransform = false;
+    };
+    inline CoreBlocks&       GetCoreBlocks()       { return Core; }
+    inline const CoreBlocks& GetCoreBlocks() const { return Core; }
+
 private:
     std::vector<uint8_t> Bytecode;
     uint64_t             ID = 0;
 
     std::unordered_map<std::string, D3D12UniformValue>   Scalars;
     std::unordered_map<std::string, D3D12TextureBinding> Textures;
+    GDITextureResource*                                  Texture0 = nullptr;
+    CoreBlocks                                           Core;
 };
 
 #endif //CORECLIENT_D3D12SHADER_H

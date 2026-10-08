@@ -7,6 +7,7 @@
 #include "Public/GDI/GDIDefinitions.h"
 #include "Public/GDI/GDIShader.h"
 #include <string>
+#include <atomic>
 #include <unordered_map>
 
 class VKDevice;
@@ -88,12 +89,42 @@ public:
     /** Texture/sampler uniforms staged this frame. */
     inline const std::unordered_map<std::string, VKTextureBinding>& GetTextures() const { return Textures; }
 
+    /**
+     * The core blocks, packed (std140, as BindDrawState uploads them), by
+     * VulkanDynamicGDI::DrawObject: the ViewParameters block (160 bytes) and
+     * the Transform block (144) of this shader's last draw -- what the
+     * "ViewParameters.*" and "Transform.*" scalars held, without a string per
+     * value (MULTITHREADED_RENDERING.md, phase 1). bView / bTransform: set at
+     * least once; until then BindDrawState packs from the scalars.
+     */
+    struct CoreBlocks
+    {
+        alignas(16) float View[40]      = {};
+        alignas(16) float Transform[36] = {};
+        bool bView      = false;
+        bool bTransform = false;
+    };
+    inline CoreBlocks&       GetCoreBlocks()       { return Core; }
+    inline const CoreBlocks& GetCoreBlocks() const { return Core; }
+
+    /**
+     * Whether the scalars hold anything but the core names -- the custom UBO
+     * at binding 2 -- worked out again only when the map's size changes.
+     */
+    bool HasCustomScalars() const;
+
 private:
     VKDevice*       Device        = nullptr;
     VkShaderModule  ShaderModule  = VK_NULL_HANDLE;
 
     std::unordered_map<std::string, VKUniformValue>  Scalars;
     std::unordered_map<std::string, VKTextureBinding> Textures;
+    CoreBlocks                                        Core;
+    /* HasCustomScalars' cache: atomics, as recording contexts ask from several
+     * threads at once (the scalars themselves only change on the render thread,
+     * outside parallel passes). */
+    mutable std::atomic<size_t>                       CustomScanSize{~size_t(0)};
+    mutable std::atomic<bool>                         bCustomScalars{false};
 };
 
 #endif //CORECLIENT_VKSHADER_H

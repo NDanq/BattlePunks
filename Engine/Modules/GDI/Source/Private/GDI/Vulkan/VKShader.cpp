@@ -202,3 +202,25 @@ void VKShaderResource::Release(void)
     Device = nullptr;
     bInitialized = false;
 }
+
+bool VKShaderResource::HasCustomScalars() const
+{
+    const size_t Size = Scalars.size();
+    if(CustomScanSize.load(std::memory_order_acquire) == Size)
+    {
+        return bCustomScalars.load(std::memory_order_relaxed);
+    }
+    bool bCustom = false;
+    for(const auto& Each : Scalars)
+    {
+        const std::string& N = Each.first;
+        if(N.compare(0, 15, "ViewParameters.") != 0 && N.compare(0, 10, "Transform.") != 0)
+        {
+            bCustom = true;
+            break;
+        }
+    }
+    bCustomScalars.store(bCustom, std::memory_order_relaxed);
+    CustomScanSize.store(Size, std::memory_order_release);
+    return bCustom;
+}

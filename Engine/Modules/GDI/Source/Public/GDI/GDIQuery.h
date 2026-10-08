@@ -15,8 +15,11 @@
  *
  * Then GDISetOcclusionPredicate(Set, i) skips the draws after it, on the GPU,
  * if query i found nothing -- where the backend can predicate. The CPU sees a
- * round's answers once its block has finished on the GPU, from the next
- * block on (GDIReadOcclusionResults), without waiting for it.
+ * round's answers once its block has finished on the GPU -- by the block
+ * GDIGetFramesInFlight() after it -- without waiting for it
+ * (GDIReadOcclusionResults); beginning a set's next round discards answers
+ * not yet read, so a caller reading every frame keeps a set per frame in
+ * flight and uses them in turn (RenderScene does).
  *
  * Only where GDISupportsOcclusionQueries(). Created on the render thread;
  * Release defers the free until the GPU is done with it, as a GDIBuffer's.

@@ -1,4 +1,6 @@
 #include "Public/RenderCore/RenderContext.h"
+#include "Public/RenderCore/ParallelRecording.h"
+#include "Public/Core/CoreJob.h"
 
 #include <algorithm>
 #include <iterator>
@@ -7,6 +9,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <memory>
+#include <mutex>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -71,7 +75,46 @@ namespace RenderCore
         GDIShader*           Pixel = nullptr;      // null: failed to load, drawn as the fallback
         GDIShader*           Vertex[5] = {};       // its own Quad, Mesh, InstancedMesh and SkinnedMesh shaders (by EMaterialVertexInput), with an offset only
         std::vector<uint8_t> Block;                // the defaults; the tint is written per draw
+        /* Its textures as found before the parallel pass under way, by
+         * Description.Textures' index (ResolveForParallel): a recording
+         * thread binds these and never looks one up. ResolvedPass: which pass. */
+        std::vector<GDITextureResource*> Resolved;
+        uint64_t             ResolvedPass = 0;
     };
+
+    /*
+     * One recording thread's issue state (MULTITHREADED_RENDERING.md, phase 3):
+     * what RenderContext::Impl's issue functions otherwise keep on the Impl --
+     * the GDI view and mesh objects Place() writes, the bound-shader memo,
+     * the shadow view's matrices, the scratch blocks -- so chunks of one stage
+     * issue at once. The render thread keeps using the Impl's own; a thread
+     * recording a chunk has GIssueScratch set to its own.
+     */
+    struct RenderIssueScratch
+    {
+        GDIShader*                   BoundVertex     = nullptr;
+        GDIShader*                   BoundPixel      = nullptr;
+        GDIView*                     View3D          = nullptr;
+        GDIViewObject*               MeshObject      = nullptr;
+        const EngineCore::Matrix4x4* PlaceProjection = nullptr;
+        const EngineCore::Matrix4x4* PlaceView       = nullptr;
+        int32_t                      ShadowView      = -1;      // the view its viewport and matrices are set for
+        std::vector<uint8_t>         OverrideBlock;
+        std::vector<uint8_t>         MaterialBlock;
+
+        ~RenderIssueScratch()
+        {
+            if(MeshObject) { delete MeshObject->Transform; delete MeshObject; }
+            delete View3D;
+        }
+    };
+    namespace
+    {
+        thread_local RenderIssueScratch* GIssueScratch = nullptr;
+
+        /* A chunk: at least this many draws, or splitting costs about what it saves. */
+        constexpr uint32_t PARALLEL_MIN_DRAWS_PER_CHUNK = 32;
+    }
 
     namespace
     {
@@ -387,6 +430,27 @@ namespace RenderCore
         bool                    bDefaultVertexTried[5] = {};
         std::vector<GDIShader*> RetiredShaders;                 // see RenderContext::ReloadMaterial
         std::vector<uint8_t>    OverrideBlock;                  // BindMaterial's: a block with an entity's overrides
+
+        /* Parallel recording (MULTITHREADED_RENDERING.md, phase 3): the gate as
+         * this frame sees it, each chunk's scratch, the lightmaps resolved for
+         * the pass, whether its draws are labelled, and how many passes ran. */
+        ParallelRecordingState  Parallel;
+        std::vector<std::unique_ptr<RenderIssueScratch>> Scratches;
+        GDITextureResource*     LightmapResolved[RENDER_BAKED_ATLASES_MAX] = {};
+        uint64_t                ParallelPassSerial = 0;
+        bool                    bLabelsThisPass    = false;
+        bool                    bParallelLatched   = false;
+        std::atomic<uint64_t>   ParallelPassCount{0};
+        std::mutex              WarnLock;
+
+        /* The issue state of the calling thread: a recording chunk's, else the Impl's own. */
+        GDIShader*&                   RefBoundVertex()     { return GIssueScratch ? GIssueScratch->BoundVertex : BoundVertex; }
+        GDIShader*&                   RefBoundPixel()      { return GIssueScratch ? GIssueScratch->BoundPixel : BoundPixel; }
+        GDIView*                      RefView3D()          { return GIssueScratch ? GIssueScratch->View3D : View3D; }
+        GDIViewObject*                RefMeshObject()      { return GIssueScratch ? GIssueScratch->MeshObject : MeshObject; }
+        const EngineCore::Matrix4x4*  RefPlaceProjection() { return GIssueScratch ? GIssueScratch->PlaceProjection : PlaceProjection; }
+        const EngineCore::Matrix4x4*  RefPlaceView()       { return GIssueScratch ? GIssueScratch->PlaceView : PlaceView; }
+        std::vector<uint8_t>&         RefOverrideBlock()   { return GIssueScratch ? GIssueScratch->OverrideBlock : OverrideBlock; }
         std::set<std::string>   Warned;                         // one warning per material and reason
 
         /* The scene block, refreshed by SetView and SetLighting. */
@@ -539,11 +603,13 @@ namespace RenderCore
 
         void Bind(GDIShader* InVertex, GDIShader* InPixel)
         {
-            if(InVertex != BoundVertex || InPixel != BoundPixel)
+            GDIShader*& Vertex = RefBoundVertex();
+            GDIShader*& Pixel  = RefBoundPixel();
+            if(InVertex != Vertex || InPixel != Pixel)
             {
                 GDISetBoundShader(InVertex, InPixel);
-                BoundVertex = InVertex;
-                BoundPixel  = InPixel;
+                Vertex = InVertex;
+                Pixel  = InPixel;
             }
         }
 
@@ -553,8 +619,9 @@ namespace RenderCore
         {
             /* Here rather than in SetView(), so a RenderContext without a
              * RenderScene (tests) still draws. */
-            View3D->Camera->Projection = PlaceProjection ? *PlaceProjection : View.Projection;
-            View3D->Camera->ViewMat    = PlaceView ? *PlaceView : View.View;
+            GDIView* const Target = RefView3D();   // a recording chunk's own, else the Impl's
+            Target->Camera->Projection = RefPlaceProjection() ? *RefPlaceProjection() : View.Projection;
+            Target->Camera->ViewMat    = RefPlaceView() ? *RefPlaceView() : View.View;
 
             GDITransform* Transform = InObject->Transform;
             Transform->Translate = InTransform.Position;
@@ -722,6 +789,7 @@ namespace RenderCore
 
         void WarnOnce(const std::string& InKey, const std::string& InMessage)
         {
+            std::lock_guard<std::mutex> Lock(WarnLock);   // recording chunks warn too
             if(Warned.insert(InKey).second)
             {
                 RENDERCORE_LOG_WARN(InMessage)
@@ -969,14 +1037,55 @@ namespace RenderCore
         std::unordered_map<std::string, GDITextureResource*> UIImages;
         uint64_t                                             UIImageEpoch   = 1;
 
-        /* "stat frame": the scene timing this GDI block, and the last block's. */
+        /* "stat frame": the scene timing this GDI block, and the scene that
+         * timed each recent block, by its GDIGetRenderingSerial (slot: serial
+         * mod 4) -- a block's times come back GDIGetFramesInFlight blocks on. */
+        struct TimedBlock { uint64_t Serial = 0; const void* Owner = nullptr; };
         bool        bTimeStages = false;
         const void* TimedOwner  = nullptr;
+        TimedBlock  TimedBlocks[4];
+
+        /* The render thread's time per ERenderGpuTimer span (RenderStats::CpuMs),
+         * measured for the timed view whether or not the GPU is: when each
+         * span started, and its last length (-1: did not run). */
+        bool            bTimeStagesCpu = false;
+        mutable int64_t StageCpuStartNs[RGT_Count] = {};
+        mutable float   StageCpuMs[RGT_Count]      = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+        int32_t         StageSpanDraws[RGT_Count]  = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+
+        void MarkStageCpu(const ERenderGpuTimer InTimer, const bool bInEnd) const
+        {
+            const int64_t Now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch()).count();
+            if(bInEnd) { StageCpuMs[InTimer] = float(double(Now - StageCpuStartNs[InTimer]) / 1.0e6); }
+            else       { StageCpuStartNs[InTimer] = Now; }
+        }
 
         /* InTimer's start (or end) timestamp: indices 2t and 2t + 1. */
         void StageTimestamp(const ERenderGpuTimer InTimer, const bool bInEnd) const
         {
+            if(bTimeStagesCpu) { MarkStageCpu(InTimer, bInEnd); }
             if(bTimeStages) { GDIWriteGPUTimestamp(uint32_t(InTimer) * 2 + (bInEnd ? 1 : 0)); }
+        }
+
+        /* A timed RenderSceneStages' draws per span, from its stage counts. */
+        void CountSpanDraws()
+        {
+            const auto Count = [this](const ERenderStage InStage) { return int32_t(StageDrawCounts[size_t(InStage)]); };
+            StageSpanDraws[RGT_PrePass]          = Count(ERenderStage::PrePass);
+            StageSpanDraws[RGT_BasePass]         = Count(ERenderStage::BasePass);
+            StageSpanDraws[RGT_AmbientOcclusion] = -1;
+            StageSpanDraws[RGT_Shadows]          = Count(ERenderStage::Shadows);
+            StageSpanDraws[RGT_Lighting]         = Count(ERenderStage::Lighting);
+            StageSpanDraws[RGT_Forward]          = Count(ERenderStage::Unlit) + Count(ERenderStage::TranslucentLit)
+                                                 + Count(ERenderStage::TranslucentUnlit);
+            StageSpanDraws[RGT_PostProcess]      = Count(ERenderStage::PostProcess);
+            int32_t Total = 0;
+            for(uint32_t Timer = RGT_PrePass; Timer < RGT_Total; ++Timer)
+            {
+                Total += std::max(StageSpanDraws[Timer], 0);
+            }
+            StageSpanDraws[RGT_Total] = Total;
         }
         bool                bGBufferThisFrame = false;   // RenderSceneStages wrote the G-buffer: Bloom may read its emissive
         bool                bVelocityThisFrame = false;  // and the velocity beside it: Motion Blur may read it
@@ -1212,7 +1321,12 @@ namespace RenderCore
          * every other entity drawing with it. The block itself without any. */
         const std::vector<uint8_t>& BlockWithOverrides(Material& InMaterial, const DrawCommand* InItem)
         {
-            const std::vector<uint8_t>& Block = InMaterial.Block;
+            return BlockWithOverrides(InMaterial, InMaterial.Block, InItem);
+        }
+        const std::vector<uint8_t>& BlockWithOverrides(Material& InMaterial, const std::vector<uint8_t>& InBase, const DrawCommand* InItem)
+        {
+            const std::vector<uint8_t>& Block = InBase;
+            std::vector<uint8_t>& OverrideBlock = RefOverrideBlock();
             if(!InItem || InItem->OverrideCount == 0)
             {
                 return Block;
@@ -1256,7 +1370,10 @@ namespace RenderCore
 
             Bind(Vertex, InMaterial.Pixel);
 
-            std::vector<uint8_t>& Block = InMaterial.Block;
+            /* The tint and baked lighting are written per draw: into the
+             * material's own block on the render thread, as always; into a
+             * recording chunk's copy, as other chunks draw with it too. */
+            std::vector<uint8_t>& Block = GIssueScratch ? (GIssueScratch->MaterialBlock = InMaterial.Block) : InMaterial.Block;
             const float Tint[4] = { InTint.Rf(), InTint.Gf(), InTint.Bf(), InTint.Af() };
             std::memcpy(Block.data(), Tint, sizeof(Tint));
 
@@ -1279,7 +1396,7 @@ namespace RenderCore
                 std::memcpy(Block.data() + MATERIAL_BLOCK_LIGHTMAP_OFFSET, Engine, sizeof(Engine));
             }
 
-            const std::vector<uint8_t>& Upload = BlockWithOverrides(InMaterial, InItem);
+            const std::vector<uint8_t>& Upload = BlockWithOverrides(InMaterial, Block, InItem);
             GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, Upload.data(), uint(Upload.size()));
             GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &Scene, uint(sizeof(Scene)));
 
@@ -1289,9 +1406,11 @@ namespace RenderCore
             {
                 GDISetMaterialTexture(Slot, nullptr);
             }
-            for(const MaterialTexture& Each : InMaterial.Description.Textures)
+            for(size_t Index = 0; Index < InMaterial.Description.Textures.size(); ++Index)
             {
-                GDISetMaterialTexture(Each.Slot, FindTexture(Each));
+                const MaterialTexture& Each = InMaterial.Description.Textures[Index];
+                GDISetMaterialTexture(Each.Slot, !GIssueScratch ? FindTexture(Each)
+                                                 : (Index < InMaterial.Resolved.size() ? InMaterial.Resolved[Index] : nullptr));
             }
             /* Slot 0, its own outside PostProcess (MaterialTemplate_PS.glsl): a Base
              * Pass material's lightmap, a forward Lit material's probe atlas. */
@@ -1301,7 +1420,8 @@ namespace RenderCore
                                     || InMaterial.Description.Domain == EMaterialDomain::Masked;
                 if(bBasePass)
                 {
-                    GDISetMaterialTexture(0, bLightmap ? LightmapTexture(Baked->Atlas) : nullptr);
+                    GDISetMaterialTexture(0, !bLightmap ? nullptr
+                                             : (GIssueScratch ? LightmapResolved[Baked->Atlas] : LightmapTexture(Baked->Atlas)));
                 }
                 else
                 {
@@ -1577,6 +1697,7 @@ namespace RenderCore
                 return;   // warned by LoadShader
             }
 
+            GDIViewObject* const MeshObject = RefMeshObject();
             Place(MeshObject, InItem.Transform, 1.0f, 1.0f);
             MeshObject->Mesh = InItem.Mesh;
             Bind(Vertex, Pixel);
@@ -1601,9 +1722,9 @@ namespace RenderCore
             GDISetDepthState(Depth);
             GDISetBlendState(IBlendStateDesc());
 
-            InItem.Mesh->SetDrawRange(InItem.First, InItem.Count);
+            GDISetDrawRange(InItem.Mesh, InItem.First, InItem.Count);
             GDIDrawObject(MeshObject);
-            InItem.Mesh->SetDrawRange(0, 0);
+            GDISetDrawRange(InItem.Mesh, 0, 0);
             MeshObject->Mesh = nullptr;
             DrawCallCount.fetch_add(1, std::memory_order_relaxed);
         }
@@ -1713,35 +1834,81 @@ namespace RenderCore
             }
 
             /* Queued view by view, the sun's first: each atlas binds once, and
-             * each run of one view's casters is a draw event of its own. */
+             * each run of one view's casters is a draw event of its own. An
+             * atlas's casters are recorded in parallel chunks where they can
+             * be (IssueInParallel), each chunk setting a view's tile and
+             * matrices as its casters reach it; else serially, view by view. */
             const std::vector<uint32_t> Order = Policy.GetIssueOrder();
-            int32_t BoundAtlas = -1;
-            for(size_t Start = 0; Start < Order.size();)
+            const auto ViewOf = [&](const size_t InAt) { return Policy[Order[InAt]].ShadowView; };
+            const auto Valid  = [&](const int32_t InView) { return InView >= 0 && uint32_t(InView) < Shadows.ViewCount; };
+            for(size_t AtlasStart = 0; AtlasStart < Order.size();)
             {
-                const int32_t ViewIndex = Policy[Order[Start]].ShadowView;
-                size_t End = Start + 1;
-                while(End < Order.size() && Policy[Order[End]].ShadowView == ViewIndex) { ++End; }
-                if(ViewIndex >= 0 && uint32_t(ViewIndex) < Shadows.ViewCount)
+                /* This atlas's run of views: [AtlasStart, AtlasEnd). */
+                size_t AtlasEnd = AtlasStart;
+                int32_t Atlas = -1;
+                while(AtlasEnd < Order.size())
                 {
-                    const ShadowView& View = Shadows.Views[ViewIndex];
-                    if(int32_t(View.Atlas) != BoundAtlas)
-                    {
-                        BoundAtlas = int32_t(View.Atlas);
-                        GDIRenderTarget* Target = ShadowAtlas[View.Atlas];
-                        GDISetRenderTargets(&Target, 1, Target);
-                        GDISetColorMask(EColM_None);
-                    }
-                    GDISetViewport(View.TileX, View.TileY, View.TileSize, View.TileSize);
-                    PlaceProjection = &View.Projection;
-                    PlaceView       = &View.View;
-
-                    SCOPED_DRAW_EVENT(GetShadowViewName(ViewIndex));
-                    IssueByMobility(Policy, Order.data() + Start, Order.data() + End, [this](const DrawCommand& InItem)
-                    {
-                        if(InItem.Mesh) { IssueShadowCaster(InItem); }
-                    });
+                    const int32_t ViewIndex = ViewOf(AtlasEnd);
+                    const int32_t Each = Valid(ViewIndex) ? int32_t(Shadows.Views[ViewIndex].Atlas) : -1;
+                    if(Atlas >= 0 && Each >= 0 && Each != Atlas) { break; }
+                    if(Each >= 0) { Atlas = Each; }
+                    ++AtlasEnd;
                 }
-                Start = End;
+                if(Atlas >= 0)
+                {
+                    GDIRenderTarget* Target = ShadowAtlas[Atlas];
+                    GDISetRenderTargets(&Target, 1, Target);
+                    GDISetColorMask(EColM_None);
+                }
+
+                std::vector<uint32_t> Flat;   // each view's casters, static then dynamic, the views in order
+                for(size_t Start = AtlasStart; Start < AtlasEnd;)
+                {
+                    size_t End = Start + 1;
+                    while(End < AtlasEnd && ViewOf(End) == ViewOf(Start)) { ++End; }
+                    if(Valid(ViewOf(Start)))
+                    {
+                        for(const uint32_t Index : MobilityOrder(Policy, Order.data() + Start, Order.data() + End))
+                        {
+                            if(Policy[Index].Mesh) { Flat.push_back(Index); }
+                        }
+                    }
+                    Start = End;
+                }
+                const bool bParallel = Atlas >= 0 && IssueInParallel(Policy, Flat, true, [this](const DrawCommand& InItem)
+                {
+                    if(GIssueScratch->ShadowView != InItem.ShadowView)
+                    {
+                        const ShadowView& View = Shadows.Views[InItem.ShadowView];
+                        GDISetViewport(View.TileX, View.TileY, View.TileSize, View.TileSize);
+                        GIssueScratch->PlaceProjection = &View.Projection;
+                        GIssueScratch->PlaceView       = &View.View;
+                        GIssueScratch->ShadowView      = InItem.ShadowView;
+                    }
+                    IssueShadowCaster(InItem);
+                });
+
+                for(size_t Start = AtlasStart; !bParallel && Start < AtlasEnd;)
+                {
+                    const int32_t ViewIndex = ViewOf(Start);
+                    size_t End = Start + 1;
+                    while(End < AtlasEnd && ViewOf(End) == ViewIndex) { ++End; }
+                    if(Valid(ViewIndex))
+                    {
+                        const ShadowView& View = Shadows.Views[ViewIndex];
+                        GDISetViewport(View.TileX, View.TileY, View.TileSize, View.TileSize);
+                        PlaceProjection = &View.Projection;
+                        PlaceView       = &View.View;
+
+                        SCOPED_DRAW_EVENT(GetShadowViewName(ViewIndex));
+                        IssueByMobility(Policy, Order.data() + Start, Order.data() + End, [this](const DrawCommand& InItem)
+                        {
+                            if(InItem.Mesh) { IssueShadowCaster(InItem); }
+                        });
+                    }
+                    Start = End;
+                }
+                AtlasStart = AtlasEnd;
             }
             PlaceProjection = nullptr;
             PlaceView       = nullptr;
@@ -1864,6 +2031,7 @@ namespace RenderCore
         void IssueMeshSection(const DrawCommand& InItem)
         {
             EnsureInitialised();
+            GDIViewObject* const MeshObject = RefMeshObject();
             Place(MeshObject, InItem.Transform, 1.0f, 1.0f, &InItem);
             MeshObject->Mesh = InItem.Mesh;
 
@@ -1872,13 +2040,13 @@ namespace RenderCore
             {
                 if(InItem.Mat && BindMaterial(*InItem.Mat, EMaterialVertexInput::InstancedMesh, InItem.Tint, &InItem))
                 {
-                    InItem.Mesh->SetDrawRange(InItem.First, InItem.Count);
+                    GDISetDrawRange(InItem.Mesh, InItem.First, InItem.Count);
                     GDISetInstanceBuffer(InItem.Instances, InItem.InstanceCount);
                     GDISetIndirectArgs(InItem.IndirectArgs, InItem.IndirectOffset);   // the live ones only, where it can
                     GDIDrawObject(MeshObject);
                     GDISetIndirectArgs(nullptr);
                     GDISetInstanceBuffer(nullptr, 0);
-                    InItem.Mesh->SetDrawRange(0, 0);
+                    GDISetDrawRange(InItem.Mesh, 0, 0);
                     DrawCallCount.fetch_add(1, std::memory_order_relaxed);
                 }
                 MeshObject->Mesh = nullptr;
@@ -1896,9 +2064,9 @@ namespace RenderCore
                 }
             }
 
-            InItem.Mesh->SetDrawRange(InItem.First, InItem.Count);
+            GDISetDrawRange(InItem.Mesh, InItem.First, InItem.Count);
             GDIDrawObject(MeshObject);
-            InItem.Mesh->SetDrawRange(0, 0);
+            GDISetDrawRange(InItem.Mesh, 0, 0);
             MeshObject->Mesh = nullptr;
             DrawCallCount.fetch_add(1, std::memory_order_relaxed);
         }
@@ -1959,10 +2127,10 @@ namespace RenderCore
         /* A draw's region, named for its mesh and material, so RenderDoc's Event
          * Browser (and PIX, Xcode) reads what it is; true if one was begun, to end
          * with EndDrawLabel. Nothing in shipping builds or where nothing records it. */
-        static bool BeginDrawLabel(const DrawCommand& InItem)
+        bool BeginDrawLabel(const DrawCommand& InItem) const
         {
 #if !(defined(NIMBLE_SHIPPING) && NIMBLE_SHIPPING)
-            if(GRenderDrawLabels.GetBool() && GDIHasDrawEvents())
+            if(GIssueScratch ? bLabelsThisPass : (GRenderDrawLabels.GetBool() && GDIHasDrawEvents()))
             {
                 GDIBeginDrawEvent(LabelOf(InItem));
                 return true;
@@ -2025,9 +2193,166 @@ namespace RenderCore
                               : ERenderStage::Unlit;
         }
 
+        /*
+         * PARALLEL ISSUE (MULTITHREADED_RENDERING.md, phase 3).
+         *
+         * InOrder's draws of InPolicy, split into contiguous chunks, each
+         * recorded on its own thread into its own GDI recording context
+         * (GDIBeginParallelPass) -- the job system's workers and this thread --
+         * and executed in chunk order, so the GPU sees the draws in InOrder's
+         * order. False, with nothing issued, where the gate says no, the stage
+         * is too small, a draw cannot be issued off the render thread, or GDI
+         * cannot: then the caller issues serially.
+         *
+         * Before any chunk runs, on this thread: every draw's material,
+         * vertex and depth shaders loaded, its textures and the lightmaps
+         * resolved (ResolveForParallel) -- a chunk only reads what is loaded.
+         * InIssue runs on the chunks' threads: only the issue functions that
+         * keep their state in GIssueScratch (Issue, IssueMeshSection,
+         * IssueShadowCaster and what they call).
+         */
+        template<typename IssueFn>
+        bool IssueInParallel(const DrawPolicy& InPolicy, const std::vector<uint32_t>& InOrder, const bool bInShadows, IssueFn&& InIssue)
+        {
+            const uint32_t Count = uint32_t(InOrder.size());
+            if(!ShouldRecordInParallel(Parallel, Count))
+            {
+                return false;
+            }
+            EngineCore::JobSystem* Jobs = Parallel.bSerialOnly ? nullptr : EngineCore::GetJobSystem();
+            if(!Parallel.bSerialOnly && !Jobs)
+            {
+                return false;
+            }
+            const uint32_t Threads = Parallel.bSerialOnly ? 4u : Jobs->GetWorkerCount() + 1;
+            const uint32_t ByDraws = std::max<uint32_t>(1, Count / PARALLEL_MIN_DRAWS_PER_CHUNK);
+            const uint32_t Chunks  = std::min<uint32_t>(std::min<uint32_t>(Threads, ByDraws), GDI_PARALLEL_CHUNKS_MAX);
+            EnsureInitialised();   // the Impl's own objects: never made on a chunk's thread
+            if(Chunks < 2 || !ResolveForParallel(InPolicy, InOrder, bInShadows))
+            {
+                return false;
+            }
+
+            while(Scratches.size() < Chunks)
+            {
+                auto Scratch = std::make_unique<RenderIssueScratch>();
+                Scratch->View3D     = new GDIView();
+                Scratch->MeshObject = new GDIViewObject();
+                Scratch->MeshObject->Init(Scratch->View3D);
+                Scratches.push_back(std::move(Scratch));
+            }
+            for(uint32_t Chunk = 0; Chunk < Chunks; ++Chunk)
+            {
+                RenderIssueScratch& Scratch = *Scratches[Chunk];
+                Scratch.BoundVertex     = BoundVertex;      // what GDI has bound as the pass begins
+                Scratch.BoundPixel      = BoundPixel;
+                Scratch.PlaceProjection = PlaceProjection;
+                Scratch.PlaceView       = PlaceView;
+                Scratch.ShadowView      = -1;
+            }
+            bLabelsThisPass = GRenderDrawLabels.GetBool() && GDIHasDrawEvents();
+
+            GDIRecordingContext* Contexts[GDI_PARALLEL_CHUNKS_MAX] = {};
+            if(!GDIBeginParallelPass(Chunks, Contexts))
+            {
+                return false;
+            }
+            const auto RunChunk = [&](const uint32_t InChunk)
+            {
+                const uint32_t Begin = uint32_t(uint64_t(Count) * InChunk / Chunks);
+                const uint32_t End   = uint32_t(uint64_t(Count) * (InChunk + 1) / Chunks);
+                GIssueScratch = Scratches[InChunk].get();
+                GDISetCurrentRecording(Contexts[InChunk]);
+                for(uint32_t Index = Begin; Index < End; ++Index)
+                {
+                    InIssue(InPolicy[InOrder[Index]]);
+                }
+                GDISetCurrentRecording(nullptr);
+                GIssueScratch = nullptr;
+            };
+            if(Jobs)
+            {
+                Jobs->ParallelFor(Chunks, 1, [&RunChunk](const uint32_t InBegin, const uint32_t InEnd)
+                {
+                    for(uint32_t Chunk = InBegin; Chunk < InEnd; ++Chunk) { RunChunk(Chunk); }
+                });
+            }
+            else
+            {
+                for(uint32_t Chunk = 0; Chunk < Chunks; ++Chunk) { RunChunk(Chunk); }
+            }
+            GDIEndParallelPass();
+            ParallelPassCount.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+
+        /* IssueInParallel's preparation, on the render thread: false if a draw
+         * cannot be issued by a recording chunk -- not a mesh section with a
+         * usable material and shaders (the fallbacks write shared shader
+         * uniforms) -- else every shader loaded and every texture resolved. */
+        bool ResolveForParallel(const DrawPolicy& InPolicy, const std::vector<uint32_t>& InOrder, const bool bInShadows)
+        {
+            ++ParallelPassSerial;
+            if(bInShadows && !GetShadowDepthShader())
+            {
+                return false;
+            }
+            for(const uint32_t Index : InOrder)
+            {
+                const DrawCommand& Item = InPolicy[Index];
+                if(!Item.Mesh || (!bInShadows && (Item.Kind != DrawCommand::EKind::MeshSection || !Item.Mat || !Item.Mat->Pixel)))
+                {
+                    return false;
+                }
+                const EMaterialVertexInput Input = Item.Instances ? EMaterialVertexInput::InstancedMesh
+                                                 : (Item.Mesh->IsSkinned() ? EMaterialVertexInput::SkinnedMesh : EMaterialVertexInput::Mesh);
+                if(bInShadows)
+                {
+                    if(!(Item.Mat ? VertexFor(*Item.Mat, Input) : GetDefaultVertex(Input))) { return false; }
+                    continue;
+                }
+                Material& Mat = *Item.Mat;
+                if(!VertexFor(Mat, Input))
+                {
+                    return false;
+                }
+                if(Mat.ResolvedPass != ParallelPassSerial)
+                {
+                    Mat.Resolved.resize(Mat.Description.Textures.size());
+                    for(size_t Texture = 0; Texture < Mat.Description.Textures.size(); ++Texture)
+                    {
+                        Mat.Resolved[Texture] = FindTexture(Mat.Description.Textures[Texture]);
+                    }
+                    Mat.ResolvedPass = ParallelPassSerial;
+                }
+            }
+            if(!bInShadows)
+            {
+                for(uint32_t Atlas = 0; Atlas < RENDER_BAKED_ATLASES_MAX; ++Atlas)
+                {
+                    LightmapResolved[Atlas] = Lighting.bBaked && Atlas < Lighting.BakedAtlasCount ? LightmapTexture(Atlas) : nullptr;
+                }
+            }
+            return true;
+        }
+
         /* InPolicy's draws [InBegin, InEnd) of an issue order: the static draw
          * lists' first, then the rest, each under its own draw event. Only for
          * a stage that neither blends nor depends on order within itself. */
+        static std::vector<uint32_t> MobilityOrder(const DrawPolicy& InPolicy, const uint32_t* InBegin, const uint32_t* InEnd)
+        {
+            std::vector<uint32_t> Out;
+            Out.reserve(size_t(InEnd - InBegin));
+            for(const bool bStatic : { true, false })
+            {
+                for(const uint32_t* It = InBegin; It != InEnd; ++It)
+                {
+                    if(InPolicy[*It].bStatic == bStatic) { Out.push_back(*It); }
+                }
+            }
+            return Out;
+        }
+
         template<typename IssueFn>
         static void IssueByMobility(const DrawPolicy& InPolicy, const uint32_t* InBegin, const uint32_t* InEnd, IssueFn&& InIssue)
         {
@@ -2060,6 +2385,12 @@ namespace RenderCore
             const std::vector<uint32_t> Order = Policy.GetIssueOrder();
             if(InStage == ERenderStage::BasePass)
             {
+                /* In the same order serially or in chunks: static, then dynamic. */
+                if(IssueInParallel(Policy, MobilityOrder(Policy, Order.data(), Order.data() + Order.size()), false,
+                                   [this](const DrawCommand& InItem) { Issue(InItem); }))
+                {
+                    return;
+                }
                 IssueByMobility(Policy, Order.data(), Order.data() + Order.size(), [this](const DrawCommand& InItem) { Issue(InItem); });
                 return;
             }
@@ -3231,8 +3562,14 @@ namespace RenderCore
 
     const void* RenderContext::BeginTimedBlock(const void* InOwner, const bool bInTime, float (&OutGpuMs)[RGT_Count])
     {
-        const void* Previous = P->TimedOwner;
+        /* The times GDI hands back are the block FramesInFlight back's (its
+         * frame slot, just reused): that block's owner, if one timed it. */
+        const uint64_t Serial  = GDIGetRenderingSerial();
+        const uint64_t Behind  = std::min<uint64_t>(GDIGetFramesInFlight(), 3);
+        const Impl::TimedBlock& Then = P->TimedBlocks[(Serial - Behind) % 4];
+        const void* Previous = Serial > Behind && Then.Serial == Serial - Behind ? Then.Owner : nullptr;
         P->TimedOwner = bInTime && CanTimeGpu() ? InOwner : nullptr;
+        P->TimedBlocks[Serial % 4] = { Serial, P->TimedOwner };
         for(float& Each : OutGpuMs) { Each = -1.0f; }
         if(!Previous)
         {
@@ -3253,7 +3590,22 @@ namespace RenderCore
 
     void RenderContext::WriteGpuTimestamp(const ERenderGpuTimer InTimer, const bool bInEnd)
     {
+        P->MarkStageCpu(InTimer, bInEnd);
         if(P->TimedOwner) { GDIWriteGPUTimestamp(uint32_t(InTimer) * 2 + (bInEnd ? 1 : 0)); }
+    }
+
+    uint64_t RenderContext::GetParallelPassCount() const
+    {
+        return P->ParallelPassCount.load(std::memory_order_relaxed);
+    }
+
+    void RenderContext::GetStageCpuTimes(float (&OutCpuMs)[RGT_Count], int32_t (&OutDraws)[RGT_Count]) const
+    {
+        for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer)
+        {
+            OutCpuMs[Timer] = P->StageCpuMs[Timer];
+            OutDraws[Timer] = P->StageSpanDraws[Timer];
+        }
     }
 
     void RenderContext::SetUnlit(const bool bInUnlit)
@@ -3341,13 +3693,34 @@ namespace RenderCore
         struct TimedScope
         {
             Impl* Owner;
-            TimedScope(Impl* InOwner, const bool bInTimed) : Owner(InOwner) { Owner->bTimeStages = bInTimed && Owner->TimedOwner; }
-            ~TimedScope() { Owner->bTimeStages = false; }
+            bool  bTimed;
+            TimedScope(Impl* InOwner, const bool bInTimed) : Owner(InOwner), bTimed(bInTimed)
+            {
+                Owner->bTimeStages    = bInTimed && Owner->TimedOwner;
+                Owner->bTimeStagesCpu = bInTimed;
+                if(bInTimed)
+                {
+                    for(uint32_t Timer = RGT_PrePass; Timer <= RGT_Total; ++Timer) { Owner->StageCpuMs[Timer] = -1.0f; }
+                }
+            }
+            ~TimedScope()
+            {
+                if(bTimed) { Owner->CountSpanDraws(); }
+                Owner->bTimeStages    = false;
+                Owner->bTimeStagesCpu = false;
+            }
         } Timed(P, bInTimed);
 
         P->bDeferring  = false;
         P->FinalTarget = nullptr;
         InTargets.Final = nullptr;
+        /* The gate as this frame sees it (ParallelRecording.h): latched once,
+         * again after the console or an ini changes it. */
+        if(TakeParallelRecordingChange() || !P->bParallelLatched)
+        {
+            P->Parallel         = GetParallelRecordingState();
+            P->bParallelLatched = true;
+        }
         for(uint32_t& Count : P->StageDrawCounts) { Count = 0; }
 
         const auto Finish = [this]()

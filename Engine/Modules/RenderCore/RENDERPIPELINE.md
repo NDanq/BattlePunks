@@ -999,10 +999,15 @@ it: a wall, terrain, a building. Each frame, for the main view only:
   its query (`GDISetOcclusionPredicate`), so the GPU skips them if no sample
   of its box passed. Shadow casters never are: a hidden caster's shadow can
   still fall in view.
-- **Next frame, on the CPU:** a proxy whose last answer read hidden is not
+- **Frames later, on the CPU:** a proxy whose last answer read hidden is not
   drawn at all -- no draw queued, nothing extracted into the stages -- but its
-  box is still queried. When it comes out from behind the occluder it is drawn
-  again from the frame after: a revealed object can pop in one frame late.
+  box is still queried. Answers come back once the GPU has finished their
+  frame: the scene keeps a query set per frame in flight (`GDIGetFramesInFlight`,
+  Vulkan's and D3D12's `[Rendering] FramesInFlight`), used in turn, and reads a set's
+  answers when it comes round again -- the frame before with one in flight,
+  two frames back with two. When a proxy comes out from behind the occluder
+  it is drawn again from then: a revealed object can pop in that many frames
+  late.
 - **Not queried:** anything, while no occluder is in view; occluders
   themselves; proxies without bounds; a box the
   near plane could cut (nearer the eye than 1.5 times the near plane's corner
@@ -1022,7 +1027,7 @@ counted.
 
 | Backend | Queries | Predication |
 |---|---|---|
-| Vulkan | `VK_QUERY_TYPE_OCCLUSION` pool, reset and copied outside the rendering region (closed and reopened, as a dispatch does) into a host-visible buffer the CPU reads a frame later | `VK_EXT_conditional_rendering`, where the GPU has it, round each draw; without it every draw draws |
+| Vulkan | `VK_QUERY_TYPE_OCCLUSION` pool, reset and copied outside the rendering region (closed and reopened, as a dispatch does) into a host-visible buffer the CPU reads once the frame has finished (`FramesInFlight` frames later) | `VK_EXT_conditional_rendering`, where the GPU has it, round each draw; without it every draw draws |
 | D3D12 | binary occlusion heap, `ResolveQueryData` into a default-heap buffer, copied to a readback one | `SetPredication` round each draw |
 | Null | answers "visible" a block later (`NullDynamicGDI::SetOcclusionAnswer`) | counted |
 | Metal, OpenGL | not yet: `GDISupportsOcclusionQueries()` is false, so nothing is culled | -- |
@@ -1109,9 +1114,11 @@ short lines.
 
 ### Stat frame
 
-**Stats.Frame** (config var, off by default) adds each stage's **GPU** time to
-the same panel. Toggle it with `stat frame` in the editor console, or set
-`[Stats] Frame=true` in a game's ini.
+**Stats.Frame** (config var, off by default) adds a table to the same panel:
+per stage, its **GPU** time, the **render thread's** time issuing it (CPU),
+and its **draws**, then a **Queue** line -- the render thread culling the
+view and queueing its draws, before any stage. Toggle it with `stat frame` in
+the editor console, or set `[Stats] Frame=true` in a game's ini.
 
 **The spans** (`ERenderGpuTimer`) are PrePass, BasePass, AO, Shadows,
 Lighting, Forward (Unlit and the translucent stages), PostProcess, and Total
@@ -1135,14 +1142,28 @@ around the capture and simulate loops, so a frame with none shows 0.00, not `-`.
 
 **Getting the results back:**
 - A GDI block (`GDIBeginRendering` to `GDIEndRendering`, one scene's render)
-  is complete by the next block's start, because the backends keep one frame
-  in flight.
-- So `RenderScene::Render`, right after `GDIBeginRendering`, takes the
-  previous block's times (`RenderContext::BeginTimedBlock`) and gives them to
-  the scene that wrote them. With several viewports, that is usually another
+  is complete by the start of the block `GDIGetFramesInFlight()` after it
+  (1 on most backends; Vulkan's and D3D12's `[Rendering] FramesInFlight`, 2 by default).
+- So `RenderScene::Render`, right after `GDIBeginRendering`, takes that
+  block's times (`RenderContext::BeginTimedBlock`, which remembers each
+  recent block's scene by its `GDIGetRenderingSerial`) and gives them to the
+  scene that wrote them. With several viewports, that is usually another
   scene.
 - Each scene averages its times over half a second. The stats-reporting scene
   also publishes them to `RenderStats::GpuMs`.
+
+**The render thread's side** (MULTITHREADED_RENDERING.md, phase 0):
+- `StageTimestamp` also reads the CPU clock at each span's start and end,
+  for the scene's own view, always -- not only while Stats.Frame is on -- and
+  `WriteGpuTimestamp` does for Captures and Particles. The draws are each
+  stage's count from that `RenderSceneStages` (Forward: Unlit and both
+  translucent stages; Total: their sum; AO, Captures and Particles: `-`).
+  Queue is `QueueDraws` around the main view.
+- Averaged over half a second like the GPU times, and published to
+  `RenderStats::CpuMs`, `StageDraws` and `QueueCpuMs` by the stats-reporting
+  scene, on every backend (Null included).
+- CPU time per stage is what parallel draw recording would shorten: compare
+  BasePass and Shadows CPU against their draws.
 
 **GDI timestamps** (`GDIDynamicDriver::WriteGPUTimestamp` /
 `GetPreviousGPUTimestamps`), up to `GDI_GPU_TIMESTAMP_MAX` (64) per block:
@@ -1436,6 +1457,20 @@ Translucent Unlit: soft round puffs) born red and black well before it fades
 
 ## GDI
 
+**Shader version and the OpenGL minimum.** Every shader -- the engine's
+`Content/Shaders`, GDI's own, the material templates -- declares
+`#version 450` (`core` where it did before), so the OpenGL backend needs an
+**OpenGL 4.5** core context: `OpenGLDynamicGDI::InitContext` raises the host's
+requested version to at least `GDI_OPENGL_MIN_MAJOR`.`GDI_OPENGL_MIN_MINOR`
+(GDIDefinitions.h), and fails with a Fatal log where the driver has none. The
+same sources compile to SPIR-V for Vulkan (and through it to HLSL and MSL),
+where 450 only adds to 440. Against 440 the cooked modules differ in their
+`OpSource GLSL 450` and, in vertex shaders, a `gl_CullDistance` member of the
+built-in `gl_PerVertex` block -- declared, never written, so no
+`CullDistance` capability is required. Every module passes `spirv-val
+--target-env vulkan1.3`, and the GPU smoke check is unchanged under the
+validation layer: Vulkan, D3D12 and Metal are unaffected.
+
 Deferred shading needs two things GDI did not have:
 
 - **Several colour targets in one pass.** `GDISetRenderTargets(Colors, Count,
@@ -1477,8 +1512,9 @@ UI drawing (### UI) needed two more:
   `GDIMeshDesc` layout (normals and UV1 optional), written in place by
   `GDIUpdateDynamicMesh(Mesh, Desc)`. Within one BeginRendering block each
   update appends behind the last -- draws recorded earlier still read their
-  own data at submit -- and the next block starts again at 0 (every backend
-  waits for the previous submission first; `GDIGetRenderingSerial` counts
+  own data at submit -- and the next block starts again at 0. The buffers
+  hold a region per frame in flight; each block writes its frame slot's,
+  whose last draws the backend has waited for (`GDIGetRenderingSerial` counts
   blocks). False if it no longer fits: the caller makes a bigger one.
 
 | Backend | Scissor | Dynamic mesh |

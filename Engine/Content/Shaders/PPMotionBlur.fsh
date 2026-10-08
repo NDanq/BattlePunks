@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // PPMotionBlur.fsh -- motion blur: each pixel's world position (from the
 // scene depth), less how far its surface moved in the world since last frame
 // (the Base Pass's velocity target: an entity's movement, a skinned mesh's
