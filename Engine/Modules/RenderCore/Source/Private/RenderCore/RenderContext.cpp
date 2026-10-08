@@ -1037,9 +1037,13 @@ namespace RenderCore
         std::unordered_map<std::string, GDITextureResource*> UIImages;
         uint64_t                                             UIImageEpoch   = 1;
 
-        /* "stat frame": the scene timing this GDI block, and the last block's. */
+        /* "stat frame": the scene timing this GDI block, and the scene that
+         * timed each recent block, by its GDIGetRenderingSerial (slot: serial
+         * mod 4) -- a block's times come back GDIGetFramesInFlight blocks on. */
+        struct TimedBlock { uint64_t Serial = 0; const void* Owner = nullptr; };
         bool        bTimeStages = false;
         const void* TimedOwner  = nullptr;
+        TimedBlock  TimedBlocks[4];
 
         /* The render thread's time per ERenderGpuTimer span (RenderStats::CpuMs),
          * measured for the timed view whether or not the GPU is: when each
@@ -3558,8 +3562,14 @@ namespace RenderCore
 
     const void* RenderContext::BeginTimedBlock(const void* InOwner, const bool bInTime, float (&OutGpuMs)[RGT_Count])
     {
-        const void* Previous = P->TimedOwner;
+        /* The times GDI hands back are the block FramesInFlight back's (its
+         * frame slot, just reused): that block's owner, if one timed it. */
+        const uint64_t Serial  = GDIGetRenderingSerial();
+        const uint64_t Behind  = std::min<uint64_t>(GDIGetFramesInFlight(), 3);
+        const Impl::TimedBlock& Then = P->TimedBlocks[(Serial - Behind) % 4];
+        const void* Previous = Serial > Behind && Then.Serial == Serial - Behind ? Then.Owner : nullptr;
         P->TimedOwner = bInTime && CanTimeGpu() ? InOwner : nullptr;
+        P->TimedBlocks[Serial % 4] = { Serial, P->TimedOwner };
         for(float& Each : OutGpuMs) { Each = -1.0f; }
         if(!Previous)
         {

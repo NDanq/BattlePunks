@@ -135,7 +135,7 @@ void VulkanDynamicGDI::ReleaseOcclusionQueries(VKOcclusionQueries* InSet)
     if(InSet->Mapped) { vkUnmapMemory(DeviceObj->GetDevice(), InSet->ResultsMemory); }
     InSet->Mapped = nullptr;
     DeferDestroyBuffer(InSet->Results, InSet->ResultsMemory);
-    if(InSet->Pool != VK_NULL_HANDLE) { DeferredQueryPools.push_back(InSet->Pool); }
+    if(InSet->Pool != VK_NULL_HANDLE) { DeferredQueryPools.push_back({ InSet->Pool, RenderTimelineCounter + 1 }); }
     InSet->Results       = VK_NULL_HANDLE;
     InSet->ResultsMemory = VK_NULL_HANDLE;
     InSet->Pool          = VK_NULL_HANDLE;

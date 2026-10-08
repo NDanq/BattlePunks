@@ -2,6 +2,13 @@
 #include "Public/GDI/Vulkan/VKDevice.h"
 #include "Public/GDI/GDILog.h"
 
+#include <atomic>
+
+/* Epochs from one counter for every allocator: with one per frame in flight
+ * (and per recording context), a draw cache keyed by an epoch must never
+ * mistake another allocator's for its own. */
+static std::atomic<uint64_t> GNextEpoch{1};
+
 // Qt types used by this file. These were arriving implicitly through
 // Public/Odessa.h until GDI stopped including application headers;
 // they are explicit now, and each one disappears as its type converts.
@@ -17,6 +24,7 @@ bool VKDescriptorAllocator::Initialize(VKDevice* InDevice)
 
     if(!GrowPool())        return false;
     if(!CreateRingChunk()) return false;
+    Epoch = GNextEpoch.fetch_add(1);
 
     GDI_LOG("[VKDescriptorAllocator] Initialized.")
     return true;
@@ -70,7 +78,7 @@ void VKDescriptorAllocator::Reset()
     // Rewind UBO ring so the same memory is reused each frame.
     ActiveChunk = 0;
     RingOffset  = 0;
-    ++Epoch;
+    Epoch       = GNextEpoch.fetch_add(1);
 }
 
 // ---------------------------------------------------------------------------

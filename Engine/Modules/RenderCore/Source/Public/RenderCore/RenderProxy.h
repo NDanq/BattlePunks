@@ -198,9 +198,11 @@ namespace RenderCore
         uint64_t ChangeSerial = 0;
         RenderBakedDraw Baked;
 
-        /* RenderScene's occlusion bookkeeping: its query in the scene's last
-         * round (-1: none), and whether the last answer read found it hidden. */
-        int32_t  OcclusionQuery = -1;
+        /* RenderScene's occlusion bookkeeping: its query in the last round of
+         * each of the scene's query sets (one per frame in flight; -1: none),
+         * and whether the last answer read found it hidden. */
+        static constexpr uint32_t OCCLUSION_SETS_MAX = 4;
+        int32_t  OcclusionQueries[OCCLUSION_SETS_MAX] = { -1, -1, -1, -1 };
         bool     bOccluded      = false;
     };
 

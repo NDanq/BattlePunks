@@ -2,15 +2,22 @@
 #define CORECLIENT_VKCOMMANDMANAGER_H
 
 #include <vulkan/vulkan.h>
+#include <cstdint>
 
 class VKDevice;
 
+/* At most this many frames in flight ([Rendering] FramesInFlight). */
+constexpr uint32_t VK_FRAMES_IN_FLIGHT_MAX = 3;
+
 /**
- * Single-threaded command pool + primary command buffer pair.
- * One instance per thread that records commands (render thread, UI thread).
+ * The render thread's primary command buffers: one command pool, buffer and
+ * completion fence per frame slot, so the CPU records frame N+1 while the GPU
+ * still runs frame N (RenderCore's MULTITHREADED_RENDERING.md, phase 4).
  *
- * Phase 1: 1 frame in flight, 1 command buffer per pool. BeginFrame resets the pool.
- * Phase 2 will expand to per-frame-in-flight pools.
+ * BeginFrame waits for the current slot's last submission -- the frame
+ * SlotCount frames back -- then resets its pool and begins its buffer.
+ * Advance moves to the next slot once a frame is submitted; a mid-frame
+ * submit (FlushForReadback) stays on its slot and begins it again.
  */
 class VKCommandManager
 {
@@ -18,34 +25,55 @@ public:
     VKCommandManager() = default;
     ~VKCommandManager();
 
-    bool Initialize(VKDevice* InDevice);
+    bool Initialize(VKDevice* InDevice, uint32_t InSlots = 1);
     void Shutdown();
 
     /**
-     * Wait for the previous submission of the command buffer to complete, then reset
-     * the pool and begin recording. The wait makes re-recording safe regardless of
-     * caller — a command buffer is never re-begun while still pending on the GPU.
+     * Wait for the current slot's previous submission to complete, then reset
+     * its pool and begin recording. The wait makes re-recording safe regardless
+     * of caller -- a command buffer is never re-begun while still pending.
      */
     VkCommandBuffer BeginFrame();
 
     /** End recording. Caller submits via VKDevice::QueueSubmit, passing GetFrameFence(). */
     void EndFrame();
 
-    inline VkCommandBuffer GetCommandBuffer() const { return CommandBuffer; }
+    /** The submission just made from the current slot signals InTimelineValue (0: none). */
+    void NoteSubmitted(uint64_t InTimelineValue);
+
+    /** On to the next slot (EndRendering, after its submit). */
+    void Advance();
+
+    inline VkCommandBuffer GetCommandBuffer() const { return Slots[Current].Buffer; }
     inline bool IsRecording() const { return bRecording; }
 
     /**
-     * Fence that every submission of this command buffer MUST signal (pass it to
-     * QueueSubmit). BeginFrame waits and resets it before reusing the buffer.
+     * Fence that every submission of the current slot's buffer MUST signal (pass
+     * it to QueueSubmit). BeginFrame waits and resets it before reusing the buffer.
      */
-    inline VkFence GetFrameFence() const { return FrameFence; }
+    inline VkFence GetFrameFence() const { return Slots[Current].Fence; }
+
+    inline uint32_t GetSlot()      const { return Current; }
+    inline uint32_t GetSlotCount() const { return SlotCount; }
+
+    /** The timeline value the last BeginFrame waited for (its slot's last frame): done on the GPU. */
+    inline uint64_t GetWaitedValue() const { return WaitedValue; }
 
 private:
-    VKDevice*       Device          = nullptr;
-    VkCommandPool   CommandPool     = VK_NULL_HANDLE;
-    VkCommandBuffer CommandBuffer   = VK_NULL_HANDLE;
-    VkFence         FrameFence      = VK_NULL_HANDLE;
-    bool            bRecording      = false;
+    struct Slot
+    {
+        VkCommandPool   Pool           = VK_NULL_HANDLE;
+        VkCommandBuffer Buffer         = VK_NULL_HANDLE;
+        VkFence         Fence          = VK_NULL_HANDLE;
+        uint64_t        SubmittedValue = 0;
+    };
+
+    VKDevice* Device      = nullptr;
+    Slot      Slots[VK_FRAMES_IN_FLIGHT_MAX];
+    uint32_t  SlotCount   = 1;
+    uint32_t  Current     = 0;
+    uint64_t  WaitedValue = 0;
+    bool      bRecording  = false;
 };
 
 #endif //CORECLIENT_VKCOMMANDMANAGER_H

@@ -12,6 +12,7 @@
 #include <atomic>
 
 #include "Public/GDI/GDI.h"
+#include "Public/GDI/Vulkan/VKCommandManager.h"
 #include "Public/GDI/Vulkan/VKPipelineCache.h"
 #include "Public/GDI/Vulkan/VKShader.h"
 
@@ -431,7 +432,9 @@ public:
      * Backs VKRenderTarget::BeginReadback.
      */
     bool RecordReadback(class VKRenderTarget* Src, VkBuffer Dst, uint64_t& OutDoneAt);
-    bool IsSubmissionDone(uint64_t InDoneAt) const { return InDoneAt <= CompletedTimelineValue; }
+    /* Whether the frame that signals InDoneAt has finished on the GPU: from
+     * what the fences have shown, else the timeline semaphore itself. */
+    bool IsSubmissionDone(uint64_t InDoneAt);
 
     /**
      * Build the pipeline + descriptor set for the current GDI state and bind them
@@ -457,9 +460,9 @@ public:
     void RecordDrawObject(GDIRecordingContext* InContext, GDIViewObject* InObject, GDIView* InView) override;
     void RecordBeginDrawEvent(GDIRecordingContext* InContext, const std::string& InName) override;
     void RecordEndDrawEvent(GDIRecordingContext* InContext) override;
-    /* Each context's per-frame resources reset (BeginRendering, once the
-     * frame's fence is waited). */
-    void ResetRecordingContexts();
+    /* Each context's resources for frame slot InSlot reset (BeginRendering,
+     * once the slot's fence is waited). */
+    void ResetRecordingContexts(uint32_t InSlot);
     void DestroyRecordingContexts();
     /* InSet's query InIndex if it can predicate a draw now (resolved this
      * round, in range); else null (VKQuery.cpp). */
@@ -491,13 +494,15 @@ public:
      * texture/mesh immediately after the draw that uses it (e.g. QCanvasLayer::Restore's
      * temp texture in the flood-fill path) — legal on GL, but on Vulkan the handles
      * are still referenced by the open (or in-flight) frame command buffer, and
-     * destroying them invalidates it. Handles queued here are destroyed only after
-     * the next frame-fence wait proves all prior submits completed.
+     * destroying them invalidates it. Each handle queued here is tagged with the
+     * frame being recorded (RenderTimelineCounter + 1, which covers every frame
+     * in flight before it) and destroyed once that frame has finished.
      */
     void DeferDestroyImage(VkImage InImage, VkDeviceMemory InMemory, VkImageView InView, VkSampler InSampler);
     void DeferDestroyBuffer(VkBuffer InBuffer, VkDeviceMemory InMemory);
-    /** Destroy everything queued above. Caller must guarantee the GPU no longer references them. */
-    void DrainDeferredDestruction();
+    /** Destroy what is queued above for frames up to InDoneAt (all of it by default). Caller
+     *  must guarantee the GPU has finished those frames. */
+    void DrainDeferredDestruction(uint64_t InDoneAt = ~0ull);
 
     inline VKDevice*                GetDeviceObj()       const { return DeviceObj; }
     inline VKCommandManager*        GetCommandManager()  const { return CommandManager; }
@@ -537,7 +542,11 @@ private:
      *  (and Destroy, once the UI thread no longer presents). */
     std::vector<std::pair<void*, VKSwapchain*>> Swapchains;
     VKPipelineCache*        PipelineCache       = nullptr;
+    /* One per frame in flight (FramesInFlight), each reset once its slot's
+     * fence is waited; DescAlloc is the slot being recorded's. */
+    VKDescriptorAllocator*  DescAllocs[VK_FRAMES_IN_FLIGHT_MAX] = {};
     VKDescriptorAllocator*  DescAlloc           = nullptr;
+    uint32_t                FramesInFlightCount = 1;   // [Rendering] FramesInFlight, read at Allocate
     VKCurrentStateData*     CurrentStateData    = nullptr;
 
 
@@ -570,18 +579,19 @@ private:
 
     /*
      * GPU timestamps (GDIDynamicDriver::WriteGPUTimestamp), render thread
-     * only. One pool of GDI_GPU_TIMESTAMP_MAX, reset at each BeginRendering
-     * after the previous block's are read back -- its fence has just been
-     * waited, so they are complete. Null if the graphics queue cannot time.
+     * only. One pool of GDI_GPU_TIMESTAMP_MAX per frame slot (queries
+     * [Slot * MAX, (Slot + 1) * MAX)); a slot's are read back at the
+     * BeginRendering that reuses it -- its fence has just been waited, so
+     * they are complete -- then reset. Null if the queue cannot time.
      */
     VkQueryPool TimestampPool      = VK_NULL_HANDLE;
     double      TimestampPeriodNs  = 0.0;                         // nanoseconds per tick
     uint64_t    TimestampValidMask = 0;                           // the queue's timestampValidBits
-    uint64_t    TimestampsWritten  = 0;                           // this block's, by index
+    uint64_t    TimestampsWritten[VK_FRAMES_IN_FLIGHT_MAX] = {};  // each slot's last block's, by index
     uint64_t    PreviousTimestamps = 0;                           // the previous block's, read back
     double      PreviousTimestampMs[GDI_GPU_TIMESTAMP_MAX] = {};
     void CreateTimestampPool();
-    void CollectTimestamps();
+    void CollectTimestamps(uint32_t InSlot);
 
     // Set by RT resize (render thread), cleared by EndRendering; read by the
     // UI-thread present to skip frames while targets are being recreated.
@@ -591,13 +601,15 @@ private:
     // SetRenderTarget all run on the render thread).
     std::unordered_set<VKRenderTarget*>  LiveRenderTargets;
 
-    // Deferred-destruction queues (render thread only). Drained after each
-    // frame-fence wait (BeginRendering / FlushForReadback) and at Destroy.
-    struct DeferredImage  { VkImage Image; VkDeviceMemory Memory; VkImageView View; VkSampler Sampler; };
-    struct DeferredBuffer { VkBuffer Buffer; VkDeviceMemory Memory; };
-    std::vector<DeferredImage>  DeferredImages;
-    std::vector<DeferredBuffer> DeferredBuffers;
-    std::vector<VkQueryPool>    DeferredQueryPools;   // released occlusion query sets'
+    // Deferred-destruction queues (render thread only), each entry tagged with
+    // the frame that may still use it. Drained after each frame-fence wait
+    // (BeginRendering: what has finished; FlushForReadback: all) and at Destroy.
+    struct DeferredImage     { VkImage Image; VkDeviceMemory Memory; VkImageView View; VkSampler Sampler; uint64_t DoneAt; };
+    struct DeferredBuffer    { VkBuffer Buffer; VkDeviceMemory Memory; uint64_t DoneAt; };
+    struct DeferredQueryPool { VkQueryPool Pool; uint64_t DoneAt; };
+    std::vector<DeferredImage>     DeferredImages;
+    std::vector<DeferredBuffer>    DeferredBuffers;
+    std::vector<DeferredQueryPool> DeferredQueryPools;   // released occlusion query sets'
 };
 
 #endif //CORECLIENT_VULKANDYNAMICGDI_H

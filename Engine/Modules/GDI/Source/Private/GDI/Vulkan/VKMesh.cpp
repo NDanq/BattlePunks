@@ -316,20 +316,22 @@ void VKMesh::InitResource()
     ApplyDebugName();
 }
 
-bool VKMesh::InitDynamic(const uint32_t InMaxVertices, const uint32_t InMaxIndices)
+bool VKMesh::InitDynamic(const uint32_t InMaxVertices, const uint32_t InMaxIndices, const uint32_t InFrames)
 {
     if(!Device || !Device->IsValid() || bResourcesValid) return false;
     MakeDynamic(InMaxVertices, InMaxIndices);
 
+    /* A region of the capacity per frame in flight: UpdateDynamic writes the recording frame's. */
     struct Stream { VkBuffer& Buffer; VkDeviceMemory& Memory; void*& Mapped; VkDeviceSize Bytes; VkBufferUsageFlags Usage; };
-    const VkDeviceSize V = InMaxVertices;
+    const VkDeviceSize Frames = InFrames > 0 ? InFrames : 1;
+    const VkDeviceSize V      = VkDeviceSize(InMaxVertices) * Frames;
     Stream Streams[] = {
         { PositionBuffer,    PositionMemory,    PositionMapped,    V * 3 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT },
         { TexCoordBuffer,    TexCoordMemory,    TexCoordMapped,    V * 2 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT },
         { NormalBuffer,      NormalMemory,      NormalMapped,      V * 3 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT },
         { VertexColorBuffer, VertexColorMemory, VertexColorMapped, V * 4 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT },
         { UV1Buffer,         UV1Memory,         UV1Mapped,         V * 2 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT },
-        { IndexBuffer,       IndexMemory,       IndexMapped,       VkDeviceSize(InMaxIndices) * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT },
+        { IndexBuffer,       IndexMemory,       IndexMapped,       VkDeviceSize(InMaxIndices) * Frames * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT },
     };
     for(Stream& Each : Streams)
     {

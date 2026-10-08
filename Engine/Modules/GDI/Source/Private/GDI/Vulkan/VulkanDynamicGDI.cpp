@@ -26,6 +26,14 @@
 #include <string>
 #include <unordered_map>
 #include "Public/Core/CoreString.h"
+#include "Public/Core/CoreConfig.h"
+#include <algorithm>
+
+/* [Rendering] FramesInFlight: how many frames the CPU may record ahead of
+ * the GPU (RenderCore's MULTITHREADED_RENDERING.md, phase 4). 1 waits for
+ * each frame before recording the next; 2 records frame N+1 while the GPU
+ * draws frame N. Read when the device is made. */
+NIMBLE_CONFIG_INT(GVulkanFramesInFlight, "Rendering", "FramesInFlight", 2, nullptr);
 
 // At global scope, not inside a module namespace, so these are wider than the
 // usual directive -- contained only because nothing includes a .cpp.
@@ -187,8 +195,11 @@ void VulkanDynamicGDI::Allocate()
         return;
     }
 
+    FramesInFlightCount = uint32_t(std::clamp(GVulkanFramesInFlight.GetInt(), 1, int(VK_FRAMES_IN_FLIGHT_MAX)));
+    FramesInFlight      = FramesInFlightCount;
+    FrameSlot           = 0;
     CommandManager = new VKCommandManager();
-    if(!CommandManager->Initialize(DeviceObj))
+    if(!CommandManager->Initialize(DeviceObj, FramesInFlightCount))
     {
         GDI_LOG("[VulkanDynamicGDI] CommandManager init failed.")
         return;
@@ -226,12 +237,17 @@ void VulkanDynamicGDI::Allocate()
         return;
     }
 
-    DescAlloc = new VKDescriptorAllocator();
-    if(!DescAlloc->Initialize(DeviceObj))
+    for(uint32_t Slot = 0; Slot < FramesInFlightCount; ++Slot)
     {
-        GDI_LOG("[VulkanDynamicGDI] DescriptorAllocator init failed.")
-        return;
+        DescAllocs[Slot] = new VKDescriptorAllocator();
+        if(!DescAllocs[Slot]->Initialize(DeviceObj))
+        {
+            GDI_LOG("[VulkanDynamicGDI] DescriptorAllocator init failed.")
+            return;
+        }
     }
+    DescAlloc = DescAllocs[0];
+    GDI_LOG("[VulkanDynamicGDI] " + std::to_string(FramesInFlightCount) + " frame(s) in flight ([Rendering] FramesInFlight).")
 
     // Create 1×1 transparent fallback texture for unbound sampler descriptor slots.
     {
@@ -277,7 +293,11 @@ void VulkanDynamicGDI::Destroy()
     Swapchains.clear();
     DestroyRecordingContexts();
     if(CommandManager)  { CommandManager->Shutdown();   delete CommandManager;  CommandManager = nullptr; }
-    if(DescAlloc)       { DescAlloc->Shutdown();        delete DescAlloc;       DescAlloc = nullptr; }
+    for(VKDescriptorAllocator*& Each : DescAllocs)
+    {
+        if(Each) { Each->Shutdown(); delete Each; Each = nullptr; }
+    }
+    DescAlloc = nullptr;
     if(PipelineCache)   { PipelineCache->Shutdown();    delete PipelineCache;   PipelineCache = nullptr; }
 
     if(DeviceObj && DeviceObj->IsValid() && RenderTimeline != VK_NULL_HANDLE)
@@ -600,41 +620,59 @@ void VulkanDynamicGDI::DeferDestroyImage(VkImage InImage, VkDeviceMemory InMemor
 {
     if(InImage == VK_NULL_HANDLE && InMemory == VK_NULL_HANDLE &&
        InView == VK_NULL_HANDLE && InSampler == VK_NULL_HANDLE) return;
-    DeferredImages.push_back({ InImage, InMemory, InView, InSampler });
+    DeferredImages.push_back({ InImage, InMemory, InView, InSampler, RenderTimelineCounter + 1 });
 }
 
 void VulkanDynamicGDI::DeferDestroyBuffer(VkBuffer InBuffer, VkDeviceMemory InMemory)
 {
     if(InBuffer == VK_NULL_HANDLE && InMemory == VK_NULL_HANDLE) return;
-    DeferredBuffers.push_back({ InBuffer, InMemory });
+    DeferredBuffers.push_back({ InBuffer, InMemory, RenderTimelineCounter + 1 });
 }
 
-void VulkanDynamicGDI::DrainDeferredDestruction()
+void VulkanDynamicGDI::DrainDeferredDestruction(const uint64_t InDoneAt)
 {
     if(!DeviceObj || !DeviceObj->IsValid()) { DeferredImages.clear(); DeferredBuffers.clear(); DeferredQueryPools.clear(); return; }
     VkDevice Dev = DeviceObj->GetDevice();
 
-    for(const DeferredImage& D : DeferredImages)
+    /* Each list in the order released, so in DoneAt order: what has finished is a prefix. */
+    size_t Done = 0;
+    for(; Done < DeferredImages.size() && DeferredImages[Done].DoneAt <= InDoneAt; ++Done)
     {
+        const DeferredImage& D = DeferredImages[Done];
         if(D.Sampler != VK_NULL_HANDLE) vkDestroySampler(Dev, D.Sampler, nullptr);
         if(D.View    != VK_NULL_HANDLE) vkDestroyImageView(Dev, D.View, nullptr);
         if(D.Image   != VK_NULL_HANDLE) vkDestroyImage(Dev, D.Image, nullptr);
         if(D.Memory  != VK_NULL_HANDLE) vkFreeMemory(Dev, D.Memory, nullptr);
     }
-    DeferredImages.clear();
+    DeferredImages.erase(DeferredImages.begin(), DeferredImages.begin() + ptrdiff_t(Done));
 
-    for(const DeferredBuffer& D : DeferredBuffers)
+    Done = 0;
+    for(; Done < DeferredBuffers.size() && DeferredBuffers[Done].DoneAt <= InDoneAt; ++Done)
     {
+        const DeferredBuffer& D = DeferredBuffers[Done];
         if(D.Buffer != VK_NULL_HANDLE) vkDestroyBuffer(Dev, D.Buffer, nullptr);
         if(D.Memory != VK_NULL_HANDLE) vkFreeMemory(Dev, D.Memory, nullptr);
     }
-    DeferredBuffers.clear();
+    DeferredBuffers.erase(DeferredBuffers.begin(), DeferredBuffers.begin() + ptrdiff_t(Done));
 
-    for(const VkQueryPool Pool : DeferredQueryPools)
+    Done = 0;
+    for(; Done < DeferredQueryPools.size() && DeferredQueryPools[Done].DoneAt <= InDoneAt; ++Done)
     {
-        vkDestroyQueryPool(Dev, Pool, nullptr);
+        vkDestroyQueryPool(Dev, DeferredQueryPools[Done].Pool, nullptr);
     }
-    DeferredQueryPools.clear();
+    DeferredQueryPools.erase(DeferredQueryPools.begin(), DeferredQueryPools.begin() + ptrdiff_t(Done));
+}
+
+bool VulkanDynamicGDI::IsSubmissionDone(const uint64_t InDoneAt)
+{
+    if(InDoneAt <= CompletedTimelineValue) { return true; }
+    uint64_t Reached = 0;
+    if(RenderTimeline != VK_NULL_HANDLE && DeviceObj && DeviceObj->IsValid()
+       && vkGetSemaphoreCounterValue(DeviceObj->GetDevice(), RenderTimeline, &Reached) == VK_SUCCESS)
+    {
+        CompletedTimelineValue = std::max(CompletedTimelineValue, Reached);
+    }
+    return InDoneAt <= CompletedTimelineValue;
 }
 
 void VulkanDynamicGDI::EndActiveRenderingRegion()
@@ -661,9 +699,10 @@ void VulkanDynamicGDI::FlushForReadback(bool bResumeActiveRegion)
     EndActiveRenderingRegion();
     CommandManager->EndFrame();
 
-    // Submit the in-progress command buffer signaling the command manager's FrameFence.
-    // The BeginFrame() below waits that fence before reusing the buffer, so by the time
-    // this returns the flushed GPU work is complete (required for the readback / resize).
+    // Submit the in-progress command buffer signaling its slot's fence. The
+    // BeginFrame() below waits that fence and begins the same slot's buffer again,
+    // so by the time this returns the flushed GPU work -- and every frame
+    // submitted before it -- is complete (required for the readback / resize).
     VkCommandBuffer Cmd = CurrentStateData->CurrentCmd;
     VkSubmitInfo Submit{};
     Submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -671,10 +710,12 @@ void VulkanDynamicGDI::FlushForReadback(bool bResumeActiveRegion)
     Submit.pCommandBuffers    = &Cmd;
     DeviceObj->QueueSubmit(1, &Submit, CommandManager->GetFrameFence());
 
-    // Resume recording into a fresh command buffer (BeginFrame waits FrameFence —
-    // the flushed submit is complete, so deferred releases are safe to destroy too).
+    // Resume recording into a fresh command buffer (BeginFrame waits the fence --
+    // the flushed submit and every frame before it are complete, so deferred
+    // releases are safe to destroy too, and every earlier frame counts as done).
     VkCommandBuffer NewCmd = CommandManager->BeginFrame();
     ForgetBoundDrawState();   // the same handle, begun again: nothing bound
+    CompletedTimelineValue = std::max(CompletedTimelineValue, RenderTimelineCounter);
     DrainDeferredDestruction();
     CurrentStateData->CurrentCmd         = NewCmd;
     CurrentStateData->ActiveRenderTarget = nullptr;
@@ -880,7 +921,7 @@ GDIMesh* VulkanDynamicGDI::CreateDynamicMesh(const uint32_t InMaxVertices, const
     if(!DeviceObj || !CurrentStateData) return nullptr;
 
     auto* Mesh = new VKMesh(DeviceObj, CurrentStateData);
-    if(!Mesh->InitDynamic(InMaxVertices, InMaxIndices))
+    if(!Mesh->InitDynamic(InMaxVertices, InMaxIndices, FramesInFlightCount))
     {
         delete Mesh;
         return nullptr;
