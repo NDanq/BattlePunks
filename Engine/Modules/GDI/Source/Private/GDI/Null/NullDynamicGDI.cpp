@@ -29,6 +29,9 @@ void NullDynamicGDI::Allocate()
 
 void NullDynamicGDI::Destroy()
 {
+    for(NullRecordingContext* Context : Contexts) { delete Context; }
+    Contexts.clear();
+    OpenChunks = 0;
     /* Nothing else to tear down -- this backend owns no device -- but the base
      * class still expects its caches empty by destruction time, and a caller
      * that loaded a shader against the Null backend has one to free. */
@@ -308,4 +311,50 @@ bool NullDynamicGDI::CheckError(const std::string& FailStr)
 EngineCore::Color NullDynamicGDI::GetColorFromSamplePoint(const EngineCore::Point&, const EngineCore::Size&)
 {
     return EngineCore::Color();
+}
+
+bool NullDynamicGDI::BeginParallelPass(const uint32_t InChunks, GDIRecordingContext** OutContexts)
+{
+    if(OpenChunks > 0 || InChunks == 0) return false;
+    while(Contexts.size() < InChunks) { Contexts.push_back(new NullRecordingContext()); }
+    for(uint32_t Chunk = 0; Chunk < InChunks; ++Chunk)
+    {
+        NullRecordingContext& Context = *Contexts[Chunk];
+        Context = NullRecordingContext();
+        Context.BoundVertexShader = BoundVertexShader;
+        Context.BoundPixelShader  = BoundPixelShader;
+        Context.InstanceBuffer    = InstanceBuffer;
+        Context.InstanceCount     = InstanceCount;
+        Context.Index             = Chunk;
+        OutContexts[Chunk]        = &Context;
+    }
+    OpenChunks = InChunks;
+    return true;
+}
+
+void NullDynamicGDI::EndParallelPass()
+{
+    for(uint32_t Chunk = 0; Chunk < OpenChunks; ++Chunk)
+    {
+        const NullRecordingContext& Context = *Contexts[Chunk];
+        Stats.DrawObjectCalls     += Context.Draws;
+        Stats.PredicatedDrawCalls += Context.Predicated;
+        Stats.InstancedDrawCalls  += Context.Instanced;
+        if(Context.Instanced > 0) { Stats.LastInstanceCount = Context.LastInstanceCount; }
+    }
+    Stats.ParallelPasses += OpenChunks > 0 ? 1 : 0;
+    Stats.ParallelChunks += OpenChunks;
+    OpenChunks = 0;
+}
+
+void NullDynamicGDI::RecordDrawObject(GDIRecordingContext* InContext, class GDIViewObject*, class GDIView*)
+{
+    auto& Context = *static_cast<NullRecordingContext*>(InContext);
+    ++Context.Draws;
+    Context.Predicated += Context.PredicateSet && Context.PredicateIndex >= 0 ? 1 : 0;
+    if(Context.InstanceBuffer)
+    {
+        ++Context.Instanced;
+        Context.LastInstanceCount = Context.InstanceCount;
+    }
 }

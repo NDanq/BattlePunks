@@ -61,6 +61,9 @@ public:
      * Binds vertex buffers at bindings 0-2 and calls vkCmdDraw[Instanced].
      */
     void Draw() override;
+    /* Draw's body with explicit inputs: the render thread's (Draw), or a
+     * recording context's (VulkanDynamicGDI::RecordDrawObject). */
+    void Record(const struct VKDrawInputs& InInputs);
 
 protected:
     /** memcpy into the mapped streams; nothing is in flight there (GDIMesh::UpdateDynamic). */

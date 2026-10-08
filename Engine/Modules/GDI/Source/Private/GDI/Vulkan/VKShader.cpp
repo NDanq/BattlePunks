@@ -205,19 +205,22 @@ void VKShaderResource::Release(void)
 
 bool VKShaderResource::HasCustomScalars() const
 {
-    if(CustomScanSize != Scalars.size())
+    const size_t Size = Scalars.size();
+    if(CustomScanSize.load(std::memory_order_acquire) == Size)
     {
-        bCustomScalars = false;
-        for(const auto& Each : Scalars)
-        {
-            const std::string& N = Each.first;
-            if(N.compare(0, 15, "ViewParameters.") != 0 && N.compare(0, 10, "Transform.") != 0)
-            {
-                bCustomScalars = true;
-                break;
-            }
-        }
-        CustomScanSize = Scalars.size();
+        return bCustomScalars.load(std::memory_order_relaxed);
     }
-    return bCustomScalars;
+    bool bCustom = false;
+    for(const auto& Each : Scalars)
+    {
+        const std::string& N = Each.first;
+        if(N.compare(0, 15, "ViewParameters.") != 0 && N.compare(0, 10, "Transform.") != 0)
+        {
+            bCustom = true;
+            break;
+        }
+    }
+    bCustomScalars.store(bCustom, std::memory_order_relaxed);
+    CustomScanSize.store(Size, std::memory_order_release);
+    return bCustom;
 }

@@ -125,7 +125,7 @@ GDIOcclusionQueries* VulkanDynamicGDI::CreateOcclusionQueries(const uint32_t InC
 
 void VulkanDynamicGDI::ReleaseOcclusionQueries(VKOcclusionQueries* InSet)
 {
-    if(bPredicateOpen && OpenPredicateBuffer == InSet->Results) { CloseDrawPredicate(); }
+    if(Immediate.bPredicateOpen && Immediate.OpenPredicateBuffer == InSet->Results) { CloseDrawPredicate(); }
     if(PredicateSet == InSet)
     {
         PredicateSet   = nullptr;
@@ -258,6 +258,18 @@ void VulkanDynamicGDI::ResolveOcclusionQueries(GDIOcclusionQueries* InSet)
     Set->bPending  = true;
 }
 
+VKOcclusionQueries* VulkanDynamicGDI::UsablePredicate(GDIOcclusionQueries* InSet, const int32_t InIndex) const
+{
+    auto* Set = static_cast<VKOcclusionQueries*>(InSet);
+    const bool bUsable = Set && Set->IsValid() && Set->bResolved && InIndex >= 0 && uint32_t(InIndex) < Set->Count;
+    return bUsable ? Set : nullptr;
+}
+
+GDIOcclusionQueries* VulkanDynamicGDI::ImmediatePredicateSet() const
+{
+    return PredicateSet;
+}
+
 void VulkanDynamicGDI::SetOcclusionPredicate(GDIOcclusionQueries* InSet, const int32_t InIndex)
 {
     auto* Set = static_cast<VKOcclusionQueries*>(InSet);
@@ -283,17 +295,18 @@ bool VulkanDynamicGDI::ReadOcclusionResults(GDIOcclusionQueries* InSet, std::vec
     return true;
 }
 
-void VulkanDynamicGDI::ApplyDrawPredicate(const VkCommandBuffer InCmd)
+void VulkanDynamicGDI::ApplyDrawPredicate(const VKDrawInputs& In)
 {
-    const bool bWanted = PredicateSet && PredicateIndex >= 0 && CmdBeginConditionalRendering
+    VKDrawCaches& C = *In.Caches;
+    const bool bWanted = In.PredicateSet && In.PredicateIndex >= 0 && CmdBeginConditionalRendering
                          && DeviceObj->SupportsConditionalRendering();
-    const VkBuffer     Buffer = bWanted ? PredicateSet->Results : VK_NULL_HANDLE;
-    const VkDeviceSize Offset = bWanted ? VkDeviceSize(PredicateIndex) * sizeof(uint32_t) : 0;
-    if(bPredicateOpen && bWanted && Buffer == OpenPredicateBuffer && Offset == OpenPredicateOffset)
+    const VkBuffer     Buffer = bWanted ? In.PredicateSet->Results : VK_NULL_HANDLE;
+    const VkDeviceSize Offset = bWanted ? VkDeviceSize(In.PredicateIndex) * sizeof(uint32_t) : 0;
+    if(C.bPredicateOpen && bWanted && Buffer == C.OpenPredicateBuffer && Offset == C.OpenPredicateOffset)
     {
         return;   // the same predicate as the draw before: still open
     }
-    CloseDrawPredicate();
+    CloseDrawPredicate(C, In.Cmd);
     if(!bWanted)
     {
         return;
@@ -302,21 +315,26 @@ void VulkanDynamicGDI::ApplyDrawPredicate(const VkCommandBuffer InCmd)
     Info.sType  = VK_STRUCTURE_TYPE_CONDITIONAL_RENDERING_BEGIN_INFO_EXT;
     Info.buffer = Buffer;
     Info.offset = Offset;
-    CmdBeginConditionalRendering(InCmd, &Info);
-    bPredicateOpen      = true;
-    OpenPredicateBuffer = Buffer;
-    OpenPredicateOffset = Offset;
+    CmdBeginConditionalRendering(In.Cmd, &Info);
+    C.bPredicateOpen      = true;
+    C.OpenPredicateBuffer = Buffer;
+    C.OpenPredicateOffset = Offset;
+}
+
+void VulkanDynamicGDI::CloseDrawPredicate(VKDrawCaches& C, const VkCommandBuffer InCmd)
+{
+    if(C.bPredicateOpen && InCmd != VK_NULL_HANDLE)
+    {
+        CmdEndConditionalRendering(InCmd);
+    }
+    C.bPredicateOpen      = false;
+    C.OpenPredicateBuffer = VK_NULL_HANDLE;
+    C.OpenPredicateOffset = 0;
 }
 
 void VulkanDynamicGDI::CloseDrawPredicate()
 {
-    if(bPredicateOpen && CurrentStateData && CurrentStateData->CurrentCmd != VK_NULL_HANDLE)
-    {
-        CmdEndConditionalRendering(CurrentStateData->CurrentCmd);
-    }
-    bPredicateOpen      = false;
-    OpenPredicateBuffer = VK_NULL_HANDLE;
-    OpenPredicateOffset = 0;
+    CloseDrawPredicate(Immediate, CurrentStateData ? CurrentStateData->CurrentCmd : VK_NULL_HANDLE);
 }
 
 void VulkanDynamicGDI::LoadQueryFunctions()

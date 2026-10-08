@@ -12,6 +12,7 @@
 #include "Public/GDI/Vulkan/VKTexture.h"
 #include "Public/GDI/Vulkan/VKMesh.h"
 #include "Private/GDI/Vulkan/VKTransientOps.h"
+#include "Private/GDI/Vulkan/VKCorePack.h"
 #include "Public/GDI/GDIShader.h"
 #include "Public/GDI/GDIView.h"
 
@@ -274,6 +275,7 @@ void VulkanDynamicGDI::Destroy()
 
     for(auto& Entry : Swapchains) { Entry.second->Shutdown(); delete Entry.second; }
     Swapchains.clear();
+    DestroyRecordingContexts();
     if(CommandManager)  { CommandManager->Shutdown();   delete CommandManager;  CommandManager = nullptr; }
     if(DescAlloc)       { DescAlloc->Shutdown();        delete DescAlloc;       DescAlloc = nullptr; }
     if(PipelineCache)   { PipelineCache->Shutdown();    delete PipelineCache;   PipelineCache = nullptr; }
@@ -1123,98 +1125,13 @@ static uint32_t PackCustomUBO(const std::unordered_map<std::string, VKUniformVal
 // ExecuteDrawCalls — core Vulkan draw implementation
 // ---------------------------------------------------------------------------
 
-namespace
+bool VulkanDynamicGDI::BindDrawState(const VKDrawInputs& In, GDIMesh* InMesh, bool bIsInstanced)
 {
-    /* std140 mat4 from Matrix4x4's row-major doubles: column-major floats,
-     * transposed as VKShaderResource::SetUniform(Matrix4x4) stores them. */
-    void MatrixToStd140(const Matrix4x4& InMatrix, float* OutColumns)
-    {
-        for(int Row = 0; Row < 4; ++Row)
-            for(int Col = 0; Col < 4; ++Col)
-                OutColumns[Col * 4 + Row] = static_cast<float>(InMatrix.Data[Row][Col]);
-    }
-
-    /* The ViewParameters block of InView, as UpdateCoreUniforms' four scalars
-     * pack it (PackViewParamsUBO's layout), before the clip-space remap. */
-    void PackCoreView(GDIView* InView, float (&OutView)[40])
-    {
-        MatrixToStd140(InView->Camera->Projection, OutView + 0);
-        MatrixToStd140(InView->Camera->ViewMat, OutView + 16);
-        const Vector3 Mouse(float(InView->MouseState.PosX), float(InView->MouseState.PosY),
-                            InView->MouseState.bMouseDown ? 1.0f : 0.0f);
-        OutView[32] = static_cast<float>(Mouse.GetX());
-        OutView[33] = static_cast<float>(Mouse.GetY());
-        OutView[34] = static_cast<float>(Mouse.GetZ());
-        OutView[35] = 0.0f;
-        const Vector4 Resolution(float(InView->Viewport.ViewportWidth), float(InView->Viewport.ViewportHeight),
-                                 1.0f / InView->Viewport.ViewportWidth, 1.0f / InView->Viewport.ViewportHeight);
-        OutView[36] = static_cast<float>(Resolution.GetX());
-        OutView[37] = static_cast<float>(Resolution.GetY());
-        OutView[38] = static_cast<float>(Resolution.GetZ());
-        OutView[39] = static_cast<float>(Resolution.GetW());
-    }
-
-    /* The Transform block of InTransform (PackTransformUBO's layout). */
-    void PackCoreTransform(const GDITransform* InTransform, float (&OutTransform)[36])
-    {
-        const Matrix4x4 Model = InTransform->GetModel();
-        OutTransform[0] = static_cast<float>(InTransform->Translate.GetX());
-        OutTransform[1] = static_cast<float>(InTransform->Translate.GetY());
-        OutTransform[2] = static_cast<float>(InTransform->Translate.GetZ());
-        OutTransform[3] = 0.0f;
-        MatrixToStd140(Model, OutTransform + 4);
-        MatrixToStd140(InTransform->bHasPrevModel ? InTransform->PrevModel : Model, OutTransform + 20);
-    }
-
-    /* The camera's GL projection to Vulkan's clip z (see PackViewParamsUBO). */
-    void RemapClipZ(float* InOutView)
-    {
-        for(int Col = 0; Col < 4; ++Col)
-        {
-            const float Z = InOutView[Col * 4 + 2];
-            const float W = InOutView[Col * 4 + 3];
-            InOutView[Col * 4 + 2] = 0.5f * Z + 0.5f * W;
-        }
-    }
-
-    bool PipelineKeysEqual(const VKPipelineCache::PipelineKey& A, const VKPipelineCache::PipelineKey& B)
-    {
-        if(A.VertexShader != B.VertexShader || A.FragmentShader != B.FragmentShader || A.VertexLayoutID != B.VertexLayoutID
-           || A.DescLayoutGroup != B.DescLayoutGroup || A.BlendEnable != B.BlendEnable || A.SrcColorBlend != B.SrcColorBlend
-           || A.DstColorBlend != B.DstColorBlend || A.SrcAlphaBlend != B.SrcAlphaBlend || A.DstAlphaBlend != B.DstAlphaBlend
-           || A.ColorBlendOp != B.ColorBlendOp || A.AlphaBlendOp != B.AlphaBlendOp || A.ColorWriteMask != B.ColorWriteMask
-           || A.DepthTestEnable != B.DepthTestEnable || A.DepthWriteEnable != B.DepthWriteEnable
-           || A.DepthCompareOp != B.DepthCompareOp || A.StencilTestEnable != B.StencilTestEnable || A.RTFormat != B.RTFormat
-           || A.ColorCount != B.ColorCount || A.DepthFormat != B.DepthFormat || A.Topology != B.Topology)
-        {
-            return false;
-        }
-        for(uint32_t Index = 0; Index < GDI_MAX_COLOR_TARGETS; ++Index)
-        {
-            if(A.ColorFormats[Index] != B.ColorFormats[Index]) { return false; }
-        }
-        return true;
-    }
-}
-
-void VulkanDynamicGDI::ForgetBoundDrawState()
-{
-    bPredicateOpen      = false;   // a command buffer begun again holds none
-    OpenPredicateBuffer = VK_NULL_HANDLE;
-    OpenPredicateOffset = 0;
-    BoundPipeline    = VK_NULL_HANDLE;
-    BoundLayout      = VK_NULL_HANDLE;
-    BoundSet         = VK_NULL_HANDLE;
-    BoundOffsetCount = 0;
-}
-
-bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
-{
-    if(!CurrentStateData || !CurrentStateData->bRenderingActive) return false;
-    if(CurrentStateData->CurrentCmd == VK_NULL_HANDLE) return false;
-    if(!InMesh || !PipelineCache || !DescAlloc || !DeviceObj) return false;
-    if(CurrentStateData->BoundVSModule == VK_NULL_HANDLE ||
-       CurrentStateData->BoundFSModule == VK_NULL_HANDLE) return false;
+    if(!In.bRenderingActive || In.Cmd == VK_NULL_HANDLE || !In.Caches || !In.Alloc) return false;
+    if(!InMesh || !PipelineCache || !DeviceObj) return false;
+    if(In.VSModule == VK_NULL_HANDLE || In.FSModule == VK_NULL_HANDLE) return false;
+    VKDrawCaches& C = *In.Caches;
+    VKDescriptorAllocator* const Alloc = In.Alloc;
 
     // ----------------------------------------------------------------
     // 1. Gather shader resources. The core blocks come from the PS (both
@@ -1222,11 +1139,13 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     // ----------------------------------------------------------------
     VKShaderResource* PSRes = nullptr;
     VKShaderResource* VSRes = nullptr;
-    if(BoundPixelShader && BoundPixelShader->Resource)
-        PSRes = static_cast<VKShaderResource*>(BoundPixelShader->Resource);
-    if(BoundVertexShader && BoundVertexShader->Resource)
-        VSRes = static_cast<VKShaderResource*>(BoundVertexShader->Resource);
+    if(In.PS && In.PS->Resource)
+        PSRes = static_cast<VKShaderResource*>(In.PS->Resource);
+    if(In.VS && In.VS->Resource)
+        VSRes = static_cast<VKShaderResource*>(In.VS->Resource);
     const VKShaderResource* CoreRes = PSRes ? PSRes : VSRes;
+    /* The draw's own core blocks (a recording context's), else the shaders'. */
+    const VKShaderResource::CoreBlocks* Core = In.Core ? In.Core : (CoreRes ? &CoreRes->GetCoreBlocks() : nullptr);
 
     // ----------------------------------------------------------------
     // 2. Descriptor layout group, from the PS's uniforms (the scan cached
@@ -1239,23 +1158,23 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     if     ( bHasCustomUBO && !bHasCustomSampler) Group = DLG_CustomUBO;
     else if(!bHasCustomUBO &&  bHasCustomSampler) Group = DLG_Sampler;
     else if( bHasCustomUBO &&  bHasCustomSampler) Group = DLG_UBOAndSampler;
-    if(IsMaterialDraw()) Group = DLG_Material;
+    if((In.VS && In.VS->Resource && In.VS->Resource->UsesMaterialLayout())
+       || (In.PS && In.PS->Resource && In.PS->Resource->UsesMaterialLayout())) Group = DLG_Material;
 
     // ----------------------------------------------------------------
     // 3. Build pipeline key
     // ----------------------------------------------------------------
     VKPipelineCache::PipelineKey Key{};
-    Key.VertexShader    = CurrentStateData->BoundVSModule;
-    Key.FragmentShader  = CurrentStateData->BoundFSModule;
+    Key.VertexShader    = In.VSModule;
+    Key.FragmentShader  = In.FSModule;
     // 3: an indexed mesh drawn instanced from GDISetInstanceBuffer's buffer.
     // 4: a skinned mesh, its bone streams at bindings 6 and 7 (never instanced).
-    Key.VertexLayoutID  = InMesh->IsIndexed() ? (GetInstanceBuffer() ? 3u : (InMesh->IsSkinned() ? 4u : 2u)) : (bIsInstanced ? 1u : 0u);
+    Key.VertexLayoutID  = InMesh->IsIndexed() ? (In.InstanceBuffer ? 3u : (InMesh->IsSkinned() ? 4u : 2u)) : (bIsInstanced ? 1u : 0u);
     Key.DescLayoutGroup = Group;
 
-    if(CurrentStateData->BlendState)
+    if(In.Blend)
     {
-        const VkPipelineColorBlendAttachmentState& BA =
-            CurrentStateData->BlendState->ColorAttachment;
+        const VkPipelineColorBlendAttachmentState& BA = In.Blend->ColorAttachment;
         VKPipelineCache::ApplyBlendState(Key,
             BA.blendEnable, BA.srcColorBlendFactor,
             BA.dstColorBlendFactor,
@@ -1263,45 +1182,40 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
             BA.colorWriteMask,
             BA.colorBlendOp, BA.alphaBlendOp);
     }
-    if(CurrentStateData->DepthStencilState)
+    if(In.Depth)
     {
-        const VkPipelineDepthStencilStateCreateInfo& DS =
-            CurrentStateData->DepthStencilState->StateInfo;
+        const VkPipelineDepthStencilStateCreateInfo& DS = In.Depth->StateInfo;
         VKPipelineCache::ApplyDepthStencilState(Key,
             DS.depthTestEnable, DS.depthWriteEnable, DS.stencilTestEnable,
             DS.depthCompareOp);
     }
-    if(CurrentStateData->ActiveRenderTarget)
+    if(In.bHasTarget)
     {
-        Key.RTFormat    = CurrentStateData->ActiveRenderTarget->GetFormat();
-        Key.ColorCount  = CurrentStateData->ActiveColorCount > 0 ? CurrentStateData->ActiveColorCount : 1u;
-        for(uint32_t Index = 0; Index < GDI_MAX_COLOR_TARGETS; ++Index)
-        {
-            const VKRenderTarget* Each = Index < CurrentStateData->ActiveColorCount ? CurrentStateData->ActiveColors[Index] : nullptr;
-            Key.ColorFormats[Index] = Each ? Each->GetFormat() : VK_FORMAT_UNDEFINED;
-        }
-        Key.DepthFormat = CurrentStateData->ActiveDepth ? CurrentStateData->ActiveDepth->GetDepthFormat() : VK_FORMAT_UNDEFINED;
+        Key.RTFormat    = In.RTFormat;
+        Key.ColorCount  = In.ColorCount;
+        for(uint32_t Index = 0; Index < GDI_MAX_COLOR_TARGETS; ++Index) { Key.ColorFormats[Index] = In.ColorFormats[Index]; }
+        Key.DepthFormat = In.DepthFormat;
     }
 
     // ----------------------------------------------------------------
     // 4. Fetch pipeline + layouts: the last lookup again when the key is the
     //    same, as it is through a run of one material's draws.
     // ----------------------------------------------------------------
-    if(!bLastPipelineValid || !PipelineKeysEqual(Key, LastPipelineKey))
+    if(!C.bLastPipelineValid || !VKPipelineCache::KeysEqual(Key, C.LastPipelineKey))
     {
-        LastPipelineFetch  = PipelineCache->GetOrCreateFull(Key);
-        LastPipelineKey    = Key;
-        bLastPipelineValid = LastPipelineFetch.Pipeline != VK_NULL_HANDLE;
+        C.LastPipelineFetch  = PipelineCache->GetOrCreateFull(Key);
+        C.LastPipelineKey    = Key;
+        C.bLastPipelineValid = C.LastPipelineFetch.Pipeline != VK_NULL_HANDLE;
     }
-    const VKPipelineCache::PipelineFetch F = LastPipelineFetch;
+    const VKPipelineCache::PipelineFetch F = C.LastPipelineFetch;
     if(F.Pipeline == VK_NULL_HANDLE || F.PipeLayout == VK_NULL_HANDLE) return false;
 
     // Descriptor sets live as long as the ring's epoch (DescAlloc->Reset).
-    const uint64_t Epoch = DescAlloc->GetEpoch();
-    if(DescSetsEpoch != Epoch)
+    const uint64_t Epoch = Alloc->GetEpoch();
+    if(C.DescSetsEpoch != Epoch)
     {
-        DescSets.clear();
-        DescSetsEpoch = Epoch;
+        C.DescSets.clear();
+        C.DescSetsEpoch = Epoch;
     }
 
     // ----------------------------------------------------------------
@@ -1309,7 +1223,7 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     //    uniform buffer -- the set names its buffer and range, the bind its
     //    offset.
     // ----------------------------------------------------------------
-    DescSetKey SetKey;
+    VKDrawCaches::DescSetKey SetKey;
     SetKey.Layout = F.DescLayout;
     uint32_t Offsets[6] = {};
     uint32_t BlockCount = 0;
@@ -1324,36 +1238,36 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     // --- Binding 0: ViewParameters (160 bytes): reused while its bytes are ---
     {
         alignas(16) float View[40];
-        if(CoreRes && CoreRes->GetCoreBlocks().bView)
+        if(Core && Core->bView)
         {
-            std::memcpy(View, CoreRes->GetCoreBlocks().View, sizeof(View));
-            RemapClipZ(View);
+            std::memcpy(View, Core->View, sizeof(View));
+            VKCorePack::RemapClipZ(View);
         }
         else
         {
             PackViewParamsUBO(CoreRes ? CoreRes->GetScalars() : std::unordered_map<std::string, VKUniformValue>(), View);
         }
-        if(ViewUploadEpoch != Epoch || ViewUploadBuffer == VK_NULL_HANDLE
-           || std::memcmp(View, ViewUploadBytes, sizeof(View)) != 0)
+        if(C.ViewUploadEpoch != Epoch || C.ViewUploadBuffer == VK_NULL_HANDLE
+           || std::memcmp(View, C.ViewUploadBytes, sizeof(View)) != 0)
         {
-            const VKUBOAllocation VPAlloc = DescAlloc->AllocateUBO(160);
+            const VKUBOAllocation VPAlloc = Alloc->AllocateUBO(160);
             if(VPAlloc.Buffer == VK_NULL_HANDLE) return false;
             std::memcpy(VPAlloc.MappedPtr, View, sizeof(View));
-            std::memcpy(ViewUploadBytes, View, sizeof(View));
-            ViewUploadBuffer = VPAlloc.Buffer;
-            ViewUploadOffset = VPAlloc.Offset;
-            ViewUploadEpoch  = Epoch;
+            std::memcpy(C.ViewUploadBytes, View, sizeof(View));
+            C.ViewUploadBuffer = VPAlloc.Buffer;
+            C.ViewUploadOffset = VPAlloc.Offset;
+            C.ViewUploadEpoch  = Epoch;
         }
-        AddBlock(ViewUploadBuffer, ViewUploadOffset, 160);
+        AddBlock(C.ViewUploadBuffer, C.ViewUploadOffset, 160);
     }
 
     // --- Binding 1: Transform (144 bytes), per draw ---
     {
-        const VKUBOAllocation TrAlloc = DescAlloc->AllocateUBO(kTransformUBOBytes);
+        const VKUBOAllocation TrAlloc = Alloc->AllocateUBO(kTransformUBOBytes);
         if(TrAlloc.Buffer == VK_NULL_HANDLE) return false;
-        if(CoreRes && CoreRes->GetCoreBlocks().bTransform)
+        if(Core && Core->bTransform)
         {
-            std::memcpy(TrAlloc.MappedPtr, CoreRes->GetCoreBlocks().Transform, kTransformUBOBytes);
+            std::memcpy(TrAlloc.MappedPtr, Core->Transform, kTransformUBOBytes);
         }
         else
         {
@@ -1366,7 +1280,7 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     static const uint32_t kCustomUBOMaxBytes = 256;
     if(Group == DLG_CustomUBO || Group == DLG_UBOAndSampler)
     {
-        const VKUBOAllocation CustAlloc = DescAlloc->AllocateUBO(kCustomUBOMaxBytes);
+        const VKUBOAllocation CustAlloc = Alloc->AllocateUBO(kCustomUBOMaxBytes);
         if(CustAlloc.Buffer == VK_NULL_HANDLE) return false;
         const uint32_t CustomRange = PackCustomUBO(PSRes ? PSRes->GetScalars() : std::unordered_map<std::string, VKUniformValue>(),
                                                    CustAlloc.MappedPtr, kCustomUBOMaxBytes);
@@ -1378,28 +1292,24 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     {
         for(uint32_t b = 0; b < 2; ++b)
         {
-            const std::vector<uint8_t>& Bytes = MaterialBlocks[b];
+            const std::vector<uint8_t>& Bytes = In.Blocks[b];
             // Never an empty range: a shader that declares the block still reads it.
             const uint32_t Size = Bytes.empty() ? 16u : uint32_t(Bytes.size());
-            VkBuffer&     UploadBuffer = b == 0 ? MaterialBlockUploadBuffer : SceneBlockUploadBuffer;
-            VkDeviceSize& UploadOffset = b == 0 ? MaterialBlockUploadOffset : SceneBlockUploadOffset;
-            uint64_t&     UploadSerial = b == 0 ? MaterialBlockUploadSerial : SceneBlockUploadSerial;
-            uint64_t&     UploadEpoch  = b == 0 ? MaterialBlockUploadEpoch  : SceneBlockUploadEpoch;
-            const bool bReuse = UploadSerial == MaterialBlockSerials[b] && UploadEpoch == Epoch
-                                && UploadBuffer != VK_NULL_HANDLE && (b != 0 || MaterialBlockUploadSize == Size);
+            const bool bReuse = C.BlockUploadSerial[b] == In.Serials[b] && C.BlockUploadEpoch[b] == Epoch
+                                && C.BlockUploadBuffer[b] != VK_NULL_HANDLE && C.BlockUploadSize[b] == Size;
             if(!bReuse)
             {
-                const VKUBOAllocation Block = DescAlloc->AllocateUBO(Size);
+                const VKUBOAllocation Block = Alloc->AllocateUBO(Size);
                 if(Block.Buffer == VK_NULL_HANDLE) return false;
                 memset(Block.MappedPtr, 0, Size);
                 if(!Bytes.empty()) memcpy(Block.MappedPtr, Bytes.data(), Bytes.size());
-                UploadBuffer = Block.Buffer;
-                UploadOffset = Block.Offset;
-                UploadSerial = MaterialBlockSerials[b];
-                UploadEpoch  = Epoch;
-                if(b == 0) { MaterialBlockUploadSize = Size; }
+                C.BlockUploadBuffer[b] = Block.Buffer;
+                C.BlockUploadOffset[b] = Block.Offset;
+                C.BlockUploadSerial[b] = In.Serials[b];
+                C.BlockUploadEpoch[b]  = Epoch;
+                C.BlockUploadSize[b]   = Size;
             }
-            AddBlock(UploadBuffer, UploadOffset, Size);
+            AddBlock(C.BlockUploadBuffer[b], C.BlockUploadOffset[b], Size);
         }
 
         // The skin blocks (bindings 12 and 13): the last palette set, and the
@@ -1408,24 +1318,24 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
         for(uint32_t Skin = 0; Skin < 2; ++Skin)
         {
             // A skinned shader declares the whole palette: bind all of it.
-            const std::vector<uint8_t>& Bytes = MaterialBlocks[2 + Skin];
+            const std::vector<uint8_t>& Bytes = In.Blocks[2 + Skin];
             const uint32_t Size = Bytes.empty() ? 16u : GDI_SKIN_BLOCK_MAX_BYTES;
-            const bool bReuse = SkinBlockUploadSerial[Skin] == MaterialBlockSerials[2 + Skin]
-                                && SkinBlockUploadEpoch[Skin] == Epoch
-                                && SkinBlockUploadBuffer[Skin] != VK_NULL_HANDLE;
+            const bool bReuse = C.SkinBlockUploadSerial[Skin] == In.Serials[2 + Skin]
+                                && C.SkinBlockUploadEpoch[Skin] == Epoch
+                                && C.SkinBlockUploadBuffer[Skin] != VK_NULL_HANDLE;
             if(!bReuse)
             {
-                const VKUBOAllocation Block = DescAlloc->AllocateUBO(Size);
+                const VKUBOAllocation Block = Alloc->AllocateUBO(Size);
                 if(Block.Buffer == VK_NULL_HANDLE) return false;
                 memset(Block.MappedPtr, 0, Size);
                 if(!Bytes.empty()) memcpy(Block.MappedPtr, Bytes.data(), Bytes.size());
-                SkinBlockUploadBuffer[Skin] = Block.Buffer;
-                SkinBlockUploadOffset[Skin] = Block.Offset;
-                SkinBlockUploadSize[Skin]   = Size;
-                SkinBlockUploadSerial[Skin] = MaterialBlockSerials[2 + Skin];
-                SkinBlockUploadEpoch[Skin]  = Epoch;
+                C.SkinBlockUploadBuffer[Skin] = Block.Buffer;
+                C.SkinBlockUploadOffset[Skin] = Block.Offset;
+                C.SkinBlockUploadSize[Skin]   = Size;
+                C.SkinBlockUploadSerial[Skin] = In.Serials[2 + Skin];
+                C.SkinBlockUploadEpoch[Skin]  = Epoch;
             }
-            AddBlock(SkinBlockUploadBuffer[Skin], SkinBlockUploadOffset[Skin], SkinBlockUploadSize[Skin]);
+            AddBlock(C.SkinBlockUploadBuffer[Skin], C.SkinBlockUploadOffset[Skin], C.SkinBlockUploadSize[Skin]);
         }
     }
 
@@ -1437,7 +1347,7 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     {
         for(uint32_t s = 0; s < GDI_MATERIAL_TEXTURE_SLOTS; ++s)
         {
-            auto* VKTex = dynamic_cast<VKTextureResource*>(MaterialTextures[s]);
+            auto* VKTex = dynamic_cast<VKTextureResource*>(In.Textures[s]);
             if(!VKTex) VKTex = dynamic_cast<VKTextureResource*>(NullTexture);
             if(!VKTex) return false;
             SetKey.Samplers[s] = VKTex->GetSampler();
@@ -1476,7 +1386,7 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
             {
                 ++NullTexWarnCount;
                 GDI_LOG("[VulkanDynamicGDI] Draw uses NullTexture fallback (FS=0x"
-                      + GDIHex(reinterpret_cast<uintptr_t>(CurrentStateData->BoundFSModule))
+                      + GDIHex(reinterpret_cast<uintptr_t>(In.FSModule))
                       + ", PS textures="
                       + ::GDILogDetail::GDINum(PSRes ? int(PSRes->GetTextures().size()) : -1) + ")")
             }
@@ -1492,14 +1402,14 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     //    else a new one.
     // ----------------------------------------------------------------
     VkDescriptorSet DescSet = VK_NULL_HANDLE;
-    const auto Found = DescSets.find(SetKey);
-    if(Found != DescSets.end())
+    const auto Found = C.DescSets.find(SetKey);
+    if(Found != C.DescSets.end())
     {
         DescSet = Found->second;
     }
     else
     {
-        DescSet = DescAlloc->Allocate(F.DescLayout);
+        DescSet = Alloc->Allocate(F.DescLayout);
         if(DescSet == VK_NULL_HANDLE) return false;
 
         VkWriteDescriptorSet  Writes[GDI_PREV_SKIN_BLOCK_BINDING + 1]{};
@@ -1547,7 +1457,7 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
             ++WriteCount;
         }
         vkUpdateDescriptorSets(DeviceObj->GetDevice(), WriteCount, Writes, 0, nullptr);
-        DescSets.emplace(SetKey, DescSet);
+        C.DescSets.emplace(SetKey, DescSet);
     }
 
     // ----------------------------------------------------------------
@@ -1557,23 +1467,64 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     //    Mesh->Draw() (e.g. layer compositing) binds a pipeline too, not just the
     //    DrawObject path.
     // ----------------------------------------------------------------
-    if(BoundPipeline != F.Pipeline)
+    if(C.BoundPipeline != F.Pipeline)
     {
-        vkCmdBindPipeline(CurrentStateData->CurrentCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, F.Pipeline);
-        BoundPipeline = F.Pipeline;
+        vkCmdBindPipeline(In.Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, F.Pipeline);
+        C.BoundPipeline = F.Pipeline;
     }
-    if(BoundSet != DescSet || BoundLayout != F.PipeLayout || BoundOffsetCount != BlockCount
-       || std::memcmp(BoundOffsets, Offsets, BlockCount * sizeof(uint32_t)) != 0)
+    if(C.BoundSet != DescSet || C.BoundLayout != F.PipeLayout || C.BoundOffsetCount != BlockCount
+       || std::memcmp(C.BoundOffsets, Offsets, BlockCount * sizeof(uint32_t)) != 0)
     {
-        vkCmdBindDescriptorSets(CurrentStateData->CurrentCmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        vkCmdBindDescriptorSets(In.Cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 F.PipeLayout, 0, 1, &DescSet, BlockCount, Offsets);
-        BoundSet         = DescSet;
-        BoundLayout      = F.PipeLayout;
-        BoundOffsetCount = BlockCount;
-        std::memcpy(BoundOffsets, Offsets, sizeof(Offsets));
+        C.BoundSet         = DescSet;
+        C.BoundLayout      = F.PipeLayout;
+        C.BoundOffsetCount = BlockCount;
+        std::memcpy(C.BoundOffsets, Offsets, sizeof(Offsets));
     }
 
     return true;
+}
+
+void VulkanDynamicGDI::MakeImmediateInputs(VKDrawInputs& Out)
+{
+    Out = VKDrawInputs();
+    if(CurrentStateData)
+    {
+        Out.Cmd              = CurrentStateData->CurrentCmd;
+        /* Inside a parallel pass the primary's rendering takes secondaries
+         * only: the render thread's own draws are refused until it ends. */
+        Out.bRenderingActive = CurrentStateData->bRenderingActive && !bParallelPass;
+        Out.VSModule         = CurrentStateData->BoundVSModule;
+        Out.FSModule         = CurrentStateData->BoundFSModule;
+        Out.Blend            = CurrentStateData->BlendState;
+        Out.Depth            = CurrentStateData->DepthStencilState;
+        if(const VKRenderTarget* RT = CurrentStateData->ActiveRenderTarget)
+        {
+            Out.bHasTarget = true;
+            Out.RTFormat   = RT->GetFormat();
+            Out.ColorCount = CurrentStateData->ActiveColorCount > 0 ? CurrentStateData->ActiveColorCount : 1u;
+            for(uint32_t Index = 0; Index < GDI_MAX_COLOR_TARGETS; ++Index)
+            {
+                const VKRenderTarget* Each = Index < CurrentStateData->ActiveColorCount ? CurrentStateData->ActiveColors[Index] : nullptr;
+                Out.ColorFormats[Index] = Each ? Each->GetFormat() : VK_FORMAT_UNDEFINED;
+            }
+            Out.DepthFormat = CurrentStateData->ActiveDepth ? CurrentStateData->ActiveDepth->GetDepthFormat() : VK_FORMAT_UNDEFINED;
+        }
+    }
+    Out.VS                 = BoundVertexShader;
+    Out.PS                 = BoundPixelShader;
+    Out.Blocks             = MaterialBlocks;
+    Out.Serials            = MaterialBlockSerials;
+    Out.Textures           = MaterialTextures;
+    Out.InstanceBuffer     = InstanceBuffer;
+    Out.InstanceCount      = InstanceCount;
+    Out.IndirectArgs       = IndirectArgs;
+    Out.IndirectArgsOffset = IndirectArgsOffset;
+    Out.PredicateSet       = PredicateSet;
+    Out.PredicateIndex     = PredicateIndex;
+    Out.Caches             = &Immediate;
+    Out.Alloc              = DescAlloc;
 }
 
 // ---------------------------------------------------------------------------
@@ -1597,8 +1548,8 @@ void VulkanDynamicGDI::DrawObject(GDIViewObject* InObject, GDIView* InView)
      * user uniforms still go through by name. */
     alignas(16) float View[40];
     alignas(16) float Transform[36];
-    if(InView) { PackCoreView(InView, View); }
-    if(InObject->Transform) { PackCoreTransform(InObject->Transform, Transform); }
+    if(InView) { VKCorePack::PackCoreView(InView, View); }
+    if(InObject->Transform) { VKCorePack::PackCoreTransform(InObject->Transform, Transform); }
     for(GDIShader* Shader : { static_cast<GDIShader*>(BoundVertexShader), static_cast<GDIShader*>(BoundPixelShader) })
     {
         if(!Shader || !Shader->Resource) continue;

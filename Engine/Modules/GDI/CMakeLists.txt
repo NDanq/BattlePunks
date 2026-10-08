@@ -185,6 +185,7 @@ if(GDI_WITH_VULKAN)
             Source/Private/GDI/Vulkan/VKBuffer.cpp
             Source/Private/GDI/Vulkan/VKCompute.cpp
             Source/Private/GDI/Vulkan/VKQuery.cpp
+            Source/Private/GDI/Vulkan/VKRecordingContext.cpp
             Source/Private/GDI/Vulkan/VKSync.cpp
             Source/Private/GDI/Vulkan/VKDevice.cpp
             Source/Private/GDI/Vulkan/VKSwapchain.cpp

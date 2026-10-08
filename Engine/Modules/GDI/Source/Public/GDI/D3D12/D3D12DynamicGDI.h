@@ -154,13 +154,14 @@ public:
     bool                 SupportsOcclusionQueries() const override { return DeviceObj != nullptr; }
 
     /* Direct command lists, one per chunk, executed in order (bundles cannot
-     * set targets, barriers or queries). Predication and queries are per list. */
+     * set targets, barriers or queries), are how D3D12 will record in
+     * parallel; its recording contexts are not written yet
+     * (MULTITHREADED_RENDERING.md, phase 4), so it says no. */
     GDIParallelRecordingSupport GetParallelRecordingSupport() const override
     {
         GDIParallelRecordingSupport Out;
-        Out.bSupported = DeviceObj != nullptr;
-        Out.Mechanism  = "direct command lists";
-        Out.Reason     = DeviceObj ? "" : "no D3D12 device";
+        Out.Mechanism = "direct command lists";
+        Out.Reason    = "D3D12's recording contexts are not implemented yet";
         return Out;
     }
     bool                 SupportsOcclusionPredication() const override { return DeviceObj != nullptr; }

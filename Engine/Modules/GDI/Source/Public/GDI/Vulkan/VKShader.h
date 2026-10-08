@@ -7,6 +7,7 @@
 #include "Public/GDI/GDIDefinitions.h"
 #include "Public/GDI/GDIShader.h"
 #include <string>
+#include <atomic>
 #include <unordered_map>
 
 class VKDevice;
@@ -119,8 +120,11 @@ private:
     std::unordered_map<std::string, VKUniformValue>  Scalars;
     std::unordered_map<std::string, VKTextureBinding> Textures;
     CoreBlocks                                        Core;
-    mutable size_t                                    CustomScanSize = ~size_t(0);
-    mutable bool                                      bCustomScalars = false;
+    /* HasCustomScalars' cache: atomics, as recording contexts ask from several
+     * threads at once (the scalars themselves only change on the render thread,
+     * outside parallel passes). */
+    mutable std::atomic<size_t>                       CustomScanSize{~size_t(0)};
+    mutable std::atomic<bool>                         bCustomScalars{false};
 };
 
 #endif //CORECLIENT_VKSHADER_H

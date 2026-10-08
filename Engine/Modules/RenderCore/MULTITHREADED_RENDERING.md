@@ -1,6 +1,6 @@
 # Multithreaded rendering: plan
 
-Status: **phases 0 (measure and gate) and 1 (per-draw cost) done; phase 2 next.** Recording draws on several
+Status: **phases 0 (measure and gate), 1 (per-draw cost) and 2 (GDI recording contexts) done; phase 3 next.** Recording draws on several
 threads when the backend can: the Base Pass first, then the Shadows views.
 This note is why, what stands in the way, and in what order.
 
@@ -207,21 +207,48 @@ serially today.
    compared each draw -- spread thin; parallel recording divides it. D3D12
    keeps its string path (it is not compiled on Linux): its turn comes with
    phase 4.
-2. **GDI recording contexts** (1-2 weeks).
-   - A `GDIRecordingContext`: command buffer, bound state, predicate, label
-     depth, descriptor pool and UBO ring slice. The global API routes to a
-     thread-local current context, so call sites do not change;
-     `VKMesh::Draw` takes the context.
-   - The pipeline cache readable concurrently, keys compared in full,
-     pipelines warmed ahead so a worker never creates one.
-   - Lazy loads resolved into the `DrawCommand` while queueing, on the
-     render thread.
-   - Material overrides, tint and baked lighting packed into per-context
-     scratch, never into the cached `Material::Block`.
-   - The packed core blocks per context, not on the shared shader resource.
-   - No mid-chunk flush: the instance ring sized per chunk up front.
-   - `GDebugGroupID` atomic; the render-thread checks accept recording
-     workers.
+2. **GDI recording contexts** -- done (Vulkan, Null). What there is:
+   - `GDIRecordingContext` (GDI.h): one thread's draw state -- bound shaders,
+     the material, scene and skin blocks with their serials, the material
+     textures, instance buffer and indirect arguments, the occlusion
+     predicate, the viewport, and the draw's own index range
+     (`GDISetDrawRange`: a mesh is shared, its range cannot be).
+   - `GDIBeginParallelPass(Chunks, OutContexts)` / `GDIEndParallelPass()`
+     on the render thread, inside the bound targets; between them, each
+     thread recording a chunk calls `GDISetCurrentRecording(Context)`. While
+     a context is current (thread-local), the draw path's `GDI*` setters --
+     shaders, blocks, textures, depth, blend, stencil, colour mask,
+     viewport, scissor, instance buffer, indirect arguments, predicate,
+     draw range, `GDIDrawObject`, draw events -- write into it, so RenderCore's
+     issue code runs unchanged on a worker. `GDIInRenderThread()` is true on
+     a recording thread. `GDebugGroupID` is atomic.
+   - Vulkan (`VKRecordingContext.h/.cpp`): each context keeps a command pool
+     (a secondary per pass, reset each frame), its own descriptor allocator
+     (pools and uniform-ring chunks), draw caches (`VKDrawCaches`), blend and
+     depth states, viewport and core blocks. A pass reopens the primary's
+     rendering with `VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT`;
+     each secondary continues it (`VkCommandBufferInheritanceRenderingInfo`);
+     `EndParallelPass` executes them in chunk order and reopens the rendering
+     for inline commands, forgetting what the primary had bound. The draw
+     path takes explicit inputs (`VKDrawInputs`): `BindDrawState` and
+     `VKMesh::Record` read nothing of the driver's but the device, the
+     pipeline cache -- now read under a shared lock, created under an
+     exclusive one, and matched on the whole key, not just its hash -- and
+     the null texture. The render thread's own draws are refused while a
+     pass is open.
+   - Null: contexts that count their draws, folded into its stats at the
+     pass's end in chunk order; the chunks run wherever the caller runs them.
+   - D3D12 and Metal report "not implemented yet" at the gate until their
+     contexts exist (phase 4).
+   Verified: GDISmokeTest records four chunks on four threads at once on
+   Null -- each thread's state its own, the driver's untouched until the
+   pass ends, every draw counted; the single-threaded path, refactored onto
+   `VKDrawInputs`, is pixel-identical (RenderCore's GPU smoke test). Vulkan's
+   secondaries are first exercised by phase 3, whose exit test compares a
+   scene rendered with the switch on and off.
+   Moved to phase 3: resolving RenderCore's lazy loads before a parallel
+   stage, and per-context issue scratch (material overrides, the mesh and
+   view objects, `Material::Block`).
 3. **Parallel issue in RenderCore** (~1 week).
    - Base Pass: the primary clears, begins rendering for secondaries; the
      Static then Dynamic issue order split into contiguous chunks; each job
