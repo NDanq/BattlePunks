@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // PPDofComposite.fsh -- Depth of Field, 3 of 3: the sharp scene where the
 // circle of confusion is small, the blurred half-resolution one where it is
 // large.

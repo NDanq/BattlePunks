@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // MaterialTemplate_VS.glsl -- every material's vertex stage (RenderCore/MATERIALS.md).
 // Cooked once per permutation by cook_material_graphs.py, with Material.glsl
 // mapped to the material's <Name>.mtl.glsl (or MaterialDefault.mtl.glsl for

@@ -112,6 +112,16 @@ private:
 
         PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB = (PFNWGLCREATECONTEXTATTRIBSARBPROC)wglGetProcAddress("wglCreateContextAttribsARB");
 
+        /* OpenGL 4.5 core at least, whatever the host's format asks for: every
+         * shader is "#version 450" (GDI_OPENGL_MIN_MAJOR/MINOR). A driver
+         * without 4.5 fails here, not at its first shader compile. */
+        if(InMajorVersion < GDI_OPENGL_MIN_MAJOR
+           || (InMajorVersion == GDI_OPENGL_MIN_MAJOR && InMinorVersion < GDI_OPENGL_MIN_MINOR))
+        {
+            InMajorVersion = GDI_OPENGL_MIN_MAJOR;
+            InMinorVersion = GDI_OPENGL_MIN_MINOR;
+        }
+
         int WGLAttribs[] =
         {
             WGL_CONTEXT_MAJOR_VERSION_ARB, InMajorVersion,
@@ -121,6 +131,7 @@ private:
             0
         };
         HGLRC wglContext = wglCreateContextAttribsARB(hdc, ShareContext, WGLAttribs);
+        GDI_CHECK(wglContext != nullptr, "[OpenGL] no OpenGL 4.5 core context: GDI needs OpenGL 4.5 or newer");
         wglMakeCurrent(NULL, NULL);
         wglDeleteContext(temp);
         wglMakeCurrent(hdc, wglContext);

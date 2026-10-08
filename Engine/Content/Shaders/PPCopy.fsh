@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // PPCopy.fsh -- a texture's texels into a target the same size, as they are:
 // the scene colour kept as the next frame's last colour, when TAA's history is
 // not there to be it (screen-space reflections read it; RENDERPIPELINE.md).

@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // PPBloomUpsample.fsh -- Bloom, back up the chain: a level's own downsample
 // plus a 9-tap tent of the level below it (already summed up the chain),
 // scaled by the radius -- how much each wider level adds. Written to a second

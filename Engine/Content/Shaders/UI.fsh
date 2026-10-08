@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // UI.fsh -- RenderCore's UI pass (RenderContext::DrawUI): the command's texture
 // (material slot 0) tinted by the vertex colour, alpha blended over the
 // post-processed picture. Text is the same draw: a font atlas is white with

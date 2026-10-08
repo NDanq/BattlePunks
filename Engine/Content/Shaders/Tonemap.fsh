@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // Tonemap.fsh -- the HDR scene colour (linear) to display space: exposure
 // (auto, then the stack's), the tone map operator, then 2.2 gamma
 // (RenderCore/RENDERPIPELINE.md, "HDR and tone mapping"). Runs first in the

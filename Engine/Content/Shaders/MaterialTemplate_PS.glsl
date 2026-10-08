@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // MaterialTemplate_PS.glsl -- every material's pixel stage (RenderCore/MATERIALS.md).
 // Cooked once per permutation by cook_material_graphs.py, with Material.glsl
 // mapped to the material's <Name>.mtl.glsl.

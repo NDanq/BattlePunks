@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // PPLuminanceReduce.fsh -- auto exposure's meter, reduced: each texel the mean
 // of a PP_Reduce.x-texel square of the target before (64 x 64 -> 8 x 8 -> 1 x 1),
 // both the weighted log luminance and the weight (PPLuminance.fsh).

@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // PPAmbientOcclusion.fsh -- screen-space ambient occlusion, at half
 // resolution, between the Base Pass and the Lighting stage (so only the
 // ambient light is darkened; RENDERPIPELINE.md, "Ambient occlusion").

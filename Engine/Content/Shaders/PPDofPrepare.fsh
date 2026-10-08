@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // PPDofPrepare.fsh -- Depth of Field, 1 of 3: at half resolution, the scene
 // (a 4-tap average) and each pixel's circle of confusion from the scene depth,
 // signed (negative near, positive far) and stored in alpha as 0.5 + CoC / 2.

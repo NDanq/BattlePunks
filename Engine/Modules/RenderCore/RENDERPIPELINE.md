@@ -1451,6 +1451,20 @@ Translucent Unlit: soft round puffs) born red and black well before it fades
 
 ## GDI
 
+**Shader version and the OpenGL minimum.** Every shader -- the engine's
+`Content/Shaders`, GDI's own, the material templates -- declares
+`#version 450` (`core` where it did before), so the OpenGL backend needs an
+**OpenGL 4.5** core context: `OpenGLDynamicGDI::InitContext` raises the host's
+requested version to at least `GDI_OPENGL_MIN_MAJOR`.`GDI_OPENGL_MIN_MINOR`
+(GDIDefinitions.h), and fails with a Fatal log where the driver has none. The
+same sources compile to SPIR-V for Vulkan (and through it to HLSL and MSL),
+where 450 only adds to 440. Against 440 the cooked modules differ in their
+`OpSource GLSL 450` and, in vertex shaders, a `gl_CullDistance` member of the
+built-in `gl_PerVertex` block -- declared, never written, so no
+`CullDistance` capability is required. Every module passes `spirv-val
+--target-env vulkan1.3`, and the GPU smoke check is unchanged under the
+validation layer: Vulkan, D3D12 and Metal are unaffected.
+
 Deferred shading needs two things GDI did not have:
 
 - **Several colour targets in one pass.** `GDISetRenderTargets(Colors, Count,
