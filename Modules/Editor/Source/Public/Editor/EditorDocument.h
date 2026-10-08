@@ -87,10 +87,7 @@ public:
     // On the EDITED World; refused while one is borrowed.
 
     /* Replaces the World with an empty one. */
-    void NewScene();
-
-    /* NewScene plus the entities Sandbox's loaded level has. */
-    void CreateSandboxScene();
+    void NewWorld();
 
     /* Via LoadWorldFile / SaveWorldPackage (WorldPackage.h). Saves the text
      * form; loads either, with OutbCooked set for a cooked world. Scripts are
