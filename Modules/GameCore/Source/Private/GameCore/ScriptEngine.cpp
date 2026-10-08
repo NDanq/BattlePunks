@@ -1,5 +1,6 @@
 #include "Public/GameCore/ScriptEngine.h"
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -115,6 +116,123 @@ namespace GameCore
         IncrementErrorCount(InState);
     }
 
+    bool LuaReadScriptFile(const char* InPath, std::string& OutSource);
+
+    /* A file through the provider, compiled: what the stock loadfile does by
+     * fopen. Pushes the function, or nil and a message. */
+    int LuaLoadProviderFile(lua_State* InState, const char* InPath, const char* InMode)
+    {
+        std::string Source;
+        if(!LuaReadScriptFile(InPath, Source))
+        {
+            lua_pushnil(InState);
+            lua_pushfstring(InState, "cannot open %s", InPath);
+            return 2;
+        }
+        const std::string ChunkName = std::string("@") + InPath;
+        if(luaL_loadbufferx(InState, Source.data(), Source.size(), ChunkName.c_str(), InMode) != LUA_OK)
+        {
+            lua_pushnil(InState);
+            lua_insert(InState, -2);   // nil, message
+            return 2;
+        }
+        return 1;
+    }
+
+    /* loadfile(path [, mode [, env]]) */
+    int LuaLoadFile(lua_State* InState)
+    {
+        const char* Path = luaL_checkstring(InState, 1);
+        const char* Mode = luaL_optstring(InState, 2, "bt");
+        const bool  bEnv = !lua_isnone(InState, 3);
+        if(LuaLoadProviderFile(InState, Path, Mode) != 1)
+        {
+            return 2;
+        }
+        if(bEnv)
+        {
+            lua_pushvalue(InState, 3);
+            if(!lua_setupvalue(InState, -2, 1)) { lua_pop(InState, 1); }   // its _ENV
+        }
+        return 1;
+    }
+
+    /* dofile(path): errors as the stock one does. */
+    int LuaDoFile(lua_State* InState)
+    {
+        const char* Path = luaL_checkstring(InState, 1);
+        lua_settop(InState, 1);
+        if(LuaLoadProviderFile(InState, Path, "bt") != 1)
+        {
+            return lua_error(InState);
+        }
+        lua_call(InState, 0, LUA_MULTRET);
+        return lua_gettop(InState) - 1;
+    }
+
+    /* require's Lua searcher, through the provider: package.path's templates,
+     * '?' the module name with '.' as '/'. */
+    int LuaSearchProvider(lua_State* InState)
+    {
+        const char* Module = luaL_checkstring(InState, 1);
+        std::string Name = Module;
+        std::replace(Name.begin(), Name.end(), '.', '/');
+
+        lua_getglobal(InState, "package");
+        lua_getfield(InState, -1, "path");
+        const std::string Templates = lua_isstring(InState, -1) ? lua_tostring(InState, -1) : "?.lua";
+        lua_pop(InState, 2);
+
+        EngineCore::IFileProvider* Provider = EngineCore::GetFileProvider();
+        std::string Tried;
+        size_t Start = 0;
+        while(Start <= Templates.size())
+        {
+            const size_t End = std::min(Templates.find(';', Start), Templates.size());
+            std::string Candidate = Templates.substr(Start, End - Start);
+            Start = End + 1;
+            if(Candidate.empty()) { continue; }
+            for(size_t At = Candidate.find('?'); At != std::string::npos; At = Candidate.find('?', At + Name.size()))
+            {
+                Candidate.replace(At, 1, Name);
+            }
+            const bool bThere = Provider ? Provider->Exists(Candidate) : EngineCore::appFileExists(Candidate);
+            if(bThere)
+            {
+                if(LuaLoadProviderFile(InState, Candidate.c_str(), "bt") != 1)
+                {
+                    return luaL_error(InState, "error loading module '%s' from '%s':\n\t%s", Module, Candidate.c_str(),
+                                      lua_tostring(InState, -1));
+                }
+                lua_pushstring(InState, Candidate.c_str());
+                return 2;
+            }
+            Tried += "\n\tno file '" + Candidate + "'";
+        }
+        lua_pushstring(InState, Tried.c_str());
+        return 1;
+    }
+
+    /* The stock libraries open files with fopen; a packaged game has its
+     * scripts only in its content pack. dofile, loadfile and require's Lua
+     * searcher read through the file provider instead. */
+    void LuaReadThroughProvider(lua_State* InState)
+    {
+        lua_pushcfunction(InState, &LuaDoFile);
+        lua_setglobal(InState, "dofile");
+        lua_pushcfunction(InState, &LuaLoadFile);
+        lua_setglobal(InState, "loadfile");
+
+        lua_getglobal(InState, "package");
+        lua_getfield(InState, -1, "searchers");
+        if(lua_istable(InState, -1))
+        {
+            lua_pushcfunction(InState, &LuaSearchProvider);
+            lua_rawseti(InState, -2, 2);   // [1] preload, [2] Lua files, [3..] C
+        }
+        lua_pop(InState, 2);
+    }
+
     bool LuaReadScriptFile(const char* InPath, std::string& OutSource)
     {
         std::string Text;
@@ -145,7 +263,10 @@ namespace GameCore
             const char Each = InPath[Length - ExtLength + Index];
             bGraph = (Each >= 'A' && Each <= 'Z' ? char(Each - 'A' + 'a') : Each) == GRAPH_EXTENSION[Index];
         }
-        if(bGraph)
+        /* A Shipping pack holds a script graph as the stripped bytecode of
+         * its Lua (NimblePak), which loads as any chunk does. */
+        const bool bBytecode = Text.compare(0, std::strlen(LUA_SIGNATURE), LUA_SIGNATURE) == 0;
+        if(bGraph && !bBytecode)
         {
             if(!ExtractGraphGeneratedCode(Text, ".lua", OutSource))
             {
@@ -298,6 +419,7 @@ namespace GameCore
         }
 
         luaL_openlibs(P->State);
+        LuaReadThroughProvider(P->State);
 
         lua_pushcfunction(P->State, &LuaPrint);
         lua_setglobal(P->State, "print");
@@ -378,7 +500,8 @@ namespace GameCore
             return false;
         }
 
-        return RunString(Source.c_str(), InPath);
+        /* By its size: a Shipping pack's script is bytecode, NULs and all. */
+        return RunBuffer(Source.data(), Source.size(), InPath);
     }
 
     bool ScriptEngine::RunString(const char* InSource, const char* InChunkName)
@@ -388,11 +511,15 @@ namespace GameCore
             GAMECORE_LOG_ERROR("RunString called before Initialize(); ignoring")
             return false;
         }
+        return RunBuffer(InSource, std::strlen(InSource), InChunkName);
+    }
 
+    bool ScriptEngine::RunBuffer(const char* InSource, const size_t InSize, const char* InChunkName)
+    {
         LuaStackGuard Guard(P->State);
 
         const std::string ChunkLabel = InChunkName ? (std::string("@") + InChunkName) : std::string("=(RunString)");
-        if(luaL_loadbuffer(P->State, InSource, std::strlen(InSource), ChunkLabel.c_str()) != LUA_OK)
+        if(luaL_loadbuffer(P->State, InSource, InSize, ChunkLabel.c_str()) != LUA_OK)
         {
             const char* ErrorText = lua_tostring(P->State, -1);
             GAMECORE_LOG_ERROR(std::string("Lua load error (") + (InChunkName ? InChunkName : "?") + "): "

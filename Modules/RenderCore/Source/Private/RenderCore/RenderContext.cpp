@@ -15,6 +15,7 @@
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreImage.h"
+#include "Public/Core/CorePack.h"
 #include "Public/GDI/Shaders/Classes/TestbedShaders.h"
 #include "Public/RenderCore/Components/RenderComponent.h"
 #include "Public/RenderCore/MaterialDescription.h"
@@ -4181,8 +4182,17 @@ namespace RenderCore
             return false;
         }
 
-        const size_t FileCount = Contents.Files.size();
-        auto Layer = std::make_shared<EngineCore::MemoryFileProvider>(std::move(Contents.Files));
+        /* A Shipping cache holds its paths as hashes only (CorePack.h). */
+        const size_t FileCount = Contents.Files.size() + Contents.HashedFiles.size();
+        std::shared_ptr<EngineCore::IFileProvider> Layer;
+        if(!Contents.HashedFiles.empty())
+        {
+            Layer = std::make_shared<EngineCore::HashedMemoryProvider>(std::move(Contents.HashedFiles));
+        }
+        else
+        {
+            Layer = std::make_shared<EngineCore::MemoryFileProvider>(std::move(Contents.Files));
+        }
         if(!Provider->MountLayer(GetShaderCacheLayerName(Module), Layer))
         {
             RENDERCORE_LOG_WARN("shader cache " + Path + ": the installed file provider takes no layers; not mounted")

@@ -152,12 +152,13 @@ namespace NimbleEngine
          * THE LOAD SEQUENCE:
          *
          *   World created, scripts and renderer bound
-         *   ILevel::OnLoad            the level populates the World
+         *   ILevel::OnLoad            the level populates the World (a listed
+         *                             world: its file, then its mode is made)
          *   IGameMode::OnLoad
          *   the startup script        why the mode has two callbacks
          *   GameState::OnReset
          *   [only when restoring a save]
-         *       ILevel::OnPrepareForLoadedGame
+         *       ILevel::OnPrepareForLoadedGame (-> IGameMode's)
          *       the World, then the GameState, from the pending save
          *       IGameMode::OnPostLoadSave
          *   IGameMode::OnStart

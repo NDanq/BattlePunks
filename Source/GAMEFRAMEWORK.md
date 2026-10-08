@@ -20,13 +20,35 @@ graphs. Public API: `Public/NimbleEngine/GameState.h`, `GameMode.h`,
 
 | Piece | Where | Role |
 |---|---|---|
-| `GameState` | `GameState.h` | The game's progress, owned by the level. The engine keeps the **phase** here: a name (`GetPhase`, `IsPhase`), the seconds spent in it (`GetPhaseSeconds`) and a round counter (`GetRound`, `SetRound`). The rest belongs to the game's subclass. |
+| `GameState` | `GameState.h` | The game's progress, owned by the mode (`IGameMode::GetGameState`). The engine keeps the **phase** here: a name (`GetPhase`, `IsPhase`), the seconds spent in it (`GetPhaseSeconds`) and a round counter (`GetRound`, `SetRound`). The rest belongs to the game's subclass. |
 | `IGameMode` | `GameMode.h` | The rules. Besides the lifecycle (`OnLoad`, `OnStart`, `OnTick`, ...), it has optional hooks: `CanEnterPhase`, `OnPhaseChanged`, `OnPlayerAdded` / `OnPlayerRemoved`, `OnScoreChanged` / `OnLivesChanged`. |
 | `PlayerStateComponent` | `PlayerState.h`, `"PlayerState"` | One player: `PlayerName`, `PlayerIndex`, `Score`, `Lives`, `bActive`. Being a component, it is saved with the World, placed by prefabs and visible to scripts. |
 | `GameSession` | `GameSession.h` | Routes every change through the rules: `SetPhase`, `AddScore`, `AddLives`, `GetPlayer(Index)`, `GetPlayerCount`. |
 | `"Game"` library | `GameFramework.cpp` | The session's half for scripts. |
 | The UI | `GameSession::GetUI` | The session's documents (Engine/Modules/UI/README.md): HUDs and menus over the game, their input taken first. The session publishes `Player<N>.Score`, `Player<N>.Lives` and `Game.Phase` to its data store for `{Bind:...}`. |
 | Pause | `GameSession::SetPaused` | Stops the World and the mode's `OnTick`; the UI keeps running, so a pause menu can resume. `Game.SetPaused` / `Game.IsPaused` in Lua; `Native:Game.Pause`, `Game.Resume`, `Game.TogglePause` from a document. |
+
+## Worlds and modes
+
+The project's worlds are data, not C++: one `[World_<Name>]` section each in
+`Config/DefaultEngine.ini`, edited in the editor's **Project Settings >
+Worlds** (`WorldList.h`):
+
+```ini
+[World_BrickBreaker]
+File=Content/Levels/BrickBreaker.nmworld   ; the world it loads
+GameMode=BrickBreaker                      ; a registered mode; empty: no rules
+StartupScript=Scripts/X.lua                ; run once the world and its mode load; absent: none
+Cook=true                                  ; cooked and packaged by Build > Build Project
+```
+
+The game module registers its modes by name in `OnStartup`
+(`RegisterGameMode<BrickBreakerMode>("BrickBreaker")`). Once it has started,
+the host makes one level per listed world, named by its section: it loads the
+world file, creates the mode, then runs `IGameMode::OnLoad`, where the mode
+registers its systems and places anything the world does not hold. `[Game]
+StartLevel` names the world the game starts in (else the first listed); saves,
+the console's `open` and `Game.OpenLevel` use the same names.
 
 ## Phases
 
@@ -109,13 +131,12 @@ can a native prefab's callbacks (they receive their instance's World).
 
 ## The startup script
 
-`ILevel::GetStartupScript()` controls what runs after `IGameMode::OnLoad`:
+Each world names its own: `StartupScript` in its `[World_<Name>]` section
+(Project Settings > Worlds) is the Lua file run after `IGameMode::OnLoad`;
+absent or empty runs nothing. There is no project-wide startup script.
 
-- `nullptr` (the default) runs `[Scripting] StartupScript`, as before;
-- a path runs that file instead;
-- `""` runs nothing.
-
-BrickBreaker returns `""`, so Sandbox's `Scripts/Main.lua` does not run there.
+`[World_Sandbox]` runs `Scripts/Main.lua`; `[World_BrickBreaker]` names none,
+so Sandbox's demo entities stay out of it.
 
 ## Example: BrickBreaker
 
@@ -147,7 +168,7 @@ loses every ball. `[BrickBreaker] RunSeconds` quits after a while.
 `[Game] StartLevel=Sandbox` brings back the older demo.
 
 Client and Server targets need cooked prefabs for `Brick` and `Ball` (`cook
-prefabs` in the editor writes `Cooked/Prefabs/`), as Sandbox's other
+prefabs` in the editor writes `Saved/Cooked/Content/Prefabs/`), as Sandbox's other
 `.nmprefab` files do.
 
 ## Networking

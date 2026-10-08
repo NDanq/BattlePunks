@@ -33,6 +33,7 @@ set( CORE_SOURCES
         Source/Private/Core/CoreLog.cpp
         Source/Private/Core/CoreImage.cpp
         Source/Private/Core/CoreFileProvider.cpp
+        Source/Private/Core/CorePack.cpp
         Source/Private/Core/CoreString.cpp
         Source/Private/Core/CoreModule.cpp
         Source/Private/Core/CoreModuleManager.cpp
@@ -48,6 +49,7 @@ set( CORE_SOURCES
         Source/Public/Core/CoreLog.h
         Source/Public/Core/CoreImage.h
         Source/Public/Core/CoreFileProvider.h
+        Source/Public/Core/CorePack.h
         Source/Public/Core/CoreString.h
         Source/Public/Core/CoreQueue.h
         Source/Public/Core/CorePlatform.h

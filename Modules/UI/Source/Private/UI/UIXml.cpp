@@ -1,6 +1,6 @@
 #include "Public/UI/UIFile.h"
 
-#if WITH_EDITOR
+#if WITH_UNCOOKED   // every build but Shipping: the editor, and a game run uncooked
 
 #include <cstring>
 #include <filesystem>
@@ -304,4 +304,4 @@ namespace UI
     }
 }
 
-#endif // WITH_EDITOR
+#endif // WITH_UNCOOKED

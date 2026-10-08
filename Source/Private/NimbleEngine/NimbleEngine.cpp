@@ -17,6 +17,8 @@
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreFileProvider.h"
+#include "Public/Core/CorePack.h"
+#include "Public/GameCore/WorldPackage.h"
 #include "Public/Core/CorePlatform.h"
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/NimbleEngine/InputRouter.h"
@@ -60,10 +62,14 @@ NIMBLE_CONFIG_INT(GMaxFrames, "Application", "MaxFrames", 0, nullptr);
  * game module's name. Two games sharing a module name would share settings. */
 NIMBLE_CONFIG_STRING(GUserDataName, "Application", "UserDataName", "", nullptr);
 
+#if WITH_UNCOOKED
+/* Set by -uncooked / -cooked (ParseLaunchArgs) and read at startup, before the
+ * config file: here so the override is a known key. */
+NIMBLE_CONFIG_STRING(GContentUncooked, "Content", "Uncooked", "", nullptr);
+#endif
+
 /* 0 runs unlimited; SetFrameRateLimit is the runtime half. */
 NIMBLE_CONFIG_INT(GFrameRateLimit, "Display", "FrameRateLimit", 60, nullptr);
-
-/* [Scripting] StartupScript is the session's -- see GameSession.cpp. */
 
 using namespace EngineCore;
 
@@ -244,6 +250,15 @@ namespace NimbleEngine
                 if(Colon != std::string::npos) { Overrides.push_back("Net.Port " + Value.substr(Colon + 1)); }
             }
             else if(Key == "port")   { Overrides.push_back("Net.Port " + Value); }
+            else if(Key == "uncooked")
+            {
+#if WITH_UNCOOKED
+                Overrides.push_back("Content.Uncooked " + (Value.empty() ? std::string("1") : Value));
+#else
+                CORE_LOG_WARN("-uncooked: a Shipping build reads only its cooked content; ignored")
+#endif
+            }
+            else if(Key == "cooked") { Overrides.push_back("Content.Uncooked 0"); }
             else if(Key == "listen") { Overrides.push_back("Net.Listen 1"); }
             else if(Key.find('.') != std::string::npos && Equals != std::string::npos)
             {
@@ -285,6 +300,38 @@ namespace NimbleEngine
         };
     }
 
+    std::string Application::MountUncookedProject()
+    {
+#if WITH_UNCOOKED
+        /* The last word on the command line wins: the build's default comes first. */
+        std::string Value;
+        for(const std::string& Override : ConfigOverrides)
+        {
+            static const std::string Prefix = "Content.Uncooked ";
+            if(Override.compare(0, Prefix.size(), Prefix) == 0) { Value = Override.substr(Prefix.size()); }
+        }
+        if(Value.empty() || Value == "0" || Value == "false" || Value == "off")
+        {
+            return std::string();
+        }
+        const std::string Root = (Value == "1" || Value == "true" || Value == "on") ? ProjectDir : Value;
+        std::error_code DirError;
+        if(Root.empty() || !std::filesystem::is_directory(std::filesystem::u8path(Root), DirError))
+        {
+            CORE_LOG_WARN("Run uncooked: no project folder" + (Root.empty() ? std::string() : " at " + Root)
+                          + "; running on the cooked content")
+            return std::string();
+        }
+
+        /* Mounted last, so asked first: a raw file beats a staged or packed one. */
+        LayeredAssets.MountLayer("Uncooked", std::make_shared<FilesystemProvider>(Root));
+        GameCore::SetUncookedContentRoot(Root);
+        return Root;
+#else
+        return std::string();
+#endif
+    }
+
     bool Application::Initialize()
     {
         /* FIRST: every asset path is relative to the exe's folder, and IDEs
@@ -321,8 +368,39 @@ namespace NimbleEngine
          */
         SetFileProvider(&LayeredAssets);
 
+        /* A packaged game's files -- config included -- are its content packs
+         * (CorePack.h), mounted over the folder before anything is read. A
+         * development build has none and reads the loose files. Logged once
+         * the run log is open. */
+        const int PackCount = MountPackFiles(LayeredAssets, "Paks");
+
+        /* Run uncooked: the project's raw files over everything, config included. */
+        const std::string UncookedRoot = MountUncookedProject();
+
         ConfigLoadStats Stats;
-        if(!LoadConfigFile("Config/DefaultEngine.ini", &Stats))
+        const bool bConfigLoaded = LoadConfigFile("Config/DefaultEngine.ini", &Stats);
+
+        /* This run's log, beside the executable as a project's is beside it:
+         * Saved/Logs/<Module>[Server]-<time>.log (CoreLog.h). */
+        {
+            const ConfigVar* Module = ConfigFindVarByPath("Game.Module");
+            std::string Name = Module && Module->GetString()[0] ? Module->GetString() : GameModuleName;
+            if(Name.empty()) { Name = "Game"; }
+            if(Desc.bHeadless && Desc.NetMode == ENetMode::Server) { Name += "Server"; }
+            if(OpenRunLog("Saved/Logs", Name))
+            {
+                CORE_LOG("Logging to " + GetRunLogPath())
+            }
+            if(PackCount > 0)
+            {
+                CORE_LOG("Content from " + std::to_string(PackCount) + " pack(s) in Paks/")
+            }
+            if(!UncookedRoot.empty())
+            {
+                CORE_LOG("Running uncooked: raw files from " + UncookedRoot + " (-cooked to run on the cooked content)")
+            }
+        }
+        if(!bConfigLoaded)
         {
             CORE_LOG_WARN("No Config/DefaultEngine.ini Found")
         }
@@ -634,7 +712,8 @@ namespace NimbleEngine
                 Level = Game.ResolveStartLevel();
                 if(!Level)
                 {
-                    CORE_LOG_ERROR("Game module '" + Game.GetModuleName() + "' has no start level")
+                    CORE_LOG_ERROR("Game module '" + Game.GetModuleName() + "' has no start level: the project lists no worlds "
+                                   "(Config/DefaultEngine.ini [World_*], Project Settings > Worlds)")
                 }
             }
 
@@ -698,6 +777,7 @@ namespace NimbleEngine
         /* Unconditional -- null-safe and idempotent, so a failed Initialize()
          * still shuts SDL down. */
         Shutdown();
+        CloseRunLog();
     }
 
     void Application::Shutdown()

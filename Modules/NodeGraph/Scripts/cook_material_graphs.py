@@ -393,9 +393,21 @@ def fnv1a64(data):
     return h
 
 
-def write_cache(cache_path, module, target, files):
+def pack_path_hash(path):
+    """EngineCore::HashPackPath (CorePack.cpp): FNV-1a 64 of the path
+    lower-cased, '/' separated, without a leading './' or '/'."""
+    normal = path.replace("\\", "/").lower()
+    while normal.startswith("./"):
+        normal = normal[2:]
+    normal = normal.lstrip("/")
+    return fnv1a64(normal.encode("utf-8"))
+
+
+def write_cache(cache_path, module, target, files, hash_paths=False):
     """files: {runtime path: bytes}. 'NMSC' header, a 'BLOB' per distinct
-    content, a 'FILE' per path naming its blob by hash (ShaderCache.cpp)."""
+    content, a 'FILE' per path naming its blob by hash (ShaderCache.cpp) --
+    or with hash_paths (a Shipping cache) an 'FHSH' per path, which keeps only
+    the path's hash."""
     out = bytearray()
     out += _chunk("NMSC", CACHE_VERSION, _string(module) + _string(target) + struct.pack("<I", template_version()))
 
@@ -405,7 +417,10 @@ def write_cache(cache_path, module, target, files):
     for h in sorted(blobs):
         out += _chunk("BLOB", 1, struct.pack("<QI", h, len(blobs[h])) + blobs[h])
     for path in sorted(files):
-        out += _chunk("FILE", 1, _string(path) + struct.pack("<Q", fnv1a64(files[path])))
+        if hash_paths:
+            out += _chunk("FHSH", 1, struct.pack("<QQ", pack_path_hash(path), fnv1a64(files[path])))
+        else:
+            out += _chunk("FILE", 1, _string(path) + struct.pack("<Q", fnv1a64(files[path])))
 
     cache_path = Path(cache_path)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -444,7 +459,7 @@ def check(cs, files, root):
 
 
 def cook(cs, target, src_paths, out_root=None, subdir="", defaults=False, cache=None, module="", root=None, data_out=None,
-         pdb=None):
+         pdb=None, hash_paths=False):
     plain, materials, graphs = collect(src_paths)
     if graphs and not root:
         print("ERROR: material graphs need -root (what their runtime paths are relative to)", file=sys.stderr)
@@ -502,7 +517,7 @@ def cook(cs, target, src_paths, out_root=None, subdir="", defaults=False, cache=
                     files["Shaders/Cooked/" + f.relative_to(tmp_dir).as_posix()] = f.read_bytes()
             for meta in metas:
                 files[meta["Runtime"]] = meta["Path"].read_bytes()
-            write_cache(cache, module, target, files)
+            write_cache(cache, module, target, files, hash_paths)
         elif data_out and not failures:
             for meta in metas:
                 destination = Path(data_out) / meta["Runtime"]
@@ -525,6 +540,8 @@ def main():
     parser.add_argument("-defaults", action="store_true", help="also cook the shared MaterialDefault vertex shaders")
     parser.add_argument("-cache", metavar="FILE", help="write one shader cache instead of loose files")
     parser.add_argument("-module", default="", metavar="NAME", help="the module the cache belongs to")
+    parser.add_argument("-hash-paths", dest="hash_paths", action="store_true",
+                        help="with -cache: keep each path only as its hash (a Shipping build's cache; CorePack.h)")
     parser.add_argument("-pdb", metavar="DIR", help="also write each shader's debug information below DIR/<Platform>/; "
                                                    "alone (no -out or -cache), only that")
     parser.add_argument("-gdi-scripts", default=str(GDI_SCRIPTS_DIR), metavar="DIR",
@@ -539,7 +556,7 @@ def main():
         if args.cache and not args.module:
             parser.error("-cache needs -module")
         sys.exit(1 if cook(cs, args.target, args.src or [], args.out, args.subdir, args.defaults, args.cache,
-                           args.module, args.root, args.data_out, args.pdb) else 0)
+                           args.module, args.root, args.data_out, args.pdb, args.hash_paths) else 0)
 
     parser.error("give -check FILE..., or -target with -src (or -defaults) and -out, -cache or -pdb")
 

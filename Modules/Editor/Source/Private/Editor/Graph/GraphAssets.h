@@ -47,7 +47,7 @@ namespace EditorGraphs
     /* Where a new graph of this schema is offered: <root>/Scripts, <root>/Materials. */
     QString GetDefaultFolder(const NodeGraph::Schema& InSchema);
 
-    /* Build trees, Binaries, dot-folders. */
+    /* Build trees, Binaries, dot-folders, Saved (cooked copies and logs). */
     bool IsIgnoredFolder(const QString& InName);
 
     /* The same relative path under the exe's folder; empty if not applicable. */

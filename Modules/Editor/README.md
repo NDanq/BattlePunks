@@ -70,7 +70,8 @@ uses it.
 | `EditorTheme` (private) | `Editor.Theme`: light, dark or the system's, applied live through Fusion and an explicit palette |
 | `ProjectSettingsDialog` + `ConfigIniFile` (private) | Edit > Project Settings: the project's `DefaultEngine.ini` as pages of settings, edited line by line so its comments stay |
 | `SettingsDialog` (private) | Edit > Editor Settings: the `[Editor]` config vars as a form, saved to the user's `EditorSettings.ini` |
-| `SourceBuild` (private) | Build > Compile Source: runs `cmake --build` on the editor's own build tree (`EditorBuildTree.h.in`) in the background, logging its output |
+| `SourceBuild` (private) | Build > Compile Source: runs `cmake --build` on the editor's own build tree (`EditorBuildTree.h.in`) in the background, logging its output; any cmake command line too (`StartCommand`), for Build Project |
+| `Build/ContentCook`, `Build/ProjectBuild`, `Build/ProjectBuildDialog` (private) | Build > Cook Content and Build > Build Project: the project's content cooked into `Saved/Cooked/` with stats, and the game's Client preset configured and built |
 | `AboutDialog` (private) | Help > About: the commit and build this editor came from (`EditorBuildInfo.h.in`, stamped by Core's `GitVersion.cmake` on every build), plus configuration, target, compiler, Qt and renderer; Copy to Clipboard for bug reports |
 | `ViewportPanel` | Navigation toolbar (view presets, framing, the Show menu, speed) over the viewport |
 | `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select (lights by their position), selection bounds, axis gizmo, light gizmos (a point light's sphere, a spot's cone, the sun's arrow, a scene capture probe's mirror rectangle and normal or its box and reach; all lights or the selected one, Show > Editor Gizmos > Light Gizmos), a perspective game camera's frustum |
@@ -579,8 +580,9 @@ registered:
 | `quit` | File > Exit, which still asks about unsaved changes |
 | `lighting <bake \| baked \| live>` | Build > Bake Lightmaps, or Show > Lighting > Baked / Live |
 | `screenshot <file.png>` | Save the viewport's next frame, without gizmos or debug lines (`Renderer::RequestSceneCapture`) |
-| `cook [world] [out]` | Cook a world file to binary -- by default the open world's saved file, to `Cooked/` beside it |
-| `cook ui [out]`, `cook <doc.nmui> [out]` | Cook every UI document to `<project>/Cooked/Content/UI/` (what a Client build stages), or one |
+| `cook project` | As Build > Cook Content: the listed worlds, every prefab and UI document, with the stats |
+| `cook [world] [out]` | Cook a world file to binary -- by default the open world's saved file, to `<project>/Saved/Cooked/<its path>` |
+| `cook ui [out]`, `cook <doc.nmui> [out]` | Cook every UI document to `<project>/Saved/Cooked/Content/UI/` (what a Client build stages), or one |
 | `ui <path \| new \| close \| select <name> \| resolution <w>x<h> \| preview <on\|off> \| screenshot <file.png>>` | Open a `.nmui` in the UI Designer, make one, or drive the one in front -- from `--command` scripts too |
 | `compile [cancel]` | As Build > Compile Source, or cancel the build running |
 | `settings` | Open Edit > Editor Settings, and print where they are saved |
@@ -599,9 +601,9 @@ registered:
 
 **Play** (F5, the viewport toolbar, or `play` in the Console) runs the game in
 the viewport: the module named by `[Game] Module` in `Config/DefaultEngine.ini`
-(Sandbox's is `SandboxGame`), from the level that loads the open world -- the
-one whose `ILevel::GetWorldFile` names it -- else from `[Game] StartLevel` or
-the module's own start level. It is the game's real code -- its level, mode, systems and startup script
+(Sandbox's is `SandboxGame`), in the open world if Project Settings > Worlds
+lists it, else in `[Game] StartLevel` (or the first listed world). It is the
+game's real code -- the world's mode, systems and startup script
 -- in a `GameSession`, exactly as the game's launcher runs it; the editor only
 stands in for `Application` as the host.
 
@@ -700,10 +702,20 @@ too.
 project's `Config/DefaultEngine.ini` -- the game's and the engine's settings,
 shared by everyone on the project, where Editor Settings are one person's.
 
-- **Project** page: title, game module, start level and startup script, and
-  where the file is.
+- **Project** page: title, game module, start world (one of the Worlds
+  page's names), and where the file is.
+- **Worlds** page: the project's worlds, in order -- the only place a world
+  becomes a level (`NimbleEngine/WorldList.h`). Each row is a `[World_<Name>]`
+  section: its name (what Start world, saves and `open` name), its world file,
+  its game mode (the modes the loaded game module registers), its startup
+  script (one of the project's Lua files, or none -- there is no project-wide
+  one) and **Cook** -- whether Build
+  Project cooks and packages it. Add World, Add Open World, Change File,
+  Remove, Up and Down; Apply checks every name is unique and every file
+  exists, rewrites the sections where they were, and reloads them in the
+  running editor so the next Play uses them.
 - **One page per config section**: every registered `NIMBLE_CONFIG_*` var in
-  it (outside `[Editor]`), with an editor for its type -- checkbox, spin box,
+  it (outside `[Editor]`, `[Build]` and the worlds), with an editor for its type -- checkbox, spin box,
   text, or a list for known choices such as `Display.RHI` -- and a reset to
   its compiled default. **Bold** means the file sets it; the rest run on their
   default. A key whose name says too little has a label and a tooltip from
@@ -786,9 +798,64 @@ editor closed):
     QT_QPA_PLATFORM=offscreen ./NimbleEditor --rhi 0 <world.nmworld> \
         --command "lighting bake" --command save --command quit
 
-**Cook Content** is a stub: it says it is not implemented yet. What it should
-cook (which worlds and assets, from where, to where, for which target) is not
-decided. The Console's `cook` still cooks a single world.
+**Build Project...** packages the game: `Build/ProjectBuildDialog`, with its
+options kept in `[Build]` of `DefaultEngine.ini`.
+
+- **Configuration**: Debug, RelWithDebInfo or Shipping.
+- **Cook content** (`Build/ContentCook`): every node graph regenerated, the
+  worlds Project Settings > Worlds ticks, every prefab and UI document --
+  into `<project>/Saved/Cooked/<their path>`. An unticked world's old cooked copy is
+  deleted. The cook reads saved files. When it ends, a table of **cook
+  stats** -- per content type: cooked, failed, source size, cooked size, time
+  -- and the same lines in the Console (`[Cook]`). A failed cook stops the
+  build.
+- **Compile the game** (`Build/ProjectBuild`): the project's
+  `client-<config>[-clang]` preset from its `CMakePresets.json`, configured
+  and built in its own tree (`cmake --preset`, then `cmake --build --preset`,
+  through `SourceBuild`), the output live in the dialog. Cancel Build stops it.
+- **Open the executable's folder** (`Binaries/<Platform>_<Config>_Client`)
+  when it is built.
+- **Packaged**: Build Project always configures with
+  `NIMBLE_PACKAGE_CONTENT=ON`, so the folder holds the binaries and
+  `Paks/Engine.nmpak` + `Paks/Game.nmpak` -- config, scripts, content, cooked
+  worlds, prefabs and UI, shaders -- and no loose content
+  (`Engine/cmake/NimblePack.cmake`, Core's `CorePack.h`). A pack's index
+  stores only path hashes; Debug and RelWithDebInfo packs also keep each path,
+  which `NimblePak list Paks/Game.nmpak` prints. A Shipping build's packs
+  name nothing anywhere: scripts and script graphs are stripped Lua
+  bytecode, the config has no comments, shader caches index by hash, and
+  every entry is scrambled, so no asset path shows even inside content.
+- **Run uncooked** (Debug and RelWithDebInfo; `NIMBLE_RUN_UNCOOKED`): the
+  built game reads the project's raw files -- config, scripts, Content, text
+  worlds and prefabs, XML UI -- straight from the project folder, over its
+  packs, so an edit shows at the game's next start with no cook or build.
+  Shaders still come from the build. Any Debug or RelWithDebInfo game takes
+  `-uncooked[=<folder>]` or `-cooked` on its command line to choose either
+  way; Shipping has no uncooked mode.
+
+The game's CMake stages exactly the listed, ticked worlds
+(`nimble_project_worlds` in `Engine/cmake/NimbleProject.cmake`): the text
+worlds for every build but Shipping, the cooked ones from `Saved/Cooked/` for
+Shipping. A Shipping build reads every asset at its own path.
+
+**Cook Content** is the same dialog's cook alone: it opens and cooks at once.
+
+### The Saved folder
+
+`<project>/Saved/` holds what the tools make, never source: made on each
+machine and ignored by git, so a fresh checkout cooks before a Shipping
+build (Build Project does). The Content Browser and every content walk skip
+it (`EditorGraphs::IsIgnoredFolder`).
+
+- `Saved/Cooked/` -- cooked content, mirroring the source paths, which a
+  Shipping or packaged build stages.
+- `Saved/Logs/` -- one log per run, the newest 10 of each kind kept:
+  - `Editor-<time>.log`, every line of an editor session (`EngineCore::OpenRunLog`);
+  - `Cook-<time>.log` and `Build-<time>.log`, a cook or Build Project run's
+    whole output and stats (the dialog's status line names the file).
+
+A game run logs the same way beside its executable:
+`Binaries/<Platform>_<Config>[_Client]/Saved/Logs/<Module>[Server]-<time>.log`.
 
 ## Known limits
 

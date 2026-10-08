@@ -14,7 +14,7 @@ parsed and kept in every save and cook, but they do not play yet. See
 ```
  Content/UI/Pause.nmui ──(editor: XML)──┐          ┌── GameSession::GetUI()  (one per game session)
                                         ├─► UIDocumentAsset ─► UIDocumentInstance ─► UIDrawList ─► Renderer::SubmitUIDrawList
- Cooked/Content/UI/... ─(game: binary)──┘     (shared)          (widgets, layout,     (pixels)        (RenderCore: drawn over the
+ Saved/Cooked/Content/UI/... ─(game: binary)──┘     (shared)          (widgets, layout,     (pixels)        (RenderCore: drawn over the
                                                                  input, bindings)                    scene, after post process)
 ```
 
@@ -521,11 +521,11 @@ apart. A game build has no XML parser, so it reads only the cooked form.
 
 | Command (editor Console) | What it does |
 |---|---|
-| `cook ui` | Cooks every document to `<project>/Cooked/Content/UI/...`. |
+| `cook ui` | Cooks every document to `<project>/Saved/Cooked/Content/UI/...`. |
 | `cook <doc.nmui> [out]` | Cooks one document. |
 
 - An Editor build stages `Content/UI/`. A Client or Server build stages
-  `Cooked/Content/UI/`, as prefabs are staged. The game's CMakeLists warns when
+  `Saved/Cooked/Content/UI/`, as prefabs are staged. The game's CMakeLists warns when
   nothing is cooked.
 - The cooked form has styles applied, keeps every property as text so an
   unknown property survives, and keeps the reserved sections as written. It is

@@ -331,6 +331,22 @@ namespace EngineCore
      * that catches an actual typo. */
     CORE_API void ConfigWarnUnclaimedEntries();
 
+    /*
+     * Every loaded entry whose section starts with InSectionPrefix (case-
+     * insensitive; "" is every entry), in the order its key was first read,
+     * as text. For data with no var to declare -- a list of sections, each
+     * one item ([World_<Name>]) -- so it is not capped at CONFIG_STRING_MAX.
+     * Visited entries count as claimed: not reported as unknown.
+     */
+    using ConfigEntryFn = void (*)(const char* InSection, const char* InKey, const char* InValue, void* InUserData);
+    CORE_API void ConfigForEachEntry(const char* InSectionPrefix, ConfigEntryFn InFn, void* InUserData);
+
+    /* Forgets every loaded entry whose section starts with InSectionPrefix --
+     * so a host that rewrote those sections (the editor's Project Settings)
+     * can load them again without stale ones lingering. Vars keep their
+     * values. */
+    CORE_API void ConfigRemoveEntries(const char* InSectionPrefix);
+
     // === Console =============================================================
 
     /*

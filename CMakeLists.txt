@@ -36,6 +36,7 @@ list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(NimbleModule)
 include(NimbleMaterials)
 include(NimbleProject)
+include(NimblePack)
 
 enable_testing()
 
@@ -252,8 +253,8 @@ endif()
 # worlds and prefabs, as the editor does, and a Client or Server cooks each
 # one itself the first time it loads it (and again when the source changes),
 # into Intermediate/Cooked/ beside the executable -- so a development build
-# never waits on a manual cook. Shipping reads only what was cooked ahead
-# (the editor's console: cook <world>, cook prefabs). See GameCore's
+# never waits on a manual cook. Shipping reads only what was cooked ahead,
+# into <project>/Saved/Cooked/ (the editor's Build > Cook Content). See GameCore's
 # WorldPackage.h (LoadContentWorld).
 #
 # WITH_UNCOOKED is that switch in code, 1 or 0, PUBLIC on EngineCore below.
@@ -265,6 +266,42 @@ if(NM_MULTI_CONFIG OR NOT CMAKE_BUILD_TYPE STREQUAL "Shipping")
     set(NIMBLE_UNCOOKED_CONTENT ON  CACHE INTERNAL "Stage text worlds and prefabs (every build but Shipping)")
 else()
     set(NIMBLE_UNCOOKED_CONTENT OFF CACHE INTERNAL "Stage text worlds and prefabs (every build but Shipping)")
+endif()
+
+# === Packaged content =======================================================
+# NIMBLE_PACKAGE_CONTENT: a game's content in Paks/Engine.nmpak and
+# Paks/Game.nmpak beside the executable instead of loose files
+# (cmake/NimblePack.cmake). On by default for Shipping; the editor's Build >
+# Build Project turns it on for whatever configuration it builds. A packaged
+# build always takes the cooked worlds, prefabs and UI, whatever the
+# configuration: a pack holds what the game reads through the file provider,
+# and the text loaders read the disk. Never in an Editor target, which edits
+# the loose files, nor with a multi-config generator (no single directory).
+if(NIMBLE_WITH_EDITOR OR NM_MULTI_CONFIG)
+    set(NIMBLE_PACKAGE_CONTENT OFF CACHE BOOL "Pack a game's content into Paks/ instead of loose files" FORCE)
+else()
+    if(CMAKE_BUILD_TYPE STREQUAL "Shipping")
+        set(NM_PACKAGE_DEFAULT ON)
+    else()
+        set(NM_PACKAGE_DEFAULT OFF)
+    endif()
+    set(NIMBLE_PACKAGE_CONTENT ${NM_PACKAGE_DEFAULT} CACHE BOOL "Pack a game's content into Paks/ instead of loose files")
+endif()
+
+# NIMBLE_RUN_UNCOOKED: a Debug or RelWithDebInfo game runs uncooked by default
+# -- reading the project's raw files (config, scripts, Content, text worlds,
+# prefabs and UI) from its source folder instead of anything staged or packed
+# (-uncooked / -cooked on its command line choose either way; ParseLaunchArgs).
+# The editor's Build Project sets it from its "Run uncooked" option. No effect
+# on Shipping, which reads only cooked content.
+option(NIMBLE_RUN_UNCOOKED "Debug/RelWithDebInfo games read the project's raw files by default (-uncooked)" OFF)
+
+# What a game stages: the cooked worlds and prefabs unless it runs on the
+# text sources (an uncooked build that is not packaged).
+if(NIMBLE_UNCOOKED_CONTENT AND NOT NIMBLE_PACKAGE_CONTENT)
+    set(NIMBLE_STAGE_TEXT_CONTENT ON  CACHE INTERNAL "Stage text worlds and prefabs rather than cooked ones")
+else()
+    set(NIMBLE_STAGE_TEXT_CONTENT OFF CACHE INTERNAL "Stage text worlds and prefabs rather than cooked ones")
 endif()
 
 # === Binaries/ =============================================================
@@ -477,6 +514,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/GameModule.cpp
         Source/Private/NimbleEngine/Level.cpp
         Source/Private/NimbleEngine/SaveGame.cpp
+        Source/Private/NimbleEngine/WorldList.cpp
         Source/Private/NimbleEngine/SaveGameFormat.h
         Source/Private/NimbleEngine/Input.cpp
         Source/Private/NimbleEngine/InputInternal.h
@@ -497,6 +535,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/GameState.h
         Source/Public/NimbleEngine/PlayerState.h
         Source/Public/NimbleEngine/SaveGame.h
+        Source/Public/NimbleEngine/WorldList.h
         Source/Public/NimbleEngine/NimbleEngineTypes.h
         Source/Public/NimbleEngine/Input.h
         Source/Public/NimbleEngine/InputRouter.h
@@ -666,13 +705,18 @@ if(TARGET GDI AND CMAKE_RUNTIME_OUTPUT_DIRECTORY
             "${NIMBLE_ENGINE_SHADER_DIR}/*.csh")
     file(GLOB NM_ENGINE_MATERIALS CONFIGURE_DEPENDS "${NIMBLE_ENGINE_MATERIAL_DIR}/*.material.nmgraph")
     get_filename_component(NM_ENGINE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)   # "Engine/Content/..." below it
+    # Packaged: cooked into the Engine pack's folder, not beside the executable.
+    set(NM_SHADER_ROOT "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+    if(NIMBLE_PACKAGE_CONTENT)
+        nimble_pack_stage_dir(Engine NM_SHADER_ROOT)
+    endif()
     nimble_shader_cook_commands(NM_SHADER_COOK_COMMANDS
             SRC "${NIMBLE_ENGINE_SHADER_DIR}"
-            OUT "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Shaders/Cooked")
+            OUT "${NM_SHADER_ROOT}/Shaders/Cooked")
     nimble_shader_cook_commands(NM_ENGINE_CACHE_COMMANDS DEFAULTS
             SRC    "${NIMBLE_ENGINE_MATERIAL_DIR}"
             ROOT   "${NM_ENGINE_ROOT}"
-            CACHE  "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Shaders/Cache"
+            CACHE  "${NM_SHADER_ROOT}/Shaders/Cache"
             MODULE Engine
             SUBDIR Materials)
     list(APPEND NM_SHADER_COOK_COMMANDS ${NM_ENGINE_CACHE_COMMANDS})
@@ -700,6 +744,9 @@ if(TARGET GDI AND CMAKE_RUNTIME_OUTPUT_DIRECTORY
     add_custom_target(NimbleStageShaders ALL DEPENDS "${NM_SHADER_STAMP}")
     add_dependencies(NimbleEngine NimbleStageShaders)
     set_target_properties(NimbleStageShaders PROPERTIES FOLDER "Engine")
+    if(NIMBLE_PACKAGE_CONTENT)
+        nimble_pack_add_dir(Engine "Shaders" "${NM_SHADER_ROOT}/Shaders" "${NM_SHADER_STAMP}" NimbleStageShaders)
+    endif()
 endif()
 
 # === Engine/Content/Meshes =================================================
@@ -708,7 +755,10 @@ endif()
 # same path, so a RenderComponent names one "Engine/Content/Meshes/Box.nmmesh"
 # in every target. Single-config only, as the shader staging above.
 file(GLOB NM_ENGINE_MESHES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/Meshes/*.nmmesh")
-if(TARGET NimbleEngine AND CMAKE_RUNTIME_OUTPUT_DIRECTORY AND NM_ENGINE_MESHES)
+get_filename_component(NM_ENGINE_PARENT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)   # "Engine/Content/..." below it
+if(NIMBLE_PACKAGE_CONTENT)
+    nimble_pack_add_files(Engine "${NM_ENGINE_PARENT}" ${NM_ENGINE_MESHES})
+elseif(TARGET NimbleEngine AND CMAKE_RUNTIME_OUTPUT_DIRECTORY AND NM_ENGINE_MESHES)
     set(NM_MESH_OUTPUTS)
     foreach(NM_MESH ${NM_ENGINE_MESHES})
         get_filename_component(NM_MESH_NAME "${NM_MESH}" NAME)
@@ -732,7 +782,9 @@ endif()
 # OFL.txt beside it ships with it), staged as the meshes are, at the same path.
 file(GLOB NM_ENGINE_FONTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/Fonts/*.ttf"
                                             "${CMAKE_CURRENT_SOURCE_DIR}/Content/Fonts/*.txt")
-if(TARGET NimbleEngine AND CMAKE_RUNTIME_OUTPUT_DIRECTORY AND NM_ENGINE_FONTS)
+if(NIMBLE_PACKAGE_CONTENT)
+    nimble_pack_add_files(Engine "${NM_ENGINE_PARENT}" ${NM_ENGINE_FONTS})
+elseif(TARGET NimbleEngine AND CMAKE_RUNTIME_OUTPUT_DIRECTORY AND NM_ENGINE_FONTS)
     set(NM_FONT_OUTPUTS)
     foreach(NM_FONT ${NM_ENGINE_FONTS})
         get_filename_component(NM_FONT_NAME "${NM_FONT}" NAME)
@@ -750,6 +802,13 @@ if(TARGET NimbleEngine AND CMAKE_RUNTIME_OUTPUT_DIRECTORY AND NM_ENGINE_FONTS)
     add_dependencies(NimbleEngine NimbleStageFonts)
     set_target_properties(NimbleStageFonts PROPERTIES FOLDER "Engine")
 endif()
+
+# === NimblePak ==============================================================
+# Makes and lists content packs (Tools/NimblePak.cpp; cmake/NimblePack.cmake
+# runs it for a packaged build). Beside EngineCore, whose library it uses.
+add_executable(NimblePak Tools/NimblePak.cpp)
+target_link_libraries(NimblePak PRIVATE EngineCore::EngineCore GameCore Lua::Lua)
+set_target_properties(NimblePak PROPERTIES FOLDER "Engine")
 
 # === Editor ================================================================
 # The Qt editor: after NimbleStageShaders, and needs RenderCore. Skips itself
