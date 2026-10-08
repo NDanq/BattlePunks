@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Instance Guid="50531b93a05d1b2b4370d5efd999efc8" Name="HerdFox_B22_0" Prefab="Content/Prefabs/HerdFox.nmprefab">
+  <Entity Id="1">
+    <Component Type="Transform" Version="1">
+      <Position X="1312.1320343559642" Y="0" Z="1312.1320343559642" />
+      <Rotation X="0" Y="319.62248883201335" Z="0" />
+    </Component>
+  </Entity>
+</Instance>

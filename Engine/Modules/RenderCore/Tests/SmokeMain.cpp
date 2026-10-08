@@ -91,8 +91,8 @@ static void TestScriptBindings()
     size_t RenderCount = 0;
     const GameCore::ScriptBindingEntry* Render =
         GameCore::FindComponentScript(RenderComponent::StaticType().ID, RenderCount);
-    Expect(Render != nullptr && RenderCount == 11,
-           "Render exposes Visible, Mesh, slots by index, material parameters, CastShadows and CastInsetShadow");
+    Expect(Render != nullptr && RenderCount == 12,
+           "Render exposes Visible, Mesh, slots by index, material parameters, CastShadows, CastInsetShadow and Occluder");
     const auto HasBinding = [&](const char* InName)
     {
         for(size_t Index = 0; Render && Index < RenderCount; ++Index)
@@ -107,6 +107,7 @@ static void TestScriptBindings()
     Expect(HasBinding("SetMaterialParameter") && HasBinding("SetMaterialColor") && HasBinding("GetMaterialParameter")
            && HasBinding("ClearMaterialParameter"), "material parameters can be set, read and cleared");
     Expect(HasBinding("CastShadows"), "and whether it casts shadows");
+    Expect(HasBinding("Occluder"), "and whether it occludes");
 
     bool bProxyExposed = false;
     for(size_t Index = 0; Index < RenderCount; ++Index)
@@ -493,11 +494,11 @@ static void TestStatUnit()
         Rend.Shutdown();
     }
 
-    float Times[RGT_Count] = { 0.01f, 0.5f, -1.0f, 1.25f, 0.2f, 0.05f, 0.75f, 2.8f, 0.6f };
+    float Times[RGT_Count] = { 0.01f, 0.5f, -1.0f, 1.25f, 0.2f, 0.05f, 0.75f, 2.8f, 0.6f, 0.3f };
     const std::string FrameText = FormatStatFrame(Times, true);
     Expect(FrameText == "GPU            ms\nPrePass      0.01\nBasePass     0.50\nAO              -\nShadows      1.25\n"
-                        "Lighting     0.20\nForward      0.05\nPostProcess  0.75\nTotal        2.80\nCaptures     0.60",
-           "stat frame's text, a line per stage, the scene captures after the total");
+                        "Lighting     0.20\nForward      0.05\nPostProcess  0.75\nTotal        2.80\nCaptures     0.60\nParticles    0.30",
+           "stat frame's text, a line per stage, the scene captures and particles after the total");
     Expect(FormatStatFrame(Times, false) == "GPU: not timed on this backend", "and a line saying so where the GPU is not timed");
 }
 
@@ -2229,7 +2230,7 @@ static void TestRenderComponentSerializer()
     };
 
     const GameCore::ComponentSerializerInfo* Info = GameCore::FindComponentSerializer(RenderComponent::StaticType().ID);
-    Expect(Info && Info->Version == 4, "RenderComponent saves as version 4 (material parameters, CastShadows, CastInsetShadow)");
+    Expect(Info && Info->Version == 5, "RenderComponent saves as version 5 (material parameters, CastShadows, CastInsetShadow, Occluder)");
     if(!Info) { return; }
 
     RenderComponent Saved;
@@ -2289,9 +2290,13 @@ static void TestRenderComponentSerializer()
            "and no CastShadows, and keeps casting");
     Expect(std::find(Old.Names.begin(), Old.Names.end(), std::string("CastInsetShadow")) == Old.Names.end() && FromOld.bCastInsetShadow == 0,
            "nor CastInsetShadow, which stays off");
+    Expect(std::find(Old.Names.begin(), Old.Names.end(), std::string("Occluder")) == Old.Names.end() && FromOld.bOccluder == 0,
+           "nor Occluder, which stays off");
 
     Expect(std::find(Out.Names.begin(), Out.Names.end(), std::string("CastInsetShadow")) != Out.Names.end(),
            "a version 4 save writes CastInsetShadow");
+    Expect(std::find(Out.Names.begin(), Out.Names.end(), std::string("Occluder")) != Out.Names.end(),
+           "a version 5 save writes Occluder");
 
     /* The lights: version 2 dropped the sun's Direction (it is the
      * Transform's forward now) and added shadows; version 3 its baked
@@ -2576,6 +2581,32 @@ static void TestShadowsOnGpu()
             Expect(EdgePixels > 20, "and a hard filter's edge differs from a 5x5 one's");
             Box.GetComponent<RenderComponent>()->bCastInsetShadow = 0;
 
+            /* Contact shadows ([Shadows] ContactShadows): the sun's map still stops short of
+             * the box, so only the screen-space march toward the sun can find it -- from the
+             * floor under it, where its shadow falls. The box floats 30 above the floor and
+             * is 120 deep, so the march reaches further and takes thicker surfaces than the
+             * defaults. Off (the default), Short above already showed nothing. */
+            ConfigVar* Contact          = ConfigFindVarByPath("Shadows.ContactShadows");
+            ConfigVar* ContactLength    = ConfigFindVarByPath("Shadows.ContactLength");
+            ConfigVar* ContactThickness = ConfigFindVarByPath("Shadows.ContactThickness");
+            Expect(Contact && ContactLength && ContactThickness, "[Shadows] ContactShadows, ContactLength and ContactThickness are config vars");
+            EngineCore::Image Contacted;
+            bool bContacted = false;
+            if(Contact && ContactLength && ContactThickness)
+            {
+                ContactLength->SetFromString("150");
+                ContactThickness->SetFromString("200");
+                Contact->SetFromString("true");
+                bContacted = Capture(Contacted);
+                Contact->ResetToDefault();
+                ContactLength->ResetToDefault();
+                ContactThickness->ResetToDefault();
+            }
+            Dump(Contacted, "sun-contact");
+            const Difference Touch = bContacted ? Compare(Contacted, Short) : Difference();
+            std::printf("    contact: %d pixels darker, %d brighter\n", Touch.Darker, Touch.Brighter);
+            Expect(bContacted && Touch.Darker > 300 && Touch.Brighter < 20, "sun contact shadows find the box from the floor under it");
+
             /* A caster out of the view's bounds altogether -- above and behind
              * the camera -- whose shadow falls on the floor it sees: offered
              * all the same, since its shadow reaches the view. */
@@ -2622,6 +2653,38 @@ static void TestShadowsOnGpu()
             const Difference SpotShadow = bSpotLit && bSpotShadowed ? Compare(SpotShadowed, SpotLit) : Difference();
             std::printf("    spot: %d pixels darker, %d brighter\n", SpotShadow.Darker, SpotShadow.Brighter);
             Expect(SpotShadow.Darker > 200 && SpotShadow.Brighter < 20, "a spot light's shadow falls under the box");
+
+            /* The spot's contact shadows ([Shadows] ContactLocalLights): the box out of the
+             * shadow map (Cast Shadows off), so only the march toward the light finds it. */
+            {
+                ConfigVar* Contact          = ConfigFindVarByPath("Shadows.ContactShadows");
+                ConfigVar* ContactLength    = ConfigFindVarByPath("Shadows.ContactLength");
+                ConfigVar* ContactThickness = ConfigFindVarByPath("Shadows.ContactThickness");
+                ConfigVar* ContactLocal     = ConfigFindVarByPath("Shadows.ContactLocalLights");
+                Expect(Contact && ContactLength && ContactThickness && ContactLocal, "[Shadows] ContactLocalLights is a config var");
+                EngineCore::Image NoMap, SpotContact, SpotSunOnly;
+                bool bNoMap = false, bSpotContact = false, bSunOnly = false;
+                if(Contact && ContactLength && ContactThickness && ContactLocal)
+                {
+                    Box.GetComponent<RenderComponent>()->bCastShadows = 0;
+                    bNoMap = Capture(NoMap);
+                    ContactLength->SetFromString("400");
+                    ContactThickness->SetFromString("200");
+                    Contact->SetFromString("true");
+                    bSpotContact = Capture(SpotContact);
+                    ContactLocal->SetFromString("false");
+                    bSunOnly = Capture(SpotSunOnly);
+                    for(ConfigVar* Each : { Contact, ContactLength, ContactThickness, ContactLocal }) { Each->ResetToDefault(); }
+                    Box.GetComponent<RenderComponent>()->bCastShadows = 1;
+                }
+                Dump(SpotContact, "spot-contact");
+                const Difference Local  = bNoMap && bSpotContact ? Compare(SpotContact, NoMap) : Difference();
+                const Difference Sunned = bNoMap && bSunOnly ? Compare(SpotSunOnly, NoMap) : Difference();
+                std::printf("    spot contact: %d pixels darker, %d brighter; %d darker with ContactLocalLights off\n",
+                            Local.Darker, Local.Brighter, Sunned.Darker);
+                Expect(bSpotContact && Local.Darker > 200 && Local.Brighter < 20, "a shadowed spot light's contact shadows find the box");
+                Expect(bSunOnly && Sunned.Darker < 40, "and ContactLocalLights off leaves them to the sun alone");
+            }
 
             /* The spot swapped for a point light over the box. */
             World.DestroyEntity(Spot);
@@ -2913,6 +2976,34 @@ static void TestPostProcessOnGpu()
             Expect(Smear.Brighter + Smear.Darker > 200, "Motion Blur smears the frame the camera turned in");
         }
 
+        /* Velocity: the camera still, a box that moved since the frame before
+         * smears; standing still at the same place, it does not. */
+        const GameCore::Entity Mover = Placed("Mover", Vector3(-120.0, 60.0, -150.0), Vector3(), Vector3(90.0, 120.0, 90.0));
+        Mover.AddComponent(Mesh("Engine/Content/Meshes/Box.nmmesh"));
+        const auto MoveTo = [&](const double InX)
+        {
+            Mover.GetComponent<GameCore::TransformComponent>()->Position = Vector3(InX, 60.0, -150.0);
+        };
+        EngineCore::Image MoverStill, MoverMoving;
+        MoveTo(0.0);
+        const bool bMoverStill = Capture(MoverStill, Turned, Turned);
+        MoveTo(-120.0);
+        Draw(Turned);
+        Draw(Turned);
+        const uint64_t MoverRequest = Rend.RequestSceneCapture();
+        MoveTo(0.0);
+        Draw(Turned);
+        Draw(Turned);
+        if(bMoverStill && MoverRequest && Rend.TakeMaterialPreview(MoverRequest, MoverMoving, Error))
+        {
+            Dump(MoverStill, "post-velocity-still");
+            Dump(MoverMoving, "post-velocity-moving");
+            const Difference Smear = Compare(MoverMoving, MoverStill);
+            std::printf("    motion blur, a box moved and the camera still: %d pixels changed\n", Smear.Brighter + Smear.Darker);
+            Expect(Smear.Brighter + Smear.Darker > 150, "Motion Blur smears what moved, with the camera still (velocity)");
+            Expect(Smear.Brighter + Smear.Darker < 256 * 256 / 4, "and only that");
+        }
+
         Rend.UnbindWorld();
         Rend.Shutdown();
     }
@@ -3015,6 +3106,7 @@ static void TestStatFrameOnGpu()
         Expect(On.GpuMs[RGT_Total] + 0.05f >= Stages, "and the stages fit inside the total");
         Expect(On.GpuMs[RGT_Shadows] > 0.0f && On.GpuMs[RGT_BasePass] > 0.0f, "the shadow and base passes take time");
         Expect(On.GpuMs[RGT_SceneCapture] >= 0.0f, "the scene captures are timed, if only as nothing");
+        Expect(On.GpuMs[RGT_Particles] >= 0.0f, "the particle passes are timed, if only as nothing");
 
         FrameVar->SetBool(false);
         Run(100);
@@ -3303,6 +3395,43 @@ static void TestToneMappingSettings()
            "a quarter in: a quarter of the exposure, the operator not yet (None)");
     BlendPostProcess(Blend, Parsed, 1.0f);
     Expect(Blend.Exposure == 2.0f && Blend.ToneMapper == 1, "all the way in: the stack's");
+}
+
+/* Auto exposure, screen-space reflections, volumetric fog and TAA: their .ppstack keys, and
+ * how a volume fades each in (RENDERPIPELINE.md). */
+static void TestFidelitySettings()
+{
+    std::printf("[auto exposure, reflections, fog and TAA settings]\n");
+    PostProcessSettings S;
+    std::string Error;
+    const bool bParsed = ParsePostProcessStack(
+        "Effect AutoExposure Key=0.12 MinEV=-3 MaxEV=2 SpeedUp=4 SpeedDown=0.5 CentreWeight=0.8\n"
+        "Effect ScreenSpaceReflections Intensity=0.7 MaxRoughness=0.3 MaxDistance=900 Thickness=12 Steps=40\n"
+        "Effect VolumetricFog Density=0.0002 HeightFalloff=0.001 BaseHeight=50 MaxDistance=5000 Anisotropy=0.7 "
+        "SunScattering=2 SkyScattering=0.5 LightScattering=3 Albedo=1,0.9,0.8 Steps=16 Shadows=false\n"
+        "Effect Antialiasing Method=TAA Sharpness=0.5 Quality=High\n", S, Error);
+    Expect(bParsed && S.bAutoExposure && S.AeKey == 0.12f && S.AeMinEV == -3.0f && S.AeMaxEV == 2.0f && S.AeSpeedUp == 4.0f
+           && S.AeSpeedDown == 0.5f && S.AeCentreWeight == 0.8f, "AutoExposure reads its key, range, speeds and weighting");
+    Expect(S.bScreenReflections && S.SsrIntensity == 0.7f && S.SsrMaxRoughness == 0.3f && S.SsrMaxDistance == 900.0f
+           && S.SsrThickness == 12.0f && S.SsrSteps == 40.0f, "ScreenSpaceReflections reads its settings");
+    Expect(S.bVolumetricFog && S.FogDensity == 0.0002f && S.FogBaseHeight == 50.0f && S.FogAnisotropy == 0.7f
+           && S.FogAlbedo[1] == 0.9f && S.FogSteps == 16.0f && !S.bFogShadows, "VolumetricFog reads its settings and Albedo");
+    Expect(S.bAntialiasing && S.AaMethod == 1 && S.AaSharpness == 0.5f, "Antialiasing reads Method TAA and its Sharpness");
+    PostProcessSettings Fxaa;
+    ParsePostProcessStack("Effect Antialiasing\n", Fxaa, Error);
+    Expect(Fxaa.AaMethod == 0 && !PostProcessSettings().bAutoExposure && !PostProcessSettings().bVolumetricFog,
+           "FXAA by default; the new effects off unless a stack has their node");
+
+    PostProcessSettings Blend;
+    BlendPostProcess(Blend, S, 0.25f);
+    Expect(Blend.bAutoExposure && std::abs(Blend.AeMinEV + 0.75f) < 1e-5f && std::abs(Blend.AeMaxEV - 0.5f) < 1e-5f,
+           "a quarter in: a quarter of auto exposure's range, from none");
+    Expect(Blend.bScreenReflections && std::abs(Blend.SsrIntensity - 0.175f) < 1e-5f, "a quarter of the reflections' intensity");
+    Expect(Blend.bVolumetricFog && std::abs(Blend.FogDensity - 0.00005f) < 1e-9f && !Blend.bFogShadows,
+           "a quarter of the fog's density, its switches the stack's from the start (as from off)");
+    BlendPostProcess(Blend, S, 1.0f);
+    Expect(Blend.AeMinEV == -3.0f && Blend.FogDensity == 0.0002f && !Blend.bFogShadows && Blend.AaMethod == 1,
+           "all the way in: the stack's, switches too");
 }
 
 /*
@@ -5782,6 +5911,195 @@ static void TestMeshDrawing()
 }
 #endif // WITH_EDITOR
 
+/*
+ * Occlusion culling (RENDERPIPELINE.md, "Occlusion culling"): a wall marked
+ * Occluder, a box behind it and a box beside it, seen in perspective. On the
+ * Null backend every query answers "visible", so this checks what is queried;
+ * with NIMBLE_SMOKE_GPU set it checks what the GPU finds, and that culling
+ * changes no pixel.
+ */
+struct OcclusionScene
+{
+    GameCore::World  World;
+    GameCore::Entity Wall, Hidden, Beside;
+
+    OcclusionScene()
+    {
+        const auto Placed = [this](const char* InName, const EngineCore::Vector3& InAt, const EngineCore::Vector3& InScale, const bool bInOccluder)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InAt;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            RenderComponent Render;
+            std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", "Engine/Content/Meshes/Box.nmmesh");
+            Render.bOccluder = bInOccluder ? 1 : 0;
+            Each.AddComponent(Render);
+            return Each;
+        };
+        /* From (0, 100, -800) along +Z: the wall at depth 800 hides x within
+         * 200 of the middle; the box beside it, at depth 1100, is clear of it. */
+        Wall   = Placed("Wall",   EngineCore::Vector3(0.0, 100.0, 0.0),   EngineCore::Vector3(400.0, 400.0, 20.0), true);
+        Hidden = Placed("Hidden", EngineCore::Vector3(0.0, 100.0, 300.0), EngineCore::Vector3(100.0, 100.0, 100.0), false);
+        Beside = Placed("Beside", EngineCore::Vector3(420.0, 100.0, 300.0), EngineCore::Vector3(100.0, 100.0, 100.0), false);
+    }
+
+    static RenderView MakeView(const EngineCore::Size InViewport, const EngineCore::Vector3& InEye = EngineCore::Vector3(0.0, 100.0, -800.0))
+    {
+        return RenderView::MakePerspective(InViewport, InEye, EngineCore::Vector3(0.0, 0.0, 1.0), 50.0f, 10.0f, 5000.0f);
+    }
+};
+
+static void TestOcclusionCulling()
+{
+    std::printf("[occlusion culling]\n");
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(ERenderBackend::Null, WindowHandle());
+    Expect(bInit, "Renderer::Initialize(Null) for occlusion culling");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = OcclusionScene::MakeView(Viewport);
+        Rend.SetViewOverride(&View);
+        OcclusionScene Scene;
+        Rend.BindWorld(Scene.World);
+
+        uint64_t Frame = 1;
+        const auto Stats = [&]()
+        {
+            for(int Each = 0; Each < 3; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            RenderStats Out;
+            Rend.GetStats(Out);
+            return Out;
+        };
+
+        RenderStats On = Stats();
+        Expect(On.OcclusionQueriesLastFrame == 2, "both boxes are queried; the occluder is not");
+        Expect(On.ProxiesOccludedLastFrame == 0, "and nothing is hidden where every query answers visible");
+
+        ConfigVar* Enabled = ConfigFindVarByPath("Rendering.OcclusionCulling");
+        Expect(Enabled != nullptr, "[Rendering] OcclusionCulling is a setting");
+        if(Enabled)
+        {
+            Enabled->SetBool(false);
+            Expect(Stats().OcclusionQueriesLastFrame == 0, "off, nothing is queried");
+            Enabled->SetBool(true);
+        }
+
+        /* A box round the eye could be cut by the near plane: drawn, never queried. */
+        const RenderView Inside = OcclusionScene::MakeView(Viewport, EngineCore::Vector3(0.0, 100.0, 300.0));
+        Rend.SetViewOverride(&Inside);
+        Expect(Stats().OcclusionQueriesLastFrame == 1, "a box the eye is in is not queried");
+
+        const RenderView Flat = RenderView::MakeOrthographic(Viewport, EngineCore::Vector3(0.0, 0.0, -1000.0), -1.0f, 5000.0f);
+        Rend.SetViewOverride(&Flat);
+        Expect(Stats().OcclusionQueriesLastFrame == 0, "an orthographic view queries nothing");
+
+        Rend.SetViewOverride(&View);
+        Scene.Wall.GetComponent<RenderComponent>()->bOccluder = 0;
+        Expect(Stats().OcclusionQueriesLastFrame == 0, "with no occluder in view, nothing is queried: there is nothing to hide behind");
+        Scene.Beside.GetComponent<RenderComponent>()->bOccluder = 1;
+        Expect(Stats().OcclusionQueriesLastFrame == 2, "an entity no longer an occluder is queried like any other");
+
+        Rend.UnbindWorld();
+        Rend.SetViewOverride(nullptr);
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+}
+
+static void TestOcclusionCullingOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[occlusion culling on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[occlusion culling on the GPU: %s]\n", GetShaderPlatformName(Backend));
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    ConfigVar* Enabled = ConfigFindVarByPath("Rendering.OcclusionCulling");
+    if(bInit && Enabled)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = OcclusionScene::MakeView(Viewport);
+        Rend.SetViewOverride(&View);
+        OcclusionScene Scene;
+        Rend.BindWorld(Scene.World);
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](EngineCore::Image& OutPixels, RenderStats& OutStats)
+        {
+            for(int Each = 0; Each < 3; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            const uint64_t Request = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            Rend.GetStats(OutStats);
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto Differing = [](const EngineCore::Image& InA, const EngineCore::Image& InB)
+        {
+            int Count = 0;
+            for(int Y = 0; Y < 256; ++Y)
+            {
+                const uint8_t* A = InA.GetData() + InA.GetStride() * Y;
+                const uint8_t* B = InB.GetData() + InB.GetStride() * Y;
+                for(int X = 0; X < 256 * 4; X += 4)
+                {
+                    Count += (A[X] != B[X] || A[X + 1] != B[X + 1] || A[X + 2] != B[X + 2]) ? 1 : 0;
+                }
+            }
+            return Count;
+        };
+
+        EngineCore::Image Culled, Unculled, Revealed, RevealedUnculled;
+        RenderStats CulledStats, UnculledStats, RevealedStats, Ignored;
+        const bool bCulled = Capture(Culled, CulledStats);
+        std::printf("    behind the wall: %llu of %llu queried boxes occluded\n",
+                    (unsigned long long)CulledStats.ProxiesOccludedLastFrame, (unsigned long long)CulledStats.OcclusionQueriesLastFrame);
+        Expect(bCulled && CulledStats.OcclusionQueriesLastFrame == 2, "both boxes are queried");
+        Expect(bCulled && CulledStats.ProxiesOccludedLastFrame == 1, "the box behind the wall is found hidden and not drawn; the one beside it is drawn");
+
+        Enabled->SetBool(false);
+        const bool bUnculled = Capture(Unculled, UnculledStats);
+        Enabled->SetBool(true);
+        std::printf("    culled vs not: %d pixels differ\n", Differing(Culled, Unculled));
+        Expect(bCulled && bUnculled && UnculledStats.OcclusionQueriesLastFrame == 0 && Differing(Culled, Unculled) == 0,
+               "and the frame is pixel for pixel the one drawn without occlusion culling");
+
+        /* The wall moved aside: the box shows again, a frame late at most. */
+        Scene.Wall.GetComponent<GameCore::TransformComponent>()->Position = EngineCore::Vector3(-3000.0, 100.0, 0.0);
+        const bool bRevealed = Capture(Revealed, RevealedStats);
+        Enabled->SetBool(false);
+        const bool bRevealedUnculled = Capture(RevealedUnculled, Ignored);
+        Enabled->SetBool(true);
+        std::printf("    wall moved aside: %d pixels changed; vs unculled %d\n", Differing(Culled, Revealed), Differing(Revealed, RevealedUnculled));
+        Expect(bRevealed && RevealedStats.ProxiesOccludedLastFrame == 0 && Differing(Culled, Revealed) > 200,
+               "with the wall moved aside, the box is drawn again");
+        Expect(bRevealed && bRevealedUnculled && Differing(Revealed, RevealedUnculled) == 0, "exactly as it is without occlusion culling");
+
+        Rend.UnbindWorld();
+        Rend.SetViewOverride(nullptr);
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+}
+
 int main()
 {
     // Unbuffered, so a run piped to a file shows how far it got if a GPU check hangs.
@@ -5837,6 +6155,8 @@ int main()
     TestParticlesOnGpu();
     TestStatFrameOnGpu();
     TestStaticDrawListsOnGpu();
+    TestOcclusionCulling();
+    TestOcclusionCullingOnGpu();
     TestClearGradientOnGpu();
     TestSceneCaptureOnGpu();
     TestToneMappingOnGpu();
@@ -5847,6 +6167,7 @@ int main()
     TestTextureCompression();
     TestTextureMips();
     TestToneMappingSettings();
+    TestFidelitySettings();
     TestImageBasedLightingData();
     TestMeshDrawing();
     TestEngineMeshes();

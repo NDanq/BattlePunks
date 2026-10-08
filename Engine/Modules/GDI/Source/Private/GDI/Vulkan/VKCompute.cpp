@@ -153,7 +153,7 @@ bool VulkanDynamicGDI::ReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& Out
 
     VkBuffer       Staging    = VK_NULL_HANDLE;
     VkDeviceMemory StagingMem = VK_NULL_HANDLE;
-    if(!AllocStagingBuffer(DeviceObj, Buffer->GetSize(), VK_BUFFER_USAGE_TRANSFER_DST_BIT, Staging, StagingMem)) return false;
+    if(!AllocStagingBuffer(DeviceObj, Buffer->GetSize(), VK_BUFFER_USAGE_TRANSFER_DST_BIT, Staging, StagingMem, true)) return false;
 
     VkCommandPool   Pool = VK_NULL_HANDLE;
     VkCommandBuffer Cmd  = VK_NULL_HANDLE;

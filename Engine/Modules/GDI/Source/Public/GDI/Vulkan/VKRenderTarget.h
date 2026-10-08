@@ -30,6 +30,7 @@ public:
     void Resize(const uint InWidth, const uint InHeight) override;
     bool IsValid() override;
     EngineCore::Image ToImage() override;
+    GDIReadback* BeginReadback() override;
     GDITexture2D* ToGDITexture2D() override;
     GDITexture2D* ToDepthTexture2D() override;
     void ResolveRenderTarget(GDIRenderTarget* Dest) override;

@@ -230,6 +230,10 @@ namespace RenderCore
             float                    Pitch  = 20.0f;
             float                    Zoom   = 1.0f;
             EngineCore::Color        Tint{255, 255, 255, 255};
+
+            /* A skinned mesh's pose: 12 floats a bone (Skinning.glsl), up to
+             * 256 bones. Empty: its reference pose. */
+            std::vector<float>       SkinPalette;
         };
         uint64_t RequestMeshPreview(const MeshPreview& InPreview);
 

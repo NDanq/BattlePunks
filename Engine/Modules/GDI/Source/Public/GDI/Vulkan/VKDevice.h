@@ -89,9 +89,16 @@ public:
      *  format's own sampled-image support. */
     bool SupportsSampledFormat(VkFormat InFormat) const;
 
+    /* Anisotropic filtering: 1 if the device has no samplerAnisotropy, else its limit (maxSamplerAnisotropy). */
+    inline float GetMaxSamplerAnisotropy() const { return MaxSamplerAnisotropy; }
+
     /** Whether the graphics queue also runs compute (GDISupportsCompute): every
      *  desktop GPU's does, which is what lets one command buffer hold both. */
     inline bool GraphicsQueueSupportsCompute() const { return bGraphicsQueueCompute; }
+
+    /** VK_EXT_conditional_rendering and its feature, enabled when the GPU has
+     *  them: what lets an occlusion query skip draws (GDISetOcclusionPredicate). */
+    inline bool SupportsConditionalRendering() const { return bConditionalRendering; }
 
 private:
     bool PickPhysicalDevice();
@@ -103,7 +110,9 @@ private:
     uint32_t            GraphicsQueueFamilyIndex = UINT32_MAX;
     VkQueue             GraphicsQueue           = VK_NULL_HANDLE;
     bool                bTextureCompressionBC   = false;   // the feature, enabled
+    float               MaxSamplerAnisotropy    = 1.0f;    // samplerAnisotropy enabled: the device's limit
     bool                bGraphicsQueueCompute   = false;   // GraphicsQueueFamilyIndex has VK_QUEUE_COMPUTE_BIT
+    bool                bConditionalRendering   = false;   // VK_EXT_conditional_rendering, enabled
 
     VkPhysicalDeviceMemoryProperties MemoryProperties{};
 

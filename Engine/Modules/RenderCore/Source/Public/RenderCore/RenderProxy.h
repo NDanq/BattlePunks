@@ -1,6 +1,7 @@
 #ifndef RENDERCORE_RENDERPROXY_H
 #define RENDERCORE_RENDERPROXY_H
 
+#include <cstring>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
@@ -79,6 +80,15 @@ namespace RenderCore
          * proxy type casts no shadow unless it says so. */
         virtual void DrawShadow(RenderContext& InContext) { (void)InContext; }
 
+        /* OCCLUSION CULLING (RENDERPIPELINE.md, "Occlusion culling"). An
+         * occluder is never culled by occlusion itself: RENDER THREAD, once a
+         * frame while it is in view, DrawOccluder queues its depth into the
+         * PrePass (RenderContext::DrawMeshOccluder), which every other proxy's
+         * box is tested against. Neither by default: a proxy type occludes
+         * nothing unless it says so (RenderComponent::bOccluder). */
+        virtual bool IsOccluder() const { return false; }
+        virtual void DrawOccluder(RenderContext& InContext) { (void)InContext; }
+
         /* RENDER THREAD, before culling: how far past WorldBounds this
          * proxy's draw can reach -- a material's World Position Offset (Max
          * Offset, RenderContext::GetMaterialMaxOffset). 0 by default. */
@@ -110,6 +120,27 @@ namespace RenderCore
             Transform    = InTransform;
             LocalToWorld = InTransform.ToMatrix();
             WorldBounds  = GameCore::AABB::Transformed(LocalBounds, LocalToWorld);
+        }
+
+        /* VELOCITY (RENDERPIPELINE.md): RenderScene calls this once a frame,
+         * after drawing it: what it is now becomes what it was. A proxy with
+         * more that moves (a skinned mesh's pose) keeps that too. */
+        virtual void EndFrameMotion()
+        {
+            PrevLocalToWorld  = LocalToWorld;
+            bHasPrevTransform = true;
+        }
+
+        /* How it moved since the frame before: OutMotion times LocalToWorld
+         * is LocalToWorld then. False if it did not, or is new. */
+        bool GetMotion(EngineCore::Matrix4x4& OutMotion) const
+        {
+            if(!bHasPrevTransform || std::memcmp(&PrevLocalToWorld, &LocalToWorld, sizeof(LocalToWorld)) == 0)
+            {
+                return false;
+            }
+            OutMotion = PrevLocalToWorld * EngineCore::Matrix4x4::Inverse(LocalToWorld);
+            return true;
         }
 
         void SetLocalBounds(const GameCore::AABB& InBounds)
@@ -153,6 +184,8 @@ namespace RenderCore
         GameCore::EntityID     Owner;
         RenderTransform        Transform;
         EngineCore::Matrix4x4  LocalToWorld;
+        EngineCore::Matrix4x4  PrevLocalToWorld;            // as the frame before was drawn (EndFrameMotion)
+        bool                   bHasPrevTransform = false;
         GameCore::AABB         LocalBounds;
         GameCore::AABB         WorldBounds;
 
@@ -164,6 +197,11 @@ namespace RenderCore
         bool     bStatic      = false;
         uint64_t ChangeSerial = 0;
         RenderBakedDraw Baked;
+
+        /* RenderScene's occlusion bookkeeping: its query in the scene's last
+         * round (-1: none), and whether the last answer read found it hidden. */
+        int32_t  OcclusionQuery = -1;
+        bool     bOccluded      = false;
     };
 
     /*

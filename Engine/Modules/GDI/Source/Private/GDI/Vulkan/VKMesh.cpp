@@ -227,6 +227,24 @@ void VKMesh::InitResource()
             return;
         }
     }
+    if(IsSkinned())
+    {
+        const VkDeviceSize SkinSize = static_cast<VkDeviceSize>(NumActualVerts * 4) * sizeof(float);
+        if(!CreateBuffer(SkinSize,
+                         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                         JointBuffer, JointMemory)
+           || !UploadBufferData(JointBuffer, RenderData.Joints, SkinSize)
+           || !CreateBuffer(SkinSize,
+                            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                            WeightBuffer, WeightMemory)
+           || !UploadBufferData(WeightBuffer, RenderData.Weights, SkinSize))
+        {
+            Release();
+            return;
+        }
+    }
     if(IsIndexed())
     {
         const VkDeviceSize IndexSize = static_cast<VkDeviceSize>(RenderData.NumIndices) * sizeof(uint32_t);
@@ -420,6 +438,8 @@ void VKMesh::Release()
     DestroyOrDefer(NormalBuffer,   NormalMemory);
     DestroyOrDefer(VertexColorBuffer, VertexColorMemory);
     DestroyOrDefer(UV1Buffer,      UV1Memory);
+    DestroyOrDefer(JointBuffer,    JointMemory);
+    DestroyOrDefer(WeightBuffer,   WeightMemory);
     DestroyOrDefer(TexCoordBuffer, TexCoordMemory);
     DestroyOrDefer(PositionBuffer, PositionMemory);
 
@@ -444,11 +464,21 @@ void VKMesh::Draw()
     // happen for EVERY draw — including a direct Mesh->Draw() (layer compositing /
     // LayerBlit), which does not go through DrawObject. If state is incomplete, skip
     // the draw rather than issue vkCmdDraw with no pipeline bound.
-    if(auto* GDI = dynamic_cast<VulkanDynamicGDI*>(GDynamicGDI))
+    auto* GDI = dynamic_cast<VulkanDynamicGDI*>(GDynamicGDI);
+    if(GDI && !GDI->BindDrawState(this, IsInstanced()))
     {
-        if(!GDI->BindDrawState(this, IsInstanced()))
-            return;
+        return;
     }
+
+    /* Skipped on the GPU if GDISetOcclusionPredicate's query found nothing:
+     * conditional rendering round whichever draw this records. */
+    struct PredicateScope
+    {
+        VulkanDynamicGDI* Driver;
+        VkCommandBuffer   Cmd;
+        bool              bBegun;
+        ~PredicateScope() { if(Driver) { Driver->EndDrawPredicate(Cmd, bBegun); } }
+    } Predicate{ GDI, Cmd, GDI && GDI->BeginDrawPredicate(Cmd) };
 
     // Bind position (binding 0) and texcoord (binding 1) buffers.
     const VkBuffer     Buffers[2] = { PositionBuffer, TexCoordBuffer };
@@ -465,6 +495,13 @@ void VKMesh::Draw()
         const VkBuffer     MeshBuffers[3] = { NormalBuffer, VertexColorBuffer, UV1Buffer };
         const VkDeviceSize MeshOffsets[3] = { 0, 0, 0 };
         vkCmdBindVertexBuffers(Cmd, 2, 3, MeshBuffers, MeshOffsets);
+        if(JointBuffer != VK_NULL_HANDLE && WeightBuffer != VK_NULL_HANDLE)
+        {
+            // Vertex layout 4: bone indices and weights at bindings 6 and 7.
+            const VkBuffer     SkinBuffers[2] = { JointBuffer, WeightBuffer };
+            const VkDeviceSize SkinOffsets[2] = { 0, 0 };
+            vkCmdBindVertexBuffers(Cmd, 6, 2, SkinBuffers, SkinOffsets);
+        }
         vkCmdBindIndexBuffer(Cmd, IndexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
         // Instanced (GDISetInstanceBuffer): vertex layout 3 reads binding 5 per instance.

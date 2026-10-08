@@ -49,6 +49,28 @@ namespace RenderCore
         float   AoPower     = 1.5f;
         uint8_t bAoBlur     = 1;
 
+        /* Screen-space reflections (RENDERPIPELINE.md): over the probes' specular, in the IBL pass. */
+        uint8_t bScreenReflections = 0;
+        float   SsrIntensity    = 1.0f;
+        float   SsrMaxRoughness = 0.45f;
+        float   SsrMaxDistance  = 1500.0f;     // world units
+        float   SsrThickness    = 25.0f;       // world units
+        float   SsrSteps        = 32.0f;
+
+        /* Volumetric fog (RENDERPIPELINE.md): after the translucent stages, before TAA. */
+        uint8_t bVolumetricFog   = 0;
+        float   FogDensity       = 0.00003f;   // per world unit, at and below FogBaseHeight
+        float   FogHeightFalloff = 0.0008f;    // per world unit above it
+        float   FogBaseHeight    = 0.0f;
+        float   FogMaxDistance   = 8000.0f;
+        float   FogAnisotropy    = 0.6f;
+        float   FogSun           = 1.0f;
+        float   FogSky           = 1.0f;
+        float   FogLights        = 1.0f;
+        float   FogAlbedo[3]     = { 1.0f, 1.0f, 1.0f };
+        float   FogSteps         = 24.0f;
+        uint8_t bFogShadows      = 1;
+
         uint8_t bDepthOfField = 0;
         float   DofFocusDistance = 800.0f;
         float   DofFocusRange    = 400.0f;
@@ -69,6 +91,8 @@ namespace RenderCore
 
         uint8_t bAntialiasing = 0;
         uint8_t AaQuality     = 1;           // 0 Low, 1 Medium, 2 High
+        uint8_t AaMethod      = 0;           // 0 FXAA, 1 TAA (RENDERPIPELINE.md, "Temporal antialiasing")
+        float   AaSharpness   = 0.35f;       // TAA: sharpened back after the resolve, 0-1
         float   AaEdgeThreshold = 0.125f;
 
         /* An HDR scene's exposure and tone map (the first post pass). Off: exposure 0, None (clamp). */
@@ -76,12 +100,23 @@ namespace RenderCore
         float   Exposure     = 0.0f;         // stops (EV): the scene times 2^Exposure
         uint8_t ToneMapper   = 2;            // 0 None, 1 Reinhard, 2 ACES
 
+        /* Eye adaptation (RENDERPIPELINE.md, "Auto exposure"): with Tone Mapping, the scene's
+         * metered average exposed toward Key, within MinEV-MaxEV stops, eased at the speeds. */
+        uint8_t bAutoExposure = 0;
+        float   AeKey         = 0.18f;
+        float   AeMinEV       = -2.0f;
+        float   AeMaxEV       = 4.0f;
+        float   AeSpeedUp     = 3.0f;        // toward a brighter view, per second
+        float   AeSpeedDown   = 1.0f;        // toward a darker one
+        float   AeCentreWeight = 0.5f;
+
         PostProcessMaterial Materials[RENDER_POST_MATERIAL_MAX];
         uint32_t            MaterialCount = 0;
 
         bool IsEmpty() const
         {
-            return !bAmbientOcclusion && !bDepthOfField && !bMotionBlur && !bBloom && !bAntialiasing && !bToneMapping && MaterialCount == 0;
+            return !bAmbientOcclusion && !bScreenReflections && !bVolumetricFog && !bDepthOfField && !bMotionBlur && !bBloom && !bAntialiasing && !bToneMapping && !bAutoExposure
+                && MaterialCount == 0;
         }
     };
 

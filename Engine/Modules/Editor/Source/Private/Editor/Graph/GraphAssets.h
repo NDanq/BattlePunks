@@ -6,6 +6,7 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <vector>
 
 #include <QColor>
 #include <QImage>
@@ -118,6 +119,7 @@ namespace EditorGraphs
 
     /* Set by the main window; nullptr when there is none. */
     void SetEditorContext(EditorContext* InContext);
+    EditorContext* GetEditorContext();
 
     /* What a RenderComponent names a material graph by: its runtime path,
      * "Materials/Glow.material.nmgraph" (the engine's: "Engine/Content/...").
@@ -129,6 +131,10 @@ namespace EditorGraphs
      * thread, unless it is gone. Requests during a cook coalesce to the latest. */
     void StageMaterial(const QString& InMaterial, const NodeGraph::CompileResult& InResult, QObject* InContext,
                        std::function<void(bool, const QString&)> InDone);
+
+    /* Whether InMaterial (a runtime path) is being cooked, or waits to be:
+     * a preview now would draw what it was before. */
+    bool IsMaterialCooking(const QString& InMaterial);
 
     /* Renderer preview of InName; InDone gets the image or null and why.
      * Not called if InContext is gone. */
@@ -148,6 +154,7 @@ namespace EditorGraphs
         float       Pitch  = 20.0f;
         float       Zoom   = 1.0f;
         QColor      Tint   = QColor(255, 255, 255);
+        std::vector<float> SkinPalette;   // a skinned mesh's pose, 12 floats a bone; empty: its reference pose
     };
     void RequestMeshPreview(const MeshPreviewOptions& InOptions, QObject* InContext,
                             std::function<void(const QImage&, const QString&)> InDone);

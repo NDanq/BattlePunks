@@ -67,8 +67,11 @@ namespace GameCore
         /* nullptr clears. False if not alive. Names need not be unique. */
         bool SetName(const char* InName) const { return OwningWorld && OwningWorld->SetEntityName(ID, InName); }
 
-        /* Static or Dynamic (Mobility.h); Dynamic if not alive. */
+        /* Static or Dynamic (Mobility.h); Dynamic if not alive. A dynamic
+         * member of a prefab instance whose root is static reads Static. */
         EMobility GetMobility() const { return OwningWorld ? OwningWorld->GetEntityMobility(ID) : EMobility::Dynamic; }
+        /* What SetMobility last set, before a static root's: what is saved. */
+        EMobility GetAuthoredMobility() const { return OwningWorld ? OwningWorld->GetEntityAuthoredMobility(ID) : EMobility::Dynamic; }
         bool      IsStatic() const { return GetMobility() == EMobility::Static; }
         /* False if not alive. */
         bool SetMobility(EMobility InMobility) const { return OwningWorld && OwningWorld->SetEntityMobility(ID, InMobility); }

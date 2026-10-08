@@ -7,6 +7,7 @@
 
 #include "GDIDefinitions.h"
 #include "GDIBuffer.h"
+#include "GDIQuery.h"
 #include "GDIShader.h"
 #include "GDIMesh.h"
 #include "GDISync.h"
@@ -396,6 +397,22 @@ public:
     virtual uint64_t GetPreviousGPUTimestamps(double* /*OutMilliseconds*/) { return 0; }
 
     /**
+     * Occlusion queries (GDIQuery.h; validated by the GDI* functions). A
+     * backend without them keeps these defaults: none made, nothing done.
+     * SupportsOcclusionPredication: whether GDISetOcclusionPredicate skips
+     * draws, or is ignored and they all draw.
+     */
+    virtual bool                 SupportsOcclusionQueries() const { return false; }
+    virtual bool                 SupportsOcclusionPredication() const { return false; }
+    virtual GDIOcclusionQueries* CreateOcclusionQueries(uint32_t /*InCapacity*/) { return nullptr; }
+    virtual void                 BeginOcclusionRound(GDIOcclusionQueries* /*InSet*/, uint32_t /*InCount*/) {}
+    virtual void                 BeginOcclusionQuery(GDIOcclusionQueries* /*InSet*/, uint32_t /*InIndex*/) {}
+    virtual void                 EndOcclusionQuery(GDIOcclusionQueries* /*InSet*/, uint32_t /*InIndex*/) {}
+    virtual void                 ResolveOcclusionQueries(GDIOcclusionQueries* /*InSet*/) {}
+    virtual void                 SetOcclusionPredicate(GDIOcclusionQueries* /*InSet*/, int32_t /*InIndex*/) {}
+    virtual bool                 ReadOcclusionResults(GDIOcclusionQueries* /*InSet*/, std::vector<uint8_t>& /*OutVisible*/) { return false; }
+
+    /**
      * Present the most recent rendered frame to the supplied window.
      * Called from the UI thread after RendererFinished(). OpenGL keeps its existing
      * QOpenGLContext-based present path and overrides this as a no-op; Vulkan
@@ -590,7 +607,7 @@ protected:
     GDIShader* BoundPixelShader;
     bool bInitialized = false;
 
-    /* SetUniformBlock's bytes for bindings 2 and 3, and SetMaterialTexture's. */
+    /* SetUniformBlock's bytes for bindings 2, 3, 12 and 13 (the skin blocks), and SetMaterialTexture's. */
     /* GDISetViewport's rectangle, which GDISetScissorRect clips to. */
     uint                  ViewportX = 0, ViewportY = 0, ViewportWidth = 0, ViewportHeight = 0;
 
@@ -615,10 +632,12 @@ protected:
     GDIBuffer*            IndirectArgs       = nullptr;
     uint32_t              IndirectArgsOffset = 0;
 
-    std::vector<uint8_t>  MaterialBlocks[2];
+    /* [0] material, [1] scene, [2] skin, [3] previous skin (empty: no skinned
+     * draw since the last clear). */
+    std::vector<uint8_t>  MaterialBlocks[4];
     /* Bumped by each SetUniformBlock, so a backend can reuse an upload of a
      * block that has not changed since (the scene block: once per frame). */
-    uint64_t              MaterialBlockSerials[2] = {};
+    uint64_t              MaterialBlockSerials[4] = {};
     GDITextureResource*   MaterialTextures[GDI_MATERIAL_TEXTURE_SLOTS] = {};
 };
 
@@ -747,6 +766,14 @@ bool GDIShaderDebugEnabled();
 std::string GDIGetShaderPDBPath(const std::string& InCookedPath);
 
 /* GDIDynamicDriver::CreateRenderTargetFormat / SupportsRenderTargetFormat. */
+/* Anisotropic filtering for textures with a mip chain and Linear filtering:
+ * InMax 1 (off) to 16, clamped to what the device supports. Read when a
+ * sampler is made, so set it before textures are created -- RenderCore does,
+ * from [Rendering] Anisotropy, before the render thread starts the device.
+ * Render targets (one level) are never filtered anisotropically. */
+void  GDISetMaxAnisotropy(float InMax);
+float GDIGetMaxAnisotropy();
+
 GDIRenderTarget* GDICreateRenderTargetFormat(std::string InName, uint InWidth, uint InHeight, EGDIRenderTargetFormat InFormat);
 bool             GDISupportsRenderTargetFormat(EGDIRenderTargetFormat InFormat);
 
@@ -805,6 +832,30 @@ void       GDISetIndirectArgs(GDIBuffer* InArgs, uint32_t InOffsetBytes = 0);
 bool     GDISupportsGPUTimestamps();
 void     GDIWriteGPUTimestamp(uint32_t InIndex);
 uint64_t GDIGetPreviousGPUTimestamps(double* OutMilliseconds);   // GDI_GPU_TIMESTAMP_MAX of them
+
+/*
+ * Occlusion queries (GDIQuery.h), where the backend has them (Vulkan, D3D12
+ * and Null so far): false and null without a driver or support. Out of range
+ * indices, and a round past the set's capacity, are ignored.
+ *
+ * GDISetOcclusionPredicate: the draws after it are skipped if InSet's query
+ * InIndex (resolved this round) found nothing, until it is called with null
+ * or -1. Where !GDISupportsOcclusionPredication() it is ignored: they draw.
+ *
+ * GDIReadOcclusionResults: OutVisible[i] for each query i of InSet's last
+ * round, nonzero if it passed, once that round's block has finished on the
+ * GPU -- by the next GDIBeginRendering. False, OutVisible untouched, before
+ * then or with no round; it never waits. Each round is read at most once.
+ */
+bool                 GDISupportsOcclusionQueries();
+bool                 GDISupportsOcclusionPredication();
+GDIOcclusionQueries* GDICreateOcclusionQueries(uint32_t InCapacity);
+void                 GDIBeginOcclusionRound(GDIOcclusionQueries* InSet, uint32_t InCount);
+void                 GDIBeginOcclusionQuery(GDIOcclusionQueries* InSet, uint32_t InIndex);
+void                 GDIEndOcclusionQuery(GDIOcclusionQueries* InSet, uint32_t InIndex);
+void                 GDIResolveOcclusionQueries(GDIOcclusionQueries* InSet);
+void                 GDISetOcclusionPredicate(GDIOcclusionQueries* InSet, int32_t InIndex);
+bool                 GDIReadOcclusionResults(GDIOcclusionQueries* InSet, std::vector<uint8_t>& OutVisible);
 
 IMPLEMENT_GDI_FUNCTION_BODY(
         template<typename ShaderRef> void,

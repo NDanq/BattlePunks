@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Prefab Format="1" Name="FoxHat" NextId="5">
+  <Tick Mode="Tick" />
+  <Entity Id="1" Name="FoxHat">
+    <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+    </Component>
+  </Entity>
+  <Entity Id="2" Name="Brim" Parent="1">
+    <Component Type="Render" Version="4">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+      <Mesh Value="Engine/Content/Meshes/Cylinder.nmmesh" />
+      <ParameterCount Value="2" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="0.035" />
+      <Parameter0Y Value="0.035" />
+      <Parameter0Z Value="0.04" />
+      <Parameter0W Value="0" />
+      <Parameter1Name Value="Roughness" />
+      <Parameter1Slot Value="0" />
+      <Parameter1X Value="0.6" />
+      <Parameter1Y Value="0" />
+      <Parameter1Z Value="0" />
+      <Parameter1W Value="0" />
+      <CastShadows Value="true" />
+      <CastInsetShadow Value="false" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="0" Y="0.5" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="12" Y="1" Z="12" />
+    </Component>
+  </Entity>
+  <Entity Id="3" Name="Crown" Parent="1">
+    <Component Type="Render" Version="4">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+      <Mesh Value="Engine/Content/Meshes/Cylinder.nmmesh" />
+      <ParameterCount Value="2" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="0.035" />
+      <Parameter0Y Value="0.035" />
+      <Parameter0Z Value="0.04" />
+      <Parameter0W Value="0" />
+      <Parameter1Name Value="Roughness" />
+      <Parameter1Slot Value="0" />
+      <Parameter1X Value="0.6" />
+      <Parameter1Y Value="0" />
+      <Parameter1Z Value="0" />
+      <Parameter1W Value="0" />
+      <CastShadows Value="true" />
+      <CastInsetShadow Value="false" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="0" Y="6" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="7" Y="10" Z="7" />
+    </Component>
+  </Entity>
+  <Entity Id="4" Name="Band" Parent="1">
+    <Component Type="Render" Version="4">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+      <Mesh Value="Engine/Content/Meshes/Cylinder.nmmesh" />
+      <ParameterCount Value="2" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="0.62" />
+      <Parameter0Y Value="0.06" />
+      <Parameter0Z Value="0.07" />
+      <Parameter0W Value="0" />
+      <Parameter1Name Value="Roughness" />
+      <Parameter1Slot Value="0" />
+      <Parameter1X Value="0.45" />
+      <Parameter1Y Value="0" />
+      <Parameter1Z Value="0" />
+      <Parameter1W Value="0" />
+      <CastShadows Value="true" />
+      <CastInsetShadow Value="false" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="0" Y="2" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="7.4" Y="1.8" Z="7.4" />
+    </Component>
+  </Entity>
+</Prefab>

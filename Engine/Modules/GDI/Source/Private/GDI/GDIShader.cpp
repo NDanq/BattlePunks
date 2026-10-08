@@ -60,7 +60,9 @@ void GDIShader::UpdateCoreUniforms(class GDIView *InView, class GDITransform *Tr
 
     if(Transform)
     {
-        Resource->SetUniform("Transform.Model", Transform->GetModel());
+        const Matrix4x4 Model = Transform->GetModel();
+        Resource->SetUniform("Transform.Model", Model);
+        Resource->SetUniform("Transform.PrevModel", Transform->bHasPrevModel ? Transform->PrevModel : Model);
         Resource->SetUniform("Transform.PositionWorldSpace", Transform->Translate);
     }
 

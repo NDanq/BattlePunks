@@ -19,6 +19,11 @@ public:
     Vector3 Scale = Vector3(1, 1, 1);
     float TransformScale = 1.0f;
 
+    /* Where the model was the frame before (Transform.PrevModel, for velocity);
+     * without it, GetModel() -- it did not move. Set per draw. */
+    bool      bHasPrevModel = false;
+    Matrix4x4 PrevModel;
+
     const Matrix4x4 GetModel() const
     {
         auto AdjustedTranslate = Vector3(Translate.GetX() * TransformScale,

@@ -10,8 +10,11 @@
 #include <QMimeData>
 #include <QUrl>
 
+#include "Public/RenderCore/AnimClipAsset.h"
+#include "Public/RenderCore/AnimStateAsset.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/ParticleSystemAsset.h"
+#include "Public/RenderCore/SkeletonAsset.h"
 #include "Public/RenderCore/TextureAsset.h"
 #include "Public/RenderCore/RenderTargetAsset.h"
 #include "Private/Editor/Graph/GraphAssets.h"
@@ -143,6 +146,18 @@ namespace EditorContent
                                                                                                                 : QString();
     }
 
+    QStringList ListAnimationPaths()
+    {
+        return ListGraphs(&AnimationPathFor);
+    }
+
+    QString AnimationPathFor(const QString& InPath)
+    {
+        const bool bAnimation = InPath.endsWith(QStringLiteral(".nmanim"), Qt::CaseInsensitive)
+                             || InPath.endsWith(QStringLiteral(".nmanimstate"), Qt::CaseInsensitive);
+        return bAnimation ? ToRuntimePath(InPath) : QString();
+    }
+
     QStringList ListRenderTargetPaths()
     {
         return ListGraphs(&RenderTargetPathFor);
@@ -207,6 +222,9 @@ namespace EditorContent
             RenderCore::TextureAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::RenderTargetAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::ParticleSystemCache::Invalidate(Runtime.toStdString());
+            RenderCore::SkeletonAssetCache::Invalidate(Runtime.toStdString());
+            RenderCore::AnimClipAssetCache::Invalidate(Runtime.toStdString());
+            RenderCore::AnimStateAssetCache::Invalidate(Runtime.toStdString());
         }
     }
 
@@ -224,6 +242,9 @@ namespace EditorContent
             RenderCore::TextureAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::RenderTargetAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::ParticleSystemCache::Invalidate(Runtime.toStdString());
+            RenderCore::SkeletonAssetCache::Invalidate(Runtime.toStdString());
+            RenderCore::AnimClipAssetCache::Invalidate(Runtime.toStdString());
+            RenderCore::AnimStateAssetCache::Invalidate(Runtime.toStdString());
         }
     }
 }

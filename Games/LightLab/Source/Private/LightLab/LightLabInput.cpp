@@ -15,6 +15,10 @@
  *            (Throw, ResetLevel, EnterVehicle, Pause, CaptureMouse) and its
  *            LightLab.Drive system (MoveForward, MoveRight, Handbrake)
  *
+ * and a second map, "Fox", read by the SteerableFox prefab's InputComponent
+ * (Content/Prefabs/SteerableFox.script.nmgraph). Its keys are clear of
+ * Default's, so the camera and the fox steer at once.
+ *
  * The pause menu (Content/UI/PauseMenu.nmui) is navigated with the engine's
  * own "UI" map (arrows, Return, Escape; the D-pad, South, East) while it is open.
  */
@@ -46,4 +50,17 @@ NIMBLE_DEFINE_INPUT_MAP(Default)
      * window's and the stick's own sense), so down looks down. */
     Map.Axis("LookX", "Mouse.DeltaX*0.15, Gamepad.RightX*2.5");
     Map.Axis("LookY", "Mouse.DeltaY*0.15, Gamepad.RightY*2.5");
+}
+
+/* The steerable fox: U walks on (hold Y to run), H and K turn, J sits once it
+ * has stopped, I looks round (its head layer). The pad's D-pad and South. */
+NIMBLE_DEFINE_INPUT_MAP(Fox)
+{
+    Map.Action("FoxSit", "J, Gamepad.DPadDown");
+
+    /* Run and Look are axes, 0 or 1 held, so the graph blends with them. */
+    Map.Axis("FoxForward", "U, Gamepad.DPadUp");
+    Map.Axis("FoxTurn",    "K, -H, Gamepad.DPadRight, -Gamepad.DPadLeft");
+    Map.Axis("FoxRun",     "Y, Gamepad.South");
+    Map.Axis("FoxLook",    "I");
 }

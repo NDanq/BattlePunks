@@ -6,6 +6,7 @@
  * look; NIMBLE_TEXTURE_SNAPSHOT=<file.png> the Texture Viewer.
  */
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -29,6 +30,13 @@
 #include "Public/Editor/ViewportWidget.h"
 #include "Public/RenderCore/TextureAsset.h"
 #include "Private/Editor/Content/TextureViewerWindow.h"
+#include "Private/Editor/Content/AnimStateEditorWindow.h"
+#include "Private/Editor/Content/AnimStateGraph.h"
+#include "Private/Editor/Content/ClipTimeline.h"
+#include "Private/Editor/Graph/GraphView.h"
+#include <QGraphicsItem>
+#include <QMouseEvent>
+#include "Public/RenderCore/AnimStateAsset.h"
 
 #include "Public/Editor/DetailsPanel.h"
 #include "Public/Editor/EditorDocument.h"
@@ -344,6 +352,171 @@ static void TestViewSettings()
     QStandardPaths::setTestModeEnabled(false);
 }
 
+/* The anim state editor's graph, offscreen: what is asked on it -- states
+ * and transitions added and removed, a box moved, the entry set -- is what
+ * Save writes. */
+static void TestAnimStateGraph()
+{
+    std::printf("Anim state graph\n");
+
+    RenderCore::AnimLayer Unplaced;
+    Unplaced.States.resize(3);
+    Unplaced.States[0].Name = "A";
+    Unplaced.States[1].Name = "B";
+    Unplaced.States[2].Name = "C";
+    Unplaced.EntryState = 2;
+    AnimStateGraph::LayOut(Unplaced);
+    Expect(Unplaced.bEditorPlaced && Unplaced.States[2].EditorX == 0.0f && Unplaced.States[2].EditorY == 0.0f
+           && Unplaced.States[0].EditorX > 0.0f, "a layer laid out: placed, the entry first");
+
+    QTemporaryDir Temp;
+    const QString Path = Temp.filePath(QStringLiteral("Graph.nmanimstate"));
+    {
+        RenderCore::AnimStateData Data;
+        RenderCore::AnimLayer Layer;
+        Layer.Name = "Base";
+        Layer.States.resize(3);
+        Layer.States[0].Name = "A";
+        Layer.States[1].Name = "B";
+        Layer.States[2].Name = "C";
+        RenderCore::AnimTransition AB;
+        AB.From = 0;
+        AB.To   = 1;
+        Layer.Transitions.push_back(AB);
+        Data.Layers.push_back(Layer);
+        RenderCore::SaveAnimStateFile(Path.toStdString(), Data);
+    }
+
+    AnimStateEditorWindow* Window = AnimStateEditorWindow::Open(Path, nullptr);
+    AnimStateGraph* Graph = Window ? Window->findChild<AnimStateGraph*>() : nullptr;
+    Expect(Window && Graph, "the editor opens with its graph");
+    if(!Window || !Graph) { return; }
+    PumpFor(50);
+
+    emit Graph->AddTransitionRequested(-1, 2);     // Any -> C
+    PumpFor(10);
+    emit Graph->RemoveStateRequested(1);           // B, and A -> B with it; C becomes 1
+    PumpFor(10);
+    emit Graph->AddStateRequested(QPointF(500.0, 40.0));
+    PumpFor(10);
+    emit Graph->StateMoved(0, QPointF(-100.0, 60.0));
+    emit Graph->EntryRequested(1);
+    PumpFor(10);
+    Expect(Window->Save(), "it saves");
+
+    RenderCore::AnimStateData Back;
+    Expect(RenderCore::LoadAnimStateFile(Path.toStdString(), Back) && Back.Layers.size() == 1, "and loads back");
+    if(Back.Layers.size() == 1)
+    {
+        const RenderCore::AnimLayer& Layer = Back.Layers[0];
+        Expect(Layer.States.size() == 3 && Layer.States[0].Name == "A" && Layer.States[1].Name == "C", "B removed, the rest in order, one added");
+        Expect(Layer.Transitions.size() == 1 && Layer.Transitions[0].From == -1 && Layer.Transitions[0].To == 1,
+               "its transition went with it; Any -> C renumbered");
+        Expect(Layer.EntryState == 1, "the entry set");
+        Expect(Layer.bEditorPlaced && Layer.States[0].EditorX == -100.0f && Layer.States[0].EditorY == 60.0f
+               && Layer.States[2].EditorX == 500.0f, "where the boxes were put is kept");
+    }
+
+    /* Left-drag on empty canvas pans; a click there clears the selection. */
+    if(GraphView* View = Graph->findChild<GraphView*>())
+    {
+        QWidget* Port = View->viewport();
+        auto Send = [Port](const QEvent::Type InType, const QPoint& InAt, const Qt::MouseButtons InButtons)
+        {
+            QMouseEvent Event(InType, QPointF(InAt), Port->mapToGlobal(QPointF(InAt)),
+                              InType == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, InButtons, Qt::NoModifier);
+            QApplication::sendEvent(Port, &Event);
+        };
+        QPoint Empty(-1, -1);
+        for(int Y = 4; Y < Port->height() && Empty.x() < 0; Y += 8)
+        {
+            for(int X = 4; X < Port->width() - 60; X += 8)
+            {
+                if(!View->itemAt(QPoint(X, Y))) { Empty = QPoint(X, Y); break; }
+            }
+        }
+        Expect(Empty.x() >= 0, "the canvas has empty space");
+        if(Empty.x() >= 0)
+        {
+            QGraphicsItem* Box = nullptr;
+            for(QGraphicsItem* Each : View->scene()->items()) { if(Each->flags() & QGraphicsItem::ItemIsMovable) { Box = Each; break; } }
+            const QPointF BoxAt  = Box ? Box->pos() : QPointF();
+            const QPointF Before = View->mapToScene(Empty);
+            Send(QEvent::MouseButtonPress, Empty, Qt::LeftButton);
+            Send(QEvent::MouseMove, Empty + QPoint(30, 0), Qt::LeftButton);
+            Send(QEvent::MouseMove, Empty + QPoint(50, 20), Qt::LeftButton);
+            Send(QEvent::MouseButtonRelease, Empty + QPoint(50, 20), Qt::NoButton);
+            const QPointF Moved = View->mapToScene(Empty) - Before;
+            Expect(std::fabs(Moved.x() + 50.0 / View->transform().m11()) < 1.5 && std::fabs(Moved.y() + 20.0 / View->transform().m11()) < 1.5,
+                   "left-drag on empty canvas pans the view");
+            Expect(!Box || Box->pos() == BoxAt, "and moves no state");
+
+            Graph->SetSelection(0, -1);
+            const QPoint Still = View->mapFromScene(Before);
+            if(!View->itemAt(Still))
+            {
+                Send(QEvent::MouseButtonPress, Still, Qt::LeftButton);
+                Send(QEvent::MouseButtonRelease, Still, Qt::NoButton);
+                Expect(View->scene()->selectedItems().isEmpty(), "a click on empty canvas clears the selection");
+            }
+        }
+    }
+    Window->close();
+    PumpFor(10);
+}
+
+/* The clip timeline, offscreen: real mouse events -- scrub, drag a notify,
+ * drag the Out handle, double-click to add. */
+static void TestClipTimeline()
+{
+    std::printf("Clip timeline\n");
+    ClipTimeline Timeline;
+    Timeline.resize(320, 74);   // strip: x 10..310, y 22..52; 31 frames, 1 s: 300 px a second
+    Timeline.SetClip(31, 30.0f);
+    Timeline.SetMarkers({ { QStringLiteral("Step"), 0.5f } });
+    Timeline.show();
+    PumpFor(10);
+
+    float Scrubbed = -1.0f, Moved = -1.0f;
+    int   Dropped = -1;
+    float Added = -1.0f;
+    uint32_t RangeLast = 0;
+    QObject::connect(&Timeline, &ClipTimeline::Scrubbed, [&](const float InT) { Scrubbed = InT; });
+    QObject::connect(&Timeline, &ClipTimeline::MarkerMoved, [&](int, const float InT) { Moved = InT; });
+    QObject::connect(&Timeline, &ClipTimeline::MarkerDropped, [&](const int InM) { Dropped = InM; });
+    QObject::connect(&Timeline, &ClipTimeline::AddRequested, [&](const float InT) { Added = InT; });
+    QObject::connect(&Timeline, &ClipTimeline::RangeChanged, [&](uint32_t, const uint32_t InLast) { RangeLast = InLast; });
+
+    const auto Send = [&Timeline](const QEvent::Type InType, const QPointF& InAt, const Qt::MouseButtons InHeld)
+    {
+        QMouseEvent Event(InType, InAt, Timeline.mapToGlobal(InAt.toPoint()), InType == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                          InHeld, Qt::NoModifier);
+        QApplication::sendEvent(&Timeline, &Event);
+    };
+
+    Send(QEvent::MouseButtonPress, QPointF(85.0, 40.0), Qt::LeftButton);    // a quarter in
+    Send(QEvent::MouseButtonRelease, QPointF(85.0, 40.0), Qt::NoButton);
+    Expect(std::fabs(Scrubbed - 0.25f) < 0.01f, "a click on the strip scrubs there");
+
+    Send(QEvent::MouseButtonPress, QPointF(160.0, 20.0), Qt::LeftButton);   // the notify's diamond, at 0.5 s
+    Send(QEvent::MouseMove, QPointF(250.0, 20.0), Qt::LeftButton);
+    Send(QEvent::MouseButtonRelease, QPointF(250.0, 20.0), Qt::NoButton);
+    Expect(std::fabs(Moved - 0.8f) < 0.01f && Dropped == 0, "a notify dragged moves -- to the frame it lands near -- and is dropped");
+
+    Send(QEvent::MouseButtonPress, QPointF(310.0, 50.0), Qt::LeftButton);   // the Out handle, at the end
+    Send(QEvent::MouseMove, QPointF(220.0, 50.0), Qt::LeftButton);
+    Send(QEvent::MouseButtonRelease, QPointF(220.0, 50.0), Qt::NoButton);
+    Expect(RangeLast == 21 && Timeline.GetRangeLast() == 21 && !Timeline.IsWholeClip(), "the Out handle dragged sets the range's end");
+
+    Send(QEvent::MouseButtonDblClick, QPointF(70.0, 40.0), Qt::LeftButton);
+    Expect(std::fabs(Added - 0.2f) < 0.01f, "a double-click asks for a notify there");
+
+    Timeline.SetReadOnly(true);
+    Added = -1.0f;
+    Send(QEvent::MouseButtonDblClick, QPointF(70.0, 40.0), Qt::LeftButton);
+    Expect(Added < 0.0f, "read-only, it adds nothing");
+}
+
 int main(int argc, char** argv)
 {
     /* No display needed. */
@@ -356,6 +529,8 @@ int main(int argc, char** argv)
     std::printf("NimbleEditorDetailsTests\n");
     TestMaterialParameters();
     TestTextureViewer();
+    TestAnimStateGraph();
+    TestClipTimeline();
     TestViewSettings();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);

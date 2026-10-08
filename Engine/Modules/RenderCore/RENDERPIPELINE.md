@@ -11,8 +11,8 @@ A frame runs these stages, in this order (`ERenderStage`, RenderPipeline.h):
 
 | Stage | Draws | Into | State |
 |---|---|---|---|
-| **PrePass** | nothing yet | -- | culls proxies against the view (padded by World Position Offset); what survives submits its draws to the stages below. Occlusion queries and a depth prepass belong here later |
-| **Base Pass** | Opaque and Masked, **Lit** | the G-buffer, and depth | depth test and write; no blending. Writes no colour to the scene |
+| **PrePass** | occluders' Opaque sections, depth only; a box per occlusion query | the scene depth | culls proxies against the view (padded by World Position Offset); what survives submits its draws to the stages below. Then the occluders' depth (depth test and write, no colour) and the queries (depth test, no write). See [Occlusion culling](#occlusion-culling) |
+| **Base Pass** | Opaque and Masked, **Lit** | the G-buffer and the velocity target, and depth | depth test and write; no blending. Writes no colour to the scene |
 | **Lighting** | one full-screen pass | scene colour | reads the G-buffer and depth; lit pixels only |
 | &nbsp;&nbsp;Shadows | shadow casters: Opaque and Masked mesh sections whose component casts | the two shadow atlases' depth | a sub-stage of Lighting, run first; depth test and write, no colour. See [Shadows](#shadows) |
 | **Unlit** | Opaque and Masked, **Unlit**; plain quads; tinted meshes | scene colour, with the Base Pass depth | depth test and write; plain quads keep their alpha blend |
@@ -119,6 +119,41 @@ brightest channel, when that is over 1, with that scale in alpha as log2 over
 `Common.glsl`). The Lighting stage reads it back whole, and Bloom uses it too. Eight-bit normals band a little on smooth, glossy surfaces;
 RGBA16F targets need a render-target format in GDI (MATERIALS.md, "Later").
 
+### Velocity
+
+Beside the G-buffer, where the backend has RGBA16F targets, the Base Pass
+writes a fifth target, **Velocity** (`SceneTargets::Velocity`): each pixel's
+**world motion** since the frame before -- xyz in world units, a 1 where
+written. What nothing writes stays 0: not moving. Motion Blur takes the
+pixel's world position from depth, less that motion, to last frame's camera
+(see [Post process](#post-process)), so the camera's motion and the
+surface's own make one screen motion, and the target needs no previous
+camera of its own.
+
+**Where a draw was:**
+- **Its transform.** `RenderProxy::EndFrameMotion`, after each frame, keeps
+  `LocalToWorld` as `PrevLocalToWorld`. Before a proxy draws, RenderScene
+  asks it how it moved (`GetMotion`: then times the inverse of now) and
+  hands that to `RenderContext::SetDrawMotion`; each draw it queues takes
+  it, and at issue its model the frame before is that times its model now --
+  GDI's `Transform.PrevModel` (the transform block: 144 bytes on every
+  backend). A new proxy, one that did not move, and a static draw list's
+  replays have none: `PrevModel` is `Model`.
+- **A skinned mesh's pose.** `RenderComponentProxy` keeps its palette the
+  frame before; the draw sets it in the **previous skin block** (binding 13,
+  `GDI_PREV_SKIN_BLOCK_BINDING`) beside the palette (12). The vertex stage
+  skins the vertex both ways.
+- **World Position Offset** is taken to be the same both frames.
+
+**Not written:** anything drawn outside the Base Pass -- Unlit and
+Translucent surfaces, plain quads -- and the sky: they move with the camera
+only. Pixel shaders
+write output 4 in every Base Pass permutation; a pass with no velocity
+target bound drops it.
+
+**Seeing it:** the Render Target view mode lists "Velocity (world motion,
+units a frame)" (negative components show black).
+
 ### Base Pass
 
 The Opaque and Masked Lit permutations of `MaterialTemplate_PS.glsl` write the
@@ -188,7 +223,8 @@ mesh casts, and **Cast Inset Shadow** gives it a sun shadow map of its own (see
 [Inset shadows](#inset-shadows)). Every scene's quality is the `[Shadows]` config section, a
 project setting (the game's DefaultEngine.ini; Edit > Project Settings >
 Shadows edits it and applies it at once): Enabled, Resolution,
-Filter, MaxShadowedLights, DistanceScale, MaxInsetShadows and InsetFilter.
+Filter, MaxShadowedLights, DistanceScale, MaxInsetShadows and InsetFilter,
+and the sun's [contact shadows](#contact-shadows).
 
 | Technique | Lights | What it draws |
 |---|---|---|
@@ -222,6 +258,47 @@ Limits: Masked casters cast their whole shape (their clip is not run in the
 Shadows sub-stage); a quad casts nothing; Translucent Lit surfaces are
 unshadowed; Metal, which cannot sample a depth target, draws no shadows (warned
 once). A material preview never draws shadows.
+
+### Contact shadows
+
+The shadow maps hold a texel of several world units at best, so the shadow
+where a thing meets the ground, under a rim, or between roof tiles is lost.
+**Sun contact shadows** find it in screen space, in the Lighting stage:
+
+- **The march:** from each lit pixel the sun lights (N.L > 0, where the
+  sun casts), Lighting.glsl's `ContactShadow` steps ContactLength world
+  units toward the sun in ContactSteps samples, starting a little off the
+  surface (more with distance, where the depth is coarser) and jittered
+  per pixel (interleaved gradient noise). Each sample is projected with
+  `Scene_ViewProjection` and compared with the scene depth there, as view
+  depth: behind the surface by more than the depth buffer's error and by
+  less than ContactThickness, it is in shadow.
+- **The result:** 1 minus ContactStrength at the first hit, softer the
+  further along the march it hit, gone past 50 m; `min`'d with the sun's
+  map (and inset) shadow, so Modulated and Standard suns take it the same
+  way. Only the deferred pass has a depth to march through
+  (`LIGHTING_CONTACT_SHADOWS`); forward (Translucent Lit) surfaces get none.
+- **Settings** (`[Shadows]`, Project Settings > Shadows): ContactShadows
+  (off by default), ContactLength (25), ContactThickness (6), ContactSteps
+  (4-32, 12) and ContactStrength (0-1, 1). `Scene_ContactShadow` carries
+  them, its length 0 when off -- or when shadows are not drawn at all, so
+  Enabled turns them off too.
+- **Point and spot lights** (`[Shadows] ContactLocalLights`, on by default
+  with ContactShadows): each shadowed one (MaxShadowedLights, nearest the
+  camera) marches too, toward the light and no further than it
+  (`ContactShadowWithin`), `min`'d with its shadow map. A march per light
+  per pixel it reaches.
+- **Limits:** screen space -- a caster off screen or behind something
+  casts nothing; a surface thinner than ContactThickness (a rail, a bar)
+  can cast a halo past its back; unshadowed point and spot lights get none.
+
+Cost: about 0.4 ms of the Lighting stage at 1280 x 720, 12 samples, on an
+integrated GPU (Intel Arc B390, LightLab's Courtyard). Verified
+(`NIMBLE_SMOKE_GPU=Vulkan`): with the sun's map cut short of the floating
+box, contact shadows alone darken the floor under it (1094 pixels, against
+1091 for its full map shadow), and lighten nothing; with the box out of a
+spot light's map, the spot's contact shadows alone darken 713 pixels, and
+none with ContactLocalLights off.
 
 ### Inset shadows
 
@@ -347,10 +424,10 @@ is not in this chain, runs earlier: see [below](#ambient-occlusion)):
 |---|---|---|---|
 | 1 | Materials, Before Effects | the material's | full size |
 | 2 | Depth of Field | `PPDofPrepare` (circle of confusion from depth: far past the focus range, or nearer with Near Blur; a half-size copy, CoC in alpha), `PPDofBlur` (a 16-tap disc, each tap counted as far as its own CoC reaches), `PPDofComposite` (sharp to blurred by CoC) | `Half[0..1]`, then full |
-| 3 | Motion Blur | `PPMotionBlur`: each pixel's world position, from depth, reprojected with **last frame's** view-projection gives its screen motion; taps along it, jittered, limited to Max Length | full |
+| 3 | Motion Blur | `PPMotionBlur`: each pixel's world position, from depth, less its world motion ([Velocity](#velocity)), reprojected with **last frame's** view-projection gives its screen motion, limited to Max Length. A reconstruction filter (McGuire et al. 2012) in one pass: the strongest motion within half Max Length, then taps along it, jittered, each weighted by which is in front and whose streak reaches the other -- a moving thing streaks out over a still background | full |
 | 4 | Bloom | `PPBloomDownsample` (13 taps; the first step adds back the emissive the scene clipped, from GBuffer3, and keeps what passes the threshold, with a soft knee) down `Bloom[0..Levels-1]` (1/2 to 1/64); `PPBloomUpsample` (each level's own plus a 9-tap tent of the one below, times Radius) back up `BloomUp`; `PPBloomComposite` adds the top level times Intensity and Tint | chain, then full |
 | 5 | Materials, After Effects | the material's | full |
-| 6 | Antialiasing | `PPFxaa` (FXAA 3.11 quality: luma edges, an end search of 4, 8 or 12 steps by Quality, plus sub-pixel smoothing) | full |
+| 6 | Antialiasing | `PPFxaa` (FXAA 3.11 quality: luma edges, an end search of 4, 8 or 12 steps by Quality, plus sub-pixel smoothing); not when [TAA](#temporal-antialiasing) resolved the frame | full |
 
 **How the passes run:**
 - **Targets:** they alternate between `SceneTargets::PostProcess` and
@@ -377,7 +454,11 @@ is not in this chain, runs earlier: see [below](#ambient-occlusion)):
   colour, so it still stops at 1. A white lit surface past the threshold glows
   all over, but only by its clipped 0-1. What reaches the G-buffer is bloomed
   even if a translucent surface later covers it.
-- **Motion Blur:** the camera's motion only; there is no per-object velocity.
+- **Motion Blur:** objects move it only where the Base Pass drew them (Lit
+  Opaque and Masked); Unlit and Translucent surfaces blur with the camera
+  alone. The strongest motion is searched at sixteen taps, not per tile: a
+  thing much smaller than half Max Length moving fast can be missed beside
+  it. A teleport blurs for one frame, as far as Max Length.
 - **Antialiasing:** FXAA only; there is no temporal AA.
 - **Memory:** each small target also allocates a depth it never uses (GDI makes
   every target with one).
@@ -465,6 +546,110 @@ shaders' cross-compilation: HLSL through `fxc` at shader model 5.0, and MSL.
 Verified (`NIMBLE_SMOKE_GPU=Vulkan`): an Unlit quad of display 0.9 reads 229 with
 no tone map, 202 with ACES, 229 with ACES at +1 EV and 176 with Reinhard, and
 the gradient background stays within 1 of authored under each.
+
+### Auto exposure
+
+A stack's **Auto Exposure** node (with Tone Mapping, in an HDR scene) is
+eye adaptation, all on the GPU -- nothing is read back:
+
+- **The meter:** `PPLuminance` writes the scene colour's mean log2
+  luminance over a 4 x 4 grid per texel of a 64 x 64 target, weighted
+  toward the middle of the view by Centre Weight; `PPLuminanceReduce`
+  averages it to 8 x 8, then 1 x 1.
+- **Adaptation:** `PPAdaptExposure` eases a 1 x 1 adapted value toward
+  that, at Speed Up toward a brighter view and Speed Down toward a darker
+  (per second, `1 - exp(-dt * speed)`), into the other of two 1 x 1s the
+  scene's targets ping-pong. A first frame -- or the node newly on --
+  starts at what it meters.
+- **Exposure:** the tone map multiplies the scene by `Key / 2^adapted`,
+  clamped to Min EV - Max EV stops, then by Tone Mapping's own Exposure,
+  which compensates on top. Previews and captures run no stack, so none.
+- **Volumes:** from off, the range widens from 0 -- it fades in.
+
+The background gradient (editor) is un-exposed for the stack's Exposure
+only, so auto exposure moves it.
+
+### Temporal antialiasing
+
+A stack's **Antialiasing** node with Method **TAA** (an HDR scene with a
+velocity target; else FXAA stands in):
+
+- **Jitter:** the main view is drawn a sub-pixel off each frame, along an
+  8-frame Halton (2, 3) sequence (`RenderScene::Render`, the projection's x
+  and y rows plus the offset times its w row, so any projection takes it);
+  captures, the next frame's PrevViewProjection and what draws after the
+  stages keep the unjittered view. `RenderContext::SetTemporalJitter` hands
+  the offset to the resolve.
+- **The resolve** (`PPTemporalAA`, after the forward stages and volumetric
+  fog, before the tone map): the scene colour blended into a full-size
+  half-float history (two, ping-ponged). Each pixel reprojects through the
+  nearest depth in its 3 x 3 and that texel's world motion, with last
+  frame's unjittered view, less this frame's jitter -- so a still scene
+  reprojects onto itself. The history is sampled Catmull-Rom (5 taps),
+  clipped toward the 3 x 3's mean +- 1.25 standard deviations, and blended
+  at 0.9 (less as the pixel moves faster) in a tone-weighted space, so a
+  lone bright sample does not dominate. No history -- first frame, resize,
+  off screen -- is the current colour alone.
+- **Sharpness** (the node's, 0.35): the tone map sharpens the resolve
+  against its four neighbours, in the same weighted space -- never the
+  history, which would sharpen itself frame after frame.
+- **Limits:** translucent surfaces and particles write no depth or motion,
+  so they reproject with what is behind them and can smear when the camera
+  moves; the clip keeps it short. Still, it is as sharp as FXAA with
+  smoother edges; moving, softer.
+
+### Screen-space reflections
+
+A stack's **Screen-Space Reflections** node (an HDR scene with image-based
+lighting): Opaque and Masked Lit surfaces smoother than Max Roughness
+reflect what is on screen, over the probes' specular.
+
+- **The march** (`PPScreenReflections`, full size, between the Lighting
+  stage and the IBL pass): the view reflected about the G-buffer normal,
+  Steps samples over Max Distance in world space (growing along the ray,
+  the start jittered per pixel), each tested against the scene depth as
+  view depth (behind it by less than Thickness, more further along), then
+  five halvings toward the surface. A hit on a back face is refused.
+- **Its colour:** the hit reprojected into the last frame (its world motion
+  off, last frame's unjittered view) and read from the last frame's
+  finished linear scene colour -- TAA's history when it ran, else a copy
+  the scene keeps (`PPCopy`, only while reflections are on) -- so it holds
+  all of that frame's light.
+- **Trust** (its alpha): faded toward the screen's edges (at the hit and
+  where it was), with roughness, and toward the ray's end, times
+  Intensity. `IBL_LightReflected` blends the probes' specular toward it by
+  that, under the same split-sum BRDF and specular occlusion.
+- **Limits:** only G-buffer surfaces: Translucent Lit (glass, water) keep
+  the probes; what is off screen or hidden reflects the probes; a rough
+  surface's reflection is sharp, so it is faded out by Max Roughness.
+
+### Volumetric fog
+
+A stack's **Volumetric Fog** node (an HDR scene): exponential height fog
+that the lights shine through.
+
+- **The march** (`PPVolumetricFog`, half size, after the forward stages,
+  before TAA): from the eye to the surface each pixel shows (Max Distance
+  for the sky), Steps jittered samples. Density is Density at Base Height
+  and below, falling by `exp(-Height Falloff * height above)`. Each sample
+  is lit by the sun -- its cascaded shadow map, one tap, when Shadows is on
+  (shafts) -- through a Henyey-Greenstein phase of Anisotropy (forward
+  scattering: a glow round a low sun); by every point and spot light in
+  reach (Lighting.glsl's falloff and cones, unshadowed); and by the sky
+  ambient. Scattering integrates per step (energy conserving), times
+  Albedo.
+- **The composite** (`PPFogComposite`): the half-size result filtered up,
+  blended (one, source alpha) -- `DrawPost`'s transmit mode -- so the scene
+  becomes scene x transmittance + scattered light, translucent surfaces
+  included.
+- **Volumes:** from off, the density rises from 0.
+- **Cost:** the march's grain is smoothed by TAA; the point and spot lights
+  are each sampled at every step, so Steps and the light count set it.
+
+Measured on LightLab's Courtyard (1280 x 720, Arc B390, Vulkan), all of the
+above on at once -- auto exposure, TAA, reflections (32 steps), fog (24
+steps, 11 local lights) and point and spot contact shadows: about 2.4 ms
+more GPU a frame (4.0 to 6.4), fog the most (about 1.2).
 
 ### Image-based lighting
 
@@ -795,6 +980,59 @@ Verified: the GPU smoke check draws a lit, shadowed scene static and dynamic
 pixel for pixel alike, and a static box moved by a tool lands exactly where a
 dynamic one does.
 
+### Occlusion culling
+
+A Render component's **Occluder** (Culling; `bOccluder`, the component's
+version 5, off by default) marks it as something that hides what is behind
+it: a wall, terrain, a building. Each frame, for the main view only:
+
+- **PrePass:** every occluder in view draws its Opaque sections into the scene
+  depth, depth only, with its materials' vertex shaders so World Position
+  Offset matches (`RenderProxy::DrawOccluder`, `RenderContext::DrawMeshOccluder`).
+  Masked sections are left out -- drawn whole, their holes would hide what is
+  behind them. Then every other proxy in view has its world box (padded by
+  World Position Offset, and 1% more so coplanar faces pass) drawn against
+  that depth inside an occlusion query, writing nothing. The queries are
+  resolved before the Base Pass.
+- **Same frame, on the GPU:** each queried proxy's draws in every stage after
+  the PrePass -- Base Pass, Unlit, both translucent ones -- are predicated on
+  its query (`GDISetOcclusionPredicate`), so the GPU skips them if no sample
+  of its box passed. Shadow casters never are: a hidden caster's shadow can
+  still fall in view.
+- **Next frame, on the CPU:** a proxy whose last answer read hidden is not
+  drawn at all -- no draw queued, nothing extracted into the stages -- but its
+  box is still queried. When it comes out from behind the occluder it is drawn
+  again from the frame after: a revealed object can pop in one frame late.
+- **Not queried:** anything, while no occluder is in view; occluders
+  themselves; proxies without bounds; a box the
+  near plane could cut (nearer the eye than 1.5 times the near plane's corner
+  distance), whose query could miss what shows in front; and everything in an
+  orthographic view, a scene capture or a preview.
+
+The occluders' depth stays in the scene depth, so the Base Pass draws them a
+second time at equal depth. Mark only large, solid things as occluders:
+small or thin ones cost more to draw first than they hide.
+
+Each scene keeps its own query set (`GDIOcclusionQueries`), 256 queries to
+start, doubled when a frame wants more (that frame culls nothing on the CPU).
+`[Rendering] OcclusionCulling` (default on) turns it all off.
+`RenderStats::ProxiesOccludedLastFrame` counts the proxies skipped on the CPU,
+`OcclusionQueriesLastFrame` the boxes queried; the GPU's own skips are not
+counted.
+
+| Backend | Queries | Predication |
+|---|---|---|
+| Vulkan | `VK_QUERY_TYPE_OCCLUSION` pool, reset and copied outside the rendering region (closed and reopened, as a dispatch does) into a host-visible buffer the CPU reads a frame later | `VK_EXT_conditional_rendering`, where the GPU has it, round each draw; without it every draw draws |
+| D3D12 | binary occlusion heap, `ResolveQueryData` into a default-heap buffer, copied to a readback one | `SetPredication` round each draw |
+| Null | answers "visible" a block later (`NullDynamicGDI::SetOcclusionAnswer`) | counted |
+| Metal, OpenGL | not yet: `GDISupportsOcclusionQueries()` is false, so nothing is culled | -- |
+
+Verified: the GPU smoke check (Vulkan) culls a box behind an occluding wall
+and draws one beside it, and the frame is pixel for pixel the one drawn with
+culling off; with the wall moved aside the box is drawn again, and that frame
+too matches. D3D12 is written against its backend's patterns but was not
+compiled here (Linux).
+
 ### UI
 
 A scene's UI -- HUDs and menus, Engine/Modules/UI/README.md -- is drawn over
@@ -877,11 +1115,14 @@ the same panel. Toggle it with `stat frame` in the editor console, or set
 
 **The spans** (`ERenderGpuTimer`) are PrePass, BasePass, AO, Shadows,
 Lighting, Forward (Unlit and the translucent stages), PostProcess, and Total
-(from the scene's clear to the end of the post process). The last line is
+(from the scene's clear to the end of the post process). Then
 **Captures**: every Scene Capture Probe's views that frame, all stages
-included. Captures run before the scene's stages and are not part of Total.
+included, then the image-based lighting update -- the reflection probes
+captured that frame (six views each) and their prefilter -- and
+**Particles**: every emitter's compute passes (simulate, then sort or
+string). Both run before the scene's stages and are not part of Total.
 `RenderScene::Render` times them with `RenderContext::WriteGpuTimestamp`
-around the capture loop, so a frame with no captures shows 0.00, not `-`.
+around the capture and simulate loops, so a frame with none shows 0.00, not `-`.
 
 **How a scene is timed:**
 - `RenderSceneStages(..., bInTimed)` writes a GPU timestamp before and after
@@ -1115,11 +1356,12 @@ Elsewhere it draws nothing and says so once.
     the ring (`ParticleSimulation::BuildParams`) -- are born in the emitter's
     sphere, each at a random moment inside the frame; the rest move on by
     acceleration, a swirl (Turbulence) and drag.
-  - `ParticleSort.csh`, one workgroup: a bitonic sort in shared memory, two
-    particles a thread, farthest first along the view; then each written as
-    an instance (GDI's layout: a transform and a colour) -- turned to the
-    camera if Face Camera, sized and coloured by age, faded in and out. Dead
-    and unused slots collapse to a point and sort last.
+  - `ParticleSort.csh`, one workgroup: the living packed to the front, then a
+    bitonic sort in shared memory over the power of two above their count (not
+    the ring's), two particles a thread, farthest first along the view; then
+    each written as an instance (GDI's layout: a transform and a colour) --
+    turned to the camera if Face Camera, sized and coloured by age, faded in
+    and out. The slots after the living collapse to a point.
   A **Ribbon** emitter runs `ParticleSimulate.csh`, then `ParticleRibbon.csh`
   instead of the sort; a **Beam** places its points with `ParticleBeam.csh`
   (point i of N at i/N of the way, its age i/N of a life, so size and colour
@@ -1134,8 +1376,14 @@ Elsewhere it draws nothing and says so once.
   as sprites, with no new GDI. U runs across the strip, V along each segment.
   Strips are not sorted; keep a ribbon's Lifetime Variance at 0, or it breaks
   where a point dies early.
+- **An idle emitter costs nothing.** Once nothing has spawned for longer than
+  the longest Lifetime it spawned with (plus a tenth of a second), every
+  particle is dead and the last passes counted none: `BuildParams` marks it
+  idle and its dispatches and draws are skipped until it spawns again -- a
+  burst emitter between bursts, one stopped emitting. A beam never idles.
 - **Drawn** from every view that sees it (`Draw`): the mesh (an empty Mesh is
-  `Engine/Content/Meshes/Quad.nmmesh`) instanced, one draw per section, with the
+  `Engine/Content/Meshes/Quad.nmmesh`; a round image draws 17% fewer pixels with
+  `SpriteOctagon.nmmesh`, the quad with its corners cut) instanced, one draw per section, with the
   material's **InstancedMesh** vertex permutation (MATERIALS.md), in the stage
   its material names, sorted with the other draws at the emitter. The
   particle's colour reaches the material as its **Vertex Color**.
@@ -1276,6 +1524,17 @@ A compute pipeline is keyed by its shader module, so releasing a compute
 shader drops its pipelines from the cache (`ForgetComputeModule`); they are
 destroyed at shutdown, past any frame that used them.
 
+Occlusion culling (### Occlusion culling) needed occlusion queries
+(`GDIQuery.h`), where `GDISupportsOcclusionQueries()` says so -- Vulkan, D3D12
+and Null so far. `GDICreateOcclusionQueries(Capacity)` makes a set, used a round
+per BeginRendering block: `GDIBeginOcclusionRound(Set, Count)` before the
+first query, `GDIBeginOcclusionQuery` / `GDIEndOcclusionQuery` round draws (one
+open at a time), `GDIResolveOcclusionQueries` after the last. Then
+`GDISetOcclusionPredicate(Set, Index)` makes the draws after it conditional on
+the query (`GDISupportsOcclusionPredication()`; ignored elsewhere), and
+`GDIReadOcclusionResults` hands the CPU a round's answers once its block has
+finished on the GPU, never waiting. A query never ended answers "visible".
+
 ## Tests
 
 - Routing (Null backend, materials from memory): each domain/shading pair lands
@@ -1308,6 +1567,12 @@ destroyed at shutdown, past any frame that used them.
   instances sorted farthest first, the unused slots last; and a plume drawn
   side on through the instanced path (`ParticleProbe`), red where it is born
   and dark where it has aged.
+- Occlusion culling (Null backend): an occluding wall, a box behind it and one
+  beside it -- both boxes queried, not the wall; nothing queried with
+  `[Rendering] OcclusionCulling` off, in an orthographic view, or for a box the
+  eye is in. On the GPU (`NIMBLE_SMOKE_GPU`): the box behind is culled, the
+  frame matches the unculled one pixel for pixel, and it shows again when the
+  wall moves aside.
 - GPU (`NIMBLE_SMOKE_GPU=Vulkan|D3D12`): previews of DefaultLit and Wave go
   through the G-buffer and keep their forward-shaded pixels (186 188 192; 40
   103 172); Glow (Translucent Unlit) is unchanged; Negative (PostProcess) inverts
@@ -1324,8 +1589,13 @@ across more than four; cube-face capture time-slicing; SH irradiance.
 Hardware shadow comparison, depth bias and front-face culling in GDI (then
 drop most of the receiver bias); Masked casters clipped in the Shadows
 sub-stage; shadows for Translucent Lit; a tiled or clustered light list past 16
-lights; occlusion queries and a depth prepass in the PrePass; per-section
-bounds for culling; RGBA16F G-buffer and scene colour.
+lights; per-section bounds for culling; RGBA16F G-buffer and scene colour.
+
+Occlusion culling: Masked occluders with their clip; occlusion queries on
+Metal and OpenGL; a hierarchical depth buffer tested on the GPU, so nothing
+waits a frame and nothing pops; the Base Pass skipping occluders' depth
+writes (depth equal) instead of drawing them twice; occlusion for shadow
+views and scene captures.
 
 Particles: compute and instancing on Metal and OpenGL; GPU emission
 counts (spawn by events, bursts); collisions with depth; soft particles

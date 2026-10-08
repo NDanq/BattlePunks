@@ -121,6 +121,23 @@ namespace RenderCore
         InOutEmitter.SpawnCursor = (First + Count) % Max;
         ++InOutEmitter.Frame;
 
+        /* Idle once the time since the last spawn passes the longest life spawned
+         * with (and a frame's clamped delta, for the GPU's float ages): a
+         * particle's age is at least that time, so the frame that reached it saw
+         * every one die and wrote a live count of 0. A spawn wakes it. */
+        if(Count > 0 || InSettings.Type == PT_Beam)
+        {
+            InOutEmitter.LongestLife = InOutEmitter.bIdle ? InSettings.Lifetime
+                                                          : std::max(InOutEmitter.LongestLife, InSettings.Lifetime);
+            InOutEmitter.SinceSpawn  = 0.0;
+            InOutEmitter.bIdle       = false;
+        }
+        else
+        {
+            InOutEmitter.bIdle       = InOutEmitter.bSimulated && InOutEmitter.SinceSpawn >= double(InOutEmitter.LongestLife) + 0.1;
+            InOutEmitter.SinceSpawn += double(InDelta);
+        }
+
         uint32_t Pow2 = 1;
         while(Pow2 < Max) { Pow2 <<= 1; }
 
@@ -219,6 +236,10 @@ namespace RenderCore
         if(!InOutEmitter.Particles || !InOutEmitter.Instances)
         {
             return false;
+        }
+        if(InOutEmitter.bIdle)
+        {
+            return true;
         }
         const uint32_t Groups = (InOutEmitter.MaxParticles + SIMULATE_GROUP_SIZE - 1) / SIMULATE_GROUP_SIZE;
         GDIBuffer* State[1] = { InOutEmitter.Particles };

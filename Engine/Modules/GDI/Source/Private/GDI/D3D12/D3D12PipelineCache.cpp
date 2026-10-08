@@ -15,6 +15,7 @@ namespace
     constexpr uint32_t kLayoutInstanced     = 1;
     constexpr uint32_t kLayoutMesh          = 2;
     constexpr uint32_t kLayoutMeshInstanced = 3;   // kLayoutMesh + an instance buffer (GDISetInstanceBuffer)
+    constexpr uint32_t kLayoutMeshSkinned   = 4;   // kLayoutMesh + bone indices and weights (slots 6, 7)
 
     // spirv-cross emits TEXCOORD<location> for every stage input, matrices
     // flattened one column per location (--hlsl-flatten-matrix-vertex-input-semantics).
@@ -30,6 +31,17 @@ namespace
         { "TEXCOORD", 8, DXGI_FORMAT_R32G32B32_FLOAT,    2, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 9, DXGI_FORMAT_R32G32B32A32_FLOAT, 3, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 10, DXGI_FORMAT_R32G32_FLOAT,      4, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+    };
+
+    // The mesh layout plus a skinned vertex's bone indices (location 11, slot 6) and weights (12, slot 7).
+    const D3D12_INPUT_ELEMENT_DESC GMeshSkinnedLayout[] = {
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT,    1, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 8, DXGI_FORMAT_R32G32B32_FLOAT,    2, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 9, DXGI_FORMAT_R32G32B32A32_FLOAT, 3, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 10, DXGI_FORMAT_R32G32_FLOAT,      4, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 11, DXGI_FORMAT_R32G32B32A32_FLOAT, 6, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 12, DXGI_FORMAT_R32G32B32A32_FLOAT, 7, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
     };
 
     // The mesh layout plus slot 5: one GDI_INSTANCE_STRIDE record per instance (GDIBuffer.h) --
@@ -106,6 +118,12 @@ bool D3D12PipelineCache::BuildRootSignature()
     Params[RP_Scene].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_CBV;
     Params[RP_Scene].Descriptor.ShaderRegister = GDI_SCENE_BLOCK_BINDING;
     Params[RP_Scene].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
+    Params[RP_Skin].ParameterType              = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    Params[RP_Skin].Descriptor.ShaderRegister  = GDI_SKIN_BLOCK_BINDING;
+    Params[RP_Skin].ShaderVisibility           = D3D12_SHADER_VISIBILITY_VERTEX;
+    Params[RP_PrevSkin].ParameterType              = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    Params[RP_PrevSkin].Descriptor.ShaderRegister  = GDI_PREV_SKIN_BLOCK_BINDING;
+    Params[RP_PrevSkin].ShaderVisibility           = D3D12_SHADER_VISIBILITY_VERTEX;
 
     for(UINT Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot)
     {
@@ -266,6 +284,7 @@ uint64_t D3D12PipelineCache::HashKey(const PipelineKey& K)
     Mix(&K.WriteMask,      sizeof(K.WriteMask));
     Mix(&K.RTFormat,       sizeof(K.RTFormat));
     Mix(&K.ColorCount,     sizeof(K.ColorCount));
+    Mix(&K.ColorFormats,   sizeof(K.ColorFormats));
     Mix(&K.DSVFormat,      sizeof(K.DSVFormat));
     Mix(&K.DepthEnable,    sizeof(K.DepthEnable));
     Mix(&K.DepthWrite,     sizeof(K.DepthWrite));
@@ -304,6 +323,10 @@ ComPtr<ID3D12PipelineState> D3D12PipelineCache::CreatePipeline(const PipelineKey
     if(Key.VertexLayoutID == kLayoutMeshInstanced)
     {
         Desc.InputLayout = { GMeshInstancedLayout, UINT(sizeof(GMeshInstancedLayout) / sizeof(GMeshInstancedLayout[0])) };
+    }
+    else if(Key.VertexLayoutID == kLayoutMeshSkinned)
+    {
+        Desc.InputLayout = { GMeshSkinnedLayout, UINT(sizeof(GMeshSkinnedLayout) / sizeof(GMeshSkinnedLayout[0])) };
     }
     else if(Key.VertexLayoutID == kLayoutMesh)
     {
@@ -350,7 +373,7 @@ ComPtr<ID3D12PipelineState> D3D12PipelineCache::CreatePipeline(const PipelineKey
     Desc.NumRenderTargets      = Key.ColorCount == 0 ? 1u : (Key.ColorCount > GDI_MAX_COLOR_TARGETS ? GDI_MAX_COLOR_TARGETS : Key.ColorCount);
     for(UINT Index = 0; Index < Desc.NumRenderTargets; ++Index)
     {
-        Desc.RTVFormats[Index] = Key.RTFormat;
+        Desc.RTVFormats[Index] = Key.ColorFormats[Index] != DXGI_FORMAT_UNKNOWN ? Key.ColorFormats[Index] : Key.RTFormat;
     }
     Desc.DSVFormat             = Key.DSVFormat;
     Desc.SampleDesc.Count      = 1;

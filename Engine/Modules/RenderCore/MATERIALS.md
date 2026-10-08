@@ -187,6 +187,7 @@ about them generically. Enforced:
 |---|---|---|
 | Texture Coordinate, Vertex Color, Vertex Normal | yes | yes |
 | World Position (before the offset in the vertex stage) | yes | yes |
+| Camera Position (the view's eye: with World Position, the direction to the camera for Fresnel) | yes | yes |
 | Parameter, Instance Tint, Viewport Size, Mouse, Time | yes | yes |
 | Math, Vector, Logic | yes | yes |
 | Pixel Coordinate, Pixel Depth, Clip Position | no | yes |
@@ -230,6 +231,12 @@ Lightmap UVs (UV1) are another, at location 10 (`GDIMeshDesc::UV1`, zero when
 the mesh has none), stored as an optional `MUV1` chunk. The vertex stage
 passes them through as `Interpolants.LightmapUV`; only the Base Pass reads
 them, for baked lighting (RENDERPIPELINE.md, "Baked lighting").
+
+`WorldMotion` (vec3) is how far the surface moved in the world since the
+frame before: the material vertex stage takes its position less where
+`Transform.PrevModel` (and, skinned, the previous skin block at binding 13)
+had it, and the Base Pass writes it to the velocity target
+(RENDERPIPELINE.md, "Velocity"). Other vertex shaders leave it 0.
 
 ## The `.material` file, version 3
 
@@ -282,8 +289,11 @@ Texels are read as stored: a colour texture is display space, like every
 colour a material authors, so nothing converts it (`sRGB` on a texture marks
 colour data for later, for an sRGB format). The image's top row is v = 0 --
 glTF's convention, so imported meshes need no flip -- and a quad shows it
-upright. No mipmaps on Vulkan and D3D12 yet (OpenGL generates them): Linear
-filters between texels at the full-size level.
+upright. A texture with a mip chain (its `TMIP`) samples it, Linear blending
+between levels, and is filtered anisotropically -- sharp at grazing angles, a
+floor receding from the camera -- up to `[Rendering] Anisotropy` (1 off to 16,
+8 by default; `GDISetMaxAnisotropy`, read as the renderer starts the device,
+clamped to what it supports). A render target, one level, never is.
 
 The editor previews a material on the engine's meshes (Sphere, Box, Cylinder, Capsule, Plane) or a
 quad, and any mesh with a material per section, through

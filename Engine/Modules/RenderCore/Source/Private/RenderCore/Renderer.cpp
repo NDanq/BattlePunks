@@ -13,6 +13,7 @@
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreImage.h"
 #include "Public/Core/CoreMemory.h"
+#include "Public/GDI/GDI.h"
 #include "Public/GameCore/AABB.h"
 #include "Public/RenderCore/RenderCommand.h"
 #include "Public/RenderCore/RenderComponents.h"
@@ -39,6 +40,11 @@ NIMBLE_CONFIG_BOOL(GStatsUnit, "Stats", "Unit", false, nullptr);
 /* "stat frame": each viewport's GPU time per stage of its frame
  * (ERenderGpuTimer), where the backend can time the GPU. */
 NIMBLE_CONFIG_BOOL(GStatsFrame, "Stats", "Frame", false, nullptr);
+
+/* Anisotropic filtering for textures with mips (GDISetMaxAnisotropy): 1 off,
+ * up to 16. Read once, as the renderer starts the device -- a change applies
+ * at the next start. */
+NIMBLE_CONFIG_INT(GRenderingAnisotropy, "Rendering", "Anisotropy", 8, nullptr);
 
 namespace RenderCore
 {
@@ -272,6 +278,7 @@ namespace RenderCore
             P->bParticlesRegistered = RegisterProxyType(ParticleSystemComponent::StaticType().ID, GetParticleSystemComponentFactory());
         }
 
+        GDISetMaxAnisotropy(float(std::clamp(GRenderingAnisotropy.GetInt(), 1, 16)));
         if(!P->Thread.Start(InBackend, InWindow))
         {
             return false;
@@ -542,6 +549,8 @@ namespace RenderCore
         Request.Zoom    = InPreview.Zoom;
         Request.Tint    = InPreview.Tint;
         Request.Mailbox = &P->Previews;
+        Request.SkinBones = uint32_t(std::min(InPreview.SkinPalette.size() / 12, std::size(Request.SkinPalette) / 12));
+        std::copy_n(InPreview.SkinPalette.begin(), size_t(Request.SkinBones) * 12, Request.SkinPalette);
 
         RenderScene* Scene = P->DefaultScene();
         ENQUEUE_RENDER_COMMAND(AddMeshPreview)([Scene, Request](RenderContext&)

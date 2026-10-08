@@ -31,6 +31,7 @@
 #include <QSortFilterProxyModel>
 #include <QSplitter>
 #include <QStyle>
+#include <QTimer>
 #include <QToolButton>
 #include <QTreeView>
 #include <QUrl>
@@ -41,8 +42,11 @@
 #include "Public/Core/CoreLog.h"
 #include "Public/NodeGraph/GraphFile.h"
 #include "Public/NodeGraph/Schema.h"
+#include "Public/RenderCore/AnimClipAsset.h"
+#include "Public/RenderCore/AnimStateAsset.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/ParticleSystemAsset.h"
+#include "Public/RenderCore/SkeletonAsset.h"
 #include "Public/RenderCore/TextureAsset.h"
 #include "Private/Editor/Content/RenderTargetAssets.h"
 #include "Private/Editor/Particles/ParticleAssets.h"
@@ -51,6 +55,7 @@
 #include "Private/Editor/Content/AssetImport.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Content/ImportWizard.h"
+#include "Private/Editor/Content/AnimationAssets.h"
 #include "Private/Editor/Content/MeshViewerWindow.h"
 #include "Private/Editor/Content/TextureViewerWindow.h"
 #include "Private/Editor/Graph/GraphAssets.h"
@@ -61,6 +66,9 @@ namespace
 
     /* The engine's content folder as the tree and the path bar name it. */
     const char* const ENGINE_CONTENT_LABEL = "Engine Content";
+
+    /* What a material's thumbnail draws it on. */
+    const QString PREVIEW_SPHERE = QStringLiteral("Engine/Content/Meshes/Sphere.nmmesh");
 
     /* Thumbnails and tooltips past this size are not read on hover. */
     constexpr qint64 PreviewByteLimit = 64 * 1024 * 1024;
@@ -134,6 +142,9 @@ namespace
     {
         return InPath.endsWith(QStringLiteral(".nmmesh"), Qt::CaseInsensitive)
             || InPath.endsWith(QStringLiteral(".nmtexture"), Qt::CaseInsensitive)
+            || InPath.endsWith(QStringLiteral(".nmskel"), Qt::CaseInsensitive)
+            || InPath.endsWith(QStringLiteral(".nmanim"), Qt::CaseInsensitive)
+            || InPath.endsWith(QStringLiteral(".nmanimstate"), Qt::CaseInsensitive)
             || InPath.endsWith(QStringLiteral(".nmrt2d"), Qt::CaseInsensitive)
             || InPath.endsWith(QStringLiteral(".nmrt3d"), Qt::CaseInsensitive);
     }
@@ -267,14 +278,15 @@ private:
         qint64  Stamp = -1;
         QIcon   Thumbnail;
         QString Summary;
-        bool    bRendered     = false;   // a mesh: its thumbnail is rendered
+        bool    bRendered     = false;   // a mesh or material: its thumbnail is rendered
         bool    bRenderQueued = false;   // waiting for or in RenderNext
         qint64  RetryAt       = 0;       // after a failed render, not before this
     };
 
-    /* A mesh's thumbnail is rendered (Renderer::RequestMeshPreview), so it
-     * comes later: queued on first view, one request at a time since each
-     * readback stalls the renderer, and only while its folder is shown. */
+    /* A mesh's thumbnail is rendered (Renderer::RequestMeshPreview), and a
+     * material's is the Sphere wearing it, so they come later: queued on
+     * first view, one request at a time since each readback stalls the
+     * renderer, and only while its folder is shown. */
     void QueueRender(const QString& InPath, Preview& InEntry) const
     {
         if(InEntry.bRenderQueued || QDateTime::currentMSecsSinceEpoch() < InEntry.RetryAt) { return; }
@@ -297,12 +309,28 @@ private:
                 continue;
             }
 
+            const QString Material = EditorContent::MaterialPathFor(Path);
+            if(!Material.isEmpty() && EditorGraphs::IsMaterialCooking(Material))
+            {
+                /* Just saved: drawn once the cook is in, not before. */
+                Found->bRenderQueued = false;
+                auto* Self = const_cast<ContentListProxy*>(this);
+                QTimer::singleShot(500, Self, [Self, Path]()
+                {
+                    const auto* Source = static_cast<const QFileSystemModel*>(Self->sourceModel());
+                    const QModelIndex Shown = Self->mapFromSource(Source->index(Path));
+                    if(Shown.isValid()) { emit Self->dataChanged(Shown, Shown, { Qt::DecorationRole }); }
+                });
+                continue;
+            }
+
             bRenderInFlight = true;
             const qreal Ratio = Panel->devicePixelRatioF();
             EditorGraphs::MeshPreviewOptions Options;
-            Options.Mesh   = Runtime;
-            Options.Width  = int(ThumbnailSize * Ratio);
-            Options.Height = Options.Width;
+            Options.Mesh     = Material.isEmpty() ? Runtime : PREVIEW_SPHERE;
+            Options.Material = Material;
+            Options.Width    = int(ThumbnailSize * Ratio);
+            Options.Height   = Options.Width;
             const qint64 Stamp = Found->Stamp;
             auto* Self = const_cast<ContentListProxy*>(this);
             EditorGraphs::RequestMeshPreview(Options, Self, [Self, Path, Stamp, Ratio](const QImage& InImage, const QString&)
@@ -403,13 +431,15 @@ private:
             EngineCore::Archive Ar = ArchiveOf(ReadAll(Path));
             if(RenderCore::SerializeMesh(Ar, Mesh))
             {
-                Entry.Summary = QStringLiteral("Mesh, %1 vertices, %2 triangles, %3 section(s)\nSize %4 x %5 x %6%7")
+                Entry.Summary = QStringLiteral("%8, %1 vertices, %2 triangles, %3 section(s)\nSize %4 x %5 x %6%7")
                                 .arg(Mesh.GetVertexCount()).arg(Mesh.GetTriangleCount()).arg(Mesh.Sections.size())
                                 .arg(double(Mesh.BoundsMax[0] - Mesh.BoundsMin[0]), 0, 'g', 4)
                                 .arg(double(Mesh.BoundsMax[1] - Mesh.BoundsMin[1]), 0, 'g', 4)
                                 .arg(double(Mesh.BoundsMax[2] - Mesh.BoundsMin[2]), 0, 'g', 4)
                                 .arg(Mesh.ImportInfo.IsEmpty() ? QString()
-                                     : QStringLiteral("\nFrom %1").arg(QString::fromStdString(Mesh.ImportInfo.SourcePath)));
+                                     : QStringLiteral("\nFrom %1").arg(QString::fromStdString(Mesh.ImportInfo.SourcePath)))
+                                .arg(Mesh.IsSkinned() ? QStringLiteral("Skinned mesh (%1)").arg(QString::fromStdString(Mesh.Skeleton))
+                                                      : QStringLiteral("Mesh"));
                 Entry.bRendered = true;
                 QueueRender(Key, Entry);
             }
@@ -417,6 +447,49 @@ private:
             {
                 Entry.Summary = QStringLiteral("Not a mesh this editor can read");
             }
+        }
+        else if(Path.endsWith(QStringLiteral(".nmskel"), Qt::CaseInsensitive))
+        {
+            RenderCore::SkeletonData Skeleton;
+            EngineCore::Archive Ar = ArchiveOf(ReadAll(Path));
+            Entry.Summary = RenderCore::SerializeSkeleton(Ar, Skeleton)
+                          ? QStringLiteral("Skeleton, %1 bones%2").arg(Skeleton.Bones.size())
+                            .arg(Skeleton.ImportInfo.IsEmpty() ? QString()
+                                 : QStringLiteral("\nFrom %1").arg(QString::fromStdString(Skeleton.ImportInfo.SourcePath)))
+                          : QStringLiteral("Not a skeleton this editor can read");
+        }
+        else if(Path.endsWith(QStringLiteral(".nmanim"), Qt::CaseInsensitive))
+        {
+            RenderCore::AnimClipData Clip;
+            EngineCore::Archive Ar = ArchiveOf(ReadAll(Path));
+            Entry.Summary = RenderCore::SerializeAnimClip(Ar, Clip)
+                          ? QStringLiteral("Animation clip, %1 s (%2 frames at %3 fps), %4 tracks, %5 notifies%6\nDouble-click to preview")
+                            .arg(double(Clip.GetDuration()), 0, 'g', 4).arg(Clip.FrameCount).arg(double(Clip.SampleRate))
+                            .arg(Clip.Tracks.size()).arg(Clip.Notifies.size())
+                            .arg(Clip.bLoop ? QStringLiteral(", looping") : QString())
+                          : QStringLiteral("Not an animation clip this editor can read");
+        }
+        else if(Path.endsWith(QStringLiteral(".nmanimstate"), Qt::CaseInsensitive))
+        {
+            RenderCore::AnimStateData State;
+            EngineCore::Archive Ar = ArchiveOf(ReadAll(Path));
+            if(RenderCore::SerializeAnimState(Ar, State))
+            {
+                size_t States = 0;
+                for(const RenderCore::AnimLayer& Layer : State.Layers) { States += Layer.States.size(); }
+                Entry.Summary = QStringLiteral("Anim state, %1 layer(s), %2 state(s), %3 parameter(s)\nDouble-click to edit")
+                                .arg(State.Layers.size()).arg(States).arg(State.Parameters.size());
+            }
+            else
+            {
+                Entry.Summary = QStringLiteral("Not an anim state this editor can read");
+            }
+        }
+        else if(!EditorContent::MaterialPathFor(Path).isEmpty())
+        {
+            Entry.Summary = QStringLiteral("Material graph\nDouble-click to edit");
+            Entry.bRendered = true;
+            QueueRender(Key, Entry);
         }
         else if(EditorContent::ClassifySource(Path) == EditorContent::EImportKind::Texture)
         {
@@ -851,6 +924,16 @@ void ContentBrowserPanel::OpenItem(const QString& InPath)
         MeshViewerWindow::Open(InPath, window());
         return;
     }
+    if(InPath.endsWith(QStringLiteral(".nmanim"), Qt::CaseInsensitive))
+    {
+        MeshViewerWindow::OpenAnimation(InPath, window());
+        return;
+    }
+    if(InPath.endsWith(QStringLiteral(".nmanimstate"), Qt::CaseInsensitive))
+    {
+        EditorAnimation::OpenAnimState(InPath, window());
+        return;
+    }
     if(InPath.endsWith(QStringLiteral(".nmtexture"), Qt::CaseInsensitive))
     {
         TextureViewerWindow::Open(InPath, window());
@@ -920,6 +1003,7 @@ void ContentBrowserPanel::ShowContextMenu(const QPoint& InPos)
         Menu.addAction(QStringLiteral("New Prefab..."), this, [this]() { EditorPrefabs::CreatePrefab(CurrentFolder, window()); });
         Menu.addAction(QStringLiteral("New UI..."), this, [this]() { EditorUI::CreateUI(CurrentFolder, window()); });
         Menu.addAction(QStringLiteral("New Particle System..."), this, [this]() { EditorParticles::CreateParticleSystem(CurrentFolder, window()); });
+        Menu.addAction(QStringLiteral("New Anim State..."), this, [this]() { EditorAnimation::CreateAnimState(CurrentFolder, window()); });
         for(const NodeGraph::Schema* Schema : NodeGraph::GetSchemas())
         {
             /* By name: a refresh (RefreshGameDeclarations) replaces the schema. */

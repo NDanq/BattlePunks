@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="de4d6264a7c467a4d9ec5067c5b8881f" Name="B33_N1" Mobility="Static">
+  <Component Type="Render" Version="5">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <ParameterCount Value="2" />
+    <Parameter0Name Value="BaseColor" />
+    <Parameter0Slot Value="0" />
+    <Parameter0X Value="0.78" />
+    <Parameter0Y Value="0.74" />
+    <Parameter0Z Value="0.66" />
+    <Parameter0W Value="0" />
+    <Parameter1Name Value="Roughness" />
+    <Parameter1Slot Value="0" />
+    <Parameter1X Value="0.85" />
+    <Parameter1Y Value="0" />
+    <Parameter1Z Value="0" />
+    <Parameter1W Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
+    <Occluder Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="3700" Y="375" Z="3950" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="800" Y="750" Z="300" />
+  </Component>
+</Entity>

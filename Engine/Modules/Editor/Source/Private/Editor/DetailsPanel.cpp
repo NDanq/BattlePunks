@@ -308,7 +308,8 @@ QWidget* DetailsPanel::BuildEntitySection(const EntityID InEntity)
     MobilityCombo->addItem(QStringLiteral("Stationary"), int(GameCore::EMobility::Stationary));
     MobilityCombo->setToolTip(QStringLiteral("Static: level geometry that never moves in play. Its draws are kept in the "
                                              "renderer's static lists, its bounds are not refitted, and a prefab instance "
-                                             "rooted on it gets no phase ticks; with baked lighting, it is baked. "
+                                             "rooted on it gets no phase ticks and is static throughout; with baked "
+                                             "lighting, it is baked. "
                                              "Stationary: a light that stays put but stays live -- only the light it bounces "
                                              "is baked. Applies to every selected entity."));
     MobilityCombo->setFocusPolicy(Qt::StrongFocus);
@@ -379,6 +380,8 @@ void DetailsPanel::RefreshEntitySection()
         {
             MobilityCombo->setCurrentIndex(Index);
         }
+        /* Static from its prefab instance's root: changed there, not here. */
+        MobilityCombo->setEnabled(E.GetMobility() == E.GetAuthoredMobility());
     }
 }
 

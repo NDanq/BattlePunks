@@ -476,6 +476,11 @@ namespace EditorGraphs
         Context() = InContext;
     }
 
+    EditorContext* GetEditorContext()
+    {
+        return Context();
+    }
+
     QString GetMaterialPath(const QString& InGraphPath)
     {
         const QString Runtime = EditorContent::ToRuntimePath(InGraphPath);
@@ -565,18 +570,24 @@ namespace EditorGraphs
                 InDone(Image, Error);
                 return;
             }
-            if(!Now || ++*Tries > 150)
+            if(!Now || ++*Tries > 600)
             {
                 Poll->deleteLater();
                 InDone(QImage(), QStringLiteral("No frame was rendered to draw the preview (is the viewport visible?)"));
             }
         });
-        Poll->start(20);
+        Poll->start(5);   // answered within a frame or two: a coarse poll would add most of a frame
     }
 
     static EngineCore::Color ToColor(const QColor& InColor)
     {
         return EngineCore::Color(uint8_t(InColor.red()), uint8_t(InColor.green()), uint8_t(InColor.blue()), uint8_t(InColor.alpha()));
+    }
+
+    bool IsMaterialCooking(const QString& InMaterial)
+    {
+        const auto Found = MaterialCooks().find(InMaterial);
+        return Found != MaterialCooks().end() && (Found->second.bRunning || Found->second.bPending);
     }
 
     void RequestMaterialPreview(const QString& InName, const int InSize, const QColor& InTint, QObject* InContext,
@@ -591,7 +602,8 @@ namespace EditorGraphs
     {
         EditorContext* Ctx = Context();
         PollPreview(Ctx ? Ctx->RequestMeshPreview(InOptions.Mesh, InOptions.Material, InOptions.Sections, InOptions.Width,
-                                                  InOptions.Height, InOptions.Yaw, InOptions.Pitch, InOptions.Zoom, ToColor(InOptions.Tint))
+                                                  InOptions.Height, InOptions.Yaw, InOptions.Pitch, InOptions.Zoom, ToColor(InOptions.Tint),
+                                                  InOptions.SkinPalette)
                         : 0,
                     InContext, std::move(InDone));
     }

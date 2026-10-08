@@ -46,6 +46,10 @@
 #include "Private/Editor/EditorPrimitives.h"
 #include "Private/Editor/AboutDialog.h"
 #include "Private/Editor/Content/ContentPaths.h"
+#include "Private/Editor/Content/AnimPreviewWidget.h"
+#include "Private/Editor/Content/AnimStateEditorWindow.h"
+#include "Private/Editor/Content/AnimationAssets.h"
+#include "Private/Editor/Content/MeshViewerWindow.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/Particles/ParticleAssets.h"
 #include "Private/Editor/Particles/ParticleDocument.h"
@@ -1454,6 +1458,96 @@ void EditorMainWindow::RegisterConsoleCommands()
         {
             Console.Print(QStringLiteral("Opened %1").arg(QDir::toNativeSeparators(Path)));
         }
+    });
+
+    /* The mesh viewer, and its animation preview, for scripts and tests. */
+    Console.Register(QStringLiteral("mesh"),
+                     QStringLiteral("<path> | play | pause | seek <s> | param <name> <value> | bones <on|off> | windowshot <file.png>"),
+                     QStringLiteral("Open a .nmmesh, .nmanim or .nmanimstate in the mesh viewer, or drive the one in front"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("Usage: mesh <path> | play | pause | seek <s> | param <name> <value> | bones <on|off> | windowshot <file.png>"));
+            return;
+        }
+        const QString Verb = InArgs.front();
+        const QStringList Drives = { QStringLiteral("play"), QStringLiteral("pause"), QStringLiteral("seek"), QStringLiteral("param"),
+                                     QStringLiteral("bones"), QStringLiteral("windowshot") };
+        if(Drives.contains(Verb))
+        {
+            MeshViewerWindow* Viewer = MeshViewerWindow::FindFront();
+            if(!Viewer)
+            {
+                Console.PrintError(QStringLiteral("No mesh viewer is open"));
+                return;
+            }
+            AnimPreviewWidget* Anim = Viewer->GetAnimPreview();
+            if(Verb == QStringLiteral("windowshot"))
+            {
+                const QString File = QFileInfo(InArgs.mid(1).join(QLatin1Char(' '))).absoluteFilePath();
+                if(!Viewer->grab().save(File)) { Console.PrintError(QStringLiteral("Could not write %1").arg(File)); }
+                else                           { Console.Print(QStringLiteral("Saved %1").arg(QDir::toNativeSeparators(File))); }
+                return;
+            }
+            if(!Anim)
+            {
+                Console.PrintError(QStringLiteral("The mesh in front is not skinned"));
+                return;
+            }
+            if(Verb == QStringLiteral("play"))       { Anim->SetPlaying(true); }
+            else if(Verb == QStringLiteral("pause")) { Anim->SetPlaying(false); }
+            else if(Verb == QStringLiteral("seek"))  { Anim->SetPlaying(false); Anim->Seek(InArgs.value(1).toFloat()); }
+            else if(Verb == QStringLiteral("bones")) { Anim->SetBonesShown(InArgs.value(1) != QStringLiteral("off")); }
+            else
+            {
+                if(!Anim->GetInstance().SetParameter(InArgs.value(1).toStdString(), InArgs.value(2).toFloat()))
+                {
+                    Console.PrintError(QStringLiteral("The anim state playing has no parameter %1").arg(InArgs.value(1)));
+                }
+                if(!Anim->IsPlaying()) { Anim->Repose(); }
+            }
+            return;
+        }
+        const QString Joined = InArgs.join(QLatin1Char(' '));
+        const QString Path = QFileInfo(Joined).isAbsolute() ? Joined : QDir(EditorGraphs::GetProjectRoot()).filePath(Joined);
+        const bool bAnimation = Path.endsWith(QStringLiteral(".nmanim"), Qt::CaseInsensitive)
+                             || Path.endsWith(QStringLiteral(".nmanimstate"), Qt::CaseInsensitive);
+        if(bAnimation ? MeshViewerWindow::OpenAnimation(Path, this) != nullptr : MeshViewerWindow::Open(Path, this) != nullptr)
+        {
+            Console.Print(QStringLiteral("Opened %1").arg(QDir::toNativeSeparators(Path)));
+        }
+    });
+
+    /* The anim state editor, for scripts and tests. */
+    Console.Register(QStringLiteral("animstate"), QStringLiteral("<path> | new | save | windowshot <file.png>"),
+                     QStringLiteral("Open an .nmanimstate in the anim state editor, make one, or drive the one in front"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("Usage: animstate <path> | new | save | windowshot <file.png>"));
+            return;
+        }
+        const QString Verb = InArgs.front();
+        if(Verb == QStringLiteral("new")) { EditorAnimation::CreateAnimState(QString(), this); return; }
+        if(Verb == QStringLiteral("save") || Verb == QStringLiteral("windowshot"))
+        {
+            AnimStateEditorWindow* Editor = AnimStateEditorWindow::FindFront();
+            if(!Editor)
+            {
+                Console.PrintError(QStringLiteral("No anim state is open"));
+                return;
+            }
+            if(Verb == QStringLiteral("save")) { Editor->Save(); return; }
+            const QString File = QFileInfo(InArgs.mid(1).join(QLatin1Char(' '))).absoluteFilePath();
+            if(!Editor->grab().save(File)) { Console.PrintError(QStringLiteral("Could not write %1").arg(File)); }
+            else                           { Console.Print(QStringLiteral("Saved %1").arg(QDir::toNativeSeparators(File))); }
+            return;
+        }
+        const QString Joined = InArgs.join(QLatin1Char(' '));
+        const QString Path = QFileInfo(Joined).isAbsolute() ? Joined : QDir(EditorGraphs::GetProjectRoot()).filePath(Joined);
+        if(AnimStateEditorWindow::Open(Path, this)) { Console.Print(QStringLiteral("Opened %1").arg(QDir::toNativeSeparators(Path))); }
     });
 
     /* A second window on a World of its own: the multi-window rendering path

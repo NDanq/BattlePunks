@@ -3,9 +3,11 @@
 // sorted back to front along the view (a bitonic sort in shared memory, two a
 // thread), then written as instances (GDIBuffer.h: a mat4 transform and a
 // colour each), so translucent particles blend in order in one instanced draw
-// (RenderCore/RENDERPIPELINE.md, "Particles"). The living sort first; their
-// count goes into the draws' arguments, so only they are drawn. Each is turned as its type
-// says: a sprite by its billboard, a mesh by its orientation.
+// (RenderCore/RENDERPIPELINE.md, "Particles"). Only the living are sorted:
+// packed to the front first, over the power of two above their count, not the
+// ring's; their count goes into the draws' arguments, so only they are drawn.
+// Each is turned as its type says: a sprite by its billboard, a mesh by its
+// orientation.
 
 #include <ParticleCommon.glsl>
 
@@ -120,26 +122,32 @@ void main()
 {
     uint Thread = gl_LocalInvocationIndex;
     uint Max    = Pa_Spawn.z;
-    uint Count  = Pa_Sort.x;   // a power of two >= Max, <= SORT_MAX
 
     if(Thread == 0u) { AliveCount = 0u; }
     barrier();
 
-    // Farthest first: the key is minus the depth; the dead and the padding last.
-    for(uint Slot = Thread; Slot < Count; Slot += 1024u)
+    // The living packed to the front, farthest first: the key is minus the depth.
+    for(uint Slot = Thread; Slot < Max; Slot += 1024u)
     {
-        float Key = 3.0e38;
-        if(Slot < Max)
+        Particle P = Particles[Slot];
+        if(IsAlive(P))
         {
-            Particle P = Particles[Slot];
-            if(IsAlive(P))
-            {
-                Key = -dot(P.PositionAge.xyz - Pa_Camera.xyz, Pa_CameraForward.xyz);
-                atomicAdd(AliveCount, 1u);
-            }
+            uint At  = atomicAdd(AliveCount, 1u);
+            Keys[At] = -dot(P.PositionAge.xyz - Pa_Camera.xyz, Pa_CameraForward.xyz);
+            Ids[At]  = Slot;
         }
-        Keys[Slot] = Key;
-        Ids[Slot]  = Slot;
+    }
+    barrier();
+
+    // The power of two the sort runs over (at most Pa_Sort.x), the padding after
+    // the living. Read from shared memory past a barrier: the same in every thread.
+    uint Alive = AliveCount;
+    uint Count = 1u;
+    while(Count < Alive) { Count <<= 1u; }
+    for(uint Slot = Alive + Thread; Slot < Count; Slot += 1024u)
+    {
+        Keys[Slot] = 3.0e38;
+        Ids[Slot]  = 0u;
     }
     barrier();
 
@@ -166,15 +174,15 @@ void main()
 
     for(uint Slot = Thread; Slot < Max; Slot += 1024u)
     {
-        Particle P = Particles[Ids[Slot]];
         Instance Out;
-        if(!IsAlive(P))
+        if(Slot >= Alive)
         {
             Out.Transform = mat4(0.0);   // collapses to a point: draws nothing
             Out.Color     = vec4(0.0);
         }
         else
         {
+            Particle P = Particles[Ids[Slot]];
             float Age = NormalizedAge(P);
             Out.Transform = ParticleTransform(P, SizeAt(Age));
             Out.Color     = ColorAt(Age);
@@ -200,6 +208,6 @@ void main()
     // The living sort first: the draws draw that many (and the dead after them never).
     if(Thread == 0u)
     {
-        for(uint Draw = 0u; Draw < Pa_Sort.w; ++Draw) { Args[Draw * ARGS_WORDS + 1u] = AliveCount; }
+        for(uint Draw = 0u; Draw < Pa_Sort.w; ++Draw) { Args[Draw * ARGS_WORDS + 1u] = Alive; }
     }
 }

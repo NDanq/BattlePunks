@@ -86,7 +86,7 @@ MATERIAL_INCLUDE = "Material.glsl"   # what the templates include; mapped per ma
 # --- Permutation keys (RenderCore's MaterialPermutation.h says the same) ------
 DOMAINS    = ["Opaque", "Masked", "Translucent", "PostProcess"]   # bits 0-2
 SHADINGS   = ["Lit", "Unlit"]                                     # bits 3-4
-VERTEX_INS = ["Quad", "Mesh", "Fullscreen", "InstancedMesh"]      # bits 8-10
+VERTEX_INS = ["Quad", "Mesh", "Fullscreen", "InstancedMesh", "SkinnedMesh"]   # bits 8-10
 
 CACHE_VERSION = 1
 
@@ -303,7 +303,7 @@ def material_jobs(mtl_path, prefix=""):
     key = pixel_key(domain, shading)
     jobs = [Job(TEMPLATE_PS, "pixel", permutation_name(name, key, "pixel"), pixel_defines(domain, shading), mtl_path)]
     if meta["HasOffset"] == "1" and domain != "PostProcess":
-        for vertex_in in ("Quad", "Mesh", "InstancedMesh"):
+        for vertex_in in ("Quad", "Mesh", "InstancedMesh", "SkinnedMesh"):
             jobs.append(Job(TEMPLATE_VS, "vertex", permutation_name(name, vertex_key(vertex_in), "vertex"),
                             vertex_defines(vertex_in, True), mtl_path))
     return jobs, meta

@@ -149,6 +149,26 @@ public:
     bool       ReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes) override;
     bool       SupportsIndirectDraw() const override { return SupportsCompute(); }
 
+    /* Occlusion queries (D3D12Query.cpp): binary occlusion, predicated with
+     * SetPredication -- core at every feature level. */
+    bool                 SupportsOcclusionQueries() const override { return DeviceObj != nullptr; }
+    bool                 SupportsOcclusionPredication() const override { return DeviceObj != nullptr; }
+    GDIOcclusionQueries* CreateOcclusionQueries(uint32_t InCapacity) override;
+    void                 BeginOcclusionRound(GDIOcclusionQueries* InSet, uint32_t InCount) override;
+    void                 BeginOcclusionQuery(GDIOcclusionQueries* InSet, uint32_t InIndex) override;
+    void                 EndOcclusionQuery(GDIOcclusionQueries* InSet, uint32_t InIndex) override;
+    void                 ResolveOcclusionQueries(GDIOcclusionQueries* InSet) override;
+    void                 SetOcclusionPredicate(GDIOcclusionQueries* InSet, int32_t InIndex) override;
+    bool                 ReadOcclusionResults(GDIOcclusionQueries* InSet, std::vector<uint8_t>& OutVisible) override;
+
+    /** D3D12OcclusionQueries::Release: its heap and buffers, freed once the GPU is done. */
+    void ReleaseOcclusionQueries(class D3D12OcclusionQueries* InSet);
+
+    /** D3D12Mesh::Draw, around its draw: predicates it on GDISetOcclusionPredicate's
+     *  query, if one is set; true if it did, to pass to EndDrawPredicate. */
+    bool BeginDrawPredicate(ID3D12GraphicsCommandList* InList);
+    void EndDrawPredicate(ID3D12GraphicsCommandList* InList, bool bInBegun);
+
     /**
      * The open frame list's serial, new each time a frame list is opened
      * (BeginRendering, FlushForReadback); D3D12Buffer tracks its state per
@@ -223,6 +243,10 @@ private:
     uint64_t                  SceneBlockUploadAddress = 0;   // D3D12_GPU_VIRTUAL_ADDRESS
     uint64_t                  SceneBlockUploadSerial = ~0ull;
     uint64_t                  SceneBlockUploadEpoch  = ~0ull;
+    /* The skin block the same way: unchanged since its last upload, reused. */
+    uint64_t                  SkinBlockUploadAddress[2] = {};                 // D3D12_GPU_VIRTUAL_ADDRESS; the palette, the frame before's
+    uint64_t                  SkinBlockUploadSerial[2]  = { ~0ull, ~0ull };
+    uint64_t                  SkinBlockUploadEpoch[2]   = { ~0ull, ~0ull };
 
     GDIMesh*                  ScreenMesh       = nullptr;
     D3D12TextureResource*     NullTexture      = nullptr;
@@ -235,6 +259,15 @@ private:
     std::unordered_set<D3D12RenderTarget*>             LiveRenderTargets;
 
     std::vector<Microsoft::WRL::ComPtr<ID3D12Resource>> DeferredResources;
+    std::vector<Microsoft::WRL::ComPtr<ID3D12QueryHeap>> DeferredQueryHeaps;   // released occlusion query sets'
+
+    /* GDISetOcclusionPredicate's: the draws after it are predicated on it. */
+    class D3D12OcclusionQueries* PredicateSet   = nullptr;
+    int32_t                      PredicateIndex = -1;
+
+    /* BeginRendering blocks begun: a round's answers are readable from the
+     * block after its own, whose BeginRendering waited its fence. */
+    uint64_t                     RenderingBlocks = 0;
 
     /*
      * GPU timestamps (GDIDynamicDriver::WriteGPUTimestamp), render thread only:

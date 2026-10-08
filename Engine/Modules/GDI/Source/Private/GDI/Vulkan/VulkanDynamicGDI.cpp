@@ -213,6 +213,7 @@ void VulkanDynamicGDI::Allocate()
     vkCreateSemaphore(DeviceObj->GetDevice(), &SemInfo, nullptr, &RenderTimeline);
 
     CreateTimestampPool();
+    LoadQueryFunctions();
 
     // Swapchains are created on the UI thread, one per window, by the first
     // present to it (FindOrCreateSwapchain).
@@ -608,7 +609,7 @@ void VulkanDynamicGDI::DeferDestroyBuffer(VkBuffer InBuffer, VkDeviceMemory InMe
 
 void VulkanDynamicGDI::DrainDeferredDestruction()
 {
-    if(!DeviceObj || !DeviceObj->IsValid()) { DeferredImages.clear(); DeferredBuffers.clear(); return; }
+    if(!DeviceObj || !DeviceObj->IsValid()) { DeferredImages.clear(); DeferredBuffers.clear(); DeferredQueryPools.clear(); return; }
     VkDevice Dev = DeviceObj->GetDevice();
 
     for(const DeferredImage& D : DeferredImages)
@@ -626,6 +627,12 @@ void VulkanDynamicGDI::DrainDeferredDestruction()
         if(D.Memory != VK_NULL_HANDLE) vkFreeMemory(Dev, D.Memory, nullptr);
     }
     DeferredBuffers.clear();
+
+    for(const VkQueryPool Pool : DeferredQueryPools)
+    {
+        vkDestroyQueryPool(Dev, Pool, nullptr);
+    }
+    DeferredQueryPools.clear();
 }
 
 void VulkanDynamicGDI::EndActiveRenderingRegion()
@@ -681,6 +688,65 @@ void VulkanDynamicGDI::FlushForReadback(bool bResumeActiveRegion)
     // Skipped for resize, where RT is about to be destroyed.
     if(bResumeActiveRegion && bWasActive && RT && ColorCount > 0)
         SetRenderTargets(Colors, ColorCount, Depth);
+}
+
+bool VulkanDynamicGDI::RecordReadback(VKRenderTarget* Src, VkBuffer Dst, uint64_t& OutDoneAt)
+{
+    if(!Src || Dst == VK_NULL_HANDLE || !CurrentStateData || !DeviceObj) return false;
+    if(CurrentStateData->CurrentCmd == VK_NULL_HANDLE || !Src->IsValid()) return false;
+
+    VKRenderTarget*  RT         = CurrentStateData->ActiveRenderTarget;
+    const bool       bWasActive = CurrentStateData->bRenderingActive;
+    GDIRenderTarget* Colors[GDI_MAX_COLOR_TARGETS] = {};
+    const uint32_t   ColorCount = CurrentStateData->ActiveColorCount;
+    for(uint32_t Index = 0; Index < ColorCount; ++Index) { Colors[Index] = CurrentStateData->ActiveColors[Index]; }
+    GDIRenderTarget* Depth      = CurrentStateData->ActiveDepth;
+
+    // A copy cannot happen inside a dynamic-rendering region.
+    EndActiveRenderingRegion();
+    VkCommandBuffer Cmd = CurrentStateData->CurrentCmd;
+
+    const VkImageLayout Cur = Src->GetCurrentLayout();
+    RecordBarrier(Cmd, MakeImageBarrier(
+        Src->GetImage(), Cur, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
+        VK_PIPELINE_STAGE_2_COPY_BIT,         VK_ACCESS_2_TRANSFER_READ_BIT));
+
+    VkBufferImageCopy Region{};
+    Region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    Region.imageSubresource.layerCount = 1;
+    Region.imageExtent = { Src->GetWidth(), Src->GetHeight(), 1 };
+    vkCmdCopyImageToBuffer(Cmd, Src->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, Dst, 1, &Region);
+
+    // Back as it was, and the copy made visible to the host's read.
+    RecordBarrier(Cmd, MakeImageBarrier(
+        Src->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, Cur,
+        VK_PIPELINE_STAGE_2_COPY_BIT,         VK_ACCESS_2_TRANSFER_READ_BIT,
+        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT));
+    VkMemoryBarrier2 ToHost{};
+    ToHost.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+    ToHost.srcStageMask  = VK_PIPELINE_STAGE_2_COPY_BIT;
+    ToHost.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    ToHost.dstStageMask  = VK_PIPELINE_STAGE_2_HOST_BIT;
+    ToHost.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+    VkDependencyInfo Dep{};
+    Dep.sType              = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    Dep.memoryBarrierCount = 1;
+    Dep.pMemoryBarriers    = &ToHost;
+    vkCmdPipelineBarrier2(Cmd, &Dep);
+
+    // Done once this frame's submit (EndRendering's, the next timeline value) has
+    // finished -- which the next BeginRendering's fence wait establishes. A flush
+    // in between submits it sooner; that only makes it done earlier.
+    OutDoneAt = RenderTimelineCounter + 1;
+
+    // The frame continues as before the copy (loadOp=LOAD preserves contents).
+    CurrentStateData->ActiveRenderTarget = nullptr;
+    CurrentStateData->ActiveColorCount   = 0;
+    CurrentStateData->ActiveDepth        = nullptr;
+    if(bWasActive && RT && ColorCount > 0)
+        SetRenderTargets(Colors, ColorCount, Depth);
+    return true;
 }
 
 void VulkanDynamicGDI::RecordResolve(VKRenderTarget* Src, VKRenderTarget* Dst)
@@ -1007,14 +1073,17 @@ static void PackViewParamsUBO(const std::unordered_map<std::string, VKUniformVal
 }
 
 /**
- * Pack Transform struct into an 80-byte std140 UBO buffer:
+ * Pack Transform struct into a 144-byte std140 UBO buffer:
  *   Offset  0: vec3  PositionWorldSpace (12 bytes + 4 pad = 16 bytes)
  *   Offset 16: mat4  Model              (64 bytes)
+ *   Offset 80: mat4  PrevModel          (64 bytes; the frame before's, for velocity)
  */
+static constexpr uint32_t kTransformUBOBytes = 144;
+
 static void PackTransformUBO(const std::unordered_map<std::string, VKUniformValue>& S, void* Dst)
 {
     float* D = static_cast<float*>(Dst);
-    memset(D, 0, 80);
+    memset(D, 0, kTransformUBOBytes);
 
     auto Write = [&](const std::string& Name, float* Out, int Count)
     {
@@ -1025,6 +1094,8 @@ static void PackTransformUBO(const std::unordered_map<std::string, VKUniformValu
 
     Write("Transform.PositionWorldSpace", D + 0, 3);  // offset  0, 12 bytes (+ 4 pad)
     Write("Transform.Model",              D + 4, 16); // offset 16, 64 bytes
+    Write("Transform.Model",              D + 20, 16); // offset 80: as Model, unless...
+    Write("Transform.PrevModel",          D + 20, 16); // ...the frame before's was set
 }
 
 /**
@@ -1105,7 +1176,8 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     Key.VertexShader    = CurrentStateData->BoundVSModule;
     Key.FragmentShader  = CurrentStateData->BoundFSModule;
     // 3: an indexed mesh drawn instanced from GDISetInstanceBuffer's buffer.
-    Key.VertexLayoutID  = InMesh->IsIndexed() ? (GetInstanceBuffer() ? 3u : 2u) : (bIsInstanced ? 1u : 0u);
+    // 4: a skinned mesh, its bone streams at bindings 6 and 7 (never instanced).
+    Key.VertexLayoutID  = InMesh->IsIndexed() ? (GetInstanceBuffer() ? 3u : (InMesh->IsSkinned() ? 4u : 2u)) : (bIsInstanced ? 1u : 0u);
     Key.DescLayoutGroup = Group;
 
     if(CurrentStateData->BlendState)
@@ -1131,6 +1203,11 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     {
         Key.RTFormat    = CurrentStateData->ActiveRenderTarget->GetFormat();
         Key.ColorCount  = CurrentStateData->ActiveColorCount > 0 ? CurrentStateData->ActiveColorCount : 1u;
+        for(uint32_t Index = 0; Index < GDI_MAX_COLOR_TARGETS; ++Index)
+        {
+            const VKRenderTarget* Each = Index < CurrentStateData->ActiveColorCount ? CurrentStateData->ActiveColors[Index] : nullptr;
+            Key.ColorFormats[Index] = Each ? Each->GetFormat() : VK_FORMAT_UNDEFINED;
+        }
         Key.DepthFormat = CurrentStateData->ActiveDepth ? CurrentStateData->ActiveDepth->GetDepthFormat() : VK_FORMAT_UNDEFINED;
     }
 
@@ -1161,19 +1238,19 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     VPBuf.range  = 160;
 
     // --- Binding 1: Transform (80 bytes) ---
-    VKUBOAllocation TrAlloc = DescAlloc->AllocateUBO(80);
+    VKUBOAllocation TrAlloc = DescAlloc->AllocateUBO(kTransformUBOBytes);
     if(TrAlloc.Buffer == VK_NULL_HANDLE) return false;
     PackTransformUBO(CoreScalars, TrAlloc.MappedPtr);
 
     VkDescriptorBufferInfo TrBuf{};
     TrBuf.buffer = TrAlloc.Buffer;
     TrBuf.offset = TrAlloc.Offset;
-    TrBuf.range  = 80;
+    TrBuf.range  = kTransformUBOBytes;
 
     // ----------------------------------------------------------------
     // 7. Collect descriptor writes (up to 4 bindings; the material layout's 12)
     // ----------------------------------------------------------------
-    VkWriteDescriptorSet Writes[GDI_MATERIAL_TEXTURE_BINDING + GDI_MATERIAL_TEXTURE_SLOTS]{};
+    VkWriteDescriptorSet Writes[GDI_PREV_SKIN_BLOCK_BINDING + 1]{};
     uint32_t WriteCount = 0;
 
     // VP UBO (binding 0)
@@ -1222,6 +1299,7 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
 
     // --- Material layout: raw blocks at 2 and 3, textures at 4-11 ---
     VkDescriptorBufferInfo BlockBufs[2]{};
+    VkDescriptorBufferInfo SkinBufs[2]{};
     VkDescriptorImageInfo  MaterialImages[GDI_MATERIAL_TEXTURE_SLOTS]{};
     if(Group == DLG_Material)
     {
@@ -1267,6 +1345,42 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
             Writes[WriteCount].descriptorCount = 1;
             Writes[WriteCount].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             Writes[WriteCount].pBufferInfo     = &BlockBufs[b];
+            ++WriteCount;
+        }
+
+        // The skin blocks (bindings 12 and 13): the last palette set, and the
+        // frame before's, each uploaded once per change -- a run of draws after
+        // a skinned one rebinds them, no more.
+        for(uint32_t Skin = 0; Skin < 2; ++Skin)
+        {
+            // A skinned shader declares the whole palette: bind all of it.
+            const std::vector<uint8_t>& Bytes = MaterialBlocks[2 + Skin];
+            const uint32_t Size = Bytes.empty() ? 16u : GDI_SKIN_BLOCK_MAX_BYTES;
+            const bool bReuse = SkinBlockUploadSerial[Skin] == MaterialBlockSerials[2 + Skin]
+                                && SkinBlockUploadEpoch[Skin] == DescAlloc->GetEpoch()
+                                && SkinBlockUploadBuffer[Skin] != VK_NULL_HANDLE;
+            if(!bReuse)
+            {
+                const VKUBOAllocation Block = DescAlloc->AllocateUBO(Size);
+                if(Block.Buffer == VK_NULL_HANDLE) return false;
+                memset(Block.MappedPtr, 0, Size);
+                if(!Bytes.empty()) memcpy(Block.MappedPtr, Bytes.data(), Bytes.size());
+                SkinBlockUploadBuffer[Skin] = Block.Buffer;
+                SkinBlockUploadOffset[Skin] = Block.Offset;
+                SkinBlockUploadSize[Skin]   = Size;
+                SkinBlockUploadSerial[Skin] = MaterialBlockSerials[2 + Skin];
+                SkinBlockUploadEpoch[Skin]  = DescAlloc->GetEpoch();
+            }
+            SkinBufs[Skin].buffer = SkinBlockUploadBuffer[Skin];
+            SkinBufs[Skin].offset = SkinBlockUploadOffset[Skin];
+            SkinBufs[Skin].range  = SkinBlockUploadSize[Skin];
+
+            Writes[WriteCount].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            Writes[WriteCount].dstSet          = DescSet;
+            Writes[WriteCount].dstBinding      = Skin == 0 ? GDI_SKIN_BLOCK_BINDING : GDI_PREV_SKIN_BLOCK_BINDING;
+            Writes[WriteCount].descriptorCount = 1;
+            Writes[WriteCount].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            Writes[WriteCount].pBufferInfo     = &SkinBufs[Skin];
             ++WriteCount;
         }
 
@@ -1451,7 +1565,7 @@ Color VulkanDynamicGDI::GetColorFromSamplePoint(const Point& InPoint, const Size
 
     VkBuffer       Buf = VK_NULL_HANDLE;
     VkDeviceMemory Mem = VK_NULL_HANDLE;
-    if(!AllocStagingBuffer(DeviceObj, 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, Buf, Mem))
+    if(!AllocStagingBuffer(DeviceObj, 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, Buf, Mem, true))
         return Color();
 
     VkCommandPool   Pool = VK_NULL_HANDLE;

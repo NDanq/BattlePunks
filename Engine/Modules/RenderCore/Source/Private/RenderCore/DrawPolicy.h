@@ -35,6 +35,7 @@ namespace RenderCore
         uint32_t          First = 0;
         uint32_t          Count = 0;             // 0: the whole mesh
         int32_t           ShadowView = -1;       // Shadows stage: the ShadowFrame view it draws into
+        int32_t           Occlusion  = -1;       // the occlusion query the GPU skips it on (RenderContext::SetDrawOcclusion); -1: none
         uint8_t           PostStage  = 1;        // PostProcess stage: EPostProcessStage, before or after the effects
         bool              bStatic    = false;    // replayed from a static draw list (SubmitCaptured): its own draw event
 
@@ -45,6 +46,17 @@ namespace RenderCore
 
         /* The entity's baked lighting; null: none (BakedLighting.glsl). */
         const RenderBakedDraw*         Baked = nullptr;
+
+        /* MeshSection of a skinned mesh: its bone palette (Skinning.glsl), 12
+         * floats a bone; null, its bind pose. Owned by the proxy. */
+        const float*                   SkinPalette = nullptr;
+        uint32_t                       SkinBones   = 0;
+        const float*                   PrevSkinPalette = nullptr;   // the frame before's; null: SkinPalette
+
+        /* Velocity: Motion times its model is its model the frame before
+         * (RenderContext::SetDrawMotion). Not bMoved: it did not move. */
+        EngineCore::Matrix4x4          Motion;
+        bool                           bMoved = false;
 
         /* MeshSection, instanced (GDISetInstanceBuffer): InstanceCount of it
          * from Instances, drawn with the InstancedMesh vertex input; sorted by

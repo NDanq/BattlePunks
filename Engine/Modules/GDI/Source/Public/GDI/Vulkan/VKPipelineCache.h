@@ -74,6 +74,9 @@ enum EDescriptorLayoutGroup : uint32_t
  *   2 — mesh:      bindings 0+1 as above, binding 2 = vec3 normal (location 8),
  *                  binding 3 = vec4 colour (location 9); an indexed mesh from
  *                  GDICreateMesh
+ *   3 — mesh, instanced: 2 plus the instance buffer at binding 5
+ *   4 — mesh, skinned: 2 plus bone indices and weights at bindings 6 and 7
+ *                  (locations 11 and 12)
  */
 class VKPipelineCache
 {
@@ -113,8 +116,10 @@ public:
 
         // Render-target format and primitive topology.
         VkFormat              RTFormat          = VK_FORMAT_R8G8B8A8_UNORM;
-        // How many colour attachments, every one RTFormat (SetRenderTargets).
+        // How many colour attachments (SetRenderTargets), and each one's format
+        // (UNDEFINED: RTFormat) -- a G-buffer beside a half-float velocity.
         uint32_t              ColorCount        = 1;
+        VkFormat              ColorFormats[GDI_MAX_COLOR_TARGETS] = {};
         // The render target's depth attachment, UNDEFINED for none. Part of the
         // pipeline (dynamic rendering requires it to match the attachment).
         VkFormat              DepthFormat       = VK_FORMAT_UNDEFINED;

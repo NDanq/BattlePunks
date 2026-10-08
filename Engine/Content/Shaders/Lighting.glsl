@@ -91,6 +91,58 @@ float LocalFalloff(float InDistance, float InRange)
     return Window * Window / (1.0 + 16.0 * X * X);
 }
 
+#ifdef LIGHTING_CONTACT_SHADOWS
+// A contact shadow at a pixel toward InL, at most InMaxLength (RENDERPIPELINE.md, "Contact shadows"):
+// a short march toward the light through the scene depth, for the shadows the
+// shadow maps are too coarse to hold -- under a pot's rim, where a column meets
+// its base, between roof tiles. 1 lit, down to 1 - strength. Screen space: a
+// caster off screen or hidden casts nothing. LIGHTING_SCENE_DEPTH names the
+// pass's depth texture (window depth, GL's 0-1); only the Lighting stage has one.
+float ContactShadowWithin(vec3 InWorldPosition, vec3 InNormal, vec3 InL, float InMaxLength)
+{
+    float Length = min(Scene_ContactShadow.x, InMaxLength);
+    if(Length <= 0.0 || dot(InNormal, InL) <= 0.0) { return 1.0; }
+
+    int   Steps    = int(clamp(Scene_ContactShadow.z, 4.0, 32.0));
+    vec2  Size     = vec2(textureSize(LIGHTING_SCENE_DEPTH, 0));
+    vec3  Forward  = Scene_CameraForward.xyz;
+    float Distance = dot(InWorldPosition, Forward) - Scene_CameraForward.w;
+    // Off the surface first, further where the depth buffer is coarser; jittered per
+    // pixel (interleaved gradient noise) so a few samples do not band.
+    vec3  Start    = InWorldPosition + InNormal * (0.3 + Distance * 0.0008);
+    float Noise    = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    float StepLength = Length / float(Steps);
+    for(int Index = 0; Index < Steps; ++Index)
+    {
+        float Along = (float(Index) + Noise) * StepLength;
+        vec3  Sample = Start + InL * Along;
+        vec4  Clip   = Scene_ViewProjection * vec4(Sample, 1.0);
+        if(Clip.w <= 1e-4) { break; }
+        vec2  Uv = NdcToTargetUv(Clip.xy / Clip.w);
+        if(any(lessThan(Uv, vec2(0.0))) || any(greaterThan(Uv, vec2(1.0)))) { break; }
+        float Depth = texelFetch(LIGHTING_SCENE_DEPTH, ivec2(Uv * Size), 0).r;
+        if(Depth >= 1.0) { continue; }   // the sky hides nothing
+        vec4  World   = Scene_InvViewProjection * vec4(Clip.xy / Clip.w, Depth * 2.0 - 1.0, 1.0);
+        float Surface = dot(World.xyz / World.w, Forward) - Scene_CameraForward.w;
+        float Behind  = (dot(Sample, Forward) - Scene_CameraForward.w) - Surface;
+        // Behind something, by more than the depth buffer's own error, by less than its thickness.
+        if(Behind > 0.05 + Surface * 0.0005 && Behind < Scene_ContactShadow.y)
+        {
+            // Softer the further along it hit, and gone by the far distance a contact shadow matters at.
+            float Fade = (1.0 - Along / Length) * (1.0 - smoothstep(2500.0, 5000.0, Distance));
+            return 1.0 - clamp(Scene_ContactShadow.w, 0.0, 1.0) * Fade;
+        }
+    }
+    return 1.0;
+}
+
+// The sun's: its full length.
+float ContactShadow(vec3 InWorldPosition, vec3 InNormal, vec3 InL)
+{
+    return ContactShadowWithin(InWorldPosition, InNormal, InL, 1.0e9);
+}
+#endif
+
 // Linear radiance leaving the surface toward the eye, from every light and the ambient --
 // its diffuse part times InAmbientDiffuse: 0 where baked lighting already holds it
 // (BakedLighting.glsl).
@@ -118,6 +170,9 @@ vec3 ShadeSurface(in MaterialSurface Surface, vec3 InWorldPosition, vec3 InNorma
         float Lit = DirectionalShadow(InWorldPosition, S.N, SunL);
         // A live sun's inset shadows (a baked sun's DeferredLighting.fsh lays over the pixel).
         if(Lighting_InsetLight.w < 0.5) { Lit = min(Lit, InsetShadow(InWorldPosition, S.N, SunL)); }
+#ifdef LIGHTING_CONTACT_SHADOWS
+        Lit = min(Lit, ContactShadow(InWorldPosition, S.N, SunL));
+#endif
         if(Scene_LightShadow.x == 1.0) { Modulate *= ModulatedShadow(Lit, 1.0, dot(S.N, SunL), Scene_LightShadowTint.rgb); }
         else                           { SunShadow = Lit; }
     }
@@ -153,6 +208,11 @@ vec3 ShadeSurface(in MaterialSurface Surface, vec3 InWorldPosition, vec3 InNorma
             vec4  Biases = Scene_Locals[Index * 6 + 5];
             float Lit    = LocalShadow(int(ConeShadow.z), DirectionType.w > 0.5, ConeShadow.x, PositionRange.xyz,
                                        InWorldPosition, S.N, L, Biases.x, Biases.y);
+#ifdef LIGHTING_CONTACT_SHADOWS
+            // A shadowed point or spot light's contact shadows too ([Shadows] ContactLocalLights):
+            // no further than the light itself.
+            if(Scene_ContactLocal.x > 0.5) { Lit = min(Lit, ContactShadowWithin(InWorldPosition, S.N, L, Distance * 0.9)); }
+#endif
             if(ConeShadow.w == 1.0)
             {
                 // Fades out with the light: full where it is at least a quarter strength.

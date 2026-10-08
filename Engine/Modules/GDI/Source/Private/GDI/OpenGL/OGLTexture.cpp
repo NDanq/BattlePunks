@@ -1,5 +1,6 @@
 #include "Public/GDI/OpenGL/OGLTexture.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include "Public/GDI/GDI.h"
@@ -102,6 +103,17 @@ OpenGLTextureResource::OpenGLTextureResource(const GLenum InInternalFormat, cons
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, Magnify);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, GLint(InCount) - 1);
+    // GDISetMaxAnisotropy (GL 4.6, or EXT_texture_filter_anisotropic: the same enums),
+    // clamped to the driver's limit; a driver without it reports 0 and is left alone.
+    if(InFilter == GDI_TF_Linear && InCount > 1 && GDIGetMaxAnisotropy() > 1.0f)
+    {
+        GLfloat Limit = 0.0f;
+        glGetFloatv(0x84FF /* GL_MAX_TEXTURE_MAX_ANISOTROPY */, &Limit);
+        if(Limit > 1.0f)
+        {
+            glTexParameterf(GL_TEXTURE_2D, 0x84FE /* GL_TEXTURE_MAX_ANISOTROPY */, (std::min)(GDIGetMaxAnisotropy(), float(Limit)));   // (std::min): windows.h defines min
+        }
+    }
 
     for(uint32_t Level = 0; Level < InCount; ++Level)
     {
@@ -132,6 +144,17 @@ OpenGLTextureResource::OpenGLTextureResource(const EngineCore::Image* InLevels, 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, Magnify);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, GLint(InCount) - 1);
+    // GDISetMaxAnisotropy (GL 4.6, or EXT_texture_filter_anisotropic: the same enums),
+    // clamped to the driver's limit; a driver without it reports 0 and is left alone.
+    if(InFilter == GDI_TF_Linear && InCount > 1 && GDIGetMaxAnisotropy() > 1.0f)
+    {
+        GLfloat Limit = 0.0f;
+        glGetFloatv(0x84FF /* GL_MAX_TEXTURE_MAX_ANISOTROPY */, &Limit);
+        if(Limit > 1.0f)
+        {
+            glTexParameterf(GL_TEXTURE_2D, 0x84FE /* GL_TEXTURE_MAX_ANISOTROPY */, (std::min)(GDIGetMaxAnisotropy(), float(Limit)));   // (std::min): windows.h defines min
+        }
+    }
 
     for(uint32_t Level = 0; Level < InCount; ++Level)
     {

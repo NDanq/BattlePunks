@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "Public/GDI/Vulkan/VKTexture.h"
 #include "Public/GDI/Vulkan/VKDevice.h"
 #include "Public/GDI/Vulkan/VulkanDynamicGDI.h"
@@ -256,7 +257,7 @@ EngineCore::Image VKTextureResource::ToImage() const
 
     if(!AllocStagingBuffer(Device, ImageDataSize,
                             VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                            ReadbackBuf, ReadbackMem))
+                            ReadbackBuf, ReadbackMem, /*bInReadback*/ true))
     {
         return EngineCore::Image();
     }
@@ -450,8 +451,12 @@ void VKTextureResource::BuildSampler()
     SamplerInfo.addressModeU            = DecodeAddressMode(StoredBorder);
     SamplerInfo.addressModeV            = DecodeAddressMode(StoredBorder);
     SamplerInfo.addressModeW            = DecodeAddressMode(StoredBorder);
-    SamplerInfo.anisotropyEnable        = VK_FALSE;
-    SamplerInfo.maxAnisotropy           = 1.0f;
+    // Anisotropic where it helps -- a Linear texture seen at a slant, sampling its mips --
+    // as far as GDISetMaxAnisotropy asks and the device allows.
+    const float Anisotropy = (StoredFilter == GDI_TF_Linear && MipLevels > 1)
+                           ? std::min(GDIGetMaxAnisotropy(), Device->GetMaxSamplerAnisotropy()) : 1.0f;
+    SamplerInfo.anisotropyEnable        = Anisotropy > 1.0f ? VK_TRUE : VK_FALSE;
+    SamplerInfo.maxAnisotropy           = Anisotropy > 1.0f ? Anisotropy : 1.0f;
     SamplerInfo.borderColor             = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
     SamplerInfo.unnormalizedCoordinates = VK_FALSE;
     SamplerInfo.compareEnable           = VK_FALSE;

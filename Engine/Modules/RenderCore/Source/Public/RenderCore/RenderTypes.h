@@ -134,14 +134,15 @@ namespace RenderCore
         RGT_Forward,             // Unlit and the translucent stages
         RGT_PostProcess,
         RGT_Total,               // the whole scene, start to end of its stages
-        RGT_SceneCapture,        // every Scene Capture Probe's views, before the scene's stages (not in Total)
+        RGT_SceneCapture,        // every Scene Capture Probe's and reflection probe's views and the IBL prefilter, before the scene's stages (not in Total)
+        RGT_Particles,           // every particle emitter's compute passes, before the captures (not in Total)
         RGT_Count
     };
 
     /* "BasePass", "Total", ... */
     inline const char* GetRenderGpuTimerName(const ERenderGpuTimer InTimer)
     {
-        static const char* const Names[RGT_Count] = { "PrePass", "BasePass", "AO", "Shadows", "Lighting", "Forward", "PostProcess", "Total", "Captures" };
+        static const char* const Names[RGT_Count] = { "PrePass", "BasePass", "AO", "Shadows", "Lighting", "Forward", "PostProcess", "Total", "Captures", "Particles" };
         return InTimer < RGT_Count ? Names[InTimer] : "";
     }
 
@@ -162,6 +163,12 @@ namespace RenderCore
         uint64_t StaticProxiesDrawn     = 0;
         uint64_t StaticListBuilds       = 0;
 
+        /* Occlusion culling (RENDERPIPELINE.md): proxies in view not drawn
+         * last frame because the answer before found them hidden, and how
+         * many boxes were queried. The GPU's own skips are not counted. */
+        uint64_t ProxiesOccludedLastFrame  = 0;
+        uint64_t OcclusionQueriesLastFrame = 0;
+
         /* "stat unit": each averaged over the last half second (0 until the
          * first half second has passed). Frame is the game thread's time
          * from one EndFrame to the next; Game Thread is that less the time it
@@ -180,7 +187,7 @@ namespace RenderCore
         /* "stat frame" (Stats.Frame on, and a backend that can time the GPU):
          * the default scene's GPU time per span, averaged over half a second;
          * -1 where it was not timed (off, or the span did not run). */
-        float GpuMs[RGT_Count] = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+        float GpuMs[RGT_Count] = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
     };
 }
 

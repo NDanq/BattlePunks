@@ -150,6 +150,16 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/Content/RenderTargetAssets.cpp
         Source/Private/Editor/Content/RenderTargetAssets.h
         Source/Private/Editor/Content/ContentPaths.h
+        Source/Private/Editor/Content/AnimationAssets.cpp
+        Source/Private/Editor/Content/AnimationAssets.h
+        Source/Private/Editor/Content/AnimPreviewWidget.cpp
+        Source/Private/Editor/Content/AnimPreviewWidget.h
+        Source/Private/Editor/Content/AnimStateEditorWindow.cpp
+        Source/Private/Editor/Content/AnimStateEditorWindow.h
+        Source/Private/Editor/Content/AnimStateGraph.cpp
+        Source/Private/Editor/Content/AnimStateGraph.h
+        Source/Private/Editor/Content/ClipTimeline.cpp
+        Source/Private/Editor/Content/ClipTimeline.h
         Source/Private/Editor/Content/MeshPreviewView.cpp
         Source/Private/Editor/Content/MeshPreviewView.h
         Source/Private/Editor/Content/MeshViewerWindow.cpp

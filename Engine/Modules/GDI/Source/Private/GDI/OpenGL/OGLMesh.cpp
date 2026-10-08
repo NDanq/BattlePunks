@@ -250,6 +250,21 @@ void OpenGLMesh::InitResource()
         glVertexAttribPointer(10, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
     }
 
+    if( IsSkinned() )
+    {
+        // Bone indices (as floats) and weights, locations 11 and 12.
+        const struct { uint* Buffer; GLuint Location; const float* Data; } Streams[2] = {
+            { &JointVBO, 11, RenderData.Joints }, { &WeightVBO, 12, RenderData.Weights } };
+        for(const auto& Stream : Streams)
+        {
+            glGenBuffers(1, Stream.Buffer);
+            glBindBuffer(GL_ARRAY_BUFFER, *Stream.Buffer);
+            glBufferData(GL_ARRAY_BUFFER, (NumVertices / 3) * 4 * sizeof(float), Stream.Data, GL_STATIC_DRAW);
+            glEnableVertexAttribArray(Stream.Location);
+            glVertexAttribPointer(Stream.Location, 4, GL_FLOAT, GL_FALSE, 0, nullptr);
+        }
+    }
+
     if( IsIndexed() )
     {
         // Bound while the VAO is: the VAO records the element buffer.
@@ -312,6 +327,8 @@ void OpenGLMesh::Release()
         if(NormalVBO) { glDeleteBuffers(1, &NormalVBO); NormalVBO = 0; }
         if(ColorVBO)  { glDeleteBuffers(1, &ColorVBO);  ColorVBO  = 0; }
         if(UV1VBO)    { glDeleteBuffers(1, &UV1VBO);    UV1VBO    = 0; }
+        if(JointVBO)  { glDeleteBuffers(1, &JointVBO);  JointVBO  = 0; }
+        if(WeightVBO) { glDeleteBuffers(1, &WeightVBO); WeightVBO = 0; }
         if(IndexEBO)  { glDeleteBuffers(1, &IndexEBO);  IndexEBO  = 0; }
         glDeleteVertexArrays(1, &VAO);
         VAO = 0;

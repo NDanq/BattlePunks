@@ -123,10 +123,10 @@ namespace EditorContent
         }
 
         RenderCore::MeshData Split = InOutMesh;
-        const auto Gather = [&Sources](const std::vector<float>& InSource, std::vector<float>& OutTarget, const size_t InWidth)
+        const auto Gather = [&Sources](const auto& InSource, auto& OutTarget, const size_t InWidth)
         {
             if(InSource.empty()) { return; }
-            OutTarget.assign(Sources.size() * InWidth, 0.0f);
+            OutTarget.assign(Sources.size() * InWidth, {});
             for(size_t Vertex = 0; Vertex < Sources.size(); ++Vertex)
             {
                 std::copy_n(InSource.begin() + std::ptrdiff_t(size_t(Sources[Vertex]) * InWidth), InWidth,
@@ -137,6 +137,8 @@ namespace EditorContent
         Gather(InOutMesh.Normals,   Split.Normals,   3);
         Gather(InOutMesh.UV0,       Split.UV0,       2);
         Gather(InOutMesh.Colors,    Split.Colors,    4);
+        Gather(InOutMesh.Joints,    Split.Joints,    4);   // a skinned mesh's copies keep their bones
+        Gather(InOutMesh.Weights,   Split.Weights,   4);
 
         Split.UV1.assign(Sources.size() * 2, 0.0f);
         for(uint32_t Vertex = 0; Vertex < Out.vertexCount; ++Vertex)

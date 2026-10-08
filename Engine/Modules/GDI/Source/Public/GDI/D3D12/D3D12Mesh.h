@@ -73,6 +73,8 @@ private:
     Microsoft::WRL::ComPtr<ID3D12Resource>  NormalBuffer;
     Microsoft::WRL::ComPtr<ID3D12Resource>  ColorBuffer;     // float4 per vertex, slot 3
     Microsoft::WRL::ComPtr<ID3D12Resource>  UV1Buffer;       // float2 per vertex, slot 4
+    Microsoft::WRL::ComPtr<ID3D12Resource>  JointBuffer;     // float4 per vertex, slot 6; skinned only
+    Microsoft::WRL::ComPtr<ID3D12Resource>  WeightBuffer;    // float4 per vertex, slot 7; skinned only
     Microsoft::WRL::ComPtr<ID3D12Resource>  IndexBuffer;
     UINT                                    IndexBytes    = 0;
 

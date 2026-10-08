@@ -478,7 +478,8 @@ namespace
             const bool bTarget   = (Entry.Flags & GameCore::PF_AssetRenderTarget) != 0;
             const bool bTexture  = (Entry.Flags & GameCore::PF_AssetTexture) != 0;
             const bool bParticles = (Entry.Flags & GameCore::PF_AssetParticleSystem) != 0;
-            if((bMesh || bMaterial || bPost || bTarget || bTexture || bParticles) && !Entry.IsReadOnly())
+            const bool bAnimation = (Entry.Flags & GameCore::PF_AssetAnimation) != 0;
+            if((bMesh || bMaterial || bPost || bTarget || bTexture || bParticles || bAnimation) && !Entry.IsReadOnly())
             {
                 /* What each kind of asset field offers. */
                 struct AssetUi { EAsset Kind; const char* Placeholder; const char* Tip; const char* PickTip; const char* Title; const char* Filter; };
@@ -501,8 +502,12 @@ namespace
                     { EAsset::ParticleSystem, "Drop an .nmparticle here (empty: one default emitter)",
                       "A particle system, by its path: Content/Particles/Smoke.nmparticle -- made and edited in the Particle Editor",
                       "Choose a particle system", "Choose a Particle System", "Particle Systems (*.nmparticle)" },
+                    { EAsset::Animation, "Drop an .nmanim or .nmanimstate here",
+                      "An animation clip (Content/Animation/Fox_Walk.nmanim), played on its own, or an anim state "
+                      "(Content/Animation/Fox.nmanimstate): states, blends and layers driven by the parameters",
+                      "Choose an animation", "Choose an Animation", "Animations (*.nmanim *.nmanimstate)" },
                 };
-                const AssetUi& Ui = Kinds[bMesh ? 0 : bMaterial ? 1 : bPost ? 2 : bTarget ? 3 : bTexture ? 4 : 5];
+                const AssetUi& Ui = Kinds[bMesh ? 0 : bMaterial ? 1 : bPost ? 2 : bTarget ? 3 : bTexture ? 4 : bParticles ? 5 : 6];
                 AssetKind = Ui.Kind;
                 Edit->setPlaceholderText(QString::fromLatin1(Ui.Placeholder));
                 Edit->installEventFilter(this);
@@ -512,6 +517,7 @@ namespace
                                                      : bPost      ? EditorContent::ListPostProcessPaths()
                                                      : bTarget    ? EditorContent::ListRenderTargetPaths()
                                                      : bParticles ? EditorContent::ListParticleSystemPaths()
+                                                     : bAnimation ? EditorContent::ListAnimationPaths()
                                                                   : EditorContent::ListTexturePaths(), Edit);
                     Completer->setCaseSensitivity(Qt::CaseInsensitive);
                     Completer->setFilterMode(Qt::MatchContains);
@@ -603,7 +609,7 @@ namespace
         }
 
     private:
-        enum class EAsset { None, Mesh, Material, PostProcess, RenderTarget, Texture, ParticleSystem };
+        enum class EAsset { None, Mesh, Material, PostProcess, RenderTarget, Texture, ParticleSystem, Animation };
 
         void Commit()
         {
@@ -680,6 +686,10 @@ namespace
             if(AssetKind == EAsset::ParticleSystem)
             {
                 return EditorContent::ParticleSystemPathFor(InFile);
+            }
+            if(AssetKind == EAsset::Animation)
+            {
+                return EditorContent::AnimationPathFor(InFile);
             }
             return QString();
         }

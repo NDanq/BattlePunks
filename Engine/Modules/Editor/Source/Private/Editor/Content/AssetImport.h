@@ -57,6 +57,12 @@ namespace EditorContent
         /* Import the images the glTF refers to as .nmtexture beside the mesh. */
         bool bImportTextures = true;
 
+        /* A skinned file's skeleton (.nmskel), its meshes skinned, and its
+         * animations as .nmanim clips (ANIMATION.md). */
+        bool  bImportAnimations   = true;
+        /* Frames per second the clips are resampled at. */
+        float AnimationSampleRate = 30.0f;
+
         QString ToSettings() const;
         static MeshImportOptions FromSettings(const QString& InSettings);
     };
@@ -87,7 +93,7 @@ namespace EditorContent
     /* An image a glTF uses: a file beside it, or bytes inside it (GLB, data URI). */
     struct ReferencedImage
     {
-        QString    Name;          // the image's name, else its file's base name, else "Image<n>"
+        QString    Name;          // the image's name, else its file's base name, else "<glTF name>_Image<n>"
         QString    SourcePath;    // a file on disk; empty when embedded
         QByteArray Embedded;      // the encoded image when it has no file
         int        Index = -1;    // its index in the glTF's images

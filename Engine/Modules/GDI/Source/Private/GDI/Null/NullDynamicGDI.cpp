@@ -149,6 +149,7 @@ void NullDynamicGDI::DrawScreenQuadPrimitive()
 void NullDynamicGDI::DrawObject(class GDIViewObject*)
 {
     Stats.DrawObjectCalls++;
+    Stats.PredicatedDrawCalls += bPredicated ? 1 : 0;
     if(InstanceBuffer)
     {
         Stats.InstancedDrawCalls++;
@@ -174,6 +175,52 @@ bool NullDynamicGDI::DispatchCompute(GDIShader*, const void*, const uint32_t InP
     return true;
 }
 
+GDIOcclusionQueries* NullDynamicGDI::CreateOcclusionQueries(const uint32_t InCapacity)
+{
+    return new NullOcclusionQueries(InCapacity);
+}
+
+void NullDynamicGDI::BeginOcclusionRound(GDIOcclusionQueries* InSet, const uint32_t InCount)
+{
+    auto* Set = static_cast<NullOcclusionQueries*>(InSet);
+    Set->Ended.assign(InCount, 0);
+    Set->RoundBlock = Stats.BeginRenderingCalls;
+    Set->bPending   = true;
+    Stats.OcclusionRounds++;
+}
+
+void NullDynamicGDI::EndOcclusionQuery(GDIOcclusionQueries* InSet, const uint32_t InIndex)
+{
+    auto* Set = static_cast<NullOcclusionQueries*>(InSet);
+    if(InIndex < Set->Ended.size())
+    {
+        Set->Ended[InIndex] = 1;
+        Stats.OcclusionQueries++;
+    }
+}
+
+void NullDynamicGDI::SetOcclusionPredicate(GDIOcclusionQueries* InSet, const int32_t InIndex)
+{
+    bPredicated = InSet && InIndex >= 0;
+}
+
+bool NullDynamicGDI::ReadOcclusionResults(GDIOcclusionQueries* InSet, std::vector<uint8_t>& OutVisible)
+{
+    auto* Set = static_cast<NullOcclusionQueries*>(InSet);
+    if(!Set->bPending || Stats.BeginRenderingCalls <= Set->RoundBlock)
+    {
+        return false;
+    }
+    /* One never ended answers "visible": it has nothing to say. */
+    OutVisible.resize(Set->Ended.size());
+    for(size_t Index = 0; Index < Set->Ended.size(); ++Index)
+    {
+        OutVisible[Index] = Set->Ended[Index] && !bOcclusionAnswer ? 0 : 1;
+    }
+    Set->bPending = false;
+    return true;
+}
+
 bool NullDynamicGDI::ReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes)
 {
     OutBytes = static_cast<NullBuffer*>(InBuffer)->Data;
@@ -183,6 +230,7 @@ bool NullDynamicGDI::ReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBy
 void NullDynamicGDI::DrawObject(class GDIViewObject*, class GDIView*)
 {
     Stats.DrawObjectCalls++;
+    Stats.PredicatedDrawCalls += bPredicated ? 1 : 0;
 }
 
 void NullDynamicGDI::BeginDrawEvent(const std::string& EventName)

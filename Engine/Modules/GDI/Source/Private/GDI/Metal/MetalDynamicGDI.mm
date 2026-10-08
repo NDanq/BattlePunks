@@ -589,14 +589,15 @@ static void PackViewParamsUBO(const std::unordered_map<std::string, MTLUniformVa
 }
 
 /**
- * Pack the Transform struct into an 80-byte block:
+ * Pack the Transform struct into a 144-byte block:
  *   offset  0: vec3  PositionWorldSpace (12 + 4 pad)
  *   offset 16: mat4  Model              (64)
+ *   offset 80: mat4  PrevModel          (64; the frame before's, for velocity)
  */
 static void PackTransformUBO(const std::unordered_map<std::string, MTLUniformValue>& S, void* Dst)
 {
     float* D = static_cast<float*>(Dst);
-    memset(D, 0, 80);
+    memset(D, 0, 144);
 
     auto Write = [&](const std::string& Name, float* Out, int Count)
     {
@@ -607,6 +608,8 @@ static void PackTransformUBO(const std::unordered_map<std::string, MTLUniformVal
 
     Write("Transform.PositionWorldSpace", D + 0, 3);   // offset  0, 12 bytes (+ 4 pad)
     Write("Transform.Model",              D + 4, 16);  // offset 16, 64 bytes
+    Write("Transform.Model",              D + 20, 16); // offset 80: as Model, unless...
+    Write("Transform.PrevModel",          D + 20, 16); // ...the frame before's was set
 }
 
 /**
@@ -751,7 +754,7 @@ bool MetalDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     // -- every block here is far below the 4 KB inline limit.
     // ----------------------------------------------------------------
     alignas(16) uint8_t VPBlock[160];
-    alignas(16) uint8_t TransformBlock[80];
+    alignas(16) uint8_t TransformBlock[144];
     PackViewParamsUBO(CoreScalars, VPBlock);
     PackTransformUBO(CoreScalars, TransformBlock);
 

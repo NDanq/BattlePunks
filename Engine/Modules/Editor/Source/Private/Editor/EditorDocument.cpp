@@ -492,7 +492,7 @@ bool EditorDocument::SetWorldSettings(const GameCore::WorldSettings& InSettings)
 
 void EditorDocument::SetEntityMobility(const EntityID InEntity, const GameCore::EMobility InMobility)
 {
-    if(!ActiveWorld || !ActiveWorld->IsAlive(InEntity) || ActiveWorld->GetEntity(InEntity).GetMobility() == InMobility)
+    if(!ActiveWorld || !ActiveWorld->IsAlive(InEntity) || ActiveWorld->GetEntity(InEntity).GetAuthoredMobility() == InMobility)
     {
         return;
     }
@@ -508,7 +508,7 @@ void EditorDocument::SetEntitiesMobility(const std::vector<EntityID>& InEntities
     std::vector<EntityID> Changing;
     for(const EntityID Each : InEntities)
     {
-        if(ActiveWorld->IsAlive(Each) && ActiveWorld->GetEntity(Each).GetMobility() != InMobility) { Changing.push_back(Each); }
+        if(ActiveWorld->IsAlive(Each) && ActiveWorld->GetEntity(Each).GetAuthoredMobility() != InMobility) { Changing.push_back(Each); }
     }
     if(Changing.size() <= 1)
     {

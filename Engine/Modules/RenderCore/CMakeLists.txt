@@ -29,6 +29,7 @@ if(NOT TARGET GDI)
 endif()
 
 option(RENDERCORE_BUILD_SMOKETEST "Build RenderCoreSmokeTest" OFF)
+option(RENDERCORE_BUILD_ANIMATION_TESTS "Build RenderCoreAnimationTests (headless; no window or GPU)" ON)
 
 # ===========================================================================
 # Sources
@@ -74,6 +75,15 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/Components/ReflectionProbeComponent.cpp
         Source/Private/RenderCore/AssetFileCommon.h
         Source/Private/RenderCore/MeshAsset.cpp
+        Source/Private/RenderCore/AssetCacheCommon.h
+        Source/Private/RenderCore/SkeletonAsset.cpp
+        Source/Private/RenderCore/AnimClipAsset.cpp
+        Source/Private/RenderCore/AnimPose.cpp
+        Source/Private/RenderCore/AnimStateAsset.cpp
+        Source/Private/RenderCore/AnimInstance.cpp
+        Source/Private/RenderCore/AnimationSystem.cpp
+        Source/Private/RenderCore/Components/AnimationComponent.cpp
+        Source/Private/RenderCore/Components/AnimSocketComponent.cpp
         Source/Private/RenderCore/BakedLightingAsset.cpp
         Source/Private/RenderCore/TextureAsset.cpp
         Source/Private/RenderCore/TextureCompression.cpp
@@ -100,6 +110,15 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/RenderScene.h
         Source/Public/RenderCore/AssetImportInfo.h
         Source/Public/RenderCore/MeshAsset.h
+        Source/Public/RenderCore/AnimMath.h
+        Source/Public/RenderCore/SkeletonAsset.h
+        Source/Public/RenderCore/AnimClipAsset.h
+        Source/Public/RenderCore/AnimPose.h
+        Source/Public/RenderCore/AnimStateAsset.h
+        Source/Public/RenderCore/AnimInstance.h
+        Source/Public/RenderCore/AnimationSystem.h
+        Source/Public/RenderCore/Components/AnimationComponent.h
+        Source/Public/RenderCore/Components/AnimSocketComponent.h
         Source/Public/RenderCore/BakedLightingAsset.h
         Source/Public/RenderCore/TextureAsset.h
         Source/Public/RenderCore/TextureCompression.h
@@ -193,6 +212,19 @@ if(RENDERCORE_BUILD_SMOKETEST)
         TIMEOUT 120
         LABELS  "smoke"
     )
+endif()
+
+# The animation runtime, headless (ANIMATION.md): pose math, clip playback, a
+# World's AnimationSystem. Writes its assets beside the executable, with the
+# Save*File writers, so editor builds only.
+if(RENDERCORE_BUILD_ANIMATION_TESTS AND NIMBLE_WITH_EDITOR)
+    add_executable(RenderCoreAnimationTests Tests/AnimationTests.cpp)
+    target_link_libraries(RenderCoreAnimationTests PRIVATE RenderCore::RenderCore)
+    set_target_properties(RenderCoreAnimationTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "RenderCore")
+
+    enable_testing()
+    add_test(NAME RenderCore.Animation COMMAND RenderCoreAnimationTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:RenderCoreAnimationTests>")
 endif()
 
 source_group("RenderCore" FILES ${RENDERCORE_SOURCES})

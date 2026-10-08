@@ -308,18 +308,28 @@ bool GDIMakeIndexedRenderData(const GDIMeshDesc& InDesc, GDIMesh::ORenderData& O
     /* Zero without lightmap UVs, so the stream is always there too. */
     Data.UV1 = InDesc.UV1 ? static_cast<float*>(Copy(InDesc.UV1, sizeof(float) * 2 * InDesc.NumVertices))
                           : static_cast<float*>(calloc(size_t(InDesc.NumVertices) * 2, sizeof(float)));
+    /* Skinning streams only when both are given: a static mesh has neither. */
+    const bool bSkinned = InDesc.Joints && InDesc.Weights;
+    if(bSkinned)
+    {
+        Data.Joints  = static_cast<float*>(Copy(InDesc.Joints,  sizeof(float) * 4 * InDesc.NumVertices));
+        Data.Weights = static_cast<float*>(Copy(InDesc.Weights, sizeof(float) * 4 * InDesc.NumVertices));
+    }
     Data.Indices    = static_cast<uint32_t*>(Copy(InDesc.Indices, sizeof(uint32_t) * InDesc.NumIndices));
     Data.NumIndices = InDesc.NumIndices;
 
     /* As CreateQuadMesh: the POSITION FLOAT count, not the vertex count. */
     Data.NumVertices = InDesc.NumVertices * 3;
 
-    if(!Data.Position || !Data.Normal || !Data.TexCoord || !Data.Color || !Data.UV1 || !Data.Indices)
+    if(!Data.Position || !Data.Normal || !Data.TexCoord || !Data.Color || !Data.UV1 || !Data.Indices
+       || (bSkinned && (!Data.Joints || !Data.Weights)))
     {
         free(Data.Position);
         free(Data.Normal);
         free(Data.Color);
         free(Data.UV1);
+        free(Data.Joints);
+        free(Data.Weights);
         free(Data.TexCoord);
         free(Data.Indices);
         return false;
@@ -330,10 +340,16 @@ bool GDIMakeIndexedRenderData(const GDIMeshDesc& InDesc, GDIMesh::ORenderData& O
 
 void GDIDynamicDriver::SetUniformBlock(const uint InBinding, const void* InData, const uint InSize)
 {
-    if(InBinding < GDI_MATERIAL_BLOCK_BINDING || InBinding > GDI_SCENE_BLOCK_BINDING) return;
-    const uint Index = InBinding - GDI_MATERIAL_BLOCK_BINDING;
+    uint Index = 0, MaxBytes = 0;
+    switch(InBinding)
+    {
+        case GDI_MATERIAL_BLOCK_BINDING: Index = 0; MaxBytes = GDI_MATERIAL_BLOCK_MAX_BYTES; break;
+        case GDI_SCENE_BLOCK_BINDING:    Index = 1; MaxBytes = GDI_SCENE_BLOCK_MAX_BYTES;    break;
+        case GDI_SKIN_BLOCK_BINDING:     Index = 2; MaxBytes = GDI_SKIN_BLOCK_MAX_BYTES;     break;
+        case GDI_PREV_SKIN_BLOCK_BINDING: Index = 3; MaxBytes = GDI_SKIN_BLOCK_MAX_BYTES;    break;
+        default: return;
+    }
     std::vector<uint8_t>& Block = MaterialBlocks[Index];
-    const uint MaxBytes = InBinding == GDI_SCENE_BLOCK_BINDING ? GDI_SCENE_BLOCK_MAX_BYTES : GDI_MATERIAL_BLOCK_MAX_BYTES;
     const uint Size = InData ? (InSize < MaxBytes ? InSize : MaxBytes) : 0;
     const auto* Bytes = static_cast<const uint8_t*>(InData);
 
@@ -716,6 +732,21 @@ GDIRenderTarget* GDICreateRenderTargetFormat(std::string InName, const uint InWi
     return GDynamicGDI ? GDynamicGDI->CreateRenderTargetFormat(std::move(InName), InWidth, InHeight, InFormat) : nullptr;
 }
 
+namespace
+{
+    float GMaxAnisotropy = 1.0f;   // GDISetMaxAnisotropy: what the backends' samplers ask for
+}
+
+void GDISetMaxAnisotropy(const float InMax)
+{
+    GMaxAnisotropy = InMax < 1.0f ? 1.0f : (InMax > 16.0f ? 16.0f : InMax);
+}
+
+float GDIGetMaxAnisotropy()
+{
+    return GMaxAnisotropy;
+}
+
 bool GDISupportsRenderTargetFormat(const EGDIRenderTargetFormat InFormat)
 {
     return GDynamicGDI && GDynamicGDI->SupportsRenderTargetFormat(InFormat);
@@ -812,4 +843,66 @@ void GDIWriteGPUTimestamp(const uint32_t InIndex)
 uint64_t GDIGetPreviousGPUTimestamps(double* OutMilliseconds)
 {
     return GDynamicGDI && OutMilliseconds ? GDynamicGDI->GetPreviousGPUTimestamps(OutMilliseconds) : 0;
+}
+
+bool GDISupportsOcclusionQueries()
+{
+    return GDynamicGDI && GDynamicGDI->SupportsOcclusionQueries();
+}
+
+bool GDISupportsOcclusionPredication()
+{
+    return GDISupportsOcclusionQueries() && GDynamicGDI->SupportsOcclusionPredication();
+}
+
+GDIOcclusionQueries* GDICreateOcclusionQueries(const uint32_t InCapacity)
+{
+    return GDISupportsOcclusionQueries() && InCapacity > 0 ? GDynamicGDI->CreateOcclusionQueries(InCapacity) : nullptr;
+}
+
+void GDIBeginOcclusionRound(GDIOcclusionQueries* InSet, const uint32_t InCount)
+{
+    if(GDynamicGDI && InSet && InCount > 0 && InCount <= InSet->GetCapacity())
+    {
+        GDynamicGDI->BeginOcclusionRound(InSet, InCount);
+    }
+}
+
+void GDIBeginOcclusionQuery(GDIOcclusionQueries* InSet, const uint32_t InIndex)
+{
+    if(GDynamicGDI && InSet && InIndex < InSet->GetCapacity())
+    {
+        GDynamicGDI->BeginOcclusionQuery(InSet, InIndex);
+    }
+}
+
+void GDIEndOcclusionQuery(GDIOcclusionQueries* InSet, const uint32_t InIndex)
+{
+    if(GDynamicGDI && InSet && InIndex < InSet->GetCapacity())
+    {
+        GDynamicGDI->EndOcclusionQuery(InSet, InIndex);
+    }
+}
+
+void GDIResolveOcclusionQueries(GDIOcclusionQueries* InSet)
+{
+    if(GDynamicGDI && InSet)
+    {
+        GDynamicGDI->ResolveOcclusionQueries(InSet);
+    }
+}
+
+void GDISetOcclusionPredicate(GDIOcclusionQueries* InSet, const int32_t InIndex)
+{
+    if(!GDynamicGDI)
+    {
+        return;
+    }
+    const bool bSet = InSet && InIndex >= 0 && uint32_t(InIndex) < InSet->GetCapacity();
+    GDynamicGDI->SetOcclusionPredicate(bSet ? InSet : nullptr, bSet ? InIndex : -1);
+}
+
+bool GDIReadOcclusionResults(GDIOcclusionQueries* InSet, std::vector<uint8_t>& OutVisible)
+{
+    return GDynamicGDI && InSet && GDynamicGDI->ReadOcclusionResults(InSet, OutVisible);
 }

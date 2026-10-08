@@ -42,6 +42,7 @@ OUTPUT(0, vec4, GBuffer0)   // rgb: Base Color; a: Ambient Occlusion
 OUTPUT(1, vec4, GBuffer1)   // rgb: world normal * 0.5 + 0.5; a: 1 a lit pixel, 0.75 one whose ambient is baked
 OUTPUT(2, vec4, GBuffer2)   // Metallic, Roughness, Specular
 OUTPUT(3, vec4, GBuffer3)   // Emissive, past 1 too (EncodeGBufferEmissive)
+OUTPUT(4, vec4, Velocity)   // xyz: world motion since the frame before; a: 1, written (the Velocity target; none bound: dropped)
 #else
 OUTPUT(0, vec4, Output)
 #endif
@@ -98,6 +99,7 @@ void main(void)
                     clamp(Surface.Specular, 0.0, 1.0), 0.0);
     // Emissive is display space as authored: the baked light joins it in linear.
     GBuffer3 = EncodeGBufferEmissive(Material_BakedLighting.x > 0.5 ? ToDisplay(ToLinear(Surface.Emissive) + Baked) : Surface.Emissive);
+    Velocity = vec4(Interpolants.WorldMotion, 1.0);
 #else
 
 #if MATERIAL_SHADING_LIT
@@ -123,6 +125,9 @@ void main(void)
     float Alpha = 1.0;
 #if MATERIAL_DOMAIN_TRANSLUCENT
     Alpha = clamp(Surface.Opacity, 0.0, 1.0);
+    // A pixel that would change the scene by under half a step of 8 bits
+    // (soft particles' corners and fringes) skips its blend: no colour write.
+    if(Alpha * max(1.0, max(Color.r, max(Color.g, Color.b))) < 0.5 / 255.0) { discard; }
 #endif
     Output = vec4(Color, Alpha);
 #endif

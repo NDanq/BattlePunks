@@ -11,6 +11,7 @@
 #include <QWheelEvent>
 
 #include "Private/Editor/Graph/GraphAssets.h"
+#include "Public/Editor/EditorContext.h"
 
 MeshPreviewView::MeshPreviewView(QWidget* InParent) : QWidget(InParent)
 {
@@ -61,6 +62,79 @@ void MeshPreviewView::SetAnimate(const bool bInAnimate)
     if(bAnimate) { Refresh(); }
 }
 
+void MeshPreviewView::SetSkinPalette(std::vector<float> InPalette)
+{
+    SkinPalette = std::move(InPalette);
+    Refresh();
+}
+
+void MeshPreviewView::SetFrameSource(std::function<void()> InSource)
+{
+    FrameSource = std::move(InSource);
+    disconnect(FrameTick);
+    FrameTick = QMetaObject::Connection();
+    if(!FrameSource)
+    {
+        return;
+    }
+    /* Paced by the editor's frames: a request each, rendered with that frame. */
+    if(EditorContext* Ctx = EditorGraphs::GetEditorContext())
+    {
+        FrameTick = connect(Ctx, &EditorContext::BeforeFrame, this, [this]() { Send(); });
+    }
+    Refresh();
+}
+
+void MeshPreviewView::SetSkeletonOverlay(std::vector<float> InSegments, const float InBoundsMin[3], const float InBoundsMax[3])
+{
+    Segments = std::move(InSegments);
+    std::copy_n(InBoundsMin, 3, BoundsMin);
+    std::copy_n(InBoundsMax, 3, BoundsMax);
+    update();
+}
+
+bool MeshPreviewView::Project(const float* InPoint, const QRectF& InTarget, QPointF& OutPoint) const
+{
+    /* RenderContext's preview camera, restated: orbiting the bounds' centre,
+     * far enough back to frame their sphere in a 40 degree field. */
+    constexpr double Pi = 3.14159265358979;
+    constexpr double HalfFov = 20.0 * Pi / 180.0;
+    double Centre[3], Radius = 0.0;
+    for(int Axis = 0; Axis < 3; ++Axis)
+    {
+        Centre[Axis] = (double(BoundsMin[Axis]) + BoundsMax[Axis]) * 0.5;
+        const double Half = (double(BoundsMax[Axis]) - BoundsMin[Axis]) * 0.5;
+        Radius += Half * Half;
+    }
+    Radius = std::max(std::sqrt(Radius), 0.01);
+    const double Yaw   = double(ShownYaw) * Pi / 180.0;
+    const double Pitch = double(std::clamp(ShownPitch, -85.0f, 85.0f)) * Pi / 180.0;
+    const double Zoom  = double(std::clamp(ShownZoom, 0.1f, 20.0f));
+    const double Forward[3] = { std::sin(Yaw) * std::cos(Pitch), -std::sin(Pitch), std::cos(Yaw) * std::cos(Pitch) };
+    const double Distance = Radius / std::sin(HalfFov) * 1.1 / Zoom;
+
+    /* +Y up; the image's right is forward x up (the renderer's LookAt). */
+    double Right[3] = { -Forward[2], 0.0, Forward[0] };
+    const double RightLength = std::max(std::sqrt(Right[0] * Right[0] + Right[2] * Right[2]), 1e-9);
+    Right[0] /= RightLength;
+    Right[2] /= RightLength;
+    const double Up[3] = { Right[1] * Forward[2] - Right[2] * Forward[1], Right[2] * Forward[0] - Right[0] * Forward[2],
+                           Right[0] * Forward[1] - Right[1] * Forward[0] };
+
+    double Relative[3];
+    for(int Axis = 0; Axis < 3; ++Axis) { Relative[Axis] = double(InPoint[Axis]) - (Centre[Axis] - Forward[Axis] * Distance); }
+    const double Depth = Relative[0] * Forward[0] + Relative[1] * Forward[1] + Relative[2] * Forward[2];
+    if(Depth <= 1e-3)
+    {
+        return false;
+    }
+    const double Aspect = InTarget.width() / std::max(InTarget.height(), 1.0);
+    const double X = (Relative[0] * Right[0] + Relative[1] * Right[1] + Relative[2] * Right[2]) / (Depth * std::tan(HalfFov) * Aspect);
+    const double Y = (Relative[0] * Up[0] + Relative[1] * Up[1] + Relative[2] * Up[2]) / (Depth * std::tan(HalfFov));
+    OutPoint = QPointF(InTarget.left() + (X * 0.5 + 0.5) * InTarget.width(), InTarget.top() + (0.5 - Y * 0.5) * InTarget.height());
+    return true;
+}
+
 void MeshPreviewView::ResetView()
 {
     Yaw   = 30.0f;
@@ -71,9 +145,13 @@ void MeshPreviewView::ResetView()
 
 void MeshPreviewView::Refresh()
 {
-    if(bInFlight)
+    if(bInFrameSource)
     {
-        bPending = true;
+        return;   // the request being sent takes it
+    }
+    if(InFlight > 0)
+    {
+        bPending = !FrameSource;   // a FrameSource's next frame takes it
         return;
     }
     Send();
@@ -81,7 +159,8 @@ void MeshPreviewView::Refresh()
 
 void MeshPreviewView::Send()
 {
-    if(bInFlight || !isVisible())
+    /* A few out at once for a FrameSource: one a frame, each a frame or two to answer. */
+    if(InFlight >= (FrameSource ? 3 : 1) || !isVisible())
     {
         bPending = !isVisible();   // drawn when shown
         return;
@@ -94,22 +173,48 @@ void MeshPreviewView::Send()
         return;
     }
 
-    bInFlight = true;
+    /* The frame's pose, as of now: sent at once, it is never older than one round trip. */
+    if(FrameSource)
+    {
+        const std::function<void()> Source = FrameSource;   // it may clear itself (a clip that stops)
+        bInFrameSource = true;
+        Source();
+        bInFrameSource = false;
+    }
+
+    ++InFlight;
     bPending  = false;
+    const uint64_t Serial = ++Sent;
     const qreal Ratio = devicePixelRatioF();
     const int   Width  = std::clamp(int(width() * Ratio), 32, 1024);
     const int   Height = std::clamp(int(height() * Ratio), 32, 1024);
 
-    const auto Done = [this](const QImage& InImage, const QString& InError)
+    /* The overlay goes with the image it was sent for. */
+    const std::vector<float> SentSegments = Segments;
+    const float SentYaw = Yaw, SentPitch = Pitch, SentZoom = Zoom;
+    const auto Done = [this, Serial, SentSegments, SentYaw, SentPitch, SentZoom](const QImage& InImage, const QString& InError)
     {
-        bInFlight = false;
+        --InFlight;
+        if(Serial < Shown)
+        {
+            return;   // overtaken by a newer answer
+        }
+        Shown = Serial;
         Image = InImage;
         Error = InError;
+        ShownSegments = SentSegments;
+        ShownYaw   = SentYaw;
+        ShownPitch = SentPitch;
+        ShownZoom  = SentZoom;
         update();
         emit Drawn(InImage.isNull() ? InError : QString());
 
-        if(bPending)      { Send(); }
-        else if(bAnimate) { Animator->start(); }
+        /* A FrameSource with no editor frames to pace it draws again at once --
+         * after a failure, not before the Animator's wait (a renderer that is
+         * not running answers at once). */
+        if(bPending)                        { Send(); }
+        else if(FrameSource && !FrameTick)  { InImage.isNull() ? Animator->start() : Send(); }
+        else if(bAnimate && !FrameSource)   { Animator->start(); }
     };
 
     if(Mesh.isEmpty())
@@ -127,6 +232,7 @@ void MeshPreviewView::Send()
     Options.Pitch    = Pitch;
     Options.Zoom     = Zoom;
     Options.Tint     = Tint;
+    Options.SkinPalette = SkinPalette;
     EditorGraphs::RequestMeshPreview(Options, this, Done);
 }
 
@@ -147,6 +253,22 @@ void MeshPreviewView::paintEvent(QPaintEvent*)
     const QRectF Target(QPointF((width() - Size.width()) * 0.5, (height() - Size.height()) * 0.5), Size);
     Painter.setRenderHint(QPainter::SmoothPixmapTransform);
     Painter.drawImage(Target, Image);
+
+    /* The skeleton, over everything: each bone a line to its parent, a dot at the joint. */
+    if(!ShownSegments.empty())
+    {
+        Painter.setRenderHint(QPainter::Antialiasing);
+        const QColor Bone(255, 196, 64);
+        Painter.setPen(QPen(Bone, 1.6));
+        Painter.setBrush(Bone);
+        for(size_t At = 0; At + 5 < ShownSegments.size(); At += 6)
+        {
+            QPointF Child, Parent;
+            if(!Project(&ShownSegments[At], Target, Child)) { continue; }
+            Painter.drawEllipse(Child, 2.2, 2.2);
+            if(Project(&ShownSegments[At + 3], Target, Parent)) { Painter.drawLine(Child, Parent); }
+        }
+    }
 }
 
 void MeshPreviewView::resizeEvent(QResizeEvent* InEvent)

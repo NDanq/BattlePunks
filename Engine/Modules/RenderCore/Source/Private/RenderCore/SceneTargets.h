@@ -35,6 +35,11 @@ namespace RenderCore
         GDIRenderTarget* SceneColor  = nullptr;
         bool             bHDR        = false;                   // SceneColor is RGBA16F, linear light (RENDERPIPELINE.md, "HDR and tone mapping")
         GDIRenderTarget* GBuffer[RENDER_GBUFFER_TARGETS] = {};
+        /* The Base Pass's fifth target (RENDERPIPELINE.md, "Velocity"): each
+         * pixel's world motion since the frame before, a 1 where written.
+         * RGBA16F; null where the backend has no such target. */
+        GDIRenderTarget* Velocity    = nullptr;
+        bool             bVelocityTried = false;
         GDIRenderTarget* PostProcess = nullptr;
         GDIRenderTarget* PostProcessB = nullptr;                // the post process stack ping-pongs PostProcess and this
 
@@ -46,6 +51,26 @@ namespace RenderCore
         GDIRenderTarget* Bloom[6] = {};                         // RENDER_BLOOM_LEVELS_MAX
         GDIRenderTarget* BloomUp[5] = {};                       // levels 0 to RENDER_BLOOM_LEVELS_MAX - 2
         GDIRenderTarget* Final       = nullptr;                 // SceneColor or PostProcess: where the last RenderSceneStages finished
+        /* Auto exposure (RENDERPIPELINE.md, "Auto exposure"): the meter, 64 x 64 -> 8 x 8 -> 1 x 1,
+         * and the adapted value, two 1 x 1s ping-ponged so each frame eases from the last
+         * (Exposure[ExposureCurrent] the newest). Fixed sizes: never resized with the scene. */
+        /* Temporal antialiasing (RENDERPIPELINE.md, "Temporal antialiasing"): the resolved
+         * scene colour, two full-size half floats ping-ponged -- one is this frame's
+         * resolve, the other the history it blends from. Resized, and forgotten, with the scene. */
+        GDIRenderTarget* History[2] = {};
+        uint32_t         HistoryCurrent = 0;
+        bool             bHistoryValid  = false;               // History[HistoryCurrent] holds the last frame's
+        /* Screen-space reflections (RENDERPIPELINE.md): this frame's, full size, and the last
+         * frame's finished linear colour they read -- TAA's history when it ran (LastColor
+         * then points at it), else a copy kept in LastCopy. Forgotten with a resize. */
+        GDIRenderTarget* Fog         = nullptr;                 // volumetric fog's march, half size, half float
+        GDIRenderTarget* Reflections = nullptr;
+        GDIRenderTarget* LastCopy    = nullptr;
+        GDIRenderTarget* LastColor   = nullptr;                 // not owned: LastCopy or a History
+        GDIRenderTarget* Luminance[3] = {};
+        GDIRenderTarget* Exposure[2]  = {};
+        uint32_t         ExposureCurrent = 0;
+        bool             bExposureValid  = false;               // Exposure[ExposureCurrent] holds the last frame's
         uint             Width  = 0;
         uint             Height = 0;
 
@@ -81,6 +106,10 @@ namespace RenderCore
                 {
                     if(Each) { Each->Resize(InWidth, InHeight); }
                 }
+                if(Velocity)
+                {
+                    Velocity->Resize(InWidth, InHeight);
+                }
                 if(PostProcess)
                 {
                     PostProcess->Resize(InWidth, InHeight);
@@ -93,6 +122,15 @@ namespace RenderCore
                 {
                     if(Each) { Each->Resize(HalfSize(InWidth, 1), HalfSize(InHeight, 1)); }
                 }
+                for(GDIRenderTarget* Each : History)
+                {
+                    if(Each) { Each->Resize(InWidth, InHeight); }
+                }
+                bHistoryValid = false;
+                if(Reflections) { Reflections->Resize(InWidth, InHeight); }
+                if(Fog)         { Fog->Resize(HalfSize(InWidth, 1), HalfSize(InHeight, 1)); }
+                if(LastCopy)    { LastCopy->Resize(InWidth, InHeight); }
+                LastColor = nullptr;
                 for(uint32_t Level = 0; Level < 6; ++Level)
                 {
                     if(Bloom[Level]) { Bloom[Level]->Resize(HalfSize(InWidth, Level + 1), HalfSize(InHeight, Level + 1)); }
@@ -122,6 +160,20 @@ namespace RenderCore
                 }
             }
             return true;
+        }
+
+        /* The velocity target, made once with the G-buffer; null if the backend cannot. */
+        GDIRenderTarget* EnsureVelocity()
+        {
+            if(!Velocity && !bVelocityTried && Width > 0 && Height > 0)
+            {
+                bVelocityTried = true;
+                if(GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
+                {
+                    Velocity = GDICreateRenderTargetFormat(Name + ".Velocity", Width, Height, GDI_RTF_RGBA16F);
+                }
+            }
+            return Velocity && Velocity->IsValid() ? Velocity : nullptr;
         }
 
         /* InSize halved InTimes times, never below 1. */
@@ -179,6 +231,66 @@ namespace RenderCore
             return true;
         }
 
+        /* Temporal antialiasing's pair, full size, half float; false if they cannot be made. */
+        bool EnsureHistory()
+        {
+            if(!GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F) || Width == 0 || Height == 0) { return false; }
+            for(uint32_t Index = 0; Index < 2; ++Index)
+            {
+                if(!History[Index])
+                {
+                    History[Index] = GDICreateRenderTargetFormat(Name + ".History" + std::to_string(Index), Width, Height, GDI_RTF_RGBA16F);
+                }
+                if(!History[Index] || !History[Index]->IsValid()) { return false; }
+            }
+            return true;
+        }
+
+        /* A full-size half-float target, made on first use: Reflections, LastCopy. */
+        GDIRenderTarget* EnsureFullHalfFloat(GDIRenderTarget*& InOutTarget, const char* InName)
+        {
+            if(!InOutTarget && Width > 0 && Height > 0 && GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
+            {
+                InOutTarget = GDICreateRenderTargetFormat(Name + "." + InName, Width, Height, GDI_RTF_RGBA16F);
+            }
+            return InOutTarget && InOutTarget->IsValid() ? InOutTarget : nullptr;
+        }
+
+        /* Volumetric fog's half-size half-float target, made on first use. */
+        GDIRenderTarget* EnsureFog()
+        {
+            if(!Fog && Width > 0 && Height > 0 && GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
+            {
+                Fog = GDICreateRenderTargetFormat(Name + ".Fog", HalfSize(Width, 1), HalfSize(Height, 1), GDI_RTF_RGBA16F);
+            }
+            return Fog && Fog->IsValid() ? Fog : nullptr;
+        }
+
+        /* Auto exposure's targets, half float; false if the backend cannot make them. */
+        bool EnsureExposure()
+        {
+            if(!GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F)) { return false; }
+            const uint Sizes[3] = { 64, 8, 1 };
+            for(uint32_t Index = 0; Index < 3; ++Index)
+            {
+                if(!Luminance[Index])
+                {
+                    Luminance[Index] = GDICreateRenderTargetFormat(Name + ".Luminance" + std::to_string(Sizes[Index]),
+                                                                   Sizes[Index], Sizes[Index], GDI_RTF_RGBA16F);
+                }
+                if(!Luminance[Index] || !Luminance[Index]->IsValid()) { return false; }
+            }
+            for(uint32_t Index = 0; Index < 2; ++Index)
+            {
+                if(!Exposure[Index])
+                {
+                    Exposure[Index] = GDICreateRenderTargetFormat(Name + ".Exposure" + std::to_string(Index), 1, 1, GDI_RTF_RGBA16F);
+                }
+                if(!Exposure[Index] || !Exposure[Index]->IsValid()) { return false; }
+            }
+            return true;
+        }
+
         GDIRenderTarget* EnsurePostProcess()
         {
             if(!PostProcess && Width > 0 && Height > 0)
@@ -190,9 +302,11 @@ namespace RenderCore
 
         void Release()
         {
-            for(GDIRenderTarget** Each : { &SceneColor, &GBuffer[0], &GBuffer[1], &GBuffer[2], &GBuffer[3], &PostProcess, &PostProcessB,
+            for(GDIRenderTarget** Each : { &SceneColor, &GBuffer[0], &GBuffer[1], &GBuffer[2], &GBuffer[3], &Velocity, &PostProcess, &PostProcessB,
                                            &Half[0], &Half[1], &Bloom[0], &Bloom[1], &Bloom[2], &Bloom[3], &Bloom[4], &Bloom[5],
-                                           &BloomUp[0], &BloomUp[1], &BloomUp[2], &BloomUp[3], &BloomUp[4] })
+                                           &BloomUp[0], &BloomUp[1], &BloomUp[2], &BloomUp[3], &BloomUp[4],
+                                           &Luminance[0], &Luminance[1], &Luminance[2], &Exposure[0], &Exposure[1],
+                                           &History[0], &History[1], &Reflections, &LastCopy, &Fog })
             {
                 if(*Each)
                 {
@@ -202,6 +316,12 @@ namespace RenderCore
                 }
             }
             Final  = nullptr;
+            bVelocityTried = false;
+            ExposureCurrent = 0;
+            bExposureValid  = false;
+            HistoryCurrent  = 0;
+            bHistoryValid   = false;
+            LastColor       = nullptr;
             Width  = 0;
             Height = 0;
         }

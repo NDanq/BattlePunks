@@ -9,6 +9,7 @@
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
+#include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/NativePrefab.h"
 #include "Public/GameCore/World.h"
 #include "Public/RenderCore/RenderComponents.h"
@@ -16,12 +17,14 @@
 #include "Public/UI/UISystem.h"
 
 #include "Private/LightLab/LightLabAvatar.h"
+#include "Private/LightLab/LightLabGpuTest.h"
 #include "Private/LightLab/LightLabPhysics.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -52,15 +55,24 @@
  *                      Player and animates the lights.
  *   LightLabBakedMode  Content/Levels/BakedLighting.nmworld: flies the Player
  *                      and swings the dynamic ball (Swinger).
+ *   LightLabGpuTestMode Content/Levels/GpuTest.nmworld (Tools/make_gpu_test_level.py):
+ *                      a town of occluding blocks, PBR props, shadowed lights
+ *                      and a herd of foxes (LightLabGpuTest.h); flies the
+ *                      Player, or with [LightLab] Benchmark flies a fixed path
+ *                      and records it.
  *   LightLabPhysics    PhysicsLab's mode (LightLabPhysics.cpp): stacks,
  *                      dominoes, ramps, mesh colliders, joints and a jump
  *                      pad, simulated by the JoltPhysics module.
  *
  * Both turn the InsetLattice (inset shadows' demo cage) and drift it round
  * where it was placed, so its own shadow map follows a moving caster.
+ * LightLab's yard also has the animation demo (LightLab.Animals): a fox on
+ * an anim state -- a walk/run blend space, a sit, a masked head layer -- and
+ * a walking man carrying a lantern on an Anim Socket, its light pulsing at
+ * his footstep notifies (Content/Animation, from Art/Animation's glTFs).
  *   LightLabGameMode   what they share: mouse capture, the T/F/L toggles, a
  *                      periodic report.
- *   LightLabGameModule registers the three modes.
+ *   LightLabGameModule registers the four modes.
  *   LightLabAvatar     multiplayer: each connected player is an orb the others
  *                      see (LightLabServer, LightLab -connect=host:port).
  *
@@ -88,6 +100,17 @@ namespace
  * or the console can too. */
 NIMBLE_CONFIG_FLOAT(GLightLabLookSensitivity, "LightLab", "LookSensitivity", 1.0f, nullptr);   // times the Look axes
 NIMBLE_CONFIG_FLOAT(GLightLabFlySpeed, "LightLab", "FlySpeed", 600.0f, nullptr);               // world units a second
+
+/* The GpuTest level's: a CSV path makes it fly its benchmark path, record each
+ * frame there and quit (LightLabBenchmark); HerdCount makes its herd that many
+ * foxes (-1: as placed). Tools/gpu_test_perf.py sets both. */
+NIMBLE_CONFIG_STRING(GLightLabBenchmark, "LightLab", "Benchmark", "", nullptr);
+NIMBLE_CONFIG_INT(GLightLabHerdCount, "LightLab", "HerdCount", -1, nullptr);
+/* With Benchmark: Shots, a folder for each leg's middle frame (an editor
+ * build); Freeze, every animation paused and the herd still, so two runs'
+ * shots compare pixel for pixel. */
+NIMBLE_CONFIG_STRING(GLightLabBenchmarkShots, "LightLab", "BenchmarkShots", "", nullptr);
+NIMBLE_CONFIG_BOOL(GLightLabBenchmarkFreeze, "LightLab", "BenchmarkFreeze", false, nullptr);
 
 // === Native prefabs =========================================================
 // The level's shapes and its player, declared as prefabs ("native:LightLab.Block"):
@@ -178,6 +201,35 @@ struct LightLabLatticeContext
     EngineCore::Vector3 Center;
     EngineCore::Vector3 Rotation;
     double              ElapsedSeconds = 0.0;
+};
+
+/* What LightLab.Animals' void* points at: the animation demo (RenderCore's
+ * ANIMATION.md). The fox laps an ellipse, walking then running -- its
+ * anim state's Speed is its ground speed, so the blend space follows it --
+ * stops, sits (a one-shot that ends on its own) and sets off again; Look
+ * brings in its masked head layer while it walks. The man walks a circle,
+ * a lantern in his hand on an Anim Socket, its light pulsing at each Step
+ * notify his walk fires. */
+struct LightLabAnimalsContext
+{
+    GameCore::EntityID  Fox;
+    GameCore::EntityID  Man;
+    GameCore::EntityID  Lantern;
+
+    /* Each loop starts where its entity was placed: its east end. */
+    EngineCore::Vector3 FoxCenter;
+    double              FoxRadiusX = 240.0, FoxRadiusZ = 100.0;
+    double              FoxAngle   = 0.0;
+    double              FoxSpeed   = 0.0;    // world units a second, along the path
+    int                 FoxPhase   = 0;      // 0 walk, 1 run, 2 stopping, 3 sitting
+    double              FoxPhaseSeconds = 0.0;
+
+    EngineCore::Vector3 ManCenter;
+    double              ManRadius = 110.0;
+    double              ManAngle  = 0.0;
+
+    double              LanternIntensity = 6.0;   // as placed
+    double              LanternPulse     = 0.0;   // 1 at a footstep, fading
 };
 
 /* What LightLab.AnimateLights' void* points at. */
@@ -307,6 +359,111 @@ namespace
         }
     }
 
+    /* A heading's yaw (TransformComponent Y): the forward of FlyForward. */
+    double YawOf(const double InX, const double InZ)
+    {
+        return std::atan2(InX, InZ) / DegToRad;
+    }
+
+    /* InCurrent toward InTarget by at most InStep. */
+    double Approach(const double InCurrent, const double InTarget, const double InStep)
+    {
+        return InCurrent < InTarget ? std::min(InCurrent + InStep, InTarget) : std::max(InCurrent - InStep, InTarget);
+    }
+
+    /* "AnimNotify" (entity, name): the man's footsteps pulse his lantern. */
+    void OnAnimNotify(GameCore::EventID, const GameCore::EventArgs& InArgs, void* InUserData)
+    {
+        auto& Context = *static_cast<LightLabAnimalsContext*>(InUserData);
+        if(InArgs.Count >= 2 && InArgs.Args[0].Entity == Context.Man.Pack() && std::strcmp(InArgs.Args[1].String, "Step") == 0)
+        {
+            Context.LanternPulse = 1.0;
+        }
+    }
+
+    /* PrePhysics system, before the animation tick (PostUpdate) reads the
+     * parameters it sets: moves the fox and the man and drives their
+     * animations. Walk 6 s, run 6 s, stop, sit while Survey plays, again. */
+    void AnimalsSystem(GameCore::World& InWorld, const float InDeltaSeconds, void* InUserData)
+    {
+        auto& Context = *static_cast<LightLabAnimalsContext*>(InUserData);
+        const double Delta = double(InDeltaSeconds);
+
+        const GameCore::Entity Fox = InWorld.GetEntity(Context.Fox);
+        GameCore::TransformComponent*   FoxTransform = Fox.GetComponent<GameCore::TransformComponent>();
+        RenderCore::AnimationComponent* FoxAnimation = Fox.GetComponent<RenderCore::AnimationComponent>();
+        if(FoxTransform && FoxAnimation)
+        {
+            Context.FoxPhaseSeconds += Delta;
+            double Target = 0.0;
+            switch(Context.FoxPhase)
+            {
+                case 0: Target = 65.0;  if(Context.FoxPhaseSeconds > 6.0) { Context.FoxPhase = 1; Context.FoxPhaseSeconds = 0.0; } break;
+                case 1: Target = 160.0; if(Context.FoxPhaseSeconds > 6.0) { Context.FoxPhase = 2; Context.FoxPhaseSeconds = 0.0; } break;
+                case 2:
+                    Target = 0.0;
+                    if(Context.FoxSpeed <= 0.0)
+                    {
+                        FoxAnimation->SetTrigger("Sit");
+                        Context.FoxPhase = 3;
+                        Context.FoxPhaseSeconds = 0.0;
+                    }
+                    break;
+                default: Target = 0.0;  if(Context.FoxPhaseSeconds > 4.0) { Context.FoxPhase = 0; Context.FoxPhaseSeconds = 0.0; } break;
+            }
+            Context.FoxSpeed = Approach(Context.FoxSpeed, Target, 90.0 * Delta);
+
+            /* Along the ellipse at that speed: the angle by the arc length it covers. */
+            const double SinA = std::sin(Context.FoxAngle), CosA = std::cos(Context.FoxAngle);
+            const double ArcPerRadian = std::max(std::hypot(Context.FoxRadiusX * SinA, Context.FoxRadiusZ * CosA), 1.0);
+            Context.FoxAngle += Context.FoxSpeed * Delta / ArcPerRadian;
+            FoxTransform->Position = Context.FoxCenter + EngineCore::Vector3(Context.FoxRadiusX * std::cos(Context.FoxAngle), 0.0,
+                                                                            Context.FoxRadiusZ * std::sin(Context.FoxAngle));
+            /* The fox's clips face -Z, as the man's do: the heading's yaw, turned round. */
+            FoxTransform->Rotation.SetY(float(YawOf(-Context.FoxRadiusX * std::sin(Context.FoxAngle),
+                                                    Context.FoxRadiusZ * std::cos(Context.FoxAngle)) + 180.0));
+            FoxAnimation->SetFloat("Speed", float(Context.FoxSpeed));
+            FoxAnimation->SetFloat("Look", float(Approach(FoxAnimation->GetFloat("Look"), Context.FoxPhase == 0 ? 1.0 : 0.0, 1.5 * Delta)));
+        }
+
+        /* The man: a walk's pace round his circle. His clip faces -Z, so his yaw is the heading's, turned round. */
+        if(GameCore::TransformComponent* ManTransform = InWorld.GetEntity(Context.Man).GetComponent<GameCore::TransformComponent>())
+        {
+            Context.ManAngle += 90.0 * Delta / Context.ManRadius;
+            ManTransform->Position = Context.ManCenter + EngineCore::Vector3(Context.ManRadius * std::cos(Context.ManAngle), 0.0,
+                                                                            Context.ManRadius * std::sin(Context.ManAngle));
+            ManTransform->Rotation.SetY(float(YawOf(-std::sin(Context.ManAngle), std::cos(Context.ManAngle)) + 180.0));
+        }
+
+        if(RenderCore::PointLightComponent* Light = InWorld.GetEntity(Context.Lantern).GetComponent<RenderCore::PointLightComponent>())
+        {
+            Context.LanternPulse = std::max(0.0, Context.LanternPulse - 4.0 * Delta);
+            Light->Intensity = float(Context.LanternIntensity * (1.0 + 0.6 * Context.LanternPulse));
+        }
+    }
+
+    /* AnimFox, AnimMan and AnimLantern, if InWorld has them, into InOut; false if not. */
+    bool FindAnimals(GameCore::World& InWorld, LightLabAnimalsContext& InOut)
+    {
+        InOut = LightLabAnimalsContext();
+        InOut.Fox     = InWorld.FindEntityByName("AnimFox");
+        InOut.Man     = InWorld.FindEntityByName("AnimMan");
+        InOut.Lantern = InWorld.FindEntityByName("AnimLantern");
+        const GameCore::TransformComponent* Fox = InWorld.GetEntity(InOut.Fox).GetComponent<GameCore::TransformComponent>();
+        const GameCore::TransformComponent* Man = InWorld.GetEntity(InOut.Man).GetComponent<GameCore::TransformComponent>();
+        if(!Fox && !Man)
+        {
+            return false;
+        }
+        if(Fox) { InOut.FoxCenter = Fox->Position - EngineCore::Vector3(InOut.FoxRadiusX, 0.0, 0.0); }
+        if(Man) { InOut.ManCenter = Man->Position - EngineCore::Vector3(InOut.ManRadius, 0.0, 0.0); }
+        if(const RenderCore::PointLightComponent* Light = InWorld.GetEntity(InOut.Lantern).GetComponent<RenderCore::PointLightComponent>())
+        {
+            InOut.LanternIntensity = double(Light->Intensity);
+        }
+        return true;
+    }
+
     /* PrePhysics system: carries the Swinger round its starting point, one lap
      * every ~12 seconds, bobbing as it goes. */
     void SwingSystem(GameCore::World& InWorld, const float InDeltaSeconds, void* InUserData)
@@ -423,8 +580,13 @@ public:
                  "R resets the level, Escape pauses")
     }
 
+    /* The GpuTest level's benchmark, recorded each tick; null: none. */
+    void SetBenchmark(LightLabBenchmark* InBenchmark) { Benchmark = InBenchmark; }
+
     void OnTick(const NimbleEngine::FrameContext& InFrame) override
     {
+        if(Benchmark) { Benchmark->Record(*Session, InFrame); }
+
         /* Concurrent with the render thread: no renderer or window access. */
         GameCore::World& World = Session->GetWorld();
         ElapsedSeconds += InFrame.DeltaSeconds;
@@ -585,6 +747,8 @@ protected:
     double   ElapsedSeconds    = 0.0;
     double   LastReportSeconds = 0.0;
     uint64_t TicksSinceReport  = 0;
+
+    LightLabBenchmark* Benchmark = nullptr;
 };
 
 /* Content/Levels/LightLab.nmworld -- the yard, the lights and the Player, as
@@ -625,6 +789,11 @@ public:
         {
             World.RegisterSystem("LightLab.TurnLattice", GameCore::TP_PrePhysics, &TurnLatticeSystem, &LatticeContext);
         }
+        if(FindAnimals(World, AnimalsContext))
+        {
+            World.RegisterSystem("LightLab.Animals", GameCore::TP_PrePhysics, &AnimalsSystem, &AnimalsContext);
+            World.GetEvents().Subscribe("AnimNotify", &OnAnimNotify, &AnimalsContext);
+        }
         return true;
     }
 
@@ -632,6 +801,7 @@ private:
     LightLabFlyContext     FlyContext;
     LightLabAnimateContext AnimateContext;
     LightLabLatticeContext LatticeContext;
+    LightLabAnimalsContext AnimalsContext;
 };
 
 /* Baked lighting's demo room (Content/Levels/BakedLighting.nmworld, made by
@@ -666,6 +836,46 @@ private:
     LightLabLatticeContext LatticeContext;
 };
 
+/* The GPU test world (Content/Levels/GpuTest.nmworld): its herd walks;
+ * the Player flies, or follows the benchmark's path ([LightLab] Benchmark). */
+class LightLabGpuTestMode final : public LightLabGameMode
+{
+public:
+    bool OnLoad(NimbleEngine::GameSession& InSession) override
+    {
+        LightLabGameMode::OnLoad(InSession);
+        GameCore::World& World = InSession.GetWorld();
+
+        const bool bFreeze = GLightLabBenchmarkFreeze.GetBool();
+        if(LightLabFindHerd(World, GLightLabHerdCount.GetInt(), HerdContext) && !bFreeze)
+        {
+            World.RegisterSystem("LightLab.Herd", GameCore::TP_PrePhysics, &LightLabHerdSystem, &HerdContext);
+        }
+        if(bFreeze)
+        {
+            LightLabFreezeAnimation(World);
+        }
+        CORE_LOG("[LightLab] GpuTest: a herd of " + std::to_string(HerdContext.Members.size()) + " foxes")
+
+        const std::string Csv = GLightLabBenchmark.GetString();
+        if(!Csv.empty() && BenchmarkRun.Begin(PlayerEntity, Csv, GLightLabBenchmarkShots.GetString()))
+        {
+            World.RegisterSystem("LightLab.Benchmark", GameCore::TP_PrePhysics, &LightLabBenchmark::System, &BenchmarkRun);
+            SetBenchmark(&BenchmarkRun);
+        }
+        else
+        {
+            LightLabStartFly(World, PlayerEntity, FlyContext);
+        }
+        return true;
+    }
+
+private:
+    LightLabFlyContext  FlyContext;
+    LightLabHerdContext HerdContext;
+    LightLabBenchmark   BenchmarkRun;
+};
+
 /* Registers the modes the project's world list names (Config/DefaultEngine.ini). */
 class LightLabGameModule : public NimbleEngine::IGameModule
 {
@@ -677,6 +887,7 @@ public:
     {
         NimbleEngine::RegisterGameMode<LightLabYardMode>("LightLab");
         NimbleEngine::RegisterGameMode<LightLabBakedMode>("BakedLighting");
+        NimbleEngine::RegisterGameMode<LightLabGpuTestMode>("GpuTest");
         LightLabPhysics::RegisterGameMode();
         return true;
     }
@@ -685,6 +896,7 @@ public:
     {
         /* The registry holds this image's functions, and it is about to go. */
         LightLabPhysics::UnregisterGameMode();
+        NimbleEngine::UnregisterGameMode("GpuTest");
         NimbleEngine::UnregisterGameMode("BakedLighting");
         NimbleEngine::UnregisterGameMode("LightLab");
     }

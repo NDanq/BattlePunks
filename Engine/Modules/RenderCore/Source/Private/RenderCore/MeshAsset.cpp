@@ -2,11 +2,13 @@
 
 #include <atomic>
 #include <algorithm>
+#include <cstring>
 #include <mutex>
 #include <unordered_map>
 
 #include "Public/Core/CoreArchive.h"
 #include "Public/RenderCore/RenderCoreLog.h"
+#include "Public/RenderCore/SkeletonAsset.h"
 #include "Private/RenderCore/AssetFileCommon.h"
 
 namespace RenderCore
@@ -20,6 +22,7 @@ namespace RenderCore
         constexpr uint32_t TAG_SECTIONS = EngineCore::MakeArchiveTag('M','S','E','C');
         constexpr uint32_t TAG_COLORS   = EngineCore::MakeArchiveTag('M','C','O','L');   // optional
         constexpr uint32_t TAG_UV1      = EngineCore::MakeArchiveTag('M','U','V','1');   // optional
+        constexpr uint32_t TAG_SKIN     = EngineCore::MakeArchiveTag('M','S','K','N');   // optional
 
         void SerializeFloats(EngineCore::Archive& Ar, std::vector<float>& InOutValues)
         {
@@ -50,6 +53,17 @@ namespace RenderCore
                     return "mesh: a section runs past the last index";
                 }
             }
+            if(InMesh.IsSkinned())
+            {
+                if(InMesh.Joints.size() != size_t(VertexCount) * 4 || InMesh.Weights.size() != size_t(VertexCount) * 4)
+                {
+                    return "mesh: skinning needs four bones and weights per vertex";
+                }
+                for(const uint16_t Joint : InMesh.Joints)
+                {
+                    if(Joint >= InMesh.InverseBind.size()) { return "mesh: a vertex names a bone past the last"; }
+                }
+            }
             return nullptr;
         }
     }
@@ -78,6 +92,55 @@ namespace RenderCore
         }
     }
 
+    void MakeRefPosePalette(const MeshData& InMesh, const SkeletonData& InSkeleton, std::vector<float>& OutPalette)
+    {
+        OutPalette.clear();
+        if(!InMesh.IsSkinned())
+        {
+            return;
+        }
+        std::vector<AnimMatrix> Model;
+        InSkeleton.ComputeRefPoseModel(Model);
+        const size_t Bones = InMesh.InverseBind.size();
+        OutPalette.assign(Bones * 12, 0.0f);
+        for(size_t Bone = 0; Bone < Bones; ++Bone)
+        {
+            /* A bone the skeleton lacks (a mismatched pair) stays where it binds. */
+            const AnimMatrix Skin = Bone < Model.size() ? AnimMath::Mul(Model[Bone], InMesh.InverseBind[Bone]) : AnimMatrix();
+            std::memcpy(&OutPalette[Bone * 12], Skin.M, sizeof(Skin.M));
+        }
+    }
+
+    void ComputeSkinnedMeshBounds(MeshData& InOutMesh, const SkeletonData& InSkeleton)
+    {
+        std::vector<float> Palette;
+        MakeRefPosePalette(InOutMesh, InSkeleton, Palette);
+        if(Palette.empty() || InOutMesh.GetVertexCount() == 0)
+        {
+            return;
+        }
+        for(uint32_t Vertex = 0; Vertex < InOutMesh.GetVertexCount(); ++Vertex)
+        {
+            const AnimVec3 P{ InOutMesh.Positions[size_t(Vertex) * 3], InOutMesh.Positions[size_t(Vertex) * 3 + 1],
+                              InOutMesh.Positions[size_t(Vertex) * 3 + 2] };
+            AnimVec3 Posed;
+            for(int Each = 0; Each < 4; ++Each)
+            {
+                const float Weight = InOutMesh.Weights[size_t(Vertex) * 4 + size_t(Each)];
+                if(Weight <= 0.0f) { continue; }
+                AnimMatrix Skin;
+                std::memcpy(Skin.M, &Palette[size_t(InOutMesh.Joints[size_t(Vertex) * 4 + size_t(Each)]) * 12], sizeof(Skin.M));
+                Posed = AnimMath::Add(Posed, AnimMath::Scale(AnimMath::TransformPoint(Skin, P), Weight));
+            }
+            const float At[3] = { Posed.X, Posed.Y, Posed.Z };
+            for(int Axis = 0; Axis < 3; ++Axis)
+            {
+                InOutMesh.BoundsMin[Axis] = Vertex == 0 ? At[Axis] : std::min(InOutMesh.BoundsMin[Axis], At[Axis]);
+                InOutMesh.BoundsMax[Axis] = Vertex == 0 ? At[Axis] : std::max(InOutMesh.BoundsMax[Axis], At[Axis]);
+            }
+        }
+    }
+
     bool SerializeMesh(EngineCore::Archive& Ar, MeshData& InOutMesh)
     {
         if(!OpenRequiredChunk(Ar, TAG_MESH, 1, "not a mesh (no NMSH chunk)")) { return false; }
@@ -97,9 +160,11 @@ namespace RenderCore
             if(InOutMesh.Normals.size() != size_t(Header.VertexCount) * 3
                || InOutMesh.UV0.size() != size_t(Header.VertexCount) * 2
                || (!InOutMesh.Colors.empty() && InOutMesh.Colors.size() != size_t(Header.VertexCount) * 4)
-               || (!InOutMesh.UV1.empty() && InOutMesh.UV1.size() != size_t(Header.VertexCount) * 2))
+               || (!InOutMesh.UV1.empty() && InOutMesh.UV1.size() != size_t(Header.VertexCount) * 2)
+               || (InOutMesh.IsSkinned() && (InOutMesh.Joints.size() != size_t(Header.VertexCount) * 4
+                                             || InOutMesh.Weights.size() != size_t(Header.VertexCount) * 4)))
             {
-                Ar.SetError("mesh: every vertex needs a normal and a UV (and a colour and a UV1, if any has one)");
+                Ar.SetError("mesh: every vertex needs a normal and a UV (and a colour, a UV1 and bones, if any has them)");
                 Ar.CloseChunk();
                 return false;
             }
@@ -177,6 +242,30 @@ namespace RenderCore
                 InOutMesh.UV1.assign(size_t(Header.VertexCount) * 2, 0.0f);
             }
             SerializeFloats(Ar, InOutMesh.UV1);
+            Ar.CloseChunk();
+        }
+
+        /* Skinning, the same way: a file without it is a static mesh. */
+        const bool bSkin = Ar.IsSaving() ? InOutMesh.IsSkinned() : Ar.PeekChunkTag() == TAG_SKIN;
+        if(!Ar.HasError() && bSkin && OpenRequiredChunk(Ar, TAG_SKIN, 1, "mesh: bad MSKN chunk"))
+        {
+            uint32_t BoneCount = uint32_t(InOutMesh.InverseBind.size());
+            Ar << InOutMesh.Skeleton << BoneCount;
+            if(Ar.IsLoading()
+               && CanHoldElements(Ar, BoneCount, 12 * sizeof(float), "mesh: bone count is past the end of the file")
+               && CanHoldElements(Ar, uint64_t(Header.VertexCount), 4 * (sizeof(uint16_t) + sizeof(float)),
+                                  "mesh: skinned vertex count is past the end of the file"))
+            {
+                InOutMesh.InverseBind.assign(BoneCount, AnimMatrix());
+                InOutMesh.Joints.assign(size_t(Header.VertexCount) * 4, 0);
+                InOutMesh.Weights.assign(size_t(Header.VertexCount) * 4, 0.0f);
+            }
+            for(AnimMatrix& Matrix : InOutMesh.InverseBind)
+            {
+                for(float (&Row)[4] : Matrix.M) { for(float& Value : Row) { Ar << Value; } }
+            }
+            for(uint16_t& Joint : InOutMesh.Joints) { Ar << Joint; }
+            SerializeFloats(Ar, InOutMesh.Weights);
             Ar.CloseChunk();
         }
 

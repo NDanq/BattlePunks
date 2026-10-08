@@ -369,6 +369,7 @@ void D3D12DynamicGDI::DeferFreeSRV(uint32_t InSlot)
 void D3D12DynamicGDI::DrainDeferredDestruction()
 {
     DeferredResources.clear();
+    DeferredQueryHeaps.clear();
     if(DescAlloc)
     {
         for(uint32_t Slot : DeferredSRVs)
@@ -671,13 +672,16 @@ namespace
         }
     }
 
-    /* Transform, 80 bytes: 0 PositionWorldSpace (+4 pad), 16 Model. */
+    /* Transform, 144 bytes: 0 PositionWorldSpace (+4 pad), 16 Model, 80 PrevModel (velocity's; Model unless set). */
+    constexpr uint32_t kTransformBytes = 144;
     void PackTransform(const ScalarMap& S, void* Dst)
     {
         float* D = static_cast<float*>(Dst);
-        memset(D, 0, 80);
+        memset(D, 0, kTransformBytes);
         WriteScalar(S, "Transform.PositionWorldSpace", D + 0, 3);
         WriteScalar(S, "Transform.Model",              D + 4, 16);
+        WriteScalar(S, "Transform.Model",              D + 20, 16);
+        WriteScalar(S, "Transform.PrevModel",          D + 20, 16);
     }
 
     /* Every non-core scalar in map order; each custom cbuffer holds one today. */
@@ -726,7 +730,8 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     Key.VertexShaderID = VSRes->GetID();
     Key.PixelShaderID  = PSRes->GetID();
     // 3: an indexed mesh drawn instanced from GDISetInstanceBuffer's buffer.
-    Key.VertexLayoutID = InMesh->IsIndexed() ? (GetInstanceBuffer() ? 3u : 2u) : (bIsInstanced ? 1u : 0u);
+    // 4: a skinned mesh, its bone streams in slots 6 and 7 (never instanced).
+    Key.VertexLayoutID = InMesh->IsIndexed() ? (GetInstanceBuffer() ? 3u : (InMesh->IsSkinned() ? 4u : 2u)) : (bIsInstanced ? 1u : 0u);
     Key.BlendEnable    = Blend.bBlend ? TRUE : FALSE;
     Key.SrcBlend       = DecodeBlendFactor(Blend.Source);
     Key.DestBlend      = DecodeBlendFactor(Blend.Dest);
@@ -735,6 +740,11 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     Key.WriteMask      = DecodeColorMask(CurrentStateData->ColorMask);
     Key.RTFormat       = CurrentStateData->ActiveRenderTarget->GetFormat();
     Key.ColorCount     = CurrentStateData->ActiveColorCount > 0 ? CurrentStateData->ActiveColorCount : 1u;
+    for(uint32_t Index = 0; Index < GDI_MAX_COLOR_TARGETS; ++Index)
+    {
+        const D3D12RenderTarget* Each = Index < CurrentStateData->ActiveColorCount ? CurrentStateData->ActiveColors[Index] : nullptr;
+        Key.ColorFormats[Index] = Each ? Each->GetFormat() : DXGI_FORMAT_UNKNOWN;
+    }
     Key.DSVFormat      = CurrentStateData->ActiveDepth ? CurrentStateData->ActiveDepth->GetDepthFormat() : DXGI_FORMAT_UNKNOWN;
     Key.DepthEnable    = CurrentStateData->DepthState.bDepthTest ? TRUE : FALSE;
     Key.DepthWrite     = CurrentStateData->DepthState.bDepthMask ? TRUE : FALSE;
@@ -758,7 +768,7 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     const uint32_t CustomBytes = bMaterial ? BlockBytes(MaterialBlocks[0]) : kCustomBytes;
 
     const D3D12CBAllocation VP     = DescAlloc->AllocateCB(160);
-    const D3D12CBAllocation TR     = DescAlloc->AllocateCB(80);
+    const D3D12CBAllocation TR     = DescAlloc->AllocateCB(kTransformBytes);
     const D3D12CBAllocation Custom = DescAlloc->AllocateCB(CustomBytes);
     if(!VP.MappedPtr || !TR.MappedPtr || !Custom.MappedPtr) return false;
 
@@ -792,6 +802,27 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
             SceneBlockUploadAddress = Scene.GPUAddress;
             SceneBlockUploadSerial = MaterialBlockSerials[1];
             SceneBlockUploadEpoch  = DescAlloc->GetEpoch();
+        }
+
+        /* The skin blocks (b12, b13): the last palette set and the frame
+         * before's, each uploaded once per change. */
+        for(uint32_t SkinIndex = 0; SkinIndex < 2; ++SkinIndex)
+        {
+            const std::vector<uint8_t>& Bytes = MaterialBlocks[2 + SkinIndex];
+            if(SkinBlockUploadSerial[SkinIndex] == MaterialBlockSerials[2 + SkinIndex] && SkinBlockUploadEpoch[SkinIndex] == DescAlloc->GetEpoch()
+               && SkinBlockUploadAddress[SkinIndex] != 0)
+            {
+                continue;
+            }
+            /* A skinned shader declares the whole palette: upload all of it. */
+            const uint32_t SkinBytes = Bytes.empty() ? 256u : GDI_SKIN_BLOCK_MAX_BYTES;
+            const D3D12CBAllocation Skin = DescAlloc->AllocateCB(SkinBytes);
+            if(!Skin.MappedPtr) return false;
+            memset(Skin.MappedPtr, 0, SkinBytes);
+            if(!Bytes.empty()) memcpy(Skin.MappedPtr, Bytes.data(), Bytes.size());
+            SkinBlockUploadAddress[SkinIndex] = Skin.GPUAddress;
+            SkinBlockUploadSerial[SkinIndex]  = MaterialBlockSerials[2 + SkinIndex];
+            SkinBlockUploadEpoch[SkinIndex]   = DescAlloc->GetEpoch();
         }
     }
     else
@@ -831,6 +862,8 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     if(bMaterial)
     {
         List->SetGraphicsRootConstantBufferView(RP_Scene, Scene.GPUAddress);
+        List->SetGraphicsRootConstantBufferView(RP_Skin,     SkinBlockUploadAddress[0]);
+        List->SetGraphicsRootConstantBufferView(RP_PrevSkin, SkinBlockUploadAddress[1]);
         for(uint32_t Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot)
         {
             auto* SlotTexture = dynamic_cast<D3D12TextureResource*>(MaterialTextures[Slot]);

@@ -70,6 +70,8 @@ nimble_add_hot_module(${GAME_MODULE}
                      Source/Private/LightLab/LightLabInput.cpp
                      Source/Private/LightLab/LightLabAvatar.cpp
                      Source/Private/LightLab/LightLabAvatar.h
+                     Source/Private/LightLab/LightLabGpuTest.cpp
+                     Source/Private/LightLab/LightLabGpuTest.h
                      Source/Private/LightLab/LightLabPhysics.cpp
                      Source/Private/LightLab/LightLabPhysics.h
         PRIVATE_DEPS NimbleEngine::NimbleEngine)
@@ -163,7 +165,7 @@ file(GLOB_RECURSE GAME_SCRIPT_FILES CONFIGURE_DEPENDS
 game_stage(Scripts "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_SCRIPT_FILES})
 
 # Content/: imported meshes and textures ("Content/Meshes/Crate.nmmesh"), and
-# post process stacks (a Post Process component's "Content/PostProcess/X.pp.nmgraph", render targets (.nmrt2d / .nmrt3d), particle systems (.nmparticle),
+# post process stacks (a Post Process component's "Content/PostProcess/X.pp.nmgraph", render targets (.nmrt2d / .nmrt3d), particle systems (.nmparticle), animation (.nmskel, .nmanim, .nmanimstate),
 # baked lighting (a world's Lighting/ folder: .nmlighting and its lightmaps), read as they are, text in every build).
 file(GLOB_RECURSE GAME_CONTENT_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmmesh"
@@ -172,6 +174,9 @@ file(GLOB_RECURSE GAME_CONTENT_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmrt2d"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmrt3d"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmparticle"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmskel"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmanim"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmanimstate"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmlighting")
 game_stage(Content "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_CONTENT_FILES})
 

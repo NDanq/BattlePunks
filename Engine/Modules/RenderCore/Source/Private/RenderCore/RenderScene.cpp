@@ -1,6 +1,7 @@
 #include "Public/RenderCore/RenderScene.h"
 
 #include <algorithm>
+#include <type_traits>
 #include <unordered_map>
 #include <atomic>
 #include <chrono>
@@ -10,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "Public/Core/CoreConfig.h"
 #include "Public/RenderCore/RenderContext.h"
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Public/RenderCore/RenderProxy.h"
@@ -32,6 +34,11 @@
  * knows through the component's own RenderProxyHandle.
  */
 
+/* [Rendering] OcclusionCulling: a perspective view's proxies hidden behind its
+ * occluders (RenderComponent::bOccluder) are skipped (RENDERPIPELINE.md,
+ * "Occlusion culling"), where the backend has occlusion queries. */
+NIMBLE_CONFIG_BOOL(GRenderOcclusionCulling, "Rendering", "OcclusionCulling", true, nullptr);
+
 namespace RenderCore
 {
     namespace
@@ -39,6 +46,35 @@ namespace RenderCore
         /* Every live scene, so a GDI block's GPU times reach the scene that
          * wrote them a block later ("stat frame"). Render thread only. */
         std::vector<RenderScene*> GLiveScenes;
+
+        /* The fewest queries a scene's set holds; it doubles past that as a
+         * frame asks for more. */
+        constexpr uint32_t OCCLUSION_QUERIES_MIN = 256;
+        constexpr uint32_t OCCLUSION_QUERIES_MAX = 65536;
+
+        bool IsPerspective(const RenderView& InView)
+        {
+            return InView.Projection.Data[3][2] != 0.0f && InView.ZNear > 0.0f;
+        }
+
+        /* How far from the eye the near plane's corners are: a box nearer than
+         * that may be cut by the near plane, which can leave a query nothing
+         * of it to draw where it covers what is behind. */
+        double NearPlaneReach(const RenderView& InView)
+        {
+            const double FocalX = std::max(std::abs(double(InView.Projection.Data[0][0])), 1e-6);
+            const double FocalY = std::max(std::abs(double(InView.Projection.Data[1][1])), 1e-6);
+            return double(InView.ZNear) * std::sqrt(1.0 + 1.0 / (FocalX * FocalX) + 1.0 / (FocalY * FocalY));
+        }
+
+        /* The distance from InPoint to the nearest point of InBox (0 inside it). */
+        double DistanceToBox(const GameCore::AABB& InBox, const EngineCore::Vector3& InPoint)
+        {
+            const double Dx = std::max({ double(InBox.Min.GetX()) - double(InPoint.GetX()), 0.0, double(InPoint.GetX()) - double(InBox.Max.GetX()) });
+            const double Dy = std::max({ double(InBox.Min.GetY()) - double(InPoint.GetY()), 0.0, double(InPoint.GetY()) - double(InBox.Max.GetY()) });
+            const double Dz = std::max({ double(InBox.Min.GetZ()) - double(InPoint.GetZ()), 0.0, double(InPoint.GetZ()) - double(InBox.Max.GetZ()) });
+            return std::sqrt(Dx * Dx + Dy * Dy + Dz * Dz);
+        }
     }
 
     struct RenderScene::Impl
@@ -75,6 +111,46 @@ namespace RenderCore
         std::unordered_map<const RenderProxy*, StaticDrawList> StaticLists;
         uint64_t                                               StaticBuilds = 0;   // lifetime captures
 
+        /*
+         * OCCLUSION CULLING (RENDERPIPELINE.md): the main view's query set,
+         * made on first use and remade larger when a frame wanted more
+         * queries than it holds; the last round's answers; and what the last
+         * frame did, for RenderStats.
+         */
+        GDIOcclusionQueries* Occlusion        = nullptr;
+        uint32_t             OcclusionWanted  = 0;
+        std::vector<uint8_t> OcclusionAnswers;
+        uint64_t             LastOccluded     = 0;
+        uint64_t             LastQueries      = 0;
+
+        /* The set the main view's queries go in this frame; null if occlusion
+         * culling is off, the backend has no queries, or InView is not a
+         * perspective one (an orthographic view has no near plane to judge
+         * nearness by, and nothing it draws is usually hidden). */
+        GDIOcclusionQueries* PrepareOcclusion(const RenderView& InView)
+        {
+            if(!GRenderOcclusionCulling.GetBool() || !GDISupportsOcclusionQueries() || !IsPerspective(InView))
+            {
+                ReleaseOcclusion();
+                return nullptr;
+            }
+            if(!Occlusion || OcclusionWanted > Occlusion->GetCapacity())
+            {
+                uint32_t Capacity = Occlusion ? Occlusion->GetCapacity() : OCCLUSION_QUERIES_MIN;
+                while(Capacity < OcclusionWanted && Capacity < OCCLUSION_QUERIES_MAX) { Capacity *= 2; }
+                ReleaseOcclusion();   // its answers with it: one frame without CPU culling
+                Occlusion = GDICreateOcclusionQueries(Capacity);
+            }
+            return Occlusion;
+        }
+
+        void ReleaseOcclusion()
+        {
+            if(Occlusion) { Occlusion->Release(); }
+            Occlusion = nullptr;
+            LastOccluded = LastQueries = 0;
+        }
+
         /* InProxy's bounding sphere, world space, from its local box: the
          * same size however it is turned (its world box grows as it turns). */
         static InsetShadowCaster InsetSphere(const RenderProxy& InProxy)
@@ -108,11 +184,38 @@ namespace RenderCore
          * stages (a static one's from its kept list), then each shadow view's
          * casters. The main view, or a scene capture's (InCapture: its owner's
          * subtree left out). Counts what it drew and culled.
+         *
+         * With InOcclusion (the main view's; RENDERPIPELINE.md, "Occlusion
+         * culling"): each visible proxy but an occluder has its box queried
+         * against the occluders' depth -- unless it is so near the eye the
+         * near plane may cut it -- and its draws predicated on the answer,
+         * so the GPU skips them if it is hidden this frame. One the last
+         * answer read found hidden is not drawn at all; its query alone
+         * says when it shows again, a frame late. Occluders queue their
+         * depth for the PrePass.
          */
         void QueueDraws(RenderContext& InContext, const RenderView& InView, const SceneCaptureRequest* InCapture,
-                        uint64_t& OutVisible, uint64_t& OutCulled, uint64_t& OutStatic)
+                        uint64_t& OutVisible, uint64_t& OutCulled, uint64_t& OutStatic,
+                        GDIOcclusionQueries* InOcclusion = nullptr)
         {
             InContext.BeginSceneDraws();
+
+            /* The last round's answers -- complete, as its block has finished --
+             * then this round's queries. Without answers nothing is hidden on
+             * the CPU; the GPU still skips what this frame's find hidden. */
+            const bool bOcclusion = InOcclusion != nullptr;
+            const bool bAnswers   = bOcclusion && GDIReadOcclusionResults(InOcclusion, OcclusionAnswers);
+            const bool bPredicate = bOcclusion && InContext.CanPredicateOcclusion();
+            const double NearReach = bOcclusion ? NearPlaneReach(InView) * 1.5 : 0.0;
+            if(bOcclusion) { InContext.SetOcclusionQueries(InOcclusion); }
+            /* Nothing to test against without an occluder in view: no queries. */
+            const bool bQueries = bOcclusion && std::any_of(Proxies.begin(), Proxies.end(), [&InView](const RenderProxy* InProxy)
+            {
+                return InProxy->IsVisible() && InProxy->IsOccluder()
+                    && (InView.Bounds.IsEmpty() || InProxy->GetWorldBounds().IsEmpty() || InProxy->GetWorldBounds().Overlaps(InView.Bounds));
+            });
+            uint32_t OcclusionWantedNow = 0;
+            uint64_t OccludedCount      = 0;
 
             uint64_t VisibleCount = 0;
             uint64_t CulledCount  = 0;
@@ -185,6 +288,15 @@ namespace RenderCore
 
             for(RenderProxy* Proxy : Proxies)
             {
+                /* Its query last round, read before anything can skip it: an
+                 * index is only good for the round it was given in. */
+                int32_t LastQuery = -1;
+                if(bOcclusion)
+                {
+                    LastQuery = Proxy->OcclusionQuery;
+                    Proxy->OcclusionQuery = -1;
+                    Proxy->bOccluded      = false;
+                }
                 if(!Proxy->IsVisible() || Excluded(Proxy))
                 {
                     continue;
@@ -230,25 +342,57 @@ namespace RenderCore
                     continue;
                 }
 
-                if(Proxy->IsStatic())
+                /* Occlusion: this round's query on its box, a little larger so
+                 * coplanar faces pass; an occluder draws its depth instead. */
+                if(bQueries && !Proxy->IsOccluder() && bProxyHasBounds && DistanceToBox(Bounds, InView.Origin) > NearReach)
                 {
-                    StaticDrawList& List = ListFor(Proxy, Generation);
-                    if(!List.bDraws)
-                    {
-                        InContext.BeginCapture(&List.Draws);
-                        Proxy->Draw(InContext);
-                        InContext.EndCapture();
-                        List.bDraws = true;
-                        ++StaticBuilds;
-                    }
-                    InContext.SubmitCaptured(List.Draws);
-                    ++StaticCount;
+                    const double Pad = (Bounds.Max - Bounds.Min).GetLength() * 0.01 + 1e-3;
+                    const EngineCore::Vector3 Grow(Pad, Pad, Pad);
+                    ++OcclusionWantedNow;
+                    Proxy->OcclusionQuery = InContext.AddOcclusionQuery(GameCore::AABB(Bounds.Min - Grow, Bounds.Max + Grow));
+                    Proxy->bOccluded      = Proxy->OcclusionQuery >= 0 && bAnswers && LastQuery >= 0
+                                         && size_t(LastQuery) < OcclusionAnswers.size() && OcclusionAnswers[size_t(LastQuery)] == 0;
+                }
+                /* Only the main view's answers: a capture sees from elsewhere. */
+                if(bOcclusion && Proxy->bOccluded)
+                {
+                    ++OccludedCount;
                 }
                 else
                 {
-                    Proxy->Draw(InContext);
+                    InContext.SetDrawOcclusion(bPredicate ? Proxy->OcclusionQuery : -1);
+                    if(Proxy->IsStatic())
+                    {
+                        StaticDrawList& List = ListFor(Proxy, Generation);
+                        if(!List.bDraws)
+                        {
+                            InContext.BeginCapture(&List.Draws);
+                            Proxy->Draw(InContext);
+                            InContext.EndCapture();
+                            List.bDraws = true;
+                            ++StaticBuilds;
+                        }
+                        InContext.SubmitCaptured(List.Draws);
+                        ++StaticCount;
+                    }
+                    else
+                    {
+                        /* Its velocity: how it moved since the frame before (a static list's never does). */
+                        EngineCore::Matrix4x4 Motion;
+                        const bool bMoved = Proxy->GetMotion(Motion);
+                        InContext.SetDrawMotion(bMoved ? &Motion : nullptr);
+                        Proxy->Draw(InContext);
+                        InContext.SetDrawMotion(nullptr);
+                    }
+                    InContext.SetDrawOcclusion(-1);
+                    ++VisibleCount;
                 }
-                ++VisibleCount;
+                if(bQueries && Proxy->IsOccluder())
+                {
+                    InContext.SetGatheringOccluders(true);
+                    Proxy->DrawOccluder(InContext);
+                    InContext.SetGatheringOccluders(false);
+                }
 
                 if(Proxy->CastsInsetShadow() && !Proxy->GetLocalBounds().IsEmpty())
                 {
@@ -349,6 +493,12 @@ namespace RenderCore
             OutVisible = VisibleCount;
             OutCulled  = CulledCount;
             OutStatic  = StaticCount;
+            if(bOcclusion)
+            {
+                OcclusionWanted = OcclusionWantedNow;
+                LastOccluded    = OccludedCount;
+                LastQueries     = std::min<uint64_t>(OcclusionWantedNow, InOcclusion->GetCapacity());
+            }
         }
 
 #if WITH_EDITOR
@@ -369,7 +519,7 @@ namespace RenderCore
         double  GpuSums[RGT_Count]   = {};
         int     GpuSamples[RGT_Count] = {};
         int64_t GpuWindowStartNs     = 0;
-        float   GpuMs[RGT_Count]     = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+        float   GpuMs[RGT_Count]     = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
 
         void AddGpuTimes(const float (&InGpuMs)[RGT_Count])
         {
@@ -407,6 +557,9 @@ namespace RenderCore
         EngineCore::Matrix4x4     PrevViewProjection;
         EngineCore::Size          PrevViewport;
         bool                      bHasPrevView = false;
+
+        /* TAA's jitter: where in its 8-frame Halton(2, 3) cycle the main view is. */
+        uint32_t                  JitterIndex = 0;
 
         /*
          * THE SCENE'S RENDER TARGETS, and the whole reason anything reaches
@@ -615,6 +768,7 @@ namespace RenderCore
          * failure) must still not leak a GPU image. Idempotent. */
         P->Targets.Release();
         P->ProbeStages.Release();
+        P->ReleaseOcclusion();
         for(GDIRenderTarget** Each : { &P->IBL.Atlas, &P->IBL.Strip })
         {
             if(*Each) { GDIReleaseRenderTarget(*Each); delete *Each; *Each = nullptr; }
@@ -765,16 +919,6 @@ namespace RenderCore
          * everything below nests under it (RENDERPIPELINE.md, "Draw events"). */
         InContext.BeginDrawEvent("Scene");
 
-        /* GPU work each proxy needs once a frame (RenderProxy::Simulate) --
-         * particles -- outside any target, against the scene's own view. */
-        {
-            SCOPED_DRAW_EVENT("Simulate");
-            for(RenderProxy* Proxy : P->Proxies)
-            {
-                Proxy->Simulate(InContext);
-            }
-        }
-
         /* "stat frame": the last GDI block's GPU times, to the scene that wrote
          * them (they are complete only now), and this block's own, if shown. */
         const StatUnitSnapshot Stats = GetStatUnit();
@@ -791,17 +935,28 @@ namespace RenderCore
             }
         }
 
+        /* GPU work each proxy needs once a frame (RenderProxy::Simulate) --
+         * particles -- outside any target, against the scene's own view;
+         * after the timed block opens, so "stat frame" times them. */
+        {
+            SCOPED_DRAW_EVENT("Simulate");
+            InContext.WriteGpuTimestamp(RGT_Particles, false);   // 0 with no emitters, not "-"
+            for(RenderProxy* Proxy : P->Proxies)
+            {
+                Proxy->Simulate(InContext);
+            }
+            InContext.WriteGpuTimestamp(RGT_Particles, true);
+        }
+
 #if WITH_EDITOR
         /* Previews FIRST, before the scene's own stages, so the scene's final
          * target is the active one at EndRendering and the present never
          * shows a preview. */
+        InContext.DeliverMaterialPreviews();
         for(const MaterialPreviewRequest& Each : P->Previews)
         {
             SCOPED_DRAW_EVENT("MaterialPreview");
-            EngineCore::Image Pixels;
-            std::string       Error;
-            InContext.RenderMaterialPreview(Each, Pixels, Error);
-            if(Each.Mailbox) { Each.Mailbox->Deliver(Each.Request, std::move(Pixels), std::move(Error)); }
+            InContext.RenderMaterialPreview(Each);
         }
         P->Previews.clear();
 #endif
@@ -849,7 +1004,6 @@ namespace RenderCore
                 bCaptured = true;
             }
         }
-        InContext.WriteGpuTimestamp(RGT_SceneCapture, true);
         P->CaptureList.Count = 0;
         if(bCaptured)
         {
@@ -869,13 +1023,51 @@ namespace RenderCore
         P->TargetReadbacks.clear();
 #endif
 
-        /* IMAGE-BASED LIGHTING: the sky block and the reflection probes, before the scene lights by them. */
+        /* IMAGE-BASED LIGHTING: the sky block and the reflection probes, before the scene lights by them.
+         * Inside the Captures span: a reflection probe's capture is six views of the scene, as costly
+         * as a Scene Capture Probe's, and a probe left capturing every frame should show in "stat frame". */
         {
             SCOPED_DRAW_EVENT("ImageBasedLighting");
             P->UpdateImageBasedLighting(InContext);
         }
+        InContext.WriteGpuTimestamp(RGT_SceneCapture, true);
 
-        P->QueueDraws(InContext, P->View, nullptr, VisibleCount, CulledCount, StaticCount);
+        /* TAA's jitter (RENDERPIPELINE.md, "Temporal antialiasing"): the main view drawn a
+         * sub-pixel off, a different way each frame (Halton 2, 3), so the resolve averages
+         * many samples a pixel. P->View stays unjittered: the captures above, the next
+         * frame's PrevViewProjection the resolve reprojects with, what draws after. */
+        RenderView Drawn = P->View;
+        InContext.SetTemporalJitter(0.0f, 0.0f);
+        const PostProcessSettings& Stack = P->PostProcess.Settings;
+        if(Stack.bAntialiasing && Stack.AaMethod == 1 && P->Targets.bHDR && P->Targets.Width > 0 && P->Targets.Height > 0)
+        {
+            const auto Halton = [](uint32_t InIndex, const uint32_t InBase)
+            {
+                double Fraction = 1.0, Result = 0.0;
+                while(InIndex > 0)
+                {
+                    Fraction /= double(InBase);
+                    Result   += Fraction * double(InIndex % InBase);
+                    InIndex  /= InBase;
+                }
+                return Result;
+            };
+            P->JitterIndex = (P->JitterIndex + 1) % 8;
+            const double X = (Halton(P->JitterIndex + 1, 2) - 0.5) * 2.0 / double(P->Targets.Width);    // NDC
+            const double Y = (Halton(P->JitterIndex + 1, 3) - 0.5) * 2.0 / double(P->Targets.Height);
+            InContext.SetTemporalJitter(float(X), float(Y));
+            using Element = std::remove_reference_t<decltype(Drawn.Projection.Data[0][0])>;
+            for(int Column = 0; Column < 4; ++Column)
+            {
+                // clip.xy += offset * clip.w: whatever the projection, perspective or not.
+                Drawn.Projection.Data[0][Column] += Element(X) * Drawn.Projection.Data[3][Column];
+                Drawn.Projection.Data[1][Column] += Element(Y) * Drawn.Projection.Data[3][Column];
+            }
+        }
+        InContext.SetView(Drawn);
+
+        GDIOcclusionQueries* Occlusion = P->PrepareOcclusion(Drawn);
+        P->QueueDraws(InContext, Drawn, nullptr, VisibleCount, CulledCount, StaticCount, Occlusion);
 
         /* The post process stack: the volumes' blend (WorldBridge), its
          * materials by stage and order, then the effects' settings. */
@@ -896,6 +1088,7 @@ namespace RenderCore
         InContext.SetUnlit(P->ViewMode == ERenderViewMode::Unlit);
         InContext.RenderSceneStages(P->Targets, P->ClearColor, /*bInTimed*/ true, P->bClearGradient ? &P->ClearBottom : nullptr);
         InContext.SetUnlit(false);
+        InContext.SetView(P->View);   // unjittered again, for what draws over the picture
 
         /* The targets this frame drew, for the view mode's list; one of them
          * over the picture in the Render Target view mode. */
@@ -933,6 +1126,7 @@ namespace RenderCore
         {
             SetSceneStats(uint64_t(P->Proxies.size()), CulledCount);
             SetStaticDrawStats(StaticCount, P->StaticBuilds);
+            SetOcclusionStats(Occlusion ? P->LastOccluded : 0, Occlusion ? P->LastQueries : 0);
         }
 
 #if WITH_EDITOR
@@ -970,6 +1164,12 @@ namespace RenderCore
 
         InContext.EndDrawEvent();   // "Scene"
         GDIEndRendering();
+
+        /* Drawn: what each proxy is now is what it was, for the next frame's velocity. */
+        for(RenderProxy* Proxy : P->Proxies)
+        {
+            Proxy->EndFrameMotion();
+        }
 
         /* After EndRendering: the final colour is now in its presentable state. */
         P->PresentTarget.store(P->Targets.Final, std::memory_order_release);
@@ -1014,6 +1214,7 @@ namespace RenderCore
         P->UI.Release();
         P->Targets.Release();
         P->ProbeStages.Release();
+        P->ReleaseOcclusion();
         InContext.ReleaseIBLResources(P->IBL);
         P->bSkyValid = false;
         for(Impl::ProbeSlot& Each : P->Slots) { Each = Impl::ProbeSlot(); }

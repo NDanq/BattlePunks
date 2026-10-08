@@ -418,6 +418,7 @@ namespace RenderCore
         OutStats.IdleMs                 = Unit.IdleMs;
         GetReportedGpuTimes(OutStats.GpuMs);
         GetStaticDrawStats(OutStats.StaticProxiesDrawn, OutStats.StaticListBuilds);
+        GetOcclusionStats(OutStats.ProxiesOccludedLastFrame, OutStats.OcclusionQueriesLastFrame);
     }
 
     // === The locator (RenderThreadInternal.h) ==================================
@@ -478,6 +479,24 @@ namespace RenderCore
 
     namespace
     {
+        std::atomic<uint64_t> GOccluded{0};
+        std::atomic<uint64_t> GOcclusionQueries{0};
+    }
+
+    void SetOcclusionStats(const uint64_t InOccluded, const uint64_t InQueries)
+    {
+        GOccluded.store(InOccluded, std::memory_order_relaxed);
+        GOcclusionQueries.store(InQueries, std::memory_order_relaxed);
+    }
+
+    void GetOcclusionStats(uint64_t& OutOccluded, uint64_t& OutQueries)
+    {
+        OutOccluded = GOccluded.load(std::memory_order_relaxed);
+        OutQueries  = GOcclusionQueries.load(std::memory_order_relaxed);
+    }
+
+    namespace
+    {
         std::mutex       GStatUnitLock;   // written twice a second, read once a frame per scene
         StatUnitSnapshot GStatUnit;
     }
@@ -533,7 +552,7 @@ namespace RenderCore
     namespace
     {
         std::mutex GReportedGpuLock;
-        float      GReportedGpuMs[RGT_Count] = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+        float      GReportedGpuMs[RGT_Count] = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
     }
 
     void SetReportedGpuTimes(const float* InGpuMs)

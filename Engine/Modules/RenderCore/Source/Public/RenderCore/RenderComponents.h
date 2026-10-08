@@ -12,6 +12,8 @@
  * This header includes them all. Include a single component's header when
  * that is all a file needs.
  */
+#include "Public/RenderCore/Components/AnimationComponent.h"
+#include "Public/RenderCore/Components/AnimSocketComponent.h"
 #include "Public/RenderCore/Components/CameraComponent.h"
 #include "Public/RenderCore/Components/DirectionalLightComponent.h"
 #include "Public/RenderCore/Components/LightShadow.h"

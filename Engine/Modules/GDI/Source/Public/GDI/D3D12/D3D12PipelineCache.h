@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <unordered_map>
 
+#include "Public/GDI/GDIDefinitions.h"
+
 class D3D12Device;
 class D3D12ShaderResource;
 
@@ -32,7 +34,9 @@ enum ED3D12RootParam : UINT
     RP_Scene,
     RP_MaterialTexture0,
     RP_MaterialSampler0 = RP_MaterialTexture0 + 8,   // GDI_MATERIAL_TEXTURE_SLOTS
-    RP_Count            = RP_MaterialSampler0 + 8
+    RP_Skin             = RP_MaterialSampler0 + 8,   // b12, GDI_SKIN_BLOCK_BINDING
+    RP_PrevSkin,                                     // b13, GDI_PREV_SKIN_BLOCK_BINDING
+    RP_Count
 };
 
 /**
@@ -57,6 +61,8 @@ enum ED3D12ComputeRootParam : UINT
  *   2 -- indexed mesh: plus slot 2 float3 normal, slot 3 float4 colour, slot 4 float2 UV1
  *   3 -- indexed mesh instanced from a GDIBuffer (GDISetInstanceBuffer): plus
  *        slot 5, one GDI_INSTANCE_STRIDE record per instance
+ *   4 -- skinned mesh: 2 plus slot 6 float4 bone indices, slot 7 float4 weights
+ *        (locations 11 and 12)
  */
 class D3D12PipelineCache
 {
@@ -75,7 +81,8 @@ public:
         UINT8                   WriteMask       = D3D12_COLOR_WRITE_ENABLE_ALL;
 
         DXGI_FORMAT             RTFormat        = DXGI_FORMAT_R8G8B8A8_UNORM;
-        UINT                    ColorCount      = 1;   // render targets, every one RTFormat
+        UINT                    ColorCount      = 1;   // render targets
+        DXGI_FORMAT             ColorFormats[GDI_MAX_COLOR_TARGETS] = {};   // each one's (UNKNOWN: RTFormat)
 
         // The render target's depth buffer (UNKNOWN for none) and its test.
         DXGI_FORMAT             DSVFormat       = DXGI_FORMAT_UNKNOWN;
