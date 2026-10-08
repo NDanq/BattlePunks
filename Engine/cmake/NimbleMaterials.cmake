@@ -109,7 +109,11 @@ function(nimble_stage_materials)
 
     # With a known runtime directory, stage before the game builds; otherwise
     # (multi-config) after it, since $<TARGET_FILE_DIR> adds a dependency.
-    if(NM_RUNTIME_DIR)
+    # Packaged: into the game pack's folder (NimblePack.cmake).
+    if(NIMBLE_PACKAGE_CONTENT)
+        nimble_pack_stage_dir(Game NM_RUNTIME)
+        set(NM_RUNTIME_DIR "${NM_RUNTIME}")
+    elseif(NM_RUNTIME_DIR)
         set(NM_RUNTIME "${NM_RUNTIME_DIR}")
     else()
         set(NM_RUNTIME "$<TARGET_FILE_DIR:${NM_TARGET}>")
@@ -136,7 +140,10 @@ function(nimble_stage_materials)
             COMMENT "${NM_TARGET}: cooking materials from ${NM_DIR}"
             VERBATIM)
 
-    if(NM_RUNTIME_DIR)
+    if(NIMBLE_PACKAGE_CONTENT)
+        add_custom_target(${NM_TARGET}StageMaterials DEPENDS "${NM_STAMP}")
+        nimble_pack_add_dir(Game "Shaders" "${NM_RUNTIME}/Shaders" "${NM_STAMP}" ${NM_TARGET}StageMaterials)
+    elseif(NM_RUNTIME_DIR)
         add_custom_target(${NM_TARGET}StageMaterials DEPENDS "${NM_STAMP}")
         add_dependencies(${NM_TARGET} ${NM_TARGET}StageMaterials)
     else()

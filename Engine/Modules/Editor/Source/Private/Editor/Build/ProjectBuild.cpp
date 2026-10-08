@@ -199,7 +199,9 @@ namespace EditorProjectBuild
 
     QStringList ConfigureArgs(const QString& InPreset)
     {
-        return { QStringLiteral("--preset"), InPreset };
+        /* Always packaged: the content in Paks/ (NimblePack.cmake), with each
+         * path kept beside its hash in every configuration but Shipping. */
+        return { QStringLiteral("--preset"), InPreset, QStringLiteral("-DNIMBLE_PACKAGE_CONTENT=ON") };
     }
 
     QStringList BuildArgs(const QString& InPreset)

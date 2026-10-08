@@ -21,6 +21,7 @@
 #include <thread>
 #include <chrono>
 #include <utility>
+#include <filesystem>
 
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreFileProvider.h"
@@ -31,6 +32,7 @@
 #include "Public/Core/CoreMemory.h"
 #include "Public/Core/CoreMemoryPool.h"
 #include "Public/Core/CoreModuleManager.h"
+#include "Public/Core/CorePack.h"
 #include "Public/Core/CorePointer.h"
 #include "Public/Core/CorePlatform.h"
 #include "Public/Core/CoreQueue.h"
@@ -96,6 +98,10 @@ static void TestLogging()
 
     // A run log gets every line beside the handler, and keeps only the newest.
     const std::string LogDir = "SmokeScratch/Logs";
+    {
+        std::error_code Ignored;
+        std::filesystem::remove_all(LogDir, Ignored);   // a previous run's logs would count against the kept
+    }
     appCreateDirectories(LogDir);
     for(const char* Stale : { "SmokeRun-2000.01.01-00.00.00.log", "SmokeRun-2000.01.02-00.00.00.log", "Other-2000.01.01-00.00.00.log" })
     {
@@ -2788,11 +2794,57 @@ static void RunModuleTests()
 #endif
 }
 
+/* Content packs: hashed paths, content stored once, names only when asked. */
+static void TestPack()
+{
+    std::printf("[pack]\n");
+    Expect(HashPackPath("Content\\Levels/A.nmworld") == HashPackPath("./content/levels/a.nmworld"),
+           "a pack path hashes the same whatever its case and slashes");
+
+    const std::vector<uint8_t> Shared = { 1, 2, 3 };
+    std::vector<PackInput> Inputs = {
+        { "Content/A.bin", Shared }, { "Content/B.bin", Shared }, { "Config/DefaultEngine.ini", { 'x', '=', '1' } },
+    };
+    appCreateDirectories("SmokeScratch/Paks");
+    std::string Error;
+    Expect(WritePackFile("SmokeScratch/Paks/Named.nmpak", "Named", Inputs, true, &Error), "a pack with names is written");
+    Expect(WritePackFile("SmokeScratch/Paks/Bare.nmpak", "Bare", Inputs, false, &Error), "a pack without names is written");
+    std::vector<PackInput> Twice = { { "Content/A.bin", Shared }, { "content/a.bin", Shared } };
+    Expect(!WritePackFile("SmokeScratch/Paks/Twice.nmpak", "Twice", Twice, false, &Error), "a path twice is refused");
+
+    std::vector<uint8_t> NamedBytes, BareBytes;
+    appFileReadAll("SmokeScratch/Paks/Named.nmpak", NamedBytes);
+    appFileReadAll("SmokeScratch/Paks/Bare.nmpak", BareBytes);
+    const std::string BareText(BareBytes.begin(), BareBytes.end());
+    Expect(BareText.find("Content") == std::string::npos && BareText.find("DefaultEngine") == std::string::npos
+           && BareText.find("content") == std::string::npos, "a pack without names holds no path text");
+    Expect(BareBytes.size() < NamedBytes.size() && BareBytes.size() < 200, "shared content is stored once");
+
+    std::shared_ptr<PackFileProvider> Named = PackFileProvider::Load(NamedBytes, Error);
+    std::shared_ptr<PackFileProvider> Bare  = PackFileProvider::Load(BareBytes, Error);
+    Expect(Named && Bare && Named->GetEntryCount() == 3 && Bare->GetEntryCount() == 3, "both packs load, three entries each");
+    std::vector<uint8_t> Out;
+    Expect(Bare && Bare->ReadAll("content/b.BIN", Out) && Out == Shared, "an entry reads back by its path, any case");
+    Expect(Bare && !Bare->Exists("Content/C.bin"), "a path not packed is not there");
+    Expect(Named && Named->HasNames() && Named->FindName(HashPackPath("Config/DefaultEngine.ini"))
+           && *Named->FindName(HashPackPath("Config/DefaultEngine.ini")) == "Config/DefaultEngine.ini",
+           "a debug pack names each hash");
+    Expect(Bare && !Bare->HasNames() && !Bare->FindName(HashPackPath("Content/A.bin")), "a shipping pack names nothing");
+    std::vector<uint8_t> Garbage = { 'N', 'O', 'P', 'E' };
+    Expect(!PackFileProvider::Load(Garbage, Error), "something else is not a pack");
+
+    FilesystemProvider Disk;
+    LayeredFileProvider Layered(&Disk, false);
+    Expect(MountPackFiles(Layered, "SmokeScratch/Paks") == 2, "every pack in a folder mounts");
+    Expect(Layered.ReadAll("Config/DefaultEngine.ini", Out) && Out.size() == 3, "a mounted pack answers the provider");
+}
+
 int main()
 {
     std::printf("EngineCore smoke test\n");
 
     TestLogging();
+    TestPack();
     TestFileSeam();
     TestFileMetadataSeam();
     TestDLLSeam();

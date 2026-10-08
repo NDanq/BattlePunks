@@ -815,6 +815,13 @@ options kept in `[Build]` of `DefaultEngine.ini`.
   through `SourceBuild`), the output live in the dialog. Cancel Build stops it.
 - **Open the executable's folder** (`Binaries/<Platform>_<Config>_Client`)
   when it is built.
+- **Packaged**: Build Project always configures with
+  `NIMBLE_PACKAGE_CONTENT=ON`, so the folder holds the binaries and
+  `Paks/Engine.nmpak` + `Paks/Game.nmpak` -- config, scripts, content, cooked
+  worlds, prefabs and UI, shaders -- and no loose content
+  (`Engine/cmake/NimblePack.cmake`, Core's `CorePack.h`). A pack's index
+  stores only path hashes; Debug and RelWithDebInfo packs also keep each path,
+  which `NimblePak list Paks/Game.nmpak` prints.
 
 The game's CMake stages exactly the listed, ticked worlds
 (`nimble_project_worlds` in `Engine/cmake/NimbleProject.cmake`): the text

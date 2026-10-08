@@ -113,6 +113,10 @@ get_target_property(GAME_RT_DIR NimbleEngine RUNTIME_OUTPUT_DIRECTORY)
 # before the game module, so building the editor alone stages too. Multi-config
 # generators have no single destination, so they copy after the launcher.
 function(game_stage STAGE_NAME STAGE_ROOT)
+    if(NIMBLE_PACKAGE_CONTENT)
+        nimble_pack_add_files(Game "${STAGE_ROOT}" ${ARGN})   # into Paks/Game.nmpak, at the end
+        return()
+    endif()
     set(STAGE_OUTPUTS)
     set(STAGE_COPIES)
     foreach(STAGE_SRC ${ARGN})
@@ -173,21 +177,21 @@ game_stage(Content "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_CONTENT_FILES})
 
 # Content/Prefabs/: every build but Shipping stages the text prefabs -- an
 # Editor edits them, a Client or Server cooks each the first time it loads it
-# (NIMBLE_UNCOOKED_CONTENT); Shipping stages the cooked ones from
+# (NIMBLE_STAGE_TEXT_CONTENT); Shipping and packaged builds stage the cooked ones from
 # Saved/Cooked/Content/Prefabs/ -- made in the editor by Build > Cook Content.
 file(GLOB_RECURSE GAME_PREFAB_SCRIPTS CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.lua"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.script.nmgraph")
 game_stage(PrefabScripts "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_PREFAB_SCRIPTS})
 
-if(NIMBLE_UNCOOKED_CONTENT)
+if(NIMBLE_STAGE_TEXT_CONTENT)
     set(GAME_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 else()
     set(GAME_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Saved/Cooked")
 endif()
 file(GLOB_RECURSE GAME_PREFAB_FILES CONFIGURE_DEPENDS "${GAME_PREFAB_ROOT}/Content/Prefabs/*.nmprefab")
 file(GLOB_RECURSE GAME_PREFAB_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.nmprefab")
-if(NOT NIMBLE_UNCOOKED_CONTENT AND GAME_PREFAB_SOURCES AND NOT GAME_PREFAB_FILES)
+if(NOT NIMBLE_STAGE_TEXT_CONTENT AND GAME_PREFAB_SOURCES AND NOT GAME_PREFAB_FILES)
     message(WARNING "${GAME_NAME}: Content/Prefabs/ has prefabs but Saved/Cooked/Content/Prefabs/ has none; a Shipping "
                     "build cannot read text prefabs. Cook them in the editor (console: cook prefabs).")
 endif()
@@ -236,6 +240,17 @@ endif()
 nimble_project_worlds("${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini" "${CMAKE_CURRENT_SOURCE_DIR}"
         GAME_LEVEL_FILES GAME_LEVEL_ROOT)
 game_stage(Levels "${GAME_LEVEL_ROOT}" ${GAME_LEVEL_FILES})
+
+# === Packaged content =======================================================
+# With NIMBLE_PACKAGE_CONTENT (Shipping, and the editor's Build Project), what
+# game_stage recorded and the engine's content go into Paks/Engine.nmpak and
+# Paks/Game.nmpak beside the executable (Engine/cmake/NimblePack.cmake).
+if(GAME_RT_DIR AND NOT GAME_MULTI_CONFIG)
+    nimble_package_game(TARGET ${GAME_NAME} RUNTIME_DIR "${GAME_RT_DIR}")
+    if(TARGET ${GAME_NAME}Paks AND TARGET ${GAME_NAME}Server)
+        add_dependencies(${GAME_NAME}Server ${GAME_NAME}Paks)
+    endif()
+endif()
 
 # === IDE ====================================================================
 set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT ${GAME_NAME})

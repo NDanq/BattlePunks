@@ -161,6 +161,14 @@ get_target_property(SANDBOX_RT_DIR NimbleEngine RUNTIME_OUTPUT_DIRECTORY)
 # trustworthy when you are asking "why did that rebuild?".
 set(SANDBOX_CONFIG_SRC "${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini")
 
+# Packaged (NIMBLE_PACKAGE_CONTENT, Engine/cmake/NimblePack.cmake): each block
+# below hands its files to Paks/Game.nmpak and clears its list, so it copies
+# nothing beside the executable.
+if(NIMBLE_PACKAGE_CONTENT)
+    nimble_pack_add_files(Game "${CMAKE_CURRENT_SOURCE_DIR}" "${SANDBOX_CONFIG_SRC}")
+    set(SANDBOX_CONFIG_SRC "")
+endif()
+
 if(EXISTS "${SANDBOX_CONFIG_SRC}" AND SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
     set(SANDBOX_CONFIG_DST "${SANDBOX_RT_DIR}/Config/DefaultEngine.ini")
 
@@ -222,6 +230,10 @@ set(SANDBOX_SCRIPT_FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Ball.lua"
         "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Brick.script.nmgraph"
 )
+if(NIMBLE_PACKAGE_CONTENT)
+    nimble_pack_add_files(Game "${CMAKE_CURRENT_SOURCE_DIR}" ${SANDBOX_SCRIPT_FILES})
+    set(SANDBOX_SCRIPT_FILES "")
+endif()
 
 if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
     set(SANDBOX_SCRIPT_OUTPUTS "")
@@ -281,6 +293,10 @@ file(GLOB_RECURSE SANDBOX_CONTENT_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmparticle"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmlighting"
 )
+if(NIMBLE_PACKAGE_CONTENT)
+    nimble_pack_add_files(Game "${CMAKE_CURRENT_SOURCE_DIR}" ${SANDBOX_CONTENT_FILES})
+    set(SANDBOX_CONTENT_FILES "")
+endif()
 
 if(SANDBOX_CONTENT_FILES)
     if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
@@ -322,23 +338,30 @@ endif()
 # the executable ("Content/Prefabs/Door.nmprefab", as SpawnPrefab and a level
 # name them). Globbed, like Content/: the Prefab Editor makes these. Every build
 # but Shipping stages the text prefabs -- an Editor edits them, a Client or
-# Server cooks each the first time it loads it (NIMBLE_UNCOOKED_CONTENT);
+# Server cooks each the first time it loads it (NIMBLE_STAGE_TEXT_CONTENT);
 # Shipping stages the cooked ones from Saved/Cooked/Content/Prefabs/ -- made in the
 # editor with the console command `cook prefabs`.
 file(GLOB_RECURSE SANDBOX_PREFAB_SCRIPTS CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.lua"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.script.nmgraph"
 )
-if(NIMBLE_UNCOOKED_CONTENT)
+if(NIMBLE_STAGE_TEXT_CONTENT)
     set(SANDBOX_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 else()
     set(SANDBOX_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Saved/Cooked")
 endif()
 file(GLOB_RECURSE SANDBOX_PREFAB_ASSETS CONFIGURE_DEPENDS "${SANDBOX_PREFAB_ROOT}/Content/Prefabs/*.nmprefab")
 file(GLOB_RECURSE SANDBOX_PREFAB_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.nmprefab")
-if(NOT NIMBLE_UNCOOKED_CONTENT AND SANDBOX_PREFAB_SOURCES AND NOT SANDBOX_PREFAB_ASSETS)
+if(NOT NIMBLE_STAGE_TEXT_CONTENT AND SANDBOX_PREFAB_SOURCES AND NOT SANDBOX_PREFAB_ASSETS)
     message(WARNING "Sandbox: Content/Prefabs/ has prefabs but Saved/Cooked/Content/Prefabs/ has none; a Shipping build cannot read "
                     "text prefabs. Cook them in the editor (console: cook prefabs).")
+endif()
+
+if(NIMBLE_PACKAGE_CONTENT)
+    nimble_pack_add_files(Game "${CMAKE_CURRENT_SOURCE_DIR}" ${SANDBOX_PREFAB_SCRIPTS})
+    nimble_pack_add_files(Game "${SANDBOX_PREFAB_ROOT}" ${SANDBOX_PREFAB_ASSETS})
+    set(SANDBOX_PREFAB_SCRIPTS "")
+    set(SANDBOX_PREFAB_ASSETS "")
 endif()
 
 set(SANDBOX_PREFAB_OUTPUTS "")
@@ -403,6 +426,13 @@ if(NOT NIMBLE_TARGET STREQUAL "Editor" AND SANDBOX_UI_SOURCES AND NOT SANDBOX_UI
                     "XML. Cook them in the editor (console: cook ui).")
 endif()
 
+if(NIMBLE_PACKAGE_CONTENT)
+    nimble_pack_add_files(Game "${CMAKE_CURRENT_SOURCE_DIR}" ${SANDBOX_UI_SCRIPTS})
+    nimble_pack_add_files(Game "${SANDBOX_UI_ROOT}" ${SANDBOX_UI_DOCUMENTS})
+    set(SANDBOX_UI_SCRIPTS "")
+    set(SANDBOX_UI_DOCUMENTS "")
+endif()
+
 set(SANDBOX_UI_OUTPUTS "")
 set(SANDBOX_UI_COPIES "")
 foreach(SANDBOX_UI_SRC ${SANDBOX_UI_SCRIPTS} ${SANDBOX_UI_DOCUMENTS})
@@ -450,6 +480,10 @@ endif()
 # A world not listed, or not cooked, is not staged (nimble_project_worlds).
 nimble_project_worlds("${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini" "${CMAKE_CURRENT_SOURCE_DIR}"
         SANDBOX_LEVEL_FILES SANDBOX_LEVEL_ROOT)
+if(NIMBLE_PACKAGE_CONTENT)
+    nimble_pack_add_files(Game "${SANDBOX_LEVEL_ROOT}" ${SANDBOX_LEVEL_FILES})
+    set(SANDBOX_LEVEL_FILES "")
+endif()
 
 set(SANDBOX_LEVEL_OUTPUTS "")
 set(SANDBOX_LEVEL_COPIES "")
@@ -503,6 +537,15 @@ endif()
 # The debugger's working directory is the executable's, where Config/ is
 # staged (nimble_add_game_launcher): without it a Visual Studio or CLion run
 # starts in the build directory and silently runs on defaults.
+
+# === Packaged content ======================================================
+# With NIMBLE_PACKAGE_CONTENT (Shipping, and the editor's Build Project), the
+# files the blocks above handed over and the engine's content go into
+# Paks/Engine.nmpak and Paks/Game.nmpak beside the executable
+# (Engine/cmake/NimblePack.cmake).
+if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
+    nimble_package_game(TARGET Sandbox RUNTIME_DIR "${SANDBOX_RT_DIR}")
+endif()
 
 # Only standalone: in a full Engine configure the startup project belongs to
 # whoever configured it, and quietly repointing it at a game would be rude.

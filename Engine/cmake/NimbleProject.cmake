@@ -83,19 +83,18 @@ endfunction()
 #   false. Each is staged at <its path relative to <OutRoot>> beside the
 #   executable -- the path the game loads it by.
 #
-#     NIMBLE_UNCOOKED_CONTENT   the text world: its .nmworld manifest and the
-#                               .nmentity / .nmprefabinst files in the folder
-#                               of the same name beside it. <OutRoot> is
-#                               <ProjectDir>.
-#     Shipping                  the cooked world, <ProjectDir>/Saved/Cooked/<File>
-#                               (the editor's Build > Cook Content). <OutRoot>
-#                               is <ProjectDir>/Saved/Cooked; a listed world not
-#                               cooked yet is a warning.
+#     text (NIMBLE_STAGE_TEXT_CONTENT: an uncooked build, not packaged)
+#         the .nmworld manifest and the .nmentity / .nmprefabinst files in
+#         the folder of the same name beside it. <OutRoot> is <ProjectDir>.
+#     cooked (Shipping, or any packaged build)
+#         <ProjectDir>/Saved/Cooked/<File> (the editor's Build > Cook
+#         Content). <OutRoot> is <ProjectDir>/Saved/Cooked; a listed world
+#         not cooked yet is a warning.
 #
 #   A world left out of the list, or with Cook=false, is not staged at all.
 function(nimble_project_worlds NM_CONFIG NM_PROJECT_DIR NM_OUT_FILES NM_OUT_ROOT)
     set(NM_FILES "")
-    if(NIMBLE_UNCOOKED_CONTENT)
+    if(NIMBLE_STAGE_TEXT_CONTENT)
         set(NM_ROOT "${NM_PROJECT_DIR}")
     else()
         set(NM_ROOT "${NM_PROJECT_DIR}/Saved/Cooked")
@@ -148,7 +147,7 @@ function(nimble_project_worlds NM_CONFIG NM_PROJECT_DIR NM_OUT_FILES NM_OUT_ROOT
         if(NM_FILE STREQUAL "" OR NM_COOK_${NM_WORLD} MATCHES "^(false|0|no|off)$")
             continue()
         endif()
-        if(NIMBLE_UNCOOKED_CONTENT)
+        if(NIMBLE_STAGE_TEXT_CONTENT)
             if(NOT EXISTS "${NM_PROJECT_DIR}/${NM_FILE}")
                 message(WARNING "${NM_CONFIG}: [World_${NM_WORLD}] File=${NM_FILE} does not exist; it is not staged")
                 continue()
@@ -166,7 +165,7 @@ function(nimble_project_worlds NM_CONFIG NM_PROJECT_DIR NM_OUT_FILES NM_OUT_ROOT
                 list(APPEND NM_FILES "${NM_ROOT}/${NM_FILE}")
             else()
                 message(WARNING "${NM_CONFIG}: [World_${NM_WORLD}] is not cooked (no ${NM_ROOT}/${NM_FILE}); a "
-                        "Shipping build cannot load it. Cook it in the editor: Build > Cook Content.")
+                        "cooked or packaged build cannot load it. Cook it in the editor: Build > Cook Content.")
             endif()
         endif()
     endforeach()

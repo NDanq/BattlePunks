@@ -17,6 +17,7 @@
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreFileProvider.h"
+#include "Public/Core/CorePack.h"
 #include "Public/Core/CorePlatform.h"
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/NimbleEngine/InputRouter.h"
@@ -319,6 +320,12 @@ namespace NimbleEngine
          */
         SetFileProvider(&LayeredAssets);
 
+        /* A packaged game's files -- config included -- are its content packs
+         * (CorePack.h), mounted over the folder before anything is read. A
+         * development build has none and reads the loose files. Logged once
+         * the run log is open. */
+        const int PackCount = MountPackFiles(LayeredAssets, "Paks");
+
         ConfigLoadStats Stats;
         const bool bConfigLoaded = LoadConfigFile("Config/DefaultEngine.ini", &Stats);
 
@@ -332,6 +339,10 @@ namespace NimbleEngine
             if(OpenRunLog("Saved/Logs", Name))
             {
                 CORE_LOG("Logging to " + GetRunLogPath())
+            }
+            if(PackCount > 0)
+            {
+                CORE_LOG("Content from " + std::to_string(PackCount) + " pack(s) in Paks/")
             }
         }
         if(!bConfigLoaded)
