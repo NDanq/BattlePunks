@@ -13,6 +13,8 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <map>
+#include <memory>
 #include <fstream>
 #include <string>
 #include <utility>
@@ -20,6 +22,7 @@
 
 #include "Public/Core/CoreArchive.h"
 #include "Public/Core/CoreConfig.h"
+#include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/GameCore/AABB.h"
@@ -1047,6 +1050,48 @@ static void TestScriptCallFunction()
     Expect(!Scripts.CallFunction("Raises"), "a raising function fails");
     Expect(Scripts.GetErrorCount() == ErrorsBefore + 3, "each failure is counted once");
     Scripts.Shutdown();
+}
+
+/* A packaged game's files are only in its content pack, a provider layer:
+ * world detection and Lua's own file loading must read through it. */
+static void TestProviderOnlyContent()
+{
+    std::printf("[provider-only content]\n");
+
+    const auto Bytes = [](const std::string& InText)
+    {
+        return std::make_shared<const std::vector<uint8_t>>(InText.begin(), InText.end());
+    };
+    std::map<std::string, EngineCore::MemoryFileProvider::FileBytes> Files;
+    Files["Content/Levels/PackedText.nmworld"]   = Bytes("  <World Format=\"1\"/>");
+    Files["Content/Levels/PackedBinary.nmworld"] = Bytes("WRLD....");
+    Files["Scripts/Packed/Mod.lua"]              = Bytes("return { Answer = 42 }");
+    Files["Scripts/Packed/Run.lua"]              = Bytes("PackedRan = (PackedRan or 0) + 1; return 'ran'");
+
+    EngineCore::IFileProvider* Previous = EngineCore::GetFileProvider();
+    EngineCore::FilesystemProvider Disk;
+    EngineCore::LayeredFileProvider Layered(&Disk, false);
+    Layered.MountLayer("Pack:Test", std::make_shared<EngineCore::MemoryFileProvider>(std::move(Files)));
+    EngineCore::SetFileProvider(&Layered);
+
+    Expect(DetectWorldFileFormat("Content/Levels/PackedText.nmworld") == EWorldFileFormat::Text, "a packed text world is detected");
+    Expect(DetectWorldFileFormat("Content/Levels/PackedBinary.nmworld") == EWorldFileFormat::Binary, "a packed cooked world is detected");
+    Expect(DetectWorldFileFormat("Content/Levels/Nowhere.nmworld") == EWorldFileFormat::Unknown, "a world in neither is unknown");
+
+    ScriptEngine Scripts;
+    Expect(Scripts.Initialize(), "ScriptEngine initializes over a pack");
+    Expect(Scripts.RunString("package.path = 'Scripts/?.lua'\n"
+                             "assert(require('Packed.Mod').Answer == 42)\n"
+                             "assert(dofile('Scripts/Packed/Run.lua') == 'ran')\n"
+                             "local F = assert(loadfile('Scripts/Packed/Run.lua'))\n"
+                             "F()\n"
+                             "assert(PackedRan == 2)\n"
+                             "assert(loadfile('Scripts/Packed/Missing.lua') == nil)\n"
+                             "assert(not pcall(require, 'Packed.Missing'))\n", "packed-lua"),
+           "require, dofile and loadfile read through the provider");
+    Scripts.Shutdown();
+
+    EngineCore::SetFileProvider(Previous);
 }
 
 /* ScriptEngine objects: a class instanced and held by C++ (a UI document's logic). */
@@ -3589,6 +3634,7 @@ int main()
     TestWorldSpatialIntegration();
     TestScripting();
     TestScriptCallFunction();
+    TestProviderOnlyContent();
     TestScriptObjects();
     TestConfigLibrary();
     TestArchiveRoundTrip();

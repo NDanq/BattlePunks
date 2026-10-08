@@ -1,5 +1,6 @@
 #include "Public/GameCore/WorldPackage.h"
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -11,6 +12,7 @@
 #include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldSerializer.h"
 #include "Public/Core/CoreConfig.h"
+#include "Public/Core/CoreFileProvider.h"
 
 #if WITH_UNCOOKED && !WITH_EDITOR
 #include <filesystem>
@@ -898,12 +900,25 @@ PrefabInstanceID RefreshPrefabInstance(World& InWorld, const PrefabInstanceID In
 EWorldFileFormat DetectWorldFileFormat(const char* InPath)
 {
     if(!InPath) { return EWorldFileFormat::Unknown; }
-    EngineCore::FileHandle Handle = EngineCore::appFileOpenRead(InPath);
-    if(!Handle) { return EWorldFileFormat::Unknown; }
 
+    /* Through the file provider, as the load itself reads: a packaged game's
+     * worlds and prefabs are only in its content pack (CorePack.h). */
     uint8_t Head[64];
-    const size_t Count = EngineCore::appFileRead(Handle, Head, sizeof(Head));
-    EngineCore::appFileClose(Handle);
+    size_t  Count = 0;
+    std::vector<uint8_t> Bytes;
+    EngineCore::IFileProvider* Provider = EngineCore::GetFileProvider();
+    if(Provider && Provider->Exists(InPath) && Provider->ReadAll(InPath, Bytes))
+    {
+        Count = std::min(Bytes.size(), sizeof(Head));
+        std::memcpy(Head, Bytes.data(), Count);
+    }
+    else
+    {
+        EngineCore::FileHandle Handle = EngineCore::appFileOpenRead(InPath);
+        if(!Handle) { return EWorldFileFormat::Unknown; }
+        Count = EngineCore::appFileRead(Handle, Head, sizeof(Head));
+        EngineCore::appFileClose(Handle);
+    }
 
     size_t Index = 0;
     if(Count >= 3 && Head[0] == 0xEF && Head[1] == 0xBB && Head[2] == 0xBF) { Index = 3; }   // UTF-8 BOM

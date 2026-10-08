@@ -50,7 +50,8 @@ namespace EditorProjectBuild
      * (Engine/CMakeLists.txt's NIMBLE_BINARIES_DIR layout). */
     QString GetOutputDir(const QString& InProjectRoot, EConfiguration InConfiguration);
 
-    /* `cmake --preset <p>` and `cmake --build --preset <p>`. */
+    /* `cmake --preset <p> -DNIMBLE_PACKAGE_CONTENT=ON` -- a packaged game,
+     * its content in Paks/ -- and `cmake --build --preset <p>`. */
     QStringList ConfigureArgs(const QString& InPreset);
     QStringList BuildArgs(const QString& InPreset);
 }
