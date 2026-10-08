@@ -11,6 +11,7 @@
 #include "Public/RenderCore/AnimMath.h"
 #include "Public/RenderCore/Components/RenderComponent.h"
 #include "Public/RenderCore/RenderContext.h"
+#include "Public/RenderCore/RenderCoreAPI.h"
 #include "Public/RenderCore/RenderProxy.h"
 
 /* The render-thread mirror of a RenderComponent: its mesh, or else a unit quad. */
@@ -21,7 +22,8 @@ namespace RenderCore
     class RenderComponentProxy final : public RenderProxy
     {
     public:
-        RenderComponentProxy(GameCore::EntityID InOwner, const RenderComponent& InInit);
+        // RENDERCORE_API: RenderCoreAnimationTests builds a proxy (TestPosedBounds)
+        RENDERCORE_API RenderComponentProxy(GameCore::EntityID InOwner, const RenderComponent& InInit);
 
         void ApplyComponent(const void* InComponentBytes) override;
         void Draw(RenderContext& InContext) override;
@@ -39,7 +41,7 @@ namespace RenderCore
         /* RENDER THREAD, from WorldBridge after ApplyComponent: its skeleton's
          * pose this frame, model space, one matrix per bone (ANIMATION.md).
          * InCount 0: the mesh's bind pose. */
-        void SetSkinPose(const AnimMatrix* InBones, uint32_t InCount);
+        RENDERCORE_API void SetSkinPose(const AnimMatrix* InBones, uint32_t InCount);
 
         /* And its palette: this frame's is the next one's previous. */
         void EndFrameMotion() override;

@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <unordered_map>
 
+#include "Public/GDI/GDIDefinitions.h"
+
 class D3D12Device;
 class D3D12ShaderResource;
 
