@@ -1,6 +1,6 @@
 # Multithreaded rendering: plan
 
-Status: **phase 0 (measure and gate) done; phase 1 next.** Recording draws on several
+Status: **phases 0 (measure and gate) and 1 (per-draw cost) done; phase 2 next.** Recording draws on several
 threads when the backend can: the Base Pass first, then the Shadows views.
 This note is why, what stands in the way, and in what order.
 
@@ -175,16 +175,38 @@ serially today.
      dense street level.
    Exit: Render ms, per-stage draws and per-stage CPU ms per level; the gate
    reports correctly on Vulkan and Null.
-1. **Per-draw cost on one thread** (3-5 days, low risk; also removes most
-   shared writes, so it is step zero for threading).
-   - Per-draw ViewParameters/Transform passed as packed values, not string
-     `SetUniform` writes into shared shaders.
-   - The view block uploaded once per view; the transform by push constant or
-     dynamic offset.
-   - Layout group and pipeline cached per shader pair; redundant binds
-     skipped; descriptor sets reused per material (or push descriptors).
-   - Material overrides packed into scratch, never into `Material::Block`.
-   Exit: render-thread ms per draw before and after; smoke tests unchanged.
+1. **Per-draw cost on one thread** -- done (Vulkan). What changed:
+   - `VulkanDynamicGDI::DrawObject` packs the ViewParameters and Transform
+     blocks once, as plain floats on each shader resource
+     (`VKShaderResource::CoreBlocks`), instead of seven named `SetUniform`s
+     per shader; the scalars remain for anything set by name.
+   - The draw layouts' uniform buffers are `UNIFORM_BUFFER_DYNAMIC`:
+     descriptor sets are cached by their contents (buffers, ranges, images)
+     for the ring's epoch and bound with each draw's offsets -- 97-98% of
+     material draws reuse a set.
+   - The view block is uploaded once per view, the material block once per
+     change; the last pipeline lookup, the layout group (per shader) and the
+     bound pipeline, set and offsets are remembered, so unchanged state is
+     not looked up or bound again.
+   - Conditional rendering (occlusion predication) is held open across
+     consecutive draws with the same predicate -- an entity's sections --
+     instead of begun and ended round every draw, which cost this driver
+     ~2.7 us a draw. It is closed before clears, queries and the end of the
+     rendering.
+
+   | Level, build | Stages CPU before -> after | Shadows | Base Pass | Frame |
+   |---|---|---|---|---|
+   | Street, RelWithDebInfo | 11.4-21.9 -> 5.2-5.4 ms | 7.6-15.7 -> 2.7 ms | 2.7-4.5 -> 2.0-2.1 ms | wait 11-21 -> 0 ms (the editor's 60 fps timer) |
+   | Street, Debug | 34.6-36.2 -> 8.1-8.5 ms | 24.4-24.9 -> 3.7 ms | 7.6-8.7 -> 3.6-3.9 ms | 46.5 -> 18-19 ms |
+   | GpuTest, occlusion on | 9.7 -> 4.4 ms | 6.9 -> 3.3 ms | 0.7 -> 0.4 ms | 15.6 -> 10.0 ms |
+   | GpuTest, occlusion off | 9.9 -> 5.0 ms | 7.1 -> 3.3 ms | 2.7 -> 1.6 ms | 16.6 -> 11.9 ms |
+
+   Smoke tests pixel-identical; the Vulkan validation layer reports nothing
+   new. Still per Base Pass draw (~6 us): material binding -- the pipeline
+   lookup on each material switch, texture lookups, the 4 KB scene block
+   compared each draw -- spread thin; parallel recording divides it. D3D12
+   keeps its string path (it is not compiled on Linux): its turn comes with
+   phase 4.
 2. **GDI recording contexts** (1-2 weeks).
    - A `GDIRecordingContext`: command buffer, bound state, predicate, label
      depth, descriptor pool and UBO ring slice. The global API routes to a
@@ -194,6 +216,9 @@ serially today.
      pipelines warmed ahead so a worker never creates one.
    - Lazy loads resolved into the `DrawCommand` while queueing, on the
      render thread.
+   - Material overrides, tint and baked lighting packed into per-context
+     scratch, never into the cached `Material::Block`.
+   - The packed core blocks per context, not on the shared shader resource.
    - No mid-chunk flush: the instance ring sized per chunk up front.
    - `GDebugGroupID` atomic; the render-thread checks accept recording
      workers.

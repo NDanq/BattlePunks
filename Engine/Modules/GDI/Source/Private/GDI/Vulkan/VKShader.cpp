@@ -202,3 +202,22 @@ void VKShaderResource::Release(void)
     Device = nullptr;
     bInitialized = false;
 }
+
+bool VKShaderResource::HasCustomScalars() const
+{
+    if(CustomScanSize != Scalars.size())
+    {
+        bCustomScalars = false;
+        for(const auto& Each : Scalars)
+        {
+            const std::string& N = Each.first;
+            if(N.compare(0, 15, "ViewParameters.") != 0 && N.compare(0, 10, "Transform.") != 0)
+            {
+                bCustomScalars = true;
+                break;
+            }
+        }
+        CustomScanSize = Scalars.size();
+    }
+    return bCustomScalars;
+}

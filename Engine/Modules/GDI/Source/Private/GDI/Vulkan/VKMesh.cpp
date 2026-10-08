@@ -471,14 +471,9 @@ void VKMesh::Draw()
     }
 
     /* Skipped on the GPU if GDISetOcclusionPredicate's query found nothing:
-     * conditional rendering round whichever draw this records. */
-    struct PredicateScope
-    {
-        VulkanDynamicGDI* Driver;
-        VkCommandBuffer   Cmd;
-        bool              bBegun;
-        ~PredicateScope() { if(Driver) { Driver->EndDrawPredicate(Cmd, bBegun); } }
-    } Predicate{ GDI, Cmd, GDI && GDI->BeginDrawPredicate(Cmd) };
+     * this draw under its conditional rendering (held open while the next
+     * draws share the predicate; VulkanDynamicGDI::ApplyDrawPredicate). */
+    if(GDI) { GDI->ApplyDrawPredicate(Cmd); }
 
     // Bind position (binding 0) and texcoord (binding 1) buffers.
     const VkBuffer     Buffers[2] = { PositionBuffer, TexCoordBuffer };

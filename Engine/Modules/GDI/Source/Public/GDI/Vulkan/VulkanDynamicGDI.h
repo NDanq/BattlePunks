@@ -3,6 +3,8 @@
 
 #include <vulkan/vulkan.h>
 #include "Public/GDI/Vulkan/GDIVulkanPlatform.h"
+#include <cstring>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -10,6 +12,7 @@
 #include <atomic>
 
 #include "Public/GDI/GDI.h"
+#include "Public/GDI/Vulkan/VKPipelineCache.h"
 
 // Qt types used by this file. These were arriving implicitly through
 // Public/Odessa.h until GDI stopped including application headers;
@@ -247,12 +250,16 @@ public:
     void ReleaseOcclusionQueries(class VKOcclusionQueries* InSet);
 
     /**
-     * VKMesh::Draw, around its vkCmdDraw*: begins conditional rendering on
-     * GDISetOcclusionPredicate's query, if one is set and the device can;
-     * true if it did, to pass to EndDrawPredicate.
+     * Puts the draw about to be recorded under GDISetOcclusionPredicate's
+     * predicate (VKMesh::Draw). Conditional rendering is held open across
+     * consecutive draws with the same predicate -- an entity's sections share
+     * its query, and begun and ended round each draw it cost the driver ~2.7 us
+     * a draw -- switched when the predicate changes, ended for a draw with
+     * none, and closed by CloseDrawPredicate before anything it would affect
+     * (a clear) or that must not span it (the rendering's end, a query).
      */
-    bool BeginDrawPredicate(VkCommandBuffer InCmd);
-    void EndDrawPredicate(VkCommandBuffer InCmd, bool bInBegun);
+    void ApplyDrawPredicate(VkCommandBuffer InCmd);
+    void CloseDrawPredicate();
 
     /** Vulkan present path: UI thread acquires + blits the offscreen RT and presents. */
     void PresentToWindow(EngineCore::WindowHandle InWindow) override;
@@ -349,6 +356,10 @@ private:
     /** GDISetOcclusionPredicate's: the draws after it are conditional on it. */
     class VKOcclusionQueries* PredicateSet   = nullptr;
     int32_t                   PredicateIndex = -1;
+    /** The conditional rendering ApplyDrawPredicate has open, if any. */
+    bool                      bPredicateOpen      = false;
+    VkBuffer                  OpenPredicateBuffer = VK_NULL_HANDLE;
+    VkDeviceSize              OpenPredicateOffset = 0;
 
     /** InWindow's swapchain, created and initialized on first use; null if that
      *  failed (retried on the next present). UI thread. */
@@ -379,6 +390,77 @@ private:
     uint32_t                SkinBlockUploadSize[2]   = {};
     uint64_t                SkinBlockUploadSerial[2] = { ~0ull, ~0ull };
     uint64_t                SkinBlockUploadEpoch[2]  = { ~0ull, ~0ull };
+
+    /*
+     * The draw path's caches (MULTITHREADED_RENDERING.md, phase 1): what a
+     * draw would otherwise rebuild, allocate or bind again.
+     *
+     *   LastPipelineKey/Fetch  the last pipeline lookup: the same key (a run
+     *                          of draws with one shader pair and state) skips
+     *                          the hash and the map
+     *   Bound*                 what the command buffer has bound: a pipeline,
+     *                          set and offsets already bound are not bound again.
+     *                          Forgotten whenever a command buffer begins
+     *                          (ForgetBoundDrawState) -- FlushForReadback restarts
+     *                          the same handle, so the handle cannot tell
+     *   ViewUpload             the ViewParameters block's last upload: reused
+     *                          while its bytes and the ring's epoch are unchanged
+     *                          (one per view, not per draw)
+     *   MaterialBlockUpload*   the material block's, while its serial is
+     *   DescSets               descriptor sets by their contents, for the ring's
+     *                          epoch: the ring-backed blocks are dynamic uniform
+     *                          buffers, so draws differing only in their offsets
+     *                          -- every draw of a material, whatever its
+     *                          transform -- share one set
+     */
+    struct DescSetKey
+    {
+        VkDescriptorSetLayout Layout = VK_NULL_HANDLE;
+        VkBuffer              Buffers[6]  = {};
+        uint32_t              Ranges[6]   = {};
+        VkSampler             Samplers[GDI_MATERIAL_TEXTURE_SLOTS] = {};
+        VkImageView           Views[GDI_MATERIAL_TEXTURE_SLOTS]    = {};
+        bool operator==(const DescSetKey& InOther) const { return std::memcmp(this, &InOther, sizeof(DescSetKey)) == 0; }
+    };
+    struct DescSetKeyHash
+    {
+        size_t operator()(const DescSetKey& InKey) const
+        {
+            const uint64_t* Words = reinterpret_cast<const uint64_t*>(&InKey);
+            uint64_t Hash = 1469598103934665603ull;
+            for(size_t Index = 0; Index < sizeof(DescSetKey) / sizeof(uint64_t); ++Index)
+            {
+                Hash = (Hash ^ Words[Index]) * 1099511628211ull;
+                Hash ^= Hash >> 29;
+            }
+            return size_t(Hash);
+        }
+    };
+    void ForgetBoundDrawState();
+
+    VKPipelineCache::PipelineKey   LastPipelineKey{};
+    VKPipelineCache::PipelineFetch LastPipelineFetch{};
+    bool                           bLastPipelineValid = false;
+
+    VkPipeline              BoundPipeline    = VK_NULL_HANDLE;
+    VkPipelineLayout        BoundLayout      = VK_NULL_HANDLE;
+    VkDescriptorSet         BoundSet         = VK_NULL_HANDLE;
+    uint32_t                BoundOffsets[6]  = {};
+    uint32_t                BoundOffsetCount = 0;
+
+    alignas(16) float       ViewUploadBytes[40] = {};
+    VkBuffer                ViewUploadBuffer  = VK_NULL_HANDLE;
+    VkDeviceSize            ViewUploadOffset  = 0;
+    uint64_t                ViewUploadEpoch   = ~0ull;
+
+    VkBuffer                MaterialBlockUploadBuffer = VK_NULL_HANDLE;
+    VkDeviceSize            MaterialBlockUploadOffset = 0;
+    uint32_t                MaterialBlockUploadSize   = 0;
+    uint64_t                MaterialBlockUploadSerial = ~0ull;
+    uint64_t                MaterialBlockUploadEpoch  = ~0ull;
+
+    std::unordered_map<DescSetKey, VkDescriptorSet, DescSetKeyHash> DescSets;
+    uint64_t                DescSetsEpoch = ~0ull;
 
     /** Lazily-created full-screen NDC quad for DrawScreenQuadPrimitive. */
     GDIMesh*                ScreenMesh          = nullptr;

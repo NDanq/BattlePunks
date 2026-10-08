@@ -413,12 +413,17 @@ bool VKPipelineCache::BuildLayouts()
     const VkShaderStageFlags kAllStages =
         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    // Helper lambdas for common binding descriptors.
+    // Helper lambdas for common binding descriptors. Every uniform buffer here
+    // lives in the per-frame ring, so each is DYNAMIC: a descriptor set names
+    // the ring's buffer and a range, and each draw binds it with its own
+    // offsets -- draws differing only in their blocks share a set
+    // (MULTITHREADED_RENDERING.md, phase 1). At most 6 per set, within
+    // maxDescriptorSetUniformBuffersDynamic's guaranteed 8.
     auto MakeUBO = [&](uint32_t Binding) -> VkDescriptorSetLayoutBinding
     {
         VkDescriptorSetLayoutBinding B{};
         B.binding         = Binding;
-        B.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        B.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
         B.descriptorCount = 1;
         B.stageFlags      = kAllStages;
         return B;
