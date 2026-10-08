@@ -15,7 +15,7 @@ code (`NetArenaGame.cpp`) only gives it behaviour.
 | `Content/Levels/NetArena.nmworld` | The level, below |
 | `Content/Prefabs/Pawn.nmprefab` | A player's capsule: Transform, Render (capsule mesh, `PawnColor` material), **Net**, NetArenaPawn |
 | `Content/Materials/PawnColor.material.nmgraph` | Lit, with a `BaseColor` parameter set per capsule |
-| `Saved/Cooked/Content/Levels/`, `Saved/Cooked/Content/Prefabs/` | Their binary forms, cooked ahead for **Shipping** builds (Build > Cook Content) |
+| `Saved/Cooked/Content/Levels/`, `Saved/Cooked/Content/Prefabs/` | Their binary forms, cooked ahead for **Shipping** builds (Build > Cook Content); made on each machine, not tracked |
 
 The level's entities:
 

@@ -842,13 +842,14 @@ Shipping. A Shipping build reads every asset at its own path.
 
 ### The Saved folder
 
-`<project>/Saved/` holds what the tools make, never source. The Content
-Browser and every content walk skip it (`EditorGraphs::IsIgnoredFolder`).
+`<project>/Saved/` holds what the tools make, never source: made on each
+machine and ignored by git, so a fresh checkout cooks before a Shipping
+build (Build Project does). The Content Browser and every content walk skip
+it (`EditorGraphs::IsIgnoredFolder`).
 
-- `Saved/Cooked/` -- cooked content, mirroring the source paths. Tracked in
-  git: a Shipping build stages it.
-- `Saved/Logs/` -- one log per run, the newest 10 of each kind kept, ignored
-  by git:
+- `Saved/Cooked/` -- cooked content, mirroring the source paths, which a
+  Shipping or packaged build stages.
+- `Saved/Logs/` -- one log per run, the newest 10 of each kind kept:
   - `Editor-<time>.log`, every line of an editor session (`EngineCore::OpenRunLog`);
   - `Cook-<time>.log` and `Build-<time>.log`, a cook or Build Project run's
     whole output and stats (the dialog's status line names the file).

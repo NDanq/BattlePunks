@@ -149,7 +149,8 @@ building a `client-shipping` preset, run **Build > Cook Content** in the editor
 in Project Settings > Worlds, every prefab and UI document go to
 `Saved/Cooked/<their path>`.
 
-The client build stages those instead; commit them with the game. A level
+The client build stages those instead. `Saved/` is made on each machine and
+not tracked: cook again after a fresh checkout (Build Project does it for you). A level
 that loads a world file reads the cooked one in a game build, as
 `Games/Sandbox`'s BrickBreaker does. Material graphs cook themselves during
 the build.

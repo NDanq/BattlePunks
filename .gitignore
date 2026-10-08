@@ -17,9 +17,10 @@
 # NewProject scripts, which make a game without the editor.
 /Games/*/Binaries/
 
-# A log per editor, game, cook and build run (<project>/Saved/Logs/). Saved/Cooked/
-# beside it is tracked: a Shipping build stages it.
-/Games/*/Saved/Logs/
+# What the tools make on each machine, never source: cooked content
+# (Saved/Cooked/, from the editor's Build > Cook Content) and a log per editor,
+# game, cook and build run (Saved/Logs/).
+/Games/*/Saved/
 /Engine/Binaries/*
 !/Engine/Binaries/NewProject.cmake
 !/Engine/Binaries/NewProject.sh
