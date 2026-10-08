@@ -292,6 +292,20 @@ uint64_t D3D12PipelineCache::HashKey(const PipelineKey& K)
     return H;
 }
 
+bool D3D12PipelineCache::PipelineKey::operator==(const PipelineKey& InOther) const
+{
+    for(UINT Index = 0; Index < GDI_MAX_COLOR_TARGETS; ++Index)
+    {
+        if(ColorFormats[Index] != InOther.ColorFormats[Index]) return false;
+    }
+    return VertexShaderID == InOther.VertexShaderID && PixelShaderID == InOther.PixelShaderID
+        && VertexLayoutID == InOther.VertexLayoutID && BlendEnable == InOther.BlendEnable
+        && SrcBlend == InOther.SrcBlend && DestBlend == InOther.DestBlend && BlendOp == InOther.BlendOp
+        && BlendOpAlpha == InOther.BlendOpAlpha && WriteMask == InOther.WriteMask && RTFormat == InOther.RTFormat
+        && ColorCount == InOther.ColorCount && DSVFormat == InOther.DSVFormat && DepthEnable == InOther.DepthEnable
+        && DepthWrite == InOther.DepthWrite && DepthFunc == InOther.DepthFunc;
+}
+
 ID3D12PipelineState* D3D12PipelineCache::GetOrCreate(const PipelineKey& Key,
                                                      const D3D12ShaderResource* VS,
                                                      const D3D12ShaderResource* PS)
@@ -299,15 +313,26 @@ ID3D12PipelineState* D3D12PipelineCache::GetOrCreate(const PipelineKey& Key,
     if(!VS || !PS || !VS->IsValid() || !PS->IsValid() || !RootSignature) return nullptr;
 
     const uint64_t H = HashKey(Key);
-    auto It = Pipelines.find(H);
-    if(It != Pipelines.end())
+    const auto Find = [this, H, &Key]() -> const PipelineEntry*
     {
-        return It->second.Get();
+        const auto Range = Pipelines.equal_range(H);
+        for(auto It = Range.first; It != Range.second; ++It)
+        {
+            if(It->second.Key == Key) return &It->second;
+        }
+        return nullptr;
+    };
+    {
+        std::shared_lock<std::shared_mutex> Read(PipelinesLock);
+        if(const PipelineEntry* Entry = Find()) return Entry->Pipeline.Get();
     }
 
+    /* Made outside the lock (it compiles), kept unless another thread made it first. */
     ComPtr<ID3D12PipelineState> New = CreatePipeline(Key, VS, PS);
+    std::unique_lock<std::shared_mutex> Write(PipelinesLock);
+    if(const PipelineEntry* Entry = Find()) return Entry->Pipeline.Get();
     ID3D12PipelineState* Result = New.Get();
-    Pipelines.emplace(H, std::move(New));
+    Pipelines.emplace(H, PipelineEntry{ Key, std::move(New) });
     return Result;
 }
 

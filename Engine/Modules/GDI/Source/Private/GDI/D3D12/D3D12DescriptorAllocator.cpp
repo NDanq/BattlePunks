@@ -125,14 +125,20 @@ D3D12CBAllocation D3D12DescriptorAllocator::AllocateCB(uint32_t Size)
 {
     D3D12CBAllocation Out;
     const uint32_t Aligned = (Size + kCBAlignment - 1) & ~(kCBAlignment - 1);
-    if(!RingMapped || RingOffset + Aligned > kRingCapacity)
+    if(!RingMapped || Aligned > kRingCapacity)
     {
         return Out;
     }
 
-    Out.GPUAddress = RingBuffer->GetGPUVirtualAddress() + RingOffset;
-    Out.MappedPtr  = RingMapped + RingOffset;
-    RingOffset += Aligned;
+    /* Claimed whole, by whichever thread gets there: past the end, nothing
+     * (the offset stays past it until Reset). */
+    const uint32_t Offset = RingOffset.fetch_add(Aligned, std::memory_order_relaxed);
+    if(Offset > kRingCapacity - Aligned)
+    {
+        return Out;
+    }
+    Out.GPUAddress = RingBuffer->GetGPUVirtualAddress() + Offset;
+    Out.MappedPtr  = RingMapped + Offset;
     return Out;
 }
 

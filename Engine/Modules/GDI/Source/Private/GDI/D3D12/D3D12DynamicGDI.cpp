@@ -10,6 +10,7 @@
 #include "Public/GDI/D3D12/D3D12Shader.h"
 #include "Public/GDI/D3D12/D3D12Texture.h"
 #include "Private/GDI/D3D12/D3D12TransientOps.h"
+#include "Private/GDI/GDICorePack.h"
 #include "Public/GDI/GDIShader.h"
 #include "Public/GDI/GDIView.h"
 
@@ -119,6 +120,7 @@ void D3D12DynamicGDI::Destroy()
     {
         DeviceObj->WaitIdle();
     }
+    DestroyRecordingContexts();
 
     if(GSync)
     {
@@ -404,6 +406,7 @@ void D3D12DynamicGDI::FlushForReadback(bool bResumeActiveRegion)
     CurrentStateData->ActiveDepth        = nullptr;
     CurrentStateData->bRenderingActive   = false;
     CurrentStateData->DebugEventDepth    = 0;
+    CurrentStateData->DebugEventNames.clear();
     if(!List) return;
 
     PrepareCommandList(List);
@@ -715,29 +718,55 @@ namespace
     }
 }
 
-bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
+bool D3D12DynamicGDI::MakeDrawInputs(D3D12DrawInputs& OutIn)
 {
     if(!CurrentStateData || !CurrentStateData->bRenderingActive || !CurrentStateData->CurrentCmd) return false;
-    if(!InMesh || !PipelineCache || !DescAlloc || !CurrentStateData->ActiveRenderTarget) return false;
+    OutIn = D3D12DrawInputs();
+    OutIn.List               = CurrentStateData->CurrentCmd;
+    OutIn.ListSerial         = FrameListSerial;
+    OutIn.VS                 = CurrentStateData->BoundVS;
+    OutIn.PS                 = CurrentStateData->BoundPS;
+    OutIn.bMaterial          = IsMaterialDraw();
+    OutIn.Blocks             = MaterialBlocks;
+    OutIn.Serials            = MaterialBlockSerials;
+    OutIn.Textures           = MaterialTextures;
+    OutIn.Uploads            = &BlockUploads;
+    OutIn.InstanceBuffer     = GetInstanceBuffer();
+    OutIn.InstanceCount      = GetInstanceCount();
+    OutIn.IndirectArgs       = GetIndirectArgs();
+    OutIn.IndirectArgsOffset = GetIndirectArgsOffset();
+    OutIn.Blend              = &CurrentStateData->BlendState;
+    OutIn.ColorMask          = CurrentStateData->ColorMask;
+    OutIn.Depth              = &CurrentStateData->DepthState;
+    OutIn.PredicateSet       = PredicateSet;
+    OutIn.PredicateIndex     = PredicateIndex;
+    return true;
+}
 
-    D3D12ShaderResource* VSRes = CurrentStateData->BoundVS;
-    D3D12ShaderResource* PSRes = CurrentStateData->BoundPS;
+bool D3D12DynamicGDI::BindDrawState(const D3D12DrawInputs& InIn, GDIMesh* InMesh, bool bIsInstanced)
+{
+    if(!InIn.List || !InMesh || !PipelineCache || !DescAlloc || !CurrentStateData || !CurrentStateData->ActiveRenderTarget) return false;
+
+    D3D12ShaderResource* VSRes = InIn.VS;
+    D3D12ShaderResource* PSRes = InIn.PS;
     if(!VSRes || !PSRes) return false;
 
-    const IBlendStateDesc& Blend = CurrentStateData->BlendState;
+    const IBlendStateDesc& Blend = *InIn.Blend;
+    const IDepthStateDesc& Depth = *InIn.Depth;
 
     D3D12PipelineCache::PipelineKey Key;
     Key.VertexShaderID = VSRes->GetID();
     Key.PixelShaderID  = PSRes->GetID();
     // 3: an indexed mesh drawn instanced from GDISetInstanceBuffer's buffer.
     // 4: a skinned mesh, its bone streams in slots 6 and 7 (never instanced).
-    Key.VertexLayoutID = InMesh->IsIndexed() ? (GetInstanceBuffer() ? 3u : (InMesh->IsSkinned() ? 4u : 2u)) : (bIsInstanced ? 1u : 0u);
+    Key.VertexLayoutID = InMesh->IsIndexed() ? (InIn.InstanceBuffer ? 3u : (InMesh->IsSkinned() ? 4u : 2u)) : (bIsInstanced ? 1u : 0u);
     Key.BlendEnable    = Blend.bBlend ? TRUE : FALSE;
     Key.SrcBlend       = DecodeBlendFactor(Blend.Source);
     Key.DestBlend      = DecodeBlendFactor(Blend.Dest);
     Key.BlendOp        = DecodeBlendOp(Blend.Op);
     Key.BlendOpAlpha   = DecodeBlendOp(Blend.AlphaOp);
-    Key.WriteMask      = DecodeColorMask(CurrentStateData->ColorMask);
+    Key.WriteMask      = DecodeColorMask(InIn.ColorMask);
+    /* The bound targets are the render thread's, unchanged while a pass records. */
     Key.RTFormat       = CurrentStateData->ActiveRenderTarget->GetFormat();
     Key.ColorCount     = CurrentStateData->ActiveColorCount > 0 ? CurrentStateData->ActiveColorCount : 1u;
     for(uint32_t Index = 0; Index < GDI_MAX_COLOR_TARGETS; ++Index)
@@ -746,18 +775,21 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
         Key.ColorFormats[Index] = Each ? Each->GetFormat() : DXGI_FORMAT_UNKNOWN;
     }
     Key.DSVFormat      = CurrentStateData->ActiveDepth ? CurrentStateData->ActiveDepth->GetDepthFormat() : DXGI_FORMAT_UNKNOWN;
-    Key.DepthEnable    = CurrentStateData->DepthState.bDepthTest ? TRUE : FALSE;
-    Key.DepthWrite     = CurrentStateData->DepthState.bDepthMask ? TRUE : FALSE;
-    Key.DepthFunc      = DecodeCompareFunc(CurrentStateData->DepthState.DepthMode);
+    Key.DepthEnable    = Depth.bDepthTest ? TRUE : FALSE;
+    Key.DepthWrite     = Depth.bDepthMask ? TRUE : FALSE;
+    Key.DepthFunc      = DecodeCompareFunc(Depth.DepthMode);
 
     ID3D12PipelineState* Pipeline = PipelineCache->GetOrCreate(Key, VSRes, PSRes);
     if(!Pipeline) return false;
 
     // Both stages carry identical core uniforms; the PS copy also has the custom ones.
+    // In a recording context they are only read: its core blocks come packed (InIn.Core*).
     const ScalarMap& Scalars = PSRes->GetScalars();
 
     static constexpr uint32_t kCustomBytes = 256;
-    const bool bMaterial = IsMaterialDraw();
+    const bool bMaterial = InIn.bMaterial;
+    const std::vector<uint8_t>* Blocks = InIn.Blocks;
+    D3D12BlockUploads& Uploads = *InIn.Uploads;
 
     /* A cbuffer is read in 256-byte units; the material layout's blocks are
      * raw bytes (GDISetUniformBlock), rounded up, never empty. */
@@ -765,52 +797,62 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     {
         return InBlock.empty() ? 256u : uint32_t((InBlock.size() + 255) & ~size_t(255));
     };
-    const uint32_t CustomBytes = bMaterial ? BlockBytes(MaterialBlocks[0]) : kCustomBytes;
+    const uint32_t CustomBytes = bMaterial ? BlockBytes(Blocks[0]) : kCustomBytes;
 
     const D3D12CBAllocation VP     = DescAlloc->AllocateCB(160);
     const D3D12CBAllocation TR     = DescAlloc->AllocateCB(kTransformBytes);
     const D3D12CBAllocation Custom = DescAlloc->AllocateCB(CustomBytes);
     if(!VP.MappedPtr || !TR.MappedPtr || !Custom.MappedPtr) return false;
 
-    PackViewParams(Scalars, VP.MappedPtr);
-    PackTransform(Scalars, TR.MappedPtr);
+    if(InIn.CoreView)
+    {
+        float* View = static_cast<float*>(VP.MappedPtr);
+        memcpy(View, InIn.CoreView, 160);
+        GDICorePack::RemapClipZ(View);
+    }
+    else
+    {
+        PackViewParams(Scalars, VP.MappedPtr);
+    }
+    if(InIn.CoreTransform) { memcpy(TR.MappedPtr, InIn.CoreTransform, kTransformBytes); }
+    else                   { PackTransform(Scalars, TR.MappedPtr); }
 
     D3D12CBAllocation Scene{};
+    const uint64_t Epoch = DescAlloc->GetEpoch();
     if(bMaterial)
     {
-        const bool bReuseScene = SceneBlockUploadSerial == MaterialBlockSerials[1]
-                                 && SceneBlockUploadEpoch == DescAlloc->GetEpoch()
-                                 && SceneBlockUploadAddress != 0;
+        const bool bReuseScene = Uploads.SceneSerial == InIn.Serials[1] && Uploads.SceneEpoch == Epoch
+                                 && Uploads.SceneAddress != 0;
         if(bReuseScene)
         {
-            Scene.GPUAddress = SceneBlockUploadAddress;
+            Scene.GPUAddress = Uploads.SceneAddress;
         }
         else
         {
-            Scene = DescAlloc->AllocateCB(BlockBytes(MaterialBlocks[1]));
+            Scene = DescAlloc->AllocateCB(BlockBytes(Blocks[1]));
             if(!Scene.MappedPtr) return false;
         }
         for(int b = 0; b < 2; ++b)
         {
             if(b == 1 && bReuseScene) continue;
             void* Dst = b == 0 ? Custom.MappedPtr : Scene.MappedPtr;
-            memset(Dst, 0, BlockBytes(MaterialBlocks[b]));
-            if(!MaterialBlocks[b].empty()) memcpy(Dst, MaterialBlocks[b].data(), MaterialBlocks[b].size());
+            memset(Dst, 0, BlockBytes(Blocks[b]));
+            if(!Blocks[b].empty()) memcpy(Dst, Blocks[b].data(), Blocks[b].size());
         }
         if(!bReuseScene)
         {
-            SceneBlockUploadAddress = Scene.GPUAddress;
-            SceneBlockUploadSerial = MaterialBlockSerials[1];
-            SceneBlockUploadEpoch  = DescAlloc->GetEpoch();
+            Uploads.SceneAddress = Scene.GPUAddress;
+            Uploads.SceneSerial  = InIn.Serials[1];
+            Uploads.SceneEpoch   = Epoch;
         }
 
         /* The skin blocks (b12, b13): the last palette set and the frame
          * before's, each uploaded once per change. */
         for(uint32_t SkinIndex = 0; SkinIndex < 2; ++SkinIndex)
         {
-            const std::vector<uint8_t>& Bytes = MaterialBlocks[2 + SkinIndex];
-            if(SkinBlockUploadSerial[SkinIndex] == MaterialBlockSerials[2 + SkinIndex] && SkinBlockUploadEpoch[SkinIndex] == DescAlloc->GetEpoch()
-               && SkinBlockUploadAddress[SkinIndex] != 0)
+            const std::vector<uint8_t>& Bytes = Blocks[2 + SkinIndex];
+            if(Uploads.SkinSerial[SkinIndex] == InIn.Serials[2 + SkinIndex] && Uploads.SkinEpoch[SkinIndex] == Epoch
+               && Uploads.SkinAddress[SkinIndex] != 0)
             {
                 continue;
             }
@@ -820,9 +862,9 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
             if(!Skin.MappedPtr) return false;
             memset(Skin.MappedPtr, 0, SkinBytes);
             if(!Bytes.empty()) memcpy(Skin.MappedPtr, Bytes.data(), Bytes.size());
-            SkinBlockUploadAddress[SkinIndex] = Skin.GPUAddress;
-            SkinBlockUploadSerial[SkinIndex]  = MaterialBlockSerials[2 + SkinIndex];
-            SkinBlockUploadEpoch[SkinIndex]   = DescAlloc->GetEpoch();
+            Uploads.SkinAddress[SkinIndex] = Skin.GPUAddress;
+            Uploads.SkinSerial[SkinIndex]  = InIn.Serials[2 + SkinIndex];
+            Uploads.SkinEpoch[SkinIndex]   = Epoch;
         }
     }
     else
@@ -846,7 +888,7 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     const D3D12_GPU_DESCRIPTOR_HANDLE SRV     = DescAlloc->GetSRVGPUHandle(Texture->GetSRVSlot());
     const D3D12_GPU_DESCRIPTOR_HANDLE Sampler = DescAlloc->GetSamplerGPUHandle(Texture->GetBorder(), Texture->GetFilter());
 
-    ID3D12GraphicsCommandList* List = CurrentStateData->CurrentCmd;
+    ID3D12GraphicsCommandList* List = InIn.List;
     List->SetPipelineState(Pipeline);
     List->SetGraphicsRootConstantBufferView(RP_ViewParameters, VP.GPUAddress);
     List->SetGraphicsRootConstantBufferView(RP_Transform,      TR.GPUAddress);
@@ -862,11 +904,11 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     if(bMaterial)
     {
         List->SetGraphicsRootConstantBufferView(RP_Scene, Scene.GPUAddress);
-        List->SetGraphicsRootConstantBufferView(RP_Skin,     SkinBlockUploadAddress[0]);
-        List->SetGraphicsRootConstantBufferView(RP_PrevSkin, SkinBlockUploadAddress[1]);
+        List->SetGraphicsRootConstantBufferView(RP_Skin,     Uploads.SkinAddress[0]);
+        List->SetGraphicsRootConstantBufferView(RP_PrevSkin, Uploads.SkinAddress[1]);
         for(uint32_t Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot)
         {
-            auto* SlotTexture = dynamic_cast<D3D12TextureResource*>(MaterialTextures[Slot]);
+            auto* SlotTexture = dynamic_cast<D3D12TextureResource*>(InIn.Textures[Slot]);
             if(!SlotTexture || SlotTexture->GetSRVSlot() == UINT32_MAX) SlotTexture = NullTexture;
             List->SetGraphicsRootDescriptorTable(RP_MaterialTexture0 + Slot, DescAlloc->GetSRVGPUHandle(SlotTexture->GetSRVSlot()));
             List->SetGraphicsRootDescriptorTable(RP_MaterialSampler0 + Slot,

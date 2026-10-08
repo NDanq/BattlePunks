@@ -4,6 +4,7 @@
 #include <d3d12.h>
 #include <wrl/client.h>
 
+#include <atomic>
 #include <cstdint>
 #include <vector>
 
@@ -26,6 +27,8 @@ struct D3D12CBAllocation
  *   - A GPU-visible sampler heap holding one sampler per border/filter pair.
  *   - A persistently mapped upload buffer sub-allocated per draw for constant
  *     buffers and rewound by Reset() once the previous frame has executed.
+ *     AllocateCB is safe from any thread (a parallel pass's recording contexts
+ *     allocate at once); everything else is the render thread's.
  */
 class D3D12DescriptorAllocator
 {
@@ -71,7 +74,7 @@ private:
 
     Microsoft::WRL::ComPtr<ID3D12Resource>          RingBuffer;
     uint8_t*                                        RingMapped = nullptr;
-    uint32_t                                        RingOffset = 0;
+    std::atomic<uint32_t>                           RingOffset{0};
     uint64_t                                        Epoch      = 0;
 
     static constexpr uint32_t kSRVCapacity  = 4096;

@@ -29,6 +29,15 @@ public:
     /** Executes the closed list and signals the frame fence behind it. Caller holds the queue mutex. */
     void SubmitLocked();
 
+    /** Executes the closed list without signalling: a frame's first half, the
+     *  rest recorded after Resume and covered by its SubmitLocked. Caller holds
+     *  the queue mutex. */
+    void ExecuteLocked();
+
+    /** Reopens the list after ExecuteLocked, on the same allocator and with no
+     *  wait: the allocator keeps both halves until BeginFrame rewinds it. */
+    ID3D12GraphicsCommandList* Resume();
+
     /** Blocks until the last submitted list has executed. */
     void WaitForCompletion();
 

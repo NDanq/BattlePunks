@@ -73,6 +73,23 @@ void D3D12CommandManager::SubmitLocked()
     Device->GetQueue()->Signal(FrameFence.Get(), ++FrameFenceValue);
 }
 
+void D3D12CommandManager::ExecuteLocked()
+{
+    if(!Device || !CommandList) return;
+
+    ID3D12CommandList* Lists[] = { CommandList.Get() };
+    Device->GetQueue()->ExecuteCommandLists(1, Lists);
+}
+
+ID3D12GraphicsCommandList* D3D12CommandManager::Resume()
+{
+    if(!CommandList || bRecording) return nullptr;
+
+    CommandList->Reset(Allocator.Get(), nullptr);
+    bRecording = true;
+    return CommandList.Get();
+}
+
 void D3D12CommandManager::WaitForCompletion()
 {
     D3D12Device::WaitForFence(FrameFence.Get(), FrameFenceValue);
