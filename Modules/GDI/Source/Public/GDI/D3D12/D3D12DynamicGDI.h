@@ -152,6 +152,17 @@ public:
     /* Occlusion queries (D3D12Query.cpp): binary occlusion, predicated with
      * SetPredication -- core at every feature level. */
     bool                 SupportsOcclusionQueries() const override { return DeviceObj != nullptr; }
+
+    /* Direct command lists, one per chunk, executed in order (bundles cannot
+     * set targets, barriers or queries). Predication and queries are per list. */
+    GDIParallelRecordingSupport GetParallelRecordingSupport() const override
+    {
+        GDIParallelRecordingSupport Out;
+        Out.bSupported = DeviceObj != nullptr;
+        Out.Mechanism  = "direct command lists";
+        Out.Reason     = DeviceObj ? "" : "no D3D12 device";
+        return Out;
+    }
     bool                 SupportsOcclusionPredication() const override { return DeviceObj != nullptr; }
     GDIOcclusionQueries* CreateOcclusionQueries(uint32_t InCapacity) override;
     void                 BeginOcclusionRound(GDIOcclusionQueries* InSet, uint32_t InCount) override;

@@ -256,6 +256,13 @@ public:
     void EndDrawEvent() override;
 
     bool     SupportsGPUTimestamps() const override { return true; }
+
+    GDIParallelRecordingSupport GetParallelRecordingSupport() const override
+    {
+        GDIParallelRecordingSupport Out;
+        Out.Reason = "OpenGL records on its one context";
+        return Out;
+    }
     void     WriteGPUTimestamp(uint32_t InIndex) override;
     uint64_t GetPreviousGPUTimestamps(double* OutMilliseconds) override;
 

@@ -391,8 +391,15 @@ namespace RenderCore
         const void* BeginTimedBlock(const void* InOwner, bool bInTime, float (&OutGpuMs)[RGT_Count]);
 
         /* InTimer's start (or end) timestamp, outside RenderSceneStages (the
-         * scene captures' span); nothing unless this block is timed. */
+         * scene captures' span); nothing unless this block is timed. The
+         * render thread's time for the span is measured either way
+         * (GetStageCpuTimes). */
         void WriteGpuTimestamp(ERenderGpuTimer InTimer, bool bInEnd);
+
+        /* The last timed RenderSceneStages' render-thread milliseconds per
+         * ERenderGpuTimer (-1: did not run) and its draws per span (-1: not
+         * counted) -- what RenderStats::CpuMs and StageDraws average. */
+        void GetStageCpuTimes(float (&OutCpuMs)[RGT_Count], int32_t (&OutDraws)[RGT_Count]) const;
 
         /* Both DrawMesh overloads: bInEvery puts InSlots[0] in every slot. */
         bool DrawMeshSections(const RenderTransform& InTransform, const char* InMeshPath, EngineCore::Color InTint,

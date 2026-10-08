@@ -40,6 +40,7 @@
 #include "Public/GameCore/World.h"
 #include "Public/RenderCore/MaterialDescription.h"
 #include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/ParallelRecording.h"
 #include "Public/RenderCore/PostProcessStack.h"
 #include "Public/RenderCore/RenderCommand.h"
 #include "Public/RenderCore/RenderComponents.h"
@@ -489,17 +490,71 @@ static void TestStatUnit()
             RenderStats Null;
             Rend.GetStats(Null);
             Expect(Null.GpuMs[RGT_Total] < 0.0f && Null.GpuMs[RGT_BasePass] < 0.0f, "the Null backend times no GPU work");
+            Expect(Null.QueueCpuMs >= 0.0f && Null.StageDraws[RGT_Total] >= 0,
+                   "but the render thread's queueing and the stages' draws are measured on every backend");
+
+            /* Parallel draw recording's gate (ParallelRecording.h): Null runs
+             * the chunks serially, so it is available without workers. */
+            Expect(Null.bParallelRecordingAvailable, "the gate finds parallel recording available on Null (serial chunks)");
+            const ParallelRecordingState Auto = EvaluateParallelRecording();
+            Expect(Auto.bBackend && Auto.bSerialOnly && Auto.bEnabled && Auto.Mode == EParallelRecordingMode::Auto,
+                   "Auto by default, the backend able, serially");
+            Expect(!ShouldRecordInParallel(Auto, Auto.MinDraws - 1) && ShouldRecordInParallel(Auto, Auto.MinDraws),
+                   "Auto splits a stage from ParallelMinDraws draws, not below");
+            if(ConfigVar* ModeVar = ConfigFindVarByPath("Rendering.ParallelRecording"))
+            {
+                ModeVar->SetString("off");
+                const ParallelRecordingState Off = EvaluateParallelRecording();
+                Expect(!Off.bEnabled && !ShouldRecordInParallel(Off, 100000), "ParallelRecording=Off (any case) turns it off");
+                ModeVar->SetString("On");
+                const ParallelRecordingState On = EvaluateParallelRecording();
+                Expect(On.bEnabled && ShouldRecordInParallel(On, 1) && !ShouldRecordInParallel(On, 0),
+                       "On splits any stage with draws");
+                ModeVar->SetString("Auto");
+            }
+            else
+            {
+                Expect(false, "[Rendering] ParallelRecording exists");
+            }
             FrameVar->SetBool(false);
         }
         Rend.Shutdown();
     }
 
-    float Times[RGT_Count] = { 0.01f, 0.5f, -1.0f, 1.25f, 0.2f, 0.05f, 0.75f, 2.8f, 0.6f, 0.3f };
-    const std::string FrameText = FormatStatFrame(Times, true);
-    Expect(FrameText == "GPU            ms\nPrePass      0.01\nBasePass     0.50\nAO              -\nShadows      1.25\n"
-                        "Lighting     0.20\nForward      0.05\nPostProcess  0.75\nTotal        2.80\nCaptures     0.60\nParticles    0.30",
-           "stat frame's text, a line per stage, the scene captures and particles after the total");
-    Expect(FormatStatFrame(Times, false) == "GPU: not timed on this backend", "and a line saying so where the GPU is not timed");
+    const float   Times[RGT_Count] = { 0.01f, 0.5f, -1.0f, 1.25f, 0.2f, 0.05f, 0.75f, 2.8f, 0.6f, 0.3f };
+    const float   Cpu[RGT_Count]   = { 0.12f, 3.5f, 0.02f, 4.25f, 0.1f, 0.4f, 0.6f, 9.1f, 1.5f, 0.05f };
+    const int32_t Draws[RGT_Count] = { 80, 1200, -1, 1800, 1, 24, 6, 3111, -1, -1 };
+    const std::string FrameText = FormatStatFrame(Times, Cpu, Draws, 2.25f, true);
+    Expect(FrameText ==
+                        "Stage       GPU ms CPU ms  Draws\n"
+                        "PrePass       0.01   0.12     80\n"
+                        "BasePass      0.50   3.50   1200\n"
+                        "AO               -   0.02      -\n"
+                        "Shadows       1.25   4.25   1800\n"
+                        "Lighting      0.20   0.10      1\n"
+                        "Forward       0.05   0.40     24\n"
+                        "PostProcess   0.75   0.60      6\n"
+                        "Total         2.80   9.10   3111\n"
+                        "Captures      0.60   1.50      -\n"
+                        "Particles     0.30   0.05      -\n"
+                        "Queue            -   2.25      -",
+           "stat frame's text: a line per stage with GPU ms, render-thread ms and draws, captures and particles after "
+           "the total, then the queueing");
+    Expect(FormatStatFrame(Times, Cpu, Draws, 2.25f, false) ==
+                        "Stage       GPU ms CPU ms  Draws\n"
+                        "PrePass          -   0.12     80\n"
+                        "BasePass         -   3.50   1200\n"
+                        "AO               -   0.02      -\n"
+                        "Shadows          -   4.25   1800\n"
+                        "Lighting         -   0.10      1\n"
+                        "Forward          -   0.40     24\n"
+                        "PostProcess      -   0.60      6\n"
+                        "Total            -   9.10   3111\n"
+                        "Captures         -   1.50      -\n"
+                        "Particles        -   0.05      -\n"
+                        "Queue            -   2.25      -\n"
+                        "GPU: not timed on this backend",
+           "and where the GPU is not timed, its column empty and a line saying so");
 }
 
 /*

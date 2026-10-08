@@ -188,6 +188,25 @@ namespace RenderCore
          * the default scene's GPU time per span, averaged over half a second;
          * -1 where it was not timed (off, or the span did not run). */
         float GpuMs[RGT_Count] = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+
+        /* The render thread's side of the same spans, always measured (not
+         * only under "stat frame"), for the stats-reporting scene's own view,
+         * averaged over half a second; -1 where it did not run.
+         * CpuMs: the render thread's time issuing each span -- for the draw
+         * stages, recording their draws (MULTITHREADED_RENDERING.md).
+         * StageDraws: the draws each span issued (Forward: Unlit and both
+         * translucent stages; Total: the sum); -1 where not counted.
+         * QueueCpuMs: culling the view and queueing its draws, before any
+         * stage (RenderScene's QueueDraws). */
+        float   CpuMs[RGT_Count]      = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+        int32_t StageDraws[RGT_Count] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+        float   QueueCpuMs            = -1.0f;
+
+        /* Parallel draw recording's gate (ParallelRecording.h), as the render
+         * thread decided it at startup: whether stages may be split, and the
+         * job workers they would run on. */
+        bool     bParallelRecordingAvailable = false;
+        uint32_t ParallelRecordingWorkers    = 0;
     };
 }
 

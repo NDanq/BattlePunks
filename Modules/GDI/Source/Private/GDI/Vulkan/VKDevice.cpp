@@ -164,10 +164,16 @@ bool VKDevice::CreateLogicalDevice()
             Query.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
             Query.pNext = &ConditionalFeatures;
             vkGetPhysicalDeviceFeatures2(PhysicalDevice, &Query);
-            ConditionalFeatures.pNext                         = nullptr;
-            ConditionalFeatures.inheritedConditionalRendering = VK_FALSE;
+            ConditionalFeatures.pNext = nullptr;
+            /* Kept as the GPU reports it: parallel recording's gate reads it
+             * (GDIParallelRecordingSupport::bInheritedPredication). */
         }
         bConditionalRendering = bHasExtension && ConditionalFeatures.conditionalRendering == VK_TRUE;
+        bInheritedConditionalRendering = bConditionalRendering && ConditionalFeatures.inheritedConditionalRendering == VK_TRUE;
+        if(!bInheritedConditionalRendering)
+        {
+            ConditionalFeatures.inheritedConditionalRendering = VK_FALSE;
+        }
         if(bConditionalRendering)
         {
             DeviceExtensions.push_back(VK_EXT_CONDITIONAL_RENDERING_EXTENSION_NAME);
@@ -199,6 +205,8 @@ bool VKDevice::CreateLogicalDevice()
     Features2.pNext = &DynamicRenderingFeatures;
     Features2.features.textureCompressionBC = Supported.textureCompressionBC;
     Features2.features.samplerAnisotropy    = Supported.samplerAnisotropy;   // GDISetMaxAnisotropy, where it has it
+    Features2.features.inheritedQueries     = Supported.inheritedQueries;    // parallel recording's gate, where it has it
+    bInheritedQueries = Supported.inheritedQueries == VK_TRUE;
 
     VkDeviceCreateInfo CreateInfo{};
     CreateInfo.sType                = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;

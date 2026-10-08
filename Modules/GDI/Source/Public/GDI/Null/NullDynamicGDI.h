@@ -202,6 +202,16 @@ public:
      * otherwise), so a caller's culling runs without a GPU. Predicates are
      * counted; every draw is a no-op anyway. */
     bool                 SupportsOcclusionQueries() const override { return true; }
+
+    /* The chunked path, every chunk on the calling thread: headless tests run it. */
+    GDIParallelRecordingSupport GetParallelRecordingSupport() const override
+    {
+        GDIParallelRecordingSupport Out;
+        Out.bSupported  = true;
+        Out.bSerialOnly = true;
+        Out.Mechanism   = "serial chunks (Null backend)";
+        return Out;
+    }
     bool                 SupportsOcclusionPredication() const override { return true; }
     GDIOcclusionQueries* CreateOcclusionQueries(uint32_t InCapacity) override;
     void                 BeginOcclusionRound(GDIOcclusionQueries* InSet, uint32_t InCount) override;

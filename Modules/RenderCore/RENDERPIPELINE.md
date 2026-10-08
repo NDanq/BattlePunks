@@ -1109,9 +1109,11 @@ short lines.
 
 ### Stat frame
 
-**Stats.Frame** (config var, off by default) adds each stage's **GPU** time to
-the same panel. Toggle it with `stat frame` in the editor console, or set
-`[Stats] Frame=true` in a game's ini.
+**Stats.Frame** (config var, off by default) adds a table to the same panel:
+per stage, its **GPU** time, the **render thread's** time issuing it (CPU),
+and its **draws**, then a **Queue** line -- the render thread culling the
+view and queueing its draws, before any stage. Toggle it with `stat frame` in
+the editor console, or set `[Stats] Frame=true` in a game's ini.
 
 **The spans** (`ERenderGpuTimer`) are PrePass, BasePass, AO, Shadows,
 Lighting, Forward (Unlit and the translucent stages), PostProcess, and Total
@@ -1143,6 +1145,19 @@ around the capture and simulate loops, so a frame with none shows 0.00, not `-`.
   scene.
 - Each scene averages its times over half a second. The stats-reporting scene
   also publishes them to `RenderStats::GpuMs`.
+
+**The render thread's side** (MULTITHREADED_RENDERING.md, phase 0):
+- `StageTimestamp` also reads the CPU clock at each span's start and end,
+  for the scene's own view, always -- not only while Stats.Frame is on -- and
+  `WriteGpuTimestamp` does for Captures and Particles. The draws are each
+  stage's count from that `RenderSceneStages` (Forward: Unlit and both
+  translucent stages; Total: their sum; AO, Captures and Particles: `-`).
+  Queue is `QueueDraws` around the main view.
+- Averaged over half a second like the GPU times, and published to
+  `RenderStats::CpuMs`, `StageDraws` and `QueueCpuMs` by the stats-reporting
+  scene, on every backend (Null included).
+- CPU time per stage is what parallel draw recording would shorten: compare
+  BasePass and Shadows CPU against their draws.
 
 **GDI timestamps** (`GDIDynamicDriver::WriteGPUTimestamp` /
 `GetPreviousGPUTimestamps`), up to `GDI_GPU_TIMESTAMP_MAX` (64) per block:

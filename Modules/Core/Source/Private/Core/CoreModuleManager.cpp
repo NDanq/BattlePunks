@@ -2,6 +2,7 @@
 
 #include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreGarbageCollector.h"
+#include "Public/Core/CoreJob.h"
 #include "Public/Core/CoreLog.h"
 
 #include <chrono>
@@ -482,6 +483,20 @@ void ModuleManager::TeardownInstance(ModuleRecord& InRecord)
     const ImageID Image = InRecord.LoadedImage;
     if(Image != IMAGE_Unknown && Image != IMAGE_Host)
     {
+        /* THE JOB BARRIER, first (CoreJob.h, JobSystem::OnImageUnloading): a
+         * job the module queued and nobody waited for is a function pointer
+         * into the image about to close. Drop the queued ones, wait out the
+         * running ones. Only once a host has registered a pool. */
+        if(JobSystem* Jobs = GetJobSystem())
+        {
+            const uint32_t Dropped = Jobs->OnImageUnloading(Image);
+            if(Dropped > 0)
+            {
+                CORE_LOG_WARN("ModuleManager: '" + InRecord.Name + "' left " + std::to_string(Dropped) +
+                              " queued job(s); dropped them before unloading");
+            }
+        }
+
         const uint64_t Destroyed = Memory::OnImageUnloading(Image);
         if(Destroyed > 0)
         {

@@ -81,6 +81,26 @@ public:
     bool                 bPending  = false;
 };
 
+/* Secondary command buffers are core Vulkan; recording one inside a dynamic
+ * rendering (VkCommandBufferInheritanceRenderingInfo) needs dynamic rendering,
+ * which every device here is created with (API 1.3). The inheritance features
+ * are extras: a query or predicate that brackets one draw is recorded inside
+ * the chunk that draws it. */
+GDIParallelRecordingSupport VulkanDynamicGDI::GetParallelRecordingSupport() const
+{
+    GDIParallelRecordingSupport Out;
+    if(!DeviceObj || DeviceObj->GetDevice() == VK_NULL_HANDLE)
+    {
+        Out.Reason = "no Vulkan device";
+        return Out;
+    }
+    Out.bSupported            = true;
+    Out.bInheritedQueries     = DeviceObj->SupportsInheritedQueries();
+    Out.bInheritedPredication = DeviceObj->SupportsInheritedConditionalRendering();
+    Out.Mechanism             = "secondary command buffers inside dynamic rendering";
+    return Out;
+}
+
 bool VulkanDynamicGDI::SupportsOcclusionQueries() const
 {
     return DeviceObj && DeviceObj->IsValid();

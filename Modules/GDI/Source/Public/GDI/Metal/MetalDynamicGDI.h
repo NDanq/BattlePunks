@@ -111,6 +111,15 @@ public:
 
     void AssignContext(GDIContext* InContext) override;
 
+    /* MTLParallelRenderCommandEncoder: a sub-encoder per chunk, executed in order. */
+    GDIParallelRecordingSupport GetParallelRecordingSupport() const override
+    {
+        GDIParallelRecordingSupport Out;
+        Out.bSupported = true;
+        Out.Mechanism  = "parallel render command encoder";
+        return Out;
+    }
+
     void Allocate() override;
     void Destroy() override;
 

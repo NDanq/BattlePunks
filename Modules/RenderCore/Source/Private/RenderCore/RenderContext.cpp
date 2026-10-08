@@ -973,10 +973,47 @@ namespace RenderCore
         bool        bTimeStages = false;
         const void* TimedOwner  = nullptr;
 
+        /* The render thread's time per ERenderGpuTimer span (RenderStats::CpuMs),
+         * measured for the timed view whether or not the GPU is: when each
+         * span started, and its last length (-1: did not run). */
+        bool            bTimeStagesCpu = false;
+        mutable int64_t StageCpuStartNs[RGT_Count] = {};
+        mutable float   StageCpuMs[RGT_Count]      = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+        int32_t         StageSpanDraws[RGT_Count]  = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+
+        void MarkStageCpu(const ERenderGpuTimer InTimer, const bool bInEnd) const
+        {
+            const int64_t Now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch()).count();
+            if(bInEnd) { StageCpuMs[InTimer] = float(double(Now - StageCpuStartNs[InTimer]) / 1.0e6); }
+            else       { StageCpuStartNs[InTimer] = Now; }
+        }
+
         /* InTimer's start (or end) timestamp: indices 2t and 2t + 1. */
         void StageTimestamp(const ERenderGpuTimer InTimer, const bool bInEnd) const
         {
+            if(bTimeStagesCpu) { MarkStageCpu(InTimer, bInEnd); }
             if(bTimeStages) { GDIWriteGPUTimestamp(uint32_t(InTimer) * 2 + (bInEnd ? 1 : 0)); }
+        }
+
+        /* A timed RenderSceneStages' draws per span, from its stage counts. */
+        void CountSpanDraws()
+        {
+            const auto Count = [this](const ERenderStage InStage) { return int32_t(StageDrawCounts[size_t(InStage)]); };
+            StageSpanDraws[RGT_PrePass]          = Count(ERenderStage::PrePass);
+            StageSpanDraws[RGT_BasePass]         = Count(ERenderStage::BasePass);
+            StageSpanDraws[RGT_AmbientOcclusion] = -1;
+            StageSpanDraws[RGT_Shadows]          = Count(ERenderStage::Shadows);
+            StageSpanDraws[RGT_Lighting]         = Count(ERenderStage::Lighting);
+            StageSpanDraws[RGT_Forward]          = Count(ERenderStage::Unlit) + Count(ERenderStage::TranslucentLit)
+                                                 + Count(ERenderStage::TranslucentUnlit);
+            StageSpanDraws[RGT_PostProcess]      = Count(ERenderStage::PostProcess);
+            int32_t Total = 0;
+            for(uint32_t Timer = RGT_PrePass; Timer < RGT_Total; ++Timer)
+            {
+                Total += std::max(StageSpanDraws[Timer], 0);
+            }
+            StageSpanDraws[RGT_Total] = Total;
         }
         bool                bGBufferThisFrame = false;   // RenderSceneStages wrote the G-buffer: Bloom may read its emissive
         bool                bVelocityThisFrame = false;  // and the velocity beside it: Motion Blur may read it
@@ -3253,7 +3290,17 @@ namespace RenderCore
 
     void RenderContext::WriteGpuTimestamp(const ERenderGpuTimer InTimer, const bool bInEnd)
     {
+        P->MarkStageCpu(InTimer, bInEnd);
         if(P->TimedOwner) { GDIWriteGPUTimestamp(uint32_t(InTimer) * 2 + (bInEnd ? 1 : 0)); }
+    }
+
+    void RenderContext::GetStageCpuTimes(float (&OutCpuMs)[RGT_Count], int32_t (&OutDraws)[RGT_Count]) const
+    {
+        for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer)
+        {
+            OutCpuMs[Timer] = P->StageCpuMs[Timer];
+            OutDraws[Timer] = P->StageSpanDraws[Timer];
+        }
     }
 
     void RenderContext::SetUnlit(const bool bInUnlit)
@@ -3341,8 +3388,22 @@ namespace RenderCore
         struct TimedScope
         {
             Impl* Owner;
-            TimedScope(Impl* InOwner, const bool bInTimed) : Owner(InOwner) { Owner->bTimeStages = bInTimed && Owner->TimedOwner; }
-            ~TimedScope() { Owner->bTimeStages = false; }
+            bool  bTimed;
+            TimedScope(Impl* InOwner, const bool bInTimed) : Owner(InOwner), bTimed(bInTimed)
+            {
+                Owner->bTimeStages    = bInTimed && Owner->TimedOwner;
+                Owner->bTimeStagesCpu = bInTimed;
+                if(bInTimed)
+                {
+                    for(uint32_t Timer = RGT_PrePass; Timer <= RGT_Total; ++Timer) { Owner->StageCpuMs[Timer] = -1.0f; }
+                }
+            }
+            ~TimedScope()
+            {
+                if(bTimed) { Owner->CountSpanDraws(); }
+                Owner->bTimeStages    = false;
+                Owner->bTimeStagesCpu = false;
+            }
         } Timed(P, bInTimed);
 
         P->bDeferring  = false;
