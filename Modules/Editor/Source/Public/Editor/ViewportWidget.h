@@ -17,6 +17,7 @@
 #include "Public/GameCore/TransformMath.h"
 #include "Public/Editor/EditorCamera.h"
 #include "Public/Editor/TransformGizmo.h"
+#include "Public/Editor/ViewportTool.h"
 
 class EditorContext;
 class EditorDocument;
@@ -41,6 +42,9 @@ namespace GameCore { struct TransformComponent; }
  *   Q / W / E / R       transform handles off / move / rotate / scale
  *   X                   handles in world or local space
  *   F / Home            frame the selection / the whole scene
+ *
+ * A tool (SetTool: the Terrain brushes) takes plain left presses and drags
+ * before selection and handles do; the camera's buttons stay the camera's.
  */
 class ViewportWidget : public QWidget, public EditorViewportClient
 {
@@ -100,6 +104,19 @@ public:
     void SetGizmoSnap(bool bInSnap);
     bool IsGizmoSnapEnabled() const { return bGizmoSnap; }
 
+    // === Tools ==============================================================
+    /* InTool takes the plain left button from now on (null: none). Not
+     * owned; the caller clears it before freeing it. A stroke in progress
+     * is cancelled. */
+    void         SetTool(ViewportTool* InTool);
+    ViewportTool* GetTool() const { return Tool; }
+
+    /* The world ray through InLogicalPos (logical pixels from the top-left). */
+    ViewportTool::Ray GetRayAt(const QPoint& InLogicalPos) const;
+
+    /* The ray under the cursor, if it is over the viewport. */
+    bool GetCursorRay(ViewportTool::Ray& OutRay) const;
+
     QPaintEngine* paintEngine() const override { return nullptr; }
 
 signals:
@@ -120,6 +137,7 @@ protected:
     void keyPressEvent(QKeyEvent* InEvent) override;
     void keyReleaseEvent(QKeyEvent* InEvent) override;
     void focusOutEvent(QFocusEvent* InEvent) override;
+    void leaveEvent(QEvent* InEvent) override;
 
     /* While the camera flies, keys are its (Ctrl+D lowers and strafes, not
      * Duplicate): the edit shortcuts wait until it lands. */
@@ -130,7 +148,7 @@ protected:
 
 private:
     /* What a held mouse button is doing. One at a time. */
-    enum class EDrag { None, Look, Orbit, Dolly, Pan, Gizmo };
+    enum class EDrag { None, Look, Orbit, Dolly, Pan, Gizmo, Tool };
 
 
     /* A game's mouse capture through the Qt fallback: while it wants it and
@@ -200,6 +218,8 @@ private:
     EditorContext&  Context;
     EditorDocument& Document;
     EditorCamera   Camera;
+
+    ViewportTool* Tool = nullptr;   // SetTool
 
 
     EDrag               Drag = EDrag::None;

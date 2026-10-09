@@ -65,6 +65,8 @@
 #include "Private/Editor/Sequencer/SequencerTab.h"
 #include "Private/Editor/Sequencer/SequencerTimeline.h"
 #include "Private/Editor/Sequencer/SequencerWindow.h"
+#include "Private/Editor/Terrain/TerrainEditing.h"
+#include "Private/Editor/Terrain/TerrainToolsWindow.h"
 #include "Private/Editor/Particles/ParticleDocument.h"
 #include "Private/Editor/Particles/ParticleEditorTab.h"
 #include "Private/Editor/Particles/ParticleEditorWindow.h"
@@ -208,6 +210,27 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     ContentDock->setWidget(ContentArea);
     addDockWidget(Qt::BottomDockWidgetArea, ContentDock);
     tabifyDockWidget(ConsoleDock, ContentDock);
+
+    /* Terrain mode, hidden until World > Terrain: tabbed with the Details.
+     * Edited terrains are written with the level, and dropped unsaved when
+     * another level replaces it (TerrainEditing.h). */
+    EditorTerrain::Host TerrainHost;
+    TerrainHost.Context      = &Context;
+    TerrainHost.Document     = &Level;
+    TerrainHost.Viewport     = Viewport;
+    TerrainHost.GetWorldFile = [this]() { return CurrentPath; };
+    EditorTerrain::SetHost(TerrainHost);
+    TerrainToolsWindow::Install(*this, DetailsDock);
+    DetailsDock->raise();
+    connect(&Level, &EditorDocument::AboutToSaveWorld, this, [this]()
+    {
+        QStringList Errors;
+        if(!EditorTerrain::SaveDirty(&Errors))
+        {
+            for(const QString& Each : Errors) { Console.PrintError(Each); }
+        }
+    });
+    connect(&Level, &EditorDocument::EditedWorldAboutToBeDestroyed, this, []() { EditorTerrain::DiscardUnsaved(); });
 
     /* The Sequencer, hidden until a sequence opens: tabbed with them. */
     SequencerWindow::Install(*this, ContentDock);
@@ -455,6 +478,11 @@ void EditorMainWindow::BuildMenus()
     };
     EditorPrimitives::AddPrimitiveActions(World->addMenu(QStringLiteral("Add &Primitive")), Level, InFrontOfCamera);
     EditorLights::AddLightActions(World->addMenu(QStringLiteral("Add &Light")), Level, InFrontOfCamera);
+
+    /* Terrain mode (TerrainToolsWindow.h): make one, then sculpt and paint it. */
+    QAction* TerrainAction = World->addAction(EditorIcons::Get(EditorIcons::EIcon::Terrain), QStringLiteral("&Terrain..."));
+    TerrainAction->setToolTip(QStringLiteral("Make, sculpt and paint terrain"));
+    connect(TerrainAction, &QAction::triggered, this, []() { TerrainToolsWindow::Show(); });
 
     /* Del itself belongs to the viewport and the Outliner (EditorEditActions.h). */
     QAction* DeleteEntity = World->addAction(QStringLiteral("&Delete"));
@@ -985,6 +1013,29 @@ void EditorMainWindow::RegisterConsoleCommands()
         Console.Print(QStringLiteral("Destroyed %1").arg(Name));
     });
 
+    Console.Register(QStringLiteral("camera"), QStringLiteral("[<x> <y> <z> [yaw] [pitch]]"),
+                     QStringLiteral("Put the viewport's camera at a position, turned yaw degrees about Y and pitched up; "
+                                    "with nothing, print where it is"),
+                     [this](const QStringList& InArgs)
+    {
+        EditorCamera& Camera = Viewport->GetCamera();
+        if(InArgs.isEmpty())
+        {
+            Console.Print(QStringLiteral("camera %1 %2 %3 %4 %5").arg(Camera.Position.GetX()).arg(Camera.Position.GetY())
+                          .arg(Camera.Position.GetZ()).arg(double(Camera.Yaw)).arg(double(Camera.Pitch)));
+            return;
+        }
+        if(InArgs.size() < 3)
+        {
+            Console.PrintError(QStringLiteral("Usage: camera [<x> <y> <z> [yaw] [pitch]]"));
+            return;
+        }
+        Camera.Position = EngineCore::Vector3(InArgs[0].toDouble(), InArgs[1].toDouble(), InArgs[2].toDouble());
+        Camera.Yaw   = 0.0f;
+        Camera.Pitch = 0.0f;
+        Camera.AddYawPitch(InArgs.value(3).toFloat(), InArgs.value(4).toFloat());
+    });
+
     Console.Register(QStringLiteral("frame"), QStringLiteral("[all]"),
                      QStringLiteral("Frame the selection in the viewport, or the whole scene"),
                      [this](const QStringList& InArgs)
@@ -1507,6 +1558,10 @@ void EditorMainWindow::RegisterConsoleCommands()
             Console.Print(QStringLiteral("Opened %1").arg(QDir::toNativeSeparators(Path)));
         }
     });
+
+    Console.Register(QStringLiteral("terrain"), EditorTerrain::GetConsoleUsage(),
+                     QStringLiteral("Make, sculpt, paint, import or export the level's terrain (for scripts and tests)"),
+                     [this](const QStringList& InArgs) { EditorTerrain::RunConsoleCommand(Console, InArgs); });
 
     Console.Register(QStringLiteral("sequence"),
                      QStringLiteral("<path | new | close | seek <seconds | marker> | play | pause | cuts <on|off> | autokey <on|off> | sound <on|off> | scrub <on|off> | height <px> | collapse <on|off> | select <track> [section] | windowshot <file.png>>"),

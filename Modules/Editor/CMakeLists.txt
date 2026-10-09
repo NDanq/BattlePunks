@@ -83,6 +83,13 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/Sequencer/SequencerTimeline.h
         Source/Private/Editor/Sequencer/SequencerWindow.cpp
         Source/Private/Editor/Sequencer/SequencerWindow.h
+        Source/Private/Editor/Terrain/TerrainEditing.cpp
+        Source/Private/Editor/Terrain/TerrainEditing.h
+        Source/Private/Editor/Terrain/TerrainTool.cpp
+        Source/Private/Editor/Terrain/TerrainTool.h
+        Source/Private/Editor/Terrain/TerrainToolsWindow.cpp
+        Source/Private/Editor/Terrain/TerrainToolsWindow.h
+        Source/Public/Editor/ViewportTool.h
         Source/Private/Editor/ConfigIniFile.cpp
         Source/Private/Editor/ConfigIniFile.h
         Source/Private/Editor/ProjectSettingsDialog.cpp
@@ -341,6 +348,21 @@ qt_add_resources(NimbleEditor "LucideIcons"
             "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/audio-waveform.svg"
             "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/captions.svg"
 )
+# The editor's own icons in Lucide's style (the Terrain tools), beside them as :/lucide/<name>.svg.
+set(NIMBLE_EDITOR_OWN_ICONS
+        "Resources/Icons/terrain.svg"
+        "Resources/Icons/terrain-raise.svg"
+        "Resources/Icons/terrain-lower.svg"
+        "Resources/Icons/terrain-smooth.svg"
+        "Resources/Icons/terrain-flatten.svg"
+        "Resources/Icons/terrain-noise.svg"
+        "Resources/Icons/terrain-set-height.svg"
+        "Resources/Icons/terrain-paint.svg"
+        "Resources/Icons/terrain-smooth-paint.svg")
+qt_add_resources(NimbleEditor "EditorOwnIcons"
+        PREFIX "/lucide"
+        BASE   "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Icons"
+        FILES  ${NIMBLE_EDITOR_OWN_ICONS})
 qt_add_resources(NimbleEditor "AppIcon"
         PREFIX "/app"
         BASE   "${CMAKE_CURRENT_SOURCE_DIR}/Resources/AppIcon"
@@ -520,9 +542,33 @@ if(NIMBLEEDITOR_BUILD_TESTS)
                  WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorSequencerTests>")
     endif()
 
+    # Terrain mode: making a terrain, strokes as undo steps, saving, the dock, offscreen.
+    add_executable(NimbleEditorTerrainTests Tests/TerrainEditorTests.cpp ${NIMBLE_EDITOR_DETAILS_SOURCES})
+    target_include_directories(NimbleEditorTerrainTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source "${NIMBLE_EDITOR_CGLTF_DIR}")
+    target_link_libraries(NimbleEditorTerrainTests PRIVATE
+            GameCore::GameCore
+            RenderCore::RenderCore
+            GameWindow::GameWindow
+            NimbleEngine::NimbleEngine
+            EngineCore::QtBridge
+            NodeGraph::NodeGraph
+            NimbleXatlas
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Widgets
+    )
+    if(TARGET NetCore)
+        target_link_libraries(NimbleEditorTerrainTests PRIVATE NetCore::NetCore)
+    endif()
+    set_target_properties(NimbleEditorTerrainTests PROPERTIES FOLDER "Editor" AUTOMOC ON)
+    add_dependencies(NimbleEditorTerrainTests NimbleEditor)
+    add_test(NAME Editor.Terrain COMMAND NimbleEditorTerrainTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorTerrainTests>")
+
     # The offscreen tests compile EditorIcons.cpp too (no resources: fallback icons).
     if(TARGET Qt6::Svg)
-        foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests NimbleEditorSequencerTests)
+        foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests NimbleEditorSequencerTests
+                NimbleEditorTerrainTests)
             if(TARGET ${NM_EDITOR_TEST})
                 target_link_libraries(${NM_EDITOR_TEST} PRIVATE Qt6::Svg)
             endif()
@@ -533,7 +579,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     if(TARGET Audio)
         foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorImportTests NimbleEditorLightingTests NimbleEditorDocumentTests
                 NimbleEditorProjectTests NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests
-                NimbleEditorSequencerTests)
+                NimbleEditorSequencerTests NimbleEditorTerrainTests)
             if(TARGET ${NM_EDITOR_TEST})
                 target_link_libraries(${NM_EDITOR_TEST} PRIVATE Audio::Audio)
             endif()
@@ -541,7 +587,8 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     endif()
     # And the content cook, which cooks sequences.
     if(TARGET Sequencer)
-        foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests NimbleEditorSequencerTests)
+        foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests NimbleEditorSequencerTests
+                NimbleEditorTerrainTests)
             if(TARGET ${NM_EDITOR_TEST})
                 target_link_libraries(${NM_EDITOR_TEST} PRIVATE Sequencer::Sequencer)
             endif()
@@ -674,6 +721,13 @@ if(TARGET NimbleEditorUIDesignerTests)
 endif()
 if(TARGET NimbleEditorParticleTests)
     target_include_directories(NimbleEditorParticleTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
+endif()
+if(TARGET NimbleEditorTerrainTests)
+    target_include_directories(NimbleEditorTerrainTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
+    qt_add_resources(NimbleEditorTerrainTests "EditorOwnIconsTests"
+            PREFIX "/lucide"
+            BASE   "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Icons"
+            FILES  ${NIMBLE_EDITOR_OWN_ICONS})
 endif()
 if(TARGET NimbleEditorSequencerTests)
     target_include_directories(NimbleEditorSequencerTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
