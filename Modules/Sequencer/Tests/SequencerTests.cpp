@@ -22,6 +22,7 @@
 #include "Public/RenderCore/Components/CameraComponent.h"
 #include "Public/RenderCore/Components/RenderComponent.h"
 #include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/PostProcessStack.h"
 #include "Public/RenderCore/SkeletonAsset.h"
 #include "Public/Sequencer/SequenceAsset.h"
 #include "Public/Sequencer/SequenceFile.h"
@@ -1006,6 +1007,76 @@ static void TestAnimationTrack()
     RenderCore::AnimationSystem::Detach(World);
 }
 
+// === Post process ============================================================
+
+static void TestPostProcess()
+{
+    std::printf("Post process\n");
+    /* RenderCore's side: settings by name turn their effect on. */
+    RenderCore::PostProcessSettings Settings;
+    RenderCore::EPostProcessParam Param;
+    Expect(RenderCore::FindPostProcessParam("DofFocusDistance", Param) && !RenderCore::FindPostProcessParam("Vignette", Param), "setting names");
+    RenderCore::FindPostProcessParam("DofFocusDistance", Param);
+    RenderCore::ApplyPostProcessParam(Settings, Param, 1234.0f);
+    Expect(Settings.bDepthOfField && Near(Settings.DofFocusDistance, 1234.0), "a focus distance turns depth of field on");
+
+    auto Asset = std::make_shared<SequenceAsset>();
+    Asset->FrameRate = 10;
+    Asset->Length    = 40;
+    SequenceTrack Stacks;
+    Stacks.Type = ESequenceTrackType::PostProcess;
+    SequenceSection Section;
+    Section.Start = 10; Section.End = 30; Section.Asset = "Test/Dream.pp.nmgraph"; Section.Volume = 0.8f; Section.BlendIn = 10;
+    Stacks.Sections = { Section };
+    SequenceTrack Exposure;
+    Exposure.Type  = ESequenceTrackType::PostProcessSetting;
+    Exposure.Field = "Exposure";
+    Exposure.Normalize();
+    Exposure.Channels[0].Keys = { Key(0, -1.0f), Key(20, 1.0f) };
+    Asset->Tracks = { Stacks, Exposure };
+    Asset->Normalize();
+    Expect(Asset->Validate().empty(), "post process tracks validate");
+
+#if WITH_UNCOOKED
+    const std::string Xml = WriteSequenceXml(*Asset);
+    Expect(Xml.find("stack=\"Test/Dream.pp.nmgraph\"") != std::string::npos && Xml.find("weight=\"0.8") != std::string::npos
+           && Xml.find("setting=\"Exposure\"") != std::string::npos, "written as stack, weight and setting");
+    SequenceAsset Again;
+    std::string Error;
+    Expect(ParseSequenceXml(Xml, Again, &Error) && WriteSequenceXml(Again) == Xml, "and read back");
+#endif
+
+    SequenceAsset Bad = *Asset;
+    Bad.Tracks[1].Field = "Vignette";
+    Expect(Bad.Validate().size() == 1, "an unknown setting is reported");
+
+    GameCore::World World;
+    SequenceInstance Instance(World, Asset, "Test/Post.nmseq");
+    Instance.Evaluate(15.0);
+    const SequencePostProcess& Post = Instance.GetPostProcess();
+    Expect(Post.Stacks.size() == 1 && Near(Post.Stacks[0].Weight, 0.4), "a stack at its weight times its fade: " +
+           (Post.Stacks.empty() ? std::string("none") : Num(Post.Stacks[0].Weight)));
+    Expect(Post.Settings.size() == 1 && Post.Settings[0].Name == "Exposure" && Near(Post.Settings[0].Value, 0.5), "a setting keyed");
+    Instance.Evaluate(35.0);
+    Expect(Instance.GetPostProcess().Stacks.empty() && Instance.GetPostProcess().Settings.size() == 1, "past its section the stack goes");
+
+    /* A player lays it over the World's post process, and takes it off when it stops. */
+    SequenceAssetCache::Set("Test/Post.nmseq", Asset);
+    SequenceWorld* Players = SequenceWorld::Attach(World);
+    const GameCore::EntityID Player = MakePlayer(World, "Test/Post.nmseq", true);
+    World.Tick(0.0f);
+    World.Tick(1.5f);
+    const RenderCore::PostProcessOverride Pushed = RenderCore::GetPostProcessOverride(&World);
+    Expect(Pushed.Stacks.size() == 1 && Pushed.Stacks[0].Path == "Test/Dream.pp.nmgraph" && Pushed.Params.size() == 1
+           && Pushed.Params[0].Param == RenderCore::EPostProcessParam::Exposure, "the World's override is the sequence's");
+    RenderCore::PostProcessSettings Laid;
+    RenderCore::ApplyPostProcessOverride(&World, Laid);
+    Expect(Laid.bToneMapping && Near(Laid.Exposure, 0.5), "applied, the exposure is the key's: " + Num(Laid.Exposure));
+    Players->Stop(Player);
+    Expect(RenderCore::GetPostProcessOverride(&World).IsEmpty(), "stopped, the override is gone");
+    SequenceWorld::Detach(World);
+}
+
 int main()
 {
     TestChannels();
@@ -1028,6 +1099,7 @@ int main()
     TestHost();
     TestReplica();
     TestAnimationTrack();
+    TestPostProcess();
 
     std::printf("%d checks, %d failed\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

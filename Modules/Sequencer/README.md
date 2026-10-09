@@ -90,6 +90,8 @@ first bytes tell the two apart, as they do for `.nmui`.
   | `CameraCut` | top level | Which camera binding the game is seen through (`camera`), blending from the previous shot over `blendIn` |
   | `Fade` | top level | The screen to black: one channel, 0 clear .. 1 black |
   | `SubSequence` | top level | Other sequences (`sequence`), each section playing one in its own time |
+  | `PostProcess` | top level | Post process stacks (`stack`, a `.pp.nmgraph`) in sections, blended over the level's volumes at `weight` times their fades |
+  | `PostProcessSetting` | top level | One setting (`setting`: `Exposure`, `DofFocusDistance`, `DofFocusRange`, `DofMaxBlur`, `BloomIntensity`, `BloomThreshold`, `FogDensity`, `MotionIntensity`, `AoIntensity`, `SsrIntensity`), keyed over everything; keying it turns its effect on |
 
   Section tracks hold `<Section start end ...>` spans. They also take
   `rate`, `volume`, `offset` (frames into the asset at `start`), `blendIn`,
@@ -170,6 +172,24 @@ before the animation system in TP_PostUpdate.
 
   The fade and the bars are a UI document GameSession builds in code, so
   there is no file to ship.
+
+### Post process
+
+The `PostProcess` and `PostProcessSetting` tracks are laid over the level's
+Post Process volumes through RenderCore's `PostProcessOverride` for the
+sequence's World:
+
+1. the volumes blend as always;
+2. the sequence's stacks blend over them at their weights;
+3. its settings are written over the result.
+
+Several players combine, earlier-started first, so a later one's settings win.
+The override is cleared when nothing plays. The editor's preview sets it for
+the level being edited. A focus pull is a `DofFocusDistance` track; keep
+`DofMaxBlur` at 0 where no blur is wanted.
+
+A volume can also be faded on its own: the Post Process component's `Weight`
+(0..1) scales its strength. A Float track on `Post Process.Weight` keys it.
 
 ### Networking
 

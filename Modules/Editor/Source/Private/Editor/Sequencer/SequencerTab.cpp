@@ -25,6 +25,7 @@
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
 #include "Public/Sequencer/SequenceAsset.h"
+#include "Public/RenderCore/PostProcessStack.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/EditorIcons.h"
 #include "Private/Editor/Graph/GraphAssets.h"
@@ -112,7 +113,11 @@ SequencerTab::SequencerTab(EditorContext& InContext, QWidget* InParent)
     connect(&Level, &EditorDocument::EditedWorldAboutToBeDestroyed, this, [this]()
     {
         /* The world goes with what was written into it: nothing to put back. */
-        if(Preview) { Preview->DiscardState(); }
+        if(Preview)
+        {
+            Preview->DiscardState();
+            Sequencer::PushPostProcess(Context.GetLevel().GetEditedWorld(), Sequencer::SequencePostProcess());
+        }
         Preview.reset();
         PreviewAsset.reset();
     });
@@ -340,10 +345,24 @@ void SequencerTab::FillAddTrackMenu(QMenu& InMenu, const int InBinding)
     Add(QStringLiteral("Audio"), -1, ESequenceTrackType::Audio);
     Add(QStringLiteral("Event"), -1, ESequenceTrackType::Event);
     Add(QStringLiteral("Sub-Sequence"), -1, ESequenceTrackType::SubSequence);
+    Add(QStringLiteral("Post Process"), -1, ESequenceTrackType::PostProcess);
+    Add(QStringLiteral("Post Process Setting..."), -1, ESequenceTrackType::PostProcessSetting);
 }
 
 void SequencerTab::AddTrackPrompted(const int InBinding, const ESequenceTrackType InType)
 {
+    if(InType == ESequenceTrackType::PostProcessSetting)
+    {
+        QStringList Settings;
+        for(size_t Index = 0; Index < size_t(RenderCore::EPostProcessParam::Count); ++Index)
+        {
+            Settings << QString::fromLatin1(RenderCore::PostProcessParamName(RenderCore::EPostProcessParam(Index)));
+        }
+        bool bOk = false;
+        const QString Setting = QInputDialog::getItem(this, QStringLiteral("Add Post Process Setting"), QStringLiteral("Setting:"), Settings, 0, false, &bOk);
+        if(bOk && !Setting.isEmpty()) { Document->AddTrack(-1, InType, QString(), Setting); }
+        return;
+    }
     if(InType == ESequenceTrackType::Float || InType == ESequenceTrackType::Bool)
     {
         bool bOk = false;
@@ -523,6 +542,7 @@ void SequencerTab::RefreshPreview()
     }
     Preview->Evaluate(Document->GetPlayhead());
     World.RefreshSpatialIndex();
+    Sequencer::PushPostProcess(World, Preview->GetPostProcess());
     RememberShownPoses();
 }
 
@@ -531,6 +551,7 @@ void SequencerTab::ReleasePreview()
     if(!Preview) { return; }
     Preview->RestoreState();
     Preview->Release();
+    Sequencer::PushPostProcess(Context.GetLevel().GetEditedWorld(), Sequencer::SequencePostProcess());
     Preview.reset();
     PreviewAsset.reset();
     PendingKeys.clear();

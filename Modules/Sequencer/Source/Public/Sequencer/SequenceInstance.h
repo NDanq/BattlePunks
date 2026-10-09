@@ -32,6 +32,27 @@ namespace Sequencer
         int32_t Depth         = 0;      // sub-sequence nesting; past 8 a SubSequence plays nothing
     };
 
+    /* What the PostProcess and PostProcessSetting tracks want laid over the
+     * level's post process now: stacks with their weights, then settings by
+     * name. PushPostProcess hands it to the renderer. */
+    struct SequencePostProcess
+    {
+        struct Stack   { std::string Path; float Weight = 1.0f; };
+        struct Setting { std::string Name; float Value  = 0.0f; };
+        std::vector<Stack>   Stacks;
+        std::vector<Setting> Settings;
+
+        bool IsEmpty() const { return Stacks.empty() && Settings.empty(); }
+        /* InOther's after these: its stacks blend later, its settings win. */
+        void Append(const SequencePostProcess& InOther);
+        bool operator==(const SequencePostProcess& InOther) const;
+        bool operator!=(const SequencePostProcess& InOther) const { return !(*this == InOther); }
+    };
+
+    /* InPost as InWorld's post process override (RenderCore's
+     * PostProcessOverride): empty clears it. Unknown setting names are skipped. */
+    SEQUENCER_API void PushPostProcess(const GameCore::World& InWorld, const SequencePostProcess& InPost);
+
     /* What the CameraCut track wants seen now: a camera binding's view, or
      * a blend between two. */
     struct SequenceShot
@@ -140,6 +161,9 @@ namespace Sequencer
          * -1 with no Fade track. */
         float GetFade() const { return Fade; }
 
+        /* The post process tracks' at the last Evaluate. */
+        const SequencePostProcess& GetPostProcess() const { return PostProcess; }
+
         /* The CameraCut track's shot at the last Evaluate. */
         const SequenceShot& GetShot() const { return Shot; }
 
@@ -231,8 +255,9 @@ namespace Sequencer
         std::vector<SavedValue>              Saved;
         std::map<SavedKey, size_t>           SavedIndex;
 
-        float              Fade = -1.0f;
-        SequenceShot       Shot;
+        float               Fade = -1.0f;
+        SequenceShot        Shot;
+        SequencePostProcess PostProcess;
         GameCore::EntityID CameraEntity;
         bool               bJumped = false;
 

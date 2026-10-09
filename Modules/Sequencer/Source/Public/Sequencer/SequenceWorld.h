@@ -68,7 +68,9 @@ namespace Sequencer
      * THE SCREEN. Of the players with a shot, the one started last is seen
      * through; when none has one the view goes back to what it was. The
      * fade is the darkest any player asks for. Cinematic mode is on while
-     * any cinematic player plays or is paused.
+     * any cinematic player plays or is paused. Post process: every player's
+     * stacks and settings, earlier-started first, laid over the volumes
+     * (RenderCore's PostProcessOverride for this World).
      *
      * NETWORKING. A server's player writes its playback into the component
      * (NetState, NetSerial, NetSeconds), which replicates. A client's copy
@@ -131,6 +133,7 @@ namespace Sequencer
         GameCore::EntityID GetViewCamera() const { return AppliedCamera; }
         float              GetFade() const       { return AppliedFade; }
         bool               IsCinematic() const   { return bAppliedCinematic; }
+        const SequencePostProcess& GetPostProcess() const { return AppliedPostProcess; }
 
         /* Every player advanced by InDeltaSeconds; the system calls it. */
         void Tick(float InDeltaSeconds);
@@ -191,6 +194,7 @@ namespace Sequencer
         bool               bViewTaken        = false;
         float              AppliedFade       = -1.0f;
         bool               bAppliedCinematic = false;
+        SequencePostProcess AppliedPostProcess;
     };
 }
 

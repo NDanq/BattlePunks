@@ -92,6 +92,8 @@ namespace Sequencer
         CameraCut,       // which camera binding the game is seen through, in sections; blends between them
         Fade,            // the screen to black: one channel, 0 clear .. 1 black
         SubSequence,     // other sequences, played in sections
+        PostProcess,     // post process stacks (.pp.nmgraph) in sections, faded in by weight over the level's volumes
+        PostProcessSetting, // one post process setting (Field: "Exposure", "DofFocusDistance"...) keyed over everything
         Count
     };
 
@@ -145,7 +147,8 @@ namespace Sequencer
     /*
      * A span of a section track, [Start, End) in frames. What Asset means
      * depends on the track: Animation a .nmanim, Audio a .nmsound,
-     * SubSequence a .nmseq, CameraCut the id of the camera's binding.
+     * SubSequence a .nmseq, CameraCut the id of the camera's binding,
+     * PostProcess a .pp.nmgraph stack.
      */
     struct SequenceSection
     {
@@ -154,7 +157,7 @@ namespace Sequencer
         std::string Asset;
 
         float   PlayRate = 1.0f;   // Animation, Audio, SubSequence: how fast the asset plays
-        float   Volume   = 1.0f;   // Audio
+        float   Volume   = 1.0f;   // Audio's volume; PostProcess's weight (0..1)
         int32_t Offset   = 0;      // frames into the asset at Start (a trimmed start)
         int32_t BlendIn  = 0;      // frames: Animation crossfade, Audio fade-in, CameraCut blend
         int32_t BlendOut = 0;      // frames: Animation, Audio fade-out
@@ -176,7 +179,8 @@ namespace Sequencer
 
         /* Float and Bool: the component (its registered name, "Camera") and
          * the field as Lua sees it ("FovY") -- any field the component binds
-         * for scripts. */
+         * for scripts. PostProcessSetting: Field is the setting's name
+         * (RenderCore's PostProcessParamName). */
         std::string Component;
         std::string Field;
 
@@ -228,7 +232,7 @@ namespace Sequencer
         std::vector<SequenceBinding> Bindings;
 
         /* Tracks of no binding: Event, Audio (heard everywhere), CameraCut,
-         * Fade and SubSequence. */
+         * Fade, SubSequence, PostProcess and PostProcessSetting. */
         std::vector<SequenceTrack> Tracks;
 
         /* Named frames, for authoring (the editor's markers) and Lua

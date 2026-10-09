@@ -9,6 +9,7 @@
 #include <unordered_set>
 
 #include "Public/Core/CoreLog.h"
+#include "Public/RenderCore/PostProcessStack.h"
 #include "Public/Sequencer/SequenceFile.h"
 
 /* The asset's arithmetic: easing, sampling a channel, names, validation, and
@@ -26,7 +27,7 @@ namespace Sequencer
         };
         static_assert(sizeof(INTERP_NAMES) / sizeof(INTERP_NAMES[0]) == size_t(ESequenceInterp::Count), "one name each");
 
-        const char* const TRACK_NAMES[] = { "Transform", "Float", "Bool", "Event", "Animation", "Audio", "CameraCut", "Fade", "SubSequence" };
+        const char* const TRACK_NAMES[] = { "Transform", "Float", "Bool", "Event", "Animation", "Audio", "CameraCut", "Fade", "SubSequence", "PostProcess", "PostProcessSetting" };
         static_assert(sizeof(TRACK_NAMES) / sizeof(TRACK_NAMES[0]) == size_t(ESequenceTrackType::Count), "one name each");
 
         const char* const CHANNEL_NAMES[] =
@@ -115,7 +116,8 @@ namespace Sequencer
     bool IsSectionTrack(const ESequenceTrackType InType)
     {
         return InType == ESequenceTrackType::Animation || InType == ESequenceTrackType::Audio
-            || InType == ESequenceTrackType::CameraCut || InType == ESequenceTrackType::SubSequence;
+            || InType == ESequenceTrackType::CameraCut || InType == ESequenceTrackType::SubSequence
+            || InType == ESequenceTrackType::PostProcess;
     }
 
     float Ease(const ESequenceInterp InInterp, float InT)
@@ -263,7 +265,8 @@ namespace Sequencer
             case ESequenceTrackType::Transform: Wanted = TC_Count; break;
             case ESequenceTrackType::Float:
             case ESequenceTrackType::Bool:
-            case ESequenceTrackType::Fade:      Wanted = 1; break;
+            case ESequenceTrackType::Fade:
+            case ESequenceTrackType::PostProcessSetting: Wanted = 1; break;
             default:                            Wanted = 0; break;
         }
         Channels.resize(Wanted);
@@ -403,7 +406,8 @@ namespace Sequencer
                     Problems.push_back(Who + ": a " + TrackTypeName(Track.Type) + " track has keys past the end");
                 }
                 if(Track.Type == ESequenceTrackType::CameraCut || Track.Type == ESequenceTrackType::Fade
-                   || Track.Type == ESequenceTrackType::SubSequence)
+                   || Track.Type == ESequenceTrackType::SubSequence || Track.Type == ESequenceTrackType::PostProcess
+                   || Track.Type == ESequenceTrackType::PostProcessSetting)
                 {
                     Problems.push_back(Who + ": a " + TrackTypeName(Track.Type) + " track belongs to no binding (put it at the top level)");
                 }
@@ -419,6 +423,11 @@ namespace Sequencer
             if(Track.GetLastFrame() > Length)
             {
                 Problems.push_back(std::string("a ") + TrackTypeName(Track.Type) + " track has keys past the end");
+            }
+            RenderCore::EPostProcessParam Param;
+            if(Track.Type == ESequenceTrackType::PostProcessSetting && !RenderCore::FindPostProcessParam(Track.Field.c_str(), Param))
+            {
+                Problems.push_back("a PostProcessSetting track names '" + Track.Field + "', which is not a post process setting");
             }
         }
 

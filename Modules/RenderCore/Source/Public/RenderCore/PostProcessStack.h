@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "Public/RenderCore/RenderCoreAPI.h"
 
@@ -142,6 +143,65 @@ namespace RenderCore
      * InBlendDistance outside; with no blend distance, 1 inside and 0 out.
      */
     RENDERCORE_API float GetPostProcessVolumeWeight(float InDistance, float InBlendDistance);
+
+    /*
+     * One post process setting a sequence (or a game) can override by name,
+     * on top of whatever the volumes blended: what Sequencer's Post Process
+     * Setting tracks key. Overriding a setting also turns its effect on.
+     */
+    enum class EPostProcessParam : uint8_t
+    {
+        Exposure = 0,        // stops; turns Tone Mapping on
+        DofFocusDistance,    // world units; turns Depth of Field on
+        DofFocusRange,
+        DofMaxBlur,          // pixels
+        BloomIntensity,      // turns Bloom on
+        BloomThreshold,
+        FogDensity,          // per world unit; turns Volumetric Fog on
+        MotionIntensity,     // turns Motion Blur on
+        AoIntensity,         // turns Ambient Occlusion on
+        SsrIntensity,        // turns Screen Reflections on
+        Count
+    };
+
+    /* Never null; "" out of range. The name tracks use. */
+    RENDERCORE_API const char* PostProcessParamName(EPostProcessParam InParam);
+    /* False, OutParam untouched, for an unknown name. */
+    RENDERCORE_API bool        FindPostProcessParam(const char* InName, EPostProcessParam& OutParam);
+    /* InValue into InOutSettings' InParam, and its effect on. */
+    RENDERCORE_API void        ApplyPostProcessParam(PostProcessSettings& InOutSettings, EPostProcessParam InParam, float InValue);
+
+    /*
+     * What is laid over a World's volumes, every frame it is set: Stacks
+     * blended after them (in order, as volumes of their weight), then Params
+     * written over the result. A Sequencer sets it for its World while a
+     * sequence plays, and clears it after. Game thread.
+     */
+    struct PostProcessOverride
+    {
+        struct Stack
+        {
+            std::string Path;            // a .pp.nmgraph, as a Post Process component names it
+            float       Weight = 1.0f;   // 0..1
+        };
+        struct Param
+        {
+            EPostProcessParam Param = EPostProcessParam::Exposure;
+            float             Value = 0.0f;
+        };
+        std::vector<Stack> Stacks;
+        std::vector<Param> Params;
+
+        bool IsEmpty() const { return Stacks.empty() && Params.empty(); }
+    };
+
+    /* InWorld's override (an empty one clears it); keyed by address, so clear
+     * it before the World goes. */
+    RENDERCORE_API void SetPostProcessOverride(const void* InWorld, const PostProcessOverride& InOverride);
+    /* A copy of InWorld's; empty if none. */
+    RENDERCORE_API PostProcessOverride GetPostProcessOverride(const void* InWorld);
+    /* InWorld's override applied to InOutSettings (WorldBridge, after the volumes). */
+    RENDERCORE_API void ApplyPostProcessOverride(const void* InWorld, PostProcessSettings& InOutSettings);
 
     /*
      * Stacks by runtime path ("Content/PostProcess/Arch.pp.nmgraph"), read

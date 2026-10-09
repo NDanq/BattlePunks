@@ -31,6 +31,14 @@ namespace
         {
             Label = QStringLiteral("%1.%2").arg(QString::fromStdString(InTrack.Component), QString::fromStdString(InTrack.Field));
         }
+        else if(InTrack.Type == ESequenceTrackType::PostProcess && InTrack.Name.empty())
+        {
+            Label = QStringLiteral("Post Process");
+        }
+        else if(InTrack.Type == ESequenceTrackType::PostProcessSetting && InTrack.Name.empty())
+        {
+            Label = QStringLiteral("Post Process: %1").arg(QString::fromStdString(InTrack.Field));
+        }
         return Label;
     }
 
@@ -201,6 +209,8 @@ QColor SequencerTimeline::TrackColor(const ESequenceTrackType InType) const
         case ESequenceTrackType::Audio:       return QColor(143, 106, 214);
         case ESequenceTrackType::CameraCut:   return QColor(201, 138, 43);
         case ESequenceTrackType::Fade:        return QColor(140, 148, 162);
+        case ESequenceTrackType::PostProcess: return QColor(196, 104, 176);
+        case ESequenceTrackType::PostProcessSetting: return QColor(196, 104, 176);
         case ESequenceTrackType::SubSequence: return QColor(180, 120, 80);
         case ESequenceTrackType::Count:       break;
     }
@@ -435,7 +445,8 @@ void SequencerTimeline::PaintRow(QPainter& InPainter, const int InRow, const QRe
         const auto& Keys = Track->Channels[size_t(Channel)].Keys;
 
         /* The curve's shape, faintly, behind its keys. */
-        if(Track->Type == ESequenceTrackType::Fade || Track->Type == ESequenceTrackType::Float || Track->Type == ESequenceTrackType::Bool)
+        if(Track->Type == ESequenceTrackType::Fade || Track->Type == ESequenceTrackType::Float || Track->Type == ESequenceTrackType::Bool
+           || Track->Type == ESequenceTrackType::PostProcessSetting)
         {
             float Low = 0.0f, High = 1.0f;
             for(const auto& Key : Keys) { Low = std::min(Low, Key.Value); High = std::max(High, Key.Value); }
@@ -963,6 +974,7 @@ void SequencerTimeline::mouseDoubleClickEvent(QMouseEvent* InEvent)
         case ESequenceTrackType::Float:
         case ESequenceTrackType::Bool:
         case ESequenceTrackType::Fade:
+        case ESequenceTrackType::PostProcessSetting:
             Document.SetKey(R.Track, 0, Frame, Document.EvaluateChannel(R.Track, 0, Frame, Track->Type == ESequenceTrackType::Bool ? 1.0f : 0.0f),
                             QStringLiteral("Add Key"));
             break;
@@ -979,6 +991,7 @@ void SequencerTimeline::mouseDoubleClickEvent(QMouseEvent* InEvent)
         case ESequenceTrackType::Animation:
         case ESequenceTrackType::Audio:
         case ESequenceTrackType::SubSequence:
+        case ESequenceTrackType::PostProcess:
             Document.AddSection(R.Track, Frame, Frame + int(Fps) * 2, QString());
             break;
         case ESequenceTrackType::Count:
