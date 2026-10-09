@@ -39,7 +39,8 @@ namespace EditorSequencer
      * path, empty if cancelled or it could not be written. */
     QString CreateSequence(const QString& InFolder, QWidget* InParent, bool bInOpen = true);
 
-    /* Offers to save each unsaved sequence, and puts the level back. False if cancelled. */
+    /* Offers to save each unsaved sequence and closes them, putting the level
+     * back (the dock stays). False if cancelled. */
     bool CloseAll();
 }
 

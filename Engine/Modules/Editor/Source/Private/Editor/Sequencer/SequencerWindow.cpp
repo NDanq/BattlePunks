@@ -4,16 +4,23 @@
 
 #include <QAction>
 #include <QCloseEvent>
+#include <QFileDialog>
+#include <QLabel>
+#include <QMainWindow>
 #include <QMouseEvent>
 #include <QPointer>
+#include <QPushButton>
+#include <QStackedWidget>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QVBoxLayout>
 
+#include "Private/Editor/Sequencer/SequencerAssets.h"
 #include "Private/Editor/Sequencer/SequencerTab.h"
 
 namespace
 {
-    /* The one window; a QPointer, so a closed (deleted) one reads as null. */
+    /* The one dock; a QPointer, so a deleted one reads as null. */
     QPointer<SequencerWindow>& Instance()
     {
         static QPointer<SequencerWindow> Window;
@@ -21,10 +28,26 @@ namespace
     }
 }
 
+SequencerWindow& SequencerWindow::Install(QMainWindow& InHost, QDockWidget* InTabifyWith)
+{
+    if(Instance()) { return *Instance(); }
+    auto* Dock = new SequencerWindow(&InHost);
+    Instance() = Dock;
+    InHost.addDockWidget(Qt::BottomDockWidgetArea, Dock);
+    if(InTabifyWith) { InHost.tabifyDockWidget(InTabifyWith, Dock); }
+    Dock->hide();
+    return *Dock;
+}
+
 SequencerWindow& SequencerWindow::Get()
 {
-    /* Top-level and unowned: the Sequencer may sit beside the main window, whose viewport it drives. */
-    if(!Instance()) { Instance() = new SequencerWindow(); }
+    /* No main window (a test): a floating dock of its own. */
+    if(!Instance())
+    {
+        Instance() = new SequencerWindow();
+        Instance()->setFloating(true);
+        Instance()->resize(1500, 700);
+    }
     return *Instance();
 }
 
@@ -34,19 +57,49 @@ SequencerWindow* SequencerWindow::Find()
 }
 
 SequencerWindow::SequencerWindow(QWidget* InParent)
-    : QMainWindow(InParent, Qt::Window)
+    : QDockWidget(QStringLiteral("Sequencer"), InParent)
 {
-    setAttribute(Qt::WA_DeleteOnClose);
-    resize(1500, 700);
+    setObjectName(QStringLiteral("SequencerDock"));
+    setAllowedAreas(Qt::AllDockWidgetAreas);
+    setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
 
-    Tabs = new QTabWidget(this);
+    Pages = new QStackedWidget(this);
+
+    /* Nothing open: how to open something. */
+    auto* Empty  = new QWidget(Pages);
+    auto* Layout = new QVBoxLayout(Empty);
+    Layout->addStretch(1);
+    auto* Note = new QLabel(QStringLiteral("No sequence is open. Double-click a .nmseq in the Content Browser, or:"), Empty);
+    Note->setAlignment(Qt::AlignCenter);
+    Note->setForegroundRole(QPalette::PlaceholderText);
+    Layout->addWidget(Note);
+    auto* Buttons = new QHBoxLayout();
+    Buttons->addStretch(1);
+    auto* Open = new QPushButton(QStringLiteral("Open Sequence..."), Empty);
+    auto* New  = new QPushButton(QStringLiteral("New Sequence..."), Empty);
+    Buttons->addWidget(Open);
+    Buttons->addWidget(New);
+    Buttons->addStretch(1);
+    Layout->addLayout(Buttons);
+    Layout->addStretch(1);
+    connect(Open, &QPushButton::clicked, this, [this]()
+    {
+        const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Sequence"), EditorSequencer::GetDefaultFolder(),
+                                                          QStringLiteral("Sequences (*.nmseq)"));
+        if(!Path.isEmpty()) { EditorSequencer::OpenSequence(Path, this); }
+    });
+    connect(New, &QPushButton::clicked, this, [this]() { EditorSequencer::CreateSequence(QString(), this); });
+    Pages->addWidget(Empty);
+
+    Tabs = new QTabWidget(Pages);
     Tabs->setObjectName(QStringLiteral("SequencerTabs"));
     Tabs->setDocumentMode(true);
     Tabs->setTabsClosable(true);
     Tabs->setMovable(true);
     Tabs->tabBar()->setExpanding(false);
     Tabs->tabBar()->installEventFilter(this);
-    setCentralWidget(Tabs);
+    Pages->addWidget(Tabs);
+    setWidget(Pages);
 
     connect(Tabs, &QTabWidget::currentChanged, this, &SequencerWindow::UpdateTitles);
     connect(Tabs, &QTabWidget::tabCloseRequested, this, [this](const int InIndex)
@@ -58,6 +111,7 @@ SequencerWindow::SequencerWindow(QWidget* InParent)
     {
         auto* Action = new QAction(this);
         Action->setShortcuts(InKeys);
+        Action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         connect(Action, &QAction::triggered, this, [this, InBy]() { StepTab(InBy); });
         addAction(Action);
     };
@@ -78,21 +132,35 @@ void SequencerWindow::AddTab(SequencerTab* InTab)
 void SequencerWindow::ShowTab(SequencerTab* InTab)
 {
     Tabs->setCurrentWidget(InTab);
-    if(isMinimized()) { showNormal(); }
-    else              { show(); }
+    UpdateTitles();
+    show();
     raise();
-    activateWindow();
+    if(isFloating()) { activateWindow(); }
 }
 
 bool SequencerWindow::CloseTab(SequencerTab* InTab)
 {
     const int Index = Tabs->indexOf(InTab);
     if(Index < 0 || !InTab->ConfirmClose()) { return false; }
-
-    /* Now, not later: the tab puts the level back as it goes. */
     Tabs->removeTab(Index);
     delete InTab;
-    if(Tabs->count() == 0) { close(); }
+    UpdateTitles();
+    return true;
+}
+
+bool SequencerWindow::CloseAllTabs()
+{
+    /* Every sequence is asked before any goes, so a Cancel loses nothing. */
+    for(SequencerTab* Tab : GetTabs())
+    {
+        if(!Tab->ConfirmClose()) { return false; }
+    }
+    for(SequencerTab* Tab : GetTabs())
+    {
+        Tabs->removeTab(Tabs->indexOf(Tab));
+        delete Tab;
+    }
+    UpdateTitles();
     return true;
 }
 
@@ -119,10 +187,10 @@ void SequencerWindow::UpdateTitles()
         Tabs->setTabText(Index, Tab->GetTabTitle());
         Tabs->setTabToolTip(Index, Tab->GetPath());
     }
+    Pages->setCurrentIndex(Tabs->count() > 0 ? 1 : 0);
 
     const SequencerTab* Current = CurrentTab();
-    setWindowTitle(Current ? QStringLiteral("%1 - Sequencer - Nimble Editor").arg(Current->GetTabTitle())
-                           : QStringLiteral("Sequencer - Nimble Editor"));
+    setWindowTitle(Current ? QStringLiteral("Sequencer - %1").arg(Current->GetTabTitle()) : QStringLiteral("Sequencer"));
 }
 
 void SequencerWindow::StepTab(const int InBy)
@@ -133,23 +201,13 @@ void SequencerWindow::StepTab(const int InBy)
 
 void SequencerWindow::closeEvent(QCloseEvent* InEvent)
 {
-    /* Every sequence is asked before any goes, so a Cancel loses nothing. */
-    for(SequencerTab* Tab : GetTabs())
+    /* The dock stays, hidden; its sequences close, the level put back. */
+    if(!CloseAllTabs())
     {
-        if(!Tab->ConfirmClose())
-        {
-            InEvent->ignore();
-            return;
-        }
+        InEvent->ignore();
+        return;
     }
-
-    /* The tabs go now, each putting the level back. */
-    for(SequencerTab* Tab : GetTabs())
-    {
-        Tabs->removeTab(Tabs->indexOf(Tab));
-        delete Tab;
-    }
-    InEvent->accept();
+    QDockWidget::closeEvent(InEvent);
 }
 
 bool SequencerWindow::eventFilter(QObject* InWatched, QEvent* InEvent)
@@ -165,7 +223,7 @@ bool SequencerWindow::eventFilter(QObject* InWatched, QEvent* InEvent)
             return true;
         }
     }
-    return QMainWindow::eventFilter(InWatched, InEvent);
+    return QDockWidget::eventFilter(InWatched, InEvent);
 }
 
 #endif // WITH_EDITOR

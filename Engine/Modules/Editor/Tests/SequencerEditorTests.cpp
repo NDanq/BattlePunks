@@ -27,6 +27,12 @@
 #include "Private/Editor/Sequencer/SequencerDocument.h"
 #include "Private/Editor/Sequencer/SequencerTab.h"
 #include "Private/Editor/Sequencer/SequencerTimeline.h"
+#include "Private/Editor/Sequencer/SequencerAssets.h"
+#include "Private/Editor/Sequencer/SequencerWindow.h"
+
+#include <QDockWidget>
+#include <QMainWindow>
+#include <QTextEdit>
 
 using Sequencer::ESequenceTrackType;
 
@@ -313,7 +319,7 @@ static void TestTab(const QString& InDir)
         /* SEQUENCER_SNAPSHOT=<png>: the tab as drawn, for a look. */
         if(!qEnvironmentVariableIsEmpty("SEQUENCER_SNAPSHOT"))
         {
-            Tab.resize(1500, 640);
+            Tab.resize(1500, 760);
             Tab.show();
             Tab.GetDocument().SetCurrent(0, { 0, 0 });
             Tab.GetTimeline().FitAll();
@@ -326,6 +332,49 @@ static void TestTab(const QString& InDir)
         Expect(Tab.ConfirmClose(), "closes clean");
     }
     Expect(Near(X(), -50.0), "closed: the level is as it was: " + std::to_string(X()));
+}
+
+/* The Sequencer docked in a main window: hidden until a sequence opens, tabbed
+ * with the Content Browser, and its sequences closed by CloseAll. */
+static void TestDock(const QString& InDir)
+{
+    std::printf("Dock\n");
+    EditorContext Context;
+    EditorSequencer::SetEditorContext(&Context);
+    Context.GetLevel().CreateEntity(QStringLiteral("Hero"), EngineCore::Vector3());
+
+    QMainWindow Host;
+    Host.resize(1600, 1000);
+    Host.setCentralWidget(new QTextEdit(QStringLiteral("(the level viewport)"), &Host));
+    auto* Content = new QDockWidget(QStringLiteral("Content Browser"), &Host);
+    Content->setObjectName(QStringLiteral("ContentBrowserDock"));
+    Content->setWidget(new QTextEdit(&Host));
+    Host.addDockWidget(Qt::BottomDockWidgetArea, Content);
+    SequencerWindow& Dock = SequencerWindow::Install(Host, Content);
+    Host.show();
+    Pump();
+    Expect(SequencerWindow::Find() == &Dock && Dock.isHidden() && Dock.parentWidget() == &Host, "installed hidden in the main window");
+
+    const QString Path = InDir + QStringLiteral("/Dock.nmseq");
+    std::string Error;
+    Sequencer::SaveSequenceXml(Path.toStdString(), Sample(), &Error);
+    SequencerTab* Tab = EditorSequencer::OpenSequence(Path, &Host);
+    Pump();
+    Expect(Tab && !Dock.isHidden() && !Dock.isFloating() && Dock.GetTabs().size() == 1, "opening a sequence shows it docked");
+    Expect(Host.tabifiedDockWidgets(Content).contains(&Dock), "tabbed with the Content Browser");
+    Expect(EditorSequencer::OpenSequence(Path, &Host) == Tab && Dock.GetTabs().size() == 1, "opening it again focuses its tab");
+    Expect(Dock.windowTitle().contains(QStringLiteral("Dock")), "the dock is titled for the sequence in front");
+
+    if(!qEnvironmentVariableIsEmpty("SEQUENCER_DOCK_SNAPSHOT"))
+    {
+        Host.resizeDocks({ &Dock }, { 560 }, Qt::Vertical);
+        Tab->GetTimeline().FitAll();
+        Pump();
+        Host.grab().save(QString::fromLocal8Bit(qgetenv("SEQUENCER_DOCK_SNAPSHOT")));
+    }
+
+    Expect(EditorSequencer::CloseAll() && Dock.GetTabs().isEmpty() && SequencerWindow::Find() == &Dock, "CloseAll closes its sequences, the dock stays");
+    EditorSequencer::SetEditorContext(nullptr);
 }
 
 int main(int argc, char** argv)
@@ -343,6 +392,7 @@ int main(int argc, char** argv)
     TestCurves();
     TestDetails();
     TestTab(Dir.path());
+    TestDock(Dir.path());
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

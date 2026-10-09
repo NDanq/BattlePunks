@@ -48,13 +48,20 @@ public:
         QString           CollapseKey;    // "" if it does not collapse
     };
 
-    static constexpr int NAME_WIDTH   = 230;
-    static constexpr int RULER_HEIGHT = 28;
-    static constexpr int ROW_HEIGHT   = 22;
+    static constexpr int NAME_WIDTH   = 290;
+    static constexpr int RULER_HEIGHT = 40;
+
+    /* Rows by kind: a binding's header, a track (a section track's taller,
+     * for its labels), a Transform channel, the sequence's header. */
+    static constexpr int BINDING_HEIGHT = 34;
+    static constexpr int TRACK_HEIGHT   = 30;
+    static constexpr int SECTION_HEIGHT = 38;
+    static constexpr int CHANNEL_HEIGHT = 26;
 
     explicit SequencerTimeline(SequencerDocument& InDocument, QWidget* InParent = nullptr);
 
     const std::vector<Row>& GetRows() const { return Rows; }
+    int    RowHeight(int InRow) const;
     /* -1 outside every row. */
     int    RowAt(int InY) const;
     QRect  RowRect(int InRow) const;
