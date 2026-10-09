@@ -100,6 +100,7 @@ namespace Sequencer
                 case ESequenceTrackType::CameraCut:   return "camera";
                 case ESequenceTrackType::SubSequence: return "sequence";
                 case ESequenceTrackType::PostProcess: return "stack";
+                case ESequenceTrackType::Subtitle:    return "text";
                 default:                              return "asset";
             }
         }
@@ -113,7 +114,9 @@ namespace Sequencer
                 return false;
             }
             OutTrack.Component = InNode.attribute("component").as_string();
-            OutTrack.Field     = InNode.attribute(OutTrack.Type == ESequenceTrackType::PostProcessSetting ? "setting" : "field").as_string();
+            OutTrack.Field     = InNode.attribute(OutTrack.Type == ESequenceTrackType::PostProcessSetting ? "setting"
+                                                    : OutTrack.Type == ESequenceTrackType::BusVolume        ? "bus"
+                                                                                                          : "field").as_string();
             OutTrack.Name      = InNode.attribute("name").as_string();
             OutTrack.bMuted    = InNode.attribute("muted").as_bool();
             OutTrack.Normalize();   // sizes Channels for the type
@@ -137,6 +140,7 @@ namespace Sequencer
                 case ESequenceTrackType::Bool:
                 case ESequenceTrackType::Fade:
                 case ESequenceTrackType::PostProcessSetting:
+                case ESequenceTrackType::BusVolume:
                     if(!ReadKeys(InNode, OutTrack.Type == ESequenceTrackType::Bool, OutTrack.Channels[0], OutError)) { return false; }
                     break;
                 case ESequenceTrackType::Animation:
@@ -144,6 +148,7 @@ namespace Sequencer
                 case ESequenceTrackType::CameraCut:
                 case ESequenceTrackType::SubSequence:
                 case ESequenceTrackType::PostProcess:
+                case ESequenceTrackType::Subtitle:
                     for(pugi::xml_node Node = InNode.child("Section"); Node; Node = Node.next_sibling("Section"))
                     {
                         SequenceSection Made;
@@ -156,6 +161,10 @@ namespace Sequencer
                         Made.BlendIn  = Node.attribute("blendIn").as_int(0);
                         Made.BlendOut = Node.attribute("blendOut").as_int(0);
                         Made.bLoop    = Node.attribute("loop").as_bool();
+                        Made.Bus      = int8_t(FindSequenceBus(Node.attribute("bus").as_string()));
+                        const char* Spatial = Node.attribute("spatial").as_string();
+                        Made.Spatial  = std::strcmp(Spatial, "2D") == 0 ? 0 : std::strcmp(Spatial, "3D") == 0 ? 1 : -1;
+                        Made.Speaker  = Node.attribute("speaker").as_string();
                         OutTrack.Sections.push_back(std::move(Made));
                     }
                     break;
@@ -230,6 +239,10 @@ namespace Sequencer
                 case ESequenceTrackType::Fade:
                     if(!InTrack.Channels.empty()) { WriteKeys(Node, InTrack.Channels[0], false); }
                     break;
+                case ESequenceTrackType::BusVolume:
+                    Node.append_attribute("bus").set_value(InTrack.Field.c_str());
+                    if(!InTrack.Channels.empty()) { WriteKeys(Node, InTrack.Channels[0], false); }
+                    break;
                 case ESequenceTrackType::PostProcessSetting:
                     Node.append_attribute("setting").set_value(InTrack.Field.c_str());
                     if(!InTrack.Channels.empty()) { WriteKeys(Node, InTrack.Channels[0], false); }
@@ -239,6 +252,7 @@ namespace Sequencer
                 case ESequenceTrackType::CameraCut:
                 case ESequenceTrackType::SubSequence:
                 case ESequenceTrackType::PostProcess:
+                case ESequenceTrackType::Subtitle:
                     for(const SequenceSection& Section : InTrack.Sections)
                     {
                         pugi::xml_node Made = Node.append_child("Section");
@@ -254,6 +268,9 @@ namespace Sequencer
                         if(Section.BlendIn != 0)     { Made.append_attribute("blendIn").set_value(Section.BlendIn); }
                         if(Section.BlendOut != 0)    { Made.append_attribute("blendOut").set_value(Section.BlendOut); }
                         if(Section.bLoop)            { Made.append_attribute("loop").set_value("true"); }
+                        if(Section.Bus >= 0)         { Made.append_attribute("bus").set_value(SequenceBusName(Section.Bus)); }
+                        if(Section.Spatial >= 0)     { Made.append_attribute("spatial").set_value(Section.Spatial ? "3D" : "2D"); }
+                        if(!Section.Speaker.empty()) { Made.append_attribute("speaker").set_value(Section.Speaker.c_str()); }
                     }
                     break;
                 case ESequenceTrackType::Event:

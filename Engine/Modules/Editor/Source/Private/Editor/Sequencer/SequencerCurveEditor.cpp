@@ -52,7 +52,7 @@ std::vector<int> SequencerCurveEditor::GetChannels() const
     const SequenceTrack* Track = Document.FindTrack(Document.GetCurrentTrack());
     if(!Track) { return Channels; }
     if(Track->Type == ESequenceTrackType::Float || Track->Type == ESequenceTrackType::Fade || Track->Type == ESequenceTrackType::Bool
-       || Track->Type == ESequenceTrackType::PostProcessSetting)
+       || Track->Type == ESequenceTrackType::PostProcessSetting || Track->Type == ESequenceTrackType::BusVolume)
     {
         Channels.push_back(0);
         return Channels;
@@ -193,8 +193,10 @@ void SequencerCurveEditor::paintEvent(QPaintEvent*)
     QFont Small = Painter.font();
     Small.setPointSizeF(std::max(7.0, Small.pointSizeF() - 1.5));
     Painter.setFont(Small);
-    for(double V = std::ceil(ValueMin / Step) * Step; V <= ValueMax; V += Step)
+    /* By index, not by summing: the sum drifts (0 drawn as -2.8e-17). */
+    for(double Line = std::ceil(ValueMin / Step); Line * Step <= ValueMax; Line += 1.0)
     {
+        const double V = Line * Step;
         const double Y = ToScreen(0, V).y();
         Painter.setPen(Pal.color(QPalette::Mid));
         Painter.drawLine(QPointF(MARGIN, Y), QPointF(width() - MARGIN, Y));

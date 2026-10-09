@@ -280,6 +280,8 @@ namespace NimbleEngine
             SequenceHost.SetFade       = &GameSession::SequenceSetFade;
             SequenceHost.SetCinematic  = &GameSession::SequenceSetCinematic;
             SequenceHost.IsReplica     = &GameSession::SequenceIsReplica;
+            SequenceHost.SetBusGain    = &GameSession::SequenceSetBusGain;
+            SequenceHost.SetSubtitle   = &GameSession::SequenceSetSubtitle;
             SequenceHost.UserData      = this;
             Sequences->SetHost(SequenceHost);
         }
@@ -483,6 +485,11 @@ namespace NimbleEngine
             Sequencer::SequenceWorld::Detach(*LevelWorld);
             bCinematic    = false;
             CinematicFade = -1.0f;
+            bSubtitle     = false;
+#if WITH_AUDIO
+            /* No level's sequence holds the mix now. */
+            for(uint8_t Bus = 0; Bus < uint8_t(Audio::EAudioBus::Count); ++Bus) { Audio::AudioDevice::Get().SetBusGain(Audio::EAudioBus(Bus), 1.0f); }
+#endif
 
             Scripts.UnbindWorld();
             Rendering.UnbindWorld();
@@ -657,8 +664,9 @@ namespace NimbleEngine
     {
         constexpr const char* CINEMATIC_DOCUMENT = "Engine/Sequencer/Cinematic.nmui";
 
-        /* Over everything, taking no input: a black box for the fade, and
-         * letterbox bars. Made in code, so no build has a file to stage. */
+        /* Over everything, taking no input: a black box for the fade,
+         * letterbox bars, and the subtitle line over both. Made in code, so
+         * no build has a file to stage. */
         std::shared_ptr<const UI::UIDocumentAsset> MakeCinematicDocument()
         {
             auto Asset = std::make_shared<UI::UIDocumentAsset>();
@@ -680,13 +688,19 @@ namespace NimbleEngine
                                { "Opacity", "{Bind:Sequencer.Letterbox}" } });
             Add("Border", 0, { { "Name", "Fade" },      { "Anchors", "0,0,1,1" },    { "Background.Tint", "#000000FF" },
                                { "Opacity", "{Bind:Sequencer.Fade}" } });
+            Add("Text", 0, { { "Name", "Speaker" }, { "Anchors", "0.1,0.795,0.9,0.835" }, { "Text", "{Bind:Sequencer.Speaker}" },
+                             { "FontSize", "22" }, { "Justify", "Center" }, { "Color", "#FFD27AFF" },
+                             { "ShadowOffset", "2,2" }, { "ShadowColor", "#000000C0" } });
+            Add("Text", 0, { { "Name", "Subtitle" }, { "Anchors", "0.1,0.835,0.9,0.95" }, { "Text", "{Bind:Sequencer.Subtitle}" },
+                             { "FontSize", "28" }, { "Justify", "Center" }, { "Wrap", "true" }, { "Color", "#FFFFFFFF" },
+                             { "ShadowOffset", "2,2" }, { "ShadowColor", "#000000C0" } });
             return Asset;
         }
     }
 
     void GameSession::UpdateCinematicOverlay()
     {
-        const bool bWanted = bCinematic || CinematicFade > 0.0f;
+        const bool bWanted = bCinematic || CinematicFade > 0.0f || bSubtitle;
         Interface->SetValue("Sequencer.Fade", UI::UIValue::Number(std::max(0.0f, CinematicFade)));
         Interface->SetValue("Sequencer.Letterbox", UI::UIValue::Number(bCinematic ? 1.0 : 0.0));
         if(bWanted && !Interface->IsOpen(CINEMATIC_DOCUMENT))
@@ -721,6 +735,28 @@ namespace NimbleEngine
     {
         auto* Session = static_cast<GameSession*>(InUserData);
         Session->bCinematic = bInOn;
+        Session->UpdateCinematicOverlay();
+    }
+
+    /* Bus Volume tracks: the device's runtime gain, under the player's own
+     * volume settings and never saved. */
+    void GameSession::SequenceSetBusGain(const char* InBus, const float InGain, void* InUserData)
+    {
+        (void)InUserData;
+#if WITH_AUDIO
+        Audio::EAudioBus Bus;
+        if(Audio::FindBus(InBus, Bus)) { Audio::AudioDevice::Get().SetBusGain(Bus, InGain); }
+#else
+        (void)InBus; (void)InGain;
+#endif
+    }
+
+    void GameSession::SequenceSetSubtitle(const char* InSpeaker, const char* InText, void* InUserData)
+    {
+        auto* Session = static_cast<GameSession*>(InUserData);
+        Session->Interface->SetValue("Sequencer.Speaker", UI::UIValue::String(InSpeaker));
+        Session->Interface->SetValue("Sequencer.Subtitle", UI::UIValue::String(InText));
+        Session->bSubtitle = InText[0] != '\0';
         Session->UpdateCinematicOverlay();
     }
 

@@ -58,6 +58,7 @@ namespace Audio
          * (ma_engine_set_volume), every other bus a group playing into it. */
         ma_sound_group Buses[size_t(EAudioBus::Count)];
         bool           bBusMuted[size_t(EAudioBus::Count)] = {};
+        float          BusGain[size_t(EAudioBus::Count)] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
 
         bool bPaused = false;
 

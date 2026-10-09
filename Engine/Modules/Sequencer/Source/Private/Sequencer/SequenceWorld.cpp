@@ -54,13 +54,33 @@ namespace Sequencer
         return Found != Map.end() ? Found->second : nullptr;
     }
 
+    namespace
+    {
+        bool GSubtitlesEnabled = true;
+    }
+
     SequenceWorld::SequenceWorld(GameCore::World& InWorld) : World(InWorld) {}
 
+    void SequenceWorld::SetSubtitlesEnabled(const bool bInOn)
+    {
+        GSubtitlesEnabled = bInOn;
+    }
+
+    bool SequenceWorld::AreSubtitlesEnabled()
+    {
+        return GSubtitlesEnabled;
+    }
+
     /* The world is going away: what the players made goes with it, nothing
-     * restored, and the host told nothing (it is going too). */
+     * restored, the view and screen left to the host (it is going too). The
+     * mix is the audio device's, which outlives the level: put back. */
     SequenceWorld::~SequenceWorld()
     {
         if(!AppliedPostProcess.IsEmpty()) { PushPostProcess(World, SequencePostProcess()); }
+        if(Host.SetBusGain)
+        {
+            for(const SequenceBusGain& Gain : AppliedBusGains) { Host.SetBusGain(Gain.Bus.c_str(), 1.0f, Host.UserData); }
+        }
     }
 
     void SequenceWorld::SetHost(const SequenceHost& InHost)
@@ -524,6 +544,47 @@ namespace Sequencer
         {
             AppliedPostProcess = Post;
             PushPostProcess(World, Post);
+        }
+
+        /* The mix: every player's gains multiplied, by bus. */
+        std::vector<SequenceBusGain> Gains;
+        for(const Player* P : Playing)
+        {
+            for(const SequenceBusGain& Gain : P->Instance->GetBusGains())
+            {
+                auto Found = std::find_if(Gains.begin(), Gains.end(), [&](const SequenceBusGain& In) { return In.Bus == Gain.Bus; });
+                if(Found == Gains.end()) { Gains.push_back(Gain); }
+                else                     { Found->Gain *= Gain.Gain; }
+            }
+        }
+        Gains.erase(std::remove_if(Gains.begin(), Gains.end(), [](const SequenceBusGain& In) { return In.Gain == 1.0f; }), Gains.end());
+        for(const SequenceBusGain& Old : AppliedBusGains)
+        {
+            const bool bKept = std::any_of(Gains.begin(), Gains.end(), [&](const SequenceBusGain& In) { return In.Bus == Old.Bus; });
+            if(!bKept && Host.SetBusGain) { Host.SetBusGain(Old.Bus.c_str(), 1.0f, Host.UserData); }
+        }
+        for(const SequenceBusGain& Gain : Gains)
+        {
+            const auto Old = std::find_if(AppliedBusGains.begin(), AppliedBusGains.end(), [&](const SequenceBusGain& In) { return In.Bus == Gain.Bus; });
+            const bool bChanged = Old == AppliedBusGains.end() || Old->Gain != Gain.Gain;
+            if(bChanged && Host.SetBusGain) { Host.SetBusGain(Gain.Bus.c_str(), Gain.Gain, Host.UserData); }
+        }
+        AppliedBusGains = std::move(Gains);
+
+        /* The subtitle: the started-last player with a line. */
+        SequenceSubtitle Line;
+        if(GSubtitlesEnabled)
+        {
+            for(auto It = Playing.rbegin(); It != Playing.rend(); ++It)
+            {
+                const SequenceSubtitle& Candidate = (*It)->Instance->GetSubtitle();
+                if(!Candidate.IsEmpty()) { Line = Candidate; break; }
+            }
+        }
+        if(Line != AppliedSubtitle)
+        {
+            AppliedSubtitle = Line;
+            if(Host.SetSubtitle) { Host.SetSubtitle(Line.Speaker.c_str(), Line.Text.c_str(), Host.UserData); }
         }
 
         if(bCinema != bAppliedCinematic)

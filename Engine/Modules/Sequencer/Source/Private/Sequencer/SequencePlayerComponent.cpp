@@ -136,6 +136,18 @@ namespace
         InCall.PushInteger(int64_t(System->SkipCinematics()));
     }
 
+    void ScriptSetSubtitles(GameCore::ScriptCall& InCall)
+    {
+        const bool bOn = InCall.GetBool(1);
+        if(InCall.HasError()) { return; }
+        Sequencer::SequenceWorld::SetSubtitlesEnabled(bOn);
+    }
+
+    void ScriptGetSubtitles(GameCore::ScriptCall& InCall)
+    {
+        InCall.PushBool(Sequencer::SequenceWorld::AreSubtitlesEnabled());
+    }
+
     void ScriptBind(GameCore::ScriptCall& InCall)
     {
         const GameCore::EntityID Player = InCall.GetEntity(1);
@@ -202,6 +214,10 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(Sequence)
        .Tooltip("Seek, to one of the sequence's named markers");
     Lib.Function("SkipCinematics", &ScriptSkipCinematics, "-> Skipped:integer")
        .Tooltip("Skips every skippable cinematic playing, as the Back key does");
+    Lib.Function("SetSubtitles", &ScriptSetSubtitles, "On:bool")
+       .Tooltip("Shows sequences' subtitle tracks or not (every level; on by default)");
+    Lib.Pure("GetSubtitles", &ScriptGetSubtitles, "-> On:bool")
+       .Tooltip("Whether sequences' subtitles are shown");
     Lib.Function("Bind", &ScriptBind, "Player:Entity, Binding:string, Entity:Entity -> Done:bool")
        .Tooltip("Plays one of the sequence's bindings on this entity instead");
     Lib.Pure("IsPlaying", &ScriptIsPlaying, "Player:Entity -> Playing:bool")

@@ -94,11 +94,19 @@ namespace Sequencer
         SubSequence,     // other sequences, played in sections
         PostProcess,     // post process stacks (.pp.nmgraph) in sections, faded in by weight over the level's volumes
         PostProcessSetting, // one post process setting (Field: "Exposure", "DofFocusDistance"...) keyed over everything
+        BusVolume,       // one sound bus's gain (Field: "Music", "Voice"...), keyed; 1 leaves it as the player set it
+        Subtitle,        // lines of text in sections (Asset the text, Speaker who says it)
         Count
     };
 
     /* Section tracks keep sections, not keys. */
     SEQUENCER_API bool IsSectionTrack(ESequenceTrackType InType);
+
+    /* The sound buses, as GameCore's EAudioSourceBus numbers them: "Master",
+     * "Music", "SFX", "UI", "Voice", "Ambient". -1 for an unknown name. */
+    enum : int32_t { SEQUENCE_BUS_COUNT = 6 };
+    SEQUENCER_API const char* SequenceBusName(int32_t InBus);
+    SEQUENCER_API int32_t     FindSequenceBus(const char* InName);
 
     SEQUENCER_API const char* TrackTypeName(ESequenceTrackType InType);
     SEQUENCER_API bool        ParseTrackType(const char* InName, ESequenceTrackType& OutType);
@@ -148,7 +156,7 @@ namespace Sequencer
      * A span of a section track, [Start, End) in frames. What Asset means
      * depends on the track: Animation a .nmanim, Audio a .nmsound,
      * SubSequence a .nmseq, CameraCut the id of the camera's binding,
-     * PostProcess a .pp.nmgraph stack.
+     * PostProcess a .pp.nmgraph stack, Subtitle the line's text.
      */
     struct SequenceSection
     {
@@ -162,6 +170,15 @@ namespace Sequencer
         int32_t BlendIn  = 0;      // frames: Animation crossfade, Audio fade-in, CameraCut blend
         int32_t BlendOut = 0;      // frames: Animation, Audio fade-out
         bool    bLoop    = false;  // Animation, Audio: wrap when the asset runs out
+
+        /* Audio: the bus (-1 the sound's own, else Master, Music, SFX, UI,
+         * Voice, Ambient: 0..5) and how it is heard (-1 the sound's own --
+         * 2D on a track of no binding -- 0 2D, 1 3D). */
+        int8_t      Bus     = -1;
+        int8_t      Spatial = -1;
+
+        /* Subtitle: who says the line (Asset). */
+        std::string Speaker;
 
         int32_t GetLength() const { return End > Start ? End - Start : 0; }
         bool    Contains(double InFrame) const { return InFrame >= double(Start) && InFrame < double(End); }
@@ -232,7 +249,8 @@ namespace Sequencer
         std::vector<SequenceBinding> Bindings;
 
         /* Tracks of no binding: Event, Audio (heard everywhere), CameraCut,
-         * Fade, SubSequence, PostProcess and PostProcessSetting. */
+         * Fade, SubSequence, PostProcess, PostProcessSetting, BusVolume and
+         * Subtitle. */
         std::vector<SequenceTrack> Tracks;
 
         /* Named frames, for authoring (the editor's markers) and Lua

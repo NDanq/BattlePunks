@@ -27,7 +27,8 @@ namespace Sequencer
         };
         static_assert(sizeof(INTERP_NAMES) / sizeof(INTERP_NAMES[0]) == size_t(ESequenceInterp::Count), "one name each");
 
-        const char* const TRACK_NAMES[] = { "Transform", "Float", "Bool", "Event", "Animation", "Audio", "CameraCut", "Fade", "SubSequence", "PostProcess", "PostProcessSetting" };
+        const char* const TRACK_NAMES[] = { "Transform", "Float", "Bool", "Event", "Animation", "Audio", "CameraCut", "Fade", "SubSequence", "PostProcess", "PostProcessSetting", "BusVolume",
+                                             "Subtitle" };
         static_assert(sizeof(TRACK_NAMES) / sizeof(TRACK_NAMES[0]) == size_t(ESequenceTrackType::Count), "one name each");
 
         const char* const CHANNEL_NAMES[] =
@@ -117,7 +118,27 @@ namespace Sequencer
     {
         return InType == ESequenceTrackType::Animation || InType == ESequenceTrackType::Audio
             || InType == ESequenceTrackType::CameraCut || InType == ESequenceTrackType::SubSequence
-            || InType == ESequenceTrackType::PostProcess;
+            || InType == ESequenceTrackType::PostProcess || InType == ESequenceTrackType::Subtitle;
+    }
+
+    namespace
+    {
+        const char* const BUS_NAMES[SEQUENCE_BUS_COUNT] = { "Master", "Music", "SFX", "UI", "Voice", "Ambient" };
+    }
+
+    const char* SequenceBusName(const int32_t InBus)
+    {
+        return InBus >= 0 && InBus < SEQUENCE_BUS_COUNT ? BUS_NAMES[InBus] : "";
+    }
+
+    int32_t FindSequenceBus(const char* InName)
+    {
+        if(!InName) { return -1; }
+        for(int32_t Index = 0; Index < SEQUENCE_BUS_COUNT; ++Index)
+        {
+            if(std::strcmp(InName, BUS_NAMES[Index]) == 0) { return Index; }
+        }
+        return -1;
     }
 
     float Ease(const ESequenceInterp InInterp, float InT)
@@ -266,7 +287,8 @@ namespace Sequencer
             case ESequenceTrackType::Float:
             case ESequenceTrackType::Bool:
             case ESequenceTrackType::Fade:
-            case ESequenceTrackType::PostProcessSetting: Wanted = 1; break;
+            case ESequenceTrackType::PostProcessSetting:
+            case ESequenceTrackType::BusVolume: Wanted = 1; break;
             default:                            Wanted = 0; break;
         }
         Channels.resize(Wanted);
@@ -299,6 +321,8 @@ namespace Sequencer
             Section.Offset   = std::max(Section.Offset, 0);
             Section.BlendIn  = std::clamp(Section.BlendIn, 0, Section.GetLength());
             Section.BlendOut = std::clamp(Section.BlendOut, 0, Section.GetLength());
+            if(Section.Bus < -1 || Section.Bus >= SEQUENCE_BUS_COUNT) { Section.Bus = -1; }
+            if(Section.Spatial < -1 || Section.Spatial > 1)           { Section.Spatial = -1; }
             if(!(Section.PlayRate > 0.0f)) { Section.PlayRate = 1.0f; }
             if(!(Section.Volume >= 0.0f))  { Section.Volume = 1.0f; }
         }
@@ -362,7 +386,7 @@ namespace Sequencer
         };
         const auto FromTrack = [&Add](const SequenceTrack& InTrack)
         {
-            if(InTrack.Type == ESequenceTrackType::CameraCut) { return; }   // a binding id, not a file
+            if(InTrack.Type == ESequenceTrackType::CameraCut || InTrack.Type == ESequenceTrackType::Subtitle) { return; }   // not files
             for(const SequenceSection& Section : InTrack.Sections) { Add(Section.Asset); }
         };
         for(const SequenceBinding& Binding : Bindings)
@@ -407,7 +431,8 @@ namespace Sequencer
                 }
                 if(Track.Type == ESequenceTrackType::CameraCut || Track.Type == ESequenceTrackType::Fade
                    || Track.Type == ESequenceTrackType::SubSequence || Track.Type == ESequenceTrackType::PostProcess
-                   || Track.Type == ESequenceTrackType::PostProcessSetting)
+                   || Track.Type == ESequenceTrackType::PostProcessSetting || Track.Type == ESequenceTrackType::BusVolume
+                   || Track.Type == ESequenceTrackType::Subtitle)
                 {
                     Problems.push_back(Who + ": a " + TrackTypeName(Track.Type) + " track belongs to no binding (put it at the top level)");
                 }
@@ -428,6 +453,10 @@ namespace Sequencer
             if(Track.Type == ESequenceTrackType::PostProcessSetting && !RenderCore::FindPostProcessParam(Track.Field.c_str(), Param))
             {
                 Problems.push_back("a PostProcessSetting track names '" + Track.Field + "', which is not a post process setting");
+            }
+            if(Track.Type == ESequenceTrackType::BusVolume && FindSequenceBus(Track.Field.c_str()) < 0)
+            {
+                Problems.push_back("a BusVolume track names '" + Track.Field + "', which is not a bus (Master, Music, SFX, UI, Voice, Ambient)");
             }
         }
 

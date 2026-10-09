@@ -98,7 +98,10 @@ and so does the editor, through `NimbleEngine::StartAudio()`. It reads
 | `MasterVolume`, `MusicVolume`, `SFXVolume`, `UIVolume`, `VoiceVolume`, `AmbientVolume` | 1 | The buses (0..4), applied as they change and saved with the player's settings |
 
 **Buses.** Master, with Music, SFX, UI, Voice and Ambient playing into it.
-Each bus has a volume and a mute.
+Each bus has a volume and a mute. Under the volume, a **gain**
+(`AudioDevice::SetBusGain`, 0..4, 1 by default) is the game's own: never
+saved, multiplied in. A sequence's Bus Volume track ducks through it, so the
+player's settings are left alone.
 
 **Pausing the device** (`SetPaused`) holds the whole mix. That is for a lost
 window. A paused game pauses only its World's voices (`AudioWorld::SetPaused`),
@@ -198,7 +201,10 @@ it does three things:
 
 A source plays by its sound's settings: loop, 3D or not, bus, distances,
 attenuation and cone. With **Override** on, it plays by its own fields
-instead. Its Volume and Pitch always scale the sound's.
+instead. Its Volume and Pitch always scale the sound's. Two settings can be
+taken over without Override: **Force Bus** (a bus other than the sound's)
+and **Force Spatial** (2D or 3D whatever the sound says); a sequence's Audio
+section sets them.
 
 **Footsteps.** An animation clip's notify can name a sound, played once at
 its bone as the clip passes it (RenderCore's ANIMATION.md, "Notifies").

@@ -50,6 +50,9 @@ namespace EditorIcons
         ZoomIn,       // lucide "zoom-in"
         ZoomOut,      // lucide "zoom-out"
         Fit,          // lucide "scan": fit the view
+        Sound,        // lucide "volume-2": hear the preview
+        Scrub,        // lucide "audio-waveform": hear the scrub
+        Subtitles,    // lucide "captions"
         Count
     };
 

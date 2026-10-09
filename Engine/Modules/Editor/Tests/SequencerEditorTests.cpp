@@ -1,7 +1,8 @@
 /*
  * NimbleEditorSequencerTests -- the Sequencer, offscreen: its document and
  * undo, the timeline's mouse work, the curve editor's tangents, the details'
- * edits, and a tab previewing on a level (auto-key, restore, save).
+ * edits, and a tab previewing on a level (auto-key, restore, save, sound
+ * and subtitles).
  */
 
 #include <cmath>
@@ -21,6 +22,7 @@
 
 #include "Public/Editor/EditorContext.h"
 #include "Public/Editor/EditorDocument.h"
+#include "Public/GameCore/Components/AudioSourceComponent.h"
 #include "Public/GameCore/Components/TransformComponent.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
@@ -397,6 +399,81 @@ static void TestTab(const QString& InDir)
     Expect(RenderCore::GetPostProcessOverride(&World).IsEmpty(), "and its post process override is gone");
 }
 
+/* Sound in the preview: helpers in the tab's own World, never the level's;
+ * the subtitle line shown; Bus Volume and Subtitle tracks added and drawn. */
+static void TestTabSound(const QString& InDir)
+{
+    std::printf("Tab sound\n");
+    EditorContext Context;
+    GameCore::World& World = Context.GetLevel().GetEditedWorld();
+
+    Sequencer::SequenceAsset Asset = Sample();
+    Sequencer::SequenceTrack Audio;
+    Audio.Type = ESequenceTrackType::Audio;
+    Sequencer::SequenceSection Ping;
+    Ping.Start = 10; Ping.End = 60; Ping.Asset = "Test/Ping.nmsound"; Ping.Bus = 4;
+    /* SEQUENCER_SOUND_ASSET=<runtime path>: a real sound, so the snapshot shows its waveform. */
+    if(!qEnvironmentVariableIsEmpty("SEQUENCER_SOUND_ASSET")) { Ping.Asset = qgetenv("SEQUENCER_SOUND_ASSET").toStdString(); }
+    Audio.Sections = { Ping };
+    Sequencer::SequenceTrack Lines;
+    Lines.Type = ESequenceTrackType::Subtitle;
+    Sequencer::SequenceSection Line;
+    Line.Start = 20; Line.End = 50; Line.Speaker = "Captain"; Line.Asset = "Hold <fast>!";
+    Lines.Sections = { Line };
+    Asset.Tracks.push_back(Audio);
+    Asset.Tracks.push_back(Lines);
+    Asset.Normalize();
+    const QString Path = InDir + QStringLiteral("/Sound.nmseq");
+    std::string Error;
+    Expect(Sequencer::SaveSequenceXml(Path.toStdString(), Asset, &Error), "the sequence is written");
+
+    const auto Count = [](GameCore::World& InWorld)
+    {
+        int N = 0;
+        InWorld.Each<GameCore::AudioSourceComponent>([&N](GameCore::Entity, GameCore::AudioSourceComponent&) { ++N; });
+        return N;
+    };
+
+    SequencerTab Tab(Context);
+    QString LoadError;
+    Expect(Tab.Load(Path, LoadError), "opened: " + LoadError.toStdString());
+    Expect(Tab.IsSoundOn() && !Tab.IsScrubAudio(), "sound on, scrub audio off, by default");
+    Tab.SetPlaying(true);
+    Tab.GetDocument().SetPlayhead(30.0);
+    Expect(Tab.GetSoundWorld() && Count(*Tab.GetSoundWorld()) == 1 && Count(World) == 0, "playing: a helper in the tab's sound world, none in the level");
+    GameCore::AudioSourceComponent* Source = nullptr;
+    Tab.GetSoundWorld()->Each<GameCore::AudioSourceComponent>([&Source](GameCore::Entity, GameCore::AudioSourceComponent& In) { Source = &In; });
+    Expect(Source && Source->ForceBus == 5 && Source->ForceSpatial == 1, "on the section's bus, 2D on a master track");
+    Expect(Tab.GetShownSubtitle().contains(QStringLiteral("Captain")) && Tab.GetShownSubtitle().contains(QStringLiteral("Hold &lt;fast&gt;!")),
+           "the subtitle line shown, escaped: " + Tab.GetShownSubtitle().toStdString());
+    Tab.SetPlaying(false);
+    Tab.GetDocument().SetPlayhead(55.0);
+    Expect(Tab.GetShownSubtitle().isEmpty(), "past it, no line");
+
+    Tab.SetScrubAudio(true);
+    Expect(Tab.IsScrubAudio(), "scrub audio on");
+    Tab.SetSound(false);
+    Expect(!Tab.GetSoundWorld() && Tab.GetPreview() && !Tab.GetPreview()->GetOptions().bAudio, "sound off: no sound world, the preview silent");
+    Tab.SetSound(true);
+    Expect(Tab.GetSoundWorld() && Tab.GetPreview()->GetOptions().SoundWorld == Tab.GetSoundWorld(), "and back on");
+
+    /* Bus Volume and Subtitle tracks: added, keyed and drawn. */
+    const SequencerTrackRef Duck = Tab.GetDocument().AddTrack(-1, ESequenceTrackType::BusVolume, QString(), QStringLiteral("Music"));
+    Tab.GetDocument().SetKey(Duck, 0, 0, 0.25f);
+    Expect(Tab.GetPreview()->GetBusGains().size() == 1 && Near(Tab.GetPreview()->GetBusGains()[0].Gain, 0.25), "the preview ducks the music");
+    Tab.resize(1500, 760);
+    Tab.show();
+    Tab.GetTimeline().FitAll();
+    Tab.GetDocument().SetPlayhead(30.0);
+    Pump();
+    const QImage Drawn = Tab.grab().toImage();
+    Expect(!Drawn.isNull(), "drawn with bus volume, subtitle and audio sections");
+    if(!qEnvironmentVariableIsEmpty("SEQUENCER_SOUND_SNAPSHOT")) { Drawn.save(QString::fromLocal8Bit(qgetenv("SEQUENCER_SOUND_SNAPSHOT"))); }
+
+    Expect(Tab.Save() && Tab.ConfirmClose(), "saved and closed");
+    Expect(Count(World) == 0, "the level never had a sound helper");
+}
+
 /* The Sequencer docked in a main window: hidden until a sequence opens, tabbed
  * with the Content Browser, and its sequences closed by CloseAll. */
 static void TestDock(const QString& InDir)
@@ -465,6 +542,7 @@ int main(int argc, char** argv)
     TestCurves();
     TestDetails();
     TestTab(Dir.path());
+    TestTabSound(Dir.path());
     TestDock(Dir.path());
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);

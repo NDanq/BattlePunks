@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "Public/GameCore/EntityID.h"
 #include "Public/Sequencer/SequenceAsset.h"
@@ -48,6 +49,15 @@ namespace Sequencer
          * follows the server rather than playing on its own. */
         bool (*IsReplica)(GameCore::EntityID InPlayer, void* InUserData) = nullptr;
 
+        /* A mix bus (SequenceBusName: "Music", "SFX", ...) at InGain, 1 being
+         * as the player set it: the Bus Volume tracks. Told 1 again when no
+         * player wants it any more. */
+        void (*SetBusGain)(const char* InBus, float InGain, void* InUserData) = nullptr;
+
+        /* The subtitle line to show; both "" for none. Never called with a
+         * line while subtitles are off (SetSubtitlesEnabled). */
+        void (*SetSubtitle)(const char* InSpeaker, const char* InText, void* InUserData) = nullptr;
+
         void* UserData = nullptr;
     };
 
@@ -70,7 +80,9 @@ namespace Sequencer
      * fade is the darkest any player asks for. Cinematic mode is on while
      * any cinematic player plays or is paused. Post process: every player's
      * stacks and settings, earlier-started first, laid over the volumes
-     * (RenderCore's PostProcessOverride for this World).
+     * (RenderCore's PostProcessOverride for this World). Bus gains: every
+     * player's multiplied. The subtitle: the started-last player's that has
+     * a line, unless subtitles are off.
      *
      * NETWORKING. A server's player writes its playback into the component
      * (NetState, NetSerial, NetSeconds), which replicates. A client's copy
@@ -114,6 +126,11 @@ namespace Sequencer
         bool SeekToMarker(GameCore::EntityID InPlayer, const char* InMarker);
         /* Jumps to the end: fireOnSkip events on the way, then it finishes. */
         bool Skip(GameCore::EntityID InPlayer);
+        /* Subtitle tracks shown or not, for every World (a player's
+         * setting; on by default). Not saved here -- the game keeps it. */
+        static void SetSubtitlesEnabled(bool bInOn);
+        static bool AreSubtitlesEnabled();
+
         /* SequenceInstance::SetBindingOverride; kept across Play and Stop. */
         bool Bind(GameCore::EntityID InPlayer, const char* InBindingId, GameCore::EntityID InEntity);
 
@@ -134,6 +151,8 @@ namespace Sequencer
         float              GetFade() const       { return AppliedFade; }
         bool               IsCinematic() const   { return bAppliedCinematic; }
         const SequencePostProcess& GetPostProcess() const { return AppliedPostProcess; }
+        const std::vector<SequenceBusGain>& GetBusGains() const { return AppliedBusGains; }
+        const SequenceSubtitle&    GetSubtitle() const    { return AppliedSubtitle; }
 
         /* Every player advanced by InDeltaSeconds; the system calls it. */
         void Tick(float InDeltaSeconds);
@@ -195,6 +214,8 @@ namespace Sequencer
         float              AppliedFade       = -1.0f;
         bool               bAppliedCinematic = false;
         SequencePostProcess AppliedPostProcess;
+        std::vector<SequenceBusGain> AppliedBusGains;   // only those not 1
+        SequenceSubtitle    AppliedSubtitle;
     };
 }
 
