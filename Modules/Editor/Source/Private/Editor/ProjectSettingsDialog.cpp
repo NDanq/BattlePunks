@@ -258,6 +258,12 @@ namespace
         return QDir::current().absoluteFilePath(QStringLiteral("Config/DefaultEngine.ini"));
     }
 
+    /* DefaultGame.ini, beside the DefaultEngine.ini at InEnginePath. */
+    QString GameConfigPathBeside(const QString& InEnginePath)
+    {
+        return QFileInfo(InEnginePath).dir().absoluteFilePath(QStringLiteral("DefaultGame.ini"));
+    }
+
     std::string ToStd(const QString& InText)
     {
         return std::string(InText.toUtf8().constData());
@@ -286,6 +292,12 @@ ProjectSettingsDialog::ProjectSettingsDialog(QWidget* InParent)
     if(!File.Load(FilePath))
     {
         CORE_LOG_ERROR("[Editor] project settings: could not read " + ToStd(FilePath) + ": " + ToStd(File.GetError()))
+    }
+    /* The game's own settings (input bindings); a missing file is empty. */
+    GameFilePath = GameConfigPathBeside(FilePath);
+    if(!GameFile.Load(GameFilePath))
+    {
+        CORE_LOG_ERROR("[Editor] project settings: could not read " + ToStd(GameFilePath) + ": " + ToStd(GameFile.GetError()))
     }
 
     auto* Layout = new QVBoxLayout(this);
@@ -372,7 +384,8 @@ void ProjectSettingsDialog::BuildProjectPage()
     auto* Where = new QLabel(Page);
     Where->setWordWrap(true);
     Where->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    QString Text = QStringLiteral("<p>Saved to <b>%1</b></p>").arg(QDir::toNativeSeparators(FilePath).toHtmlEscaped());
+    QString Text = QStringLiteral("<p>Saved to <b>%1</b>; input bindings to <b>%2</b></p>")
+                       .arg(QDir::toNativeSeparators(FilePath).toHtmlEscaped(), QDir::toNativeSeparators(GameFilePath).toHtmlEscaped());
     if(!bFileIsSource)
     {
         Text += QStringLiteral("<p><b>This is the copy staged beside the editor.</b> The editor does not know the "
@@ -710,7 +723,7 @@ void ProjectSettingsDialog::BuildInputPage()
     auto* Scroll = new QScrollArea(Stack);
     Scroll->setWidgetResizable(true);
     Scroll->setFrameShape(QFrame::NoFrame);
-    Input = new InputMapsPage(File, Scroll);
+    Input = new InputMapsPage(GameFile, File, Scroll);
     Scroll->setWidget(Input);
     Stack->addWidget(Scroll);
     Pages->addItem(QStringLiteral("Input"));
@@ -1053,49 +1066,64 @@ bool ProjectSettingsDialog::Apply()
         Changed << QStringLiteral("Worlds = %1").arg(Names.isEmpty() ? QStringLiteral("(none)") : Names.join(QStringLiteral(", ")));
     }
 
-    if(Input) { Changed << Input->Apply(File); }
+    /* Input bindings are the game's: DefaultGame.ini. */
+    const QStringList InputChanged = Input ? Input->Apply(GameFile) : QStringList();
 
     if(!Rejected.isEmpty())
     {
         QMessageBox::warning(this, windowTitle(),
                              QStringLiteral("Not valid values, so not saved:\n%1").arg(Rejected.join(QLatin1Char('\n'))));
     }
-    if(Changed.isEmpty())
+    if(Changed.isEmpty() && InputChanged.isEmpty())
     {
         return bModulesConfirmed;
     }
 
-    if(!File.Save(FilePath))
+    /* The master, then the staged copy too, so the next Play and the next
+     * launch see the change before any build copies it across. */
+    const auto SaveConfig = [this](const ConfigIniFile& InFile, const QString& InPath, const QString& InStaged,
+                                   const QStringList& InChanged)
     {
-        CORE_LOG_ERROR("[Editor] project settings: could not write " + ToStd(FilePath) + ": " + ToStd(File.GetError()))
-        QMessageBox::warning(this, windowTitle(),
-                             QStringLiteral("The settings apply to this session, but could not be saved to\n%1\n\n%2")
-                             .arg(QDir::toNativeSeparators(FilePath), File.GetError()));
+        if(!InFile.Save(InPath))
+        {
+            CORE_LOG_ERROR("[Editor] project settings: could not write " + ToStd(InPath) + ": " + ToStd(InFile.GetError()))
+            QMessageBox::warning(this, windowTitle(),
+                                 QStringLiteral("The settings apply to this session, but could not be saved to\n%1\n\n%2")
+                                 .arg(QDir::toNativeSeparators(InPath), InFile.GetError()));
+            return false;
+        }
+        for(const QString& Line : InChanged)
+        {
+            CORE_LOG("[Editor] project settings: " + ToStd(Line))
+        }
+        CORE_LOG("[Editor] project settings saved to " + ToStd(InPath))
+
+        if(bFileIsSource && QFileInfo(InStaged).absoluteFilePath() != QFileInfo(InPath).absoluteFilePath())
+        {
+            QDir().mkpath(QFileInfo(InStaged).absolutePath());
+            if(!InFile.Save(InStaged))
+            {
+                CORE_LOG_WARN("[Editor] project settings: could not refresh the staged copy " + ToStd(InStaged)
+                              + "; the next build will")
+            }
+        }
+        return true;
+    };
+
+    if(!Changed.isEmpty() && !SaveConfig(File, FilePath, StagedConfigPath(), Changed))
+    {
         return false;
     }
-    for(const QString& Line : Changed)
+    if(!InputChanged.isEmpty()
+       && !SaveConfig(GameFile, GameFilePath, GameConfigPathBeside(StagedConfigPath()), InputChanged))
     {
-        CORE_LOG("[Editor] project settings: " + ToStd(Line))
+        return false;
     }
-    CORE_LOG("[Editor] project settings saved to " + ToStd(FilePath))
 
     if(!ModulesChanged.isEmpty())
     {
         CORE_LOG_WARN("[Editor] project settings: " + ToStd(ModulesChanged.join(QStringLiteral(", ")))
                       + " -- a native recompile applies it: close the editor and build the project")
-    }
-
-    /* The staged copy too, so the next Play and the next launch see the
-     * change before any build copies it across. */
-    const QString Staged = StagedConfigPath();
-    if(bFileIsSource && QFileInfo(Staged).absoluteFilePath() != QFileInfo(FilePath).absoluteFilePath())
-    {
-        QDir().mkpath(QFileInfo(Staged).absolutePath());
-        if(!File.Save(Staged))
-        {
-            CORE_LOG_WARN("[Editor] project settings: could not refresh the staged copy " + ToStd(Staged)
-                          + "; the next build will")
-        }
     }
     return bModulesConfirmed;
 }

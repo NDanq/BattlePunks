@@ -94,7 +94,7 @@ namespace
     };
 }
 
-InputMapsPage::InputMapsPage(const ConfigIniFile& InFile, QWidget* InParent)
+InputMapsPage::InputMapsPage(const ConfigIniFile& InGameFile, const ConfigIniFile& InEngineFile, QWidget* InParent)
     : QWidget(InParent)
 {
     auto* Layout = new QVBoxLayout(this);
@@ -102,7 +102,7 @@ InputMapsPage::InputMapsPage(const ConfigIniFile& InFile, QWidget* InParent)
     Layout->addWidget(Title);
     auto* About = new QLabel(QStringLiteral("The game's actions and axes. Keys are comma-separated; on an axis, '-' before a "
                                             "key pushes it the other way and *0.5 scales it. Saved as [Input_&lt;Map&gt;] in "
-                                            "the project's DefaultEngine.ini."), this);
+                                            "the project's DefaultGame.ini."), this);
     About->setWordWrap(true);
     Layout->addWidget(About);
 
@@ -149,12 +149,20 @@ InputMapsPage::InputMapsPage(const ConfigIniFile& InFile, QWidget* InParent)
     connect(Capture, &QPushButton::clicked, this, &InputMapsPage::CaptureKey);
     connect(Reset, &QPushButton::clicked, this, &InputMapsPage::ResetSelected);
 
-    Populate(InFile);
+    Populate(InGameFile, InEngineFile);
     OnSelectionChanged();
 }
 
-void InputMapsPage::Populate(const ConfigIniFile& InFile)
+void InputMapsPage::Populate(const ConfigIniFile& InGameFile, const ConfigIniFile& InEngineFile)
 {
+    /* DefaultGame.ini's binding, else one a project from before it still
+     * keeps in DefaultEngine.ini -- the order the runtime loads them in. */
+    const auto FromFile = [&](const QString& InSection, const QString& InKey, bool* OutbFound)
+    {
+        const QString Value = InGameFile.Get(InSection, InKey, OutbFound);
+        return *OutbFound ? Value : InEngineFile.Get(InSection, InKey, OutbFound);
+    };
+
     /* Map -> its entries in order: the registry's, then the file's others. */
     std::map<QString, std::vector<Entry>> ByMap;
     std::vector<QString> Order;
@@ -179,28 +187,32 @@ void InputMapsPage::Populate(const ConfigIniFile& InFile)
             const std::string Section = "Input_" + std::string(MapName);
             const EngineCore::ConfigVar* Var = EngineCore::ConfigFindVar(Section.c_str(), Current.Name);
             Added.Default = Var ? QString::fromStdString(Var->DefaultToString()) : QString::fromUtf8(Current.Bindings);
-            const QString FromFile = InFile.Get(InputPrefix + Added.Map, Added.Name, &Added.bInFile);
-            Added.Baseline = Added.bInFile ? FromFile : Added.Default;
+            const QString Bindings = FromFile(InputPrefix + Added.Map, Added.Name, &Added.bInFile);
+            Added.Baseline = Added.bInFile ? Bindings : Added.Default;
             List.push_back(Added);
         }
     }
 
-    /* A map only the file knows: no module that defines it is loaded. */
-    for(const ConfigIniFile::Section& Section : InFile.GetSections(InputPrefix))
+    /* A map only the files know: no module that defines it is loaded. The
+     * game file first, so its value wins a key both have. */
+    for(const ConfigIniFile* File : { &InGameFile, &InEngineFile })
     {
-        const QString MapName = Section.Name.mid(InputPrefix.size());
-        std::vector<Entry>& List = Ensure(MapName);
-        for(const QPair<QString, QString>& Key : Section.Keys)
+        for(const ConfigIniFile::Section& Section : File->GetSections(InputPrefix))
         {
-            bool bKnown = false;
-            for(const Entry& Each : List) { bKnown = bKnown || Each.Name.compare(Key.first, Qt::CaseInsensitive) == 0; }
-            if(bKnown) { continue; }
-            Entry Added;
-            Added.Map      = MapName;
-            Added.Name     = Key.first;
-            Added.Baseline = Key.second;
-            Added.bInFile  = true;
-            List.push_back(Added);
+            const QString MapName = Section.Name.mid(InputPrefix.size());
+            std::vector<Entry>& List = Ensure(MapName);
+            for(const QPair<QString, QString>& Key : Section.Keys)
+            {
+                bool bKnown = false;
+                for(const Entry& Each : List) { bKnown = bKnown || Each.Name.compare(Key.first, Qt::CaseInsensitive) == 0; }
+                if(bKnown) { continue; }
+                Entry Added;
+                Added.Map      = MapName;
+                Added.Name     = Key.first;
+                Added.Baseline = Key.second;
+                Added.bInFile  = true;
+                List.push_back(Added);
+            }
         }
     }
 
@@ -232,7 +244,7 @@ void InputMapsPage::Populate(const ConfigIniFile& InFile)
     }
     if(Order.empty())
     {
-        Note->setText(QStringLiteral("No input maps: the game module is not loaded, and the .ini has no [Input_*] section."));
+        Note->setText(QStringLiteral("No input maps: the game module is not loaded, and DefaultGame.ini has no [Input_*] section."));
     }
     RefreshAll();
 }

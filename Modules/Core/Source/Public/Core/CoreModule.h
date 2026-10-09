@@ -255,7 +255,7 @@ namespace EngineCore
      */
     enum : uint32_t
     {
-        MODULE_ABI_REVISION     = 1,
+        MODULE_ABI_REVISION     = 2,
 
         MODULE_ABI_FLAG_SIMD    = 1u << 16,   // WITH_SIMD              -> Vector/Matrix layout
         MODULE_ABI_FLAG_NOALIAS = 1u << 17,   // CORE_NO_GLOBAL_ALIASES -> which names exist globally
