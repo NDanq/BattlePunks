@@ -193,6 +193,8 @@ void PrefabEditorTab::BuildActions()
     QAction* Undo = Add(Edit, QStringLiteral("&Undo"), { QKeySequence::Undo }, [this]() { Document->Undo(); });
     QAction* Redo = Add(Edit, QStringLiteral("&Redo"), { QKeySequence::Redo, QKeySequence(Qt::CTRL | Qt::Key_Y) },
                         [this]() { Document->Redo(); });
+    Undo->setIcon(EditorIcons::Get(EditorIcons::EIcon::Undo));
+    Redo->setIcon(EditorIcons::Get(EditorIcons::EIcon::Redo));
     /* Cut/Copy/Paste/Duplicate/Rename/Delete: keys owned by this tab's
      * viewport and Outliner (EditorEditActions.h), shown here. */
     Edit->addSeparator();

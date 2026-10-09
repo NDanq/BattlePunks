@@ -68,7 +68,7 @@ uses it.
 | `EditorHistory` (private) | Undo / redo commands and the entity and component snapshots they hold |
 | `EditorMainWindow` | Docks, menus (File / Edit / View / Play / Build / Help), status bar; starts and stops the Renderer |
 | `EditorTheme` (private) | `Editor.Theme`: light, dark or the system's, applied live through Fusion and an explicit palette |
-| `EditorIcons` (private) | The editor's icons: Lucide (ISC, `External/lucide-1.53.0`, compiled in as `:/lucide/*.svg`), drawn in the palette's button text so they follow `Editor.Theme`; the style's standard icons without Qt Svg |
+| `EditorIcons` (private) | The editor's icons: Lucide (ISC, `External/lucide-1.53.0`, compiled in as `:/lucide/*.svg`), drawn in the palette's button text so they follow `Editor.Theme`; the style's standard icons without Qt Svg. Play, pause, stop, undo, redo, save, the transport, loop, record, key, camera cuts, pilot, snap, add, zoom and fit; Undo and Redo also sit at the front of the viewport toolbar |
 | `ProjectSettingsDialog` + `ConfigIniFile` (private) | Edit > Project Settings: the project's `DefaultEngine.ini` as pages of settings, edited line by line so its comments stay |
 | `SettingsDialog` (private) | Edit > Editor Settings: the `[Editor]` config vars as a form, saved to the user's `EditorSettings.ini` |
 | `SourceBuild` (private) | Build > Compile Source: runs `cmake --build` on the editor's own build tree (`EditorBuildTree.h.in`) in the background, logging its output; any cmake command line too (`StartCommand`), for Build Project |
@@ -502,7 +502,8 @@ empty camera cut track.
 | **Timeline** (top) | Rows on the left: each binding, its tracks, a Transform track's keyed channels; then the sequence's own tracks. Lanes on the right: keys, sections, events; markers along the ruler. Click the ruler to scrub. Click to select (Ctrl adds); drag to move, Alt-drag to copy, a section's edge to trim it; drag on empty lane to box select. Double-click a lane to add a key, event or section there. Ctrl+wheel zooms, Shift+wheel pans. Right-click for the row's menu (add tracks, mute, remove; on the ruler, add a marker or set the end). Delete removes the selection |
 | **Curves** (below) | The current track's curves: drag a key in time and value; drag a selected key's handle to give it its own tangents (User), Alt to break them; right-click a key for its interpolation; double-click a curve to key it; F fits |
 | **Details** (right) | What is selected: a key, section, event or marker; else the current track or binding (**Bind to Selected Entity** retargets it); else the sequence's rate and length, and what `Validate` finds wrong |
-| **Toolbar** | Save, Undo, Redo; the transport (Home, `,`, Space, `.`, End) and Loop; the timecode; **Auto-key**, **Key** (K: the current binding's pose), **Camera Cuts**, **Pilot**, **Snap**; **+ Binding** (the level's selected entity, or a spawned prefab) and **+ Track**; Fit |
+| **Toolbar** | Save, Undo, Redo; the transport (Home, `,`, Space, `.`, End) and Loop; the timecode; **Auto-key**, **Key** (K: the current binding's pose), **Camera Cuts**, **Pilot**, **Snap**; **+ Binding** (the level's selected entity, or a spawned prefab) and **+ Track**; zoom out, the zoom slider, zoom in (Ctrl+- / Ctrl+=) and Fit (Ctrl+0) |
+| **Zoom** | Ctrl+wheel anywhere, or the wheel over the ruler, zooms about the cursor; `=` / `-` about the playhead; F fits; middle-drag pans time and rows; the scrollbar under the lanes scrolls time. The curve editor zooms time with the wheel and value with Ctrl+wheel, and pans with a middle-drag |
 
 **The preview.** While the tab is open the sequence is shown on the level at the
 playhead, through the same `SequenceInstance` the game plays it with, set to

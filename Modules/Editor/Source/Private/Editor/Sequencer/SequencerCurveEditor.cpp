@@ -11,6 +11,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QWheelEvent>
 
 using Sequencer::ESequenceInterp;
 using Sequencer::ESequenceTrackType;
@@ -181,7 +182,7 @@ void SequencerCurveEditor::paintEvent(QPaintEvent*)
     if(!Track || GetChannels().empty())
     {
         Painter.setPen(Pal.color(QPalette::PlaceholderText));
-        Painter.drawText(rect(), Qt::AlignCenter, QStringLiteral("Pick a Transform, Float or Fade track with keys to see its curves"));
+        Painter.drawText(rect(), Qt::AlignCenter, QStringLiteral("Pick a track with keys (Transform, a field, Fade or a post process setting) to see its curves"));
         return;
     }
 
@@ -254,6 +255,15 @@ void SequencerCurveEditor::paintEvent(QPaintEvent*)
 void SequencerCurveEditor::mousePressEvent(QMouseEvent* InEvent)
 {
     setFocus();
+    if(InEvent->button() == Qt::MiddleButton)
+    {
+        Drag     = EDrag::Pan;
+        PressPos = InEvent->position();
+        PanFrame[0] = FrameMin; PanFrame[1] = FrameMax;
+        PanValue[0] = ValueMin; PanValue[1] = ValueMax;
+        setCursor(Qt::ClosedHandCursor);
+        return;
+    }
     if(InEvent->button() != Qt::LeftButton) { return; }
     PressPos = InEvent->position();
     bMoved   = false;
@@ -287,6 +297,16 @@ void SequencerCurveEditor::mouseMoveEvent(QMouseEvent* InEvent)
 {
     if(Drag == EDrag::None) { return; }
     const QPointF Pos = InEvent->position();
+    if(Drag == EDrag::Pan)
+    {
+        const double PerX = (PanFrame[1] - PanFrame[0]) / std::max(1.0, width() - 2 * MARGIN);
+        const double PerY = (PanValue[1] - PanValue[0]) / std::max(1.0, height() - 2 * MARGIN);
+        const double DF = (Pos.x() - PressPos.x()) * PerX, DV = (Pos.y() - PressPos.y()) * PerY;
+        FrameMin = PanFrame[0] - DF; FrameMax = PanFrame[1] - DF;
+        ValueMin = PanValue[0] + DV; ValueMax = PanValue[1] + DV;
+        update();
+        return;
+    }
     if(!bMoved && QLineF(Pos, PressPos).length() < 3) { return; }
     bMoved = true;
 
@@ -329,6 +349,11 @@ void SequencerCurveEditor::mouseReleaseEvent(QMouseEvent*)
     if(Drag == EDrag::None) { return; }
     const EDrag Was = Drag;
     Drag = EDrag::None;
+    if(Was == EDrag::Pan)
+    {
+        setCursor(Qt::ArrowCursor);
+        return;
+    }
     if(!bMoved)
     {
         Document.EndDrag(QString(), true);
@@ -373,6 +398,26 @@ void SequencerCurveEditor::mouseDoubleClickEvent(QMouseEvent* InEvent)
         Document.SetKey(Document.GetCurrentTrack(), Best, int(Frame), Track->Channels[size_t(Best)].Evaluate(Frame, 0.0f),
                         QStringLiteral("Add Key"));
     }
+}
+
+void SequencerCurveEditor::wheelEvent(QWheelEvent* InEvent)
+{
+    const double Factor = std::pow(1.2, -InEvent->angleDelta().y() / 120.0);   // > 1 out
+    if(InEvent->modifiers() & Qt::ControlModifier)
+    {
+        const double Pivot = ValueAt(InEvent->position().y());
+        ValueMin = Pivot - (Pivot - ValueMin) * Factor;
+        ValueMax = Pivot + (ValueMax - Pivot) * Factor;
+    }
+    else
+    {
+        const double Pivot = FrameAt(InEvent->position().x());
+        const double NewMin = Pivot - (Pivot - FrameMin) * Factor;
+        const double NewMax = Pivot + (FrameMax - Pivot) * Factor;
+        if(NewMax - NewMin > 1.0) { FrameMin = NewMin; FrameMax = NewMax; }
+    }
+    update();
+    InEvent->accept();
 }
 
 void SequencerCurveEditor::keyPressEvent(QKeyEvent* InEvent)

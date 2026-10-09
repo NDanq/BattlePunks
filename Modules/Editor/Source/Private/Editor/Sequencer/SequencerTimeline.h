@@ -27,9 +27,11 @@
  *   a section's edge            trim it
  *   empty lane                  box select (Ctrl adds)
  *   double-click a lane         add a key, event or section there
- *   Ctrl+wheel                  zoom about the cursor; Shift+wheel pans; wheel scrolls rows
+ *   Ctrl+wheel, wheel on ruler  zoom about the cursor; Shift+wheel pans; wheel scrolls rows
+ *   middle-drag                 pan (time and rows)
  *   right-click                 ContextMenuRequested
- * KEYS. Delete removes the selection.
+ * KEYS. Delete removes the selection; = and - (or Ctrl with them) zoom about
+ * the playhead; F fits the whole sequence.
  */
 class SequencerTimeline : public QWidget
 {
@@ -70,6 +72,18 @@ public:
 
     double GetPixelsPerFrame() const { return PixelsPerFrame; }
     void   SetPixelsPerFrame(double InPixels);
+
+    static constexpr double MIN_PIXELS_PER_FRAME = 0.05;
+    static constexpr double MAX_PIXELS_PER_FRAME = 80.0;
+
+    /* Zoom by InFactor (>1 in) keeping the frame at lane x InPivotX where it
+     * is; a negative pivot keeps the playhead (or the lanes' middle, if the
+     * playhead is out of view). */
+    void   ZoomBy(double InFactor, double InPivotX = -1.0);
+    /* The frame at the lanes' left edge, and how many frames the lanes show. */
+    double GetScrollFrame() const { return ScrollFrame; }
+    void   SetScrollFrame(double InFrame);
+    double GetVisibleFrames() const;
     /* The whole sequence across the lanes. */
     void   FitAll();
 
@@ -87,6 +101,8 @@ signals:
     void ContextMenuRequested(int InRow, double InFrame, const QPoint& InGlobalPos);
     /* A name double-clicked: the tab offers a rename. */
     void RowActivated(int InRow);
+    /* The zoom or the horizontal scroll changed. */
+    void ViewChanged();
 
 protected:
     void paintEvent(QPaintEvent* InEvent) override;
@@ -97,9 +113,10 @@ protected:
     void wheelEvent(QWheelEvent* InEvent) override;
     void keyPressEvent(QKeyEvent* InEvent) override;
     void contextMenuEvent(QContextMenuEvent* InEvent) override;
+    void resizeEvent(QResizeEvent* InEvent) override;
 
 private:
-    enum class EDrag : uint8_t { None, Scrub, Move, TrimStart, TrimEnd, Box };
+    enum class EDrag : uint8_t { None, Scrub, Move, TrimStart, TrimEnd, Box, Pan };
 
     void RebuildRows();
     void PaintRuler(class QPainter& InPainter, const QRect& InRect);
@@ -126,6 +143,8 @@ private:
 
     EDrag   Drag = EDrag::None;
     QPoint  PressPos;
+    double  PanStartFrame = 0.0;
+    int     PanStartRow   = 0;
     QPoint  DragPos;
     bool    bDragMoved = false;
     int     LastDelta  = 0;

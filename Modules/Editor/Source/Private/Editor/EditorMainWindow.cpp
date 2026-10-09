@@ -345,7 +345,7 @@ void EditorMainWindow::BuildMenus()
     Open->setShortcut(QKeySequence::Open);
     connect(Open, &QAction::triggered, this, &EditorMainWindow::OpenWorld);
 
-    QAction* Save = File->addAction(QStringLiteral("&Save World"));
+    QAction* Save = File->addAction(EditorIcons::Get(EditorIcons::EIcon::Save), QStringLiteral("&Save World"));
     Save->setShortcut(QKeySequence::Save);
     connect(Save, &QAction::triggered, this, &EditorMainWindow::SaveWorld);
 
@@ -408,11 +408,11 @@ void EditorMainWindow::BuildMenus()
 
     /* Through the context, which refuses while playing or mid-drag. Focused
      * text fields still get Ctrl+Z first. */
-    UndoAction = Edit->addAction(QStringLiteral("&Undo"));
+    UndoAction = Edit->addAction(EditorIcons::Get(EditorIcons::EIcon::Undo), QStringLiteral("&Undo"));
     UndoAction->setShortcut(QKeySequence::Undo);
     connect(UndoAction, &QAction::triggered, &Level, &EditorDocument::Undo);
 
-    RedoAction = Edit->addAction(QStringLiteral("&Redo"));
+    RedoAction = Edit->addAction(EditorIcons::Get(EditorIcons::EIcon::Redo), QStringLiteral("&Redo"));
     RedoAction->setShortcuts({ QKeySequence::Redo, QKeySequence(Qt::CTRL | Qt::Key_Y) });
     connect(RedoAction, &QAction::triggered, &Level, &EditorDocument::Redo);
 
@@ -617,13 +617,17 @@ void EditorMainWindow::BuildPlayControls()
     /* In front of the navigation buttons, where a run is started and ended. */
     QToolBar* Bar = ViewportArea->GetToolbar();
     QAction*  First = Bar->actions().isEmpty() ? nullptr : Bar->actions().front();
+    /* Undo and Redo first: the level's, as Edit's. */
+    Bar->insertAction(First, UndoAction);
+    Bar->insertAction(First, RedoAction);
+    Bar->insertSeparator(First);
     Bar->insertAction(First, PlayAction);
     Bar->insertAction(First, StopAction);
     Bar->insertAction(First, EjectAction);
     Bar->insertSeparator(First);
 
-    /* The viewport toolbar is text-only; Play and Stop show their icons (the tooltip names them). */
-    for(QAction* Each : { PlayAction, StopAction })
+    /* The viewport toolbar is text-only; these show their icons (the tooltip names them). */
+    for(QAction* Each : { UndoAction, RedoAction, PlayAction, StopAction })
     {
         if(auto* Button = qobject_cast<QToolButton*>(Bar->widgetForAction(Each)))
         {

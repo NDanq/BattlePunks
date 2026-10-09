@@ -185,8 +185,39 @@ double SequencerTimeline::XOfFrame(const double InFrame) const
 
 void SequencerTimeline::SetPixelsPerFrame(const double InPixels)
 {
-    PixelsPerFrame = std::clamp(InPixels, 0.05, 80.0);
+    const double Clamped = std::clamp(InPixels, MIN_PIXELS_PER_FRAME, MAX_PIXELS_PER_FRAME);
+    if(Clamped == PixelsPerFrame) { return; }
+    PixelsPerFrame = Clamped;
     update();
+    emit ViewChanged();
+}
+
+void SequencerTimeline::SetScrollFrame(const double InFrame)
+{
+    /* Not far past either end: a little margin, as FitAll leaves. */
+    const double Length = double(std::max(Document.GetAsset().Length, 1));
+    const double Clamped = std::clamp(InFrame, -GetVisibleFrames() * 0.5, Length);
+    if(Clamped == ScrollFrame) { return; }
+    ScrollFrame = Clamped;
+    update();
+    emit ViewChanged();
+}
+
+double SequencerTimeline::GetVisibleFrames() const
+{
+    return double(std::max(1, width() - NAME_WIDTH)) / PixelsPerFrame;
+}
+
+void SequencerTimeline::ZoomBy(const double InFactor, double InPivotX)
+{
+    if(InPivotX < NAME_WIDTH)
+    {
+        const double Head = XOfFrame(Document.GetPlayhead());
+        InPivotX = Head >= NAME_WIDTH && Head <= width() ? Head : (NAME_WIDTH + width()) * 0.5;
+    }
+    const double Pivot = FrameAtX(InPivotX);
+    SetPixelsPerFrame(PixelsPerFrame * InFactor);
+    SetScrollFrame(Pivot - (InPivotX - NAME_WIDTH) / PixelsPerFrame);
 }
 
 void SequencerTimeline::FitAll()
@@ -195,6 +226,8 @@ void SequencerTimeline::FitAll()
     const double Lane = std::max(50, width() - NAME_WIDTH - 48);
     SetPixelsPerFrame(Lane / double(std::max(Document.GetAsset().Length, 1)));
     ScrollFrame = -16.0 / PixelsPerFrame;
+    update();
+    emit ViewChanged();
 }
 
 QColor SequencerTimeline::TrackColor(const ESequenceTrackType InType) const
@@ -731,6 +764,14 @@ void SequencerTimeline::mousePressEvent(QMouseEvent* InEvent)
     DragPos    = Pos;
     bDragMoved = false;
     LastDelta  = 0;
+    if(InEvent->button() == Qt::MiddleButton)
+    {
+        Drag          = EDrag::Pan;
+        PanStartFrame = ScrollFrame;
+        PanStartRow   = ScrollRow;
+        setCursor(Qt::ClosedHandCursor);
+        return;
+    }
     if(InEvent->button() != Qt::LeftButton) { return; }
 
     const bool bCtrl = InEvent->modifiers() & Qt::ControlModifier;
@@ -902,6 +943,13 @@ void SequencerTimeline::mouseMoveEvent(QMouseEvent* InEvent)
                 Document.PreviewDrag();
             }
             break;
+        case EDrag::Pan:
+        {
+            SetScrollFrame(PanStartFrame - double(Pos.x() - PressPos.x()) / PixelsPerFrame);
+            ScrollRow = std::clamp(PanStartRow - (Pos.y() - PressPos.y()) / TRACK_HEIGHT, 0, std::max(0, int(Rows.size()) - 1));
+            update();
+            break;
+        }
         case EDrag::Box:
         {
             std::vector<SequencerItem> Items = BoxBase;
@@ -942,6 +990,7 @@ void SequencerTimeline::mouseReleaseEvent(QMouseEvent* InEvent)
             ReselectMoved(LastDelta);
         }
     }
+    if(Was == EDrag::Pan) { setCursor(Qt::ArrowCursor); }
     Drag = EDrag::None;
     DragItems.clear();
     update();
@@ -1002,17 +1051,15 @@ void SequencerTimeline::mouseDoubleClickEvent(QMouseEvent* InEvent)
 void SequencerTimeline::wheelEvent(QWheelEvent* InEvent)
 {
     const double Steps = InEvent->angleDelta().y() / 120.0;
-    if(InEvent->modifiers() & Qt::ControlModifier)
+    const bool bOverRuler = InEvent->position().y() < RULER_HEIGHT && InEvent->position().x() >= NAME_WIDTH;
+    if((InEvent->modifiers() & Qt::ControlModifier) || bOverRuler)
     {
         /* Zoom about the frame under the cursor. */
-        const double X     = InEvent->position().x();
-        const double Pivot = FrameAtX(X);
-        SetPixelsPerFrame(PixelsPerFrame * std::pow(1.2, Steps));
-        ScrollFrame = Pivot - (X - NAME_WIDTH) / PixelsPerFrame;
+        ZoomBy(std::pow(1.2, Steps), std::max(double(NAME_WIDTH), InEvent->position().x()));
     }
     else if(InEvent->modifiers() & Qt::ShiftModifier)
     {
-        ScrollFrame = std::max(-10.0, ScrollFrame - Steps * 60.0 / PixelsPerFrame);
+        SetScrollFrame(ScrollFrame - Steps * 60.0 / PixelsPerFrame);
     }
     else
     {
@@ -1027,6 +1074,21 @@ void SequencerTimeline::keyPressEvent(QKeyEvent* InEvent)
     if(InEvent->key() == Qt::Key_Delete || InEvent->key() == Qt::Key_Backspace)
     {
         Document.DeleteSelection();
+        return;
+    }
+    if(InEvent->key() == Qt::Key_Equal || InEvent->key() == Qt::Key_Plus)
+    {
+        ZoomBy(1.5);
+        return;
+    }
+    if(InEvent->key() == Qt::Key_Minus || InEvent->key() == Qt::Key_Underscore)
+    {
+        ZoomBy(1.0 / 1.5);
+        return;
+    }
+    if(InEvent->key() == Qt::Key_F)
+    {
+        FitAll();
         return;
     }
     if(InEvent->key() == Qt::Key_Escape && Drag != EDrag::None)
@@ -1049,6 +1111,12 @@ void SequencerTimeline::contextMenuEvent(QContextMenuEvent* InEvent)
     }
     emit ContextMenuRequested(RowIndex, InEvent->pos().x() >= NAME_WIDTH ? std::max(0.0, FrameAtX(InEvent->pos().x())) : Document.GetPlayhead(),
                               InEvent->globalPos());
+}
+
+void SequencerTimeline::resizeEvent(QResizeEvent* InEvent)
+{
+    QWidget::resizeEvent(InEvent);
+    emit ViewChanged();   // how many frames the lanes show
 }
 
 #endif // WITH_EDITOR

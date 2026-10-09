@@ -98,6 +98,8 @@ private:
     void FillAddTrackMenu(class QMenu& InMenu, int InBinding);
     void AddTrackPrompted(int InBinding, Sequencer::ESequenceTrackType InType);
     void UpdateTimecode();
+    /* The zoom slider and time scrollbar, from the timeline's view. */
+    void SyncViewControls();
     void OnPlayTick();
     void OnBeforeFrame();
     void OnPropertyEdited(GameCore::EntityID InEntity, uint16_t InType);
@@ -114,6 +116,9 @@ private:
     SequencerCurveEditor* Curves = nullptr;
     SequencerDetails*  Details  = nullptr;
     QLabel*            Timecode = nullptr;
+    class QSlider*     ZoomSlider = nullptr;
+    class QScrollBar*  TimeScroll = nullptr;
+    bool               bSyncingView = false;
 
     QAction* PlayAction   = nullptr;
     QAction* LoopAction   = nullptr;
