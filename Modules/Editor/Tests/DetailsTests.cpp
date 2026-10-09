@@ -3,7 +3,9 @@
  * a component's properties, struct arrays above all (a RenderComponent's
  * material parameter overrides) -- and the Texture Viewer.
  * NIMBLE_DETAILS_SNAPSHOT=<file.png> also saves the panel as drawn, for a
- * look; NIMBLE_TEXTURE_SNAPSHOT=<file.png> the Texture Viewer.
+ * look; NIMBLE_TEXTURE_SNAPSHOT=<file.png> the Texture Viewer;
+ * NIMBLE_DOCS_SNAPSHOT=<file.png> Help > Documentation (at NIMBLE_DOCS_PAGE,
+ * an .md, if given).
  */
 
 #include <cmath>
@@ -33,6 +35,11 @@
 #include "Private/Editor/Content/AnimStateEditorWindow.h"
 #include "Private/Editor/Content/AnimStateGraph.h"
 #include "Private/Editor/Content/ClipTimeline.h"
+#include "Private/Editor/DocumentationWindow.h"
+#include <QDir>
+#include <QFileInfo>
+#include <QTextBlock>
+#include <QTextBrowser>
 #include "Private/Editor/Graph/GraphView.h"
 #include <QGraphicsItem>
 #include <QMouseEvent>
@@ -467,6 +474,72 @@ static void TestAnimStateGraph()
 
 /* The clip timeline, offscreen: real mouse events -- scrub, drag a notify,
  * drag the Out handle, double-click to add. */
+static void TestDocumentation()
+{
+    std::printf("Documentation\n");
+    QTemporaryDir Dir;
+    const auto Write = [&Dir](const QString& InRelative, const QByteArray& InText)
+    {
+        const QString Path = Dir.filePath(InRelative);
+        QDir().mkpath(QFileInfo(Path).absolutePath());
+        QFile File(Path);
+        File.open(QIODevice::WriteOnly);
+        File.write(InText);
+    };
+    Write(QStringLiteral("README.md"), "# Readme\n\nSee [the guide](Docs/Guide.md#c--you).\n");
+    Write(QStringLiteral("Docs/Guide.md"), "# Guide\n\n## Intro\n\ntext\n\n## Intro\n\n## C++ & You\n\n| A | B |\n|---|---|\n| 1 | 2 |\n");
+    Write(QStringLiteral("External/Lib/README.md"), "# vendored\n");
+    Write(QStringLiteral("cmake-build-debug/Notes.md"), "# build\n");
+    Write(QStringLiteral("Build/CMakeCache.txt"), "");
+    Write(QStringLiteral("Build/Generated.md"), "# build\n");
+    Write(QStringLiteral(".git/Hidden.md"), "# hidden\n");
+
+    const QStringList Found = DocumentationWindow::FindMarkdownFiles(Dir.path());
+    Expect(Found.size() == 2 && Found.first().endsWith(QStringLiteral("Docs/Guide.md")) && Found.last().endsWith(QStringLiteral("README.md")),
+           "the .md files are found, skipping External/, build trees and hidden folders");
+
+    Expect(DocumentationWindow::HeadingAnchor(QStringLiteral("Position in the tree")) == QStringLiteral("position-in-the-tree"),
+           "a heading's anchor is GitHub's");
+    Expect(DocumentationWindow::HeadingAnchor(QStringLiteral("C++ & You")) == QStringLiteral("c--you"),
+           "punctuation is dropped from an anchor");
+
+    DocumentationWindow* Window = DocumentationWindow::Open(Dir.filePath(QStringLiteral("README.md")));
+    auto* Page = Window->findChild<QTextBrowser*>();
+    Expect(Page && Page->source().toLocalFile().endsWith(QStringLiteral("README.md")), "the window opens at the file given");
+    if(!Page) { return; }
+
+    emit Page->anchorClicked(QUrl(QStringLiteral("Docs/Guide.md#c--you")));
+    Expect(Page->source().toLocalFile().endsWith(QStringLiteral("Docs/Guide.md")), "a relative .md link opens in the window");
+
+    QStringList Anchors;
+    for(QTextBlock Block = Page->document()->begin(); Block.isValid(); Block = Block.next())
+    {
+        for(QTextBlock::iterator It = Block.begin(); !It.atEnd(); ++It)
+        {
+            Anchors << It.fragment().charFormat().anchorNames();
+        }
+    }
+    Expect(Anchors.contains(QStringLiteral("intro")) && Anchors.contains(QStringLiteral("intro-1")) && Anchors.contains(QStringLiteral("c--you")),
+           "headings get anchors, a repeated one numbered");
+
+    Page->backward();
+    Expect(Page->source().toLocalFile().endsWith(QStringLiteral("README.md")), "Back returns to the previous page");
+
+    DocumentationWindow::CloseIfOpen();
+    PumpFor(10);
+
+    /* The real thing -- the editor's project and engine docs -- for a look. */
+    const QByteArray Snapshot = qgetenv("NIMBLE_DOCS_SNAPSHOT");
+    if(!Snapshot.isEmpty())
+    {
+        DocumentationWindow* Real = DocumentationWindow::Open(QString::fromLocal8Bit(qgetenv("NIMBLE_DOCS_PAGE")));
+        PumpFor(200);
+        Real->grab().save(QString::fromLocal8Bit(Snapshot));
+        DocumentationWindow::CloseIfOpen();
+        PumpFor(10);
+    }
+}
+
 static void TestClipTimeline()
 {
     std::printf("Clip timeline\n");
@@ -532,6 +605,7 @@ int main(int argc, char** argv)
     TestAnimStateGraph();
     TestClipTimeline();
     TestViewSettings();
+    TestDocumentation();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

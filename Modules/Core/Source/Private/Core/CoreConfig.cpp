@@ -240,7 +240,7 @@ namespace
 // ============================================================================
 
 ConfigVar::ConfigVar(const EConfigType InType, const char* InSection, const char* InName,
-                      const ConfigValue InDefault, const ConfigChangedFn InOnChanged)
+                      const ConfigValue InDefault, const ConfigChangedFn InOnChanged, const EConfigScope InScope)
     : Section(InSection ? InSection : "")
     , Name(InName ? InName : "")
     , Value(InDefault)
@@ -249,6 +249,7 @@ ConfigVar::ConfigVar(const EConfigType InType, const char* InSection, const char
     , Next(nullptr)
     , Type(InType)
     , bOverridden(false)
+    , Scope(InScope)
 {
     ConfigRegisterVar(this);
 
@@ -462,6 +463,16 @@ bool ConfigVar::ResetToDefault()
 void ConfigVar::FireCallback() const
 {
     if(OnChanged) OnChanged(*this);
+}
+
+EConfigScope ConfigVar::GetScope() const
+{
+    return Scope;
+}
+
+bool ConfigVar::IsGameVar() const
+{
+    return (Scope == EConfigScope::CS_Game);
 }
 
 // ============================================================================

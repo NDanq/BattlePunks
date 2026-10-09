@@ -26,6 +26,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/EditorMain.cpp
         Source/Private/Editor/AboutDialog.cpp
         Source/Private/Editor/AboutDialog.h
+        Source/Private/Editor/DocumentationWindow.cpp
+        Source/Private/Editor/DocumentationWindow.h
         Source/Private/Editor/EditorContext.cpp
         Source/Private/Editor/EditorDocument.cpp
         Source/Private/Editor/EditorHistory.cpp
