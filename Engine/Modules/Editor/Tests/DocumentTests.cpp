@@ -307,7 +307,7 @@ static void TestWorldSettings()
     Doc.Redo();
     Expect(Doc.GetWorldSettings().Lighting.bBakedLighting && Changed == 3, "redo applies them again");
 
-    Doc.NewScene();
+    Doc.NewWorld();
     Expect(Doc.GetWorldSettings() == GameCore::WorldSettings(), "a new scene starts with the defaults");
 }
 
@@ -383,7 +383,7 @@ static void TestNewScene()
     QObject::connect(&Doc, &EditorDocument::WorldReset, [&]() { ++Resets; });
 
     Doc.SetSelection(Doc.CreateEntity(QStringLiteral("Gone"), EngineCore::Vector3()));
-    Doc.NewScene();
+    Doc.NewWorld();
 
     Expect(AboutToGo == 1 && bOldWorldStillThere, "EditedWorldAboutToBeDestroyed while the old World is alive");
     Expect(Created == 1, "EditedWorldCreated for the new one");
@@ -420,7 +420,7 @@ static void TestBorrowedWorld()
     Expect(Game->IsAlive(Spawned), "entity operations reach the borrowed World");
     Expect(Doc.GetHistory().count() == 1, "but are not recorded");
 
-    Doc.NewScene();
+    Doc.NewWorld();
     Expect(&Doc.GetEditedWorld() == Edited && Edited->IsAlive(Kept), "scene operations are refused");
 
     /* A level swap: unhook, the owner frees it, a new one is lent. */

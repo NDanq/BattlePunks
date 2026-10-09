@@ -65,6 +65,12 @@ namespace EngineCore
         CT_String
     };
 
+    enum class EConfigScope : uint8_t
+    {
+        CS_Engine = 0,
+        CS_Game
+    };
+
     /* Max bytes of a string config value, NUL included. */
     enum : size_t { CONFIG_STRING_MAX = 128 };
 
@@ -167,7 +173,7 @@ namespace EngineCore
     {
     public:
         ConfigVar(EConfigType InType, const char* InSection, const char* InName,
-                  ConfigValue InDefault, ConfigChangedFn InOnChanged);
+                  ConfigValue InDefault, ConfigChangedFn InOnChanged, EConfigScope Scope);
         ~ConfigVar();
 
         /* Self-registering singletons are not copyable: a copy would link a
@@ -229,6 +235,9 @@ namespace EngineCore
         bool ResetToDefault();                     // fires the callback if it changed
         void FireCallback() const;                 // unconditional; used by ConfigApplyAll
 
+        EConfigScope GetScope() const;
+        bool IsGameVar() const;
+
     private:
         // Repeats CORE_API to match the declaration above exactly -- MSVC
         // treats a friend re-declaration with different dll linkage as
@@ -244,6 +253,7 @@ namespace EngineCore
         ConfigVar*      Next;
         EConfigType     Type;
         bool            bOverridden;   // an .ini or a console set touched this
+        EConfigScope    Scope;
     };
 
     // === Registry ===========================================================
@@ -393,44 +403,102 @@ namespace EngineCore
  * matching NIMBLE_IMPLEMENT_MODULE rather than CORE_LOG. Call sites write the
  * ';' themselves.
  */
-#define NIMBLE_CONFIG_BOOL(VarName, SectionLiteral, KeyLiteral, bInDefault, CallbackFn) \
-    ::EngineCore::ConfigVar VarName                                                     \
-    (                                                                                   \
-        ::EngineCore::EConfigType::CT_Bool,                                             \
-        SectionLiteral,                                                                 \
-        KeyLiteral,                                                                     \
-        ::EngineCore::MakeConfigBool(bInDefault),                                       \
-        CallbackFn                                                                      \
+#define NIMBLE_CONFIG_IMPL(VarName, Type, Section, Key, Default, CallbackFn, Scope)             \
+    ::EngineCore::ConfigVar VarName(                                                            \
+        ::EngineCore::EConfigType::CT_##Type,                                                   \
+        Section,                                                                                \
+        Key,                                                                                    \
+        ::EngineCore::MakeConfig##Type( Default ),                                              \
+        CallbackFn,                                                                             \
+        ::EngineCore::EConfigScope::CS_##Scope                                                  \
     )
 
-#define NIMBLE_CONFIG_INT(VarName, SectionLiteral, KeyLiteral, InDefault, CallbackFn)   \
-    ::EngineCore::ConfigVar VarName                                                     \
-    (                                                                                   \
-        ::EngineCore::EConfigType::CT_Int,                                              \
+#define NIMBLE_CONFIG_BOOL(VarName, SectionLiteral, KeyLiteral, bInDefault, CallbackFn) \
+    NIMBLE_CONFIG_IMPL(                                                                 \
+        VarName,                                                                        \
+        Bool,                                                                           \
         SectionLiteral,                                                                 \
         KeyLiteral,                                                                     \
-        ::EngineCore::MakeConfigInt(InDefault),                                         \
-        CallbackFn                                                                      \
+        bInDefault,                                                                     \
+        CallbackFn,                                                                     \
+        Engine                                                                          \
     )
+
+#define NIMBLE_CONFIG_INT(VarName, SectionLiteral, KeyLiteral, InDefault, CallbackFn) \
+    NIMBLE_CONFIG_IMPL(                                                               \
+        VarName,                                                                      \
+        Int,                                                                          \
+        SectionLiteral,                                                               \
+        KeyLiteral,                                                                   \
+        InDefault,                                                                    \
+        CallbackFn,                                                                   \
+        Engine                                                                        \
+        )
 
 #define NIMBLE_CONFIG_FLOAT(VarName, SectionLiteral, KeyLiteral, InDefault, CallbackFn) \
-    ::EngineCore::ConfigVar VarName                                                     \
-    (                                                                                   \
-        ::EngineCore::EConfigType::CT_Float,                                            \
+    NIMBLE_CONFIG_IMPL(                                                                 \
+        VarName,                                                                        \
+        Float,                                                                          \
         SectionLiteral,                                                                 \
         KeyLiteral,                                                                     \
-        ::EngineCore::MakeConfigFloat(InDefault),                                       \
-        CallbackFn                                                                      \
-    )
+        InDefault,                                                                      \
+        CallbackFn,                                                                     \
+        Engine                                                                          \
+        )
 
 #define NIMBLE_CONFIG_STRING(VarName, SectionLiteral, KeyLiteral, InDefault, CallbackFn) \
-    ::EngineCore::ConfigVar VarName                                                      \
-    (                                                                                    \
-        ::EngineCore::EConfigType::CT_String,                                            \
+    NIMBLE_CONFIG_IMPL(                                                                  \
+        VarName,                                                                         \
+        String,                                                                          \
         SectionLiteral,                                                                  \
         KeyLiteral,                                                                      \
-        ::EngineCore::MakeConfigString(InDefault),                                       \
-        CallbackFn                                                                       \
+        InDefault,                                                                       \
+        CallbackFn,                                                                      \
+        Engine                                                                           \
+    )
+
+#define NIMBLE_GAME_CONFIG_BOOL(VarName, SectionLiteral, KeyLiteral, bInDefault, CallbackFn) \
+    NIMBLE_CONFIG_IMPL(                                                                 \
+        VarName,                                                                        \
+        Bool,                                                                           \
+        SectionLiteral,                                                                 \
+        KeyLiteral,                                                                     \
+        bInDefault,                                                                     \
+        CallbackFn,                                                                     \
+        Engine                                                                          \
+    )
+
+#define NIMBLE_GAME_CONFIG_INT(VarName, SectionLiteral, KeyLiteral, InDefault, CallbackFn) \
+    NIMBLE_CONFIG_IMPL(                                                               \
+        VarName,                                                                      \
+        Int,                                                                          \
+        SectionLiteral,                                                               \
+        KeyLiteral,                                                                   \
+        InDefault,                                                                    \
+        CallbackFn,                                                                   \
+        Engine                                                                        \
+        )
+
+#define NIMBLE_GAME_CONFIG_FLOAT(VarName, SectionLiteral, KeyLiteral, InDefault, CallbackFn) \
+    NIMBLE_CONFIG_IMPL(                                                                 \
+        VarName,                                                                        \
+        Float,                                                                          \
+        SectionLiteral,                                                                 \
+        KeyLiteral,                                                                     \
+        InDefault,                                                                      \
+        CallbackFn,                                                                     \
+        Engine                                                                          \
+        )
+
+#define NIMBLE_GAME_CONFIG_STRING(VarName, SectionLiteral, KeyLiteral, InDefault, CallbackFn) \
+    NIMBLE_CONFIG_IMPL(                                                                  \
+        VarName,                                                                         \
+        String,                                                                          \
+        SectionLiteral,                                                                  \
+        KeyLiteral,                                                                      \
+        InDefault,                                                                       \
+        CallbackFn,                                                                      \
+        Engine                                                                           \
     )
 
 /* For a header that must expose a config var declared elsewhere to other

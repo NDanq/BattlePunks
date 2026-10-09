@@ -499,7 +499,7 @@ InputMapHandle RegisterInputMap(const char* InName, const InputMapEntry* InEntri
         {
             Item.Var = std::make_unique<EngineCore::ConfigVar>(EngineCore::EConfigType::CT_String, Stored.Section.c_str(),
                                                                Item.Desc.Name, EngineCore::MakeConfigString(Item.Desc.Bindings),
-                                                               &OnBindingVarChanged);
+                                                               &OnBindingVarChanged, EngineCore::EConfigScope::CS_Game);
             ParseBindings(Stored.Name, Item, Item.Var->GetString());
         }
     }

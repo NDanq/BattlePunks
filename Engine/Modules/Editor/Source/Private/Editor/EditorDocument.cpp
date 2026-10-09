@@ -81,7 +81,7 @@ EditorDocument::~EditorDocument()
 
 // === Scene ===================================================================
 
-void EditorDocument::NewScene()
+void EditorDocument::NewWorld()
 {
     if(RefuseWhileBorrowed("New Scene"))
     {
@@ -89,46 +89,6 @@ void EditorDocument::NewScene()
     }
     ReplaceWorld();
     ResetHistory();
-}
-
-void EditorDocument::CreateSandboxScene()
-{
-    if(RefuseWhileBorrowed("New Sandbox Scene"))
-    {
-        return;
-    }
-    ReplaceWorld();
-    ResetHistory();
-    const FlagScope Building(bSuspendRecording);   // the scene is the starting point, not an edit
-
-    /*
-     * Sandbox's level as loaded, before its first tick: prefab instances. A
-     * hand-kept MIRROR of:
-     *
-     *   Games/Sandbox/Source/Private/Sandbox/SandboxGame.cpp   SandboxLevel::OnLoad -- Marker, Camera
-     *   Games/Sandbox/Scripts/Main.lua                         the startup script   -- Scripted
-     *
-     * Keep it in step. The native prefabs come from the game module, cached
-     * when the editor last loaded it; Content/Prefabs/Mover.nmprefab is staged
-     * beside the exe. Behaviour (systems, the mode, scripts) is not mirrored.
-     */
-    const auto Place = [this](const char* InPath, const EngineCore::Vector3& InPosition, const EngineCore::Vector3& InScale)
-    {
-        GameCore::TransformPose At;
-        At.Position = InPosition;
-        At.Scale    = InScale;
-        if(!EditedWorld->SpawnPrefab(InPath, At).IsValid())
-        {
-            CORE_LOG_WARN(std::string("[Editor] New Sandbox Scene: '") + InPath + "' is not available -- build the game module")
-        }
-    };
-    const EngineCore::Vector3 One(1.0, 1.0, 1.0);
-    Place("native:Sandbox.Marker", EngineCore::Vector3(0.0, 360.0, 0.0), EngineCore::Vector3(32.0, 32.0, 1.0));
-    Place("native:Sandbox.Camera", EngineCore::Vector3(0.0, 0.0, 0.0), One);
-    Place("Content/Prefabs/Mover.nmprefab", EngineCore::Vector3(0.0, 0.0, 0.0), One);
-
-    EditedWorld->RefreshSpatialIndex();
-    QueueEntitiesChanged();
 }
 
 bool EditorDocument::LoadWorld(const QString& InPath, bool* OutbCooked)
