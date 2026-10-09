@@ -4,6 +4,7 @@
 #if WITH_EDITOR
 #include "Public/GameCore/ComponentProperties.h"
 #endif
+#include "Public/GameCore/ComponentReplication.h"
 #include "Public/GameCore/ComponentSerializer.h"
 #include "Public/GameCore/ScriptLibrary.h"
 #include "Public/GameCore/World.h"
@@ -25,6 +26,8 @@ namespace Sequencer
         Ar.Flag("Loop",                 C.bLoop);
         Ar.Flag("RestoreState",         C.bRestoreState);
         Ar.Flag("DestroyWhenFinished",  C.bDestroyWhenFinished);
+        Ar.Flag("Cinematic",            C.bCinematic);
+        Ar.Flag("Skippable",            C.bSkippable);
     }
 
     /* The fields; playing goes through the Sequence library (below), which
@@ -36,18 +39,35 @@ namespace Sequencer
         Bind.Flag("AutoPlay",      &SequencePlayerComponent::bAutoPlay);
         Bind.Flag("Loop",          &SequencePlayerComponent::bLoop);
         Bind.Flag("RestoreState",  &SequencePlayerComponent::bRestoreState);
+        Bind.Flag("Cinematic",     &SequencePlayerComponent::bCinematic);
+        Bind.Flag("Skippable",     &SequencePlayerComponent::bSkippable);
+    }
+
+    /* What a client's copy needs to follow the server's (SequenceWorld.h,
+     * "Networking"): which sequence, how it plays, and where it is. */
+    GAMECORE_DEFINE_COMPONENT_REPLICATION(SequencePlayerComponent)
+    {
+        Rep.Field("Sequence",   &SequencePlayerComponent::Sequence);
+        Rep.Field("PlayRate",   &SequencePlayerComponent::PlayRate);
+        Rep.Flag("Loop",        &SequencePlayerComponent::bLoop);
+        Rep.Flag("Cinematic",   &SequencePlayerComponent::bCinematic);
+        Rep.Field("NetState",   &SequencePlayerComponent::NetState);
+        Rep.Field("NetSerial",  &SequencePlayerComponent::NetSerial);
+        Rep.Field("NetSeconds", &SequencePlayerComponent::NetSeconds);
     }
 
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(SequencePlayerComponent)
     {
         Props.Category("Sequence");
-        Props.Field("Sequence",              &SequencePlayerComponent::Sequence);
+        Props.Field("Sequence",              &SequencePlayerComponent::Sequence, GameCore::PF_AssetSequence);
         Props.Field("Play Rate",             &SequencePlayerComponent::PlayRate);
         Props.Flag("Auto Play",              &SequencePlayerComponent::bAutoPlay);
         Props.Flag("Loop",                   &SequencePlayerComponent::bLoop);
         Props.Flag("Restore State",          &SequencePlayerComponent::bRestoreState);
         Props.Flag("Destroy When Finished",  &SequencePlayerComponent::bDestroyWhenFinished);
+        Props.Flag("Cinematic",              &SequencePlayerComponent::bCinematic);
+        Props.Flag("Skippable",              &SequencePlayerComponent::bSkippable);
     }
 #endif // WITH_EDITOR
 }
@@ -97,6 +117,23 @@ namespace
         Sequencer::SequenceWorld* System = Players(InCall);
         if(!System) { return; }
         InCall.PushBool(System->Seek(Player, Seconds));
+    }
+
+    void ScriptSeekToMarker(GameCore::ScriptCall& InCall)
+    {
+        const GameCore::EntityID Player = InCall.GetEntity(1);
+        const char*              Marker = InCall.GetString(2);
+        if(InCall.HasError()) { return; }
+        Sequencer::SequenceWorld* System = Players(InCall);
+        if(!System) { return; }
+        InCall.PushBool(System->SeekToMarker(Player, Marker));
+    }
+
+    void ScriptSkipCinematics(GameCore::ScriptCall& InCall)
+    {
+        Sequencer::SequenceWorld* System = Players(InCall);
+        if(!System) { return; }
+        InCall.PushInteger(int64_t(System->SkipCinematics()));
     }
 
     void ScriptBind(GameCore::ScriptCall& InCall)
@@ -161,6 +198,10 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(Sequence)
        .Tooltip("Jumps to the end, firing only the events marked fire-on-skip, and finishes");
     Lib.Function("Seek", &ScriptSeek, "Player:Entity, Seconds:number -> Done:bool")
        .Tooltip("Moves the playhead and shows that moment now; no events fire");
+    Lib.Function("SeekToMarker", &ScriptSeekToMarker, "Player:Entity, Marker:string -> Done:bool")
+       .Tooltip("Seek, to one of the sequence's named markers");
+    Lib.Function("SkipCinematics", &ScriptSkipCinematics, "-> Skipped:integer")
+       .Tooltip("Skips every skippable cinematic playing, as the Back key does");
     Lib.Function("Bind", &ScriptBind, "Player:Entity, Binding:string, Entity:Entity -> Done:bool")
        .Tooltip("Plays one of the sequence's bindings on this entity instead");
     Lib.Pure("IsPlaying", &ScriptIsPlaying, "Player:Entity -> Playing:bool")

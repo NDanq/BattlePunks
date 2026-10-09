@@ -37,6 +37,20 @@ namespace Sequencer
         /* When it finishes (not when stopped), destroy this entity. What
          * Sequence.Play's players do. */
         uint8_t bDestroyWhenFinished = 0;
+
+        /* While it plays: letterboxed, and the players' input held back
+         * (GameSession). Skippable: the Back key (Escape, gamepad East)
+         * skips it, as Sequence.Skip does. */
+        uint8_t bCinematic  = 0;
+        uint8_t bSkippable  = 1;
+
+        // === Engine-written: never saved ====================================
+        /* The server's playback, replicated: a client's copy follows it
+         * rather than playing on its own (SequenceWorld.h, "Networking"). */
+        uint8_t NetState   = 0;      // ESequencePlayState
+        uint8_t Reserved0  = 0;
+        int32_t NetSerial  = 0;      // bumped by each start, seek and skip
+        float   NetSeconds = 0.0f;   // where the playhead was at the last change
     };
 }
 

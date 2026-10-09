@@ -39,6 +39,7 @@ namespace Sequencer
         CubicInOut,
         BackOut,
         ElasticOut,
+        User,           // a curve with the key's own tangents (the curve editor's)
         Count
     };
 
@@ -52,6 +53,11 @@ namespace Sequencer
         int32_t         Frame  = 0;
         float           Value  = 0.0f;
         ESequenceInterp Interp = ESequenceInterp::Auto;   // toward the next key
+
+        /* User keys: the slope arriving and leaving, in value per frame. A
+         * curve through a User key uses them; Auto works its own out. */
+        float           InTangent  = 0.0f;
+        float           OutTangent = 0.0f;
     };
 
     /* One animated value: keys in frame order, no two on one frame. */
@@ -67,6 +73,11 @@ namespace Sequencer
 
         /* Sorts by frame; a later key on a frame already used replaces it. */
         void Normalize();
+
+        /* The slope the curve leaves key InIndex with (value per frame):
+         * a User key's own, else the smooth one Auto uses. */
+        float GetLeaveSlope(size_t InIndex) const;
+        float GetArriveSlope(size_t InIndex) const;
     };
 
     /* What a track does. */
@@ -76,8 +87,16 @@ namespace Sequencer
         Float,           // one number field of one of its components
         Bool,            // one flag field of one of its components, stepped
         Event,           // named EventBus events at frames
+        Animation,       // the binding's clips, in sections (blending where they overlap)
+        Audio,           // sounds in sections: at the binding, or heard everywhere on a track of no binding
+        CameraCut,       // which camera binding the game is seen through, in sections; blends between them
+        Fade,            // the screen to black: one channel, 0 clear .. 1 black
+        SubSequence,     // other sequences, played in sections
         Count
     };
+
+    /* Section tracks keep sections, not keys. */
+    SEQUENCER_API bool IsSectionTrack(ESequenceTrackType InType);
 
     SEQUENCER_API const char* TrackTypeName(ESequenceTrackType InType);
     SEQUENCER_API bool        ParseTrackType(const char* InName, ESequenceTrackType& OutType);
@@ -123,6 +142,34 @@ namespace Sequencer
         bool                          bFireOnSkip = false;
     };
 
+    /*
+     * A span of a section track, [Start, End) in frames. What Asset means
+     * depends on the track: Animation a .nmanim, Audio a .nmsound,
+     * SubSequence a .nmseq, CameraCut the id of the camera's binding.
+     */
+    struct SequenceSection
+    {
+        int32_t     Start = 0;
+        int32_t     End   = 0;
+        std::string Asset;
+
+        float   PlayRate = 1.0f;   // Animation, Audio, SubSequence: how fast the asset plays
+        float   Volume   = 1.0f;   // Audio
+        int32_t Offset   = 0;      // frames into the asset at Start (a trimmed start)
+        int32_t BlendIn  = 0;      // frames: Animation crossfade, Audio fade-in, CameraCut blend
+        int32_t BlendOut = 0;      // frames: Animation, Audio fade-out
+        bool    bLoop    = false;  // Animation, Audio: wrap when the asset runs out
+
+        int32_t GetLength() const { return End > Start ? End - Start : 0; }
+        bool    Contains(double InFrame) const { return InFrame >= double(Start) && InFrame < double(End); }
+
+        /* Seconds into the asset at InFrame, at InFrameRate. */
+        double AssetSeconds(double InFrame, uint32_t InFrameRate) const
+        {
+            return (InFrame - double(Start) + double(Offset)) * double(PlayRate) / double(InFrameRate ? InFrameRate : 1);
+        }
+    };
+
     struct SEQUENCER_API SequenceTrack
     {
         ESequenceTrackType Type = ESequenceTrackType::Transform;
@@ -139,6 +186,15 @@ namespace Sequencer
 
         /* Event only, in frame order. */
         std::vector<SequenceEventKey> Events;
+
+        /* Section tracks, by Start. */
+        std::vector<SequenceSection> Sections;
+
+        /* The track's label; "" shows its type. */
+        std::string Name;
+
+        /* Muted tracks are skipped when the sequence plays (the editor's). */
+        bool bMuted = false;
 
         /* Channels sized for Type, keys and events sorted. */
         void Normalize();
@@ -171,8 +227,21 @@ namespace Sequencer
 
         std::vector<SequenceBinding> Bindings;
 
-        /* Tracks of no binding. Only Event tracks belong here. */
+        /* Tracks of no binding: Event, Audio (heard everywhere), CameraCut,
+         * Fade and SubSequence. */
         std::vector<SequenceTrack> Tracks;
+
+        /* Named frames, for authoring (the editor's markers) and Lua
+         * (Sequence.SeekToMarker). */
+        struct Marker
+        {
+            int32_t     Frame = 0;
+            std::string Name;
+        };
+        std::vector<Marker> Markers;
+
+        /* -1 if none has InName. */
+        int32_t FindMarker(const std::string& InName) const;
 
         double FramesToSeconds(double InFrames) const { return InFrames / double(FrameRate ? FrameRate : 1); }
         double SecondsToFrames(double InSeconds) const { return InSeconds * double(FrameRate ? FrameRate : 1); }
@@ -183,6 +252,11 @@ namespace Sequencer
 
         /* Every track normalized, FrameRate clamped. */
         void Normalize();
+
+        /* Every asset file its sections and spawn bindings name (clips,
+         * sounds, sub-sequences, prefabs), once each: what the cook checks
+         * is there. */
+        std::vector<std::string> GetReferencedAssets() const;
 
         /* What is wrong with it, one line each; empty when it is sound.
          * Loading does not refuse an asset with problems -- the player skips

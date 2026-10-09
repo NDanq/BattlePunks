@@ -27,7 +27,9 @@
 #include "Public/RenderCore/Renderer.h"
 #include "Public/RenderCore/Components/CameraComponent.h"
 #include "Public/Sequencer/SequenceWorld.h"
+#include "Public/UI/UIDocument.h"
 #include "Public/UI/UISystem.h"
+#include "Public/GameCore/Components/NetComponent.h"
 
 #if WITH_JOLTPHYSICS
 #include "Public/JoltPhysics/PhysicsWorld.h"
@@ -268,7 +270,19 @@ namespace NimbleEngine
 
         /* Cutscenes: the level's Sequence Players, from TP_PostPhysics.
          * Before OnLoad, so an AutoPlay player starts with the level. */
-        Sequencer::SequenceWorld::Attach(*LevelWorld);
+        bCinematic    = false;
+        CinematicFade = -1.0f;
+        if(Sequencer::SequenceWorld* Sequences = Sequencer::SequenceWorld::Attach(*LevelWorld))
+        {
+            Sequencer::SequenceHost SequenceHost;
+            SequenceHost.SetViewTarget = &GameSession::SequenceSetViewTarget;
+            SequenceHost.GetViewTarget = &GameSession::SequenceGetViewTarget;
+            SequenceHost.SetFade       = &GameSession::SequenceSetFade;
+            SequenceHost.SetCinematic  = &GameSession::SequenceSetCinematic;
+            SequenceHost.IsReplica     = &GameSession::SequenceIsReplica;
+            SequenceHost.UserData      = this;
+            Sequences->SetHost(SequenceHost);
+        }
 
         CORE_LOG("[Level] loading '" + std::string(InLevel.GetName()) + "'")
 
@@ -460,8 +474,15 @@ namespace NimbleEngine
             ViewTarget = GameCore::EntityID();
 
             /* While scripts are bound: what sequences spawned is destroyed
-             * with its OnDestroy run. */
+             * with its OnDestroy run. The overlay closed with the level's
+             * documents above. */
+            if(Sequencer::SequenceWorld* Sequences = Sequencer::SequenceWorld::Find(LevelWorld))
+            {
+                Sequences->SetHost(Sequencer::SequenceHost());
+            }
             Sequencer::SequenceWorld::Detach(*LevelWorld);
+            bCinematic    = false;
+            CinematicFade = -1.0f;
 
             Scripts.UnbindWorld();
             Rendering.UnbindWorld();
@@ -611,8 +632,104 @@ namespace NimbleEngine
         if(Taken.bConsumeKeyboard) { FilteredInput.ConsumeKeyboard(); }
         if(Taken.bConsumeGamepad)  { FilteredInput.ConsumeGamepad(); }
 
+        /* A cinematic holds the players' input back; Back the UI left skips it. */
+        if(bCinematic && LevelWorld && !bConsoleOpen)
+        {
+            if(Frame.bBack && !Taken.bConsumeKeyboard)
+            {
+                if(Sequencer::SequenceWorld* Sequences = Sequencer::SequenceWorld::Find(LevelWorld))
+                {
+                    Sequences->SkipCinematics();
+                }
+            }
+            FilteredInput.ConsumeMouseButtons();
+            FilteredInput.ConsumeKeyboard();
+            FilteredInput.ConsumeGamepad();
+        }
+
         /* Before the game ticks: a Resume or a Quit takes effect this frame. */
         Interface->RunQueuedActions();
+    }
+
+    // === Cutscenes ==============================================================
+
+    namespace
+    {
+        constexpr const char* CINEMATIC_DOCUMENT = "Engine/Sequencer/Cinematic.nmui";
+
+        /* Over everything, taking no input: a black box for the fade, and
+         * letterbox bars. Made in code, so no build has a file to stage. */
+        std::shared_ptr<const UI::UIDocumentAsset> MakeCinematicDocument()
+        {
+            auto Asset = std::make_shared<UI::UIDocumentAsset>();
+            Asset->Settings.SetFromText("InputMode", "GameOnly");
+            Asset->Settings.SetFromText("Layer", "1000");
+            const auto Add = [&Asset](const char* InType, const int32_t InParent,
+                                      std::initializer_list<std::pair<const char*, const char*>> InProperties)
+            {
+                UI::UIWidgetDesc Widget;
+                Widget.Type   = InType;
+                Widget.Parent = InParent;
+                for(const auto& Property : InProperties) { Widget.Set(Property.first, Property.second); }
+                Asset->Widgets.push_back(std::move(Widget));
+            };
+            Add("Canvas", -1, { { "Name", "Root" } });
+            Add("Border", 0, { { "Name", "BarTop" },    { "Anchors", "0,0,1,0.11" }, { "Background.Tint", "#000000FF" },
+                               { "Opacity", "{Bind:Sequencer.Letterbox}" } });
+            Add("Border", 0, { { "Name", "BarBottom" }, { "Anchors", "0,0.89,1,1" }, { "Background.Tint", "#000000FF" },
+                               { "Opacity", "{Bind:Sequencer.Letterbox}" } });
+            Add("Border", 0, { { "Name", "Fade" },      { "Anchors", "0,0,1,1" },    { "Background.Tint", "#000000FF" },
+                               { "Opacity", "{Bind:Sequencer.Fade}" } });
+            return Asset;
+        }
+    }
+
+    void GameSession::UpdateCinematicOverlay()
+    {
+        const bool bWanted = bCinematic || CinematicFade > 0.0f;
+        Interface->SetValue("Sequencer.Fade", UI::UIValue::Number(std::max(0.0f, CinematicFade)));
+        Interface->SetValue("Sequencer.Letterbox", UI::UIValue::Number(bCinematic ? 1.0 : 0.0));
+        if(bWanted && !Interface->IsOpen(CINEMATIC_DOCUMENT))
+        {
+            static const std::shared_ptr<const UI::UIDocumentAsset> Document = MakeCinematicDocument();
+            Interface->OpenAsset(Document, CINEMATIC_DOCUMENT, false, false);
+        }
+        else if(!bWanted && Interface->IsOpen(CINEMATIC_DOCUMENT))
+        {
+            Interface->Close(std::string(CINEMATIC_DOCUMENT));
+        }
+    }
+
+    void GameSession::SequenceSetViewTarget(const GameCore::EntityID InCamera, void* InUserData)
+    {
+        static_cast<GameSession*>(InUserData)->SetViewTarget(InCamera);
+    }
+
+    GameCore::EntityID GameSession::SequenceGetViewTarget(void* InUserData)
+    {
+        return static_cast<GameSession*>(InUserData)->GetViewTarget();
+    }
+
+    void GameSession::SequenceSetFade(const float InAlpha, void* InUserData)
+    {
+        auto* Session = static_cast<GameSession*>(InUserData);
+        Session->CinematicFade = InAlpha;
+        Session->UpdateCinematicOverlay();
+    }
+
+    void GameSession::SequenceSetCinematic(const bool bInOn, void* InUserData)
+    {
+        auto* Session = static_cast<GameSession*>(InUserData);
+        Session->bCinematic = bInOn;
+        Session->UpdateCinematicOverlay();
+    }
+
+    /* A client's copy of a replicated player follows the server's. */
+    bool GameSession::SequenceIsReplica(const GameCore::EntityID InPlayer, void* InUserData)
+    {
+        auto* Session = static_cast<GameSession*>(InUserData);
+        return IsClient() && Session->LevelWorld && Session->LevelWorld->IsAlive(InPlayer)
+            && Session->LevelWorld->GetEntity(InPlayer).HasComponent<GameCore::NetComponent>();
     }
 
     void GameSession::PublishUIValues()

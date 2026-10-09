@@ -572,7 +572,36 @@ namespace RenderCore
             if(Layer.bAdditive) { ApplyAdditivePose(LocalPose, *LayerPose, Weight, Mask); }
             else                { BlendPoses(LocalPose, *LayerPose, Weight, Mask); }
         }
+        if(Overlay && OverlayWeight > 0.0f)
+        {
+            if(OverlayBoundTo != Skeleton.get())
+            {
+                BindClip(*Overlay, *Skeleton, OverlayBinding);
+                OverlayBoundTo = Skeleton.get();
+            }
+            GetRefPose(*Skeleton, Scratch[2]);
+            SampleClip(*Overlay, OverlayBinding, OverlayTime, Scratch[2]);
+            BlendPoses(LocalPose, Scratch[2], std::min(OverlayWeight, 1.0f));
+        }
         LocalToModel(*Skeleton, LocalPose, ModelPose);
+    }
+
+    void AnimInstance::SetOverlayClip(std::shared_ptr<const AnimClipData> InClip, const float InSeconds, const float InWeight)
+    {
+        if(!InClip || InWeight <= 0.0f)
+        {
+            Overlay.reset();
+            OverlayBoundTo = nullptr;
+            OverlayWeight  = 0.0f;
+            return;
+        }
+        if(InClip != Overlay)
+        {
+            Overlay        = std::move(InClip);
+            OverlayBoundTo = nullptr;
+        }
+        OverlayTime   = std::clamp(InSeconds, 0.0f, Overlay->GetDuration());
+        OverlayWeight = InWeight;
     }
 
     // === Where it is ===========================================================

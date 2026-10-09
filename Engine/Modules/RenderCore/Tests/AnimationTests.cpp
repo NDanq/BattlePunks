@@ -187,6 +187,33 @@ static void TestInstance()
     Expect(Near(Instance.GetModelPose()[2].M[1][3], 50.0f), "a seek evaluates where it lands");
 }
 
+/* SetOverlayClip: a second clip blended over the first by a weight (the Sequencer's crossfade). */
+static void TestOverlay()
+{
+    std::printf("[overlay]\n");
+    auto Skeleton = std::make_shared<SkeletonData>(MakeSkeleton());
+    auto Clip     = std::make_shared<AnimClipData>(MakeClip());
+
+    AnimInstance Instance;
+    Instance.SetSkeleton(Skeleton);
+    Instance.PlayClip(Clip);
+    Instance.SetTime(0.0f);
+    Expect(Near(Instance.GetModelPose()[2].M[1][3], 0.0f) && !Instance.HasOverlayClip(), "the base clip at 0: the arm along X");
+
+    Instance.SetOverlayClip(Clip, 1.0f, 1.0f);
+    Instance.Evaluate();
+    Expect(Instance.HasOverlayClip() && Near(Instance.GetModelPose()[2].M[1][3], 50.0f), "a whole overlay is its own pose");
+
+    Instance.SetOverlayClip(Clip, 1.0f, 0.5f);
+    Instance.Evaluate();
+    const float Half = Instance.GetModelPose()[2].M[1][3];
+    Expect(Half > 10.0f && Half < 40.0f, "half an overlay is between the two");
+
+    Instance.SetOverlayClip(nullptr, 0.0f, 0.0f);
+    Instance.Evaluate();
+    Expect(!Instance.HasOverlayClip() && Near(Instance.GetModelPose()[2].M[1][3], 0.0f), "cleared, the base clip alone");
+}
+
 static void TestSystem()
 {
     std::printf("[system]\n");
@@ -938,6 +965,7 @@ int main()
     TestPoseMath();
     TestTrim();
     TestInstance();
+    TestOverlay();
     TestSystem();
     TestStateAsset();
     TestStateMachine();

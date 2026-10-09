@@ -30,8 +30,16 @@
  *     </Track>
  *   </Sequence>
  *
- * A key's interp is omitted when it is Auto (a Bool track's always are), an
- * event's fireOnSkip when false. Written deterministically -- two spaces of
+ * Section tracks hold <Section start="0" end="96" clip="..."/>: the asset
+ * attribute is named for the track -- clip (Animation), sound (Audio),
+ * camera (CameraCut: a binding id), sequence (SubSequence) -- with rate,
+ * volume, offset, blendIn, blendOut and loop when not their defaults.
+ * <Marker f="96" name="Reveal"/> names a frame. A track may carry name=""
+ * and muted="true".
+ *
+ * A key's interp is omitted when it is Auto (a Bool track's always are), a
+ * User key adds in="" and out="" (its tangents), an event's fireOnSkip is
+ * omitted when false. Written deterministically -- two spaces of
  * indent, LF, attributes in a fixed order -- so a save that changes nothing
  * changes nothing in version control.
  */
@@ -74,10 +82,25 @@ namespace Sequencer
                         OutError = std::string("interp=\"") + Interp.value() + "\" is not an interpolation";
                         return false;
                     }
+                    Made.InTangent  = Key.attribute("in").as_float();
+                    Made.OutTangent = Key.attribute("out").as_float();
                 }
                 OutChannel.Keys.push_back(Made);
             }
             return true;
+        }
+
+        /* The attribute a section names its asset by, on InType's track. */
+        const char* SectionAssetAttribute(const ESequenceTrackType InType)
+        {
+            switch(InType)
+            {
+                case ESequenceTrackType::Animation:   return "clip";
+                case ESequenceTrackType::Audio:       return "sound";
+                case ESequenceTrackType::CameraCut:   return "camera";
+                case ESequenceTrackType::SubSequence: return "sequence";
+                default:                              return "asset";
+            }
         }
 
         bool ReadTrack(const pugi::xml_node& InNode, SequenceTrack& OutTrack, std::string& OutError)
@@ -90,6 +113,8 @@ namespace Sequencer
             }
             OutTrack.Component = InNode.attribute("component").as_string();
             OutTrack.Field     = InNode.attribute("field").as_string();
+            OutTrack.Name      = InNode.attribute("name").as_string();
+            OutTrack.bMuted    = InNode.attribute("muted").as_bool();
             OutTrack.Normalize();   // sizes Channels for the type
 
             switch(OutTrack.Type)
@@ -109,7 +134,27 @@ namespace Sequencer
                     break;
                 case ESequenceTrackType::Float:
                 case ESequenceTrackType::Bool:
+                case ESequenceTrackType::Fade:
                     if(!ReadKeys(InNode, OutTrack.Type == ESequenceTrackType::Bool, OutTrack.Channels[0], OutError)) { return false; }
+                    break;
+                case ESequenceTrackType::Animation:
+                case ESequenceTrackType::Audio:
+                case ESequenceTrackType::CameraCut:
+                case ESequenceTrackType::SubSequence:
+                    for(pugi::xml_node Node = InNode.child("Section"); Node; Node = Node.next_sibling("Section"))
+                    {
+                        SequenceSection Made;
+                        Made.Start    = Node.attribute("start").as_int();
+                        Made.End      = Node.attribute("end").as_int();
+                        Made.Asset    = Node.attribute(SectionAssetAttribute(OutTrack.Type)).as_string(Node.attribute("asset").as_string());
+                        Made.PlayRate = Node.attribute("rate").as_float(1.0f);
+                        Made.Volume   = Node.attribute("volume").as_float(1.0f);
+                        Made.Offset   = Node.attribute("offset").as_int(0);
+                        Made.BlendIn  = Node.attribute("blendIn").as_int(0);
+                        Made.BlendOut = Node.attribute("blendOut").as_int(0);
+                        Made.bLoop    = Node.attribute("loop").as_bool();
+                        OutTrack.Sections.push_back(std::move(Made));
+                    }
                     break;
                 case ESequenceTrackType::Event:
                     for(pugi::xml_node Key = InNode.child("Key"); Key; Key = Key.next_sibling("Key"))
@@ -145,6 +190,11 @@ namespace Sequencer
                 {
                     Node.append_attribute("interp").set_value(InterpName(Key.Interp));
                 }
+                if(!bInBool && Key.Interp == ESequenceInterp::User)
+                {
+                    Node.append_attribute("in").set_value(FormatFloat(Key.InTangent).c_str());
+                    Node.append_attribute("out").set_value(FormatFloat(Key.OutTangent).c_str());
+                }
             }
         }
 
@@ -152,6 +202,8 @@ namespace Sequencer
         {
             pugi::xml_node Node = InParent.append_child("Track");
             Node.append_attribute("type").set_value(TrackTypeName(InTrack.Type));
+            if(!InTrack.Name.empty()) { Node.append_attribute("name").set_value(InTrack.Name.c_str()); }
+            if(InTrack.bMuted)        { Node.append_attribute("muted").set_value("true"); }
             switch(InTrack.Type)
             {
                 case ESequenceTrackType::Transform:
@@ -170,6 +222,27 @@ namespace Sequencer
                     if(!InTrack.Channels.empty())
                     {
                         WriteKeys(Node, InTrack.Channels[0], InTrack.Type == ESequenceTrackType::Bool);
+                    }
+                    break;
+                case ESequenceTrackType::Fade:
+                    if(!InTrack.Channels.empty()) { WriteKeys(Node, InTrack.Channels[0], false); }
+                    break;
+                case ESequenceTrackType::Animation:
+                case ESequenceTrackType::Audio:
+                case ESequenceTrackType::CameraCut:
+                case ESequenceTrackType::SubSequence:
+                    for(const SequenceSection& Section : InTrack.Sections)
+                    {
+                        pugi::xml_node Made = Node.append_child("Section");
+                        Made.append_attribute("start").set_value(Section.Start);
+                        Made.append_attribute("end").set_value(Section.End);
+                        Made.append_attribute(SectionAssetAttribute(InTrack.Type)).set_value(Section.Asset.c_str());
+                        if(Section.PlayRate != 1.0f) { Made.append_attribute("rate").set_value(FormatFloat(Section.PlayRate).c_str()); }
+                        if(Section.Volume != 1.0f)   { Made.append_attribute("volume").set_value(FormatFloat(Section.Volume).c_str()); }
+                        if(Section.Offset != 0)      { Made.append_attribute("offset").set_value(Section.Offset); }
+                        if(Section.BlendIn != 0)     { Made.append_attribute("blendIn").set_value(Section.BlendIn); }
+                        if(Section.BlendOut != 0)    { Made.append_attribute("blendOut").set_value(Section.BlendOut); }
+                        if(Section.bLoop)            { Made.append_attribute("loop").set_value("true"); }
                     }
                     break;
                 case ESequenceTrackType::Event:
@@ -251,6 +324,13 @@ namespace Sequencer
                 if(!ReadTrack(Child, Track, Error)) { return Fail(Error); }
                 Asset.Tracks.push_back(std::move(Track));
             }
+            else if(std::strcmp(Child.name(), "Marker") == 0)
+            {
+                SequenceAsset::Marker Marker;
+                Marker.Frame = Child.attribute("f").as_int();
+                Marker.Name  = Child.attribute("name").as_string();
+                Asset.Markers.push_back(std::move(Marker));
+            }
             else
             {
                 return Fail(std::string("<") + Child.name() + "> does not belong in a <Sequence>");
@@ -285,6 +365,12 @@ namespace Sequencer
             for(const SequenceTrack& Track : Binding.Tracks) { WriteTrack(Node, Track); }
         }
         for(const SequenceTrack& Track : InAsset.Tracks) { WriteTrack(Root, Track); }
+        for(const SequenceAsset::Marker& Marker : InAsset.Markers)
+        {
+            pugi::xml_node Node = Root.append_child("Marker");
+            Node.append_attribute("f").set_value(Marker.Frame);
+            Node.append_attribute("name").set_value(Marker.Name.c_str());
+        }
 
         std::ostringstream Stream;
         Document.save(Stream, "  ", pugi::format_indent, pugi::encoding_utf8);

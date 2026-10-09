@@ -5,427 +5,15 @@
 #include <cstdio>
 #include <cstring>
 
-#include "Public/Core/CoreLog.h"
-#include "Public/GameCore/ComponentScript.h"
-#include "Public/GameCore/Components/TransformComponent.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/EventBus.h"
-#include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/World.h"
 #include "Public/Sequencer/SequencePlayerComponent.h"
 
-/* SequenceInstance (evaluating an asset against a World) and SequenceWorld
- * (the players that drive instances through time). README.md has the rules. */
+/* SequenceWorld: the players that drive instances through time. README.md
+ * has the rules; SequenceInstance.cpp what an instance does at a frame. */
 namespace Sequencer
 {
-    namespace
-    {
-        /* Bytes a field of InType occupies; 0 for a type a track cannot write. */
-        uint32_t FieldSize(const GameCore::EScriptFieldType InType)
-        {
-            switch(InType)
-            {
-                case GameCore::EScriptFieldType::Float:  return sizeof(float);
-                case GameCore::EScriptFieldType::Double: return sizeof(double);
-                case GameCore::EScriptFieldType::Int32:  return sizeof(int32_t);
-                case GameCore::EScriptFieldType::UInt8:
-                case GameCore::EScriptFieldType::Flag:   return sizeof(uint8_t);
-                case GameCore::EScriptFieldType::Bool:   return sizeof(bool);
-                default:                                 return 0;
-            }
-        }
-
-        float ReadField(const uint8_t* InAt, const GameCore::EScriptFieldType InType)
-        {
-            switch(InType)
-            {
-                case GameCore::EScriptFieldType::Float:  { float V;   std::memcpy(&V, InAt, sizeof(V)); return V; }
-                case GameCore::EScriptFieldType::Double: { double V;  std::memcpy(&V, InAt, sizeof(V)); return float(V); }
-                case GameCore::EScriptFieldType::Int32:  { int32_t V; std::memcpy(&V, InAt, sizeof(V)); return float(V); }
-                case GameCore::EScriptFieldType::UInt8:
-                case GameCore::EScriptFieldType::Flag:   return float(*InAt);
-                case GameCore::EScriptFieldType::Bool:   { bool V;    std::memcpy(&V, InAt, sizeof(V)); return V ? 1.0f : 0.0f; }
-                default:                                 return 0.0f;
-            }
-        }
-
-        void WriteFieldValue(uint8_t* InAt, const GameCore::EScriptFieldType InType, const float InValue)
-        {
-            switch(InType)
-            {
-                case GameCore::EScriptFieldType::Float:  { const float V = InValue;                      std::memcpy(InAt, &V, sizeof(V)); break; }
-                case GameCore::EScriptFieldType::Double: { const double V = double(InValue);            std::memcpy(InAt, &V, sizeof(V)); break; }
-                case GameCore::EScriptFieldType::Int32:  { const int32_t V = int32_t(std::lround(InValue)); std::memcpy(InAt, &V, sizeof(V)); break; }
-                case GameCore::EScriptFieldType::UInt8:  *InAt = uint8_t(std::clamp(std::lround(InValue), 0l, 255l)); break;
-                case GameCore::EScriptFieldType::Flag:   *InAt = InValue != 0.0f ? 1 : 0; break;
-                case GameCore::EScriptFieldType::Bool:   { const bool V = InValue != 0.0f;              std::memcpy(InAt, &V, sizeof(V)); break; }
-                default: break;
-            }
-        }
-
-        bool IsNumberField(const GameCore::EScriptFieldType InType)
-        {
-            return InType == GameCore::EScriptFieldType::Float || InType == GameCore::EScriptFieldType::Double
-                || InType == GameCore::EScriptFieldType::Int32 || InType == GameCore::EScriptFieldType::UInt8;
-        }
-
-        bool IsFlagField(const GameCore::EScriptFieldType InType)
-        {
-            return InType == GameCore::EScriptFieldType::Flag || InType == GameCore::EScriptFieldType::Bool
-                || InType == GameCore::EScriptFieldType::UInt8;
-        }
-
-        float GetAxis(const EngineCore::Vector3& InVector, const size_t InAxis)
-        {
-            return InAxis == 0 ? float(InVector.GetX()) : InAxis == 1 ? float(InVector.GetY()) : float(InVector.GetZ());
-        }
-
-        void SetAxis(EngineCore::Vector3& InOutVector, const size_t InAxis, const float InValue)
-        {
-            if(InAxis == 0)      { InOutVector.SetX(InValue); }
-            else if(InAxis == 1) { InOutVector.SetY(InValue); }
-            else                 { InOutVector.SetZ(InValue); }
-        }
-
-        constexpr uint32_t TRANSFORM_OFFSET = 0xFFFFFFFFu;
-    }
-
-    // === SequenceInstance ==================================================
-
-    SequenceInstance::SequenceInstance(GameCore::World& InWorld, std::shared_ptr<const SequenceAsset> InAsset, std::string InPath)
-        : World(InWorld), Asset(std::move(InAsset)), Path(std::move(InPath))
-    {
-        if(!Asset)
-        {
-            Asset = std::make_shared<SequenceAsset>();
-        }
-        Bindings.resize(Asset->Bindings.size());
-    }
-
-    SequenceInstance::~SequenceInstance()
-    {
-        ReleaseSpawned();
-    }
-
-    bool SequenceInstance::SetBindingOverride(const std::string& InId, const GameCore::EntityID InEntity)
-    {
-        const int32_t Index = Asset->FindBinding(InId);
-        if(Index < 0)
-        {
-            return false;
-        }
-        BindingState& State = Bindings[size_t(Index)];
-        State.Override  = InEntity;
-        State.bResolved = false;
-        State.bWarned   = false;
-        return true;
-    }
-
-    GameCore::EntityID SequenceInstance::ResolveBinding(const size_t InIndex)
-    {
-        if(InIndex >= Bindings.size())
-        {
-            return GameCore::EntityID();
-        }
-        BindingState&          State   = Bindings[InIndex];
-        const SequenceBinding& Binding = Asset->Bindings[InIndex];
-
-        /* Resolved and still there (or resolved to nothing): as it was. */
-        if(State.bResolved && (!State.Entity.IsSet() || World.IsAlive(State.Entity)))
-        {
-            return State.Entity;
-        }
-
-        State.bResolved = true;
-        State.Entity    = GameCore::EntityID();
-        if(State.Override.IsSet() && World.IsAlive(State.Override))
-        {
-            State.Entity = State.Override;
-        }
-        else if(Binding.Kind == ESequenceBindingKind::Possess)
-        {
-            if(Binding.Guid.IsSet())
-            {
-                State.Entity = World.FindEntityByGuid(Binding.Guid);
-            }
-            if(!State.Entity.IsSet() && !Binding.Name.empty())
-            {
-                State.Entity = World.FindEntityByName(Binding.Name.c_str());
-            }
-        }
-        else if(!Binding.Prefab.empty())
-        {
-            if(State.Spawned.IsSet() && World.IsInstanceAlive(State.Spawned))
-            {
-                State.Entity = World.GetInstance(State.Spawned).GetRoot().GetID();
-            }
-            else
-            {
-                const char* Name = Binding.Name.empty() ? Binding.Id.c_str() : Binding.Name.c_str();
-                const GameCore::PrefabInstance Spawned = World.SpawnPrefab(Binding.Prefab.c_str(), GameCore::TransformPose(), Name);
-                if(Spawned.IsValid())
-                {
-                    State.Spawned = Spawned.GetID();
-                    State.Entity  = Spawned.GetRoot().GetID();
-                }
-            }
-        }
-
-        if(!State.Entity.IsSet() && !State.bWarned)
-        {
-            State.bWarned = true;
-            CORE_LOG_WARN("[Sequencer] '" + Path + "': binding '" + Binding.Id + "' "
-                          + (Binding.Kind == ESequenceBindingKind::Spawn ? "could not spawn '" + Binding.Prefab + "'"
-                                                                         : std::string("matches no entity in the level"))
-                          + "; its tracks do nothing")
-        }
-        BindTracks(State, Binding);
-        return State.Entity;
-    }
-
-    void SequenceInstance::BindTracks(BindingState& InOutState, const SequenceBinding& InBinding)
-    {
-        InOutState.Tracks.clear();
-        InOutState.Tracks.reserve(InBinding.Tracks.size());
-        for(const SequenceTrack& Track : InBinding.Tracks)
-        {
-            BoundTrack Bound;
-            Bound.Track = &Track;
-            if(Track.Type == ESequenceTrackType::Transform)
-            {
-                Bound.bUsable = true;
-            }
-            else if(Track.Type == ESequenceTrackType::Float || Track.Type == ESequenceTrackType::Bool)
-            {
-                const GameCore::ComponentTypeInfo* Info = GameCore::FindComponentType(Track.Component.c_str());
-                size_t Count = 0;
-                const GameCore::ScriptBindingEntry* Entries = Info ? GameCore::FindComponentScript(Info->ID, Count) : nullptr;
-                for(size_t Index = 0; Entries && Index < Count; ++Index)
-                {
-                    const GameCore::ScriptBindingEntry& Entry = Entries[Index];
-                    if(Entry.bMethod || Entry.bReadOnly || Track.Field != Entry.Name)
-                    {
-                        continue;
-                    }
-                    const bool bFits = Track.Type == ESequenceTrackType::Float ? IsNumberField(Entry.FieldType) : IsFlagField(Entry.FieldType);
-                    if(bFits && FieldSize(Entry.FieldType) > 0)
-                    {
-                        Bound.Type      = Info->ID;
-                        Bound.Offset    = Entry.Offset;
-                        Bound.FieldType = uint8_t(Entry.FieldType);
-                        Bound.bUsable   = true;
-                    }
-                    break;
-                }
-                if(!Bound.bUsable && InOutState.Entity.IsSet())
-                {
-                    CORE_LOG_WARN("[Sequencer] '" + Path + "': binding '" + InBinding.Id + "': " + TrackTypeName(Track.Type)
-                                  + " track " + Track.Component + "." + Track.Field
-                                  + " is not a writable " + (Track.Type == ESequenceTrackType::Float ? "number" : "flag")
-                                  + " field that component binds for scripts; the track does nothing")
-                }
-            }
-            InOutState.Tracks.push_back(Bound);
-        }
-    }
-
-    void SequenceInstance::Evaluate(double InFrame)
-    {
-        InFrame = std::clamp(InFrame, 0.0, double(std::max(Asset->Length, 0)));
-        for(size_t Index = 0; Index < Bindings.size(); ++Index)
-        {
-            const GameCore::EntityID Entity = ResolveBinding(Index);
-            if(!Entity.IsSet() || !World.IsAlive(Entity))
-            {
-                continue;
-            }
-            for(const BoundTrack& Bound : Bindings[Index].Tracks)
-            {
-                if(!Bound.bUsable) { continue; }
-                switch(Bound.Track->Type)
-                {
-                    case ESequenceTrackType::Transform: WriteTransform(Entity, *Bound.Track, InFrame); break;
-                    case ESequenceTrackType::Float:
-                    case ESequenceTrackType::Bool:      WriteField(Entity, Bound, InFrame); break;
-                    case ESequenceTrackType::Event:
-                    case ESequenceTrackType::Count:     break;
-                }
-            }
-        }
-    }
-
-    void SequenceInstance::WriteTransform(const GameCore::EntityID InEntity, const SequenceTrack& InTrack, const double InFrame)
-    {
-        GameCore::TransformComponent* Transform = World.GetEntity(InEntity).GetComponent<GameCore::TransformComponent>();
-        if(!Transform) { return; }
-
-        bool bAny = false;
-        for(const SequenceChannel& Channel : InTrack.Channels) { bAny = bAny || !Channel.IsEmpty(); }
-        if(!bAny) { return; }
-
-        GameCore::TransformPose Pose = Transform->GetPose();
-        SaveTransform(InEntity, Pose);
-
-        EngineCore::Vector3* Parts[3] = { &Pose.Position, &Pose.Rotation, &Pose.Scale };
-        for(size_t Channel = 0; Channel < InTrack.Channels.size() && Channel < TC_Count; ++Channel)
-        {
-            const SequenceChannel& Keys = InTrack.Channels[Channel];
-            if(Keys.IsEmpty()) { continue; }
-            EngineCore::Vector3& Part = *Parts[Channel / 3];
-            SetAxis(Part, Channel % 3, Keys.Evaluate(InFrame, GetAxis(Part, Channel % 3)));
-        }
-        Transform->SetPose(Pose);
-    }
-
-    void SequenceInstance::WriteField(const GameCore::EntityID InEntity, const BoundTrack& InBound, const double InFrame)
-    {
-        if(InBound.Track->Channels.empty() || InBound.Track->Channels[0].IsEmpty()) { return; }
-        auto* Component = static_cast<uint8_t*>(World.GetEntity(InEntity).GetComponentByType(InBound.Type));
-        if(!Component) { return; }
-
-        const auto     Type = GameCore::EScriptFieldType(InBound.FieldType);
-        uint8_t*       At   = Component + InBound.Offset;
-        Save(InEntity, InBound.Type, InBound.Offset, FieldSize(Type), At);
-        WriteFieldValue(At, Type, InBound.Track->Channels[0].Evaluate(InFrame, ReadField(At, Type)));
-    }
-
-    void SequenceInstance::Save(const GameCore::EntityID InEntity, const GameCore::ComponentTypeID InType, const uint32_t InOffset,
-                                const uint32_t InSize, const void* InNow)
-    {
-        const SavedKey Key{ InEntity.Pack(), InType, InOffset };
-        if(SavedIndex.count(Key) || InSize > sizeof(SavedValue::Bytes)) { return; }
-        SavedValue Value;
-        Value.Entity = InEntity;
-        Value.Type   = InType;
-        Value.Offset = InOffset;
-        Value.Size   = InSize;
-        std::memcpy(Value.Bytes, InNow, InSize);
-        SavedIndex.emplace(Key, Saved.size());
-        Saved.push_back(Value);
-    }
-
-    void SequenceInstance::SaveTransform(const GameCore::EntityID InEntity, const GameCore::TransformPose& InNow)
-    {
-        const SavedKey Key{ InEntity.Pack(), GameCore::TransformComponent::StaticType().ID, TRANSFORM_OFFSET };
-        if(SavedIndex.count(Key)) { return; }
-        SavedValue Value;
-        Value.Entity = InEntity;
-        Value.Type   = GameCore::TransformComponent::StaticType().ID;
-        Value.Offset = TRANSFORM_OFFSET;
-        Value.Pose   = InNow;
-        SavedIndex.emplace(Key, Saved.size());
-        Saved.push_back(Value);
-    }
-
-    void SequenceInstance::RestoreState()
-    {
-        /* Newest first, so where two saves overlap the oldest value wins. */
-        for(auto It = Saved.rbegin(); It != Saved.rend(); ++It)
-        {
-            const SavedValue& Value = *It;
-            if(!World.IsAlive(Value.Entity)) { continue; }
-            const GameCore::Entity Entity = World.GetEntity(Value.Entity);
-            if(Value.Offset == TRANSFORM_OFFSET)
-            {
-                if(GameCore::TransformComponent* Transform = Entity.GetComponent<GameCore::TransformComponent>())
-                {
-                    Transform->SetPose(Value.Pose);
-                }
-            }
-            else if(auto* Component = static_cast<uint8_t*>(Entity.GetComponentByType(Value.Type)))
-            {
-                std::memcpy(Component + Value.Offset, Value.Bytes, Value.Size);
-            }
-        }
-        Saved.clear();
-        SavedIndex.clear();
-    }
-
-    void SequenceInstance::DiscardState()
-    {
-        Saved.clear();
-        SavedIndex.clear();
-    }
-
-    void SequenceInstance::ReleaseSpawned()
-    {
-        for(BindingState& State : Bindings)
-        {
-            if(!State.Spawned.IsSet()) { continue; }
-            if(World.IsInstanceAlive(State.Spawned))
-            {
-                World.DestroyPrefabInstance(State.Spawned);
-            }
-            State.Spawned   = GameCore::PrefabInstanceID();
-            State.Entity    = GameCore::EntityID();
-            State.bResolved = false;
-        }
-    }
-
-    void SequenceInstance::FireEvents(const double InFrom, const double InTo, const bool bInIncludeFrom, const bool bInSkipOnly)
-    {
-        if(InTo < InFrom) { return; }
-
-        struct Pending
-        {
-            int32_t             Frame = 0;
-            std::string         Name;
-            GameCore::EventArgs Args;
-        };
-        std::vector<Pending> Fire;
-
-        const auto Collect = [&](const SequenceTrack& InTrack)
-        {
-            if(InTrack.Type != ESequenceTrackType::Event) { return; }
-            for(const SequenceEventKey& Key : InTrack.Events)
-            {
-                const double At = double(Key.Frame);
-                const bool bIn  = (At > InFrom || (bInIncludeFrom && At >= InFrom)) && At <= InTo;
-                if(!bIn || Key.Event.empty() || (bInSkipOnly && !Key.bFireOnSkip)) { continue; }
-
-                Pending Made;
-                Made.Frame = Key.Frame;
-                Made.Name  = Key.Event;
-                for(const SequenceEventArg& Arg : Key.Args)
-                {
-                    if(Made.Args.Count >= SEQUENCE_EVENT_ARGS_MAX) { break; }
-                    GameCore::EventArg& Out = Made.Args.Args[Made.Args.Count++];
-                    switch(Arg.Type)
-                    {
-                        case SequenceEventArg::EType::Number:  Out = GameCore::EventArg::Make(Arg.Number); break;
-                        case SequenceEventArg::EType::Bool:    Out = GameCore::EventArg::Make(Arg.bValue); break;
-                        case SequenceEventArg::EType::String:  Out = GameCore::EventArg::Make(Arg.Text.c_str()); break;
-                        case SequenceEventArg::EType::Binding:
-                        {
-                            const int32_t Index = Asset->FindBinding(Arg.Text);
-                            Out = GameCore::EventArg::Make(Index >= 0 ? ResolveBinding(size_t(Index)) : GameCore::EntityID());
-                            break;
-                        }
-                    }
-                }
-                Fire.push_back(std::move(Made));
-            }
-        };
-        for(const SequenceBinding& Binding : Asset->Bindings)
-        {
-            for(const SequenceTrack& Track : Binding.Tracks) { Collect(Track); }
-        }
-        for(const SequenceTrack& Track : Asset->Tracks) { Collect(Track); }
-        if(Fire.empty()) { return; }
-
-        std::stable_sort(Fire.begin(), Fire.end(), [](const Pending& L, const Pending& R) { return L.Frame < R.Frame; });
-
-        /* A handler may stop or restart the player that owns this instance,
-         * destroying it: from here only locals are touched. */
-        GameCore::EventBus& Bus = World.GetEvents();
-        for(const Pending& Event : Fire)
-        {
-            Bus.Emit(Event.Name.c_str(), Event.Args);
-        }
-    }
-
-    // === SequenceWorld =====================================================
-
     namespace
     {
         std::unordered_map<const GameCore::World*, SequenceWorld*>& Systems()
@@ -468,8 +56,14 @@ namespace Sequencer
 
     SequenceWorld::SequenceWorld(GameCore::World& InWorld) : World(InWorld) {}
 
-    /* The world is going away: spawned entities go with it, nothing restored. */
+    /* The world is going away: what the players made goes with it, nothing
+     * restored, and the host told nothing (it is going too). */
     SequenceWorld::~SequenceWorld() = default;
+
+    void SequenceWorld::SetHost(const SequenceHost& InHost)
+    {
+        Host = InHost;
+    }
 
     void SequenceWorld::TickSystem(GameCore::World& InWorld, const float InDeltaSeconds, void* InUserData)
     {
@@ -496,6 +90,17 @@ namespace Sequencer
             return nullptr;
         }
         return &Players[InPlayer.Pack()];
+    }
+
+    SequenceInstance* SequenceWorld::FindInstance(const GameCore::EntityID InPlayer)
+    {
+        Player* P = FindPlayer(InPlayer);
+        return P ? P->Instance.get() : nullptr;
+    }
+
+    bool SequenceWorld::IsReplica(const GameCore::EntityID InPlayer) const
+    {
+        return Host.IsReplica && Host.IsReplica(InPlayer, Host.UserData);
     }
 
     bool SequenceWorld::Prepare(const GameCore::EntityID InPlayer, Player& InOutPlayer)
@@ -527,7 +132,7 @@ namespace Sequencer
         if(!InOutPlayer.Instance) { return; }
         if(InOutPlayer.bRestoreState) { InOutPlayer.Instance->RestoreState(); }
         else                          { InOutPlayer.Instance->DiscardState(); }
-        InOutPlayer.Instance->ReleaseSpawned();
+        InOutPlayer.Instance->Release();
     }
 
     void SequenceWorld::Emit(const char* InEvent, const GameCore::EntityID InPlayer, const Player& InPlayerState)
@@ -537,6 +142,16 @@ namespace Sequencer
         Args.Args[1] = GameCore::EventArg::Make(InPlayerState.Instance ? InPlayerState.Instance->GetPath().c_str() : "");
         Args.Count   = 2;
         World.GetEvents().Emit(InEvent, Args);
+    }
+
+    void SequenceWorld::Publish(const GameCore::EntityID InPlayer, const Player& InPlayerState, const bool bInJumped)
+    {
+        if(IsReplica(InPlayer) || !World.IsAlive(InPlayer)) { return; }
+        SequencePlayerComponent* Component = World.GetEntity(InPlayer).GetComponent<SequencePlayerComponent>();
+        if(!Component) { return; }
+        Component->NetState   = uint8_t(InPlayerState.State);
+        Component->NetSeconds = InPlayerState.Instance ? float(InPlayerState.Instance->GetAsset().FramesToSeconds(InPlayerState.Frame)) : 0.0f;
+        if(bInJumped) { ++Component->NetSerial; }
     }
 
     GameCore::EntityID SequenceWorld::PlaySequence(const char* InPath, const bool bInLoop)
@@ -581,6 +196,8 @@ namespace Sequencer
         P->Frame         = 0.0;
         P->bIncludeFrame = true;
         P->bFresh        = true;
+        P->StartOrder    = ++StartCounter;
+        Publish(InPlayer, *P, true);
         Emit("SequenceStarted", InPlayer, *P);
         return true;
     }
@@ -589,7 +206,12 @@ namespace Sequencer
     {
         Player* P = GetPlayer(InPlayer);
         if(!P) { return false; }
-        if(P->State == ESequencePlayState::Playing) { P->State = ESequencePlayState::Paused; }
+        if(P->State == ESequencePlayState::Playing)
+        {
+            P->State = ESequencePlayState::Paused;
+            if(P->Instance) { P->Instance->UpdatePlayback(P->Frame, false); }
+            Publish(InPlayer, *P, false);
+        }
         return true;
     }
 
@@ -597,7 +219,11 @@ namespace Sequencer
     {
         Player* P = GetPlayer(InPlayer);
         if(!P) { return false; }
-        if(P->State == ESequencePlayState::Paused && P->Instance) { P->State = ESequencePlayState::Playing; }
+        if(P->State == ESequencePlayState::Paused && P->Instance)
+        {
+            P->State = ESequencePlayState::Playing;
+            Publish(InPlayer, *P, false);
+        }
         return true;
     }
 
@@ -610,10 +236,12 @@ namespace Sequencer
         P->State         = ESequencePlayState::Stopped;
         P->Frame         = 0.0;
         P->bIncludeFrame = false;
+        Publish(InPlayer, *P, false);
         if(!bWasStopped)
         {
             Emit("SequenceStopped", InPlayer, *P);
         }
+        ApplyToHost();
         return true;
     }
 
@@ -632,10 +260,26 @@ namespace Sequencer
         P->bAutoPlayed   = true;
         if(P->State == ESequencePlayState::Stopped || P->State == ESequencePlayState::Finished)
         {
-            P->State = ESequencePlayState::Paused;
+            P->State      = ESequencePlayState::Paused;
+            P->StartOrder = ++StartCounter;
         }
+        P->Instance->NoteJump();
         P->Instance->Evaluate(P->Frame);
+        P->Instance->UpdatePlayback(P->Frame, P->State == ESequencePlayState::Playing);
+        Publish(InPlayer, *P, true);
+        ApplyToHost();
         return true;
+    }
+
+    bool SequenceWorld::SeekToMarker(const GameCore::EntityID InPlayer, const char* InMarker)
+    {
+        Player* P = GetPlayer(InPlayer);
+        if(!P || !InMarker) { return false; }
+        /* The asset as the cache has it now: the markers may be new. */
+        if(!Prepare(InPlayer, *P)) { return false; }
+        const SequenceAsset& Asset = P->Instance->GetAsset();
+        const int32_t Marker = Asset.FindMarker(InMarker);
+        return Marker >= 0 && Seek(InPlayer, Asset.FramesToSeconds(double(Asset.Markers[size_t(Marker)].Frame)));
     }
 
     bool SequenceWorld::Skip(const GameCore::EntityID InPlayer)
@@ -645,8 +289,8 @@ namespace Sequencer
         if(P->State != ESequencePlayState::Playing && P->State != ESequencePlayState::Paused) { return false; }
 
         SequenceInstance* Instance = P->Instance.get();
-        const double End = double(Instance->GetAsset().Length);
-        const double From = P->Frame;
+        const double End   = double(Instance->GetAsset().Length);
+        const double From  = P->Frame;
         const bool   bIncl = P->bIncludeFrame;
         P->Frame         = End;
         P->bIncludeFrame = false;
@@ -657,9 +301,26 @@ namespace Sequencer
         P = FindPlayer(InPlayer);
         if(P && P->Instance.get() == Instance && P->State != ESequencePlayState::Stopped)
         {
+            Publish(InPlayer, *P, true);
             Finish(InPlayer, *P);
         }
+        ApplyToHost();
         return true;
+    }
+
+    size_t SequenceWorld::SkipCinematics()
+    {
+        std::vector<GameCore::EntityID> Skippable;
+        for(const auto& Entry : Players)
+        {
+            const GameCore::EntityID Id = GameCore::EntityID::Unpack(Entry.first);
+            if(Entry.second.State != ESequencePlayState::Playing || !World.IsAlive(Id)) { continue; }
+            const SequencePlayerComponent* Component = World.GetEntity(Id).GetComponent<SequencePlayerComponent>();
+            if(Component && Component->bCinematic && Component->bSkippable && !IsReplica(Id)) { Skippable.push_back(Id); }
+        }
+        size_t Count = 0;
+        for(const GameCore::EntityID Id : Skippable) { Count += Skip(Id) ? 1 : 0; }
+        return Count;
     }
 
     bool SequenceWorld::Bind(const GameCore::EntityID InPlayer, const char* InBindingId, const GameCore::EntityID InEntity)
@@ -697,10 +358,11 @@ namespace Sequencer
     {
         InOutPlayer.State = ESequencePlayState::Finished;
         Release(InOutPlayer);
+        Publish(InPlayer, InOutPlayer, false);
 
         const SequencePlayerComponent* Component = World.IsAlive(InPlayer)
             ? World.GetEntity(InPlayer).GetComponent<SequencePlayerComponent>() : nullptr;
-        const bool bDestroy = Component && Component->bDestroyWhenFinished;
+        const bool bDestroy = Component && Component->bDestroyWhenFinished && !IsReplica(InPlayer);
 
         Emit("SequenceFinished", InPlayer, InOutPlayer);
         if(bDestroy && World.IsAlive(InPlayer))
@@ -729,8 +391,10 @@ namespace Sequencer
             {
                 /* The rest of this pass, then the start of the next. */
                 const double Wrapped = std::fmod(To, Length);
-                Instance->Evaluate(Wrapped);
                 InOutPlayer.Frame = Wrapped;
+                Instance->NoteJump();
+                Instance->Evaluate(Wrapped);
+                Instance->UpdatePlayback(Wrapped, true);
                 Instance->FireEvents(From, Length, bIncl);
                 Player* P = FindPlayer(InPlayer);
                 if(P && P->Instance.get() == Instance && P->State == ESequencePlayState::Playing)
@@ -745,6 +409,7 @@ namespace Sequencer
 
         InOutPlayer.Frame = To;
         Instance->Evaluate(To);
+        Instance->UpdatePlayback(To, !bEnded);
         Instance->FireEvents(From, To, bIncl);
 
         if(bEnded)
@@ -754,6 +419,98 @@ namespace Sequencer
             {
                 Finish(InPlayer, *P);
             }
+        }
+    }
+
+    void SequenceWorld::Follow(const GameCore::EntityID InPlayer, Player& InOutPlayer)
+    {
+        const SequencePlayerComponent* Component = World.GetEntity(InPlayer).GetComponent<SequencePlayerComponent>();
+        const auto Wanted  = ESequencePlayState(std::min<uint8_t>(Component->NetState, uint8_t(ESequencePlayState::Finished)));
+        const bool bJumped = Component->NetSerial != InOutPlayer.SeenSerial;
+        const bool bState  = Component->NetState != InOutPlayer.SeenState;
+        if(!bJumped && !bState) { return; }
+        InOutPlayer.SeenSerial = Component->NetSerial;
+        InOutPlayer.SeenState  = Component->NetState;
+        const double Seconds   = Component->NetSeconds;
+
+        switch(Wanted)
+        {
+            case ESequencePlayState::Stopped:
+                if(InOutPlayer.State != ESequencePlayState::Stopped) { Stop(InPlayer); }
+                break;
+            case ESequencePlayState::Finished:
+                if(InOutPlayer.State == ESequencePlayState::Playing || InOutPlayer.State == ESequencePlayState::Paused) { Skip(InPlayer); }
+                break;
+            case ESequencePlayState::Playing:
+            case ESequencePlayState::Paused:
+                if(bJumped)
+                {
+                    /* Started over where the server's is: from the start's
+                     * events if it is at the start, else seeked there. */
+                    if(InOutPlayer.State != ESequencePlayState::Playing || Seconds <= 0.0) { Play(InPlayer); }
+                    if(Seconds > 0.0) { Seek(InPlayer, Seconds); }
+                }
+                if(Wanted == ESequencePlayState::Paused) { Pause(InPlayer); }
+                else                                     { Resume(InPlayer); }
+                break;
+        }
+    }
+
+    void SequenceWorld::ApplyToHost()
+    {
+        /* The shot of the player started last; the darkest fade; any cinematic. */
+        GameCore::EntityID Camera;
+        uint64_t Latest   = 0;
+        float    Fade     = -1.0f;
+        bool     bCinema  = false;
+        for(const auto& Entry : Players)
+        {
+            const Player& P = Entry.second;
+            if(!P.Instance || (P.State != ESequencePlayState::Playing && P.State != ESequencePlayState::Paused)) { continue; }
+            const GameCore::EntityID Shot = P.Instance->GetCameraEntity();
+            if(Shot.IsSet() && P.StartOrder >= Latest)
+            {
+                Camera = Shot;
+                Latest = P.StartOrder;
+            }
+            Fade = std::max(Fade, P.Instance->GetFade());
+            const GameCore::EntityID Id = GameCore::EntityID::Unpack(Entry.first);
+            if(World.IsAlive(Id))
+            {
+                const SequencePlayerComponent* Component = World.GetEntity(Id).GetComponent<SequencePlayerComponent>();
+                bCinema = bCinema || (Component && Component->bCinematic);
+            }
+        }
+
+        if(Camera != AppliedCamera)
+        {
+            if(Camera.IsSet())
+            {
+                if(!bViewTaken)
+                {
+                    ViewBefore = Host.GetViewTarget ? Host.GetViewTarget(Host.UserData) : GameCore::EntityID();
+                    bViewTaken = true;
+                }
+                if(Host.SetViewTarget) { Host.SetViewTarget(Camera, Host.UserData); }
+            }
+            else
+            {
+                const GameCore::EntityID Back = ViewBefore.IsSet() && World.IsAlive(ViewBefore) ? ViewBefore : GameCore::EntityID();
+                if(Host.SetViewTarget) { Host.SetViewTarget(Back, Host.UserData); }
+                bViewTaken = false;
+                ViewBefore = GameCore::EntityID();
+            }
+            AppliedCamera = Camera;
+        }
+        if(Fade != AppliedFade)
+        {
+            AppliedFade = Fade;
+            if(Host.SetFade) { Host.SetFade(Fade, Host.UserData); }
+        }
+        if(bCinema != bAppliedCinematic)
+        {
+            bAppliedCinematic = bCinema;
+            if(Host.SetCinematic) { Host.SetCinematic(bCinema, Host.UserData); }
         }
     }
 
@@ -783,7 +540,12 @@ namespace Sequencer
         {
             Player* P = GetPlayer(Id);
             if(!P) { continue; }
-            if(!P->bAutoPlayed)
+            if(IsReplica(Id))
+            {
+                P->bAutoPlayed = true;   // the server's plays, not this copy
+                Follow(Id, *P);
+            }
+            else if(!P->bAutoPlayed)
             {
                 P->bAutoPlayed = true;
                 const SequencePlayerComponent* Component = World.GetEntity(Id).GetComponent<SequencePlayerComponent>();
@@ -800,5 +562,6 @@ namespace Sequencer
                 Advance(Id, *P, Delta);
             }
         }
+        ApplyToHost();
     }
 }

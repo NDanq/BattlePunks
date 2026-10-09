@@ -9,14 +9,17 @@
 /*
  * The cooked .nmseq: "NMSQ", a version, then chunks (CoreArchive) -- HEAD the
  * rate and length, BIND the bindings with their tracks, TRAK the tracks of no
- * binding. A chunk a newer build adds is stepped over.
+ * binding, MARK the markers. A chunk a newer build adds is stepped over.
+ *
+ * Version 2 added key tangents, track names and mute, sections and markers;
+ * version 1 files still read.
  */
 namespace Sequencer
 {
     namespace
     {
         constexpr char     MAGIC[4]       = { 'N', 'M', 'S', 'Q' };
-        constexpr uint32_t BINARY_VERSION = 1;
+        constexpr uint32_t BINARY_VERSION = 2;
 
         constexpr uint32_t Tag(const char InA, const char InB, const char InC, const char InD)
         {
@@ -25,6 +28,7 @@ namespace Sequencer
         constexpr uint32_t TAG_HEADER   = Tag('H', 'E', 'A', 'D');
         constexpr uint32_t TAG_BINDINGS = Tag('B', 'I', 'N', 'D');
         constexpr uint32_t TAG_TRACKS   = Tag('T', 'R', 'A', 'K');
+        constexpr uint32_t TAG_MARKERS  = Tag('M', 'A', 'R', 'K');
 
         /* Past these a count is damage, not data. */
         constexpr uint32_t COUNT_MAX = 1000000;
@@ -40,7 +44,7 @@ namespace Sequencer
             return !Ar.HasError();
         }
 
-        void SerializeChannel(EngineCore::Archive& Ar, SequenceChannel& InOutChannel)
+        void SerializeChannel(EngineCore::Archive& Ar, SequenceChannel& InOutChannel, const uint32_t InVersion)
         {
             uint32_t Count = uint32_t(InOutChannel.Keys.size());
             if(!SerializeCount(Ar, Count, "key")) { return; }
@@ -52,10 +56,15 @@ namespace Sequencer
                 Ar << Key.Value;
                 Ar << Interp;
                 Key.Interp = Interp < uint8_t(ESequenceInterp::Count) ? ESequenceInterp(Interp) : ESequenceInterp::Auto;
+                if(InVersion >= 2)
+                {
+                    Ar << Key.InTangent;
+                    Ar << Key.OutTangent;
+                }
             }
         }
 
-        void SerializeTrack(EngineCore::Archive& Ar, SequenceTrack& InOutTrack)
+        void SerializeTrack(EngineCore::Archive& Ar, SequenceTrack& InOutTrack, const uint32_t InVersion)
         {
             uint8_t Type = uint8_t(InOutTrack.Type);
             Ar << Type;
@@ -71,7 +80,7 @@ namespace Sequencer
             uint32_t Channels = uint32_t(InOutTrack.Channels.size());
             if(!SerializeCount(Ar, Channels, "channel")) { return; }
             if(Ar.IsLoading()) { InOutTrack.Channels.resize(Channels); }
-            for(SequenceChannel& Channel : InOutTrack.Channels) { SerializeChannel(Ar, Channel); }
+            for(SequenceChannel& Channel : InOutTrack.Channels) { SerializeChannel(Ar, Channel, InVersion); }
 
             uint32_t Events = uint32_t(InOutTrack.Events.size());
             if(!SerializeCount(Ar, Events, "event")) { return; }
@@ -94,21 +103,52 @@ namespace Sequencer
                     Ar << Arg.Text;
                 }
             }
+
+            if(InVersion < 2) { return; }
+            Ar << InOutTrack.Name;
+            Ar << InOutTrack.bMuted;
+            uint32_t Sections = uint32_t(InOutTrack.Sections.size());
+            if(!SerializeCount(Ar, Sections, "section")) { return; }
+            if(Ar.IsLoading()) { InOutTrack.Sections.resize(Sections); }
+            for(SequenceSection& Section : InOutTrack.Sections)
+            {
+                Ar << Section.Start;
+                Ar << Section.End;
+                Ar << Section.Asset;
+                Ar << Section.PlayRate;
+                Ar << Section.Volume;
+                Ar << Section.Offset;
+                Ar << Section.BlendIn;
+                Ar << Section.BlendOut;
+                Ar << Section.bLoop;
+            }
         }
 
-        void SerializeTracks(EngineCore::Archive& Ar, std::vector<SequenceTrack>& InOutTracks)
+        void SerializeTracks(EngineCore::Archive& Ar, std::vector<SequenceTrack>& InOutTracks, const uint32_t InVersion)
         {
             uint32_t Count = uint32_t(InOutTracks.size());
             if(!SerializeCount(Ar, Count, "track")) { return; }
             if(Ar.IsLoading()) { InOutTracks.resize(Count); }
             for(SequenceTrack& Track : InOutTracks)
             {
-                SerializeTrack(Ar, Track);
+                SerializeTrack(Ar, Track, InVersion);
                 if(Ar.HasError()) { return; }
             }
         }
 
-        void SerializeBindings(EngineCore::Archive& Ar, std::vector<SequenceBinding>& InOutBindings)
+        void SerializeMarkers(EngineCore::Archive& Ar, std::vector<SequenceAsset::Marker>& InOutMarkers)
+        {
+            uint32_t Count = uint32_t(InOutMarkers.size());
+            if(!SerializeCount(Ar, Count, "marker")) { return; }
+            if(Ar.IsLoading()) { InOutMarkers.resize(Count); }
+            for(SequenceAsset::Marker& Marker : InOutMarkers)
+            {
+                Ar << Marker.Frame;
+                Ar << Marker.Name;
+            }
+        }
+
+        void SerializeBindings(EngineCore::Archive& Ar, std::vector<SequenceBinding>& InOutBindings, const uint32_t InVersion)
         {
             uint32_t Count = uint32_t(InOutBindings.size());
             if(!SerializeCount(Ar, Count, "binding")) { return; }
@@ -123,7 +163,7 @@ namespace Sequencer
                 Ar << Binding.Guid.Hi;
                 Ar << Binding.Guid.Lo;
                 Ar << Binding.Prefab;
-                SerializeTracks(Ar, Binding.Tracks);
+                SerializeTracks(Ar, Binding.Tracks, InVersion);
                 if(Ar.HasError()) { return; }
             }
         }
@@ -161,13 +201,19 @@ namespace Sequencer
         ChunkVersion = 1;
         if(Ar.OpenChunk(TAG_BINDINGS, ChunkVersion))
         {
-            SerializeBindings(Ar, Asset.Bindings);
+            SerializeBindings(Ar, Asset.Bindings, BINARY_VERSION);
             Ar.CloseChunk();
         }
         ChunkVersion = 1;
         if(Ar.OpenChunk(TAG_TRACKS, ChunkVersion))
         {
-            SerializeTracks(Ar, Asset.Tracks);
+            SerializeTracks(Ar, Asset.Tracks, BINARY_VERSION);
+            Ar.CloseChunk();
+        }
+        ChunkVersion = 1;
+        if(Ar.OpenChunk(TAG_MARKERS, ChunkVersion))
+        {
+            SerializeMarkers(Ar, Asset.Markers);
             Ar.CloseChunk();
         }
         return Ar.GetBytes();
@@ -200,12 +246,17 @@ namespace Sequencer
             }
             else if(Ar.OpenChunk(TAG_BINDINGS, ChunkVersion))
             {
-                SerializeBindings(Ar, Asset.Bindings);
+                SerializeBindings(Ar, Asset.Bindings, Version);
                 Ar.CloseChunk();
             }
             else if(Ar.OpenChunk(TAG_TRACKS, ChunkVersion))
             {
-                SerializeTracks(Ar, Asset.Tracks);
+                SerializeTracks(Ar, Asset.Tracks, Version);
+                Ar.CloseChunk();
+            }
+            else if(Ar.OpenChunk(TAG_MARKERS, ChunkVersion))
+            {
+                SerializeMarkers(Ar, Asset.Markers);
                 Ar.CloseChunk();
             }
             else

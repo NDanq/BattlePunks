@@ -75,6 +75,14 @@ namespace RenderCore
         /* How a lone clip plays (PlayClip): -1 as it says, 0 once, 1 looping. */
         void SetLoopOverride(int InLoop);
 
+        /* A clip blended over whatever plays, by InWeight (0..1), sampled at
+         * InSeconds: what a sequence's overlapping clips crossfade with
+         * (Engine/Modules/Sequencer). Applied by Evaluate after the layers;
+         * nothing advances it. Null, or a weight of 0, clears it. Call
+         * Evaluate after. */
+        void SetOverlayClip(std::shared_ptr<const AnimClipData> InClip, float InSeconds, float InWeight);
+        bool HasOverlayClip() const { return Overlay != nullptr && OverlayWeight > 0.0f; }
+
         /* Layers, and what each plays now: its state's name ("" for a lone
          * clip), and whether it is crossfading into it. */
         size_t      GetLayerCount() const { return Layers.size(); }
@@ -190,6 +198,13 @@ namespace RenderCore
         std::vector<FinishedState> Finished;
         AnimVec3                 RootMotion;
         AnimLocalPose            RefPose;          // the skeleton's: what root travel is measured in
+
+        /* SetOverlayClip's. */
+        std::shared_ptr<const AnimClipData> Overlay;
+        AnimClipBinding                     OverlayBinding;
+        const SkeletonData*                 OverlayBoundTo = nullptr;
+        float                               OverlayTime   = 0.0f;
+        float                               OverlayWeight = 0.0f;
     };
 }
 

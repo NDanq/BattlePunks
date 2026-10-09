@@ -14,6 +14,15 @@
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/World.h"
+#include "Public/RenderCore/AnimClipAsset.h"
+#include "Public/RenderCore/AnimInstance.h"
+#include "Public/RenderCore/AnimMath.h"
+#include "Public/RenderCore/AnimationSystem.h"
+#include "Public/RenderCore/Components/AnimationComponent.h"
+#include "Public/RenderCore/Components/CameraComponent.h"
+#include "Public/RenderCore/Components/RenderComponent.h"
+#include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/SkeletonAsset.h"
 #include "Public/Sequencer/SequenceAsset.h"
 #include "Public/Sequencer/SequenceFile.h"
 #include "Public/Sequencer/SequencePlayerComponent.h"
@@ -523,6 +532,480 @@ static void TestLoopAndPlaySequence()
     SequenceWorld::Detach(World);
 }
 
+// === Phase 2-4 ===============================================================
+
+#if WITH_UNCOOKED
+static void TestSectionFiles()
+{
+    std::printf("Sections and markers\n");
+    const char* const Text = R"(<Sequence version="1" fps="30" length="300">
+  <Binding id="hero" name="Hero">
+    <Track type="Animation" name="Body">
+      <Section start="0" end="120" clip="Anims/Walk.nmanim" rate="1.25" loop="true"/>
+      <Section start="100" end="300" clip="Anims/Talk.nmanim" blendIn="20" offset="15"/>
+    </Track>
+    <Track type="Audio" muted="true">
+      <Section start="10" end="90" sound="Audio/Steps.nmsound" volume="0.5" blendIn="5" blendOut="10"/>
+    </Track>
+    <Track type="Float" component="Sequence Player" field="PlayRate">
+      <Key f="0" v="1" interp="User" in="0" out="0.25"/>
+      <Key f="30" v="2"/>
+    </Track>
+  </Binding>
+  <Binding id="wide" name="CamWide"/>
+  <Track type="CameraCut">
+    <Section start="0" end="150" camera="wide"/>
+    <Section start="150" end="300" camera="hero" blendIn="30"/>
+  </Track>
+  <Track type="Fade"><Key f="0" v="1"/><Key f="15" v="0"/></Track>
+  <Track type="SubSequence"><Section start="200" end="300" sequence="Cine/Inner.nmseq"/></Track>
+  <Marker f="150" name="Reveal"/>
+</Sequence>)";
+    SequenceAsset Asset;
+    std::string Error;
+    Expect(ParseSequenceXml(Text, Asset, &Error), "sections parse: " + Error);
+    if(Asset.Bindings.size() != 2) { return; }
+    const SequenceTrack& Body = Asset.Bindings[0].Tracks[0];
+    Expect(Body.Type == ESequenceTrackType::Animation && Body.Name == "Body" && Body.Sections.size() == 2, "an animation track");
+    Expect(Body.Sections[0].Asset == "Anims/Walk.nmanim" && Near(Body.Sections[0].PlayRate, 1.25) && Body.Sections[0].bLoop,
+           "a clip section's fields");
+    Expect(Body.Sections[1].BlendIn == 20 && Body.Sections[1].Offset == 15, "blend and offset");
+    Expect(Asset.Bindings[0].Tracks[1].bMuted && Near(Asset.Bindings[0].Tracks[1].Sections[0].Volume, 0.5), "a muted audio track");
+    const SequenceKey& User = Asset.Bindings[0].Tracks[2].Channels[0].Keys[0];
+    Expect(User.Interp == ESequenceInterp::User && Near(User.OutTangent, 0.25), "a user key's tangents");
+    Expect(Asset.Tracks.size() == 3 && Asset.Tracks[0].Sections[1].Asset == "hero", "a camera cut names a binding");
+    Expect(Asset.Markers.size() == 1 && Asset.FindMarker("Reveal") == 0, "a marker");
+    Expect(Asset.Validate().empty(), "it validates");
+    const std::vector<std::string> Refs = Asset.GetReferencedAssets();
+    Expect(Refs.size() == 4, "four referenced files (no camera ids): " + std::to_string(Refs.size()));
+
+    const std::string Written = WriteSequenceXml(Asset);
+    SequenceAsset Again;
+    Expect(ParseSequenceXml(Written, Again, &Error) && WriteSequenceXml(Again) == Written, "sections round-trip as XML");
+    SequenceAsset Cooked;
+    Expect(ReadSequence(WriteSequenceBinary(Asset), Cooked, &Error) && WriteSequenceXml(Cooked) == Written, "and through the cook");
+
+    /* A camera cut naming no binding, and a fade on a binding, are reported. */
+    SequenceAsset Bad = Asset;
+    Bad.Tracks[0].Sections[0].Asset = "nobody";
+    SequenceTrack Fade;
+    Fade.Type = ESequenceTrackType::Fade;
+    Bad.Bindings[0].Tracks.push_back(Fade);
+    Bad.Normalize();
+    Expect(Bad.Validate().size() == 2, "a bad camera and a misplaced fade are reported");
+}
+#endif
+
+static void TestUserTangents()
+{
+    std::printf("User tangents\n");
+    SequenceChannel Curve;
+    SequenceKey A = Key(0, 0.0f, ESequenceInterp::User);
+    A.OutTangent = 2.0f;   // leaves steeply
+    Curve.Keys = { A, Key(10, 10.0f, ESequenceInterp::Linear) };
+    const double Slope = (Curve.Evaluate(0.1) - Curve.Evaluate(0.0)) / 0.1;
+    Expect(Near(Slope, 2.0, 0.1), "a user key leaves at its tangent: " + Num(Slope));
+    Expect(Near(Curve.Evaluate(10.0), 10.0), "and arrives at the next key");
+}
+
+namespace
+{
+    GameCore::EntityID MakeCamera(GameCore::World& InWorld, const char* InName, const EngineCore::Vector3& InAt, const float InYaw,
+                                  const float InFov)
+    {
+        GameCore::Entity Camera = InWorld.CreateEntity(InName);
+        GameCore::TransformComponent Transform;
+        Transform.Position = InAt;
+        Transform.Rotation = EngineCore::Vector3(0.0, InYaw, 0.0);
+        Camera.AddComponent(Transform);
+        RenderCore::CameraComponent Lens;
+        Lens.Projection = RenderCore::CP_Perspective;
+        Lens.FovY       = InFov;
+        Camera.AddComponent(Lens);
+        return Camera.GetID();
+    }
+
+    /* Two cameras, a cut at 10 that blends over 10 frames, a fade 0 -> 1. */
+    std::shared_ptr<SequenceAsset> ShotAsset()
+    {
+        auto Asset = std::make_shared<SequenceAsset>();
+        Asset->FrameRate = 10;
+        Asset->Length    = 20;
+        SequenceBinding A, B;
+        A.Id = "a"; A.Name = "CamA";
+        B.Id = "b"; B.Name = "CamB";
+        Asset->Bindings = { A, B };
+        SequenceTrack Cut;
+        Cut.Type = ESequenceTrackType::CameraCut;
+        SequenceSection First, Second;
+        First.Start = 0;   First.End = 10;  First.Asset = "a";
+        Second.Start = 10; Second.End = 20; Second.Asset = "b"; Second.BlendIn = 10;
+        Cut.Sections = { First, Second };
+        SequenceTrack Fade;
+        Fade.Type = ESequenceTrackType::Fade;
+        Fade.Normalize();
+        Fade.Channels[0].Keys = { Key(0, 0.0f), Key(20, 1.0f) };
+        Asset->Tracks = { Cut, Fade };
+        Asset->Normalize();
+        return Asset;
+    }
+}
+
+static void TestShots()
+{
+    std::printf("Shots and fades\n");
+    GameCore::World World;
+    const GameCore::EntityID CamA = MakeCamera(World, "CamA", EngineCore::Vector3(0.0, 0.0, 0.0), 0.0f, 40.0f);
+    const GameCore::EntityID CamB = MakeCamera(World, "CamB", EngineCore::Vector3(10.0, 0.0, 0.0), 90.0f, 80.0f);
+
+    SequenceInstance Instance(World, ShotAsset(), "Test/Shot.nmseq");
+    Instance.Evaluate(5.0);
+    Expect(Instance.GetShot().bValid && Instance.GetShot().To == CamA && !Instance.GetShot().From.IsSet(), "the first shot");
+    Expect(Near(Instance.GetFade(), 0.25), "the fade: " + Num(Instance.GetFade()));
+    const GameCore::EntityID Camera = Instance.GetCameraEntity();
+    Expect(Camera.IsSet(), "a camera entity shows the shot");
+
+    Instance.Evaluate(15.0);
+    const SequenceShot& Shot = Instance.GetShot();
+    Expect(Shot.To == CamB && Shot.From == CamA && Near(Shot.Blend, 0.5), "half way through the blend");
+    Expect(Near(Shot.Pose.Position.GetX(), 5.0, 1e-3) && Near(Shot.FovY, 60.0), "position and lens blended");
+    Expect(Near(Shot.Pose.Rotation.GetY(), 45.0, 0.05), "rotation blended: " + Num(Shot.Pose.Rotation.GetY()));
+    const RenderCore::CameraComponent* Lens = World.GetEntity(Camera).GetComponent<RenderCore::CameraComponent>();
+    Expect(Instance.GetCameraEntity() == Camera && Lens && Near(Lens->FovY, 60.0), "the same camera entity, its lens moved");
+
+    Instance.Evaluate(20.0);
+    Expect(Instance.GetShot().bValid && Instance.GetShot().To == CamB, "the last frame keeps the last shot");
+
+    Instance.Release();
+    Expect(!World.IsAlive(Camera) && !Instance.GetShot().bValid, "released: the camera entity goes");
+
+    SequenceInstanceOptions Editor;
+    Editor.bCameraEntity = false;
+    SequenceInstance Preview(World, ShotAsset(), "Test/Shot.nmseq", Editor);
+    Preview.Evaluate(5.0);
+    Expect(Preview.GetShot().bValid && !Preview.GetCameraEntity().IsSet(), "without bCameraEntity, the shot alone");
+}
+
+static void TestSubSequences()
+{
+    std::printf("Sub-sequences\n");
+    auto Inner = std::make_shared<SequenceAsset>(*MoverAsset());   // x 0 -> 10 over 10 frames, Mid at 5
+    SequenceAssetCache::Set("Test/Inner.nmseq", Inner);
+
+    auto Outer = std::make_shared<SequenceAsset>();
+    Outer->FrameRate = 10;
+    Outer->Length    = 40;
+    SequenceTrack Subs;
+    Subs.Type = ESequenceTrackType::SubSequence;
+    SequenceSection Section;
+    Section.Start = 10; Section.End = 30; Section.Asset = "Test/Inner.nmseq"; Section.PlayRate = 0.5f;
+    Subs.Sections = { Section };
+    Outer->Tracks = { Subs };
+    Outer->Normalize();
+
+    GameCore::World World;
+    const GameCore::EntityID Mover = MakeMover(World);
+    Heard Mid;
+    Listen(World, Mid, "Mid");
+
+    SequenceInstance Instance(World, Outer, "Test/Outer.nmseq");
+    Instance.Evaluate(20.0);   // (20 - 10) * 0.5 = frame 5 inside
+    Expect(Near(MoverX(World, Mover), 5.0), "the inner sequence at its own frame: " + Num(MoverX(World, Mover)));
+    Instance.FireEvents(0.0, 19.0, true);
+    Expect(Mid.Args.empty(), "the inner event not yet");
+    Instance.FireEvents(19.0, 21.0, false);
+    Expect(Mid.Args.size() == 1, "the inner event, mapped into the outer's time");
+    Instance.Evaluate(35.0);
+    Expect(Near(MoverX(World, Mover), 5.0), "outside its section the inner one holds");
+}
+
+static void TestSounds()
+{
+    std::printf("Sounds\n");
+    auto Asset = std::make_shared<SequenceAsset>();
+    Asset->FrameRate = 10;
+    Asset->Length    = 20;
+    SequenceTrack Audio;
+    Audio.Type = ESequenceTrackType::Audio;
+    SequenceSection Ping;
+    Ping.Start = 5; Ping.End = 15; Ping.Asset = "Test/Ping.nmsound"; Ping.Volume = 0.5f; Ping.BlendIn = 2;
+    Audio.Sections = { Ping };
+    Asset->Tracks = { Audio };
+    Asset->Normalize();
+
+    GameCore::World World;
+    SequenceInstance Instance(World, Asset, "Test/Sound.nmseq");
+    const auto Source = [&]() -> GameCore::AudioSourceComponent*
+    {
+        GameCore::AudioSourceComponent* Found = nullptr;
+        World.Each<GameCore::AudioSourceComponent>([&Found](GameCore::Entity, GameCore::AudioSourceComponent& InSource) { Found = &InSource; });
+        return Found;
+    };
+
+    Instance.UpdatePlayback(4.0, true);
+    Expect(!Source(), "no sound before its section");
+    Instance.UpdatePlayback(6.0, true);
+    GameCore::AudioSourceComponent* Made = Source();
+    Expect(Made && std::string(Made->Sound) == "Test/Ping.nmsound" && Made->bPendingPlay, "inside it, a source is asked to play");
+    Expect(Made && Near(Made->Volume, 0.25) && Near(Made->PendingSeekSeconds, 0.1), "faded in, and seeked to its place");
+    Made->bPendingPlay = 0; Made->PendingSeekSeconds = -1.0f;
+
+    Instance.UpdatePlayback(7.0, false);
+    Expect(Source()->bPendingPause, "paused with the sequence");
+    Instance.UpdatePlayback(8.0, true);
+    Expect(Source()->bPendingResume && Near(Source()->PendingSeekSeconds, 0.3), "resumed where the sequence is");
+    Source()->PendingSeekSeconds = -1.0f;
+    Instance.NoteJump();
+    Instance.UpdatePlayback(12.0, true);
+    Expect(Near(Source()->PendingSeekSeconds, 0.7), "a jump seeks it");
+    Instance.UpdatePlayback(16.0, true);
+    Expect(Source()->bPendingStop, "stopped past its section");
+
+    Instance.Release();
+    World.Tick(0.0f);
+    Expect(!Source(), "released: the helper goes");
+}
+
+static void TestHeldValues()
+{
+    std::printf("Held values\n");
+    GameCore::World World;
+    const GameCore::EntityID Mover = MakeMover(World);
+    World.GetEntity(Mover).AddComponent(GameCore::RigidBodyComponent());
+
+    SequenceInstance Instance(World, MoverAsset(), "Test/Mover.nmseq");
+    Instance.Evaluate(5.0);
+    const auto Motion = [&]() { return World.GetEntity(Mover).GetComponent<GameCore::RigidBodyComponent>()->Motion; };
+    Expect(Motion() == GameCore::RBM_Kinematic, "a moved rigid body is kinematic while held");
+    Instance.DiscardState();
+    Expect(Motion() == GameCore::RBM_Dynamic && Near(MoverX(World, Mover), 5.0), "let go: dynamic again, where it was left");
+}
+
+namespace
+{
+    struct FakeHost
+    {
+        GameCore::EntityID View;
+        GameCore::EntityID Before;
+        float Fade = -1.0f;
+        bool  bCinematic = false;
+        bool  bReplica = false;
+        int   ViewCalls = 0;
+    };
+
+    SequenceHost MakeHost(FakeHost& InFake)
+    {
+        SequenceHost Host;
+        Host.SetViewTarget = [](const GameCore::EntityID InCamera, void* InUser) { auto& F = *static_cast<FakeHost*>(InUser); F.View = InCamera; ++F.ViewCalls; };
+        Host.GetViewTarget = [](void* InUser) { return static_cast<FakeHost*>(InUser)->Before; };
+        Host.SetFade       = [](const float InAlpha, void* InUser) { static_cast<FakeHost*>(InUser)->Fade = InAlpha; };
+        Host.SetCinematic  = [](const bool bInOn, void* InUser) { static_cast<FakeHost*>(InUser)->bCinematic = bInOn; };
+        Host.IsReplica     = [](GameCore::EntityID, void* InUser) { return static_cast<FakeHost*>(InUser)->bReplica; };
+        Host.UserData = &InFake;
+        return Host;
+    }
+}
+
+static void TestHost()
+{
+    std::printf("Host\n");
+    SequenceAssetCache::Set("Test/Shot.nmseq", ShotAsset());
+    GameCore::World World;
+    MakeCamera(World, "CamA", EngineCore::Vector3(0.0, 0.0, 0.0), 0.0f, 40.0f);
+    MakeCamera(World, "CamB", EngineCore::Vector3(10.0, 0.0, 0.0), 90.0f, 80.0f);
+    const GameCore::EntityID Gameplay = MakeCamera(World, "PlayerCam", EngineCore::Vector3(0.0, 5.0, 0.0), 0.0f, 70.0f);
+
+    FakeHost Fake;
+    Fake.Before = Gameplay;
+    SequenceWorld* Players = SequenceWorld::Attach(World);
+    Players->SetHost(MakeHost(Fake));
+    const GameCore::EntityID Player = MakePlayer(World, "Test/Shot.nmseq", true);
+    World.GetEntity(Player).GetComponent<SequencePlayerComponent>()->bCinematic = 1;
+
+    World.Tick(0.0f);
+    SequenceInstance* Instance = Players->FindInstance(Player);
+    Expect(Instance && Fake.View == Instance->GetCameraEntity() && Fake.View.IsSet(), "the view goes to the sequence's camera");
+    Expect(Fake.bCinematic && Near(Fake.Fade, 0.0), "cinematic, the fade clear");
+    World.Tick(1.0f);
+    Expect(Near(Fake.Fade, 0.5), "the fade follows: " + Num(Fake.Fade));
+
+    Expect(Players->SkipCinematics() == 1, "Back skips a skippable cinematic");
+    Expect(Fake.View == Gameplay && !Fake.bCinematic && Fake.Fade < 0.0f, "finished: the view, input and screen given back");
+
+    /* Markers: a seek by name. */
+    SequenceAsset WithMarker = *ShotAsset();
+    WithMarker.Markers.push_back({ 15, "Blend" });
+    SequenceAssetCache::Set("Test/Shot.nmseq", std::make_shared<SequenceAsset>(WithMarker));
+    Expect(Players->SeekToMarker(Player, "Blend") && Near(Players->GetTime(Player), 1.5), "seek to a marker");
+    Expect(!Players->SeekToMarker(Player, "Nope"), "a marker it lacks");
+    SequenceWorld::Detach(World);
+}
+
+static void TestReplica()
+{
+    std::printf("Replicas\n");
+    SequenceAssetCache::Set("Test/Mover.nmseq", MoverAsset());
+
+    GameCore::World Server, Client;
+    SequenceWorld* ServerPlayers = SequenceWorld::Attach(Server);
+    SequenceWorld* ClientPlayers = SequenceWorld::Attach(Client);
+    FakeHost ClientHost;
+    ClientHost.bReplica = true;
+    ClientPlayers->SetHost(MakeHost(ClientHost));
+
+    MakeMover(Server);
+    const GameCore::EntityID ClientMover = MakeMover(Client);
+    const GameCore::EntityID ServerPlayer = MakePlayer(Server, "Test/Mover.nmseq", false);
+    const GameCore::EntityID ClientPlayer = MakePlayer(Client, "Test/Mover.nmseq", true);   // AutoPlay: ignored on a replica
+
+    /* What replication would carry. */
+    const auto Replicate = [&]()
+    {
+        const SequencePlayerComponent* From = Server.GetEntity(ServerPlayer).GetComponent<SequencePlayerComponent>();
+        SequencePlayerComponent*       To   = Client.GetEntity(ClientPlayer).GetComponent<SequencePlayerComponent>();
+        To->NetState = From->NetState; To->NetSerial = From->NetSerial; To->NetSeconds = From->NetSeconds;
+    };
+
+    Client.Tick(0.1f);
+    Expect(ClientPlayers->GetState(ClientPlayer) == ESequencePlayState::Stopped, "a replica does not auto play");
+
+    ServerPlayers->Play(ServerPlayer);
+    Server.Tick(0.0f);
+    Server.Tick(0.3f);
+    ServerPlayers->Seek(ServerPlayer, 0.3);   // publish where it is
+    Replicate();
+    Client.Tick(0.0f);
+    Expect(ClientPlayers->IsPlaying(ClientPlayer) && Near(ClientPlayers->GetTime(ClientPlayer), 0.3, 0.11), "the replica starts where the server is");
+    Expect(Near(MoverX(Client, ClientMover), 3.0, 1.1), "and shows it");
+
+    ServerPlayers->Pause(ServerPlayer);
+    Replicate();
+    Client.Tick(0.1f);
+    Expect(ClientPlayers->GetState(ClientPlayer) == ESequencePlayState::Paused, "paused as the server is");
+
+    ServerPlayers->Stop(ServerPlayer);
+    Replicate();
+    Client.Tick(0.1f);
+    Expect(ClientPlayers->GetState(ClientPlayer) == ESequencePlayState::Stopped, "stopped as the server is");
+    SequenceWorld::Detach(Client);
+    SequenceWorld::Detach(Server);
+}
+
+// === Animation ===============================================================
+
+namespace
+{
+    /* Root, and an Arm 100 along X with a Hand 50 further: RenderCore's test rig. */
+    RenderCore::SkeletonData ArmSkeleton()
+    {
+        RenderCore::SkeletonData Skeleton;
+        Skeleton.Bones.resize(3);
+        Skeleton.Bones[0].Name = "Root";
+        Skeleton.Bones[1].Name = "Arm";
+        Skeleton.Bones[1].Parent = 0;
+        Skeleton.Bones[1].RefPose.Translation = { 100.0f, 0.0f, 0.0f };
+        Skeleton.Bones[2].Name = "Hand";
+        Skeleton.Bones[2].Parent = 1;
+        Skeleton.Bones[2].RefPose.Translation = { 50.0f, 0.0f, 0.0f };
+        return Skeleton;
+    }
+
+    /* The arm turned 0 -> InDegrees about Z over one second. */
+    RenderCore::AnimClipData ArmClip(const float InDegrees)
+    {
+        RenderCore::AnimClipData Clip;
+        Clip.SampleRate = 30.0f;
+        Clip.FrameCount = 31;
+        Clip.bLoop      = false;
+        Clip.RootBone   = "Root";
+        RenderCore::AnimTrack Track;
+        Track.Bone = "Arm";
+        Track.Translations.push_back({ 100.0f, 0.0f, 0.0f });
+        Track.Scales.push_back({ 1.0f, 1.0f, 1.0f });
+        for(uint32_t Frame = 0; Frame < Clip.FrameCount; ++Frame)
+        {
+            const float Half = 0.5f * InDegrees * 0.0174532925f * float(Frame) / 30.0f;
+            Track.Rotations.push_back({ 0.0f, 0.0f, std::sin(Half), std::cos(Half) });
+        }
+        Clip.Tracks.push_back(Track);
+        return Clip;
+    }
+}
+
+static void TestAnimationTrack()
+{
+    std::printf("Animation\n");
+    const std::string Scratch = "SequencerTestScratch/";
+    RenderCore::SkeletonData Skeleton = ArmSkeleton();
+    RenderCore::AnimClipData Bend = ArmClip(90.0f), Still = ArmClip(0.0f);
+    RenderCore::MeshData Mesh;
+    Mesh.Positions = { 150.0f, 0.0f, 0.0f,   160.0f, 0.0f, 0.0f,   150.0f, 10.0f, 0.0f };
+    Mesh.Normals   = { 0, 0, 1,  0, 0, 1,  0, 0, 1 };
+    Mesh.UV0       = { 0, 0,  1, 0,  0, 1 };
+    Mesh.Indices   = { 0, 1, 2 };
+    Mesh.Sections.push_back({ "Tri", "", 0, 3 });
+    Mesh.Skeleton  = Scratch + "Arm.nmskel";
+    std::vector<RenderCore::AnimMatrix> Model;
+    Skeleton.ComputeRefPoseModel(Model);
+    for(const RenderCore::AnimMatrix& Each : Model) { Mesh.InverseBind.push_back(RenderCore::AnimMath::Inverse(Each)); }
+    Mesh.Joints  = { 2, 0, 0, 0,  2, 0, 0, 0,  2, 0, 0, 0 };
+    Mesh.Weights = { 1, 0, 0, 0,  1, 0, 0, 0,  1, 0, 0, 0 };
+    RenderCore::ComputeMeshBounds(Mesh);
+    Expect(RenderCore::SaveSkeletonFile(Scratch + "Arm.nmskel", Skeleton) && RenderCore::SaveAnimClipFile(Scratch + "Bend.nmanim", Bend)
+           && RenderCore::SaveAnimClipFile(Scratch + "Still.nmanim", Still) && RenderCore::SaveMeshFile(Scratch + "Arm.nmmesh", Mesh),
+           "the rig's assets are written");
+
+    GameCore::World World;
+    RenderCore::AnimationSystem* Animation = RenderCore::AnimationSystem::Attach(World);
+    GameCore::Entity Actor = World.CreateEntity("Actor");
+    Actor.AddComponent(GameCore::TransformComponent());
+    RenderCore::RenderComponent Render;
+    std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", (Scratch + "Arm.nmmesh").c_str());
+    Actor.AddComponent(Render);
+    RenderCore::AnimationComponent Own;
+    std::snprintf(Own.Animation, sizeof(Own.Animation), "%s", (Scratch + "Still.nmanim").c_str());
+    Actor.AddComponent(Own);
+    World.Tick(0.0f);
+
+    /* Bend over frames 0..10 (10 fps: one second); Still blends in over 8..12. */
+    auto Asset = std::make_shared<SequenceAsset>();
+    Asset->FrameRate = 10;
+    Asset->Length    = 20;
+    SequenceBinding Binding;
+    Binding.Id = "actor"; Binding.Name = "Actor";
+    SequenceTrack Clips;
+    Clips.Type = ESequenceTrackType::Animation;
+    SequenceSection First, Second;
+    First.Start = 0;  First.End = 10;  First.Asset = Scratch + "Bend.nmanim";
+    Second.Start = 8; Second.End = 20; Second.Asset = Scratch + "Still.nmanim"; Second.BlendIn = 4;
+    Clips.Sections = { First, Second };
+    Binding.Tracks = { Clips };
+    Asset->Bindings = { Binding };
+    Asset->Normalize();
+
+    const auto HandY = [&]() { return Animation->FindInstance(Actor)->GetModelPose()[2].M[1][3]; };
+    SequenceInstance Instance(World, Asset, "Test/Anim.nmseq");
+    Instance.Evaluate(5.0);
+    RenderCore::AnimInstance* Pose = Animation->FindInstance(Actor);
+    Expect(Pose && Pose->GetClip() == RenderCore::AnimClipAssetCache::Find(First.Asset) && Near(Pose->GetTime(), 0.5, 1e-3),
+           "a section plays its clip at the sequence's time");
+    Expect(Actor.GetComponent<RenderCore::AnimationComponent>()->bPaused == 1, "the component's own advance is held");
+    const float HalfBent = HandY();
+    World.Tick(0.5f);
+    Expect(Near(HandY(), HalfBent, 1e-3), "a world tick does not move a clip the sequence holds");
+
+    Instance.Evaluate(9.9);
+    Expect(Pose->HasOverlayClip(), "where sections overlap, the next blends in over the first");
+    Instance.Evaluate(15.0);
+    Expect(!Pose->HasOverlayClip() && Pose->GetClip() == RenderCore::AnimClipAssetCache::Find(Second.Asset), "blended in, it plays alone");
+
+    Instance.Release();
+    Expect(Actor.GetComponent<RenderCore::AnimationComponent>()->bPaused == 0, "released: the component plays itself again");
+    Expect(Animation->FindInstance(Actor)->GetClip() == RenderCore::AnimClipAssetCache::Find(Scratch + "Still.nmanim"),
+           "its own clip back");
+    RenderCore::AnimationSystem::Detach(World);
+}
+
 int main()
 {
     TestChannels();
@@ -534,6 +1017,17 @@ int main()
     TestFields();
     TestPlayers();
     TestLoopAndPlaySequence();
+#if WITH_UNCOOKED
+    TestSectionFiles();
+#endif
+    TestUserTangents();
+    TestShots();
+    TestSubSequences();
+    TestSounds();
+    TestHeldValues();
+    TestHost();
+    TestReplica();
+    TestAnimationTrack();
 
     std::printf("%d checks, %d failed\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
