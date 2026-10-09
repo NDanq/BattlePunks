@@ -771,6 +771,14 @@ Content/Levels/Sandbox/<guid>.nmprefabinst   text: one prefab instance -- its pr
 Saved/Cooked/Content/Levels/Sandbox.nmworld        binary: what Shipping reads (CookWorldFile), staged at the source path
 ```
 
+**Outliner folders.** Editor organisation only; nothing at runtime reads
+them. A top-level entity's folder is a `Folder="Lights/Street"` attribute on
+its `.nmentity`'s `<Entity>` (an instance root's, on its `<Instance>`), and
+the manifest lists every folder, so an empty one survives a save:
+`<Folders><Folder Path="Lights" /><Folder Path="Lights/Street" /></Folders>`.
+Neither is written when unused, and cooking drops both
+(`Entity::GetFolder`, `WorldSettings::Folders`).
+
 **Prefab instances.** The manifest lists them beside the loose entities, as
 `<Instance>` entries. An instance's file names its prefab and records only
 what this instance changed:

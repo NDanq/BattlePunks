@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "Public/GameCore/GameCoreAPI.h"
 
@@ -51,7 +52,12 @@ namespace GameCore
     {
         WorldLightingSettings Lighting;
 
-        bool operator==(const WorldSettings& InOther) const { return Lighting == InOther.Lighting; }
+        /* The editor Outliner's folders ("A/B": B inside A), sorted, so one
+         * with nothing in it is kept too; an entity names its own
+         * (Entity::GetFolder). Text worlds only: a cooked world has none. */
+        std::vector<std::string> Folders;
+
+        bool operator==(const WorldSettings& InOther) const { return Lighting == InOther.Lighting && Folders == InOther.Folders; }
         bool operator!=(const WorldSettings& InOther) const { return !(*this == InOther); }
     };
 

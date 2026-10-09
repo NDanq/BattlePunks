@@ -742,6 +742,106 @@ static void TestConvertTrees()
     Expect(W.GetInstanceCount() == 2 && W.GetEntityCount() == 4, "redo converts them again");
 }
 
+/* Outliner folders: each change one undo step, kept by a save and a load. */
+static void TestFolders()
+{
+    std::printf("Outliner folders\n");
+    QTemporaryDir Temp;
+    const QString PrefabPath = Temp.filePath(QStringLiteral("Crate.nmprefab"));
+    {
+        GameCore::World Scratch;
+        const GameCore::Entity Root = Scratch.CreateEntity("Crate");
+        Root.AddComponent<GameCore::TransformComponent>();
+        GameCore::PrefabAsset Asset;
+        GameCore::CapturePrefab(Scratch, Root.GetID(), Asset);
+        GameCore::SavePrefabFile(PrefabPath.toUtf8().constData(), Asset);
+    }
+
+    EditorDocument Doc;
+    GameCore::World& W = Doc.GetEditedWorld();
+    const EntityID A = Doc.CreateEntity(QStringLiteral("A"), EngineCore::Vector3(1.0, 0.0, 0.0));
+    const EntityID B = Doc.CreateEntity(QStringLiteral("B"), EngineCore::Vector3(2.0, 0.0, 0.0));
+    const EntityID Child = Doc.CreateEntity(QStringLiteral("Child"), EngineCore::Vector3(5.0, 0.0, 0.0));
+    Doc.SetEntityParent(Child, A);
+    const EntityID Crate = Doc.PlacePrefab(PrefabPath, EngineCore::Vector3());
+
+    Expect(EditorDocument::NormalizeFolder(QStringLiteral(" /Lights// Street /")) == QStringLiteral("Lights/Street"),
+           "a folder path is normalised");
+
+    int Steps = Doc.GetHistory().count();
+    Expect(Doc.CreateFolder(QStringLiteral("Props/Empty")), "a folder is created");
+    Expect(Doc.GetFolders() == QStringList({ QStringLiteral("Props"), QStringLiteral("Props/Empty") }), "with its ancestor");
+    Expect(Doc.GetHistory().count() == Steps + 1, "as one undo step");
+    Expect(!Doc.CreateFolder(QStringLiteral("Props")), "but not twice");
+
+    /* Moving: a child is detached where it stands; a prefab root goes too. */
+    Steps = Doc.GetHistory().count();
+    Expect(Doc.MoveEntitiesToFolder({ B, Child, Crate }, QStringLiteral("Props/Boxes")) == 3, "three entities move");
+    Expect(Doc.GetHistory().count() == Steps + 1, "in one undo step");
+    Expect(!W.GetEntity(Child).HasParent() && Doc.GetEntityFolder(Child) == QStringLiteral("Props/Boxes"), "the child detached into it");
+    Expect(W.GetEntity(Child).GetWorldPose().Position.GetX() == 5.0, "where it stood");
+    Expect(Doc.GetFolders().contains(QStringLiteral("Props/Boxes")), "the folder is made as it is used");
+    Expect(Doc.GetEntitiesInFolder(QStringLiteral("Props"), true).size() == 3, "Props holds them, recursively");
+    Expect(Doc.GetEntitiesInFolder(QStringLiteral("Props"), false).empty(), "but none directly");
+    Doc.Undo();
+    Expect(W.GetEntity(Child).GetParent() == A && Doc.GetEntityFolder(B).isEmpty(), "undo puts all three back");
+    Expect(!Doc.GetFolders().contains(QStringLiteral("Props/Boxes")), "and drops the folder");
+    Doc.Redo();
+    Expect(Doc.GetEntityFolder(Crate) == QStringLiteral("Props/Boxes") && !W.GetEntity(Child).HasParent(), "redo moves them again");
+
+    /* Renaming a folder carries its subfolders and their entities. */
+    Steps = Doc.GetHistory().count();
+    Expect(Doc.RenameFolder(QStringLiteral("Props"), QStringLiteral("Stuff")), "a folder is renamed");
+    Expect(Doc.GetHistory().count() == Steps + 1, "in one undo step");
+    Expect(Doc.GetEntityFolder(B) == QStringLiteral("Stuff/Boxes"), "its entities follow");
+    Expect(Doc.GetFolders() == QStringList({ QStringLiteral("Stuff"), QStringLiteral("Stuff/Boxes"), QStringLiteral("Stuff/Empty") }),
+           "and its subfolders");
+    Expect(!Doc.RenameFolder(QStringLiteral("Stuff"), QStringLiteral("Stuff/Inner")), "not into itself");
+    Doc.Undo();
+    Expect(Doc.GetEntityFolder(B) == QStringLiteral("Props/Boxes") && Doc.GetFolders().contains(QStringLiteral("Props/Empty")),
+           "undo renames it back");
+    Doc.Redo();
+
+    /* Moving one into another, then deleting: what it held moves up. */
+    Expect(Doc.CreateFolder(QStringLiteral("Level")), "a second folder");
+    Expect(Doc.RenameFolder(QStringLiteral("Stuff"), QStringLiteral("Level/Stuff")), "a folder moves inside another");
+    Expect(Doc.GetEntityFolder(B) == QStringLiteral("Level/Stuff/Boxes"), "with its entities");
+    Steps = Doc.GetHistory().count();
+    Expect(Doc.DeleteFolder(QStringLiteral("Level/Stuff")), "a folder is deleted");
+    Expect(Doc.GetHistory().count() == Steps + 1, "in one undo step");
+    Expect(Doc.GetEntityFolder(B) == QStringLiteral("Level/Boxes") && W.IsAlive(B), "its entities stay, a level up");
+    Expect(!Doc.GetFolders().contains(QStringLiteral("Level/Stuff")) && Doc.GetFolders().contains(QStringLiteral("Level/Empty")),
+           "and its subfolders");
+    Doc.Undo();
+    Expect(Doc.GetEntityFolder(B) == QStringLiteral("Level/Stuff/Boxes"), "undo restores it");
+    Doc.Redo();
+
+    /* Delete, undo and duplicate keep an entity's folder. */
+    Doc.DestroyEntity(B);
+    Doc.Undo();
+    const EntityID BackB = W.FindEntityByName("B");
+    Expect(Doc.GetEntityFolder(BackB) == QStringLiteral("Level/Boxes"), "a deleted entity comes back in its folder");
+    Doc.SetSelection(BackB);
+    const std::vector<EntityID> Copy = Doc.DuplicateSelection();
+    Expect(Copy.size() == 1 && Doc.GetEntityFolder(Copy.front()) == QStringLiteral("Level/Boxes"), "its duplicate lands beside it");
+
+    /* Saved and loaded: entities' folders, an instance root's, an empty one. */
+    const QString LevelPath = Temp.filePath(QStringLiteral("Folders.nmworld"));
+    Expect(Doc.SaveWorld(LevelPath), "the level saves");
+    EditorDocument Loaded;
+    Expect(Loaded.LoadWorld(LevelPath), "and loads");
+    GameCore::World& L = Loaded.GetEditedWorld();
+    Expect(Loaded.GetFolders() == Doc.GetFolders(), "with every folder, the empty one too");
+    Expect(Loaded.GetEntityFolder(L.FindEntityByName("Child")) == QStringLiteral("Level/Boxes"), "a loose entity's");
+    Expect(Loaded.GetEntityFolder(L.FindEntityByName("Crate")) == QStringLiteral("Level/Boxes"), "an instance root's");
+    Expect(Loaded.GetEntityFolder(L.FindEntityByName("A")).isEmpty(), "and none where there was none");
+
+    /* A prefab has none. */
+    EditorDocument PrefabDoc;
+    PrefabDoc.SetSingleRoot(true);
+    Expect(!PrefabDoc.CreateFolder(QStringLiteral("Nope")), "a prefab document refuses folders");
+}
+
 int main(int argc, char* argv[])
 {
     QCoreApplication App(argc, argv);
@@ -764,6 +864,7 @@ int main(int argc, char* argv[])
     TestReplaceWithPrefab();
     TestRefreshInstances();
     TestConvertTrees();
+    TestFolders();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

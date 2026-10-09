@@ -378,6 +378,8 @@ namespace GameCore
         EntityGuid         GetEntityGuid(EntityID InEntity) const;
         const char*        GetEntityName(EntityID InEntity) const;
         bool               SetEntityName(EntityID InEntity, const char* InName);
+        const char*        GetEntityFolder(EntityID InEntity) const;
+        bool               SetEntityFolder(EntityID InEntity, const char* InFolder);
         EMobility          GetEntityMobility(EntityID InEntity) const;
         EMobility          GetEntityAuthoredMobility(EntityID InEntity) const;
         bool               SetEntityMobility(EntityID InEntity, EMobility InMobility);
