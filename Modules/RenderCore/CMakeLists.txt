@@ -59,6 +59,7 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/RenderComponentProxy.cpp
         Source/Private/RenderCore/Components/RenderComponent.cpp
         Source/Private/RenderCore/Components/ParticleSystemComponent.cpp
+        Source/Private/RenderCore/Components/TerrainComponent.cpp
         Source/Private/RenderCore/ParticleSimulation.h
         Source/Private/RenderCore/ParticleSimulation.cpp
         Source/Private/RenderCore/ParticleSystemAsset.cpp
@@ -127,6 +128,7 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/RenderComponents.h
         Source/Public/RenderCore/Components/RenderComponent.h
         Source/Public/RenderCore/Components/ParticleSystemComponent.h
+        Source/Public/RenderCore/Components/TerrainComponent.h
         Source/Public/RenderCore/ParticleSystemAsset.h
         Source/Public/RenderCore/ParticleTypes.h
         Source/Public/RenderCore/Components/CameraComponent.h

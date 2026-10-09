@@ -573,6 +573,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/NetHost.cpp
         Source/Private/NimbleEngine/NetScript.cpp
         Source/Private/NimbleEngine/PhysicsFacade.cpp
+        Source/Private/NimbleEngine/TerrainFacade.cpp
         Source/Private/NimbleEngine/SequenceFacade.cpp
         Source/Private/NimbleEngine/InactiveModules.cpp
         Source/Public/NimbleEngine/NimbleEngine.h
@@ -595,6 +596,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/NetFacade.h
         Source/Public/NimbleEngine/NetHost.h
         Source/Public/NimbleEngine/PhysicsFacade.h
+        Source/Public/NimbleEngine/TerrainFacade.h
         Source/Public/NimbleEngine/SequenceFacade.h
 )
 
@@ -713,6 +715,13 @@ if(NIMBLEENGINE_BUILD_TESTS)
     set_tests_properties(NimbleEngine.InputTests PROPERTIES TIMEOUT 120 LABELS "smoke")
 
     # Collision: overlaps, events, layers, queries, and shapes from meshes.
+    add_executable(NimbleEngineTerrainTests Tests/TerrainTests.cpp)
+    target_link_libraries(NimbleEngineTerrainTests PRIVATE NimbleEngine::NimbleEngine)
+    set_target_properties(NimbleEngineTerrainTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
+    add_test(NAME NimbleEngine.TerrainTests COMMAND NimbleEngineTerrainTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineTerrainTests>")
+    set_tests_properties(NimbleEngine.TerrainTests PROPERTIES TIMEOUT 120 LABELS "smoke")
+
     add_executable(NimbleEngineCollisionTests Tests/CollisionTests.cpp)
     target_link_libraries(NimbleEngineCollisionTests PRIVATE NimbleEngine::NimbleEngine)
     set_target_properties(NimbleEngineCollisionTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
