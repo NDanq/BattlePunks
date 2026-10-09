@@ -342,6 +342,19 @@ namespace
         Expect(Mesh.Indices[0] == 0 && Mesh.Indices[1] == 65 && Mesh.Indices[2] == 66
                && Mesh.Indices[3] == 0 && Mesh.Indices[4] == 66 && Mesh.Indices[5] == 1, "cells split along the shared diagonal");
         Expect(!RenderCore::BuildTerrainChunkMesh(Data, 2, 0, 200.0f, Mesh), "chunk out of range does not build");
+
+        /* Coarser LODs take every 2nd / 4th sample; skirts add a dropped copy of each edge. */
+        RenderCore::MeshData Lod2;
+        Expect(RenderCore::BuildTerrainChunkMesh(Data, 1, 0, 200.0f, Lod2, 2) && Lod2.GetVertexCount() == 17 * 17
+               && Lod2.Indices.size() == size_t(16) * 16 * 6, "LOD 2: 17 x 17 vertices");
+        Expect(Near(Lod2.Positions[3], 68.0f * 50.0f) && Near(Lod2.Positions[4], Data.GetHeight(68, 0)), "on every fourth sample");
+        RenderCore::MeshData Skirted;
+        Expect(RenderCore::BuildTerrainChunkMesh(Data, 1, 0, 200.0f, Skirted, 1, true, 200.0f)
+               && Skirted.GetVertexCount() == 33 * 33 + 4 * 33 && Skirted.Indices.size() == size_t(32) * 32 * 6 + 4 * 32 * 6,
+               "skirts: four edges of 33 more vertices, 32 quads each");
+        Expect(Near(Skirted.BoundsMin[1], std::min(Data.GetMinHeight(), Mesh.BoundsMin[1]) - 200.0f, 400.0f), "hanging below the edge");
+        Expect(RenderCore::GetTerrainChunkMeshPath(EntityID(3, 1), 2, 5, 2) != RenderCore::GetTerrainChunkMeshPath(EntityID(3, 1), 2, 5),
+               "each LOD has its own path");
         Expect(RenderCore::GetTerrainChunkMeshPath(EntityID(3, 1), 2, 5).rfind("@terrain/", 0) == 0, "chunk meshes have virtual paths");
 
         /* MeshAssetCache::Store: generated meshes are found, survive Invalidate, and go with Remove. */

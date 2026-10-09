@@ -17,6 +17,7 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 /* TerrainComponent: registration, its proxy, and what it exposes to saves,
@@ -24,16 +25,23 @@
 
 namespace RenderCore
 {
-    std::string GetTerrainChunkMeshPath(const GameCore::EntityID InOwner, const uint32_t InX, const uint32_t InZ)
+    std::string GetTerrainChunkMeshPath(const GameCore::EntityID InOwner, const uint32_t InX, const uint32_t InZ, const uint32_t InLod)
     {
         char Buffer[96];
-        std::snprintf(Buffer, sizeof(Buffer), "@terrain/%llx/%u_%u",
-                      static_cast<unsigned long long>(InOwner.Pack()), InX, InZ);
+        if(InLod == 0)
+        {
+            std::snprintf(Buffer, sizeof(Buffer), "@terrain/%llx/%u_%u", static_cast<unsigned long long>(InOwner.Pack()), InX, InZ);
+        }
+        else
+        {
+            std::snprintf(Buffer, sizeof(Buffer), "@terrain/%llx/%u_%u_lod%u", static_cast<unsigned long long>(InOwner.Pack()), InX, InZ, InLod);
+        }
         return Buffer;
     }
 
     bool BuildTerrainChunkMesh(const GameCore::TerrainData& InData, const uint32_t InX, const uint32_t InZ,
-                               const float InUVTileSize, MeshData& OutMesh)
+                               const float InUVTileSize, MeshData& OutMesh, const uint32_t InLod, const bool bInSkirts,
+                               const float InSkirtDepth)
     {
         std::lock_guard<std::mutex> Guard(InData.GetLock());
         const GameCore::TerrainRect Rect = InData.GetChunkSamples(InX, InZ);
@@ -42,44 +50,46 @@ namespace RenderCore
             return false;
         }
 
-        const uint32_t Columns = uint32_t(Rect.X1 - Rect.X0 + 1);
-        const uint32_t Rows    = uint32_t(Rect.Z1 - Rect.Z0 + 1);
-        const uint32_t Count   = Columns * Rows;
+        /* The samples this LOD takes along each axis: every Step-th, and the last always. */
+        const int32_t Step = int32_t(1u << std::min<uint32_t>(InLod, TERRAIN_LODS - 1));
+        const auto Pick = [Step](const int32_t InFirst, const int32_t InLast)
+        {
+            std::vector<int32_t> Out;
+            for(int32_t At = InFirst; At < InLast; At += Step) { Out.push_back(At); }
+            Out.push_back(InLast);
+            return Out;
+        };
+        const std::vector<int32_t> Xs = Pick(Rect.X0, Rect.X1);
+        const std::vector<int32_t> Zs = Pick(Rect.Z0, Rect.Z1);
+        const uint32_t Columns = uint32_t(Xs.size());
+        const uint32_t Rows    = uint32_t(Zs.size());
         const float    Spacing = InData.GetSpacing();
         const float    Tile    = InUVTileSize > 1e-3f ? InUVTileSize : 400.0f;
 
         OutMesh = MeshData();
-        OutMesh.Positions.resize(size_t(Count) * 3);
-        OutMesh.Normals.resize(size_t(Count) * 3);
-        OutMesh.UV0.resize(size_t(Count) * 2);
-        OutMesh.Colors.resize(size_t(Count) * 4);
+        const size_t Reserve = size_t(Columns) * Rows + (bInSkirts ? size_t(Columns + Rows) * 2 : 0);
+        OutMesh.Positions.reserve(Reserve * 3);
+        OutMesh.Normals.reserve(Reserve * 3);
+        OutMesh.UV0.reserve(Reserve * 2);
+        OutMesh.Colors.reserve(Reserve * 4);
 
-        size_t Vertex = 0;
-        for(int32_t Z = Rect.Z0; Z <= Rect.Z1; ++Z)
+        const auto AddVertex = [&](const int32_t InSampleX, const int32_t InSampleZ, const float InDrop)
         {
-            for(int32_t X = Rect.X0; X <= Rect.X1; ++X, ++Vertex)
-            {
-                const float PX = float(X) * Spacing;
-                const float PZ = float(Z) * Spacing;
-                OutMesh.Positions[Vertex * 3 + 0] = PX;
-                OutMesh.Positions[Vertex * 3 + 1] = InData.GetHeight(X, Z);
-                OutMesh.Positions[Vertex * 3 + 2] = PZ;
+            const float PX = float(InSampleX) * Spacing;
+            const float PZ = float(InSampleZ) * Spacing;
+            OutMesh.Positions.insert(OutMesh.Positions.end(), { PX, InData.GetHeight(InSampleX, InSampleZ) - InDrop, PZ });
+            float Normal[3];
+            InData.GetSmoothNormal(InSampleX, InSampleZ, Normal);
+            OutMesh.Normals.insert(OutMesh.Normals.end(), { Normal[0], Normal[1], Normal[2] });
+            OutMesh.UV0.insert(OutMesh.UV0.end(), { PX / Tile, PZ / Tile });
+            const uint8_t* Weight = InData.GetWeight(InSampleX, InSampleZ);
+            for(uint32_t Layer = 0; Layer < 4; ++Layer) { OutMesh.Colors.push_back(float(Weight[Layer]) / 255.0f); }
+            return uint32_t(OutMesh.Positions.size() / 3 - 1);
+        };
 
-                float Normal[3];
-                InData.GetSmoothNormal(X, Z, Normal);
-                OutMesh.Normals[Vertex * 3 + 0] = Normal[0];
-                OutMesh.Normals[Vertex * 3 + 1] = Normal[1];
-                OutMesh.Normals[Vertex * 3 + 2] = Normal[2];
-
-                OutMesh.UV0[Vertex * 2 + 0] = PX / Tile;
-                OutMesh.UV0[Vertex * 2 + 1] = PZ / Tile;
-
-                const uint8_t* Weight = InData.GetWeight(X, Z);
-                for(uint32_t Layer = 0; Layer < 4; ++Layer)
-                {
-                    OutMesh.Colors[Vertex * 4 + Layer] = float(Weight[Layer]) / 255.0f;
-                }
-            }
+        for(uint32_t Z = 0; Z < Rows; ++Z)
+        {
+            for(uint32_t X = 0; X < Columns; ++X) { AddVertex(Xs[X], Zs[Z], 0.0f); }
         }
 
         /* Each cell along the (X, Z) -> (X + 1, Z + 1) diagonal, as TerrainData samples it. */
@@ -94,6 +104,42 @@ namespace RenderCore
                 const uint32_t I11 = I01 + 1;
                 OutMesh.Indices.insert(OutMesh.Indices.end(), { I00, I01, I11, I00, I11, I10 });
             }
+        }
+
+        /* Skirts: each edge's vertices again, dropped, joined to the edge by a strip. */
+        if(bInSkirts && InSkirtDepth > 0.0f)
+        {
+            const auto Skirt = [&](const std::vector<uint32_t>& InEdge, const std::vector<std::pair<int32_t, int32_t>>& InSamples)
+            {
+                std::vector<uint32_t> Dropped;
+                Dropped.reserve(InEdge.size());
+                for(const auto& Each : InSamples) { Dropped.push_back(AddVertex(Each.first, Each.second, InSkirtDepth)); }
+                for(size_t Each = 0; Each + 1 < InEdge.size(); ++Each)
+                {
+                    OutMesh.Indices.insert(OutMesh.Indices.end(), { InEdge[Each], Dropped[Each], Dropped[Each + 1],
+                                                                    InEdge[Each], Dropped[Each + 1], InEdge[Each + 1] });
+                }
+            };
+            std::vector<uint32_t> Edge;
+            std::vector<std::pair<int32_t, int32_t>> Samples;
+            const auto Gather = [&](const bool bInAlongX, const uint32_t InFixed)
+            {
+                Edge.clear();
+                Samples.clear();
+                const uint32_t Count = bInAlongX ? Columns : Rows;
+                for(uint32_t Each = 0; Each < Count; ++Each)
+                {
+                    const uint32_t X = bInAlongX ? Each : InFixed;
+                    const uint32_t Z = bInAlongX ? InFixed : Each;
+                    Edge.push_back(Z * Columns + X);
+                    Samples.emplace_back(Xs[X], Zs[Z]);
+                }
+                Skirt(Edge, Samples);
+            };
+            Gather(true, 0);
+            Gather(true, Rows - 1);
+            Gather(false, 0);
+            Gather(false, Columns - 1);
         }
 
         MeshSection Section;
@@ -175,6 +221,7 @@ namespace RenderCore
                     UVTileSize = C.UVTileSize;
                     bRebuildAll = true;
                 }
+                LODDistance = std::max(C.LODDistance, 0.0f);
             }
 
             void Simulate(RenderContext& InContext) override
@@ -187,21 +234,23 @@ namespace RenderCore
             {
                 const RenderView& View = InContext.GetView();
                 const EngineCore::Matrix4x4 Clip = View.Projection * View.View * GetLocalToWorld();
+                ChooseLODs(View.Origin);
                 const char* Slots[1] = { Material.c_str() };
                 for(const Chunk& Each : Chunks)
                 {
                     if(!Each.bBuilt || !BoxInFrustum(Clip, Each.Min, Each.Max)) { continue; }
-                    InContext.DrawMesh(GetTransform(), Each.Path.c_str(), EngineCore::Color(255, 255, 255, 255), Slots, 1);
+                    InContext.DrawMesh(GetTransform(), Each.Paths[Each.Lod].c_str(), EngineCore::Color(255, 255, 255, 255), Slots, 1);
                 }
             }
 
+            /* Every chunk (the shadow view culls the proxy, not its chunks), at the LOD the view last chose. */
             void DrawShadow(RenderContext& InContext) override
             {
                 if(!bCastShadows) { return; }
                 const char* Slots[1] = { Material.c_str() };
                 for(const Chunk& Each : Chunks)
                 {
-                    if(Each.bBuilt) { InContext.DrawMeshShadow(GetTransform(), Each.Path.c_str(), Slots, 1); }
+                    if(Each.bBuilt) { InContext.DrawMeshShadow(GetTransform(), Each.Paths[Each.Lod].c_str(), Slots, 1); }
                 }
             }
 
@@ -209,11 +258,12 @@ namespace RenderCore
             {
                 const RenderView& View = InContext.GetView();
                 const EngineCore::Matrix4x4 Clip = View.Projection * View.View * GetLocalToWorld();
+                ChooseLODs(View.Origin);
                 const char* Slots[1] = { Material.c_str() };
                 for(const Chunk& Each : Chunks)
                 {
                     if(!Each.bBuilt || !BoxInFrustum(Clip, Each.Min, Each.Max)) { continue; }
-                    InContext.DrawMeshOccluder(GetTransform(), Each.Path.c_str(), Slots, 1);
+                    InContext.DrawMeshOccluder(GetTransform(), Each.Paths[Each.Lod].c_str(), Slots, 1);
                 }
             }
 
@@ -221,8 +271,11 @@ namespace RenderCore
             {
                 for(const Chunk& Each : Chunks)
                 {
-                    InContext.ReleaseMesh(Each.Path.c_str());
-                    MeshAssetCache::Remove(Each.Path);
+                    for(const std::string& Path : Each.Paths)
+                    {
+                        InContext.ReleaseMesh(Path.c_str());
+                        MeshAssetCache::Remove(Path);
+                    }
                 }
                 Chunks.clear();
             }
@@ -230,7 +283,8 @@ namespace RenderCore
         private:
             struct Chunk
             {
-                std::string Path;
+                std::string Paths[TERRAIN_LODS];
+                uint32_t    Lod      = 0;      // what the last view chose
                 uint64_t    Revision = 0;      // the data's chunk revision it was built from
                 bool        bBuilt   = false;
                 float       Min[3]   = {0.0f, 0.0f, 0.0f};
@@ -285,7 +339,13 @@ namespace RenderCore
                     Chunks.resize(Revisions.size());
                     for(uint32_t Z = 0; Z < Side; ++Z)
                     {
-                        for(uint32_t X = 0; X < Side; ++X) { Chunks[size_t(Z) * Side + X].Path = GetTerrainChunkMeshPath(GetOwner(), X, Z); }
+                        for(uint32_t X = 0; X < Side; ++X)
+                        {
+                            for(uint32_t Lod = 0; Lod < TERRAIN_LODS; ++Lod)
+                            {
+                                Chunks[size_t(Z) * Side + X].Paths[Lod] = GetTerrainChunkMeshPath(GetOwner(), X, Z, Lod);
+                            }
+                        }
                     }
                 }
 
@@ -296,13 +356,23 @@ namespace RenderCore
                         Chunk& Each = Chunks[size_t(Z) * Side + X];
                         const uint64_t Wanted = Revisions[size_t(Z) * Side + X];
                         if(Each.bBuilt && Each.Revision == Wanted && !bRebuildAll) { continue; }
-                        auto Mesh = std::make_shared<MeshData>();
-                        if(!BuildTerrainChunkMesh(*Data, X, Z, UVTileSize, *Mesh)) { continue; }
-                        std::memcpy(Each.Min, Mesh->BoundsMin, sizeof(Each.Min));
-                        std::memcpy(Each.Max, Mesh->BoundsMax, sizeof(Each.Max));
+                        /* Skirts deep enough to hide where a coarser neighbour cuts a corner. */
+                        const float SkirtDepth = Data->GetSpacing() * 4.0f;
+                        bool bAll = true;
+                        for(uint32_t Lod = 0; Lod < TERRAIN_LODS && bAll; ++Lod)
+                        {
+                            auto Mesh = std::make_shared<MeshData>();
+                            if(!BuildTerrainChunkMesh(*Data, X, Z, UVTileSize, *Mesh, Lod, true, SkirtDepth)) { bAll = false; break; }
+                            if(Lod == 0)
+                            {
+                                std::memcpy(Each.Min, Mesh->BoundsMin, sizeof(Each.Min));
+                                std::memcpy(Each.Max, Mesh->BoundsMax, sizeof(Each.Max));
+                            }
+                            MeshAssetCache::Store(Each.Paths[Lod], std::move(Mesh));
+                        }
+                        if(!bAll) { continue; }
                         Each.Revision = Wanted;
                         Each.bBuilt   = true;
-                        MeshAssetCache::Store(Each.Path, std::move(Mesh));
                     }
                 }
                 bRebuildAll  = false;
@@ -312,9 +382,45 @@ namespace RenderCore
                 MarkChanged();
             }
 
+            /* Each chunk's LOD for a view from InEye: by the distance from the eye to its box, in
+             * terrain units (LODDistance is the world's; the entity's ground scale converts). */
+            void ChooseLODs(const EngineCore::Vector3& InEye)
+            {
+                if(Chunks.empty() || !Data) { return; }
+                const EngineCore::Matrix4x4& World = GetLocalToWorld();
+                const EngineCore::Matrix4x4 Inverse = EngineCore::Matrix4x4::Inverse(World);
+                float Eye[3];
+                for(int Row = 0; Row < 3; ++Row)
+                {
+                    Eye[Row] = float(double(Inverse.Data[Row][0]) * InEye.GetX() + double(Inverse.Data[Row][1]) * InEye.GetY()
+                                     + double(Inverse.Data[Row][2]) * InEye.GetZ() + double(Inverse.Data[Row][3]));
+                }
+                const double ScaleX = std::sqrt(double(World.Data[0][0]) * World.Data[0][0] + double(World.Data[1][0]) * World.Data[1][0]
+                                                + double(World.Data[2][0]) * World.Data[2][0]);
+                const double ScaleZ = std::sqrt(double(World.Data[0][2]) * World.Data[0][2] + double(World.Data[1][2]) * World.Data[1][2]
+                                                + double(World.Data[2][2]) * World.Data[2][2]);
+                const double Scale = std::max(0.5 * (ScaleX + ScaleZ), 1e-6);
+                const float Near = LODDistance > 0.0f ? float(double(LODDistance) / Scale)
+                                                      : 1.5f * float(GameCore::TERRAIN_CHUNK_QUADS) * Data->GetSpacing();
+                for(Chunk& Each : Chunks)
+                {
+                    float Distance2 = 0.0f;
+                    for(int Axis = 0; Axis < 3; ++Axis)
+                    {
+                        const float Out = std::max({ Each.Min[Axis] - Eye[Axis], 0.0f, Eye[Axis] - Each.Max[Axis] });
+                        Distance2 += Out * Out;
+                    }
+                    const float Distance = std::sqrt(Distance2);
+                    Each.Lod = Distance < Near ? 0u : (Distance < Near * 2.0f ? 1u : 2u);
+                }
+            }
+
             void DropChunks()
             {
-                for(const Chunk& Each : Chunks) { MeshAssetCache::Remove(Each.Path); }
+                for(const Chunk& Each : Chunks)
+                {
+                    for(const std::string& Path : Each.Paths) { MeshAssetCache::Remove(Path); }
+                }
                 Chunks.clear();
                 ChunksPerSide = 0;
             }
@@ -327,6 +433,7 @@ namespace RenderCore
             uint64_t                               SeenRevision    = 0;
             uint64_t                               CacheGeneration = ~uint64_t(0);
             float                                  UVTileSize      = 400.0f;
+            float                                  LODDistance     = 0.0f;
             bool                                   bRebuildAll     = true;
             bool                                   bCastShadows    = true;
             bool                                   bOccluder       = true;
@@ -340,7 +447,8 @@ namespace RenderCore
         return &TerrainComponent_CreateProxy;
     }
 
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(TerrainComponent, 1)
+    /* Version 2 adds the LOD distance. */
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(TerrainComponent, 2)
     {
         Ar.Field("Terrain",       C.Terrain);
         Ar.Field("Material",      C.Material);
@@ -349,6 +457,10 @@ namespace RenderCore
         Ar.Flag("Occluder",       C.bOccluder);
         Ar.Flag("Walkable",       C.bWalkable);
         Ar.Field("UVTileSize",    C.UVTileSize);
+        if(Ar.GetVersion() >= 2)
+        {
+            Ar.Field("LODDistance", C.LODDistance);
+        }
     }
 
     /* Lua sees the same names (e:GetComponent("Terrain").Walkable). */
@@ -361,6 +473,7 @@ namespace RenderCore
         Bind.Flag("Occluder",     &TerrainComponent::bOccluder);
         Bind.Flag("Walkable",     &TerrainComponent::bWalkable);
         Bind.Field("UVTileSize",  &TerrainComponent::UVTileSize);
+        Bind.Field("LODDistance", &TerrainComponent::LODDistance);
     }
 
 #if WITH_EDITOR
@@ -376,6 +489,7 @@ namespace RenderCore
         Props.Flag("Cast Shadows",   &TerrainComponent::bCastShadows);
         Props.Category("Culling");
         Props.Flag("Occluder",       &TerrainComponent::bOccluder);
+        Props.Field("LOD Distance",  &TerrainComponent::LODDistance);
     }
 #endif
 }
