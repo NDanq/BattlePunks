@@ -159,33 +159,39 @@ get_target_property(SANDBOX_RT_DIR NimbleEngine RUNTIME_OUTPUT_DIRECTORY)
 # step every build -- which costs nothing but makes an incremental build look
 # like it is working when it is not, and that is the exact signal you want
 # trustworthy when you are asking "why did that rebuild?".
-set(SANDBOX_CONFIG_SRC "${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini")
+# Every Config/*.ini: DefaultEngine.ini, and DefaultGame.ini (the game's own
+# settings, its input bindings among them) when there is one.
+file(GLOB SANDBOX_CONFIG_SRCS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Config/*.ini")
 
 # Packaged (NIMBLE_PACKAGE_CONTENT, Engine/cmake/NimblePack.cmake): each block
 # below hands its files to Paks/Game.nmpak and clears its list, so it copies
 # nothing beside the executable.
 if(NIMBLE_PACKAGE_CONTENT)
-    nimble_pack_add_files(Game "${CMAKE_CURRENT_SOURCE_DIR}" "${SANDBOX_CONFIG_SRC}")
-    set(SANDBOX_CONFIG_SRC "")
+    nimble_pack_add_files(Game "${CMAKE_CURRENT_SOURCE_DIR}" ${SANDBOX_CONFIG_SRCS})
+    set(SANDBOX_CONFIG_SRCS "")
 endif()
 
-if(EXISTS "${SANDBOX_CONFIG_SRC}" AND SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
-    set(SANDBOX_CONFIG_DST "${SANDBOX_RT_DIR}/Config/DefaultEngine.ini")
+if(SANDBOX_CONFIG_SRCS AND SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
+    set(SANDBOX_CONFIG_DSTS "")
+    foreach(SANDBOX_CONFIG_SRC IN LISTS SANDBOX_CONFIG_SRCS)
+        get_filename_component(SANDBOX_CONFIG_NAME "${SANDBOX_CONFIG_SRC}" NAME)
+        list(APPEND SANDBOX_CONFIG_DSTS "${SANDBOX_RT_DIR}/Config/${SANDBOX_CONFIG_NAME}")
+    endforeach()
 
     add_custom_command(
-            OUTPUT  "${SANDBOX_CONFIG_DST}"
+            OUTPUT  ${SANDBOX_CONFIG_DSTS}
             COMMAND ${CMAKE_COMMAND} -E make_directory "${SANDBOX_RT_DIR}/Config"
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${SANDBOX_CONFIG_SRC}" "${SANDBOX_CONFIG_DST}"
-            DEPENDS "${SANDBOX_CONFIG_SRC}"
-            COMMENT "Sandbox: staging Config/DefaultEngine.ini beside the executable"
+                    ${SANDBOX_CONFIG_SRCS} "${SANDBOX_RT_DIR}/Config"
+            DEPENDS ${SANDBOX_CONFIG_SRCS}
+            COMMENT "Sandbox: staging Config/*.ini beside the executable"
             VERBATIM)
 
-    add_custom_target(SandboxStageConfig DEPENDS "${SANDBOX_CONFIG_DST}")
+    add_custom_target(SandboxStageConfig DEPENDS ${SANDBOX_CONFIG_DSTS})
     add_dependencies(Sandbox SandboxStageConfig)
     set_target_properties(SandboxStageConfig PROPERTIES FOLDER "Games")
 
-elseif(EXISTS "${SANDBOX_CONFIG_SRC}")
+elseif(SANDBOX_CONFIG_SRCS)
     # Multi-config fallback. The destination differs per configuration, so a
     # single OUTPUT path cannot describe it, and a generator expression is not
     # allowed in OUTPUT until CMake 3.20 -- above the 3.16 this project targets.
@@ -195,10 +201,10 @@ elseif(EXISTS "${SANDBOX_CONFIG_SRC}")
             COMMAND ${CMAKE_COMMAND} -E make_directory
                     "$<TARGET_FILE_DIR:Sandbox>/Config"
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${SANDBOX_CONFIG_SRC}"
-                    "$<TARGET_FILE_DIR:Sandbox>/Config/DefaultEngine.ini"
-            DEPENDS "${SANDBOX_CONFIG_SRC}"
-            COMMENT "Sandbox: staging Config/DefaultEngine.ini beside the executable"
+                    ${SANDBOX_CONFIG_SRCS}
+                    "$<TARGET_FILE_DIR:Sandbox>/Config"
+            DEPENDS ${SANDBOX_CONFIG_SRCS}
+            COMMENT "Sandbox: staging Config/*.ini beside the executable"
             VERBATIM)
     add_dependencies(SandboxStageConfig Sandbox)
     set_target_properties(SandboxStageConfig PROPERTIES FOLDER "Games")
@@ -210,7 +216,7 @@ endif()
 # so Scripts/ is staged beside the executable by the identical mechanism as
 # Config/ above, for the identical reason (an IDE run and a shell run must
 # both find it, and a POST_BUILD step would silently go stale exactly as the
-# comment on SANDBOX_CONFIG_DST explains).
+# comment on SANDBOX_CONFIG_DSTS explains).
 #
 # A script graph (*.script.nmgraph) is listed the same way: the runtime runs
 # the Lua stored in it (<gen_code>).

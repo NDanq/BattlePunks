@@ -381,6 +381,14 @@ namespace NimbleEngine
         ConfigLoadStats Stats;
         const bool bConfigLoaded = LoadConfigFile("Config/DefaultEngine.ini", &Stats);
 
+        /* The game's own settings -- its input maps' bindings, [Input_*] --
+         * after the engine's, so a key in both takes the game's. Optional: a
+         * project need not have one. */
+        if(LayeredAssets.Exists("Config/DefaultGame.ini"))
+        {
+            LoadConfigFile("Config/DefaultGame.ini");
+        }
+
         /* This run's log, beside the executable as a project's is beside it:
          * Saved/Logs/<Module>[Server]-<time>.log (CoreLog.h). */
         {

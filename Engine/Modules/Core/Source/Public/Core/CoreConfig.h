@@ -465,7 +465,7 @@ namespace EngineCore
         KeyLiteral,                                                                     \
         bInDefault,                                                                     \
         CallbackFn,                                                                     \
-        Engine                                                                          \
+        Game                                                                            \
     )
 
 #define NIMBLE_GAME_CONFIG_INT(VarName, SectionLiteral, KeyLiteral, InDefault, CallbackFn) \
@@ -476,7 +476,7 @@ namespace EngineCore
         KeyLiteral,                                                                   \
         InDefault,                                                                    \
         CallbackFn,                                                                   \
-        Engine                                                                        \
+        Game                                                                          \
         )
 
 #define NIMBLE_GAME_CONFIG_FLOAT(VarName, SectionLiteral, KeyLiteral, InDefault, CallbackFn) \
@@ -487,7 +487,7 @@ namespace EngineCore
         KeyLiteral,                                                                     \
         InDefault,                                                                      \
         CallbackFn,                                                                     \
-        Engine                                                                          \
+        Game                                                                            \
         )
 
 #define NIMBLE_GAME_CONFIG_STRING(VarName, SectionLiteral, KeyLiteral, InDefault, CallbackFn) \
@@ -498,7 +498,7 @@ namespace EngineCore
         KeyLiteral,                                                                      \
         InDefault,                                                                       \
         CallbackFn,                                                                      \
-        Engine                                                                           \
+        Game                                                                             \
     )
 
 /* For a header that must expose a config var declared elsewhere to other
