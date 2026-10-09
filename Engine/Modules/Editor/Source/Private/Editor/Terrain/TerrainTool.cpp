@@ -9,6 +9,7 @@
 #include <QWheelEvent>
 
 #include "Public/Editor/EditorContext.h"
+#include "Public/Editor/EditorDocument.h"
 #include "Public/Editor/ViewportWidget.h"
 #include "Public/NimbleEngine/TerrainFacade.h"
 #include "Public/RenderCore/RenderTypes.h"
@@ -89,6 +90,9 @@ bool TerrainTool::OnPress(ViewportWidget& InViewport, const Ray& InRay, const Qt
 {
     (void)InViewport;
     bShift = (InModifiers & Qt::ShiftModifier) != 0;
+    /* Not on a running game's World: the stroke could not be undone, and Play shares the data. */
+    const EditorDocument* Document = EditorTerrain::GetHost().Document;
+    if(!Document || Document->IsWorldBorrowed()) { return false; }
     if(!Trace(InRay)) { return false;   /* not on a terrain: a click selects, as ever */ }
 
     const EngineCore::Vector3 Local = HitTarget.ToLocal(HitPoint);

@@ -596,6 +596,11 @@ namespace EditorTerrain
         }
         if(Verb == QStringLiteral("sculpt") || Verb == QStringLiteral("paint"))
         {
+            if(Document->IsWorldBorrowed())
+            {
+                InConsole.PrintError(QStringLiteral("Not while playing; 'stop' first"));
+                return;
+            }
             const bool bPaint = Verb == QStringLiteral("paint");
             if(InArgs.size() < 5)
             {
