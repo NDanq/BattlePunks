@@ -27,6 +27,7 @@ namespace GameCore
         RBS_Cylinder     = 4,   // along Y, likewise
         RBS_ConvexHull   = 5,   // the hull of the RenderComponent mesh's vertices
         RBS_TriangleMesh = 6,   // the mesh's triangles; Static and Kinematic only (Dynamic falls back to a hull)
+        RBS_HeightField  = 7,   // the entity's Terrain (RenderCore's Terrain component); Static and Kinematic only
     };
 
     /* Where a fitted shape's box comes from. */
@@ -54,6 +55,8 @@ namespace GameCore
      *   - Shape Auto on any other mesh is its triangles when Static or
      *     Kinematic, its convex hull when Dynamic;
      *   - Shape Auto with no mesh is a box: the BoundsComponent's.
+     *   - Shape Auto (or Height Field) on an entity with a Terrain is its
+     *     heightfield: the same triangles the terrain draws.
      *   - Box, Sphere, Capsule and Cylinder fit the box ShapeSource names.
      * The shape is rebuilt when any of that changes (mesh, bounds, scale,
      * these fields).
