@@ -71,6 +71,9 @@ namespace EditorContent
     /* Terrains (*.nmterrain): every one in the project, and a file's runtime path. */
     QStringList ListTerrainPaths();
     QString     TerrainPathFor(const QString& InPath);
+    /* A terrain's foliage (*.nmfoliage): every one in the project, and a file's runtime path. */
+    QStringList ListFoliagePaths();
+    QString     FoliagePathFor(const QString& InPath);
 
     /* An animation field (PF_AssetAnimation): an .nmanim clip or an
      * .nmanimstate anim state. Every one's runtime path in the project and

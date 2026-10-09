@@ -51,8 +51,9 @@ namespace
         return Bytes;
     }
 
-    /* The terrains a text world's entities name (a Terrain component's Terrain
-     * field, in <World>/<guid>.nmentity) whose file is not in the project. */
+    /* The terrains (and their foliage) a text world's entities name -- a Terrain
+     * component's Terrain and Foliage fields, in <World>/<guid>.nmentity --
+     * whose file is not in the project. */
     QStringList FindMissingTerrains(const QString& InRoot, const QString& InWorldFile)
     {
         QStringList Missing;
@@ -66,11 +67,17 @@ namespace
             QFile Entity(It.next());
             if(!Entity.open(QIODevice::ReadOnly | QIODevice::Text)) { continue; }
             const QString Text = QString::fromUtf8(Entity.readAll());
-            QRegularExpressionMatchIterator Found = TerrainField.globalMatch(Text);
-            while(Found.hasNext())
+            /* And its foliage, a field of the same component. */
+            static const QRegularExpression FoliageField(QStringLiteral("<Foliage Value=\"([^\"]*)\""));
+            for(const QRegularExpression* Field : { &TerrainField, &FoliageField })
             {
-                const QString Path = Found.next().captured(1);
-                if(!Path.isEmpty() && !QFileInfo::exists(QDir(InRoot).filePath(Path)) && !Missing.contains(Path)) { Missing << Path; }
+                if(Field == &FoliageField && !Text.contains(QStringLiteral("<Component Type=\"Terrain\""))) { continue; }
+                QRegularExpressionMatchIterator Found = Field->globalMatch(Text);
+                while(Found.hasNext())
+                {
+                    const QString Path = Found.next().captured(1);
+                    if(!Path.isEmpty() && !QFileInfo::exists(QDir(InRoot).filePath(Path)) && !Missing.contains(Path)) { Missing << Path; }
+                }
             }
         }
         return Missing;
@@ -275,7 +282,7 @@ namespace EditorCook
                 if(!MissingTerrains.isEmpty())
                 {
                     ++Stats.Types[AT_Worlds].Failed;
-                    Stats.Failures << QStringLiteral("%1: its terrain file does not exist: %2").arg(File, MissingTerrains.join(QStringLiteral(", ")));
+                    Stats.Failures << QStringLiteral("%1: its terrain or foliage file does not exist: %2").arg(File, MissingTerrains.join(QStringLiteral(", ")));
                     continue;
                 }
                 if(GameCore::CookWorldFile(ToStd(Source).c_str(), ToStd(Out).c_str()))

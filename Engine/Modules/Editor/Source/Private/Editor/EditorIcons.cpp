@@ -64,6 +64,8 @@ namespace
         { "terrain-set-height.svg",   QStyle::SP_ArrowRight },
         { "terrain-paint.svg",        QStyle::SP_DialogApplyButton },
         { "terrain-smooth-paint.svg", QStyle::SP_DialogResetButton },
+        { "foliage.svg",              QStyle::SP_DialogYesButton },
+        { "foliage-erase.svg",        QStyle::SP_DialogNoButton },
     }};
 
     QIcon FallbackIcon(const EditorIcons::EIcon InIcon)

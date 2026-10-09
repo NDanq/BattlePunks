@@ -285,7 +285,7 @@ endif()
 
 # === Content/ ===============================================================
 # Imported .nmmesh / .nmtexture files, render targets (.nmrt2d / .nmrt3d), particle systems (.nmparticle), animation (.nmskel, .nmanim, .nmanimstate), sounds (.nmsound), post process stacks (.pp.nmgraph)
-# baked lighting (.nmlighting) and terrain heightfields (.nmterrain),
+# baked lighting (.nmlighting) and terrain heightfields and foliage (.nmterrain, .nmfoliage),
 # staged at the same relative path beside
 # the executable (how a RenderComponent names them). Globbed, unlike Scripts/:
 # the editor creates these, so listing them would mean editing this file on
@@ -303,6 +303,7 @@ file(GLOB_RECURSE SANDBOX_CONTENT_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmsound"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmlighting"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmterrain"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmfoliage"
 )
 if(NIMBLE_PACKAGE_CONTENT)
     nimble_pack_add_files(Game "${CMAKE_CURRENT_SOURCE_DIR}" ${SANDBOX_CONTENT_FILES})

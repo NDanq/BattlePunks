@@ -24,6 +24,7 @@
 #include <QPushButton>
 #include <QSlider>
 #include <QTabWidget>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -31,7 +32,10 @@
 #include "Public/Editor/ViewportWidget.h"
 #include "Public/GameCore/World.h"
 
+#include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/EditorIcons.h"
+#include "Private/Editor/Graph/GraphAssets.h"
+#include "Private/Editor/Terrain/FoliageEditing.h"
 #include "Private/Editor/Terrain/TerrainEditing.h"
 
 namespace
@@ -126,6 +130,18 @@ bool TerrainToolsWindow::SelectTool(const QString& InName)
         Dock->Modes->setCurrentIndex(0);
         return true;
     }
+    const bool bFoliagePaint = InName.compare(QStringLiteral("Foliage"), Qt::CaseInsensitive) == 0
+                            || InName.compare(QStringLiteral("FoliagePaint"), Qt::CaseInsensitive) == 0;
+    if(bFoliagePaint || InName.compare(QStringLiteral("FoliageErase"), Qt::CaseInsensitive) == 0)
+    {
+        Dock->show();
+        Dock->raise();
+        Dock->Modes->setCurrentIndex(3);
+        if(QAbstractButton* Button = Dock->FoliageTools->button(bFoliagePaint ? GameCore::FT_Paint : GameCore::FT_Erase)) { Button->setChecked(true); }
+        Dock->PullSettings();
+        Dock->UpdateViewportTool();
+        return true;
+    }
     for(const ToolEntry& Each : ToolTable)
     {
         if(InName.compare(QString::fromLatin1(Each.Name), Qt::CaseInsensitive) != 0) { continue; }
@@ -162,6 +178,7 @@ TerrainToolsWindow::TerrainToolsWindow(QWidget* InParent)
     Modes->addTab(MakeCreatePage(), EditorIcons::Get(EditorIcons::EIcon::Terrain), QStringLiteral("Create"));
     Modes->addTab(MakeSculptPage(), EditorIcons::Get(EditorIcons::EIcon::TerrainRaise), QStringLiteral("Sculpt"));
     Modes->addTab(MakePaintPage(), EditorIcons::Get(EditorIcons::EIcon::TerrainPaint), QStringLiteral("Paint"));
+    Modes->addTab(MakeFoliagePage(), EditorIcons::Get(EditorIcons::EIcon::Foliage), QStringLiteral("Foliage"));
     Modes->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
     Layout->addWidget(Modes);
 
@@ -187,6 +204,7 @@ TerrainToolsWindow::TerrainToolsWindow(QWidget* InParent)
         connect(Document, &EditorDocument::SelectionChanged, this, [this](GameCore::EntityID) { RefreshTarget(); });
         connect(Document, &EditorDocument::EntitiesChanged, this, [this]() { RefreshTarget(); });
         connect(Document, &EditorDocument::WorldReset, this, [this]() { RefreshTarget(); });
+        connect(Document, &EditorDocument::HistoryChanged, this, [this]() { if(!bLoadingFoliage) { RefreshFoliage(); } });
     }
     PullSettings();
     RefreshTarget();
@@ -394,6 +412,17 @@ void TerrainToolsWindow::PullSettings()
     if(bPushing || !Radius || !SculptTools || !PaintTools || !Modes) { return; }
     TerrainTool::Settings& S = Tool.GetSettings();
     const bool bPaint = Modes->currentIndex() == 2;
+    S.bFoliage = Modes->currentIndex() == 3;
+    if(FoliageTools) { S.FoliageTool = uint8_t(std::max(FoliageTools->checkedId(), 0)); }
+    S.FoliageTypes.clear();
+    for(int Row = 0; FoliageList && Row < FoliageList->count(); ++Row)
+    {
+        if(FoliageList->item(Row)->checkState() == Qt::Checked) { S.FoliageTypes.push_back(uint16_t(Row)); }
+    }
+    if(S.bFoliage && FoliageList && FoliageList->count() > 0 && S.FoliageTypes.empty())
+    {
+        S.FoliageTypes.push_back(uint16_t(FoliageList->count()));   // none checked: an index of no type, so nothing paints
+    }
     const int  Id     = bPaint ? PaintTools->checkedId() : SculptTools->checkedId();
     S.bLower       = Id == LowerId;
     S.Tool         = uint8_t(Id == LowerId ? GameCore::TT_Raise : std::max(Id, 0));
@@ -407,9 +436,10 @@ void TerrainToolsWindow::PullSettings()
     StrengthValue->setText(QStringLiteral("%1%").arg(Strength->value()));
 
     /* Only what the tool in front uses is editable. */
-    Rate->setEnabled(!bPaint && (S.Tool == GameCore::TT_Raise || S.Tool == GameCore::TT_Noise));
-    TargetHeight->setEnabled(!bPaint && S.Tool == GameCore::TT_SetHeight);
-    NoiseScale->setEnabled(!bPaint && S.Tool == GameCore::TT_Noise);
+    const bool bSculpt = !bPaint && !S.bFoliage;
+    Rate->setEnabled(bSculpt && (S.Tool == GameCore::TT_Raise || S.Tool == GameCore::TT_Noise));
+    TargetHeight->setEnabled(bSculpt && S.Tool == GameCore::TT_SetHeight);
+    NoiseScale->setEnabled(bSculpt && S.Tool == GameCore::TT_Noise);
 }
 
 void TerrainToolsWindow::PushSettings()
@@ -437,6 +467,7 @@ void TerrainToolsWindow::UpdateViewportTool()
 
 void TerrainToolsWindow::RefreshTarget()
 {
+    RefreshFoliage();
     const EditorTerrain::Target Target = EditorTerrain::FindEditTarget();
     EditorDocument* Document = EditorTerrain::GetHost().Document;
     if(!Target.IsValid() || !Document)
@@ -512,6 +543,287 @@ void TerrainToolsWindow::ExportHeightmap()
     if(File.isEmpty()) { return; }
     QString Error;
     if(!EditorTerrain::ExportHeightmap(Target, File, Error)) { QMessageBox::warning(this, QStringLiteral("Export Heightmap"), Error); }
+}
+
+// === Foliage =================================================================
+
+QWidget* TerrainToolsWindow::MakeFoliagePage()
+{
+    auto* Page   = new QWidget(this);
+    auto* Layout = new QVBoxLayout(Page);
+
+    auto* Row = new QHBoxLayout();
+    FoliageTools = new QButtonGroup(Page);
+    FoliageTools->setExclusive(true);
+    const struct { const char* Label; int Id; EditorIcons::EIcon Icon; const char* Tip; } Tools[] = {
+        { "Paint", GameCore::FT_Paint, EditorIcons::EIcon::Foliage, "Place the checked types under the brush, as close as their Spacing (Shift: erase)" },
+        { "Erase", GameCore::FT_Erase, EditorIcons::EIcon::FoliageErase, "Remove the checked types under the brush (Shift: paint)" },
+    };
+    for(const auto& Each : Tools)
+    {
+        auto* Button = new QToolButton(Page);
+        Button->setText(QString::fromLatin1(Each.Label));
+        Button->setIcon(EditorIcons::Get(Each.Icon));
+        Button->setIconSize(QSize(24, 24));
+        Button->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+        Button->setCheckable(true);
+        Button->setAutoRaise(true);
+        Button->setMinimumWidth(72);
+        Button->setToolTip(QString::fromLatin1(Each.Tip));
+        Button->setObjectName(QStringLiteral("FoliageTool_") + QString::fromLatin1(Each.Label));
+        FoliageTools->addButton(Button, Each.Id);
+        Row->addWidget(Button);
+    }
+    FoliageTools->button(GameCore::FT_Paint)->setChecked(true);
+    connect(FoliageTools, &QButtonGroup::idClicked, this, [this](int) { PullSettings(); });
+    Row->addStretch(1);
+    Layout->addLayout(Row);
+
+    FoliageList = new QListWidget(Page);
+    FoliageList->setObjectName(QStringLiteral("FoliageTypes"));
+    FoliageList->setToolTip(QStringLiteral("The terrain's foliage types: the checked ones are painted or erased; the selected one's settings are below"));
+    FoliageList->setMaximumHeight(130);
+    connect(FoliageList, &QListWidget::itemChanged, this, [this](QListWidgetItem*) { if(!bLoadingFoliage) { PullSettings(); } });
+    connect(FoliageList, &QListWidget::currentRowChanged, this, [this](int) { if(!bLoadingFoliage) { RefreshFoliage(); } });
+    Layout->addWidget(FoliageList);
+
+    auto* Buttons = new QHBoxLayout();
+    auto* Add     = new QPushButton(EditorIcons::Get(EditorIcons::EIcon::Add), QStringLiteral("Add Mesh..."), Page);
+    auto* Remove  = new QPushButton(QStringLiteral("Remove"), Page);
+    Add->setToolTip(QStringLiteral("A new type for an .nmmesh in the project (the terrain's foliage file is made on first use)"));
+    Remove->setToolTip(QStringLiteral("Remove the selected type and every instance of it"));
+    connect(Add, &QPushButton::clicked, this, [this]() { AddFoliageType(); });
+    connect(Remove, &QPushButton::clicked, this, [this]() { RemoveFoliageType(); });
+    Buttons->addWidget(Add);
+    Buttons->addWidget(Remove);
+    Buttons->addStretch(1);
+    Layout->addLayout(Buttons);
+
+    FoliageStats = new QLabel(Page);
+    FoliageStats->setWordWrap(true);
+    FoliageStats->setEnabled(false);
+    Layout->addWidget(FoliageStats);
+
+    FoliageForm = new QGroupBox(QStringLiteral("Type"), Page);
+    auto* Form = new QFormLayout(FoliageForm);
+    const auto Spin = [&](const double InMin, const double InMax, const int InDecimals, const double InStep, const QString& InSuffix,
+                          const QString& InTip)
+    {
+        auto* Box = new QDoubleSpinBox(FoliageForm);
+        Box->setRange(InMin, InMax);
+        Box->setDecimals(InDecimals);
+        Box->setSingleStep(InStep);
+        Box->setSuffix(InSuffix);
+        Box->setToolTip(InTip);
+        Box->setKeyboardTracking(false);
+        connect(Box, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double) { CommitFoliageType(); });
+        return Box;
+    };
+    const auto Line = [&](const QString& InTip)
+    {
+        auto* Edit = new QLineEdit(FoliageForm);
+        Edit->setToolTip(InTip);
+        connect(Edit, &QLineEdit::editingFinished, this, [this]() { CommitFoliageType(); });
+        return Edit;
+    };
+    FoliageName     = Line(QStringLiteral("Its name in the list and in undo steps"));
+    FoliageMesh[0]  = Line(QStringLiteral("The mesh drawn near the camera (a runtime .nmmesh path)"));
+    FoliageMesh[1]  = Line(QStringLiteral("Its mesh where the terrain draws at LOD 1; empty: LOD 0's"));
+    FoliageMesh[2]  = Line(QStringLiteral("Its mesh where the terrain draws at LOD 2; empty: LOD 1's"));
+    FoliageMaterial = Line(QStringLiteral("A material graph for every section; empty: the mesh's own"));
+    FoliageSpacing  = Spin(1.0, 100000.0, 0, 25.0, QStringLiteral(" units"), QStringLiteral("The distance kept between two of this type"));
+    FoliageScaleMin = Spin(0.01, 100.0, 2, 0.05, QString(), QStringLiteral("The smallest an instance is made"));
+    FoliageScaleMax = Spin(0.01, 100.0, 2, 0.05, QString(), QStringLiteral("The largest an instance is made"));
+    FoliageAlign    = Spin(0.0, 1.0, 2, 0.1, QString(), QStringLiteral("0: upright; 1: leaning with the ground"));
+    FoliageSlope    = Spin(0.0, 90.0, 0, 5.0, QStringLiteral(" deg"), QStringLiteral("Not placed on ground steeper than this"));
+    FoliageSink     = Spin(-10000.0, 10000.0, 1, 5.0, QStringLiteral(" units"), QStringLiteral("Pushed this far into the ground (times its scale)"));
+    FoliageCull     = Spin(0.0, 1000000.0, 0, 500.0, QStringLiteral(" units"), QStringLiteral("Not drawn past this distance from the camera; 0: always"));
+    FoliageDensity[0] = Spin(0.0, 1.0, 2, 0.05, QString(), QStringLiteral("The fraction drawn where the terrain draws at LOD 1"));
+    FoliageDensity[1] = Spin(0.0, 1.0, 2, 0.05, QString(), QStringLiteral("The fraction drawn where the terrain draws at LOD 2"));
+    FoliageColor    = Spin(0.0, 1.0, 2, 0.05, QString(), QStringLiteral("Each instance darkened by up to this"));
+    FoliageShadows  = new QCheckBox(QStringLiteral("Cast shadows"), FoliageForm);
+    FoliageYaw      = new QCheckBox(QStringLiteral("Random yaw"), FoliageForm);
+    connect(FoliageShadows, &QCheckBox::toggled, this, [this](bool) { CommitFoliageType(); });
+    connect(FoliageYaw, &QCheckBox::toggled, this, [this](bool) { CommitFoliageType(); });
+
+    auto* Scale = new QHBoxLayout();
+    Scale->addWidget(FoliageScaleMin);
+    Scale->addWidget(new QLabel(QStringLiteral("to"), FoliageForm));
+    Scale->addWidget(FoliageScaleMax);
+    auto* Density = new QHBoxLayout();
+    Density->addWidget(FoliageDensity[0]);
+    Density->addWidget(new QLabel(QStringLiteral("then"), FoliageForm));
+    Density->addWidget(FoliageDensity[1]);
+    auto* Checks = new QHBoxLayout();
+    Checks->addWidget(FoliageShadows);
+    Checks->addWidget(FoliageYaw);
+
+    Form->addRow(QStringLiteral("Name"), FoliageName);
+    Form->addRow(QStringLiteral("Mesh"), FoliageMesh[0]);
+    Form->addRow(QStringLiteral("LOD 1 Mesh"), FoliageMesh[1]);
+    Form->addRow(QStringLiteral("LOD 2 Mesh"), FoliageMesh[2]);
+    Form->addRow(QStringLiteral("Material"), FoliageMaterial);
+    Form->addRow(QStringLiteral("Spacing"), FoliageSpacing);
+    Form->addRow(QStringLiteral("Scale"), Scale);
+    Form->addRow(QStringLiteral("Align to Ground"), FoliageAlign);
+    Form->addRow(QStringLiteral("Max Slope"), FoliageSlope);
+    Form->addRow(QStringLiteral("Sink"), FoliageSink);
+    Form->addRow(QStringLiteral("Cull Distance"), FoliageCull);
+    Form->addRow(QStringLiteral("LOD 1 / 2 Density"), Density);
+    Form->addRow(QStringLiteral("Color Variation"), FoliageColor);
+    Form->addRow(QString(), Checks);
+    Layout->addWidget(FoliageForm);
+    Layout->addStretch(1);
+
+    /* The counts while painting, and why a stroke could not start. */
+    FoliageTimer = new QTimer(this);
+    FoliageTimer->setInterval(400);
+    connect(FoliageTimer, &QTimer::timeout, this, [this]()
+    {
+        if(!isVisible() || Modes->currentIndex() != 3) { return; }
+        if(!Tool.LastError.isEmpty())
+        {
+            FoliageStats->setText(Tool.LastError);
+            return;
+        }
+        const EditorFoliage::Target Foliage = EditorFoliage::FindFoliage(EditorTerrain::FindEditTarget());
+        if(!Foliage.IsValid()) { return; }
+        std::lock_guard<std::mutex> Guard(Foliage.Data->GetLock());
+        FoliageStats->setText(QStringLiteral("%1 instances%2").arg(qulonglong(Foliage.Data->GetInstanceCount()))
+                              .arg(EditorTerrain::IsDirty(Foliage.Path) ? QStringLiteral(", unsaved") : QString()));
+    });
+    FoliageTimer->start();
+    return Page;
+}
+
+void TerrainToolsWindow::RefreshFoliage()
+{
+    if(!FoliageList) { return; }
+    const EditorFoliage::Target Foliage = EditorFoliage::FindFoliage(EditorTerrain::FindEditTarget());
+    std::vector<GameCore::FoliageType> Types;
+    size_t Count = 0;
+    if(Foliage.IsValid())
+    {
+        std::lock_guard<std::mutex> Guard(Foliage.Data->GetLock());
+        Types = Foliage.Data->GetTypes();
+        Count = Foliage.Data->GetInstanceCount();
+    }
+
+    bLoadingFoliage = true;
+    const int Current = std::clamp(FoliageList->currentRow(), 0, std::max(int(Types.size()) - 1, 0));
+    std::vector<bool> Checked;
+    for(int Row = 0; Row < FoliageList->count(); ++Row) { Checked.push_back(FoliageList->item(Row)->checkState() == Qt::Checked); }
+    FoliageList->clear();
+    for(size_t Each = 0; Each < Types.size(); ++Each)
+    {
+        auto* Item = new QListWidgetItem(QString::fromStdString(Types[Each].Name), FoliageList);
+        Item->setFlags(Item->flags() | Qt::ItemIsUserCheckable);
+        Item->setCheckState(Each < Checked.size() && !Checked[Each] ? Qt::Unchecked : Qt::Checked);
+        Item->setToolTip(QString::fromStdString(Types[Each].Mesh[0]));
+    }
+    if(!Types.empty()) { FoliageList->setCurrentRow(Current); }
+
+    FoliageForm->setEnabled(!Types.empty());
+    FoliageStats->setText(!EditorTerrain::FindEditTarget().IsValid() ? QStringLiteral("Select a terrain first.")
+                        : !Foliage.IsValid() ? QStringLiteral("No foliage yet: Add Mesh... makes the terrain's foliage file.")
+                        : QStringLiteral("%1 instances").arg(qulonglong(Count)));
+    if(!Types.empty())
+    {
+        const GameCore::FoliageType& Type = Types[size_t(Current)];
+        FoliageName->setText(QString::fromStdString(Type.Name));
+        for(int Lod = 0; Lod < 3; ++Lod) { FoliageMesh[Lod]->setText(QString::fromStdString(Type.Mesh[Lod])); }
+        FoliageMaterial->setText(QString::fromStdString(Type.Material));
+        FoliageSpacing->setValue(double(Type.Spacing));
+        FoliageScaleMin->setValue(double(Type.ScaleMin));
+        FoliageScaleMax->setValue(double(Type.ScaleMax));
+        FoliageAlign->setValue(double(Type.AlignToNormal));
+        FoliageSlope->setValue(double(Type.MaxSlope));
+        FoliageSink->setValue(double(Type.Sink));
+        FoliageCull->setValue(double(Type.CullDistance));
+        FoliageDensity[0]->setValue(double(Type.LODDensity[1]));
+        FoliageDensity[1]->setValue(double(Type.LODDensity[2]));
+        FoliageColor->setValue(double(Type.ColorVariation));
+        FoliageShadows->setChecked(Type.bCastShadows != 0);
+        FoliageYaw->setChecked(Type.bRandomYaw != 0);
+    }
+    bLoadingFoliage = false;
+    PullSettings();
+}
+
+void TerrainToolsWindow::CommitFoliageType()
+{
+    if(bLoadingFoliage || !FoliageList || FoliageList->currentRow() < 0) { return; }
+    const EditorFoliage::Target Foliage = EditorFoliage::FindFoliage(EditorTerrain::FindEditTarget());
+    if(!Foliage.IsValid()) { return; }
+    const uint16_t Index = uint16_t(FoliageList->currentRow());
+    GameCore::FoliageType Type;
+    {
+        std::lock_guard<std::mutex> Guard(Foliage.Data->GetLock());
+        if(Index >= Foliage.Data->GetTypes().size()) { return; }
+        Type = Foliage.Data->GetTypes()[Index];
+    }
+    const GameCore::FoliageType Was = Type;
+    Type.Name = FoliageName->text().trimmed().isEmpty() ? Type.Name : FoliageName->text().trimmed().toStdString();
+    for(int Lod = 0; Lod < 3; ++Lod) { Type.Mesh[Lod] = FoliageMesh[Lod]->text().trimmed().toStdString(); }
+    if(Type.Mesh[0].empty()) { Type.Mesh[0] = Was.Mesh[0]; }   // LOD 0 is not optional
+    Type.Material       = FoliageMaterial->text().trimmed().toStdString();
+    Type.Spacing        = float(FoliageSpacing->value());
+    Type.ScaleMin       = float(std::min(FoliageScaleMin->value(), FoliageScaleMax->value()));
+    Type.ScaleMax       = float(std::max(FoliageScaleMin->value(), FoliageScaleMax->value()));
+    Type.AlignToNormal  = float(FoliageAlign->value());
+    Type.MaxSlope       = float(FoliageSlope->value());
+    Type.Sink           = float(FoliageSink->value());
+    Type.CullDistance   = float(FoliageCull->value());
+    Type.LODDensity[1]  = float(FoliageDensity[0]->value());
+    Type.LODDensity[2]  = float(FoliageDensity[1]->value());
+    Type.ColorVariation = float(FoliageColor->value());
+    Type.bCastShadows   = FoliageShadows->isChecked() ? 1 : 0;
+    Type.bRandomYaw     = FoliageYaw->isChecked() ? 1 : 0;
+
+    const bool bSame = Type.Name == Was.Name && Type.Material == Was.Material && Type.Spacing == Was.Spacing
+                    && Type.ScaleMin == Was.ScaleMin && Type.ScaleMax == Was.ScaleMax && Type.AlignToNormal == Was.AlignToNormal
+                    && Type.MaxSlope == Was.MaxSlope && Type.Sink == Was.Sink && Type.CullDistance == Was.CullDistance
+                    && Type.LODDensity[1] == Was.LODDensity[1] && Type.LODDensity[2] == Was.LODDensity[2]
+                    && Type.ColorVariation == Was.ColorVariation && Type.bCastShadows == Was.bCastShadows
+                    && Type.bRandomYaw == Was.bRandomYaw && Type.Mesh[0] == Was.Mesh[0] && Type.Mesh[1] == Was.Mesh[1]
+                    && Type.Mesh[2] == Was.Mesh[2];
+    if(bSame) { return; }
+    bLoadingFoliage = true;   // the history signal would reload the form under the edit
+    EditorFoliage::SetType(Foliage, Index, Type);
+    bLoadingFoliage = false;
+    if(Type.Name != Was.Name && FoliageList->item(Index)) { FoliageList->item(Index)->setText(QString::fromStdString(Type.Name)); }
+}
+
+void TerrainToolsWindow::AddFoliageType()
+{
+    const EditorTerrain::Target Terrain = EditorTerrain::FindEditTarget();
+    if(!Terrain.IsValid())
+    {
+        QMessageBox::information(this, QStringLiteral("Add Foliage"), QStringLiteral("Select the terrain to add foliage to first."));
+        return;
+    }
+    const QString File = QFileDialog::getOpenFileName(this, QStringLiteral("Add Foliage"), EditorGraphs::GetProjectRoot(),
+                                                      QStringLiteral("Meshes (*.nmmesh)"));
+    if(File.isEmpty()) { return; }
+    const QString Runtime = EditorContent::ToRuntimePath(File);
+    QString Error;
+    const EditorFoliage::Target Foliage = Runtime.isEmpty() ? EditorFoliage::Target() : EditorFoliage::EnsureFoliage(Terrain, Error);
+    const int Made = Foliage.IsValid() ? EditorFoliage::AddType(Foliage, Runtime, QString(), Error) : -1;
+    if(Made < 0)
+    {
+        QMessageBox::warning(this, QStringLiteral("Add Foliage"), Runtime.isEmpty() ? QStringLiteral("The mesh must be inside the project.") : Error);
+        return;
+    }
+    RefreshFoliage();
+    FoliageList->setCurrentRow(Made);
+}
+
+void TerrainToolsWindow::RemoveFoliageType()
+{
+    const EditorFoliage::Target Foliage = EditorFoliage::FindFoliage(EditorTerrain::FindEditTarget());
+    if(!Foliage.IsValid() || !FoliageList || FoliageList->currentRow() < 0) { return; }
+    EditorFoliage::RemoveType(Foliage, uint16_t(FoliageList->currentRow()));
+    RefreshFoliage();
 }
 
 #endif // WITH_EDITOR

@@ -6,10 +6,14 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <vector>
+
+#include <QString>
 
 #include "Public/Editor/ViewportTool.h"
 #include "Public/GameCore/TerrainBrush.h"
 
+#include "Private/Editor/Terrain/FoliageEditing.h"
 #include "Private/Editor/Terrain/TerrainEditing.h"
 
 /*
@@ -22,6 +26,9 @@
  *   Esc, right     cancel the stroke, putting the terrain back
  *
  * Flatten levels toward the height where the stroke began.
+ *
+ * In foliage mode (the dock's Foliage tab) the same brush paints the chosen
+ * foliage types onto the terrain, or erases them (Shift erases while painting).
  */
 class TerrainTool final : public ViewportTool
 {
@@ -38,6 +45,10 @@ public:
         float   TargetHeight = 0.0f;      // Set Height, world Y
         uint8_t Layer        = 0;         // Paint
         float   NoiseScale   = 800.0f;
+
+        bool                  bFoliage     = false;              // the brush places foliage, not ground
+        uint8_t               FoliageTool  = GameCore::FT_Paint;
+        std::vector<uint16_t> FoliageTypes;                      // which it paints; empty: every type
     };
 
     Settings& GetSettings() { return Current; }
@@ -45,7 +56,11 @@ public:
     /* Called when the tool changes a setting itself (the keys): the dock follows. */
     std::function<void()> OnSettingsChanged;
 
-    bool IsStroking() const { return ActiveStroke != nullptr; }
+    bool IsStroking() const { return ActiveStroke != nullptr || FoliageStroke != nullptr; }
+
+    /* Set by a foliage stroke that could not make the terrain's foliage (no
+     * level file, say); the dock shows it. */
+    QString LastError;
 
     // === ViewportTool ======================================================
     bool OnPress(ViewportWidget& InViewport, const Ray& InRay, Qt::KeyboardModifiers InModifiers) override;
@@ -73,6 +88,8 @@ private:
     EditorTerrain::Target      HitTarget;
     bool                       bShift = false;
     std::unique_ptr<EditorTerrain::Stroke> ActiveStroke;
+    std::unique_ptr<EditorFoliage::Stroke> FoliageStroke;
+    GameCore::FoliageBrushOp               FoliageOp;
     float                      StrokeHeight = 0.0f;   // terrain space, where Flatten began
 };
 

@@ -415,6 +415,31 @@ namespace GameCore
             if(Rng.Fraction() < Expected - float(Tries)) { ++Tries; }
             Tries = std::min<uint32_t>(Tries, 4096);
             const float MinUp = std::cos(std::clamp(Type.MaxSlope, 0.0f, 90.0f) * Pi / 180.0f);
+            if(Tries == 0) { continue; }
+
+            /* What is already there, in a grid of Spacing-wide cells: a candidate checks its 3 x 3. */
+            std::unordered_map<uint64_t, std::vector<std::pair<float, float>>> Taken;
+            const auto CellKey = [Spacing](const float InX, const float InZ)
+            {
+                const int32_t CX = int32_t(std::floor(InX / Spacing)), CZ = int32_t(std::floor(InZ / Spacing));
+                return (uint64_t(uint32_t(CX)) << 32) | uint64_t(uint32_t(CZ));
+            };
+            {
+                uint32_t X0, Z0, X1, Z1;
+                BucketRange(InBrush.X, InBrush.Z, InBrush.Radius + Spacing, X0, Z0, X1, Z1);
+                const float Reach = InBrush.Radius + Spacing;
+                for(uint32_t BZ = Z0; BZ <= Z1; ++BZ)
+                {
+                    for(uint32_t BX = X0; BX <= X1; ++BX)
+                    {
+                        for(const FoliageInstance& Other : InFoliage.GetBucket(BX, BZ))
+                        {
+                            if(Other.Type != TypeIndex || std::fabs(Other.X - InBrush.X) > Reach || std::fabs(Other.Z - InBrush.Z) > Reach) { continue; }
+                            Taken[CellKey(Other.X, Other.Z)].emplace_back(Other.X, Other.Z);
+                        }
+                    }
+                }
+            }
 
             for(uint32_t Try = 0; Try < Tries; ++Try)
             {
@@ -431,16 +456,16 @@ namespace GameCore
 
                 /* Room for it: none of its type nearer than Spacing. */
                 bool bCrowded = false;
-                uint32_t X0, Z0, X1, Z1;
-                BucketRange(X, Z, Spacing, X0, Z0, X1, Z1);
-                for(uint32_t BZ = Z0; BZ <= Z1 && !bCrowded; ++BZ)
+                const int32_t CX = int32_t(std::floor(X / Spacing)), CZ = int32_t(std::floor(Z / Spacing));
+                for(int32_t OZ = -1; OZ <= 1 && !bCrowded; ++OZ)
                 {
-                    for(uint32_t BX = X0; BX <= X1 && !bCrowded; ++BX)
+                    for(int32_t OX = -1; OX <= 1 && !bCrowded; ++OX)
                     {
-                        for(const FoliageInstance& Other : InFoliage.GetBucket(BX, BZ))
+                        const auto Found = Taken.find((uint64_t(uint32_t(CX + OX)) << 32) | uint64_t(uint32_t(CZ + OZ)));
+                        if(Found == Taken.end()) { continue; }
+                        for(const auto& Other : Found->second)
                         {
-                            if(Other.Type != TypeIndex) { continue; }
-                            const float DX = Other.X - X, DZ = Other.Z - Z;
+                            const float DX = Other.first - X, DZ = Other.second - Z;
                             if(DX * DX + DZ * DZ < Spacing * Spacing) { bCrowded = true; break; }
                         }
                     }
@@ -459,6 +484,7 @@ namespace GameCore
                 {
                     ++Result.Added;
                     Touch(BX, BZ);
+                    Taken[CellKey(X, Z)].emplace_back(X, Z);
                 }
             }
         }

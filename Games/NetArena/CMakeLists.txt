@@ -156,8 +156,8 @@ game_stage(Scripts "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_SCRIPT_FILES})
 
 # Content/: imported meshes and textures ("Content/Meshes/Crate.nmmesh"), and
 # post process stacks (a Post Process component's "Content/PostProcess/X.pp.nmgraph", render targets (.nmrt2d / .nmrt3d),
-# baked lighting (a world's Lighting/ folder: .nmlighting and its lightmaps), and terrain heightfields (a world's
-# Terrain/ folder: .nmterrain), read as they are, text in every build).
+# baked lighting (a world's Lighting/ folder: .nmlighting and its lightmaps), and terrain heightfields and their foliage
+# (a world's Terrain/ folder: .nmterrain, .nmfoliage), read as they are, text in every build).
 file(GLOB_RECURSE GAME_CONTENT_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmmesh"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmtexture"
@@ -166,7 +166,8 @@ file(GLOB_RECURSE GAME_CONTENT_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmrt2d"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmrt3d"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmlighting"
-        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmterrain")
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmterrain"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmfoliage")
 game_stage(Content "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_CONTENT_FILES})
 
 # Content/Prefabs/: every build but Shipping stages the text prefabs -- an

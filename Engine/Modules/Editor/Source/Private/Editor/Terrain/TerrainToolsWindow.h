@@ -19,6 +19,7 @@ class QListWidget;
 class QMainWindow;
 class QSlider;
 class QTabWidget;
+class QTimer;
 
 /*
  * Terrain mode: a dock of the main window (View > Terrain, or the Create
@@ -28,8 +29,10 @@ class QTabWidget;
  *            Terrain folder), heightmap import and export
  *   Sculpt   Raise, Lower, Smooth, Flatten, Noise, Set Height
  *   Paint    a layer (the terrain material's four), or Smooth Paint
+ *   Foliage  its foliage types (a mesh each, and how it is placed and
+ *            drawn), painted onto the terrain or erased
  *
- * While Sculpt or Paint is in front and the dock is shown, the viewport's
+ * While Sculpt, Paint or Foliage is in front and the dock is shown, the viewport's
  * left button is the brush (TerrainTool); Create, or hiding the dock, gives
  * it back to selection. The brush settings are shared by both.
  */
@@ -64,6 +67,14 @@ private:
     QWidget* MakeSculptPage();
     QWidget* MakePaintPage();
     QWidget* MakeBrushPanel();
+    QWidget* MakeFoliagePage();
+
+    /* The foliage list and the current type's fields, from the terrain's foliage. */
+    void RefreshFoliage();
+    /* The current type's fields -> its type (one undo step, merged while typing). */
+    void CommitFoliageType();
+    void AddFoliageType();
+    void RemoveFoliageType();
 
     /* The viewport's tool follows the dock: shown and on Sculpt/Paint. */
     void UpdateViewportTool();
@@ -99,6 +110,27 @@ private:
     QDoubleSpinBox* Rate          = nullptr;
     QDoubleSpinBox* TargetHeight  = nullptr;
     QDoubleSpinBox* NoiseScale    = nullptr;
+
+    QButtonGroup*   FoliageTools  = nullptr;
+    QListWidget*    FoliageList   = nullptr;
+    QLabel*         FoliageStats  = nullptr;
+    QWidget*        FoliageForm   = nullptr;
+    QLineEdit*      FoliageName   = nullptr;
+    QLineEdit*      FoliageMesh[3] = {};
+    QLineEdit*      FoliageMaterial = nullptr;
+    QDoubleSpinBox* FoliageSpacing = nullptr;
+    QDoubleSpinBox* FoliageScaleMin = nullptr;
+    QDoubleSpinBox* FoliageScaleMax = nullptr;
+    QDoubleSpinBox* FoliageAlign   = nullptr;
+    QDoubleSpinBox* FoliageSlope   = nullptr;
+    QDoubleSpinBox* FoliageSink    = nullptr;
+    QDoubleSpinBox* FoliageCull    = nullptr;
+    QDoubleSpinBox* FoliageDensity[2] = {};
+    QDoubleSpinBox* FoliageColor   = nullptr;
+    QCheckBox*      FoliageShadows = nullptr;
+    QCheckBox*      FoliageYaw     = nullptr;
+    bool            bLoadingFoliage = false;
+    QTimer*         FoliageTimer   = nullptr;
 
     bool bPushing = false;
 };
