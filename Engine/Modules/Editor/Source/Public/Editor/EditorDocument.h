@@ -10,6 +10,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 
 #include "Public/Core/CoreTypes.h"
 #include "Public/GameCore/AABB.h"
@@ -172,13 +173,56 @@ public:
     /* The edited World's settings (WorldSettings.h). Setting them is one undo
      * step, refused while a World is borrowed (they are the edited one's). */
     const GameCore::WorldSettings& GetWorldSettings() const;
-    bool SetWorldSettings(const GameCore::WorldSettings& InSettings);
+    bool SetWorldSettings(const GameCore::WorldSettings& InSettings, const QString& InUndoText = QString());
 
     /* Entity::SetMobility (Static / Dynamic), one undo step. */
     void SetEntityMobility(GameCore::EntityID InEntity, GameCore::EMobility InMobility);
 
     /* The same for each of InEntities, all one undo step. */
     void SetEntitiesMobility(const std::vector<GameCore::EntityID>& InEntities, GameCore::EMobility InMobility);
+
+    // === Outliner folders ===================================================
+    // Organisation only, nothing at runtime reads them. A top-level entity
+    // names its folder (Entity::GetFolder), "A/B" for B inside A, and the
+    // edited World's settings list every folder (WorldSettings::Folders), so
+    // an empty one is kept. Each change is one undo step; refused while a
+    // World is borrowed or in a single-root document.
+
+    /* "A/B" from InPath: segments trimmed, empty ones dropped. */
+    static QString NormalizeFolder(const QString& InPath);
+
+    /* Every folder, sorted: the settings' and those the active World's
+     * top-level entities name, with their ancestors. */
+    QStringList GetFolders() const;
+
+    /* InEntity's folder; "" for none, or if it has a parent (it sits under
+     * that instead). */
+    QString GetEntityFolder(GameCore::EntityID InEntity) const;
+
+    /* The top-level entities whose folder is InFolder, or inside it if
+     * bInRecursive. */
+    std::vector<GameCore::EntityID> GetEntitiesInFolder(const QString& InFolder, bool bInRecursive) const;
+
+    /* A new, empty folder (and its ancestors). False if it is "" or there. */
+    bool CreateFolder(const QString& InFolder);
+
+    /* InFolder, its subfolders and their entities moved to InNewFolder --
+     * a rename, or a move into another folder; into an existing one they
+     * merge. False if either is "", they are the same, or InNewFolder is
+     * inside InFolder. */
+    bool RenameFolder(const QString& InFolder, const QString& InNewFolder);
+
+    /* InFolder gone; what was in it -- entities and subfolders -- moves up
+     * into its parent folder. */
+    bool DeleteFolder(const QString& InFolder);
+
+    /* Each of InEntities made top-level (detached where it stands, unless it
+     * is a prefab instance's part, which stays) and put in InFolder ("": no
+     * folder), which is created if needed. Returns how many changed. */
+    int MoveEntitiesToFolder(const std::vector<GameCore::EntityID>& InEntities, const QString& InFolder);
+
+    /* Entity::SetFolder, one undo step. */
+    void SetEntityFolder(GameCore::EntityID InEntity, const QString& InFolder);
 
     // === Clipboard ==========================================================
     // Copies hold the selected subtrees (GetSelectedRoots) as snapshots, shared
@@ -387,8 +431,19 @@ private:
     std::vector<GameCore::EntityID> PasteSnapshots(const std::vector<EditorHistory::EntitySnapshot>& InRoots,
                                                    const std::vector<GameCore::TransformPose>& InPoses, const QString& InLabel);
 
-    /* PlacePrefab's spawn and record, at a full pose. */
-    GameCore::EntityID SpawnPrefabRecorded(const QString& InRuntimePath, const GameCore::TransformPose& InAt);
+    /* PlacePrefab's spawn and record, at a full pose, its root in InFolder. */
+    GameCore::EntityID SpawnPrefabRecorded(const QString& InRuntimePath, const GameCore::TransformPose& InAt,
+                                           const QString& InFolder = QString());
+
+    /* RenameFolder and DeleteFolder: InFolder and everything in it to
+     * InNewFolder ("": the top), one InLabel step. */
+    bool MoveFolderTree(const QString& InFolder, const QString& InNewFolder, const QString& InLabel);
+
+    /* Folders refused (logged): a borrowed World or a single-root document. */
+    bool RefuseFolders(const char* InWhat) const;
+
+    /* Closes a macro opened while recording; nothing merges across it. */
+    void EndMacro();
 
     /* Records a name / mobility change from InBefore, if recording. */
     void RecordMembersChange(GameCore::EntityID InEntity, const EditorHistory::EntityMembers& InBefore, const QString& InText);

@@ -8,7 +8,6 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <vector>
 
 #include <QUndoCommand>
 
@@ -59,6 +58,7 @@ namespace EditorHistory
         GameCore::EntityGuid           ParentGuid;   // unset: a root
         std::string                    Name;
         GameCore::EMobility            Mobility = GameCore::EMobility::Dynamic;
+        std::string                    Folder;       // the Outliner's (Entity::GetFolder)
         std::vector<ComponentSnapshot> Components;
         std::vector<EntitySnapshot>    Children;     // in child order
 
@@ -159,15 +159,17 @@ namespace EditorHistory
         int64_t                   TimeMs;      // of the latest edit merged in
     };
 
-    /* What an entity carries besides components: its name and mobility. */
+    /* What an entity carries besides components: its name, mobility and
+     * Outliner folder. */
     struct EntityMembers
     {
         std::string         Name;
         GameCore::EMobility Mobility = GameCore::EMobility::Dynamic;
+        std::string         Folder;
 
         bool operator==(const EntityMembers& InOther) const
         {
-            return Name == InOther.Name && Mobility == InOther.Mobility;
+            return Name == InOther.Name && Mobility == InOther.Mobility && Folder == InOther.Folder;
         }
     };
 

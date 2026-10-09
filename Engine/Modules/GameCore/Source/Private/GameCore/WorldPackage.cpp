@@ -190,6 +190,11 @@ namespace
         {
             Root.append_attribute("Mobility") = MobilityName(Handle.GetAuthoredMobility());
         }
+        /* The Outliner's; only a top-level entity shows one, so only it saves one. */
+        if(Handle.GetFolder()[0] != '\0' && !Handle.HasParent())
+        {
+            Root.append_attribute("Folder") = Handle.GetFolder();
+        }
         /* Only when set, so a root entity's file reads as it always has. */
         if(const EntityID Parent = Handle.GetParent(); Parent.IsSet())
         {
@@ -313,6 +318,10 @@ namespace
         if(const EntityID Parent = Instance.GetRoot().GetParent(); Parent.IsSet())
         {
             Root.append_attribute("Parent") = GuidText(InWorld.GetEntity(Parent).GetGuid()).c_str();
+        }
+        else if(Instance.GetRoot().GetFolder()[0] != '\0')
+        {
+            Root.append_attribute("Folder") = Instance.GetRoot().GetFolder();   // the root's, as a loose entity's
         }
 
         LocalIdMap ToLive;
@@ -502,6 +511,7 @@ namespace
             if(ParsePrefabTickMode(Mode.as_string(), Parsed)) { Instance.SetTickMode(Parsed); }
             else { GAMECORE_LOG_WARN("WorldPackage: '" + InEntry.File + "' has an unknown tick mode '" + Mode.as_string() + "'") }
         }
+        if(const pugi::xml_attribute Folder = Root.attribute("Folder")) { Instance.GetRoot().SetFolder(Folder.as_string()); }
 
         const WorldLoadingRefs Refs(InLoaded);
         for(const pugi::xml_node Item : Root.children("Entity"))
@@ -559,6 +569,16 @@ namespace
      * nothing at all for a world with none, so its manifest stays as it was. */
     void AppendSettings(pugi::xml_node InRoot, const WorldSettings& InSettings)
     {
+        /* The Outliner's folders, one element each so a merge sees one line. */
+        if(!InSettings.Folders.empty())
+        {
+            pugi::xml_node Folders = InRoot.append_child("Folders");
+            for(const std::string& Path : InSettings.Folders)
+            {
+                Folders.append_child("Folder").append_attribute("Path") = Path.c_str();
+            }
+        }
+
         const WorldLightingSettings Defaults;
         const WorldLightingSettings& Lighting = InSettings.Lighting;
         if(Lighting == Defaults) { return; }
@@ -577,6 +597,15 @@ namespace
 
     void ReadSettings(const pugi::xml_node InRoot, WorldSettings& OutSettings)
     {
+        OutSettings.Folders.clear();
+        for(const pugi::xml_node Folder : InRoot.child("Folders").children("Folder"))
+        {
+            const std::string Path = Folder.attribute("Path").as_string();
+            if(!Path.empty()) { OutSettings.Folders.push_back(Path); }
+        }
+        std::sort(OutSettings.Folders.begin(), OutSettings.Folders.end());
+        OutSettings.Folders.erase(std::unique(OutSettings.Folders.begin(), OutSettings.Folders.end()), OutSettings.Folders.end());
+
         const pugi::xml_node Element = InRoot.child("Settings").child("Lighting");
         WorldLightingSettings& Lighting = OutSettings.Lighting;
         Lighting = WorldLightingSettings();
@@ -694,6 +723,7 @@ namespace
                 if(ParseMobility(Mobility.as_string(), Parsed)) { Created.SetMobility(Parsed); }
                 else { GAMECORE_LOG_WARN("WorldPackage: '" + File + "' has an unknown mobility '" + Mobility.as_string() + "'") }
             }
+            Created.SetFolder(EntityRoot.attribute("Folder").as_string());
 
             PendingEntity Entry;
             Entry.Id         = Created.GetID();

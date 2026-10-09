@@ -85,7 +85,7 @@ uses it.
 | `Lighting/LightBakeWorld`, `BakeLightmaps` (private) | A World's static meshes and lights to a bake scene, and the bake to files beside the world (`Levels/<World>/Lighting/`, staged too); Build > Bake Lightmaps' worker thread and progress dialog |
 | `Content/LightmapUVs` (private) | Lightmap UVs (UV1) for a mesh without: xatlas (`External/xatlas-f700c77`) charts and packs it, every vertex keeping its index |
 | `TransformGizmo` | Move / rotate / scale handles on the selection: drawing, hit testing and drag math, with no Qt input or World access of its own |
-| `OutlinerPanel` | Entity hierarchy with component summary, filter, create, drag to reparent; Ctrl/Shift multiple selection, F2 renames in the row, and the edit actions (below) in its context menu |
+| `OutlinerPanel` | Entity hierarchy with component summary, filter, create, drag to reparent, folders; Ctrl/Shift multiple selection, F2 renames in the row, and the edit actions (below) in its context menu |
 | `PlaySession` (private) | Play-in-Editor: the editor as an `IGameHost` -- game module, ScriptEngine, `GameSession`, `InputRouter` |
 | `ViewportSDLInput` (private) | The viewport as an SDL window (focus hand-over, text forwarding, pumping), for the game's input and the input probe |
 | `DetailsPanel` + `PropertyWidgets` | The entity's name and **Mobility** (Dynamic / Static / Stationary -- applies to every selected entity, one undo step), then one section per component, one editor per property type, lists for array properties, reset-to-default, add/remove component |
@@ -432,6 +432,34 @@ the selection.
 - **Right-click**: Create Empty Entity, Create Child Entity (at the parent's
   origin), Detach from Parent, and Destroy Entity -- "and Children" when it
   has some, since destroying a parent destroys its subtree.
+
+### Folders
+
+In a level (not the Prefab Editor), top-level entities can be sorted into
+**folders**, nested as deep as wanted ("Lights/Street"). They organise the
+Outliner only -- they do not move, parent or group anything in the world --
+and are saved with the level, empty ones too. Folders list before the
+entities at each level; the filter matches folder names as well.
+
+- **New Folder** (right-click empty space or an entity; on a folder, it makes
+  one inside) adds one and opens its name for editing.
+- **Drop the selection onto a folder**, or between rows inside one, to move it
+  there; onto empty space to take it out of every folder. A child entity
+  dropped into a folder is detached where it stands. **Move to Folder** in
+  the right-click menu does the same for the selection, to an existing folder
+  or a new one.
+- **Drag a folder onto another** to move it inside, with everything in it;
+  onto empty space to bring it to the top. Into a folder of the same name
+  they merge.
+- **F2** renames a selected folder in its row, **Del** deletes it: what it
+  held -- entities and subfolders -- moves up a level, nothing is destroyed.
+- A folder's right-click menu also has **Select Contents** (every entity in
+  it and its subfolders) and **Create Empty Entity** (in that folder).
+- **Detach from Parent** puts the entity in the folder its tree was in.
+
+Every folder change is one undo step. Duplicating or pasting an entity puts
+the copy in the original's folder; converting one to a prefab keeps the
+instance in it.
 
 ## Details panel
 
