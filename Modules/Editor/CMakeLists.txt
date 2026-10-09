@@ -67,6 +67,20 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/EditorTheme.h
         Source/Private/Editor/EditorIcons.cpp
         Source/Private/Editor/EditorIcons.h
+        Source/Private/Editor/Sequencer/SequencerAssets.cpp
+        Source/Private/Editor/Sequencer/SequencerAssets.h
+        Source/Private/Editor/Sequencer/SequencerCurveEditor.cpp
+        Source/Private/Editor/Sequencer/SequencerCurveEditor.h
+        Source/Private/Editor/Sequencer/SequencerDetails.cpp
+        Source/Private/Editor/Sequencer/SequencerDetails.h
+        Source/Private/Editor/Sequencer/SequencerDocument.cpp
+        Source/Private/Editor/Sequencer/SequencerDocument.h
+        Source/Private/Editor/Sequencer/SequencerTab.cpp
+        Source/Private/Editor/Sequencer/SequencerTab.h
+        Source/Private/Editor/Sequencer/SequencerTimeline.cpp
+        Source/Private/Editor/Sequencer/SequencerTimeline.h
+        Source/Private/Editor/Sequencer/SequencerWindow.cpp
+        Source/Private/Editor/Sequencer/SequencerWindow.h
         Source/Private/Editor/ConfigIniFile.cpp
         Source/Private/Editor/ConfigIniFile.h
         Source/Private/Editor/ProjectSettingsDialog.cpp
@@ -442,17 +456,45 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     add_test(NAME Editor.Particles COMMAND NimbleEditorParticleTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorParticleTests>")
 
+    # The Sequencer's document, timeline, curves, details and preview, offscreen.
+    if(TARGET Sequencer)
+        add_executable(NimbleEditorSequencerTests Tests/SequencerEditorTests.cpp ${NIMBLE_EDITOR_DETAILS_SOURCES})
+        target_include_directories(NimbleEditorSequencerTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source "${NIMBLE_EDITOR_CGLTF_DIR}")
+        target_link_libraries(NimbleEditorSequencerTests PRIVATE
+                GameCore::GameCore
+                RenderCore::RenderCore
+                GameWindow::GameWindow
+                NimbleEngine::NimbleEngine
+                EngineCore::QtBridge
+                NodeGraph::NodeGraph
+                NimbleXatlas
+                Qt6::Core
+                Qt6::Gui
+                Qt6::Widgets
+        )
+        if(TARGET NetCore)
+            target_link_libraries(NimbleEditorSequencerTests PRIVATE NetCore::NetCore)
+        endif()
+        set_target_properties(NimbleEditorSequencerTests PROPERTIES FOLDER "Editor" AUTOMOC ON)
+        add_dependencies(NimbleEditorSequencerTests NimbleEditor)
+        add_test(NAME Editor.Sequencer COMMAND NimbleEditorSequencerTests
+                 WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorSequencerTests>")
+    endif()
+
     # The offscreen tests compile EditorIcons.cpp too (no resources: fallback icons).
     if(TARGET Qt6::Svg)
-        foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests)
-            target_link_libraries(${NM_EDITOR_TEST} PRIVATE Qt6::Svg)
+        foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests NimbleEditorSequencerTests)
+            if(TARGET ${NM_EDITOR_TEST})
+                target_link_libraries(${NM_EDITOR_TEST} PRIVATE Qt6::Svg)
+            endif()
         endforeach()
     endif()
 
     # The tests compile the editor's own sources, sound import among them.
     if(TARGET Audio)
         foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorImportTests NimbleEditorLightingTests NimbleEditorDocumentTests
-                NimbleEditorProjectTests NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests)
+                NimbleEditorProjectTests NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests
+                NimbleEditorSequencerTests)
             if(TARGET ${NM_EDITOR_TEST})
                 target_link_libraries(${NM_EDITOR_TEST} PRIVATE Audio::Audio)
             endif()
@@ -460,7 +502,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     endif()
     # And the content cook, which cooks sequences.
     if(TARGET Sequencer)
-        foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests)
+        foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests NimbleEditorSequencerTests)
             if(TARGET ${NM_EDITOR_TEST})
                 target_link_libraries(${NM_EDITOR_TEST} PRIVATE Sequencer::Sequencer)
             endif()
@@ -582,7 +624,7 @@ endif()
 
 source_group("Editor" FILES ${NIMBLE_EDITOR_SOURCES})
 
-# The Details, UI Designer and Particle tests compile the editor's sources, so they need
+# The Details, UI Designer, Particle and Sequencer tests compile the editor's sources, so they need
 # its generated headers too (build info, project config); made by
 # NimbleEditor's build, which they depend on.
 if(TARGET NimbleEditorDetailsTests)
@@ -593,4 +635,7 @@ if(TARGET NimbleEditorUIDesignerTests)
 endif()
 if(TARGET NimbleEditorParticleTests)
     target_include_directories(NimbleEditorParticleTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
+endif()
+if(TARGET NimbleEditorSequencerTests)
+    target_include_directories(NimbleEditorSequencerTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
 endif()

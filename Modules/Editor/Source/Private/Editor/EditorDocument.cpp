@@ -173,7 +173,10 @@ bool EditorDocument::SaveWorld(const QString& InPath)
 {
     /* The edited World, not the playing one -- allowed while playing, since
      * the edited World is untouched by the run. */
-    if(!GameCore::SaveWorldPackage(InPath.toUtf8().constData(), *EditedWorld))
+    emit AboutToSaveWorld();
+    const bool bSaved = GameCore::SaveWorldPackage(InPath.toUtf8().constData(), *EditedWorld);
+    emit WorldSaved();
+    if(!bSaved)
     {
         return false;
     }

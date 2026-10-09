@@ -6,8 +6,8 @@ time (**tracks**). A **Sequence Player** component plays one. The World's
 `SequenceWorld` advances the players and writes their tracks.
 
 The runtime is complete: every track type, cinematic mode, sub-sequences and
-networked playback. Sequences are written as XML until the editor window
-lands.
+networked playback. Sequences are authored in the editor's Sequencer
+(Modules/Editor README, "Sequencer"), or as XML by hand.
 
 ---
 
@@ -251,3 +251,4 @@ ctest -R Sequencer
 
 - Time dilation (slow motion): the World has no time scale.
 - Spawn bindings in the editor's preview: they show nothing until played.
+- Sounds in the editor's preview: the timeline is silent until played.

@@ -58,6 +58,7 @@
 #include "Private/Editor/Content/MeshViewerWindow.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/Particles/ParticleAssets.h"
+#include "Private/Editor/Sequencer/SequencerAssets.h"
 #include "Private/Editor/Particles/ParticleDocument.h"
 #include "Private/Editor/Particles/ParticleEditorTab.h"
 #include "Private/Editor/Particles/ParticleEditorWindow.h"
@@ -269,6 +270,8 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     EditorGraphs::SetEditorContext(&Context);
     EditorPrefabs::SetEditorContext(&Context);
     EditorParticles::SetEditorContext(&Context);
+    EditorSequencer::SetEditorContext(&Context);
+    EditorSequencer::SetLevelViewport(Viewport);
 
     /* Editor Settings > Shaders > ShaderPDB: the build cooks without debug
      * information, so it is written here, in the background. */
@@ -292,6 +295,8 @@ EditorMainWindow::~EditorMainWindow()
     EditorGraphs::SetEditorContext(nullptr);
     EditorPrefabs::SetEditorContext(nullptr);
     EditorParticles::SetEditorContext(nullptr);
+    EditorSequencer::SetEditorContext(nullptr);
+    EditorSequencer::SetLevelViewport(nullptr);
     Context.Shutdown();
 }
 
@@ -367,6 +372,16 @@ void EditorMainWindow::BuildMenus()
                                                           QStringLiteral("Particle Systems (*.nmparticle)"));
         if(!Path.isEmpty()) { EditorParticles::OpenParticleSystem(Path, this); }
     });
+
+    QAction* OpenSequence = File->addAction(QStringLiteral("Open Se&quence..."));
+    connect(OpenSequence, &QAction::triggered, this, [this]()
+    {
+        const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Sequence"), EditorSequencer::GetDefaultFolder(),
+                                                          QStringLiteral("Sequences (*.nmseq)"));
+        if(!Path.isEmpty()) { EditorSequencer::OpenSequence(Path, this); }
+    });
+    QAction* NewSequence = File->addAction(QStringLiteral("New Sequence..."));
+    connect(NewSequence, &QAction::triggered, this, [this]() { EditorSequencer::CreateSequence(QString(), this); });
 
     QAction* OpenGraph = File->addAction(QStringLiteral("Open Grap&h..."));
     OpenGraph->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
@@ -1905,7 +1920,8 @@ void EditorMainWindow::closeEvent(QCloseEvent* InEvent)
 {
     /* Open prefabs, particle systems and graphs first: an unsaved one may cancel the close.
      * Prefabs and particle systems before the Renderer stops: their viewports' swapchains go now. */
-    if(!EditorPrefabs::CloseAllPrefabs() || !EditorParticles::CloseAll() || !EditorUI::CloseAll() || !EditorGraphs::CloseAllGraphs())
+    if(!EditorSequencer::CloseAll() || !EditorPrefabs::CloseAllPrefabs() || !EditorParticles::CloseAll() || !EditorUI::CloseAll()
+       || !EditorGraphs::CloseAllGraphs())
     {
         InEvent->ignore();
         return;
