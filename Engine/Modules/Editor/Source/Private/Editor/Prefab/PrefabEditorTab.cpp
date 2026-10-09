@@ -1,7 +1,11 @@
+/**
+* VIBECODE CERTIFIED
+*/
 #if WITH_EDITOR
 
 #include "Private/Editor/EditorEditActions.h"
 #include "Private/Editor/Prefab/PrefabEditorTab.h"
+#include "Private/Editor/EditorIcons.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -18,6 +22,7 @@
 #include <QPushButton>
 #include <QTimer>
 #include <QToolBar>
+#include <QToolButton>
 #include <QUndoStack>
 
 #include "Public/Core/CoreLog.h"
@@ -124,6 +129,15 @@ void PrefabEditorTab::BuildToolBar()
     SimulateAction = Bar->addAction(QStringLiteral("Simulate"), this, &PrefabEditorTab::StartSimulation);
     SimulateAction->setToolTip(QStringLiteral("Run the prefab and its script in a World of its own; Stop drops it"));
     StopAction = Bar->addAction(QStringLiteral("Stop"), this, &PrefabEditorTab::StopSimulation);
+    SimulateAction->setIcon(EditorIcons::Get(EditorIcons::EIcon::Play));
+    StopAction->setIcon(EditorIcons::Get(EditorIcons::EIcon::Stop));
+    for(QAction* Each : { SimulateAction, StopAction })
+    {
+        if(auto* Button = qobject_cast<QToolButton*>(Bar->widgetForAction(Each)))
+        {
+            Button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);   // the rest of the bar is text
+        }
+    }
     SimulateLabel = new QLabel(Bar);
     SimulateLabel->setStyleSheet(QStringLiteral("color: #4caf50; padding: 0 6px;"));
     Bar->addWidget(SimulateLabel);

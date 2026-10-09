@@ -22,6 +22,13 @@ if(NOT Qt6Widgets_FOUND)
     return()
 endif()
 
+# Qt Svg draws the Lucide icons (EditorIcons.cpp). Optional: without it, the
+# style's standard icons stand in.
+find_package(Qt6 6.8 OPTIONAL_COMPONENTS Svg QUIET)
+if(NOT TARGET Qt6::Svg)
+    message(STATUS "NimbleEditor: Qt6 Svg not found; the editor uses the style's standard icons")
+endif()
+
 set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/EditorMain.cpp
         Source/Private/Editor/AboutDialog.cpp
@@ -58,6 +65,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/SDLInputProbe.h
         Source/Private/Editor/EditorTheme.cpp
         Source/Private/Editor/EditorTheme.h
+        Source/Private/Editor/EditorIcons.cpp
+        Source/Private/Editor/EditorIcons.h
         Source/Private/Editor/ConfigIniFile.cpp
         Source/Private/Editor/ConfigIniFile.h
         Source/Private/Editor/ProjectSettingsDialog.cpp
@@ -279,6 +288,24 @@ if(TARGET Audio)
     target_link_libraries(NimbleEditor PRIVATE Audio::Audio)
 endif()
 
+# === Icons ======================================================================
+# Lucide (ISC), vendored at lucide-static 1.53.0: External/lucide-1.53.0, its
+# LICENSE beside the SVGs. Compiled in as :/lucide/<name>.svg (EditorIcons.h).
+set(NIMBLE_EDITOR_LUCIDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/lucide-1.53.0")
+qt_add_resources(NimbleEditor "LucideIcons"
+        PREFIX "/lucide"
+        BASE   "${NIMBLE_EDITOR_LUCIDE_DIR}/icons"
+        FILES
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/play.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/pause.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/square.svg"
+)
+if(TARGET Qt6::Svg)
+    target_link_libraries(NimbleEditor PRIVATE Qt6::Svg)
+    set_source_files_properties(Source/Private/Editor/EditorIcons.cpp PROPERTIES
+            COMPILE_DEFINITIONS "NIMBLEEDITOR_HAS_QTSVG=1")
+endif()
+
 # === Import tests =================================================================
 # Runs from Binaries, where NimbleEditor's windeployqt put Qt (hence the dependency).
 option(NIMBLEEDITOR_BUILD_TESTS "Build NimbleEditorImportTests, NimbleEditorDocumentTests, NimbleEditorDetailsTests, NimbleEditorUIDesignerTests and NimbleEditorParticleTests" ON)
@@ -414,6 +441,13 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     add_dependencies(NimbleEditorParticleTests NimbleEditor)
     add_test(NAME Editor.Particles COMMAND NimbleEditorParticleTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorParticleTests>")
+
+    # The offscreen tests compile EditorIcons.cpp too (no resources: fallback icons).
+    if(TARGET Qt6::Svg)
+        foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests)
+            target_link_libraries(${NM_EDITOR_TEST} PRIVATE Qt6::Svg)
+        endforeach()
+    endif()
 
     # The tests compile the editor's own sources, sound import among them.
     if(TARGET Audio)
