@@ -67,6 +67,13 @@ NIMBLE_CONFIG_BOOL(GRenderDrawLabels, "Rendering", "DrawLabels", true, nullptr);
 
 namespace RenderCore
 {
+    /* CreateInstanceBuffer's: the GDI buffer behind the public handle, and how many it holds. */
+    struct RenderInstanceBuffer
+    {
+        GDIBuffer* Buffer = nullptr;
+        uint32_t   Count  = 0;
+    };
+
     /* A loaded material: DrawCommand points at one (DrawPolicy.h). */
     struct RenderMaterial
     {
@@ -1690,7 +1697,7 @@ namespace RenderCore
         {
             EnsureInitialised();
             GDIShader* Pixel  = GetShadowDepthShader();
-            const EMaterialVertexInput Input = PrepareMeshInput(InItem);
+            const EMaterialVertexInput Input = InItem.Instances ? EMaterialVertexInput::InstancedMesh : PrepareMeshInput(InItem);
             GDIShader* Vertex = InItem.Mat ? VertexFor(*InItem.Mat, Input) : GetDefaultVertex(Input);
             if(!Pixel || !Vertex)
             {
@@ -1723,7 +1730,9 @@ namespace RenderCore
             GDISetBlendState(IBlendStateDesc());
 
             GDISetDrawRange(InItem.Mesh, InItem.First, InItem.Count);
+            if(InItem.Instances) { GDISetInstanceBuffer(InItem.Instances, InItem.InstanceCount); }
             GDIDrawObject(MeshObject);
+            if(InItem.Instances) { GDISetInstanceBuffer(nullptr, 0); }
             GDISetDrawRange(InItem.Mesh, 0, 0);
             MeshObject->Mesh = nullptr;
             DrawCallCount.fetch_add(1, std::memory_order_relaxed);
@@ -3064,6 +3073,10 @@ namespace RenderCore
         {
             return false;
         }
+        if(InOverrides.Instances && (InOverrides.InstanceCount == 0 || !InOverrides.Instances->Buffer))
+        {
+            return true;   // no instances: nothing to draw
+        }
 
         std::shared_ptr<const MeshData> Source;
         GDIMesh* Mesh = P->FindMesh(InMeshPath, Source);
@@ -3115,9 +3128,46 @@ namespace RenderCore
             Item.SkinBones     = SkinBones;
             Item.PrevSkinPalette = SkinPalette == InOverrides.SkinPalette ? InOverrides.PrevSkinPalette : nullptr;
             Item.MaterialSlot  = uint8_t(SlotIndex);   // the section's slot, whichever material it fell back to
+            if(InOverrides.Instances)
+            {
+                Item.Instances     = InOverrides.Instances->Buffer;
+                Item.InstanceCount = std::min(InOverrides.InstanceCount, InOverrides.Instances->Count);
+                Item.SortOrigin    = InTransform.Position;
+            }
             P->Submit(Item, Impl::StageOf(Chosen));
         }
         return true;
+    }
+
+    bool RenderContext::SupportsInstancing() const
+    {
+        return GDISupportsCompute();
+    }
+
+    RenderInstanceBuffer* RenderContext::CreateInstanceBuffer(const RenderInstance* InInstances, const uint32_t InCount, const char* InName)
+    {
+        static_assert(sizeof(RenderInstance) == GDI_INSTANCE_STRIDE, "RenderInstance is GDIBuffer.h's instance layout");
+        if(!InInstances || InCount == 0 || !GDISupportsCompute())
+        {
+            return nullptr;
+        }
+        GDIBuffer* Buffer = GDICreateBuffer(InCount * GDI_INSTANCE_STRIDE, GDI_BU_Instance, InInstances);
+        if(!Buffer)
+        {
+            return nullptr;
+        }
+        if(InName && InName[0] != '\0') { GDISetDebugName(Buffer, InName); }
+        auto* Out   = new RenderInstanceBuffer();
+        Out->Buffer = Buffer;
+        Out->Count  = InCount;
+        return Out;
+    }
+
+    void RenderContext::ReleaseInstanceBuffer(RenderInstanceBuffer* InBuffer)
+    {
+        if(!InBuffer) { return; }
+        if(InBuffer->Buffer) { InBuffer->Buffer->Release(); }   // deferred past the frames still reading it
+        delete InBuffer;
     }
 
     void RenderContext::ReleaseMesh(const char* InMeshPath)
@@ -3321,6 +3371,10 @@ namespace RenderCore
                                                  const ERenderStage InStage, const int32_t InShadowView)
     {
         Impl& P = *this;
+        if(InOverrides.Instances && (InOverrides.InstanceCount == 0 || !InOverrides.Instances->Buffer))
+        {
+            return true;   // no instances: nothing to draw
+        }
         std::shared_ptr<const MeshData> Source;
         GDIMesh* Mesh = P.FindMesh(InMeshPath, Source);
         if(!Mesh || !Source)
@@ -3370,6 +3424,12 @@ namespace RenderCore
             Item.SkinPalette   = SkinPalette;
             Item.SkinBones     = SkinBones;
             Item.MaterialSlot  = uint8_t(Index);
+            if(InOverrides.Instances)
+            {
+                Item.Instances     = InOverrides.Instances->Buffer;
+                Item.InstanceCount = std::min(InOverrides.InstanceCount, InOverrides.Instances->Count);
+                Item.SortOrigin    = InTransform.Position;
+            }
             if(P.Capture && InStage == ERenderStage::Shadows) { P.Capture->push_back({ Item, InStage }); }
             else                                              { P.PolicyFor(InStage).Add(Item); }
         }

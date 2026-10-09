@@ -18,6 +18,7 @@
 #include "Public/Editor/EditorContext.h"
 #include "Public/Editor/EditorDocument.h"
 #include "Public/GameCore/Components/RigidBodyComponent.h"
+#include "Public/GameCore/Foliage.h"
 #include "Public/GameCore/Components/TransformComponent.h"
 #include "Public/GameCore/World.h"
 #include "Public/NimbleEngine/TerrainFacade.h"
@@ -407,15 +408,18 @@ namespace EditorTerrain
         bool bAll = true;
         for(auto It = DirtyPaths().begin(); It != DirtyPaths().end();)
         {
-            const std::shared_ptr<GameCore::TerrainData> Data = GameCore::TerrainAssetCache::FindLoaded(*It);
+            /* A terrain, or its foliage (Foliage.h): the same rules. */
+            const bool bFoliage = QString::fromStdString(*It).endsWith(QStringLiteral(".nmfoliage"), Qt::CaseInsensitive);
+            const std::shared_ptr<GameCore::TerrainData> Data    = bFoliage ? nullptr : GameCore::TerrainAssetCache::FindLoaded(*It);
+            const std::shared_ptr<GameCore::FoliageData> Foliage = bFoliage ? GameCore::FoliageAssetCache::FindLoaded(*It) : nullptr;
             const QString File = ProjectFileFor(*It);
-            if(!Data || File.isEmpty())
+            if((!Data && !Foliage) || File.isEmpty())
             {
                 It = DirtyPaths().erase(It);
                 continue;
             }
             QDir().mkpath(QFileInfo(File).absolutePath());
-            if(!GameCore::SaveTerrainFile(File.toStdString(), *Data))
+            if(Foliage ? !GameCore::SaveFoliageFile(File.toStdString(), *Foliage) : !GameCore::SaveTerrainFile(File.toStdString(), *Data))
             {
                 bAll = false;
                 if(OutErrors) { OutErrors->push_back(QStringLiteral("Cannot write %1").arg(QDir::toNativeSeparators(File))); }
@@ -430,7 +434,11 @@ namespace EditorTerrain
 
     void DiscardUnsaved()
     {
-        for(const std::string& Each : DirtyPaths()) { GameCore::TerrainAssetCache::Invalidate(Each); }
+        for(const std::string& Each : DirtyPaths())
+        {
+            GameCore::TerrainAssetCache::Invalidate(Each);
+            GameCore::FoliageAssetCache::Invalidate(Each);
+        }
         DirtyPaths().clear();
     }
 

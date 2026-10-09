@@ -62,6 +62,8 @@ namespace EditorIcons
         TerrainSetHeight,   // a height gauge
         TerrainPaint,       // a brush
         TerrainSmoothPaint, // two overlapping circles
+        Foliage,            // a tree
+        FoliageErase,       // a small tree and a cross
         Count
     };
 

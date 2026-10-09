@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 #include <QKeyEvent>
 #include <QWheelEvent>
@@ -74,14 +75,16 @@ bool TerrainTool::Trace(const Ray& InRay)
     EditorTerrain::Target Target;
     EngineCore::Vector3   Point;
     bHit = EditorTerrain::PickTerrain(InRay.Origin, InRay.Direction, Target, Point);
-    if(bHit && ActiveStroke && Target.Entity != ActiveStroke->GetTarget().Entity)
+    const EditorTerrain::Target* Stroking = ActiveStroke ? &ActiveStroke->GetTarget()
+                                          : (FoliageStroke ? &FoliageStroke->GetTarget().Terrain : nullptr);
+    if(bHit && Stroking && Target.Entity != Stroking->Entity)
     {
         bHit = false;   // a stroke stays on the terrain it began on
     }
     if(bHit)
     {
         HitPoint  = Point;
-        HitTarget = ActiveStroke ? ActiveStroke->GetTarget() : Target;
+        HitTarget = Stroking ? *Stroking : Target;
     }
     return bHit;
 }
@@ -94,6 +97,20 @@ bool TerrainTool::OnPress(ViewportWidget& InViewport, const Ray& InRay, const Qt
     const EditorDocument* Document = EditorTerrain::GetHost().Document;
     if(!Document || Document->IsWorldBorrowed()) { return false; }
     if(!Trace(InRay)) { return false;   /* not on a terrain: a click selects, as ever */ }
+
+    if(Current.bFoliage)
+    {
+        LastError.clear();
+        const EditorFoliage::Target Foliage = EditorFoliage::EnsureFoliage(HitTarget, LastError);
+        if(!Foliage.IsValid()) { return true;   /* taken, but nothing to paint: the dock says why */ }
+        const bool bErase = (Current.FoliageTool == GameCore::FT_Erase) != bShift;
+        FoliageOp = GameCore::FoliageBrushOp();
+        FoliageOp.Tool  = bErase ? GameCore::FT_Erase : GameCore::FT_Paint;
+        FoliageOp.Types = Current.FoliageTypes;
+        FoliageOp.Seed  = uint32_t(std::rand()) * 2654435761u | 1u;
+        FoliageStroke = std::make_unique<EditorFoliage::Stroke>(Foliage, bErase ? QStringLiteral("Erase Foliage") : QStringLiteral("Paint Foliage"));
+        return true;
+    }
 
     const EngineCore::Vector3 Local = HitTarget.ToLocal(HitPoint);
     StrokeHeight = HitTarget.Data->SampleHeight(float(Local.GetX()), float(Local.GetZ()));
@@ -111,6 +128,11 @@ void TerrainTool::OnDrag(ViewportWidget& InViewport, const Ray& InRay, const Qt:
 void TerrainTool::OnRelease(ViewportWidget& InViewport, const bool bInCancel)
 {
     (void)InViewport;
+    if(FoliageStroke)
+    {
+        FoliageStroke->End(bInCancel);
+        FoliageStroke.reset();
+    }
     if(!ActiveStroke) { return; }
     ActiveStroke->End(bInCancel);
     ActiveStroke.reset();
@@ -131,12 +153,18 @@ void TerrainTool::Tick(ViewportWidget& InViewport, const float InDeltaSeconds)
     if(InViewport.GetCursorRay(Cursor)) { Trace(Cursor); }
     else if(!ActiveStroke)              { bHit = false; }
 
-    if(!ActiveStroke || !bHit) { return; }
+    if((!ActiveStroke && !FoliageStroke) || !bHit) { return; }
     /* Clamped: a hitch does not dump a second of brush in one frame. */
     const float Delta = std::clamp(InDeltaSeconds, 0.0f, 0.1f);
     GameCore::TerrainBrush Brush;
     Brush.Strength = Current.Strength;
     Brush.Falloff  = Current.Falloff;
+    if(FoliageStroke)
+    {
+        FoliageOp.DeltaSeconds = Delta;
+        FoliageStroke->Dab(HitPoint, Current.Radius, Brush, FoliageOp);
+        return;
+    }
     ActiveStroke->Dab(HitPoint, Current.Radius, Brush, MakeOp(Delta));
 }
 
@@ -148,7 +176,9 @@ void TerrainTool::QueueOverlay(ViewportWidget& InViewport)
 
     const EngineCore::Vector3 Centre = HitTarget.ToLocal(HitPoint);
     const float LocalRadius = HitTarget.ToLocalLength(Current.Radius);
-    const EngineCore::Color Colour = ToolColor(Current.Tool, bShift != Current.bLower);
+    const bool bErasing = Current.bFoliage && ((Current.FoliageTool == GameCore::FT_Erase) != bShift);
+    const EngineCore::Color Colour = Current.bFoliage ? (bErasing ? EngineCore::Color(255, 110, 90) : EngineCore::Color(90, 220, 140))
+                                                      : ToolColor(Current.Tool, bShift != Current.bLower);
     const EngineCore::Color Dim(Colour.R / 2, Colour.G / 2, Colour.B / 2, 255);
     const GameCore::TerrainData& Data = *HitTarget.Data;
     const float Lift = Data.GetSpacing() * 0.05f;

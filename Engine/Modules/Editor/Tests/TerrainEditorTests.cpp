@@ -18,6 +18,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QLabel>
+#include <QListWidget>
 #include <QMainWindow>
 #include <QUndoStack>
 
@@ -27,10 +28,12 @@
 #include "Public/GameCore/Components/RigidBodyComponent.h"
 #include "Public/GameCore/Components/TransformComponent.h"
 #include "Public/GameCore/Entity.h"
+#include "Public/GameCore/Foliage.h"
 #include "Public/GameCore/Terrain.h"
 #include "Public/GameCore/World.h"
 #include "Public/RenderCore/Components/TerrainComponent.h"
 #include "Private/Editor/Graph/GraphAssets.h"
+#include "Private/Editor/Terrain/FoliageEditing.h"
 #include "Private/Editor/Terrain/TerrainEditing.h"
 #include "Private/Editor/Terrain/TerrainToolsWindow.h"
 
@@ -197,6 +200,8 @@ int main(int argc, char** argv)
     EditorConsole Console;
     Console.Register(QStringLiteral("terrain"), EditorTerrain::GetConsoleUsage(), QString(),
                      [&](const QStringList& InArgs) { EditorTerrain::RunConsoleCommand(Console, InArgs); });
+    Console.Register(QStringLiteral("foliage"), EditorFoliage::GetConsoleUsage(), QString(),
+                     [&](const QStringList& InArgs) { EditorFoliage::RunConsoleCommand(Console, InArgs); });
     const int ConsoleBase = Level.GetHistory().index();   // after an undo: the new step replaces the redo
     Expect(Console.Execute(QStringLiteral("terrain sculpt Lower 1000 1000 400 1 0.5")), "terrain sculpt runs");
     Expect(Level.GetHistory().index() == ConsoleBase + 1 && Level.GetHistory().undoText() == QStringLiteral("Sculpt Lower Ground"),
@@ -209,6 +214,77 @@ int main(int argc, char** argv)
     Target.Data->SampleWeights(float(Painted.GetX()), float(Painted.GetZ()), Weights);
     Expect(Weights[2] > 0.9f, "the paint landed on layer 2: " + Num(Weights[2]));
     Expect(Level.GetHistory().undoText() == QStringLiteral("Paint Rock Ground"), "named for its layer: " + Level.GetHistory().undoText().toStdString());
+
+    // --- Foliage ------------------------------------------------------------
+    std::printf("Foliage\n");
+    {
+        Level.SetSelection(Ground);
+        Target = EditorTerrain::FindEditTarget();
+        Expect(!EditorFoliage::FindFoliage(Target).IsValid(), "a new terrain has no foliage");
+        const int FoliageBase = Level.GetHistory().index();
+        EditorFoliage::Target Foliage = EditorFoliage::EnsureFoliage(Target, Error);
+        const auto* Named = World.GetEntity(Ground).GetComponent<RenderCore::TerrainComponent>();
+        Expect(Foliage.IsValid() && Named && std::string(Named->Foliage) == "Saved/TerrainEditorTests/Hills/Terrain/Ground.nmfoliage",
+               "EnsureFoliage makes it beside the terrain and names it: " + Error.toStdString());
+        Expect(QFileInfo::exists(EditorTerrain::ProjectFileFor(Foliage.Path)) && Foliage.Data->GetBucketsPerSide() == Target.Data->GetChunksPerSide(),
+               "its file is written, bucketed by the terrain's chunks");
+        Expect(Level.GetHistory().index() == FoliageBase + 1, "naming it is one step");
+
+        const int Box = EditorFoliage::AddType(Foliage, QStringLiteral("Engine/Content/Meshes/Box.nmmesh"), QStringLiteral("Crate"), Error);
+        Expect(Box == 0 && Foliage.Data->GetTypes().size() == 1 && Level.GetHistory().undoText() == QStringLiteral("Add Foliage Crate"),
+               "AddType: one step: " + Error.toStdString());
+        Expect(EditorFoliage::AddType(Foliage, QStringLiteral("Content/Nope.nmmesh"), QString(), Error) < 0, "a mesh that does not load is refused");
+
+        /* Two quick edits of one type merge into one step. */
+        const int EditBase = Level.GetHistory().index();
+        GameCore::FoliageType Crate = Foliage.Data->GetTypes()[0];
+        Crate.Spacing = 400.0f;
+        EditorFoliage::SetType(Foliage, 0, Crate);
+        Crate.CullDistance = 9000.0f;
+        EditorFoliage::SetType(Foliage, 0, Crate);
+        Expect(Level.GetHistory().index() == EditBase + 1 && Near(Foliage.Data->GetTypes()[0].Spacing, 400.0)
+               && Near(Foliage.Data->GetTypes()[0].CullDistance, 9000.0), "type edits a second apart merge into one step");
+
+        /* Paint through the console: one step; undo takes every instance back. */
+        Expect(Console.Execute(QStringLiteral("foliage paint 0 0 2000 1 1 Crate")), "foliage paint runs");
+        const size_t Painted = Foliage.Data->GetInstanceCount();
+        Expect(Painted > 20 && Level.GetHistory().undoText() == QStringLiteral("Paint Foliage Ground"),
+               "it places instances (" + std::to_string(Painted) + "), one step: " + Level.GetHistory().undoText().toStdString());
+        Level.Undo();
+        Expect(Foliage.Data->GetInstanceCount() == 0, "undo takes them back");
+        Level.Redo();
+        Expect(Foliage.Data->GetInstanceCount() == Painted, "redo puts the same ones back");
+
+        Expect(Console.Execute(QStringLiteral("foliage erase 0 0 800 1 2")), "foliage erase runs");
+        Expect(Foliage.Data->GetInstanceCount() < Painted, "erasing removes some");
+        Level.Undo();
+        Expect(Foliage.Data->GetInstanceCount() == Painted, "undo restores them");
+
+        /* A stroke on the tool's path, cancelled: nothing, no step. */
+        const int StrokeBase = Level.GetHistory().index();
+        {
+            EditorFoliage::Stroke Cancelled(Foliage, QStringLiteral("Paint Foliage"));
+            GameCore::TerrainBrush Brush; Brush.Strength = 1.0f;
+            GameCore::FoliageBrushOp Op; Op.DeltaSeconds = 0.5f;
+            Cancelled.Dab(EngineCore::Vector3(-2000.0, 0.0, -2000.0), 1500.0f, Brush, Op);
+            Cancelled.End(true);
+        }
+        Expect(Foliage.Data->GetInstanceCount() == Painted && Level.GetHistory().index() == StrokeBase, "a cancelled stroke leaves nothing");
+
+        /* Removing a type takes its instances; undo brings both back. */
+        EditorFoliage::RemoveType(Foliage, 0);
+        Expect(Foliage.Data->GetTypes().empty() && Foliage.Data->GetInstanceCount() == 0, "RemoveType removes its instances");
+        Level.Undo();
+        Expect(Foliage.Data->GetTypes().size() == 1 && Foliage.Data->GetInstanceCount() == Painted, "undo brings the type and its instances back");
+
+        /* Saved with the level. */
+        Expect(EditorTerrain::IsDirty(Foliage.Path) && Level.SaveWorld(WorldFile) && !EditorTerrain::IsDirty(Foliage.Path), "saving writes it");
+        GameCore::FoliageData Saved;
+        Expect(GameCore::LoadFoliageFile(EditorTerrain::ProjectFileFor(Foliage.Path).toStdString(), Saved)
+               && Saved.GetInstanceCount() == Painted && Saved.GetTypes().size() == 1 && Near(Saved.GetTypes()[0].Spacing, 400.0),
+               "the file holds the instances and the edited type");
+        Expect(Console.Execute(QStringLiteral("foliage stats")), "foliage stats prints");
+    }
 
     // --- The dock -----------------------------------------------------------
     std::printf("Dock\n");
@@ -226,6 +302,12 @@ int main(int argc, char** argv)
         Expect(TerrainToolsWindow::SelectTool(QStringLiteral("Paint")) && Dock.GetTool().GetSettings().Tool == GameCore::TT_Paint,
                "SelectTool Paint");
         Expect(!TerrainToolsWindow::SelectTool(QStringLiteral("Bulldoze")), "an unknown tool is refused");
+        Expect(TerrainToolsWindow::SelectTool(QStringLiteral("FoliageErase")) && Dock.GetTool().GetSettings().bFoliage
+               && Dock.GetTool().GetSettings().FoliageTool == GameCore::FT_Erase, "SelectTool FoliageErase: the Foliage tab, erasing");
+        const QListWidget* Types = Dock.findChild<QListWidget*>(QStringLiteral("FoliageTypes"));
+        Expect(Types && Types->count() == 1 && Types->item(0)->text() == QStringLiteral("Crate"), "the Foliage tab lists the terrain's types");
+        Expect(Dock.GetTool().GetSettings().FoliageTypes.size() == 1 && Dock.GetTool().GetSettings().FoliageTypes[0] == 0,
+               "checked types are what the brush paints");
     }
 
     EditorTerrain::DiscardUnsaved();

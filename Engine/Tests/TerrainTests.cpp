@@ -17,6 +17,7 @@
 #include "Public/GameCore/ComponentSerializer.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
+#include "Public/GameCore/Foliage.h"
 #include "Public/GameCore/Terrain.h"
 #include "Public/GameCore/TerrainBrush.h"
 #include "Public/GameCore/World.h"
@@ -500,6 +501,140 @@ namespace
     }
 }
 
+namespace
+{
+    void TestFoliage()
+    {
+        TerrainData Ground;
+        Ground.Reset(129, 100.0f);   // 2 x 2 chunks, 12800 a side
+        {
+            /* A cliff along X = 6400..7000 (steep), flat elsewhere. */
+            std::lock_guard<std::mutex> Guard(Ground.GetLock());
+            TerrainRect All;
+            for(int32_t Z = 0; Z < 129; ++Z)
+            {
+                for(int32_t X = 0; X < 129; ++X)
+                {
+                    Ground.SetHeight(X, Z, std::clamp(float(X - 64) * 250.0f, 0.0f, 1500.0f));
+                    All.Add(X, Z);
+                }
+            }
+            Ground.MarkDirty(All);
+        }
+
+        FoliageData Foliage;
+        Foliage.Reset(Ground);
+        Expect(Foliage.GetBucketsPerSide() == 2 && Near(Foliage.GetBucketSize(), 6400.0f), "a bucket per terrain chunk");
+        FoliageType Grass;
+        Grass.Name = "Grass"; Grass.Mesh[0] = "Content/Meshes/Grass.nmmesh"; Grass.Spacing = 200.0f; Grass.MaxSlope = 30.0f;
+        FoliageType Tree;
+        Tree.Name = "Tree"; Tree.Mesh[0] = "Content/Meshes/Tree.nmmesh"; Tree.Spacing = 800.0f; Tree.AlignToNormal = 0.0f;
+        Tree.LODDensity[1] = 1.0f; Tree.LODDensity[2] = 1.0f; Tree.CullDistance = 30000.0f;
+        Foliage.GetTypes() = { Grass, Tree };
+
+        /* Paint grass for two seconds on the flat. */
+        TerrainBrush Brush;
+        Brush.X = 3000.0f; Brush.Z = 3000.0f; Brush.Radius = 2000.0f; Brush.Strength = 1.0f;
+        FoliageBrushOp Paint;
+        Paint.Tool = FT_Paint; Paint.Types = { 0 }; Paint.DeltaSeconds = 1.0f / 30.0f;
+        const uint64_t Before   = Foliage.GetBucketRevision(0, 0);
+        const uint64_t Before11 = Foliage.GetBucketRevision(1, 1);
+        uint32_t Added = 0;
+        for(int Dab = 0; Dab < 60; ++Dab) { Added += ApplyFoliageBrush(Foliage, Ground, Brush, Paint).Added; }
+        const size_t Grasses = Foliage.GetInstanceCount(0);
+        const double Ideal = 3.14159 * 2000.0 * 2000.0 / (200.0 * 200.0);
+        Expect(Added == Grasses && Grasses > size_t(Ideal * 0.25) && Grasses < size_t(Ideal * 1.2),
+               "painting fills toward the spacing: " + std::to_string(Grasses) + " of ~" + std::to_string(int(Ideal)));
+        Expect(Foliage.GetInstanceCount(1) == 0, "only the chosen type");
+        Expect(Foliage.GetBucketRevision(0, 0) != Before && Foliage.GetBucketRevision(1, 1) == Before11,
+               "the touched bucket's revision moves, an untouched one's does not");
+
+        /* None closer than the spacing, none outside the brush. */
+        double Closest = 1e9, Farthest = 0.0;
+        const std::vector<FoliageInstance>& Bucket = Foliage.GetBucket(0, 0);
+        for(size_t A = 0; A < Bucket.size(); ++A)
+        {
+            Farthest = std::max(Farthest, std::hypot(double(Bucket[A].X) - 3000.0, double(Bucket[A].Z) - 3000.0));
+            for(size_t B = A + 1; B < Bucket.size(); ++B)
+            {
+                Closest = std::min(Closest, std::hypot(double(Bucket[A].X - Bucket[B].X), double(Bucket[A].Z - Bucket[B].Z)));
+            }
+        }
+        Expect(Closest >= 200.0 - 1e-3 && Farthest <= 2000.0, "spacing kept (" + Num(Closest) + "), inside the brush (" + Num(Farthest) + ")");
+
+        /* The cliff is too steep for grass; flat ground beyond it is not. */
+        Brush.X = 6700.0f; Brush.Radius = 250.0f;
+        for(int Dab = 0; Dab < 60; ++Dab) { ApplyFoliageBrush(Foliage, Ground, Brush, Paint); }
+        int OnCliff = 0;
+        for(const FoliageInstance& Each : Foliage.GetBucket(1, 0)) { OnCliff += (Each.X > 6450.0f && Each.X < 6950.0f) ? 1 : 0; }
+        Expect(OnCliff == 0, "nothing on ground steeper than MaxSlope (" + std::to_string(OnCliff) + ")");
+
+        /* Erase takes the chosen types out from under the brush. */
+        FoliageBrushOp Erase;
+        Erase.Tool = FT_Erase; Erase.DeltaSeconds = 1.0f / 30.0f;
+        Brush.X = 3000.0f; Brush.Radius = 800.0f;
+        uint32_t Removed = 0;
+        for(int Dab = 0; Dab < 120; ++Dab) { Removed += ApplyFoliageBrush(Foliage, Ground, Brush, Erase).Removed; }
+        int Left = 0;
+        for(const FoliageInstance& Each : Foliage.GetBucket(0, 0)) { Left += std::hypot(Each.X - 3000.0f, Each.Z - 3000.0f) < 400.0f ? 1 : 0; }
+        Expect(Removed > 0 && Left == 0, "erase clears the brush's middle (" + std::to_string(Removed) + " removed)");
+
+        /* Transforms stand on the ground, upright or along the normal, sunk, scaled. */
+        FoliageInstance One;
+        One.Type = 1; One.X = 6500.0f; One.Z = 1000.0f; One.Yaw = 90.0f; One.Scale = 2.0f;
+        float M[16];
+        Tree.Sink = 10.0f;
+        GetFoliageTransform(Ground, Tree, One, M);
+        Expect(Near(M[12], 6500.0) && Near(M[13], Ground.SampleHeight(6500.0f, 1000.0f) - 20.0, 0.01) && Near(M[14], 1000.0),
+               "upright: at the ground, sunk Sink x Scale: y " + Num(M[13]));
+        Expect(Near(M[5], 2.0) && Near(std::hypot(M[0], M[2]), 2.0) && Near(M[1], 0.0) && Near(M[15], 1.0), "scaled, yawed about Y only");
+        Tree.AlignToNormal = 1.0f;
+        GetFoliageTransform(Ground, Tree, One, M);
+        float Normal[3];
+        Ground.SampleNormal(6500.0f, 1000.0f, Normal);
+        Expect(Near(M[4] / 2.0, Normal[0], 1e-3) && Near(M[5] / 2.0, Normal[1], 1e-3), "aligned: its up is the ground's normal");
+
+        /* It follows the ground when sculpted. */
+        {
+            std::lock_guard<std::mutex> Guard(Ground.GetLock());
+            for(int32_t Z = 0; Z < 129; ++Z) { for(int32_t X = 0; X < 129; ++X) { Ground.SetHeight(X, Z, Ground.GetHeight(X, Z) + 300.0f); } }
+        }
+        Tree.AlignToNormal = 0.0f;
+        Tree.Sink = 0.0f;
+        GetFoliageTransform(Ground, Tree, One, M);
+        Expect(Near(M[13], Ground.SampleHeight(6500.0f, 1000.0f), 0.01), "raised ground raises it");
+
+        /* The file both ways; out-of-grid instances dropped on load. */
+        std::error_code Error;
+        const std::filesystem::path Folder = std::filesystem::temp_directory_path(Error) / "NimbleFoliageTests";
+        std::filesystem::remove_all(Folder, Error);
+        std::filesystem::create_directories(Folder, Error);
+        const std::string Path = (Folder / "Ground.nmfoliage").string();
+        Foliage.GetTypes()[1].CullDistance = 12345.0f;
+        Expect(SaveFoliageFile(Path, Foliage), "SaveFoliageFile writes it");
+        FoliageData Loaded;
+        Expect(LoadFoliageFile(Path, Loaded), "LoadFoliageFile reads it");
+        Expect(Loaded.GetTypes().size() == 2 && Loaded.GetTypes()[0].Name == "Grass" && Loaded.GetTypes()[1].Mesh[0] == "Content/Meshes/Tree.nmmesh"
+               && Near(Loaded.GetTypes()[1].CullDistance, 12345.0) && Near(Loaded.GetTypes()[1].LODDensity[2], 1.0),
+               "types round-trip");
+        Expect(Loaded.GetInstanceCount() == Foliage.GetInstanceCount() && Loaded.GetBucket(0, 0).size() == Foliage.GetBucket(0, 0).size(),
+               "instances round-trip into the same buckets");
+        const FoliageInstance& A = Foliage.GetBucket(0, 0).front();
+        const FoliageInstance& B = Loaded.GetBucket(0, 0).front();
+        Expect(A.X == B.X && A.Z == B.Z && A.Yaw == B.Yaw && A.Scale == B.Scale && A.Seed == B.Seed && A.Type == B.Type, "exactly");
+
+        /* RemoveType renumbers. */
+        Loaded.RemoveType(0);
+        Expect(Loaded.GetTypes().size() == 1 && Loaded.GetTypes()[0].Name == "Tree" && Loaded.GetInstanceCount() == Loaded.GetInstanceCount(0),
+               "removing a type removes its instances and renumbers the rest");
+        std::filesystem::remove_all(Folder, Error);
+
+        /* Thinning is stable: a fraction from the seed alone. */
+        Expect(FoliageSeedFraction(12345u) == FoliageSeedFraction(12345u) && FoliageSeedFraction(1u) != FoliageSeedFraction(2u)
+               && FoliageSeedFraction(0xFFFFFFFFu) < 1.0f, "seed fractions are stable, in [0, 1)");
+    }
+}
+
 int main()
 {
     std::printf("NimbleEngineTerrainTests\n");
@@ -510,6 +645,7 @@ int main()
     TestChunkMesh();
     TestGround();
     TestWalking();
+    TestFoliage();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
 }

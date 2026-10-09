@@ -5,6 +5,7 @@
 #include "Public/GameCore/ComponentProperties.h"
 #endif
 #include "Public/GameCore/ComponentSerializer.h"
+#include "Public/GameCore/Foliage.h"
 
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/RenderContext.h"
@@ -190,6 +191,13 @@ namespace RenderCore
          * under the entity's own paths, rebuilt in Simulate whenever the
          * chunk's samples change (an editor brush) -- so it never captures
          * static draws, and culls its chunks per view in Draw.
+         *
+         * Its foliage (GameCore's Foliage.h) rides the same chunks: an
+         * instance buffer per chunk and type, sorted so its first N are the
+         * instances a coarser LOD keeps; rebuilt when the chunk's foliage or
+         * its ground changes; drawn when the chunk is in view and nearer than
+         * the type's cull distance, as many as the chunk's LOD keeps, with
+         * that LOD's mesh.
          */
         class TerrainProxy final : public RenderProxy
         {
@@ -209,12 +217,20 @@ namespace RenderCore
                 Material.assign(C.Material[0] != '\0' ? C.Material : DEFAULT_TERRAIN_MATERIAL);
                 bCastShadows = C.bCastShadows != 0;
                 bOccluder    = C.bOccluder != 0;
-                SetVisible(C.bVisible != 0);
+                bShowTerrain = C.bVisible != 0;
+                bShowFoliage = C.bFoliageVisible != 0;
+                SetVisible(bShowTerrain || bShowFoliage);
                 if(Path != C.Terrain)
                 {
                     Path.assign(C.Terrain);
                     Data.reset();
                     CacheGeneration = ~uint64_t(0);   // look it up in the next Simulate
+                }
+                if(FoliagePath != C.Foliage)
+                {
+                    FoliagePath.assign(C.Foliage);
+                    Foliage.reset();
+                    FoliageGeneration = ~uint64_t(0);
                 }
                 if(C.UVTileSize != UVTileSize)
                 {
@@ -226,8 +242,8 @@ namespace RenderCore
 
             void Simulate(RenderContext& InContext) override
             {
-                (void)InContext;
-                Refresh();
+                Refresh(InContext);
+                RefreshFoliage(InContext);
             }
 
             void Draw(RenderContext& InContext) override
@@ -238,24 +254,34 @@ namespace RenderCore
                 const char* Slots[1] = { Material.c_str() };
                 for(const Chunk& Each : Chunks)
                 {
-                    if(!Each.bBuilt || !BoxInFrustum(Clip, Each.Min, Each.Max)) { continue; }
-                    InContext.DrawMesh(GetTransform(), Each.Paths[Each.Lod].c_str(), EngineCore::Color(255, 255, 255, 255), Slots, 1);
+                    if(!Each.bBuilt) { continue; }
+                    if(bShowTerrain && BoxInFrustum(Clip, Each.Min, Each.Max))
+                    {
+                        InContext.DrawMesh(GetTransform(), Each.Paths[Each.Lod].c_str(), EngineCore::Color(255, 255, 255, 255), Slots, 1);
+                    }
+                    if(bShowFoliage && !Each.Foliage.empty())
+                    {
+                        const float Max[3] = { Each.Max[0], Each.Max[1] + Each.FoliageTop, Each.Max[2] };
+                        if(BoxInFrustum(Clip, Each.Min, Max)) { DrawFoliage(InContext, Each, false); }
+                    }
                 }
             }
 
             /* Every chunk (the shadow view culls the proxy, not its chunks), at the LOD the view last chose. */
             void DrawShadow(RenderContext& InContext) override
             {
-                if(!bCastShadows) { return; }
                 const char* Slots[1] = { Material.c_str() };
                 for(const Chunk& Each : Chunks)
                 {
-                    if(Each.bBuilt) { InContext.DrawMeshShadow(GetTransform(), Each.Paths[Each.Lod].c_str(), Slots, 1); }
+                    if(!Each.bBuilt) { continue; }
+                    if(bShowTerrain && bCastShadows) { InContext.DrawMeshShadow(GetTransform(), Each.Paths[Each.Lod].c_str(), Slots, 1); }
+                    if(bShowFoliage && !Each.Foliage.empty()) { DrawFoliage(InContext, Each, true); }
                 }
             }
 
             void DrawOccluder(RenderContext& InContext) override
             {
+                if(!bShowTerrain) { return; }
                 const RenderView& View = InContext.GetView();
                 const EngineCore::Matrix4x4 Clip = View.Projection * View.View * GetLocalToWorld();
                 ChooseLODs(View.Origin);
@@ -267,32 +293,94 @@ namespace RenderCore
                 }
             }
 
+            float GetBoundsPadding(RenderContext& InContext) override
+            {
+                (void)InContext;
+                return 0.0f;   // the foliage's height is in the local bounds
+            }
+
             void ReleaseRenderResources(RenderContext& InContext) override
             {
-                for(const Chunk& Each : Chunks)
+                for(Chunk& Each : Chunks)
                 {
                     for(const std::string& Path : Each.Paths)
                     {
                         InContext.ReleaseMesh(Path.c_str());
                         MeshAssetCache::Remove(Path);
                     }
+                    ReleaseFoliage(InContext, Each);
                 }
                 Chunks.clear();
             }
 
         private:
+            /* One foliage type's instances in one chunk. */
+            struct FoliageDraw
+            {
+                uint16_t              Type   = 0;
+                RenderInstanceBuffer* Buffer = nullptr;
+                uint32_t              Count  = 0;
+            };
+
             struct Chunk
             {
                 std::string Paths[TERRAIN_LODS];
                 uint32_t    Lod      = 0;      // what the last view chose
+                float       Distance = 0.0f;   // and how far it was, terrain units
                 uint64_t    Revision = 0;      // the data's chunk revision it was built from
                 bool        bBuilt   = false;
                 float       Min[3]   = {0.0f, 0.0f, 0.0f};
                 float       Max[3]   = {0.0f, 0.0f, 0.0f};
+
+                std::vector<FoliageDraw> Foliage;
+                uint64_t                 FoliageRevision = 0;   // the bucket's, as built
+                uint64_t                 FoliageGround   = 0;   // the chunk revision it stood on
+                float                    FoliageTop      = 0.0f;   // how far above the ground it reaches
             };
 
+            /* Type InDraw's instances in InChunk: as many as its LOD keeps, with that LOD's mesh. */
+            void DrawFoliage(RenderContext& InContext, const Chunk& InChunk, const bool bInShadow)
+            {
+                for(const FoliageDraw& Each : InChunk.Foliage)
+                {
+                    if(Each.Type >= FoliageTypes.size() || !Each.Buffer) { continue; }
+                    const GameCore::FoliageType& Type = FoliageTypes[Each.Type];
+                    if(bInShadow && !Type.bCastShadows) { continue; }
+                    if(Type.CullDistance > 0.0f && InChunk.Distance * Scale > Type.CullDistance) { continue; }
+                    const uint32_t Lod   = std::min<uint32_t>(InChunk.Lod, GameCore::FOLIAGE_LODS - 1);
+                    const float Density  = std::clamp(Type.LODDensity[Lod], 0.0f, 1.0f);
+                    const uint32_t Count = uint32_t(std::ceil(float(Each.Count) * Density));
+                    if(Count == 0) { continue; }
+                    const std::string* Mesh = nullptr;
+                    for(int32_t Level = int32_t(Lod); Level >= 0 && !Mesh; --Level)
+                    {
+                        if(!Type.Mesh[Level].empty()) { Mesh = &Type.Mesh[Level]; }
+                    }
+                    if(!Mesh) { continue; }
+
+                    MaterialParameterOverrides Instanced;
+                    Instanced.Instances     = Each.Buffer;
+                    Instanced.InstanceCount = Count;
+                    const char* Every[RENDER_MATERIAL_SLOTS];
+                    for(const char*& Slot : Every) { Slot = Type.Material.c_str(); }
+                    const char* const* Slots = Type.Material.empty() ? nullptr : Every;
+                    const uint32_t SlotCount = Type.Material.empty() ? 0u : uint32_t(RENDER_MATERIAL_SLOTS);
+                    if(bInShadow) { InContext.DrawMeshShadow(GetTransform(), Mesh->c_str(), Slots, SlotCount, Instanced); }
+                    else          { InContext.DrawMesh(GetTransform(), Mesh->c_str(), EngineCore::Color(255, 255, 255, 255), Slots, SlotCount, Instanced); }
+                }
+            }
+
+            void ReleaseFoliage(RenderContext& InContext, Chunk& InChunk)
+            {
+                for(FoliageDraw& Each : InChunk.Foliage) { InContext.ReleaseInstanceBuffer(Each.Buffer); }
+                InChunk.Foliage.clear();
+                InChunk.FoliageRevision = 0;
+                InChunk.FoliageGround   = 0;
+                InChunk.FoliageTop      = 0.0f;
+            }
+
             /* Picks up a new terrain (path or cache), then rebuilds the chunks whose samples moved. */
-            void Refresh()
+            void Refresh(RenderContext& InContext)
             {
                 const uint64_t Generation = GameCore::TerrainAssetCache::GetGeneration();
                 if(Generation != CacheGeneration)
@@ -308,7 +396,7 @@ namespace RenderCore
                 }
                 if(!Data)
                 {
-                    if(!Chunks.empty()) { DropChunks(); }
+                    if(!Chunks.empty()) { DropChunks(InContext); }
                     SetLocalBounds(GameCore::AABB());
                     return;
                 }
@@ -334,7 +422,7 @@ namespace RenderCore
                 }
                 if(Chunks.size() != Revisions.size() || Side != ChunksPerSide)
                 {
-                    DropChunks();
+                    DropChunks(InContext);
                     ChunksPerSide = Side;
                     Chunks.resize(Revisions.size());
                     for(uint32_t Z = 0; Z < Side; ++Z)
@@ -377,9 +465,156 @@ namespace RenderCore
                 }
                 bRebuildAll  = false;
                 SeenRevision = Revision;
-                SetLocalBounds(GameCore::AABB(EngineCore::Vector3(0.0, double(Low), 0.0),
-                                              EngineCore::Vector3(double(Size), double(High), double(Size))));
+                TerrainBounds = GameCore::AABB(EngineCore::Vector3(0.0, double(Low), 0.0),
+                                               EngineCore::Vector3(double(Size), double(High), double(Size)));
+                UpdateBounds();
                 MarkChanged();
+            }
+
+            /* The foliage: picks up a new file, then rebuilds the chunks whose bucket or ground moved. */
+            void RefreshFoliage(RenderContext& InContext)
+            {
+                const uint64_t Generation = GameCore::FoliageAssetCache::GetGeneration();
+                if(Generation != FoliageGeneration)
+                {
+                    FoliageGeneration = Generation;
+                    std::shared_ptr<GameCore::FoliageData> Next = FoliagePath.empty() ? nullptr : GameCore::FoliageAssetCache::Find(FoliagePath);
+                    if(Next != Foliage)
+                    {
+                        Foliage = std::move(Next);
+                        SeenFoliageRevision = 0;
+                        for(Chunk& Each : Chunks) { ReleaseFoliage(InContext, Each); }
+                    }
+                }
+                if(!Foliage || !Data || Chunks.empty())
+                {
+                    if(!Foliage) { for(Chunk& Each : Chunks) { if(!Each.Foliage.empty()) { ReleaseFoliage(InContext, Each); } } }
+                    return;
+                }
+                const uint64_t Revision = Foliage->GetRevision();
+                if(Revision == SeenFoliageRevision && SeenFoliageGround == SeenRevision) { return; }
+
+                if(!InContext.SupportsInstancing())
+                {
+                    if(!bWarnedInstancing)
+                    {
+                        bWarnedInstancing = true;
+                        RENDERCORE_LOG_WARN("this backend draws no instanced meshes: terrain foliage is not drawn")
+                    }
+                    SeenFoliageRevision = Revision;
+                    SeenFoliageGround   = SeenRevision;
+                    return;
+                }
+
+                /* Lock order: the foliage, then the terrain (as the brushes take them). */
+                std::vector<std::vector<GameCore::FoliageInstance>> Rebuild(Chunks.size());
+                std::vector<uint64_t> BucketRevisions(Chunks.size(), 0);
+                std::vector<bool> bChanged(Chunks.size(), false);
+                {
+                    std::lock_guard<std::mutex> Guard(Foliage->GetLock());
+                    FoliageTypes = Foliage->GetTypes();
+                    const bool bFits = Foliage->GetBucketsPerSide() == ChunksPerSide;
+                    if(!bFits && !bWarnedGrid)
+                    {
+                        bWarnedGrid = true;
+                        RENDERCORE_LOG_WARN("foliage '" + FoliagePath + "' was made for a terrain of another size: it is not drawn")
+                    }
+                    for(uint32_t Z = 0; Z < ChunksPerSide && bFits; ++Z)
+                    {
+                        for(uint32_t X = 0; X < ChunksPerSide; ++X)
+                        {
+                            const size_t Index = size_t(Z) * ChunksPerSide + X;
+                            const uint64_t Bucket = Foliage->GetBucketRevision(X, Z);
+                            BucketRevisions[Index] = Bucket;
+                            if(Chunks[Index].FoliageRevision == Bucket && Chunks[Index].FoliageGround == Chunks[Index].Revision) { continue; }
+                            bChanged[Index] = true;
+                            Rebuild[Index]  = Foliage->GetBucket(X, Z);
+                        }
+                    }
+                }
+
+                /* Each type's tallest point above its pivot, at scale 1 (its LOD 0 mesh's box). */
+                std::vector<float> Tops(FoliageTypes.size(), 0.0f);
+                for(size_t Type = 0; Type < FoliageTypes.size(); ++Type)
+                {
+                    if(const std::shared_ptr<const MeshData> Mesh = FoliageTypes[Type].Mesh[0].empty() ? nullptr
+                                                                    : MeshAssetCache::Find(FoliageTypes[Type].Mesh[0]))
+                    {
+                        Tops[Type] = std::max(Mesh->BoundsMax[1], 0.0f);
+                    }
+                }
+
+                std::lock_guard<std::mutex> TerrainGuard(Data->GetLock());
+                for(size_t Index = 0; Index < Chunks.size(); ++Index)
+                {
+                    if(!bChanged[Index]) { continue; }
+                    Chunk& Each = Chunks[Index];
+                    ReleaseFoliage(InContext, Each);
+
+                    /* By type; within a type, in thinning order: its first N are what a coarser LOD keeps. */
+                    std::vector<GameCore::FoliageInstance>& Instances = Rebuild[Index];
+                    std::sort(Instances.begin(), Instances.end(), [](const GameCore::FoliageInstance& A, const GameCore::FoliageInstance& B)
+                    {
+                        if(A.Type != B.Type) { return A.Type < B.Type; }
+                        return GameCore::FoliageSeedFraction(A.Seed) < GameCore::FoliageSeedFraction(B.Seed);
+                    });
+                    std::vector<RenderInstance> Packed;
+                    size_t First = 0;
+                    while(First < Instances.size())
+                    {
+                        const uint16_t Type = Instances[First].Type;
+                        size_t Last = First;
+                        while(Last < Instances.size() && Instances[Last].Type == Type) { ++Last; }
+                        if(Type < FoliageTypes.size())
+                        {
+                            const GameCore::FoliageType& Kind = FoliageTypes[Type];
+                            Packed.assign(Last - First, RenderInstance());
+                            float Highest = 0.0f;
+                            for(size_t Each = First; Each < Last; ++Each)
+                            {
+                                RenderInstance& Out = Packed[Each - First];
+                                GameCore::GetFoliageTransform(*Data, Kind, Instances[Each], Out.Transform);
+                                const float Shade = 1.0f - std::clamp(Kind.ColorVariation, 0.0f, 1.0f)
+                                                         * GameCore::FoliageSeedFraction(Instances[Each].Seed * 7919u + 13u);
+                                Out.Color[0] = Out.Color[1] = Out.Color[2] = Shade;
+                                Out.Color[3] = 1.0f;
+                                Highest = std::max(Highest, Out.Transform[13] - Data->SampleHeight(Instances[Each].X, Instances[Each].Z)
+                                                            + Tops[Type] * Instances[Each].Scale);
+                            }
+                            char Name[96];
+                            std::snprintf(Name, sizeof(Name), "Foliage %s chunk %zu", Kind.Name.c_str(), Index);
+                            FoliageDraw Draw;
+                            Draw.Type   = Type;
+                            Draw.Count  = uint32_t(Packed.size());
+                            Draw.Buffer = InContext.CreateInstanceBuffer(Packed.data(), Draw.Count, Name);
+                            if(Draw.Buffer)
+                            {
+                                Each.Foliage.push_back(Draw);
+                                Each.FoliageTop = std::max(Each.FoliageTop, Highest);
+                            }
+                        }
+                        First = Last;
+                    }
+                    Each.FoliageRevision = BucketRevisions[Index];
+                    Each.FoliageGround   = Each.Revision;
+                }
+                SeenFoliageRevision = Revision;
+                SeenFoliageGround   = SeenRevision;
+                UpdateBounds();
+                MarkChanged();
+            }
+
+            /* The terrain's box, raised by the tallest foliage. */
+            void UpdateBounds()
+            {
+                float Top = 0.0f;
+                for(const Chunk& Each : Chunks) { Top = std::max(Top, Each.FoliageTop); }
+                GameCore::AABB Box = TerrainBounds;
+                if(!Box.IsEmpty() && Top > 0.0f)
+                {
+                    Box = GameCore::AABB(Box.Min, EngineCore::Vector3(Box.Max.GetX(), Box.Max.GetY() + double(Top), Box.Max.GetZ()));
+                }
+                SetLocalBounds(Box);
             }
 
             /* Each chunk's LOD for a view from InEye: by the distance from the eye to its box, in
@@ -399,27 +634,29 @@ namespace RenderCore
                                                 + double(World.Data[2][0]) * World.Data[2][0]);
                 const double ScaleZ = std::sqrt(double(World.Data[0][2]) * World.Data[0][2] + double(World.Data[1][2]) * World.Data[1][2]
                                                 + double(World.Data[2][2]) * World.Data[2][2]);
-                const double Scale = std::max(0.5 * (ScaleX + ScaleZ), 1e-6);
-                const float Near = LODDistance > 0.0f ? float(double(LODDistance) / Scale)
+                Scale = float(std::max(0.5 * (ScaleX + ScaleZ), 1e-6));
+                const float Near = LODDistance > 0.0f ? LODDistance / Scale
                                                       : 1.5f * float(GameCore::TERRAIN_CHUNK_QUADS) * Data->GetSpacing();
                 for(Chunk& Each : Chunks)
                 {
                     float Distance2 = 0.0f;
                     for(int Axis = 0; Axis < 3; ++Axis)
                     {
-                        const float Out = std::max({ Each.Min[Axis] - Eye[Axis], 0.0f, Eye[Axis] - Each.Max[Axis] });
+                        const float Top = Axis == 1 ? Each.Max[1] + Each.FoliageTop : Each.Max[Axis];
+                        const float Out = std::max({ Each.Min[Axis] - Eye[Axis], 0.0f, Eye[Axis] - Top });
                         Distance2 += Out * Out;
                     }
-                    const float Distance = std::sqrt(Distance2);
-                    Each.Lod = Distance < Near ? 0u : (Distance < Near * 2.0f ? 1u : 2u);
+                    Each.Distance = std::sqrt(Distance2);
+                    Each.Lod = Each.Distance < Near ? 0u : (Each.Distance < Near * 2.0f ? 1u : 2u);
                 }
             }
 
-            void DropChunks()
+            void DropChunks(RenderContext& InContext)
             {
-                for(const Chunk& Each : Chunks)
+                for(Chunk& Each : Chunks)
                 {
                     for(const std::string& Path : Each.Paths) { MeshAssetCache::Remove(Path); }
+                    ReleaseFoliage(InContext, Each);
                 }
                 Chunks.clear();
                 ChunksPerSide = 0;
@@ -429,14 +666,27 @@ namespace RenderCore
             std::string                            Material;
             std::shared_ptr<GameCore::TerrainData> Data;
             std::vector<Chunk>                     Chunks;
+            GameCore::AABB                         TerrainBounds;
             uint32_t                               ChunksPerSide   = 0;
             uint64_t                               SeenRevision    = 0;
             uint64_t                               CacheGeneration = ~uint64_t(0);
             float                                  UVTileSize      = 400.0f;
             float                                  LODDistance     = 0.0f;
+            float                                  Scale           = 1.0f;   // world units per terrain unit, as of the last view
             bool                                   bRebuildAll     = true;
             bool                                   bCastShadows    = true;
             bool                                   bOccluder       = true;
+            bool                                   bShowTerrain    = true;
+            bool                                   bShowFoliage    = true;
+
+            std::string                            FoliagePath;
+            std::shared_ptr<GameCore::FoliageData> Foliage;
+            std::vector<GameCore::FoliageType>     FoliageTypes;          // as of the last rebuild
+            uint64_t                               FoliageGeneration   = ~uint64_t(0);
+            uint64_t                               SeenFoliageRevision = 0;
+            uint64_t                               SeenFoliageGround   = 0;
+            bool                                   bWarnedInstancing   = false;
+            bool                                   bWarnedGrid         = false;
         };
     }
 
@@ -447,8 +697,8 @@ namespace RenderCore
         return &TerrainComponent_CreateProxy;
     }
 
-    /* Version 2 adds the LOD distance. */
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(TerrainComponent, 2)
+    /* Version 2 adds the LOD distance; 3, the foliage. */
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(TerrainComponent, 3)
     {
         Ar.Field("Terrain",       C.Terrain);
         Ar.Field("Material",      C.Material);
@@ -460,6 +710,11 @@ namespace RenderCore
         if(Ar.GetVersion() >= 2)
         {
             Ar.Field("LODDistance", C.LODDistance);
+        }
+        if(Ar.GetVersion() >= 3)
+        {
+            Ar.Field("Foliage",        C.Foliage);
+            Ar.Flag("FoliageVisible",  C.bFoliageVisible);
         }
     }
 
@@ -474,6 +729,8 @@ namespace RenderCore
         Bind.Flag("Walkable",     &TerrainComponent::bWalkable);
         Bind.Field("UVTileSize",  &TerrainComponent::UVTileSize);
         Bind.Field("LODDistance", &TerrainComponent::LODDistance);
+        Bind.Field("Foliage",     &TerrainComponent::Foliage);
+        Bind.Flag("FoliageVisible", &TerrainComponent::bFoliageVisible);
     }
 
 #if WITH_EDITOR
@@ -483,6 +740,9 @@ namespace RenderCore
         Props.Field("Material",      &TerrainComponent::Material, GameCore::PF_AssetMaterial);
         Props.Flag("Visible",        &TerrainComponent::bVisible);
         Props.Field("UV Tile Size",  &TerrainComponent::UVTileSize);
+        Props.Category("Foliage");
+        Props.Field("Foliage",       &TerrainComponent::Foliage, GameCore::PF_AssetFoliage);
+        Props.Flag("Foliage Visible", &TerrainComponent::bFoliageVisible);
         Props.Category("Collision");
         Props.Flag("Walkable",       &TerrainComponent::bWalkable);
         Props.Category("Shadows");
