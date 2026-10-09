@@ -182,6 +182,7 @@ The shape is inferred from the entity, and the world scale is applied:
 | **Auto**, with no Render mesh | a **box**: the `BoundsComponent`'s |
 | **Box**, **Sphere**, **Capsule**, **Cylinder** | fitted to the box `ShapeSource` names. *Auto* uses the mesh's bounds if there is a mesh, else the Bounds |
 | **ConvexHull**, **TriangleMesh** | the Render mesh's vertices or triangles. A Dynamic triangle mesh becomes its hull, with a warning |
+| **HeightField** (and **Auto**, on an entity with a Terrain) | the Terrain's samples as a Jolt `HeightFieldShape`, on the same cell split the terrain draws with. Static or Kinematic only; rebuilt when the terrain is edited (its revision is in the signature). See `Engine/Source/TERRAIN.md` |
 
 - **Off-centre boxes:** a box that is not centred on the entity's origin is
   offset to match.
