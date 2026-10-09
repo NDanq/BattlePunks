@@ -59,6 +59,9 @@
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/Particles/ParticleAssets.h"
 #include "Private/Editor/Sequencer/SequencerAssets.h"
+#include "Private/Editor/Sequencer/SequencerDocument.h"
+#include "Private/Editor/Sequencer/SequencerTab.h"
+#include "Private/Editor/Sequencer/SequencerWindow.h"
 #include "Private/Editor/Particles/ParticleDocument.h"
 #include "Private/Editor/Particles/ParticleEditorTab.h"
 #include "Private/Editor/Particles/ParticleEditorWindow.h"
@@ -1473,6 +1476,63 @@ void EditorMainWindow::RegisterConsoleCommands()
                            ? InArgs.join(QLatin1Char(' '))
                            : QDir(EditorGraphs::GetProjectRoot()).filePath(InArgs.join(QLatin1Char(' ')));
         if(EditorPrefabs::OpenPrefab(Path, this))
+        {
+            Console.Print(QStringLiteral("Opened %1").arg(QDir::toNativeSeparators(Path)));
+        }
+    });
+
+    Console.Register(QStringLiteral("sequence"),
+                     QStringLiteral("<path | new | close | seek <seconds | marker> | play | pause | cuts <on|off> | autokey <on|off>>"),
+                     QStringLiteral("Open a .nmseq in the Sequencer, make a new one, or drive the one in front (for scripts and tests)"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("Usage: sequence <path | new | close | seek <seconds | marker> | play | pause | cuts <on|off> | autokey <on|off>>"));
+            return;
+        }
+        const QString Verb = InArgs.front();
+        if(Verb == QStringLiteral("new"))   { EditorSequencer::CreateSequence(QString(), this); return; }
+        if(Verb == QStringLiteral("close")) { EditorSequencer::CloseAll(); return; }
+
+        const QStringList Drives = { QStringLiteral("seek"), QStringLiteral("play"), QStringLiteral("pause"), QStringLiteral("cuts"),
+                                     QStringLiteral("autokey") };
+        if(Drives.contains(Verb))
+        {
+            SequencerWindow* Window = SequencerWindow::Find();
+            SequencerTab*    Tab    = Window ? Window->CurrentTab() : nullptr;
+            if(!Tab)
+            {
+                Console.PrintError(QStringLiteral("No sequence is open"));
+                return;
+            }
+            const QString Argument = InArgs.mid(1).join(QLatin1Char(' '));
+            const bool    bOn      = Argument == QStringLiteral("on");
+            if(Verb == QStringLiteral("play"))         { Tab->SetPlaying(true); }
+            else if(Verb == QStringLiteral("pause"))   { Tab->SetPlaying(false); }
+            else if(Verb == QStringLiteral("cuts"))    { Tab->SetViewLocked(bOn); }
+            else if(Verb == QStringLiteral("autokey")) { Tab->SetAutoKey(bOn); }
+            else
+            {
+                /* Seconds, or a marker by name. */
+                const Sequencer::SequenceAsset& Asset = Tab->GetDocument().GetAsset();
+                bool bNumber = false;
+                const double Seconds = Argument.toDouble(&bNumber);
+                const int32_t Marker = bNumber ? -1 : Asset.FindMarker(Argument.toStdString());
+                if(!bNumber && Marker < 0)
+                {
+                    Console.PrintError(QStringLiteral("No marker named %1").arg(Argument));
+                    return;
+                }
+                Tab->SetPlaying(false);
+                Tab->GetDocument().SetPlayhead(bNumber ? Asset.SecondsToFrames(Seconds) : double(Asset.Markers[size_t(Marker)].Frame));
+            }
+            return;
+        }
+        const QString Path = QFileInfo(InArgs.join(QLatin1Char(' '))).isAbsolute()
+                           ? InArgs.join(QLatin1Char(' '))
+                           : QDir(EditorGraphs::GetProjectRoot()).filePath(InArgs.join(QLatin1Char(' ')));
+        if(EditorSequencer::OpenSequence(Path, this))
         {
             Console.Print(QStringLiteral("Opened %1").arg(QDir::toNativeSeparators(Path)));
         }

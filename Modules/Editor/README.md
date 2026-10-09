@@ -513,6 +513,11 @@ shows another frame. Edit history is the sequence's own: a snapshot of the
 whole asset a step. **Save** writes the XML, stages it and drops it from the
 Sequencer's cache, so the next Play plays it.
 
+The console drives the tab in front, for scripts and tests: `sequence <path> |
+new | close | seek <seconds | marker> | play | pause | cuts <on|off> |
+autokey <on|off>`. With `--command "after <ms> ..."` and `screenshot`, a
+scripted run can look through each shot.
+
 ## Particle Editor
 
 A `.nmparticle` (a particle system: RenderCore's `ParticleSystemAsset.h`) opens
