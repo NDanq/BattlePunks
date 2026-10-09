@@ -1050,6 +1050,18 @@ void EditorDocument::Record(QUndoCommand* InCommand)
     }
 }
 
+bool EditorDocument::RecordToolCommand(QUndoCommand* InCommand)
+{
+    if(!InCommand) { return false; }
+    if(!IsRecording())
+    {
+        delete InCommand;
+        return false;
+    }
+    Record(InCommand);
+    return true;
+}
+
 void EditorDocument::ResetHistory()
 {
     History->clear();   // also clean

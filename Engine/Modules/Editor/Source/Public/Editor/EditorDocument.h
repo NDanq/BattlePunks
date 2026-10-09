@@ -302,6 +302,12 @@ public:
     /* InCommand is the latest entry with no undo/redo since: mergeable. */
     bool IsLatestRecorded(const QUndoCommand* InCommand) const;
 
+    /* A tool's change it has already made (a terrain stroke), as one undo
+     * step: an EditorHistory::Command whose first redo is skipped. Takes
+     * ownership; false, deleting it, while nothing is recorded (a borrowed
+     * World, inside undo/redo). */
+    bool RecordToolCommand(QUndoCommand* InCommand);
+
 signals:
     /* The active World was replaced; every cached EntityID is stale. */
     void WorldReset();

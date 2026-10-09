@@ -2,7 +2,8 @@
  * NimbleEnginePhysicsTests -- JoltPhysics simulating GameCore's Rigid Body and
  * Physics Constraint components: falling and resting, stacking, impulses and
  * velocities, kinematic and teleported bodies, joints, removal, shapes
- * inferred from meshes, layers, contact and sensor events, raycasts.
+ * inferred from meshes, layers, contact and sensor events, raycasts, and
+ * terrain heightfields.
  *
  * Built only with the module (NIMBLE_WITH_JOLTPHYSICS). Runs from the
  * binaries folder, where Engine/Content/Meshes is staged.
@@ -10,15 +11,18 @@
 
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <string>
 
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/EventBus.h"
+#include "Public/GameCore/Terrain.h"
 #include "Public/GameCore/World.h"
 #include "Public/JoltPhysics/PhysicsWorld.h"
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/PhysicsFacade.h"
+#include "Public/NimbleEngine/TerrainFacade.h"
 #include "Public/RenderCore/RenderComponents.h"
 
 using namespace GameCore;
@@ -498,6 +502,94 @@ namespace
 
 namespace
 {
+    /* A terrain entity: 65 x 65 samples 50 apart (32 m a side), rising 1 in 4 along X, plus a bump. */
+    Entity MakeTerrain(World& InWorld, const char* InPath, const EngineCore::Vector3& InAt)
+    {
+        auto Data = std::make_shared<TerrainData>();
+        Data->Reset(65, 50.0f);
+        {
+            std::lock_guard<std::mutex> Guard(Data->GetLock());
+            TerrainRect All;
+            for(int32_t Z = 0; Z < 65; ++Z)
+            {
+                for(int32_t X = 0; X < 65; ++X)
+                {
+                    const float DX = float(X - 40), DZ = float(Z - 32);
+                    Data->SetHeight(X, Z, 0.25f * float(X) * 50.0f + 150.0f * std::exp(-(DX * DX + DZ * DZ) / 18.0f));
+                    All.Add(X, Z);
+                }
+            }
+            Data->MarkDirty(All);
+        }
+        TerrainAssetCache::Store(InPath, Data);
+
+        Entity Ground = InWorld.CreateEntity("Terrain");
+        TransformComponent T;
+        T.Position = InAt;
+        Ground.AddComponent(T);
+        RenderCore::TerrainComponent C;
+        std::snprintf(C.Terrain, sizeof(C.Terrain), "%s", InPath);
+        Ground.AddComponent(C);
+        Ground.AddComponent(Body(RBM_Static));   // Shape Auto: the heightfield
+        return Ground;
+    }
+
+    void TestHeightField()
+    {
+        std::printf("[heightfield]\n");
+        const char* Path = "Content/Levels/PhysicsTest/Terrain/Ground.nmterrain";
+        World W;
+        JoltPhysics::PhysicsWorld Physics;
+        Physics.Attach(W, TestSettings());
+        Entity Ground = MakeTerrain(W, Path, EngineCore::Vector3(-800.0, 0.0, -800.0));
+        W.Tick(Frame);
+        std::shared_ptr<TerrainData> Data = TerrainAssetCache::Find(Path);
+
+        /* Rays land where the terrain's own sampling says, everywhere: one triangulation. */
+        int Off = 0, Missed = 0;
+        for(int Each = 0; Each < 60; ++Each)
+        {
+            const double X = -780.0 + double(Each * 53 % 1560), Z = -780.0 + double(Each * 31 % 1560);
+            NimbleEngine::PhysicsRaycastHit Hit;
+            if(!NimbleEngine::PhysicsRaycast(W, EngineCore::Vector3(X, 2000.0, Z), EngineCore::Vector3(0.0, -1.0, 0.0), 5000.0f, Hit)
+               || Hit.Entity != Ground.GetID())
+            {
+                ++Missed;
+                continue;
+            }
+            const float Expected = Data->SampleHeight(float(X + 800.0), float(Z + 800.0));
+            if(std::fabs(float(Hit.Point.GetY()) - Expected) > 2.0f) { ++Off; }   // Jolt quantises to 8 bits a 4 x 4 block
+        }
+        Expect(Missed == 0, "rays down hit the heightfield body (" + std::to_string(Missed) + " missed)");
+        Expect(Off == 0, "where SampleHeight says, within Jolt's quantisation (" + std::to_string(Off) + " off)");
+
+        /* A ball dropped on the slope rolls downhill (toward -X) and stays on the surface. */
+        Entity Ball = MakeBall(W, "Ball", EngineCore::Vector3(0.0, 800.0, -400.0), 30.0);
+        Run(W, 3.0);
+        const EngineCore::Vector3 At = PositionOf(Ball);
+        float Ground0 = 0.0f;
+        NimbleEngine::SampleGround(W, At, Ground0);
+        Expect(At.GetX() < -50.0, "the ball rolled downhill: x " + Num(At.GetX()));
+        Expect(At.GetY() > double(Ground0) + 20.0 && At.GetY() < double(Ground0) + 45.0,
+               "and rests on the surface (y " + Num(At.GetY()) + ", ground " + Num(Ground0) + ")");
+
+        /* An edit is picked up: flatten everything and the body is rebuilt. */
+        {
+            std::lock_guard<std::mutex> Guard(Data->GetLock());
+            TerrainRect All;
+            for(int32_t Z = 0; Z < 65; ++Z) { for(int32_t X = 0; X < 65; ++X) { Data->SetHeight(X, Z, 100.0f); All.Add(X, Z); } }
+            Data->MarkDirty(All);
+        }
+        W.Tick(Frame);
+        NimbleEngine::PhysicsRaycastHit Hit;
+        Expect(NimbleEngine::PhysicsRaycast(W, EngineCore::Vector3(500.0, 2000.0, 300.0), EngineCore::Vector3(0.0, -1.0, 0.0), 5000.0f, Hit)
+               && std::fabs(Hit.Point.GetY() - 100.0) < 1.0, "an edited terrain's body is rebuilt (y " + Num(Hit.Point.GetY()) + ")");
+        TerrainAssetCache::Invalidate(Path);
+    }
+}
+
+namespace
+{
     /* A car: a 180 x 40 x 400 chassis (Bounds), 1200 kg, and four wheels of
      * radius 40 as children named for their slots -- no meshes, so the
      * Vehicle names their size. */
@@ -614,6 +706,7 @@ int main()
     TestLayers();
     TestEvents();
     TestRaycast();
+    TestHeightField();
     TestVehicle();
     TestVehicleOverBump();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);

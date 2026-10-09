@@ -8,6 +8,7 @@
 #include "Public/GameCore/ScriptLibrary.h"
 #include "Public/GameCore/SpatialIndex.h"
 #include "Public/GameCore/World.h"
+#include "Public/NimbleEngine/TerrainFacade.h"
 
 #if WITH_JOLTPHYSICS
 #include "Public/JoltPhysics/PhysicsWorld.h"
@@ -104,11 +105,26 @@ namespace NimbleEngine
         if(Length <= 0.0 || InMaxDistance <= 0.0f) { return false; }
         const EngineCore::Vector3 Unit = InDirection * (1.0 / Length);
         GameCore::RaycastHit Hit;
-        if(!InWorld.Raycast(InOrigin, Unit, InMaxDistance, Hit)) { return false; }
-        OutHit.Entity   = Hit.Entity;
-        OutHit.Distance = Hit.T;
-        OutHit.Point    = InOrigin + Unit * double(Hit.T);
-        return true;
+        const bool bBounds = InWorld.Raycast(InOrigin, Unit, InMaxDistance, Hit);
+        if(bBounds)
+        {
+            OutHit.Entity   = Hit.Entity;
+            OutHit.Distance = Hit.T;
+            OutHit.Point    = InOrigin + Unit * double(Hit.T);
+        }
+
+        /* And walkable terrain, its own triangles (TerrainFacade.h), with a normal: the nearer wins. */
+        TerrainRaycastHit Ground;
+        if(RaycastTerrain(InWorld, InOrigin, Unit, bBounds ? Hit.T : InMaxDistance, Ground)
+           && (!bBounds || Ground.Distance < Hit.T))
+        {
+            OutHit.Entity   = Ground.Entity;
+            OutHit.Distance = Ground.Distance;
+            OutHit.Point    = Ground.Point;
+            OutHit.Normal   = Ground.Normal;
+            return true;
+        }
+        return bBounds;
     }
 }
 

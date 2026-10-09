@@ -483,7 +483,10 @@ namespace
             const bool bSound     = (Entry.Flags & GameCore::PF_AssetSound) != 0;
             const bool bPrefab    = (Entry.Flags & GameCore::PF_AssetPrefab) != 0;
             const bool bSequence  = (Entry.Flags & GameCore::PF_AssetSequence) != 0;
-            if((bMesh || bMaterial || bPost || bTarget || bTexture || bParticles || bAnimation || bSound || bPrefab || bSequence)
+            const bool bTerrain   = (Entry.Flags & GameCore::PF_AssetTerrain) != 0;
+            const bool bFoliage   = (Entry.Flags & GameCore::PF_AssetFoliage) != 0;
+            if((bMesh || bMaterial || bPost || bTarget || bTexture || bParticles || bAnimation || bSound || bPrefab || bSequence
+                || bTerrain || bFoliage)
                && !Entry.IsReadOnly())
             {
                 /* What each kind of asset field offers. */
@@ -520,9 +523,15 @@ namespace
                     { EAsset::Sequence, "Drop an .nmseq here",
                       "A sequence, by its path: Content/Cinematics/Intro.nmseq -- made and edited in the Sequencer",
                       "Choose a sequence", "Choose a Sequence", "Sequences (*.nmseq)" },
+                    { EAsset::Terrain, "Drop an .nmterrain here",
+                      "A terrain heightfield, by its path: Content/Levels/Hills/Terrain/Ground.nmterrain -- made with World > Terrain",
+                      "Choose a terrain", "Choose a Terrain", "Terrains (*.nmterrain)" },
+                    { EAsset::Foliage, "Drop an .nmfoliage here",
+                      "A terrain's foliage, by its path: Content/Levels/Hills/Terrain/Ground.nmfoliage -- made by the Terrain dock's Foliage tab",
+                      "Choose foliage", "Choose Foliage", "Foliage (*.nmfoliage)" },
                 };
                 const AssetUi& Ui = Kinds[bMesh ? 0 : bMaterial ? 1 : bPost ? 2 : bTarget ? 3 : bTexture ? 4 : bParticles ? 5
-                                          : bAnimation ? 6 : bSound ? 7 : bPrefab ? 8 : 9];
+                                          : bAnimation ? 6 : bSound ? 7 : bPrefab ? 8 : bSequence ? 9 : bTerrain ? 10 : 11];
                 AssetKind = Ui.Kind;
                 Edit->setPlaceholderText(QString::fromLatin1(Ui.Placeholder));
                 Edit->installEventFilter(this);
@@ -536,6 +545,8 @@ namespace
                                                      : bSound     ? EditorContent::ListSoundPaths()
                                                      : bPrefab    ? EditorContent::ListPrefabPaths()
                                                      : bSequence  ? EditorContent::ListSequencePaths()
+                                                     : bTerrain   ? EditorContent::ListTerrainPaths()
+                                                     : bFoliage   ? EditorContent::ListFoliagePaths()
                                                                   : EditorContent::ListTexturePaths(), Edit);
                     Completer->setCaseSensitivity(Qt::CaseInsensitive);
                     Completer->setFilterMode(Qt::MatchContains);
@@ -652,7 +663,8 @@ namespace
         }
 
     private:
-        enum class EAsset { None, Mesh, Material, PostProcess, RenderTarget, Texture, ParticleSystem, Animation, Sound, Prefab, Sequence };
+        enum class EAsset { None, Mesh, Material, PostProcess, RenderTarget, Texture, ParticleSystem, Animation, Sound, Prefab, Sequence,
+                            Terrain, Foliage };
 
         void Commit()
         {
@@ -745,6 +757,14 @@ namespace
             if(AssetKind == EAsset::Sequence)
             {
                 return EditorContent::SequencePathFor(InFile);
+            }
+            if(AssetKind == EAsset::Terrain)
+            {
+                return EditorContent::TerrainPathFor(InFile);
+            }
+            if(AssetKind == EAsset::Foliage)
+            {
+                return EditorContent::FoliagePathFor(InFile);
             }
             return QString();
         }

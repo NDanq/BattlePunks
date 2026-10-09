@@ -340,6 +340,7 @@ namespace RenderCore
         {
             std::mutex                                                       Lock;
             std::unordered_map<std::string, std::shared_ptr<const MeshData>> Meshes;   // null: failed
+            std::unordered_map<std::string, std::shared_ptr<const MeshData>> Generated;   // Store's; Invalidate leaves them
             std::atomic<uint64_t>                                            Generation{0};
         };
 
@@ -361,6 +362,11 @@ namespace RenderCore
         CacheState& Cache = GetCache();
         {
             std::lock_guard<std::mutex> Guard(Cache.Lock);
+            const auto Made = Cache.Generated.find(InPath);
+            if(Made != Cache.Generated.end())
+            {
+                return Made->second;
+            }
             const auto Found = Cache.Meshes.find(InPath);
             if(Found != Cache.Meshes.end())
             {
@@ -382,6 +388,29 @@ namespace RenderCore
 
         std::lock_guard<std::mutex> Guard(Cache.Lock);
         return Cache.Meshes.emplace(InPath, Result).first->second;
+    }
+
+    void MeshAssetCache::Store(const std::string& InPath, std::shared_ptr<const MeshData> InMesh)
+    {
+        if(InPath.empty())
+        {
+            return;
+        }
+        CacheState& Cache = GetCache();
+        std::lock_guard<std::mutex> Guard(Cache.Lock);
+        if(InMesh)
+        {
+            Cache.Generated[InPath] = std::move(InMesh);
+        }
+        else
+        {
+            Cache.Generated.erase(InPath);
+        }
+    }
+
+    void MeshAssetCache::Remove(const std::string& InPath)
+    {
+        Store(InPath, nullptr);
     }
 
     uint64_t MeshAssetCache::GetGeneration()

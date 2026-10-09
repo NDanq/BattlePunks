@@ -55,6 +55,17 @@ namespace
         { "volume-2.svg",        QStyle::SP_MediaVolume },
         { "audio-waveform.svg",  QStyle::SP_MediaVolume },
         { "captions.svg",        QStyle::SP_FileDialogDetailedView },
+        { "terrain.svg",              QStyle::SP_DriveHDIcon },
+        { "terrain-raise.svg",        QStyle::SP_ArrowUp },
+        { "terrain-lower.svg",        QStyle::SP_ArrowDown },
+        { "terrain-smooth.svg",       QStyle::SP_BrowserReload },
+        { "terrain-flatten.svg",      QStyle::SP_ToolBarHorizontalExtensionButton },
+        { "terrain-noise.svg",        QStyle::SP_MessageBoxWarning },
+        { "terrain-set-height.svg",   QStyle::SP_ArrowRight },
+        { "terrain-paint.svg",        QStyle::SP_DialogApplyButton },
+        { "terrain-smooth-paint.svg", QStyle::SP_DialogResetButton },
+        { "foliage.svg",              QStyle::SP_DialogYesButton },
+        { "foliage-erase.svg",        QStyle::SP_DialogNoButton },
     }};
 
     QIcon FallbackIcon(const EditorIcons::EIcon InIcon)

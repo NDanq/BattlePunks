@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Public/NimbleEngine/Input.h"
+#include "Public/NimbleEngine/TerrainFacade.h"
 #include "Public/Editor/ViewportWidget.h"
 
 #include <algorithm>
@@ -421,7 +422,9 @@ bool ViewportWidget::PrepareFrame(const float InDeltaSeconds, const bool bInEdit
     {
         ApplyFlyInput(InDeltaSeconds);
         Gizmo.SetView(Camera, GetLogicalSize(), float(devicePixelRatioF()));
+        if(Tool) { Tool->Tick(*this, InDeltaSeconds); }
         QueueOverlay();
+        if(Tool) { Tool->QueueOverlay(*this); }
     }
 
     OutFrame.Pixels = GetPixelSize();
@@ -863,6 +866,17 @@ void ViewportWidget::mousePressEvent(QMouseEvent* InEvent)
     LastMousePos = InEvent->position().toPoint();
     PressPos     = LastMousePos;
 
+    /* A right click abandons a tool stroke, as Esc does. */
+    if(Drag == EDrag::Tool)
+    {
+        if(InEvent->button() == Qt::RightButton)
+        {
+            Drag       = EDrag::None;
+            DragButton = Qt::NoButton;
+            if(Tool) { Tool->OnRelease(*this, true); }
+        }
+        return;
+    }
     /* A right click abandons a handle drag, as Esc does. */
     if(Drag == EDrag::Gizmo)
     {
@@ -878,6 +892,15 @@ void ViewportWidget::mousePressEvent(QMouseEvent* InEvent)
     }
 
     const bool bAlt = (InEvent->modifiers() & Qt::AltModifier) != 0;
+
+    /* A tool takes a plain left press first (not the axis gizmo's corner). */
+    if(Tool && InEvent->button() == Qt::LeftButton && !bAlt && HitGizmoAxis(PressPos) < 0
+       && Tool->OnPress(*this, GetRayAt(PressPos), InEvent->modifiers()))
+    {
+        Drag       = EDrag::Tool;
+        DragButton = Qt::LeftButton;
+        return;
+    }
 
     /* A transform handle takes the press -- before click-to-select, which
      * waits for the release. The axis gizmo in the corner keeps its clicks. */
@@ -975,6 +998,16 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* InEvent)
     }
 
     const QPointF At = InEvent->position();
+    if(Tool)
+    {
+        const ViewportTool::Ray Ray = GetRayAt(Pos);
+        if(Drag == EDrag::Tool)
+        {
+            Tool->OnDrag(*this, Ray, InEvent->modifiers());
+            return;
+        }
+        Tool->OnHover(*this, &Ray, InEvent->modifiers());
+    }
     if(Drag == EDrag::Gizmo)
     {
         Gizmo.SetView(Camera, GetLogicalSize(), float(devicePixelRatioF()));
@@ -1022,6 +1055,7 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* InEvent)
 
         case EDrag::None:
         case EDrag::Gizmo:
+        case EDrag::Tool:
             break;
     }
 }
@@ -1044,6 +1078,16 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* InEvent)
             FinishGizmoDrag(false);
         }
         return;   // a handle drag never selects
+    }
+    if(Drag == EDrag::Tool)
+    {
+        if(InEvent->button() == DragButton)
+        {
+            Drag       = EDrag::None;
+            DragButton = Qt::NoButton;
+            if(Tool) { Tool->OnRelease(*this, false); }
+        }
+        return;   // a stroke never selects
     }
 
     const bool bWasDragging = Drag != EDrag::None;
@@ -1114,6 +1158,10 @@ void ViewportWidget::wheelEvent(QWheelEvent* InEvent)
     {
         return;
     }
+    if(Tool && Tool->OnWheel(*this, InEvent))
+    {
+        return;
+    }
     const double Notches = double(InEvent->angleDelta().y()) / 120.0;
     Camera.Dolly(GetPivot(), Notches * double(Camera.FocusDistance) * DollyFractionPerNotch * double(Camera.SpeedScale));
 }
@@ -1131,6 +1179,13 @@ void ViewportWidget::keyPressEvent(QKeyEvent* InEvent)
         FinishGizmoDrag(true);
         return;
     }
+    if(InEvent->key() == Qt::Key_Escape && Drag == EDrag::Tool)
+    {
+        Drag       = EDrag::None;
+        DragButton = Qt::NoButton;
+        if(Tool) { Tool->OnRelease(*this, true); }
+        return;
+    }
     if(InEvent->key() == Qt::Key_Escape && Context.IsPlaying())
     {
         Context.StopPlay();
@@ -1141,6 +1196,11 @@ void ViewportWidget::keyPressEvent(QKeyEvent* InEvent)
         if(const char* Name = QtKeyToInputName(InEvent->key())) { Game->Press(NimbleEngine::FindInputKey(Name)); }
     }
     if(!Context.IsEditorViewActive())
+    {
+        return;
+    }
+
+    if(Tool && Drag != EDrag::Look && Tool->OnKey(*this, InEvent))
     {
         return;
     }
@@ -1191,6 +1251,7 @@ void ViewportWidget::focusOutEvent(QFocusEvent* InEvent)
     /* A release that lands in another widget would otherwise leave the
      * camera flying, or a drag stuck on. */
     FinishGizmoDrag(false);
+    if(Drag == EDrag::Tool && Tool) { Tool->OnRelease(*this, false); }
     HeldKeys.clear();
     if(NimbleEngine::InputState* Game = Context.GetPlayFallbackInput())
     {
@@ -1200,6 +1261,42 @@ void ViewportWidget::focusOutEvent(QFocusEvent* InEvent)
     DragButton = Qt::NoButton;
     ReleaseMouseHold();   // the cursor is the user's again; a click takes it back
     QWidget::focusOutEvent(InEvent);
+}
+
+void ViewportWidget::leaveEvent(QEvent* InEvent)
+{
+    if(Tool && Drag != EDrag::Tool) { Tool->OnHover(*this, nullptr, Qt::NoModifier); }
+    QWidget::leaveEvent(InEvent);
+}
+
+// === Tools ===================================================================
+
+void ViewportWidget::SetTool(ViewportTool* InTool)
+{
+    if(InTool == Tool) { return; }
+    if(Drag == EDrag::Tool)
+    {
+        Drag       = EDrag::None;
+        DragButton = Qt::NoButton;
+        if(Tool) { Tool->OnRelease(*this, true); }
+    }
+    if(Tool) { Tool->OnHover(*this, nullptr, Qt::NoModifier); }
+    Tool = InTool;
+}
+
+ViewportTool::Ray ViewportWidget::GetRayAt(const QPoint& InLogicalPos) const
+{
+    ViewportTool::Ray Ray;
+    Camera.ScreenRay(double(InLogicalPos.x()), double(InLogicalPos.y()), GetLogicalSize(), Ray.Origin, Ray.Direction);
+    return Ray;
+}
+
+bool ViewportWidget::GetCursorRay(ViewportTool::Ray& OutRay) const
+{
+    const QPoint At = mapFromGlobal(QCursor::pos());
+    if(!rect().contains(At)) { return false; }
+    OutRay = GetRayAt(At);
+    return true;
 }
 
 // === Transform handles =======================================================
@@ -1510,6 +1607,15 @@ GameCore::EntityID ViewportWidget::Pick(const QPoint& InLogicalPos) const
             Best  = InEntity.GetID();
         }
     });
+
+    /* Terrain: its own triangles (TerrainFacade.h), walkable or not. */
+    NimbleEngine::TerrainRaycastHit Ground;
+    if(NimbleEngine::RaycastTerrain(Document.GetWorld(), RayOrigin, RayDir, float(std::min(BestT, 1.0e9)), Ground, false)
+       && double(Ground.Distance) < BestT)
+    {
+        BestT = Ground.Distance;
+        Best  = Ground.Entity;
+    }
 
     /* A light has no shape to hit: its position, within a few pixels, unless
      * a mesh is nearer the camera. */

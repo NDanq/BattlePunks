@@ -11,6 +11,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/Prefab.h"
@@ -48,6 +49,38 @@ namespace
             Bytes += FileBytes(It.next());
         }
         return Bytes;
+    }
+
+    /* The terrains (and their foliage) a text world's entities name -- a Terrain
+     * component's Terrain and Foliage fields, in <World>/<guid>.nmentity --
+     * whose file is not in the project. */
+    QStringList FindMissingTerrains(const QString& InRoot, const QString& InWorldFile)
+    {
+        QStringList Missing;
+        const QFileInfo Info(InWorldFile);
+        const QString Folder = QDir(Info.absolutePath()).filePath(Info.completeBaseName());
+        static const QRegularExpression TerrainField(
+            QStringLiteral("<Component Type=\"Terrain\"[^>]*>\\s*<Terrain Value=\"([^\"]*)\""));
+        QDirIterator It(Folder, { QStringLiteral("*.nmentity") }, QDir::Files);
+        while(It.hasNext())
+        {
+            QFile Entity(It.next());
+            if(!Entity.open(QIODevice::ReadOnly | QIODevice::Text)) { continue; }
+            const QString Text = QString::fromUtf8(Entity.readAll());
+            /* And its foliage, a field of the same component. */
+            static const QRegularExpression FoliageField(QStringLiteral("<Foliage Value=\"([^\"]*)\""));
+            for(const QRegularExpression* Field : { &TerrainField, &FoliageField })
+            {
+                if(Field == &FoliageField && !Text.contains(QStringLiteral("<Component Type=\"Terrain\""))) { continue; }
+                QRegularExpressionMatchIterator Found = Field->globalMatch(Text);
+                while(Found.hasNext())
+                {
+                    const QString Path = Found.next().captured(1);
+                    if(!Path.isEmpty() && !QFileInfo::exists(QDir(InRoot).filePath(Path)) && !Missing.contains(Path)) { Missing << Path; }
+                }
+            }
+        }
+        return Missing;
     }
 
     /* The project's own files matching InPattern: not the cooked tree, not a
@@ -242,6 +275,14 @@ namespace EditorCook
                 {
                     ++Stats.Types[AT_Worlds].Failed;
                     Stats.Failures << QStringLiteral("%1: the world file does not exist").arg(File);
+                    continue;
+                }
+                /* Its terrains' heightfields ship beside it, as they are: each must exist. */
+                const QStringList MissingTerrains = FindMissingTerrains(Root, Source);
+                if(!MissingTerrains.isEmpty())
+                {
+                    ++Stats.Types[AT_Worlds].Failed;
+                    Stats.Failures << QStringLiteral("%1: its terrain or foliage file does not exist: %2").arg(File, MissingTerrains.join(QStringLiteral(", ")));
                     continue;
                 }
                 if(GameCore::CookWorldFile(ToStd(Source).c_str(), ToStd(Out).c_str()))

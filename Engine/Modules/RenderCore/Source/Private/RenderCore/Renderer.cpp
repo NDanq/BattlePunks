@@ -114,6 +114,7 @@ namespace RenderCore
 
         bool bRenderRegistered = false;
         bool bParticlesRegistered = false;
+        bool bTerrainRegistered   = false;
 
         /* "stat unit", game thread only: this frame's start and the time it
          * spent blocked (the fence, presenting); sums over the current half
@@ -276,6 +277,10 @@ namespace RenderCore
         if(!P->bParticlesRegistered)
         {
             P->bParticlesRegistered = RegisterProxyType(ParticleSystemComponent::StaticType().ID, GetParticleSystemComponentFactory());
+        }
+        if(!P->bTerrainRegistered)
+        {
+            P->bTerrainRegistered = RegisterProxyType(TerrainComponent::StaticType().ID, GetTerrainComponentFactory());
         }
 
         GDISetMaxAnisotropy(float(std::clamp(GRenderingAnisotropy.GetInt(), 1, 16)));

@@ -41,6 +41,17 @@ namespace RenderCore
     struct RenderMaterialParameter;  // Components/RenderComponent.h
     struct UISceneState;             // Private/RenderCore/UIRenderer.h: a scene's UI draw list
     struct ParticleEmitterGpu;       // Private/RenderCore/ParticleSimulation.h: an emitter's GPU state
+    struct RenderInstanceBuffer;     // Private/RenderCore/RenderContext.cpp: instances on the GPU (CreateInstanceBuffer)
+
+    /* One instance of an instanced mesh draw: the instance's transform inside
+     * the draw's (entity) transform, column-major, with its bottom row 0 0 0 1;
+     * and a colour the vertex colour is multiplied by. 80 bytes. */
+    struct RenderInstance
+    {
+        float Transform[16] = { 1.0f, 0.0f, 0.0f, 0.0f,   0.0f, 1.0f, 0.0f, 0.0f,
+                                0.0f, 0.0f, 1.0f, 0.0f,   0.0f, 0.0f, 0.0f, 1.0f };
+        float Color[4]      = { 1.0f, 1.0f, 1.0f, 1.0f };
+    };
 
     /* An entity's material parameter overrides for one draw call: each entry
      * applies to the material in its Slot. Must stay valid until the scene
@@ -63,6 +74,13 @@ namespace RenderCore
         /* Its palette the frame before, as SkinPalette, for velocity; null:
          * SkinPalette (it did not move). */
         const float*                   PrevSkinPalette = nullptr;
+
+        /* Instanced (RenderContext::CreateInstanceBuffer): the mesh drawn
+         * InstanceCount times, the first InstanceCount of Instances, each
+         * placed by its transform inside the draw's. Null: once. Where the
+         * backend has no instancing (SupportsInstancing) nothing draws. */
+        const RenderInstanceBuffer*    Instances     = nullptr;
+        uint32_t                       InstanceCount = 0;
     };
 
     class RENDERCORE_API RenderContext
@@ -199,6 +217,24 @@ namespace RenderCore
         bool DrawMeshOccluder(const RenderTransform& InTransform, const char* InMeshPath,
                               const char* const* InSlots, uint32_t InSlotCount,
                               const MaterialParameterOverrides& InOverrides = MaterialParameterOverrides());
+
+        /*
+         * INSTANCED MESHES (MaterialParameterOverrides::Instances): InCount
+         * instances uploaded once (GDI_BU_Instance), for DrawMesh, DrawMeshShadow
+         * and DrawMeshOccluder to draw many of a mesh in one call. Null where
+         * the backend has no instancing (Vulkan, D3D12 and Null have it), or for
+         * no instances. Freed by ReleaseInstanceBuffer, which may follow the last
+         * draw that read it (the free waits for the GPU). InName names it for
+         * capture tools.
+         */
+        bool                  SupportsInstancing() const;
+        RenderInstanceBuffer* CreateInstanceBuffer(const RenderInstance* InInstances, uint32_t InCount, const char* InName = nullptr);
+        void                  ReleaseInstanceBuffer(RenderInstanceBuffer* InBuffer);
+
+        /* Frees the GPU copy of InMeshPath now rather than at shutdown: for a
+         * proxy whose meshes are its own (MeshAssetCache::Store), when it
+         * goes. Drawing the path again rebuilds it. */
+        void ReleaseMesh(const char* InMeshPath);
 
         /* How far InMaterial's World Position Offset reaches (its Max Offset),
          * for a proxy to pad its culling bounds; 0 without one, or if it

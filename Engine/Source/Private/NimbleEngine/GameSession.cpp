@@ -1,4 +1,5 @@
 #include "Public/NimbleEngine/GameSession.h"
+#include "Public/NimbleEngine/TerrainFacade.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -159,6 +160,7 @@ namespace NimbleEngine
         , Rendering(InRenderer)
     {
         InstallCollisionMeshProvider();   // CS_Mesh colliders (CollisionMeshes.cpp)
+        InstallTerrainProvider();         // heightfield bodies (TerrainFacade.cpp)
 
         Interface = EngineCore::Memory::Alloc<UI::UISystem>();
         Interface->SetRenderer(&Rendering, RenderCore::RENDER_DEFAULT_SCENE);

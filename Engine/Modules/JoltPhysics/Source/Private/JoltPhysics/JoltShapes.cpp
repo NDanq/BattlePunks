@@ -9,6 +9,7 @@
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
+#include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/ScaledShape.h>
@@ -138,6 +139,36 @@ namespace JoltPhysics
         return Shape;
     }
 
+    JPH::RefConst<JPH::Shape> ShapeBuilder::BuildHeightField(const ShapeRequest& InRequest)
+    {
+        const GameCore::TerrainData& Data = *InRequest.Terrain;
+        const double ToMeters = 1.0 / InRequest.UnitsPerMeter;
+
+        /* Jolt's sample (x, y) is at Offset + Scale * (x, height, y): our (X, Z), the same row-major
+         * layout and the same (X, Z)-(X + 1, Z + 1) cell split, so it collides with what draws. */
+        JPH::Array<float> Samples;
+        uint32_t Resolution = 0;
+        float    Spacing    = 0.0f;
+        {
+            std::lock_guard<std::mutex> Guard(Data.GetLock());
+            Resolution = Data.GetResolution();
+            Spacing    = Data.GetSpacing();
+            if(Resolution < GameCore::TERRAIN_RESOLUTION_MIN) { return nullptr; }
+            const float* Heights = Data.GetHeights();
+            Samples.assign(Heights, Heights + size_t(Resolution) * Resolution);
+        }
+
+        const EngineCore::Vector3 Scale = InRequest.Scale;
+        const JPH::Vec3 FieldScale(float(double(Spacing) * ToMeters * double(Scale.GetX())),
+                                   float(ToMeters * double(Scale.GetY())),
+                                   float(double(Spacing) * ToMeters * double(Scale.GetZ())));
+        JPH::HeightFieldShapeSettings Settings(Samples.data(), JPH::Vec3::sZero(), FieldScale, Resolution);
+        /* 8 bits a sample within each 4 x 4 block, over that block's own height range. */
+        Settings.mBitsPerSample = 8;
+        Settings.mBlockSize     = 4;
+        return Make(Settings, "heightfield");
+    }
+
     JPH::RefConst<JPH::Shape> ShapeBuilder::Build(const ShapeRequest& InRequest, std::string& OutKind)
     {
         using namespace GameCore;
@@ -162,6 +193,29 @@ namespace JoltPhysics
         /* What to build. */
         uint8_t Kind = InRequest.Shape;
         const EPrimitive Primitive = InRequest.bHasMesh ? PrimitiveOf(InRequest.MeshPath) : EPrimitive::None;
+        if(Kind == RBS_Auto && InRequest.Terrain)
+        {
+            Kind = RBS_HeightField;
+        }
+        if(Kind == RBS_HeightField)
+        {
+            if(!InRequest.Terrain)
+            {
+                CORE_LOG_WARN("[Physics] a Height Field Rigid Body has no Terrain; using its box")
+                Kind = RBS_Box;
+            }
+            else if(InRequest.Motion == RBM_Dynamic)
+            {
+                CORE_LOG_WARN("[Physics] a Dynamic body cannot be a heightfield; make the terrain's Rigid Body Static")
+                return nullptr;
+            }
+            else
+            {
+                JPH::RefConst<JPH::Shape> Field = BuildHeightField(InRequest);
+                if(Field) { OutKind = "HeightField"; return Field; }
+                return nullptr;
+            }
+        }
         if(Kind == RBS_Auto)
         {
             switch(Primitive)

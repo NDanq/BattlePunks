@@ -275,6 +275,14 @@ namespace JoltPhysics
                 Request.bHasBounds  = true;
                 Request.BoundsLocal = Bounds->Local;
             }
+            if(const GameCore::TerrainProvider* Terrains = GameCore::GetTerrainProvider())
+            {
+                if(Terrains->FindTerrain)
+                {
+                    Request.Terrain = Terrains->FindTerrain(*World, InEntity.GetID(), Terrains->UserData);
+                    if(Request.Terrain) { Request.TerrainRevision = Request.Terrain->GetRevision(); }
+                }
+            }
             return Request;
         }
 
@@ -304,6 +312,8 @@ namespace JoltPhysics
                 S.Add(InRequest.BoundsLocal.Max);
             }
             S.Add(InRequest.Scale);
+            S.Add(uint64_t(reinterpret_cast<uintptr_t>(InRequest.Terrain.get())));
+            S.Add(InRequest.TerrainRevision);
             return S.Hash;
         }
 

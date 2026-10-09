@@ -531,6 +531,35 @@ new | close | seek <seconds | marker> | play | pause | cuts <on|off> |
 autokey <on|off> | sound <on|off> | scrub <on|off> | height <px> | collapse <on|off> | select <track> [section] | windowshot <file.png>`; `windowshot <file.png>` saves the whole editor window. With `--command "after <ms> ..."` and `screenshot`, a
 scripted run can look through each shot.
 
+## Terrain mode
+
+**World > Terrain...** opens the **Terrain dock**, tabbed with the Details. It
+has three tabs:
+
+- **Create:** a flat terrain for the saved level, with its file in the level's
+  `Terrain/` folder. Also heightmap import and export.
+- **Sculpt:** Raise, Lower, Smooth, Flatten, Noise and Set Height.
+- **Paint:** the material's four layers, and Smooth Paint.
+- **Foliage:** the terrain's foliage types (Add Mesh..., Remove, and each
+  type's settings), painted or erased with the same brush. See
+  `Engine/Source/FOLIAGE.md`.
+
+The **Brush** settings below the tabs are shared. While Sculpt or Paint is in
+front, the viewport's plain left button is the brush (`ViewportTool`,
+`ViewportWidget::SetTool`), and a ring laid on the ground shows it.
+
+- **Shift** inverts the tool.
+- **`[` and `]`**, or Ctrl+wheel, resize the brush.
+- **Esc** or a right click cancels a stroke.
+
+A stroke is one undo step, which the dock records with
+`EditorDocument::RecordToolCommand`. Edited terrain is written when the level
+is saved. Clicking a terrain selects it, and the Details' Terrain field takes
+`.nmterrain` files. The `terrain` console command does all of this from a
+script.
+
+The full guide is `Engine/Source/TERRAIN.md`.
+
 ## Particle Editor
 
 A `.nmparticle` (a particle system: RenderCore's `ParticleSystemAsset.h`) opens

@@ -185,6 +185,26 @@ namespace EditorContent
         return InPath.endsWith(QStringLiteral(".nmseq"), Qt::CaseInsensitive) ? ToRuntimePath(InPath) : QString();
     }
 
+    QStringList ListTerrainPaths()
+    {
+        return ListGraphs(&TerrainPathFor);
+    }
+
+    QString TerrainPathFor(const QString& InPath)
+    {
+        return InPath.endsWith(QStringLiteral(".nmterrain"), Qt::CaseInsensitive) ? ToRuntimePath(InPath) : QString();
+    }
+
+    QStringList ListFoliagePaths()
+    {
+        return ListGraphs(&FoliagePathFor);
+    }
+
+    QString FoliagePathFor(const QString& InPath)
+    {
+        return InPath.endsWith(QStringLiteral(".nmfoliage"), Qt::CaseInsensitive) ? ToRuntimePath(InPath) : QString();
+    }
+
     QStringList ListAnimationPaths()
     {
         return ListGraphs(&AnimationPathFor);
