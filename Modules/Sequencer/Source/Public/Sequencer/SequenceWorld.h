@@ -160,6 +160,8 @@ namespace Sequencer
     private:
         explicit SequenceWorld(GameCore::World& InWorld);
         ~SequenceWorld();
+        SequenceWorld(const SequenceWorld&)            = delete;
+        SequenceWorld& operator=(const SequenceWorld&) = delete;
 
         static void TickSystem(GameCore::World& InWorld, float InDeltaSeconds, void* InUserData);
 
