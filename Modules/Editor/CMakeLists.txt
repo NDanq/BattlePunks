@@ -83,6 +83,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/Sequencer/SequencerTimeline.h
         Source/Private/Editor/Sequencer/SequencerWindow.cpp
         Source/Private/Editor/Sequencer/SequencerWindow.h
+        Source/Private/Editor/Terrain/FoliageEditing.cpp
+        Source/Private/Editor/Terrain/FoliageEditing.h
         Source/Private/Editor/Terrain/TerrainEditing.cpp
         Source/Private/Editor/Terrain/TerrainEditing.h
         Source/Private/Editor/Terrain/TerrainTool.cpp
@@ -358,7 +360,9 @@ set(NIMBLE_EDITOR_OWN_ICONS
         "Resources/Icons/terrain-noise.svg"
         "Resources/Icons/terrain-set-height.svg"
         "Resources/Icons/terrain-paint.svg"
-        "Resources/Icons/terrain-smooth-paint.svg")
+        "Resources/Icons/terrain-smooth-paint.svg"
+        "Resources/Icons/foliage.svg"
+        "Resources/Icons/foliage-erase.svg")
 qt_add_resources(NimbleEditor "EditorOwnIcons"
         PREFIX "/lucide"
         BASE   "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Icons"

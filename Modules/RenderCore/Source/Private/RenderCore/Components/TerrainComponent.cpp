@@ -741,7 +741,7 @@ namespace RenderCore
         Props.Flag("Visible",        &TerrainComponent::bVisible);
         Props.Field("UV Tile Size",  &TerrainComponent::UVTileSize);
         Props.Category("Foliage");
-        Props.Field("Foliage",       &TerrainComponent::Foliage, GameCore::PF_AssetTerrain);
+        Props.Field("Foliage",       &TerrainComponent::Foliage, GameCore::PF_AssetFoliage);
         Props.Flag("Foliage Visible", &TerrainComponent::bFoliageVisible);
         Props.Category("Collision");
         Props.Flag("Walkable",       &TerrainComponent::bWalkable);

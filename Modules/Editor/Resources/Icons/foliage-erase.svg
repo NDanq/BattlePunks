@@ -1,0 +1,17 @@
+<!-- NimbleEngine editor icon, drawn to match Lucide's grid (24 x 24, 2 px round strokes) -->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M8 22v-5" />
+  <path d="M8 17c-2.8 0-5-1.8-5-4.3a5 5 0 0 1 10 0c0 2.5-2.2 4.3-5 4.3Z" />
+  <path d="m15 9 6 6" />
+  <path d="m21 9-6 6" />
+</svg>

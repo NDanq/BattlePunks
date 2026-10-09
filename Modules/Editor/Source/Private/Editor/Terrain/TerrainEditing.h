@@ -152,7 +152,7 @@ namespace EditorTerrain
 
     // === Saving =============================================================
 
-    /* InPath's samples changed since its file was written. */
+    /* InPath's samples (a .nmterrain's, or a .nmfoliage's) changed since its file was written. */
     void MarkDirty(const std::string& InPath);
     bool IsDirty(const std::string& InPath);
 
