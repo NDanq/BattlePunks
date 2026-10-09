@@ -1,3 +1,6 @@
+/**
+* VIBECODE CERTIFIED
+*/
 #if WITH_EDITOR
 
 #include "Public/Editor/EditorMainWindow.h"
@@ -21,6 +24,7 @@
 #include <QSignalBlocker>
 #include <QStatusBar>
 #include <QToolBar>
+#include <QToolButton>
 #include <QUndoStack>
 #include <QVBoxLayout>
 
@@ -38,6 +42,7 @@
 #include "Public/Editor/EditorDocument.h"
 #include "Public/Editor/OutlinerPanel.h"
 #include "Public/Editor/ViewportPanel.h"
+#include "Private/Editor/EditorIcons.h"
 #include "Public/Editor/ViewportWidget.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Private/Editor/Content/RenderTargetAssets.h"
@@ -545,12 +550,12 @@ void EditorMainWindow::BuildPlayControls()
 {
     QMenu* PlayMenu = menuBar()->addMenu(QStringLiteral("&Play"));
 
-    PlayAction = PlayMenu->addAction(QStringLiteral("&Play"));
+    PlayAction = PlayMenu->addAction(EditorIcons::Get(EditorIcons::EIcon::Play), QStringLiteral("&Play"));
     PlayAction->setShortcut(QKeySequence(Qt::Key_F5));
     PlayAction->setToolTip(QStringLiteral("Run the game ([Game] Module) from its start level in the viewport (F5)"));
     connect(PlayAction, &QAction::triggered, this, &EditorMainWindow::StartPlay);
 
-    StopAction = PlayMenu->addAction(QStringLiteral("&Stop"));
+    StopAction = PlayMenu->addAction(EditorIcons::Get(EditorIcons::EIcon::Stop), QStringLiteral("&Stop"));
     StopAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F5));
     StopAction->setToolTip(QStringLiteral("End the run and return to the edited scene (Shift+F5, or Esc in the viewport)"));
     StopAction->setEnabled(false);
@@ -595,6 +600,15 @@ void EditorMainWindow::BuildPlayControls()
     Bar->insertAction(First, StopAction);
     Bar->insertAction(First, EjectAction);
     Bar->insertSeparator(First);
+
+    /* The viewport toolbar is text-only; Play and Stop show their icons (the tooltip names them). */
+    for(QAction* Each : { PlayAction, StopAction })
+    {
+        if(auto* Button = qobject_cast<QToolButton*>(Bar->widgetForAction(Each)))
+        {
+            Button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        }
+    }
 }
 
 void EditorMainWindow::StartPlay()

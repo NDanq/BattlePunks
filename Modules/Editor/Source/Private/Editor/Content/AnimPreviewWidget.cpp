@@ -1,3 +1,6 @@
+/**
+* VIBECODE CERTIFIED
+*/
 #if WITH_EDITOR
 
 #include "Private/Editor/Content/AnimPreviewWidget.h"
@@ -19,6 +22,7 @@
 
 #include "Public/RenderCore/SkeletonAsset.h"
 #include "Private/Editor/Content/MeshPreviewView.h"
+#include "Private/Editor/EditorIcons.h"
 
 namespace
 {
@@ -208,7 +212,7 @@ void AnimPreviewWidget::PushPose()
 
 void AnimPreviewWidget::UpdateTransport()
 {
-    PlayButton->setIcon(style()->standardIcon(bPlaying ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
+    PlayButton->setIcon(EditorIcons::Get(bPlaying ? EditorIcons::EIcon::Pause : EditorIcons::EIcon::Play));
     PlayButton->setEnabled(HasSkeleton());
     Scrubber->setEnabled(HasSkeleton() && Instance.GetDuration() > 0.0f);
     const float Duration = Instance.GetDuration();
