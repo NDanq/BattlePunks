@@ -7,8 +7,9 @@ project(Sequencer VERSION 0.1 LANGUAGES CXX)
 # the Sequence Player component that plays one, and the per-World system
 # (SequenceWorld) that drives players and writes their tracks. See README.md.
 #
-# After GameCore, whose World and components it drives, and before
-# NimbleEngine, which attaches a SequenceWorld to each level's World.
+# After GameCore and RenderCore (animation and cameras, linked PRIVATE: no
+# public header needs them), and before NimbleEngine, which attaches a
+# SequenceWorld to each level's World.
 # ===========================================================================
 
 if(NOT COMMAND nimble_add_module)
@@ -24,10 +25,12 @@ set(SEQUENCER_SOURCES
         Source/Private/Sequencer/SequenceBinary.cpp
         Source/Private/Sequencer/SequenceXml.cpp
         Source/Private/Sequencer/SequencePlayerComponent.cpp
+        Source/Private/Sequencer/SequenceInstance.cpp
         Source/Private/Sequencer/SequenceWorld.cpp
         Source/Public/Sequencer/SequencerAPI.h
         Source/Public/Sequencer/SequenceAsset.h
         Source/Public/Sequencer/SequenceFile.h
+        Source/Public/Sequencer/SequenceInstance.h
         Source/Public/Sequencer/SequencePlayerComponent.h
         Source/Public/Sequencer/SequenceWorld.h
 )
@@ -37,7 +40,8 @@ set(SEQUENCER_SOURCES
 nimble_add_module(Sequencer SHARED
         PREFIX       SEQUENCER
         SOURCES      ${SEQUENCER_SOURCES}
-        PUBLIC_DEPS  GameCore::GameCore)
+        PUBLIC_DEPS  GameCore::GameCore
+        PRIVATE_DEPS RenderCore::RenderCore)
 
 target_include_directories(Sequencer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
 set_target_properties(Sequencer PROPERTIES FOLDER "Engine")
@@ -52,7 +56,7 @@ endif()
 # they also test is the same code in every build.
 if(SEQUENCER_BUILD_TESTS)
     add_executable(SequencerTests Tests/SequencerTests.cpp)
-    target_link_libraries(SequencerTests PRIVATE Sequencer::Sequencer)
+    target_link_libraries(SequencerTests PRIVATE Sequencer::Sequencer RenderCore::RenderCore)
     set_target_properties(SequencerTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
     add_test(NAME Sequencer.Tests COMMAND SequencerTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:SequencerTests>")

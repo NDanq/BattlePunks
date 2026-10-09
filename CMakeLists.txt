@@ -507,9 +507,9 @@ if(NIMBLE_WITH_AUDIO AND TARGET GameCore
 endif()
 
 # Sequencer: cutscenes -- .nmseq timelines and the Sequence Player component
-# (Modules/Sequencer/README.md). After GameCore, whose World it drives, and
-# before NimbleEngine, which attaches it to each level's World.
-if(TARGET GameCore AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/Sequencer/CMakeLists.txt")
+# (Modules/Sequencer/README.md). After GameCore and RenderCore, which it
+# drives, and before NimbleEngine, which attaches it to each level's World.
+if(TARGET GameCore AND TARGET RenderCore AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/Sequencer/CMakeLists.txt")
     add_subdirectory(Modules/Sequencer)
 endif()
 

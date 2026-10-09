@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QFileInfo>
 
 #include "Public/Core/CoreLog.h"
@@ -20,6 +21,7 @@
 #include "Private/Editor/ConfigIniFile.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphAssets.h"
+#include "Private/Editor/Particles/ParticleAssets.h"
 #include "Private/Editor/ProjectSettingsDialog.h"
 #include "Private/Editor/UI/UIAssets.h"
 
@@ -313,6 +315,32 @@ namespace EditorCook
             {
                 const QString Out = GetCookedPath(Root, Sequence.first);
                 std::string   Error;
+
+                /* What it plays must ship with it; anything else wrong is a warning. */
+                Sequencer::SequenceAsset Asset;
+                QFile SourceFile(Sequence.second);
+                const QByteArray Bytes = SourceFile.open(QIODevice::ReadOnly) ? SourceFile.readAll() : QByteArray();
+                if(Sequencer::ReadSequence(std::vector<uint8_t>(Bytes.begin(), Bytes.end()), Asset, &Error))
+                {
+                    QStringList Missing;
+                    for(const std::string& Referenced : Asset.GetReferencedAssets())
+                    {
+                        if(!QFileInfo::exists(EditorParticles::ToProjectPath(QString::fromStdString(Referenced))))
+                        {
+                            Missing << QString::fromStdString(Referenced);
+                        }
+                    }
+                    for(const std::string& Problem : Asset.Validate())
+                    {
+                        CORE_LOG_WARN("[Cook] " + ToStd(Sequence.first) + ": " + Problem)
+                    }
+                    if(!Missing.isEmpty())
+                    {
+                        ++Stats.Types[AT_Sequences].Failed;
+                        Stats.Failures << QStringLiteral("%1: plays what does not exist: %2").arg(Sequence.first, Missing.join(QStringLiteral(", ")));
+                        continue;
+                    }
+                }
                 if(Sequencer::CookSequenceFile(ToStd(Sequence.second), ToStd(Out), &Error))
                 {
                     ++Stats.Types[AT_Sequences].Cooked;

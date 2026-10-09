@@ -22,11 +22,11 @@ namespace Sequencer
         const char* const INTERP_NAMES[] =
         {
             "Constant", "Linear", "Auto", "QuadIn", "QuadOut", "QuadInOut",
-            "CubicIn", "CubicOut", "CubicInOut", "BackOut", "ElasticOut",
+            "CubicIn", "CubicOut", "CubicInOut", "BackOut", "ElasticOut", "User",
         };
         static_assert(sizeof(INTERP_NAMES) / sizeof(INTERP_NAMES[0]) == size_t(ESequenceInterp::Count), "one name each");
 
-        const char* const TRACK_NAMES[] = { "Transform", "Float", "Bool", "Event" };
+        const char* const TRACK_NAMES[] = { "Transform", "Float", "Bool", "Event", "Animation", "Audio", "CameraCut", "Fade", "SubSequence" };
         static_assert(sizeof(TRACK_NAMES) / sizeof(TRACK_NAMES[0]) == size_t(ESequenceTrackType::Count), "one name each");
 
         const char* const CHANNEL_NAMES[] =
@@ -112,6 +112,12 @@ namespace Sequencer
         return TC_Count;
     }
 
+    bool IsSectionTrack(const ESequenceTrackType InType)
+    {
+        return InType == ESequenceTrackType::Animation || InType == ESequenceTrackType::Audio
+            || InType == ESequenceTrackType::CameraCut || InType == ESequenceTrackType::SubSequence;
+    }
+
     float Ease(const ESequenceInterp InInterp, float InT)
     {
         InT = std::clamp(InT, 0.0f, 1.0f);
@@ -119,7 +125,8 @@ namespace Sequencer
         {
             case ESequenceInterp::Constant:   return 0.0f;
             case ESequenceInterp::Linear:     return InT;
-            case ESequenceInterp::Auto:       return InT;
+            case ESequenceInterp::Auto:
+            case ESequenceInterp::User:       return InT;
             case ESequenceInterp::QuadIn:     return InT * InT;
             case ESequenceInterp::QuadOut:    return 1.0f - (1.0f - InT) * (1.0f - InT);
             case ESequenceInterp::QuadInOut:  return InT < 0.5f ? 2.0f * InT * InT : 1.0f - std::pow(-2.0f * InT + 2.0f, 2.0f) * 0.5f;
@@ -158,16 +165,28 @@ namespace Sequencer
         const float Span = float(B.Frame - A.Frame);
         const float T    = float((InFrame - double(A.Frame)) / double(Span));
 
-        if(A.Interp == ESequenceInterp::Auto)
+        if(A.Interp == ESequenceInterp::Auto || A.Interp == ESequenceInterp::User)
         {
             /* Cubic Hermite, slopes scaled to the segment. */
-            const float M0 = AutoSlope(Keys, Index) * Span;
-            const float M1 = AutoSlope(Keys, Index + 1) * Span;
+            const float M0 = GetLeaveSlope(Index) * Span;
+            const float M1 = GetArriveSlope(Index + 1) * Span;
             const float T2 = T * T, T3 = T2 * T;
             return (2.0f * T3 - 3.0f * T2 + 1.0f) * A.Value + (T3 - 2.0f * T2 + T) * M0
                  + (-2.0f * T3 + 3.0f * T2) * B.Value + (T3 - T2) * M1;
         }
         return A.Value + (B.Value - A.Value) * Ease(A.Interp, T);
+    }
+
+    float SequenceChannel::GetLeaveSlope(const size_t InIndex) const
+    {
+        if(InIndex >= Keys.size()) { return 0.0f; }
+        return Keys[InIndex].Interp == ESequenceInterp::User ? Keys[InIndex].OutTangent : AutoSlope(Keys, InIndex);
+    }
+
+    float SequenceChannel::GetArriveSlope(const size_t InIndex) const
+    {
+        if(InIndex >= Keys.size()) { return 0.0f; }
+        return Keys[InIndex].Interp == ESequenceInterp::User ? Keys[InIndex].InTangent : AutoSlope(Keys, InIndex);
     }
 
     void SequenceChannel::Normalize()
@@ -243,9 +262,9 @@ namespace Sequencer
         {
             case ESequenceTrackType::Transform: Wanted = TC_Count; break;
             case ESequenceTrackType::Float:
-            case ESequenceTrackType::Bool:      Wanted = 1; break;
-            case ESequenceTrackType::Event:
-            case ESequenceTrackType::Count:     Wanted = 0; break;
+            case ESequenceTrackType::Bool:
+            case ESequenceTrackType::Fade:      Wanted = 1; break;
+            default:                            Wanted = 0; break;
         }
         Channels.resize(Wanted);
         for(SequenceChannel& Channel : Channels)
@@ -266,6 +285,21 @@ namespace Sequencer
             Events.clear();
         }
         std::stable_sort(Events.begin(), Events.end(), [](const SequenceEventKey& L, const SequenceEventKey& R) { return L.Frame < R.Frame; });
+
+        if(!IsSectionTrack(Type))
+        {
+            Sections.clear();
+        }
+        for(SequenceSection& Section : Sections)
+        {
+            if(Section.End < Section.Start) { std::swap(Section.Start, Section.End); }
+            Section.Offset   = std::max(Section.Offset, 0);
+            Section.BlendIn  = std::clamp(Section.BlendIn, 0, Section.GetLength());
+            Section.BlendOut = std::clamp(Section.BlendOut, 0, Section.GetLength());
+            if(!(Section.PlayRate > 0.0f)) { Section.PlayRate = 1.0f; }
+            if(!(Section.Volume >= 0.0f))  { Section.Volume = 1.0f; }
+        }
+        std::stable_sort(Sections.begin(), Sections.end(), [](const SequenceSection& L, const SequenceSection& R) { return L.Start < R.Start; });
         for(SequenceEventKey& Event : Events)
         {
             if(Event.Args.size() > SEQUENCE_EVENT_ARGS_MAX) { Event.Args.resize(SEQUENCE_EVENT_ARGS_MAX); }
@@ -280,6 +314,7 @@ namespace Sequencer
             if(!Channel.Keys.empty()) { Last = std::max(Last, Channel.Keys.back().Frame); }
         }
         if(!Events.empty()) { Last = std::max(Last, Events.back().Frame); }
+        for(const SequenceSection& Section : Sections) { Last = std::max(Last, Section.End); }
         return Last;
     }
 
@@ -294,8 +329,18 @@ namespace Sequencer
         return -1;
     }
 
+    int32_t SequenceAsset::FindMarker(const std::string& InName) const
+    {
+        for(size_t Index = 0; Index < Markers.size(); ++Index)
+        {
+            if(Markers[Index].Name == InName) { return int32_t(Index); }
+        }
+        return -1;
+    }
+
     void SequenceAsset::Normalize()
     {
+        std::stable_sort(Markers.begin(), Markers.end(), [](const Marker& L, const Marker& R) { return L.Frame < R.Frame; });
         FrameRate = std::clamp<uint32_t>(FrameRate, 1, 1000);
         if(Length < 0) { Length = 0; }
         for(SequenceBinding& Binding : Bindings)
@@ -303,6 +348,27 @@ namespace Sequencer
             for(SequenceTrack& Track : Binding.Tracks) { Track.Normalize(); }
         }
         for(SequenceTrack& Track : Tracks) { Track.Normalize(); }
+    }
+
+    std::vector<std::string> SequenceAsset::GetReferencedAssets() const
+    {
+        std::vector<std::string> Out;
+        const auto Add = [&Out](const std::string& InPath)
+        {
+            if(!InPath.empty() && std::find(Out.begin(), Out.end(), InPath) == Out.end()) { Out.push_back(InPath); }
+        };
+        const auto FromTrack = [&Add](const SequenceTrack& InTrack)
+        {
+            if(InTrack.Type == ESequenceTrackType::CameraCut) { return; }   // a binding id, not a file
+            for(const SequenceSection& Section : InTrack.Sections) { Add(Section.Asset); }
+        };
+        for(const SequenceBinding& Binding : Bindings)
+        {
+            if(Binding.Kind == ESequenceBindingKind::Spawn && Binding.Prefab.rfind("native:", 0) != 0) { Add(Binding.Prefab); }
+            for(const SequenceTrack& Track : Binding.Tracks) { FromTrack(Track); }
+        }
+        for(const SequenceTrack& Track : Tracks) { FromTrack(Track); }
+        return Out;
     }
 
     std::vector<std::string> SequenceAsset::Validate() const
@@ -336,19 +402,40 @@ namespace Sequencer
                 {
                     Problems.push_back(Who + ": a " + TrackTypeName(Track.Type) + " track has keys past the end");
                 }
+                if(Track.Type == ESequenceTrackType::CameraCut || Track.Type == ESequenceTrackType::Fade
+                   || Track.Type == ESequenceTrackType::SubSequence)
+                {
+                    Problems.push_back(Who + ": a " + TrackTypeName(Track.Type) + " track belongs to no binding (put it at the top level)");
+                }
             }
         }
         for(const SequenceTrack& Track : Tracks)
         {
-            if(Track.Type != ESequenceTrackType::Event)
+            if(Track.Type == ESequenceTrackType::Transform || Track.Type == ESequenceTrackType::Float
+               || Track.Type == ESequenceTrackType::Bool || Track.Type == ESequenceTrackType::Animation)
             {
                 Problems.push_back(std::string("a ") + TrackTypeName(Track.Type) + " track has no binding to animate");
             }
             if(Track.GetLastFrame() > Length)
             {
-                Problems.push_back("an event track has keys past the end");
+                Problems.push_back(std::string("a ") + TrackTypeName(Track.Type) + " track has keys past the end");
             }
         }
+
+        /* Sections: something to play, and a camera that is a binding. */
+        const auto CheckSections = [&](const SequenceTrack& InTrack)
+        {
+            for(const SequenceSection& Section : InTrack.Sections)
+            {
+                const std::string Where = std::string(TrackTypeName(InTrack.Type)) + " section at frame " + std::to_string(Section.Start);
+                if(Section.GetLength() == 0) { Problems.push_back(Where + " is empty"); }
+                if(Section.Asset.empty())    { Problems.push_back(Where + " names nothing to play"); }
+                else if(InTrack.Type == ESequenceTrackType::CameraCut && Ids.find(Section.Asset) == Ids.end())
+                {
+                    Problems.push_back(Where + " cuts to '" + Section.Asset + "', which is not a binding");
+                }
+            }
+        };
 
         /* Every @id an event names is a binding. */
         const auto CheckEvents = [&](const SequenceTrack& InTrack)
@@ -367,9 +454,9 @@ namespace Sequencer
         };
         for(const SequenceBinding& Binding : Bindings)
         {
-            for(const SequenceTrack& Track : Binding.Tracks) { CheckEvents(Track); }
+            for(const SequenceTrack& Track : Binding.Tracks) { CheckEvents(Track); CheckSections(Track); }
         }
-        for(const SequenceTrack& Track : Tracks) { CheckEvents(Track); }
+        for(const SequenceTrack& Track : Tracks) { CheckEvents(Track); CheckSections(Track); }
         return Problems;
     }
 

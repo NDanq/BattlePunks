@@ -5,8 +5,9 @@ names the entities it controls (**bindings**) and what it does to them over
 time (**tracks**). A **Sequence Player** component plays one. The World's
 `SequenceWorld` advances the players and writes their tracks.
 
-This is phase 0 of the Sequencer: the asset, the runtime and scripting.
-There is no editor window yet, so a sequence is written by hand as XML.
+The runtime is complete: every track type, cinematic mode, sub-sequences and
+networked playback. Sequences are written as XML until the editor window
+lands.
 
 ---
 
@@ -14,6 +15,7 @@ There is no editor window yet, so a sequence is written by hand as XML.
 
 ```
 Host exe --> NimbleEngine --> Sequencer --> GameCore --> EngineCore
+                                    `----> RenderCore (PRIVATE: clips, cameras)
 ```
 
 `NimbleEngine` links it **PRIVATE**. A game reaches cutscenes in three ways,
@@ -58,6 +60,12 @@ first bytes tell the two apart, as they do for `.nmui`.
   <Track type="Event">
     <Key f="228" event="Combat.Start" arg0="cellar" arg1="@hale" fireOnSkip="true"/>
   </Track>
+  <Track type="CameraCut">
+    <Section start="0" end="132" camera="wide"/>
+    <Section start="132" end="240" camera="close" blendIn="12"/>
+  </Track>
+  <Track type="Fade"><Key f="0" v="1"/><Key f="18" v="0"/></Track>
+  <Marker f="132" name="Reveal"/>
 </Sequence>
 ```
 
@@ -77,7 +85,15 @@ first bytes tell the two apart, as they do for `.nmui`.
   | `Float` | a binding | One number field (float, double, int, uint8) of one of the entity's components |
   | `Bool` | a binding | One flag field, stepped (never blended) |
   | `Event` | anywhere | EventBus events at frames |
+  | `Animation` | a binding | Its clips, in sections (`clip`); overlapping sections crossfade over the later one's `blendIn` |
+  | `Audio` | anywhere | Sounds in sections (`sound`): at the binding, or at the origin on a track of no binding (use 2D sounds there) |
+  | `CameraCut` | top level | Which camera binding the game is seen through (`camera`), blending from the previous shot over `blendIn` |
+  | `Fade` | top level | The screen to black: one channel, 0 clear .. 1 black |
+  | `SubSequence` | top level | Other sequences (`sequence`), each section playing one in its own time |
 
+  Section tracks hold `<Section start end ...>` spans. They also take
+  `rate`, `volume`, `offset` (frames into the asset at `start`), `blendIn`,
+  `blendOut` and `loop`. Any track can carry `name=""` and `muted="true"`.
   `component` is the component's registered name. `field` is any writable
   field that the component binds for scripts (`Bind.Field` / `Bind.Flag`):
   the same name Lua uses, without Get/Set.
@@ -85,6 +101,8 @@ first bytes tell the two apart, as they do for `.nmui`.
   - `Auto` (the default) is a smooth curve. It is flat at the first and last
     keys and at peaks, so it never overshoots a key.
   - `Constant` and `Linear`.
+  - `User`, a curve with the key's own tangents (`in`, `out`, in value per
+    frame), which the curve editor writes.
   - The eases from `UIAnimation.h`: `QuadIn`, `QuadOut`, `QuadInOut`,
     `CubicIn`, `CubicOut`, `CubicInOut`, `BackOut`, `ElasticOut`.
 - **Event arguments.** Up to four, `arg0` to `arg3`. A number, `true` or
@@ -120,6 +138,47 @@ before the animation system in TP_PostUpdate.
 - **Pause.** A paused game (`GameSession::SetPaused`) does not tick the World,
   so sequences pause with it. Each player can also be paused on its own.
 - The playhead never runs backwards. A `PlayRate` of 0 holds.
+- **What it holds.** Some values belong to the sequence only while it plays,
+  and always go back, whatever Restore State says:
+  - An Animation track pauses its entity's Animation component and sets the
+    clip and time itself. When the playhead leaves its sections, the
+    component plays its own animation again.
+  - A rigid body moved by a Transform track is kinematic while held.
+- **Sounds** play through helper entities with an Audio Source, parented to
+  the binding. They pause, resume and seek with the playhead, and are seeked
+  back if they drift more than a quarter second. `blendIn` and `blendOut`
+  fade them.
+- **Sub-sequences** play in their section's time, at its `rate`. A binding a
+  sub-sequence shares by id plays the same entity, and their events fire as
+  the outer playhead passes them.
+
+### The screen: cameras, fades and cinematic mode
+
+`GameSession` gives each level's `SequenceWorld` a `SequenceHost`:
+
+- **Camera cuts** drive a camera entity the sequence makes (`Sequence
+  Camera`). The game is seen through it with `GameSession::SetViewTarget`.
+  When several players have a shot, the one started last wins. When none
+  has, the view goes back to what it was.
+- **The fade** is the darkest any player asks for.
+- **Cinematic mode** (the component's **Cinematic**) is on while a cinematic
+  player plays or is paused:
+  - letterbox bars are drawn;
+  - the players' input is held back;
+  - Back (Escape, gamepad East) skips every **Skippable** one
+    (`Sequence.SkipCinematics()`).
+
+  The fade and the bars are a UI document GameSession builds in code, so
+  there is no file to ship.
+
+### Networking
+
+A server's player writes its playback into the component's `NetState`,
+`NetSerial` and `NetSeconds`, which replicate with `Sequence`, `PlayRate`,
+`Loop` and `Cinematic`. A client's copy of a replicated player (one with a
+Net component) never auto plays. It follows those fields: it starts, pauses,
+seeks, skips and stops as the server's did, and plays locally from there, a
+round trip behind. Spawn bindings spawn on each machine.
 
 Each player emits these on the World's EventBus, each with
 `(player entity, sequence path)`:
@@ -138,6 +197,7 @@ Events.On("Combat.Start", function(arena, who) ... end)      -- an Event track's
 
 Sequence.Pause(p)  Sequence.Resume(p)  Sequence.Seek(p, 4.5)
 Sequence.Skip(p)   Sequence.Stop(p)    Sequence.Start(p)
+Sequence.SeekToMarker(p, "Reveal")     Sequence.SkipCinematics()
 Sequence.IsPlaying(p)  Sequence.GetTime(p)  Sequence.GetDuration(p)
 ```
 
@@ -153,9 +213,17 @@ NimbleEngine::SkipSequence(World, Player);
 ```
 
 Engine and editor code can use `Sequencer::SequenceInstance` directly. It
-applies an asset to a World at any frame, fires events over a range, and
-restores what it changed. The editor's preview will use it, so what the
-editor shows is what the game plays.
+applies an asset to a World at any frame, keeps its sounds in step, fires
+events over a range, and restores what it changed. The editor's preview uses
+it with `SequenceInstanceOptions` that make nothing in the level (no sound
+helpers, no camera entity, no spawns), so what the editor shows is what the
+game plays.
+
+## Cooking
+
+Build > Cook Content cooks every `.nmseq`. A sequence that plays a clip,
+sound, sub-sequence or prefab that does not exist fails the cook. Anything
+else `Validate` finds is logged as a warning.
 
 ---
 
@@ -163,12 +231,15 @@ editor shows is what the game plays.
 
 `SequencerTests` covers:
 
-- curve sampling;
-- XML and binary round trips;
+- curve sampling, user tangents;
+- XML and binary round trips, sections and markers;
 - validation;
 - an instance writing transforms and fields and restoring them;
+- clips through a real AnimationSystem, crossfades and hand-back;
+- shots and camera blends, fades, sub-sequences, sounds, held rigid bodies;
 - players auto-playing, pausing, seeking, looping, skipping and finishing on
-  a bare World ticked by hand.
+  a bare World ticked by hand;
+- the host (view, fade, cinematic, skip) and a replica following a server.
 
 ```
 ctest -R Sequencer
@@ -178,14 +249,5 @@ ctest -R Sequencer
 
 ## Not yet
 
-These are in the order of the Sequencer plan's phases:
-
-- **P1** The editor window: track tree, timeline, undo, preview, and the
-  Content Browser and Details panel hookup. That includes a `.nmseq` asset
-  picker for the component's Sequence field.
-- **P2** Animation, Audio, Camera cut and Fade tracks.
-- **P3** The curve editor, auto-key, pilot camera and camera blends.
-- **P4** Cinematic input lock, sub-sequences, and a synced network start.
-
-A bound rigid body is not yet switched to kinematic while a sequence holds
-it.
+- Time dilation (slow motion): the World has no time scale.
+- Spawn bindings in the editor's preview: they show nothing until played.
