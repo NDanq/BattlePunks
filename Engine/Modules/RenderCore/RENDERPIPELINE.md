@@ -980,6 +980,31 @@ Verified: the GPU smoke check draws a lit, shadowed scene static and dynamic
 pixel for pixel alike, and a static box moved by a tool lands exactly where a
 dynamic one does.
 
+### Terrain
+
+A **Terrain** component (`Components/TerrainComponent.h`; the full guide is
+`Engine/Source/TERRAIN.md`) draws through the ordinary mesh paths. Its proxy
+builds a `MeshData` for each 64 × 64-cell chunk at three LODs, with skirts, and
+stores it with `MeshAssetCache::Store` under `@terrain/<owner>/<x>_<z>[_lod<n>]`.
+From there it draws with `DrawMesh`, `DrawMeshShadow` and `DrawMeshOccluder`,
+and so gets the G-buffer, the shadow cascades, occlusion and parallel
+recording.
+
+- **Stored meshes:** `Invalidate` leaves them alone.
+- **Rebuilds:** storing a different pointer makes the render thread rebuild
+  the GPU copy. `FindMesh` sees the new pointer and bumps the content
+  generation, so static lists that hold the old one are thrown away.
+- **Release:** `RenderContext::ReleaseMesh` frees a chunk's GPU copy when the
+  proxy goes.
+
+The proxy never captures static draws (`AllowsStaticDraws` is false):
+
+- **Culling and LOD:** it culls each chunk against the view's clip space and
+  picks the chunk's LOD by distance, every frame.
+- **Edits:** it picks up editor brush edits in `Simulate` by polling the
+  terrain data's per-chunk revisions, so an unchanged static entity's skipped
+  extraction does not hide them.
+
 ### Occlusion culling
 
 A Render component's **Occluder** (Culling; `bOccluder`, the component's
