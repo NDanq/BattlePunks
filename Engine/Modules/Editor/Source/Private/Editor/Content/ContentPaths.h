@@ -65,6 +65,9 @@ namespace EditorContent
      * not a particle system). */
     QStringList ListParticleSystemPaths();
     QString     ParticleSystemPathFor(const QString& InPath);
+    /* Sequences (*.nmseq): every one in the project, and a file's runtime path. */
+    QStringList ListSequencePaths();
+    QString     SequencePathFor(const QString& InPath);
 
     /* An animation field (PF_AssetAnimation): an .nmanim clip or an
      * .nmanimstate anim state. Every one's runtime path in the project and

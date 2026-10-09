@@ -33,6 +33,7 @@
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/Particles/ParticleAssets.h"
+#include "Private/Editor/Sequencer/SequencerAssets.h"
 
 using GameCore::EPropertyType;
 
@@ -481,7 +482,9 @@ namespace
             const bool bAnimation = (Entry.Flags & GameCore::PF_AssetAnimation) != 0;
             const bool bSound     = (Entry.Flags & GameCore::PF_AssetSound) != 0;
             const bool bPrefab    = (Entry.Flags & GameCore::PF_AssetPrefab) != 0;
-            if((bMesh || bMaterial || bPost || bTarget || bTexture || bParticles || bAnimation || bSound || bPrefab) && !Entry.IsReadOnly())
+            const bool bSequence  = (Entry.Flags & GameCore::PF_AssetSequence) != 0;
+            if((bMesh || bMaterial || bPost || bTarget || bTexture || bParticles || bAnimation || bSound || bPrefab || bSequence)
+               && !Entry.IsReadOnly())
             {
                 /* What each kind of asset field offers. */
                 struct AssetUi { EAsset Kind; const char* Placeholder; const char* Tip; const char* PickTip; const char* Title; const char* Filter; };
@@ -514,9 +517,12 @@ namespace
                     { EAsset::Prefab, "Drop an .nmprefab here",
                       "A prefab, by its path: Content/Prefabs/Pawn.nmprefab -- or a native one, native:Game.Name",
                       "Choose a prefab", "Choose a Prefab", "Prefabs (*.nmprefab)" },
+                    { EAsset::Sequence, "Drop an .nmseq here",
+                      "A sequence, by its path: Content/Cinematics/Intro.nmseq -- made and edited in the Sequencer",
+                      "Choose a sequence", "Choose a Sequence", "Sequences (*.nmseq)" },
                 };
                 const AssetUi& Ui = Kinds[bMesh ? 0 : bMaterial ? 1 : bPost ? 2 : bTarget ? 3 : bTexture ? 4 : bParticles ? 5
-                                          : bAnimation ? 6 : bSound ? 7 : 8];
+                                          : bAnimation ? 6 : bSound ? 7 : bPrefab ? 8 : 9];
                 AssetKind = Ui.Kind;
                 Edit->setPlaceholderText(QString::fromLatin1(Ui.Placeholder));
                 Edit->installEventFilter(this);
@@ -529,6 +535,7 @@ namespace
                                                      : bAnimation ? EditorContent::ListAnimationPaths()
                                                      : bSound     ? EditorContent::ListSoundPaths()
                                                      : bPrefab    ? EditorContent::ListPrefabPaths()
+                                                     : bSequence  ? EditorContent::ListSequencePaths()
                                                                   : EditorContent::ListTexturePaths(), Edit);
                     Completer->setCaseSensitivity(Qt::CaseInsensitive);
                     Completer->setFilterMode(Qt::MatchContains);
@@ -548,6 +555,31 @@ namespace
                     const QString Value = Chosen.isEmpty() ? QString() : ValueForFile(Chosen);
                     if(!Value.isEmpty()) { SetAndCommit(Value); }
                 });
+
+                /* A sequence opens in the Sequencer, made first if the field is empty. */
+                if(bSequence)
+                {
+                    auto* Open = new QToolButton(this);
+                    Open->setText(QStringLiteral("Edit"));
+                    Open->setToolTip(QStringLiteral("Open this sequence in the Sequencer (empty: make a new one here)"));
+                    Layout->addWidget(Open);
+                    connect(Open, &QToolButton::clicked, this, [this]()
+                    {
+                        const QString Runtime = Edit->text().trimmed();
+                        if(Runtime.isEmpty())
+                        {
+                            const QString Made = EditorSequencer::CreateSequence(QString(), window(), false);
+                            const QString Value = Made.isEmpty() ? QString() : ValueForFile(Made);
+                            if(!Value.isEmpty())
+                            {
+                                SetAndCommit(Value);
+                                EditorSequencer::OpenSequence(Made, window());
+                            }
+                            return;
+                        }
+                        EditorSequencer::OpenSequence(EditorParticles::ToProjectPath(Runtime), window());
+                    });
+                }
 
                 /* A particle system opens in the Particle Editor, made first if the field is empty. */
                 if(bParticles)
@@ -620,7 +652,7 @@ namespace
         }
 
     private:
-        enum class EAsset { None, Mesh, Material, PostProcess, RenderTarget, Texture, ParticleSystem, Animation, Sound, Prefab };
+        enum class EAsset { None, Mesh, Material, PostProcess, RenderTarget, Texture, ParticleSystem, Animation, Sound, Prefab, Sequence };
 
         void Commit()
         {
@@ -709,6 +741,10 @@ namespace
             if(AssetKind == EAsset::Prefab)
             {
                 return EditorContent::PrefabPathFor(InFile);
+            }
+            if(AssetKind == EAsset::Sequence)
+            {
+                return EditorContent::SequencePathFor(InFile);
             }
             return QString();
         }
