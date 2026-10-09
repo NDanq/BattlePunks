@@ -1005,6 +1005,19 @@ The proxy never captures static draws (`AllowsStaticDraws` is false):
   terrain data's per-chunk revisions, so an unchanged static entity's skipped
   extraction does not hide them.
 
+**Foliage** rides the same chunks. The proxy builds one instance buffer per
+chunk and type with `RenderContext::CreateInstanceBuffer`; an instance's
+transform sits inside the entity's, column-major, its bottom row 0 0 0 1.
+
+- **Drawing:** it draws with `DrawMesh` and `DrawMeshShadow`, whose
+  `MaterialParameterOverrides::Instances` and `InstanceCount` select the
+  material's InstancedMesh vertex shader. Shadow casters bind the instance
+  buffer too.
+- **LOD:** a chunk's LOD draws a prefix of the buffer. The instances are
+  sorted by seed, so the prefix is stable.
+
+The full guide is `Engine/Source/FOLIAGE.md`.
+
 ### Occlusion culling
 
 A Render component's **Occluder** (Culling; `bOccluder`, the component's

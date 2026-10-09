@@ -197,12 +197,19 @@ rebuilds it, because the terrain's revision is part of the body's signature.
 | `terrain tool <name\|off>` / `terrain show` | Drives the dock |
 | `camera [x y z yaw pitch]` | Places, or prints, the viewport camera, for scripted shots |
 
+## Foliage
+
+A terrain can carry foliage: grass, rocks, trees. The Terrain component's
+**Foliage** names a `.nmfoliage` beside the `.nmterrain`. The terrain's proxy
+draws it as instanced meshes and culls and thins it with the terrain's own
+chunks and LOD. You paint it on the Terrain dock's **Foliage** tab. See
+`FOLIAGE.md`.
+
 ## Not yet
 
 - Holes.
 - More than four layers. A second set of weights in UV1 would allow eight.
 - Per-entity texture overrides of the material.
-- Foliage.
 - Splitting large terrains into streamed tiles.
 - Runtime deformation over the network.
 - The light baker ignores terrain, so terrain is lit live.
