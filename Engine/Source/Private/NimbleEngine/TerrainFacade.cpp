@@ -68,7 +68,7 @@ namespace
 namespace NimbleEngine
 {
     bool RaycastTerrain(GameCore::World& InWorld, const EngineCore::Vector3& InOrigin, const EngineCore::Vector3& InDirection,
-                        const float InMaxDistance, TerrainRaycastHit& OutHit)
+                        const float InMaxDistance, TerrainRaycastHit& OutHit, const bool bInWalkableOnly)
     {
         OutHit = TerrainRaycastHit();
         const double Length = std::sqrt(double(InDirection.GetX()) * InDirection.GetX() + double(InDirection.GetY()) * InDirection.GetY()
@@ -80,7 +80,8 @@ namespace NimbleEngine
         float Best = InMaxDistance;
         InWorld.Each<RenderCore::TerrainComponent>([&](GameCore::Entity InEntity, RenderCore::TerrainComponent& InTerrain)
         {
-            if(!InTerrain.bWalkable || InTerrain.Terrain[0] == '\0') { return; }
+            if(InTerrain.Terrain[0] == '\0') { return; }
+            if(bInWalkableOnly ? !InTerrain.bWalkable : !InTerrain.bVisible) { return; }
             const std::shared_ptr<GameCore::TerrainData> Data = GameCore::TerrainAssetCache::Find(InTerrain.Terrain);
             if(!Data || Data->IsEmpty()) { return; }
 
@@ -119,6 +120,51 @@ namespace NimbleEngine
         return true;
     }
 
+    bool MoveOnGround(GameCore::World& InWorld, const EngineCore::Vector3& InFrom, EngineCore::Vector3& InOutTo,
+                      const GroundMoveSettings& InSettings, EngineCore::Vector3* OutNormal)
+    {
+        const double Ride = double(InSettings.RideHeight);
+        float FromGround = 0.0f;
+        const bool bFrom = SampleGround(InWorld, EngineCore::Vector3(InFrom.GetX(), InFrom.GetY() - Ride, InFrom.GetZ()), FromGround);
+
+        /* Where the move would put the feet, and whether that is a climb it may not make. */
+        const auto Blocked = [&](const double InX, const double InZ, float& OutGround, EngineCore::Vector3& OutGroundNormal)
+        {
+            if(!SampleGround(InWorld, EngineCore::Vector3(InX, InOutTo.GetY() - Ride, InZ), OutGround, &OutGroundNormal)) { return -1; }
+            const double MinUp = std::cos(double(std::clamp(InSettings.MaxSlopeDegrees, 0.0f, 90.0f)) * 3.14159265358979 / 180.0);
+            const bool bSteep = double(OutGroundNormal.GetY()) < MinUp;
+            const bool bClimb = bFrom && double(OutGround) - double(FromGround) > double(InSettings.StepHeight);
+            return bSteep && bClimb ? 1 : 0;
+        };
+
+        float Ground = 0.0f;
+        EngineCore::Vector3 Normal(0.0, 1.0, 0.0);
+        double X = InOutTo.GetX(), Z = InOutTo.GetZ();
+        int State = Blocked(X, Z, Ground, Normal);
+        if(State < 0) { return false; }
+        if(State > 0)
+        {
+            /* Along the slope: the move without its part up the fall line. */
+            const double DX = X - InFrom.GetX(), DZ = Z - InFrom.GetZ();
+            const double NX = Normal.GetX(), NZ = Normal.GetZ();
+            const double Len2 = NX * NX + NZ * NZ;
+            const double Into = Len2 > 1e-12 ? (DX * NX + DZ * NZ) / Len2 : 0.0;
+            X = InFrom.GetX() + DX - NX * std::min(Into, 0.0);
+            Z = InFrom.GetZ() + DZ - NZ * std::min(Into, 0.0);
+            State = Blocked(X, Z, Ground, Normal);
+            if(State != 0)
+            {
+                /* Nowhere to go: stay, on the ground where it stands. */
+                X = InFrom.GetX();
+                Z = InFrom.GetZ();
+                if(Blocked(X, Z, Ground, Normal) < 0) { return false; }
+            }
+        }
+        InOutTo = EngineCore::Vector3(X, double(Ground) + Ride, Z);
+        if(OutNormal) { *OutNormal = Normal; }
+        return true;
+    }
+
     void InstallTerrainProvider()
     {
         GameCore::TerrainProvider Provider;
@@ -144,6 +190,20 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(Terrain)
         Call.PushVector3(Normal);
     }, "At:Vector3 -> Hit:bool, Height:number, Normal:Vector3")
        .Tooltip("The walkable terrain's surface height and normal straight below At (looking from well above it)");
+
+    Lib.Function("MoveOnGround", [](GameCore::ScriptCall& Call)
+    {
+        const EngineCore::Vector3 From = Call.GetVector3(1);
+        EngineCore::Vector3       To   = Call.GetVector3(4);
+        NimbleEngine::GroundMoveSettings Settings;
+        Settings.RideHeight = Call.HasArg(7) ? Call.GetFloat(7) : 0.0f;
+        if(Call.HasError()) { return; }
+        const bool bOn = NimbleEngine::MoveOnGround(Call.GetWorld(), From, To, Settings);
+        Call.PushBool(bOn);
+        Call.PushVector3(To);
+    }, "From:Vector3, To:Vector3, RideHeight:number -> OnGround:bool, At:Vector3")
+       .Tooltip("A walk from From to To over walkable terrain: To on the ground (plus RideHeight), "
+                "sliding along slopes too steep to climb. OnGround false (To unchanged) off the terrain");
 
     Lib.Function("Raycast", [](GameCore::ScriptCall& Call)
     {

@@ -25,8 +25,9 @@ namespace RenderCore
      * Material is a material graph like a Render component's slot. Its
      * vertices carry the four paint weights as Vertex Color (R G B A = layers
      * 0 1 2 3) and a world-tiled UV0 (one tile per UVTileSize units), so a
-     * terrain material blends four textures by Vertex Color; the engine's
-     * Materials/Terrain.material does. Empty: DefaultLit.
+     * terrain material blends four textures by them (the Terrain Layer Blend
+     * node). Empty: the engine's Materials/Terrain.material.nmgraph, four
+     * flat colours (grass, earth, rock, snow).
      *
      * Collision is separate, as for meshes: give the entity a Rigid Body
      * (Static, shape Height Field or Auto) for physics. Ground queries

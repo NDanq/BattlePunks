@@ -109,7 +109,7 @@ namespace GameCore
         Props.Choice("Motion", &RigidBodyComponent::Motion, "Dynamic|Kinematic|Static");   // ERigidBodyMotion
         Props.Category("Shape");
         Props.Choice("Shape", &RigidBodyComponent::Shape,
-                     "Auto|Box|Sphere|Capsule|Cylinder|Convex hull|Triangle mesh");         // ERigidBodyShape
+                     "Auto|Box|Sphere|Capsule|Cylinder|Convex hull|Triangle mesh|Height field");   // ERigidBodyShape
         Props.Choice("Shape Source", &RigidBodyComponent::ShapeSource,
                      "Auto|Bounds component|Render component mesh");                        // ERigidBodyShapeSource
         Props.Category("Material");

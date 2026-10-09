@@ -5,6 +5,7 @@
  * on (SampleGround, RaycastTerrain, PhysicsRaycast's terrain fallback).
  */
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -414,6 +415,76 @@ namespace
                "the TerrainProvider finds an entity's terrain for physics");
         TerrainAssetCache::Invalidate("Content/Levels/Test/Terrain/Ground.nmterrain");
     }
+
+    void TestWalking()
+    {
+        /* Flat for X < 3000, then a cliff rising 3 for every 1 (72 degrees) to 3000 high, then flat again. */
+        World TheWorld;
+        auto Data = std::make_shared<TerrainData>();
+        Data->Reset(65, 100.0f);
+        {
+            std::lock_guard<std::mutex> Guard(Data->GetLock());
+            TerrainRect All;
+            for(int32_t Z = 0; Z < 65; ++Z)
+            {
+                for(int32_t X = 0; X < 65; ++X)
+                {
+                    const float Rise = std::clamp(float(X - 30) * 300.0f, 0.0f, 3000.0f);
+                    Data->SetHeight(X, Z, Rise + float(X) * 2.0f);   // and a gentle 1-in-50 everywhere
+                    All.Add(X, Z);
+                }
+            }
+            Data->MarkDirty(All);
+        }
+        const char* Path = "Content/Levels/Test/Terrain/Cliff.nmterrain";
+        TerrainAssetCache::Store(Path, Data);
+        Entity Ground = TheWorld.CreateEntity("Cliff");
+        Ground.AddComponent(TransformComponent());
+        RenderCore::TerrainComponent C;
+        std::snprintf(C.Terrain, sizeof(C.Terrain), "%s", Path);
+        Ground.AddComponent(C);
+
+        NimbleEngine::GroundMoveSettings Walk;
+        Walk.RideHeight = 170.0f;
+
+        /* Up the gentle slope: the eye follows the ground. */
+        EngineCore::Vector3 To(1500.0, 0.0, 3200.0);
+        Expect(NimbleEngine::MoveOnGround(TheWorld, EngineCore::Vector3(1400.0, 170.0, 3200.0), To, Walk)
+               && Near(To.GetX(), 1500.0) && Near(To.GetY(), 30.0 + 170.0, 0.01), "a walk on gentle ground rides 170 above it: y " + Num(To.GetY()));
+
+        /* Into the cliff: stopped at its foot. */
+        EngineCore::Vector3 At(2950.0, 230.0, 3200.0);
+        int Steps = 0;
+        for(; Steps < 40; ++Steps)
+        {
+            EngineCore::Vector3 Next(At.GetX() + 20.0, At.GetY(), At.GetZ());
+            NimbleEngine::MoveOnGround(TheWorld, At, Next, Walk);
+            At = Next;
+        }
+        Expect(At.GetX() < 3060.0 && At.GetY() < 170.0 + 300.0, "the cliff stops a walk up it: x " + Num(At.GetX()) + " y " + Num(At.GetY()));
+
+        /* A diagonal into it slides along its foot instead. */
+        EngineCore::Vector3 Slide(3020.0, 0.0, 3300.0);
+        NimbleEngine::MoveOnGround(TheWorld, EngineCore::Vector3(3000.0, 230.0, 3200.0), Slide, Walk);
+        Expect(Slide.GetZ() > 3250.0 && Slide.GetX() <= 3020.0, "a diagonal into the cliff slides along it: z " + Num(Slide.GetZ()));
+
+        /* Down it is always allowed. */
+        EngineCore::Vector3 Down(3000.0, 0.0, 3200.0);
+        Expect(NimbleEngine::MoveOnGround(TheWorld, EngineCore::Vector3(4100.0, 3300.0, 3200.0), Down, Walk) && Near(Down.GetX(), 3000.0),
+               "stepping off the top is never blocked");
+
+        /* A low ledge is a step: a 1-sample rise of 30 at a steep angle. */
+        NimbleEngine::GroundMoveSettings Steep = Walk;
+        Steep.MaxSlopeDegrees = 5.0f;
+        EngineCore::Vector3 Small(1510.0, 0.0, 3200.0);
+        Expect(NimbleEngine::MoveOnGround(TheWorld, EngineCore::Vector3(1500.0, 200.0, 3200.0), Small, Steep) && Near(Small.GetX(), 1510.0),
+               "a rise under StepHeight is walked up whatever its slope");
+
+        EngineCore::Vector3 Off(9000.0, 50.0, 3200.0);
+        Expect(!NimbleEngine::MoveOnGround(TheWorld, EngineCore::Vector3(6300.0, 50.0, 3200.0), Off, Walk) && Near(Off.GetX(), 9000.0)
+               && Near(Off.GetY(), 50.0), "off the terrain: false, the move left alone");
+        TerrainAssetCache::Invalidate(Path);
+    }
 }
 
 int main()
@@ -425,6 +496,7 @@ int main()
     TestBrushes();
     TestChunkMesh();
     TestGround();
+    TestWalking();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
 }

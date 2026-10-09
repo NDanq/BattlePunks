@@ -1941,6 +1941,19 @@ namespace
         Pure("Vector.Normalize", "Normalize", "Vector", { In("V", W), Out("Out", W, "normalize({V})") }, GVectorTypes, "unit");
         Pure("Vector.Cross",     "Cross",     "Vector", { In("A", "vec3"), In("B", "vec3"), Out("Out", "vec3", "cross({A}, {B})") });
 
+        // --- Terrain ---------------------------------------------------------------
+        /* A terrain's four paint layers (RenderCore's Terrain component puts
+         * their weights in the vertex colour, R G B A = layers 0 1 2 3),
+         * blended: each input times its weight, over the weights' sum. */
+        Pure("Terrain.LayerBlend", "Terrain Layer Blend", "Terrain",
+             { In("Layer0", W), In("Layer1", W), In("Layer2", W), In("Layer3", W),
+               Out("Out", W, "(({Layer0}) * Inputs.Color.r + ({Layer1}) * Inputs.Color.g + ({Layer2}) * Inputs.Color.b"
+                             " + ({Layer3}) * Inputs.Color.a) / max(Inputs.Color.r + Inputs.Color.g + Inputs.Color.b"
+                             " + Inputs.Color.a, 0.0001)") },
+             GFloatTypes, "landscape splat paint weights mix")
+            .Tooltip = "A Terrain's paint layers mixed by their weights (the vertex colour's R G B A). "
+                       "Feed it a colour, roughness or normal per layer.";
+
         Pure("Vector.Split", "Split", "Vector",
              { In("Vector", "vec4"), Out("X", "float", "{Vector}.x"), Out("Y", "float", "{Vector}.y"),
                Out("Z", "float", "{Vector}.z"), Out("W", "float", "{Vector}.w") }, {}, "break components rgba xyzw");

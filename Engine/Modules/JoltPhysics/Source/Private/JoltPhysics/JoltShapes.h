@@ -3,12 +3,14 @@
 
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/Collision/Shape/Shape.h>
 
 #include "Public/GameCore/AABB.h"
+#include "Public/GameCore/Terrain.h"
 #include "Public/Math/Vector.h"
 
 /*
@@ -20,6 +22,7 @@
  *   Auto, no mesh                       a box, the BoundsComponent's
  *   Box / Sphere / Capsule / Cylinder   fitted to the ShapeSource's box
  *   ConvexHull / TriangleMesh           the mesh's vertices / triangles
+ *   Auto or HeightField, with a Terrain the terrain's heightfield (Static, Kinematic)
  *
  * Everything is in the body's space, in metres, with the entity's world scale
  * applied. Hulls and triangle meshes are built once per mesh, in its own
@@ -41,6 +44,11 @@ namespace JoltPhysics
         bool          bHasBounds = false;
         GameCore::AABB BoundsLocal;
 
+        /* The entity's Terrain (GameCore's TerrainProvider), and its revision
+         * when asked: a change rebuilds the body. */
+        std::shared_ptr<GameCore::TerrainData> Terrain;
+        uint64_t                               TerrainRevision = 0;
+
         EngineCore::Vector3 Scale = EngineCore::Vector3(1.0, 1.0, 1.0);   // world scale
         double UnitsPerMeter = 100.0;
     };
@@ -59,6 +67,9 @@ namespace JoltPhysics
         /* InPath's hull (bInTriangles false) or triangles, in the mesh's own
          * units (Build scales them to metres); null if unreadable. */
         JPH::RefConst<JPH::Shape> FindMeshShape(const std::string& InPath, bool bInTriangles);
+
+        /* InRequest.Terrain as a Jolt heightfield, in metres, scaled. */
+        static JPH::RefConst<JPH::Shape> BuildHeightField(const ShapeRequest& InRequest);
 
         /* InPath's bounds from the mesh provider. */
         static bool GetMeshBounds(const std::string& InPath, GameCore::AABB& OutLocal);

@@ -107,6 +107,9 @@ namespace RenderCore
 
     namespace
     {
+        /* What a Terrain with no Material draws with: flat layer colours mixed by its weights. */
+        const char* const DEFAULT_TERRAIN_MATERIAL = "Engine/Content/Materials/Terrain.material.nmgraph";
+
         /* Whether any of a local box's corners, through InClip (projection * view * world), is in the frustum:
          * a box is out when every corner is past the same side. Conservative: corners may straddle. */
         bool BoxInFrustum(const EngineCore::Matrix4x4& InClip, const float (&InMin)[3], const float (&InMax)[3])
@@ -157,7 +160,7 @@ namespace RenderCore
             void ApplyComponent(const void* InComponentBytes) override
             {
                 const auto& C = *static_cast<const TerrainComponent*>(InComponentBytes);
-                Material.assign(C.Material);
+                Material.assign(C.Material[0] != '\0' ? C.Material : DEFAULT_TERRAIN_MATERIAL);
                 bCastShadows = C.bCastShadows != 0;
                 bOccluder    = C.bOccluder != 0;
                 SetVisible(C.bVisible != 0);
