@@ -29,6 +29,9 @@ namespace RenderCore
      * node). Empty: the engine's Materials/Terrain.material.nmgraph, four
      * flat colours (grass, earth, rock, snow).
      *
+     * Foliage (Foliage, a .nmfoliage) draws with the terrain's chunks: in view
+     * with them, as dense as each chunk's LOD keeps, with each type's LOD meshes.
+     *
      * Collision is separate, as for meshes: give the entity a Rigid Body
      * (Static, shape Height Field or Auto) for physics. Ground queries
      * (NimbleEngine's SampleGround, the editor's picking) read the terrain
@@ -51,6 +54,12 @@ namespace RenderCore
          * as far, every second; further, every fourth (and shadows the same).
          * 0: one and a half chunk widths. Skirts hide the cracks between. */
         float   LODDistance  = 0.0f;
+
+        /* Its foliage (a runtime-relative .nmfoliage, GameCore's Foliage.h):
+         * instanced meshes standing on it, drawn and culled with its chunks.
+         * "": none. Foliage Visible hides it on its own. */
+        char    Foliage[GameCore::TERRAIN_PATH_MAX] = {};
+        uint8_t bFoliageVisible = 1;
     };
 
     /* TerrainComponent's proxy factory, for Renderer::Initialize to register. */
