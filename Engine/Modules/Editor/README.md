@@ -527,7 +527,7 @@ Sequencer's cache, so the next Play plays it.
 
 The console drives the tab in front, for scripts and tests: `sequence <path> |
 new | close | seek <seconds | marker> | play | pause | cuts <on|off> |
-autokey <on|off> | sound <on|off> | scrub <on|off>`. With `--command "after <ms> ..."` and `screenshot`, a
+autokey <on|off> | sound <on|off> | scrub <on|off> | height <px> | windowshot <file.png>`; `windowshot <file.png>` saves the whole editor window. With `--command "after <ms> ..."` and `screenshot`, a
 scripted run can look through each shot.
 
 ## Particle Editor

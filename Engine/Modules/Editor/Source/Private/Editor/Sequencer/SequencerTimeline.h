@@ -86,6 +86,8 @@ public:
     double GetVisibleFrames() const;
     /* The whole sequence across the lanes. */
     void   FitAll();
+    /* Rows scrolled so InTrack's row shows (no change if it already does). */
+    void   ScrollToTrack(const SequencerTrackRef& InTrack);
 
     /* Scrubbing lands on whole frames. */
     void SetSnap(bool bInSnap) { bSnap = bInSnap; }
@@ -138,6 +140,7 @@ private:
 
     double PixelsPerFrame = 6.0;
     double ScrollFrame    = 0.0;   // the frame at the lanes' left edge
+    bool   bFitPending    = false; // FitAll asked before the lanes had a width: done on the first real size
     int    ScrollRow      = 0;     // the first row shown
     bool   bSnap          = true;
 
