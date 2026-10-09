@@ -65,6 +65,7 @@
 #include "Private/Editor/Sequencer/SequencerTab.h"
 #include "Private/Editor/Sequencer/SequencerTimeline.h"
 #include "Private/Editor/Sequencer/SequencerWindow.h"
+#include "Private/Editor/Terrain/FoliageEditing.h"
 #include "Private/Editor/Terrain/TerrainEditing.h"
 #include "Private/Editor/Terrain/TerrainToolsWindow.h"
 #include "Private/Editor/Particles/ParticleDocument.h"
@@ -121,6 +122,20 @@ namespace
      * its manifest, its folder of entity and instance files and its baked
      * lighting (Lighting/), stale ones removed -- so the next Play loads what
      * was saved without a build. */
+    /* InFrom's files and folders, recursively, into InTo (made if need be). */
+    void CopyFolder(const QDir& InFrom, const QString& InTo)
+    {
+        QDir().mkpath(InTo);
+        for(const QString& Each : InFrom.entryList(QDir::Files))
+        {
+            QFile::copy(InFrom.filePath(Each), QDir(InTo).filePath(Each));
+        }
+        for(const QString& Each : InFrom.entryList(QDir::Dirs | QDir::NoDotAndDotDot))
+        {
+            CopyFolder(QDir(InFrom.filePath(Each)), QDir(InTo).filePath(Each));
+        }
+    }
+
     void StageWorldPackage(const QString& InPath)
     {
         const QString Staged = EditorGraphs::GetStagedPath(InPath);
@@ -134,26 +149,15 @@ namespace
         QFile::remove(Staged);
         QFile::copy(InPath, Staged);
 
+        /* The level's folder, whole: its entities and what lives beside them --
+         * Lighting/ (a bake), Terrain/ (heightfields and foliage) -- so a save
+         * never leaves the staged copy without a file the level names. */
         const QDir SourceEntities(Source.dir().filePath(Source.completeBaseName()));
         QDir TargetEntities(Target.dir().filePath(Target.completeBaseName()));
         TargetEntities.removeRecursively();
         if(SourceEntities.exists())
         {
-            QDir().mkpath(TargetEntities.absolutePath());
-            for(const QString& Each : SourceEntities.entryList(QDir::Files))
-            {
-                QFile::copy(SourceEntities.filePath(Each), TargetEntities.filePath(Each));
-            }
-            const QDir SourceLighting(SourceEntities.filePath(QStringLiteral("Lighting")));
-            if(SourceLighting.exists())
-            {
-                const QDir TargetLighting(TargetEntities.filePath(QStringLiteral("Lighting")));
-                QDir().mkpath(TargetLighting.absolutePath());
-                for(const QString& Each : SourceLighting.entryList(QDir::Files))
-                {
-                    QFile::copy(SourceLighting.filePath(Each), TargetLighting.filePath(Each));
-                }
-            }
+            CopyFolder(SourceEntities, TargetEntities.absolutePath());
         }
     }
 
@@ -1562,6 +1566,10 @@ void EditorMainWindow::RegisterConsoleCommands()
     Console.Register(QStringLiteral("terrain"), EditorTerrain::GetConsoleUsage(),
                      QStringLiteral("Make, sculpt, paint, import or export the level's terrain (for scripts and tests)"),
                      [this](const QStringList& InArgs) { EditorTerrain::RunConsoleCommand(Console, InArgs); });
+
+    Console.Register(QStringLiteral("foliage"), EditorFoliage::GetConsoleUsage(),
+                     QStringLiteral("Add, edit, paint or erase the selected terrain's foliage (for scripts and tests)"),
+                     [this](const QStringList& InArgs) { EditorFoliage::RunConsoleCommand(Console, InArgs); });
 
     Console.Register(QStringLiteral("sequence"),
                      QStringLiteral("<path | new | close | seek <seconds | marker> | play | pause | cuts <on|off> | autokey <on|off> | sound <on|off> | scrub <on|off> | height <px> | collapse <on|off> | select <track> [section] | windowshot <file.png>>"),
