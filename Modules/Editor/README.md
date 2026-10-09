@@ -540,6 +540,9 @@ has three tabs:
   `Terrain/` folder. Also heightmap import and export.
 - **Sculpt:** Raise, Lower, Smooth, Flatten, Noise and Set Height.
 - **Paint:** the material's four layers, and Smooth Paint.
+- **Foliage:** the terrain's foliage types (Add Mesh..., Remove, and each
+  type's settings), painted or erased with the same brush. See
+  `Engine/Source/FOLIAGE.md`.
 
 The **Brush** settings below the tabs are shared. While Sculpt or Paint is in
 front, the viewport's plain left button is the brush (`ViewportTool`,
