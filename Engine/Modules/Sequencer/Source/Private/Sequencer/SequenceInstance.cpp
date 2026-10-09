@@ -20,6 +20,7 @@
 #include "Public/RenderCore/AnimationSystem.h"
 #include "Public/RenderCore/Components/AnimationComponent.h"
 #include "Public/RenderCore/Components/CameraComponent.h"
+#include "Public/RenderCore/PostProcessStack.h"
 
 /* SequenceInstance: one asset applied to one World. README.md has the rules. */
 namespace Sequencer
@@ -190,6 +191,48 @@ namespace Sequencer
             const float T = std::clamp(InT, 0.0f, 1.0f);
             return T * T * (3.0f - 2.0f * T);
         }
+    }
+
+    // === Post process ========================================================
+
+    void SequencePostProcess::Append(const SequencePostProcess& InOther)
+    {
+        Stacks.insert(Stacks.end(), InOther.Stacks.begin(), InOther.Stacks.end());
+        for(const Setting& Each : InOther.Settings)
+        {
+            auto Found = std::find_if(Settings.begin(), Settings.end(), [&](const Setting& InMine) { return InMine.Name == Each.Name; });
+            if(Found != Settings.end()) { Found->Value = Each.Value; }
+            else                        { Settings.push_back(Each); }
+        }
+    }
+
+    bool SequencePostProcess::operator==(const SequencePostProcess& InOther) const
+    {
+        if(Stacks.size() != InOther.Stacks.size() || Settings.size() != InOther.Settings.size()) { return false; }
+        for(size_t Index = 0; Index < Stacks.size(); ++Index)
+        {
+            if(Stacks[Index].Path != InOther.Stacks[Index].Path || Stacks[Index].Weight != InOther.Stacks[Index].Weight) { return false; }
+        }
+        for(size_t Index = 0; Index < Settings.size(); ++Index)
+        {
+            if(Settings[Index].Name != InOther.Settings[Index].Name || Settings[Index].Value != InOther.Settings[Index].Value) { return false; }
+        }
+        return true;
+    }
+
+    void PushPostProcess(const GameCore::World& InWorld, const SequencePostProcess& InPost)
+    {
+        RenderCore::PostProcessOverride Override;
+        for(const SequencePostProcess::Stack& Each : InPost.Stacks)
+        {
+            Override.Stacks.push_back({ Each.Path, Each.Weight });
+        }
+        for(const SequencePostProcess::Setting& Each : InPost.Settings)
+        {
+            RenderCore::EPostProcessParam Param;
+            if(RenderCore::FindPostProcessParam(Each.Name.c_str(), Param)) { Override.Params.push_back({ Param, Each.Value }); }
+        }
+        RenderCore::SetPostProcessOverride(&InWorld, Override);
     }
 
     // === Lifetime ============================================================
@@ -373,6 +416,7 @@ namespace Sequencer
         InFrame = std::clamp(InFrame, 0.0, double(std::max(Asset->Length, 0)));
         Fade = -1.0f;
         Shot = SequenceShot();
+        PostProcess = SequencePostProcess();
 
         for(size_t Index = 0; Index < Bindings.size(); ++Index)
         {
@@ -440,6 +484,26 @@ namespace Sequencer
                 }
                 break;
             case ESequenceTrackType::SubSequence: EvaluateSubs(InOutBound, InFrame); break;
+            case ESequenceTrackType::PostProcess:
+                /* Each section under the playhead, at its weight times its fades. */
+                for(const SequenceSection& Section : Track.Sections)
+                {
+                    if(!Section.Contains(InFrame) || Section.Asset.empty()) { continue; }
+                    float Envelope = 1.0f;
+                    if(Section.BlendIn > 0)  { Envelope = std::min(Envelope, float((InFrame - double(Section.Start)) / double(Section.BlendIn))); }
+                    if(Section.BlendOut > 0) { Envelope = std::min(Envelope, float((double(Section.End) - InFrame) / double(Section.BlendOut))); }
+                    const float Weight = std::clamp(Section.Volume * std::clamp(Envelope, 0.0f, 1.0f), 0.0f, 1.0f);
+                    if(Weight > 0.0f) { PostProcess.Stacks.push_back({ Section.Asset, Weight }); }
+                }
+                break;
+            case ESequenceTrackType::PostProcessSetting:
+                if(!Track.Channels.empty() && !Track.Channels[0].IsEmpty() && !Track.Field.empty())
+                {
+                    SequencePostProcess Setting;
+                    Setting.Settings.push_back({ Track.Field, Track.Channels[0].Evaluate(InFrame, 0.0f) });
+                    PostProcess.Append(Setting);
+                }
+                break;
             case ESequenceTrackType::Event:
             case ESequenceTrackType::Audio:
             case ESequenceTrackType::Count:     break;
@@ -711,6 +775,7 @@ namespace Sequencer
             Sub->Evaluate(SubFrame(Track.Sections[Index], *Sub, InFrame));
             if(Fade < 0.0f)  { Fade = Sub->GetFade(); }
             if(!Shot.bValid) { Shot = Sub->GetShot(); }
+            PostProcess.Append(Sub->GetPostProcess());
         }
     }
 
@@ -1044,6 +1109,7 @@ namespace Sequencer
         }
         Shot = SequenceShot();
         Fade = -1.0f;
+        PostProcess = SequencePostProcess();
         ReleaseSpawned();
     }
 

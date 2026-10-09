@@ -58,7 +58,10 @@ namespace Sequencer
 
     /* The world is going away: what the players made goes with it, nothing
      * restored, and the host told nothing (it is going too). */
-    SequenceWorld::~SequenceWorld() = default;
+    SequenceWorld::~SequenceWorld()
+    {
+        if(!AppliedPostProcess.IsEmpty()) { PushPostProcess(World, SequencePostProcess()); }
+    }
 
     void SequenceWorld::SetHost(const SequenceHost& InHost)
     {
@@ -507,6 +510,22 @@ namespace Sequencer
             AppliedFade = Fade;
             if(Host.SetFade) { Host.SetFade(Fade, Host.UserData); }
         }
+        /* Post process: earlier-started players first, so a later one's settings win. */
+        std::vector<const Player*> Playing;
+        for(const auto& Entry : Players)
+        {
+            const Player& P = Entry.second;
+            if(P.Instance && (P.State == ESequencePlayState::Playing || P.State == ESequencePlayState::Paused)) { Playing.push_back(&P); }
+        }
+        std::sort(Playing.begin(), Playing.end(), [](const Player* InA, const Player* InB) { return InA->StartOrder < InB->StartOrder; });
+        SequencePostProcess Post;
+        for(const Player* P : Playing) { Post.Append(P->Instance->GetPostProcess()); }
+        if(Post != AppliedPostProcess)
+        {
+            AppliedPostProcess = Post;
+            PushPostProcess(World, Post);
+        }
+
         if(bCinema != bAppliedCinematic)
         {
             bAppliedCinematic = bCinema;

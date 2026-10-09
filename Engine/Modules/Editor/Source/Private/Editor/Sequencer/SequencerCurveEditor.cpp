@@ -50,7 +50,8 @@ std::vector<int> SequencerCurveEditor::GetChannels() const
     std::vector<int> Channels;
     const SequenceTrack* Track = Document.FindTrack(Document.GetCurrentTrack());
     if(!Track) { return Channels; }
-    if(Track->Type == ESequenceTrackType::Float || Track->Type == ESequenceTrackType::Fade || Track->Type == ESequenceTrackType::Bool)
+    if(Track->Type == ESequenceTrackType::Float || Track->Type == ESequenceTrackType::Fade || Track->Type == ESequenceTrackType::Bool
+       || Track->Type == ESequenceTrackType::PostProcessSetting)
     {
         Channels.push_back(0);
         return Channels;

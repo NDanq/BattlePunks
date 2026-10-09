@@ -21,6 +21,7 @@
 #include "Public/GameCore/Components/TransformComponent.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
+#include "Public/RenderCore/PostProcessStack.h"
 #include "Public/Sequencer/SequenceFile.h"
 #include "Private/Editor/Sequencer/SequencerCurveEditor.h"
 #include "Private/Editor/Sequencer/SequencerDetails.h"
@@ -311,6 +312,13 @@ static void TestTab(const QString& InDir)
         Tab.GetDocument().SetPlayhead(45.0);
         Expect(Near(World.GetEntity(Hero).GetComponent<GameCore::TransformComponent>()->Position.GetY(), 75.0, 0.01), "and the preview plays it");
 
+        /* A post process setting: the preview lays it over the level. */
+        const SequencerTrackRef Focus = Tab.GetDocument().AddTrack(-1, ESequenceTrackType::PostProcessSetting, QString(), QStringLiteral("DofFocusDistance"));
+        Tab.GetDocument().SetKey(Focus, 0, 0, 900.0f);
+        const RenderCore::PostProcessOverride Pushed = RenderCore::GetPostProcessOverride(&World);
+        Expect(Pushed.Params.size() == 1 && Pushed.Params[0].Param == RenderCore::EPostProcessParam::DofFocusDistance
+               && Near(Pushed.Params[0].Value, 900.0), "the preview's post process is the level's override");
+
         /* A binding for the selected entity. */
         const GameCore::EntityID Prop = Level.CreateEntity(QStringLiteral("Prop"), EngineCore::Vector3());
         Level.SetSelection(Prop);
@@ -332,6 +340,7 @@ static void TestTab(const QString& InDir)
         Expect(Tab.ConfirmClose(), "closes clean");
     }
     Expect(Near(X(), -50.0), "closed: the level is as it was: " + std::to_string(X()));
+    Expect(RenderCore::GetPostProcessOverride(&World).IsEmpty(), "and its post process override is gone");
 }
 
 /* The Sequencer docked in a main window: hidden until a sequence opens, tabbed

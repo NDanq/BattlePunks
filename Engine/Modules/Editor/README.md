@@ -514,7 +514,9 @@ the viewport move that shot's camera. With **Auto-key** a bound entity moved by
 the gizmo or the Details panel is keyed at the playhead -- the channels that
 moved -- once the move ends; without it, the move lasts until the preview
 shows another frame. Edit history is the sequence's own: a snapshot of the
-whole asset a step. **Save** writes the XML, stages it and drops it from the
+whole asset a step. The preview also lays the sequence's post process over the
+level's (Post Process and Post Process Setting tracks), and takes it off with
+the rest. **Save** writes the XML, stages it and drops it from the
 Sequencer's cache, so the next Play plays it.
 
 The console drives the tab in front, for scripts and tests: `sequence <path> |

@@ -14,7 +14,8 @@ namespace RenderCore
      * PostProcessStack.h) applied while the camera is in this entity's
      * volume: its sibling Bounds component's World box. Full strength
      * inside, fading to nothing over BlendDistance outside (0: a hard edge).
-     * With no Bounds it applies everywhere.
+     * With no Bounds it applies everywhere. Weight (0..1) scales all of
+     * that: a sequence or a script fades a volume in and out with it.
      *
      * Every volume the camera is in blends, Priority low first, so a higher
      * one's settings win where both have the effect (BlendPostProcess). Stack
@@ -29,6 +30,7 @@ namespace RenderCore
         int32_t Priority = 0;
         uint8_t bEnabled = 1;
         float   BlendDistance = 0.0f;
+        float   Weight        = 1.0f;   // 0 off .. 1 full strength
     };
 }
 

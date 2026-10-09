@@ -19,6 +19,7 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 
+#include "Public/RenderCore/PostProcessStack.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 
@@ -300,6 +301,24 @@ void SequencerDetails::BuildTrack(const SequencerTrackRef& InTrack)
             if(SequenceTrack* Live = Document.FindLiveTrack(InTrack)) { Live->Field = InText.toStdString(); }
         });
     }
+    if(Track->Type == ESequenceTrackType::PostProcessSetting)
+    {
+        QStringList Settings;
+        int Current = -1;
+        for(size_t Index = 0; Index < size_t(RenderCore::EPostProcessParam::Count); ++Index)
+        {
+            Settings << QString::fromLatin1(RenderCore::PostProcessParamName(RenderCore::EPostProcessParam(Index)));
+            if(Track->Field == RenderCore::PostProcessParamName(RenderCore::EPostProcessParam(Index))) { Current = int(Index); }
+        }
+        AddChoice(QStringLiteral("Setting"), Settings, Current, [this, InTrack](SequenceAsset&, const int InIndex)
+        {
+            if(SequenceTrack* Live = Document.FindLiveTrack(InTrack))
+            {
+                Live->Field = RenderCore::PostProcessParamName(RenderCore::EPostProcessParam(InIndex));
+            }
+        });
+        AddNote(QStringLiteral("Keyed over whatever the level's volumes give, and turns its effect on."));
+    }
     AddNote(Sequencer::IsSectionTrack(Track->Type) ? QStringLiteral("Double-click its lane to add a section.")
           : Track->Type == ESequenceTrackType::Event ? QStringLiteral("Double-click its lane to add an event.")
           : QStringLiteral("Double-click its lane (a Transform track's channels) to add a key; K keys the binding's pose."));
@@ -384,6 +403,13 @@ void SequencerDetails::BuildSection(const SequencerItem& InItem)
                 if(auto* S = Live()) { S->Asset = InText.toStdString(); }
             }, QStringLiteral("Sounds (*.nmsound)"));
             break;
+        case ESequenceTrackType::PostProcess:
+            AddText(QStringLiteral("Stack"), QString::fromStdString(Section.Asset), [Live](SequenceAsset&, const QString& InText)
+            {
+                if(auto* S = Live()) { S->Asset = InText.toStdString(); }
+            }, QStringLiteral("Post Process Stacks (*.pp.nmgraph)"));
+            AddFloat(QStringLiteral("Weight"), Section.Volume, 0.0, 1.0, 2, [Live](SequenceAsset&, const double V) { if(auto* S = Live()) { S->Volume = float(V); } });
+            break;
         case ESequenceTrackType::SubSequence:
             AddText(QStringLiteral("Sequence"), QString::fromStdString(Section.Asset), [Live](SequenceAsset&, const QString& InText)
             {
@@ -396,13 +422,13 @@ void SequencerDetails::BuildSection(const SequencerItem& InItem)
 
     AddInt(QStringLiteral("Start"), Section.Start, 0, 1000000, [Live](SequenceAsset&, const int V) { if(auto* S = Live()) { const int L = S->GetLength(); S->Start = V; S->End = V + L; } });
     AddInt(QStringLiteral("Length"), Section.GetLength(), 1, 1000000, [Live](SequenceAsset&, const int V) { if(auto* S = Live()) { S->End = S->Start + V; } });
-    if(Track->Type != ESequenceTrackType::CameraCut)
+    if(Track->Type != ESequenceTrackType::CameraCut && Track->Type != ESequenceTrackType::PostProcess)
     {
         AddFloat(QStringLiteral("Play rate"), Section.PlayRate, 0.01, 100.0, 3, [Live](SequenceAsset&, const double V) { if(auto* S = Live()) { S->PlayRate = float(V); } });
         AddInt(QStringLiteral("Offset"), Section.Offset, 0, 1000000, [Live](SequenceAsset&, const int V) { if(auto* S = Live()) { S->Offset = V; } });
     }
     AddInt(QStringLiteral("Blend in"), Section.BlendIn, 0, 1000000, [Live](SequenceAsset&, const int V) { if(auto* S = Live()) { S->BlendIn = V; } });
-    if(Track->Type == ESequenceTrackType::Audio || Track->Type == ESequenceTrackType::Animation)
+    if(Track->Type == ESequenceTrackType::Audio || Track->Type == ESequenceTrackType::Animation || Track->Type == ESequenceTrackType::PostProcess)
     {
         AddInt(QStringLiteral("Blend out"), Section.BlendOut, 0, 1000000, [Live](SequenceAsset&, const int V) { if(auto* S = Live()) { S->BlendOut = V; } });
     }

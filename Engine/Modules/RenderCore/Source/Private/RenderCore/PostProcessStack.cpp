@@ -521,3 +521,99 @@ namespace RenderCore
         Cache.Stacks.erase(InPath);
     }
 }
+
+// === Overrides (Sequencer's Post Process tracks) ===================================
+
+namespace RenderCore
+{
+    namespace
+    {
+        const char* const PARAM_NAMES[] =
+        {
+            "Exposure", "DofFocusDistance", "DofFocusRange", "DofMaxBlur", "BloomIntensity", "BloomThreshold",
+            "FogDensity", "MotionIntensity", "AoIntensity", "SsrIntensity",
+        };
+        static_assert(sizeof(PARAM_NAMES) / sizeof(PARAM_NAMES[0]) == size_t(EPostProcessParam::Count), "one name each");
+
+        std::mutex& OverrideMutex()
+        {
+            static std::mutex Mutex;
+            return Mutex;
+        }
+
+        std::unordered_map<const void*, PostProcessOverride>& Overrides()
+        {
+            static std::unordered_map<const void*, PostProcessOverride> Map;
+            return Map;
+        }
+    }
+
+    const char* PostProcessParamName(const EPostProcessParam InParam)
+    {
+        const size_t Index = size_t(InParam);
+        return Index < size_t(EPostProcessParam::Count) ? PARAM_NAMES[Index] : "";
+    }
+
+    bool FindPostProcessParam(const char* InName, EPostProcessParam& OutParam)
+    {
+        if(!InName) { return false; }
+        for(size_t Index = 0; Index < size_t(EPostProcessParam::Count); ++Index)
+        {
+            if(std::strcmp(InName, PARAM_NAMES[Index]) == 0)
+            {
+                OutParam = EPostProcessParam(Index);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void ApplyPostProcessParam(PostProcessSettings& S, const EPostProcessParam InParam, const float InValue)
+    {
+        switch(InParam)
+        {
+            case EPostProcessParam::Exposure:         S.bToneMapping = 1;       S.Exposure = InValue; break;
+            case EPostProcessParam::DofFocusDistance: S.bDepthOfField = 1;      S.DofFocusDistance = std::max(0.0f, InValue); break;
+            case EPostProcessParam::DofFocusRange:    S.bDepthOfField = 1;      S.DofFocusRange = std::max(0.0f, InValue); break;
+            case EPostProcessParam::DofMaxBlur:       S.bDepthOfField = 1;      S.DofMaxBlur = std::max(0.0f, InValue); break;
+            case EPostProcessParam::BloomIntensity:   S.bBloom = 1;             S.BloomIntensity = std::max(0.0f, InValue); break;
+            case EPostProcessParam::BloomThreshold:   S.bBloom = 1;             S.BloomThreshold = InValue; break;
+            case EPostProcessParam::FogDensity:       S.bVolumetricFog = 1;     S.FogDensity = std::max(0.0f, InValue); break;
+            case EPostProcessParam::MotionIntensity:  S.bMotionBlur = 1;        S.MotionIntensity = std::max(0.0f, InValue); break;
+            case EPostProcessParam::AoIntensity:      S.bAmbientOcclusion = 1;  S.AoIntensity = std::max(0.0f, InValue); break;
+            case EPostProcessParam::SsrIntensity:     S.bScreenReflections = 1; S.SsrIntensity = std::max(0.0f, InValue); break;
+            case EPostProcessParam::Count:            break;
+        }
+    }
+
+    void SetPostProcessOverride(const void* InWorld, const PostProcessOverride& InOverride)
+    {
+        std::lock_guard<std::mutex> Lock(OverrideMutex());
+        if(InOverride.IsEmpty()) { Overrides().erase(InWorld); }
+        else                     { Overrides()[InWorld] = InOverride; }
+    }
+
+    PostProcessOverride GetPostProcessOverride(const void* InWorld)
+    {
+        std::lock_guard<std::mutex> Lock(OverrideMutex());
+        const auto Found = Overrides().find(InWorld);
+        return Found != Overrides().end() ? Found->second : PostProcessOverride();
+    }
+
+    void ApplyPostProcessOverride(const void* InWorld, PostProcessSettings& InOutSettings)
+    {
+        const PostProcessOverride Override = GetPostProcessOverride(InWorld);
+        for(const PostProcessOverride::Stack& Each : Override.Stacks)
+        {
+            if(!(Each.Weight > 0.0f)) { continue; }
+            if(const std::shared_ptr<const PostProcessSettings> Stack = PostProcessStackCache::Find(Each.Path))
+            {
+                BlendPostProcess(InOutSettings, *Stack, std::min(Each.Weight, 1.0f));
+            }
+        }
+        for(const PostProcessOverride::Param& Each : Override.Params)
+        {
+            ApplyPostProcessParam(InOutSettings, Each.Param, Each.Value);
+        }
+    }
+}
