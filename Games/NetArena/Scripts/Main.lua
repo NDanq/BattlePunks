@@ -3,12 +3,12 @@
 -- loaded -- on every process: the server and each client alike. The Net
 -- library says which one this is (networking starts before the level loads).
 --
--- The capsules and their RPC are C++ (NetArenaGame.cpp); from Lua the same
--- RPC is a method of the component, routed by the network:
+-- The capsules are avatars (Engine/Source/AVATARS.md): each one's Avatar
+-- Harness reads its player's keys and the engine sends them to the server. From
+-- Lua, a capsule's input reads the same way on every process:
 --
---   local pawn = World.FindEntity("Host"):GetComponent("NetArenaPawn")
---   pawn:ServerMove(1, 1, 0, 0, 0.016)                          -- move 1: right, a frame
---   Net.Call(pawn:GetEntity(), "NetArenaPawn", "ServerMove", 2, 1, 0, 0, 0.016)
+--   local harness = Game.GetLocalAvatar(0):GetComponent("AvatarHarness")
+--   print(harness:GetAxis("MoveRight"), harness:IsLocallyControlled())
 
 local Role = Net.IsDedicatedServer() and "a dedicated server"
           or Net.IsServer() and "a listen server"
@@ -27,3 +27,8 @@ if Net.IsServer() then
         print(string.format("NetArena (Lua): client %d left", Client))
     end)
 end
+
+-- Every process hears who takes which capsule (a client, as it replicates).
+Events.On(Game.Possessed, function(Player, Avatar)
+    print("NetArena (Lua): " .. Player:GetName() .. " drives " .. Avatar:GetName())
+end)

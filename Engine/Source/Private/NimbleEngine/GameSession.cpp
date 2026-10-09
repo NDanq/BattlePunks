@@ -7,7 +7,9 @@
 #include <utility>
 #include <vector>
 
+#include "Public/NimbleEngine/Avatar.h"
 #include "Public/NimbleEngine/GameConsole.h"
+#include "Public/NimbleEngine/PlayerStart.h"
 #include "Public/NimbleEngine/NetFacade.h"
 #include "Public/NimbleEngine/GameState.h"
 #include "Public/NimbleEngine/Level.h"
@@ -23,6 +25,7 @@
 #include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldSerializer.h"
 #include "Public/RenderCore/Renderer.h"
+#include "Public/RenderCore/Components/CameraComponent.h"
 #include "Public/UI/UISystem.h"
 
 #if WITH_JOLTPHYSICS
@@ -51,19 +54,33 @@ NIMBLE_CONFIG_BOOL(GStatsAudio, "Stats", "Audio", false, nullptr);
 #if WITH_AUDIO
 namespace
 {
-    /* The level heard from its active camera when it has no active Audio
-     * Listener: the first active Camera, as WorldBridge views through it. */
-    bool CameraListener(GameCore::World& InWorld, Audio::AudioListenerPose& OutPose, void* /*InUserData*/)
+    void PoseFromCamera(const GameCore::Entity& InEntity, Audio::AudioListenerPose& OutPose)
     {
+        const GameCore::TransformPose Pose = InEntity.GetWorldPose();
+        const GameCore::Rotation3     Turn = GameCore::TransformMath::EulerToRotation(Pose.Rotation);
+        OutPose.Position = Pose.Position;
+        OutPose.Forward  = Turn * EngineCore::Vector3(0.0, 0.0, 1.0);
+        OutPose.Up       = Turn * EngineCore::Vector3(0.0, 1.0, 0.0);
+    }
+
+    /* The level heard from its camera when it has no active Audio Listener:
+     * the one it is viewed through (the view target), else the first active
+     * Camera, as WorldBridge views through it. */
+    bool CameraListener(GameCore::World& InWorld, Audio::AudioListenerPose& OutPose, void* InUserData)
+    {
+        auto* Session = static_cast<NimbleEngine::GameSession*>(InUserData);
+        const GameCore::EntityID Viewed = Session ? Session->GetRenderer().GetViewCamera() : GameCore::EntityID();
+        if(Viewed.IsSet() && InWorld.IsAlive(Viewed))
+        {
+            PoseFromCamera(InWorld.GetEntity(Viewed), OutPose);
+            return true;
+        }
+
         bool bFound = false;
         InWorld.Each<RenderCore::CameraComponent>([&](GameCore::Entity InEntity, RenderCore::CameraComponent& InCamera)
         {
             if(bFound || !InCamera.bActive) { return; }
-            const GameCore::TransformPose Pose = InEntity.GetWorldPose();
-            const GameCore::Rotation3     Turn = GameCore::TransformMath::EulerToRotation(Pose.Rotation);
-            OutPose.Position = Pose.Position;
-            OutPose.Forward  = Turn * EngineCore::Vector3(0.0, 0.0, 1.0);
-            OutPose.Up       = Turn * EngineCore::Vector3(0.0, 1.0, 0.0);
+            PoseFromCamera(InEntity, OutPose);
             bFound = true;
         });
         return bFound;
@@ -213,7 +230,7 @@ namespace NimbleEngine
         LevelAudio = EngineCore::Memory::Alloc<Audio::AudioWorld>();
         if(LevelAudio->Attach(*LevelWorld))
         {
-            LevelAudio->SetListenerFallback(&CameraListener, nullptr);
+            LevelAudio->SetListenerFallback(&CameraListener, this);
             /* Rendering.BindWorld above attached the animation system. */
             if(RenderCore::AnimationSystem* Animation = RenderCore::AnimationSystem::Find(LevelWorld))
             {
@@ -240,6 +257,13 @@ namespace NimbleEngine
          * script and system this frame reads this frame's input. */
         LevelWorld->RegisterSystem("Engine.Input", GameCore::TP_PrePhysics, &GameSession::ResolveInput, this,
                                    GameCore::SO_BeforeScripts);
+
+        /* Right after: each AvatarHarness from its player's devices, or (a
+         * server) its client's (Avatar.h). */
+        ViewTarget = GameCore::EntityID();
+        Avatars = EngineCore::Memory::Alloc<AvatarWorld>();
+        Avatars->Attach(*LevelWorld);
+        Avatars->SetInput(&FilteredInput);
 
         CORE_LOG("[Level] loading '" + std::string(InLevel.GetName()) + "'")
 
@@ -326,6 +350,10 @@ namespace NimbleEngine
                                + std::string(InLevel.GetName()) + "'; continuing with a fresh level")
             }
         }
+
+        /* Avatars placed for local players are theirs before the mode starts,
+         * so OnStart sees who already has one. */
+        ApplyAutoPossess(*LevelWorld);
 
         if(Mode)
         {
@@ -416,6 +444,15 @@ namespace NimbleEngine
         {
             LevelWorld->OnComponentAdded().Remove(ComponentAddedHandle);
             LevelWorld->OnComponentRemoved().Remove(ComponentRemovedHandle);
+
+            /* Before the World goes: its removals would reach the avatars. */
+            if(Avatars)
+            {
+                Avatars->Detach();
+                EngineCore::Memory::Dealloc(Avatars);
+                Avatars = nullptr;
+            }
+            ViewTarget = GameCore::EntityID();
 
             Scripts.UnbindWorld();
             Rendering.UnbindWorld();
@@ -641,7 +678,9 @@ namespace NimbleEngine
             /* Paused: the components still follow the input, so what the pause
              * menu consumed is not waiting for the game when it resumes. */
             ResolveInputComponents(*LevelWorld, FilteredInput);
+            if(Avatars) { Avatars->Update(0.0f, false); }
         }
+        PublishViewTarget();
 
         PublishPhysicsStat();
         PublishAudioStat();
@@ -744,6 +783,34 @@ namespace NimbleEngine
 #endif
         Rendering.SetStatText("Audio", Text);
         bAudioStatShown = true;
+    }
+
+    void GameSession::SetViewTarget(const GameCore::EntityID InCamera)
+    {
+        CheckGameThread("SetViewTarget");
+        ViewTarget = InCamera;
+        PublishViewTarget();
+    }
+
+    GameCore::EntityID GameSession::GetViewTarget() const
+    {
+        if(LevelWorld && ViewTarget.IsSet() && LevelWorld->IsAlive(ViewTarget)) { return ViewTarget; }
+        return Avatars ? Avatars->GetViewCamera() : GameCore::EntityID();
+    }
+
+    void GameSession::PublishViewTarget()
+    {
+        if(!LevelWorld) { return; }
+
+        /* The target's camera: its own, else its first descendant's. */
+        GameCore::EntityID Camera = GetViewTarget();
+        for(int Depth = 0; Camera.IsSet() && Depth < 16; ++Depth)
+        {
+            const GameCore::Entity Node = LevelWorld->GetEntity(Camera);
+            if(Node.HasComponent<RenderCore::CameraComponent>()) { break; }
+            Camera = Node.GetFirstChild();
+        }
+        if(Camera != Rendering.GetViewCamera()) { Rendering.SetViewCamera(Camera); }
     }
 
     void GameSession::ResolveInput(GameCore::World& InWorld, float /*InDeltaSeconds*/, void* InUserData)

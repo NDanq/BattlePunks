@@ -95,6 +95,10 @@ in its builder, and a script uses `e:AddComponent("PlayerState")`.
   there, so every change goes through the rules. C++ may set the fields to
   set up or reset a player, and nobody is told.
 - **`GetPlayer(Index)`** finds a player by its `PlayerIndex`.
+- **Avatars.** A player drives an avatar: an entity with an Avatar Harness,
+  possessed with `Possess(World, Player, Avatar)`. The avatar reads the
+  player's input, on a server too. `AvatarGameMode` spawns one per player at
+  the level's Player Starts. AVATARS.md has the model.
 
 ## From scripts
 
@@ -188,16 +192,21 @@ With NetCore built (`NIMBLE_WITH_NETCORE`, on by default), the same game runs as
   `PlayerStateComponent` and a `NetComponent` the client owns. Then
   `OnPlayerAdded` and `IGameMode::OnClientConnected(Client, Player)` run.
   Give the player its pawn there. `OnClientDisconnected` comes before the
-  client's entities are destroyed.
-- **Input goes to the server as RPCs.** A client checks
-  `IsLocallyOwned(*Net)` on its own entities and calls a Server RPC
-  (`GAMECORE_RPC`). The server answers with replicated fields, or with Client
-  and Multicast RPCs.
+  client's entities are destroyed. The player also has a Possessor: possess
+  an avatar for it (`AvatarGameMode` does), and the avatar is lent to the
+  client.
+- **Input goes to the server.** An avatar's harness sends its client's input
+  itself, and the server's copy reads the same actions and axes. A
+  simulation predicts the avatar on its client (AVATARS.md). For anything
+  else a client checks `IsLocallyOwned(*Net)` on its own entities and calls a
+  Server RPC (`GAMECORE_RPC`). The server answers with replicated fields, or
+  with Client and Multicast RPCs.
 - **Standalone** (no session, or NetCore compiled out), every `HasAuthority()`
   is true and every RPC runs locally, so the same code plays offline.
 
+`Games/NetArena` is built on avatars (AVATARS.md).
 `Games/LightLab/Source/Private/LightLab/LightLabAvatar.cpp` is the smallest
-working example. Each player is an orb the others see, steered by a Server RPC
+hand-rolled example. Each player is an orb the others see, steered by a Server RPC
 and moved by Transform replication.
 
 ## Physics

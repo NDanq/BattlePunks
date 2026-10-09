@@ -11,6 +11,7 @@
 
 #include "Private/Editor/ConfigIniFile.h"
 
+class InputMapsPage;
 class QComboBox;
 class QDialogButtonBox;
 class QFormLayout;
@@ -23,8 +24,8 @@ class QWidget;
 namespace EngineCore { class ConfigVar; }
 
 /*
- * Edit > Project Settings: the project's Config/DefaultEngine.ini (shared),
- * as opposed to per-user Editor Settings.
+ * Edit > Project Settings: the project's Config/DefaultEngine.ini and
+ * Config/DefaultGame.ini (shared), as opposed to per-user Editor Settings.
  *
  * Edits the master copy in the game's source tree (EditorProject.h), then
  * refreshes the staged copy; without a game, the staged copy. Line-by-line
@@ -33,7 +34,8 @@ namespace EngineCore { class ConfigVar; }
  * Pages: Project (title, module, start world, and the
  * optional engine modules -- [Modules], build-time); Worlds (the project's
  * [World_*] list, NimbleEngine/WorldList.h: every world a level, with its
- * game mode, startup script and whether it is cooked); one per config
+ * game mode, startup script and whether it is cooked); Input (the game's
+ * input maps, [Input_*] in DefaultGame.ini: InputMapsPage.h); one per config
  * section (registered vars, outside [Editor] and [Build], with reset; keys
  * set in the file shown bold); and unregistered keys as text.
  *
@@ -70,6 +72,7 @@ private:
     void     BuildProjectPage();
     void     BuildWorldsPage();
     void     BuildSectionPages();
+    void     BuildInputPage();
 
     /* One row of the Worlds table, from a [World_*] section. */
     void     AddWorldRow(const ConfigIniFile::Section& InSection);
@@ -94,9 +97,12 @@ private:
     ConfigIniFile     File;
     QString           FilePath;
     bool              bFileIsSource = false;
+    ConfigIniFile     GameFile;       // DefaultGame.ini beside File: the input bindings
+    QString           GameFilePath;
 
     std::vector<Row>  Rows;
     QTableWidget*     Worlds = nullptr;
+    InputMapsPage*    Input = nullptr;
     QList<ConfigIniFile::Section> WorldsBaseline;
     QComboBox*        StartLevelChoice = nullptr;
     QString           OpenWorld;

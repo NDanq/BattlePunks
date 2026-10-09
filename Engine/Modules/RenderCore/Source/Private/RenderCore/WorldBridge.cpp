@@ -124,6 +124,7 @@ namespace RenderCore
 
     void WorldBridge::UnbindWorld()
     {
+        ViewCamera = EntityID();
         if(!BoundWorld)
         {
             return;
@@ -287,10 +288,17 @@ namespace RenderCore
 
     RenderView WorldBridge::BuildView(const FrameInfo& InFrame) const
     {
-        /* The first active CameraComponent wins -- see DESIGN.md's "View".
-         * (0, 1, -1) matches GDICamera's own default constructor when no
-         * camera is active. */
-        EngineCore::Vector3 Origin(0.0, 1.0, -1.0);
+        /* The view camera if one is set and still there, else the first
+         * active CameraComponent -- see DESIGN.md's "View". (0, 1, -1)
+         * matches GDICamera's own default constructor when no camera is
+         * active. */
+        if(BoundWorld && ViewCamera.IsSet() && BoundWorld->IsAlive(ViewCamera))
+        {
+            if(const CameraComponent* Camera = BoundWorld->GetEntity(ViewCamera).GetComponent<CameraComponent>())
+            {
+                return ViewThrough(*Camera, InFrame);
+            }
+        }
 
         if(BoundWorld)
         {
@@ -301,41 +309,44 @@ namespace RenderCore
                 const size_t Count  = CameraPool->GetCount();
                 for(size_t Index = 0; Index < Count; ++Index)
                 {
-                    const CameraComponent& Camera = Cameras[Index];
-                    if(!Camera.bActive)
+                    if(Cameras[Index].bActive)
                     {
-                        continue;
+                        return ViewThrough(Cameras[Index], InFrame);
                     }
-
-                    const GameCore::TransformPose Pose = PoseOf(Camera.Owner);
-                    if(Camera.Owner.HasSibling<TransformComponent>() || Camera.Owner.GetEntity().HasParent())
-                    {
-                        Origin = Pose.Position;
-                    }
-
-                    if(Camera.Projection == CP_Perspective)
-                    {
-                        /* Looks along its forward, as a light does; never straight
-                         * up or down, which MakePerspective cannot aim along. */
-                        EngineCore::Vector3 Forward = LightForward(Pose.Rotation);
-                        if(std::abs(Forward.GetY()) > 0.9999)
-                        {
-                            Forward = EngineCore::Vector3(0.0, Forward.GetY() > 0.0 ? 0.9999 : -0.9999, 0.01).GetNormalize();
-                        }
-                        const float ZNear = std::max(Camera.ZNear, 1.0f);
-                        const float ZFar  = std::max(Camera.ZFar, ZNear + 1.0f);
-                        const float FovY  = std::clamp(Camera.FovY, 1.0f, 170.0f);
-                        RenderView View = RenderView::MakePerspective(InFrame.ViewportPixels, Origin, Forward, FovY, ZNear, ZFar);
-                        View.Bounds = PerspectiveBounds(View);
-                        return View;
-                    }
-
-                    return RenderView::MakeOrthographic(InFrame.ViewportPixels, Origin, Camera.ZNear, Camera.ZFar);
                 }
             }
         }
 
-        return RenderView::MakeOrthographic(InFrame.ViewportPixels, Origin, -1.0f, 1000.0f);
+        return RenderView::MakeOrthographic(InFrame.ViewportPixels, EngineCore::Vector3(0.0, 1.0, -1.0), -1.0f, 1000.0f);
+    }
+
+    RenderView WorldBridge::ViewThrough(const CameraComponent& Camera, const FrameInfo& InFrame) const
+    {
+        EngineCore::Vector3 Origin(0.0, 1.0, -1.0);
+        const GameCore::TransformPose Pose = PoseOf(Camera.Owner);
+        if(Camera.Owner.HasSibling<TransformComponent>() || Camera.Owner.GetEntity().HasParent())
+        {
+            Origin = Pose.Position;
+        }
+
+        if(Camera.Projection == CP_Perspective)
+        {
+            /* Looks along its forward, as a light does; never straight
+             * up or down, which MakePerspective cannot aim along. */
+            EngineCore::Vector3 Forward = LightForward(Pose.Rotation);
+            if(std::abs(Forward.GetY()) > 0.9999)
+            {
+                Forward = EngineCore::Vector3(0.0, Forward.GetY() > 0.0 ? 0.9999 : -0.9999, 0.01).GetNormalize();
+            }
+            const float ZNear = std::max(Camera.ZNear, 1.0f);
+            const float ZFar  = std::max(Camera.ZFar, ZNear + 1.0f);
+            const float FovY  = std::clamp(Camera.FovY, 1.0f, 170.0f);
+            RenderView View = RenderView::MakePerspective(InFrame.ViewportPixels, Origin, Forward, FovY, ZNear, ZFar);
+            View.Bounds = PerspectiveBounds(View);
+            return View;
+        }
+
+        return RenderView::MakeOrthographic(InFrame.ViewportPixels, Origin, Camera.ZNear, Camera.ZFar);
     }
 
     RenderLighting WorldBridge::BuildLighting(const EngineCore::Vector3& InEye) const

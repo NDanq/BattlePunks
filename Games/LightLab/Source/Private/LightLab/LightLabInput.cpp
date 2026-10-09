@@ -3,7 +3,7 @@
 /*
  * LightLab's controls: one input map, "Default", read by the Player entity's
  * InputComponent. Keys are names (Engine/Source/INPUT.md); each line is also
- * a config var, so Config/DefaultEngine.ini can rebind it without a rebuild:
+ * a config var, so Config/DefaultGame.ini can rebind it without a rebuild:
  *
  *     [Input_Default]
  *     ToggleShadows = G

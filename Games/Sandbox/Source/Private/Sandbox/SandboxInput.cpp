@@ -4,7 +4,7 @@
  * Sandbox's controls: one input map, "Default", which every InputComponent
  * in the game reads (its Map field's default). Keys are names
  * (Engine/Source/INPUT.md); each line is also a config var, so
- * Config/DefaultEngine.ini can rebind it without a rebuild:
+ * Config/DefaultGame.ini can rebind it without a rebuild:
  *
  *     [Input_Default]
  *     Jump = K, Gamepad.South

@@ -1,13 +1,14 @@
+#include "Public/NimbleEngine/Avatar.h"
 #include "Public/NimbleEngine/GameModule.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/Input.h"
+#include "Public/NimbleEngine/PlayerStart.h"
 #include "Public/NimbleEngine/WorldList.h"
 #include "Public/NimbleEngine/NetFacade.h"
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/ComponentReplication.h"
-#include "Public/GameCore/ComponentRpc.h"
 #include "Public/GameCore/ComponentSerializer.h"
 #if WITH_EDITOR
 #include "Public/GameCore/ComponentProperties.h"
@@ -22,6 +23,7 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 /*
@@ -33,15 +35,17 @@
  * and edits; this file only gives it behaviour:
  *
  *   Content/Levels/NetArena.nmworld   the plane, the sun and sky, the camera,
- *                                     the Controller (this process's keys),
- *                                     four spawn points (NetArenaSpawn: which
- *                                     colour starts there), and the Spinner --
- *                                     a bar with a Net component, so the level
+ *                                     four Player Starts (one kept for each
+ *                                     player, by join order, each naming the
+ *                                     Pawn prefab), and the Spinner -- a bar
+ *                                     with a Net component, so the level
  *                                     itself has something networked in it.
  *   Content/Prefabs/Pawn.nmprefab     a player's capsule: Transform, Render
  *                                     (the capsule mesh, the PawnColor
- *                                     material), Net and NetArenaPawn. The
- *                                     server spawns one per player.
+ *                                     material), Net, NetArenaPawn and an
+ *                                     Avatar Harness (Simulation
+ *                                     NetArenaMove). The server spawns one per
+ *                                     player.
  *
  * What a level entity with a Net component means: every process loads the
  * world, so every process has the Spinner; the server gives its copy a
@@ -52,24 +56,33 @@
  * sent whole to every client (and to any that joins later); the server sets
  * who owns it (NetComponent::OwnerClient) and its colour after spawning.
  *
- * Server-authoritative, as NetCore is (Engine/Modules/NetCore/GUIDE.md):
+ * Server-authoritative, as NetCore is (Engine/Modules/NetCore/GUIDE.md), and
+ * built on avatars (Engine/Source/AVATARS.md), so this file holds no
+ * networking of its own:
  *
- *   - The server spawns the capsules: one for each client that joins
- *     (OnClientConnected), and one for a listen server's or standalone
- *     game's own user (OnStart).
- *   - Each process reads its own keyboard and sends each frame's move, in
- *     the numbered Server RPC ServerMove. On the server the call simply runs;
- *     the server's Transform is the truth, replicated to everyone.
+ *   - The server spawns the capsules (AvatarGameMode): one for each client
+ *     that joins, and one for a listen server's or standalone game's own
+ *     user, at the Player Start kept for it, and possesses each for its
+ *     player.
+ *   - Each capsule's Avatar Harness reads its player's keys on that
+ *     player's process and sends them to the server. NetArenaMove, the
+ *     harness's simulation, moves it from them -- on the server, the truth,
+ *     replicated to everyone.
  *   - The server turns the Spinner (NetArena.Spin).
+ *   - Two karts are placed in the level (Content/Prefabs/Kart.nmprefab): more
+ *     avatars, Requestable, with a faster simulation (NetArenaKart) and a
+ *     chase camera. Interact (E) gets a player in and out (NetArena.Interact,
+ *     on the server, from the harness's input). Scripts/Kart.lua tints a kart
+ *     in its driver's colour; Scripts/Signpost.script.nmgraph, on a placed
+ *     signpost, shows the same avatar queries from a script graph.
  *
- * Smooth, and answering at once (NetFacade.h, "CLIENT-SIDE PREDICTION"): a
- * client shows other capsules and the Spinner a moment behind, blended
- * between the server's updates. Its own capsule is predicted -- Pawn.nmprefab
- * marks its Net component Predicted -- so the client moves it the moment a
- * key is down (ApplyMove, the same code the server runs), and when the
- * server's state comes back replays the moves the server had not reached yet
- * (OnCorrection). The 5-second report logs the worst correction: 0 when
- * client and server agree.
+ * Smooth, and answering at once: a client shows other capsules and the
+ * Spinner a moment behind, blended between the server's updates. Its own
+ * capsule is predicted -- Pawn.nmprefab marks its Net component Predicted --
+ * so the harness runs NetArenaMove there too the moment a key is down, and
+ * replays the frames the server had not reached yet when its state comes
+ * back. The 5-second report logs the worst correction: 0 when client and
+ * server agree.
  *
  * Run it as:
  *
@@ -79,22 +92,24 @@
  *               Play > Network mode = Listen Server; Play (F5); then
  *               Play > New Client Window (Shift+F6)
  *
- *   NetArenaPawnComponent     a capsule: its colour, and ServerMove.
- *   NetArenaSpawnComponent    a spawn point, authored in the level.
+ *   NetArenaPawnComponent     a capsule: its colour.
+ *   NetArenaMove              a capsule's move, from a frame of its input.
+ *   NetArenaKart              a kart's: faster, keeping its heading.
  *   NetArenaSpinnerComponent  turns its entity, on the server.
- *   NetArenaGameMode          registers the systems, sends this process's
- *                             input, spawns capsules. [World_NetArena] in
- *                             Config/DefaultEngine.ini names it.
+ *   NetArenaGameMode          registers the system, colours the capsules
+ *                             AvatarGameMode spawns, reports. [World_NetArena]
+ *                             in Config/DefaultEngine.ini names it.
  */
 
 namespace
 {
-    const char* const PawnPrefab = "Content/Prefabs/Pawn.nmprefab";
-
     /* The arena: a square of this half-size around the origin. */
     constexpr double ArenaHalfSize  = 900.0;
-    /* World units a second. */
+    /* World units a second: on foot, and in a kart. */
     constexpr double PawnSpeed      = 450.0;
+    constexpr double KartSpeed      = 900.0;
+    /* How close a capsule must be to a kart to get in. */
+    constexpr double KartReach      = 300.0;
     /* Seconds between the mode's log reports. */
     constexpr double ReportInterval = 5.0;
 
@@ -122,36 +137,31 @@ namespace
 /* A bot at the keys, for unattended tests: each process steers its capsule
  * round a square of its own, a new side each second. -NetArena.AutoMove=1. */
 NIMBLE_CONFIG_BOOL(GNetArenaAutoMove, "NetArena", "AutoMove", false, nullptr);
+/* The bot also gets into the kart by its start after a second, and out
+ * again five seconds later. -NetArena.AutoKart=1, with AutoMove. */
+NIMBLE_CONFIG_BOOL(GNetArenaAutoKart, "NetArena", "AutoKart", false, nullptr);
 
 // === Input ===================================================================
 
-/* The local player's keys, read through the level's Controller entity. Each
- * process reads its own; the capsule they steer is whichever one it owns. */
+/* A player's keys, read by its capsule's Avatar Harness on its own process. */
 NIMBLE_DEFINE_INPUT_MAP(Default)
 {
     Map.Axis("MoveForward", "W, Up, -S, -Down, -Gamepad.LeftY");
     Map.Axis("MoveRight",   "D, Right, -A, -Left, Gamepad.LeftX");
+    Map.Action("Interact",  "E, Gamepad.West");   // into the nearest kart, and out
 }
 
 // === Components ==============================================================
 
 /* "NetArenaPawn": a player's capsule (Content/Prefabs/Pawn.nmprefab). Its
- * place is its Transform, which the server moves and replicates. */
+ * place is its Transform, which NetArenaMove moves on the server. */
 struct NetArenaPawnComponent
 {
     GAMECORE_COMPONENT_BODY()
 
     /* Which of PawnColors. The server sets it, and the Render colour, when
-     * it spawns the capsule; both reach clients with it. */
+     * the capsule spawns; both reach clients with it. */
     uint8_t ColorIndex = 0;
-
-    /* One frame of its player's input, numbered InSequence, on the server:
-     * the same ApplyMove the player's own process has already run
-     * (prediction), then acknowledged in NetComponent::InputAck so that
-     * process knows which of its moves this state includes. Old or repeated
-     * numbers are ignored; the input is clamped -- a client says where to go,
-     * never how far. */
-    void ServerMove(int32_t InSequence, const EngineCore::Vector3& InDirection, float InSeconds);
 };
 
 GAMECORE_DEFINE_COMPONENT(NetArenaPawnComponent, "NetArenaPawn")
@@ -162,38 +172,10 @@ GAMECORE_DEFINE_COMPONENT_SERIALIZER(NetArenaPawnComponent, 1)
     Ar.Field("ColorIndex", C.ColorIndex);
 }
 
-GAMECORE_DEFINE_COMPONENT_RPCS(NetArenaPawnComponent)
-{
-    Rpc.Server<&NetArenaPawnComponent::ServerMove>("ServerMove");
-}
-
 #if WITH_EDITOR
 GAMECORE_DEFINE_COMPONENT_PROPERTIES(NetArenaPawnComponent)
 {
     Props.Choice("Color", &NetArenaPawnComponent::ColorIndex, "Red|Blue|Green|Yellow");
-}
-#endif
-
-/* "NetArenaSpawn": where a colour's capsule starts. Placed in the level, an
- * entity with a Transform and this; nothing else reads it but the mode. */
-struct NetArenaSpawnComponent
-{
-    GAMECORE_COMPONENT_BODY()
-
-    uint8_t ColorIndex = 0;
-};
-
-GAMECORE_DEFINE_COMPONENT(NetArenaSpawnComponent, "NetArenaSpawn")
-
-GAMECORE_DEFINE_COMPONENT_SERIALIZER(NetArenaSpawnComponent, 1)
-{
-    Ar.Field("ColorIndex", C.ColorIndex);
-}
-
-#if WITH_EDITOR
-GAMECORE_DEFINE_COMPONENT_PROPERTIES(NetArenaSpawnComponent)
-{
-    Props.Choice("Color", &NetArenaSpawnComponent::ColorIndex, "Red|Blue|Green|Yellow");
 }
 #endif
 
@@ -240,7 +222,8 @@ namespace
      * owner's prediction and its replay after a correction all call this, so
      * they agree to the bit -- prediction only works if they do.
      */
-    void ApplyMove(GameCore::TransformComponent& InOut, const EngineCore::Vector3& InDirection, const float InSeconds)
+    void ApplyMove(GameCore::TransformComponent& InOut, const EngineCore::Vector3& InDirection, const float InSeconds,
+                   const double InSpeed = PawnSpeed, const bool bInFace = true)
     {
         double X = std::clamp(double(InDirection.GetX()), -1.0, 1.0);
         double Z = std::clamp(double(InDirection.GetZ()), -1.0, 1.0);
@@ -248,26 +231,45 @@ namespace
         if(Length < 0.01) { return; }
         if(Length > 1.0) { X /= Length; Z /= Length; }   // diagonals no faster
 
-        const double Step = PawnSpeed * double(std::clamp(InSeconds, 0.0f, MaxMoveSeconds));
+        const double Step = InSpeed * double(std::clamp(InSeconds, 0.0f, MaxMoveSeconds));
         const double NewX = std::clamp(double(InOut.Position.GetX()) + X * Step, -ArenaHalfSize, ArenaHalfSize);
         const double NewZ = std::clamp(double(InOut.Position.GetZ()) + Z * Step, -ArenaHalfSize, ArenaHalfSize);
         InOut.Position = EngineCore::Vector3(NewX, InOut.Position.GetY(), NewZ);
 
         /* Face where it is going. */
-        InOut.Rotation = EngineCore::Vector3(0.0, std::atan2(X, Z) * 57.29577951308232, 0.0);
+        if(bInFace) { InOut.Rotation = EngineCore::Vector3(0.0, std::atan2(X, Z) * 57.29577951308232, 0.0); }
     }
 }
 
-void NetArenaPawnComponent::ServerMove(const int32_t InSequence, const EngineCore::Vector3& InDirection, const float InSeconds)
+/*
+ * NetArenaMove: the Pawn's harness's simulation. One frame of a player's
+ * input moves its capsule -- on the server for every frame its client sends,
+ * on that client at once (prediction), and again there for the frames the
+ * server had not reached when its state arrives. The engine clamps the
+ * frame's seconds to MaxMoveSeconds; a client says where to go, never how far.
+ */
+NIMBLE_DEFINE_AVATAR_SIMULATION(NetArenaMove, MaxMoveSeconds)
 {
-    GameCore::NetComponent* Net = Owner.GetSibling<GameCore::NetComponent>();
-    if(Net && InSequence <= Net->InputAck) { return; }   // already applied
+    static const int Right   = NimbleEngine::FindInputAxis("Default", "MoveRight");
+    static const int Forward = NimbleEngine::FindInputAxis("Default", "MoveForward");
+    GameCore::TransformComponent* Transform = InWorld.GetEntity(InAvatar).GetComponent<GameCore::TransformComponent>();
+    if(!Transform || Right < 0 || Forward < 0) { return; }
+    ApplyMove(*Transform, EngineCore::Vector3(double(InFrame.Axes[Right]), 0.0, double(InFrame.Axes[Forward])), InFrame.Seconds);
+}
 
-    if(GameCore::TransformComponent* Transform = Owner.GetSibling<GameCore::TransformComponent>())
-    {
-        ApplyMove(*Transform, InDirection, InSeconds);
-    }
-    if(Net) { Net->InputAck = InSequence; }
+/*
+ * NetArenaKart: a kart's harness's simulation (Content/Prefabs/Kart.nmprefab).
+ * Twice as fast as on foot, and it keeps its heading, so the chase camera on
+ * its child stays behind it while WASD still means up, left, down, right.
+ */
+NIMBLE_DEFINE_AVATAR_SIMULATION(NetArenaKart, MaxMoveSeconds)
+{
+    static const int Right   = NimbleEngine::FindInputAxis("Default", "MoveRight");
+    static const int Forward = NimbleEngine::FindInputAxis("Default", "MoveForward");
+    GameCore::TransformComponent* Transform = InWorld.GetEntity(InAvatar).GetComponent<GameCore::TransformComponent>();
+    if(!Transform || Right < 0 || Forward < 0) { return; }
+    ApplyMove(*Transform, EngineCore::Vector3(double(InFrame.Axes[Right]), 0.0, double(InFrame.Axes[Forward])), InFrame.Seconds,
+              KartSpeed, false);
 }
 
 // === Systems (server only) ===================================================
@@ -288,70 +290,22 @@ namespace
             }
         });
     }
-
-    /* Server (or standalone): a capsule from the prefab, at InColor's spawn
-     * point, owned by InOwner (NET_CLIENT_NONE: the server's own user). */
-    GameCore::EntityID SpawnPawn(GameCore::World& InWorld, const GameCore::NetClientID InOwner, const int InColor,
-                                 const char* InName)
-    {
-        const int Color = InColor % PawnColorCount;
-
-        /* The authored spawn point for this colour; the middle without one. */
-        GameCore::TransformPose At;
-        InWorld.Each<NetArenaSpawnComponent>([&](GameCore::Entity InSpawn, NetArenaSpawnComponent& InPoint)
-        {
-            if(InPoint.ColorIndex != Color) { return; }
-            if(const GameCore::TransformComponent* Transform = InSpawn.GetComponent<GameCore::TransformComponent>())
-            {
-                At.Position = Transform->Position;
-                At.Rotation = Transform->Rotation;
-            }
-        });
-
-        const GameCore::PrefabInstance Instance = InWorld.SpawnPrefab(PawnPrefab, At, InName);
-        const GameCore::Entity Pawn = Instance.GetRoot();
-        if(!Pawn.IsValid())
-        {
-            CORE_LOG_ERROR(std::string("[NetArena] could not spawn ") + PawnPrefab)
-            return GameCore::EntityID();
-        }
-
-        /* Who it belongs to, and its colour: set before the end of the frame,
-         * when the server first sends it, so clients get it this way. */
-        if(GameCore::NetComponent* Net = Pawn.GetComponent<GameCore::NetComponent>()) { Net->OwnerClient = InOwner; }
-        if(NetArenaPawnComponent* State = Pawn.GetComponent<NetArenaPawnComponent>()) { State->ColorIndex = uint8_t(Color); }
-        if(RenderCore::RenderComponent* Render = Pawn.GetComponent<RenderCore::RenderComponent>())
-        {
-            const PawnColor& Tint = PawnColors[Color];
-            Render->SetMaterialParameter(0, "BaseColor", Tint.R, Tint.G, Tint.B, 0.0f);
-        }
-
-        CORE_LOG(std::string("[NetArena] ") + PawnColors[Color].Name + " capsule for " + InName)
-        return Pawn.GetID();
-    }
 }
 
 // === Mode ===================================================================
 
-class NetArenaGameMode : public NimbleEngine::IGameMode
+class NetArenaGameMode : public NimbleEngine::AvatarGameMode
 {
 public:
     /* The world (Content/Levels/NetArena.nmworld, every process the same
      * file) is loaded: give it behaviour. */
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
-        Session = &InSession;
-        GameCore::World& World = InSession.GetWorld();
-
-        /* This process's keys: the level's Controller (an Input component). */
-        Controller = World.FindEntityByName("Controller");
-        if(!Controller.IsSet())
-        {
-            CORE_LOG_WARN("[NetArena] the level has no entity named Controller; nobody can steer")
-        }
-
-        World.RegisterSystem("NetArena.Spin", GameCore::TP_PrePhysics, &SpinSystem);
-        NimbleEngine::SetNetCorrectionHandler(&OnCorrection, this);
+        AvatarGameMode::OnLoad(InSession);
+        InSession.GetWorld().RegisterSystem("NetArena.Spin", GameCore::TP_PrePhysics, &SpinSystem);
+        InSession.GetWorld().RegisterSystem("NetArena.Interact", GameCore::TP_PrePhysics, &InteractSystem, this);
+        Capsules.clear();
+        if(NimbleEngine::AvatarWorld* Avatars = InSession.GetAvatars()) { Avatars->SetInputFilter(&AutoMove, this); }
         return true;
     }
 
@@ -360,10 +314,7 @@ public:
         /* A server with a player of its own (a listen server), or no network
          * at all: this process's user gets the first capsule. A dedicated
          * server has no user; a client waits for the server's. */
-        if(NimbleEngine::HasAuthority() && !NimbleEngine::IsDedicatedServer())
-        {
-            SpawnPawn(Session->GetWorld(), GameCore::NET_CLIENT_NONE, NextColor++, "Host");
-        }
+        AvatarGameMode::OnStart();
 
         CORE_LOG(std::string("[NetArena] started as ")
                  + (NimbleEngine::IsDedicatedServer() ? "a dedicated server"
@@ -373,14 +324,6 @@ public:
                  + " -- WASD moves your capsule")
     }
 
-    /* Server: a capsule for the client, owned by it. The engine's player
-     * entity for it (InPlayer, a PlayerState) stays as it is; everything the
-     * client owns -- the capsule too -- goes when it leaves. */
-    void OnClientConnected(const int32_t InClient, const GameCore::EntityID /*InPlayer*/) override
-    {
-        SpawnPawn(Session->GetWorld(), InClient, NextColor++, ("Pawn " + std::to_string(InClient)).c_str());
-    }
-
     void OnClientDisconnected(const int32_t InClient, const GameCore::EntityID /*InPlayer*/) override
     {
         CORE_LOG("[NetArena] client " + std::to_string(InClient) + " left; its capsule goes with it")
@@ -388,108 +331,148 @@ public:
 
     void OnTick(const NimbleEngine::FrameContext& InFrame) override
     {
-        GameCore::World& World = Session->GetWorld();
         ElapsedSeconds += InFrame.DeltaSeconds;
-        SendInput(World, float(InFrame.DeltaSeconds));
-
         if(ElapsedSeconds - LastReport >= ReportInterval)
         {
             LastReport = ElapsedSeconds;
-            Report(World);
+            Report(Session->GetWorld());
         }
     }
 
     void OnUnload() override
     {
-        NimbleEngine::SetNetCorrectionHandler(nullptr, nullptr);
+        if(Session && Session->GetAvatars()) { Session->GetAvatars()->SetInputFilter(nullptr, nullptr); }
         Session = nullptr;
     }
 
-private:
-    /* One move this client has made that the server has not acknowledged yet. */
-    struct PendingMove
+protected:
+    /* Each capsule in join order: red, blue, green, yellow. Set before the
+     * end of the frame, when the server first sends it, so clients get it
+     * this way. */
+    void OnAvatarSpawned(const GameCore::EntityID InPlayer, const GameCore::EntityID InAvatar, const uint32_t InOrdinal) override
     {
-        int32_t             Sequence;
-        EngineCore::Vector3 Direction;
-        float               Seconds;
-    };
-
-    /*
-     * This process's keys to the capsule it owns, every frame they move it: a
-     * numbered ServerMove. A client whose capsule is predicted (the prefab's
-     * Net component says so) moves it at once with the same ApplyMove and
-     * keeps the move until the server acknowledges it (OnCorrection). On the
-     * server, or standalone, the RPC simply runs here.
-     */
-    void SendInput(GameCore::World& InWorld, const float InSeconds)
-    {
-        const NimbleEngine::InputComponent* Input = InWorld.GetEntity(Controller).GetComponent<NimbleEngine::InputComponent>();
-        if(!Input) { return; }
-        EngineCore::Vector3 Wanted(double(Input->GetAxis("MoveRight")), 0.0, double(Input->GetAxis("MoveForward")));
-        if(GNetArenaAutoMove.GetBool())
+        GameCore::World& World = Session->GetWorld();
+        const int Color = int(InOrdinal % uint32_t(PawnColorCount));
+        const GameCore::Entity Pawn = World.GetEntity(InAvatar);
+        if(NetArenaPawnComponent* State = Pawn.GetComponent<NetArenaPawnComponent>()) { State->ColorIndex = uint8_t(Color); }
+        if(RenderCore::RenderComponent* Render = Pawn.GetComponent<RenderCore::RenderComponent>())
         {
-            /* Right, forward, left, back; each process a side apart, so two
-             * bots go different ways. */
-            static const double Sides[4][2] = { { 1.0, 0.0 }, { 0.0, 1.0 }, { -1.0, 0.0 }, { 0.0, -1.0 } };
-            const int Side = (int(ElapsedSeconds) + int(NimbleEngine::GetLocalClientId() + 1) * 2) & 3;
-            Wanted = EngineCore::Vector3(Sides[Side][0], 0.0, Sides[Side][1]);
+            const PawnColor& Tint = PawnColors[Color];
+            Render->SetMaterialParameter(0, "BaseColor", Tint.R, Tint.G, Tint.B, 0.0f);
         }
-
-        if(InSeconds <= 0.0f || (Wanted.GetX() == 0.0f && Wanted.GetZ() == 0.0f)) { return; }
-
-        InWorld.Each<NetArenaPawnComponent>([&](GameCore::Entity InPawn, NetArenaPawnComponent&)
-        {
-            const GameCore::NetComponent* Net = InPawn.GetComponent<GameCore::NetComponent>();
-            if(!Net || !NimbleEngine::IsLocallyOwned(*Net)) { return; }
-
-            const int32_t Sequence = ++NextSequence;
-            const float   Seconds  = std::min(InSeconds, MaxMoveSeconds);
-            if(NimbleEngine::IsClient() && Net->bPredicted)
-            {
-                if(GameCore::TransformComponent* Transform = InPawn.GetComponent<GameCore::TransformComponent>())
-                {
-                    ApplyMove(*Transform, Wanted, Seconds);
-                    Pending.push_back({ Sequence, Wanted, Seconds });
-                    if(Pending.size() > 256) { Pending.erase(Pending.begin()); }   // the server has stopped answering
-                    LastShown  = Transform->Position;
-                    bHaveShown = true;
-                }
-            }
-            GAMECORE_RPC(NetArenaPawnComponent, ServerMove)(InPawn, Sequence, Wanted, Seconds);
-        });
+        CORE_LOG(std::string("[NetArena] ") + PawnColors[Color].Name + " capsule for " + World.GetEntity(InPlayer).GetName())
+        Capsules[InPlayer.Pack()] = InAvatar;
     }
 
-    /*
-     * The server's state for this client's capsule arrived: its Transform is
-     * now the server's, as of move InInputAck. Forget the moves up to it and
-     * replay the rest -- the same code from the same place, so the capsule
-     * ends where it was shown unless the server disagreed. How far it jumped
-     * is the correction, reported.
-     */
-    static void OnCorrection(GameCore::World& InWorld, const GameCore::EntityID InEntity, const int32_t InInputAck,
-                             void* InUserData)
+    /* Every process: the server as it happens, a client as it replicates. */
+    void OnAvatarPossessed(const GameCore::EntityID InPlayer, const GameCore::EntityID InAvatar) override
     {
+        GameCore::World& World = Session->GetWorld();
+        const NimbleEngine::AvatarHarnessComponent* Harness = World.GetEntity(InAvatar).GetComponent<NimbleEngine::AvatarHarnessComponent>();
+        if(Harness && Harness->bRequestable)
+        {
+            CORE_LOG(std::string("[NetArena] ") + World.GetEntity(InPlayer).GetName() + " got into " + World.GetEntity(InAvatar).GetName())
+        }
+    }
+
+    void OnAvatarUnpossessed(const GameCore::EntityID InPlayer, const GameCore::EntityID InAvatar) override
+    {
+        GameCore::World& World = Session->GetWorld();
+        if(!World.IsAlive(InAvatar) || !World.IsAlive(InPlayer)) { return; }
+        const NimbleEngine::AvatarHarnessComponent* Harness = World.GetEntity(InAvatar).GetComponent<NimbleEngine::AvatarHarnessComponent>();
+        if(Harness && Harness->bRequestable)
+        {
+            CORE_LOG(std::string("[NetArena] ") + World.GetEntity(InPlayer).GetName() + " got out of " + World.GetEntity(InAvatar).GetName())
+        }
+    }
+
+private:
+    /*
+     * Server: Interact, from whatever a player drives. In a capsule, it gets
+     * into the nearest free kart within KartReach (a Requestable harness);
+     * in a kart, it gets out -- its capsule is put beside the kart, and
+     * driven again. No RPC: the harness carried the press here.
+     */
+    static void InteractSystem(GameCore::World& InWorld, float /*InDeltaSeconds*/, void* InUserData)
+    {
+        if(!NimbleEngine::HasAuthority()) { return; }
         NetArenaGameMode& Self = *static_cast<NetArenaGameMode*>(InUserData);
-        GameCore::TransformComponent* Transform = InWorld.GetEntity(InEntity).GetComponent<GameCore::TransformComponent>();
-        if(!Transform) { return; }
 
-        Self.Pending.erase(std::remove_if(Self.Pending.begin(), Self.Pending.end(),
-                                          [&](const PendingMove& InMove) { return InMove.Sequence <= InInputAck; }),
-                           Self.Pending.end());
-        for(const PendingMove& Move : Self.Pending)
+        /* Collected first: Possess changes harnesses under Each. */
+        std::vector<std::pair<GameCore::EntityID, GameCore::EntityID>> Asking;   // player, what it drives
+        InWorld.Each<NimbleEngine::AvatarHarnessComponent>([&](GameCore::Entity InAvatar, NimbleEngine::AvatarHarnessComponent& InHarness)
         {
-            ApplyMove(*Transform, Move.Direction, Move.Seconds);
-        }
+            if(InHarness.WasPressed("Interact") && InHarness.IsPossessed()) { Asking.push_back({ InHarness.GetPossessor(), InAvatar.GetID() }); }
+        });
 
-        if(Self.bHaveShown)
+        for(const auto& [Player, Driven] : Asking)
         {
-            const double DX = double(Transform->Position.GetX()) - double(Self.LastShown.GetX());
-            const double DZ = double(Transform->Position.GetZ()) - double(Self.LastShown.GetZ());
-            Self.MaxCorrection = std::max(Self.MaxCorrection, std::sqrt(DX * DX + DZ * DZ));
+            const GameCore::EntityID Capsule = Self.Capsules[Player.Pack()];
+            if(Driven != Capsule)
+            {
+                /* Out: the capsule waits where it was left; bring it to the kart. */
+                if(!InWorld.IsAlive(Capsule)) { continue; }
+                const GameCore::TransformComponent* KartAt = InWorld.GetEntity(Driven).GetComponent<GameCore::TransformComponent>();
+                GameCore::TransformComponent*       At     = InWorld.GetEntity(Capsule).GetComponent<GameCore::TransformComponent>();
+                if(KartAt && At)
+                {
+                    const double X = std::clamp(double(KartAt->Position.GetX()) + 150.0, -ArenaHalfSize, ArenaHalfSize);
+                    At->Position = EngineCore::Vector3(X, At->Position.GetY(), KartAt->Position.GetZ());
+                }
+                NimbleEngine::Possess(InWorld, Player, Capsule);
+                continue;
+            }
+
+            const GameCore::EntityID Kart = FindKartNear(InWorld, Driven);
+            if(Kart.IsSet()) { NimbleEngine::Possess(InWorld, Player, Kart); }
         }
-        Self.LastShown  = Transform->Position;
-        Self.bHaveShown = true;
-        ++Self.Corrections;
+    }
+
+    /* The nearest free kart within KartReach of InFrom, on the plane. */
+    static GameCore::EntityID FindKartNear(GameCore::World& InWorld, const GameCore::EntityID InFrom)
+    {
+        const EngineCore::Vector3 From = InWorld.GetEntity(InFrom).GetWorldPose().Position;
+        GameCore::EntityID Best;
+        double BestDistance = KartReach;
+        InWorld.Each<NimbleEngine::AvatarHarnessComponent>([&](GameCore::Entity InKart, NimbleEngine::AvatarHarnessComponent& InHarness)
+        {
+            if(!InHarness.bRequestable || InHarness.IsPossessed()) { return; }
+            const EngineCore::Vector3 At = InKart.GetWorldPose().Position;
+            const double DX = double(At.GetX()) - double(From.GetX()), DZ = double(At.GetZ()) - double(From.GetZ());
+            const double Distance = std::sqrt(DX * DX + DZ * DZ);
+            if(Distance <= BestDistance) { BestDistance = Distance; Best = InKart.GetID(); }
+        });
+        return Best;
+    }
+
+    /* A bot at the keys (-NetArena.AutoMove=1): right, forward, left, back;
+     * each process a side apart, so two bots go different ways. */
+    static void AutoMove(GameCore::World& /*InWorld*/, GameCore::EntityID /*InAvatar*/, NimbleEngine::InputSnapshot& InOut, void* InUserData)
+    {
+        if(!GNetArenaAutoMove.GetBool()) { return; }
+        static const int Right   = NimbleEngine::FindInputAxis("Default", "MoveRight");
+        static const int Forward = NimbleEngine::FindInputAxis("Default", "MoveForward");
+        if(Right < 0 || Forward < 0) { return; }
+        static const double Sides[4][2] = { { 1.0, 0.0 }, { 0.0, 1.0 }, { -1.0, 0.0 }, { 0.0, -1.0 } };
+        NetArenaGameMode& Self = *static_cast<NetArenaGameMode*>(InUserData);
+        const int Side = (int(Self.ElapsedSeconds) + int(NimbleEngine::GetLocalClientId() + 1) * 2) & 3;
+        InOut.Axes[Right]   = float(Sides[Side][0]);
+        InOut.Axes[Forward] = float(Sides[Side][1]);
+
+        /* AutoKart: stand still a second, by the kart near the start; press
+         * Interact (in); drive; press it again five seconds later (out). */
+        static const int Interact = NimbleEngine::FindInputAction("Default", "Interact");
+        if(!GNetArenaAutoKart.GetBool() || Interact < 0) { return; }
+        if(Self.ElapsedSeconds < 1.0) { InOut.Axes[Right] = InOut.Axes[Forward] = 0.0f; }
+        for(double& At : Self.AutoKartPresses)
+        {
+            if(At > 0.0 && Self.ElapsedSeconds >= At)
+            {
+                InOut.Pressed |= 1u << Interact;
+                At = 0.0;
+                break;
+            }
+        }
     }
 
     /* Where each capsule is, and the spinner's angle, as this process sees
@@ -506,6 +489,13 @@ private:
                   + (Net && NimbleEngine::IsLocallyOwned(*Net) ? "(you)" : "")
                   + "=(" + Fixed0(Transform->Position.GetX()) + "," + Fixed0(Transform->Position.GetZ()) + ")";
         });
+        InWorld.Each<NimbleEngine::AvatarHarnessComponent>([&](GameCore::Entity InKart, NimbleEngine::AvatarHarnessComponent& InHarness)
+        {
+            const GameCore::TransformComponent* Transform = InKart.GetComponent<GameCore::TransformComponent>();
+            if(!InHarness.bRequestable || !Transform) { return; }
+            Line += std::string(" ") + InKart.GetName() + (InHarness.IsLocallyControlled() ? "(you)" : InHarness.IsPossessed() ? "(driven)" : "")
+                  + "=(" + Fixed0(Transform->Position.GetX()) + "," + Fixed0(Transform->Position.GetZ()) + ")";
+        });
         InWorld.Each<NetArenaSpinnerComponent>([&](GameCore::Entity InSpinner, NetArenaSpinnerComponent&)
         {
             if(const GameCore::TransformComponent* Transform = InSpinner.GetComponent<GameCore::TransformComponent>())
@@ -513,30 +503,26 @@ private:
                 Line += " spinner=" + Fixed0(Transform->Rotation.GetY()) + "deg";
             }
         });
-        if(Corrections > 0)
+
+        /* Prediction's evidence: how many server states replayed, and the
+         * furthest one moved the capsule from where it was shown. */
+        const GameCore::EntityID Mine = NimbleEngine::GetLocalAvatar(InWorld, 0);
+        NimbleEngine::AvatarWorld* Avatars = Session->GetAvatars();
+        const NimbleEngine::AvatarPredictionStats Stats = Avatars && Mine.IsSet() ? Avatars->TakePredictionStats(Mine)
+                                                                                    : NimbleEngine::AvatarPredictionStats();
+        if(Stats.Corrections > 0)
         {
-            /* Prediction's evidence: how many server states replayed, and the
-             * furthest one moved the capsule from where it was shown. */
-            Line += " predicted: " + std::to_string(Corrections) + " states, " + std::to_string(Pending.size())
-                  + " pending, worst correction " + Fixed0(MaxCorrection) + "u";
-            Corrections   = 0;
-            MaxCorrection = 0.0;
+            Line += " predicted: " + std::to_string(Stats.Corrections) + " states, " + std::to_string(Stats.Pending)
+                  + " pending, worst correction " + Fixed0(Stats.MaxCorrection) + "u";
         }
         CORE_LOG(Line)
     }
 
-    NimbleEngine::GameSession* Session = nullptr;
-    GameCore::EntityID         Controller;
+    double ElapsedSeconds = 0.0;
+    double LastReport     = 0.0;
+    double AutoKartPresses[2] = { 1.0, 6.0 };   // AutoKart's Interact presses, by ElapsedSeconds; 0 once done
 
-    int                      NextColor    = 0;
-    int32_t                  NextSequence = 0;
-    std::vector<PendingMove> Pending;
-    EngineCore::Vector3      LastShown;
-    bool                     bHaveShown    = false;
-    int                      Corrections   = 0;
-    double                   MaxCorrection = 0.0;
-    double                   ElapsedSeconds = 0.0;
-    double              LastReport     = 0.0;
+    std::unordered_map<uint64_t, GameCore::EntityID> Capsules;   // each player's own, by packed id
 };
 
 // === Module =================================================================

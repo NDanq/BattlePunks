@@ -532,6 +532,151 @@ int FindInputAxis(const char* InMap, const char* InAxis)
     return Found && InAxis ? IndexIn(Found->Axes, InAxis) : -1;
 }
 
+// === Rebinding ================================================================
+
+namespace
+{
+    Entry* FindEntry(const char* InMap, const char* InName)
+    {
+        const Map* Found = InMap ? FindMap(InMap) : nullptr;
+        if(!Found || !InName) { return nullptr; }
+        for(const std::vector<Entry>* List : { &Found->Actions, &Found->Axes })
+        {
+            const int Index = IndexIn(*List, InName);
+            if(Index >= 0) { return const_cast<Entry*>(&(*List)[size_t(Index)]); }
+        }
+        return nullptr;
+    }
+
+    const Entry* EntryAt(const Map& InMap, const size_t InIndex)
+    {
+        if(InIndex < InMap.Actions.size()) { return &InMap.Actions[InIndex]; }
+        const size_t Axis = InIndex - InMap.Actions.size();
+        return Axis < InMap.Axes.size() ? &InMap.Axes[Axis] : nullptr;
+    }
+
+    void CopyText(char* OutBuffer, const size_t InCapacity, const std::string& InText)
+    {
+        const size_t Length = std::min(InText.size(), InCapacity - 1);
+        std::memcpy(OutBuffer, InText.data(), Length);
+        OutBuffer[Length] = '\0';
+    }
+
+    /* Every key that names itself back: what a picker lists. */
+    const std::vector<InputKey>& AllKeys()
+    {
+        static std::vector<InputKey> Keys;
+        if(!Keys.empty()) { return Keys; }
+        const auto Try = [](const InputKey InKey)
+        {
+            const char* Name = GetInputKeyName(InKey);
+            if(std::strcmp(Name, "Unknown") != 0 && FindInputKey(Name) == InKey) { Keys.push_back(InKey); }
+        };
+        for(uint16_t Index = 0; Index < KC_MAX; ++Index)     { Try(MakeKey(IK_Key, Index)); }
+        for(uint16_t Index = 0; Index < MB_MAX; ++Index)     { Try(MakeKey(IK_MouseButton, Index)); }
+        for(uint16_t Index = 0; Index < 4; ++Index)          { Try(MakeKey(IK_MouseAxis, Index)); }
+        for(uint16_t Index = 0; Index < PAD_BUTTONS; ++Index) { Try(MakeKey(IK_PadButton, Index)); }
+        for(uint16_t Index = 0; Index < PAD_AXES; ++Index)    { Try(MakeKey(IK_PadAxis, Index)); }
+        return Keys;
+    }
+}
+
+size_t GetInputMapCount() { return GetMaps().Maps.size(); }
+
+const char* GetInputMapName(const size_t InIndex)
+{
+    return InIndex < GetMaps().Maps.size() ? GetMaps().Maps[InIndex]->Name.c_str() : "";
+}
+
+size_t GetInputMapEntryCount(const char* InMap)
+{
+    const Map* Found = InMap ? FindMap(InMap) : nullptr;
+    return Found ? Found->Actions.size() + Found->Axes.size() : 0;
+}
+
+bool GetInputMapEntry(const char* InMap, const size_t InIndex, InputMapEntry& OutCurrent, InputMapEntry* OutBaseline)
+{
+    const Map*   Found = InMap ? FindMap(InMap) : nullptr;
+    const Entry* Item  = Found ? EntryAt(*Found, InIndex) : nullptr;
+    if(!Item) { return false; }
+    OutCurrent = Item->Desc;
+    CopyText(OutCurrent.Bindings, sizeof(OutCurrent.Bindings), Item->Var ? Item->Var->GetString() : Item->Desc.Bindings);
+    if(OutBaseline)
+    {
+        *OutBaseline = Item->Desc;
+        if(Item->Var) { CopyText(OutBaseline->Bindings, sizeof(OutBaseline->Bindings), EngineCore::ConfigGetBaselineText(*Item->Var)); }
+    }
+    return true;
+}
+
+bool SetInputBinding(const char* InMap, const char* InEntry, const char* InBindings)
+{
+    Entry* Item = FindEntry(InMap, InEntry);
+    if(!Item || !Item->Var) { return false; }
+    const std::string Text = InBindings ? InBindings : "";
+    if(Text.size() >= sizeof(Item->Desc.Bindings)) { return false; }
+    Item->Var->SetString(Text.c_str());   // OnBindingVarChanged re-parses it
+    return true;
+}
+
+bool ResetInputBinding(const char* InMap, const char* InEntry)
+{
+    Entry* Item = FindEntry(InMap, InEntry);
+    if(!Item || !Item->Var) { return false; }
+    EngineCore::ConfigResetToBaseline(*Item->Var);
+    return true;
+}
+
+bool SaveInputBindings(std::string* OutError)
+{
+    if(EngineCore::ConfigGetUserFile().empty())
+    {
+        if(OutError) { *OutError = "no user settings file here (the editor's Play): bindings last until the game ends"; }
+        return false;
+    }
+    return EngineCore::ConfigSaveUserFile(OutError);
+}
+
+bool FindInputBindingConflict(const char* InMap, const char* InEntry, const InputKey InKey, char (&OutOther)[INPUT_NAME_MAX])
+{
+    OutOther[0] = '\0';
+    const Map* Found = InMap ? FindMap(InMap) : nullptr;
+    if(!Found || InKey == INPUT_KEY_INVALID) { return false; }
+    for(const std::vector<Entry>* List : { &Found->Actions, &Found->Axes })
+    {
+        for(const Entry& Item : *List)
+        {
+            if(InEntry && std::strcmp(Item.Desc.Name, InEntry) == 0) { continue; }
+            for(uint8_t Each = 0; Each < Item.Count; ++Each)
+            {
+                if(Item.Bindings[Each].Key == InKey)
+                {
+                    CopyText(OutOther, INPUT_NAME_MAX, Item.Desc.Name);
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+size_t   GetInputKeyCount()                     { return AllKeys().size(); }
+InputKey GetInputKeyByIndex(const size_t InIndex) { return InIndex < AllKeys().size() ? AllKeys()[InIndex] : INPUT_KEY_INVALID; }
+
+InputKey GetFirstPressedInputKey(const InputState& InState, const uint8_t InPlayer)
+{
+    for(const InputKey Key : AllKeys())
+    {
+        switch(KindOf(Key))
+        {
+        case IK_MouseAxis: break;   // motion, not a choice
+        case IK_PadAxis:   if(std::fabs(InState.GetValue(Key, InPlayer)) >= 0.5f) { return Key; } break;
+        default:           if(InState.WasPressed(Key, InPlayer)) { return Key; } break;
+        }
+    }
+    return INPUT_KEY_INVALID;
+}
+
 // === InputComponent ===========================================================
 
 bool InputComponent::IsDown(const char* InAction) const
@@ -558,6 +703,47 @@ float InputComponent::GetAxis(const char* InAxis) const
     return Index >= 0 ? Axes[Index] : 0.0f;
 }
 
+void ResolveInputSnapshot(const char* InMap, const uint8_t InPlayer, const InputState& InState, const uint32_t InWasDown,
+                          InputSnapshot& OutSnapshot)
+{
+    const Map* Bindings = InMap ? FindMap(InMap) : nullptr;
+
+    uint32_t NowDown = 0, Tapped = 0;
+    for(size_t Action = 0; Bindings && Action < Bindings->Actions.size(); ++Action)
+    {
+        const Entry& Item = Bindings->Actions[Action];
+        for(uint8_t Each = 0; Each < Item.Count; ++Each)
+        {
+            if(InState.IsDown(Item.Bindings[Each].Key, InPlayer))     { NowDown |= 1u << Action; }
+            if(InState.WasPressed(Item.Bindings[Each].Key, InPlayer)) { Tapped  |= 1u << Action; }
+        }
+    }
+
+    /* An edge is the action's, not a key's: a second key held down while
+     * the first is still held does not press it again. A tap -- down and
+     * up inside one frame -- is both. */
+    OutSnapshot.Down     = NowDown;
+    OutSnapshot.Pressed  = ~InWasDown & (NowDown | Tapped);
+    OutSnapshot.Released = (InWasDown & ~NowDown) | (~InWasDown & ~NowDown & Tapped);
+
+    for(size_t Axis = 0; Axis < INPUT_AXES_MAX; ++Axis)
+    {
+        float Sum = 0.0f;
+        const Entry* Item = Bindings && Axis < Bindings->Axes.size() ? &Bindings->Axes[Axis] : nullptr;
+        for(uint8_t Each = 0; Item && Each < Item->Count; ++Each)
+        {
+            Sum += InState.GetValue(Item->Bindings[Each].Key, InPlayer) * Item->Bindings[Each].Scale;
+        }
+        OutSnapshot.Axes[Axis] = Item && Item->bUnclamped ? Sum : std::max(-1.0f, std::min(1.0f, Sum));
+    }
+}
+
+bool IsInputAxisAccumulated(const char* InMap, const int InAxis)
+{
+    const Map* Found = InMap ? FindMap(InMap) : nullptr;
+    return Found && InAxis >= 0 && size_t(InAxis) < Found->Axes.size() && Found->Axes[size_t(InAxis)].bUnclamped;
+}
+
 void ResolveInputComponents(GameCore::World& InWorld, const InputState& InState)
 {
     GameCore::ComponentPool* Pool = InWorld.FindPool(InputComponent::StaticType().ID);
@@ -567,37 +753,12 @@ void ResolveInputComponents(GameCore::World& InWorld, const InputState& InState)
     for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
     {
         InputComponent& C = Components[Index];
-        const uint32_t WasDown = C.Down;
-        const Map* Bindings = C.bEnabled ? FindMap(C.Map) : nullptr;
-
-        uint32_t NowDown = 0, Tapped = 0;
-        for(size_t Action = 0; Bindings && Action < Bindings->Actions.size(); ++Action)
-        {
-            const Entry& Item = Bindings->Actions[Action];
-            for(uint8_t Each = 0; Each < Item.Count; ++Each)
-            {
-                if(InState.IsDown(Item.Bindings[Each].Key, C.PlayerIndex))     { NowDown |= 1u << Action; }
-                if(InState.WasPressed(Item.Bindings[Each].Key, C.PlayerIndex)) { Tapped  |= 1u << Action; }
-            }
-        }
-
-        /* An edge is the action's, not a key's: a second key held down while
-         * the first is still held does not press it again. A tap -- down and
-         * up inside one frame -- is both. */
-        C.Down     = NowDown;
-        C.Pressed  = ~WasDown & (NowDown | Tapped);
-        C.Released = (WasDown & ~NowDown) | (~WasDown & ~NowDown & Tapped);
-
-        for(size_t Axis = 0; Axis < INPUT_AXES_MAX; ++Axis)
-        {
-            float Sum = 0.0f;
-            const Entry* Item = Bindings && Axis < Bindings->Axes.size() ? &Bindings->Axes[Axis] : nullptr;
-            for(uint8_t Each = 0; Item && Each < Item->Count; ++Each)
-            {
-                Sum += InState.GetValue(Item->Bindings[Each].Key, C.PlayerIndex) * Item->Bindings[Each].Scale;
-            }
-            C.Axes[Axis] = Item && Item->bUnclamped ? Sum : std::max(-1.0f, std::min(1.0f, Sum));
-        }
+        InputSnapshot Snapshot;
+        ResolveInputSnapshot(C.bEnabled ? C.Map : nullptr, C.PlayerIndex, InState, C.Down, Snapshot);
+        C.Down     = Snapshot.Down;
+        C.Pressed  = Snapshot.Pressed;
+        C.Released = Snapshot.Released;
+        std::memcpy(C.Axes, Snapshot.Axes, sizeof(C.Axes));
     }
 }
 
@@ -716,4 +877,103 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(Input)
         Call.PushInteger(Delta.X);
         Call.PushInteger(Delta.Y);
     }, "-> X:integer, Y:integer").Tooltip("This frame's mouse motion, in pixels");
+}
+
+/* Rebinding, for a settings menu in Lua or a graph (INPUT.md, "Rebinding"):
+ *
+ *     for i = 0, InputMaps.GetEntryCount("Default") - 1 do
+ *         local name, isAxis, bindings = InputMaps.GetEntry("Default", i)
+ *     end
+ *     local key = InputMaps.CaptureKey(0)          -- each frame, until not nil
+ *     if key then InputMaps.SetBinding("Default", "Jump", key) end
+ *     InputMaps.Save()
+ */
+GAMECORE_DEFINE_SCRIPT_LIBRARY(InputMaps)
+{
+    Lib.Pure("GetMapCount", [](GameCore::ScriptCall& Call)
+    {
+        Call.PushInteger(int32_t(NimbleEngine::GetInputMapCount()));
+    }, "-> Count:integer");
+
+    Lib.Pure("GetMapName", [](GameCore::ScriptCall& Call)
+    {
+        const int32_t Index = Call.GetInt(1);
+        if(Call.HasError()) { return; }
+        Call.PushString(Index >= 0 ? NimbleEngine::GetInputMapName(size_t(Index)) : "");
+    }, "Index:integer -> Map:string");
+
+    Lib.Pure("GetEntryCount", [](GameCore::ScriptCall& Call)
+    {
+        const char* Map = Call.GetString(1);
+        if(Call.HasError()) { return; }
+        Call.PushInteger(int32_t(NimbleEngine::GetInputMapEntryCount(Map)));
+    }, "Map:string -> Count:integer").Tooltip("A map's actions, then its axes");
+
+    Lib.Pure("GetEntry", [](GameCore::ScriptCall& Call)
+    {
+        const char*   Map   = Call.GetString(1);
+        const int32_t Index = Call.GetInt(2);
+        if(Call.HasError()) { return; }
+        NimbleEngine::InputMapEntry Current, Baseline;
+        if(Index < 0 || !NimbleEngine::GetInputMapEntry(Map, size_t(Index), Current, &Baseline))
+        {
+            Call.PushString("");
+            Call.PushBool(false);
+            Call.PushString("");
+            Call.PushString("");
+            return;
+        }
+        Call.PushString(Current.Name);
+        Call.PushBool(Current.bAxis);
+        Call.PushString(Current.Bindings);
+        Call.PushString(Baseline.Bindings);
+    }, "Map:string, Index:integer -> Name:string, IsAxis:bool, Bindings:string, Default:string");
+
+    Lib.Function("SetBinding", [](GameCore::ScriptCall& Call)
+    {
+        const char* Map      = Call.GetString(1);
+        const char* Entry    = Call.GetString(2);
+        const char* Bindings = Call.GetString(3);
+        if(Call.HasError()) { return; }
+        Call.PushBool(NimbleEngine::SetInputBinding(Map, Entry, Bindings));
+    }, "Map:string, Entry:string, Bindings:string -> Done:bool")
+       .Tooltip("Bind an action or axis: \"Space, Gamepad.South\"; '-' before a key negates it on an axis");
+
+    Lib.Function("ResetBinding", [](GameCore::ScriptCall& Call)
+    {
+        const char* Map   = Call.GetString(1);
+        const char* Entry = Call.GetString(2);
+        if(Call.HasError()) { return; }
+        Call.PushBool(NimbleEngine::ResetInputBinding(Map, Entry));
+    }, "Map:string, Entry:string -> Done:bool").Tooltip("Back to the game's binding");
+
+    Lib.Function("Save", [](GameCore::ScriptCall& Call)
+    {
+        std::string Error;
+        const bool bSaved = NimbleEngine::SaveInputBindings(&Error);
+        Call.PushBool(bSaved);
+        Call.PushString(Error.c_str());
+    }, "-> Saved:bool, Error:string").Tooltip("Keep the player's bindings in their settings file");
+
+    Lib.Pure("CaptureKey", [](GameCore::ScriptCall& Call)
+    {
+        const int32_t Player = Call.GetArgCount() >= 1 ? Call.GetInt(1) : 0;
+        if(Call.HasError()) { return; }
+        const NimbleEngine::InputKey Key = Player >= 0 && Player < int32_t(NimbleEngine::INPUT_PLAYERS_MAX)
+                                         ? NimbleEngine::GetFirstPressedInputKey(NimbleEngine::ScriptInput(), uint8_t(Player))
+                                         : NimbleEngine::INPUT_KEY_INVALID;
+        if(Key == NimbleEngine::INPUT_KEY_INVALID) { Call.PushNil(); return; }
+        Call.PushString(NimbleEngine::GetInputKeyName(Key));
+    }, "Player:integer -> Key:string").Tooltip("The key (or that player's pad button) pressed this frame, for \"press a key\"; nil if none");
+
+    Lib.Pure("FindConflict", [](GameCore::ScriptCall& Call)
+    {
+        const char* Map   = Call.GetString(1);
+        const char* Entry = Call.GetString(2);
+        const char* Key   = Call.GetString(3);
+        if(Call.HasError()) { return; }
+        char Other[NimbleEngine::INPUT_NAME_MAX];
+        if(!NimbleEngine::FindInputBindingConflict(Map, Entry, NimbleEngine::FindInputKey(Key), Other)) { Call.PushNil(); return; }
+        Call.PushString(Other);
+    }, "Map:string, Entry:string, Key:string -> Other:string").Tooltip("Another of the map's entries already on Key; nil if none");
 }

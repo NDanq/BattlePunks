@@ -43,7 +43,7 @@
  *
  * Arguments are values, encoded one at a time (never raw bytes): float,
  * double, int32_t, uint32_t, uint8_t, bool, Vector3, Color, EntityID (sent as
- * the entity's NetId) and RpcString<N>. By value or const&.
+ * the entity's NetId), RpcString<N> and RpcFloats<N>. By value or const&.
  *
  * WHERE A CALL GOES is the installed IRpcSink's decision. GameCore's own sink
  * runs every call here and now, so a game with NetCore compiled out -- or
@@ -94,6 +94,15 @@ namespace GameCore
             Text[Length] = '\0';
         }
         const char* c_str() const { return Text; }
+    };
+
+    /* Up to N floats, of which Count are sent: an axis set, a short curve. */
+    template<size_t N>
+    struct RpcFloats
+    {
+        static_assert(N > 0 && N <= 255, "RpcFloats<N>: 1..255 values");
+        uint8_t Count = 0;
+        float   Values[N] = {};
     };
 
     enum : size_t
@@ -272,6 +281,27 @@ namespace GameCore
             }
         };
 
+        /* Its count, then that many floats; a count past N does not decode. */
+        template<size_t N> struct Traits<RpcFloats<N>>
+        {
+            static constexpr bool bSupported = true;
+            static constexpr char Code = 'F';
+            static void Write(EngineCore::Archive& Ar, World&, const RpcFloats<N>& InValue)
+            {
+                uint8_t Count = InValue.Count <= N ? InValue.Count : uint8_t(N);
+                Ar << Count;
+                for(uint8_t Index = 0; Index < Count; ++Index) { float Value = InValue.Values[Index]; Ar << Value; }
+            }
+            static RpcFloats<N> Read(EngineCore::Archive& Ar, World&)
+            {
+                RpcFloats<N> Value;
+                Ar << Value.Count;
+                if(Value.Count > N) { Ar.SetError("RpcFloats: more values than the parameter holds"); Value.Count = 0; return Value; }
+                for(uint8_t Index = 0; Index < Value.Count; ++Index) { Ar << Value.Values[Index]; }
+                return Value;
+            }
+        };
+
         /* A handler's parameters, without a leading `const RpcContext&`. */
         template<typename TTuple> struct StripContext
         {
@@ -299,7 +329,7 @@ namespace GameCore
             static_assert(sizeof...(P) + 1 <= RPC_ARG_SIGNATURE_MAX, "an RPC takes at most 15 arguments");
             static_assert((Traits<Bare<P>>::bSupported && ...),
                           "RPC: an argument type cannot be sent. Supported: float, double, int32_t, uint32_t, uint8_t, "
-                          "bool, Vector3, Color, EntityID, Entity and RpcString<N>, by value or const&");
+                          "bool, Vector3, Color, EntityID, Entity, RpcString<N> and RpcFloats<N>, by value or const&");
             static_assert(((!std::is_lvalue_reference<P>::value || std::is_const<std::remove_reference_t<P>>::value) && ...),
                           "RPC: arguments are values; take them by value or const&");
 

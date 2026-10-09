@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Prefab Format="1" Name="Signpost" NextId="4">
+  <Script Path="Scripts/Signpost.script.nmgraph" />
+  <Tick Mode="Tick" />
+  <Entity Id="1" Name="Signpost">
+    <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+    </Component>
+  </Entity>
+  <Entity Id="2" Name="Pole" Parent="1">
+    <Component Type="Render" Version="3">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PawnColor.material.nmgraph" />
+      <Mesh Value="Engine/Content/Meshes/Cylinder.nmmesh" />
+      <ParameterCount Value="1" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="0.85" />
+      <Parameter0Y Value="0.85" />
+      <Parameter0Z Value="0.85" />
+      <Parameter0W Value="0" />
+      <CastShadows Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="0" Y="110" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="24" Y="220" Z="24" />
+    </Component>
+  </Entity>
+  <Entity Id="3" Name="Board" Parent="1">
+    <Component Type="Render" Version="3">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PawnColor.material.nmgraph" />
+      <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+      <ParameterCount Value="1" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="0.95" />
+      <Parameter0Y Value="0.6" />
+      <Parameter0Z Value="0.1" />
+      <Parameter0W Value="0" />
+      <CastShadows Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="0" Y="230" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="220" Y="80" Z="12" />
+    </Component>
+  </Entity>
+</Prefab>

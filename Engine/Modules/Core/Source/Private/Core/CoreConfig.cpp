@@ -731,6 +731,19 @@ const std::string& ConfigGetUserFile()
     return GUserFile ? *GUserFile : None;
 }
 
+std::string ConfigGetBaselineText(const ConfigVar& InVar)
+{
+    const ConfigEntry* Entry = FindConfigEntry(InVar.GetSection(), InVar.GetName());
+    return Entry && Entry->bHasProject ? Entry->ProjectValue : InVar.DefaultToString();
+}
+
+bool ConfigResetToBaseline(ConfigVar& InVar)
+{
+    bool bChanged = false;
+    if(!InVar.SetFromString(ConfigGetBaselineText(InVar), &bChanged)) { return InVar.ResetToDefault(); }
+    return bChanged;
+}
+
 std::string ConfigBuildUserText()
 {
     /* Section -> "Key=Value" lines, both sorted (case-folded): a stable file. */

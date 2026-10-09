@@ -10,6 +10,7 @@
 #include "Private/NimbleEngine/NetInternal.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
+#include "Public/NimbleEngine/Avatar.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/Level.h"
@@ -117,9 +118,10 @@ namespace NimbleEngine
                 GameCore::NetComponent Net;
                 Net.OwnerClient = InClient;
                 Entity.AddComponent(Net);
+                Entity.AddComponent<PossessorComponent>();   // a client's own player is its local player 1
                 PlayerStateComponent State;
                 std::snprintf(State.PlayerName, sizeof(State.PlayerName), "%s", Name);
-                State.PlayerIndex = uint8_t(InClient & 0xFF);
+                State.PlayerIndex = FindFreePlayerIndex(Self.Session->GetWorld());   // not the host's
                 Entity.AddComponent(State);
                 Player = Entity.GetID();
             }
@@ -129,10 +131,13 @@ namespace NimbleEngine
             EmitClientEvent(Self.Session->GetWorld(), "ClientConnected", InClient, Player);
         }
 
-        /* The game's handler (NetFacade.h, SetNetCorrectionHandler), looked up at
-         * each call: a mode sets it after networking has started. */
+        /* A simulated avatar replays its own frames (Avatar.h); anything else
+         * goes to the game's handler (NetFacade.h, SetNetCorrectionHandler),
+         * looked up at each call: a mode sets it after networking has started. */
         static void OnCorrection(GameCore::World& InWorld, const GameCore::EntityID InEntity, const int32_t InAck, void*)
         {
+            AvatarWorld* Avatars = AvatarWorld::Find(InWorld);
+            if(Avatars && Avatars->HandleCorrection(InEntity, InAck)) { return; }
             void* UserData = nullptr;
             if(const NetCorrectionFn Handler = GetNetCorrectionHandler(UserData)) { Handler(InWorld, InEntity, InAck, UserData); }
         }
@@ -142,8 +147,12 @@ namespace NimbleEngine
             Impl& Self = *static_cast<Impl*>(InUserData);
             if(!Self.Session || !Self.Session->HasWorld()) { return; }
 
-            /* Everything the client owned; its player is the one with a PlayerState. */
+            /* What its players drove goes back to whoever owns it undriven: a
+             * level's vehicle to the server, the client's own avatar still to
+             * the client. Then everything the client owns; its player is the
+             * one with a PlayerState. */
             GameCore::World& World = Self.Session->GetWorld();
+            ReleaseClientAvatars(World, InClient);
             std::vector<GameCore::EntityID> Owned;
             GameCore::EntityID Player;
             World.Each<GameCore::NetComponent>([&](GameCore::Entity InEntity, GameCore::NetComponent& InNet)

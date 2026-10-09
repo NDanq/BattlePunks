@@ -1,4 +1,6 @@
+#include "Public/NimbleEngine/Avatar.h"
 #include "Public/NimbleEngine/GameSession.h"
+#include "Public/NimbleEngine/NetFacade.h"
 #include "Public/NimbleEngine/GameState.h"
 #include "Public/NimbleEngine/PlayerState.h"
 
@@ -142,9 +144,81 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(Game)
         Call.PushInteger(Call.GetWorld().GetEntity(Player).GetComponent<NimbleEngine::PlayerStateComponent>()->Lives);
     }, "Player:Entity, Amount:integer -> Lives:integer").Tooltip("Add (or, negative, take) lives, through the game mode's rules");
 
+    // === Avatars (Avatar.h) ====================================================
+
+    Lib.Function("Possess", [](GameCore::ScriptCall& Call)
+    {
+        const GameCore::EntityID Player = Call.GetEntity(1);
+        const GameCore::EntityID Avatar = Call.GetEntity(2);
+        if(Call.HasError()) { return; }
+        if(NimbleEngine::HasAuthority())
+        {
+            Call.PushBool(NimbleEngine::Possess(Call.GetWorld(), Player, Avatar));
+            return;
+        }
+        /* A client asks; the server's rules (Requestable, the mode's CanPossess) decide. */
+        const GameCore::Entity Asking = Call.GetWorld().GetEntity(Player);
+        Call.PushBool(Asking.HasComponent<NimbleEngine::PossessorComponent>()
+                      && GAMECORE_RPC(NimbleEngine::PossessorComponent, ServerRequestPossess)(Asking, Avatar));
+    }, "Player:Entity, Avatar:Entity -> Accepted:bool")
+       .Tooltip("Player drives Avatar (an entity with an Avatar Harness). On a client, a request the server may refuse");
+
+    Lib.Function("Unpossess", [](GameCore::ScriptCall& Call)
+    {
+        const GameCore::EntityID Player = Call.GetEntity(1);
+        if(Call.HasError()) { return; }
+        if(NimbleEngine::HasAuthority())
+        {
+            Call.PushBool(NimbleEngine::Unpossess(Call.GetWorld(), Player));
+            return;
+        }
+        const GameCore::Entity Asking = Call.GetWorld().GetEntity(Player);
+        Call.PushBool(Asking.HasComponent<NimbleEngine::PossessorComponent>()
+                      && GAMECORE_RPC(NimbleEngine::PossessorComponent, ServerRequestUnpossess)(Asking));
+    }, "Player:Entity -> Accepted:bool").Tooltip("Player lets go of the avatar it drives");
+
+    Lib.Pure("GetAvatar", [](GameCore::ScriptCall& Call)
+    {
+        const GameCore::EntityID Player = Call.GetEntity(1);
+        if(Call.HasError()) { return; }
+        Call.PushEntity(NimbleEngine::GetAvatar(Call.GetWorld(), Player));
+    }, "Player:Entity -> Avatar:Entity").Tooltip("What Player drives; nil if nothing");
+
+    Lib.Pure("GetPossessor", [](GameCore::ScriptCall& Call)
+    {
+        const GameCore::EntityID Avatar = Call.GetEntity(1);
+        if(Call.HasError()) { return; }
+        Call.PushEntity(NimbleEngine::GetPossessor(Call.GetWorld(), Avatar));
+    }, "Avatar:Entity -> Player:Entity").Tooltip("Who drives Avatar; nil if nobody");
+
+    Lib.Pure("GetLocalAvatar", [](GameCore::ScriptCall& Call)
+    {
+        const int32_t Local = Call.GetArgCount() >= 1 ? Call.GetInt(1) : 0;
+        if(Call.HasError()) { return; }
+        Call.PushEntity(Local >= 0 && Local < int32_t(NimbleEngine::INPUT_PLAYERS_MAX)
+                        ? NimbleEngine::GetLocalAvatar(Call.GetWorld(), uint8_t(Local)) : GameCore::EntityID());
+    }, "LocalPlayer:integer -> Avatar:Entity").Tooltip("The avatar this machine's local player (0 first) drives");
+
+    Lib.Pure("GetLocalPlayer", [](GameCore::ScriptCall& Call)
+    {
+        const int32_t Local = Call.GetArgCount() >= 1 ? Call.GetInt(1) : 0;
+        if(Call.HasError()) { return; }
+        Call.PushEntity(Local >= 0 && Local < int32_t(NimbleEngine::INPUT_PLAYERS_MAX)
+                        ? NimbleEngine::FindLocalPlayer(Call.GetWorld(), uint8_t(Local)) : GameCore::EntityID());
+    }, "LocalPlayer:integer -> Player:Entity").Tooltip("This machine's local player (0 first): the entity with its Possessor");
+
+    Lib.Function("SetViewTarget", [](GameCore::ScriptCall& Call)
+    {
+        const GameCore::EntityID Camera = Call.GetEntity(1);
+        if(Call.HasError()) { return; }
+        if(NimbleEngine::GameSession* Session = SessionFor(Call)) { Session->SetViewTarget(Camera); }
+    }, "Camera:Entity").Tooltip("View through Camera (or its child camera); nil goes back to your avatar's");
+
     // === Events (GameSession emits them on the World's EventBus) ===============
 
     Lib.Event("PhaseChanged", "Phase:string, Previous:string");
     Lib.Event("ScoreChanged", "Player:Entity, Score:integer");
     Lib.Event("LivesChanged", "Player:Entity, Lives:integer");
+    Lib.Event("Possessed",    "Player:Entity, Avatar:Entity");
+    Lib.Event("Unpossessed",  "Player:Entity, Avatar:Entity");
 }

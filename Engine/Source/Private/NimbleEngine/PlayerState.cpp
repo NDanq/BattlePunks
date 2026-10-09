@@ -3,11 +3,27 @@
 #include "Public/GameCore/ComponentProperties.h"
 #include "Public/GameCore/ComponentScript.h"
 #include "Public/GameCore/ComponentSerializer.h"
+#include "Public/GameCore/Entity.h"
+#include "Public/GameCore/World.h"
 
 /*
  * PlayerState.h's component: registration, save, script and editor views.
  * The rules that change it are GameSession's (GameSession.cpp).
  */
+
+namespace NimbleEngine
+{
+    uint8_t FindFreePlayerIndex(GameCore::World& InWorld)
+    {
+        bool Used[256] = {};
+        InWorld.Each<PlayerStateComponent>([&](GameCore::Entity, PlayerStateComponent& InState) { Used[InState.PlayerIndex] = true; });
+        for(int Index = 0; Index < 255; ++Index)
+        {
+            if(!Used[Index]) { return uint8_t(Index); }
+        }
+        return 255;
+    }
+}
 
 using NimbleEngine::PlayerStateComponent;
 

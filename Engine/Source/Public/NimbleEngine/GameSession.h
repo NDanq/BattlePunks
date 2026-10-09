@@ -41,6 +41,7 @@ namespace Audio
 namespace NimbleEngine
 {
     class GameConsole;
+    class AvatarWorld;
     class GameSession;
     class GameState;
     class ILevel;
@@ -165,6 +166,7 @@ namespace NimbleEngine
          *       ILevel::OnPrepareForLoadedGame (-> IGameMode's)
          *       the World, then the GameState, from the pending save
          *       IGameMode::OnPostLoadSave
+         *   ApplyAutoPossess          placed avatars to their local players
          *   IGameMode::OnStart
          *
          * Restoring after OnReset leaves uncovered fields at defaults; before
@@ -264,6 +266,22 @@ namespace NimbleEngine
          * start of TP_PrePhysics. */
         const InputState& GetInput() const { return FilteredInput; }
 
+        // === Avatars (Avatar.h, AVATARS.md) =====================================
+
+        /* The level's avatars: what feeds each AvatarHarness its player's
+         * input. nullptr with no level. */
+        AvatarWorld* GetAvatars() { return Avatars; }
+
+        /*
+         * The camera the game is viewed through (and heard from, with no
+         * Audio Listener): InCamera, an entity with a CameraComponent or
+         * whose descendant has one -- a cutscene, a death cam. Unset (the
+         * default) goes back to local player 1's avatar's camera, then the
+         * level's first active one. Cleared by a level change.
+         */
+        void               SetViewTarget(GameCore::EntityID InCamera);
+        GameCore::EntityID GetViewTarget() const;
+
         /* Hides and holds the cursor, for mouse-look; Mouse.DeltaX keeps
          * coming past the screen's edge. The host lets go when the run ends. */
         void SetMouseCaptured(bool bInCaptured) { Host.SetMouseCaptured(bInCaptured); }
@@ -301,6 +319,9 @@ namespace NimbleEngine
         /* Friends, not a public setter: only SaveGame.cpp may arm a restore. */
         friend NE_API bool SaveGameToFile(GameSession& InSession, const std::string& InPath);
         friend NE_API bool LoadGameFromFile(GameSession& InSession, const std::string& InPath);
+
+        /* The view camera, to the renderer: SetViewTarget's, else the avatars'. */
+        void PublishViewTarget();
 
         /* The before-scripts TP_PrePhysics system: InputComponents from GetInput(). */
         static void ResolveInput(GameCore::World& InWorld, float InDeltaSeconds, void* InUserData);
@@ -341,6 +362,8 @@ namespace NimbleEngine
         /* LevelWorld lives from LoadLevel to UnloadLevel; same as ILevel::OwnedWorld. */
         ILevel*           ActiveLevel = nullptr;
         GameCore::World*  LevelWorld  = nullptr;
+        AvatarWorld*      Avatars     = nullptr;
+        GameCore::EntityID ViewTarget;
 
         /* Set by RequestLevel, consumed by the next ApplyPendingLevel. */
         ILevel*           PendingLevel = nullptr;

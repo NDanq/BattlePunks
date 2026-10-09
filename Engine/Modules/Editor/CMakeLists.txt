@@ -63,7 +63,11 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/ConfigIniFile.cpp
         Source/Private/Editor/ConfigIniFile.h
         Source/Private/Editor/ProjectSettingsDialog.cpp
+        Source/Private/Editor/InputMapsPage.cpp
+        Source/Private/Editor/QtInputNames.cpp
         Source/Private/Editor/ProjectSettingsDialog.h
+        Source/Private/Editor/InputMapsPage.h
+        Source/Private/Editor/QtInputNames.h
         Source/Private/Editor/WorldSettingsDialog.cpp
         Source/Private/Editor/WorldSettingsDialog.h
         Source/Private/Editor/SettingsDialog.cpp

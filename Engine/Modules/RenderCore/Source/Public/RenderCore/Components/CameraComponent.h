@@ -13,7 +13,9 @@ namespace RenderCore
      * its own, the same "read the sibling, do not duplicate it" rule
      * BoundsComponent's own refit pass follows for the same reason. The
      * first entity with an active CameraComponent that WorldBridge's
-     * per-frame view build finds wins; see DESIGN.md's "View" section. */
+     * per-frame view build finds wins -- unless a view camera is set
+     * (Renderer::SetViewCamera, a game's view target: the possessed avatar's
+     * camera), which wins Active or not; see DESIGN.md's "View" section. */
     struct RENDERCORE_API CameraComponent
     {
         GAMECORE_COMPONENT_BODY()
