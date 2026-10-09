@@ -340,6 +340,25 @@ namespace RenderCore
         }
     }
 
+    void Renderer::SetViewCamera(const GameCore::EntityID InCamera)
+    {
+        SetViewCamera(RENDER_DEFAULT_SCENE, InCamera);
+    }
+
+    void Renderer::SetViewCamera(const RenderSceneID InScene, const GameCore::EntityID InCamera)
+    {
+        if(RendererScene* Scene = P->Find(InScene))
+        {
+            if(Scene->Bridge) { Scene->Bridge->SetViewCamera(InCamera); }
+        }
+    }
+
+    GameCore::EntityID Renderer::GetViewCamera(const RenderSceneID InScene) const
+    {
+        const RendererScene* Scene = P->Find(InScene);
+        return Scene && Scene->Bridge ? Scene->Bridge->GetViewCamera() : GameCore::EntityID();
+    }
+
     RenderSceneID Renderer::CreateScene()
     {
         if(P->Scenes.empty())

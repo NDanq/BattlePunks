@@ -108,6 +108,28 @@ Jump = K, Gamepad.South
 
 `Input_Default.Jump Space` in the console does the same, live.
 
+**In the editor.** Project Settings > Input lists every map the game module
+registers, each action and axis with its keys. Each key can be typed, picked
+from the list of every key, or caught with **Press a Key...**. Keys two
+entries of one map share are flagged. **Reset** puts back the keys the code
+gives. Apply writes `[Input_<Map>]` to the project's `DefaultEngine.ini` and
+rebinds the running maps.
+
+**In a game's settings menu.** The rebinding API in `Input.h`, and the
+`InputMaps` script library for Lua and graphs:
+
+| C++ | Lua / graph | |
+|---|---|---|
+| `GetInputMapCount`, `GetInputMapName` | `InputMaps.GetMapCount()`, `GetMapName(i)` | the maps |
+| `GetInputMapEntryCount`, `GetInputMapEntry` | `GetEntryCount(map)`, `GetEntry(map, i)` -> name, isAxis, keys, default | actions, then axes |
+| `SetInputBinding`, `ResetInputBinding` | `SetBinding(map, entry, keys)`, `ResetBinding(map, entry)` | live at once |
+| `GetFirstPressedInputKey` | `CaptureKey(player)` -> key or nil | "press a key", each frame until one comes |
+| `FindInputBindingConflict` | `FindConflict(map, entry, key)` -> other or nil | |
+| `SaveInputBindings` | `Save()` -> ok, error | the player's `User.ini` (ConfigSaveUserFile) |
+
+A reset goes back to the baseline: the project's `.ini`, else the game's
+code. Nothing is saved in the editor's Play, which has no user file.
+
 ## Reading it
 
 **C++.** A system or the mode reads the component:
@@ -130,6 +152,11 @@ if input:WasPressed("Jump") then ... end
 local x = input:GetAxis("MoveX")
 if Input.WasKeyPressed("F3") then print(Input.GetMousePosition()) end
 ```
+
+**An avatar** (AVATARS.md) reads its player's input the same way, through
+its Avatar Harness (`harness:WasPressed("Jump")`), with no Input component on
+it. The harness follows whoever possesses it, and on a server it reads the
+input its client sent.
 
 **Script graphs.** These nodes come for free:
 - `Input: Is Down`, `Was Pressed`, `Was Released` and `Get Axis` under

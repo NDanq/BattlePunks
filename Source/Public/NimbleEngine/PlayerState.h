@@ -6,6 +6,8 @@
 #include "Public/NimbleEngine/NimbleEngineAPI.h"
 #include "Public/GameCore/ComponentType.h"
 
+namespace GameCore { class World; }
+
 namespace NimbleEngine
 {
     enum : size_t { PLAYER_NAME_MAX = 32 };   // including the NUL
@@ -34,6 +36,9 @@ namespace NimbleEngine
         int32_t Lives       = 0;   // 0 for a game without lives
         uint8_t bActive     = 1;   // still in the game; the mode decides what that means
     };
+
+    /* The lowest PlayerIndex no player in InWorld has: a new player's. */
+    NE_API uint8_t FindFreePlayerIndex(GameCore::World& InWorld);
 }
 
 #endif //NIMBLEENGINE_PLAYERSTATE_H

@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Private/Editor/ProjectSettingsDialog.h"
+#include "Private/Editor/InputMapsPage.h"
 
 #include <algorithm>
 #include <climits>
@@ -301,6 +302,7 @@ ProjectSettingsDialog::ProjectSettingsDialog(QWidget* InParent)
 
     BuildProjectPage();
     BuildWorldsPage();
+    BuildInputPage();
     BuildSectionPages();
     Pages->setCurrentRow(0);
 
@@ -703,6 +705,17 @@ void ProjectSettingsDialog::RefreshStartLevelChoices()
     StartLevelChoice->setCurrentText(Current);
 }
 
+void ProjectSettingsDialog::BuildInputPage()
+{
+    auto* Scroll = new QScrollArea(Stack);
+    Scroll->setWidgetResizable(true);
+    Scroll->setFrameShape(QFrame::NoFrame);
+    Input = new InputMapsPage(File, Scroll);
+    Scroll->setWidget(Input);
+    Stack->addWidget(Scroll);
+    Pages->addItem(QStringLiteral("Input"));
+}
+
 void ProjectSettingsDialog::BuildSectionPages()
 {
     /* Section (as first spelled) -> keys, from the registry and the file. */
@@ -710,7 +723,8 @@ void ProjectSettingsDialog::BuildSectionPages()
     const auto Note = [&Sections](const QString& InSection, const QString& InKey)
     {
         if(InSection.isEmpty() || Same(InSection, "Editor") || Same(InSection, "Build") || IsProjectKey(InSection, InKey)
-           || InSection.startsWith(QLatin1String(NimbleEngine::WORLD_SECTION_PREFIX), Qt::CaseInsensitive))
+           || InSection.startsWith(QLatin1String(NimbleEngine::WORLD_SECTION_PREFIX), Qt::CaseInsensitive)
+           || InSection.startsWith(QLatin1String("Input_"), Qt::CaseInsensitive))   // the Input page's
         {
             return;
         }
@@ -1038,6 +1052,8 @@ bool ProjectSettingsDialog::Apply()
         EngineCore::LoadConfigText(Text);
         Changed << QStringLiteral("Worlds = %1").arg(Names.isEmpty() ? QStringLiteral("(none)") : Names.join(QStringLiteral(", ")));
     }
+
+    if(Input) { Changed << Input->Apply(File); }
 
     if(!Rejected.isEmpty())
     {

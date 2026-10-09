@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 #include "Public/Core/CoreTypes.h"
 #include "Public/GameCore/ComponentType.h"
@@ -192,6 +193,52 @@ namespace NimbleEngine
     NE_API int FindInputAction(const char* InMap, const char* InAction);
     NE_API int FindInputAxis(const char* InMap, const char* InAxis);
 
+    // === Rebinding ============================================================
+    // What a settings menu (the InputMaps script library) and the editor's
+    // Project Settings > Input page are built on. A binding is the same text an
+    // .ini holds ("Space, Gamepad.South"); setting one sets its config var, so
+    // ConfigSaveUserFile keeps it for the player and the console sees it.
+
+    /* The registered maps, in registration order. */
+    NE_API size_t      GetInputMapCount();
+    NE_API const char* GetInputMapName(size_t InIndex);
+
+    /* A map's actions, then its axes. 0 for a map not registered. */
+    NE_API size_t GetInputMapEntryCount(const char* InMap);
+
+    /* Entry InIndex of InMap: OutCurrent its bindings now; OutBaseline, if
+     * given, what a reset goes back to (the project's .ini, else the
+     * game's). False past the end. */
+    NE_API bool GetInputMapEntry(const char* InMap, size_t InIndex, InputMapEntry& OutCurrent,
+                                 InputMapEntry* OutBaseline = nullptr);
+
+    /* InMap's action or axis InEntry bound to InBindings from now on. False
+     * for an unknown entry, or text too long. Keys it does not know are
+     * dropped, warned, as from an .ini. */
+    NE_API bool SetInputBinding(const char* InMap, const char* InEntry, const char* InBindings);
+
+    /* Back to its baseline. */
+    NE_API bool ResetInputBinding(const char* InMap, const char* InEntry);
+
+    /* Every binding a player changed, to their user settings file
+     * (ConfigSaveUserFile). False, with a reason, where there is none -- the
+     * editor's Play. */
+    NE_API bool SaveInputBindings(std::string* OutError = nullptr);
+
+    /* Another of InMap's entries InKey is bound to, other than InEntry: the
+     * clash a rebind would make. Its name into OutOther; false if none. */
+    NE_API bool FindInputBindingConflict(const char* InMap, const char* InEntry, InputKey InKey,
+                                         char (&OutOther)[INPUT_NAME_MAX]);
+
+    /* Every key there is, for a picker: 0 .. GetInputKeyCount() - 1. */
+    NE_API size_t   GetInputKeyCount();
+    NE_API InputKey GetInputKeyByIndex(size_t InIndex);
+
+    /* A key that went down this frame in InState -- a pad's for InPlayer,
+     * or the keyboard's or mouse's -- for "press a key to bind". A stick or
+     * trigger counts once pushed past half way. INPUT_KEY_INVALID if none. */
+    NE_API InputKey GetFirstPressedInputKey(const InputState& InState, uint8_t InPlayer = 0);
+
     /* What `Map` is inside NIMBLE_DEFINE_INPUT_MAP. Plain data until Commit(). */
     class InputMapBinder
     {
@@ -246,6 +293,27 @@ namespace NimbleEngine
         bool  WasReleased(const char* InAction) const;
         float GetAxis    (const char* InAxis) const;
     };
+
+    /* One reader's actions and axes for one frame: what an InputComponent
+     * holds, and what an AvatarHarness (Avatar.h) receives. */
+    struct InputSnapshot
+    {
+        uint32_t Down     = 0;
+        uint32_t Pressed  = 0;
+        uint32_t Released = 0;
+        float    Axes[INPUT_AXES_MAX] = {};
+    };
+
+    /* InMap read from InState for player InPlayer, given which actions were
+     * down last frame (InWasDown): an InputComponent's resolve step. A map
+     * that is not registered reads as nothing held. */
+    NE_API void ResolveInputSnapshot(const char* InMap, uint8_t InPlayer, const InputState& InState, uint32_t InWasDown,
+                                     InputSnapshot& OutSnapshot);
+
+    /* Whether InMap's axis InAxis adds up over time rather than holds a
+     * position -- a mouse axis is bound (look, wheel) -- so several frames
+     * of it sum rather than the last one standing. */
+    NE_API bool IsInputAxisAccumulated(const char* InMap, int InAxis);
 
     // === Host side ============================================================
     // GameSession does both; exported for other hosts and tests.
