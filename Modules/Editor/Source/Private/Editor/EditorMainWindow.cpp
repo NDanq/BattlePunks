@@ -205,6 +205,9 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     ContentDock->setWidget(ContentArea);
     addDockWidget(Qt::BottomDockWidgetArea, ContentDock);
     tabifyDockWidget(ConsoleDock, ContentDock);
+
+    /* The Sequencer, hidden until a sequence opens: tabbed with them. */
+    SequencerWindow::Install(*this, ContentDock);
     ContentDock->raise();
     connect(ContentArea, &ContentBrowserPanel::OpenWorldRequested, this, &EditorMainWindow::OpenWorldFile);
     connect(ViewportArea, &ViewportPanel::StatusMessage, this, [this](const QString& InText) { statusBar()->showMessage(InText, 6000); });

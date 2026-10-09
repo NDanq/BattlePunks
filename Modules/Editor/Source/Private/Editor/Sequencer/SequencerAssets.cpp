@@ -158,7 +158,7 @@ namespace EditorSequencer
     bool CloseAll()
     {
         SequencerWindow* Window = SequencerWindow::Find();
-        return !Window || Window->close();
+        return !Window || Window->CloseAllTabs();
     }
 }
 

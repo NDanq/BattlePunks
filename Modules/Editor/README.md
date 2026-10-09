@@ -91,7 +91,7 @@ uses it.
 | `Graph/GraphEditorWindow` (private) | The graph editor: one window, a closable, movable tab per open `.nmgraph` (Content Browser right-click > New Material / Script Graph, File > Open Graph, or double-click in the Content Browser). Ctrl+Tab steps through them; closing the window offers to save each |
 | `Graph/GraphEditorTab` (private) | One graph, with its own menus and docks. It has the canvas, Details, the generated code (live) and Messages; clicking a code line or a message selects its node. Save writes the graph with its generated code inside it, `<gen_code>` (see `Modules/NodeGraph`); nothing is written beside it |
 | `Graph/GraphDocument` (private) | One open graph and its own undo history, separate from the scene's; every edit is a before/after snapshot |
-| `Sequencer/SequencerWindow`, `SequencerTab` (private) | The **Sequencer**: a tab per open `.nmseq`, its timeline, curves and details, previewed on the level (see Sequencer) |
+| `Sequencer/SequencerWindow`, `SequencerTab` (private) | The **Sequencer** dock: a tab per open `.nmseq`, its timeline, curves and details, previewed on the level (see Sequencer) |
 | `Particles/ParticleEditorWindow`, `ParticleEditorTab` (private) | The **Particle Editor**: a tab per open `.nmparticle`, its emitters and settings beside a live preview in a World of its own (see Particle Editor) |
 | `Particles/ParticleDocument`, `ParticleEmitterPanels`, `ParticleAssets` (private) | The open system and its undo history (whole-system snapshots), the Emitters and Details docks, and particle systems as project files: new, open, close. Tested offscreen by `NimbleEditorParticleTests` |
 | `UI/UIEditorWindow`, `UIEditorTab` (private) | The **UI Designer**: a tab per open `.nmui` (Content Browser double-click, or right-click > New UI...). The canvas is drawn by the game's UI renderer at a design resolution (presets: 720p to 4K, ultrawide, portrait, custom), with the selection's handles drawn over it; Palette and Hierarchy on the left, Details on the right; Preview runs the document as in a game, logging its actions. Engine/Modules/UI/README.md, "Editor: UI Designer" |
@@ -487,9 +487,13 @@ World's (RenderCore's RENDERPIPELINE.md, "Particles").
 
 ## Sequencer
 
-A `.nmseq` (a cutscene: `Modules/Sequencer`) opens in its own window, a tab per
-sequence, from a double-click in the Content Browser, File > Open Sequence, or a
-Sequence Player's Sequence field's **Edit**. Content Browser right-click >
+A `.nmseq` (a cutscene: `Modules/Sequencer`) opens in the **Sequencer dock**, a
+tab per sequence, from a double-click in the Content Browser, File > Open
+Sequence, or a Sequence Player's Sequence field's **Edit**. The dock starts
+hidden, tabbed with the Content Browser along the bottom, and shows itself when
+a sequence opens. Like the other docks it floats out, docks on any side, and is
+in View; closing it (its x) asks about unsaved sequences and closes them,
+putting the level back. Content Browser right-click >
 **New Sequence...** (or File > New Sequence...) writes a five-second one with an
 empty camera cut track.
 

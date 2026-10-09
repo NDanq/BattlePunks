@@ -19,9 +19,10 @@ using Sequencer::SequenceTrack;
 
 namespace
 {
-    constexpr int KEY_HIT   = 5;   // pixels either side of a key
-    constexpr int EDGE_HIT  = 5;   // pixels either side of a section's edge
-    constexpr int ARROW_W   = 14;
+    constexpr int KEY_HIT   = 7;   // pixels either side of a key
+    constexpr int EDGE_HIT  = 6;   // pixels either side of a section's edge
+    constexpr int ARROW_W   = 18;
+    constexpr int INDENT    = 20;   // per depth
 
     QString TrackLabel(const SequenceTrack& InTrack)
     {
@@ -54,7 +55,7 @@ SequencerTimeline::SequencerTimeline(SequencerDocument& InDocument, QWidget* InP
     setObjectName(QStringLiteral("SequencerTimeline"));
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
-    setMinimumHeight(RULER_HEIGHT + ROW_HEIGHT * 3);
+    setMinimumHeight(RULER_HEIGHT + TRACK_HEIGHT * 4);
 
     connect(&Document, &SequencerDocument::RowsChanged,      this, [this]() { RebuildRows(); update(); });
     connect(&Document, &SequencerDocument::Changed,          this, [this]() { RebuildRows(); update(); });
@@ -128,16 +129,40 @@ void SequencerTimeline::RebuildRows()
     ScrollRow = std::clamp(ScrollRow, 0, std::max(0, int(Rows.size()) - 1));
 }
 
+int SequencerTimeline::RowHeight(const int InRow) const
+{
+    if(InRow < 0 || size_t(InRow) >= Rows.size()) { return TRACK_HEIGHT; }
+    const Row& R = Rows[size_t(InRow)];
+    switch(R.Kind)
+    {
+        case Row::EKind::Binding: return BINDING_HEIGHT;
+        case Row::EKind::Header:  return BINDING_HEIGHT;
+        case Row::EKind::Channel: return CHANNEL_HEIGHT;
+        case Row::EKind::Track:   break;
+    }
+    const SequenceTrack* Track = Document.FindTrack(R.Track);
+    return Track && (Sequencer::IsSectionTrack(Track->Type) || Track->Type == ESequenceTrackType::Event) ? SECTION_HEIGHT : TRACK_HEIGHT;
+}
+
 int SequencerTimeline::RowAt(const int InY) const
 {
     if(InY < RULER_HEIGHT) { return -1; }
-    const int Row = ScrollRow + (InY - RULER_HEIGHT) / ROW_HEIGHT;
-    return Row < int(Rows.size()) ? Row : -1;
+    int Top = RULER_HEIGHT;
+    for(int Row = ScrollRow; Row < int(Rows.size()); ++Row)
+    {
+        const int Height = RowHeight(Row);
+        if(InY < Top + Height) { return Row; }
+        Top += Height;
+    }
+    return -1;
 }
 
 QRect SequencerTimeline::RowRect(const int InRow) const
 {
-    return QRect(0, RULER_HEIGHT + (InRow - ScrollRow) * ROW_HEIGHT, width(), ROW_HEIGHT);
+    int Top = RULER_HEIGHT;
+    for(int Row = ScrollRow; Row < InRow; ++Row) { Top += RowHeight(Row); }
+    for(int Row = InRow; Row < ScrollRow; ++Row) { Top -= RowHeight(Row); }
+    return QRect(0, Top, width(), RowHeight(InRow));
 }
 
 double SequencerTimeline::FrameAtX(const double InX) const
@@ -159,9 +184,9 @@ void SequencerTimeline::SetPixelsPerFrame(const double InPixels)
 void SequencerTimeline::FitAll()
 {
     /* A margin either side, so keys on the first and last frames show whole. */
-    const double Lane = std::max(50, width() - NAME_WIDTH - 32);
+    const double Lane = std::max(50, width() - NAME_WIDTH - 48);
     SetPixelsPerFrame(Lane / double(std::max(Document.GetAsset().Length, 1)));
-    ScrollFrame = -12.0 / PixelsPerFrame;
+    ScrollFrame = -16.0 / PixelsPerFrame;
 }
 
 QColor SequencerTimeline::TrackColor(const ESequenceTrackType InType) const
@@ -246,31 +271,32 @@ void SequencerTimeline::PaintRuler(QPainter& InPainter, const QRect& InRect)
     InPainter.drawText(QRect(8, 0, NAME_WIDTH - 16, RULER_HEIGHT), Qt::AlignVCenter | Qt::AlignLeft,
                        QStringLiteral("%1 fps  ·  %2 frames").arg(Asset.FrameRate).arg(Asset.Length));
 
-    /* Ticks every 1, 5, 10, ... frames, labels where they fit, in seconds:frames. */
-    static const int Steps[] = { 1, 2, 5, 10, 12, 24, 30, 48, 60, 120, 240, 600, 1200, 2400 };
-    int Major = Steps[0];
+    /* Major ticks a whole number of frames under a second, or whole seconds
+     * (and minutes) above: labels where they fit, in seconds:frames. */
+    const int Fps = int(std::max<uint32_t>(Asset.FrameRate, 1));
+    std::vector<int> Steps = { 1, 2, 5, 10 };
+    for(const int Divisor : { 4, 2 }) { if(Fps % Divisor == 0 && Fps / Divisor > 10) { Steps.push_back(Fps / Divisor); } }
+    for(const int Seconds : { 1, 2, 5, 10, 15, 30, 60, 120, 300 }) { Steps.push_back(Fps * Seconds); }
+    std::sort(Steps.begin(), Steps.end());
+    int Major = Steps.back();
     for(const int Step : Steps)
     {
-        Major = Step;
-        if(Step * PixelsPerFrame >= 70.0) { break; }
+        if(Step * PixelsPerFrame >= 96.0) { Major = Step; break; }
     }
     const int Minor = std::max(1, Major / 5);
     const int First = int(std::floor(std::max(0.0, ScrollFrame) / Minor)) * Minor;
     InPainter.save();
     InPainter.setClipRect(QRect(NAME_WIDTH, 0, width() - NAME_WIDTH, RULER_HEIGHT));
-    QFont Small = InPainter.font();
-    Small.setPointSizeF(std::max(7.0, Small.pointSizeF() - 1.5));
-    InPainter.setFont(Small);
     for(int Frame = First; XOfFrame(Frame) < width(); Frame += Minor)
     {
         const double X = XOfFrame(Frame);
         const bool bMajor = Frame % Major == 0;
         InPainter.setPen(Pal.color(bMajor ? QPalette::Text : QPalette::Mid));
-        InPainter.drawLine(QPointF(X, RULER_HEIGHT - (bMajor ? 10 : 5)), QPointF(X, RULER_HEIGHT));
+        InPainter.drawLine(QPointF(X, RULER_HEIGHT - (bMajor ? 14 : 6)), QPointF(X, RULER_HEIGHT));
         if(bMajor)
         {
             const uint32_t Fps = std::max<uint32_t>(Asset.FrameRate, 1);
-            InPainter.drawText(QPointF(X + 3, 12), QStringLiteral("%1:%2").arg(Frame / int(Fps)).arg(Frame % int(Fps), 2, 10, QLatin1Char('0')));
+            InPainter.drawText(QPointF(X + 4, 16), QStringLiteral("%1:%2").arg(Frame / int(Fps)).arg(Frame % int(Fps), 2, 10, QLatin1Char('0')));
         }
     }
 
@@ -280,13 +306,13 @@ void SequencerTimeline::PaintRuler(QPainter& InPainter, const QRect& InRect)
         const double X = XOfFrame(Asset.Markers[Index].Frame);
         const bool bSelected = Document.IsSelected({ SequencerItem::EKind::Marker, {}, 0, int(Index) });
         QPainterPath Flag;
-        Flag.moveTo(X, RULER_HEIGHT - 12);
-        Flag.lineTo(X + 8, RULER_HEIGHT - 8);
-        Flag.lineTo(X, RULER_HEIGHT - 4);
+        Flag.moveTo(X, RULER_HEIGHT - 16);
+        Flag.lineTo(X + 10, RULER_HEIGHT - 11);
+        Flag.lineTo(X, RULER_HEIGHT - 6);
         Flag.closeSubpath();
         InPainter.fillPath(Flag, bSelected ? Pal.color(QPalette::Highlight) : QColor(106, 168, 255));
         InPainter.setPen(QColor(106, 168, 255));
-        InPainter.drawText(QPointF(X + 10, RULER_HEIGHT - 4), QString::fromStdString(Asset.Markers[Index].Name));
+        InPainter.drawText(QPointF(X + 13, RULER_HEIGHT - 6), QString::fromStdString(Asset.Markers[Index].Name));
     }
     InPainter.restore();
 }
@@ -310,7 +336,7 @@ void SequencerTimeline::PaintRow(QPainter& InPainter, const int InRow, const QRe
     const bool bCurrent = (R.Kind == Row::EKind::Binding && R.Binding == Document.GetCurrentBinding() && !Document.GetCurrentTrack().IsValid())
                        || (R.Kind != Row::EKind::Binding && R.Track.IsValid() && R.Track == Document.GetCurrentTrack() && R.Channel < 0);
     InPainter.fillRect(Name, bCurrent ? Pal.color(QPalette::Highlight).darker(130) : Pal.color(QPalette::Window));
-    const int Indent = 6 + R.Depth * 14;
+    const int Indent = 8 + R.Depth * INDENT;
     if(!R.CollapseKey.isEmpty())
     {
         const bool bCollapsed = Document.IsCollapsed(R.CollapseKey);
@@ -323,8 +349,8 @@ void SequencerTimeline::PaintRow(QPainter& InPainter, const int InRow, const QRe
     {
         InPainter.setBrush(TrackColor(Track->Type));
         InPainter.setPen(Qt::NoPen);
-        InPainter.drawRoundedRect(QRectF(TextX, InRect.center().y() - 4, 8, 8), 2, 2);
-        TextX += 13;
+        InPainter.drawRoundedRect(QRectF(TextX, InRect.center().y() - 5, 10, 10), 2.5, 2.5);
+        TextX += 17;
     }
     QFont Font = InPainter.font();
     Font.setBold(R.Kind == Row::EKind::Binding || R.Kind == Row::EKind::Header);
@@ -332,8 +358,8 @@ void SequencerTimeline::PaintRow(QPainter& InPainter, const int InRow, const QRe
     InPainter.setPen(Track && Track->bMuted ? Pal.color(QPalette::PlaceholderText) : Pal.color(QPalette::Text));
     QString Label = R.Label;
     if(Track && Track->bMuted && R.Kind == Row::EKind::Track) { Label += QStringLiteral("  (muted)"); }
-    InPainter.drawText(QRect(TextX, InRect.top(), NAME_WIDTH - TextX - 4, InRect.height()), Qt::AlignVCenter | Qt::AlignLeft,
-                       InPainter.fontMetrics().elidedText(Label, Qt::ElideRight, NAME_WIDTH - TextX - 4));
+    InPainter.drawText(QRect(TextX, InRect.top(), NAME_WIDTH - TextX - 8, InRect.height()), Qt::AlignVCenter | Qt::AlignLeft,
+                       InPainter.fontMetrics().elidedText(Label, Qt::ElideRight, NAME_WIDTH - TextX - 8));
     Font.setBold(false);
     InPainter.setFont(Font);
 
@@ -342,19 +368,19 @@ void SequencerTimeline::PaintRow(QPainter& InPainter, const int InRow, const QRe
     InPainter.save();
     InPainter.setClipRect(Lane);
     const QColor Color = TrackColor(Track->Type);
-    const double Mid = InRect.center().y() + 0.5;
+    const double Mid = InRect.top() + InRect.height() * 0.5;
 
     /* Sections. */
     for(size_t Index = 0; Index < Track->Sections.size(); ++Index)
     {
         const Sequencer::SequenceSection& Section = Track->Sections[Index];
-        const QRectF Box(XOfFrame(Section.Start), InRect.top() + 3, std::max(2.0, Section.GetLength() * PixelsPerFrame), InRect.height() - 6);
+        const QRectF Box(XOfFrame(Section.Start), InRect.top() + 5, std::max(2.0, Section.GetLength() * PixelsPerFrame), InRect.height() - 10);
         const bool bSelected = Document.IsSelected({ SequencerItem::EKind::Section, R.Track, 0, int(Index) });
         QColor Fill = Color;
         Fill.setAlpha(Track->bMuted ? 90 : 210);
         InPainter.setPen(QPen(bSelected ? Pal.color(QPalette::Highlight) : QColor(255, 255, 255, 40), bSelected ? 2.5 : 1.0));
         InPainter.setBrush(Fill);
-        InPainter.drawRoundedRect(Box, 3, 3);
+        InPainter.drawRoundedRect(Box, 4, 4);
         if(Section.BlendIn > 0)
         {
             QPainterPath Ramp;
@@ -382,8 +408,8 @@ void SequencerTimeline::PaintRow(QPainter& InPainter, const int InRow, const QRe
         }
         if(Text.isEmpty()) { Text = QStringLiteral("(nothing)"); }
         InPainter.setPen(QColor(255, 255, 255));
-        InPainter.drawText(Box.adjusted(6, 0, -4, 0), Qt::AlignVCenter | Qt::AlignLeft,
-                           InPainter.fontMetrics().elidedText(Text, Qt::ElideRight, int(Box.width()) - 10));
+        InPainter.drawText(Box.adjusted(9, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft,
+                           InPainter.fontMetrics().elidedText(Text, Qt::ElideRight, int(Box.width()) - 15));
     }
 
     /* Events: flags with their names. */
@@ -394,10 +420,11 @@ void SequencerTimeline::PaintRow(QPainter& InPainter, const int InRow, const QRe
         const bool bSelected = Document.IsSelected({ SequencerItem::EKind::Event, R.Track, 0, int(Index) });
         const QColor Flag = bSelected ? Pal.color(QPalette::Highlight) : Color;
         InPainter.setPen(QPen(Flag, 2.0));
-        InPainter.drawLine(QPointF(X, InRect.top() + 3), QPointF(X, InRect.bottom() - 3));
-        InPainter.fillRect(QRectF(X, InRect.top() + 3, 8, 7), Flag);
+        InPainter.drawLine(QPointF(X, InRect.top() + 5), QPointF(X, InRect.bottom() - 5));
+        InPainter.fillRect(QRectF(X, InRect.top() + 5, 11, 9), Flag);
         InPainter.setPen(Pal.color(QPalette::Text));
-        InPainter.drawText(QPointF(X + 11, InRect.top() + 13), QString::fromStdString(Event.Event));
+        InPainter.drawText(QRectF(X + 15, InRect.top(), 400, InRect.height()), Qt::AlignVCenter | Qt::AlignLeft,
+                           QString::fromStdString(Event.Event));
     }
 
     /* Keys: a channel's own, a one-channel track's, or a Transform track's
@@ -417,7 +444,7 @@ void SequencerTimeline::PaintRow(QPainter& InPainter, const int InRow, const QRe
             for(int X = NAME_WIDTH; X < width(); X += 3)
             {
                 const double V = Track->Channels[size_t(Channel)].Evaluate(FrameAtX(X), 0.0f);
-                const double Y = InRect.bottom() - 4 - (V - Low) / Span * (InRect.height() - 8);
+                const double Y = InRect.bottom() - 6 - (V - Low) / Span * (InRect.height() - 12);
                 if(X == NAME_WIDTH) { Curve.moveTo(X, Y); } else { Curve.lineTo(X, Y); }
             }
             InPainter.setPen(QPen(QColor(Color.red(), Color.green(), Color.blue(), 110), 1.0));
@@ -427,7 +454,7 @@ void SequencerTimeline::PaintRow(QPainter& InPainter, const int InRow, const QRe
         for(size_t Index = 0; Index < Keys.size(); ++Index)
         {
             const bool bSelected = Document.IsSelected({ SequencerItem::EKind::Key, R.Track, Channel, int(Index) });
-            Diamond(InPainter, QPointF(XOfFrame(Keys[Index].Frame), Mid), bSelected ? 5.5 : 4.5, Color, bSelected, Pal.color(QPalette::Highlight));
+            Diamond(InPainter, QPointF(XOfFrame(Keys[Index].Frame), Mid), bSelected ? 7.5 : 6.0, Color, bSelected, Pal.color(QPalette::Highlight));
         }
     }
     else if(Track->Type == ESequenceTrackType::Transform)
@@ -451,7 +478,7 @@ void SequencerTimeline::PaintRow(QPainter& InPainter, const int InRow, const QRe
                     }
                 }
             }
-            Diamond(InPainter, QPointF(XOfFrame(Frame), Mid), bSelected ? 4.5 : 3.5, QColor(170, 177, 191), bSelected, Pal.color(QPalette::Highlight));
+            Diamond(InPainter, QPointF(XOfFrame(Frame), Mid), bSelected ? 6.0 : 4.5, QColor(170, 177, 191), bSelected, Pal.color(QPalette::Highlight));
         }
     }
     InPainter.restore();
@@ -471,7 +498,7 @@ SequencerItem SequencerTimeline::HitItem(const QPoint& InPos, bool* bOutEdgeStar
         const auto& Markers = Document.GetAsset().Markers;
         for(size_t Index = 0; Index < Markers.size(); ++Index)
         {
-            if(std::fabs(XOfFrame(Markers[Index].Frame) - InPos.x()) <= KEY_HIT + 3 && InPos.y() >= RULER_HEIGHT - 14)
+            if(std::fabs(XOfFrame(Markers[Index].Frame) - InPos.x()) <= KEY_HIT + 4 && InPos.y() >= RULER_HEIGHT - 18)
             {
                 return { SequencerItem::EKind::Marker, {}, 0, int(Index) };
             }
@@ -509,7 +536,7 @@ SequencerItem SequencerTimeline::HitItem(const QPoint& InPos, bool* bOutEdgeStar
     }
     for(size_t Index = 0; Index < Track->Events.size(); ++Index)
     {
-        if(InPos.x() >= XOfFrame(Track->Events[Index].Frame) - 3 && InPos.x() <= XOfFrame(Track->Events[Index].Frame) + 9)
+        if(InPos.x() >= XOfFrame(Track->Events[Index].Frame) - 4 && InPos.x() <= XOfFrame(Track->Events[Index].Frame) + 12)
         {
             return { SequencerItem::EKind::Event, R.Track, 0, int(Index) };
         }
@@ -703,7 +730,7 @@ void SequencerTimeline::mousePressEvent(QMouseEvent* InEvent)
         const int RowIndex = RowAt(Pos.y());
         if(RowIndex < 0) { return; }
         const Row& R = Rows[size_t(RowIndex)];
-        const int Indent = 6 + R.Depth * 14;
+        const int Indent = 8 + R.Depth * INDENT;
         if(!R.CollapseKey.isEmpty() && Pos.x() >= Indent && Pos.x() < Indent + ARROW_W)
         {
             Document.SetCollapsed(R.CollapseKey, !Document.IsCollapsed(R.CollapseKey));
