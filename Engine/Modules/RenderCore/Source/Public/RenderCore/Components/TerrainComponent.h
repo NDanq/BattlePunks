@@ -17,8 +17,8 @@ namespace RenderCore
      * .nmterrain, GameCore's Terrain.h) from its entity's origin: a grid
      * Size x Size on X and Z, heights up +Y, placed by the Transform.
      *
-     * Drawn as chunks of TERRAIN_CHUNK_QUADS cells, each culled on its own
-     * and rebuilt only when its samples change -- the editor's brushes edit
+     * Drawn as chunks of TERRAIN_CHUNK_QUADS cells, each culled on its own,
+     * coarser with distance (LODDistance), and rebuilt only when its samples change -- the editor's brushes edit
      * the shared TerrainAssetCache copy, and the proxy picks the change up
      * the next frame, whether the entity is Static or not.
      *
@@ -46,21 +46,32 @@ namespace RenderCore
         uint8_t bOccluder    = 1;   // hides what is behind hills from occlusion culling
         uint8_t bWalkable    = 1;   // SampleGround and editor picking hit it
         float   UVTileSize   = 400.0f;   // world units per texture tile (UV0)
+
+        /* Chunks within this distance of the view draw every sample; twice
+         * as far, every second; further, every fourth (and shadows the same).
+         * 0: one and a half chunk widths. Skirts hide the cracks between. */
+        float   LODDistance  = 0.0f;
     };
 
     /* TerrainComponent's proxy factory, for Renderer::Initialize to register. */
     RENDERCORE_API CreateProxyFn GetTerrainComponentFactory();
 
     /* The MeshAssetCache path a terrain proxy stores chunk (InX, InZ) of
-     * entity InOwner under: "@terrain/<owner>/<x>_<z>". Never a file. */
-    RENDERCORE_API std::string GetTerrainChunkMeshPath(GameCore::EntityID InOwner, uint32_t InX, uint32_t InZ);
+     * entity InOwner under: "@terrain/<owner>/<x>_<z>[_lod<n>]". Never a file. */
+    RENDERCORE_API std::string GetTerrainChunkMeshPath(GameCore::EntityID InOwner, uint32_t InX, uint32_t InZ, uint32_t InLod = 0);
+
+    enum : uint32_t { TERRAIN_LODS = 3 };   // every sample, every 2nd, every 4th
 
     /* Builds chunk (InX, InZ) of InData as a mesh in terrain space: positions,
      * smooth normals, UV0 tiled every InUVTileSize units, the paint weights
-     * as colours, the cells split as GameCore's TerrainData describes. Locks
-     * InData. False if the chunk is out of range. */
+     * as colours, the cells split as GameCore's TerrainData describes. LOD
+     * InLod takes every (1 << InLod)th sample (the chunk's last row and column
+     * always). bInSkirts hangs a strip below each edge, InSkirtDepth deep,
+     * hiding the cracks where a neighbour draws coarser. Locks InData. False
+     * if the chunk is out of range. */
     RENDERCORE_API bool BuildTerrainChunkMesh(const GameCore::TerrainData& InData, uint32_t InX, uint32_t InZ,
-                                              float InUVTileSize, struct MeshData& OutMesh);
+                                              float InUVTileSize, struct MeshData& OutMesh,
+                                              uint32_t InLod = 0, bool bInSkirts = false, float InSkirtDepth = 0.0f);
 }
 
 #endif //RENDERCORE_TERRAINCOMPONENT_H

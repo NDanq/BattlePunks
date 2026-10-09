@@ -162,6 +162,7 @@ TerrainToolsWindow::TerrainToolsWindow(QWidget* InParent)
     Modes->addTab(MakeCreatePage(), EditorIcons::Get(EditorIcons::EIcon::Terrain), QStringLiteral("Create"));
     Modes->addTab(MakeSculptPage(), EditorIcons::Get(EditorIcons::EIcon::TerrainRaise), QStringLiteral("Sculpt"));
     Modes->addTab(MakePaintPage(), EditorIcons::Get(EditorIcons::EIcon::TerrainPaint), QStringLiteral("Paint"));
+    Modes->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
     Layout->addWidget(Modes);
 
     BrushPanel = MakeBrushPanel();
@@ -285,6 +286,7 @@ QWidget* TerrainToolsWindow::MakeSculptPage()
         Grid->addWidget(Button, Index / 3, Index % 3);
         ++Index;
     }
+    Grid->setRowStretch((Index + 2) / 3, 1);   // the buttons keep their size; the room goes below them
     SculptTools->button(GameCore::TT_Raise)->setChecked(true);
     connect(SculptTools, &QButtonGroup::idClicked, this, [this](int) { PullSettings(); });
     return Page;
@@ -320,6 +322,7 @@ QWidget* TerrainToolsWindow::MakePaintPage()
     Layers->setCurrentRow(0);
     connect(Layers, &QListWidget::currentRowChanged, this, [this](int) { PullSettings(); });
     Layout->addWidget(Layers);
+    Layout->addStretch(1);
     return Page;
 }
 
