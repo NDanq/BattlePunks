@@ -45,6 +45,7 @@
 #include "Private/Editor/EditorLights.h"
 #include "Private/Editor/EditorPrimitives.h"
 #include "Private/Editor/AboutDialog.h"
+#include "Private/Editor/DocumentationWindow.h"
 #include "Private/Editor/Content/AssetImport.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Content/AnimPreviewWidget.h"
@@ -304,21 +305,11 @@ void EditorMainWindow::BuildMenus()
 
     File->addSeparator();
 
-    QAction* New = File->addAction(QStringLiteral("&New Scene"));
+    QAction* New = File->addAction(QStringLiteral("&New World"));
     New->setShortcut(QKeySequence::New);
     connect(New, &QAction::triggered, this, [this]()
     {
-        Level.NewScene();
-        CurrentPath.clear();
-        UpdateTitle();
-    });
-
-    QAction* SandboxScene = File->addAction(QStringLiteral("New &Sandbox Scene"));
-    SandboxScene->setToolTip(QStringLiteral("The Sandbox level as it stands once loaded: Marker, Camera and Scripted"));
-    connect(SandboxScene, &QAction::triggered, this, [this]()
-    {
-        Level.CreateSandboxScene();
-        Viewport->ApplySandboxView();
+        Level.NewWorld();
         CurrentPath.clear();
         UpdateTitle();
     });
@@ -338,7 +329,7 @@ void EditorMainWindow::BuildMenus()
     connect(SaveAs, &QAction::triggered, this, &EditorMainWindow::SaveWorldAs);
 
     /* Save stays: it writes the edited World, which a run never touches. */
-    SceneActions = { New, SandboxScene, Open };
+    SceneActions = { New, Open };
 
     File->addSeparator();
 
@@ -530,6 +521,13 @@ void EditorMainWindow::BuildMenus()
 void EditorMainWindow::BuildHelpMenu()
 {
     QMenu* Help = menuBar()->addMenu(QStringLiteral("&Help"));
+
+    QAction* Docs = Help->addAction(QStringLiteral("&Documentation"));
+    Docs->setShortcut(QKeySequence::HelpContents);
+    Docs->setToolTip(QStringLiteral("The project's and the engine's .md files, rendered (F1)"));
+    connect(Docs, &QAction::triggered, this, []() { DocumentationWindow::Open(); });
+
+    Help->addSeparator();
 
     QAction* About = Help->addAction(QStringLiteral("&About NimbleEditor..."));
     About->setMenuRole(QAction::AboutRole);
@@ -1610,7 +1608,7 @@ void EditorMainWindow::RegisterConsoleCommands()
         Window->resize(800, 600);
 
         auto* Document = new EditorDocument(Window);
-        Document->CreateSandboxScene();
+        Document->NewWorld();
         Document->CreateEntity(QStringLiteral("TestQuad"), EngineCore::Vector3(200.0, 200.0, 0.0), [](const GameCore::Entity& InEntity)
         {
             InEntity.GetComponent<GameCore::TransformComponent>()->Scale = EngineCore::Vector3(240.0, 240.0, 1.0);
@@ -1639,12 +1637,7 @@ void EditorMainWindow::RegisterConsoleCommands()
         const QString Which = InArgs.isEmpty() ? QString() : InArgs.front().toLower();
         if(Which == QStringLiteral("new"))
         {
-            Level.NewScene();
-        }
-        else if(Which == QStringLiteral("sandbox"))
-        {
-            Level.CreateSandboxScene();
-            Viewport->ApplySandboxView();
+            Level.NewWorld();
         }
         else
         {
@@ -1857,7 +1850,7 @@ void EditorMainWindow::StartRenderer()
     }
     else
     {
-        Level.CreateSandboxScene();
+        Level.NewWorld();
         Viewport->ApplySandboxView();
     }
     UpdateTitle();
@@ -1898,6 +1891,8 @@ void EditorMainWindow::closeEvent(QCloseEvent* InEvent)
     }
 
     CORE_LOG(std::string("[Editor] closing -- ") + (InEvent->spontaneous() ? "requested by the window system" : "requested by the editor"))
+
+    DocumentationWindow::CloseIfOpen();
 
     /* Before any widget is destroyed: the Renderer releases its swapchain
      * against the viewport's native window, which must still exist. */
