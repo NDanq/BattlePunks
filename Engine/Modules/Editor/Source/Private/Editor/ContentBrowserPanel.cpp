@@ -64,6 +64,7 @@
 #include "Private/Editor/Content/AnimationAssets.h"
 #include "Private/Editor/Content/MeshViewerWindow.h"
 #include "Private/Editor/Content/TextureViewerWindow.h"
+#include "Private/Editor/DocumentationWindow.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 
 namespace
@@ -999,6 +1000,11 @@ void ContentBrowserPanel::OpenItem(const QString& InPath)
     if(InPath.endsWith(QStringLiteral(".nmtexture"), Qt::CaseInsensitive))
     {
         TextureViewerWindow::Open(InPath, window());
+        return;
+    }
+    if(InPath.endsWith(QStringLiteral(".md"), Qt::CaseInsensitive))
+    {
+        DocumentationWindow::Open(InPath);
         return;
     }
 #if WITH_AUDIO

@@ -113,6 +113,11 @@ int main(int argc, char* argv[])
     {
         EngineCore::LoadConfigFile("Config/DefaultEngine.ini");
     }
+    /* The game's own settings ([Input_*]), over the engine's. */
+    if(QFileInfo::exists(QStringLiteral("Config/DefaultGame.ini")))
+    {
+        EngineCore::LoadConfigFile("Config/DefaultGame.ini");
+    }
     /* The user's own choices, over the project's (Edit > Editor Settings). */
     SettingsDialog::LoadUserSettings();
     /* [Modules] asking for what this build was configured without, or the

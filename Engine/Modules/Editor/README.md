@@ -74,6 +74,7 @@ uses it.
 | `SourceBuild` (private) | Build > Compile Source: runs `cmake --build` on the editor's own build tree (`EditorBuildTree.h.in`) in the background, logging its output; any cmake command line too (`StartCommand`), for Build Project |
 | `Build/ContentCook`, `Build/ProjectBuild`, `Build/ProjectBuildDialog` (private) | Build > Cook Content and Build > Build Project: the project's content cooked into `Saved/Cooked/` with stats, and the game's Client preset configured and built |
 | `AboutDialog` (private) | Help > About: the commit and build this editor came from (`EditorBuildInfo.h.in`, stamped by Core's `GitVersion.cmake` on every build), plus configuration, target, compiler, Qt and renderer; Copy to Clipboard for bug reports |
+| `DocumentationWindow` (private) | Help > Documentation (F1): the project's and engine's `.md` files, rendered |
 | `ViewportPanel` | Navigation toolbar (view presets, framing, the Show menu, speed) over the viewport |
 | `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select (lights by their position), selection bounds, axis gizmo, light gizmos (a point light's sphere, a spot's cone, the sun's arrow, a scene capture probe's mirror rectangle and normal or its box and reach; all lights or the selected one, Show > Editor Gizmos > Light Gizmos), a perspective game camera's frustum |
 | `EditorPrimitives` (private) | World > Add Primitive and the Outliner's Add Primitive: the engine's Box, Sphere, Cylinder, Capsule or Plane mesh on a new entity, sized to see, in one undo step |
@@ -904,6 +905,23 @@ it (`EditorGraphs::IsIgnoredFolder`).
 
 A game run logs the same way beside its executable:
 `Binaries/<Platform>_<Config>[_Client]/Saved/Logs/<Module>[Server]-<time>.log`.
+
+## Documentation
+
+**Help > Documentation** (F1) opens a window listing every `.md` file of the
+open project and of the engine -- module READMEs and design notes, a game's
+`Docs/`, the repository README -- by folder, rendered with Qt's GitHub-dialect
+Markdown. The filter matches file names and contents; **On this page** lists
+the open file's headings. Double-clicking an `.md` in the Content Browser
+opens it here too.
+
+Relative links to other `.md` files open in the window (Back/Forward,
+Alt+Left/Right), `#section` links jump to GitHub-style heading anchors, and
+anything else -- web links, source files -- opens outside the editor. The page
+reloads when its file changes on disk, so a doc being written can be watched;
+Refresh (F5) picks up added and removed files. Hidden folders, `External/`,
+`Binaries/`, `Saved/`, `Intermediate/` and build trees (`cmake-build-*`, any
+folder with a `CMakeCache.txt`) are not listed.
 
 ## Known limits
 

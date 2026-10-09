@@ -98,8 +98,9 @@ NIMBLE_DEFINE_INPUT_MAP(Default)
     Mouse look wants pixels.
 - **Limits:** 32 actions and 16 axes per map, 8 keys each.
 
-**Rebinding.** Each entry is a config var, `[Input_<Map>] <Name>`, so an
-.ini or the console rebinds it without a rebuild:
+**Rebinding.** Each entry is a config var, `[Input_<Map>] <Name>`, so the
+project's `Config/DefaultGame.ini` (loaded after `DefaultEngine.ini`) or the
+console rebinds it without a rebuild:
 
 ```ini
 [Input_Default]
@@ -112,7 +113,7 @@ Jump = K, Gamepad.South
 registers, each action and axis with its keys. Each key can be typed, picked
 from the list of every key, or caught with **Press a Key...**. Keys two
 entries of one map share are flagged. **Reset** puts back the keys the code
-gives. Apply writes `[Input_<Map>]` to the project's `DefaultEngine.ini` and
+gives. Apply writes `[Input_<Map>]` to the project's `DefaultGame.ini` and
 rebinds the running maps.
 
 **In a game's settings menu.** The rebinding API in `Input.h`, and the
@@ -222,7 +223,7 @@ consumed is not waiting for the game when it resumes.
 | `SandboxGame.cpp` | Marker with an Input component. The `Sandbox.DriveMarker` PrePhysics system steers it from MoveX/MoveY, faster with Boost. Marker drifts on its own until the player first steers it, so an unattended run still plays. |
 | `Scripts/JumpCounter.script.nmgraph` | A graph on Marker: `Input: Was Pressed (Jump)` into a Branch, counting jumps |
 | `Scripts/InputDemo.lua` | Hand-written Lua: the component's actions, plus the `Input` library's raw keys (F3 prints the mouse) and mouse capture (C) |
-| `Config/DefaultEngine.ini` | A commented `[Input_Default]` rebinding |
+| `Config/DefaultGame.ini` | A commented `[Input_Default]` rebinding |
 
 ## Tests
 

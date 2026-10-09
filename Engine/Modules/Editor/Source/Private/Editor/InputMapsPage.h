@@ -20,7 +20,7 @@ class QTreeWidgetItem;
  * Project Settings > Input: the game's input maps (NIMBLE_DEFINE_INPUT_MAP,
  * NimbleEngine/Input.h) -- every action and axis, its keys, and what each was
  * given in code -- to rebind for the whole project. A change is written to
- * the project's .ini as [Input_<Map>] <Entry>=<keys>, the form a map reads its
+ * the project's DefaultGame.ini as [Input_<Map>] <Entry>=<keys>, the form a map reads its
  * overrides in, and set in this process at once.
  *
  * Maps come from the game module the editor has loaded; a map only the .ini
@@ -37,9 +37,11 @@ class InputMapsPage : public QWidget
     Q_OBJECT
 
 public:
-    InputMapsPage(const ConfigIniFile& InFile, QWidget* InParent = nullptr);
+    /* Bindings from InGameFile (DefaultGame.ini), else InEngineFile: a project
+     * from before DefaultGame.ini kept them in DefaultEngine.ini. */
+    InputMapsPage(const ConfigIniFile& InGameFile, const ConfigIniFile& InEngineFile, QWidget* InParent = nullptr);
 
-    /* Every changed binding into InOutFile, and into the running maps. One
+    /* Every changed binding into InOutFile (DefaultGame.ini), and into the running maps. One
      * "Input_<Map>.<Entry> = <keys>" line per change, for the log. */
     QStringList Apply(ConfigIniFile& InOutFile);
 
@@ -55,7 +57,7 @@ private:
         QTreeWidgetItem* Item    = nullptr;
     };
 
-    void   Populate(const ConfigIniFile& InFile);
+    void   Populate(const ConfigIniFile& InGameFile, const ConfigIniFile& InEngineFile);
     Entry* Selected();
     void   OnSelectionChanged();
     void   AppendKey(const QString& InKey);
