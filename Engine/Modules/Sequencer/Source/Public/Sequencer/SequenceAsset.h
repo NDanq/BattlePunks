@@ -127,7 +127,7 @@ namespace Sequencer
 
     /* One argument of an event key. A Binding argument is the entity a
      * binding resolved to, when the event fires. */
-    struct SequenceEventArg
+    struct SEQUENCER_API SequenceEventArg
     {
         enum class EType : uint8_t { Number = 0, Bool, String, Binding };
 

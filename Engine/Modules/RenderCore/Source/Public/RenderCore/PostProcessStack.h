@@ -184,13 +184,13 @@ namespace RenderCore
             std::string Path;            // a .pp.nmgraph, as a Post Process component names it
             float       Weight = 1.0f;   // 0..1
         };
-        struct Param
+        struct ParamValue
         {
             EPostProcessParam Param = EPostProcessParam::Exposure;
             float             Value = 0.0f;
         };
-        std::vector<Stack> Stacks;
-        std::vector<Param> Params;
+        std::vector<Stack>      Stacks;
+        std::vector<ParamValue> Params;
 
         bool IsEmpty() const { return Stacks.empty() && Params.empty(); }
     };

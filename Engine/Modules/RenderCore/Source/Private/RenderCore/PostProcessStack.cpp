@@ -611,7 +611,7 @@ namespace RenderCore
                 BlendPostProcess(InOutSettings, *Stack, std::min(Each.Weight, 1.0f));
             }
         }
-        for(const PostProcessOverride::Param& Each : Override.Params)
+        for(const PostProcessOverride::ParamValue& Each : Override.Params)
         {
             ApplyPostProcessParam(InOutSettings, Each.Param, Each.Value);
         }
