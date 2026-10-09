@@ -189,7 +189,11 @@ void SequencerCurveEditor::paintEvent(QPaintEvent*)
     /* A grid: value lines at round steps, frame lines at seconds. */
     Painter.setPen(Pal.color(QPalette::AlternateBase).darker(110));
     const double Range = ValueMax - ValueMin;
-    const double Step  = std::pow(10.0, std::floor(std::log10(Range / 4.0)));
+    /* 1, 2 or 5 times a power of ten, lines at least 22 pixels apart. */
+    const double PerPixel = Range / std::max(1.0, double(height() - 2 * MARGIN));
+    double Step = std::pow(10.0, std::floor(std::log10(std::max(1e-9, PerPixel * 22.0))));
+    if(Step / PerPixel < 22.0) { Step *= 2.0; }
+    if(Step / PerPixel < 22.0) { Step *= 2.5; }
     QFont Small = Painter.font();
     Small.setPointSizeF(std::max(7.0, Small.pointSizeF() - 1.5));
     Painter.setFont(Small);

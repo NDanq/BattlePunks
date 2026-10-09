@@ -214,6 +214,21 @@ int SequencerTimeline::RowAt(const int InY) const
     return -1;
 }
 
+void SequencerTimeline::ScrollToTrack(const SequencerTrackRef& InTrack)
+{
+    for(int Index = 0; Index < int(Rows.size()); ++Index)
+    {
+        if(Rows[size_t(Index)].Kind != Row::EKind::Track || Rows[size_t(Index)].Track != InTrack) { continue; }
+        const QRect Rect = RowRect(Index);
+        if(Index < ScrollRow || Rect.bottom() > height())
+        {
+            ScrollRow = std::max(0, Index - 1);
+            update();
+        }
+        return;
+    }
+}
+
 QRect SequencerTimeline::RowRect(const int InRow) const
 {
     int Top = RULER_HEIGHT;
@@ -271,6 +286,13 @@ void SequencerTimeline::ZoomBy(const double InFactor, double InPivotX)
 
 void SequencerTimeline::FitAll()
 {
+    /* Not laid out yet (a sequence opened into a hidden dock): fit once it is. */
+    if(!isVisible() || width() <= NAME_WIDTH + 100)
+    {
+        bFitPending = true;
+        return;
+    }
+    bFitPending = false;
     /* A margin either side, so keys on the first and last frames show whole. */
     const double Lane = std::max(50, width() - NAME_WIDTH - 48);
     SetPixelsPerFrame(Lane / double(std::max(Document.GetAsset().Length, 1)));
@@ -1183,6 +1205,11 @@ void SequencerTimeline::contextMenuEvent(QContextMenuEvent* InEvent)
 void SequencerTimeline::resizeEvent(QResizeEvent* InEvent)
 {
     QWidget::resizeEvent(InEvent);
+    if(bFitPending && isVisible() && width() > NAME_WIDTH + 100)
+    {
+        FitAll();
+        return;
+    }
     emit ViewChanged();   // how many frames the lanes show
 }
 

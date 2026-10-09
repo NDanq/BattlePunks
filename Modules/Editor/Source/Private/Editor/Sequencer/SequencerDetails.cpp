@@ -332,7 +332,8 @@ void SequencerDetails::BuildTrack(const SequencerTrackRef& InTrack)
     }
     AddNote(Sequencer::IsSectionTrack(Track->Type) ? QStringLiteral("Double-click its lane to add a section.")
           : Track->Type == ESequenceTrackType::Event ? QStringLiteral("Double-click its lane to add an event.")
-          : QStringLiteral("Double-click its lane (a Transform track's channels) to add a key; K keys the binding's pose."));
+          : Track->Type == ESequenceTrackType::Transform ? QStringLiteral("Double-click a channel's lane to add a key; K keys the binding's pose.")
+          : QStringLiteral("Double-click its lane to add a key; edit its shape in the curves below."));
 }
 
 void SequencerDetails::BuildKey(const SequencerItem& InItem)

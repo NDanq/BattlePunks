@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <iterator>
 
+#include <QPainter>
 #include <QAction>
 #include <QActionGroup>
 #include <QCloseEvent>
@@ -61,6 +62,7 @@
 #include "Private/Editor/Sequencer/SequencerAssets.h"
 #include "Private/Editor/Sequencer/SequencerDocument.h"
 #include "Private/Editor/Sequencer/SequencerTab.h"
+#include "Private/Editor/Sequencer/SequencerTimeline.h"
 #include "Private/Editor/Sequencer/SequencerWindow.h"
 #include "Private/Editor/Particles/ParticleDocument.h"
 #include "Private/Editor/Particles/ParticleEditorTab.h"
@@ -1163,6 +1165,26 @@ void EditorMainWindow::RegisterConsoleCommands()
         SaveCaptureWhenReady(Request, Path);
     });
 
+    Console.Register(QStringLiteral("windowshot"), QStringLiteral("<file.png>"),
+                     QStringLiteral("Save the whole editor window, panels and docks included, as an image"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("Usage: windowshot <file.png>"));
+            return;
+        }
+        const QString File = QFileInfo(InArgs.join(QLatin1Char(' '))).absoluteFilePath();
+        const uint64_t Request = Viewport && Viewport->isVisible() ? Context.RequestSceneCapture() : 0;
+        if(Request != 0)
+        {
+            SaveCaptureWhenReady(Request, File, true);
+            return;
+        }
+        if(!grab().save(File)) { Console.PrintError(QStringLiteral("Could not write %1").arg(File)); }
+        else                   { Console.Print(QStringLiteral("Saved %1").arg(QDir::toNativeSeparators(File))); }
+    });
+
     Console.Register(QStringLiteral("quit"), QString(), QStringLiteral("File > Exit (asks to save unsaved changes)"),
                      [this](const QStringList&)
     {
@@ -1489,21 +1511,49 @@ void EditorMainWindow::RegisterConsoleCommands()
     });
 
     Console.Register(QStringLiteral("sequence"),
-                     QStringLiteral("<path | new | close | seek <seconds | marker> | play | pause | cuts <on|off> | autokey <on|off> | sound <on|off> | scrub <on|off>>"),
+                     QStringLiteral("<path | new | close | seek <seconds | marker> | play | pause | cuts <on|off> | autokey <on|off> | sound <on|off> | scrub <on|off> | height <px> | collapse <on|off> | select <track> [section] | windowshot <file.png>>"),
                      QStringLiteral("Open a .nmseq in the Sequencer, make a new one, or drive the one in front (for scripts and tests)"),
                      [this](const QStringList& InArgs)
     {
         if(InArgs.isEmpty())
         {
-            Console.PrintError(QStringLiteral("Usage: sequence <path | new | close | seek <seconds | marker> | play | pause | cuts <on|off> | autokey <on|off> | sound <on|off> | scrub <on|off>>"));
+            Console.PrintError(QStringLiteral("Usage: sequence <path | new | close | seek <seconds | marker> | play | pause | cuts <on|off> | autokey <on|off> | sound <on|off> | scrub <on|off> | height <px> | collapse <on|off> | select <track> [section] | windowshot <file.png>>"));
             return;
         }
         const QString Verb = InArgs.front();
         if(Verb == QStringLiteral("new"))   { EditorSequencer::CreateSequence(QString(), this); return; }
         if(Verb == QStringLiteral("close")) { EditorSequencer::CloseAll(); return; }
+        if(Verb == QStringLiteral("height"))
+        {
+            /* The dock's height in pixels, for a scripted run that wants room. */
+            SequencerWindow* Window = SequencerWindow::Find();
+            bool bOk = false;
+            const int Height = InArgs.value(1).toInt(&bOk);
+            if(!Window || !bOk || Height <= 0)
+            {
+                Console.PrintError(QStringLiteral("Usage: sequence height <pixels> (with the Sequencer open)"));
+                return;
+            }
+            resizeDocks({ Window }, { Height }, Qt::Vertical);
+            return;
+        }
+        if(Verb == QStringLiteral("windowshot"))
+        {
+            SequencerWindow* Window = SequencerWindow::Find();
+            if(!Window || !Window->isVisible())
+            {
+                Console.PrintError(QStringLiteral("The Sequencer is not open"));
+                return;
+            }
+            const QString File = QFileInfo(InArgs.mid(1).join(QLatin1Char(' '))).absoluteFilePath();
+            if(!Window->grab().save(File)) { Console.PrintError(QStringLiteral("Could not write %1").arg(File)); }
+            else                           { Console.Print(QStringLiteral("Saved %1").arg(QDir::toNativeSeparators(File))); }
+            return;
+        }
 
         const QStringList Drives = { QStringLiteral("seek"), QStringLiteral("play"), QStringLiteral("pause"), QStringLiteral("cuts"),
-                                     QStringLiteral("autokey"), QStringLiteral("sound"), QStringLiteral("scrub") };
+                                     QStringLiteral("autokey"), QStringLiteral("sound"), QStringLiteral("scrub"),
+                                     QStringLiteral("collapse"), QStringLiteral("select") };
         if(Drives.contains(Verb))
         {
             SequencerWindow* Window = SequencerWindow::Find();
@@ -1521,6 +1571,58 @@ void EditorMainWindow::RegisterConsoleCommands()
             else if(Verb == QStringLiteral("autokey")) { Tab->SetAutoKey(bOn); }
             else if(Verb == QStringLiteral("sound"))   { Tab->SetSound(bOn); }
             else if(Verb == QStringLiteral("scrub"))   { Tab->SetScrubAudio(bOn); }
+            else if(Verb == QStringLiteral("collapse"))
+            {
+                /* Every binding and track that folds, folded (or opened). */
+                std::vector<QString> Keys;
+                for(const SequencerTimeline::Row& Row : Tab->GetTimeline().GetRows())
+                {
+                    if(!Row.CollapseKey.isEmpty()) { Keys.push_back(Row.CollapseKey); }
+                }
+                for(const QString& Key : Keys) { Tab->GetDocument().SetCollapsed(Key, bOn); }
+            }
+            else if(Verb == QStringLiteral("select"))
+            {
+                /* A track by name (or type), and one of its sections: shown in Details. */
+                QStringList Words = InArgs.mid(1);
+                bool bIndex = false;
+                const int Section = Words.size() > 1 ? Words.last().toInt(&bIndex) : 0;
+                if(bIndex) { Words.removeLast(); }
+                const std::string Name = Words.join(QLatin1Char(' ')).toStdString();
+                const Sequencer::SequenceAsset& Asset = Tab->GetDocument().GetAsset();
+                SequencerTrackRef Found;
+                const auto Match = [&Name](const Sequencer::SequenceTrack& InTrack)
+                {
+                    return InTrack.Name == Name || (InTrack.Name.empty() && Name == Sequencer::TrackTypeName(InTrack.Type));
+                };
+                for(size_t T = 0; T < Asset.Tracks.size() && !Found.IsValid(); ++T)
+                {
+                    if(Match(Asset.Tracks[T])) { Found = { -1, int(T) }; }
+                }
+                for(size_t B = 0; B < Asset.Bindings.size() && !Found.IsValid(); ++B)
+                {
+                    for(size_t T = 0; T < Asset.Bindings[B].Tracks.size() && !Found.IsValid(); ++T)
+                    {
+                        if(Match(Asset.Bindings[B].Tracks[T])) { Found = { int(B), int(T) }; }
+                    }
+                }
+                const Sequencer::SequenceTrack* Track = Found.IsValid() ? Tab->GetDocument().FindTrack(Found) : nullptr;
+                if(!Track)
+                {
+                    Console.PrintError(QStringLiteral("No track named %1").arg(QString::fromStdString(Name)));
+                    return;
+                }
+                Tab->GetDocument().SetCurrent(Found.Binding, Found);
+                if(Section >= 0 && size_t(Section) < Track->Sections.size())
+                {
+                    Tab->GetDocument().SetSelection({ { SequencerItem::EKind::Section, Found, 0, Section } });
+                }
+                else
+                {
+                    Tab->GetDocument().ClearSelection();
+                }
+                Tab->GetTimeline().ScrollToTrack(Found);
+            }
             else
             {
                 /* Seconds, or a marker by name. */
@@ -2160,7 +2262,7 @@ bool EditorMainWindow::SaveWorldAs()
 }
 
 
-void EditorMainWindow::SaveCaptureWhenReady(const uint64_t InRequest, const QString& InPath)
+void EditorMainWindow::SaveCaptureWhenReady(const uint64_t InRequest, const QString& InPath, const bool bInWholeWindow)
 {
     const uint64_t Request = InRequest;
     const QString  Path    = InPath;
@@ -2168,13 +2270,21 @@ void EditorMainWindow::SaveCaptureWhenReady(const uint64_t InRequest, const QStr
     /* Answered after a frame renders; a few seconds, then given up. */
     auto* Poll  = new QTimer(this);
     auto  Tries = std::make_shared<int>(0);
-    connect(Poll, &QTimer::timeout, this, [this, Poll, Request, Tries, Path]()
+    connect(Poll, &QTimer::timeout, this, [this, Poll, Request, Tries, Path, bInWholeWindow]()
     {
         QImage  Image;
         QString Error;
         if(Context.TakeMaterialPreview(Request, Image, Error))
         {
             Poll->deleteLater();
+            if(bInWholeWindow && !Image.isNull() && Viewport)
+            {
+                QPixmap Window = grab();
+                QPainter Painter(&Window);
+                Painter.drawImage(QRect(Viewport->mapTo(this, QPoint(0, 0)), Viewport->size()), Image);
+                Painter.end();
+                Image = Window.toImage();
+            }
             if(Image.isNull() || !Image.save(Path))
             {
                 Console.PrintError(QStringLiteral("No screenshot: %1").arg(Image.isNull() ? Error : QStringLiteral("cannot write ") + Path));
