@@ -16,6 +16,10 @@
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
+#include <QScrollBar>
+#include <QSlider>
+#include <QVBoxLayout>
+#include <utility>
 #include <QUndoStack>
 
 #include "Public/Editor/EditorContext.h"
@@ -66,8 +70,18 @@ SequencerTab::SequencerTab(EditorContext& InContext, QWidget* InParent)
     Curves   = new SequencerCurveEditor(*Document, this);
     Details  = new SequencerDetails(*Document, this);
 
+    /* The timeline, with its time scrollbar under it. */
+    auto* TimelineArea   = new QWidget(this);
+    auto* TimelineLayout = new QVBoxLayout(TimelineArea);
+    TimelineLayout->setContentsMargins(0, 0, 0, 0);
+    TimelineLayout->setSpacing(0);
+    TimelineLayout->addWidget(Timeline, 1);
+    TimeScroll = new QScrollBar(Qt::Horizontal, TimelineArea);
+    TimeScroll->setObjectName(QStringLiteral("SequencerTimeScroll"));
+    TimelineLayout->addWidget(TimeScroll);
+
     auto* Lanes = new QSplitter(Qt::Vertical, this);
-    Lanes->addWidget(Timeline);
+    Lanes->addWidget(TimelineArea);
     Lanes->addWidget(Curves);
     Lanes->setStretchFactor(0, 3);
     Lanes->setStretchFactor(1, 2);
@@ -91,6 +105,13 @@ SequencerTab::SequencerTab(EditorContext& InContext, QWidget* InParent)
     connect(AutoKeyTimer, &QTimer::timeout, this, &SequencerTab::FlushAutoKey);
 
     BuildToolBar();
+    connect(Timeline, &SequencerTimeline::ViewChanged, this, &SequencerTab::SyncViewControls);
+    connect(Document, &SequencerDocument::Changed, this, &SequencerTab::SyncViewControls);
+    connect(TimeScroll, &QScrollBar::valueChanged, this, [this](const int InValue)
+    {
+        if(!bSyncingView) { Timeline->SetScrollFrame(double(InValue)); }
+    });
+    SyncViewControls();
 
     connect(Document, &SequencerDocument::Changed,         this, &SequencerTab::RefreshPreview);
     connect(Document, &SequencerDocument::LiveChanged,     this, &SequencerTab::RefreshPreview);
@@ -215,50 +236,59 @@ bool SequencerTab::ConfirmClose()
 
 void SequencerTab::BuildToolBar()
 {
+    using EditorIcons::EIcon;
     QToolBar* Bar = addToolBar(QStringLiteral("Sequencer"));
     Bar->setObjectName(QStringLiteral("SequencerToolBar"));
     Bar->setMovable(false);
+    Bar->setIconSize(QSize(18, 18));
+    Bar->setToolButtonStyle(Qt::ToolButtonIconOnly);
 
-    QAction* SaveAction = Bar->addAction(QStringLiteral("Save"), this, &SequencerTab::Save);
-    SaveAction->setShortcut(QKeySequence::Save);
-    SaveAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
-    UndoAction = Bar->addAction(QStringLiteral("Undo"), &Document->GetHistory(), &QUndoStack::undo);
-    UndoAction->setShortcut(QKeySequence::Undo);
-    UndoAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
-    RedoAction = Bar->addAction(QStringLiteral("Redo"), &Document->GetHistory(), &QUndoStack::redo);
-    RedoAction->setShortcut(QKeySequence::Redo);
-    RedoAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    /* A button, its icon, its tooltip and its shortcut (in this tab only). */
+    const auto Add = [this, Bar](const EIcon InIcon, const QString& InText, const QString& InTip, const QKeySequence& InKey,
+                                 auto&& InSlot) -> QAction*
+    {
+        QAction* Action = Bar->addAction(EditorIcons::Get(InIcon), InText);
+        connect(Action, &QAction::triggered, this, std::forward<decltype(InSlot)>(InSlot));
+        Action->setToolTip(InKey.isEmpty() ? InTip : QStringLiteral("%1 (%2)").arg(InTip, InKey.toString(QKeySequence::NativeText)));
+        if(!InKey.isEmpty())
+        {
+            Action->setShortcut(InKey);
+            Action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        }
+        return Action;
+    };
+    /* A toggle that keeps its label beside the icon: its state is worth reading. */
+    const auto Labelled = [Bar](QAction* InAction)
+    {
+        if(auto* Button = qobject_cast<QToolButton*>(Bar->widgetForAction(InAction))) { Button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); }
+    };
+
+    Add(EIcon::Save, QStringLiteral("Save"), QStringLiteral("Save the sequence"), QKeySequence::Save, [this]() { Save(); });
+    UndoAction = Add(EIcon::Undo, QStringLiteral("Undo"), QStringLiteral("Undo"), QKeySequence::Undo, [this]() { Document->GetHistory().undo(); });
+    RedoAction = Add(EIcon::Redo, QStringLiteral("Redo"), QStringLiteral("Redo"), QKeySequence::Redo, [this]() { Document->GetHistory().redo(); });
     const auto UpdateHistory = [this]()
     {
         QUndoStack& History = Document->GetHistory();
         UndoAction->setEnabled(History.canUndo());
         RedoAction->setEnabled(History.canRedo());
-        UndoAction->setToolTip(History.canUndo() ? QStringLiteral("Undo %1").arg(History.undoText()) : QStringLiteral("Undo"));
-        RedoAction->setToolTip(History.canRedo() ? QStringLiteral("Redo %1").arg(History.redoText()) : QStringLiteral("Redo"));
+        UndoAction->setToolTip(History.canUndo() ? QStringLiteral("Undo %1 (Ctrl+Z)").arg(History.undoText()) : QStringLiteral("Undo (Ctrl+Z)"));
+        RedoAction->setToolTip(History.canRedo() ? QStringLiteral("Redo %1 (Ctrl+Shift+Z)").arg(History.redoText()) : QStringLiteral("Redo (Ctrl+Shift+Z)"));
     };
     connect(&Document->GetHistory(), &QUndoStack::indexChanged, this, UpdateHistory);
     UpdateHistory();
     Bar->addSeparator();
 
-    QAction* Start = Bar->addAction(QStringLiteral("⏮"), this, [this]() { SetPlaying(false); Document->SetPlayhead(0.0); });
-    Start->setToolTip(QStringLiteral("To the start (Home)"));
-    Start->setShortcut(QKeySequence(Qt::Key_Home));
-    QAction* Back = Bar->addAction(QStringLiteral("◀"), this, [this]() { StepFrames(-1); });
-    Back->setToolTip(QStringLiteral("Back a frame (,)"));
-    Back->setShortcut(QKeySequence(Qt::Key_Comma));
-    PlayAction = Bar->addAction(EditorIcons::Get(EditorIcons::EIcon::Play), QStringLiteral("Play"), this, [this]() { SetPlaying(!bPlaying); });
-    PlayAction->setToolTip(QStringLiteral("Play / pause the preview (Space)"));
-    PlayAction->setShortcut(QKeySequence(Qt::Key_Space));
-    QAction* Forward = Bar->addAction(QStringLiteral("▶"), this, [this]() { StepFrames(1); });
-    Forward->setToolTip(QStringLiteral("Forward a frame (.)"));
-    Forward->setShortcut(QKeySequence(Qt::Key_Period));
-    QAction* End = Bar->addAction(QStringLiteral("⏭"), this, [this]() { SetPlaying(false); Document->SetPlayhead(double(Document->GetAsset().Length)); });
-    End->setToolTip(QStringLiteral("To the end (End)"));
-    End->setShortcut(QKeySequence(Qt::Key_End));
-    LoopAction = Bar->addAction(QStringLiteral("Loop"));
+    Add(EIcon::SkipBack, QStringLiteral("Start"), QStringLiteral("To the start"), QKeySequence(Qt::Key_Home),
+        [this]() { SetPlaying(false); Document->SetPlayhead(0.0); });
+    Add(EIcon::StepBack, QStringLiteral("Back"), QStringLiteral("Back a frame"), QKeySequence(Qt::Key_Comma), [this]() { StepFrames(-1); });
+    PlayAction = Add(EIcon::Play, QStringLiteral("Play"), QStringLiteral("Play / pause the preview"), QKeySequence(Qt::Key_Space),
+                     [this]() { SetPlaying(!bPlaying); });
+    Add(EIcon::StepForward, QStringLiteral("Forward"), QStringLiteral("Forward a frame"), QKeySequence(Qt::Key_Period), [this]() { StepFrames(1); });
+    Add(EIcon::SkipForward, QStringLiteral("End"), QStringLiteral("To the end"), QKeySequence(Qt::Key_End),
+        [this]() { SetPlaying(false); Document->SetPlayhead(double(Document->GetAsset().Length)); });
+    LoopAction = Add(EIcon::Loop, QStringLiteral("Loop"), QStringLiteral("Loop the preview"), QKeySequence(), []() {});
     LoopAction->setCheckable(true);
     LoopAction->setChecked(true);
-    for(QAction* Each : { Start, Back, PlayAction, Forward, End }) { Each->setShortcutContext(Qt::WidgetWithChildrenShortcut); }
 
     Timecode = new QLabel(Bar);
     Timecode->setObjectName(QStringLiteral("SequencerTimecode"));
@@ -271,28 +301,33 @@ void SequencerTab::BuildToolBar()
     Bar->addWidget(Timecode);
     Bar->addSeparator();
 
-    AutoKeyAction = Bar->addAction(QStringLiteral("● Auto-key"), this, [this](const bool bInOn) { SetAutoKey(bInOn); });
+    AutoKeyAction = Add(EIcon::Record, QStringLiteral("Auto-key"), QStringLiteral("Moving a bound entity keys it at the playhead"), QKeySequence(),
+                        [this](const bool bInOn) { SetAutoKey(bInOn); });
     AutoKeyAction->setCheckable(true);
-    AutoKeyAction->setToolTip(QStringLiteral("Moving a bound entity keys it at the playhead"));
-    QAction* Key = Bar->addAction(QStringLiteral("Key"), this, &SequencerTab::KeyCurrentBinding);
-    Key->setToolTip(QStringLiteral("Key the current binding's pose at the playhead (K)"));
-    Key->setShortcut(QKeySequence(Qt::Key_K));
-    Key->setShortcutContext(Qt::WidgetWithChildrenShortcut);
-    LockAction = Bar->addAction(QStringLiteral("Camera Cuts"), this, [this](const bool bInOn) { SetViewLocked(bInOn); });
+    Labelled(AutoKeyAction);
+    Add(EIcon::Key, QStringLiteral("Key"), QStringLiteral("Key the current binding's pose at the playhead"), QKeySequence(Qt::Key_K),
+        [this]() { KeyCurrentBinding(); });
+    LockAction = Add(EIcon::CameraCuts, QStringLiteral("Camera Cuts"), QStringLiteral("The level viewport looks through the shot at the playhead"),
+                     QKeySequence(), [this](const bool bInOn) { SetViewLocked(bInOn); });
     LockAction->setCheckable(true);
-    LockAction->setToolTip(QStringLiteral("The level viewport looks through the shot at the playhead"));
-    PilotAction = Bar->addAction(QStringLiteral("Pilot"), this, [this](const bool bInOn) { SetPilot(bInOn); });
+    Labelled(LockAction);
+    PilotAction = Add(EIcon::Pilot, QStringLiteral("Pilot"),
+                      QStringLiteral("Flying the level viewport moves the shot's camera (keyed when it settles, with Auto-key)"), QKeySequence(),
+                      [this](const bool bInOn) { SetPilot(bInOn); });
     PilotAction->setCheckable(true);
-    PilotAction->setToolTip(QStringLiteral("Flying the level viewport moves the shot's camera (keyed when it settles, with Auto-key)"));
-    QAction* Snap = Bar->addAction(QStringLiteral("Snap"), this, [this](const bool bInOn) { Timeline->SetSnap(bInOn); });
+    Labelled(PilotAction);
+    QAction* Snap = Add(EIcon::Snap, QStringLiteral("Snap"), QStringLiteral("Scrubbing lands on whole frames"), QKeySequence(),
+                        [this](const bool bInOn) { Timeline->SetSnap(bInOn); });
     Snap->setCheckable(true);
     Snap->setChecked(true);
-    Snap->setToolTip(QStringLiteral("Scrubbing lands on whole frames"));
     Bar->addSeparator();
 
     /* + Binding and + Track, as menus. */
     auto* AddBinding = new QToolButton(Bar);
-    AddBinding->setText(QStringLiteral("+ Binding"));
+    AddBinding->setText(QStringLiteral("Binding"));
+    AddBinding->setIcon(EditorIcons::Get(EIcon::Add));
+    AddBinding->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    AddBinding->setToolTip(QStringLiteral("Add a binding: the level's selected entity, or a spawned prefab"));
     AddBinding->setPopupMode(QToolButton::InstantPopup);
     auto* BindingMenu = new QMenu(AddBinding);
     BindingMenu->addAction(QStringLiteral("Selected Entity"), this, [this]() { AddSelectedEntity(); });
@@ -307,7 +342,10 @@ void SequencerTab::BuildToolBar()
     Bar->addWidget(AddBinding);
 
     auto* AddTrack = new QToolButton(Bar);
-    AddTrack->setText(QStringLiteral("+ Track"));
+    AddTrack->setText(QStringLiteral("Track"));
+    AddTrack->setIcon(EditorIcons::Get(EIcon::Add));
+    AddTrack->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    AddTrack->setToolTip(QStringLiteral("Add a track to the current binding, or to the sequence"));
     AddTrack->setPopupMode(QToolButton::InstantPopup);
     auto* TrackMenu = new QMenu(AddTrack);
     connect(TrackMenu, &QMenu::aboutToShow, this, [this, TrackMenu]()
@@ -317,9 +355,45 @@ void SequencerTab::BuildToolBar()
     });
     AddTrack->setMenu(TrackMenu);
     Bar->addWidget(AddTrack);
+    Bar->addSeparator();
 
-    QAction* Fit = Bar->addAction(QStringLiteral("Fit"), this, [this]() { Timeline->FitAll(); Curves->FitView(); });
-    Fit->setToolTip(QStringLiteral("The whole sequence across the timeline"));
+    /* Zoom: out, a slider (logarithmic, frames per pixel), in, and fit. */
+    Add(EIcon::ZoomOut, QStringLiteral("Zoom Out"), QStringLiteral("Zoom the timeline out"), QKeySequence(Qt::CTRL | Qt::Key_Minus),
+        [this]() { Timeline->ZoomBy(1.0 / 1.5); });
+    ZoomSlider = new QSlider(Qt::Horizontal, Bar);
+    ZoomSlider->setObjectName(QStringLiteral("SequencerZoom"));
+    ZoomSlider->setRange(0, 1000);
+    ZoomSlider->setFixedWidth(120);
+    ZoomSlider->setToolTip(QStringLiteral("Timeline zoom (Ctrl+wheel, or the wheel over the ruler)"));
+    Bar->addWidget(ZoomSlider);
+    Add(EIcon::ZoomIn, QStringLiteral("Zoom In"), QStringLiteral("Zoom the timeline in"), QKeySequence(Qt::CTRL | Qt::Key_Equal),
+        [this]() { Timeline->ZoomBy(1.5); });
+    Add(EIcon::Fit, QStringLiteral("Fit"), QStringLiteral("The whole sequence across the timeline and curves"), QKeySequence(Qt::CTRL | Qt::Key_0),
+        [this]() { Timeline->FitAll(); Curves->FitView(); });
+
+    connect(ZoomSlider, &QSlider::valueChanged, this, [this](const int InValue)
+    {
+        if(bSyncingView) { return; }
+        const double Range = std::log(SequencerTimeline::MAX_PIXELS_PER_FRAME / SequencerTimeline::MIN_PIXELS_PER_FRAME);
+        const double Pixels = SequencerTimeline::MIN_PIXELS_PER_FRAME * std::exp(Range * InValue / 1000.0);
+        Timeline->ZoomBy(Pixels / Timeline->GetPixelsPerFrame());
+    });
+}
+
+void SequencerTab::SyncViewControls()
+{
+    bSyncingView = true;
+    const double Range = std::log(SequencerTimeline::MAX_PIXELS_PER_FRAME / SequencerTimeline::MIN_PIXELS_PER_FRAME);
+    ZoomSlider->setValue(int(std::lround(1000.0 * std::log(Timeline->GetPixelsPerFrame() / SequencerTimeline::MIN_PIXELS_PER_FRAME) / Range)));
+
+    /* The scrollbar in frames: the sequence plus half a view of margin either side. */
+    const double Visible = Timeline->GetVisibleFrames();
+    const double Length  = double(std::max(Document->GetAsset().Length, 1));
+    TimeScroll->setRange(int(std::floor(-Visible * 0.5)), int(std::ceil(std::max(Length - Visible * 0.5, -Visible * 0.5))));
+    TimeScroll->setPageStep(std::max(1, int(Visible)));
+    TimeScroll->setSingleStep(std::max(1, int(Visible / 20)));
+    TimeScroll->setValue(int(std::lround(Timeline->GetScrollFrame())));
+    bSyncingView = false;
 }
 
 void SequencerTab::FillAddTrackMenu(QMenu& InMenu, const int InBinding)

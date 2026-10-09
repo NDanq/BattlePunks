@@ -30,11 +30,28 @@ namespace
     };
 
     /* In EIcon's order. */
-    constexpr std::array<FIconInfo, 3> Icons =
+    constexpr std::array<FIconInfo, size_t(EditorIcons::EIcon::Count)> Icons =
     {{
-        { "play.svg",   QStyle::SP_MediaPlay  },
-        { "pause.svg",  QStyle::SP_MediaPause },
-        { "square.svg", QStyle::SP_MediaStop  },
+        { "play.svg",            QStyle::SP_MediaPlay },
+        { "pause.svg",           QStyle::SP_MediaPause },
+        { "square.svg",          QStyle::SP_MediaStop },
+        { "undo-2.svg",          QStyle::SP_ArrowBack },
+        { "redo-2.svg",          QStyle::SP_ArrowForward },
+        { "save.svg",            QStyle::SP_DialogSaveButton },
+        { "skip-back.svg",       QStyle::SP_MediaSkipBackward },
+        { "skip-forward.svg",    QStyle::SP_MediaSkipForward },
+        { "step-back.svg",       QStyle::SP_MediaSeekBackward },
+        { "step-forward.svg",    QStyle::SP_MediaSeekForward },
+        { "repeat.svg",          QStyle::SP_BrowserReload },
+        { "circle-dot.svg",      QStyle::SP_DialogApplyButton },
+        { "key-round.svg",       QStyle::SP_DialogApplyButton },
+        { "clapperboard.svg",    QStyle::SP_DesktopIcon },
+        { "plane.svg",           QStyle::SP_ArrowUp },
+        { "magnet.svg",          QStyle::SP_DialogApplyButton },
+        { "plus.svg",            QStyle::SP_FileDialogNewFolder },
+        { "zoom-in.svg",         QStyle::SP_ArrowUp },
+        { "zoom-out.svg",        QStyle::SP_ArrowDown },
+        { "scan.svg",            QStyle::SP_TitleBarMaxButton },
     }};
 
     QIcon FallbackIcon(const EditorIcons::EIcon InIcon)

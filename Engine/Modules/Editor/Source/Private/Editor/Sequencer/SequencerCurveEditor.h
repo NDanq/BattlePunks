@@ -20,6 +20,8 @@
  *                             Alt breaks the two sides apart
  *   double-click near a curve add a key there
  *   right-click a key         its interpolation
+ *   wheel                     zoom time about the cursor; Ctrl+wheel zooms value
+ *   middle-drag               pan
  *   F                         fit the view
  */
 class SequencerCurveEditor : public QWidget
@@ -46,12 +48,13 @@ protected:
     void mouseMoveEvent(QMouseEvent* InEvent) override;
     void mouseReleaseEvent(QMouseEvent* InEvent) override;
     void mouseDoubleClickEvent(QMouseEvent* InEvent) override;
+    void wheelEvent(QWheelEvent* InEvent) override;
     void keyPressEvent(QKeyEvent* InEvent) override;
     void contextMenuEvent(QContextMenuEvent* InEvent) override;
     void resizeEvent(QResizeEvent* InEvent) override;
 
 private:
-    enum class EDrag : uint8_t { None, Key, In, Out };
+    enum class EDrag : uint8_t { None, Key, In, Out, Pan };
 
     struct KeyHit
     {
@@ -74,6 +77,7 @@ private:
     EDrag   Drag = EDrag::None;
     KeyHit  Dragged;
     QPointF PressPos;
+    double  PanFrame[2] = {}, PanValue[2] = {};
     bool    bMoved = false;
     bool    bBroken = false;
 };

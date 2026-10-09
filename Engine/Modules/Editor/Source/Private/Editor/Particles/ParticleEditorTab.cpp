@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Private/Editor/Particles/ParticleEditorTab.h"
+#include "Private/Editor/EditorIcons.h"
 
 #include <algorithm>
 #include <cmath>
@@ -335,6 +336,8 @@ void ParticleEditorTab::BuildActions()
     QAction* Undo = Add(Edit, QStringLiteral("&Undo"), { QKeySequence::Undo }, [this]() { Particles->GetHistory().undo(); });
     QAction* Redo = Add(Edit, QStringLiteral("&Redo"), { QKeySequence::Redo, QKeySequence(Qt::CTRL | Qt::Key_Y) },
                         [this]() { Particles->GetHistory().redo(); });
+    Undo->setIcon(EditorIcons::Get(EditorIcons::EIcon::Undo));
+    Redo->setIcon(EditorIcons::Get(EditorIcons::EIcon::Redo));
     const auto UpdateHistory = [this, Undo, Redo]()
     {
         QUndoStack& History = Particles->GetHistory();

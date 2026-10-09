@@ -30,9 +30,27 @@ namespace EditorIcons
 {
     enum class EIcon : uint8_t
     {
-        Play,    // lucide "play"
-        Pause,   // lucide "pause"
-        Stop,    // lucide "square"
+        Play,         // lucide "play"
+        Pause,        // lucide "pause"
+        Stop,         // lucide "square"
+        Undo,         // lucide "undo-2"
+        Redo,         // lucide "redo-2"
+        Save,         // lucide "save"
+        SkipBack,     // lucide "skip-back": to the start
+        SkipForward,  // lucide "skip-forward": to the end
+        StepBack,     // lucide "step-back": a frame back
+        StepForward,  // lucide "step-forward": a frame on
+        Loop,         // lucide "repeat"
+        Record,       // lucide "circle-dot": auto-key
+        Key,          // lucide "key-round": set a key
+        CameraCuts,   // lucide "clapperboard": look through the shot
+        Pilot,        // lucide "plane": fly the shot camera
+        Snap,         // lucide "magnet"
+        Add,          // lucide "plus"
+        ZoomIn,       // lucide "zoom-in"
+        ZoomOut,      // lucide "zoom-out"
+        Fit,          // lucide "scan": fit the view
+        Count
     };
 
     QIcon Get(EIcon InIcon);

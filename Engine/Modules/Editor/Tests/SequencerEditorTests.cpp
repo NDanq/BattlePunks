@@ -11,7 +11,10 @@
 #include <QApplication>
 #include <QDoubleSpinBox>
 #include <QFile>
+#include <QKeyEvent>
 #include <QMouseEvent>
+#include <QSlider>
+#include <QWheelEvent>
 #include <QSpinBox>
 #include <QTemporaryDir>
 #include <QUndoStack>
@@ -219,6 +222,57 @@ static void TestTimeline()
     Expect(Timeline.GetRows().size() < Before, "a collapsed binding hides its rows");
 }
 
+static void TestZoom()
+{
+    std::printf("Zoom\n");
+    SequencerDocument Document;
+    Document.Reset(Sample());
+    SequencerTimeline Timeline(Document);
+    Timeline.resize(900, 300);
+    Timeline.show();
+    Timeline.FitAll();
+    Pump();
+
+    int Changes = 0;
+    QObject::connect(&Timeline, &SequencerTimeline::ViewChanged, [&Changes]() { ++Changes; });
+
+    /* About a pivot: the frame under it stays put. */
+    const double Pivot = Timeline.XOfFrame(45.0);
+    const double Before = Timeline.GetPixelsPerFrame();
+    Timeline.ZoomBy(2.0, Pivot);
+    Expect(Near(Timeline.GetPixelsPerFrame(), Before * 2.0) && Near(Timeline.FrameAtX(Pivot), 45.0, 0.01) && Changes > 0,
+           "zooming in keeps the frame under the pivot");
+
+    /* The wheel over the ruler zooms, with no modifier. */
+    const double Mid = Timeline.GetPixelsPerFrame();
+    QWheelEvent Wheel(QPointF(Pivot, 10), Timeline.mapToGlobal(QPointF(Pivot, 10)), QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier,
+                      Qt::NoScrollPhase, false);
+    QApplication::sendEvent(&Timeline, &Wheel);
+    Expect(Timeline.GetPixelsPerFrame() > Mid, "the wheel over the ruler zooms in");
+
+    /* Keys: - zooms out about the playhead; F fits. */
+    QKeyEvent Minus(QEvent::KeyPress, Qt::Key_Minus, Qt::NoModifier, QStringLiteral("-"));
+    const double BeforeMinus = Timeline.GetPixelsPerFrame();
+    QApplication::sendEvent(&Timeline, &Minus);
+    Expect(Timeline.GetPixelsPerFrame() < BeforeMinus, "- zooms out");
+    Timeline.ZoomBy(1000.0);
+    Expect(Near(Timeline.GetPixelsPerFrame(), SequencerTimeline::MAX_PIXELS_PER_FRAME), "zoom stops at its limit");
+    QKeyEvent Fit(QEvent::KeyPress, Qt::Key_F, Qt::NoModifier, QStringLiteral("f"));
+    QApplication::sendEvent(&Timeline, &Fit);
+    Expect(Timeline.GetVisibleFrames() >= 90.0, "F shows the whole sequence");
+
+    /* Middle-drag pans. */
+    Timeline.ZoomBy(4.0);
+    const double Scroll = Timeline.GetScrollFrame();
+    QMouseEvent Press(QEvent::MouseButtonPress, QPointF(500, 100), Timeline.mapToGlobal(QPointF(500, 100)), Qt::MiddleButton, Qt::MiddleButton, Qt::NoModifier);
+    QApplication::sendEvent(&Timeline, &Press);
+    QMouseEvent Move(QEvent::MouseMove, QPointF(400, 100), Timeline.mapToGlobal(QPointF(400, 100)), Qt::NoButton, Qt::MiddleButton, Qt::NoModifier);
+    QApplication::sendEvent(&Timeline, &Move);
+    QMouseEvent Release(QEvent::MouseButtonRelease, QPointF(400, 100), Timeline.mapToGlobal(QPointF(400, 100)), Qt::MiddleButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(&Timeline, &Release);
+    Expect(Timeline.GetScrollFrame() > Scroll, "a middle-drag to the left pans later in time");
+}
+
 static void TestCurves()
 {
     std::printf("Curve editor\n");
@@ -382,6 +436,15 @@ static void TestDock(const QString& InDir)
         Host.grab().save(QString::fromLocal8Bit(qgetenv("SEQUENCER_DOCK_SNAPSHOT")));
     }
 
+    /* The toolbar's zoom slider follows the timeline, and drives it. */
+    auto* Slider = Tab->findChild<QSlider*>(QStringLiteral("SequencerZoom"));
+    const int Was = Slider ? Slider->value() : 0;
+    Tab->GetTimeline().ZoomBy(3.0);
+    Expect(Slider && Slider->value() > Was, "the zoom slider follows the timeline");
+    const double Pixels = Tab->GetTimeline().GetPixelsPerFrame();
+    if(Slider) { Slider->setValue(Slider->value() - 200); }
+    Expect(Tab->GetTimeline().GetPixelsPerFrame() < Pixels, "and moving it zooms the timeline");
+
     Expect(EditorSequencer::CloseAll() && Dock.GetTabs().isEmpty() && SequencerWindow::Find() == &Dock, "CloseAll closes its sequences, the dock stays");
     EditorSequencer::SetEditorContext(nullptr);
 }
@@ -398,6 +461,7 @@ int main(int argc, char** argv)
     std::printf("NimbleEditorSequencerTests\n");
     TestDocument(Dir.path());
     TestTimeline();
+    TestZoom();
     TestCurves();
     TestDetails();
     TestTab(Dir.path());

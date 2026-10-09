@@ -313,6 +313,23 @@ qt_add_resources(NimbleEditor "LucideIcons"
             "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/play.svg"
             "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/pause.svg"
             "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/square.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/undo-2.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/redo-2.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/save.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/skip-back.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/skip-forward.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/step-back.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/step-forward.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/repeat.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/circle-dot.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/key-round.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/clapperboard.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/plane.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/magnet.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/plus.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/zoom-in.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/zoom-out.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/scan.svg"
 )
 if(TARGET Qt6::Svg)
     target_link_libraries(NimbleEditor PRIVATE Qt6::Svg)
@@ -638,4 +655,30 @@ if(TARGET NimbleEditorParticleTests)
 endif()
 if(TARGET NimbleEditorSequencerTests)
     target_include_directories(NimbleEditorSequencerTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
+    # The Lucide icons too, so its snapshot shows the toolbar as the editor draws it.
+    qt_add_resources(NimbleEditorSequencerTests "LucideIconsTests"
+            PREFIX "/lucide"
+            BASE   "${NIMBLE_EDITOR_LUCIDE_DIR}/icons"
+            FILES
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/play.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/pause.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/square.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/undo-2.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/redo-2.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/save.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/skip-back.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/skip-forward.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/step-back.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/step-forward.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/repeat.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/circle-dot.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/key-round.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/clapperboard.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/plane.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/magnet.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/plus.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/zoom-in.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/zoom-out.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/scan.svg"
+    )
 endif()
