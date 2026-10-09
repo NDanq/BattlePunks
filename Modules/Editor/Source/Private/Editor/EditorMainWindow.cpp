@@ -1489,13 +1489,13 @@ void EditorMainWindow::RegisterConsoleCommands()
     });
 
     Console.Register(QStringLiteral("sequence"),
-                     QStringLiteral("<path | new | close | seek <seconds | marker> | play | pause | cuts <on|off> | autokey <on|off>>"),
+                     QStringLiteral("<path | new | close | seek <seconds | marker> | play | pause | cuts <on|off> | autokey <on|off> | sound <on|off> | scrub <on|off>>"),
                      QStringLiteral("Open a .nmseq in the Sequencer, make a new one, or drive the one in front (for scripts and tests)"),
                      [this](const QStringList& InArgs)
     {
         if(InArgs.isEmpty())
         {
-            Console.PrintError(QStringLiteral("Usage: sequence <path | new | close | seek <seconds | marker> | play | pause | cuts <on|off> | autokey <on|off>>"));
+            Console.PrintError(QStringLiteral("Usage: sequence <path | new | close | seek <seconds | marker> | play | pause | cuts <on|off> | autokey <on|off> | sound <on|off> | scrub <on|off>>"));
             return;
         }
         const QString Verb = InArgs.front();
@@ -1503,7 +1503,7 @@ void EditorMainWindow::RegisterConsoleCommands()
         if(Verb == QStringLiteral("close")) { EditorSequencer::CloseAll(); return; }
 
         const QStringList Drives = { QStringLiteral("seek"), QStringLiteral("play"), QStringLiteral("pause"), QStringLiteral("cuts"),
-                                     QStringLiteral("autokey") };
+                                     QStringLiteral("autokey"), QStringLiteral("sound"), QStringLiteral("scrub") };
         if(Drives.contains(Verb))
         {
             SequencerWindow* Window = SequencerWindow::Find();
@@ -1519,6 +1519,8 @@ void EditorMainWindow::RegisterConsoleCommands()
             else if(Verb == QStringLiteral("pause"))   { Tab->SetPlaying(false); }
             else if(Verb == QStringLiteral("cuts"))    { Tab->SetViewLocked(bOn); }
             else if(Verb == QStringLiteral("autokey")) { Tab->SetAutoKey(bOn); }
+            else if(Verb == QStringLiteral("sound"))   { Tab->SetSound(bOn); }
+            else if(Verb == QStringLiteral("scrub"))   { Tab->SetScrubAudio(bOn); }
             else
             {
                 /* Seconds, or a marker by name. */

@@ -211,7 +211,7 @@ namespace Audio
 
     void AudioDevice::Impl::ApplyBus(const EAudioBus InBus)
     {
-        const float Volume = bBusMuted[size_t(InBus)] ? 0.0f : ClampVolume(BusVolumeVar(InBus).GetFloat());
+        const float Volume = bBusMuted[size_t(InBus)] ? 0.0f : ClampVolume(BusVolumeVar(InBus).GetFloat()) * BusGain[size_t(InBus)];
         if(InBus == EAudioBus::Master)
         {
             ma_engine_set_volume(&Engine, Volume);
@@ -418,6 +418,20 @@ namespace Audio
         if(!P || !ValidBus(InBus)) { return; }
         P->bBusMuted[size_t(InBus)] = bInMuted;
         P->ApplyBus(InBus);
+    }
+
+    void AudioDevice::SetBusGain(const EAudioBus InBus, const float InGain)
+    {
+        if(!P || !ValidBus(InBus)) { return; }
+        const float Gain = std::clamp(InGain, 0.0f, 4.0f);
+        if(P->BusGain[size_t(InBus)] == Gain) { return; }
+        P->BusGain[size_t(InBus)] = Gain;
+        P->ApplyBus(InBus);
+    }
+
+    float AudioDevice::GetBusGain(const EAudioBus InBus) const
+    {
+        return P && ValidBus(InBus) ? P->BusGain[size_t(InBus)] : 1.0f;
     }
 
     bool AudioDevice::IsBusMuted(const EAudioBus InBus) const

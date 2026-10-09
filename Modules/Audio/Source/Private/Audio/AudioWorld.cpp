@@ -78,6 +78,14 @@ namespace Audio
                 Out.Rolloff       = InSource->Rolloff;
                 Out.DopplerFactor = InSource->DopplerFactor;
             }
+            if(InSource && InSource->ForceBus > 0 && InSource->ForceBus <= uint8_t(EAudioBus::Count))
+            {
+                Out.Bus = EAudioBus(InSource->ForceBus - 1);
+            }
+            if(InSource && InSource->ForceSpatial > 0)
+            {
+                Out.bSpatial = InSource->ForceSpatial == 2;
+            }
             return Out;
         }
 

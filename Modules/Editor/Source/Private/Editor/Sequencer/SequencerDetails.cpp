@@ -319,6 +319,17 @@ void SequencerDetails::BuildTrack(const SequencerTrackRef& InTrack)
         });
         AddNote(QStringLiteral("Keyed over whatever the level's volumes give, and turns its effect on."));
     }
+    if(Track->Type == ESequenceTrackType::BusVolume)
+    {
+        QStringList Buses;
+        for(int Index = 0; Index < Sequencer::SEQUENCE_BUS_COUNT; ++Index) { Buses << QString::fromLatin1(Sequencer::SequenceBusName(Index)); }
+        AddChoice(QStringLiteral("Bus"), Buses, Sequencer::FindSequenceBus(Track->Field.c_str()), [this, InTrack](SequenceAsset&, const int InIndex)
+        {
+            if(SequenceTrack* Live = Document.FindLiveTrack(InTrack)) { Live->Field = Sequencer::SequenceBusName(InIndex); }
+        });
+        AddNote(QStringLiteral("A gain on the mix bus: 1 leaves it as the player set it, 0.3 ducks it. Players' gains multiply; "
+                               "put back when the sequence stops."));
+    }
     AddNote(Sequencer::IsSectionTrack(Track->Type) ? QStringLiteral("Double-click its lane to add a section.")
           : Track->Type == ESequenceTrackType::Event ? QStringLiteral("Double-click its lane to add an event.")
           : QStringLiteral("Double-click its lane (a Transform track's channels) to add a key; K keys the binding's pose."));
@@ -402,6 +413,32 @@ void SequencerDetails::BuildSection(const SequencerItem& InItem)
             {
                 if(auto* S = Live()) { S->Asset = InText.toStdString(); }
             }, QStringLiteral("Sounds (*.nmsound)"));
+            {
+                QStringList Buses{ QStringLiteral("The sound's") };
+                for(int Index = 0; Index < Sequencer::SEQUENCE_BUS_COUNT; ++Index) { Buses << QString::fromLatin1(Sequencer::SequenceBusName(Index)); }
+                AddChoice(QStringLiteral("Bus"), Buses, Section.Bus + 1, [Live](SequenceAsset&, const int InIndex)
+                {
+                    if(auto* S = Live()) { S->Bus = int8_t(InIndex - 1); }
+                });
+                const QStringList Spatial{ Item.Track.Binding < 0 ? QStringLiteral("The sound's (2D on a master track)") : QStringLiteral("The sound's"),
+                                           QStringLiteral("2D"), QStringLiteral("3D") };
+                AddChoice(QStringLiteral("Spatial"), Spatial, Section.Spatial + 1, [Live](SequenceAsset&, const int InIndex)
+                {
+                    if(auto* S = Live()) { S->Spatial = int8_t(InIndex - 1); }
+                });
+            }
+            break;
+        case ESequenceTrackType::Subtitle:
+            AddText(QStringLiteral("Speaker"), QString::fromStdString(Section.Speaker), [Live](SequenceAsset&, const QString& InText)
+            {
+                if(auto* S = Live()) { S->Speaker = InText.toStdString(); }
+            });
+            AddText(QStringLiteral("Text"), QString::fromStdString(Section.Asset), [Live](SequenceAsset&, const QString& InText)
+            {
+                if(auto* S = Live()) { S->Asset = InText.toStdString(); }
+            });
+            AddNote(QStringLiteral("Shown under the letterbox while the playhead is in it (the later-started line wins); "
+                                   "players can turn subtitles off (Lua: Sequence.SetSubtitles)."));
             break;
         case ESequenceTrackType::PostProcess:
             AddText(QStringLiteral("Stack"), QString::fromStdString(Section.Asset), [Live](SequenceAsset&, const QString& InText)
@@ -422,6 +459,7 @@ void SequencerDetails::BuildSection(const SequencerItem& InItem)
 
     AddInt(QStringLiteral("Start"), Section.Start, 0, 1000000, [Live](SequenceAsset&, const int V) { if(auto* S = Live()) { const int L = S->GetLength(); S->Start = V; S->End = V + L; } });
     AddInt(QStringLiteral("Length"), Section.GetLength(), 1, 1000000, [Live](SequenceAsset&, const int V) { if(auto* S = Live()) { S->End = S->Start + V; } });
+    if(Track->Type == ESequenceTrackType::Subtitle) { return; }
     if(Track->Type != ESequenceTrackType::CameraCut && Track->Type != ESequenceTrackType::PostProcess)
     {
         AddFloat(QStringLiteral("Play rate"), Section.PlayRate, 0.01, 100.0, 3, [Live](SequenceAsset&, const double V) { if(auto* S = Live()) { S->PlayRate = float(V); } });

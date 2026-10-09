@@ -52,6 +52,9 @@ namespace
         { "zoom-in.svg",         QStyle::SP_ArrowUp },
         { "zoom-out.svg",        QStyle::SP_ArrowDown },
         { "scan.svg",            QStyle::SP_TitleBarMaxButton },
+        { "volume-2.svg",        QStyle::SP_MediaVolume },
+        { "audio-waveform.svg",  QStyle::SP_MediaVolume },
+        { "captions.svg",        QStyle::SP_FileDialogDetailedView },
     }};
 
     QIcon FallbackIcon(const EditorIcons::EIcon InIcon)

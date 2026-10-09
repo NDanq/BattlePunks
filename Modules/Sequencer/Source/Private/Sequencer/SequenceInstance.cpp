@@ -362,7 +362,7 @@ namespace Sequencer
         {
             for(SoundVoice& Voice : Old.Voices)
             {
-                if(Voice.Helper.IsSet() && World.IsAlive(Voice.Helper)) { World.DestroyEntity(Voice.Helper); }
+                if(Voice.Helper.IsSet() && Sounds().IsAlive(Voice.Helper)) { Sounds().DestroyEntity(Voice.Helper); }
             }
         }
         InOutState.Tracks.clear();
@@ -417,6 +417,8 @@ namespace Sequencer
         Fade = -1.0f;
         Shot = SequenceShot();
         PostProcess = SequencePostProcess();
+        BusGains.clear();
+        Subtitle = SequenceSubtitle();
 
         for(size_t Index = 0; Index < Bindings.size(); ++Index)
         {
@@ -494,6 +496,23 @@ namespace Sequencer
                     if(Section.BlendOut > 0) { Envelope = std::min(Envelope, float((double(Section.End) - InFrame) / double(Section.BlendOut))); }
                     const float Weight = std::clamp(Section.Volume * std::clamp(Envelope, 0.0f, 1.0f), 0.0f, 1.0f);
                     if(Weight > 0.0f) { PostProcess.Stacks.push_back({ Section.Asset, Weight }); }
+                }
+                break;
+            case ESequenceTrackType::BusVolume:
+                if(!Track.Channels.empty() && !Track.Channels[0].IsEmpty() && FindSequenceBus(Track.Field.c_str()) >= 0)
+                {
+                    MultiplyGain(Track.Field, std::max(0.0f, Track.Channels[0].Evaluate(InFrame, 1.0f)));
+                }
+                break;
+            case ESequenceTrackType::Subtitle:
+                /* The latest line under the playhead. */
+                for(const SequenceSection& Section : Track.Sections)
+                {
+                    if(Section.Contains(InFrame) && !Section.Asset.empty())
+                    {
+                        Subtitle.Speaker = Section.Speaker;
+                        Subtitle.Text    = Section.Asset;
+                    }
                 }
                 break;
             case ESequenceTrackType::PostProcessSetting:
@@ -776,6 +795,8 @@ namespace Sequencer
             if(Fade < 0.0f)  { Fade = Sub->GetFade(); }
             if(!Shot.bValid) { Shot = Sub->GetShot(); }
             PostProcess.Append(Sub->GetPostProcess());
+            for(const SequenceBusGain& Gain : Sub->GetBusGains()) { MultiplyGain(Gain.Bus, Gain.Gain); }
+            if(Subtitle.IsEmpty()) { Subtitle = Sub->GetSubtitle(); }
         }
     }
 
@@ -816,8 +837,9 @@ namespace Sequencer
             SoundVoice&            Voice   = InOutBound.Voices[Index];
             const bool             bInside = Section.Contains(InFrame) && !Section.Asset.empty();
 
-            GameCore::AudioSourceComponent* Source = Voice.Helper.IsSet() && World.IsAlive(Voice.Helper)
-                ? World.GetEntity(Voice.Helper).GetComponent<GameCore::AudioSourceComponent>() : nullptr;
+            GameCore::World& SoundWorld = Sounds();
+            GameCore::AudioSourceComponent* Source = Voice.Helper.IsSet() && SoundWorld.IsAlive(Voice.Helper)
+                ? SoundWorld.GetEntity(Voice.Helper).GetComponent<GameCore::AudioSourceComponent>() : nullptr;
 
             if(!bInside)
             {
@@ -835,16 +857,25 @@ namespace Sequencer
             {
                 /* A helper of its own: under the binding, so it follows it;
                  * at the origin for a track of no binding. */
-                GameCore::Entity Helper = World.CreateEntity("Sequence Sound");
+                GameCore::Entity Helper = SoundWorld.CreateEntity("Sequence Sound");
                 Helper.AddComponent(GameCore::TransformComponent());
                 GameCore::AudioSourceComponent Init;
                 Init.bAutoPlay = 0;
                 std::snprintf(Init.Sound, sizeof(Init.Sound), "%s", Section.Asset.c_str());
+                /* Its bus and 2D/3D as the section says; a track of no binding is heard 2D unless told otherwise. */
+                Init.ForceBus     = Section.Bus >= 0 ? uint8_t(Section.Bus + 1) : 0;
+                Init.ForceSpatial = Section.Spatial >= 0 ? uint8_t(Section.Spatial + 1) : (InOwner.IsSet() ? 0 : 1);
                 Helper.AddComponent(Init);
-                if(InOwner.IsSet() && World.IsAlive(InOwner)) { Helper.SetParent(InOwner, false); }
+                if(&SoundWorld == &World && InOwner.IsSet() && World.IsAlive(InOwner)) { Helper.SetParent(InOwner, false); }
                 Voice.Helper = Helper.GetID();
                 Voice.State  = SoundVoice::EState::Idle;
                 Source = Helper.GetComponent<GameCore::AudioSourceComponent>();
+            }
+
+            /* In another World it cannot follow by parenting: placed where its binding is. */
+            if(&SoundWorld != &World && InOwner.IsSet() && World.IsAlive(InOwner))
+            {
+                SoundWorld.GetEntity(Voice.Helper).SetWorldPose(World.GetEntity(InOwner).GetWorldPose());
             }
 
             /* Its fades, as a volume envelope. */
@@ -854,7 +885,8 @@ namespace Sequencer
             Source->Volume = Section.Volume * std::clamp(Envelope, 0.0f, 1.0f);
             Source->Pitch  = Section.PlayRate;
 
-            const float Expected = float(Section.AssetSeconds(InFrame, Asset->FrameRate) / double(Section.PlayRate));
+            /* Where in the sound: source seconds, as its cursor and seeks are (Pitch plays it PlayRate fast). */
+            const float Expected = float(Section.AssetSeconds(InFrame, Asset->FrameRate));
             switch(Voice.State)
             {
                 case SoundVoice::EState::Idle:
@@ -879,6 +911,51 @@ namespace Sequencer
         }
     }
 
+    GameCore::World& SequenceInstance::Sounds() const
+    {
+        return Options.SoundWorld ? *Options.SoundWorld : World;
+    }
+
+    void SequenceInstance::MultiplyGain(const std::string& InBus, const float InGain)
+    {
+        for(SequenceBusGain& Each : BusGains)
+        {
+            if(Each.Bus == InBus) { Each.Gain *= InGain; return; }
+        }
+        BusGains.push_back({ InBus, InGain });
+    }
+
+    void SequenceInstance::ReleaseSounds()
+    {
+        StopPlayback();
+        ForEachTrack([this](const GameCore::EntityID, BoundTrack& InOutBound)
+        {
+            for(SoundVoice& Voice : InOutBound.Voices)
+            {
+                if(Voice.Helper.IsSet() && Sounds().IsAlive(Voice.Helper)) { Sounds().DestroyEntity(Voice.Helper); }
+            }
+            InOutBound.Voices.clear();
+            for(std::unique_ptr<SequenceInstance>& Sub : InOutBound.Subs)
+            {
+                if(Sub) { Sub->ReleaseSounds(); }
+            }
+        });
+    }
+
+    void SequenceInstance::SetAudioEnabled(const bool bInOn)
+    {
+        if(Options.bAudio == bInOn) { return; }
+        Options.bAudio = bInOn;
+        if(!bInOn) { ReleaseSounds(); }
+        ForEachTrack([bInOn](const GameCore::EntityID, BoundTrack& InOutBound)
+        {
+            for(std::unique_ptr<SequenceInstance>& Sub : InOutBound.Subs)
+            {
+                if(Sub) { Sub->SetAudioEnabled(bInOn); }
+            }
+        });
+    }
+
     void SequenceInstance::NoteJump()
     {
         bJumped = true;
@@ -890,9 +967,9 @@ namespace Sequencer
         {
             for(SoundVoice& Voice : InOutBound.Voices)
             {
-                if(Voice.State != SoundVoice::EState::Idle && Voice.Helper.IsSet() && World.IsAlive(Voice.Helper))
+                if(Voice.State != SoundVoice::EState::Idle && Voice.Helper.IsSet() && Sounds().IsAlive(Voice.Helper))
                 {
-                    if(auto* Source = World.GetEntity(Voice.Helper).GetComponent<GameCore::AudioSourceComponent>()) { Source->Stop(); }
+                    if(auto* Source = Sounds().GetEntity(Voice.Helper).GetComponent<GameCore::AudioSourceComponent>()) { Source->Stop(); }
                 }
                 Voice.State = SoundVoice::EState::Idle;
             }
@@ -1081,7 +1158,7 @@ namespace Sequencer
             if(InOutBound.bControlling) { HandBackAnimation(InOwner, InOutBound); }
             for(SoundVoice& Voice : InOutBound.Voices)
             {
-                if(Voice.Helper.IsSet() && World.IsAlive(Voice.Helper)) { World.DestroyEntity(Voice.Helper); }
+                if(Voice.Helper.IsSet() && Sounds().IsAlive(Voice.Helper)) { Sounds().DestroyEntity(Voice.Helper); }
             }
             InOutBound.Voices.clear();
             for(std::unique_ptr<SequenceInstance>& Sub : InOutBound.Subs)
@@ -1110,6 +1187,8 @@ namespace Sequencer
         Shot = SequenceShot();
         Fade = -1.0f;
         PostProcess = SequencePostProcess();
+        BusGains.clear();
+        Subtitle = SequenceSubtitle();
         ReleaseSpawned();
     }
 

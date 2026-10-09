@@ -100,6 +100,12 @@ namespace Audio
         void  SetBusMuted(EAudioBus InBus, bool bInMuted);
         bool  IsBusMuted(EAudioBus InBus) const;
 
+        /* A gain over the bus's volume (0..4, 1 none), never saved: what a
+         * cutscene ducks the music or mutes the ambience with (Sequencer's
+         * Bus Volume tracks). The player's volume stays theirs. */
+        void  SetBusGain(EAudioBus InBus, float InGain);
+        float GetBusGain(EAudioBus InBus) const;
+
         /*
          * Pausing stops the device pulling the mix: every voice holds where it
          * is, and resumes from there. For a game losing focus or a debugger

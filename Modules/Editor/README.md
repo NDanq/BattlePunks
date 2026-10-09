@@ -499,15 +499,20 @@ empty camera cut track.
 
 | Part | What it does |
 |---|---|
-| **Timeline** (top) | Rows on the left: each binding, its tracks, a Transform track's keyed channels; then the sequence's own tracks. Lanes on the right: keys, sections, events; markers along the ruler. Click the ruler to scrub. Click to select (Ctrl adds); drag to move, Alt-drag to copy, a section's edge to trim it; drag on empty lane to box select. Double-click a lane to add a key, event or section there. Ctrl+wheel zooms, Shift+wheel pans. Right-click for the row's menu (add tracks, mute, remove; on the ruler, add a marker or set the end). Delete removes the selection |
+| **Timeline** (top) | Rows on the left: each binding, its tracks, a Transform track's keyed channels; then the sequence's own tracks. Lanes on the right: keys, sections (an Audio section draws its sound's waveform; a Subtitle section its speaker and line), events; markers along the ruler. Click the ruler to scrub. Click to select (Ctrl adds); drag to move, Alt-drag to copy, a section's edge to trim it; drag on empty lane to box select. Double-click a lane to add a key, event or section there. Ctrl+wheel zooms, Shift+wheel pans. Right-click for the row's menu (add tracks, mute, remove; on the ruler, add a marker or set the end). Delete removes the selection |
 | **Curves** (below) | The current track's curves: drag a key in time and value; drag a selected key's handle to give it its own tangents (User), Alt to break them; right-click a key for its interpolation; double-click a curve to key it; F fits |
-| **Details** (right) | What is selected: a key, section, event or marker; else the current track or binding (**Bind to Selected Entity** retargets it); else the sequence's rate and length, and what `Validate` finds wrong |
-| **Toolbar** | Save, Undo, Redo; the transport (Home, `,`, Space, `.`, End) and Loop; the timecode; **Auto-key**, **Key** (K: the current binding's pose), **Camera Cuts**, **Pilot**, **Snap**; **+ Binding** (the level's selected entity, or a spawned prefab) and **+ Track**; zoom out, the zoom slider, zoom in (Ctrl+- / Ctrl+=) and Fit (Ctrl+0) |
+| **Details** (right) | What is selected: a key, section (an Audio one's bus and 2D/3D; a Subtitle one's speaker and text), event or marker; else the current track or binding (**Bind to Selected Entity** retargets it); else the sequence's rate and length, and what `Validate` finds wrong |
+| **Toolbar** | Save, Undo, Redo; the transport (Home, `,`, Space, `.`, End) and Loop; the timecode; **Auto-key**, **Key** (K: the current binding's pose), **Camera Cuts**, **Pilot**, **Sound**, **Scrub Audio**, **Snap**; **+ Binding** (the level's selected entity, or a spawned prefab) and **+ Track**; zoom out, the zoom slider, zoom in (Ctrl+- / Ctrl+=) and Fit (Ctrl+0) |
 | **Zoom** | Ctrl+wheel anywhere, or the wheel over the ruler, zooms about the cursor; `=` / `-` about the playhead; F fits; middle-drag pans time and rows; the scrollbar under the lanes scrolls time. The curve editor zooms time with the wheel and value with Ctrl+wheel, and pans with a middle-drag |
 
 **The preview.** While the tab is open the sequence is shown on the level at the
 playhead, through the same `SequenceInstance` the game plays it with, set to
-make nothing in the level: no sounds, spawns or camera entity. What it changes
+make nothing in the level: no spawns or camera entity, and its sounds' helpers
+in a World of the tab's own, heard from the level viewport's camera. With
+**Sound** on (the default) the sounds play while the preview plays; **Scrub
+Audio** also plays a moment of them as the playhead is dragged or stepped. Bus
+Volume tracks set the audio device's bus gains while the preview shows them,
+and the Subtitle tracks' line shows in a strip above the timeline. What it changes
 goes back when the tab closes, Play starts, or the level is saved (and comes
 back after), so the level's file never holds the preview. **Camera Cuts** looks
 through the shot at the playhead in the level viewport; **Pilot** makes flying
@@ -522,7 +527,7 @@ Sequencer's cache, so the next Play plays it.
 
 The console drives the tab in front, for scripts and tests: `sequence <path> |
 new | close | seek <seconds | marker> | play | pause | cuts <on|off> |
-autokey <on|off>`. With `--command "after <ms> ..."` and `screenshot`, a
+autokey <on|off> | sound <on|off> | scrub <on|off>`. With `--command "after <ms> ..."` and `screenshot`, a
 scripted run can look through each shot.
 
 ## Particle Editor

@@ -14,6 +14,10 @@
 #include <QPainterPath>
 #include <QWheelEvent>
 
+#if WITH_AUDIO
+#include "Public/Audio/SoundAsset.h"
+#endif
+
 using Sequencer::ESequenceTrackType;
 using Sequencer::SequenceTrack;
 
@@ -39,8 +43,53 @@ namespace
         {
             Label = QStringLiteral("Post Process: %1").arg(QString::fromStdString(InTrack.Field));
         }
+        else if(InTrack.Type == ESequenceTrackType::BusVolume && InTrack.Name.empty())
+        {
+            Label = QStringLiteral("Bus Volume: %1").arg(QString::fromStdString(InTrack.Field));
+        }
+        else if(InTrack.Type == ESequenceTrackType::Subtitle && InTrack.Name.empty())
+        {
+            Label = QStringLiteral("Subtitles");
+        }
         return Label;
     }
+
+    /* A subtitle section's caption: "Speaker: line". */
+    QString SubtitleCaption(const Sequencer::SequenceSection& InSection)
+    {
+        const QString Text = QString::fromStdString(InSection.Asset).simplified();
+        return InSection.Speaker.empty() ? Text : QStringLiteral("%1: %2").arg(QString::fromStdString(InSection.Speaker), Text);
+    }
+
+#if WITH_AUDIO
+    /* An Audio section's sound, its peaks across the box: where in the sound
+     * each pixel plays (its offset and play rate; wrapping if the sound
+     * loops). Nothing for a sound that does not load. */
+    void DrawWaveform(QPainter& InPainter, const QRectF& InBox, const Sequencer::SequenceSection& InSection, const double InPixelsPerFrame,
+                      const uint32_t InFps, const QColor& InColor)
+    {
+        if(InSection.Asset.empty()) { return; }
+        const std::shared_ptr<const Audio::SoundData> Sound = Audio::SoundAssetCache::Find(InSection.Asset);
+        if(!Sound || Sound->Cooked.Waveform.empty()) { return; }
+        const double Duration = Sound->Cooked.GetDuration();
+        if(Duration <= 0.0) { return; }
+        const size_t Buckets = Sound->Cooked.Waveform.size();
+        const double Mid  = InBox.center().y();
+        const double Half = InBox.height() * 0.5 - 3.0;
+        const QRectF Visible = InBox.intersected(InPainter.clipBoundingRect().isEmpty() ? InBox : InPainter.clipBoundingRect());
+        InPainter.setPen(QPen(InColor, 1.0));
+        for(int X = int(std::floor(Visible.left())); X < int(std::ceil(Visible.right())); ++X)
+        {
+            const double Frames = (X - InBox.left()) / InPixelsPerFrame + InSection.Offset;
+            double Seconds = Frames / double(InFps) * InSection.PlayRate;
+            if(Sound->Settings.bLoop) { Seconds = std::fmod(Seconds, Duration); }
+            if(Seconds < 0.0 || Seconds >= Duration) { continue; }
+            const size_t Bucket = std::min(Buckets - 1, size_t(Seconds / Duration * double(Buckets)));
+            const double Peak = std::max(0.5, Sound->Cooked.Waveform[Bucket] / 255.0 * Half);
+            InPainter.drawLine(QPointF(X + 0.5, Mid - Peak), QPointF(X + 0.5, Mid + Peak));
+        }
+    }
+#endif
 
     void Diamond(QPainter& InPainter, const QPointF& InAt, const double InHalf, const QColor& InFill, const bool bInSelected,
                  const QColor& InSelectedRing)
@@ -244,6 +293,8 @@ QColor SequencerTimeline::TrackColor(const ESequenceTrackType InType) const
         case ESequenceTrackType::Fade:        return QColor(140, 148, 162);
         case ESequenceTrackType::PostProcess: return QColor(196, 104, 176);
         case ESequenceTrackType::PostProcessSetting: return QColor(196, 104, 176);
+        case ESequenceTrackType::BusVolume:   return QColor(118, 92, 184);
+        case ESequenceTrackType::Subtitle:    return QColor(186, 160, 74);
         case ESequenceTrackType::SubSequence: return QColor(180, 120, 80);
         case ESequenceTrackType::Count:       break;
     }
@@ -442,8 +493,18 @@ void SequencerTimeline::PaintRow(QPainter& InPainter, const int InRow, const QRe
             Ramp.closeSubpath();
             InPainter.fillPath(Ramp, QColor(0, 0, 0, 90));
         }
+#if WITH_AUDIO
+        if(Track->Type == ESequenceTrackType::Audio)
+        {
+            InPainter.save();
+            InPainter.setClipRect(Box.adjusted(1, 1, -1, -1), Qt::IntersectClip);
+            DrawWaveform(InPainter, Box, Section, PixelsPerFrame, std::max<uint32_t>(Document.GetAsset().FrameRate, 1), QColor(255, 255, 255, 100));
+            InPainter.restore();
+        }
+#endif
         QString Text = QString::fromStdString(Section.Asset);
-        if(Track->Type != ESequenceTrackType::CameraCut) { Text = QFileInfo(Text).completeBaseName(); }
+        if(Track->Type == ESequenceTrackType::Subtitle) { Text = SubtitleCaption(Section); }
+        else if(Track->Type != ESequenceTrackType::CameraCut) { Text = QFileInfo(Text).completeBaseName(); }
         else if(const int Bound = Document.GetAsset().FindBinding(Section.Asset); Bound >= 0)
         {
             const auto& Binding = Document.GetAsset().Bindings[size_t(Bound)];
@@ -479,7 +540,7 @@ void SequencerTimeline::PaintRow(QPainter& InPainter, const int InRow, const QRe
 
         /* The curve's shape, faintly, behind its keys. */
         if(Track->Type == ESequenceTrackType::Fade || Track->Type == ESequenceTrackType::Float || Track->Type == ESequenceTrackType::Bool
-           || Track->Type == ESequenceTrackType::PostProcessSetting)
+           || Track->Type == ESequenceTrackType::PostProcessSetting || Track->Type == ESequenceTrackType::BusVolume)
         {
             float Low = 0.0f, High = 1.0f;
             for(const auto& Key : Keys) { Low = std::min(Low, Key.Value); High = std::max(High, Key.Value); }
@@ -1026,6 +1087,12 @@ void SequencerTimeline::mouseDoubleClickEvent(QMouseEvent* InEvent)
         case ESequenceTrackType::PostProcessSetting:
             Document.SetKey(R.Track, 0, Frame, Document.EvaluateChannel(R.Track, 0, Frame, Track->Type == ESequenceTrackType::Bool ? 1.0f : 0.0f),
                             QStringLiteral("Add Key"));
+            break;
+        case ESequenceTrackType::BusVolume:
+            Document.SetKey(R.Track, 0, Frame, Document.EvaluateChannel(R.Track, 0, Frame, 1.0f), QStringLiteral("Add Key"));
+            break;
+        case ESequenceTrackType::Subtitle:
+            Document.AddSection(R.Track, Frame, Frame + int(Fps) * 3, QStringLiteral("..."));
             break;
         case ESequenceTrackType::Event:
             Document.AddEvent(R.Track, Frame, QStringLiteral("Event"));

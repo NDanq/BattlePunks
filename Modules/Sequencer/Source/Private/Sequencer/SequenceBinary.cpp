@@ -12,14 +12,14 @@
  * binding, MARK the markers. A chunk a newer build adds is stepped over.
  *
  * Version 2 added key tangents, track names and mute, sections and markers;
- * version 1 files still read.
+ * version 3 a section's bus, 2D/3D and speaker. Older files still read.
  */
 namespace Sequencer
 {
     namespace
     {
         constexpr char     MAGIC[4]       = { 'N', 'M', 'S', 'Q' };
-        constexpr uint32_t BINARY_VERSION = 2;
+        constexpr uint32_t BINARY_VERSION = 3;
 
         constexpr uint32_t Tag(const char InA, const char InB, const char InC, const char InD)
         {
@@ -121,6 +121,12 @@ namespace Sequencer
                 Ar << Section.BlendIn;
                 Ar << Section.BlendOut;
                 Ar << Section.bLoop;
+                if(InVersion >= 3)
+                {
+                    Ar << Section.Bus;
+                    Ar << Section.Spatial;
+                    Ar << Section.Speaker;
+                }
             }
         }
 

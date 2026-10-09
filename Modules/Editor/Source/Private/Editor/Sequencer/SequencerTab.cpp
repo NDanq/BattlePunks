@@ -39,7 +39,23 @@
 #include "Private/Editor/Sequencer/SequencerDocument.h"
 #include "Private/Editor/Sequencer/SequencerTimeline.h"
 
+#if WITH_AUDIO
+#include "Public/Audio/AudioDevice.h"
+#include "Public/Audio/AudioWorld.h"
+#endif
+
 using Sequencer::ESequenceTrackType;
+
+/* The preview's sound: a World for the helpers, heard through an AudioWorld
+ * (when the device runs; a test's helpers are only made). */
+struct SequencerTab::PreviewSound
+{
+    GameCore::World World;
+#if WITH_AUDIO
+    Audio::AudioWorld Out;   // after World: detached before it goes
+#endif
+    QElapsedTimer Clock;
+};
 
 namespace
 {
@@ -59,6 +75,23 @@ namespace
         return std::fabs(A.GetX() - B.GetX()) < 1e-3 && std::fabs(A.GetY() - B.GetY()) < 1e-3 && std::fabs(A.GetZ() - B.GetZ()) < 1e-3
             && std::fabs(InA.Yaw - InB.Yaw) < 1e-3f && std::fabs(InA.Pitch - InB.Pitch) < 1e-3f;
     }
+
+#if WITH_AUDIO
+    /* The preview is heard from the level viewport's camera. */
+    bool ViewportListener(GameCore::World&, Audio::AudioListenerPose& OutPose, void*)
+    {
+        ViewportWidget* Viewport = EditorSequencer::GetLevelViewport();
+        if(!Viewport) { return false; }
+        const EditorCamera& Camera = Viewport->GetCamera();
+        OutPose.Position = Camera.Position;
+        OutPose.Forward  = Camera.GetForward();
+        OutPose.Up       = EngineCore::Vector3(0.0, 1.0, 0.0);
+        return true;
+    }
+#endif
+
+    /* A scrub is heard for this long. */
+    constexpr int SCRUB_SNIPPET_MS = 90;
 }
 
 SequencerTab::SequencerTab(EditorContext& InContext, QWidget* InParent)
@@ -75,6 +108,15 @@ SequencerTab::SequencerTab(EditorContext& InContext, QWidget* InParent)
     auto* TimelineLayout = new QVBoxLayout(TimelineArea);
     TimelineLayout->setContentsMargins(0, 0, 0, 0);
     TimelineLayout->setSpacing(0);
+    SubtitleStrip = new QLabel(TimelineArea);
+    SubtitleStrip->setObjectName(QStringLiteral("SequencerSubtitle"));
+    SubtitleStrip->setAlignment(Qt::AlignCenter);
+    SubtitleStrip->setWordWrap(true);
+    SubtitleStrip->setTextFormat(Qt::RichText);
+    SubtitleStrip->setContentsMargins(12, 5, 12, 5);
+    SubtitleStrip->setStyleSheet(QStringLiteral("QLabel#SequencerSubtitle { background: rgba(0, 0, 0, 170); color: white; font-size: 13px; }"));
+    SubtitleStrip->hide();
+    TimelineLayout->addWidget(SubtitleStrip);
     TimelineLayout->addWidget(Timeline, 1);
     TimeScroll = new QScrollBar(Qt::Horizontal, TimelineArea);
     TimeScroll->setObjectName(QStringLiteral("SequencerTimeScroll"));
@@ -103,6 +145,17 @@ SequencerTab::SequencerTab(EditorContext& InContext, QWidget* InParent)
     AutoKeyTimer->setSingleShot(true);
     AutoKeyTimer->setInterval(300);
     connect(AutoKeyTimer, &QTimer::timeout, this, &SequencerTab::FlushAutoKey);
+
+    SoundTimer = new QTimer(this);
+    SoundTimer->setInterval(16);
+    connect(SoundTimer, &QTimer::timeout, this, &SequencerTab::OnSoundTick);
+    ScrubTimer = new QTimer(this);
+    ScrubTimer->setSingleShot(true);
+    ScrubTimer->setInterval(SCRUB_SNIPPET_MS);
+    connect(ScrubTimer, &QTimer::timeout, this, [this]()
+    {
+        if(Preview && !bPlaying) { Preview->UpdatePlayback(Document->GetPlayhead(), false); }
+    });
 
     BuildToolBar();
     connect(Timeline, &SequencerTimeline::ViewChanged, this, &SequencerTab::SyncViewControls);
@@ -141,6 +194,8 @@ SequencerTab::SequencerTab(EditorContext& InContext, QWidget* InParent)
         }
         Preview.reset();
         PreviewAsset.reset();
+        ResetMix();
+        ShowSubtitle(Sequencer::SequenceSubtitle());
     });
     connect(&Level, &EditorDocument::EditedWorldCreated, this, &SequencerTab::RefreshPreview);
     connect(&Level, &EditorDocument::PropertyEdited, this, &SequencerTab::OnPropertyEdited);
@@ -165,6 +220,7 @@ SequencerTab::~SequencerTab()
 {
     SetViewLocked(false);
     ReleasePreview();
+    Sound.reset();
 }
 
 // === The file ====================================================================
@@ -316,6 +372,14 @@ void SequencerTab::BuildToolBar()
                       [this](const bool bInOn) { SetPilot(bInOn); });
     PilotAction->setCheckable(true);
     Labelled(PilotAction);
+    SoundAction = Add(EIcon::Sound, QStringLiteral("Sound"), QStringLiteral("Hear the sequence's sounds while the preview plays"), QKeySequence(),
+                      [this](const bool bInOn) { SetSound(bInOn); });
+    SoundAction->setCheckable(true);
+    SoundAction->setChecked(bSoundOn);
+    ScrubAction = Add(EIcon::Scrub, QStringLiteral("Scrub Audio"), QStringLiteral("Hear a moment of sound as the playhead is dragged or stepped"),
+                      QKeySequence(), [this](const bool bInOn) { SetScrubAudio(bInOn); });
+    ScrubAction->setCheckable(true);
+    ScrubAction->setChecked(bScrubAudio);
     QAction* Snap = Add(EIcon::Snap, QStringLiteral("Snap"), QStringLiteral("Scrubbing lands on whole frames"), QKeySequence(),
                         [this](const bool bInOn) { Timeline->SetSnap(bInOn); });
     Snap->setCheckable(true);
@@ -421,6 +485,8 @@ void SequencerTab::FillAddTrackMenu(QMenu& InMenu, const int InBinding)
     Add(QStringLiteral("Sub-Sequence"), -1, ESequenceTrackType::SubSequence);
     Add(QStringLiteral("Post Process"), -1, ESequenceTrackType::PostProcess);
     Add(QStringLiteral("Post Process Setting..."), -1, ESequenceTrackType::PostProcessSetting);
+    Add(QStringLiteral("Bus Volume..."), -1, ESequenceTrackType::BusVolume);
+    Add(QStringLiteral("Subtitles"), -1, ESequenceTrackType::Subtitle);
 }
 
 void SequencerTab::AddTrackPrompted(const int InBinding, const ESequenceTrackType InType)
@@ -435,6 +501,16 @@ void SequencerTab::AddTrackPrompted(const int InBinding, const ESequenceTrackTyp
         bool bOk = false;
         const QString Setting = QInputDialog::getItem(this, QStringLiteral("Add Post Process Setting"), QStringLiteral("Setting:"), Settings, 0, false, &bOk);
         if(bOk && !Setting.isEmpty()) { Document->AddTrack(-1, InType, QString(), Setting); }
+        return;
+    }
+    if(InType == ESequenceTrackType::BusVolume)
+    {
+        QStringList Buses;
+        for(int Index = 0; Index < Sequencer::SEQUENCE_BUS_COUNT; ++Index) { Buses << QString::fromLatin1(Sequencer::SequenceBusName(Index)); }
+        bool bOk = false;
+        const QString Bus = QInputDialog::getItem(this, QStringLiteral("Add Bus Volume"), QStringLiteral("Bus:"), Buses,
+                                                  Sequencer::FindSequenceBus("Music"), false, &bOk);
+        if(bOk && !Bus.isEmpty()) { Document->AddTrack(-1, InType, QString(), Bus); }
         return;
     }
     if(InType == ESequenceTrackType::Float || InType == ESequenceTrackType::Bool)
@@ -558,6 +634,7 @@ void SequencerTab::SetPlaying(const bool bInPlaying)
     else
     {
         PlayTimer->stop();
+        UpdateSound();
     }
 }
 
@@ -608,7 +685,8 @@ void SequencerTab::RefreshPreview()
             Preview.reset();
         }
         Sequencer::SequenceInstanceOptions Options;
-        Options.bAudio        = false;
+        Options.bAudio        = bSoundOn;
+        Options.SoundWorld    = GetSoundWorld();
         Options.bCameraEntity = false;
         Options.bSpawn        = false;
         Preview      = std::make_unique<Sequencer::SequenceInstance>(World, Asset, GetRuntimePath().toStdString(), Options);
@@ -617,6 +695,7 @@ void SequencerTab::RefreshPreview()
     Preview->Evaluate(Document->GetPlayhead());
     World.RefreshSpatialIndex();
     Sequencer::PushPostProcess(World, Preview->GetPostProcess());
+    UpdateSound();
     RememberShownPoses();
 }
 
@@ -629,6 +708,141 @@ void SequencerTab::ReleasePreview()
     Preview.reset();
     PreviewAsset.reset();
     PendingKeys.clear();
+    ResetMix();
+    ShowSubtitle(Sequencer::SequenceSubtitle());
+    LastSoundFrame = -1.0;
+}
+
+// === Sound =======================================================================
+
+GameCore::World* SequencerTab::GetSoundWorld()
+{
+    if(!bSoundOn) { return nullptr; }
+    if(!Sound)
+    {
+        Sound = std::make_unique<PreviewSound>();
+#if WITH_AUDIO
+        if(Audio::AudioDevice::Get().IsInitialized() && Sound->Out.Attach(Sound->World))
+        {
+            Sound->Out.SetListenerFallback(&ViewportListener, nullptr);
+        }
+#endif
+        Sound->Clock.start();
+        SoundTimer->start();
+    }
+    return &Sound->World;
+}
+
+void SequencerTab::SetSound(const bool bInOn)
+{
+    if(bInOn == bSoundOn) { return; }
+    bSoundOn = bInOn;
+    if(SoundAction) { SoundAction->setChecked(bInOn); }
+    if(Preview)
+    {
+        /* Remade with its sounds (or without): the instance's helpers live in the sound world. */
+        if(!bInOn) { Preview->SetAudioEnabled(false); }
+        Preview->RestoreState();
+        Preview.reset();
+        PreviewAsset.reset();
+    }
+    if(!bInOn)
+    {
+        SoundTimer->stop();
+        Sound.reset();
+    }
+    LastSoundFrame = -1.0;
+    RefreshPreview();
+}
+
+void SequencerTab::SetScrubAudio(const bool bInOn)
+{
+    bScrubAudio = bInOn;
+    if(ScrubAction) { ScrubAction->setChecked(bInOn); }
+}
+
+void SequencerTab::UpdateSound()
+{
+    if(!Preview) { return; }
+    const double Frame = Document->GetPlayhead();
+    if(Sound)
+    {
+        const double Fps = double(std::max<uint32_t>(Document->GetAsset().FrameRate, 1));
+        if(bPlaying)
+        {
+            /* A loop, a click on the ruler while playing, or the start of play: seek. */
+            if(!bWasPlaying || Frame < LastSoundFrame || Frame - LastSoundFrame > Fps * 0.5) { Preview->NoteJump(); }
+            Preview->UpdatePlayback(Frame, true);
+        }
+        else if(bScrubAudio && LastSoundFrame >= 0.0 && Frame != LastSoundFrame)
+        {
+            /* A moment of what is under the playhead, then paused again. */
+            Preview->NoteJump();
+            Preview->UpdatePlayback(Frame, true);
+            ScrubTimer->start();
+        }
+        else if(!ScrubTimer->isActive())
+        {
+            Preview->UpdatePlayback(Frame, false);
+        }
+    }
+    LastSoundFrame = Frame;
+    bWasPlaying    = bPlaying;
+
+#if WITH_AUDIO
+    /* The mix: every bus the sequence does not duck back at 1. */
+    Audio::AudioDevice& Device = Audio::AudioDevice::Get();
+    if(bSoundOn && (bMixApplied || !Preview->GetBusGains().empty()))
+    {
+        for(int Bus = 0; Bus < int(Audio::EAudioBus::Count); ++Bus)
+        {
+            float Gain = 1.0f;
+            for(const Sequencer::SequenceBusGain& Wanted : Preview->GetBusGains())
+            {
+                if(Sequencer::FindSequenceBus(Wanted.Bus.c_str()) == Bus) { Gain = Wanted.Gain; }
+            }
+            Device.SetBusGain(Audio::EAudioBus(Bus), Gain);
+        }
+        bMixApplied = !Preview->GetBusGains().empty();
+    }
+#endif
+    ShowSubtitle(Preview->GetSubtitle());
+}
+
+void SequencerTab::ResetMix()
+{
+    if(!bMixApplied) { return; }
+    bMixApplied = false;
+#if WITH_AUDIO
+    for(int Bus = 0; Bus < int(Audio::EAudioBus::Count); ++Bus) { Audio::AudioDevice::Get().SetBusGain(Audio::EAudioBus(Bus), 1.0f); }
+#endif
+}
+
+void SequencerTab::ShowSubtitle(const Sequencer::SequenceSubtitle& InLine)
+{
+    if(!SubtitleStrip) { return; }
+    if(InLine.IsEmpty())
+    {
+        SubtitleStrip->clear();
+        SubtitleStrip->hide();
+        return;
+    }
+    const QString Text = QString::fromStdString(InLine.Text).toHtmlEscaped();
+    SubtitleStrip->setText(InLine.Speaker.empty() ? Text
+                         : QStringLiteral("<span style=\"color:#ffd27a\">%1</span><br>%2").arg(QString::fromStdString(InLine.Speaker).toHtmlEscaped(), Text));
+    SubtitleStrip->show();
+}
+
+QString SequencerTab::GetShownSubtitle() const
+{
+    return SubtitleStrip && !SubtitleStrip->isHidden() ? SubtitleStrip->text() : QString();
+}
+
+void SequencerTab::OnSoundTick()
+{
+    if(!Sound) { return; }
+    const float Seconds = float(Sound->Clock.restart()) / 1000.0f;
+    Sound->World.Tick(std::min(Seconds, 0.1f));
 }
 
 void SequencerTab::RememberShownPoses()

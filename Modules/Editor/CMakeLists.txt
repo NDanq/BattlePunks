@@ -330,6 +330,9 @@ qt_add_resources(NimbleEditor "LucideIcons"
             "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/zoom-in.svg"
             "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/zoom-out.svg"
             "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/scan.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/volume-2.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/audio-waveform.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/captions.svg"
 )
 if(TARGET Qt6::Svg)
     target_link_libraries(NimbleEditor PRIVATE Qt6::Svg)
@@ -680,5 +683,8 @@ if(TARGET NimbleEditorSequencerTests)
                 "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/zoom-in.svg"
                 "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/zoom-out.svg"
                 "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/scan.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/volume-2.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/audio-waveform.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/captions.svg"
     )
 endif()

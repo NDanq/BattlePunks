@@ -28,6 +28,12 @@ namespace Sequencer
     {
         bool    bSpawn        = true;   // Spawn bindings spawn their prefab
         bool    bAudio        = true;   // Audio sections play, through helper entities with an Audio Source
+
+        /* Where those helpers live: null, the instance's World (parented to
+         * their binding); another World -- the editor's private one, so the
+         * level is never touched -- and they are placed where their binding
+         * is each update. */
+        GameCore::World* SoundWorld = nullptr;
         bool    bCameraEntity = true;   // CameraCut tracks drive a camera entity of their own (GetCameraEntity)
         int32_t Depth         = 0;      // sub-sequence nesting; past 8 a SubSequence plays nothing
     };
@@ -47,6 +53,22 @@ namespace Sequencer
         void Append(const SequencePostProcess& InOther);
         bool operator==(const SequencePostProcess& InOther) const;
         bool operator!=(const SequencePostProcess& InOther) const { return !(*this == InOther); }
+    };
+
+    /* What the BusVolume tracks want of the sound buses now: a gain each,
+     * by bus name ("Music"), 1 for none. And the Subtitle track's line. */
+    struct SequenceBusGain
+    {
+        std::string Bus;
+        float       Gain = 1.0f;
+    };
+    struct SequenceSubtitle
+    {
+        std::string Speaker;
+        std::string Text;    // "" for none
+        bool IsEmpty() const { return Text.empty(); }
+        bool operator==(const SequenceSubtitle& InOther) const { return Speaker == InOther.Speaker && Text == InOther.Text; }
+        bool operator!=(const SequenceSubtitle& InOther) const { return !(*this == InOther); }
     };
 
     /* InPost as InWorld's post process override (RenderCore's
@@ -161,6 +183,18 @@ namespace Sequencer
          * -1 with no Fade track. */
         float GetFade() const { return Fade; }
 
+        /* The BusVolume tracks' gains at the last Evaluate (sub-sequences'
+         * multiplied in), one per bus they key. */
+        const std::vector<SequenceBusGain>& GetBusGains() const { return BusGains; }
+
+        /* The Subtitle tracks' line at the last Evaluate: the latest section
+         * under the playhead. */
+        const SequenceSubtitle& GetSubtitle() const { return Subtitle; }
+
+        /* Audio on or off from now on (Options.bAudio): off stops every
+         * sound and lets go of their helpers. */
+        void SetAudioEnabled(bool bInOn);
+
         /* The post process tracks' at the last Evaluate. */
         const SequencePostProcess& GetPostProcess() const { return PostProcess; }
 
@@ -258,6 +292,13 @@ namespace Sequencer
         float               Fade = -1.0f;
         SequenceShot        Shot;
         SequencePostProcess PostProcess;
+        std::vector<SequenceBusGain> BusGains;
+        SequenceSubtitle    Subtitle;
+
+        /* Where sound helpers live (Options.SoundWorld, else World). */
+        GameCore::World& Sounds() const;
+        void ReleaseSounds();
+        void MultiplyGain(const std::string& InBus, float InGain);
         GameCore::EntityID CameraEntity;
         bool               bJumped = false;
 

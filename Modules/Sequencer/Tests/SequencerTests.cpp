@@ -1077,6 +1077,142 @@ static void TestPostProcess()
     SequenceWorld::Detach(World);
 }
 
+// === Sound mix and subtitles =================================================
+
+static std::shared_ptr<SequenceAsset> MixAsset()
+{
+    auto Asset = std::make_shared<SequenceAsset>();
+    Asset->FrameRate = 10;
+    Asset->Length    = 40;
+    SequenceTrack Duck;
+    Duck.Type  = ESequenceTrackType::BusVolume;
+    Duck.Field = "Music";
+    Duck.Normalize();
+    Duck.Channels[0].Keys = { Key(0, 1.0f), Key(20, 0.2f) };
+    SequenceTrack Lines;
+    Lines.Type = ESequenceTrackType::Subtitle;
+    SequenceSection First;
+    First.Start = 5; First.End = 20; First.Speaker = "Captain"; First.Asset = "Hold fast!";
+    SequenceSection Second;
+    Second.Start = 15; Second.End = 30; Second.Asset = "(wind howls)";
+    Lines.Sections = { First, Second };
+    SequenceTrack Voice;
+    Voice.Type = ESequenceTrackType::Audio;
+    SequenceSection Line;
+    Line.Start = 5; Line.End = 20; Line.Asset = "Test/Line.nmsound"; Line.Bus = 4; Line.Spatial = 0;
+    Voice.Sections = { Line };
+    Asset->Tracks = { Duck, Lines, Voice };
+    Asset->Normalize();
+    return Asset;
+}
+
+static void TestSoundMix()
+{
+    std::printf("Sound mix and subtitles\n");
+    Expect(SEQUENCE_BUS_COUNT == 6 && FindSequenceBus("Voice") == 4 && std::string(SequenceBusName(1)) == "Music" && FindSequenceBus("Loud") < 0,
+           "bus names");
+    const std::shared_ptr<SequenceAsset> Asset = MixAsset();
+    Expect(Asset->Validate().empty(), "bus volume and subtitle tracks validate");
+    SequenceAsset Bad = *Asset;
+    Bad.Tracks[0].Field = "Loud";
+    Expect(Bad.Validate().size() == 1, "an unknown bus is reported");
+
+#if WITH_UNCOOKED
+    const std::string Xml = WriteSequenceXml(*Asset);
+    Expect(Xml.find("bus=\"Music\"") != std::string::npos && Xml.find("speaker=\"Captain\"") != std::string::npos
+           && Xml.find("text=\"Hold fast!\"") != std::string::npos && Xml.find("bus=\"Voice\"") != std::string::npos
+           && Xml.find("spatial=\"2D\"") != std::string::npos, "written as bus, speaker, text and spatial");
+    SequenceAsset Again;
+    std::string Error;
+    Expect(ParseSequenceXml(Xml, Again, &Error) && WriteSequenceXml(Again) == Xml, "and read back");
+#endif
+    SequenceAsset Cooked;
+    Expect(ReadSequenceBinary(WriteSequenceBinary(*Asset), Cooked) && Cooked.Tracks.size() == 3
+           && Cooked.Tracks[1].Sections[0].Speaker == "Captain" && Cooked.Tracks[2].Sections[0].Bus == 4
+           && Cooked.Tracks[2].Sections[0].Spatial == 0, "cooked and read back");
+
+    GameCore::World World;
+    SequenceInstance Instance(World, Asset, "Test/Mix.nmseq");
+    Instance.Evaluate(10.0);
+    Expect(Instance.GetBusGains().size() == 1 && Instance.GetBusGains()[0].Bus == "Music" && Near(Instance.GetBusGains()[0].Gain, 0.6),
+           "the music ducked: " + (Instance.GetBusGains().empty() ? std::string("none") : Num(Instance.GetBusGains()[0].Gain)));
+    Expect(Instance.GetSubtitle().Speaker == "Captain" && Instance.GetSubtitle().Text == "Hold fast!", "the line under the playhead");
+    Instance.Evaluate(17.0);
+    Expect(Instance.GetSubtitle().Speaker.empty() && Instance.GetSubtitle().Text == "(wind howls)", "the later-started line wins");
+    Instance.Evaluate(35.0);
+    Expect(Instance.GetSubtitle().IsEmpty(), "past them, none");
+
+    /* A section's bus and 2D/3D reach its source. */
+    Instance.UpdatePlayback(10.0, true);
+    GameCore::AudioSourceComponent* Made = nullptr;
+    World.Each<GameCore::AudioSourceComponent>([&Made](GameCore::Entity, GameCore::AudioSourceComponent& InSource) { Made = &InSource; });
+    Expect(Made && Made->ForceBus == 5 && Made->ForceSpatial == 1, "the source forced to Voice, 2D");
+    Instance.SetAudioEnabled(false);
+    World.Tick(0.0f);
+    Made = nullptr;
+    World.Each<GameCore::AudioSourceComponent>([&Made](GameCore::Entity, GameCore::AudioSourceComponent& InSource) { Made = &InSource; });
+    Expect(!Made, "audio off: the helper goes");
+    Instance.Release();
+
+    /* At twice the rate, a second in is two seconds into the sound. */
+    auto Fast = std::make_shared<SequenceAsset>(*Asset);
+    Fast->Tracks[2].Sections[0].PlayRate = 2.0f;
+    SequenceInstance Quick(World, Fast, "Test/Fast.nmseq");
+    Quick.UpdatePlayback(15.0, true);
+    Made = nullptr;
+    World.Each<GameCore::AudioSourceComponent>([&Made](GameCore::Entity, GameCore::AudioSourceComponent& InSource) { Made = &InSource; });
+    Expect(Made && Near(Made->Pitch, 2.0) && Near(Made->PendingSeekSeconds, 2.0),
+           "a fast section seeks in the sound's own seconds: " + (Made ? Num(Made->PendingSeekSeconds) : std::string("none")));
+    Quick.Release();
+    World.Tick(0.0f);
+
+    /* Sounds in a World of their own (the editor's preview). */
+    GameCore::World SoundWorld;
+    SequenceInstanceOptions Options;
+    Options.SoundWorld = &SoundWorld;
+    SequenceInstance Apart(World, Asset, "Test/Mix.nmseq", Options);
+    Apart.UpdatePlayback(10.0, true);
+    int InLevel = 0, InSounds = 0;
+    World.Each<GameCore::AudioSourceComponent>([&InLevel](GameCore::Entity, GameCore::AudioSourceComponent&) { ++InLevel; });
+    SoundWorld.Each<GameCore::AudioSourceComponent>([&InSounds](GameCore::Entity, GameCore::AudioSourceComponent&) { ++InSounds; });
+    Expect(InLevel == 0 && InSounds == 1, "helpers made in the sound world, none in the level");
+    Apart.Release();
+
+    /* Players: gains multiplied to the host, the subtitle shown unless off. */
+    struct MixHost
+    {
+        std::vector<std::pair<std::string, float>> Gains;
+        std::string Speaker, Text;
+    } Fake;
+    SequenceHost Host;
+    Host.SetBusGain  = [](const char* InBus, const float InGain, void* InUser) { static_cast<MixHost*>(InUser)->Gains.emplace_back(InBus, InGain); };
+    Host.SetSubtitle = [](const char* InSpeaker, const char* InText, void* InUser)
+    {
+        static_cast<MixHost*>(InUser)->Speaker = InSpeaker;
+        static_cast<MixHost*>(InUser)->Text    = InText;
+    };
+    Host.UserData = &Fake;
+    SequenceAssetCache::Set("Test/Mix.nmseq", Asset);
+    GameCore::World Level;
+    SequenceWorld* Players = SequenceWorld::Attach(Level);
+    Players->SetHost(Host);
+    const GameCore::EntityID A = MakePlayer(Level, "Test/Mix.nmseq", true);
+    const GameCore::EntityID B = MakePlayer(Level, "Test/Mix.nmseq", true);
+    Level.Tick(0.0f);
+    Level.Tick(1.0f);
+    Expect(!Fake.Gains.empty() && Fake.Gains.back().first == "Music" && Near(Fake.Gains.back().second, 0.36),
+           "two players' ducks multiply: " + (Fake.Gains.empty() ? std::string("none") : Num(Fake.Gains.back().second)));
+    Expect(Fake.Speaker == "Captain" && Fake.Text == "Hold fast!", "the subtitle reaches the host");
+    SequenceWorld::SetSubtitlesEnabled(false);
+    Level.Tick(0.1f);
+    Expect(Fake.Text.empty() && !SequenceWorld::AreSubtitlesEnabled(), "subtitles off: none shown");
+    SequenceWorld::SetSubtitlesEnabled(true);
+    Players->Stop(A);
+    Players->Stop(B);
+    Expect(!Fake.Gains.empty() && Near(Fake.Gains.back().second, 1.0) && Fake.Text.empty(), "stopped: the bus put back, the line cleared");
+    SequenceWorld::Detach(Level);
+}
+
 int main()
 {
     TestChannels();
@@ -1100,6 +1236,7 @@ int main()
     TestReplica();
     TestAnimationTrack();
     TestPostProcess();
+    TestSoundMix();
 
     std::printf("%d checks, %d failed\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

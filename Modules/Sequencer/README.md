@@ -65,6 +65,13 @@ first bytes tell the two apart, as they do for `.nmui`.
     <Section start="132" end="240" camera="close" blendIn="12"/>
   </Track>
   <Track type="Fade"><Key f="0" v="1"/><Key f="18" v="0"/></Track>
+  <Track type="Audio">
+    <Section start="0" end="240" sound="Content/Sounds/CellarTheme.nmsound" bus="Music" spatial="2D"/>
+  </Track>
+  <Track type="BusVolume" bus="Music"><Key f="120" v="1"/><Key f="132" v="0.3"/></Track>
+  <Track type="Subtitle">
+    <Section start="132" end="200" speaker="Hale" text="Nobody leaves this cellar."/>
+  </Track>
   <Marker f="132" name="Reveal"/>
 </Sequence>
 ```
@@ -86,11 +93,13 @@ first bytes tell the two apart, as they do for `.nmui`.
   | `Bool` | a binding | One flag field, stepped (never blended) |
   | `Event` | anywhere | EventBus events at frames |
   | `Animation` | a binding | Its clips, in sections (`clip`); overlapping sections crossfade over the later one's `blendIn` |
-  | `Audio` | anywhere | Sounds in sections (`sound`): at the binding, or at the origin on a track of no binding (use 2D sounds there) |
+  | `Audio` | anywhere | Sounds in sections (`sound`): at the binding, or at the origin on a track of no binding (heard 2D there unless the section says `spatial="3D"`). A section can put its sound on another mix bus (`bus`) or force it `spatial="2D"`/`"3D"` |
   | `CameraCut` | top level | Which camera binding the game is seen through (`camera`), blending from the previous shot over `blendIn` |
   | `Fade` | top level | The screen to black: one channel, 0 clear .. 1 black |
   | `SubSequence` | top level | Other sequences (`sequence`), each section playing one in its own time |
   | `PostProcess` | top level | Post process stacks (`stack`, a `.pp.nmgraph`) in sections, blended over the level's volumes at `weight` times their fades |
+  | `BusVolume` | top level | A gain on one mix bus (`bus`: `Master`, `Music`, `SFX`, `UI`, `Voice`, `Ambient`), 1 as the player set it: ducking music under a line, swelling it for a reveal |
+  | `Subtitle` | top level | Lines in sections (`text`, and an optional `speaker`), shown under the letterbox; the later-started section wins where they overlap |
   | `PostProcessSetting` | top level | One setting (`setting`: `Exposure`, `DofFocusDistance`, `DofFocusRange`, `DofMaxBlur`, `BloomIntensity`, `BloomThreshold`, `FogDensity`, `MotionIntensity`, `AoIntensity`, `SsrIntensity`), keyed over everything; keying it turns its effect on |
 
   Section tracks hold `<Section start end ...>` spans. They also take
@@ -149,7 +158,9 @@ before the animation system in TP_PostUpdate.
 - **Sounds** play through helper entities with an Audio Source, parented to
   the binding. They pause, resume and seek with the playhead, and are seeked
   back if they drift more than a quarter second. `blendIn` and `blendOut`
-  fade them.
+  fade them; `rate` plays them faster (higher). A section's `bus` and
+  `spatial` reach the source as `ForceBus` and `ForceSpatial`, over the
+  sound's own settings.
 - **Sub-sequences** play in their section's time, at its `rate`. A binding a
   sub-sequence shares by id plays the same entity, and their events fire as
   the outer playhead passes them.
@@ -172,6 +183,14 @@ before the animation system in TP_PostUpdate.
 
   The fade and the bars are a UI document GameSession builds in code, so
   there is no file to ship.
+- **Subtitles**: the line of the player started last that has one, drawn
+  over the bars (the same document, bound to `Sequencer.Speaker` and
+  `Sequencer.Subtitle`). A game's settings turn them off with
+  `Sequence.SetSubtitles(false)` (every level; not saved here).
+- **The mix**: every player's Bus Volume gains, multiplied, set on the audio
+  device (`AudioDevice::SetBusGain`). They sit under the player's own bus
+  volumes, are never saved, and go back to 1 when no player wants them or
+  the level unloads.
 
 ### Post process
 
@@ -219,6 +238,7 @@ Sequence.Pause(p)  Sequence.Resume(p)  Sequence.Seek(p, 4.5)
 Sequence.Skip(p)   Sequence.Stop(p)    Sequence.Start(p)
 Sequence.SeekToMarker(p, "Reveal")     Sequence.SkipCinematics()
 Sequence.IsPlaying(p)  Sequence.GetTime(p)  Sequence.GetDuration(p)
+Sequence.SetSubtitles(false)  Sequence.GetSubtitles()        -- the player's setting, every level
 ```
 
 A player placed in a level is driven the same way through its entity.
@@ -235,9 +255,9 @@ NimbleEngine::SkipSequence(World, Player);
 Engine and editor code can use `Sequencer::SequenceInstance` directly. It
 applies an asset to a World at any frame, keeps its sounds in step, fires
 events over a range, and restores what it changed. The editor's preview uses
-it with `SequenceInstanceOptions` that make nothing in the level (no sound
-helpers, no camera entity, no spawns), so what the editor shows is what the
-game plays.
+it with `SequenceInstanceOptions` that make nothing in the level (no camera
+entity, no spawns; sound helpers in a World of its own, `SoundWorld`), so
+what the editor shows is what the game plays.
 
 ## Cooking
 
@@ -257,6 +277,8 @@ else `Validate` finds is logged as a warning.
 - an instance writing transforms and fields and restoring them;
 - clips through a real AnimationSystem, crossfades and hand-back;
 - shots and camera blends, fades, sub-sequences, sounds, held rigid bodies;
+- bus gains, subtitles and a section's bus and 2D/3D, helpers in a separate
+  sound World, players' gains multiplying to the host and subtitles off;
 - players auto-playing, pausing, seeking, looping, skipping and finishing on
   a bare World ticked by hand;
 - the host (view, fade, cinematic, skip) and a replica following a server.
@@ -271,4 +293,4 @@ ctest -R Sequencer
 
 - Time dilation (slow motion): the World has no time scale.
 - Spawn bindings in the editor's preview: they show nothing until played.
-- Sounds in the editor's preview: the timeline is silent until played.
+- Lip sync, and subtitles from a string table (a line's text is the line).

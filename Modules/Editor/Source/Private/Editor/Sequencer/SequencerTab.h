@@ -31,7 +31,12 @@ class SequencerTimeline;
  *
  * THE PREVIEW. While open (and the editor is not playing) the sequence is
  * shown on the level being edited, at the playhead: a SequenceInstance
- * that makes nothing in the level -- no sounds, spawns or camera entity.
+ * that makes nothing in the level -- no spawns or camera entity, and its
+ * sounds' helpers in a World of the tab's own, heard through an AudioWorld
+ * from the level viewport's camera. Sound plays while the preview plays
+ * (the Sound toggle) and, with Scrub on, a moment of it as the playhead is
+ * dragged. Bus Volume tracks set the audio device's bus gains, put back
+ * when the preview goes; the Subtitle tracks' line shows under the toolbar.
  * Everything it changed goes back when the tab closes, Play starts, or the
  * level is saved (and comes back after the save), so the level's file
  * never holds a preview.
@@ -80,6 +85,14 @@ public:
     void SetAutoKey(bool bInOn);
     void SetViewLocked(bool bInOn);
     void SetPilot(bool bInOn);
+    void SetSound(bool bInOn);
+    void SetScrubAudio(bool bInOn);
+    bool IsSoundOn() const    { return bSoundOn; }
+    bool IsScrubAudio() const { return bScrubAudio; }
+    /* Where the preview's sound helpers live; null while the sound is off. */
+    GameCore::World* GetSoundWorld();
+    /* The subtitle line shown now ("" for none). */
+    QString GetShownSubtitle() const;
 
     /* The preview made (again) for the document now, at the playhead. */
     void RefreshPreview();
@@ -108,6 +121,14 @@ private:
     int  BindingOf(GameCore::EntityID InEntity);
     /* What the preview showed for each binding, as the "before" of an auto-key. */
     void RememberShownPoses();
+    /* The preview's sounds in step with the playhead, its mix and subtitle shown. */
+    void UpdateSound();
+    /* The device's bus gains back to 1, if the preview set any. */
+    void ResetMix();
+    void ShowSubtitle(const Sequencer::SequenceSubtitle& InLine);
+    void OnSoundTick();
+
+    struct PreviewSound;
 
     EditorContext&     Context;
     QString            Path;
@@ -127,11 +148,23 @@ private:
     QAction* PilotAction  = nullptr;
     QAction* UndoAction   = nullptr;
     QAction* RedoAction   = nullptr;
+    QAction* SoundAction  = nullptr;
+    QAction* ScrubAction  = nullptr;
+    QLabel*  SubtitleStrip = nullptr;
 
     std::unique_ptr<Sequencer::SequenceInstance>   Preview;
     std::shared_ptr<const Sequencer::SequenceAsset> PreviewAsset;
     std::vector<GameCore::TransformPose>           Shown;     // by binding: as the preview left it
     std::vector<bool>                              bShown;
+
+    std::unique_ptr<PreviewSound> Sound;
+    bool          bSoundOn    = true;
+    bool          bScrubAudio = false;
+    bool          bMixApplied = false;
+    double        LastSoundFrame = -1.0;
+    bool          bWasPlaying = false;
+    QTimer*       SoundTimer = nullptr;   // ticks the sound world
+    QTimer*       ScrubTimer = nullptr;   // ends a scrub's snippet
 
     bool          bPlaying = false;
     QTimer*       PlayTimer = nullptr;
