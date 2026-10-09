@@ -267,6 +267,11 @@ endif()
 set_target_properties(NimbleXatlas PROPERTIES FOLDER "Editor/External" POSITION_INDEPENDENT_CODE ON)
 
 add_executable(NimbleEditor WIN32 ${NIMBLE_EDITOR_SOURCES})
+# The application icon: the .exe's own icon on Windows (Explorer, the taskbar
+# before Qt is up); every platform gets the window icon from :/app (EditorMain).
+if(WIN32)
+    target_sources(NimbleEditor PRIVATE Resources/AppIcon/NimbleEditor.rc)
+endif()
 
 # The only engine target with AUTOMOC on.
 set_target_properties(NimbleEditor PROPERTIES
@@ -333,6 +338,18 @@ qt_add_resources(NimbleEditor "LucideIcons"
             "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/volume-2.svg"
             "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/audio-waveform.svg"
             "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/captions.svg"
+)
+qt_add_resources(NimbleEditor "AppIcon"
+        PREFIX "/app"
+        BASE   "${CMAKE_CURRENT_SOURCE_DIR}/Resources/AppIcon"
+        FILES
+            "Resources/AppIcon/NimbleEditor-16.png"
+            "Resources/AppIcon/NimbleEditor-32.png"
+            "Resources/AppIcon/NimbleEditor-48.png"
+            "Resources/AppIcon/NimbleEditor-64.png"
+            "Resources/AppIcon/NimbleEditor-128.png"
+            "Resources/AppIcon/NimbleEditor-256.png"
+            "Resources/AppIcon/NimbleEditor-512.png"
 )
 if(TARGET Qt6::Svg)
     target_link_libraries(NimbleEditor PRIVATE Qt6::Svg)
