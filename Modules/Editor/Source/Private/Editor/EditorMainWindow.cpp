@@ -45,6 +45,7 @@
 #include "Private/Editor/EditorLights.h"
 #include "Private/Editor/EditorPrimitives.h"
 #include "Private/Editor/AboutDialog.h"
+#include "Private/Editor/DocumentationWindow.h"
 #include "Private/Editor/Content/AssetImport.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Content/AnimPreviewWidget.h"
@@ -520,6 +521,13 @@ void EditorMainWindow::BuildMenus()
 void EditorMainWindow::BuildHelpMenu()
 {
     QMenu* Help = menuBar()->addMenu(QStringLiteral("&Help"));
+
+    QAction* Docs = Help->addAction(QStringLiteral("&Documentation"));
+    Docs->setShortcut(QKeySequence::HelpContents);
+    Docs->setToolTip(QStringLiteral("The project's and the engine's .md files, rendered (F1)"));
+    connect(Docs, &QAction::triggered, this, []() { DocumentationWindow::Open(); });
+
+    Help->addSeparator();
 
     QAction* About = Help->addAction(QStringLiteral("&About NimbleEditor..."));
     About->setMenuRole(QAction::AboutRole);
@@ -1883,6 +1891,8 @@ void EditorMainWindow::closeEvent(QCloseEvent* InEvent)
     }
 
     CORE_LOG(std::string("[Editor] closing -- ") + (InEvent->spontaneous() ? "requested by the window system" : "requested by the editor"))
+
+    DocumentationWindow::CloseIfOpen();
 
     /* Before any widget is destroyed: the Renderer releases its swapchain
      * against the viewport's native window, which must still exist. */
