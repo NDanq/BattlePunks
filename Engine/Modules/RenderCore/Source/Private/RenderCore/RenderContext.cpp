@@ -3120,6 +3120,16 @@ namespace RenderCore
         return true;
     }
 
+    void RenderContext::ReleaseMesh(const char* InMeshPath)
+    {
+        if(!InMeshPath || InMeshPath[0] == '\0') { return; }
+        const auto Found = P->Meshes.find(InMeshPath);
+        if(Found == P->Meshes.end()) { return; }
+        delete Found->second.Gpu;   // each backend defers the buffers past any frame still using them
+        P->Meshes.erase(Found);
+        ++P->ContentGeneration;     // static draw lists hold the pointer
+    }
+
     float RenderContext::GetMaterialMaxOffset(const char* InMaterial, const bool bInQuietIfMissing)
     {
         if(!InMaterial || InMaterial[0] == '\0')

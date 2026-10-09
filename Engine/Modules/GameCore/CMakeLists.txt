@@ -179,6 +179,8 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/TickPhase.cpp
         Source/Private/GameCore/SpatialIndex.cpp
         Source/Private/GameCore/Collision.cpp
+        Source/Private/GameCore/Terrain.cpp
+        Source/Private/GameCore/TerrainBrush.cpp
         Source/Private/GameCore/World.cpp
         Source/Private/GameCore/WorldSettings.cpp
         Source/Private/GameCore/ScriptEngine.cpp
@@ -203,6 +205,8 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/EntityID.h
         Source/Public/GameCore/EntityGuid.h
         Source/Public/GameCore/AABB.h
+        Source/Public/GameCore/Terrain.h
+        Source/Public/GameCore/TerrainBrush.h
         Source/Public/GameCore/SpatialIndex.h
         Source/Public/GameCore/TickPhase.h
         Source/Public/GameCore/Mobility.h

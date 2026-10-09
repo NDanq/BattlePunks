@@ -122,6 +122,17 @@ namespace RenderCore
         /* Forget InPath (or everything, given an empty path). */
         static void Invalidate(const std::string& InPath);
 
+        /*
+         * A mesh made in memory rather than loaded -- a terrain's chunks --
+         * under InPath, which should not name a file ("@terrain/..."): Find
+         * returns it, and the render thread rebuilds its GPU copy whenever
+         * a different pointer is stored. Invalidate leaves these alone; a
+         * null InMesh (or Remove) forgets one. Does not bump the generation
+         * (no asset on disk changed).
+         */
+        static void Store(const std::string& InPath, std::shared_ptr<const MeshData> InMesh);
+        static void Remove(const std::string& InPath);
+
         /* Bumped by every Invalidate: anything that kept a mesh past a frame
          * (the static draw lists) compares it to know to look again. */
         static uint64_t GetGeneration();

@@ -13,8 +13,8 @@ namespace GameCore { class World; }
  * What a game asks of physics, without JoltPhysics' headers. Always compiled:
  * with the module compiled out (NIMBLE_WITH_JOLTPHYSICS=OFF, the default) or
  * a World without physics, IsPhysicsAvailable() is false and PhysicsRaycast
- * tests the World's Bounds instead (World::Raycast), with no normal -- so game
- * code needs no #if.
+ * tests the World's Bounds instead (World::Raycast), with no normal, and
+ * walkable terrain (TerrainFacade.h), with one -- so game code needs no #if.
  *
  * Bodies themselves are GameCore's components: a RigidBodyComponent to
  * simulate an entity, its AddImpulse / AddForce / SetLinearVelocity to push

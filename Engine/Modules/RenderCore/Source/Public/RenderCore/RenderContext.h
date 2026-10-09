@@ -200,6 +200,11 @@ namespace RenderCore
                               const char* const* InSlots, uint32_t InSlotCount,
                               const MaterialParameterOverrides& InOverrides = MaterialParameterOverrides());
 
+        /* Frees the GPU copy of InMeshPath now rather than at shutdown: for a
+         * proxy whose meshes are its own (MeshAssetCache::Store), when it
+         * goes. Drawing the path again rebuilds it. */
+        void ReleaseMesh(const char* InMeshPath);
+
         /* How far InMaterial's World Position Offset reaches (its Max Offset),
          * for a proxy to pad its culling bounds; 0 without one, or if it
          * cannot load. Loads it if need be -- warning as a draw of it would,
