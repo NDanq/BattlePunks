@@ -208,11 +208,12 @@ EntityID EditorDocument::ReplaceWithPrefab(const EntityID InEntity, const QStrin
     }
     const GameCore::TransformPose At = ActiveWorld->GetEntity(InEntity).GetWorldPose();
     const QString Name = GetDisplayName(InEntity);
+    const QString Folder = GetEntityFolder(InEntity);   // the instance takes its place there too
 
     const bool bMacro = IsRecording();
     if(bMacro) { History->beginMacro(QStringLiteral("Convert %1 to Prefab").arg(Name)); }
     DestroyEntity(InEntity);
-    const EntityID Root = SpawnPrefabRecorded(InRuntimePath, At);
+    const EntityID Root = SpawnPrefabRecorded(InRuntimePath, At, Folder);
     if(bMacro)
     {
         History->endMacro();
@@ -353,6 +354,7 @@ int EditorDocument::ConvertTreesToPrefabs(const std::vector<std::pair<EntityID, 
                 EditorHistory::LoadComponent(*EditedWorld, InNew, Component, &Remap);
             }
             if(InOld.Name != New.GetName()) { New.SetName(InOld.Name.c_str()); }
+            New.SetFolder(InOld.Folder.c_str());
             EntityID Child = New.GetFirstChild();
             for(const EditorHistory::EntitySnapshot& OldChild : InOld.Children)
             {
@@ -393,7 +395,7 @@ int EditorDocument::ConvertTreesToPrefabs(const std::vector<std::pair<EntityID, 
     return Converted;
 }
 
-EntityID EditorDocument::SpawnPrefabRecorded(const QString& InRuntimePath, const GameCore::TransformPose& InAt)
+EntityID EditorDocument::SpawnPrefabRecorded(const QString& InRuntimePath, const GameCore::TransformPose& InAt, const QString& InFolder)
 {
     const GameCore::PrefabInstance Instance = ActiveWorld->SpawnPrefab(InRuntimePath.toUtf8().constData(), InAt);
     if(!Instance.IsValid())
@@ -401,6 +403,7 @@ EntityID EditorDocument::SpawnPrefabRecorded(const QString& InRuntimePath, const
         return EntityID();
     }
     const EntityID Root = Instance.GetRoot().GetID();
+    Instance.GetRoot().SetFolder(InFolder.toUtf8().constData());
     ActiveWorld->RefreshEntityBounds(Root);
 
     if(IsRecording())
@@ -431,7 +434,7 @@ const GameCore::WorldSettings& EditorDocument::GetWorldSettings() const
     return EditedWorld->GetSettings();
 }
 
-bool EditorDocument::SetWorldSettings(const GameCore::WorldSettings& InSettings)
+bool EditorDocument::SetWorldSettings(const GameCore::WorldSettings& InSettings, const QString& InUndoText)
 {
     if(RefuseWhileBorrowed("Edit World Settings"))
     {
@@ -447,7 +450,8 @@ bool EditorDocument::SetWorldSettings(const GameCore::WorldSettings& InSettings)
     EditedWorld->GetSettings() = Clamped;
     if(IsRecording())
     {
-        Record(new EditorHistory::WorldSettingsCommand(*this, QStringLiteral("Edit World Settings"), Before, Clamped));
+        Record(new EditorHistory::WorldSettingsCommand(*this, InUndoText.isEmpty() ? QStringLiteral("Edit World Settings") : InUndoText,
+                                                       Before, Clamped));
     }
     emit WorldSettingsChanged();
     return true;
@@ -490,6 +494,238 @@ void EditorDocument::SetEntitiesMobility(const std::vector<EntityID>& InEntities
         LatestRecorded = nullptr;
         emit HistoryChanged();
     }
+}
+
+// === Outliner folders ========================================================
+
+namespace
+{
+    /* InPath, or what it becomes when InFrom (and all inside it) moves to
+     * InTo; unchanged if it is not InFrom or inside it. */
+    QString Rebase(const QString& InPath, const QString& InFrom, const QString& InTo)
+    {
+        if(InPath == InFrom) { return InTo; }
+        if(!InPath.startsWith(InFrom + QLatin1Char('/'))) { return InPath; }
+        const QString Rest = InPath.mid(InFrom.size() + 1);
+        return InTo.isEmpty() ? Rest : InTo + QLatin1Char('/') + Rest;
+    }
+
+    bool IsInFolder(const QString& InPath, const QString& InFolder)
+    {
+        return InPath == InFolder || InPath.startsWith(InFolder + QLatin1Char('/'));
+    }
+
+    /* InOut with InFolder and its ancestors added, sorted and unique. */
+    void AddFolderAndAncestors(std::vector<std::string>& InOut, const QString& InFolder)
+    {
+        for(int Slash = InFolder.indexOf(QLatin1Char('/')); ; Slash = InFolder.indexOf(QLatin1Char('/'), Slash + 1))
+        {
+            InOut.push_back((Slash < 0 ? InFolder : InFolder.left(Slash)).toStdString());
+            if(Slash < 0) { break; }
+        }
+        std::sort(InOut.begin(), InOut.end());
+        InOut.erase(std::unique(InOut.begin(), InOut.end()), InOut.end());
+    }
+
+    std::vector<EntityID> AllEntities(const GameCore::World& InWorld)
+    {
+        std::vector<EntityID> Entities;
+        InWorld.ForEachEntity([](const EntityID InEntity, void* InUserData)
+        {
+            static_cast<std::vector<EntityID>*>(InUserData)->push_back(InEntity);
+        }, &Entities);
+        return Entities;
+    }
+}
+
+QString EditorDocument::NormalizeFolder(const QString& InPath)
+{
+    QStringList Segments;
+    for(const QString& Segment : InPath.split(QLatin1Char('/')))
+    {
+        const QString Trimmed = Segment.trimmed();
+        if(!Trimmed.isEmpty()) { Segments << Trimmed; }
+    }
+    return Segments.join(QLatin1Char('/'));
+}
+
+QStringList EditorDocument::GetFolders() const
+{
+    std::vector<std::string> Folders = EditedWorld->GetSettings().Folders;
+    for(const EntityID Entity : AllEntities(*ActiveWorld))
+    {
+        const QString Folder = GetEntityFolder(Entity);
+        if(!Folder.isEmpty()) { AddFolderAndAncestors(Folders, Folder); }
+    }
+    std::sort(Folders.begin(), Folders.end());
+    Folders.erase(std::unique(Folders.begin(), Folders.end()), Folders.end());
+
+    QStringList Result;
+    for(const std::string& Folder : Folders) { Result << QString::fromStdString(Folder); }
+    return Result;
+}
+
+QString EditorDocument::GetEntityFolder(const EntityID InEntity) const
+{
+    const GameCore::Entity E = ActiveWorld->GetEntity(InEntity);
+    return ActiveWorld->IsAlive(InEntity) && !E.HasParent() ? QString::fromUtf8(E.GetFolder()) : QString();
+}
+
+std::vector<EntityID> EditorDocument::GetEntitiesInFolder(const QString& InFolder, const bool bInRecursive) const
+{
+    std::vector<EntityID> Result;
+    for(const EntityID Entity : AllEntities(*ActiveWorld))
+    {
+        const QString Folder = GetEntityFolder(Entity);
+        if(Folder == InFolder || (bInRecursive && !InFolder.isEmpty() && IsInFolder(Folder, InFolder)))
+        {
+            Result.push_back(Entity);
+        }
+    }
+    return Result;
+}
+
+bool EditorDocument::RefuseFolders(const char* InWhat) const
+{
+    if(bSingleRoot)
+    {
+        CORE_LOG_WARN(std::string("[Editor] ") + InWhat + ": a prefab has no folders")
+        return true;
+    }
+    return RefuseWhileBorrowed(InWhat);
+}
+
+void EditorDocument::EndMacro()
+{
+    History->endMacro();
+    LatestRecorded = nullptr;   // nothing merges across the macro
+    emit HistoryChanged();
+}
+
+bool EditorDocument::CreateFolder(const QString& InFolder)
+{
+    const QString Folder = NormalizeFolder(InFolder);
+    if(Folder.isEmpty() || RefuseFolders("Create Folder") || GetFolders().contains(Folder))
+    {
+        return false;
+    }
+    GameCore::WorldSettings Settings = EditedWorld->GetSettings();
+    AddFolderAndAncestors(Settings.Folders, Folder);
+    return SetWorldSettings(Settings, QStringLiteral("Create Folder %1").arg(Folder));
+}
+
+bool EditorDocument::RenameFolder(const QString& InFolder, const QString& InNewFolder)
+{
+    const QString From = NormalizeFolder(InFolder);
+    const QString To   = NormalizeFolder(InNewFolder);
+    if(From.isEmpty() || To.isEmpty() || IsInFolder(To, From))
+    {
+        return false;
+    }
+    const QString Label = From.section(QLatin1Char('/'), 0, -2) == To.section(QLatin1Char('/'), 0, -2)
+        ? QStringLiteral("Rename Folder %1 to %2").arg(From, To.section(QLatin1Char('/'), -1))
+        : QStringLiteral("Move Folder %1 to %2").arg(From, To);
+    return MoveFolderTree(From, To, Label);
+}
+
+bool EditorDocument::DeleteFolder(const QString& InFolder)
+{
+    const QString Folder = NormalizeFolder(InFolder);
+    if(Folder.isEmpty())
+    {
+        return false;
+    }
+    return MoveFolderTree(Folder, Folder.section(QLatin1Char('/'), 0, -2), QStringLiteral("Delete Folder %1").arg(Folder));
+}
+
+bool EditorDocument::MoveFolderTree(const QString& InFolder, const QString& InNewFolder, const QString& InLabel)
+{
+    if(RefuseFolders("Edit Folders") || !GetFolders().contains(InFolder))
+    {
+        return false;
+    }
+
+    GameCore::WorldSettings Settings = EditedWorld->GetSettings();
+    std::vector<std::string> Folders;
+    for(const std::string& Each : Settings.Folders)
+    {
+        const QString Moved = Rebase(QString::fromStdString(Each), InFolder, InNewFolder);
+        if(!Moved.isEmpty()) { AddFolderAndAncestors(Folders, Moved); }
+    }
+    Settings.Folders = std::move(Folders);
+
+    std::vector<std::pair<EntityID, QString>> Entities;
+    for(const EntityID Entity : GetEntitiesInFolder(InFolder, true))
+    {
+        Entities.emplace_back(Entity, Rebase(GetEntityFolder(Entity), InFolder, InNewFolder));
+    }
+
+    const bool bMacro = IsRecording();
+    if(bMacro) { History->beginMacro(InLabel); }
+    const bool bSettings = SetWorldSettings(Settings, InLabel);
+    for(const auto& [Entity, Folder] : Entities)
+    {
+        SetEntityFolder(Entity, Folder);
+    }
+    if(bMacro) { EndMacro(); }
+    if(!bSettings && Entities.empty())
+    {
+        return false;
+    }
+    QueueEntitiesChanged();
+    return true;
+}
+
+int EditorDocument::MoveEntitiesToFolder(const std::vector<EntityID>& InEntities, const QString& InFolder)
+{
+    const QString Folder = NormalizeFolder(InFolder);
+    if(RefuseFolders("Move to Folder"))
+    {
+        return 0;
+    }
+    std::vector<EntityID> Moving;
+    for(const EntityID Entity : InEntities)
+    {
+        if(!ActiveWorld->IsAlive(Entity)) { continue; }
+        const GameCore::Entity E = ActiveWorld->GetEntity(Entity);
+        const bool bCanDetach = !E.IsInInstance() || E.GetInstance() != ActiveWorld->GetEntity(E.GetParent()).GetInstance();
+        if(E.HasParent() ? bCanDetach : GetEntityFolder(Entity) != Folder) { Moving.push_back(Entity); }
+    }
+    GameCore::WorldSettings Settings = EditedWorld->GetSettings();
+    if(!Folder.isEmpty()) { AddFolderAndAncestors(Settings.Folders, Folder); }
+    if(Moving.empty() && Settings == EditedWorld->GetSettings())
+    {
+        return 0;
+    }
+
+    const QString Where = Folder.isEmpty() ? QStringLiteral("no folder") : Folder;
+    const QString Label = Moving.size() == 1 ? QStringLiteral("Move %1 to %2").arg(GetDisplayName(Moving.front()), Where)
+                                             : QStringLiteral("Move %1 entities to %2").arg(Moving.size()).arg(Where);
+    const bool bMacro = IsRecording();
+    if(bMacro) { History->beginMacro(Label); }
+    SetWorldSettings(Settings, QStringLiteral("Create Folder %1").arg(Folder));
+    for(const EntityID Entity : Moving)
+    {
+        if(ActiveWorld->GetEntity(Entity).HasParent()) { SetEntityParent(Entity, EntityID()); }
+        SetEntityFolder(Entity, Folder);
+    }
+    if(bMacro) { EndMacro(); }
+    QueueEntitiesChanged();
+    return int(Moving.size());
+}
+
+void EditorDocument::SetEntityFolder(const EntityID InEntity, const QString& InFolder)
+{
+    const QByteArray Folder = InFolder.toUtf8();
+    if(!ActiveWorld || !ActiveWorld->IsAlive(InEntity) || Folder == ActiveWorld->GetEntity(InEntity).GetFolder())
+    {
+        return;
+    }
+    const EditorHistory::EntityMembers Before = EditorHistory::CaptureMembers(*ActiveWorld, InEntity);
+    ActiveWorld->GetEntity(InEntity).SetFolder(Folder.constData());
+    QueueEntitiesChanged();
+    RecordMembersChange(InEntity, Before, QStringLiteral("Move %1 to %2")
+        .arg(GetDisplayName(InEntity), InFolder.isEmpty() ? QStringLiteral("no folder") : InFolder));
 }
 
 void EditorDocument::RecordMembersChange(const EntityID InEntity, const EditorHistory::EntityMembers& InBefore, const QString& InText)

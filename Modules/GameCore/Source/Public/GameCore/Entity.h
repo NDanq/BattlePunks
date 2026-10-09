@@ -67,6 +67,14 @@ namespace GameCore
         /* nullptr clears. False if not alive. Names need not be unique. */
         bool SetName(const char* InName) const { return OwningWorld && OwningWorld->SetEntityName(ID, InName); }
 
+        /* The editor Outliner's folder, "A/B" for B inside A; "" for none.
+         * Organisation only -- nothing at runtime reads it -- and only a
+         * top-level entity's is shown (a child sits under its parent). Never
+         * null. Saved with a text world, not cooked. */
+        const char* GetFolder() const { return OwningWorld ? OwningWorld->GetEntityFolder(ID) : ""; }
+        /* nullptr clears. False if not alive. */
+        bool SetFolder(const char* InFolder) const { return OwningWorld && OwningWorld->SetEntityFolder(ID, InFolder); }
+
         /* Static or Dynamic (Mobility.h); Dynamic if not alive. A dynamic
          * member of a prefab instance whose root is static reads Static. */
         EMobility GetMobility() const { return OwningWorld ? OwningWorld->GetEntityMobility(ID) : EMobility::Dynamic; }

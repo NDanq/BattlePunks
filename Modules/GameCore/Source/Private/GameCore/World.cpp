@@ -48,6 +48,7 @@ namespace GameCore
             EntityGuid        Guid;
             std::string       Name;
             EMobility         Mobility = EMobility::Dynamic;
+            std::string       Folder;   // the editor Outliner's, "" for none
 
             /* The hierarchy, as slot indices: an intrusive, ordered child
              * list. Slots, not EntityIDs -- a child is destroyed with its
@@ -243,6 +244,7 @@ namespace GameCore
             Members[Index].Guid     = InGuid;
             Members[Index].Name     = InName ? InName : "";
             Members[Index].Mobility = EMobility::Dynamic;
+            Members[Index].Folder.clear();
             GuidToSlot[InGuid]  = Index;
 
             return EntityID(Index, Generations[Index]);
@@ -694,6 +696,18 @@ namespace GameCore
     {
         if(!P->IsAliveIndex(InEntity)) { return false; }
         P->Members[InEntity.Index].Name = InName ? InName : "";
+        return true;
+    }
+
+    const char* World::GetEntityFolder(const EntityID InEntity) const
+    {
+        return P->IsAliveIndex(InEntity) ? P->Members[InEntity.Index].Folder.c_str() : "";
+    }
+
+    bool World::SetEntityFolder(const EntityID InEntity, const char* InFolder)
+    {
+        if(!P->IsAliveIndex(InEntity)) { return false; }
+        P->Members[InEntity.Index].Folder = InFolder ? InFolder : "";
         return true;
     }
 
