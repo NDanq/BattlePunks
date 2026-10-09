@@ -26,6 +26,7 @@
 #include "Public/GameCore/WorldSerializer.h"
 #include "Public/RenderCore/Renderer.h"
 #include "Public/RenderCore/Components/CameraComponent.h"
+#include "Public/Sequencer/SequenceWorld.h"
 #include "Public/UI/UISystem.h"
 
 #if WITH_JOLTPHYSICS
@@ -265,6 +266,10 @@ namespace NimbleEngine
         Avatars->Attach(*LevelWorld);
         Avatars->SetInput(&FilteredInput);
 
+        /* Cutscenes: the level's Sequence Players, from TP_PostPhysics.
+         * Before OnLoad, so an AutoPlay player starts with the level. */
+        Sequencer::SequenceWorld::Attach(*LevelWorld);
+
         CORE_LOG("[Level] loading '" + std::string(InLevel.GetName()) + "'")
 
         if(!InLevel.OnLoad(*this))
@@ -453,6 +458,10 @@ namespace NimbleEngine
                 Avatars = nullptr;
             }
             ViewTarget = GameCore::EntityID();
+
+            /* While scripts are bound: what sequences spawned is destroyed
+             * with its OnDestroy run. */
+            Sequencer::SequenceWorld::Detach(*LevelWorld);
 
             Scripts.UnbindWorld();
             Rendering.UnbindWorld();
