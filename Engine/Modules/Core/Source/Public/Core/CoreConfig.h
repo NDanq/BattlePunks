@@ -317,6 +317,12 @@ namespace EngineCore
     /* The text ConfigSaveUserFile would write now. */
     CORE_API std::string        ConfigBuildUserText();
 
+    /* InVar's baseline, as text: the project file's value for it, else its
+     * compiled default -- what a settings menu's "reset" goes back to. */
+    CORE_API std::string        ConfigGetBaselineText(const ConfigVar& InVar);
+    /* InVar set to its baseline; true if that changed it. */
+    CORE_API bool               ConfigResetToBaseline(ConfigVar& InVar);
+
     /* Fires every registered var's callback unconditionally, changed or not.
      * NOT part of the load path -- see WHY CALLBACKS FIRE INLINE in
      * CoreConfig.cpp. For a host that builds its subsystems after reading

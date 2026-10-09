@@ -80,7 +80,9 @@ namespace NimbleEngine
      *      nothing visibly moves; a disagreement is corrected.
      *
      * One handler, nullptr clears it; a mode sets it in OnLoad and clears it
-     * in OnUnload. Games/NetArena/NetArenaGame.cpp does all four steps.
+     * in OnUnload. An avatar whose harness names a Simulation needs none of
+     * this -- the engine does all four steps (Avatar.h, AVATARS.md) and the
+     * handler hears only of other entities.
      */
     using NetCorrectionFn = void (*)(GameCore::World& InWorld, GameCore::EntityID InEntity, int32_t InInputAck,
                                      void* InUserData);

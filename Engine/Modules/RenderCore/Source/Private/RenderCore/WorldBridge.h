@@ -32,6 +32,7 @@
 namespace RenderCore
 {
     class RenderScene;
+    struct CameraComponent;
 
     class WorldBridge
     {
@@ -57,6 +58,12 @@ namespace RenderCore
 
         bool IsBound() const;
 
+        /* The camera to view through, whatever its Active flag says, while
+         * InCamera is alive with a CameraComponent; unset (the default)
+         * restores the first-active rule. Cleared by UnbindWorld. */
+        void SetViewCamera(GameCore::EntityID InCamera) { ViewCamera = InCamera; }
+        GameCore::EntityID GetViewCamera() const        { return ViewCamera; }
+
         /* Builds the RenderView (DESIGN.md's "View"), enqueues one extraction
          * per proxy type, then the scene render. InViewOverride replaces the
          * camera; ViewportPixels always comes from InFrame. */
@@ -67,6 +74,7 @@ namespace RenderCore
         static void OnComponentRemoved(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType, void* InUserData);
 
         RenderView BuildView(const FrameInfo& InFrame) const;
+        RenderView ViewThrough(const CameraComponent& InCamera, const FrameInfo& InFrame) const;
 
         /* Each animated Render component's pose, to its proxy, as one batch
          * after the frame's extraction (ANIMATION.md); a proxy posed before
@@ -111,6 +119,7 @@ namespace RenderCore
 
         RenderScene*    Scene = nullptr;
         GameCore::World* BoundWorld = nullptr;
+        GameCore::EntityID ViewCamera;   // SetViewCamera
 
         /* The bound world's animation (attached while bound), and the
          * proxies ExtractPoses posed last frame. */

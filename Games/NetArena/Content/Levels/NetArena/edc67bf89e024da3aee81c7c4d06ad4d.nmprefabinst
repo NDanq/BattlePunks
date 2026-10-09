@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Instance Guid="edc67bf89e024da3aee81c7c4d06ad4d" Name="KartBlue" Prefab="Content/Prefabs/Kart.nmprefab">
+  <Entity Id="1" Name="KartBlue">
+    <Component Type="Transform" Version="1">
+      <Position X="500" Y="0" Z="-150" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+    </Component>
+  </Entity>
+</Instance>

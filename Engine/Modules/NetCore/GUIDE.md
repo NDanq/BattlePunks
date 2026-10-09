@@ -159,6 +159,14 @@ player's own pawn answer at once, predict it (section 8).
 
 ## 5. Players
 
+> **The short way: avatars** (`Engine/Source/AVATARS.md`). Put an **Avatar
+> Harness** on the pawn prefab and derive the mode from
+> `NimbleEngine::AvatarGameMode`. Each player then gets a pawn at a Player
+> Start, owned by its client and possessed. The harness carries the input to
+> the server (section 8 by itself), and a harness Simulation predicts it.
+> NetArena works this way. The rest of this section, and section 8, is what
+> that does for you, for a game that wants to do it by hand.
+
 On the server, when a client joins, the engine makes it a **player entity**:
 
 - a `NetComponent` with `OwnerClient` set to the client's id
@@ -322,6 +330,11 @@ GAMECORE_RPC(ShipComponent, ServerFire)(MyShip, AimDirection);
 ---
 
 ## 8. Sending input
+
+With an Avatar Harness on the pawn, all of this is built in (AVATARS.md,
+"Input" and "Prediction"): the harness numbers and sends each frame, the
+server merges presses that arrive between its ticks, and a Simulation is
+predicted and replayed. What follows is the hand-rolled version.
 
 The pattern NetArena uses, and the one to start from:
 
@@ -560,6 +573,13 @@ The Server RPC was called on an entity another player, or the server, owns.
 The arguments passed do not match the function's parameters. Each argument
 is converted to its parameter's type, so pass compatible values.
 
+**A client's vehicle vanishes when the client leaves.**
+Its Net component was the client's when nobody drove it. `Possess` lends a
+level's vehicle to its driver's client and gives it back (`RestOwner`), and
+NetHost does that before destroying a leaving client's entities. A vehicle
+given to the client outright, by setting `OwnerClient` by hand, goes with the
+client.
+
 **State flickers back on a client.**
 The client is writing a replicated field. Only the server writes; clients
 send requests.
@@ -589,7 +609,8 @@ Compile Source.
       `GAMECORE_DEFINE_COMPONENT_REPLICATION` (Transform already is).
 - [ ] Simulation systems that change shared state early-out unless
       `HasAuthority()`.
-- [ ] `OnClientConnected` turns the engine's player entity into a pawn.
+- [ ] `OnClientConnected` turns the engine's player entity into a pawn
+      (or the mode is an `AvatarGameMode`, and the pawn has an Avatar Harness).
 - [ ] `OnStart` gives a listen server's (and standalone) user a pawn when
       `HasAuthority() && !IsDedicatedServer()`.
 - [ ] Input is read locally and sent as a Server RPC on the owned pawn, on

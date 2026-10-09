@@ -13,7 +13,9 @@ code (`NetArenaGame.cpp`) only gives it behaviour.
 | File | What is in it |
 |---|---|
 | `Content/Levels/NetArena.nmworld` | The level, below |
-| `Content/Prefabs/Pawn.nmprefab` | A player's capsule: Transform, Render (capsule mesh, `PawnColor` material), **Net**, NetArenaPawn |
+| `Content/Prefabs/Pawn.nmprefab` | A player's capsule: Transform, Render (capsule mesh, `PawnColor` material), **Net** (Predicted), NetArenaPawn, **Avatar Harness** (Simulation `NetArenaMove`) |
+| `Content/Prefabs/Kart.nmprefab` | A kart anyone may drive: **Avatar Harness** (Requestable, Simulation `NetArenaKart`), **Net** (Predicted), a Body child (box) and a ChaseCamera child (Camera, Active off). Script: `Scripts/Kart.lua` |
+| `Content/Prefabs/Signpost.nmprefab` | A pole and board. Script: the graph `Scripts/Signpost.script.nmgraph` |
 | `Content/Materials/PawnColor.material.nmgraph` | Lit, with a `BaseColor` parameter set per capsule |
 | `Saved/Cooked/Content/Levels/`, `Saved/Cooked/Content/Prefabs/` | Their binary forms, cooked ahead for **Shipping** builds (Build > Cook Content); made on each machine, not tracked |
 
@@ -24,16 +26,17 @@ The level's entities:
 | Floor | Transform, Render (plane) | No: every process loads it. |
 | Sun, Sky | Directional Light, Sky Light | No |
 | Camera | Camera | No: each process's own view. |
-| Controller | Input | No: each process's own keyboard. |
-| SpawnRed, SpawnBlue, SpawnGreen, SpawnYellow | Transform, NetArenaSpawn (colour) | No: the server reads them to place capsules. |
+| SpawnRed, SpawnBlue, SpawnGreen, SpawnYellow | Transform, Player Start (kept for player 1..4, naming the Pawn prefab) | No: the server reads them to place capsules. |
 | Spinner | Transform, Render, **Net**, NetArenaSpinner | **Yes:** one entity across the session. |
+| KartRed, KartBlue | instances of `Kart.nmprefab`, by the red and blue starts | **Yes:** placed, and driven by whoever gets in. |
+| Signpost | an instance of `Signpost.nmprefab` | No: its graph runs on every process. |
 
 ### Three ways content reaches a networked game
 
-**Placed, not networked** (Floor, lights, Camera, Controller, spawn points).
+**Placed, not networked** (Floor, lights, Camera, Player Starts).
 Every process loads the same world file, so each has its own copy. That is
 right for anything that never changes, and for anything that must be
-per-process, like the camera and the input reader.
+per-process, like the camera.
 
 **Placed and networked** (the Spinner). Add a **Net** component in the editor
 (Details > Add Component > Net, Replicate on).
@@ -48,10 +51,14 @@ per-process, like the camera and the input reader.
 - Author it as a prefab with a **Net** component, and spawn it **on the
   server only**.
 - NetCore sends it whole to every client, including ones that join later.
-- After spawning, the server sets who owns it (`NetComponent::OwnerClient`)
-  and its colour, before the end of the frame, when it is first sent.
+- The mode is an `AvatarGameMode` (Engine/Source/AVATARS.md). It spawns a
+  capsule at the Player Start kept for each player and gives it to that
+  player's client (`NetComponent::OwnerClient`). It also possesses the
+  capsule, so its Avatar Harness reads that player's keys. In
+  `OnAvatarSpawned` it sets the colour, before the end of the frame, when the
+  capsule is first sent.
 
-A game's own components (NetArenaSpawn, NetArenaSpinner, NetArenaPawn) appear
+A game's own components (NetArenaSpinner, NetArenaPawn) appear
 in the editor's Add Component list and Details panel like the engine's. The
 editor keeps the game module loaded while editing, so they open and save
 with the world.
@@ -63,14 +70,42 @@ the past, blended between the server's 30 updates a second
 (`[Net] InterpolationDelayMs`).
 
 Your own capsule is **predicted**. The prefab's Net component has
-**Predicted** on, so:
-- the client moves it the moment a key is down;
-- each frame's move goes to the server, numbered, in `ServerMove`;
-- the server runs the same `ApplyMove`;
-- when the server's position comes back, the client replays the moves the
+**Predicted** on, and its harness names the `NetArenaMove` simulation, so the
+engine does the following:
+- the client moves it the moment a key is down, with `NetArenaMove`;
+- the harness sends each frame of input to the server, numbered;
+- the server runs the same `NetArenaMove` for each frame;
+- when the server's position comes back, the client replays the frames the
   server had not reached yet.
 
-GUIDE.md, section 8, explains the pattern.
+`NetArenaGame.cpp` holds no networking code of its own. AVATARS.md,
+"Prediction", explains it.
+
+## The avatar demo: karts
+
+Walk a capsule up to a kart and press **E** (pad: West) to get in. The view
+moves to the kart's chase camera, WASD drives it at twice the speed, and the
+kart lights up in your colour. **E** again gets you out: your capsule is put
+beside the kart, and the view goes back to the arena camera. Everyone sees
+who is driving what.
+
+| Piece | What it shows (Engine/Source/AVATARS.md) |
+|---|---|
+| **Kart prefab** | A second kind of avatar. Its harness is **Requestable**, and its own simulation `NetArenaKart` is predicted like the capsule's. Its child camera becomes the driver's **view target**; it is Active off, so nobody else sees through it. |
+| **`NetArena.Interact`** (C++) | Gameplay from the harness on the server. Interact in a capsule `Possess`es the nearest free kart within 300 units; Interact in a kart possesses the player's capsule again. No RPC: the harness carried the press. |
+| **`Scripts/Kart.lua`** (Lua) | `OnPossessed` / `OnUnpossessed` on every process: each tints its own copy of the kart in the driver's colour. |
+| **`Scripts/Signpost.script.nmgraph`** (script graph) | Reads this machine's own avatar each tick (Game: Get Local Avatar, then Was Pressed Interact), and hears **On Unpossessed** for everyone. |
+| **`Scripts/Main.lua`** | `Events.On(Game.Possessed, ...)` from the startup script. |
+
+The karts and the signpost are placed in the world file, so the editor opens
+and edits them like everything else. `-NetArena.AutoKart=1` (with AutoMove)
+has the bot get in after a second and out five seconds later, for unattended
+runs.
+
+**Why the Lua and the graph are on placed props, not on the capsule.** A
+prefab instance placed in the level is loaded by every process, script and
+all. A prefab *spawned* on the server reaches clients as its components
+only, so a script on the spawned capsule would run on the server alone.
 
 ## Editing
 

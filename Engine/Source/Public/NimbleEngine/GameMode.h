@@ -120,6 +120,19 @@ namespace NimbleEngine
         virtual void OnScoreChanged(GameCore::EntityID InPlayer, int32_t InScore) { (void)InPlayer; (void)InScore; }
         virtual void OnLivesChanged(GameCore::EntityID InPlayer, int32_t InLives) { (void)InPlayer; (void)InLives; }
 
+        // === Avatars (Avatar.h) =================================================
+
+        /* A client asked to drive InAvatar (Possessor's ServerRequestPossess,
+         * or a script's Possess on a client) -- one marked Requestable that
+         * nobody drives; the engine has checked that much. The mode's own
+         * rules on top (close enough, same team). Server only. */
+        virtual bool CanPossess(GameCore::EntityID InPlayer, GameCore::EntityID InAvatar) { (void)InPlayer; (void)InAvatar; return true; }
+
+        /* InPlayer took or let go of InAvatar. Every process: the server as it
+         * happens, a client as it sees the change replicated. */
+        virtual void OnAvatarPossessed(GameCore::EntityID InPlayer, GameCore::EntityID InAvatar)   { (void)InPlayer; (void)InAvatar; }
+        virtual void OnAvatarUnpossessed(GameCore::EntityID InPlayer, GameCore::EntityID InAvatar) { (void)InPlayer; (void)InAvatar; }
+
         // === Networking (NetFacade.h) ===========================================
         // A server's only. InClient is the client's id (GameCore::NetClientID).
 

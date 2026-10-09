@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="89af36af46e948468d5e2fdbe86ac39b" Name="SpawnYellow">
-  <Component Type="NetArenaSpawn" Version="1">
-    <ColorIndex Value="3" />
+  <Component Type="PlayerStart" Version="1">
+    <AvatarPrefab Value="Content/Prefabs/Pawn.nmprefab" />
+    <PlayerSlot Value="4" />
+    <Enabled Value="true" />
   </Component>
   <Component Type="Transform" Version="1">
     <Position X="500" Y="70" Z="400" />

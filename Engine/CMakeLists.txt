@@ -550,6 +550,8 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/GameUI.cpp
         Source/Private/NimbleEngine/GameConsole.cpp
         Source/Private/NimbleEngine/PlayerState.cpp
+        Source/Private/NimbleEngine/Avatar.cpp
+        Source/Private/NimbleEngine/PlayerStart.cpp
         Source/Private/NimbleEngine/GameModule.cpp
         Source/Private/NimbleEngine/Level.cpp
         Source/Private/NimbleEngine/SaveGame.cpp
@@ -567,6 +569,8 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/InactiveModules.cpp
         Source/Public/NimbleEngine/NimbleEngine.h
         Source/Public/NimbleEngine/GameMode.h
+        Source/Public/NimbleEngine/Avatar.h
+        Source/Public/NimbleEngine/PlayerStart.h
         Source/Public/NimbleEngine/GameSession.h
         Source/Public/NimbleEngine/GameConsole.h
         Source/Public/NimbleEngine/GameModule.h
@@ -709,6 +713,15 @@ if(NIMBLEENGINE_BUILD_TESTS)
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineGameFrameworkTests>")
     set_tests_properties(NimbleEngine.GameFrameworkTests PROPERTIES TIMEOUT 120 LABELS "smoke")
 
+    # Avatars (Avatar.h): possession, the harness's input, the server's half of
+    # the input stream, simulations, AutoPossess and AvatarGameMode.
+    add_executable(NimbleEngineAvatarTests Tests/AvatarTests.cpp)
+    target_link_libraries(NimbleEngineAvatarTests PRIVATE NimbleEngine::NimbleEngine)
+    set_target_properties(NimbleEngineAvatarTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
+    add_test(NAME NimbleEngine.AvatarTests COMMAND NimbleEngineAvatarTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineAvatarTests>")
+    set_tests_properties(NimbleEngine.AvatarTests PROPERTIES TIMEOUT 120 LABELS "smoke")
+
     # Physics: bodies, shapes from meshes, forces, joints, events, raycasts.
     # Only with the module (NIMBLE_WITH_JOLTPHYSICS).
     if(TARGET JoltPhysics AND JOLTPHYSICS_BUILD_TESTS)
@@ -729,6 +742,17 @@ if(NIMBLEENGINE_BUILD_TESTS)
         add_test(NAME NimbleEngine.AudioScriptTests COMMAND NimbleEngineAudioScriptTests
                  WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineAudioScriptTests>")
         set_tests_properties(NimbleEngine.AudioScriptTests PROPERTIES TIMEOUT 120 LABELS "smoke")
+    endif()
+
+    # AVATARS_GUIDE.md's examples -- C++, Lua and a script graph -- built and
+    # run. The graph needs NodeGraph (an Editor build).
+    if(TARGET NodeGraph)
+        add_executable(NimbleEngineAvatarGuideTests Tests/AvatarGuideTests.cpp)
+        target_link_libraries(NimbleEngineAvatarGuideTests PRIVATE NimbleEngine::NimbleEngine NodeGraph::NodeGraph)
+        set_target_properties(NimbleEngineAvatarGuideTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
+        add_test(NAME NimbleEngine.AvatarGuideTests COMMAND NimbleEngineAvatarGuideTests
+                 WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineAvatarGuideTests>")
+        set_tests_properties(NimbleEngine.AvatarGuideTests PROPERTIES TIMEOUT 120 LABELS "smoke")
     endif()
 endif()
 

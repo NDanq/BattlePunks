@@ -480,7 +480,8 @@ namespace
             const bool bParticles = (Entry.Flags & GameCore::PF_AssetParticleSystem) != 0;
             const bool bAnimation = (Entry.Flags & GameCore::PF_AssetAnimation) != 0;
             const bool bSound     = (Entry.Flags & GameCore::PF_AssetSound) != 0;
-            if((bMesh || bMaterial || bPost || bTarget || bTexture || bParticles || bAnimation || bSound) && !Entry.IsReadOnly())
+            const bool bPrefab    = (Entry.Flags & GameCore::PF_AssetPrefab) != 0;
+            if((bMesh || bMaterial || bPost || bTarget || bTexture || bParticles || bAnimation || bSound || bPrefab) && !Entry.IsReadOnly())
             {
                 /* What each kind of asset field offers. */
                 struct AssetUi { EAsset Kind; const char* Placeholder; const char* Tip; const char* PickTip; const char* Title; const char* Filter; };
@@ -510,8 +511,12 @@ namespace
                     { EAsset::Sound, "Drop an .nmsound here",
                       "A sound, by its path: Content/Sounds/EngineLoop.nmsound -- imported from a .wav, .flac, .mp3 or .ogg",
                       "Choose a sound", "Choose a Sound", "Sounds (*.nmsound)" },
+                    { EAsset::Prefab, "Drop an .nmprefab here",
+                      "A prefab, by its path: Content/Prefabs/Pawn.nmprefab -- or a native one, native:Game.Name",
+                      "Choose a prefab", "Choose a Prefab", "Prefabs (*.nmprefab)" },
                 };
-                const AssetUi& Ui = Kinds[bMesh ? 0 : bMaterial ? 1 : bPost ? 2 : bTarget ? 3 : bTexture ? 4 : bParticles ? 5 : bAnimation ? 6 : 7];
+                const AssetUi& Ui = Kinds[bMesh ? 0 : bMaterial ? 1 : bPost ? 2 : bTarget ? 3 : bTexture ? 4 : bParticles ? 5
+                                          : bAnimation ? 6 : bSound ? 7 : 8];
                 AssetKind = Ui.Kind;
                 Edit->setPlaceholderText(QString::fromLatin1(Ui.Placeholder));
                 Edit->installEventFilter(this);
@@ -523,6 +528,7 @@ namespace
                                                      : bParticles ? EditorContent::ListParticleSystemPaths()
                                                      : bAnimation ? EditorContent::ListAnimationPaths()
                                                      : bSound     ? EditorContent::ListSoundPaths()
+                                                     : bPrefab    ? EditorContent::ListPrefabPaths()
                                                                   : EditorContent::ListTexturePaths(), Edit);
                     Completer->setCaseSensitivity(Qt::CaseInsensitive);
                     Completer->setFilterMode(Qt::MatchContains);
@@ -614,7 +620,7 @@ namespace
         }
 
     private:
-        enum class EAsset { None, Mesh, Material, PostProcess, RenderTarget, Texture, ParticleSystem, Animation, Sound };
+        enum class EAsset { None, Mesh, Material, PostProcess, RenderTarget, Texture, ParticleSystem, Animation, Sound, Prefab };
 
         void Commit()
         {
@@ -699,6 +705,10 @@ namespace
             if(AssetKind == EAsset::Sound)
             {
                 return EditorContent::SoundPathFor(InFile);
+            }
+            if(AssetKind == EAsset::Prefab)
+            {
+                return EditorContent::PrefabPathFor(InFile);
             }
             return QString();
         }

@@ -11,6 +11,7 @@
 
 #include "Private/Editor/ConfigIniFile.h"
 
+class InputMapsPage;
 class QComboBox;
 class QDialogButtonBox;
 class QFormLayout;
@@ -33,7 +34,8 @@ namespace EngineCore { class ConfigVar; }
  * Pages: Project (title, module, start world, and the
  * optional engine modules -- [Modules], build-time); Worlds (the project's
  * [World_*] list, NimbleEngine/WorldList.h: every world a level, with its
- * game mode, startup script and whether it is cooked); one per config
+ * game mode, startup script and whether it is cooked); Input (the game's
+ * input maps, [Input_*]: InputMapsPage.h); one per config
  * section (registered vars, outside [Editor] and [Build], with reset; keys
  * set in the file shown bold); and unregistered keys as text.
  *
@@ -70,6 +72,7 @@ private:
     void     BuildProjectPage();
     void     BuildWorldsPage();
     void     BuildSectionPages();
+    void     BuildInputPage();
 
     /* One row of the Worlds table, from a [World_*] section. */
     void     AddWorldRow(const ConfigIniFile::Section& InSection);
@@ -97,6 +100,7 @@ private:
 
     std::vector<Row>  Rows;
     QTableWidget*     Worlds = nullptr;
+    InputMapsPage*    Input = nullptr;
     QList<ConfigIniFile::Section> WorldsBaseline;
     QComboBox*        StartLevelChoice = nullptr;
     QString           OpenWorld;

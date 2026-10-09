@@ -2,6 +2,7 @@
 #define RENDERCORE_RENDERER_H
 
 #include "Public/Core/CoreTypes.h"
+#include "Public/GameCore/EntityID.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/RenderCore/UIDrawList.h"
@@ -61,6 +62,15 @@ namespace RenderCore
 
         /* Reverses BindWorld(). Safe with no World bound. */
         void UnbindWorld();
+
+        /* View the default scene through InCamera's CameraComponent, Active
+         * or not, while it is alive; an unset id (and every UnbindWorld)
+         * goes back to the first active camera. A game's view target
+         * (GameSession::SetViewTarget); SetViewOverride still wins.
+         * GAME THREAD ONLY. */
+        void SetViewCamera(GameCore::EntityID InCamera);
+        void SetViewCamera(RenderSceneID InScene, GameCore::EntityID InCamera);
+        GameCore::EntityID GetViewCamera(RenderSceneID InScene = RENDER_DEFAULT_SCENE) const;
 
         // === Scenes ==========================================================
         // GAME THREAD ONLY. Every frame renders every scene; each has its own

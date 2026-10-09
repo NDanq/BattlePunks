@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Prefab Format="1" Name="Kart" NextId="4">
+  <Script Path="Scripts/Kart.lua" />
+  <Tick Mode="Tick" />
+  <Entity Id="1" Name="Kart">
+    <Component Type="AvatarHarness" Version="1">
+      <InputMap Value="Default" />
+      <Simulation Value="NetArenaKart" />
+      <AutoPossess Value="0" />
+      <Enabled Value="true" />
+      <ViewTarget Value="true" />
+      <Requestable Value="true" />
+    </Component>
+    <Component Type="Net" Version="2">
+      <Replicate Value="true" />
+      <Predicted Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+    </Component>
+  </Entity>
+  <Entity Id="2" Name="Body" Parent="1">
+    <Component Type="Render" Version="3">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PawnColor.material.nmgraph" />
+      <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+      <ParameterCount Value="1" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="0.35" />
+      <Parameter0Y Value="0.35" />
+      <Parameter0Z Value="0.38" />
+      <Parameter0W Value="0" />
+      <CastShadows Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="0" Y="30" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="140" Y="60" Z="200" />
+    </Component>
+  </Entity>
+  <Entity Id="3" Name="ChaseCamera" Parent="1">
+    <Component Type="Camera" Version="2">
+      <ZNear Value="10" />
+      <ZFar Value="20000" />
+      <Active Value="false" />
+      <Projection Value="1" />
+      <FovY Value="60" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="0" Y="650" Z="-750" />
+      <Rotation X="40" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+    </Component>
+  </Entity>
+</Prefab>

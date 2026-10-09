@@ -365,6 +365,66 @@ static void TestTextAndRepeat()
            "the next frame starts with no text or repeats; held stays held");
 }
 
+/* The rebinding API a settings menu and the editor's Input page use. */
+static void TestRebinding()
+{
+    std::printf("[rebinding]\n");
+    bool bFound = false;
+    for(size_t Index = 0; Index < GetInputMapCount(); ++Index)
+    {
+        bFound = bFound || std::string(GetInputMapName(Index)) == "TestMap";
+    }
+    Expect(bFound, "registered maps are listed");
+    Expect(GetInputMapEntryCount("TestMap") == 4 && GetInputMapEntryCount("NoSuchMap") == 0, "a map's actions then axes are counted");
+
+    InputMapEntry Current, Baseline;
+    Expect(GetInputMapEntry("TestMap", 0, Current, &Baseline) && std::string(Current.Name) == "Jump" && !Current.bAxis
+           && std::string(Baseline.Bindings) == "Space, Gamepad.South", "an entry reads back with its baseline");
+    Expect(GetInputMapEntry("TestMap", 2, Current) && Current.bAxis && std::string(Current.Name) == "MoveX", "axes follow actions");
+    Expect(!GetInputMapEntry("TestMap", 4, Current), "past the end is false");
+
+    /* Snapshots follow a rebind at once. */
+    InputState State;
+    State.BeginFrame(1);
+    State.Press(FindInputKey("K"));
+    InputSnapshot Read;
+    Expect(SetInputBinding("TestMap", "Jump", "K"), "an entry rebinds");
+    ResolveInputSnapshot("TestMap", 0, State, 0, Read);
+    Expect((Read.Down & 1u) != 0, "and reads its new key");
+    Expect(GetInputMapEntry("TestMap", 0, Current) && std::string(Current.Bindings) == "K", "and reports it");
+    Expect(!SetInputBinding("TestMap", "NoSuchAction", "K"), "an unknown entry is refused");
+
+    char Other[INPUT_NAME_MAX];
+    Expect(FindInputBindingConflict("TestMap", "MoveX", FindInputKey("K"), Other) && std::string(Other) == "Jump",
+           "a key another entry has is a conflict, named");
+    Expect(!FindInputBindingConflict("TestMap", "Jump", FindInputKey("K"), Other), "an entry does not clash with itself");
+
+    Expect(ResetInputBinding("TestMap", "Jump") && GetInputMapEntry("TestMap", 0, Current)
+           && std::string(Current.Bindings) == "Space, Gamepad.South", "reset goes back to the baseline");
+    ResolveInputSnapshot("TestMap", 0, State, 0, Read);
+    Expect((Read.Down & 1u) == 0, "and K no longer jumps");
+
+    /* Press a key to bind. */
+    InputState Capture;
+    Capture.BeginFrame(1);
+    Expect(GetFirstPressedInputKey(Capture) == INPUT_KEY_INVALID, "nothing pressed, nothing caught");
+    Capture.Press(FindInputKey("Gamepad.East"), 1);
+    Expect(GetFirstPressedInputKey(Capture, 0) == INPUT_KEY_INVALID && GetFirstPressedInputKey(Capture, 1) == FindInputKey("Gamepad.East"),
+           "a pad's button is caught for its own player");
+    Capture.SetAnalog(FindInputKey("Gamepad.LeftX"), 0.8f, 0);
+    Expect(GetFirstPressedInputKey(Capture, 0) == FindInputKey("Gamepad.LeftX"), "a stick pushed past half way is caught");
+    Capture.MoveMouse(10, 10, 40, 0);
+    Capture.SetAnalog(FindInputKey("Gamepad.LeftX"), 0.0f, 0);
+    Expect(GetFirstPressedInputKey(Capture, 0) == INPUT_KEY_INVALID, "mouse motion is not a choice");
+
+    bool bListed = false;
+    for(size_t Index = 0; Index < GetInputKeyCount(); ++Index) { bListed = bListed || GetInputKeyByIndex(Index) == FindInputKey("Gamepad.South"); }
+    Expect(GetInputKeyCount() > 100 && bListed, "every key is listed for a picker");
+
+    std::string Error;
+    Expect(!SaveInputBindings(&Error) && !Error.empty(), "without a user settings file, saving says why");
+}
+
 int main()
 {
     std::printf("NimbleEngineInputTests\n");
@@ -374,6 +434,7 @@ int main()
     TestEdges();
     TestRouterLatch();
     TestComponents();
+    TestRebinding();
 #if NIMBLEENGINE_TESTS_HAVE_SDL
     TestGamepadsThroughSDL();
 #endif

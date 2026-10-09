@@ -20,6 +20,7 @@
 #if WITH_AUDIO
 #include "Public/Audio/SoundAsset.h"
 #endif
+#include "Public/GameCore/NativePrefab.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 
 namespace EditorContent
@@ -146,6 +147,21 @@ namespace EditorContent
     QString SoundPathFor(const QString& InPath)
     {
         return InPath.endsWith(QStringLiteral(".nmsound"), Qt::CaseInsensitive) ? ToRuntimePath(InPath) : QString();
+    }
+
+    QStringList ListPrefabPaths()
+    {
+        QStringList Paths = ListGraphs(&PrefabPathFor);
+        for(size_t Index = 0; Index < GameCore::GetNativePrefabCount(); ++Index)
+        {
+            if(const char* Name = GameCore::GetNativePrefabName(Index)) { Paths.append(QStringLiteral("native:") + QString::fromUtf8(Name)); }
+        }
+        return Paths;
+    }
+
+    QString PrefabPathFor(const QString& InPath)
+    {
+        return InPath.endsWith(QStringLiteral(".nmprefab"), Qt::CaseInsensitive) ? ToRuntimePath(InPath) : QString();
     }
 
     QStringList ListParticleSystemPaths()
