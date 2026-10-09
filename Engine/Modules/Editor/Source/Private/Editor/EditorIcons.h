@@ -53,6 +53,15 @@ namespace EditorIcons
         Sound,        // lucide "volume-2": hear the preview
         Scrub,        // lucide "audio-waveform": hear the scrub
         Subtitles,    // lucide "captions"
+        Terrain,            // the editor's own (Resources/Icons), drawn to Lucide's grid: a mountain
+        TerrainRaise,       // a hump and an arrow up
+        TerrainLower,       // a dip and an arrow down
+        TerrainSmooth,      // waves easing out
+        TerrainFlatten,     // an arrow down onto a level line
+        TerrainNoise,       // a jagged line
+        TerrainSetHeight,   // a height gauge
+        TerrainPaint,       // a brush
+        TerrainSmoothPaint, // two overlapping circles
         Count
     };
 
