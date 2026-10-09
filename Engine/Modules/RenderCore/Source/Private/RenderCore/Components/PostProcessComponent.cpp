@@ -14,8 +14,9 @@ namespace RenderCore
     GAMECORE_DEFINE_COMPONENT(PostProcessComponent, "Post Process")
 
     /* Version 2: the stack (a version 1 save's Material, a material graph
-     * path, reads into it -- a stack of that one material) and BlendDistance. */
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(PostProcessComponent, 2)
+     * path, reads into it -- a stack of that one material) and BlendDistance.
+     * Version 3: Weight. */
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(PostProcessComponent, 3)
     {
         Ar.Field(Ar.GetVersion() >= 2 ? "Stack" : "Material", C.Stack);
         Ar.Field("Priority", C.Priority);
@@ -24,6 +25,10 @@ namespace RenderCore
         {
             Ar.Field("BlendDistance", C.BlendDistance);
         }
+        if(Ar.GetVersion() >= 3)
+        {
+            Ar.Field("Weight", C.Weight);
+        }
     }
 
     GAMECORE_DEFINE_COMPONENT_SCRIPT(PostProcessComponent)
@@ -31,6 +36,7 @@ namespace RenderCore
         Bind.Field("Stack",         &PostProcessComponent::Stack);
         Bind.Field("Priority",      &PostProcessComponent::Priority);
         Bind.Field("BlendDistance", &PostProcessComponent::BlendDistance);
+        Bind.Field("Weight",        &PostProcessComponent::Weight);
         Bind.Flag("Enabled",        &PostProcessComponent::bEnabled);
     }
 
@@ -40,6 +46,7 @@ namespace RenderCore
         Props.Field("Stack",          &PostProcessComponent::Stack, GameCore::PF_AssetPostProcess);
         Props.Field("Priority",       &PostProcessComponent::Priority);
         Props.Field("Blend Distance", &PostProcessComponent::BlendDistance);
+        Props.Field("Weight",         &PostProcessComponent::Weight);
         Props.Flag("Enabled",         &PostProcessComponent::bEnabled);
     }
 #endif // WITH_EDITOR

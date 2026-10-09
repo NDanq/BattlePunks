@@ -61,8 +61,12 @@ namespace GameCore
         uint8_t bSpatial  = 1;
 
         uint8_t Bus       = ASB_SFX;   // EAudioSourceBus
-        uint8_t Reserved0 = 0;
-        uint8_t Reserved1 = 0;
+        /* Two settings taken over without Override (the sound's own kept for
+         * the rest): ForceBus 0 the sound's (or Override's) bus, else
+         * 1 + an EAudioSourceBus; ForceSpatial 0 as set, 1 heard 2D, 2 in 3D.
+         * What a sequence's Audio section sets. */
+        uint8_t ForceBus     = 0;
+        uint8_t ForceSpatial = 0;
         uint8_t Reserved2 = 0;
 
         float MinDistance   = 100.0f;    // world units: full volume within

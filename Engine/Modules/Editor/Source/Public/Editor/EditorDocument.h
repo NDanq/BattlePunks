@@ -325,6 +325,12 @@ signals:
      * World brings its own: WorldReset. */
     void WorldSettingsChanged();
 
+    /* Around SaveWorld's write: what a preview has written into the edited
+     * World (the Sequencer's) goes back first, and comes back after, so a
+     * saved level never holds it. Direct (same-thread) signals. */
+    void AboutToSaveWorld();
+    void WorldSaved();
+
     /* CanUndo / CanRedo / clean state may have changed. */
     void HistoryChanged();
 

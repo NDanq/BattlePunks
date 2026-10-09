@@ -22,6 +22,13 @@ if(NOT Qt6Widgets_FOUND)
     return()
 endif()
 
+# Qt Svg draws the Lucide icons (EditorIcons.cpp). Optional: without it, the
+# style's standard icons stand in.
+find_package(Qt6 6.8 OPTIONAL_COMPONENTS Svg QUIET)
+if(NOT TARGET Qt6::Svg)
+    message(STATUS "NimbleEditor: Qt6 Svg not found; the editor uses the style's standard icons")
+endif()
+
 set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/EditorMain.cpp
         Source/Private/Editor/AboutDialog.cpp
@@ -60,6 +67,22 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/SDLInputProbe.h
         Source/Private/Editor/EditorTheme.cpp
         Source/Private/Editor/EditorTheme.h
+        Source/Private/Editor/EditorIcons.cpp
+        Source/Private/Editor/EditorIcons.h
+        Source/Private/Editor/Sequencer/SequencerAssets.cpp
+        Source/Private/Editor/Sequencer/SequencerAssets.h
+        Source/Private/Editor/Sequencer/SequencerCurveEditor.cpp
+        Source/Private/Editor/Sequencer/SequencerCurveEditor.h
+        Source/Private/Editor/Sequencer/SequencerDetails.cpp
+        Source/Private/Editor/Sequencer/SequencerDetails.h
+        Source/Private/Editor/Sequencer/SequencerDocument.cpp
+        Source/Private/Editor/Sequencer/SequencerDocument.h
+        Source/Private/Editor/Sequencer/SequencerTab.cpp
+        Source/Private/Editor/Sequencer/SequencerTab.h
+        Source/Private/Editor/Sequencer/SequencerTimeline.cpp
+        Source/Private/Editor/Sequencer/SequencerTimeline.h
+        Source/Private/Editor/Sequencer/SequencerWindow.cpp
+        Source/Private/Editor/Sequencer/SequencerWindow.h
         Source/Private/Editor/ConfigIniFile.cpp
         Source/Private/Editor/ConfigIniFile.h
         Source/Private/Editor/ProjectSettingsDialog.cpp
@@ -246,6 +269,11 @@ endif()
 set_target_properties(NimbleXatlas PROPERTIES FOLDER "Editor/External" POSITION_INDEPENDENT_CODE ON)
 
 add_executable(NimbleEditor WIN32 ${NIMBLE_EDITOR_SOURCES})
+# The application icon: the .exe's own icon on Windows (Explorer, the taskbar
+# before Qt is up); every platform gets the window icon from :/app (EditorMain).
+if(WIN32)
+    target_sources(NimbleEditor PRIVATE Resources/AppIcon/NimbleEditor.rc)
+endif()
 
 # The only engine target with AUTOMOC on.
 set_target_properties(NimbleEditor PROPERTIES
@@ -272,9 +300,63 @@ target_link_libraries(NimbleEditor PRIVATE
 if(TARGET NetCore)
     target_link_libraries(NimbleEditor PRIVATE NetCore::NetCore)
 endif()
+# Sequences: the cook (Build/ContentCook.cpp), and the Sequencer to come.
+if(TARGET Sequencer)
+    target_link_libraries(NimbleEditor PRIVATE Sequencer::Sequencer)
+endif()
 # Sound import and preview (Content/AssetImport.cpp), when the module is built.
 if(TARGET Audio)
     target_link_libraries(NimbleEditor PRIVATE Audio::Audio)
+endif()
+
+# === Icons ======================================================================
+# Lucide (ISC), vendored at lucide-static 1.53.0: External/lucide-1.53.0, its
+# LICENSE beside the SVGs. Compiled in as :/lucide/<name>.svg (EditorIcons.h).
+set(NIMBLE_EDITOR_LUCIDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/lucide-1.53.0")
+qt_add_resources(NimbleEditor "LucideIcons"
+        PREFIX "/lucide"
+        BASE   "${NIMBLE_EDITOR_LUCIDE_DIR}/icons"
+        FILES
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/play.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/pause.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/square.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/undo-2.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/redo-2.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/save.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/skip-back.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/skip-forward.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/step-back.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/step-forward.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/repeat.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/circle-dot.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/key-round.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/clapperboard.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/plane.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/magnet.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/plus.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/zoom-in.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/zoom-out.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/scan.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/volume-2.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/audio-waveform.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/captions.svg"
+)
+qt_add_resources(NimbleEditor "AppIcon"
+        PREFIX "/app"
+        BASE   "${CMAKE_CURRENT_SOURCE_DIR}/Resources/AppIcon"
+        FILES
+            "Resources/AppIcon/NimbleEditor-16.png"
+            "Resources/AppIcon/NimbleEditor-32.png"
+            "Resources/AppIcon/NimbleEditor-48.png"
+            "Resources/AppIcon/NimbleEditor-64.png"
+            "Resources/AppIcon/NimbleEditor-128.png"
+            "Resources/AppIcon/NimbleEditor-256.png"
+            "Resources/AppIcon/NimbleEditor-512.png"
+)
+if(TARGET Qt6::Svg)
+    target_link_libraries(NimbleEditor PRIVATE Qt6::Svg)
+    set_source_files_properties(Source/Private/Editor/EditorIcons.cpp PROPERTIES
+            COMPILE_DEFINITIONS "NIMBLEEDITOR_HAS_QTSVG=1")
 endif()
 
 # === Import tests =================================================================
@@ -413,12 +495,55 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     add_test(NAME Editor.Particles COMMAND NimbleEditorParticleTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorParticleTests>")
 
+    # The Sequencer's document, timeline, curves, details and preview, offscreen.
+    if(TARGET Sequencer)
+        add_executable(NimbleEditorSequencerTests Tests/SequencerEditorTests.cpp ${NIMBLE_EDITOR_DETAILS_SOURCES})
+        target_include_directories(NimbleEditorSequencerTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source "${NIMBLE_EDITOR_CGLTF_DIR}")
+        target_link_libraries(NimbleEditorSequencerTests PRIVATE
+                GameCore::GameCore
+                RenderCore::RenderCore
+                GameWindow::GameWindow
+                NimbleEngine::NimbleEngine
+                EngineCore::QtBridge
+                NodeGraph::NodeGraph
+                NimbleXatlas
+                Qt6::Core
+                Qt6::Gui
+                Qt6::Widgets
+        )
+        if(TARGET NetCore)
+            target_link_libraries(NimbleEditorSequencerTests PRIVATE NetCore::NetCore)
+        endif()
+        set_target_properties(NimbleEditorSequencerTests PROPERTIES FOLDER "Editor" AUTOMOC ON)
+        add_dependencies(NimbleEditorSequencerTests NimbleEditor)
+        add_test(NAME Editor.Sequencer COMMAND NimbleEditorSequencerTests
+                 WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorSequencerTests>")
+    endif()
+
+    # The offscreen tests compile EditorIcons.cpp too (no resources: fallback icons).
+    if(TARGET Qt6::Svg)
+        foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests NimbleEditorSequencerTests)
+            if(TARGET ${NM_EDITOR_TEST})
+                target_link_libraries(${NM_EDITOR_TEST} PRIVATE Qt6::Svg)
+            endif()
+        endforeach()
+    endif()
+
     # The tests compile the editor's own sources, sound import among them.
     if(TARGET Audio)
         foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorImportTests NimbleEditorLightingTests NimbleEditorDocumentTests
-                NimbleEditorProjectTests NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests)
+                NimbleEditorProjectTests NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests
+                NimbleEditorSequencerTests)
             if(TARGET ${NM_EDITOR_TEST})
                 target_link_libraries(${NM_EDITOR_TEST} PRIVATE Audio::Audio)
+            endif()
+        endforeach()
+    endif()
+    # And the content cook, which cooks sequences.
+    if(TARGET Sequencer)
+        foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests NimbleEditorSequencerTests)
+            if(TARGET ${NM_EDITOR_TEST})
+                target_link_libraries(${NM_EDITOR_TEST} PRIVATE Sequencer::Sequencer)
             endif()
         endforeach()
     endif()
@@ -538,7 +663,7 @@ endif()
 
 source_group("Editor" FILES ${NIMBLE_EDITOR_SOURCES})
 
-# The Details, UI Designer and Particle tests compile the editor's sources, so they need
+# The Details, UI Designer, Particle and Sequencer tests compile the editor's sources, so they need
 # its generated headers too (build info, project config); made by
 # NimbleEditor's build, which they depend on.
 if(TARGET NimbleEditorDetailsTests)
@@ -549,4 +674,36 @@ if(TARGET NimbleEditorUIDesignerTests)
 endif()
 if(TARGET NimbleEditorParticleTests)
     target_include_directories(NimbleEditorParticleTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
+endif()
+if(TARGET NimbleEditorSequencerTests)
+    target_include_directories(NimbleEditorSequencerTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
+    # The Lucide icons too, so its snapshot shows the toolbar as the editor draws it.
+    qt_add_resources(NimbleEditorSequencerTests "LucideIconsTests"
+            PREFIX "/lucide"
+            BASE   "${NIMBLE_EDITOR_LUCIDE_DIR}/icons"
+            FILES
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/play.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/pause.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/square.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/undo-2.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/redo-2.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/save.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/skip-back.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/skip-forward.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/step-back.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/step-forward.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/repeat.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/circle-dot.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/key-round.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/clapperboard.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/plane.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/magnet.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/plus.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/zoom-in.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/zoom-out.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/scan.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/volume-2.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/audio-waveform.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/captions.svg"
+    )
 endif()

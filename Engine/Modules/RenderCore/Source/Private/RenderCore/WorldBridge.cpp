@@ -580,6 +580,8 @@ namespace RenderCore
         ComponentPool* Pool = BoundWorld ? BoundWorld->FindPool(PostProcessComponent::StaticType().ID) : nullptr;
         if(!Pool)
         {
+            /* No volumes: a sequence's override alone. */
+            if(BoundWorld) { ApplyPostProcessOverride(BoundWorld, Result.Settings); }
             return Result;
         }
 
@@ -598,11 +600,11 @@ namespace RenderCore
         for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
         {
             const PostProcessComponent& Each = Components[Index];
-            if(!Each.bEnabled || Each.Stack[0] == '\0')
+            if(!Each.bEnabled || Each.Stack[0] == '\0' || !(Each.Weight > 0.0f))
             {
                 continue;
             }
-            float Weight = 1.0f;
+            float Weight = std::min(Each.Weight, 1.0f);
             if(const BoundsComponent* Bounds = Each.Owner.GetSibling<BoundsComponent>())
             {
                 if(Bounds->World.IsEmpty())
@@ -619,7 +621,7 @@ namespace RenderCore
                     const double Gap = P < Min ? Min - P : P > Max ? P - Max : 0.0;
                     Outside += Gap * Gap;
                 }
-                Weight = GetPostProcessVolumeWeight(float(std::sqrt(Outside)), Each.BlendDistance);
+                Weight *= GetPostProcessVolumeWeight(float(std::sqrt(Outside)), Each.BlendDistance);
             }
             if(Weight > 0.0f)
             {
@@ -639,6 +641,9 @@ namespace RenderCore
                 BlendPostProcess(Result.Settings, *Stack, Each.Weight);
             }
         }
+
+        /* A sequence's stacks and settings, over the volumes (PostProcessOverride). */
+        ApplyPostProcessOverride(BoundWorld, Result.Settings);
 
         /* Materials run by stage, then order; volumes' order breaks ties. */
         PostProcessSettings& S = Result.Settings;

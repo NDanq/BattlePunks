@@ -411,6 +411,22 @@ namespace NimbleEngine
         void PublishAudioStat();
         bool bAudioStatShown = false;
 
+        /* Cutscenes (Modules/Sequencer): the level's SequenceWorld's host.
+         * The screen it asks for -- a fade, and in cinematic mode letterbox
+         * bars and the players' input held back (Back skips) -- is a UI
+         * document made in code, open while either is wanted. */
+        static void               SequenceSetViewTarget(GameCore::EntityID InCamera, void* InUserData);
+        static GameCore::EntityID SequenceGetViewTarget(void* InUserData);
+        static void               SequenceSetFade(float InAlpha, void* InUserData);
+        static void               SequenceSetCinematic(bool bInOn, void* InUserData);
+        static bool               SequenceIsReplica(GameCore::EntityID InPlayer, void* InUserData);
+        static void               SequenceSetBusGain(const char* InBus, float InGain, void* InUserData);
+        static void               SequenceSetSubtitle(const char* InSpeaker, const char* InText, void* InUserData);
+        void UpdateCinematicOverlay();
+        bool  bCinematic    = false;
+        float CinematicFade = -1.0f;
+        bool  bSubtitle     = false;   // a line is up
+
         uint32_t LoadCount = 0;
     };
 }

@@ -212,6 +212,24 @@ if(NOT NIMBLE_TARGET STREQUAL "Editor" AND GAME_UI_SOURCES AND NOT GAME_UI_FILES
 endif()
 game_stage(UI "${GAME_UI_ROOT}" ${GAME_UI_FILES})
 
+# Sequences (.nmseq, anywhere under Content/): cutscenes
+# (Engine/Modules/Sequencer/README.md). As prefabs: every build but Shipping
+# stages the XML (NIMBLE_STAGE_TEXT_CONTENT); Shipping and packaged builds
+# stage the cooked ones from Saved/Cooked/ -- made in the editor by Build >
+# Cook Content.
+if(NIMBLE_STAGE_TEXT_CONTENT)
+    set(GAME_SEQUENCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
+else()
+    set(GAME_SEQUENCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Saved/Cooked")
+endif()
+file(GLOB_RECURSE GAME_SEQUENCE_FILES CONFIGURE_DEPENDS "${GAME_SEQUENCE_ROOT}/Content/*.nmseq")
+file(GLOB_RECURSE GAME_SEQUENCE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmseq")
+if(NOT NIMBLE_STAGE_TEXT_CONTENT AND GAME_SEQUENCE_SOURCES AND NOT GAME_SEQUENCE_FILES)
+    message(WARNING "${GAME_NAME}: Content/ has sequences but Saved/Cooked/Content/ has none; a Shipping "
+                    "build cannot read XML sequences. Cook them in the editor (Build > Cook Content).")
+endif()
+game_stage(Sequences "${GAME_SEQUENCE_ROOT}" ${GAME_SEQUENCE_FILES})
+
 # Content/Materials/: material graphs, cooked into the module's shader cache
 # (Engine/cmake/NimbleMaterials.cmake), named "Content/Materials/<Name>.material.nmgraph".
 if(GAME_RT_DIR AND NOT GAME_MULTI_CONFIG)

@@ -54,6 +54,8 @@
 #include "Public/RenderCore/TextureAsset.h"
 #include "Private/Editor/Content/RenderTargetAssets.h"
 #include "Private/Editor/Particles/ParticleAssets.h"
+#include "Private/Editor/Sequencer/SequencerAssets.h"
+#include "Public/Sequencer/SequenceAsset.h"
 #include "Private/Editor/Prefab/PrefabAssets.h"
 #include "Private/Editor/UI/UIAssets.h"
 #include "Private/Editor/Content/AssetImport.h"
@@ -975,6 +977,11 @@ void ContentBrowserPanel::OpenItem(const QString& InPath)
         EditorParticles::OpenParticleSystem(InPath, window());
         return;
     }
+    if(InPath.endsWith(QString::fromLatin1(Sequencer::SEQUENCE_EXTENSION), Qt::CaseInsensitive))
+    {
+        EditorSequencer::OpenSequence(InPath, window());
+        return;
+    }
     if(InPath.endsWith(QStringLiteral(".nmmesh"), Qt::CaseInsensitive))
     {
         MeshViewerWindow::Open(InPath, window());
@@ -1085,6 +1092,7 @@ void ContentBrowserPanel::ShowContextMenu(const QPoint& InPos)
         Menu.addAction(QStringLiteral("New Prefab..."), this, [this]() { EditorPrefabs::CreatePrefab(CurrentFolder, window()); });
         Menu.addAction(QStringLiteral("New UI..."), this, [this]() { EditorUI::CreateUI(CurrentFolder, window()); });
         Menu.addAction(QStringLiteral("New Particle System..."), this, [this]() { EditorParticles::CreateParticleSystem(CurrentFolder, window()); });
+        Menu.addAction(QStringLiteral("New Sequence..."), this, [this]() { EditorSequencer::CreateSequence(CurrentFolder, window()); });
         Menu.addAction(QStringLiteral("New Anim State..."), this, [this]() { EditorAnimation::CreateAnimState(CurrentFolder, window()); });
         for(const NodeGraph::Schema* Schema : NodeGraph::GetSchemas())
         {

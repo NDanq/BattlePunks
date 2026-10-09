@@ -175,6 +175,16 @@ namespace EditorContent
                                                                                                                 : QString();
     }
 
+    QStringList ListSequencePaths()
+    {
+        return ListGraphs(&SequencePathFor);
+    }
+
+    QString SequencePathFor(const QString& InPath)
+    {
+        return InPath.endsWith(QStringLiteral(".nmseq"), Qt::CaseInsensitive) ? ToRuntimePath(InPath) : QString();
+    }
+
     QStringList ListAnimationPaths()
     {
         return ListGraphs(&AnimationPathFor);

@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Private/Editor/UI/UIEditorTab.h"
+#include "Private/Editor/EditorIcons.h"
 
 #include <QAction>
 #include <QComboBox>
@@ -144,6 +145,8 @@ void UIEditorTab::BuildToolBar()
     QAction* RedoAction = Design->GetUndoStack()->createRedoAction(this, QStringLiteral("Redo"));
     RedoAction->setShortcuts({ QKeySequence::Redo, QKeySequence(Qt::CTRL | Qt::Key_Y) });
     RedoAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    UndoAction->setIcon(EditorIcons::Get(EditorIcons::EIcon::Undo));
+    RedoAction->setIcon(EditorIcons::Get(EditorIcons::EIcon::Redo));
     Bar->addAction(UndoAction);
     Bar->addAction(RedoAction);
     addAction(UndoAction);

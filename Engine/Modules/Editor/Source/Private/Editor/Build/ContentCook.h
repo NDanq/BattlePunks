@@ -26,12 +26,13 @@
  *   Prefabs   every .nmprefab: game code spawns them by path, so a world's
  *             own placements do not say which are needed
  *   UI        every .nmui, for the same reason
+ *   Sequences every .nmseq, for the same reason
  *
  * Synchronous, on the main thread; InProgress hears each step.
  */
 namespace EditorCook
 {
-    enum EAssetType { AT_Graphs = 0, AT_Worlds, AT_Prefabs, AT_UI, AT_Count };
+    enum EAssetType { AT_Graphs = 0, AT_Worlds, AT_Prefabs, AT_UI, AT_Sequences, AT_Count };
 
     const char* GetTypeName(EAssetType InType);
 

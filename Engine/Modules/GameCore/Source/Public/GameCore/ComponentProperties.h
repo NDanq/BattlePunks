@@ -54,7 +54,7 @@ namespace GameCore
     /* Same field types as the Lua bindings. */
     using EPropertyType = EScriptFieldType;
 
-    /* 16 bits: the asset hints fill bits 1..9. */
+    /* 16 bits: the asset hints fill bits 1..10. */
     enum EPropertyFlags : uint16_t
     {
         PF_None     = 0,
@@ -70,6 +70,7 @@ namespace GameCore
         PF_AssetAnimation = 1 << 7,   // an animation clip (*.nmanim) or anim state (*.nmanimstate; RenderCore's ANIMATION.md)
         PF_AssetSound    = 1 << 8,   // a sound (*.nmsound; the Audio module's SoundAsset.h)
         PF_AssetPrefab   = 1 << 9,   // a prefab (*.nmprefab, or a native one's "native:Name"; PREFABS.md)
+        PF_AssetSequence = 1 << 10,  // a sequence (*.nmseq; Engine/Modules/Sequencer)
     };
 
     enum : size_t

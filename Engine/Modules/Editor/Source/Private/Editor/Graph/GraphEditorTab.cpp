@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Private/Editor/Graph/GraphEditorTab.h"
+#include "Private/Editor/EditorIcons.h"
 
 #include <functional>
 
@@ -169,6 +170,8 @@ void GraphEditorTab::BuildActions()
     Undo->setShortcut(QKeySequence::Undo);
     QAction* Redo = History.createRedoAction(this, QStringLiteral("&Redo"));
     Redo->setShortcuts({ QKeySequence::Redo, QKeySequence(Qt::CTRL | Qt::Key_Y) });
+    Undo->setIcon(EditorIcons::Get(EditorIcons::EIcon::Undo));
+    Redo->setIcon(EditorIcons::Get(EditorIcons::EIcon::Redo));
     Edit->addAction(Undo);
     Edit->addAction(Redo);
     Edit->addSeparator();

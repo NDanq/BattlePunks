@@ -506,6 +506,13 @@ if(NIMBLE_WITH_AUDIO AND TARGET GameCore
     add_subdirectory(Modules/Audio)
 endif()
 
+# Sequencer: cutscenes -- .nmseq timelines and the Sequence Player component
+# (Modules/Sequencer/README.md). After GameCore and RenderCore, which it
+# drives, and before NimbleEngine, which attaches it to each level's World.
+if(TARGET GameCore AND TARGET RenderCore AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/Sequencer/CMakeLists.txt")
+    add_subdirectory(Modules/Sequencer)
+endif()
+
 # UI: in-game interfaces from XML documents (Modules/UI/README.md). After
 # RenderCore, whose UI draw list it paints into, and before NimbleEngine,
 # which owns a game session's UISystem.
@@ -566,6 +573,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/NetHost.cpp
         Source/Private/NimbleEngine/NetScript.cpp
         Source/Private/NimbleEngine/PhysicsFacade.cpp
+        Source/Private/NimbleEngine/SequenceFacade.cpp
         Source/Private/NimbleEngine/InactiveModules.cpp
         Source/Public/NimbleEngine/NimbleEngine.h
         Source/Public/NimbleEngine/GameMode.h
@@ -587,6 +595,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/NetFacade.h
         Source/Public/NimbleEngine/NetHost.h
         Source/Public/NimbleEngine/PhysicsFacade.h
+        Source/Public/NimbleEngine/SequenceFacade.h
 )
 
 nimble_add_module(NimbleEngine SHARED
@@ -653,6 +662,12 @@ endif()
 # breaks no game.
 if(TARGET Audio)
     target_link_libraries(NimbleEngine PRIVATE Audio::Audio)
+endif()
+
+# PRIVATE: a game plays cutscenes through the Sequence Player component, the
+# Sequence script library and NimbleEngine/SequenceFacade.h.
+if(TARGET Sequencer)
+    target_link_libraries(NimbleEngine PRIVATE Sequencer::Sequencer)
 endif()
 
 # A session's UISystem (GameSession::GetUI) is game-facing: PUBLIC.

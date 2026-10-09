@@ -81,7 +81,8 @@ namespace GameCore
     }
 
     /* The authored fields; requests and playback state are this run's. */
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(AudioSourceComponent, 1)
+    /* Version 2: ForceBus, ForceSpatial. */
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(AudioSourceComponent, 2)
     {
         Ar.Field("Sound",         C.Sound);
         Ar.Field("Volume",        C.Volume);
@@ -95,6 +96,11 @@ namespace GameCore
         Ar.Field("MaxDistance",   C.MaxDistance);
         Ar.Field("Rolloff",       C.Rolloff);
         Ar.Field("DopplerFactor", C.DopplerFactor);
+        if(Ar.GetVersion() >= 2)
+        {
+            Ar.Field("ForceBus",     C.ForceBus);
+            Ar.Field("ForceSpatial", C.ForceSpatial);
+        }
     }
 
     /* Get/Set for the authored fields; Play, Stop, Pause, Resume, FadeTo(Gain,
@@ -113,6 +119,8 @@ namespace GameCore
         Bind.Field("MaxDistance",   &AudioSourceComponent::MaxDistance);
         Bind.Field("Rolloff",       &AudioSourceComponent::Rolloff);
         Bind.Field("DopplerFactor", &AudioSourceComponent::DopplerFactor);
+        Bind.Field("ForceBus",      &AudioSourceComponent::ForceBus);
+        Bind.Field("ForceSpatial",  &AudioSourceComponent::ForceSpatial);
 
         Bind.Native<&AudioSourceComponent::Play>("Play");
         Bind.Native<&AudioSourceComponent::Stop>("Stop");
@@ -135,6 +143,8 @@ namespace GameCore
         Props.Field("Volume",    &AudioSourceComponent::Volume);
         Props.Field("Pitch",     &AudioSourceComponent::Pitch);
         Props.Flag("Auto Play",  &AudioSourceComponent::bAutoPlay);
+        Props.Choice("Force Bus",     &AudioSourceComponent::ForceBus, "The Sound's|Master|Music|SFX|UI|Voice|Ambient");
+        Props.Choice("Force 2D / 3D", &AudioSourceComponent::ForceSpatial, "The Sound's|2D|3D");
         Props.Category("Override");
         Props.Flag("Override",   &AudioSourceComponent::bOverride);
         Props.Flag("Loop",       &AudioSourceComponent::bLoop);

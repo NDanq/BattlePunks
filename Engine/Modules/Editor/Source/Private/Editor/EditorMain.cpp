@@ -12,6 +12,7 @@
 #include <QCommandLineParser>
 #include <QDir>
 #include <QFileInfo>
+#include <QIcon>
 
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreJob.h"
@@ -57,6 +58,15 @@ int main(int argc, char* argv[])
     QApplication App(argc, argv);
     QApplication::setApplicationName(QStringLiteral("Nimble Editor"));
     QApplication::setOrganizationName(QStringLiteral("NimbleEngine"));
+
+    /* The application icon, every window's unless it sets its own. One PNG per
+     * size, so the title bar and taskbar never scale the 512 down themselves. */
+    QIcon AppIcon;
+    for(const int Size : {16, 32, 48, 64, 128, 256, 512})
+    {
+        AppIcon.addFile(QStringLiteral(":/app/NimbleEditor-%1.png").arg(Size), QSize(Size, Size));
+    }
+    QApplication::setWindowIcon(AppIcon);
 
     /* First, so the Console panel's history starts with everything logged
      * from here on -- config load and renderer startup included. */

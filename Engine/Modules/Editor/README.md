@@ -68,6 +68,7 @@ uses it.
 | `EditorHistory` (private) | Undo / redo commands and the entity and component snapshots they hold |
 | `EditorMainWindow` | Docks, menus (File / Edit / View / Play / Build / Help), status bar; starts and stops the Renderer |
 | `EditorTheme` (private) | `Editor.Theme`: light, dark or the system's, applied live through Fusion and an explicit palette |
+| `EditorIcons` (private) | The editor's icons: Lucide (ISC, `External/lucide-1.53.0`, compiled in as `:/lucide/*.svg`), drawn in the palette's button text so they follow `Editor.Theme`; the style's standard icons without Qt Svg. Play, pause, stop, undo, redo, save, the transport, loop, record, key, camera cuts, pilot, snap, add, zoom and fit; Undo and Redo also sit at the front of the viewport toolbar |
 | `ProjectSettingsDialog` + `ConfigIniFile` (private) | Edit > Project Settings: the project's `DefaultEngine.ini` as pages of settings, edited line by line so its comments stay |
 | `SettingsDialog` (private) | Edit > Editor Settings: the `[Editor]` config vars as a form, saved to the user's `EditorSettings.ini` |
 | `SourceBuild` (private) | Build > Compile Source: runs `cmake --build` on the editor's own build tree (`EditorBuildTree.h.in`) in the background, logging its output; any cmake command line too (`StartCommand`), for Build Project |
@@ -91,6 +92,7 @@ uses it.
 | `Graph/GraphEditorWindow` (private) | The graph editor: one window, a closable, movable tab per open `.nmgraph` (Content Browser right-click > New Material / Script Graph, File > Open Graph, or double-click in the Content Browser). Ctrl+Tab steps through them; closing the window offers to save each |
 | `Graph/GraphEditorTab` (private) | One graph, with its own menus and docks. It has the canvas, Details, the generated code (live) and Messages; clicking a code line or a message selects its node. Save writes the graph with its generated code inside it, `<gen_code>` (see `Modules/NodeGraph`); nothing is written beside it |
 | `Graph/GraphDocument` (private) | One open graph and its own undo history, separate from the scene's; every edit is a before/after snapshot |
+| `Sequencer/SequencerWindow`, `SequencerTab` (private) | The **Sequencer** dock: a tab per open `.nmseq`, its timeline, curves and details, previewed on the level (see Sequencer) |
 | `Particles/ParticleEditorWindow`, `ParticleEditorTab` (private) | The **Particle Editor**: a tab per open `.nmparticle`, its emitters and settings beside a live preview in a World of its own (see Particle Editor) |
 | `Particles/ParticleDocument`, `ParticleEmitterPanels`, `ParticleAssets` (private) | The open system and its undo history (whole-system snapshots), the Emitters and Details docks, and particle systems as project files: new, open, close. Tested offscreen by `NimbleEditorParticleTests` |
 | `UI/UIEditorWindow`, `UIEditorTab` (private) | The **UI Designer**: a tab per open `.nmui` (Content Browser double-click, or right-click > New UI...). The canvas is drawn by the game's UI renderer at a design resolution (presets: 720p to 4K, ultrawide, portrait, custom), with the selection's handles drawn over it; Palette and Hierarchy on the left, Details on the right; Preview runs the document as in a game, logging its actions. Engine/Modules/UI/README.md, "Editor: UI Designer" |
@@ -138,7 +140,7 @@ build. Dragging one into a project folder copies it there.
 | Rename | F2, or the context menu |
 | Delete | Del: confirmed, then moved to the Recycle Bin -- never deleted outright |
 | Move | Drag items onto a folder (in the list) |
-| Open | Double-click: a graph opens in its window, a world in the viewport (not while playing), a mesh in the mesh viewer, a texture in the texture viewer, a UI document (`.nmui`) in the UI Designer, a particle system (`.nmparticle`) in the Particle Editor, anything else with the system's own application |
+| Open | Double-click: a graph opens in its window, a world in the viewport (not while playing), a mesh in the mesh viewer, a texture in the texture viewer, a UI document (`.nmui`) in the UI Designer, a particle system (`.nmparticle`) in the Particle Editor, a sequence (`.nmseq`) in the Sequencer, anything else with the system's own application |
 | Import | Drop files from Explorer, the toolbar's Import..., or File > Import (Ctrl+I) |
 | Reimport | The context menu on a `.nmmesh` / `.nmtexture`: the same source, the same options |
 
@@ -483,6 +485,51 @@ one when the field is empty) and what this instance overrides -- Emitting,
 Tint, Spawn Rate Scale, Time Scale, Seed, and a Beam Target for its beams. Its effect animates in the viewport
 while editing, since it runs on the render thread's clock rather than the
 World's (RenderCore's RENDERPIPELINE.md, "Particles").
+
+## Sequencer
+
+A `.nmseq` (a cutscene: `Modules/Sequencer`) opens in the **Sequencer dock**, a
+tab per sequence, from a double-click in the Content Browser, File > Open
+Sequence, or a Sequence Player's Sequence field's **Edit**. The dock starts
+hidden, tabbed with the Content Browser along the bottom, and shows itself when
+a sequence opens. Like the other docks it floats out, docks on any side, and is
+in View; closing it (its x) asks about unsaved sequences and closes them,
+putting the level back. Content Browser right-click >
+**New Sequence...** (or File > New Sequence...) writes a five-second one with an
+empty camera cut track.
+
+| Part | What it does |
+|---|---|
+| **Timeline** (top) | Rows on the left: each binding, its tracks, a Transform track's keyed channels; then the sequence's own tracks. Lanes on the right: keys, sections (an Audio section draws its sound's waveform; a Subtitle section its speaker and line), events; markers along the ruler. Click the ruler to scrub. Click to select (Ctrl adds); drag to move, Alt-drag to copy, a section's edge to trim it; drag on empty lane to box select. Double-click a lane to add a key, event or section there. Ctrl+wheel zooms, Shift+wheel pans. Right-click for the row's menu (add tracks, mute, remove; on the ruler, add a marker or set the end). Delete removes the selection |
+| **Curves** (below) | The current track's curves: drag a key in time and value; drag a selected key's handle to give it its own tangents (User), Alt to break them; right-click a key for its interpolation; double-click a curve to key it; F fits |
+| **Details** (right) | What is selected: a key, section (an Audio one's bus and 2D/3D; a Subtitle one's speaker and text), event or marker; else the current track or binding (**Bind to Selected Entity** retargets it); else the sequence's rate and length, and what `Validate` finds wrong |
+| **Toolbar** | Save, Undo, Redo; the transport (Home, `,`, Space, `.`, End) and Loop; the timecode; **Auto-key**, **Key** (K: the current binding's pose), **Camera Cuts**, **Pilot**, **Sound**, **Scrub Audio**, **Snap**; **+ Binding** (the level's selected entity, or a spawned prefab) and **+ Track**; zoom out, the zoom slider, zoom in (Ctrl+- / Ctrl+=) and Fit (Ctrl+0) |
+| **Zoom** | Ctrl+wheel anywhere, or the wheel over the ruler, zooms about the cursor; `=` / `-` about the playhead; F fits; middle-drag pans time and rows; the scrollbar under the lanes scrolls time. The curve editor zooms time with the wheel and value with Ctrl+wheel, and pans with a middle-drag |
+
+**The preview.** While the tab is open the sequence is shown on the level at the
+playhead, through the same `SequenceInstance` the game plays it with, set to
+make nothing in the level: no spawns or camera entity, and its sounds' helpers
+in a World of the tab's own, heard from the level viewport's camera. With
+**Sound** on (the default) the sounds play while the preview plays; **Scrub
+Audio** also plays a moment of them as the playhead is dragged or stepped. Bus
+Volume tracks set the audio device's bus gains while the preview shows them,
+and the Subtitle tracks' line shows in a strip above the timeline. What it changes
+goes back when the tab closes, Play starts, or the level is saved (and comes
+back after), so the level's file never holds the preview. **Camera Cuts** looks
+through the shot at the playhead in the level viewport; **Pilot** makes flying
+the viewport move that shot's camera. With **Auto-key** a bound entity moved by
+the gizmo or the Details panel is keyed at the playhead -- the channels that
+moved -- once the move ends; without it, the move lasts until the preview
+shows another frame. Edit history is the sequence's own: a snapshot of the
+whole asset a step. The preview also lays the sequence's post process over the
+level's (Post Process and Post Process Setting tracks), and takes it off with
+the rest. **Save** writes the XML, stages it and drops it from the
+Sequencer's cache, so the next Play plays it.
+
+The console drives the tab in front, for scripts and tests: `sequence <path> |
+new | close | seek <seconds | marker> | play | pause | cuts <on|off> |
+autokey <on|off> | sound <on|off> | scrub <on|off> | height <px> | collapse <on|off> | select <track> [section] | windowshot <file.png>`; `windowshot <file.png>` saves the whole editor window. With `--command "after <ms> ..."` and `screenshot`, a
+scripted run can look through each shot.
 
 ## Particle Editor
 

@@ -9,16 +9,19 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QFileInfo>
 
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/WorldPackage.h"
 #include "Public/NimbleEngine/WorldList.h"
+#include "Public/Sequencer/SequenceFile.h"
 
 #include "Private/Editor/ConfigIniFile.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphAssets.h"
+#include "Private/Editor/Particles/ParticleAssets.h"
 #include "Private/Editor/ProjectSettingsDialog.h"
 #include "Private/Editor/UI/UIAssets.h"
 
@@ -93,6 +96,7 @@ namespace EditorCook
         case AT_Worlds:  return "Worlds";
         case AT_Prefabs: return "Prefabs";
         case AT_UI:      return "UI documents";
+        case AT_Sequences: return "Sequences";
         default:         return "?";
         }
     }
@@ -301,6 +305,56 @@ namespace EditorCook
             }
         }
         Stats.Types[AT_UI].Seconds = double(Step.elapsed()) / 1000.0;
+
+        // --- Sequences ---------------------------------------------------------
+        Step.start();
+        {
+            const QList<QPair<QString, QString>> Sequences = ProjectFiles(Root, QStringLiteral("*.nmseq"));
+            Progress(QStringLiteral("Cooking %1 sequence(s)").arg(Sequences.size()));
+            for(const QPair<QString, QString>& Sequence : Sequences)
+            {
+                const QString Out = GetCookedPath(Root, Sequence.first);
+                std::string   Error;
+
+                /* What it plays must ship with it; anything else wrong is a warning. */
+                Sequencer::SequenceAsset Asset;
+                QFile SourceFile(Sequence.second);
+                const QByteArray Bytes = SourceFile.open(QIODevice::ReadOnly) ? SourceFile.readAll() : QByteArray();
+                if(Sequencer::ReadSequence(std::vector<uint8_t>(Bytes.begin(), Bytes.end()), Asset, &Error))
+                {
+                    QStringList Missing;
+                    for(const std::string& Referenced : Asset.GetReferencedAssets())
+                    {
+                        if(!QFileInfo::exists(EditorParticles::ToProjectPath(QString::fromStdString(Referenced))))
+                        {
+                            Missing << QString::fromStdString(Referenced);
+                        }
+                    }
+                    for(const std::string& Problem : Asset.Validate())
+                    {
+                        CORE_LOG_WARN("[Cook] " + ToStd(Sequence.first) + ": " + Problem)
+                    }
+                    if(!Missing.isEmpty())
+                    {
+                        ++Stats.Types[AT_Sequences].Failed;
+                        Stats.Failures << QStringLiteral("%1: plays what does not exist: %2").arg(Sequence.first, Missing.join(QStringLiteral(", ")));
+                        continue;
+                    }
+                }
+                if(Sequencer::CookSequenceFile(ToStd(Sequence.second), ToStd(Out), &Error))
+                {
+                    ++Stats.Types[AT_Sequences].Cooked;
+                    Stats.Types[AT_Sequences].BytesIn  += FileBytes(Sequence.second);
+                    Stats.Types[AT_Sequences].BytesOut += FileBytes(Out);
+                }
+                else
+                {
+                    ++Stats.Types[AT_Sequences].Failed;
+                    Stats.Failures << QStringLiteral("%1: %2").arg(Sequence.first, QString::fromStdString(Error));
+                }
+            }
+        }
+        Stats.Types[AT_Sequences].Seconds = double(Step.elapsed()) / 1000.0;
 
         Stats.Seconds = double(Total.elapsed()) / 1000.0;
         for(const QString& Line : DescribeStats(Stats))

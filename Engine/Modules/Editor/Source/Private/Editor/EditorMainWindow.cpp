@@ -1,3 +1,6 @@
+/**
+* VIBECODE CERTIFIED
+*/
 #if WITH_EDITOR
 
 #include "Public/Editor/EditorMainWindow.h"
@@ -5,6 +8,7 @@
 #include <algorithm>
 #include <iterator>
 
+#include <QPainter>
 #include <QAction>
 #include <QActionGroup>
 #include <QCloseEvent>
@@ -21,6 +25,7 @@
 #include <QSignalBlocker>
 #include <QStatusBar>
 #include <QToolBar>
+#include <QToolButton>
 #include <QUndoStack>
 #include <QVBoxLayout>
 
@@ -38,6 +43,7 @@
 #include "Public/Editor/EditorDocument.h"
 #include "Public/Editor/OutlinerPanel.h"
 #include "Public/Editor/ViewportPanel.h"
+#include "Private/Editor/EditorIcons.h"
 #include "Public/Editor/ViewportWidget.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Private/Editor/Content/RenderTargetAssets.h"
@@ -54,6 +60,11 @@
 #include "Private/Editor/Content/MeshViewerWindow.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/Particles/ParticleAssets.h"
+#include "Private/Editor/Sequencer/SequencerAssets.h"
+#include "Private/Editor/Sequencer/SequencerDocument.h"
+#include "Private/Editor/Sequencer/SequencerTab.h"
+#include "Private/Editor/Sequencer/SequencerTimeline.h"
+#include "Private/Editor/Sequencer/SequencerWindow.h"
 #include "Private/Editor/Particles/ParticleDocument.h"
 #include "Private/Editor/Particles/ParticleEditorTab.h"
 #include "Private/Editor/Particles/ParticleEditorWindow.h"
@@ -197,6 +208,9 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     ContentDock->setWidget(ContentArea);
     addDockWidget(Qt::BottomDockWidgetArea, ContentDock);
     tabifyDockWidget(ConsoleDock, ContentDock);
+
+    /* The Sequencer, hidden until a sequence opens: tabbed with them. */
+    SequencerWindow::Install(*this, ContentDock);
     ContentDock->raise();
     connect(ContentArea, &ContentBrowserPanel::OpenWorldRequested, this, &EditorMainWindow::OpenWorldFile);
     connect(ViewportArea, &ViewportPanel::StatusMessage, this, [this](const QString& InText) { statusBar()->showMessage(InText, 6000); });
@@ -265,6 +279,8 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     EditorGraphs::SetEditorContext(&Context);
     EditorPrefabs::SetEditorContext(&Context);
     EditorParticles::SetEditorContext(&Context);
+    EditorSequencer::SetEditorContext(&Context);
+    EditorSequencer::SetLevelViewport(Viewport);
 
     /* Editor Settings > Shaders > ShaderPDB: the build cooks without debug
      * information, so it is written here, in the background. */
@@ -288,6 +304,8 @@ EditorMainWindow::~EditorMainWindow()
     EditorGraphs::SetEditorContext(nullptr);
     EditorPrefabs::SetEditorContext(nullptr);
     EditorParticles::SetEditorContext(nullptr);
+    EditorSequencer::SetEditorContext(nullptr);
+    EditorSequencer::SetLevelViewport(nullptr);
     Context.Shutdown();
 }
 
@@ -320,7 +338,7 @@ void EditorMainWindow::BuildMenus()
     Open->setShortcut(QKeySequence::Open);
     connect(Open, &QAction::triggered, this, &EditorMainWindow::OpenWorld);
 
-    QAction* Save = File->addAction(QStringLiteral("&Save World"));
+    QAction* Save = File->addAction(EditorIcons::Get(EditorIcons::EIcon::Save), QStringLiteral("&Save World"));
     Save->setShortcut(QKeySequence::Save);
     connect(Save, &QAction::triggered, this, &EditorMainWindow::SaveWorld);
 
@@ -354,6 +372,16 @@ void EditorMainWindow::BuildMenus()
         if(!Path.isEmpty()) { EditorParticles::OpenParticleSystem(Path, this); }
     });
 
+    QAction* OpenSequence = File->addAction(QStringLiteral("Open Se&quence..."));
+    connect(OpenSequence, &QAction::triggered, this, [this]()
+    {
+        const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Sequence"), EditorSequencer::GetDefaultFolder(),
+                                                          QStringLiteral("Sequences (*.nmseq)"));
+        if(!Path.isEmpty()) { EditorSequencer::OpenSequence(Path, this); }
+    });
+    QAction* NewSequence = File->addAction(QStringLiteral("New Sequence..."));
+    connect(NewSequence, &QAction::triggered, this, [this]() { EditorSequencer::CreateSequence(QString(), this); });
+
     QAction* OpenGraph = File->addAction(QStringLiteral("Open Grap&h..."));
     OpenGraph->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
     connect(OpenGraph, &QAction::triggered, this, [this]()
@@ -373,11 +401,11 @@ void EditorMainWindow::BuildMenus()
 
     /* Through the context, which refuses while playing or mid-drag. Focused
      * text fields still get Ctrl+Z first. */
-    UndoAction = Edit->addAction(QStringLiteral("&Undo"));
+    UndoAction = Edit->addAction(EditorIcons::Get(EditorIcons::EIcon::Undo), QStringLiteral("&Undo"));
     UndoAction->setShortcut(QKeySequence::Undo);
     connect(UndoAction, &QAction::triggered, &Level, &EditorDocument::Undo);
 
-    RedoAction = Edit->addAction(QStringLiteral("&Redo"));
+    RedoAction = Edit->addAction(EditorIcons::Get(EditorIcons::EIcon::Redo), QStringLiteral("&Redo"));
     RedoAction->setShortcuts({ QKeySequence::Redo, QKeySequence(Qt::CTRL | Qt::Key_Y) });
     connect(RedoAction, &QAction::triggered, &Level, &EditorDocument::Redo);
 
@@ -543,12 +571,12 @@ void EditorMainWindow::BuildPlayControls()
 {
     QMenu* PlayMenu = menuBar()->addMenu(QStringLiteral("&Play"));
 
-    PlayAction = PlayMenu->addAction(QStringLiteral("&Play"));
+    PlayAction = PlayMenu->addAction(EditorIcons::Get(EditorIcons::EIcon::Play), QStringLiteral("&Play"));
     PlayAction->setShortcut(QKeySequence(Qt::Key_F5));
     PlayAction->setToolTip(QStringLiteral("Run the game ([Game] Module) from its start level in the viewport (F5)"));
     connect(PlayAction, &QAction::triggered, this, &EditorMainWindow::StartPlay);
 
-    StopAction = PlayMenu->addAction(QStringLiteral("&Stop"));
+    StopAction = PlayMenu->addAction(EditorIcons::Get(EditorIcons::EIcon::Stop), QStringLiteral("&Stop"));
     StopAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F5));
     StopAction->setToolTip(QStringLiteral("End the run and return to the edited scene (Shift+F5, or Esc in the viewport)"));
     StopAction->setEnabled(false);
@@ -589,10 +617,23 @@ void EditorMainWindow::BuildPlayControls()
     /* In front of the navigation buttons, where a run is started and ended. */
     QToolBar* Bar = ViewportArea->GetToolbar();
     QAction*  First = Bar->actions().isEmpty() ? nullptr : Bar->actions().front();
+    /* Undo and Redo first: the level's, as Edit's. */
+    Bar->insertAction(First, UndoAction);
+    Bar->insertAction(First, RedoAction);
+    Bar->insertSeparator(First);
     Bar->insertAction(First, PlayAction);
     Bar->insertAction(First, StopAction);
     Bar->insertAction(First, EjectAction);
     Bar->insertSeparator(First);
+
+    /* The viewport toolbar is text-only; these show their icons (the tooltip names them). */
+    for(QAction* Each : { UndoAction, RedoAction, PlayAction, StopAction })
+    {
+        if(auto* Button = qobject_cast<QToolButton*>(Bar->widgetForAction(Each)))
+        {
+            Button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        }
+    }
 }
 
 void EditorMainWindow::StartPlay()
@@ -1122,6 +1163,26 @@ void EditorMainWindow::RegisterConsoleCommands()
         SaveCaptureWhenReady(Request, Path);
     });
 
+    Console.Register(QStringLiteral("windowshot"), QStringLiteral("<file.png>"),
+                     QStringLiteral("Save the whole editor window, panels and docks included, as an image"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("Usage: windowshot <file.png>"));
+            return;
+        }
+        const QString File = QFileInfo(InArgs.join(QLatin1Char(' '))).absoluteFilePath();
+        const uint64_t Request = Viewport && Viewport->isVisible() ? Context.RequestSceneCapture() : 0;
+        if(Request != 0)
+        {
+            SaveCaptureWhenReady(Request, File, true);
+            return;
+        }
+        if(!grab().save(File)) { Console.PrintError(QStringLiteral("Could not write %1").arg(File)); }
+        else                   { Console.Print(QStringLiteral("Saved %1").arg(QDir::toNativeSeparators(File))); }
+    });
+
     Console.Register(QStringLiteral("quit"), QString(), QStringLiteral("File > Exit (asks to save unsaved changes)"),
                      [this](const QStringList&)
     {
@@ -1442,6 +1503,145 @@ void EditorMainWindow::RegisterConsoleCommands()
                            ? InArgs.join(QLatin1Char(' '))
                            : QDir(EditorGraphs::GetProjectRoot()).filePath(InArgs.join(QLatin1Char(' ')));
         if(EditorPrefabs::OpenPrefab(Path, this))
+        {
+            Console.Print(QStringLiteral("Opened %1").arg(QDir::toNativeSeparators(Path)));
+        }
+    });
+
+    Console.Register(QStringLiteral("sequence"),
+                     QStringLiteral("<path | new | close | seek <seconds | marker> | play | pause | cuts <on|off> | autokey <on|off> | sound <on|off> | scrub <on|off> | height <px> | collapse <on|off> | select <track> [section] | windowshot <file.png>>"),
+                     QStringLiteral("Open a .nmseq in the Sequencer, make a new one, or drive the one in front (for scripts and tests)"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("Usage: sequence <path | new | close | seek <seconds | marker> | play | pause | cuts <on|off> | autokey <on|off> | sound <on|off> | scrub <on|off> | height <px> | collapse <on|off> | select <track> [section] | windowshot <file.png>>"));
+            return;
+        }
+        const QString Verb = InArgs.front();
+        if(Verb == QStringLiteral("new"))   { EditorSequencer::CreateSequence(QString(), this); return; }
+        if(Verb == QStringLiteral("close")) { EditorSequencer::CloseAll(); return; }
+        if(Verb == QStringLiteral("height"))
+        {
+            /* The dock's height in pixels, for a scripted run that wants room. */
+            SequencerWindow* Window = SequencerWindow::Find();
+            bool bOk = false;
+            const int Height = InArgs.value(1).toInt(&bOk);
+            if(!Window || !bOk || Height <= 0)
+            {
+                Console.PrintError(QStringLiteral("Usage: sequence height <pixels> (with the Sequencer open)"));
+                return;
+            }
+            resizeDocks({ Window }, { Height }, Qt::Vertical);
+            return;
+        }
+        if(Verb == QStringLiteral("windowshot"))
+        {
+            SequencerWindow* Window = SequencerWindow::Find();
+            if(!Window || !Window->isVisible())
+            {
+                Console.PrintError(QStringLiteral("The Sequencer is not open"));
+                return;
+            }
+            const QString File = QFileInfo(InArgs.mid(1).join(QLatin1Char(' '))).absoluteFilePath();
+            if(!Window->grab().save(File)) { Console.PrintError(QStringLiteral("Could not write %1").arg(File)); }
+            else                           { Console.Print(QStringLiteral("Saved %1").arg(QDir::toNativeSeparators(File))); }
+            return;
+        }
+
+        const QStringList Drives = { QStringLiteral("seek"), QStringLiteral("play"), QStringLiteral("pause"), QStringLiteral("cuts"),
+                                     QStringLiteral("autokey"), QStringLiteral("sound"), QStringLiteral("scrub"),
+                                     QStringLiteral("collapse"), QStringLiteral("select") };
+        if(Drives.contains(Verb))
+        {
+            SequencerWindow* Window = SequencerWindow::Find();
+            SequencerTab*    Tab    = Window ? Window->CurrentTab() : nullptr;
+            if(!Tab)
+            {
+                Console.PrintError(QStringLiteral("No sequence is open"));
+                return;
+            }
+            const QString Argument = InArgs.mid(1).join(QLatin1Char(' '));
+            const bool    bOn      = Argument == QStringLiteral("on");
+            if(Verb == QStringLiteral("play"))         { Tab->SetPlaying(true); }
+            else if(Verb == QStringLiteral("pause"))   { Tab->SetPlaying(false); }
+            else if(Verb == QStringLiteral("cuts"))    { Tab->SetViewLocked(bOn); }
+            else if(Verb == QStringLiteral("autokey")) { Tab->SetAutoKey(bOn); }
+            else if(Verb == QStringLiteral("sound"))   { Tab->SetSound(bOn); }
+            else if(Verb == QStringLiteral("scrub"))   { Tab->SetScrubAudio(bOn); }
+            else if(Verb == QStringLiteral("collapse"))
+            {
+                /* Every binding and track that folds, folded (or opened). */
+                std::vector<QString> Keys;
+                for(const SequencerTimeline::Row& Row : Tab->GetTimeline().GetRows())
+                {
+                    if(!Row.CollapseKey.isEmpty()) { Keys.push_back(Row.CollapseKey); }
+                }
+                for(const QString& Key : Keys) { Tab->GetDocument().SetCollapsed(Key, bOn); }
+            }
+            else if(Verb == QStringLiteral("select"))
+            {
+                /* A track by name (or type), and one of its sections: shown in Details. */
+                QStringList Words = InArgs.mid(1);
+                bool bIndex = false;
+                const int Section = Words.size() > 1 ? Words.last().toInt(&bIndex) : 0;
+                if(bIndex) { Words.removeLast(); }
+                const std::string Name = Words.join(QLatin1Char(' ')).toStdString();
+                const Sequencer::SequenceAsset& Asset = Tab->GetDocument().GetAsset();
+                SequencerTrackRef Found;
+                const auto Match = [&Name](const Sequencer::SequenceTrack& InTrack)
+                {
+                    return InTrack.Name == Name || (InTrack.Name.empty() && Name == Sequencer::TrackTypeName(InTrack.Type));
+                };
+                for(size_t T = 0; T < Asset.Tracks.size() && !Found.IsValid(); ++T)
+                {
+                    if(Match(Asset.Tracks[T])) { Found = { -1, int(T) }; }
+                }
+                for(size_t B = 0; B < Asset.Bindings.size() && !Found.IsValid(); ++B)
+                {
+                    for(size_t T = 0; T < Asset.Bindings[B].Tracks.size() && !Found.IsValid(); ++T)
+                    {
+                        if(Match(Asset.Bindings[B].Tracks[T])) { Found = { int(B), int(T) }; }
+                    }
+                }
+                const Sequencer::SequenceTrack* Track = Found.IsValid() ? Tab->GetDocument().FindTrack(Found) : nullptr;
+                if(!Track)
+                {
+                    Console.PrintError(QStringLiteral("No track named %1").arg(QString::fromStdString(Name)));
+                    return;
+                }
+                Tab->GetDocument().SetCurrent(Found.Binding, Found);
+                if(Section >= 0 && size_t(Section) < Track->Sections.size())
+                {
+                    Tab->GetDocument().SetSelection({ { SequencerItem::EKind::Section, Found, 0, Section } });
+                }
+                else
+                {
+                    Tab->GetDocument().ClearSelection();
+                }
+                Tab->GetTimeline().ScrollToTrack(Found);
+            }
+            else
+            {
+                /* Seconds, or a marker by name. */
+                const Sequencer::SequenceAsset& Asset = Tab->GetDocument().GetAsset();
+                bool bNumber = false;
+                const double Seconds = Argument.toDouble(&bNumber);
+                const int32_t Marker = bNumber ? -1 : Asset.FindMarker(Argument.toStdString());
+                if(!bNumber && Marker < 0)
+                {
+                    Console.PrintError(QStringLiteral("No marker named %1").arg(Argument));
+                    return;
+                }
+                Tab->SetPlaying(false);
+                Tab->GetDocument().SetPlayhead(bNumber ? Asset.SecondsToFrames(Seconds) : double(Asset.Markers[size_t(Marker)].Frame));
+            }
+            return;
+        }
+        const QString Path = QFileInfo(InArgs.join(QLatin1Char(' '))).isAbsolute()
+                           ? InArgs.join(QLatin1Char(' '))
+                           : QDir(EditorGraphs::GetProjectRoot()).filePath(InArgs.join(QLatin1Char(' ')));
+        if(EditorSequencer::OpenSequence(Path, this))
         {
             Console.Print(QStringLiteral("Opened %1").arg(QDir::toNativeSeparators(Path)));
         }
@@ -1884,7 +2084,8 @@ void EditorMainWindow::closeEvent(QCloseEvent* InEvent)
 {
     /* Open prefabs, particle systems and graphs first: an unsaved one may cancel the close.
      * Prefabs and particle systems before the Renderer stops: their viewports' swapchains go now. */
-    if(!EditorPrefabs::CloseAllPrefabs() || !EditorParticles::CloseAll() || !EditorUI::CloseAll() || !EditorGraphs::CloseAllGraphs())
+    if(!EditorSequencer::CloseAll() || !EditorPrefabs::CloseAllPrefabs() || !EditorParticles::CloseAll() || !EditorUI::CloseAll()
+       || !EditorGraphs::CloseAllGraphs())
     {
         InEvent->ignore();
         return;
@@ -2056,7 +2257,7 @@ bool EditorMainWindow::SaveWorldAs()
 }
 
 
-void EditorMainWindow::SaveCaptureWhenReady(const uint64_t InRequest, const QString& InPath)
+void EditorMainWindow::SaveCaptureWhenReady(const uint64_t InRequest, const QString& InPath, const bool bInWholeWindow)
 {
     const uint64_t Request = InRequest;
     const QString  Path    = InPath;
@@ -2064,13 +2265,21 @@ void EditorMainWindow::SaveCaptureWhenReady(const uint64_t InRequest, const QStr
     /* Answered after a frame renders; a few seconds, then given up. */
     auto* Poll  = new QTimer(this);
     auto  Tries = std::make_shared<int>(0);
-    connect(Poll, &QTimer::timeout, this, [this, Poll, Request, Tries, Path]()
+    connect(Poll, &QTimer::timeout, this, [this, Poll, Request, Tries, Path, bInWholeWindow]()
     {
         QImage  Image;
         QString Error;
         if(Context.TakeMaterialPreview(Request, Image, Error))
         {
             Poll->deleteLater();
+            if(bInWholeWindow && !Image.isNull() && Viewport)
+            {
+                QPixmap Window = grab();
+                QPainter Painter(&Window);
+                Painter.drawImage(QRect(Viewport->mapTo(this, QPoint(0, 0)), Viewport->size()), Image);
+                Painter.end();
+                Image = Window.toImage();
+            }
             if(Image.isNull() || !Image.save(Path))
             {
                 Console.PrintError(QStringLiteral("No screenshot: %1").arg(Image.isNull() ? Error : QStringLiteral("cannot write ") + Path));

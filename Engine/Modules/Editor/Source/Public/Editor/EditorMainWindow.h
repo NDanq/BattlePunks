@@ -66,8 +66,10 @@ private:
     void RegisterConsoleCommands();
 
     /* Saves capture InRequest (EditorContext::RequestSceneCapture) to InPath
-     * once a frame answers it; the Console says how it went. */
-    void SaveCaptureWhenReady(uint64_t InRequest, const QString& InPath);
+     * once a frame answers it; the Console says how it went. bInWholeWindow:
+     * the whole window instead, the frame laid where the viewport is (a
+     * widget grab cannot see what the GPU drew there). */
+    void SaveCaptureWhenReady(uint64_t InRequest, const QString& InPath, bool bInWholeWindow = false);
     void OnPlayStateChanged(bool bInPlaying);
     void StartPlay();
     void CompileSource();
