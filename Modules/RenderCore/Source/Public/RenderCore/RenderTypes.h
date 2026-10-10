@@ -169,6 +169,16 @@ namespace RenderCore
         float    UpdateMs        = 0.0f;   // the render thread's last Update
         float    CreateMs        = 0.0f;   // the render thread making streamed GPU textures, the last frame
         float    CreateMsPeak    = 0.0f;   // ... the most in one frame of the last 120
+        /* The "Textures" memory pool (TextureAsset.h): every texture file's
+         * levels on the CPU, streamed or not, and the freed blocks it keeps. */
+        uint64_t CpuBytes        = 0;
+        uint64_t CpuCachedBytes  = 0;
+        /* The backend's texture memory (GDIGetTextureMemoryStats): every
+         * texture's, streamed or not, where the backend tracks it. */
+        uint64_t GpuBlockBytes   = 0;   // blocks images are carved from
+        uint64_t GpuBlockUsed    = 0;
+        uint64_t GpuDedicated    = 0;   // images on their own allocation
+        uint64_t GpuStaging      = 0;   // the upload ring
     };
 
     struct RenderStats

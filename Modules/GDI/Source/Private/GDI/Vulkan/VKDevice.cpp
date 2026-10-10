@@ -43,6 +43,8 @@ bool VKDevice::Initialize(VkInstance InInstance)
     }
 
     vkGetPhysicalDeviceMemoryProperties(PhysicalDevice, &MemoryProperties);
+    ImageHeap.Initialize(this);
+    StagingRing.Initialize(this);
 
     GDI_LOG("[VKDevice] Initialized.")
     return true;
@@ -53,6 +55,8 @@ void VKDevice::Shutdown()
     if(Device != VK_NULL_HANDLE)
     {
         vkDeviceWaitIdle(Device);
+        StagingRing.Shutdown();
+        ImageHeap.Shutdown();
         vkDestroyDevice(Device, nullptr);
         Device = VK_NULL_HANDLE;
     }

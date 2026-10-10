@@ -31,6 +31,7 @@ endif()
 
 set( CORE_SOURCES
         Source/Private/Core/CoreLog.cpp
+        Source/Private/Core/CoreBytes.cpp
         Source/Private/Core/CoreImage.cpp
         Source/Private/Core/CoreFileProvider.cpp
         Source/Private/Core/CorePack.cpp
@@ -47,6 +48,7 @@ set( CORE_SOURCES
         Source/Public/Core/CoreAPI.h
         Source/Public/Core/CoreTypes.h
         Source/Public/Core/CoreLog.h
+        Source/Public/Core/CoreBytes.h
         Source/Public/Core/CoreImage.h
         Source/Public/Core/CoreFileProvider.h
         Source/Public/Core/CorePack.h

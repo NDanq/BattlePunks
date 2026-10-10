@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "Public/Core/CoreBytes.h"
 #include "Public/Core/CoreImage.h"
 #include "Public/RenderCore/AssetImportInfo.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
@@ -13,6 +14,7 @@
 namespace EngineCore
 {
     class Archive;
+    class BucketMemoryPool;
 }
 
 /*
@@ -59,13 +61,23 @@ namespace RenderCore
 
     enum : int { TEXTURE_MAX_DIMENSION = 16384 };
 
+    /*
+     * Texture memory (CoreMemoryPool.h): the pool every texture file's
+     * levels and blocks are loaded into -- a BucketMemoryPool named
+     * "Textures", registered as RenderCore loads, so a level freed by
+     * streaming is reused for the next one of its size rather than returned
+     * to the system. Its stats are the CPU side of every texture loaded.
+     */
+    RENDERCORE_API EngineCore::PoolID            GetTextureMemoryPool();
+    RENDERCORE_API EngineCore::BucketMemoryPool* GetTextureMemory();
+
     /* One level as its compression's 4x4 blocks, row by row; a partial
      * block at the right or bottom edge repeats the edge texels. */
     struct TextureBlockLevel
     {
         int                  Width  = 0;   // in texels
         int                  Height = 0;
-        std::vector<uint8_t> Bytes;
+        EngineCore::PooledBytes Bytes{ GetTextureMemoryPool() };
     };
 
     /* What LoadTextureFile reads: everything, or what the GPU is given -- the

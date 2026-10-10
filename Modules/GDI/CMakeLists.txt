@@ -188,6 +188,7 @@ if(GDI_WITH_VULKAN)
             Source/Private/GDI/Vulkan/VKRecordingContext.cpp
             Source/Private/GDI/Vulkan/VKSync.cpp
             Source/Private/GDI/Vulkan/VKDevice.cpp
+            Source/Private/GDI/Vulkan/VKMemoryHeap.cpp
             Source/Private/GDI/Vulkan/VKSwapchain.cpp
             Source/Private/GDI/Vulkan/VKCommandManager.cpp
             Source/Private/GDI/Vulkan/VKPipelineCache.cpp
@@ -205,6 +206,7 @@ if(GDI_WITH_VULKAN)
             Source/Public/GDI/Vulkan/VKRenderTarget.h
             Source/Public/GDI/Vulkan/VKSync.h
             Source/Public/GDI/Vulkan/VKDevice.h
+            Source/Public/GDI/Vulkan/VKMemoryHeap.h
             Source/Public/GDI/Vulkan/VKSwapchain.h
             Source/Public/GDI/Vulkan/VKCommandManager.h
             Source/Public/GDI/Vulkan/VKPipelineCache.h

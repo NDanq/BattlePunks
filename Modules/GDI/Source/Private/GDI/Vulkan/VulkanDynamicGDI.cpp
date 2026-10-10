@@ -613,7 +613,13 @@ void VulkanDynamicGDI::DeferDestroyImage(VkImage InImage, VkDeviceMemory InMemor
 {
     if(InImage == VK_NULL_HANDLE && InMemory == VK_NULL_HANDLE &&
        InView == VK_NULL_HANDLE && InSampler == VK_NULL_HANDLE) return;
-    DeferredImages.push_back({ InImage, InMemory, InView, InSampler, RenderTimelineCounter + 1 });
+    DeferredImages.push_back({ InImage, InMemory, InView, InSampler, RenderTimelineCounter + 1, VKAllocation() });
+}
+
+void VulkanDynamicGDI::DeferDestroyImage(VkImage InImage, const VKAllocation& InAllocation, VkImageView InView, VkSampler InSampler)
+{
+    if(InImage == VK_NULL_HANDLE && !InAllocation.IsValid() && InView == VK_NULL_HANDLE && InSampler == VK_NULL_HANDLE) return;
+    DeferredImages.push_back({ InImage, VK_NULL_HANDLE, InView, InSampler, RenderTimelineCounter + 1, InAllocation });
 }
 
 void VulkanDynamicGDI::DeferDestroyBuffer(VkBuffer InBuffer, VkDeviceMemory InMemory)
@@ -642,6 +648,7 @@ void VulkanDynamicGDI::DrainDeferredDestruction(const uint64_t InDoneAt)
         if(D.View    != VK_NULL_HANDLE) vkDestroyImageView(Dev, D.View, nullptr);
         if(D.Image   != VK_NULL_HANDLE) vkDestroyImage(Dev, D.Image, nullptr);
         if(D.Memory  != VK_NULL_HANDLE) vkFreeMemory(Dev, D.Memory, nullptr);
+        if(D.Allocation.IsValid())      DeviceObj->GetImageHeap().Free(D.Allocation);
     }
     DeferredImages.erase(DeferredImages.begin(), DeferredImages.begin() + ptrdiff_t(Done));
 
@@ -667,6 +674,8 @@ void VulkanDynamicGDI::DrainDeferredDestruction(const uint64_t InDoneAt)
         vkDestroyCommandPool(Dev, DeferredCmdPools[Done].Pool, nullptr);   // frees its command buffer
     }
     DeferredCmdPools.erase(DeferredCmdPools.begin(), DeferredCmdPools.begin() + ptrdiff_t(Done));
+
+    DeviceObj->GetStagingRing().Reclaim(InDoneAt);   // the uploads those frames waited on
 }
 
 bool VulkanDynamicGDI::IsSubmissionDone(const uint64_t InDoneAt)
@@ -1007,6 +1016,21 @@ static VkFormat ToVkCompressedFormat(const EGDICompressedFormat InFormat)
         default: break;
     }
     return VK_FORMAT_UNDEFINED;
+}
+
+bool VulkanDynamicGDI::GetTextureMemoryStats(GDITextureMemoryStats& OutStats) const
+{
+    if(!DeviceObj || !DeviceObj->IsValid()) { return false; }
+    const VKImageHeap::Stats Heap = DeviceObj->GetImageHeap().GetStats();
+    OutStats.BlockBytes      = Heap.BlockBytes;
+    OutStats.BlockUsedBytes  = Heap.UsedBytes;
+    OutStats.DedicatedBytes  = Heap.DedicatedBytes;
+    OutStats.Blocks          = Heap.Blocks;
+    OutStats.BlockImages     = Heap.Allocations;
+    OutStats.DedicatedImages = Heap.Dedicated;
+    OutStats.StagingBytes    = DeviceObj->GetStagingRing().GetCapacity();
+    OutStats.StagingInUse    = DeviceObj->GetStagingRing().GetBytesInUse();
+    return true;
 }
 
 bool VulkanDynamicGDI::SupportsCompressedFormat(const EGDICompressedFormat InFormat) const

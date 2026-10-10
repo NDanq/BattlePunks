@@ -191,11 +191,13 @@ namespace RenderCore
             TextureBlockLevel& Each = Blocks[size_t(Level)];
             Each.Width  = Mip.GetWidth();
             Each.Height = Mip.GetHeight();
+            std::vector<uint8_t> Encoded;   // the compressor's interface; then into texture memory
             if(!GCompressor->Compress(Mip.ConvertedTo(EngineCore::EImageFormat::RGBA8), InOutTexture.bSRGB,
-                                      InOutTexture.Compression, Each.Bytes, OutError))
+                                      InOutTexture.Compression, Encoded, OutError))
             {
                 return false;
             }
+            Each.Bytes.assign(Encoded.data(), Encoded.data() + Encoded.size());
             if(Each.Bytes.size() != TextureCompressedBytes(Each.Width, Each.Height, 1, InOutTexture.Compression))
             {
                 OutError = std::string(GCompressor->GetName()) + " gave the wrong number of bytes";
