@@ -126,7 +126,9 @@ namespace EditorProject
                 OutError = QStringLiteral("Could not read %1").arg(QDir::toNativeSeparators(Source));
                 break;
             }
+            /* LF whatever the checkout has (core.autocrlf), as NewProject.cmake writes. */
             QString Text = QString::fromUtf8(In.readAll());
+            Text.remove(QLatin1Char('\r'));
             Text.replace(NAME_TOKEN, InName);
             Text.replace(ENGINE_DIR_TOKEN, EngineDir);
 
