@@ -622,9 +622,15 @@ void VulkanDynamicGDI::DeferDestroyBuffer(VkBuffer InBuffer, VkDeviceMemory InMe
     DeferredBuffers.push_back({ InBuffer, InMemory, RenderTimelineCounter + 1 });
 }
 
+void VulkanDynamicGDI::DeferDestroyCommandPool(VkCommandPool InPool)
+{
+    if(InPool == VK_NULL_HANDLE) return;
+    DeferredCmdPools.push_back({ InPool, RenderTimelineCounter + 1 });
+}
+
 void VulkanDynamicGDI::DrainDeferredDestruction(const uint64_t InDoneAt)
 {
-    if(!DeviceObj || !DeviceObj->IsValid()) { DeferredImages.clear(); DeferredBuffers.clear(); DeferredQueryPools.clear(); return; }
+    if(!DeviceObj || !DeviceObj->IsValid()) { DeferredImages.clear(); DeferredBuffers.clear(); DeferredQueryPools.clear(); DeferredCmdPools.clear(); return; }
     VkDevice Dev = DeviceObj->GetDevice();
 
     /* Each list in the order released, so in DoneAt order: what has finished is a prefix. */
@@ -654,6 +660,13 @@ void VulkanDynamicGDI::DrainDeferredDestruction(const uint64_t InDoneAt)
         vkDestroyQueryPool(Dev, DeferredQueryPools[Done].Pool, nullptr);
     }
     DeferredQueryPools.erase(DeferredQueryPools.begin(), DeferredQueryPools.begin() + ptrdiff_t(Done));
+
+    Done = 0;
+    for(; Done < DeferredCmdPools.size() && DeferredCmdPools[Done].DoneAt <= InDoneAt; ++Done)
+    {
+        vkDestroyCommandPool(Dev, DeferredCmdPools[Done].Pool, nullptr);   // frees its command buffer
+    }
+    DeferredCmdPools.erase(DeferredCmdPools.begin(), DeferredCmdPools.begin() + ptrdiff_t(Done));
 }
 
 bool VulkanDynamicGDI::IsSubmissionDone(const uint64_t InDoneAt)

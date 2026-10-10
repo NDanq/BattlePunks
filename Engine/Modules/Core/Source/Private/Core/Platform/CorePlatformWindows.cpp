@@ -205,6 +205,29 @@ bool appFileReadAll(const std::string& InPath, std::vector<uint8_t>& OutBytes)
     return true;
 }
 
+bool appFileReadRange(const std::string& InPath, const uint64_t InOffset, const uint64_t InSize, std::vector<uint8_t>& OutBytes)
+{
+    OutBytes.clear();
+    const FileHandle H = appFileOpenRead(InPath);
+    if(!H) return false;
+    LARGE_INTEGER To{};
+    To.QuadPart = LONGLONG(InOffset);
+    if(!::SetFilePointerEx(ToWin32(H), To, nullptr, FILE_BEGIN))
+    {
+        appFileClose(H);
+        return false;
+    }
+    OutBytes.resize(size_t(InSize));
+    const size_t Got = InSize == 0 ? 0 : appFileRead(H, OutBytes.data(), OutBytes.size());
+    appFileClose(H);
+    if(Got != OutBytes.size())
+    {
+        OutBytes.clear();
+        return false;
+    }
+    return true;
+}
+
 bool appFileExists(const std::string& InPath)
 {
     const DWORD Attribs = ::GetFileAttributesW(Widen(InPath).c_str());

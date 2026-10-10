@@ -24,21 +24,32 @@ namespace
 
     /* XORs InSize bytes with a splitmix64 stream seeded by the blob's file
      * offset: the same call scrambles and unscrambles. */
-    void Scramble(uint8_t* InOutData, const size_t InSize, const uint64_t InOffset)
+    /* The same, for InSize bytes that start InFrom bytes into the blob (a
+     * range read): the stream is skipped ahead to InFrom's word. */
+    void ScrambleRange(uint8_t* InOutData, const size_t InSize, const uint64_t InOffset, const uint64_t InFrom)
     {
         uint64_t State = SCRAMBLE_KEY ^ (InOffset * 0x9E3779B97F4A7C15ull);
-        for(size_t Index = 0; Index < InSize; Index += 8)
+        State += (InFrom / 8) * 0x9E3779B97F4A7C15ull;
+        size_t Index = 0;
+        size_t Byte  = size_t(InFrom % 8);
+        while(Index < InSize)
         {
             State += 0x9E3779B97F4A7C15ull;
             uint64_t Word = State;
             Word = (Word ^ (Word >> 30)) * 0xBF58476D1CE4E5B9ull;
             Word = (Word ^ (Word >> 27)) * 0x94D049BB133111EBull;
             Word ^= Word >> 31;
-            for(size_t Byte = 0; Byte < 8 && Index + Byte < InSize; ++Byte)
+            for(; Byte < 8 && Index < InSize; ++Byte, ++Index)
             {
-                InOutData[Index + Byte] ^= uint8_t(Word >> (8 * Byte));
+                InOutData[Index] ^= uint8_t(Word >> (8 * Byte));
             }
+            Byte = 0;
         }
+    }
+
+    void Scramble(uint8_t* InOutData, const size_t InSize, const uint64_t InOffset)
+    {
+        ScrambleRange(InOutData, InSize, InOffset, 0);
     }
 
     uint64_t Fnv1a64(const uint8_t* InData, const size_t InSize)
@@ -306,6 +317,28 @@ bool PackFileProvider::ReadAll(const std::string& InPath, std::vector<uint8_t>& 
     if(bScrambled)
     {
         Scramble(OutBytes.data(), OutBytes.size(), Each.Offset);
+    }
+    return true;
+}
+
+bool PackFileProvider::ReadRange(const std::string& InPath, const uint64_t InOffset, const uint64_t InSize, std::vector<uint8_t>& OutBytes)
+{
+    OutBytes.clear();
+    const auto Found = Entries.find(HashPackPath(InPath));
+    if(Found == Entries.end())
+    {
+        return false;
+    }
+    const Blob& Each = Blobs[Found->second];
+    if(InOffset > Each.Size || InSize > Each.Size - InOffset)
+    {
+        return false;
+    }
+    const uint64_t From = Each.Offset + InOffset;
+    OutBytes.assign(Data.begin() + std::ptrdiff_t(From), Data.begin() + std::ptrdiff_t(From + InSize));
+    if(bScrambled)
+    {
+        ScrambleRange(OutBytes.data(), OutBytes.size(), Each.Offset, InOffset);
     }
     return true;
 }

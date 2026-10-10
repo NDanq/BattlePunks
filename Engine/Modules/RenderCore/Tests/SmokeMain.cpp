@@ -31,6 +31,7 @@
 #include "Public/Core/CoreImage.h"
 #include "Public/Core/CoreJob.h"
 #include "Public/Core/CoreLog.h"
+#include "Public/Core/CorePack.h"
 #include "Public/Core/CorePlatform.h"
 #include "Public/Core/CoreThread.h"
 #include "Public/GameCore/AABB.h"
@@ -59,6 +60,7 @@
 #include "Private/RenderCore/RenderThreadInternal.h"
 #include "Private/RenderCore/ParticleSimulation.h"
 #include "Private/RenderCore/ShadowSetup.h"
+#include "Private/RenderCore/TextureStreaming.h"
 
 using namespace RenderCore;
 using namespace EngineCore;
@@ -1915,6 +1917,219 @@ static void TestTextureAssets()
 }
 
 /* Mip chains (TextureAsset.h): built, saved, read, and what a v1 file reads as. */
+/*
+ * TEXTURE STREAMING (TEXTURE_STREAMING.md), its files: a texture's levels
+ * found by their chunk headers and read by range -- RGBA8 and blocks -- and
+ * the range reads beneath, including a scrambled pack's.
+ */
+static TextureData MakeStreamingTexture(const int InSize)
+{
+    TextureData Texture;
+    Texture.MipGen = ETextureMipGen::Box;
+    Texture.Pixels = Image(InSize, InSize, EImageFormat::RGBA8);
+    for(int Y = 0; Y < InSize; ++Y)
+    {
+        uint8_t* Row = Texture.Pixels.GetScanline(Y);
+        for(int X = 0; X < InSize; ++X)
+        {
+            Row[X * 4 + 0] = uint8_t(X * 7 + Y);
+            Row[X * 4 + 1] = uint8_t(Y * 3);
+            Row[X * 4 + 2] = uint8_t((X ^ Y) * 5);
+            Row[X * 4 + 3] = 255;
+        }
+    }
+    BuildTextureMips(Texture);
+    return Texture;
+}
+
+static bool SameImage(const Image& InA, const Image& InB)
+{
+    return InA.GetWidth() == InB.GetWidth() && InA.GetHeight() == InB.GetHeight() && InA.GetSizeBytes() == InB.GetSizeBytes()
+        && std::memcmp(InA.GetData(), InB.GetData(), InA.GetSizeBytes()) == 0;
+}
+
+static void TestTextureStreamingFiles()
+{
+    std::printf("[texture streaming files]\n");
+    const std::filesystem::path Root = std::filesystem::temp_directory_path() / "NimbleRenderCoreStreaming";
+    std::filesystem::create_directories(Root);
+    const std::string File = (Root / "Levels.nmtexture").string();
+
+#if WITH_EDITOR
+    TextureData Source = MakeStreamingTexture(256);
+    Expect(SaveTextureFile(File, Source), "a 256 x 256 texture with its mips saves");
+
+    TextureFileLayout Layout;
+    Expect(ReadTextureLayout(File, Layout) && Layout.GetMipCount() == 9 && !Layout.bBlocks
+           && Layout.LevelBytes[0] == 256u * 256u * 4u && Layout.LevelBytes[8] == 4u,
+           "its layout: nine RGBA8 levels, level 0 first");
+
+    TextureData Tail;
+    Expect(LoadTextureLevels(File, Layout, 2, -1, Tail) && Tail.GetMipCount() == 7 && SameImage(Tail.Pixels, Source.Mips[1])
+           && SameImage(Tail.Mips.back(), Source.Mips.back()) && Tail.MipGen == ETextureMipGen::Box,
+           "levels 2 on read by range are the file's: 64 x 64 down to 1 x 1");
+    TextureData Middle;
+    Expect(LoadTextureLevels(File, Layout, 0, 2, Middle) && Middle.GetMipCount() == 2 && SameImage(Middle.Pixels, Source.Pixels)
+           && SameImage(Middle.Mips[0], Source.Mips[0]),
+           "levels 0 and 1 read across TMIP's chunk header");
+    Expect(!LoadTextureLevels(File, Layout, 3, 3, Middle), "an empty range is refused");
+
+    if(IsTextureCompressionAvailable(ETextureCompression::BC1))
+    {
+        TextureData Blocky = Source;
+        Blocky.Compression = ETextureCompression::BC1;
+        TextureData ForGpu;
+        Expect(SaveTextureFile(File, Blocky) && LoadTextureFile(File, ForGpu, ETextureLoad::ForGpu)
+               && ReadTextureLayout(File, Layout) && Layout.bBlocks && Layout.GetMipCount() == 9,
+               "a BC1 file's layout is its blocks (past its import info)");
+        TextureData Blocks;
+        Expect(LoadTextureLevels(File, Layout, 3, -1, Blocks) && Blocks.Blocks.size() == 6 && Blocks.Pixels.IsNull()
+               && Blocks.Blocks[0].Width == 32 && Blocks.Blocks[0].Bytes == ForGpu.Blocks[3].Bytes
+               && Blocks.Blocks[5].Bytes == ForGpu.Blocks[8].Bytes && Blocks.Compression == ETextureCompression::BC1,
+               "and its blocks from level 3 on read as LoadTextureFile's");
+    }
+#endif
+
+    /* A material's TextureUV lines: the smallest scale a texture's samples apply to UV0. */
+    MaterialDescription Scaled;
+    std::string ParseError;
+    const bool bParsed = ParseMaterialDescription("NimbleMaterial 3\nBlockSize 208\n"
+                                                  "Param UVScale vec2 192 0.5 0.25 0 0\n"
+                                                  "Texture 1 Default Default A.nmtexture\n"
+                                                  "Texture 2 Default Default B.nmtexture\n"
+                                                  "Texture 3 Default Default C.nmtexture\n"
+                                                  "TextureUV 1 1 UVScale\nTextureUV 1 4\nTextureUV 3 2 Missing\n", Scaled, ParseError);
+    Expect(bParsed && Scaled.Textures.size() == 3 && Scaled.Textures[0].StreamUVScale == 0.5f
+           && Scaled.Textures[1].StreamUVScale == 1.0f && Scaled.Textures[2].StreamUVScale == 1.0f,
+           "TextureUV: a parameter's largest component, the smallest of a slot's samples; 1 without, or with an unknown parameter");
+
+    /* Range reads: the default (whole then slice), a scrambled pack's, the filesystem's. */
+    std::vector<uint8_t> Bytes(5000);
+    for(size_t Index = 0; Index < Bytes.size(); ++Index) { Bytes[Index] = uint8_t(Index * 31 + 7); }
+    const std::vector<uint8_t> Want(Bytes.begin() + 13, Bytes.begin() + 13 + 1001);
+    std::vector<uint8_t> Got;
+
+    std::map<std::string, MemoryFileProvider::FileBytes> Files;
+    Files["A.bin"] = std::make_shared<const std::vector<uint8_t>>(Bytes);
+    MemoryFileProvider Memory(Files);
+    Expect(Memory.ReadRange("A.bin", 13, 1001, Got) && Got == Want && !Memory.ReadRange("A.bin", 4500, 501, Got),
+           "a provider's default range read: the slice, and nothing past the end");
+
+    const std::string PackFile = (Root / "Range.nmpak").string();
+    std::string Error;
+    Expect(WritePackFile(PackFile, "Range", { PackInput{ "Pad.bin", std::vector<uint8_t>(37, 1) }, PackInput{ "A.bin", Bytes } },
+                         false, true, &Error), "a scrambled pack writes");
+    std::vector<uint8_t> PackBytes;
+    std::shared_ptr<PackFileProvider> Pack = appFileReadAll(PackFile, PackBytes) ? PackFileProvider::Load(std::move(PackBytes), Error) : nullptr;
+    std::vector<uint8_t> All;
+    Expect(Pack && Pack->IsScrambled() && Pack->ReadAll("A.bin", All) && All == Bytes && Pack->ReadRange("A.bin", 13, 1001, Got) && Got == Want,
+           "a scrambled pack's range unscrambles from an unaligned offset");
+
+    const std::string Plain = (Root / "A.bin").string();
+    Archive Writer = Archive::ForWriting();
+    Writer.SerializeBytes(Bytes.data(), Bytes.size());
+    Expect(SaveArchiveToFile(Plain, Writer) && appFileReadRange(Plain, 13, 1001, Got) && Got == Want
+           && !appFileReadRange(Plain, 4999, 2, Got) && Got.empty(),
+           "the filesystem's range read seeks, and fails short");
+    std::filesystem::remove_all(Root);
+}
+
+/*
+ * TEXTURE STREAMING, the streamer: a texture starts with its 64-texel tail,
+ * loads to the level its demand asks for, drops back when asked for less,
+ * and the pool raises every wanted level when they do not fit.
+ */
+static void TestTextureStreamer()
+{
+    std::printf("[texture streamer]\n");
+#if WITH_EDITOR
+    const std::filesystem::path Root = std::filesystem::temp_directory_path() / "NimbleRenderCoreStreamer";
+    std::filesystem::create_directories(Root);
+    const std::string File  = (Root / "Big.nmtexture").string();
+    const std::string Small = (Root / "Small.nmtexture").string();
+    TextureData Source = MakeStreamingTexture(1024);
+    TextureData Tiny   = MakeStreamingTexture(64);
+    Expect(SaveTextureFile(File, Source) && SaveTextureFile(Small, Tiny), "a 1024 and a 64 texture save");
+
+    ConfigVar* MinResident = ConfigFindVar("Rendering", "TextureStreamingMinResident");
+    ConfigVar* DropDelay   = ConfigFindVar("Rendering", "TextureStreamingDropDelay");
+    ConfigVar* Pool        = ConfigFindVar("Rendering", "TextureStreamingPoolMB");
+    ConfigVar* Enabled     = ConfigFindVar("Rendering", "TextureStreaming");
+    Expect(MinResident && DropDelay && Pool && Enabled, "its settings exist");
+    if(!MinResident || !DropDelay || !Pool || !Enabled) { return; }
+    MinResident->SetInt(64);
+    DropDelay->SetFloat(0.0f);
+    Pool->SetInt(512);
+    Enabled->SetBool(true);
+
+    {
+        TextureStreamer Streamer;
+        Expect(Streamer.FindEntry(Small) == nullptr, "a texture no larger than MinResident is not streamed");
+        TextureStreamer::Entry* Entry = Streamer.FindEntry(File);
+        Expect(Entry && TextureStreamer::GetResidentTop(*Entry) == 4 && TextureStreamer::GetResident(*Entry)->Pixels.GetWidth() == 64
+               && TextureStreamer::GetResident(*Entry)->GetMipCount() == 7,
+               "a 1024 texture starts with levels 4 on: 64 x 64 down");
+        if(Entry)
+        {
+            /* 1024 pixels a UV unit: level 0. */
+            TextureStreamer::NoteDemand(*Entry, 1024.0f);
+            Streamer.Update();
+            Streamer.Flush();
+            const std::shared_ptr<const TextureData> Full = TextureStreamer::GetResident(*Entry);
+            Expect(TextureStreamer::GetResidentTop(*Entry) == 0 && Full->GetMipCount() == 11 && SameImage(Full->Pixels, Source.Pixels)
+                   && SameImage(Full->Mips[3], Source.Mips[3]) && SameImage(Full->Mips.back(), Source.Mips.back()),
+                   "asked for at 1024 pixels a UV unit, it loads to level 0: the file's levels, joined to the tail");
+            const TextureStreamingStats Stats = Streamer.GetStats();
+            Expect(Stats.Textures == 1 && Stats.ResidentBytes == Stats.FullBytes && Stats.Loads >= 1 && Stats.BytesRead > 0,
+                   "the stats count it whole, and the load");
+
+            /* 256 pixels: level 2 (1024 / 256 = 4 texels a pixel). DropDelay 0: dropped at once. */
+            TextureStreamer::NoteDemand(*Entry, 256.0f);
+            Streamer.Update();
+            Expect(TextureStreamer::GetWanted(*Entry) == 2 && TextureStreamer::GetResidentTop(*Entry) == 2
+                   && TextureStreamer::GetResident(*Entry)->Pixels.GetWidth() == 256
+                   && SameImage(TextureStreamer::GetResident(*Entry)->Pixels, Source.Mips[1]),
+                   "asked for at 256 pixels, it drops to level 2, without a read");
+
+            TextureStreamer::NoteDemand(*Entry, 700.0f);   // 1.46 texels a pixel: still level 0
+            Streamer.Update();
+            Streamer.Flush();
+            Expect(TextureStreamer::GetResidentTop(*Entry) == 0, "between two levels, the sharper one");
+
+            /* A 1 MB pool cannot hold 1024 (5.3 MB) or 512 (1.3 MB): 256 on, bias 2. */
+            Pool->SetInt(1);
+            TextureStreamer::NoteDemand(*Entry, 0.0f);   // not known: all of it
+            Streamer.Update();
+            Expect(TextureStreamer::GetWanted(*Entry) == 2 && Streamer.GetStats().BudgetBias == 2
+                   && TextureStreamer::GetResidentTop(*Entry) == 2,
+                   "over the pool, every wanted level is raised alike, and what is over is dropped at once");
+            Pool->SetInt(512);
+
+            /* Not drawn past DropDelay: back to its tail. */
+            Streamer.Update();
+            Expect(TextureStreamer::GetWanted(*Entry) == 4 && TextureStreamer::GetResidentTop(*Entry) == 4,
+                   "not drawn for DropDelay, it keeps only its tail");
+
+            /* A reimport: read again, from its tail. */
+            TextureStreamer::NoteDemand(*Entry, 1024.0f);
+            Streamer.Update();
+            Streamer.Flush();
+            TextureAssetCache::Invalidate(File);
+            Streamer.Update();
+            Expect(TextureStreamer::GetResidentTop(*Entry) == 4, "an invalidated texture starts again from its tail");
+        }
+        Enabled->SetBool(false);
+        Expect(Streamer.FindEntry(File) == nullptr, "with streaming off, nothing is streamed");
+        Enabled->SetBool(true);
+    }
+    MinResident->ResetToDefault();
+    DropDelay->ResetToDefault();
+    Pool->ResetToDefault();
+    Enabled->ResetToDefault();
+    std::filesystem::remove_all(Root);
+#endif
+}
+
 static void TestTextureMips()
 {
     std::printf("[texture mips]\n");
@@ -6367,6 +6582,8 @@ int main()
     TestTextureAssets();
     TestTextureCompression();
     TestTextureMips();
+    TestTextureStreamingFiles();
+    TestTextureStreamer();
     TestToneMappingSettings();
     TestFidelitySettings();
     TestImageBasedLightingData();

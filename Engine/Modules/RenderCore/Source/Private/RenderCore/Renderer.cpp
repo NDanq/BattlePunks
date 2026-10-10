@@ -41,6 +41,10 @@ NIMBLE_CONFIG_BOOL(GStatsUnit, "Stats", "Unit", false, nullptr);
  * (ERenderGpuTimer), where the backend can time the GPU. */
 NIMBLE_CONFIG_BOOL(GStatsFrame, "Stats", "Frame", false, nullptr);
 
+/* "stat streaming": texture streaming's pool, loads and commits
+ * (TEXTURE_STREAMING.md), as the render thread's last update left them. */
+NIMBLE_CONFIG_BOOL(GStatsStreaming, "Stats", "Streaming", false, nullptr);
+
 /* Anisotropic filtering for textures with mips (GDISetMaxAnisotropy): 1 off,
  * up to 16. Read once, as the renderer starts the device -- a change applies
  * at the next start. */
@@ -162,6 +166,12 @@ namespace RenderCore
             for(const auto& [Name, Text] : StatSections)
             {
                 Unit.Extra += (Unit.Extra.empty() ? "" : "\n\n") + Name + "\n" + Text;
+            }
+            if(GStatsStreaming.GetBool())
+            {
+                RenderStats Stats;
+                Thread.GetStats(Stats);
+                Unit.Extra += (Unit.Extra.empty() ? "" : "\n\n") + std::string("Streaming\n") + FormatStatStreaming(Stats.TextureStreaming);
             }
             if(Samples > 0 && InEndNs - WindowStartNs >= 500'000'000)
             {

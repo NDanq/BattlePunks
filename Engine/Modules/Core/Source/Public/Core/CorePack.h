@@ -69,6 +69,7 @@ namespace EngineCore
 
         bool ReadAll(const std::string& InPath, std::vector<uint8_t>& OutBytes) override;
         bool Exists (const std::string& InPath) override;
+        bool ReadRange(const std::string& InPath, uint64_t InOffset, uint64_t InSize, std::vector<uint8_t>& OutBytes) override;
 
         const std::string& GetName() const { return Name; }
         size_t             GetEntryCount() const { return Entries.size(); }

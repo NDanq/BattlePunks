@@ -40,6 +40,13 @@ namespace EngineCore
 
         virtual bool Exists(const std::string& InPath) = 0;
 
+        /* InSize bytes of the resource from InOffset: what a streamed asset
+         * reads (RenderCore's texture streaming) instead of the whole file.
+         * False if the resource is shorter or cannot be read. This default
+         * reads it all and keeps the range; a provider that can seek does
+         * better. */
+        virtual bool ReadRange(const std::string& InPath, uint64_t InOffset, uint64_t InSize, std::vector<uint8_t>& OutBytes);
+
         /*
          * Optional: a provider that can take extra read-only layers
          * (LayeredFileProvider) mounts InLayer under InName, consulted before
@@ -65,6 +72,7 @@ namespace EngineCore
 
         bool ReadAll(const std::string& InPath, std::vector<uint8_t>& OutBytes) override;
         bool Exists (const std::string& InPath) override;
+        bool ReadRange(const std::string& InPath, uint64_t InOffset, uint64_t InSize, std::vector<uint8_t>& OutBytes) override;
 
         const std::string& GetBaseDir() const { return BaseDir; }
 
@@ -108,6 +116,7 @@ namespace EngineCore
 
         bool ReadAll(const std::string& InPath, std::vector<uint8_t>& OutBytes) override;
         bool Exists (const std::string& InPath) override;
+        bool ReadRange(const std::string& InPath, uint64_t InOffset, uint64_t InSize, std::vector<uint8_t>& OutBytes) override;
 
         bool MountLayer(const std::string& InName, std::shared_ptr<IFileProvider> InLayer) override;
         bool UnmountLayer(const std::string& InName) override;
@@ -134,6 +143,11 @@ namespace EngineCore
     /* Process-wide provider used by GDI's shader loading. Not owned. */
     CORE_API void           SetFileProvider(IFileProvider* InProvider);
     CORE_API IFileProvider* GetFileProvider();
+
+    /* InSize bytes of InPath from InOffset: through GetFileProvider() when it
+     * has the file, else the platform layer -- where LoadArchiveFromFile
+     * would read it from. False if it is shorter or cannot be read. */
+    CORE_API bool ReadFileRange(const std::string& InPath, uint64_t InOffset, uint64_t InSize, std::vector<uint8_t>& OutBytes);
 }
 
 #endif //ENGINECORE_COREFILEPROVIDER_H

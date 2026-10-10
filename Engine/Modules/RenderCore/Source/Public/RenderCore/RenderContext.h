@@ -272,6 +272,13 @@ namespace RenderCore
          * Lighting stage counts its one pass when it ran. */
         uint32_t GetStageDrawCount(ERenderStage InStage) const;
 
+        /* TEXTURE STREAMING (TEXTURE_STREAMING.md). Flush: every level the
+         * draws last asked for loaded and committed now, whatever the upload
+         * budget -- for a test or a one-off render that must not be blurry.
+         * Render thread. Stats: as the last update left them, any thread. */
+        void                  FlushTextureStreaming();
+        TextureStreamingStats GetTextureStreamingStats() const;
+
     private:
         friend class RenderThread;
         friend class RenderScene;
@@ -317,6 +324,15 @@ namespace RenderCore
          * Null: nothing moved. RenderScene sets it per proxy; a static draw
          * list's replays never move. */
         void SetDrawMotion(const EngineCore::Matrix4x4* InMotion);
+
+        /* TEXTURE STREAMING (TEXTURE_STREAMING.md): how many screen pixels a
+         * world unit spans where what queues draws next is -- RenderScene's,
+         * per proxy, from its distance to the view; 0 (BeginSceneDraws'):
+         * not known, so its textures are asked for whole. Update: once a
+         * frame, before the first scene queues (later calls that frame do
+         * nothing). */
+        void SetDrawStreamingScale(float InPixelsPerWorldUnit);
+        void UpdateTextureStreaming();
 
         /*
          * OCCLUSION CULLING (RenderScene; RENDERPIPELINE.md, "Occlusion

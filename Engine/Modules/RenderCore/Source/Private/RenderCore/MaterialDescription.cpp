@@ -1,5 +1,7 @@
 #include "Public/RenderCore/MaterialDescription.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <sstream>
@@ -71,6 +73,13 @@ namespace RenderCore
     bool ParseMaterialDescription(const std::string& InText, MaterialDescription& OutDescription, std::string& OutError)
     {
         MaterialDescription Result;
+        struct UVLine
+        {
+            uint32_t                 Slot  = 0;
+            float                    Scale = 1.0f;
+            std::vector<std::string> Params;
+        };
+        std::vector<UVLine> UVLines;
         std::istringstream Lines(InText);
         std::string Line;
         bool bHeader = false;
@@ -160,6 +169,23 @@ namespace RenderCore
                 Result.Textures.push_back(Texture);
                 continue;   // getline leaves the stream at its end: not a failure
             }
+            else if(Keyword == "TextureUV")
+            {
+                /* TextureUV <Slot> <x> [<Param> ...]: resolved below, once every Param is known. */
+                uint32_t Slot = 0;
+                float    Scale = 1.0f;
+                Words >> Slot >> Scale;
+                std::vector<std::string> Params;
+                std::string Param;
+                while(Words >> Param) { Params.push_back(Param); }
+                if(Words.bad())
+                {
+                    OutError = "bad TextureUV line '" + Line + "'";
+                    return false;
+                }
+                UVLines.push_back({ Slot, Scale, std::move(Params) });
+                continue;
+            }
             else
             {
                 continue;   // a newer line this build does not know
@@ -189,6 +215,33 @@ namespace RenderCore
             {
                 OutError = "parameter '" + Each.Name + "' lies outside the block";
                 return false;
+            }
+        }
+
+        /* Each texture's smallest UV scale: the sample that wants the most of it. */
+        std::vector<bool> bScaled(Result.Textures.size(), false);
+        for(const UVLine& Each : UVLines)
+        {
+            float Scale = std::abs(Each.Scale);
+            for(const std::string& Name : Each.Params)
+            {
+                const MaterialParameter* Param = Result.FindParameter(Name);
+                if(!Param) { Scale = 0.0f; break; }   // not known: no scale for this sample
+                Scale *= std::max({ std::abs(Param->Default[0]), std::abs(Param->Default[1]),
+                                    std::abs(Param->Default[2]), std::abs(Param->Default[3]) });
+            }
+            for(size_t Index = 0; Index < Result.Textures.size(); ++Index)
+            {
+                MaterialTexture& Texture = Result.Textures[Index];
+                if(Texture.Slot != Each.Slot) { continue; }
+                if(Scale <= 0.0f)
+                {
+                    Texture.StreamUVScale = 1.0f;   // a sample it cannot read decides: as UV0
+                    bScaled[Index] = true;
+                    continue;
+                }
+                Texture.StreamUVScale = bScaled[Index] ? std::min(Texture.StreamUVScale, Scale) : Scale;
+                bScaled[Index] = true;
             }
         }
 

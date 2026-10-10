@@ -41,6 +41,23 @@ bool FilesystemProvider::ReadAll(const std::string& InPath, std::vector<uint8_t>
     return appFileReadAll(Resolve(InPath), OutBytes);
 }
 
+bool IFileProvider::ReadRange(const std::string& InPath, const uint64_t InOffset, const uint64_t InSize, std::vector<uint8_t>& OutBytes)
+{
+    std::vector<uint8_t> All;
+    if(!ReadAll(InPath, All) || InOffset > All.size() || InSize > All.size() - InOffset)
+    {
+        OutBytes.clear();
+        return false;
+    }
+    OutBytes.assign(All.begin() + std::ptrdiff_t(InOffset), All.begin() + std::ptrdiff_t(InOffset + InSize));
+    return true;
+}
+
+bool FilesystemProvider::ReadRange(const std::string& InPath, const uint64_t InOffset, const uint64_t InSize, std::vector<uint8_t>& OutBytes)
+{
+    return appFileReadRange(Resolve(InPath), InOffset, InSize, OutBytes);
+}
+
 bool FilesystemProvider::Exists(const std::string& InPath)
 {
     return appFileExists(Resolve(InPath));
@@ -88,6 +105,28 @@ bool LayeredFileProvider::ReadAll(const std::string& InPath, std::vector<uint8_t
         }
     }
     return !bBaseFirst && Base && Base->ReadAll(InPath, OutBytes);
+}
+
+/* The first provider ReadAll would take the file from: the one that has it. */
+bool LayeredFileProvider::ReadRange(const std::string& InPath, const uint64_t InOffset, const uint64_t InSize, std::vector<uint8_t>& OutBytes)
+{
+    if(bBaseFirst && Base && Base->Exists(InPath))
+    {
+        return Base->ReadRange(InPath, InOffset, InSize, OutBytes);
+    }
+    for(const std::shared_ptr<IFileProvider>& Each : Snapshot())
+    {
+        if(Each->Exists(InPath))
+        {
+            return Each->ReadRange(InPath, InOffset, InSize, OutBytes);
+        }
+    }
+    if(!bBaseFirst && Base && Base->Exists(InPath))
+    {
+        return Base->ReadRange(InPath, InOffset, InSize, OutBytes);
+    }
+    OutBytes.clear();
+    return false;
 }
 
 bool LayeredFileProvider::Exists(const std::string& InPath)
@@ -158,5 +197,17 @@ void SetFileProvider(IFileProvider* InProvider)
 IFileProvider* GetFileProvider()
 {
     return GFileProvider;
+}
+
+bool ReadFileRange(const std::string& InPath, const uint64_t InOffset, const uint64_t InSize, std::vector<uint8_t>& OutBytes)
+{
+    if(IFileProvider* Provider = GetFileProvider())
+    {
+        if(Provider->Exists(InPath))
+        {
+            return Provider->ReadRange(InPath, InOffset, InSize, OutBytes);
+        }
+    }
+    return appFileReadRange(InPath, InOffset, InSize, OutBytes);
 }
 }
