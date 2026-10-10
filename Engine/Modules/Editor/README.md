@@ -977,7 +977,7 @@ Alt+Left/Right), `#section` links jump to GitHub-style heading anchors, and
 anything else -- web links, source files -- opens outside the editor. The page
 reloads when its file changes on disk, so a doc being written can be watched;
 Refresh (F5) picks up added and removed files. Hidden folders, `External/`,
-`Binaries/`, `Saved/`, `Intermediate/` and build trees (`cmake-build-*`, any
+`Binaries/`, `Build/`, `Saved/`, `Intermediate/` and build trees (`cmake-build-*`, any
 folder with a `CMakeCache.txt`) are not listed.
 
 ## Known limits

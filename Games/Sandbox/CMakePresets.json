@@ -7,7 +7,7 @@
       "hidden": true,
       "description": "Standalone Sandbox configure (adds ../../Engine). One build tree per preset; every tree stages its binaries into Binaries/<Platform>_<Config>[_<Target>].",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/cmake-build-${presetName}"
+      "binaryDir": "${sourceDir}/Build/${presetName}"
     },
     {
       "name": "editor",
