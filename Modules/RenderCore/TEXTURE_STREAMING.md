@@ -210,5 +210,6 @@ thread in one frame. Two changes:
   (`minLod` / `SetResourceMinLODClamp`).
 - **D3D12** still drains the device after every upload (D3D12TransientOps.h),
   and has no image heap or staging ring.
+  The plan for both is `GDI/D3D12_TEXTURE_HANDOFF.md`, deleted when it is done.
 - **Prefetching** from where the camera is going (a sequence's camera
   track) -- what a cut wants arrives a few frames after it.
