@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <mutex>
 
+#include "Public/GDI/D3D12/D3D12MemoryHeap.h"
+
 /**
  * Owns the adapter, the ID3D12Device and the single direct queue.
  *
@@ -39,6 +41,10 @@ public:
     inline IDXGIFactory4*       GetFactory() const    { return Factory.Get(); }
     inline bool                 IsValid()    const    { return Device != nullptr; }
 
+    /* Texture memory (D3D12MemoryHeap.h): released in Shutdown, after the wait. */
+    inline D3D12TextureHeap&    GetTextureHeap()      { return TextureHeap; }
+    inline D3D12StagingRing&    GetStagingRing()      { return StagingRing; }
+
 private:
     bool PickAdapter();
     bool TryAdapter(IDXGIAdapter1* InAdapter);
@@ -58,6 +64,9 @@ private:
     DWORD                                       DebugMessageCookie = 0;
 
     std::mutex                                  QueueMutex;
+
+    D3D12TextureHeap                            TextureHeap;
+    D3D12StagingRing                            StagingRing;
 };
 
 #endif //CORECLIENT_D3D12DEVICE_H
