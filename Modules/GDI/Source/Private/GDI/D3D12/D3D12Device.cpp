@@ -59,6 +59,9 @@ bool D3D12Device::Initialize()
 
     HookDebugMessages();
 
+    TextureHeap.Initialize(this);
+    StagingRing.Initialize(this);
+
     GDI_LOG("[D3D12Device] Initialized.")
     return true;
 }
@@ -103,6 +106,8 @@ void D3D12Device::Shutdown()
     {
         WaitIdle();
     }
+    StagingRing.Shutdown();
+    TextureHeap.Shutdown();
     UnhookDebugMessages();
     IdleFence.Reset();
     Queue.Reset();

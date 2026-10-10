@@ -98,7 +98,7 @@ D3D12TextureResource::D3D12TextureResource(D3D12Device*              InDevice,
     {
         Levels[Level] = { InLevels[Level].Data, InLevels[Level].Bytes };
     }
-    if(!D3D12Ops::UploadSubresources(Device, Resource.Get(), CurrentState, Levels.data(), MipLevels))
+    if(!D3D12Ops::UploadSubresources(Device, Resource.Get(), CurrentState, Levels.data(), MipLevels, TakeAsyncUpload()))
     {
         DestroyImage();   // no SRV slot: the driver reports it unmade
         return;
@@ -211,9 +211,6 @@ void D3D12TextureResource::AllocateImage()
     D3D12DynamicGDI* GDI = GetD3D12Driver();
     if(!GDI || !GDI->GetDescAlloc()) return;
 
-    D3D12_HEAP_PROPERTIES Heap{};
-    Heap.Type = D3D12_HEAP_TYPE_DEFAULT;
-
     D3D12_RESOURCE_DESC Desc{};
     Desc.Dimension        = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     Desc.Width            = UINT64(Width);
@@ -223,14 +220,14 @@ void D3D12TextureResource::AllocateImage()
     Desc.Format           = Format;
     Desc.SampleDesc.Count = 1;
 
-    if(FAILED(Device->GetDevice()->CreateCommittedResource(&Heap, D3D12_HEAP_FLAG_NONE, &Desc,
-                                                           D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-                                                           IID_PPV_ARGS(&Resource))))
+    /* Placed in a heap block when small, else committed (D3D12TextureHeap). */
+    if(!Device->GetTextureHeap().CreateTexture(Desc, D3D12_RESOURCE_STATE_COPY_DEST, Resource, Allocation))
     {
-        GDI_LOG_ERROR("[D3D12Texture] CreateCommittedResource failed.")
+        GDI_LOG_ERROR("[D3D12Texture] No device memory for the texture.")
         return;
     }
     CurrentState = D3D12_RESOURCE_STATE_COPY_DEST;
+    bFresh       = true;
     D3D12Util::SetObjectName(Resource.Get(), DebugName);
 
     SRVSlot = GDI->GetDescAlloc()->AllocateSRV();
@@ -243,38 +240,66 @@ void D3D12TextureResource::AllocateImage()
 void D3D12TextureResource::DestroyImage()
 {
     // Deferred: Update() and Release() both run while recorded draws may still reference the texture.
+    // Its heap range goes back with it, once no frame reads it.
     if(D3D12DynamicGDI* GDI = GetD3D12Driver())
     {
-        if(Resource) GDI->DeferRelease(Resource);
+        if(Resource || Allocation.IsValid()) GDI->DeferRelease(Resource, Allocation);
         if(SRVSlot != UINT32_MAX) GDI->DeferFreeSRV(SRVSlot);
+        Resource.Reset();
     }
-    Resource.Reset();
+    else
+    {
+        Resource.Reset();
+        if(Device) Device->GetTextureHeap().Free(Allocation);
+    }
+    Allocation   = D3D12Allocation();
     SRVSlot      = UINT32_MAX;
     CurrentState = D3D12_RESOURCE_STATE_COPY_DEST;
+    bFresh       = false;
+}
+
+D3D12DynamicGDI* D3D12TextureResource::TakeAsyncUpload()
+{
+    D3D12DynamicGDI* GDI = bFresh ? GetD3D12Driver() : nullptr;
+    bFresh = false;
+    return GDI;
 }
 
 void D3D12TextureResource::UploadImageData(const EngineCore::Image& InImage)
 {
     if(!Device || !Device->IsValid() || !Resource) return;
 
-    const EngineCore::Image Formatted = InImage.ConvertedTo(EngineCore::EImageFormat::RGBA8);
-    D3D12Ops::UploadTexture(Device, Resource.Get(), CurrentState, Formatted.GetData(),
-                            uint32_t(Formatted.GetWidth()), uint32_t(Formatted.GetHeight()));
+    // An RGBA8 image is read in place; any other is converted (a copy).
+    EngineCore::Image        Converted;
+    const EngineCore::Image* Formatted = &InImage;
+    if(InImage.GetFormat() != EngineCore::EImageFormat::RGBA8)
+    {
+        Converted = InImage.ConvertedTo(EngineCore::EImageFormat::RGBA8);
+        Formatted = &Converted;
+    }
+    if(Formatted->IsNull()) return;
+    D3D12Ops::UploadTexture(Device, Resource.Get(), CurrentState, Formatted->GetData(),
+                            uint32_t(Formatted->GetWidth()), uint32_t(Formatted->GetHeight()), TakeAsyncUpload());
 }
 
 void D3D12TextureResource::UploadMipChain(const EngineCore::Image* InLevels, const uint32_t InCount)
 {
     if(!Device || !Device->IsValid() || !Resource || InCount == 0) return;
 
-    std::vector<EngineCore::Image>     Formatted;
+    /* RGBA8 levels are read in place; only the others are converted (a copy each). */
+    std::vector<EngineCore::Image>         Formatted;
     std::vector<D3D12Ops::SubresourceData> Levels;
-    Formatted.reserve(InCount);
+    Formatted.reserve(InCount);   // never reallocates: Levels points into it
     Levels.reserve(InCount);
     for(uint32_t Level = 0; Level < InCount; ++Level)
     {
-        Formatted.push_back(InLevels[Level].ConvertedTo(EngineCore::EImageFormat::RGBA8));
-        const EngineCore::Image& Each = Formatted.back();
-        Levels.push_back({ Each.GetData(), size_t(Each.GetWidth()) * size_t(Each.GetHeight()) * 4u });
+        const EngineCore::Image* Each = &InLevels[Level];
+        if(Each->GetFormat() != EngineCore::EImageFormat::RGBA8)
+        {
+            Formatted.push_back(Each->ConvertedTo(EngineCore::EImageFormat::RGBA8));
+            Each = &Formatted.back();
+        }
+        Levels.push_back({ Each->GetData(), size_t(Each->GetWidth()) * size_t(Each->GetHeight()) * 4u });
     }
-    D3D12Ops::UploadSubresources(Device, Resource.Get(), CurrentState, Levels.data(), InCount);
+    D3D12Ops::UploadSubresources(Device, Resource.Get(), CurrentState, Levels.data(), InCount, TakeAsyncUpload());
 }

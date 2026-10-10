@@ -63,6 +63,9 @@ public:
     /** Whether the submit that signals InValue has finished on the GPU (no wait). */
     bool IsComplete(uint64_t InValue) const;
 
+    /** The last frame fence value the GPU has reached (every value, with no fence). */
+    inline uint64_t GetCompletedValue() const { return FrameFence ? FrameFence->GetCompletedValue() : ~0ull; }
+
     inline uint32_t                   GetSlot()        const { return Slot; }
     inline uint32_t                   GetSlotCount()   const { return SlotCount; }
     inline ID3D12GraphicsCommandList* GetCommandList() const { return CommandList.Get(); }

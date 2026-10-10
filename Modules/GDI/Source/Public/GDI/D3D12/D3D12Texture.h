@@ -7,13 +7,16 @@
 #include <cstdint>
 
 #include "Public/GDI/GDITexture.h"
+#include "Public/GDI/D3D12/D3D12MemoryHeap.h"
 
 class D3D12Device;
+class D3D12DynamicGDI;
 
 /**
- * R8G8B8A8_UNORM (or block-compressed BC1-BC7) texture with its own SRV slot.
- * Uploads and readbacks run synchronously on a transient command list, render
- * thread only.
+ * R8G8B8A8_UNORM (or block-compressed BC1-BC7) texture with its own SRV slot,
+ * in the device's D3D12TextureHeap. Uploads and readbacks run on a transient
+ * command list, render thread only: the first upload into a fresh texture
+ * without a wait, later ones (and readbacks) synchronously.
  */
 class D3D12TextureResource : public GDITextureResource
 {
@@ -78,10 +81,16 @@ private:
     void UploadImageData(const EngineCore::Image& InImage);
     void UploadMipChain(const EngineCore::Image* InLevels, uint32_t InCount);
 
+    /* The driver to submit through without a wait while the texture is fresh
+     * (nothing has sampled it), null after; clears bFresh. */
+    D3D12DynamicGDI* TakeAsyncUpload();
+
     ID3D12Resource* GetResource() const { return bOwnsImage ? Resource.Get() : ExternalResource; }
 
     D3D12Device*                            Device           = nullptr;
     Microsoft::WRL::ComPtr<ID3D12Resource>  Resource;
+    D3D12Allocation                         Allocation;      // Resource's memory in the device's texture heap
+    bool                                    bFresh           = false;   // made, not yet uploaded into
     ID3D12Resource*                         ExternalResource = nullptr;
     uint32_t                                SRVSlot          = UINT32_MAX;
     bool                                    bOwnsImage       = true;

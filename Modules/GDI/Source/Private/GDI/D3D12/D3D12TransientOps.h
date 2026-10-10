@@ -10,9 +10,11 @@
 #include <vector>
 
 #include "Public/GDI/D3D12/D3D12Device.h"
+#include "Public/GDI/D3D12/D3D12DynamicGDI.h"
 #include "Public/GDI/GDILog.h"
 
-// Synchronous one-shot GPU operations (uploads, readbacks) on their own command list.
+// One-shot GPU operations (uploads, readbacks) on their own command list.
+// Readbacks wait; an upload into a fresh texture does not (UploadSubresources).
 
 namespace D3D12Ops
 {
@@ -62,13 +64,26 @@ inline bool BeginTransientCmd(D3D12Device* Device, TransientCmd& Out)
     return true;
 }
 
-inline void EndAndSubmitTransientCmd(D3D12Device* Device, TransientCmd& Cmd)
+/**
+ * Closes and executes Cmd. Without InAsync, waits for the device to go idle.
+ * With it, does not wait: the list goes ahead of the frame being recorded on
+ * the same queue, so it has finished before that frame's fence is signalled,
+ * and InAsync keeps Cmd (and InStaging, a staging buffer of its own) until then.
+ */
+inline void EndAndSubmitTransientCmd(D3D12Device* Device, TransientCmd& Cmd, D3D12DynamicGDI* InAsync = nullptr,
+                                     Microsoft::WRL::ComPtr<ID3D12Resource> InStaging = nullptr)
 {
     Cmd.List->Close();
     {
         std::lock_guard<std::mutex> Lock(Device->GetQueueMutex());
         ID3D12CommandList* Lists[] = { Cmd.List.Get() };
         Device->GetQueue()->ExecuteCommandLists(1, Lists);
+    }
+    if(InAsync)
+    {
+        InAsync->DeferReleaseTransient(std::move(Cmd.Allocator), std::move(Cmd.List));
+        if(InStaging) InAsync->DeferRelease(std::move(InStaging));
+        return;
     }
     Device->WaitIdle();
 }
@@ -115,12 +130,18 @@ struct SubresourceData
 
 /**
  * Uploads InLevels into subresources 0..InCount-1 (mip 0 first), through one
- * staging buffer laid out by GetCopyableFootprints: each level's rows (texel
+ * staging range laid out by GetCopyableFootprints: each level's rows (texel
  * rows, or block rows for a BC format) as the footprint counts them, as many
  * as its bytes hold. Leaves the texture in PIXEL_SHADER_RESOURCE.
+ *
+ * InAsync: the texture is fresh (nothing has sampled it, so nothing in flight
+ * can), so the upload is submitted without a wait, staged in the device's
+ * ring when it has room. Null: a texture already in use, or no driver; staged
+ * in a buffer of its own, and the device drained so the frames in flight
+ * finish reading the old contents.
  */
 inline bool UploadSubresources(D3D12Device* Device, ID3D12Resource* Texture, D3D12_RESOURCE_STATES& InOutState,
-                               const SubresourceData* InLevels, uint32_t InCount)
+                               const SubresourceData* InLevels, uint32_t InCount, D3D12DynamicGDI* InAsync = nullptr)
 {
     const D3D12_RESOURCE_DESC Desc = Texture->GetDesc();
     if(InCount == 0 || InCount > Desc.MipLevels) return false;
@@ -131,13 +152,31 @@ inline bool UploadSubresources(D3D12Device* Device, ID3D12Resource* Texture, D3D
     UINT64 TotalBytes = 0;
     Device->GetDevice()->GetCopyableFootprints(&Desc, 0, InCount, 0, Footprints.data(), RowCounts.data(), RowSizes.data(), &TotalBytes);
 
-    Microsoft::WRL::ComPtr<ID3D12Resource> Staging =
-        CreateBuffer(Device, TotalBytes, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
-    if(!Staging) return false;
+    /* A ring range starts 512-aligned (D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT),
+     * so the footprints, moved by its offset, stay aligned. */
+    ID3D12Resource*                        StagingBuffer = nullptr;
+    Microsoft::WRL::ComPtr<ID3D12Resource> OwnStaging;
+    UINT64                                 RingOffset    = 0;
+    uint8_t*                               Mapped        = nullptr;
+    const bool bRing = InAsync && Device->GetStagingRing().Allocate(TotalBytes, D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT,
+                                                                    InAsync->GetRecordingFenceValue(),
+                                                                    StagingBuffer, RingOffset, Mapped);
+    if(bRing)
+    {
+        for(D3D12_PLACED_SUBRESOURCE_FOOTPRINT& Footprint : Footprints) { Footprint.Offset += RingOffset; }
+        Mapped -= RingOffset;   // the buffer's start: indexed by the footprints' offsets below
+    }
+    else
+    {
+        OwnStaging = CreateBuffer(Device, TotalBytes, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+        if(!OwnStaging) return false;
+        void* Address = nullptr;
+        const D3D12_RANGE NoRead{ 0, 0 };
+        if(FAILED(OwnStaging->Map(0, &NoRead, &Address))) return false;
+        Mapped        = static_cast<uint8_t*>(Address);
+        StagingBuffer = OwnStaging.Get();
+    }
 
-    void* Mapped = nullptr;
-    const D3D12_RANGE NoRead{ 0, 0 };
-    if(FAILED(Staging->Map(0, &NoRead, &Mapped))) return false;
     for(uint32_t Level = 0; Level < InCount; ++Level)
     {
         const D3D12_PLACED_SUBRESOURCE_FOOTPRINT& Footprint = Footprints[Level];
@@ -145,11 +184,11 @@ inline bool UploadSubresources(D3D12Device* Device, ID3D12Resource* Texture, D3D
         const size_t RowBytes = size_t(RowSizes[Level]);
         for(uint32_t Row = 0; Row < RowCounts[Level] && (Row + 1) * RowBytes <= Source.Size; ++Row)
         {
-            std::memcpy(static_cast<uint8_t*>(Mapped) + Footprint.Offset + Row * Footprint.Footprint.RowPitch,
+            std::memcpy(Mapped + Footprint.Offset + Row * Footprint.Footprint.RowPitch,
                         Source.Bytes + Row * RowBytes, RowBytes);
         }
     }
-    Staging->Unmap(0, nullptr);
+    if(OwnStaging) OwnStaging->Unmap(0, nullptr);
 
     TransientCmd Cmd;
     if(!BeginTransientCmd(Device, Cmd)) return false;
@@ -164,7 +203,7 @@ inline bool UploadSubresources(D3D12Device* Device, ID3D12Resource* Texture, D3D
         Dst.SubresourceIndex = Level;
 
         D3D12_TEXTURE_COPY_LOCATION Src{};
-        Src.pResource       = Staging.Get();
+        Src.pResource       = StagingBuffer;
         Src.Type            = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
         Src.PlacedFootprint = Footprints[Level];
 
@@ -172,7 +211,7 @@ inline bool UploadSubresources(D3D12Device* Device, ID3D12Resource* Texture, D3D
     }
 
     RecordTransition(Cmd.List.Get(), Texture, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    EndAndSubmitTransientCmd(Device, Cmd);
+    EndAndSubmitTransientCmd(Device, Cmd, InAsync, std::move(OwnStaging));
 
     InOutState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
     return true;
@@ -180,10 +219,10 @@ inline bool UploadSubresources(D3D12Device* Device, ID3D12Resource* Texture, D3D
 
 /** Uploads tightly-packed RGBA8 rows into subresource 0. Leaves the texture in PIXEL_SHADER_RESOURCE. */
 inline bool UploadTexture(D3D12Device* Device, ID3D12Resource* Texture, D3D12_RESOURCE_STATES& InOutState,
-                          const uint8_t* Pixels, uint32_t Width, uint32_t Height)
+                          const uint8_t* Pixels, uint32_t Width, uint32_t Height, D3D12DynamicGDI* InAsync = nullptr)
 {
     const SubresourceData Level{ Pixels, size_t(Width) * Height * 4u };
-    return UploadSubresources(Device, Texture, InOutState, &Level, 1);
+    return UploadSubresources(Device, Texture, InOutState, &Level, 1, InAsync);
 }
 
 /** Reads a Width x Height region at (X, Y) into OutPixels, InBytesPerTexel each (4: RGBA8; 8: RGBA16F),

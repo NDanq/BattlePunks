@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "Public/GDI/GDI.h"
+#include "Public/GDI/D3D12/D3D12MemoryHeap.h"
 #include "Public/GDI/D3D12/D3D12PipelineCache.h"
 
 class D3D12Device;
@@ -218,6 +219,7 @@ public:
     bool                SupportsCompressedFormat(EGDICompressedFormat InFormat) const override;
     GDITextureResource* CreateCompressedTextureResource(EGDICompressedFormat InFormat, const GDICompressedLevel* InLevels, uint32_t InCount,
                                                         EGDITextureBorder InBorder, EGDITextureFilter InFilter) override;
+    bool                GetTextureMemoryStats(GDITextureMemoryStats& OutStats) const override;
 
     bool CheckError(const std::string& FailStr) override;
 
@@ -333,11 +335,16 @@ public:
      * each tagged with the fence value of the frame being recorded (which covers
      * every frame in flight before it), until that frame has finished.
      */
-    void DeferRelease(Microsoft::WRL::ComPtr<ID3D12Resource> InResource);
+    /** InAllocation (D3D12TextureHeap's) goes back to its block once InResource is released. */
+    void DeferRelease(Microsoft::WRL::ComPtr<ID3D12Resource> InResource, const D3D12Allocation& InAllocation = D3D12Allocation());
     void DeferFreeSRV(uint32_t InSlot);
     void DeferReleaseQueryHeap(Microsoft::WRL::ComPtr<ID3D12QueryHeap> InHeap);
+    /** An upload's command list, submitted without a wait (D3D12Ops::EndAndSubmitTransientCmd). */
+    void DeferReleaseTransient(Microsoft::WRL::ComPtr<ID3D12CommandAllocator>    InAllocator,
+                               Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> InList);
 
-    /** Frees what is queued above for frames that have finished (all of it, after a full wait). */
+    /** Frees what is queued above for frames that have finished (all of it, after a full wait),
+     *  and gives back the staging ring's ranges those frames' uploads used. */
     void DrainDeferredDestruction(bool bInAll = false);
 
     /** The fence value the frame being recorded will signal (D3D12CommandManager). */
@@ -403,12 +410,19 @@ private:
 
     /* Deferred destruction (render thread only), each entry tagged with the
      * fence value after which nothing uses it; queued in that order. */
-    struct DeferredResource  { Microsoft::WRL::ComPtr<ID3D12Resource>  Resource; uint64_t DoneAt; };
+    struct DeferredResource  { Microsoft::WRL::ComPtr<ID3D12Resource>  Resource; D3D12Allocation Allocation; uint64_t DoneAt; };
     struct DeferredQueryHeap { Microsoft::WRL::ComPtr<ID3D12QueryHeap> Heap;     uint64_t DoneAt; };
     struct DeferredSRV       { uint32_t Slot; uint64_t DoneAt; };
+    struct DeferredTransient
+    {
+        Microsoft::WRL::ComPtr<ID3D12CommandAllocator>    Allocator;
+        Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> List;
+        uint64_t                                          DoneAt;
+    };
     std::vector<DeferredResource>  DeferredResources;
     std::vector<DeferredQueryHeap> DeferredQueryHeaps;   // released occlusion query sets'
     std::vector<DeferredSRV>       DeferredSRVs;
+    std::vector<DeferredTransient> DeferredTransients;   // uploads into fresh textures
 
     /* GDISetOcclusionPredicate's: the draws after it are predicated on it. */
     D3D12OcclusionQueries*       PredicateSet   = nullptr;

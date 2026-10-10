@@ -232,6 +232,7 @@ if(GDI_WITH_D3D12)
             Source/Private/GDI/D3D12/D3D12Compute.cpp
             Source/Private/GDI/D3D12/D3D12Query.cpp
             Source/Private/GDI/D3D12/D3D12RecordingContext.cpp
+            Source/Private/GDI/D3D12/D3D12MemoryHeap.cpp
             Source/Private/GDI/D3D12/D3D12TransientOps.h
             Source/Public/GDI/D3D12/GDID3D12Platform.h
             Source/Public/GDI/D3D12/D3D12DynamicGDI.h
@@ -247,6 +248,7 @@ if(GDI_WITH_D3D12)
             Source/Public/GDI/D3D12/D3D12Shader.h
             Source/Public/GDI/D3D12/D3D12Sync.h
             Source/Public/GDI/D3D12/D3D12Buffer.h
+            Source/Public/GDI/D3D12/D3D12MemoryHeap.h
     )
 endif()
 
