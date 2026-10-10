@@ -672,13 +672,34 @@ namespace EditorContent
             /* glTF (right-handed) -> engine (left-handed): x and y stay, z flips. */
             const float Flip = InOptions.bConvertCoordinates ? -1.0f : 1.0f;
 
-            /* Vertex colours (COLOR_0) are all or none in a mesh: the first
-             * primitive with them backfills white for the vertices before it,
-             * and a primitive without them after that is white. */
-            if(Colors && InOutMesh.Colors.empty())
+            /* An untextured material's base colour, baked into the vertex
+             * colours (times COLOR_0, as glTF multiplies them), so the mesh
+             * draws in its colours with DefaultLit and no material of its own. */
+            float Tint[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+            bool  bTint   = false;
+            if(InOptions.bBakeMaterialColors && InPrimitive.material && InPrimitive.material->has_pbr_metallic_roughness)
+            {
+                const cgltf_pbr_metallic_roughness& Pbr = InPrimitive.material->pbr_metallic_roughness;
+                if(!Pbr.base_color_texture.texture)
+                {
+                    for(int At = 0; At < 4; ++At)
+                    {
+                        Tint[At] = Pbr.base_color_factor[At];
+                        bTint    = bTint || Tint[At] != 1.0f;
+                    }
+                }
+            }
+
+            /* Vertex colours (COLOR_0, or a baked tint) are all or none in a
+             * mesh: the first primitive with them backfills white for the
+             * vertices before it, and a primitive without them after that is
+             * white. */
+            if((Colors || bTint) && InOutMesh.Colors.empty())
             {
                 InOutMesh.Colors.assign(size_t(BaseVertex) * 4, 1.0f);
             }
+            /* Not Colors.empty(): the first primitive's backfill is empty. */
+            const bool bWriteColors = Colors || bTint || !InOutMesh.Colors.empty();
 
             for(cgltf_size Vertex = 0; Vertex < VertexCount; ++Vertex)
             {
@@ -718,11 +739,12 @@ namespace EditorContent
                     InOutMesh.UV1.push_back(UV1[1]);
                 }
 
-                if(!InOutMesh.Colors.empty())
+                if(bWriteColors)
                 {
                     /* Float or normalised integers alike; a vec3 colour keeps alpha 1. */
                     float Color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
                     if(Colors) { cgltf_accessor_read_float(Colors, Vertex, Color, 4); }
+                    for(int At = 0; At < 4; ++At) { Color[At] *= Tint[At]; }
                     InOutMesh.Colors.insert(InOutMesh.Colors.end(), Color, Color + 4);
                 }
 

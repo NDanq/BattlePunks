@@ -558,6 +558,120 @@ static void TestAdditiveLayer()
            "from the reference pose, it adds its 45");
 }
 
+/*
+ * Sync groups. Base: "Walk" (Bend: the arm turning 90 over 1 s) and "Stride"
+ * (Bend again), both in group "Loco", and "Rest" (Idle) in none; Alt and
+ * Rest switch between them at once. Upper, masked to the hand: "Swing", the
+ * hand turning 90 over 2 s, in "Loco" -- half the base's pace unless synced.
+ */
+static void TestSyncGroups()
+{
+    std::printf("[sync groups]\n");
+    WriteStateClips();
+    AnimClipData Slow;
+    Slow.SampleRate = 30.0f;
+    Slow.FrameCount = 61;
+    AnimTrack Track;
+    Track.Bone = "Hand";
+    Track.Translations.push_back({ 50.0f, 0.0f, 0.0f });
+    Track.Scales.push_back({ 1.0f, 1.0f, 1.0f });
+    for(uint32_t Frame = 0; Frame < Slow.FrameCount; ++Frame)
+    {
+        const float Angle = 0.5f * 1.5707963f * float(Frame) / 60.0f;
+        Track.Rotations.push_back({ 0.0f, 0.0f, std::sin(Angle), std::cos(Angle) });
+    }
+    Slow.Tracks.push_back(Track);
+    Slow.Notifies.push_back({ "Swung", 1.2f });   // phase 0.6
+    SaveAnimClipFile(std::string(SCRATCH) + "SwingSlow.nmanim", Slow);
+    AnimClipAssetCache::Invalidate("");
+
+    const auto Make = [](const std::string& InGroup)
+    {
+        AnimStateData Data;
+        Data.Parameters = { { "Alt", EAnimParameterType::Bool, 0.0f }, { "Rest", EAnimParameterType::Bool, 0.0f } };
+        AnimLayer Base;
+        Base.Name = "Base";
+        AnimStateNode Walk;
+        Walk.Name      = "Walk";
+        Walk.SyncGroup = InGroup;
+        Walk.Samples   = { { std::string(SCRATCH) + "Bend.nmanim", 0.0f, 0.0f } };
+        AnimStateNode Stride = Walk;
+        Stride.Name = "Stride";
+        AnimStateNode Rest;
+        Rest.Name    = "Rest";
+        Rest.Samples = { { std::string(SCRATCH) + "Bend.nmanim", 0.0f, 0.0f } };
+        Base.States = { Walk, Stride, Rest };
+        AnimTransition ToStride;
+        ToStride.From = 0;
+        ToStride.To   = 1;
+        ToStride.Duration = 0.0f;
+        ToStride.Conditions.push_back({ "Alt", EAnimCompare::IsTrue, 0.0f });
+        AnimTransition ToRest;
+        ToRest.From = -1;
+        ToRest.To   = 2;
+        ToRest.Duration = 0.0f;
+        ToRest.Conditions.push_back({ "Rest", EAnimCompare::IsTrue, 0.0f });
+        Base.Transitions = { ToStride, ToRest };
+        AnimLayer Upper;
+        Upper.Name      = "Upper";
+        Upper.MaskBones = { "Hand" };
+        AnimStateNode Swing;
+        Swing.Name      = "Swing";
+        Swing.SyncGroup = InGroup;
+        Swing.Samples   = { { std::string(SCRATCH) + "SwingSlow.nmanim", 0.0f, 0.0f } };
+        Upper.States = { Swing };
+        Data.Layers = { Base, Upper };
+        return Data;
+    };
+    /* The hand's angle from the arm's, in degrees. */
+    const auto HandTurn = [](const AnimInstance& InInstance)
+    {
+        const AnimMatrix& Arm  = InInstance.GetModelPose()[1];
+        const AnimMatrix& Hand = InInstance.GetModelPose()[2];
+        return (std::atan2(Hand.M[1][0], Hand.M[0][0]) - std::atan2(Arm.M[1][0], Arm.M[0][0])) * 57.29578f;
+    };
+
+    AnimStateData Synced = Make("Loco");
+    EngineCore::Archive Out = EngineCore::Archive::ForWriting();
+    Expect(SerializeAnimState(Out, Synced), "it saves");
+    EngineCore::Archive In = EngineCore::Archive::ForReading(Out.GetBytes());
+    AnimStateData Read;
+    Expect(SerializeAnimState(In, Read) && Read.Layers[0].States[0].SyncGroup == "Loco" && Read.Layers[0].States[2].SyncGroup.empty()
+           && Read.Layers[1].States[0].SyncGroup == "Loco", "a state's sync group reads back");
+
+    AnimInstance Free;
+    Free.SetSkeleton(std::make_shared<SkeletonData>(MakeSkeleton()));
+    Free.SetState(std::make_shared<AnimStateData>(Make("")));
+    Free.Update(0.5f);
+    Expect(Near(HandTurn(Free), 22.5f, 0.2f), "unsynced, each layer keeps its own pace: the 2 s swing a quarter through");
+
+    AnimInstance Instance;
+    Instance.SetSkeleton(std::make_shared<SkeletonData>(MakeSkeleton()));
+    Instance.SetState(std::make_shared<AnimStateData>(Synced));
+    Instance.Update(0.5f);
+    Expect(Near(HandTurn(Instance), 45.0f, 0.2f), "synced, the later layer's state takes the leader's phase: half through");
+    Expect(Instance.GetFiredNotifies().empty(), "locking on to the leader passes no notifies");
+    Instance.Update(0.25f);
+    Expect(Near(HandTurn(Instance), 67.5f, 0.2f), "and keeps to it");
+    Expect(Instance.GetFiredNotifies().size() == 1 && Instance.GetFiredNotifies()[0].Name == "Swung",
+           "following, it fires the notifies it passes");
+    Instance.Update(0.5f);
+    Expect(Near(HandTurn(Instance), 22.5f, 0.2f), "it wraps when the leader does");
+
+    /* Phase 0.25 now. Into Stride, the same group: it goes on from there. */
+    Instance.SetParameter("Alt", 1.0f);
+    Instance.Update(0.0f);
+    Instance.Update(0.25f);
+    Expect(std::string(Instance.GetCurrentStateName(0)) == "Stride" && Near(Instance.GetTime(), 0.5f, 0.02f),
+           "a transition within a sync group starts where the state it left was");
+    Instance.SetParameter("Rest", 1.0f);
+    Instance.Update(0.0f);
+    Expect(std::string(Instance.GetCurrentStateName(0)) == "Rest" && Near(Instance.GetTime(), 0.0f),
+           "one out of the group starts from the beginning");
+    Instance.Update(0.3f);
+    Expect(Near(HandTurn(Instance), 45.0f + 0.3f * 45.0f, 0.3f), "with no leader in its group, a follower plays on at its own pace");
+}
+
 static void TestStateSystem()
 {
     std::printf("[anim state on a component]\n");
@@ -971,6 +1085,7 @@ int main()
     TestStateMachine();
     TestBlendSpace2D();
     TestAdditiveLayer();
+    TestSyncGroups();
     TestStateSystem();
     TestSocket();
     TestRootMotion();

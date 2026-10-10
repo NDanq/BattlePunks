@@ -129,6 +129,7 @@ namespace RenderCore
             int32_t             BlendParameterY = -1;   // >= 0: a 2D blend space
             float               Speed = 1.0f;
             EAnimLoop           Loop  = EAnimLoop::Clip;
+            int32_t             SyncGroup = -1;   // in SyncGroups; -1: none
         };
         struct TransitionRuntime
         {
@@ -144,6 +145,7 @@ namespace RenderCore
             int32_t State = -1;
             float   Phase = 0.0f;
             bool    bEnded = false;   // a one-shot reached its end, or a loop wrapped, this update
+            bool    bSynced = false;  // followed its sync group's leader last update (false: it locks on, firing nothing)
         };
         struct LayerRuntime
         {
@@ -169,8 +171,10 @@ namespace RenderCore
         static void SampleWeights2D(const StateRuntime& InState, float InX, float InY, std::vector<float>& OutWeights, size_t& OutDominant);
         float StateDuration(const StateRuntime& InState) const;
         bool  StateLoops(const StateRuntime& InState) const;
-        /* Moves InOutHead; returns its root motion (model space). */
-        AnimVec3 AdvancePlayhead(const LayerRuntime& InLayer, Playhead& InOutHead, float InDelta, bool bInNotify);
+        /* Moves InOutHead -- by InDelta, or to InSyncPhase (0..1) when it
+         * follows its sync group's leader; returns its root motion (model space). */
+        AnimVec3 AdvancePlayhead(const LayerRuntime& InLayer, Playhead& InOutHead, float InDelta, bool bInNotify,
+                                 float InSyncPhase = -1.0f);
         /* InPose's InBone parent's model matrix: its ancestors composed. */
         AnimMatrix ParentModel(const AnimLocalPose& InPose, int32_t InBone) const;
         /* A clip with root motion keeps its root bone's model X and Z at its first frame's. */
@@ -186,6 +190,8 @@ namespace RenderCore
 
         std::vector<LayerRuntime>   Layers;
         std::vector<float>          Parameters;     // by State's parameter
+        std::vector<std::string>    SyncGroups;     // the states' sync group names, each once
+        std::vector<float>          LeaderPhase;    // by sync group, this update: its leader's phase; < 0: none leads
         std::vector<std::string>    Consumed;
 
         float PlayRate     = 1.0f;

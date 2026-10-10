@@ -252,12 +252,38 @@ namespace EditorContent
             return Out.isEmpty() ? QStringLiteral("Asset") : Out;
         }
 
-        /* InSource relative to the project when it is inside it, forward slashes. */
+        const QString ENGINE_CONTENT_PREFIX = QStringLiteral("Engine/Content/");
+
+        /* SetImportEngineContentRoot's: absolute, forward slashes; empty: none. */
+        QString& EngineContentRoot()
+        {
+            static QString Root;
+            return Root;
+        }
+
+        bool IsEngineContent(const QString& InAbsolute)
+        {
+            const QString& Root = EngineContentRoot();
+            return !Root.isEmpty() && QDir::fromNativeSeparators(InAbsolute).startsWith(Root + QLatin1Char('/'), Qt::CaseInsensitive);
+        }
+
+        /* "Engine/Content/..." for a file in the engine's content (IsEngineContent). */
+        QString EngineContentRuntimePath(const QString& InAbsolute)
+        {
+            return ENGINE_CONTENT_PREFIX + QDir::fromNativeSeparators(QDir(EngineContentRoot()).relativeFilePath(InAbsolute));
+        }
+
+        /* InSource relative to the project when it is inside it ("Engine/Content/..."
+         * in the engine's content), forward slashes. */
         RenderCore::AssetImportInfo MakeImportInfo(const QString& InSource, const QString& InProjectRoot, const QString& InSettings)
         {
             const QFileInfo Source(InSource.section(QString::fromLatin1(EMBEDDED_IMAGE_MARK), 0, 0));
             QString Path = QFileInfo(InSource).isAbsolute() ? InSource : Source.absoluteFilePath();
-            if(!InProjectRoot.isEmpty())
+            if(IsEngineContent(Path))
+            {
+                Path = EngineContentRuntimePath(Path);
+            }
+            else if(!InProjectRoot.isEmpty())
             {
                 const QString Relative = QDir(InProjectRoot).relativeFilePath(Path);
                 if(!Relative.startsWith(QStringLiteral(".."))) { Path = Relative; }
@@ -274,6 +300,10 @@ namespace EditorContent
         QString ResolveSource(const RenderCore::AssetImportInfo& InInfo, const QString& InProjectRoot)
         {
             const QString Path = QString::fromStdString(InInfo.SourcePath);
+            if(Path.startsWith(ENGINE_CONTENT_PREFIX) && !EngineContentRoot().isEmpty())
+            {
+                return QDir(EngineContentRoot()).absoluteFilePath(Path.mid(ENGINE_CONTENT_PREFIX.size()));
+            }
             return QDir::isAbsolutePath(Path) ? Path : QDir(InProjectRoot).absoluteFilePath(Path);
         }
 
@@ -325,10 +355,12 @@ namespace EditorContent
         }
 
         /* What an asset names InAbsolute by: project-relative, as a
-         * RenderComponent names a mesh. Outside the project, the absolute
-         * path -- which only this machine's editor can follow. */
+         * RenderComponent names a mesh, or "Engine/Content/..." in the
+         * engine's content. Outside both, the absolute path -- which only
+         * this machine's editor can follow. */
         QString RuntimePathOf(const QString& InAbsolute, const QString& InProjectRoot)
         {
+            if(IsEngineContent(InAbsolute)) { return EngineContentRuntimePath(InAbsolute); }
             if(!InProjectRoot.isEmpty())
             {
                 const QString Relative = QDir(InProjectRoot).relativeFilePath(InAbsolute);
@@ -347,6 +379,22 @@ namespace EditorContent
             }
             const QByteArray Bytes = File.readAll();
             return EngineCore::Archive::ForReading(std::vector<uint8_t>(Bytes.begin(), Bytes.end()));
+        }
+
+        /* What the editor set on the clip already at InPath, kept over a fresh
+         * import of it: its notifies, looping, root motion and root bone. */
+        void KeepAuthoredClipFields(const QString& InPath, RenderCore::AnimClipData& InOutClip)
+        {
+            if(!QFileInfo::exists(InPath)) { return; }
+            RenderCore::AnimClipData Old;
+            EngineCore::Archive OldAr = ReadAssetArchive(InPath);
+            if(RenderCore::SerializeAnimClip(OldAr, Old))
+            {
+                InOutClip.Notifies   = Old.Notifies;
+                InOutClip.bLoop      = Old.bLoop;
+                InOutClip.RootMotion = Old.RootMotion;
+                InOutClip.RootBone   = Old.RootBone;
+            }
         }
 
         /* A skeleton is written as <Base>_Skeleton, each clip as <Base>_<Clip>. */
@@ -540,10 +588,10 @@ namespace EditorContent
     QString MeshImportOptions::ToSettings() const
     {
         return QStringLiteral("Scale=%1\nConvertCoordinates=%2\nGenerateNormals=%3\nCombineMeshes=%4\nImportTextures=%5\n"
-                              "GenerateLightmapUVs=%6\nImportAnimations=%7\nAnimationSampleRate=%8\n")
+                              "GenerateLightmapUVs=%6\nImportAnimations=%7\nAnimationSampleRate=%8\nBakeMaterialColors=%9\n")
                .arg(double(Scale)).arg(int(bConvertCoordinates)).arg(int(bGenerateNormals))
                .arg(int(bCombineMeshes)).arg(int(bImportTextures)).arg(int(bGenerateLightmapUVs))
-               .arg(int(bImportAnimations)).arg(double(AnimationSampleRate));
+               .arg(int(bImportAnimations)).arg(double(AnimationSampleRate)).arg(int(bBakeMaterialColors));
     }
 
     MeshImportOptions MeshImportOptions::FromSettings(const QString& InSettings)
@@ -559,6 +607,7 @@ namespace EditorContent
         Out.bImportTextures     = ReadBool(Map, QStringLiteral("ImportTextures"), Out.bImportTextures);
         Out.bGenerateLightmapUVs = ReadBool(Map, QStringLiteral("GenerateLightmapUVs"), Out.bGenerateLightmapUVs);
         Out.bImportAnimations   = ReadBool(Map, QStringLiteral("ImportAnimations"), Out.bImportAnimations);
+        Out.bBakeMaterialColors = ReadBool(Map, QStringLiteral("BakeMaterialColors"), false);   // absent: settings from before, as recorded
         bool bRateOK = false;
         const float Rate = Map.value(QStringLiteral("AnimationSampleRate")).toFloat(&bRateOK);
         if(bRateOK && Rate >= 1.0f && Rate <= 240.0f) { Out.AnimationSampleRate = Rate; }
@@ -596,6 +645,11 @@ namespace EditorContent
     }
 
     // === Importing ======================================================================
+
+    void SetImportEngineContentRoot(const QString& InRoot)
+    {
+        EngineContentRoot() = InRoot.isEmpty() ? QString() : QDir::fromNativeSeparators(QDir(InRoot).absolutePath());
+    }
 
     bool FindReferencedImages(const QString& InGltfPath, QList<ReferencedImage>& OutImages, QString& OutError)
     {
@@ -637,6 +691,7 @@ namespace EditorContent
         {
             const QString ClipPath = QDir(InDestFolder).absoluteFilePath(Base + QStringLiteral("_") + SanitizeName(Clip.Name)
                                                                          + QString::fromLatin1(CLIP_EXTENSION));
+            KeepAuthoredClipFields(ClipPath, Clip.Data);
             Clip.Data.Skeleton   = SkeletonRuntime.toStdString();
             Clip.Data.ImportInfo = MakeImportInfo(InSource, InProjectRoot, InOptions.ToSettings()
                                                   + QStringLiteral("%1=%2\n").arg(QString::fromLatin1(CLIP_SETTING_KEY), Clip.Name));
@@ -951,16 +1006,11 @@ namespace EditorContent
             {
                 if(Clip.Name != Name) { continue; }
 
-                /* What the editor set on the clip survives: its notifies, looping and root motion. */
+                /* What the editor set on the clip survives, and the skeleton it names. */
                 RenderCore::AnimClipData Old;
                 EngineCore::Archive OldAr = ReadAssetArchive(InAssetPath);
-                if(RenderCore::SerializeAnimClip(OldAr, Old))
-                {
-                    Clip.Data.Notifies   = Old.Notifies;
-                    Clip.Data.bLoop      = Old.bLoop;
-                    Clip.Data.RootMotion = Old.RootMotion;
-                    Clip.Data.Skeleton   = Old.Skeleton;
-                }
+                if(RenderCore::SerializeAnimClip(OldAr, Old)) { Clip.Data.Skeleton = Old.Skeleton; }
+                KeepAuthoredClipFields(InAssetPath, Clip.Data);
                 Clip.Data.ImportInfo = MakeImportInfo(Source, InProjectRoot, Settings);
                 if(!WriteClip(InAssetPath, Clip.Data, Result.Message))
                 {

@@ -22,6 +22,8 @@
 #include "Public/Editor/EditorLog.h"
 #include "Public/Editor/EditorMainWindow.h"
 #include "Private/Editor/Build/ContentCook.h"
+#include "Private/Editor/Content/AssetImport.h"
+#include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/EditorTheme.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/SettingsDialog.h"
@@ -71,6 +73,8 @@ int main(int argc, char* argv[])
     /* First, so the Console panel's history starts with everything logged
      * from here on -- config load and renderer startup included. */
     EditorLog::Install();
+
+    EditorContent::SetImportEngineContentRoot(EditorContent::GetEngineContentRoot());
 
     QCommandLineParser Parser;
     Parser.setApplicationDescription(QStringLiteral("NimbleEngine editor"));

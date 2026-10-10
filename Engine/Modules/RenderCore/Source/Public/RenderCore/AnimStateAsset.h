@@ -25,6 +25,10 @@ namespace EngineCore
  *   - a TRANSITION moves from one state (or any) to another when its
  *     conditions hold -- optionally only as the state's clip ends -- cross-
  *     fading over its Duration;
+ *   - states in one SYNC GROUP keep in step: a later layer's state takes
+ *     the phase of the first layer playing one of its group (an upper-body
+ *     walk stepping with the legs), and a transition between two of a layer's
+ *     states in one group starts the new one where the old one was;
  *   - a LAYER after the first is laid over the ones before through a bone
  *     mask, at its weight (scaled by a parameter, if it names one): an
  *     upper-body layer holding a weapon while the legs walk. An ADDITIVE
@@ -36,8 +40,8 @@ namespace EngineCore
  *
  *   NAST v1      the file
  *     APRM v1    the parameters: name, type, default
- *     ALYR v4    the layers, each with its states and transitions
- *                (v3: no editor positions; v2: nor Blend or AdditiveBase;
+ *     ALYR v5    the layers, each with its states and transitions
+ *                (v4: no sync groups; v3: no editor positions; v2: nor Blend or AdditiveBase;
  *                v1: nor 2D blend spaces -- BlendParameterY, PositionY)
  *
  * Clips are named by runtime path; skeletons are not -- a state plays on
@@ -78,6 +82,7 @@ namespace RenderCore
         float                        Speed = 1.0f;
         EAnimLoop                    Loop  = EAnimLoop::Clip;
         float                        EditorX = 0.0f, EditorY = 0.0f;   // where the anim state editor draws it; not played
+        std::string                  SyncGroup;        // states of one group keep in step, across layers and transitions; "": none
     };
 
     enum class EAnimCompare : uint8_t
