@@ -894,6 +894,8 @@ static void TestReplica()
 
 // === Animation ===============================================================
 
+/* Writes its rig with the editor-only Save*File: editor builds only. */
+#if WITH_EDITOR
 namespace
 {
     /* Root, and an Arm 100 along X with a Hand 50 further: RenderCore's test rig. */
@@ -1006,6 +1008,7 @@ static void TestAnimationTrack()
            "its own clip back");
     RenderCore::AnimationSystem::Detach(World);
 }
+#endif // WITH_EDITOR
 
 // === Post process ============================================================
 
@@ -1234,7 +1237,9 @@ int main()
     TestHeldValues();
     TestHost();
     TestReplica();
+#if WITH_EDITOR
     TestAnimationTrack();
+#endif
     TestPostProcess();
     TestSoundMix();
 
