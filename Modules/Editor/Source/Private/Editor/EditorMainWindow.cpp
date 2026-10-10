@@ -59,6 +59,8 @@
 #include "Private/Editor/Content/AnimationAssets.h"
 #include "Private/Editor/Content/MeshViewerWindow.h"
 #include "Private/Editor/Graph/GraphAssets.h"
+#include "Private/Editor/Graph/GraphEditorTab.h"
+#include "Private/Editor/Graph/GraphEditorWindow.h"
 #include "Private/Editor/Particles/ParticleAssets.h"
 #include "Private/Editor/Sequencer/SequencerAssets.h"
 #include "Private/Editor/Sequencer/SequencerDocument.h"
@@ -1420,13 +1422,47 @@ void EditorMainWindow::RegisterConsoleCommands()
         }
     });
 
-    Console.Register(QStringLiteral("graph"), QStringLiteral("<path>"),
-                     QStringLiteral("Open a node graph (*.material.nmgraph, *.script.nmgraph); relative to the project"),
+    Console.Register(QStringLiteral("graph"), QStringLiteral("<path> | windowshot <file.png> | canvasshot <file.png> [scale]"),
+                     QStringLiteral("Open a node graph (*.material.nmgraph, *.script.nmgraph; relative to the project), "
+                                    "save the graph editor's window as an image, or draw the whole graph at a scale (default 2)"),
                      [this](const QStringList& InArgs)
     {
         if(InArgs.isEmpty())
         {
-            Console.PrintError(QStringLiteral("Usage: graph <path>"));
+            Console.PrintError(QStringLiteral("Usage: graph <path> | windowshot <file.png> | canvasshot <file.png> [scale]"));
+            return;
+        }
+        if(InArgs.front() == QStringLiteral("canvasshot"))
+        {
+            GraphEditorWindow* Window = GraphEditorWindow::Find();
+            GraphEditorTab*    Tab    = Window ? Window->CurrentTab() : nullptr;
+            if(!Tab || InArgs.size() < 2)
+            {
+                Console.PrintError(Tab ? QStringLiteral("Usage: graph canvasshot <file.png> [scale]") : QStringLiteral("No graph is open"));
+                return;
+            }
+            const QString File  = QFileInfo(InArgs[1]).absoluteFilePath();
+            const double  Scale = InArgs.size() > 2 ? InArgs[2].toDouble() : 2.0;
+            QRectF Area;
+            if(!Tab->SaveCanvasImage(File, Scale, Area)) { Console.PrintError(QStringLiteral("Could not write %1 (too large at that scale?)").arg(File)); }
+            else
+            {
+                Console.Print(QStringLiteral("Saved %1: scene %2,%3 to %4,%5 at x%6").arg(QDir::toNativeSeparators(File))
+                              .arg(Area.left()).arg(Area.top()).arg(Area.right()).arg(Area.bottom()).arg(Scale));
+            }
+            return;
+        }
+        if(InArgs.front() == QStringLiteral("windowshot"))
+        {
+            GraphEditorWindow* Window = GraphEditorWindow::Find();
+            if(!Window)
+            {
+                Console.PrintError(QStringLiteral("No graph is open"));
+                return;
+            }
+            const QString File = QFileInfo(InArgs.mid(1).join(QLatin1Char(' '))).absoluteFilePath();
+            if(!Window->grab().save(File)) { Console.PrintError(QStringLiteral("Could not write %1").arg(File)); }
+            else                           { Console.Print(QStringLiteral("Saved %1").arg(QDir::toNativeSeparators(File))); }
             return;
         }
         const QString Given = InArgs.join(QLatin1Char(' '));

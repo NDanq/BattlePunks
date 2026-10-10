@@ -1596,6 +1596,10 @@ namespace
         if(!IsUI()) { Pure("Entity.Self", "Self", "Entity", SOP_Self, { Out("Entity", "Entity") }, std::string(), {}, "this me owner"); }
         Pure("Entity.GetName", "Get Name", "Entity", SOP_Call, { In("Entity", "Entity"), Out("Name", "string") }, "{Entity}:GetName()");
         Pure("Entity.IsValid", "Is Valid", "Entity", SOP_Call, { In("Entity", "Entity"), Out("Valid", "bool") }, "{Entity}:IsValid()", {}, "alive");
+        /* Entities are handles: two for one entity are not == in Lua, so compare their ids -- "is this
+         * event's entity mine?" (On AnimNotify's Entity against Self or Prefab Root). */
+        Pure("Entity.Same", "Same Entity", "Entity", SOP_Call, { In("A", "Entity"), In("B", "Entity"), Out("Same", "bool") },
+             "({A}):GetID() == ({B}):GetID()", {}, "equal equals compare is mine same");
         Statement("Entity.SetName", "Set Name", "Entity", SOP_Call, { In("Entity", "Entity"), In("Name", "string") }, "{Entity}:SetName({Name})");
         Statement("Entity.Destroy", "Destroy", "Entity", SOP_Call, { In("Entity", "Entity") }, "{Entity}:Destroy()", "delete remove kill");
         /* A prefab's script: its root, its entities by template name, and how it ticks. */
