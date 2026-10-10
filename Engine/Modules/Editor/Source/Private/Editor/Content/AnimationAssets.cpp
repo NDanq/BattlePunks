@@ -76,7 +76,8 @@ namespace EditorAnimation
             {
                 const QString File = It.next();
                 /* Build trees and staged copies are not the project's own. */
-                if(File.contains(QStringLiteral("/Binaries/")) || File.contains(QStringLiteral("/cmake-build"))) { continue; }
+                if(File.contains(QStringLiteral("/Binaries/")) || File.contains(QStringLiteral("/Build/"))
+                    || File.contains(QStringLiteral("/cmake-build"))) { continue; }
                 EngineCore::Archive Ar = ReadAssetArchive(File);
                 RenderCore::MeshData Mesh;
                 if(RenderCore::SerializeMesh(Ar, Mesh) && Mesh.IsSkinned() && Mesh.Skeleton == InSkeleton) { return File; }
