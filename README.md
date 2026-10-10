@@ -229,7 +229,7 @@ Open `Games/Sandbox`. Its `CMakePresets.json` gives CLion five profiles:
 with clang and lld and are named with a `-clang` suffix (**Editor - Debug
 (Clang)**, `editor-debug-clang`, ...); elsewhere they use the platform's
 default compiler. Each has its own build tree
-(`Games/Sandbox/cmake-build-<preset>`). Enable the ones you want under
+(`Games/Sandbox/Build/<preset>`). Enable the ones you want under
 *Settings > Build, Execution, Deployment > CMake*. Pick a profile, then pick a
 run target:
 
