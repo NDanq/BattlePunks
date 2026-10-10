@@ -884,7 +884,6 @@ static void TestMultipleScenes()
 }
 #endif // WITH_EDITOR
 
-#if WITH_EDITOR
 // ============================================================================
 // Debug lines: queued on the game thread, drawn once, then gone
 // ============================================================================
@@ -1000,6 +999,7 @@ static void TestUISubmit()
     Expect(true, "a UI list and image survive frames and Shutdown on the Null backend");
 }
 
+#if WITH_EDITOR   /* main runs it in editor builds only: it uses the editor's Renderer API */
 static void TestDebugLines()
 {
     std::printf("[debug lines]\n");
@@ -1056,6 +1056,7 @@ static void TestDebugLines()
     Rend.SetViewOverride(nullptr);
     Rend.Shutdown();
 }
+#endif // WITH_EDITOR
 
 // ============================================================================
 // Materials: a primitive naming a material, missing then present
@@ -1086,6 +1087,7 @@ namespace
     }
 }
 
+#if WITH_EDITOR   /* main runs it in editor builds only: it uses the editor's Renderer API */
 static void TestMaterials()
 {
     std::printf("[materials]\n");
@@ -1177,6 +1179,7 @@ static void TestMaterials()
     SetFileProvider(PreviousProvider);
     std::filesystem::remove_all(Root, Ignored);
 }
+#endif // WITH_EDITOR
 
 /* .material v3, the material block, permutation names, the shader cache and
  * the layered provider it mounts on -- no renderer needed. */
@@ -1783,7 +1786,6 @@ static void TestUIOnGpu()
     Rend.Shutdown();
     SetFileProvider(PreviousProvider);
 }
-#endif
 
 static void TestMeshAssets()
 {
@@ -1874,6 +1876,7 @@ static void TestMeshAssets()
     SetFileProvider(PreviousProvider);
     std::filesystem::remove_all(Root, Ignored);
 }
+#endif // WITH_EDITOR
 
 static void TestTextureAssets()
 {
@@ -6131,6 +6134,7 @@ static void TestLightComponents()
            "Spot Light exposes its light and shadow fields to Lua");
 }
 
+#if WITH_EDITOR   /* main runs it in editor builds only: it uses the editor's Renderer API */
 /*
  * The stages (RENDERPIPELINE.md), on the Null backend: each material lands in
  * the stage its Domain and Shading name; a mesh's sections take their slots,
@@ -6276,6 +6280,7 @@ static void TestRenderStages()
     SetFileProvider(PreviousProvider);
     std::filesystem::remove_all(Root, Ignored);
 }
+#endif // WITH_EDITOR
 
 /*
  * The engine's primitive meshes (Engine/Scripts/generate_primitive_meshes.py),
@@ -6350,6 +6355,7 @@ static void TestEngineMeshes()
     }
 }
 
+#if WITH_EDITOR   /* main runs it in editor builds only: it uses the editor's Renderer API */
 /* Null backend: one draw per section, mesh bounds, quad fallback. */
 static void TestMeshDrawing()
 {
@@ -6417,6 +6423,7 @@ static void TestMeshDrawing()
 }
 #endif // WITH_EDITOR
 
+#if WITH_EDITOR   /* main runs it in editor builds only: it uses the editor's Renderer API */
 /*
  * Occlusion culling (RENDERPIPELINE.md, "Occlusion culling"): a wall marked
  * Occluder, a box behind it and a box beside it, seen in perspective. On the
@@ -6605,6 +6612,7 @@ static void TestOcclusionCullingOnGpu()
     }
     SetFileProvider(PreviousProvider);
 }
+#endif // WITH_EDITOR
 
 int main()
 {
