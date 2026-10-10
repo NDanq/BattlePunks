@@ -140,8 +140,19 @@ texture loaded (`stat streaming`'s *CPU* line).
   the ring reclaims each frame's part when that frame's fence has passed. A
   full ring, or an upload into an image in use, stages on its own as before.
 
-`GDIGetTextureMemoryStats` reports both (blocks, their used bytes, dedicated
-images, the ring); `stat streaming`'s *GPU* line shows them.
+**GPU (D3D12).** The same two, on `D3D12Device` (D3D12MemoryHeap.h):
+
+- `D3D12TextureHeap`: textures under 512 KB are placed
+  (`CreatePlacedResource`) in 4 MB `ID3D12Heap` blocks with
+  `ALLOW_ONLY_NON_RT_DS_TEXTURES` (what resource heap tier 1 needs), at 4 KB
+  alignment where the runtime grants it; larger ones are committed. A
+  placed texture's range goes back to its block only after the resource is
+  released and the frames that sampled it have finished (`DeferRelease`).
+- `D3D12StagingRing`: a 16 MB upload-heap buffer, mapped once. Ranges start
+  at 512 bytes (`D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT`), not Vulkan's 16.
+
+`GDIGetTextureMemoryStats` reports both backends' (blocks, their used bytes,
+dedicated images, the ring); `stat streaming`'s *GPU* line shows them.
 
 **Measured** (the same path as below; GPU memory is the process's DRM GTT):
 
@@ -191,11 +202,38 @@ thread in one frame. Two changes:
   `FinishUpload`): submitted without a fence and freed with the frame being
   recorded, whose fence covers every earlier submission on the queue. An
   upload into an image already in use (`Update` at the same size) still waits:
-  the frames in flight may be reading it. D3D12 still waits every time.
+  the frames in flight may be reading it. D3D12 does the same (D3D12Texture's
+  `bFresh`; the list, its allocator and its staging are kept until the frame
+  being recorded has finished).
 - **UploadMB 8**: about 1 ms a megabyte remains on this machine (copying the
   levels, the staging buffer, the allocations), so 32 MB a frame was a 20 ms
   frame at a cut. At 8 the most in one frame was 8 ms, and a cut's textures
   arrive over a quarter of a second.
+
+**D3D12, measured.** WorldsLab is not in the repository, so on Windows
+(RTX 2080 Ti, RelWithDebInfo client, 120 Hz vsync) the numbers come from
+LightLab's BakedLighting room instead: a few textures stream (the bricks',
+the chrome's, the lightmap), 21 MB in all, so
+they do not compare with the table above. Each run is the same 75-second
+camera path: a dolly up to the brick box, cuts away and back, an orbit, a
+cut to the chrome ball. Two runs each, before the D3D12 change (every upload
+waits) and after; GPU memory is Task Manager's, dedicated and shared, and
+`stat streaming`'s GPU line.
+
+| | D3D12, waiting | D3D12 | Vulkan |
+|---|---|---|---|
+| Streamed textures resident, mean | 17.2 of 21.3 MB | 17.2 MB | 17.2 MB |
+| Texture creation per frame, mean | 0.020-0.022 ms | 0.008 ms | 0.005 ms |
+| Worst texture creation in one frame | 9.4-12.7 ms | 4.2-5.3 ms | 2.9 ms |
+| Frame, mean | 8.35-8.37 ms | 8.35 ms | 8.35 ms |
+| Task Manager, dedicated, mean / end | 275 / 279 MB | 279 / 283 MB | 292 / 296 MB |
+| Task Manager, shared | 35 MB | 52 MB | 33 MB |
+| `stat streaming` GPU, mean / end | (not reported) | 45 / 50 MB | 45 / 49 MB |
+
+Each second of the tour with a creation spike over 0.5 ms waiting (twelve:
+load, the cuts, the dollies' mip changes) was 2-6x lower without the wait.
+The extra 17 MB of shared memory is the staging ring (an upload heap lives in
+system memory) and the extra 4 MB dedicated the one kept heap block.
 
 ## Not done
 
@@ -208,8 +246,5 @@ thread in one frame. Two changes:
 - **Partial updates.** A commit makes a whole new texture rather than adding
   levels to the one it has; GDI has no texture with a resident-level range
   (`minLod` / `SetResourceMinLODClamp`).
-- **D3D12** still drains the device after every upload (D3D12TransientOps.h),
-  and has no image heap or staging ring.
-  The plan for both is `GDI/D3D12_TEXTURE_HANDOFF.md`, deleted when it is done.
 - **Prefetching** from where the camera is going (a sequence's camera
   track) -- what a cut wants arrives a few frames after it.
