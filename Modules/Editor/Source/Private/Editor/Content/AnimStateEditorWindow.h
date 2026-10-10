@@ -133,6 +133,7 @@ private:
     QLineEdit*      StateName   = nullptr;
     QDoubleSpinBox* StateSpeed  = nullptr;
     QComboBox*      StateLoop   = nullptr;
+    QLineEdit*      StateSync   = nullptr;
     QComboBox*      StateBlend  = nullptr;
     QComboBox*      StateBlendY = nullptr;   // a second: a 2D blend space
     QTableWidget*   SampleTable = nullptr;

@@ -49,6 +49,7 @@ namespace RenderCore
     {
         Layers.clear();
         Parameters.clear();
+        SyncGroups.clear();
         RefPose.clear();
         if(Skeleton) { GetRefPose(*Skeleton, RefPose); }
 
@@ -106,6 +107,12 @@ namespace RenderCore
                 Runtime.BlendParameterY = Node.BlendParameterY.empty() || Runtime.BlendParameter < 0 ? -1 : State->FindParameter(Node.BlendParameterY);
                 Runtime.Speed          = Node.Speed;
                 Runtime.Loop           = Node.Loop;
+                if(!Node.SyncGroup.empty())
+                {
+                    const auto Found = std::find(SyncGroups.begin(), SyncGroups.end(), Node.SyncGroup);
+                    Runtime.SyncGroup = int32_t(Found - SyncGroups.begin());
+                    if(Found == SyncGroups.end()) { SyncGroups.push_back(Node.SyncGroup); }
+                }
                 for(const AnimBlendSample& Each : Node.Samples)
                 {
                     Runtime.Samples.push_back(MakeSample(AnimClipAssetCache::Find(Each.Clip), Each.Position, Each.PositionY));
@@ -297,9 +304,13 @@ namespace RenderCore
         Local = AnimMath::TransformPoint(AnimMath::Inverse(Parent), { First.X, Now.Y, First.Z });
     }
 
-    AnimVec3 AnimInstance::AdvancePlayhead(const LayerRuntime& InLayer, Playhead& InOutHead, const float InDelta, const bool bInNotify)
+    AnimVec3 AnimInstance::AdvancePlayhead(const LayerRuntime& InLayer, Playhead& InOutHead, const float InDelta, const bool bInNotify,
+                                           const float InSyncPhase)
     {
         InOutHead.bEnded = false;
+        const bool bFollowing = InSyncPhase >= 0.0f;
+        const bool bLockingOn = bFollowing && !InOutHead.bSynced;
+        InOutHead.bSynced = bFollowing;
         if(InOutHead.State < 0 || size_t(InOutHead.State) >= InLayer.States.size())
         {
             return AnimVec3();
@@ -315,7 +326,15 @@ namespace RenderCore
         const float From  = InOutHead.Phase;
         float       To    = From + InDelta * State.Speed / Duration;
         bool        bWrap = false;
-        if(StateLoops(State))
+        if(bFollowing)
+        {
+            /* Where the leader is: forward, round the end if it is behind.
+             * Locking on jumps there, passing nothing. */
+            To    = std::clamp(InSyncPhase, 0.0f, 1.0f);
+            bWrap = !bLockingOn && To < From && StateLoops(State);
+            InOutHead.bEnded = StateLoops(State) ? bWrap : To >= 1.0f;
+        }
+        else if(StateLoops(State))
         {
             if(To >= 1.0f || To < 0.0f)
             {
@@ -337,7 +356,8 @@ namespace RenderCore
         SampleWeights(State, Weights, Dominant);
 
         /* The dominant clip's notifies, moving forward. */
-        if(bInNotify && To != From && InDelta * State.Speed > 0.0f)
+        const bool bForward = bFollowing ? !bLockingOn && (To > From || bWrap) : InDelta * State.Speed > 0.0f;
+        if(bInNotify && To != From && bForward)
         {
             if(Dominant < State.Samples.size() && State.Samples[Dominant].Clip)
             {
@@ -488,6 +508,13 @@ namespace RenderCore
             InOutLayer.Previous     = InOutLayer.Current;
             InOutLayer.Current      = Playhead();
             InOutLayer.Current.State = Transition.To;
+            /* Within a sync group it goes on from where the state it leaves was. */
+            const int32_t Group = InOutLayer.States[size_t(Transition.To)].SyncGroup;
+            if(Group >= 0 && Group == Leaving.SyncGroup)
+            {
+                InOutLayer.Current.Phase   = InOutLayer.Previous.Phase;
+                InOutLayer.Current.bSynced = InOutLayer.Previous.bSynced;
+            }
             InOutLayer.FadeTime     = 0.0f;
             InOutLayer.FadeDuration = Transition.Duration;
             if(Transition.Duration <= 0.0f) { InOutLayer.Previous.State = -1; }
@@ -506,11 +533,18 @@ namespace RenderCore
         if(Skeleton)
         {
             const float Delta = InDeltaSeconds * PlayRate;
+            LeaderPhase.assign(SyncGroups.size(), -1.0f);
             for(size_t Index = 0; Index < Layers.size(); ++Index)
             {
                 LayerRuntime& Layer = Layers[Index];
                 const bool bWasEnded = Layer.Current.State >= 0 && Layer.Current.Phase >= 1.0f;
-                AnimVec3 Travel = AdvancePlayhead(Layer, Layer.Current, Delta, /*bInNotify*/ true);
+
+                /* The first layer playing a state of a sync group leads it;
+                 * a later one in a state of that group goes where it went. */
+                const int32_t Group = Layer.Current.State >= 0 ? Layer.States[size_t(Layer.Current.State)].SyncGroup : -1;
+                const float   Lead  = Group >= 0 ? LeaderPhase[size_t(Group)] : -1.0f;
+                AnimVec3 Travel = AdvancePlayhead(Layer, Layer.Current, Delta, /*bInNotify*/ true, Lead);
+                if(Group >= 0 && Lead < 0.0f) { LeaderPhase[size_t(Group)] = Layer.Current.Phase; }
 
                 /* A one-shot reaching its end: once, as it gets there. */
                 if(Layer.Current.State >= 0 && !bWasEnded && Layer.Current.Phase >= 1.0f

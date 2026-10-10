@@ -423,6 +423,11 @@ QWidget* AnimStateEditorWindow::BuildStates()
     StateSpeed->setSingleStep(0.1);
     StateLoop = new QComboBox(StateForm);
     StateLoop->addItems(LOOP_NAMES);
+    StateSync = new QLineEdit(StateForm);
+    StateSync->setPlaceholderText(QStringLiteral("none"));
+    StateSync->setToolTip(QStringLiteral("States with one sync group name keep in step: a later layer's state follows the first layer "
+                                         "playing one of the group (arms swinging with the legs), and a transition between two of a "
+                                         "layer's states in the group goes on from where the first was"));
     StateBlend = new QComboBox(StateForm);
     StateBlend->setToolTip(QStringLiteral("None: the first clip alone. A float parameter: a blend space -- each clip plays fully at its "
                                           "position, and between two the parameter blends them"));
@@ -439,6 +444,7 @@ QWidget* AnimStateEditorWindow::BuildStates()
     Form->addRow(QStringLiteral("Name"), StateName);
     Form->addRow(QStringLiteral("Speed"), StateSpeed);
     Form->addRow(QStringLiteral("Loop"), StateLoop);
+    Form->addRow(QStringLiteral("Sync Group"), StateSync);
     Form->addRow(QStringLiteral("Blend Parameter"), StateBlend);
     Form->addRow(QStringLiteral("Blend Parameter Y"), StateBlendY);
     Form->addRow(QStringLiteral("Clips"), SampleColumn);
@@ -452,6 +458,12 @@ QWidget* AnimStateEditorWindow::BuildStates()
     connect(StateSpeed, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](const double InValue)
     {
         if(RenderCore::AnimStateNode* State = CurrentState(); State && !bFilling) { State->Speed = float(InValue); Edited(); }
+    });
+    connect(StateSync, &QLineEdit::editingFinished, this, [this]()
+    {
+        RenderCore::AnimStateNode* State = CurrentState();
+        const std::string Group = StateSync->text().trimmed().toStdString();
+        if(State && !bFilling && State->SyncGroup != Group) { State->SyncGroup = Group; Edited(); }
     });
     connect(StateLoop, QOverload<int>::of(&QComboBox::activated), this, [this](const int InIndex)
     {
@@ -1051,6 +1063,7 @@ void AnimStateEditorWindow::FillState()
         StateName->setText(ToQ(State->Name));
         StateSpeed->setValue(double(State->Speed));
         StateLoop->setCurrentIndex(int(State->Loop));
+        StateSync->setText(ToQ(State->SyncGroup));
         StateBlend->setCurrentIndex(std::max(StateBlend->findText(ToQ(State->BlendParameter)), 0));
         StateBlendY->setCurrentIndex(std::max(StateBlendY->findText(ToQ(State->BlendParameterY)), 0));
         StateBlendY->setEnabled(!State->BlendParameter.empty() || !State->BlendParameterY.empty());

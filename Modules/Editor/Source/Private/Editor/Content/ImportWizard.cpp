@@ -40,6 +40,7 @@ NIMBLE_CONFIG_BOOL (GEditorImportGenerateNormals,    "Editor", "ImportGenerateNo
 NIMBLE_CONFIG_BOOL (GEditorImportLightmapUVs,        "Editor", "ImportLightmapUVs",        true,   nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportCombineMeshes,      "Editor", "ImportCombineMeshes",      true,   nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportMeshTextures,       "Editor", "ImportMeshTextures",       true,   nullptr);
+NIMBLE_CONFIG_BOOL (GEditorImportMaterialColors,     "Editor", "ImportMaterialColors",     true,   nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportTextureSRGB,        "Editor", "ImportTextureSRGB",        true,   nullptr);
 NIMBLE_CONFIG_INT  (GEditorImportTextureMaxSize,     "Editor", "ImportTextureMaxSize",     4096,   nullptr);
 NIMBLE_CONFIG_INT  (GEditorImportTextureMipGen,      "Editor", "ImportTextureMipGen",      1,      nullptr);   // ETextureMipGen: Box
@@ -227,6 +228,10 @@ QWizardPage* ImportWizard::BuildMeshPage()
     MeshTextures = new QCheckBox(QStringLiteral("Import the textures it uses, beside it"), Page);
     MeshTextures->setChecked(GEditorImportMeshTextures.GetBool());
 
+    MaterialColors = new QCheckBox(QStringLiteral("Bake untextured materials' base colours into vertex colours"), Page);
+    MaterialColors->setToolTip(QStringLiteral("The mesh then draws in its colours with DefaultLit, with no material of its own"));
+    MaterialColors->setChecked(GEditorImportMaterialColors.GetBool());
+
     ImageList = new QListWidget(Page);
     ImageList->setSelectionMode(QAbstractItemView::NoSelection);
     connect(MeshTextures, &QCheckBox::toggled, ImageList, &QWidget::setEnabled);
@@ -238,6 +243,7 @@ QWizardPage* ImportWizard::BuildMeshPage()
     Form->addRow(QString(), GenNormals);
     Form->addRow(QString(), LightmapUVs);
     Form->addRow(QString(), Combine);
+    Form->addRow(QString(), MaterialColors);
     Form->addRow(QString(), MeshTextures);
     Form->addRow(QStringLiteral("Textures used"), ImageList);
     return Page;
@@ -394,6 +400,7 @@ void ImportWizard::SaveOptions()
     GEditorImportLightmapUVs.SetBool(LightmapUVs->isChecked());
     GEditorImportCombineMeshes.SetBool(Combine->isChecked());
     GEditorImportMeshTextures.SetBool(MeshTextures->isChecked());
+    GEditorImportMaterialColors.SetBool(MaterialColors->isChecked());
     GEditorImportTextureSRGB.SetBool(SRGB->isChecked());
     GEditorImportTextureMaxSize.SetInt(MaxSize->currentData().toInt());
     GEditorImportTextureMipGen.SetInt(MipGen->currentData().toInt());
@@ -411,6 +418,7 @@ void ImportWizard::StartImport()
     Mesh.bGenerateLightmapUVs = LightmapUVs->isChecked();
     Mesh.bCombineMeshes      = Combine->isChecked();
     Mesh.bImportTextures     = MeshTextures->isChecked();
+    Mesh.bBakeMaterialColors = MaterialColors->isChecked();
 
     TextureImportOptions Texture;
     Texture.bSRGB           = SRGB->isChecked();
