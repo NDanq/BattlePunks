@@ -1934,14 +1934,15 @@ void EditorMainWindow::RegisterConsoleCommands()
      * thread times (Stats.Unit), "stat frame" each stage's GPU time
      * (Stats.Frame), "stat physics" the playing level's simulation
      * (Stats.Physics, GameSession), "stat audio" the playing level's sound
-     * (Stats.Audio); "stat none" hides them all. */
-    Console.Register(QStringLiteral("stat"), QStringLiteral("unit | frame | physics | audio | none"),
+     * (Stats.Audio), "stat streaming" texture streaming (Stats.Streaming);
+     * "stat none" hides them all. */
+    Console.Register(QStringLiteral("stat"), QStringLiteral("unit | frame | physics | audio | streaming | none"),
                      QStringLiteral("Show thread times (unit), each render stage's GPU time (frame), the "
-                                    "physics simulation (physics) or the sound (audio) while playing over the viewport"),
+                                    "physics simulation (physics), the sound (audio) while playing, or texture streaming (streaming) over the viewport"),
                      [this](const QStringList& InArgs)
     {
-        static const char* const Names[] = { "unit", "frame", "physics", "audio" };
-        static const char* const Vars[]  = { "Unit", "Frame", "Physics", "Audio" };
+        static const char* const Names[] = { "unit", "frame", "physics", "audio", "streaming" };
+        static const char* const Vars[]  = { "Unit", "Frame", "Physics", "Audio", "Streaming" };
         const QString Which = InArgs.isEmpty() ? QString() : InArgs.front().toLower();
         if(Which == QStringLiteral("none"))
         {

@@ -27,6 +27,27 @@ static VulkanDynamicGDI* GetVKDriver()
     return dynamic_cast<VulkanDynamicGDI*>(GDynamicGDI);
 }
 
+/* An upload's end. Into a fresh image (nothing has sampled it, so nothing
+ * in flight can), submitted without draining the device: queue order puts it
+ * ahead of the frame being recorded, and its pool and staging are freed with
+ * that frame. Into one already in use, or with no driver, as before: submit
+ * and wait idle, so the frames in flight finish reading the old contents. */
+static void FinishUpload(VKDevice* InDevice, VkCommandPool InPool, VkCommandBuffer InCmd,
+                         VkBuffer InStaging, VkDeviceMemory InStagingMem, const bool bInFresh)
+{
+    VulkanDynamicGDI* GDI = bInFresh ? GetVKDriver() : nullptr;
+    if(GDI)
+    {
+        EndAndSubmitTransientCmdAsync(InDevice, InCmd);
+        GDI->DeferDestroyCommandPool(InPool);
+        GDI->DeferDestroyBuffer(InStaging, InStagingMem);
+        return;
+    }
+    EndAndSubmitTransientCmd(InDevice, InPool, InCmd);
+    vkDestroyBuffer(InDevice->GetDevice(), InStaging, nullptr);
+    vkFreeMemory(InDevice->GetDevice(), InStagingMem, nullptr);
+}
+
 // ---------------------------------------------------------------------------
 //  VKTextureResource — constructors / destructor
 // ---------------------------------------------------------------------------
@@ -473,6 +494,7 @@ void VKTextureResource::BuildSampler()
 void VKTextureResource::UploadImageData(const EngineCore::Image& InImage)
 {
     if(!Device || !Device->IsValid() || Image == VK_NULL_HANDLE) return;
+    const bool bFresh = CurrentLayout == VK_IMAGE_LAYOUT_UNDEFINED;   // nothing has used it yet
 
     // Convert to RGBA8888 — maps byte-for-byte onto VK_FORMAT_R8G8B8A8_UNORM.
     const EngineCore::Image Formatted = InImage.ConvertedTo(EngineCore::EImageFormat::RGBA8);
@@ -537,11 +559,7 @@ void VKTextureResource::UploadImageData(const EngineCore::Image& InImage)
         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
     RecordBarrier(UploadCmd, ToShader);
 
-    EndAndSubmitTransientCmd(Device, UploadPool, UploadCmd);
-
-    // Staging cleanup
-    vkDestroyBuffer(Device->GetDevice(), StagingBuf, nullptr);
-    vkFreeMemory(Device->GetDevice(), StagingMem, nullptr);
+    FinishUpload(Device, UploadPool, UploadCmd, StagingBuf, StagingMem, bFresh);
 
     CurrentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 }
@@ -554,28 +572,30 @@ void VKTextureResource::UploadMipChain(const EngineCore::Image* InLevels, const 
     std::vector<EngineCore::Image> Formatted;
     Formatted.reserve(InCount);
     std::vector<VkBufferImageCopy> Regions(InCount);
+    /* RGBA8 levels are read in place; only the others are converted (a copy each). */
+    std::vector<const uint8_t*> Sources(InCount);
+    std::vector<VkDeviceSize>   Sizes(InCount);
     VkDeviceSize Total = 0;
     for(uint32_t Level = 0; Level < InCount; ++Level)
     {
-        Formatted.push_back(InLevels[Level].ConvertedTo(EngineCore::EImageFormat::RGBA8));
+        const EngineCore::Image* Level8 = &InLevels[Level];
+        if(Level8->GetFormat() != EngineCore::EImageFormat::RGBA8)
+        {
+            Formatted.push_back(InLevels[Level].ConvertedTo(EngineCore::EImageFormat::RGBA8));
+            Level8 = &Formatted.back();
+        }
+        Sources[Level] = Level8->GetData();
+        Sizes[Level]   = VkDeviceSize(Level8->GetSizeBytes());
         VkBufferImageCopy& Region = Regions[Level];
         Region = {};
         Region.bufferOffset                    = Total;
         Region.imageSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
         Region.imageSubresource.mipLevel       = Level;
         Region.imageSubresource.layerCount     = 1;
-        Region.imageExtent                     = { static_cast<uint32_t>(Formatted.back().GetWidth()),
-                                                   static_cast<uint32_t>(Formatted.back().GetHeight()), 1u };
-        Total += static_cast<VkDeviceSize>(Formatted.back().GetSizeBytes());
+        Region.imageExtent                     = { static_cast<uint32_t>(Level8->GetWidth()),
+                                                   static_cast<uint32_t>(Level8->GetHeight()), 1u };
+        Total += Sizes[Level];
         Total  = (Total + 3u) & ~VkDeviceSize(3u);   // bufferOffset: a multiple of the texel size
-    }
-
-    std::vector<const uint8_t*> Sources(InCount);
-    std::vector<VkDeviceSize>   Sizes(InCount);
-    for(uint32_t Level = 0; Level < InCount; ++Level)
-    {
-        Sources[Level] = Formatted[Level].GetData();
-        Sizes[Level]   = VkDeviceSize(Formatted[Level].GetSizeBytes());
     }
     UploadRegions(Sources.data(), Sizes.data(), Regions, Total);
 }
@@ -584,6 +604,7 @@ void VKTextureResource::UploadRegions(const uint8_t* const* InSources, const VkD
                                       std::vector<VkBufferImageCopy>& InRegions, const VkDeviceSize InTotal)
 {
     const uint32_t Count = uint32_t(InRegions.size());
+    const bool     bFresh = CurrentLayout == VK_IMAGE_LAYOUT_UNDEFINED;   // nothing has used it yet
 
     VkBuffer       StagingBuf = VK_NULL_HANDLE;
     VkDeviceMemory StagingMem = VK_NULL_HANDLE;
@@ -624,10 +645,7 @@ void VKTextureResource::UploadRegions(const uint8_t* const* InSources, const VkD
     ToShader.subresourceRange.levelCount = Count;
     RecordBarrier(UploadCmd, ToShader);
 
-    EndAndSubmitTransientCmd(Device, UploadPool, UploadCmd);
-
-    vkDestroyBuffer(Device->GetDevice(), StagingBuf, nullptr);
-    vkFreeMemory(Device->GetDevice(), StagingMem, nullptr);
+    FinishUpload(Device, UploadPool, UploadCmd, StagingBuf, StagingMem, bFresh);
 
     CurrentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 }

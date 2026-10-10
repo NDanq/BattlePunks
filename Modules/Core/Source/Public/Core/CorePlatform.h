@@ -46,6 +46,9 @@ namespace EngineCore
     CORE_API void        appFileClose(FileHandle InHandle);
 
     CORE_API bool        appFileReadAll(const std::string& InPath, std::vector<uint8_t>& OutBytes);
+    /* InSize bytes from InOffset; false (OutBytes cleared) if the file is
+     * shorter than that or cannot be read. */
+    CORE_API bool        appFileReadRange(const std::string& InPath, uint64_t InOffset, uint64_t InSize, std::vector<uint8_t>& OutBytes);
     CORE_API bool        appFileExists (const std::string& InPath);
 
     CORE_API bool        appCreateDirectories(const std::string& InPath);

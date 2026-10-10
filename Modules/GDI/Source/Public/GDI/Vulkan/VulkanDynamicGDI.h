@@ -500,6 +500,9 @@ public:
      */
     void DeferDestroyImage(VkImage InImage, VkDeviceMemory InMemory, VkImageView InView, VkSampler InSampler);
     void DeferDestroyBuffer(VkBuffer InBuffer, VkDeviceMemory InMemory);
+    /* A transient pool whose one command buffer was submitted without a wait
+     * (EndAndSubmitTransientCmdAsync): freed with the frame being recorded. */
+    void DeferDestroyCommandPool(VkCommandPool InPool);
     /** Destroy what is queued above for frames up to InDoneAt (all of it by default). Caller
      *  must guarantee the GPU has finished those frames. */
     void DrainDeferredDestruction(uint64_t InDoneAt = ~0ull);
@@ -607,9 +610,11 @@ private:
     struct DeferredImage     { VkImage Image; VkDeviceMemory Memory; VkImageView View; VkSampler Sampler; uint64_t DoneAt; };
     struct DeferredBuffer    { VkBuffer Buffer; VkDeviceMemory Memory; uint64_t DoneAt; };
     struct DeferredQueryPool { VkQueryPool Pool; uint64_t DoneAt; };
+    struct DeferredCmdPool   { VkCommandPool Pool; uint64_t DoneAt; };
     std::vector<DeferredImage>     DeferredImages;
     std::vector<DeferredBuffer>    DeferredBuffers;
     std::vector<DeferredQueryPool> DeferredQueryPools;   // released occlusion query sets'
+    std::vector<DeferredCmdPool>   DeferredCmdPools;     // texture uploads submitted without a wait
 };
 
 #endif //CORECLIENT_VULKANDYNAMICGDI_H

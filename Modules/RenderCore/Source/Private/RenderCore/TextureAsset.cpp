@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <mutex>
 #include <unordered_map>
 
 #include "Public/Core/CoreArchive.h"
+#include "Public/Core/CoreFileProvider.h"
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Public/RenderCore/TextureCompression.h"
 #include "Private/RenderCore/AssetFileCommon.h"
@@ -267,6 +269,157 @@ namespace RenderCore
         }
         Ar.CloseChunk();
         return !Ar.HasError();
+    }
+
+    // === Streaming: levels by range ===========================================
+
+    namespace
+    {
+        constexpr uint64_t CHUNK_HEADER_BYTES = 10;   // tag (4), version (2), size (4): CoreArchive's
+
+        struct ChunkHeader
+        {
+            uint32_t Tag     = 0;
+            uint16_t Version = 0;
+            uint32_t Size    = 0;
+        };
+
+        uint32_t ReadLittle32(const uint8_t* InBytes)
+        {
+            return uint32_t(InBytes[0]) | (uint32_t(InBytes[1]) << 8) | (uint32_t(InBytes[2]) << 16) | (uint32_t(InBytes[3]) << 24);
+        }
+
+        /* The chunk header at InOffset; false past the end of the file. */
+        bool ReadChunkHeader(const std::string& InPath, const uint64_t InOffset, ChunkHeader& OutHeader)
+        {
+            std::vector<uint8_t> Bytes;
+            if(!EngineCore::ReadFileRange(InPath, InOffset, CHUNK_HEADER_BYTES, Bytes)) { return false; }
+            OutHeader.Tag     = ReadLittle32(Bytes.data());
+            OutHeader.Version = uint16_t(Bytes[4] | (Bytes[5] << 8));
+            OutHeader.Size    = ReadLittle32(Bytes.data() + 6);
+            return true;
+        }
+    }
+
+    bool ReadTextureLayout(const std::string& InPath, TextureFileLayout& OutLayout)
+    {
+        OutLayout = TextureFileLayout();
+        const auto Fail = [&InPath](const char* InWhy)
+        {
+            RENDERCORE_LOG_WARN("texture '" + InPath + "': cannot stream it: " + InWhy)
+            return false;
+        };
+
+        /* NTEX, then THDR: small, read whole and parsed as LoadTextureHeader does. */
+        ChunkHeader Texture, Header;
+        if(!ReadChunkHeader(InPath, 0, Texture) || Texture.Tag != TAG_TEXTURE) { return Fail("not a texture"); }
+        if(!ReadChunkHeader(InPath, CHUNK_HEADER_BYTES, Header) || Header.Tag != TAG_HEADER || Header.Size > 256)
+        {
+            return Fail("no THDR chunk");
+        }
+        std::vector<uint8_t> HeaderBytes;
+        if(!EngineCore::ReadFileRange(InPath, CHUNK_HEADER_BYTES, CHUNK_HEADER_BYTES + Header.Size, HeaderBytes)) { return Fail("short THDR"); }
+        {
+            EngineCore::Archive Ar = EngineCore::Archive::ForReading(std::move(HeaderBytes));
+            uint16_t Version = 0;
+            if(!Ar.OpenChunk(TAG_HEADER, Version) || !SerializeHeader(Ar, OutLayout.Header)) { return Fail("bad THDR"); }
+            Ar.CloseChunk();
+        }
+        const TextureHeader& H = OutLayout.Header;
+        OutLayout.bBlocks = H.bBlocks;
+
+        /* TPIX, TMIP (with mips), ISRC (optional), TBLK (with blocks): each found from the last's size. */
+        uint64_t At = CHUNK_HEADER_BYTES * 2 + Header.Size;
+        ChunkHeader Pixels;
+        if(!ReadChunkHeader(InPath, At, Pixels) || Pixels.Tag != TAG_PIXELS) { return Fail("no TPIX chunk"); }
+        const uint64_t PixelsAt = At + CHUNK_HEADER_BYTES;
+        At = PixelsAt + Pixels.Size;
+
+        uint64_t MipsAt = 0;
+        if(H.MipCount > 1)
+        {
+            ChunkHeader Mips;
+            if(!ReadChunkHeader(InPath, At, Mips) || Mips.Tag != TAG_MIPS) { return Fail("no TMIP chunk"); }
+            MipsAt = At + CHUNK_HEADER_BYTES;
+            At = MipsAt + Mips.Size;
+        }
+
+        if(!H.bBlocks)
+        {
+            uint64_t Offset = PixelsAt;
+            for(int Level = 0; Level < H.MipCount; ++Level)
+            {
+                if(Level == 1) { Offset = MipsAt; }
+                const uint64_t Bytes = uint64_t(OutLayout.LevelWidth(Level)) * uint64_t(OutLayout.LevelHeight(Level)) * 4;
+                OutLayout.LevelOffsets.push_back(Offset);
+                OutLayout.LevelBytes.push_back(Bytes);
+                Offset += Bytes;
+            }
+            if(OutLayout.LevelBytes[0] != Pixels.Size) { return Fail("TPIX is not the header's size"); }
+            return true;
+        }
+
+        ChunkHeader Next;
+        if(ReadChunkHeader(InPath, At, Next) && Next.Tag == TAG_IMPORT_SOURCE)
+        {
+            At += CHUNK_HEADER_BYTES + Next.Size;
+            if(!ReadChunkHeader(InPath, At, Next)) { return Fail("no TBLK chunk"); }
+        }
+        if(Next.Tag != TAG_BLOCKS) { return Fail("no TBLK chunk"); }
+        uint64_t Offset = At + CHUNK_HEADER_BYTES + 1;   // past its compression byte
+        const uint64_t BlockBytes = uint64_t(TextureBlockBytes(H.Compression));
+        for(int Level = 0; Level < H.MipCount; ++Level)
+        {
+            const uint64_t Bytes = uint64_t((OutLayout.LevelWidth(Level) + 3) / 4) * uint64_t((OutLayout.LevelHeight(Level) + 3) / 4) * BlockBytes;
+            OutLayout.LevelOffsets.push_back(Offset);
+            OutLayout.LevelBytes.push_back(Bytes);
+            Offset += Bytes;
+        }
+        if(Offset > At + CHUNK_HEADER_BYTES + Next.Size) { return Fail("TBLK is shorter than its levels"); }
+        return true;
+    }
+
+    bool LoadTextureLevels(const std::string& InPath, const TextureFileLayout& InLayout, const int InFirst, int InEnd,
+                           TextureData& OutTexture)
+    {
+        OutTexture = TextureData();
+        const int Count = InLayout.GetMipCount();
+        if(InEnd < 0 || InEnd > Count) { InEnd = Count; }
+        if(InFirst < 0 || InFirst >= InEnd) { return false; }
+
+        /* One read from the first level's start to the last's end: RGBA8's
+         * levels 0 and 1 have TMIP's chunk header between them, read and stepped over. */
+        const uint64_t From = InLayout.LevelOffsets[size_t(InFirst)];
+        const uint64_t To   = InLayout.LevelOffsets[size_t(InEnd - 1)] + InLayout.LevelBytes[size_t(InEnd - 1)];
+        std::vector<uint8_t> Bytes;
+        if(To < From || !EngineCore::ReadFileRange(InPath, From, To - From, Bytes)) { return false; }
+
+        const TextureHeader& H = InLayout.Header;
+        OutTexture.Format      = H.Format;
+        OutTexture.bSRGB       = H.bSRGB;
+        OutTexture.Filter      = H.Filter;
+        OutTexture.Wrap        = H.Wrap;
+        OutTexture.MipGen      = H.MipGen;
+        OutTexture.Compression = H.Compression;
+        for(int Level = InFirst; Level < InEnd; ++Level)
+        {
+            const uint8_t* Source = Bytes.data() + (InLayout.LevelOffsets[size_t(Level)] - From);
+            const size_t   Size   = size_t(InLayout.LevelBytes[size_t(Level)]);
+            if(InLayout.bBlocks)
+            {
+                TextureBlockLevel& Each = OutTexture.Blocks.emplace_back();
+                Each.Width  = InLayout.LevelWidth(Level);
+                Each.Height = InLayout.LevelHeight(Level);
+                Each.Bytes.assign(Source, Source + Size);
+                continue;
+            }
+            EngineCore::Image Image(InLayout.LevelWidth(Level), InLayout.LevelHeight(Level), EngineCore::EImageFormat::RGBA8);
+            if(Image.GetSizeBytes() != Size) { return false; }
+            std::memcpy(Image.GetData(), Source, Size);
+            if(Level == InFirst) { OutTexture.Pixels = std::move(Image); }
+            else                 { OutTexture.Mips.push_back(std::move(Image)); }
+        }
+        return true;
     }
 
     const EngineCore::Image* TextureData::GetMip(const int InLevel) const
@@ -609,7 +762,13 @@ namespace RenderCore
         {
             std::mutex                                                          Lock;
             std::unordered_map<std::string, std::shared_ptr<const TextureData>> Textures;   // null: failed
+
+            /* ConsumeInvalidations': the paths invalidated, the last
+             * INVALIDATION_LOG of them; Serial counts every one. */
+            std::vector<std::string> Invalidated;
+            uint64_t                 InvalidationSerial = 0;
         };
+        constexpr size_t INVALIDATION_LOG = 256;
 
         /* Function-local, so it exists before any static initialiser asks. */
         TextureCacheState& GetTextureCache()
@@ -664,5 +823,27 @@ namespace RenderCore
         {
             Cache.Textures.erase(InPath);
         }
+        if(Cache.Invalidated.size() == INVALIDATION_LOG) { Cache.Invalidated.erase(Cache.Invalidated.begin()); }
+        Cache.Invalidated.push_back(InPath);
+        ++Cache.InvalidationSerial;
+    }
+
+    bool TextureAssetCache::ConsumeInvalidations(uint64_t& InOutSerial, std::vector<std::string>& OutPaths)
+    {
+        OutPaths.clear();
+        TextureCacheState& Cache = GetTextureCache();
+        std::lock_guard<std::mutex> Guard(Cache.Lock);
+        if(InOutSerial >= Cache.InvalidationSerial) { return false; }
+        const uint64_t Behind = Cache.InvalidationSerial - InOutSerial;
+        if(Behind > Cache.Invalidated.size())
+        {
+            OutPaths.emplace_back();   // fell off the log: everything
+        }
+        else
+        {
+            OutPaths.assign(Cache.Invalidated.end() - std::ptrdiff_t(Behind), Cache.Invalidated.end());
+        }
+        InOutSerial = Cache.InvalidationSerial;
+        return true;
     }
 }

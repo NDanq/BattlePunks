@@ -42,6 +42,7 @@ Engine/Modules/RenderCore/
 |-- README.md                       (this file)
 |-- DESIGN.md                       the long-form "why"
 |-- ANIMATION.md                    skeletal meshes, skinning, clips, anim states, sockets
+|-- TEXTURE_STREAMING.md            material textures' mips on the GPU by distance
 |-- Source/
 |   |-- Public/RenderCore/
 |   |   |-- RenderCoreAPI.h         RENDERCORE_API three-state export macro (always SHARED)

@@ -234,6 +234,13 @@ namespace RenderCore
             uint32_t OcclusionWantedNow = 0;
             uint64_t OccludedCount      = 0;
 
+            /* TEXTURE STREAMING: a world unit at distance d spans K / d pixels
+             * (K: half the viewport's height times the projection's y scale);
+             * an orthographic view's span K everywhere. */
+            const double StreamK = double(std::max(InView.ViewportPixels.Height, 0)) * 0.5 * std::abs(double(InView.Projection.Data[1][1]));
+            const bool   bStreamPerspective = IsPerspective(InView);
+            const double StreamNear = std::max(double(InView.ZNear), 0.01);
+
             uint64_t VisibleCount = 0;
             uint64_t CulledCount  = 0;
             const auto Excluded = [InCapture](const RenderProxy* InProxy)
@@ -380,6 +387,10 @@ namespace RenderCore
                 else
                 {
                     InContext.SetDrawOcclusion(bPredicate && Query ? *Query : -1);
+                    /* Its nearest point's distance decides its textures' levels; no bounds: all of them. */
+                    const double StreamScale = !bProxyHasBounds || StreamK <= 0.0 ? 0.0
+                                             : (bStreamPerspective ? StreamK / std::max(DistanceToBox(Bounds, InView.Origin), StreamNear) : StreamK);
+                    InContext.SetDrawStreamingScale(float(StreamScale));
                     if(Proxy->IsStatic())
                     {
                         StaticDrawList& List = ListFor(Proxy, Generation);
@@ -404,6 +415,7 @@ namespace RenderCore
                         InContext.SetDrawMotion(nullptr);
                     }
                     InContext.SetDrawOcclusion(-1);
+                    InContext.SetDrawStreamingScale(0.0f);
                     ++VisibleCount;
                 }
                 if(bQueries && Proxy->IsOccluder())
@@ -964,6 +976,7 @@ namespace RenderCore
          * leaves GetView() reporting a view nothing has drawn against yet. */
         InContext.SetView(P->View);
         InContext.SetLighting(P->Lighting);
+        InContext.UpdateTextureStreaming();   // the frame's first scene: last frame's demand to loads and commits
         P->ApplyImageBasedLighting(InContext);   // last frame's, for the captures below; brought up to date before the scene
 
         /* Created on first use and resized with the viewport -- see Impl's

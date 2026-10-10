@@ -253,6 +253,7 @@ Param Color vec3 160 0.2 0.8 1 0
 Param Intensity float 172 1 0 0 0
 Texture 1 Default Default Content/Textures/Brick.nmtexture
 Texture 2 Nearest Clamp Content/Textures/Height Map.nmtexture
+TextureUV 1 1 UVScale
 ```
 
 Offsets are bytes into the material block; the first 160 are the engine's
@@ -265,6 +266,12 @@ every graph at once).
 `Texture <slot> <filter> <wrap> <path>`: a material texture slot (1-7), the
 node's sampler settings (`Default` keeps the asset's own), and the texture's
 runtime path -- the rest of the line, so it may hold spaces (not `#`).
+`TextureUV <slot> <x> [<param> ...]`: a Texture Sample of that slot reads
+UV0 times x times each parameter (its largest component, at its default) --
+written where the compiler can follow the sample's UV (Texture Coordinate
+through Multiply), one line a sample, none when it is UV0 as is; texture
+streaming's demand is divided by it (TEXTURE_STREAMING.md). A material
+compiled before it has none and streams as UV0.
 `ParseMaterialDescription` skips lines it does not know.
 
 ## Textures

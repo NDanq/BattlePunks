@@ -706,11 +706,11 @@ NIMBLE_CONSOLE_COMMAND(open, "<level>", "Load a level by its registered name, as
 
 /* As the editor's console spells it: "stat unit" toggles [Stats] Unit, "stat
  * frame" [Stats] Frame, "stat physics" [Stats] Physics, "stat audio" [Stats]
- * Audio; "stat none" hides them all. */
-NIMBLE_CONSOLE_COMMAND(stat, "<unit|frame|physics|audio|none>", "Show thread times, GPU times, the physics simulation or the level's sound over the game")
+ * Audio, "stat streaming" [Stats] Streaming; "stat none" hides them all. */
+NIMBLE_CONSOLE_COMMAND(stat, "<unit|frame|physics|audio|streaming|none>", "Show thread times, GPU times, the physics simulation, the level's sound or texture streaming over the game")
 {
-    static const char* const Names[] = { "unit", "frame", "physics", "audio" };
-    static const char* const Vars[]  = { "Unit", "Frame", "Physics", "Audio" };
+    static const char* const Names[] = { "unit", "frame", "physics", "audio", "streaming" };
+    static const char* const Vars[]  = { "Unit", "Frame", "Physics", "Audio", "Streaming" };
     std::string Which = Console.Args.size() == 1 ? Console.Args.front() : std::string();
     for(char& Each : Which) { Each = char(std::tolower(static_cast<unsigned char>(Each))); }
 
@@ -732,7 +732,7 @@ NIMBLE_CONSOLE_COMMAND(stat, "<unit|frame|physics|audio|none>", "Show thread tim
         Console.Print("stat " + Which + ": " + (Var->GetBool() ? "on" : "off"));
         return;
     }
-    Console.PrintError("Usage: stat unit | frame | physics | audio | none");
+    Console.PrintError("Usage: stat unit | frame | physics | audio | streaming | none");
 }
 
 NIMBLE_CONSOLE_COMMAND(pause, "", "Pause or resume the World")

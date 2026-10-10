@@ -123,6 +123,21 @@ inline void EndAndSubmitTransientCmd(VKDevice*       Device,
     vkDestroyCommandPool(Device->GetDevice(), Pool, nullptr);
 }
 
+/** End recording and submit WITHOUT waiting -- for an upload into an image no
+ *  command has used yet. Queue submission order puts it before the frame being
+ *  recorded (whose fence covers every earlier submission), so the caller defers
+ *  the pool and staging past that frame instead of draining the device. */
+inline void EndAndSubmitTransientCmdAsync(VKDevice* Device, VkCommandBuffer Cmd)
+{
+    vkEndCommandBuffer(Cmd);
+
+    VkSubmitInfo Submit{};
+    Submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    Submit.commandBufferCount = 1;
+    Submit.pCommandBuffers    = &Cmd;
+    Device->QueueSubmit(1, &Submit, VK_NULL_HANDLE);
+}
+
 /** Build a synchronization2 VkImageMemoryBarrier2 for a layout transition. */
 inline VkImageMemoryBarrier2 MakeImageBarrier(VkImage               InImage,
                                               VkImageLayout         OldLayout,

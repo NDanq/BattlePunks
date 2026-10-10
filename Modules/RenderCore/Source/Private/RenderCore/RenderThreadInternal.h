@@ -6,6 +6,7 @@
 
 #include "Public/RenderCore/RenderCoreAPI.h"
 #include "Public/RenderCore/RenderThread.h"
+#include "Public/RenderCore/RenderTypes.h"
 
 /*
  * The process-wide locator for the one live RenderThread, plus the
@@ -78,6 +79,10 @@ namespace RenderCore
     /* The overlay's text, a line each: Frame, Game, Render, Wait, Present,
      * Idle (ms), and FPS. Frame = Game + Wait + Present + Idle. */
     RENDERCORE_API std::string FormatStatUnit(const StatUnitSnapshot& InSnapshot);
+
+    /* "stat streaming"'s text: the pool, what is resident and wanted against
+     * all of it, the loads under way and done, the last frame's commits. */
+    RENDERCORE_API std::string FormatStatStreaming(const TextureStreamingStats& InStats);
 
     /* "stat frame"'s text: a heading, then a line per ERenderGpuTimer with its
      * GPU milliseconds, the render thread's milliseconds and its draws ("-"

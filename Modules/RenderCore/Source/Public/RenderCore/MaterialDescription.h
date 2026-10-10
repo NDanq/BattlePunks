@@ -113,6 +113,10 @@ namespace RenderCore
         ETextureFilter Filter  = ETextureFilter::Linear;
         bool           bWrap   = false;                   // false: the texture asset's own
         ETextureWrap   Wrap    = ETextureWrap::Repeat;
+        /* TEXTURE STREAMING: the smallest scale its samples apply to UV0
+         * (TextureUV lines, their parameters at their defaults); 1 when the
+         * material does not say. A draw's demand is divided by it. */
+        float          StreamUVScale = 1.0f;
     };
 
     struct RENDERCORE_API MaterialDescription
