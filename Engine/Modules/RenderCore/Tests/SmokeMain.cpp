@@ -2703,7 +2703,7 @@ static void TestRenderComponentSerializer()
     Expect(CameraInfo && CameraInfo->Version == 2, "CameraComponent saves as version 2 (Projection, FovY)");
 
     const GameCore::ComponentSerializerInfo* PostInfo = GameCore::FindComponentSerializer(PostProcessComponent::StaticType().ID);
-    Expect(PostInfo && PostInfo->Version == 2, "PostProcessComponent saves as version 2 (Stack, BlendDistance)");
+    Expect(PostInfo && PostInfo->Version == 3, "PostProcessComponent saves as version 3 (Stack, BlendDistance; Weight)");
     if(PostInfo)
     {
         const auto HasName = [](const RecordingArchive& InArchive, const char* InName)
@@ -2715,8 +2715,15 @@ static void TestRenderComponentSerializer()
         PostProcessComponent Volume;
         std::strcpy(Volume.Stack, "Content/PostProcess/Arch.pp.nmgraph");
         PostInfo->Fn(PostOut, &Volume);
-        Expect(HasName(PostOut, "Stack") && HasName(PostOut, "BlendDistance") && !HasName(PostOut, "Material"),
-               "version 2 writes Stack and BlendDistance");
+        Expect(HasName(PostOut, "Stack") && HasName(PostOut, "BlendDistance") && HasName(PostOut, "Weight") && !HasName(PostOut, "Material"),
+               "version 3 writes Stack, BlendDistance and Weight");
+        RecordingArchive PostTwo;
+        PostTwo.bLoading = true;
+        PostTwo.Version  = 2;
+        PostProcessComponent FromTwo;
+        PostInfo->Fn(PostTwo, &FromTwo);
+        Expect(HasName(PostTwo, "BlendDistance") && !HasName(PostTwo, "Weight") && FromTwo.Weight == 1.0f,
+               "a version 2 save reads no Weight and keeps full strength");
         RecordingArchive PostOld;
         PostOld.bLoading = true;
         PostOld.Version  = 1;
