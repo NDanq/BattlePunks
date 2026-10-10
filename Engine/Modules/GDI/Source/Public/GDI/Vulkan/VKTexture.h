@@ -4,6 +4,7 @@
 #include <vector>
 
 #include <vulkan/vulkan.h>
+#include "Public/GDI/Vulkan/VKMemoryHeap.h"
 
 #include "Public/GDI/GDITexture.h"
 
@@ -155,7 +156,8 @@ private:
     VKDevice*           Device          = nullptr;
 
     VkImage             Image           = VK_NULL_HANDLE;
-    VkDeviceMemory      ImageMemory     = VK_NULL_HANDLE;
+    VkDeviceMemory      ImageMemory     = VK_NULL_HANDLE;   // ImageAllocation's, when owned
+    VKAllocation        ImageAllocation;                    // where in VKImageHeap the image's memory is
     VkImageView         ImageView       = VK_NULL_HANDLE;
     VkSampler           Sampler         = VK_NULL_HANDLE;
 

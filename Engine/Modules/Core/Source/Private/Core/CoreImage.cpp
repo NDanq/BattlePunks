@@ -20,6 +20,12 @@ int BytesPerPixel(const EImageFormat InFormat)
 }
 
 Image::Image(const int InWidth, const int InHeight, const EImageFormat InFormat)
+    : Image(InWidth, InHeight, InFormat, POOL_Default)
+{
+}
+
+Image::Image(const int InWidth, const int InHeight, const EImageFormat InFormat, const PoolID InPool)
+    : Pixels(InPool)
 {
     if(InWidth <= 0 || InHeight <= 0 || InFormat == EImageFormat::None)
     {
@@ -104,7 +110,7 @@ Image Image::ConvertedTo(const EImageFormat InFormat) const
         return Image();
     }
 
-    Image Out(Width, Height, InFormat);
+    Image Out(Width, Height, InFormat, GetPool());
 
     // BGRA <-> RGBA is the same operation in both directions: swap bytes 0
     // and 2, leave green and alpha alone.

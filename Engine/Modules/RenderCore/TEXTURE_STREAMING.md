@@ -103,15 +103,62 @@ a 1024 x 1024 RGBA8 texture.
 | TextureStreamingUploadMB | 8 | textures made on the render thread in one frame, by their bytes; 0: no limit |
 | TextureStreamingDropDelay | 5 | seconds a texture keeps levels it no longer wants while the pool has room |
 | TextureStreamingMaxLoads | 8 | loads on the streaming thread at once |
+| TextureMemoryCacheMB | 32 | freed texture blocks the CPU "Textures" pool keeps for reuse (below) |
 
 `stat streaming` (the editor's console and the game's; `[Stats] Streaming`)
 shows the textures streamed, the bytes resident, wanted and in every level,
 the pool and its bias, loads in flight and done, drops, the last frame's
-commits, and the render thread's time in the update and in making the
-textures. `RenderStats::TextureStreaming` has the same numbers.
+commits, the render thread's time in the update and in making the
+textures, and texture memory on both sides (below).
+`RenderStats::TextureStreaming` has the same numbers.
 
 `RenderContext::FlushTextureStreaming` loads and commits every level the last
 update wanted, ignoring the upload budget -- for a test or a one-off render.
+
+## Texture memory
+
+**CPU.** Every texture file's levels and blocks are allocated in a Core
+memory pool, `"Textures"` (`GetTextureMemoryPool`, TextureAsset.h): a
+`BucketMemoryPool` (CoreMemoryPool.h) registered as RenderCore loads. Pixels
+live in `EngineCore::PooledBytes` -- `Image`'s storage, and
+`TextureBlockLevel::Bytes` -- which allocate through `Memory::Allocate` in
+the pool they name. The pool rounds requests to size classes (2^k and
+1.5 x 2^k, from 4 KB to 64 MB) and keeps freed blocks, up to
+`TextureMemoryCacheMB`, for the next request of the same class: a streamed
+level freed is the next one's memory. Its stats are the CPU cost of every
+texture loaded (`stat streaming`'s *CPU* line).
+
+**GPU (Vulkan).** On `VKDevice` (VKMemoryHeap.h):
+
+- `VKImageHeap`: images under 512 KB -- most textures by count: a streamed
+  texture's tail, UI images -- share 4 MB device-local blocks (first fit,
+  coalescing frees; one empty block per memory type kept); larger images get
+  their own allocation. Freed images go back through the deferred-destruction
+  queue, after the frames that sampled them.
+- `VKStagingRing`: a 16 MB persistently mapped upload buffer. An upload into a
+  fresh image stages there instead of in a buffer made and freed for it, and
+  the ring reclaims each frame's part when that frame's fence has passed. A
+  full ring, or an upload into an image in use, stages on its own as before.
+
+`GDIGetTextureMemoryStats` reports both (blocks, their used bytes, dedicated
+images, the ring); `stat streaming`'s *GPU* line shows them.
+
+**Measured** (the same path as below; GPU memory is the process's DRM GTT):
+
+| | Before the pools | Large images in 64 MB blocks | Final (small images in 4 MB blocks) |
+|---|---|---|---|
+| GPU memory, mean | 825 MB | 963 MB | 838 MB |
+| ... at the end, streaming idle | 777 MB | 971 MB | 787 MB |
+| Worst texture creation in a frame | 7.1-7.9 ms | 5.7 ms | 5.7-6.3 ms |
+| Texture creation per frame, mean | 1.5-1.9 ms | 1.1 ms | 0.8-1.1 ms |
+
+Large images in shared blocks stranded memory: once streaming dropped them,
+partly used blocks held three times what they still served, and nothing can
+move an image to compact them -- hence large images on their own. What the
+final layout costs is the 16 MB ring. The CPU pool's cache changed little on
+Linux: glibc already reuses large blocks once some are freed (page faults
+over the run 120.7K with the cache, 126.5K without); a CRT that maps every
+large block afresh, as MSVC's does, has more to gain. Not measured there.
 
 ## Cost, measured
 
@@ -161,6 +208,7 @@ thread in one frame. Two changes:
 - **Partial updates.** A commit makes a whole new texture rather than adding
   levels to the one it has; GDI has no texture with a resident-level range
   (`minLod` / `SetResourceMinLODClamp`).
-- **D3D12** still drains the device after every upload (D3D12TransientOps.h).
+- **D3D12** still drains the device after every upload (D3D12TransientOps.h),
+  and has no image heap or staging ring.
 - **Prefetching** from where the camera is going (a sequence's camera
   track) -- what a cut wants arrives a few frames after it.

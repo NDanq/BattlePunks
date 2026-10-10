@@ -852,6 +852,12 @@ GDITextureResource* GDICreateTextureResourceMips(const EngineCore::Image* InLeve
     return GDynamicGDI ? GDynamicGDI->CreateTextureResourceMips(InLevels, InCount, InBorder, InFilter) : nullptr;
 }
 
+bool GDIGetTextureMemoryStats(GDITextureMemoryStats& OutStats)
+{
+    OutStats = GDITextureMemoryStats();
+    return GDynamicGDI && GDynamicGDI->GetTextureMemoryStats(OutStats);
+}
+
 bool GDISupportsCompressedFormat(const EGDICompressedFormat InFormat)
 {
     return GDynamicGDI && InFormat < GDI_CF_MAX && GDynamicGDI->SupportsCompressedFormat(InFormat);

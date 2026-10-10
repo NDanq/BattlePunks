@@ -374,6 +374,70 @@ namespace EngineCore
         size_t          Offset = 0;
         MemoryPoolStats Stats;
     };
+
+    /*
+     * Large buffers of many sizes, reused rather than returned to the system.
+     *
+     * Requests are rounded up to a size class -- two a power of two, 2^k and
+     * 1.5 x 2^k, each plus InHeaderSlack so CoreMemory.h's header does not
+     * push a 4 MB payload into the next class -- and a freed block is kept on
+     * its class's free list for the next request of that class. That is the
+     * whole point: a multi-megabyte malloc is an mmap and a page fault per
+     * page every time, and a texture's mip levels are freed and asked for
+     * again at the same sizes over and over (RenderCore's texture streaming).
+     *
+     * The cache is bounded: a block freed while InMaxCachedBytes are already
+     * kept goes back to the system. Trim() releases every kept block.
+     * Requests below the smallest class or above the largest, or aligned past
+     * BLOCK_ALIGN, go straight to the system both ways. Thread safe.
+     */
+    class CORE_API BucketMemoryPool final : public IMemoryPool
+    {
+    public:
+        enum : size_t { BLOCK_ALIGN = 64 };
+
+        BucketMemoryPool(const char* InName, size_t InMinBytes, size_t InMaxBytes, size_t InMaxCachedBytes,
+                         size_t InHeaderSlack = 256);
+        ~BucketMemoryPool() override;
+
+        BucketMemoryPool(const BucketMemoryPool&)            = delete;
+        BucketMemoryPool& operator=(const BucketMemoryPool&) = delete;
+
+        void*       Allocate  (size_t InBytes, size_t InAlign) override;
+        void        Deallocate(void* InPtr, size_t InBytes, size_t InAlign) override;
+        const char* GetName   () const override { return Name; }
+        uint8_t     GetCapabilities() const override { return PC_IndividualFree; }
+        /* BytesInUse: the classes' bytes handed out; BytesCommitted: those
+         * and the kept blocks. */
+        void        GetStats  (MemoryPoolStats& OutStats) const override;
+
+        /* Frees every kept block. */
+        void   Trim();
+        /* A smaller cap trims down to it at once. */
+        void   SetMaxCachedBytes(size_t InBytes);
+        size_t GetCachedBytes() const;
+
+    private:
+        static constexpr size_t NAME_CAPACITY = 32;
+        static constexpr int    CLASS_MAX     = 64;
+
+        /* InBytes' class, or -1 when it goes to the system. Lock not needed:
+         * the classes are fixed at construction. */
+        int  ClassOf(size_t InBytes, size_t InAlign) const;
+        void TrimTo(size_t InBytes);   // lock held
+
+        char Name[NAME_CAPACITY] = {};
+
+        size_t ClassBytes[CLASS_MAX] = {};
+        int    ClassCount = 0;
+
+        mutable std::mutex Mutex;
+        void*    FreeHead[CLASS_MAX]  = {};   // each kept block's first bytes hold the next
+        uint32_t FreeCount[CLASS_MAX] = {};
+        size_t   CachedBytes    = 0;
+        size_t   MaxCachedBytes = 0;
+        MemoryPoolStats Stats;
+    };
 }
 
 #endif //ENGINECORE_COREMEMORYPOOL_H

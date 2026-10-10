@@ -306,6 +306,8 @@ public:
 bool GDIStoreUniformBlock(std::vector<uint8_t> (&InOutBlocks)[4], uint64_t (&InOutSerials)[4], uint InBinding,
                           const void* InData, uint InSize);
 
+struct GDITextureMemoryStats;   // below, with GDIGetTextureMemoryStats
+
 class GDIDynamicDriver
 {
 public:
@@ -673,6 +675,10 @@ public:
     GDIBuffer* GetIndirectArgs()       const { return IndirectArgs; }
     uint32_t   GetIndirectArgsOffset() const { return IndirectArgsOffset; }
 
+    /* Where the backend keeps texture memory, for stats (GDIGetTextureMemoryStats);
+     * false from a backend that does not say. */
+    virtual bool GetTextureMemoryStats(GDITextureMemoryStats& /*OutStats*/) const { return false; }
+
     /* Whether InFormat can be sampled (CreateCompressedTextureResource).
      * This default, for a backend without block formats (Metal and Null so
      * far), says no: the caller decodes to RGBA8 instead. */
@@ -913,6 +919,23 @@ bool             GDISupportsRenderTargetFormat(EGDIRenderTargetFormat InFormat);
 /* GDIDynamicDriver::CreateTextureResourceMips; null without a driver. */
 GDITextureResource* GDICreateTextureResourceMips(const EngineCore::Image* InLevels, uint32_t InCount,
                                                  EGDITextureBorder InBorder, EGDITextureFilter InFilter);
+
+/* Texture memory as the backend holds it (Vulkan: VKMemoryHeap.h). Bytes
+ * the images use, the blocks they are carved from, images on their own
+ * allocation, and the upload ring. False without a driver or from a backend
+ * that does not track it. */
+struct GDITextureMemoryStats
+{
+    uint64_t BlockBytes     = 0;
+    uint64_t BlockUsedBytes = 0;
+    uint64_t DedicatedBytes = 0;
+    uint64_t StagingBytes   = 0;   // the ring's size, once made
+    uint64_t StagingInUse   = 0;
+    uint32_t Blocks         = 0;
+    uint32_t BlockImages    = 0;
+    uint32_t DedicatedImages = 0;
+};
+bool GDIGetTextureMemoryStats(GDITextureMemoryStats& OutStats);
 
 /* GDIDynamicDriver::SupportsCompressedFormat / CreateCompressedTextureResource;
  * false and null without a driver. */

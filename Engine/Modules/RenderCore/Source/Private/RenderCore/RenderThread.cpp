@@ -532,7 +532,7 @@ namespace RenderCore
     {
         if(!InStats.bEnabled) { return "off ([Rendering] TextureStreaming)"; }
         const auto Mb = [](const uint64_t InBytes) { return double(InBytes) / (1024.0 * 1024.0); };
-        char Buffer[512];
+        char Buffer[768];
         std::snprintf(Buffer, sizeof(Buffer),
                       "Textures  %6u\n"
                       "Resident  %7.1f MB\n"
@@ -544,12 +544,16 @@ namespace RenderCore
                       "Drops     %6llu\n"
                       "Commits   %6u  %.1f MB\n"
                       "Update    %6.2f ms  load %.2f ms\n"
-                      "Create    %6.2f ms  peak %.2f ms",
+                      "Create    %6.2f ms  peak %.2f ms\n"
+                      "CPU       %7.1f MB  kept %.1f MB\n"
+                      "GPU       %7.1f MB  in blocks %.1f/%.1f MB, ring %.0f MB",
                       InStats.Textures, Mb(InStats.ResidentBytes), Mb(InStats.WantedBytes), Mb(InStats.FullBytes),
                       Mb(InStats.PoolBytes), InStats.BudgetBias, InStats.PendingLoads, InStats.WaitingLoads,
                       static_cast<unsigned long long>(InStats.Loads), Mb(InStats.BytesRead),
                       static_cast<unsigned long long>(InStats.Drops), InStats.CommitsLastFrame, Mb(InStats.UploadBytesLastFrame),
-                      double(InStats.UpdateMs), double(InStats.LoadMs), double(InStats.CreateMs), double(InStats.CreateMsPeak));
+                      double(InStats.UpdateMs), double(InStats.LoadMs), double(InStats.CreateMs), double(InStats.CreateMsPeak),
+                      Mb(InStats.CpuBytes), Mb(InStats.CpuCachedBytes),
+                      Mb(InStats.GpuBlockUsed + InStats.GpuDedicated), Mb(InStats.GpuBlockUsed), Mb(InStats.GpuBlockBytes), Mb(InStats.GpuStaging));
         return Buffer;
     }
 

@@ -8,6 +8,7 @@
 
 #include "Public/Core/CoreArchive.h"
 #include "Public/Core/CoreFileProvider.h"
+#include "Public/Core/CoreMemoryPool.h"
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Public/RenderCore/TextureCompression.h"
 #include "Private/RenderCore/AssetFileCommon.h"
@@ -159,7 +160,7 @@ namespace RenderCore
                 }
                 else if(CanHoldElements(Ar, uint64_t(Header.Width) * uint64_t(Header.Height), 4, "texture: pixels run past the end of the file"))
                 {
-                    InOutTexture.Pixels = EngineCore::Image(Header.Width, Header.Height, EngineCore::EImageFormat::RGBA8);
+                    InOutTexture.Pixels = EngineCore::Image(Header.Width, Header.Height, EngineCore::EImageFormat::RGBA8, GetTextureMemoryPool());
                 }
             }
 
@@ -183,7 +184,7 @@ namespace RenderCore
                         if(Ar.IsLoading())
                         {
                             if(!CanHoldElements(Ar, uint64_t(Width) * uint64_t(Height), 4, "texture: mips run past the end of the file")) { break; }
-                            InOutTexture.Mips.emplace_back(Width, Height, EngineCore::EImageFormat::RGBA8);
+                            InOutTexture.Mips.emplace_back(Width, Height, EngineCore::EImageFormat::RGBA8, GetTextureMemoryPool());
                         }
                         EngineCore::Image& Mip = InOutTexture.Mips[size_t(Level - 1)];
                         Ar.SerializeBytes(Mip.GetData(), Mip.GetSizeBytes());
@@ -219,7 +220,7 @@ namespace RenderCore
                         Each.Height = Height;
                         Each.Bytes.resize(size_t(Blocks * BlockBytes));
                     }
-                    std::vector<uint8_t>& Bytes = InOutTexture.Blocks[size_t(Level)].Bytes;
+                    EngineCore::PooledBytes& Bytes = InOutTexture.Blocks[size_t(Level)].Bytes;
                     Ar.SerializeBytes(Bytes.data(), Bytes.size());
                     Width  = std::max(Width / 2, 1);
                     Height = std::max(Height / 2, 1);
@@ -269,6 +270,55 @@ namespace RenderCore
         }
         Ar.CloseChunk();
         return !Ar.HasError();
+    }
+
+    // === Texture memory =======================================================
+
+    namespace
+    {
+        /* 4 KB to 64 MB (a 4096 x 4096 RGBA8 level), 32 MB kept free at first
+         * ([Rendering] TextureMemoryCacheMB, streaming's Update). Never
+         * destroyed or unregistered: a texture may be freed by a static
+         * destructor after RenderCore's own have run. */
+        EngineCore::BucketMemoryPool* MakeTextureMemory(EngineCore::PoolID& OutPool)
+        {
+            auto* Made = new EngineCore::BucketMemoryPool("Textures", 4 * 1024, 64 * 1024 * 1024, 32 * 1024 * 1024);
+            OutPool = EngineCore::RegisterMemoryPool(Made);
+            if(OutPool == EngineCore::POOL_Invalid) { OutPool = EngineCore::POOL_Default; }
+            return Made;
+        }
+
+        struct TextureMemoryState
+        {
+            EngineCore::PoolID            Pool   = EngineCore::POOL_Default;
+            EngineCore::BucketMemoryPool* Memory = nullptr;
+        };
+
+        /* Registered while RenderCore loads -- the registry wants its pools
+         * before any thread allocates (CoreMemoryPool.h, THREADING) -- and
+         * function-local, so a static initialiser that loads a texture first
+         * still finds it. */
+        TextureMemoryState& GetTextureMemoryState()
+        {
+            static TextureMemoryState State = []
+            {
+                TextureMemoryState Made;
+                Made.Memory = MakeTextureMemory(Made.Pool);
+                return Made;
+            }();
+            return State;
+        }
+        [[maybe_unused]] const bool GTextureMemoryRegistered = (GetTextureMemoryState(), true);
+    }
+
+    EngineCore::PoolID GetTextureMemoryPool()
+    {
+        return GetTextureMemoryState().Pool;
+    }
+
+    EngineCore::BucketMemoryPool* GetTextureMemory()
+    {
+        return GetTextureMemoryState().Memory;
     }
 
     // === Streaming: levels by range ===========================================
@@ -413,7 +463,8 @@ namespace RenderCore
                 Each.Bytes.assign(Source, Source + Size);
                 continue;
             }
-            EngineCore::Image Image(InLayout.LevelWidth(Level), InLayout.LevelHeight(Level), EngineCore::EImageFormat::RGBA8);
+            EngineCore::Image Image(InLayout.LevelWidth(Level), InLayout.LevelHeight(Level), EngineCore::EImageFormat::RGBA8,
+                                    GetTextureMemoryPool());
             if(Image.GetSizeBytes() != Size) { return false; }
             std::memcpy(Image.GetData(), Source, Size);
             if(Level == InFirst) { OutTexture.Pixels = std::move(Image); }

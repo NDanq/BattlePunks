@@ -31,6 +31,8 @@
 #include "Public/Core/CoreImage.h"
 #include "Public/Core/CoreJob.h"
 #include "Public/Core/CoreLog.h"
+#include "Public/Core/CoreMemory.h"
+#include "Public/Core/CoreMemoryPool.h"
 #include "Public/Core/CorePack.h"
 #include "Public/Core/CorePlatform.h"
 #include "Public/Core/CoreThread.h"
@@ -2126,6 +2128,95 @@ static void TestTextureStreamer()
     DropDelay->ResetToDefault();
     Pool->ResetToDefault();
     Enabled->ResetToDefault();
+    std::filesystem::remove_all(Root);
+#endif
+}
+
+/*
+ * TEXTURE MEMORY: Core's BucketMemoryPool (blocks kept and reused, capped),
+ * PooledBytes (a vector's subset over a pool), Image in a pool, and texture
+ * files loading into RenderCore's "Textures" pool.
+ */
+static void TestTextureMemory()
+{
+    std::printf("[texture memory]\n");
+
+    BucketMemoryPool Bucket("SmokeBuckets", 4096, 1 << 20, 3 << 20);
+    const PoolID Id = RegisterMemoryPool(&Bucket);
+    Expect(Id != POOL_Invalid, "a bucket pool registers");
+
+    {
+        PooledBytes A(Id);
+        A.resize(100000);
+        const uint8_t* First = A.data();
+        bool bZero = true;
+        for(size_t Index = 0; Index < A.size(); ++Index) { bZero = bZero && A[Index] == 0; }
+        Expect(A.size() == 100000 && bZero && A.GetPool() == Id, "PooledBytes resizes in its pool, zeroed");
+        A.clear();
+        Expect(Bucket.GetCachedBytes() > 0, "a freed block is kept");
+        PooledBytes B(Id);
+        B.resize(99000);   // the same class: 96K < 99000 + header <= 128K
+        Expect(B.data() == First && Bucket.GetCachedBytes() == 0, "and handed out again for the next of its class");
+
+        PooledBytes C = B;
+        C[5] = 7;
+        Expect(C.GetPool() == Id && C.size() == B.size() && C != B && C.data() != B.data(), "a copy is its own, in the same pool");
+        PooledBytes D = std::move(C);
+        Expect(D.size() == 99000 && C.empty() && D[5] == 7, "a move takes the block");
+        D = { 1, 2, 3 };
+        D.pop_back();
+        Expect(D.size() == 2 && D[1] == 2 && D == PooledBytes{ 1, 2 }, "assign, pop_back and equality as a vector's");
+    }
+
+    /* The cap: 3 MB kept; four 1 MB-class blocks freed keep at most that. */
+    {
+        std::vector<PooledBytes> Many(4, PooledBytes(Id));
+        for(PooledBytes& Each : Many) { Each.resize(1000000); }
+    }
+    Expect(Bucket.GetCachedBytes() <= (size_t(3) << 20) && Bucket.GetCachedBytes() > 0, "the cache keeps no more than its cap");
+    Bucket.SetMaxCachedBytes(0);
+    MemoryPoolStats Stats;
+    Bucket.GetStats(Stats);
+    Expect(Bucket.GetCachedBytes() == 0 && Stats.LiveAllocations == 0 && Stats.BytesInUse == 0,
+           "a zero cap trims everything; nothing is live");
+    {
+        PooledBytes Huge(Id);
+        Huge.resize(size_t(4) << 20);   // past the largest class: the system both ways
+        Expect(Huge.size() == (size_t(4) << 20), "a request past the classes still allocates");
+    }
+    Bucket.GetStats(Stats);
+    Expect(Stats.LiveAllocations == 0 && Bucket.GetCachedBytes() == 0, "and is freed, not kept");
+
+    {
+        const Image Pooled(16, 8, EImageFormat::RGBA8, Id);
+        const Image Converted = Pooled.ConvertedTo(EImageFormat::BGRA8);
+        const Image Copied = Pooled;
+        Expect(Pooled.GetPool() == Id && Converted.GetPool() == Id && Copied.GetPool() == Id && Pooled.GetSizeBytes() == 16 * 8 * 4,
+               "an Image in a pool, and its copies and conversions with it");
+    }
+    Bucket.GetStats(Stats);
+    Expect(Stats.LiveAllocations == 0, "every allocation came back");
+    UnregisterMemoryPool(Id);
+
+#if WITH_EDITOR
+    /* A texture file loads into the "Textures" pool. */
+    const std::filesystem::path Root = std::filesystem::temp_directory_path() / "NimbleRenderCoreTextureMemory";
+    std::filesystem::create_directories(Root);
+    const std::string File = (Root / "Pooled.nmtexture").string();
+    TextureData Source = MakeStreamingTexture(128);
+    Expect(SaveTextureFile(File, Source), "a texture saves");
+    MemoryPoolStats Before, After;
+    Expect(GetTextureMemory() != nullptr && FindMemoryPool("Textures") == GetTextureMemoryPool(), "RenderCore registers its Textures pool");
+    GetTextureMemory()->GetStats(Before);
+    {
+        TextureData Loaded;
+        Expect(LoadTextureFile(File, Loaded) && Loaded.Pixels.GetPool() == GetTextureMemoryPool()
+               && Loaded.Mips.back().GetPool() == GetTextureMemoryPool(), "its levels load into it");
+        GetTextureMemory()->GetStats(After);
+        Expect(After.BytesInUse >= Before.BytesInUse + TextureGpuBytes(Loaded), "and count there");
+    }
+    GetTextureMemory()->GetStats(After);
+    Expect(After.BytesInUse == Before.BytesInUse, "and go back when it is gone");
     std::filesystem::remove_all(Root);
 #endif
 }
@@ -6584,6 +6675,7 @@ int main()
     TestTextureMips();
     TestTextureStreamingFiles();
     TestTextureStreamer();
+    TestTextureMemory();
     TestToneMappingSettings();
     TestFidelitySettings();
     TestImageBasedLightingData();

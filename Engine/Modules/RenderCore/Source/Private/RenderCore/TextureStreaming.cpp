@@ -11,6 +11,8 @@
 #include <vector>
 
 #include "Public/Core/CoreConfig.h"
+#include "Public/Core/CoreMemoryPool.h"
+#include "Public/GDI/GDI.h"
 
 /* TEXTURE_STREAMING.md, "Settings". PoolMB: the levels the draws may ask for
  * before every wanted level is raised alike; MipBias: added to each wanted
@@ -25,6 +27,8 @@ NIMBLE_CONFIG_FLOAT(GTextureStreamingMipBias,    "Rendering", "TextureStreamingM
 NIMBLE_CONFIG_INT(GTextureStreamingMinResident,  "Rendering", "TextureStreamingMinResident", 64,    nullptr);
 NIMBLE_CONFIG_INT(GTextureStreamingUploadMB,     "Rendering", "TextureStreamingUploadMB",    8,     nullptr);
 NIMBLE_CONFIG_FLOAT(GTextureStreamingDropDelay,  "Rendering", "TextureStreamingDropDelay",   5.0f,  nullptr);
+/* The "Textures" pool's free blocks kept for reuse (TextureAsset.h). */
+NIMBLE_CONFIG_INT(GTextureMemoryCacheMB,         "Rendering", "TextureMemoryCacheMB",        32,    nullptr);
 NIMBLE_CONFIG_INT(GTextureStreamingMaxLoads,     "Rendering", "TextureStreamingMaxLoads",    8,     nullptr);
 
 namespace RenderCore
@@ -143,6 +147,7 @@ namespace RenderCore
         float    CreateMs = 0.0f;                 // this frame's so far
         float    CreateHistory[120] = {};         // the frames before, a ring
         uint32_t CreateAt = 0;
+        int      AppliedCacheMB = 32;   // the pool's own default (TextureAsset.cpp)
         double   LastLoadMs = 0.0;
         mutable std::mutex    StatsLock;
         TextureStreamingStats Stats;
@@ -473,6 +478,21 @@ namespace RenderCore
             Out.Drops     = Drops;
             Out.LoadMs    = float(LastLoadMs);
             Out.UpdateMs  = float(InUpdateMs);
+            if(EngineCore::BucketMemoryPool* Memory = GetTextureMemory())
+            {
+                EngineCore::MemoryPoolStats Pool;
+                Memory->GetStats(Pool);
+                Out.CpuBytes       = Pool.BytesInUse;
+                Out.CpuCachedBytes = Pool.BytesCommitted - Pool.BytesInUse;
+            }
+            GDITextureMemoryStats Gpu;
+            if(GDIGetTextureMemoryStats(Gpu))
+            {
+                Out.GpuBlockBytes = Gpu.BlockBytes;
+                Out.GpuBlockUsed  = Gpu.BlockUsedBytes;
+                Out.GpuDedicated  = Gpu.DedicatedBytes;
+                Out.GpuStaging    = Gpu.StagingBytes;
+            }
             Out.CreateMs  = CreateHistory[(CreateAt + 119) % 120];
             Out.CreateMsPeak = *std::max_element(std::begin(CreateHistory), std::end(CreateHistory));
             std::lock_guard<std::mutex> Guard(StatsLock);
@@ -537,6 +557,12 @@ namespace RenderCore
     {
         const auto Began = std::chrono::steady_clock::now();
         P->CreateHistory[P->CreateAt] = P->CreateMs;   // the frame that just ended
+        const int CacheMB = std::max(GTextureMemoryCacheMB.GetInt(), 0);
+        if(CacheMB != P->AppliedCacheMB)
+        {
+            if(EngineCore::BucketMemoryPool* Memory = GetTextureMemory()) { Memory->SetMaxCachedBytes(size_t(CacheMB) * 1024 * 1024); }
+            P->AppliedCacheMB = CacheMB;
+        }
         P->CreateAt = (P->CreateAt + 1) % 120;
         P->CreateMs = 0.0f;
         const double Time = P->Now();
