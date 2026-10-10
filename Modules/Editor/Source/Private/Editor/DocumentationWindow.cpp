@@ -61,7 +61,7 @@ namespace
         {
             return true;
         }
-        for(const char* Skipped : { "External", "Binaries", "Saved", "Intermediate", "node_modules" })
+        for(const char* Skipped : { "External", "Binaries", "Build", "Saved", "Intermediate", "node_modules" })
         {
             if(Name.compare(QLatin1String(Skipped), Qt::CaseInsensitive) == 0) { return true; }
         }

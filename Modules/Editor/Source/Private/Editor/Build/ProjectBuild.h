@@ -10,7 +10,7 @@
  * Build > Build Project, without widgets: what a packaged build of the game
  * is, from the project's own CMakePresets.json. The game (Client target) is
  * configured and built in its own tree beside the project
- * (cmake-build-<preset>), never the editor's -- which this process holds.
+ * (Build/<preset>), never the editor's -- which this process holds.
  *
  * Options live in Config/DefaultEngine.ini's [Build], beside the world list
  * whose Cook flags say which worlds go in.

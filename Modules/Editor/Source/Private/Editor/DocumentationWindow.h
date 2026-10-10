@@ -25,7 +25,7 @@ class QTreeWidgetItem;
  * "#section" links jump to GitHub-style heading anchors, anything else opens
  * outside the editor. The page reloads when its file changes on disk.
  *
- * Skipped while listing: hidden folders, External/, Binaries/, Saved/,
+ * Skipped while listing: hidden folders, External/, Binaries/, Build/, Saved/,
  * Intermediate/ and build trees (cmake-build-*, any folder with a
  * CMakeCache.txt).
  *
