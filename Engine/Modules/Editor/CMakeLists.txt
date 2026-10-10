@@ -691,7 +691,9 @@ if(TARGET NimbleStageShaders)
     add_dependencies(NimbleEditor NimbleStageShaders)
 endif()
 
-# Qt's DLLs beside the exe, so it runs without Qt on PATH.
+# Qt's DLLs beside the exe, so it runs without Qt on PATH. qoffscreen too:
+# the editor tests run headless (QT_QPA_PLATFORM=offscreen), and windeployqt
+# deploys only qwindows unless asked.
 if(WIN32)
     get_target_property(NM_QT_QMAKE Qt6::qmake IMPORTED_LOCATION)
     get_filename_component(NM_QT_BIN_DIR "${NM_QT_QMAKE}" DIRECTORY)
@@ -701,6 +703,7 @@ if(WIN32)
         add_custom_command(TARGET NimbleEditor POST_BUILD
                 COMMAND "${NM_WINDEPLOYQT}" --no-translations --no-compiler-runtime
                         --no-opengl-sw --no-system-d3d-compiler
+                        --include-plugins qoffscreen
                         "$<TARGET_FILE:NimbleEditor>"
                 COMMENT "NimbleEditor: deploying Qt beside the executable"
                 VERBATIM)
