@@ -13,6 +13,8 @@
 #   @ENGINE_DIR@     replaced by the Engine tree, as the new CMakeLists reads it
 #   __PROJECT__      replaced by <Name>              (file names)
 #
+# and every line ending LF, whatever the checkout has (core.autocrlf).
+#
 # The two are kept identical by NimbleEditorProjectTests, which runs this
 # script and compares its output with the editor's file by file. Change both.
 #
@@ -20,7 +22,7 @@
 # Engine tree itself.
 # ===========================================================================
 
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.18)   # file(CONFIGURE)
 
 get_filename_component(NP_ENGINE_DIR   "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
 get_filename_component(NP_TEMPLATE_DIR "${NP_ENGINE_DIR}/Templates/Game" ABSOLUTE)
@@ -88,7 +90,20 @@ foreach(NP_FILE IN LISTS NP_FILES)
     string(REPLACE "@PROJECT_NAME@" "${NAME}" NP_TEXT "${NP_TEXT}")
     string(REPLACE "@ENGINE_DIR@" "${NP_ENGINE_FOR_CMAKE}" NP_TEXT "${NP_TEXT}")
 
-    file(WRITE "${NP_STAGING}/${NP_TARGET}" "${NP_TEXT}")
+    # LF on every platform. file(READ) has already dropped any CR, but
+    # file(WRITE) on Windows turns each LF into CRLF; CONFIGURE writes LF and
+    # substitutes only @NP_TEXT@ itself (its value is not scanned again). It
+    # ends the text with a newline, so the file's own last one is dropped
+    # first. Text with no newline at all (an empty .gitkeep) has nothing to
+    # turn into CRLF: written as it is. (A file with lines but no final
+    # newline would gain one; the template has none.)
+    string(FIND "${NP_TEXT}" "\n" NP_NEWLINE)
+    if(NP_NEWLINE EQUAL -1)
+        file(WRITE "${NP_STAGING}/${NP_TARGET}" "${NP_TEXT}")
+    else()
+        string(REGEX REPLACE "\n$" "" NP_TEXT "${NP_TEXT}")
+        file(CONFIGURE OUTPUT "${NP_STAGING}/${NP_TARGET}" CONTENT "@NP_TEXT@" @ONLY NEWLINE_STYLE UNIX)
+    endif()
     message(STATUS "  ${NP_TARGET}")
 endforeach()
 
