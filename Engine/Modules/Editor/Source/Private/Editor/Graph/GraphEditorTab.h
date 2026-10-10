@@ -52,6 +52,11 @@ public:
      * rebuild, so a node just added is there. */
     void RevealNode(const NodeGraph::NodeGuid& InNode);
 
+    /* The whole graph -- every node, link and comment -- drawn at InScale (2: twice
+     * on-screen size) into InFile, whatever the window shows: for docs and reviews.
+     * OutSceneRect is the scene area the image covers. False if it could not write. */
+    bool SaveCanvasImage(const QString& InFile, double InScale, QRectF& OutSceneRect) const;
+
 signals:
     /* Saved, or edited since: the tab's title changed. */
     void TitleChanged();

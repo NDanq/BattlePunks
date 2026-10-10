@@ -36,6 +36,9 @@ public:
 
     QList<GraphEditorTab*> GetTabs() const;
 
+    /* The tab in front; nullptr if none. */
+    GraphEditorTab* CurrentTab() const;
+
 protected:
     void closeEvent(QCloseEvent* InEvent) override;
     bool eventFilter(QObject* InWatched, QEvent* InEvent) override;
@@ -43,7 +46,6 @@ protected:
 private:
     explicit GraphEditorWindow(QWidget* InParent = nullptr);
 
-    GraphEditorTab* CurrentTab() const;
     void            UpdateTitles();
     void            StepTab(int InBy);
 

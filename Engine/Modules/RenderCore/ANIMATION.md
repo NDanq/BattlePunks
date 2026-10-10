@@ -99,7 +99,10 @@ Float, Set Bool, Set Trigger, Get Float, Get Bool, Get Bone Location (a
 Vector3), Get State, Is In Transition, Get Time and its fields; the Anim
 Socket's Bone and offsets; and, from the `Animation` script library, typed
 **On AnimNotify** (Entity, Name) and **On AnimEnded** (Entity, State, Layer)
-events, with Emit nodes for each.
+events, with Emit nodes for each. The events fire for every character in the
+world: check the Entity is your own with **Same Entity** (against Self or
+Prefab Root) before acting -- Equal does not take entities, and in Lua compare
+`entity:GetID()`, since two handles to one entity are not `==`.
 
 It replicates what it plays and its parameters; each client animates on its
 own. Poses are never sent.
