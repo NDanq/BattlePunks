@@ -492,6 +492,7 @@ static void TestDocumentation()
     Write(QStringLiteral("cmake-build-debug/Notes.md"), "# build\n");
     Write(QStringLiteral("Build/CMakeCache.txt"), "");
     Write(QStringLiteral("Build/Generated.md"), "# build\n");
+    Write(QStringLiteral("Sub/Build/editor-debug/Notes.md"), "# build\n");
     Write(QStringLiteral(".git/Hidden.md"), "# hidden\n");
 
     const QStringList Found = DocumentationWindow::FindMarkdownFiles(Dir.path());
