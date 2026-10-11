@@ -290,7 +290,8 @@ Every undo step one editor records is announced to the others by its text,
 relayed by the host, and printed. **Nothing is applied.** Look for
 `STUB(NetCore-Editor)`.
 
-The road from here:
+The road from here (superseded by the Collab plan in
+`Engine/Modules/Editor/COLLABORATION.md`, whose P6 finishes it):
 
 1. **A snapshot of the host's world** for an editor that joins, through
    `SerializeWorld`.
