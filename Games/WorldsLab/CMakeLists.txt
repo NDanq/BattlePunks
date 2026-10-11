@@ -70,7 +70,7 @@ endif()
 # Loaded by name (NimbleEngine/GameModule.h) by the launcher and the editor's
 # Play-in-Editor, never linked. Add new sources here.
 nimble_add_hot_module(${GAME_MODULE}
-        SOURCES      WorldsLabGame.cpp WorldsLabExplore.cpp WorldsLabRange.cpp
+        SOURCES      WorldsLabGame.cpp WorldsLabExplore.cpp WorldsLabRange.cpp WorldsLabWalker.h WorldsLabPvP.cpp
         PRIVATE_DEPS NimbleEngine::NimbleEngine)
 set_target_properties(${GAME_MODULE} PROPERTIES FOLDER "Games")
 

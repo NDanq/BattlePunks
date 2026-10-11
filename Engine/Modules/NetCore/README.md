@@ -104,12 +104,15 @@ and dedicated server: what the windows and the server run. These are the
 targets `nimble_add_game_launcher` / `nimble_add_server_launcher` recorded for
 the editor. **Editor Settings > Build** turns that off.
 
-`Games/NetArena` is the test game: capsules on a plane, one per player. Its
-README walks through each mode.
+`Games/WorldsLab`'s **Steampunk PvP** (`WorldsLabPvP.cpp`) is the full sample:
+a deathmatch with predicted movement, server-side hits, Multicast and Client
+RPCs for feedback, a replicated match state, and bots that play through the
+same input path. Its README section runs a match unattended.
 
 The launchers' command line is config overrides (`ParseLaunchArgs`,
 `NimbleEngine.h`): `-Section.Key=Value` for anything, plus `-connect`,
-`-port` and `-listen`.
+`-port` and `-listen`. `-headless` runs the game launcher with no window,
+input or renderer: a client a bot drives, for an unattended test or a soak.
 
 | `[Net]` | Default | |
 |---|---|---|

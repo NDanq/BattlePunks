@@ -30,6 +30,9 @@ the game alone, without the editor.
 | `Docs/` | This project's guides |
 | `Tools/<Style>/` | The Python generators that build each style's world and content |
 | `WorldsLabExplore.cpp` | The style worlds' game mode: walk (with collision) and fly |
+| `WorldsLabRange.cpp` | The Shooting Range's mode, and `RangeMove`, the third-person walker |
+| `WorldsLabWalker.h` | The walker as other modes use it: its replicated `RangeMover` state |
+| `WorldsLabPvP.cpp` | Steampunk PvP: NetCore's sample deathmatch |
 
 Everything in `Config/`, `Scripts/` and `Content/` is staged into `Binaries/`
 by the build at the same relative path, which is how the runtime names it
@@ -93,7 +96,8 @@ You play the **RangeShooter** (`Content/Prefabs/ShootingRange/RangeShooter.nmpre
 the engine's crash dummy and its pistol, third person. The Player Start
 spawns it (an `NetGameMode`); `RangeMove`, an avatar simulation, walks it on
 the physics with raycasts -- floors, stairs, catwalks, walls -- and swings the
-camera. `Scripts/ShootingRange/RangeShooter.lua` draws and holsters (the
+camera. What it keeps between frames is the avatar's `RangeMover` component
+(`WorldsLabWalker.h`), replicated, so it predicts over the network. `Scripts/ShootingRange/RangeShooter.lua` draws and holsters (the
 pistol moves between holster and hand on the clips' notifies), shoots
 (Physics.Raycast through the crosshair; steel gets an impulse, sparks and a
 ring; rounds pass the catwalk grating), reloads, and feeds the HUD
@@ -136,6 +140,75 @@ python Games/WorldsLab/Tools/ShootingRange/make_range_sounds.py      # Tools/Sho
 The sounds import with the editor's console (`import Tools/ShootingRange/Audio/Gunshot.wav
 Content/Sounds/ShootingRange`, one a file). Reflection probes are off
 (`PROBES` in the level script) until they stop mirroring onto the shooter.
+
+### Steampunk PvP (`SteampunkPvP`)
+
+`Content/Levels/SteampunkPvP.nmworld`, run by `WorldsLabPvP` (`WorldsLabPvP.cpp`):
+NetCore's sample, a free-for-all deathmatch on the Steampunk street. Pistols,
+100 health, 25 a body shot and 60 a head shot, a 12-round magazine. Respawns
+come 3 s after a death, at the Player Start farthest from anyone standing.
+The first to `[WorldsLab] PvpFragLimit` (15) kills wins, or whoever has the
+most when `PvpMatchSeconds` (600) run out. Then come 8 s of scores and a new
+round.
+
+```
+WorldsLabServer -Game.StartLevel=SteampunkPvP                    # a dedicated server
+WorldsLab -Game.StartLevel=SteampunkPvP -connect=127.0.0.1       # each player
+WorldsLab -Game.StartLevel=SteampunkPvP -listen                  # or a player who hosts
+```
+
+In the editor, open the world, set **Play > Network Settings** (Listen Server,
+or Client with a dedicated server) and press Play. **Play > New Client Window**
+adds players.
+
+WASD moves (Shift runs), Space jumps, right mouse aims over the shoulder,
+left mouse fires, R reloads, Tab holds the scores, Escape frees the mouse.
+
+**How it is split** (the comment at the top of `WorldsLabPvP.cpp` has the
+detail):
+
+| | Where it runs |
+|---|---|
+| Moving | `RangeMove`, the Shooting Range's walker: predicted on the client that drives the fighter, stepped on the server from its input, interpolated everywhere else |
+| Firing | the driving process sends `ServerFire(origin, direction)` from its camera, and shows its own muzzle flash and impact at once |
+| Hits | the server only: walls by physics raycast, fighters by a capsule each, rewound by `[Net] InterpolationDelayMs` to where the shooter saw them |
+| Health, ammo, kills, deaths | replicated fields of each fighter's `PvpFighter` component |
+| Feedback | `MulticastShot` (everyone else's flash, sound, impact), `MulticastKilled` (the kill feed, the ragdoll), `ClientHitConfirm` (the shooter's hit marker) |
+| The match | a networked `PvpMatch` entity the server makes: the clock, the phase, the winner |
+| The pistol and camera boom | made by each process for each fighter (`DressFighter`) and never sent |
+
+**Bots.** `[WorldsLab] PvpBots=N` (up to 3) gives the authority N more
+players. `PvpBot=1` hands this process's own player to a bot too. Bots go
+through the avatar input filter, as a person's devices do, so they use the
+same prediction and RPCs. A whole match runs unattended:
+
+```
+WorldsLabServer -Game.StartLevel=SteampunkPvP -WorldsLab.PvpBots=1
+WorldsLab -headless -connect=127.0.0.1 -Game.StartLevel=SteampunkPvP -WorldsLab.PvpBot=1   # twice
+```
+
+`-headless` runs the launcher with no window, input or renderer. A client
+with `[WorldsLab] PvpNetStats=1` logs its prediction every 5 s: the worst
+correction while running should read 0.00. Respawns show up as one large
+correction each.
+
+The level is generated from the street, which has to be generated first:
+
+```
+python Games/WorldsLab/Tools/SteampunkPvP/make_steampunk_pvp.py
+```
+
+That script drops the flyover and the explore camera. It gives the
+buildings' footprints, the props and the ground static bodies (layer 1),
+and adds boundary walls, eight Player Starts and an overview camera.
+
+**Not yet:**
+- The hit rewind allows for the interpolation delay but not the client's
+  half of the round trip, which NetCore does not report yet. On a slow link,
+  a shot at a runner lands behind it.
+- Fighters pass through each other.
+- The HUD is XML: Client and Server builds read UI cooked in the editor
+  (Build > Cook Content) first.
 
 ### Courtyard (`Courtyard`)
 
