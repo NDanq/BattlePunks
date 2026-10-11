@@ -19,7 +19,14 @@
  *                        u16 count, then per component:
  *                            string type name, then its serializer's DATA chunk
  *                        (versioned, as a cooked world; EntityIDs as net ids)
- *   Destroy        S->C  i32 net id
+ *   Destroy        S->C  i32 net id; also when the entity stops replicating
+ *                        (bReplicate off, or its NetComponent removed)
+ *   AddComponents  S->C  i32 net id, then as Spawn from u16 count on: the
+ *                        components it gained since it was sent
+ *   RemoveComponents S->C i32 net id, u16 count, then per component: string
+ *                        type name
+ *   Reparent       S->C  i32 net id, u64 parent guid hi, u64 parent guid lo
+ *                        (0,0: none)
  *   Rpc            both  i32 net id, u16 wire type, u8 rpc index, u32 bytes, bytes
  *
  * STATE CHANNEL (NET_CHANNEL_STATE): unreliable, sequenced -- a packet older
@@ -36,7 +43,11 @@
  * Each batch holds, for every component it mentions, every field that
  * differs from what the client has acknowledged: applied over that, it gives
  * the server's state at the batch's time, whatever was lost in between.
- * NetSession.cpp ("acknowledged baselines") has the bookkeeping.
+ * NetSession.cpp ("acknowledged baselines") has the bookkeeping. A batch
+ * carries only components the client has been told the entity has (Spawn,
+ * AddComponents), so one that names a component the client lacks and was not
+ * told of is ahead of its AddComponents: it is not acknowledged, and comes
+ * again.
  *
  * Wire types index NetSchema's name-sorted list of the types that replicate
  * or have RPCs -- identical on both ends because the schema hash matched.
@@ -46,7 +57,7 @@
 
 namespace NetCore
 {
-    constexpr uint32_t NET_PROTOCOL_VERSION = 3;
+    constexpr uint32_t NET_PROTOCOL_VERSION = 4;
 
     enum class ENetMessage : uint8_t
     {
@@ -58,6 +69,9 @@ namespace NetCore
         Rpc,
         StateBatch,           // S->C, unreliable: replicated fields, against the acknowledged baseline
         StateAck,             // C->S, unreliable: which batches were applied
+        AddComponents,        // S->C: components a sent entity gained
+        RemoveComponents,     // S->C: components it lost
+        Reparent,             // S->C: its new parent
 
         EditorHello = 64,     // u32 version, string user name
         EditorCommand,        // string user name, string command text (STUB)

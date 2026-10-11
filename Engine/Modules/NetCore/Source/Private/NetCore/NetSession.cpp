@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <deque>
+#include <iterator>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -153,9 +154,30 @@ struct NetSession::Impl final : public INetEntityMap
     std::string              LevelName;
     GameCore::DelegateHandle DestroyedHandle;
 
+    GameCore::DelegateHandle ComponentAddedHandle;
+    GameCore::DelegateHandle ComponentRemovedHandle;
+
     std::unordered_map<int32_t, EntityID>  NetToEntity;
     std::unordered_map<uint64_t, int32_t>  EntityToNet;   // by EntityID::Pack()
     int32_t                                NextNetId = 1;
+
+    /*
+     * WHAT CLIENTS WERE TOLD a networked entity is: its serialized
+     * components, sorted, and its parent. The server keeps it as of the last
+     * flush and sends AddComponents / RemoveComponents / Reparent when the
+     * entity drifts from it; state goes only for components listed here. A
+     * client keeps the components the server named, to tell state that is
+     * ahead of its AddComponents from state for one removed here.
+     */
+    struct Structure
+    {
+        std::vector<ComponentTypeID> Types;
+        GameCore::EntityGuid         Parent;
+    };
+    std::unordered_map<int32_t, Structure> Structures;   // by NetId
+
+    /* The server: entities whose components changed since the last flush (by EntityID::Pack()). */
+    std::unordered_set<uint64_t> StructureDirty;
 
     /* The replication tables' generation the baselines were made under. */
     uint32_t BaselineGeneration = 0;
@@ -243,6 +265,14 @@ struct NetSession::Impl final : public INetEntityMap
             }
         }
         Interpolations.erase(InNetId);
+        Structures.erase(InNetId);
+    }
+
+    /* Every client's baseline for one component, gone with it. */
+    void DropBaselines(const int32_t InNetId, const ComponentTypeID InType)
+    {
+        const uint64_t Key = ShadowKey(InNetId, InType);
+        for(auto& Client : Clients) { Client.second.Baselines.erase(Key); }
     }
 
     // === A client's smoothing and prediction ==============================
@@ -435,6 +465,36 @@ struct NetSession::Impl final : public INetEntityMap
 
     // === The server's stream =============================================
 
+    /* What a spawn carries: InEntity's serialized components, in type order. */
+    std::vector<ComponentTypeID> SerializedTypes(const GameCore::Entity& InHandle) const
+    {
+        std::vector<ComponentTypeID> Types;
+        for(size_t Index = 0; Index < GameCore::GetComponentTypeCount(); ++Index)
+        {
+            const ComponentTypeID Type = ComponentTypeID(Index);
+            if(GameCore::FindComponentSerializer(Type) && InHandle.HasComponentByType(Type)) { Types.push_back(Type); }
+        }
+        return Types;
+    }
+
+    GameCore::EntityGuid ParentGuidOf(const GameCore::Entity& InHandle) const
+    {
+        return InHandle.HasParent() ? GameCore::Entity(BoundWorld, InHandle.GetParent()).GetGuid() : GameCore::EntityGuid();
+    }
+
+    /* u16 count, then each component's type name and serialized data. */
+    void WriteComponents(EngineCore::Archive& Ar, const GameCore::Entity& InHandle, const std::vector<ComponentTypeID>& InTypes)
+    {
+        uint16_t Count = uint16_t(InTypes.size());
+        Ar << Count;
+        for(const ComponentTypeID Type : InTypes)
+        {
+            std::string TypeName = GameCore::GetComponentType(Type)->Name;
+            Ar << TypeName;
+            WriteComponentData(Ar, Type, InHandle.GetComponentByType(Type), *this);
+        }
+    }
+
     EngineCore::Archive BuildSpawn(const int32_t InNetId, const EntityID InEntity)
     {
         GameCore::Entity Handle(BoundWorld, InEntity);
@@ -443,26 +503,89 @@ struct NetSession::Impl final : public INetEntityMap
         int32_t NetId = InNetId;
         GameCore::EntityGuid Guid = Handle.GetGuid();
         std::string Name = Handle.GetName();
-        GameCore::EntityGuid ParentGuid;
-        if(Handle.HasParent()) { ParentGuid = GameCore::Entity(BoundWorld, Handle.GetParent()).GetGuid(); }
+        GameCore::EntityGuid ParentGuid = ParentGuidOf(Handle);
         Ar << NetId << Guid.Hi << Guid.Lo << Name << ParentGuid.Hi << ParentGuid.Lo;
-
-        std::vector<ComponentTypeID> Types;
-        for(size_t Index = 0; Index < GameCore::GetComponentTypeCount(); ++Index)
-        {
-            const ComponentTypeID Type = ComponentTypeID(Index);
-            if(GameCore::FindComponentSerializer(Type) && Handle.HasComponentByType(Type)) { Types.push_back(Type); }
-        }
-
-        uint16_t Count = uint16_t(Types.size());
-        Ar << Count;
-        for(const ComponentTypeID Type : Types)
-        {
-            std::string TypeName = GameCore::GetComponentType(Type)->Name;
-            Ar << TypeName;
-            WriteComponentData(Ar, Type, Handle.GetComponentByType(Type), *this);
-        }
+        WriteComponents(Ar, Handle, SerializedTypes(Handle));
         return Ar;
+    }
+
+    /*
+     * Networked entities that changed shape since the last flush: components
+     * gained or lost, a new parent, or no longer replicated (bReplicate off,
+     * or the NetComponent removed -- clients destroy it, and turned back on
+     * it spawns again under a new NetId). Reliable, so in order with spawns.
+     */
+    void SendStructureChanges()
+    {
+        std::vector<int32_t> Unreplicated;
+        for(const auto& Entry : NetToEntity)
+        {
+            const int32_t          NetId = Entry.first;
+            const GameCore::Entity Handle(BoundWorld, Entry.second);
+            const NetComponent*    Net = Handle.GetComponent<NetComponent>();
+            if(!Net || !Net->bReplicate)
+            {
+                Unreplicated.push_back(NetId);
+                continue;
+            }
+
+            Structure& Known = Structures[NetId];
+            if(StructureDirty.count(Entry.second.Pack()) != 0)
+            {
+                std::vector<ComponentTypeID> Types = SerializedTypes(Handle);
+                std::vector<ComponentTypeID> Added, Removed;
+                std::set_difference(Types.begin(), Types.end(), Known.Types.begin(), Known.Types.end(), std::back_inserter(Added));
+                std::set_difference(Known.Types.begin(), Known.Types.end(), Types.begin(), Types.end(), std::back_inserter(Removed));
+
+                if(!Added.empty())
+                {
+                    EngineCore::Archive Ar = BeginMessage(ENetMessage::AddComponents);
+                    int32_t ID = NetId;
+                    Ar << ID;
+                    WriteComponents(Ar, Handle, Added);
+                    Broadcast(Ar);
+                }
+                if(!Removed.empty())
+                {
+                    EngineCore::Archive Ar = BeginMessage(ENetMessage::RemoveComponents);
+                    int32_t  ID    = NetId;
+                    uint16_t Count = uint16_t(Removed.size());
+                    Ar << ID << Count;
+                    for(const ComponentTypeID Type : Removed)
+                    {
+                        std::string TypeName = GameCore::GetComponentType(Type)->Name;
+                        Ar << TypeName;
+                        DropBaselines(NetId, Type);
+                    }
+                    Broadcast(Ar);
+                }
+                Known.Types = std::move(Types);
+            }
+
+            const GameCore::EntityGuid Parent = ParentGuidOf(Handle);
+            if(Parent != Known.Parent)
+            {
+                EngineCore::Archive Ar = BeginMessage(ENetMessage::Reparent);
+                int32_t ID = NetId;
+                GameCore::EntityGuid Guid = Parent;
+                Ar << ID << Guid.Hi << Guid.Lo;
+                Broadcast(Ar);
+                Known.Parent = Parent;
+            }
+        }
+        StructureDirty.clear();
+
+        for(const int32_t NetId : Unreplicated)
+        {
+            EngineCore::Archive Ar = BeginMessage(ENetMessage::Destroy);
+            int32_t ID = NetId;
+            Ar << ID;
+            Broadcast(Ar);
+
+            const EntityID Entity = FromNetId(NetId);
+            if(NetComponent* Net = GameCore::Entity(BoundWorld, Entity).GetComponent<NetComponent>()) { Net->NetId = 0; }
+            UnmapEntity(NetId);
+        }
     }
 
     /* One state entry: InMask's fields of InType on InComponent. */
@@ -575,8 +698,14 @@ struct NetSession::Impl final : public INetEntityMap
             Items.clear();
             EngineCore::Archive EntityAr = EngineCore::Archive::ForWriting();
 
+            /* Only what clients were told it has: state for anything else would wait on a spawn that never comes. */
+            const auto Known = Structures.find(Entry.first);
+            if(Known == Structures.end()) { continue; }
+            const std::vector<ComponentTypeID>& KnownTypes = Known->second.Types;
+
             for(const ComponentTypeID Type : InTypes)
             {
+                if(!std::binary_search(KnownTypes.begin(), KnownTypes.end(), Type)) { continue; }
                 const void* Component = Handle.GetComponentByType(Type);
                 if(!Component) { continue; }
 
@@ -690,9 +819,13 @@ struct NetSession::Impl final : public INetEntityMap
             InNet.NetId = NextNetId++;
             MapEntity(InNet.NetId, InEntity.GetID());
             Spawned.emplace_back(InNet.NetId, InEntity.GetID());
+            Structures[InNet.NetId] = Structure{ SerializedTypes(InEntity), ParentGuidOf(InEntity) };
         });
-        if(!HasWelcomedClients()) { return; }
         for(const auto& Entry : Spawned) { Broadcast(BuildSpawn(Entry.first, Entry.second)); }
+
+        /* Then what changed on the ones already sent -- kept current with no one to tell, too. */
+        SendStructureChanges();
+        if(!HasWelcomedClients()) { return; }
 
         /* Then each client's state, unreliably. */
         const std::vector<ComponentTypeID> Types = ReplicatedTypes();
@@ -835,32 +968,8 @@ struct NetSession::Impl final : public INetEntityMap
         if(!Entity.IsSet())                                 { Entity = BoundWorld->CreateEntity(Name.c_str(), Guid).GetID(); }
         MapEntity(NetId, Entity);
         GameCore::Entity Handle(BoundWorld, Entity);
-
-        for(uint16_t Index = 0; Index < Count && !Ar.HasError(); ++Index)
-        {
-            std::string TypeName;
-            Ar << TypeName;
-            const GameCore::ComponentTypeInfo* Info = GameCore::FindComponentType(TypeName.c_str());
-            if(!Info || !GameCore::FindComponentSerializer(Info->ID))
-            {
-                /* A type this build lacks: skip its chunk. */
-                uint16_t Version = 0;
-                if(Ar.OpenChunk(EngineCore::MakeArchiveTag('D', 'A', 'T', 'A'), Version)) { Ar.CloseChunk(); }
-                continue;
-            }
-
-            if(void* Live = Handle.GetComponentByType(Info->ID))
-            {
-                ReadComponentData(Ar, Info->ID, Live, *this);
-            }
-            else
-            {
-                std::vector<uint8_t> Bytes(Info->SizeBytes, 0);
-                const GameCore::ComponentSerializerInfo* Serializer = GameCore::FindComponentSerializer(Info->ID);
-                if(Serializer->DefaultsFn) { Serializer->DefaultsFn(Bytes.data()); }
-                if(ReadComponentData(Ar, Info->ID, Bytes.data(), *this)) { Handle.AddComponentByType(Info->ID, Bytes.data()); }
-            }
-        }
+        Structures[NetId] = Structure();
+        ReadComponents(Ar, Handle, NetId, Count);
 
         /* Its id, whatever the component data said. */
         NetComponent* Net = Handle.GetComponent<NetComponent>();
@@ -878,6 +987,107 @@ struct NetSession::Impl final : public INetEntityMap
             Smooth.Target = *Handle.GetComponent<GameCore::TransformComponent>();
             PushSample(Smooth);
         }
+    }
+
+    /* InCount components, written by WriteComponents after its count: each
+     * read over the entity's own, or added. Every type named is recorded as
+     * told, read or not, so state for it is never waited on. */
+    void ReadComponents(EngineCore::Archive& Ar, const GameCore::Entity& InHandle, const int32_t InNetId, const uint16_t InCount)
+    {
+        std::vector<ComponentTypeID>& Told = Structures[InNetId].Types;
+        for(uint16_t Index = 0; Index < InCount && !Ar.HasError(); ++Index)
+        {
+            std::string TypeName;
+            Ar << TypeName;
+            const GameCore::ComponentTypeInfo* Info = GameCore::FindComponentType(TypeName.c_str());
+            if(Info && std::find(Told.begin(), Told.end(), Info->ID) == Told.end()) { Told.push_back(Info->ID); }
+            if(!Info || !GameCore::FindComponentSerializer(Info->ID))
+            {
+                /* A type this build lacks: skip its chunk. */
+                uint16_t Version = 0;
+                if(Ar.OpenChunk(EngineCore::MakeArchiveTag('D', 'A', 'T', 'A'), Version)) { Ar.CloseChunk(); }
+                continue;
+            }
+
+            if(void* Live = InHandle.GetComponentByType(Info->ID))
+            {
+                ReadComponentData(Ar, Info->ID, Live, *this);
+            }
+            else
+            {
+                std::vector<uint8_t> Bytes(Info->SizeBytes, 0);
+                const GameCore::ComponentSerializerInfo* Serializer = GameCore::FindComponentSerializer(Info->ID);
+                if(Serializer->DefaultsFn) { Serializer->DefaultsFn(Bytes.data()); }
+                if(ReadComponentData(Ar, Info->ID, Bytes.data(), *this)) { InHandle.AddComponentByType(Info->ID, Bytes.data()); }
+            }
+        }
+    }
+
+    /* Components a sent entity gained. One already destroyed here needs nothing. */
+    void ClientAddComponents(EngineCore::Archive& Ar)
+    {
+        int32_t  NetId = 0;
+        uint16_t Count = 0;
+        Ar << NetId << Count;
+        if(Ar.HasError() || !BoundWorld) { return; }
+        const EntityID Entity = FromNetId(NetId);
+        if(!Entity.IsSet() || !BoundWorld->IsAlive(Entity)) { return; }
+        ReadComponents(Ar, GameCore::Entity(BoundWorld, Entity), NetId, Count);
+    }
+
+    void ClientRemoveComponents(EngineCore::Archive& Ar)
+    {
+        int32_t  NetId = 0;
+        uint16_t Count = 0;
+        Ar << NetId << Count;
+        if(Ar.HasError() || !BoundWorld) { return; }
+        const EntityID         Entity = FromNetId(NetId);
+        const GameCore::Entity Handle(BoundWorld, Entity);
+        for(uint16_t Index = 0; Index < Count && !Ar.HasError(); ++Index)
+        {
+            std::string TypeName;
+            Ar << TypeName;
+            const GameCore::ComponentTypeInfo* Info = GameCore::FindComponentType(TypeName.c_str());
+            if(!Info || !Entity.IsSet()) { continue; }
+
+            const auto Found = Structures.find(NetId);
+            if(Found != Structures.end())
+            {
+                std::vector<ComponentTypeID>& Told = Found->second.Types;
+                Told.erase(std::remove(Told.begin(), Told.end(), Info->ID), Told.end());
+            }
+            if(BoundWorld->IsAlive(Entity)) { Handle.RemoveComponentByType(Info->ID); }
+        }
+    }
+
+    void ClientReparent(EngineCore::Archive& Ar)
+    {
+        int32_t              NetId = 0;
+        GameCore::EntityGuid ParentGuid;
+        Ar << NetId << ParentGuid.Hi << ParentGuid.Lo;
+        if(Ar.HasError() || !BoundWorld) { return; }
+        const EntityID Entity = FromNetId(NetId);
+        if(!Entity.IsSet() || !BoundWorld->IsAlive(Entity)) { return; }
+
+        /* Replaces a link still waiting on its parent. */
+        PendingParents.erase(std::remove_if(PendingParents.begin(), PendingParents.end(),
+                                            [&](const PendingParent& InPending) { return InPending.Child == Entity; }),
+                             PendingParents.end());
+
+        /* The Transform is local, and the server's own follows: no keeping the world one. */
+        if(ParentGuid.IsSet())
+        {
+            PendingParents.push_back({ Entity, ParentGuid });
+            ResolveParents();
+        }
+        else
+        {
+            GameCore::Entity(BoundWorld, Entity).ClearParent(false);
+        }
+
+        /* Samples under the old parent mean something else under the new one. */
+        const auto Smooth = Interpolations.find(NetId);
+        if(Smooth != Interpolations.end()) { Smooth->second.Samples.clear(); }
     }
 
     /* A child can arrive before its parent; link what can be linked now. */
@@ -936,9 +1146,8 @@ struct NetSession::Impl final : public INetEntityMap
         std::vector<uint8_t> Scratch;
         if(!Component)
         {
-            /* Not here: read it past. A component the entity lacks, or an
-             * entity already destroyed, is done with; one not spawned yet is
-             * not. */
+            /* Not here: read it past. Whether that is done with is decided
+             * below, once it is read. */
             Scratch.assign(GameCore::GetComponentType(Type)->SizeBytes, 0);
             Into = Scratch.data();
         }
@@ -955,7 +1164,16 @@ struct NetSession::Impl final : public INetEntityMap
             if(Mask & (1u << Field)) { ReadReplicatedField(Ar, Fields[Field], Into, *this); }
         }
         if(Ar.HasError()) { return true; }
-        if(!Component) { return Entity.IsSet() || DestroyedIds.count(NetId) != 0; }
+        if(!Component)
+        {
+            if(!Entity.IsSet()) { return DestroyedIds.count(NetId) != 0; }
+
+            /* Told of and gone: removed here, done with. Not told of: its
+             * AddComponents is still on the way, so wait for it. */
+            const auto Known = Structures.find(NetId);
+            return Known != Structures.end()
+                && std::find(Known->second.Types.begin(), Known->second.Types.end(), Type) != Known->second.Types.end();
+        }
 
         if(Smooth) { PushSample(*Smooth); }
 
@@ -1110,6 +1328,9 @@ struct NetSession::Impl final : public INetEntityMap
                 }
                 case ENetMessage::Spawn:   ClientSpawn(Ar);         break;
                 case ENetMessage::Destroy: ClientDestroy(Ar);       break;
+                case ENetMessage::AddComponents:    ClientAddComponents(Ar);    break;
+                case ENetMessage::RemoveComponents: ClientRemoveComponents(Ar); break;
+                case ENetMessage::Reparent:         ClientReparent(Ar);         break;
                 case ENetMessage::StateBatch: ReceiveStateBatch(Ar); break;
                 case ENetMessage::Rpc:     ReceiveRpc(InPeer, Ar);  break;
                 default:                   Ar.SetError("a message a server does not send"); break;
@@ -1139,6 +1360,13 @@ struct NetSession::Impl final : public INetEntityMap
             Self.Broadcast(Ar);
         }
         Self.UnmapEntity(NetId);
+    }
+
+    /* The server's cue to look at a networked entity's components in the next flush. */
+    static void OnComponentChanged(const EntityID InEntity, const ComponentTypeID, void* InUserData)
+    {
+        Impl& Self = *static_cast<Impl*>(InUserData);
+        if(Self.Role == ENetRole::Server) { Self.StructureDirty.insert(InEntity.Pack()); }
     }
 
     // === RPCs: RouterSink's per-session half =============================
@@ -1384,17 +1612,25 @@ void NetSession::BindWorld(GameCore::World& InWorld, const char* InLevelName)
     UnbindWorld();
     P->BoundWorld      = &InWorld;
     P->LevelName       = InLevelName ? InLevelName : "";
-    P->DestroyedHandle = InWorld.OnEntityDestroyed().Add(&Impl::OnEntityDestroyed, P);
+    P->DestroyedHandle        = InWorld.OnEntityDestroyed().Add(&Impl::OnEntityDestroyed, P);
+    P->ComponentAddedHandle   = InWorld.OnComponentAdded().Add(&Impl::OnComponentChanged, P);
+    P->ComponentRemovedHandle = InWorld.OnComponentRemoved().Add(&Impl::OnComponentChanged, P);
 }
 
 void NetSession::UnbindWorld()
 {
     if(!P->BoundWorld) { return; }
     P->BoundWorld->OnEntityDestroyed().Remove(P->DestroyedHandle);
-    P->DestroyedHandle = GameCore::DelegateHandle();
+    P->BoundWorld->OnComponentAdded().Remove(P->ComponentAddedHandle);
+    P->BoundWorld->OnComponentRemoved().Remove(P->ComponentRemovedHandle);
+    P->DestroyedHandle        = GameCore::DelegateHandle();
+    P->ComponentAddedHandle   = GameCore::DelegateHandle();
+    P->ComponentRemovedHandle = GameCore::DelegateHandle();
     P->BoundWorld = nullptr;
     P->NetToEntity.clear();
     P->EntityToNet.clear();
+    P->Structures.clear();
+    P->StructureDirty.clear();
     for(auto& Client : P->Clients)
     {
         Client.second.Baselines.clear();

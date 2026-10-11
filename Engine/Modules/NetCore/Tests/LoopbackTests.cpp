@@ -3,7 +3,8 @@
  * one process, each with its own World, stepped together. Covers the
  * handshake, spawning (a new entity, and one the client's level already has),
  * field replication, entity references, Server / Client / Multicast RPCs, the
- * ownership check, a late joiner's snapshot, destruction and disconnects.
+ * ownership check, a late joiner's snapshot, destruction and disconnects,
+ * and an entity changing shape after its spawn.
  *
  * Real sockets on 127.0.0.1, on a port the OS picks, so it runs beside
  * anything else. Every wait is bounded.
@@ -316,6 +317,131 @@ namespace
             const PawnComponent* Pawn = There.IsSet() ? Entity(&ClientWorld, There).GetComponent<PawnComponent>() : nullptr;
             return Pawn && Pawn->Health == 79;
         }), "and a change made just after a spawn reaches it");
+
+        Client.Stop();
+        Server.UnbindWorld();
+        Server.Stop();
+        Client.UnbindWorld();
+    }
+}
+
+namespace
+{
+    /* An entity changing shape after its spawn: components gained and lost,
+     * a new parent, and replication turned off and on. Run clean, then with
+     * state packets lost each way, where a batch can outrun the
+     * AddComponents it depends on. */
+    void TestStructureChanges(const uint32_t InLossPercent)
+    {
+        const std::string Run = InLossPercent == 0 ? "" : " (" + std::to_string(InLossPercent) + "% loss)";
+        auto Say = [&](const char* InWhat) { return std::string(InWhat) + Run; };
+
+        World ServerWorld;
+        World ClientWorld;
+        NetSession Server;
+        NetSession Client;
+        const Pair Both{ &Server, &Client };
+
+        NetConfig ServerConfig;
+        ServerConfig.Port                 = 0;
+        ServerConfig.SimulatedLossPercent = InLossPercent;
+        Check(Server.Start(ENetRole::Server, ServerConfig), Say("a server listens").c_str());
+        Server.BindWorld(ServerWorld, "Shapes");
+
+        NetConfig ClientConfig;
+        std::strcpy(ClientConfig.ServerAddress, "127.0.0.1");
+        ClientConfig.Port                 = Server.GetPort();
+        ClientConfig.SimulatedLossPercent = InLossPercent;
+        ClientConfig.InterpolationDelayMs = 0;   // Transforms as they arrive, to compare them
+        Check(Client.Start(ENetRole::Client, ClientConfig), Say("a client connects").c_str());
+        Client.BindWorld(ClientWorld, "Shapes");
+        Check(StepUntil(Both, [&] { return Client.IsConnected(); }), Say("it is welcomed").c_str());
+
+        /* The client's copy of a server entity, as of now; unset if it has none. */
+        auto ClientOf = [&](const Entity& InServer) -> Entity
+        {
+            const NetComponent* Net = InServer.GetComponent<NetComponent>();
+            const EntityID There = Net && Net->NetId != 0 ? Client.FindEntityByNetId(Net->NetId) : EntityID();
+            return Entity(&ClientWorld, There.IsSet() && ClientWorld.IsAlive(There) ? There : EntityID());
+        };
+        auto HealthThere = [&](const Entity& InServer) -> int32_t
+        {
+            const Entity There = ClientOf(InServer);
+            const PawnComponent* Pawn = There.GetID().IsSet() ? There.GetComponent<PawnComponent>() : nullptr;
+            return Pawn ? Pawn->Health : -1;
+        };
+        auto XThere = [&](const Entity& InServer) -> float
+        {
+            const Entity There = ClientOf(InServer);
+            const TransformComponent* Transform = There.GetID().IsSet() ? There.GetComponent<TransformComponent>() : nullptr;
+            return Transform ? Transform->Position.GetX() : -1.0f;
+        };
+
+        Entity Shape = ServerWorld.CreateEntity("Shape");
+        Shape.AddComponent<NetComponent>();
+        Shape.AddComponent<TransformComponent>();
+        Entity Anchor = ServerWorld.CreateEntity("Anchor");
+        Anchor.AddComponent<NetComponent>();
+        Anchor.AddComponent<TransformComponent>();
+        Check(StepUntil(Both, [&] { return ClientOf(Shape).GetID().IsSet() && ClientOf(Anchor).GetID().IsSet(); }),
+              Say("both entities spawn").c_str());
+        Check(!ClientOf(Shape).HasComponent<PawnComponent>(), Say("without the component it does not have yet").c_str());
+
+        // --- a component gained after the spawn -----------------------------------
+        PawnComponent Gained;
+        Gained.Health = 42;
+        Shape.AddComponent(Gained);
+        Check(StepUntil(Both, [&] { return HealthThere(Shape) == 42; }), Say("a component added after the spawn reaches the client").c_str());
+        Shape.GetComponent<PawnComponent>()->Health = 43;
+        Check(StepUntil(Both, [&] { return HealthThere(Shape) == 43; }), Say("and its later changes follow").c_str());
+
+        /* Added and changed in the same frame as its state goes out. */
+        Entity Second = ServerWorld.CreateEntity("Second");
+        Second.AddComponent<NetComponent>();
+        Check(StepUntil(Both, [&] { return ClientOf(Second).GetID().IsSet(); }), Say("a bare entity spawns").c_str());
+        Second.AddComponent<PawnComponent>();
+        Step(Both);
+        Second.GetComponent<PawnComponent>()->Health = 5;
+        Check(StepUntil(Both, [&] { return HealthThere(Second) == 5; }), Say("a change right after the add lands").c_str());
+
+        // --- a component lost -------------------------------------------------------
+        Shape.RemoveComponent<PawnComponent>();
+        Check(StepUntil(Both, [&] { return ClientOf(Shape).GetID().IsSet() && !ClientOf(Shape).HasComponent<PawnComponent>(); }),
+              Say("a removed component goes on the client too").c_str());
+        Shape.GetComponent<TransformComponent>()->Position = EngineCore::Vector3(12.0f, 0.0f, 0.0f);
+        Check(StepUntil(Both, [&] { return Near(XThere(Shape), 12.0f); }), Say("the entity's other state still flows").c_str());
+
+        /* Gained back: everything again, not a diff against the old one. */
+        PawnComponent Back;
+        Back.Health = 7;
+        Shape.AddComponent(Back);
+        Check(StepUntil(Both, [&] { return HealthThere(Shape) == 7; }), Say("re-added, it arrives whole").c_str());
+
+        // --- a new parent ----------------------------------------------------------
+        Shape.SetParent(Anchor.GetID(), false);
+        Check(StepUntil(Both, [&] { return ClientOf(Shape).GetParent() == ClientOf(Anchor).GetID(); }),
+              Say("a new parent reaches the client").c_str());
+        Shape.ClearParent(false);
+        Check(StepUntil(Both, [&] { return ClientOf(Shape).GetID().IsSet() && !ClientOf(Shape).HasParent(); }),
+              Say("and so does losing it").c_str());
+
+        // --- replication turned off and on -------------------------------------------
+        const EntityID Before = ClientOf(Shape).GetID();
+        Shape.GetComponent<NetComponent>()->bReplicate = 0;
+        Check(StepUntil(Both, [&] { return !ClientWorld.IsAlive(Before); }), Say("bReplicate off destroys it on the client").c_str());
+        Check(Shape.GetComponent<NetComponent>()->NetId == 0, Say("and the server forgets its NetId").c_str());
+
+        Shape.GetComponent<NetComponent>()->bReplicate = 1;
+        Check(StepUntil(Both, [&] { return HealthThere(Shape) == 7; }), Say("turned back on, it spawns again, whole").c_str());
+
+        Second.RemoveComponent<NetComponent>();
+        const EntityID SecondThere = Client.FindEntityByNetId(Server.GetNetId(Second.GetID()));
+        Check(StepUntil(Both, [&] { return !ClientWorld.IsAlive(SecondThere); }),
+              Say("removing the NetComponent destroys it on the client").c_str());
+
+        /* Nothing left waiting: a plain change still arrives. */
+        Shape.GetComponent<TransformComponent>()->Position = EngineCore::Vector3(30.0f, 0.0f, 0.0f);
+        Check(StepUntil(Both, [&] { return Near(XThere(Shape), 30.0f); }), Say("state still flows at the end").c_str());
 
         Client.Stop();
         Server.UnbindWorld();
@@ -644,6 +770,8 @@ int main()
     Check(GServerLog.ServerMoves == MovesBefore + 1, "stopping the last session restores local RPCs");
 
     TestLossyState();
+    TestStructureChanges(0);
+    TestStructureChanges(50);
 
     if(GFailures == 0) { std::printf("NetCore loopback: all passed\n"); }
     else               { std::fprintf(stderr, "NetCore loopback: %d failure(s)\n", GFailures); }
