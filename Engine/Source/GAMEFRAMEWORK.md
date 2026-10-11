@@ -2,7 +2,8 @@
 
 The game's phase, its rules and its players, the same from C++, Lua and script
 graphs. Public API: `Public/NimbleEngine/GameState.h`, `GameMode.h`,
-`PlayerState.h` and `GameSession.h`.
+`PlayerState.h` and `GameSession.h`. A walkthrough that builds a game mode in all three:
+`Engine/Docs/Guides/GameModeGuide.md`.
 
 ```
            C++ (GameSession)             Lua / script graphs ("Game" library)

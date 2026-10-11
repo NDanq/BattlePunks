@@ -788,6 +788,12 @@ if(NIMBLEENGINE_BUILD_TESTS)
         add_test(NAME NimbleEngine.AvatarGuideTests COMMAND NimbleEngineAvatarGuideTests
                  WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineAvatarGuideTests>")
         set_tests_properties(NimbleEngine.AvatarGuideTests PROPERTIES TIMEOUT 120 LABELS "smoke")
+        add_executable(NimbleEngineGameModeGuideTests Tests/GameModeGuideTests.cpp)
+        target_link_libraries(NimbleEngineGameModeGuideTests PRIVATE NimbleEngine::NimbleEngine NodeGraph::NodeGraph)
+        set_target_properties(NimbleEngineGameModeGuideTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
+        add_test(NAME NimbleEngine.GameModeGuideTests COMMAND NimbleEngineGameModeGuideTests
+                 WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineGameModeGuideTests>")
+        set_tests_properties(NimbleEngine.GameModeGuideTests PROPERTIES TIMEOUT 120 LABELS "smoke")
     endif()
 endif()
 
