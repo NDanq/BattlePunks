@@ -59,7 +59,8 @@ namespace RenderCore
          * root motion) and the pose stays as it was. */
         void Update(float InDeltaSeconds, bool bInEvaluate = true);
 
-        /* Evaluates where it is, without moving: after a seek or a change. */
+        /* Evaluates where it is, without moving: after a seek or a change.
+         * The look-at goes straight to its target (Update eases it there). */
         void Evaluate();
 
         /* The first layer's current state: its dominant clip's playhead and
@@ -110,6 +111,10 @@ namespace RenderCore
          * space (X and Z): the travel of the first layer's clips set to
          * EAnimRootMotion::Extract, blended as their poses are. */
         const AnimVec3& GetRootMotion() const { return RootMotion; }
+
+        /* The look-at's angle now, degrees: its parameter clamped, weighted
+         * and eased toward (AnimStateAsset.h). 0 without one. */
+        float GetLookAngle() const { return LookAngle; }
 
     private:
         struct Sample
@@ -181,6 +186,12 @@ namespace RenderCore
         void  HoldRoot(const Sample& InSample, AnimLocalPose& InOutPose) const;
         /* InLayer's state InState at InPhase; an additive layer's as its additive pose. */
         void  EvaluateState(const LayerRuntime& InLayer, const StateRuntime& InState, float InPhase, AnimLocalPose& OutPose);
+        /* The pose where it is, the look-at where it is. */
+        void  EvaluatePose();
+        /* The angle the look-at heads for: its parameter, clamped and weighted. */
+        float LookTarget() const;
+        /* Turns the look-at's bones by LookAngle, after the layers. */
+        void  ApplyLookAt(AnimLocalPose& InOutPose) const;
         bool  ConditionsHold(const TransitionRuntime& InTransition, const LayerRuntime& InLayer) const;
         void  UpdateTransitions(LayerRuntime& InOutLayer);
 
@@ -204,6 +215,15 @@ namespace RenderCore
         std::vector<FinishedState> Finished;
         AnimVec3                 RootMotion;
         AnimLocalPose            RefPose;          // the skeleton's: what root travel is measured in
+
+        /* The look-at, from State's; no bones: none. */
+        struct LookBoneRuntime { int32_t Bone = -1; float Share = 0.0f; };
+        std::vector<LookBoneRuntime> LookBones;
+        int32_t  LookParameter = -1, LookWeightParameter = -1;
+        float    LookMin = 0.0f, LookMax = 0.0f, LookResponse = 0.0f;
+        AnimVec3 LookAxis;
+        float    LookAngle   = 0.0f;
+        bool     bLookPlaced = false;   // false: the next update starts it at its target, not easing there
 
         /* SetOverlayClip's. */
         std::shared_ptr<const AnimClipData> Overlay;

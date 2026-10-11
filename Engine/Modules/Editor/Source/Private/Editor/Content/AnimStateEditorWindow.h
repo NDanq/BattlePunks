@@ -59,6 +59,7 @@ private:
     void BuildUi();
     QWidget* BuildParameters();
     QWidget* BuildLayers();
+    QWidget* BuildLookAt();
     QWidget* BuildStates();
     QWidget* BuildTransitions();
     QWidget* BuildPreview();
@@ -71,6 +72,7 @@ private:
     void FillParameters();
     void FillLayers();
     void FillLayer();
+    void FillLookAt();
     void FillStates();
     void FillState();
     void FillTransitions();
@@ -123,6 +125,14 @@ private:
     QComboBox*      LayerEntry  = nullptr;
     QComboBox*      LayerBlend  = nullptr;   // override or additive
     QComboBox*      LayerBase   = nullptr;   // an additive layer's base
+
+    QComboBox*      LookParameter = nullptr;
+    QComboBox*      LookWeightParameter = nullptr;
+    QDoubleSpinBox* LookMin      = nullptr;
+    QDoubleSpinBox* LookMax      = nullptr;
+    QDoubleSpinBox* LookAxis[3]  = { nullptr, nullptr, nullptr };
+    QDoubleSpinBox* LookResponse = nullptr;
+    QLineEdit*      LookBones    = nullptr;   // "bone:share, bone:share"
 
     AnimStateGraph* Graph       = nullptr;
     QGroupBox*      StateBox    = nullptr;

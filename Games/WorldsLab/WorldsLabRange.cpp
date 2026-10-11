@@ -350,6 +350,8 @@ NIMBLE_DEFINE_AVATAR_SIMULATION(RangeMove, 0.1f)
     {
         Animation->SetFloat("Speed", float(Speed));
         Animation->SetBool("Grounded", S.bGrounded || S.AirTime < 0.12);
+        /* The spine pitches with the view (the anim state's look-at): its angle is up-positive, the camera's down. */
+        Animation->SetFloat("AimPitch", float(-S.Pitch));
     }
 
     // --- The camera: the boom turned to the view, the camera kept out of walls ------------

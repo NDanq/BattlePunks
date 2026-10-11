@@ -5,7 +5,7 @@ with the arms in step with the legs. This guide follows the engine's CrashDummy
 (`Engine/Content/Characters/CrashDummy`) and drives it three ways: C++, Lua and
 a ScriptGraph.
 
-**74** bones · **14** clips · **2** layers · **4** parameters · **2** notifies · **1** sync group
+**74** bones · **14** clips · **2** layers · **5** parameters · **2** notifies · **1** sync group · **1** look-at
 
 Reference: [ANIMATION.md](../../Modules/RenderCore/ANIMATION.md) (the animation
 system), [Editor README](../../Modules/Editor/README.md) (the tools).
@@ -108,7 +108,7 @@ import Engine/Content/Characters/CrashDummy/CrashDummy.glb Engine/Content/Charac
 ## 3. Build the anim state
 
 Create `CrashDummy.nmanimstate` (Content Browser › New Anim State) and give it
-four parameters and two layers.
+five parameters, two layers and a look-at.
 
 ![The anim state editor: parameters Speed, Grounded, Jump and Armed; the FullBody layer's graph with Locomotion, JumpStart, Fall and Land; a live preview of the dummy](Images/CrashDummy/animstate-editor.jpg)
 
@@ -133,6 +133,39 @@ frame, whatever the clip lengths. A transition between two states of one group
 > **Air time.** UpperBody's weight is scaled by `Grounded`, so in the air the
 > full body's flailing arms play. The weight follows the parameter instantly,
 > with no blend; see [Pitfalls](#8-pitfalls).
+
+### Look up and down with the camera
+
+A look-at runs after the layers: the float parameter `AimPitch` (degrees, up
+positive) bends the spine about the model's X axis. In the anim state editor's
+**Look-At** box:
+
+| Field | Value | Why |
+|---|---|---|
+| Angle Parameter | `AimPitch` | add it as a Float first |
+| Weight Parameter | (none) | `Armed` would look only with the pistol up |
+| Min, Max | -40, 55 | how far down and up the torso goes |
+| Axis | X 1, Y 0, Z 0 | imported characters face -Z, so +X turns the chest up |
+| Response | 15 /s | eases out mouse flicks; 0 snaps |
+| Bones | `DEF-spine.001:0.25, DEF-spine.002:0.35, DEF-spine.003:0.4` | the shares add to 1 |
+
+![The dummy from the side three times: hunched forward looking down, upright, and leaning back with the pistol raised](Images/CrashDummy/lookat-sweep.jpg)
+
+*AimPitch at about -30, 0 and +30 degrees, from the demo prefab's nod. The
+arms ride `DEF-spine.003`, so the pistol tilts with the chest.*
+
+Stop the chain at the chest. The arms then take the whole angle and the gun
+points where the camera does; adding the neck bones would give the head more
+angle than the gun. Drive it each frame from the camera:
+
+```cpp
+Animation->SetFloat("AimPitch", float(-CameraPitch));   // the camera's pitch is down-positive
+```
+```lua
+self.Animation:SetFloat("AimPitch", -cameraPitch)
+```
+
+In a graph, an **Animation: Set Float** with Name `AimPitch` on the tick chain.
 
 ## 4. Notifies and sockets
 
@@ -555,6 +588,7 @@ end,
 | `Grounded` | bool | 1 | on the ground; also the upper layer's weight | `SetBool` | `animation:SetBool` | Animation: Set Bool |
 | `Jump` | trigger | 0 | take off; spent by the transition | `SetTrigger` | `animation:SetTrigger` | Animation: Set Trigger |
 | `Armed` | bool | 0 | draw (true) or holster (false) | `SetBool` | `animation:SetBool` | Animation: Set Bool |
+| `AimPitch` | float | 0 | the look-at's angle, degrees, up positive (clamped -40..55) | `SetFloat` | `animation:SetFloat` | Animation: Set Float |
 
 ### Events
 
@@ -595,8 +629,8 @@ end,
 ## In a full game
 
 The same character as a third-person shooter: a C++ avatar simulation sets
-Speed and Grounded as it walks the physics, Lua shoots and seats the pistol, and
-holding right mouse scopes the camera in.
+Speed, Grounded and AimPitch (from the camera's pitch) as it walks the physics,
+Lua shoots and seats the pistol, and holding right mouse scopes the camera in.
 
 | Scoped, firing | Walking, holstered |
 |---|---|
