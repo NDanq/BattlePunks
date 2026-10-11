@@ -1388,6 +1388,246 @@ static void TestLightLabGraph()
     EngineCore::SetFileProvider(Previous);
 }
 
+/*
+ * WorldsLab's Shooting Range UI (Engine/Docs/Guides/UI): the HUD with its logic graph, the pause menu
+ * (a Lua Script, native and built-in actions), and the settings document whose graph reads and
+ * writes config vars and saves the user's file. Game and Input stand in (they need a GameSession),
+ * as does the module's C++ action Range.Resume; the config vars the game module and the Audio module
+ * declare are declared here.
+ */
+NIMBLE_CONFIG_FLOAT(GTestRangeLook,   "WorldsLab", "RangeLookSensitivity", 1.0f, nullptr);
+NIMBLE_CONFIG_BOOL(GTestRangeHelp,    "WorldsLab", "RangeShowHelp",        true, nullptr);
+NIMBLE_CONFIG_FLOAT(GTestRangeMaster, "Audio",     "MasterVolume",         1.0f, nullptr);
+NIMBLE_CONFIG_FLOAT(GTestRangeEffects, "Audio",    "SFXVolume",            1.0f, nullptr);
+
+static int GRangeResumes = 0;
+UI_DEFINE_ACTIONS(Range)
+{
+    Actions.Add("Resume", [](const UIActionContext&) { ++GRangeResumes; });
+}
+
+/* The settings guide's C++ alternative to the graph: a native action sets the var. */
+UI_DEFINE_ACTIONS(RangeSettings)
+{
+    Actions.Add("SetLook", [](const UIActionContext& InContext)
+    {
+        const GameCore::EventArgs& Args = *InContext.Args;
+        if(Args.Count < 1 || Args.Args[0].Type != GameCore::EventArg::ET_Number) { return; }
+        if(EngineCore::ConfigVar* Var = EngineCore::ConfigFindVarByPath("WorldsLab.RangeLookSensitivity"))
+        {
+            Var->SetFloat(float(Args.Args[0].Number));
+        }
+    }, "Sets the range's look sensitivity");
+}
+
+/* ... and its Lua alternative: a Script the document names. */
+static const char* const RangeSettingsLua = R"LUA(
+RangeSettings = RangeSettings or {}
+
+function RangeSettings.Refresh()
+    UI.SetNumber("RangeSettings.Look", Config.GetNumber("WorldsLab.RangeLookSensitivity"))
+    UI.SetBool("RangeSettings.Help", Config.GetBool("WorldsLab.RangeShowHelp"))
+end
+
+function RangeSettings.SetHelp(on)
+    Config.SetBool("WorldsLab.RangeShowHelp", on ~= 0)
+end
+)LUA";
+
+static void TestWorldsLabRangeUI()
+{
+    std::printf("[worldslab range ui]\n");
+    EngineCore::ConfigVar* Shadows = EngineCore::ConfigFindVarByPath("Shadows.Enabled");
+    Expect(Shadows != nullptr, "the shadows config var is there to set");
+    if(!Shadows) return;
+    const bool bShadowsBefore = Shadows->GetBool();
+    Shadows->SetBool(true);
+
+    EngineCore::FilesystemProvider Game(std::string(UI_REPO_ROOT) + "/Games/WorldsLab");
+    EngineCore::IFileProvider* Previous = EngineCore::GetFileProvider();
+    EngineCore::SetFileProvider(&Game);
+
+    GameCore::World World;
+    GameCore::ScriptEngine Scripts;
+    Expect(Scripts.Initialize(), "a script engine for the range's UI");
+    Scripts.BindWorld(&World);
+    Expect(Scripts.RunString("Game = { SetPaused = function(p) Paused = p end }\n"
+                             "Input = { SetMouseCaptured = function(c) Captured = c end }\n"
+                             "Events.On('Range.ResetScore', function() ScoreWasReset = true end)\n", "stand-ins"), "Game and Input stand in");
+    Expect(Scripts.RunFile("Scripts/ShootingRange/RangeShooter.lua"), "the shooter's Lua still loads");
+
+    UISystem System;
+    System.SetScriptEngine(&Scripts);
+    System.SetWorld(&World);
+    SetScriptUISystem(&System);
+    const UIVec2 Viewport{ 1920, 1080 };
+
+    const std::string UserFile = (std::filesystem::temp_directory_path() / "NimbleUIRangeUser.ini").string();
+    std::filesystem::remove(UserFile);
+    EngineCore::ConfigSetUserFile(UserFile);
+
+    const auto Settle = [&]()
+    {
+        System.RunQueuedActions();
+        System.Tick(0.016f);
+        System.Update(Viewport);
+    };
+    const auto Click = [&](UIDocumentInstance& InDoc, const char* InWidget)
+    {
+        System.Update(Viewport);
+        const UIVec2 At = CentreOf(InDoc, InWidget);
+        System.ProcessInput(Pointer(At, true, false));
+        System.ProcessInput(Pointer(At, false, true));
+        Settle();
+    };
+
+    // --- The HUD: values the game and Lua push, and a graph that reads the config ---------------
+    const char* const Hud = "Content/UI/ShootingRange/RangeHUD.nmui";
+    System.SetValue("Range.Hits", UIValue::String("7"));
+    System.SetValue("Range.Time", UIValue::String("2:41"));
+    Expect(System.Open(Hud) != UI_DOCUMENT_INVALID, "the HUD opens");
+    Settle();
+    UIDocumentInstance* HudDoc = System.Find(Hud);
+    Expect(HudDoc != nullptr, "and is found by its path");
+    if(!HudDoc) { return; }
+    auto* Time = dynamic_cast<UIText*>(HudDoc->FindWidget("Time"));
+    auto* Hits = dynamic_cast<UIText*>(HudDoc->FindWidget("Hits"));
+    Expect(Time && Time->Text == "2:41" && Hits && Hits->Text == "7", "its texts follow the data store (the mode's clock, Lua's tally)");
+    Expect(HudDoc->IsShown(HudDoc->FindWidget("Help")->GetIndex()), "the controls hint is shown while RangeShowHelp is on");
+    System.SetValue("Range.Time", UIValue::String("2:42"));
+    Settle();
+    Expect(Time->Text == "2:42", "a new value reaches the text on the next update");
+
+    // The same calls the Lua and C++ guide examples make.
+    const std::string HudLua = "assert(UI.SetText('" + std::string(Hud) + "', 'Status', 'RELOADING'))\n"
+                               "assert(UI.SetVisible('" + std::string(Hud) + "', 'Crosshair', true))\n";
+    Expect(Scripts.RunString(HudLua.c_str(), "hud-lua"), "Lua: UI.SetText and UI.SetVisible on the HUD");
+    auto* Status = dynamic_cast<UIText*>(HudDoc->FindWidget("Status"));
+    Expect(Status && Status->Text == "RELOADING", "they land on the widgets");
+    UIWidget* Crosshair = HudDoc->FindWidget("Crosshair");
+    Expect(Crosshair && HudDoc->SetPropertyText(*Crosshair, "Visibility", "Hidden"), "C++: SetPropertyText on a found widget");
+    Expect(!System.IsOpen("Content/UI/Nope.nmui") && System.Close(Hud) && !System.IsOpen(Hud), "C++: IsOpen and Close by path");
+
+    GTestRangeHelp.SetBool(false);
+    System.Open(Hud);
+    Settle();
+    HudDoc = System.Find(Hud);
+    Expect(HudDoc && !HudDoc->IsShown(HudDoc->FindWidget("Help")->GetIndex()), "opened with RangeShowHelp off, the graph collapses the hint");
+    GTestRangeHelp.SetBool(true);
+    System.Close(Hud);
+
+    // --- The pause menu ---------------------------------------------------------------------------
+    const char* const Menu = "Content/UI/ShootingRange/PauseMenu.nmui";
+    const char* const Settings = "Content/UI/ShootingRange/Settings.nmui";
+    System.Open(Hud);
+    Expect(System.Open(Menu) != UI_DOCUMENT_INVALID, "the pause menu opens");
+    Settle();
+    UIDocumentInstance* MenuDoc = System.Find(Menu);
+    if(!MenuDoc) { return; }
+    Expect(Scripts.RunString("assert(type(RangeMenu) == 'table' and type(RangeMenu.ResetScore) == 'function')", "menu-lua"),
+           "its Script ran as it first opened: RangeMenu is a global");
+
+    Click(*MenuDoc, "ResetScore");
+    Expect(Scripts.RunString("assert(ScoreWasReset == true)", "reset"), "Lua: Reset Score emitted the event the shooter listens for");
+    auto* Notice = dynamic_cast<UIText*>(MenuDoc->FindWidget("Notice"));
+    Expect(Notice && Notice->Text == "Score reset", "and the menu said so, with UI.SetText");
+
+    Click(*MenuDoc, "Resume");
+    Expect(GRangeResumes == 1, "Native: Resume reached the C++ action");
+    UIInputFrame Back;
+    Back.bBack = true;
+    System.ProcessInput(Back);
+    Settle();
+    Expect(GRangeResumes == 2, "and so does Back (OnBack)");
+
+    Click(*MenuDoc, "SettingsButton");
+    Expect(System.IsOpen(Settings), "Native:UI.Open put the settings over the menu");
+
+    // --- The settings: a graph over config vars -----------------------------------------------------
+    GTestRangeMaster.SetFloat(0.5f);
+    GTestRangeLook.SetFloat(1.5f);
+    System.Close(Settings);
+    System.Open(Settings);
+    Settle();
+    UIDocumentInstance* SettingsDoc = System.Find(Settings);
+    if(!SettingsDoc) { return; }
+    const UIValue* Master = System.GetValue("RangeSettings.Master");
+    const UIValue* Look = System.GetValue("RangeSettings.Look");
+    const UIValue* ShadowsKey = System.GetValue("RangeSettings.Shadows");
+    Expect(Master && Master->AsNumber() == 0.5 && Look && Look->AsNumber() == 1.5 && ShadowsKey && ShadowsKey->B,
+           "On Document Open filled the store from the config vars (Refresh)");
+
+    Click(*SettingsDoc, "Shadows");
+    Expect(!Shadows->GetBool(), "unticking Shadows set the engine's config var, through the graph");
+    Click(*SettingsDoc, "Help");
+    Expect(!GTestRangeHelp.GetBool(), "unticking the hint set the game's var");
+    HudDoc = System.Find(Hud);
+    Expect(HudDoc && !HudDoc->IsShown(HudDoc->FindWidget("Help")->GetIndex()), "and hid the hint on the HUD at once, in another document");
+
+    SettingsDoc->SetFocus(int32_t(SettingsDoc->FindWidget("Look")->GetIndex()));
+    UIInputFrame Right;
+    Right.bNavRight = true;
+    System.ProcessInput(Right);
+    Settle();
+    Expect(std::fabs(GTestRangeLook.GetFloat() - 1.55f) < 1e-4f, "Right on the slider steps the look sensitivity var");
+
+    Click(*SettingsDoc, "Defaults");
+    Expect(GTestRangeMaster.GetFloat() == 1.0f && GTestRangeLook.GetFloat() == 1.0f && Shadows->GetBool() && GTestRangeHelp.GetBool(),
+           "Defaults restored the game's values");
+    Expect(System.GetValue("RangeSettings.Look")->AsNumber() == 1.0 && System.GetValue("RangeSettings.Shadows")->B,
+           "and the controls follow");
+    HudDoc = System.Find(Hud);
+    Expect(HudDoc && HudDoc->IsShown(HudDoc->FindWidget("Help")->GetIndex()), "and the hint is back");
+
+    GTestRangeLook.SetFloat(2.0f);
+    Settle();
+    System.ProcessInput(Back);
+    Settle();
+    Expect(!System.IsOpen(Settings) && System.IsOpen(Menu), "Back closes the settings and leaves the pause menu");
+    std::ifstream Saved(UserFile);
+    const std::string SavedText((std::istreambuf_iterator<char>(Saved)), std::istreambuf_iterator<char>());
+    Expect(SavedText.find("[WorldsLab]") != std::string::npos && SavedText.find("RangeLookSensitivity=2") != std::string::npos,
+           "closing the settings saved what differs from the game's values to the user's file");
+    Expect(SavedText.find("RangeShowHelp") == std::string::npos, "and nothing that equals them");
+    Saved.close();
+    Expect(Scripts.GetErrorCount() == 0, "the range's UI logic raised no Lua errors");
+
+    // --- The settings guide's alternatives to the graph: a native action, and a Lua Script ----------
+    {
+        UIActionList Native;
+        Expect(Native.Parse("Native:RangeSettings.SetLook(1.25)"), "a native action with a number argument parses");
+        System.QueueActions(Native, nullptr, nullptr);
+        System.RunQueuedActions();
+        Expect(std::fabs(GTestRangeLook.GetFloat() - 1.25f) < 1e-4f, "C++: a native action sets the config var from its argument");
+
+        Expect(Scripts.RunString(RangeSettingsLua, "settings-lua"), "the guide's settings Script loads");
+        GTestRangeLook.SetFloat(0.75f);
+        UIActionList Lua;
+        Expect(Lua.Parse("Lua:RangeSettings.Refresh; Lua:RangeSettings.SetHelp(0)"), "Lua actions chain");
+        System.QueueActions(Lua, nullptr, nullptr);
+        System.RunQueuedActions();
+        Expect(!GTestRangeHelp.GetBool() && System.GetValue("RangeSettings.Look")->AsNumber() == 0.75
+               && System.GetValue("RangeSettings.Help") != nullptr,
+               "Lua: Refresh fills the store from the vars, SetHelp(0) turns the var off");
+        GTestRangeHelp.SetBool(true);
+        Expect(Scripts.GetErrorCount() == 0, "and neither raised a Lua error");
+    }
+
+    EngineCore::ConfigSetUserFile("");
+    std::filesystem::remove(UserFile);
+    Shadows->SetBool(bShadowsBefore);
+    GTestRangeLook.ResetToDefault();
+    GTestRangeMaster.ResetToDefault();
+    GTestRangeEffects.ResetToDefault();
+    GTestRangeHelp.ResetToDefault();
+    System.CloseAll(true);
+    System.SetScriptEngine(nullptr);
+    SetScriptUISystem(nullptr);
+    Scripts.UnbindWorld();
+    Scripts.Shutdown();
+    EngineCore::SetFileProvider(Previous);
+}
+
 /* A document opened mid-frame (by game code, after input) shows its graph's
  * OnOpen values on the frame it first paints. */
 static void TestOpenBeforePaint()
@@ -1875,7 +2115,7 @@ static void TestOnGpu()
     Expect(bInit, "the renderer starts on the GPU with no window");
     if(bInit)
     {
-        const EngineCore::Size Viewport(1280, 720);
+        EngineCore::Size Viewport(1280, 720);
         const RenderCore::RenderView View = RenderCore::RenderView::MakeOrthographic(Viewport, EngineCore::Vector3(0.0, 0.0, -10.0), -1.0f, 1000.0f);
         Rend.SetViewOverride(&View);
         Rend.SetClearGradient(RenderCore::RENDER_DEFAULT_SCENE, EngineCore::Color(52, 74, 104, 255), EngineCore::Color(18, 22, 30, 255));
@@ -2016,6 +2256,55 @@ static void TestOnGpu()
             System.ClearRenderer();
         }
 
+        /* WorldsLab's Shooting Range UI at 1080p, from the source tree, for the docs (Engine/Docs/Guides/UI):
+         * the HUD, the pause menu over it, and the settings over that. Their logic does not run here, so the
+         * values the game and its graph would publish are set by hand. */
+        {
+            const EngineCore::Size SavedViewport = Viewport;
+            Viewport = EngineCore::Size(1920, 1080);
+            const RenderCore::RenderView View1080 = RenderCore::RenderView::MakeOrthographic(Viewport, EngineCore::Vector3(0.0, 0.0, -10.0), -1.0f, 1000.0f);
+            Rend.SetViewOverride(&View1080);
+            Rend.SetClearGradient(RenderCore::RENDER_DEFAULT_SCENE, EngineCore::Color(74, 72, 66, 255), EngineCore::Color(20, 21, 24, 255));
+
+            const auto Load = [&](UISystem& InSystem, const char* InFile, const char* InPath)
+            {
+                std::ifstream File(std::string(UI_REPO_ROOT) + "/Games/WorldsLab/Content/UI/ShootingRange/" + InFile, std::ios::binary);
+                const std::string Xml((std::istreambuf_iterator<char>(File)), std::istreambuf_iterator<char>());
+                Expect(InSystem.OpenAsset(Parse(Xml, InFile), InPath) != UI_DOCUMENT_INVALID, InFile);
+            };
+            UISystem System;
+            System.SetRenderer(&Rend);
+            const char* const Strings[][2] = { { "Range.Mag", "12" }, { "Range.Reserve", "68" }, { "Range.Hits", "14" }, { "Range.Shots", "18" },
+                                               { "Range.Accuracy", "78%" }, { "Range.Time", "2:41" }, { "Range.Status", "RELOADING" } };
+            for(const auto& Each : Strings) { System.SetValue(Each[0], UIValue::String(Each[1])); }
+            System.SetValue("Range.MagFill", UIValue::Number(12.0 / 17.0));
+            Load(System, "RangeHUD.nmui", "Content/UI/ShootingRange/RangeHUD.nmui");
+            if(UIDocumentInstance* Hud = System.Find("Content/UI/ShootingRange/RangeHUD.nmui"))
+            {
+                Hud->SetPropertyText(*Hud->FindWidget("Crosshair"), "Visibility", "Visible");
+            }
+            EngineCore::Image HudShot;
+            Expect(Shot(System, "range_hud", HudShot), "the range HUD frame reads back");
+
+            Load(System, "PauseMenu.nmui", "Content/UI/ShootingRange/PauseMenu.nmui");
+            EngineCore::Image PauseShot;
+            Expect(Shot(System, "range_pause", PauseShot), "the range pause menu frame reads back");
+
+            System.SetValue("RangeSettings.Master", UIValue::Number(0.8));
+            System.SetValue("RangeSettings.Effects", UIValue::Number(1.0));
+            System.SetValue("RangeSettings.Look", UIValue::Number(1.5));
+            System.SetValue("RangeSettings.Shadows", UIValue::Bool(true));
+            System.SetValue("RangeSettings.Help", UIValue::Bool(true));
+            Load(System, "Settings.nmui", "Content/UI/ShootingRange/Settings.nmui");
+            EngineCore::Image SettingsShot;
+            Expect(Shot(System, "range_settings", SettingsShot), "the range settings frame reads back");
+            System.ClearRenderer();
+
+            Viewport = SavedViewport;
+            Rend.SetViewOverride(&View);
+            Rend.SetClearGradient(RenderCore::RENDER_DEFAULT_SCENE, EngineCore::Color(52, 74, 104, 255), EngineCore::Color(18, 22, 30, 255));
+        }
+
         /* The newer widgets together: a text field with a selection, a grid, a scroll box. */
         {
             UISystem System;
@@ -2085,6 +2374,7 @@ int main()
     TestListView();
     TestSandboxProfile();
     TestLightLabGraph();
+    TestWorldsLabRangeUI();
     TestHotReload();
     TestCost();
 #if WITH_EDITOR
