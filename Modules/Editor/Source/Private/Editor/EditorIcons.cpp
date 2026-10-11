@@ -55,6 +55,8 @@ namespace
         { "volume-2.svg",        QStyle::SP_MediaVolume },
         { "audio-waveform.svg",  QStyle::SP_MediaVolume },
         { "captions.svg",        QStyle::SP_FileDialogDetailedView },
+        { "eye.svg",             QStyle::SP_FileDialogContentsView },
+        { "circle-question-mark.svg", QStyle::SP_TitleBarContextHelpButton },
         { "terrain.svg",              QStyle::SP_DriveHDIcon },
         { "terrain-raise.svg",        QStyle::SP_ArrowUp },
         { "terrain-lower.svg",        QStyle::SP_ArrowDown },

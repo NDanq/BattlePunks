@@ -10,6 +10,7 @@
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QDebug>
 #include <QDir>
 #include <QFileInfo>
 #include <QIcon>
@@ -23,6 +24,7 @@
 #include "Public/Editor/EditorMainWindow.h"
 #include "Private/Editor/Build/ContentCook.h"
 #include "Private/Editor/Content/AssetImport.h"
+#include "Private/Editor/ComponentDocs.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/EditorTheme.h"
 #include "Private/Editor/Graph/GraphAssets.h"
@@ -93,8 +95,18 @@ int main(int argc, char* argv[])
                                            QStringLiteral("Run a console command once the viewport is up. Repeatable."),
                                            QStringLiteral("line"));
     Parser.addOption(CommandOption);
+    const QCommandLineOption DocsOption(QStringLiteral("generate-component-docs"),
+                                        QStringLiteral("Write Engine/Docs/Components/<Name>.md for every component without one, then exit."));
+    Parser.addOption(DocsOption);
     Parser.addPositionalArgument(QStringLiteral("world"), QStringLiteral("A .nmworld file to open."), QStringLiteral("[world]"));
     Parser.process(App);
+
+    if(Parser.isSet(DocsOption))
+    {
+        const int Written = EditorDocs::GenerateMissingComponentDocs();
+        qInfo().noquote() << "Wrote" << Written << "component pages to" << EditorDocs::GetDocsRoot();
+        return 0;
+    }
 
     /* Resolve the positional path BEFORE changing directory, so a path
      * relative to where the editor was launched still means that. */

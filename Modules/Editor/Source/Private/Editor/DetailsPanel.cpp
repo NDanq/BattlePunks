@@ -29,6 +29,9 @@
 #include "Public/Editor/EditorDocument.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Prefab.h"
+#include "Private/Editor/ComponentDocs.h"
+#include "Private/Editor/DocumentationWindow.h"
+#include "Private/Editor/EditorIcons.h"
 #include "Private/Editor/Prefab/PrefabAssets.h"
 #include "Private/Editor/PropertyWidgets.h"
 #include "Private/Editor/Content/ContentPaths.h"
@@ -447,6 +450,24 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
     Toggle->setAutoRaise(true);
     Toggle->setStyleSheet(QStringLiteral("QToolButton { font-weight: bold; }"));
     HeaderRow->addWidget(Toggle);
+
+    /* The ?: this component's reference page (Engine/Docs/Components), written first if it has none. */
+    auto* Help = new QToolButton(Section);
+    Help->setIcon(EditorIcons::Get(EditorIcons::EIcon::Help));
+    Help->setToolTip(QStringLiteral("Open the %1 documentation").arg(TypeName));
+    Help->setAutoRaise(true);
+    connect(Help, &QToolButton::clicked, this, [Help, InType]()
+    {
+        const QString Page = EditorDocs::EnsureComponentDoc(InType);
+        if(Page.isEmpty())
+        {
+            QToolTip::showText(Help->mapToGlobal(QPoint(0, Help->height())),
+                               QStringLiteral("No documentation: the engine's Docs folder was not found"), Help);
+            return;
+        }
+        DocumentationWindow::Open(Page);
+    });
+    HeaderRow->addWidget(Help);
     HeaderRow->addStretch(1);
 
     if(State.Defaults)
