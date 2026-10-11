@@ -70,6 +70,11 @@ namespace NimbleEngine
         void OnStart() override;
         void OnClientConnected(int32_t InClient, GameCore::EntityID InPlayer) override;
 
+        /* GetAvatarPrefab asked for no particular player: what this mode spawns
+         * unless a Player Start or [Avatar] DefaultPrefab decides. For tools
+         * (Collaboration's content report), not play. */
+        const char* PeekAvatarPrefab() { return GetAvatarPrefab(GameCore::EntityID()); }
+
     protected:
         /* nullptr: the start's, else [Avatar] DefaultPrefab. */
         virtual const char* GetAvatarPrefab(GameCore::EntityID InPlayer) { (void)InPlayer; return nullptr; }

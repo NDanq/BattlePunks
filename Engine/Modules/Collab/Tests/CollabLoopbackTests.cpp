@@ -414,7 +414,7 @@ namespace
             Out.bOk        = true;
             Out.Module     = "WorldsLabGame";
             Out.SchemaHash = 0x2f8d597745b8342full;
-            Out.Worlds     = { { "A", "Content/Levels/A.nmworld", "Arena", true }, { "B", "Content/Levels/B.nmworld", "Explore", false } };
+            Out.Worlds     = { { "A", "Content/Levels/A.nmworld", "Arena", true }, { "B", "Content/Levels/B.nmworld", "Explore", false, "its mode, Explore, isn't a NetGameMode" } };
             for(const fs::directory_entry& Each : fs::recursive_directory_iterator(fs::u8path(InGameDir) / "Content"))
             {
                 const std::string Name = Each.path().generic_u8string();
@@ -461,11 +461,12 @@ namespace
 
         ToolchainReport Report;
         Check(ParseContentReport("module\tWorldsLabGame\nschema\t2f8d597745b8342f\nchecked\t13\n"
-                                 "world\tShootingRange\tContent/Levels/ShootingRange.nmworld\tWorldsLabRange\t1\n"
-                                 "world\tCourtyard\tContent/Levels/Courtyard.nmworld\tWorldsLabCourtyard\t0\n"
+                                 "world\tShootingRange\tContent/Levels/ShootingRange.nmworld\tWorldsLabRange\t1\t\n"
+                                 "world\tCourtyard\tContent/Levels/Courtyard.nmworld\tWorldsLabCourtyard\t0\tits mode, WorldsLabCourtyard, isn't a NetGameMode\n"
                                  "problem\tContent/Levels/A/x.nmentity\tis not valid XML\n", Report), "a report parses");
         Check(Report.Worlds.size() == 2 && Report.Worlds[0].Name == "ShootingRange" && Report.Worlds[0].bNetworked
               && Report.Worlds[1].GameMode == "WorldsLabCourtyard" && !Report.Worlds[1].bNetworked, "its worlds, networked or not");
+        Check(Report.Worlds[0].Why.empty() && Report.Worlds[1].Why == "its mode, WorldsLabCourtyard, isn't a NetGameMode", "and why not");
         Check(Report.Module == "WorldsLabGame" && Report.SchemaHash == 0x2f8d597745b8342full && Report.Checked == 13, "its fields");
         Check(Report.Problems.size() == 1 && Report.Problems[0].Path == "Content/Levels/A/x.nmentity"
               && Report.Problems[0].Message == "is not valid XML", "its problem");
@@ -714,6 +715,7 @@ namespace
               "a run of world B");
         const ClientEvent* BInvite = AliceLog.Find(ClientEvent::EType::PlayInvite);
         Check(BInvite && BInvite->Invite.GameMode == "Explore" && !BInvite->Invite.bNetworked, "its invite says the mode isn't networked");
+        Check(BInvite && BInvite->Invite.NetworkNote == "its mode, Explore, isn't a NetGameMode", "and why");
         Alice.RequestStopPlay();
         PumpUntil(Server, { &Alice, &Carol }, [&]() { return !Game.bRunning; });
 

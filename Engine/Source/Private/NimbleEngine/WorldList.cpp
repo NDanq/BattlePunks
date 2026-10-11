@@ -237,6 +237,24 @@ bool IsNetworkedGameMode(const char* InName)
     return bNetworked;
 }
 
+std::string GetGameModeAvatarPrefab(const char* InName)
+{
+    const GameModeType* Type = FindGameMode(InName);
+    if(!Type)
+    {
+        return std::string();
+    }
+    IGameMode* Mode = Type->Create();
+    std::string Prefab;
+    if(NetGameMode* Net = dynamic_cast<NetGameMode*>(Mode))
+    {
+        const char* Named = Net->PeekAvatarPrefab();
+        Prefab = Named ? Named : "";
+    }
+    Type->Destroy(Mode);
+    return Prefab;
+}
+
 void RegisterWorldLevels()
 {
     UnregisterWorldLevels();

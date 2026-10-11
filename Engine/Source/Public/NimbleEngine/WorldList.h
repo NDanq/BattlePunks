@@ -64,6 +64,10 @@ namespace NimbleEngine
      * level where players won't see each other. */
     NE_API bool IsNetworkedGameMode(const char* InName);
 
+    /* A NetGameMode's own avatar prefab (PeekAvatarPrefab): "" if InName isn't
+     * one, or leaves it to the Player Start and [Avatar] DefaultPrefab. */
+    NE_API std::string GetGameModeAvatarPrefab(const char* InName);
+
     /* RegisterGameMode<BrickBreakerMode>("BrickBreaker"): new and delete in the
      * caller's image. */
     template <class ModeType>

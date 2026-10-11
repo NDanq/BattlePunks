@@ -514,10 +514,11 @@ struct CollabServer::Impl
             In.Invite.Port = State.Port;
             In.Invite.GameMode   = State.GameMode;
             In.Invite.bNetworked = State.bNetworked;
+            In.Invite.NetworkNote = State.NetworkNote;
             if(!State.bNetworked)
             {
-                CORE_LOG_WARN("[Collab] session " + std::to_string(In.Id) + ": " + In.Invite.Level + "'s mode, " + State.GameMode
-                              + ", isn't networked: players won't see each other")
+                CORE_LOG_WARN("[Collab] session " + std::to_string(In.Id) + ": players in " + In.Invite.Level + " won't see each other: "
+                              + State.NetworkNote)
             }
             CORE_LOG("[Collab] session " + std::to_string(In.Id) + ": Play Together is up on UDP " + std::to_string(State.Port))
             Broadcast(In, In.Invite, 0);

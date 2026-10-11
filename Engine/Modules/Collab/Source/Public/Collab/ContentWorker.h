@@ -71,7 +71,8 @@ namespace Collab
         std::string Name;
         std::string File;          // runtime-relative
         std::string GameMode;
-        bool        bNetworked = false;   // a NetGameMode: each client gets an avatar
+        bool        bNetworked = false;   // players there see each other: a NetGameMode whose avatars have a Net component
+        std::string Why;                  // !bNetworked: why not
     };
 
     struct COLLAB_API ToolchainReport

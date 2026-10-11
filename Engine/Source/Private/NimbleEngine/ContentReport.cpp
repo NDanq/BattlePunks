@@ -8,15 +8,18 @@
 #include <system_error>
 #include <vector>
 
+#include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreMemory.h"
 #include "Public/Core/CorePlatform.h"
 #include "Public/Core/CoreThread.h"
 #include "Public/GameCore/Prefab.h"
+#include "Public/GameCore/Components/NetComponent.h"
 #include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldPackage.h"
 #include "Public/NimbleEngine/GameModule.h"
+#include "Public/NimbleEngine/PlayerStart.h"
 #include "Public/NimbleEngine/WorldList.h"
 #if WITH_NETCORE
 #include "Public/NetCore/NetSession.h"
@@ -31,8 +34,10 @@
  *     module  <name>              the game module that loaded ("" if none)
  *     schema  <16 hex digits>     NetCore's ComputeSchemaHash (0 without NetCore)
  *     checked <count>             worlds and prefabs loaded
- *     world   <name> <file> <mode> <1|0>   each [World_*]: its game mode,
- *                                 and whether that's a NetGameMode
+ *     world   <name> <file> <mode> <1|0> <why>   each [World_*]: its game mode,
+ *                                 whether players there see each other (a
+ *                                 NetGameMode whose avatar prefabs have a Net
+ *                                 component), and if not, why
  *     problem <path>  <message>   <path> relative to the project, '/' separated
  *
  * A problem is a warning or error logged while loading a file (an unknown
@@ -168,6 +173,86 @@ namespace
         }
     }
 
+    /*
+     * Whether players in InWorld see each other: its mode is a NetGameMode,
+     * and every avatar prefab it can spawn -- the mode's own, else each Player
+     * Start's, else [Avatar] DefaultPrefab -- has a Net component (else it
+     * isn't replicated, and its client can't drive it). OutWhy says why not.
+     */
+    bool CheckWorldNetworked(const WorldEntry& InWorld, const fs::path& InProject, std::string& OutWhy)
+    {
+        if(!IsNetworkedGameMode(InWorld.GameMode.c_str()))
+        {
+            OutWhy = InWorld.GameMode.empty() ? std::string("it has no game mode")
+                                              : "its mode, " + InWorld.GameMode + ", isn't a NetGameMode";
+            return false;
+        }
+
+        std::vector<std::string> Prefabs;
+        const std::string ModePrefab = GetGameModeAvatarPrefab(InWorld.GameMode.c_str());
+        if(!ModePrefab.empty())
+        {
+            Prefabs.push_back(ModePrefab);
+        }
+        else
+        {
+            /* The level's Player Starts; one that names none takes the default. */
+            bool bNeedsDefault = true;
+            GameCore::World Scratch;
+            if(GameCore::LoadWorldFile(Generic(InProject / fs::u8path(InWorld.File)).c_str(), Scratch))
+            {
+                Scratch.Each<PlayerStartComponent>([&](const GameCore::Entity&, PlayerStartComponent& InStart)
+                {
+                    if(!InStart.bEnabled)
+                    {
+                        return;
+                    }
+                    if(InStart.AvatarPrefab[0] != '\0')
+                    {
+                        Prefabs.push_back(InStart.AvatarPrefab);
+                        bNeedsDefault = false;
+                    }
+                    else
+                    {
+                        bNeedsDefault = true;
+                    }
+                });
+            }
+            if(bNeedsDefault)
+            {
+                const EngineCore::ConfigVar* Default = EngineCore::ConfigFindVar("Avatar", "DefaultPrefab");
+                if(Default && Default->GetString()[0] != '\0')
+                {
+                    Prefabs.push_back(Default->GetString());
+                }
+            }
+        }
+        std::sort(Prefabs.begin(), Prefabs.end());
+        Prefabs.erase(std::unique(Prefabs.begin(), Prefabs.end()), Prefabs.end());
+        if(Prefabs.empty())
+        {
+            OutWhy = "it names no avatar prefab (its Player Start, its mode, or [Avatar] DefaultPrefab)";
+            return false;
+        }
+
+        for(const std::string& Prefab : Prefabs)
+        {
+            GameCore::World Scratch;
+            const GameCore::Entity Root = Scratch.SpawnPrefab(Prefab.c_str()).GetRoot();
+            if(!Root.IsValid() || !Root.IsAlive())
+            {
+                OutWhy = "its avatar prefab, " + Prefab + ", doesn't load";
+                return false;
+            }
+            if(!Root.GetComponent<GameCore::NetComponent>())
+            {
+                OutWhy = "its avatar prefab, " + Prefab + ", has no Net component";
+                return false;
+            }
+        }
+        return true;
+    }
+
     bool EndsWith(const std::string& InText, const char* InSuffix)
     {
         const size_t Length = std::char_traits<char>::length(InSuffix);
@@ -198,14 +283,17 @@ int Application::ExecReport(const char* InDefaultModule, const ContentReportOpti
 #if WITH_NETCORE
         SchemaHash = NetCore::ComputeSchemaHash();
 #endif
-        /* Each listed world's mode: networked or not (Play Together warns). */
-        for(const WorldEntry& Each : ReadWorldList())
-        {
-            WorldLines += "world\t" + OneLine(Each.Name) + "\t" + OneLine(Each.File) + "\t" + OneLine(Each.GameMode) + "\t"
-                        + (IsNetworkedGameMode(Each.GameMode.c_str()) ? "1" : "0") + "\n";
-        }
         const fs::path Project = fs::u8path(InOptions.ProjectDir);
         const fs::path Engine  = InOptions.EngineDir.empty() ? fs::path() : fs::u8path(InOptions.EngineDir);
+
+        /* Each listed world: whether players in it see each other (Play Together warns). */
+        for(const WorldEntry& Each : ReadWorldList())
+        {
+            std::string Why;
+            const bool bNetworked = CheckWorldNetworked(Each, Project, Why);
+            WorldLines += "world\t" + OneLine(Each.Name) + "\t" + OneLine(Each.File) + "\t" + OneLine(Each.GameMode) + "\t"
+                        + (bNetworked ? "1" : "0") + "\t" + OneLine(Why) + "\n";
+        }
 
         /* Every world and prefab, in a stable order. */
         std::vector<fs::path> Files;

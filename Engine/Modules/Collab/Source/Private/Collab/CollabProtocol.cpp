@@ -221,6 +221,10 @@ void PlayInviteMessage::Serialize(EngineCore::Archive& Ar)
     {
         Ar << GameMode << bNetworked;
     }
+    if(Ar.IsSaving() || !Ar.IsAtEnd())
+    {
+        Ar << NetworkNote;
+    }
 }
 
 void PlayEndedMessage::Serialize(EngineCore::Archive& Ar)
@@ -239,6 +243,10 @@ void WorkerPlayStateMessage::Serialize(EngineCore::Archive& Ar)
     if(Ar.IsSaving() || !Ar.IsAtEnd())
     {
         Ar << GameMode << bNetworked;
+    }
+    if(Ar.IsSaving() || !Ar.IsAtEnd())
+    {
+        Ar << NetworkNote;
     }
 }
 
