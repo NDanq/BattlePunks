@@ -674,6 +674,16 @@ AvatarPredictionStats AvatarWorld::TakePredictionStats(const GameCore::EntityID 
     return Stats;
 }
 
+/* One frame of a simulation, then its avatar's quantized replicated fields
+ * snapped to what a client reads (ComponentReplication.h): the server, the
+ * predicting client and a replay all step on from the very same values. */
+static void StepSimulation(const Simulation& InSim, World& InWorld, const EntityID InAvatar,
+                           const AvatarInputFrame& InFrame)
+{
+    InSim.Step(InWorld, InAvatar, InFrame);
+    GameCore::QuantizeEntityReplicatedFields(InWorld, InAvatar);
+}
+
 void AvatarWorld::ApplyRemoteInput(const GameCore::EntityID InAvatar, const AvatarInputFrame& InFrame)
 {
     if(!P->Bound) { return; }
@@ -682,7 +692,7 @@ void AvatarWorld::ApplyRemoteInput(const GameCore::EntityID InAvatar, const Avat
     if(!Sim) { return; }
     AvatarInputFrame Frame = InFrame;
     Frame.Seconds = std::min(Frame.Seconds, Sim->MaxStepSeconds);
-    Sim->Step(*P->Bound, InAvatar, Frame);
+    StepSimulation(*Sim, *P->Bound, InAvatar, Frame);
 }
 
 bool AvatarWorld::HandleCorrection(const GameCore::EntityID InEntity, const int32_t InInputAck)
@@ -698,7 +708,7 @@ bool AvatarWorld::HandleCorrection(const GameCore::EntityID InEntity, const int3
      * so the avatar ends where it was shown unless the server disagreed. */
     Impl::Predicted& State = P->Avatars[InEntity.Pack()];
     while(!State.Frames.empty() && State.Frames.front().Sequence <= InInputAck) { State.Frames.pop_front(); }
-    for(const AvatarInputFrame& Frame : State.Frames) { Sim->Step(InWorld, InEntity, Frame); }
+    for(const AvatarInputFrame& Frame : State.Frames) { StepSimulation(*Sim, InWorld, InEntity, Frame); }
 
     if(const GameCore::TransformComponent* Transform = InWorld.GetEntity(InEntity).GetComponent<GameCore::TransformComponent>())
     {
@@ -821,7 +831,7 @@ void AvatarWorld::Update(const float InSeconds, const bool bInSend)
 
                 if(Sim && Net->bPredicted)
                 {
-                    Sim->Step(InWorld, Avatar, Frame);
+                    StepSimulation(*Sim, InWorld, Avatar, Frame);
                     Impl::Predicted& After = P->Avatars[Avatar.Pack()];   // the step may have reached in
                     After.Frames.push_back(Frame);
                     while(After.Frames.size() > AVATAR_HISTORY_MAX) { After.Frames.pop_front(); }   // the server has stopped answering
@@ -835,7 +845,7 @@ void AvatarWorld::Update(const float InSeconds, const bool bInSend)
             else if(Sim && !bClient)
             {
                 /* The server's own avatar, or a standalone game's. */
-                Sim->Step(InWorld, Avatar, Frame);
+                StepSimulation(*Sim, InWorld, Avatar, Frame);
             }
             continue;
         }

@@ -169,6 +169,19 @@ GAMECORE_DEFINE_COMPONENT_REPLICATION(TurretComponent)   // in one .cpp
 
 - Fields are encoded by type, never as raw bytes: `Vector3`'s layout depends on
   `WITH_SIMD`.
+- **Quantized fields travel smaller.** A `float` or `Vector3` can say how
+  precise it needs to be:
+
+  ```cpp
+  Rep.Field("Position", &TransformComponent::Position).Precision(0.01f);   // whole 0.01s: a variable-length integer
+  Rep.Field("Rotation", &TransformComponent::Rotation).Angles();           // degrees, 2 bytes each, read back in [-180, 180)
+  ```
+
+  `TransformComponent` does both, plus `Scale` to 0.001. A client reads the
+  rounded value; the server keeps its own. An avatar's quantized fields are
+  snapped after every simulation step on both ends
+  (`QuantizeEntityReplicatedFields`), so prediction stays exact. The
+  encoding is part of the schema hash.
 - A type allows at most 32 fields, one bit each in the change mask.
 - `TransformComponent` replicates Position, Rotation and Scale out of the box.
 
@@ -258,9 +271,15 @@ its own arguments, as `PvpFighterComponent::ServerFire` does.
 **Prediction.**
 - An entity with `NetComponent::bPredicted`, on the client that owns it, is
   never interpolated. The server's Transform is written as it arrives.
+- **Replays start from the server's whole state.** A batch carries only the
+  fields that changed. So the client keeps every replicated component as the
+  server last stated it, and before a replay it copies all of them, every
+  component, onto the predicted entity. Fields the batch left out would
+  otherwise still hold the client's own later prediction, and the replay
+  would apply that input twice.
 - After each poll, the handler set by
   `NimbleEngine::SetNetCorrectionHandler` runs once for each such entity
-  whose state arrived. It gets the replicated `NetComponent::InputAck`, the
+  whose state arrived (any of its components). It gets the replicated `NetComponent::InputAck`, the
   last input the server applied, so the game can replay the inputs after it.
 - NetFacade.h and GUIDE.md section 8 describe the game's side.
 
@@ -288,6 +307,10 @@ resent: a whole round trip of frozen state. So state does not go reliably.
 - **Every server tick, each client gets a `StateBatch`,** even an empty one,
   which also keeps its clock. A batch stays under 1200 bytes; a big tick
   splits into several, between entities, never within one.
+- **Entries are compact.** Each starts with its NetId, wire type and field
+  mask as variable-length integers: usually 3 or 4 bytes, not 10. With
+  quantization, a moving entity's Position update fell from 22 bytes to 9
+  (the `state:` line of `NetCore.Loopback`).
 - **The client acknowledges** the batches it applied (`StateAck`: the newest,
   and the 32 before it as bits), unreliably too; each ack repeats the last
   32, so losing one costs little.
@@ -483,6 +506,8 @@ a client in one process over 127.0.0.1. It covers:
 - a late joiner
 - the flush's cost with 2000 entities and 4 clients, printed (and the
   movers' state checked to arrive)
+- quantization: the rounding, and a Transform arriving bit for bit as
+  `QuantizeReplicatedFields` predicts
 - view times: a client's Server RPC stamped about its interpolation delay
   behind the server's clock, a local call with none
 - reconnecting: a lost client kept away and taken back with the same id and

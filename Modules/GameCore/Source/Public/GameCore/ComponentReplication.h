@@ -1,6 +1,7 @@
 #ifndef GAMECORE_COMPONENTREPLICATION_H
 #define GAMECORE_COMPONENTREPLICATION_H
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
@@ -58,6 +59,49 @@ namespace GameCore
         RFF_InitialOnly = 1 << 0,   // sent when the entity spawns on a client, never after
     };
 
+    /*
+     * QUANTIZATION: a Float or Vector3 field sent in fewer bytes, by its
+     * options in the table (ReplicatedFieldOptions):
+     *
+     *     Rep.Field("Position", &TransformComponent::Position).Precision(0.01f);   // whole 0.01s
+     *     Rep.Field("Rotation", &TransformComponent::Rotation).Angles();           // degrees, 16 bits
+     *
+     * Precision(Step): the value as a whole number of Steps, a variable-length
+     * integer -- smaller the nearer zero. Angles(): degrees in 65536ths of a
+     * turn, two bytes, read back in [-180, 180). A client reads the value
+     * rounded so; the server keeps its own, unrounded -- except an avatar's,
+     * which its simulation snaps after every step on both ends
+     * (QuantizeEntityReplicatedFields), so a predicting client and the server
+     * step on from the same values and prediction stays exact.
+     */
+    enum EReplicatedQuantize : uint8_t
+    {
+        RQ_None  = 0,
+        RQ_Step  = 1,   // whole Steps
+        RQ_Angle = 2,   // degrees, 16 bits
+    };
+
+    /* The quantization arithmetic, one place for the wire and the snap. */
+    namespace ReplicationQuantize
+    {
+        inline int64_t  ToSteps(const float InValue, const float InStep)   { return int64_t(std::llround(double(InValue) / double(InStep))); }
+        inline float    FromSteps(const int64_t InSteps, const float InStep) { return float(double(InSteps) * double(InStep)); }
+        inline uint16_t ToAngle(const float InDegrees)
+        {
+            double Turn = std::fmod(double(InDegrees), 360.0);
+            if(Turn < 0.0) { Turn += 360.0; }
+            return uint16_t(uint32_t(std::llround(Turn * (65536.0 / 360.0))) & 0xFFFFu);
+        }
+        inline float FromAngle(const uint16_t InAngle)
+        {
+            double Degrees = double(InAngle) * (360.0 / 65536.0);
+            if(Degrees >= 180.0) { Degrees -= 360.0; }
+            return float(Degrees);
+        }
+        inline float SnapStep(const float InValue, const float InStep) { return FromSteps(ToSteps(InValue, InStep), InStep); }
+        inline float SnapAngle(const float InDegrees)                 { return FromAngle(ToAngle(InDegrees)); }
+    }
+
     struct ReplicatedFieldEntry
     {
         char             Name[SCRIPT_BINDING_NAME_MAX] = {};
@@ -66,7 +110,51 @@ namespace GameCore
         uint8_t          Flags     = RFF_None;
         uint32_t         Offset    = 0;   // from the start of the component (Owner included)
         uint32_t         Size      = 0;
+        uint8_t          Quantize  = RQ_None;   // EReplicatedQuantize
+        float            Step      = 0.0f;      // RQ_Step's
     };
+
+    /* What Rep.Field returns: how the field just declared travels. Inert if
+     * the declaration was refused; a Float or Vector3 only (others ignore it). */
+    class ReplicatedFieldOptions
+    {
+    public:
+        explicit ReplicatedFieldOptions(ReplicatedFieldEntry* InEntry) : Entry(InEntry) {}
+
+        /* Whole InStep units (InStep > 0): a variable-length integer. */
+        ReplicatedFieldOptions& Precision(const float InStep)
+        {
+            if(Accepts() && InStep > 0.0f) { Entry->Quantize = RQ_Step; Entry->Step = InStep; }
+            return *this;
+        }
+
+        /* Degrees, 65536 to the turn: two bytes a value, read back in [-180, 180). */
+        ReplicatedFieldOptions& Angles()
+        {
+            if(Accepts()) { Entry->Quantize = RQ_Angle; Entry->Step = 0.0f; }
+            return *this;
+        }
+
+    private:
+        bool Accepts() const
+        {
+            return Entry && Entry->Kind == EReplicatedKind::Value
+                && (Entry->FieldType == EScriptFieldType::Float || Entry->FieldType == EScriptFieldType::Vector3);
+        }
+        ReplicatedFieldEntry* Entry;
+    };
+
+    /* Snaps InType's quantized fields on InComponent to what they read back
+     * as. False (nothing done) if it has none. */
+    GAMECORE_API bool QuantizeReplicatedFields(ComponentTypeID InType, void* InComponent);
+
+    /* Whether InType has a quantized field: cheap, for a check every tick. */
+    GAMECORE_API bool HasQuantizedFields(ComponentTypeID InType);
+
+    /* Every quantized field of every component InEntity has: what an avatar
+     * simulation does after each step, on the server and the predicting
+     * client alike, so they step on from the same values. */
+    GAMECORE_API void QuantizeEntityReplicatedFields(World& InWorld, EntityID InEntity);
 
     /* Called by the macro. InRejected counts fields the binder could not
      * record (too many, a name too long) and is logged. False on a duplicate
@@ -95,10 +183,10 @@ namespace GameCore
     {
     public:
         template<typename TField>
-        void Field(const char* InName, TField T::* InMember, const uint8_t InFlags = RFF_None)
+        ReplicatedFieldOptions Field(const char* InName, TField T::* InMember, const uint8_t InFlags = RFF_None)
         {
             static_assert(!IsScriptStruct<TField>::value, "Rep.Field: script structs do not replicate yet; replicate their fields' owner members");
-            AddField(InName, InMember, EReplicatedKind::Value, ScriptFieldTypeOf<TField>::Value, InFlags);
+            return ReplicatedFieldOptions(AddField(InName, InMember, EReplicatedKind::Value, ScriptFieldTypeOf<TField>::Value, InFlags));
         }
 
         /* A uint8_t 0/1 flag. */
@@ -120,15 +208,15 @@ namespace GameCore
         /* Offsets measured on a default-constructed instance, as
          * ComponentScriptBinder does. Over-long names are rejected, not cut. */
         template<typename TField>
-        void AddField(const char* InName, TField T::* InMember, const EReplicatedKind InKind,
-                      const EScriptFieldType InType, const uint8_t InFlags)
+        ReplicatedFieldEntry* AddField(const char* InName, TField T::* InMember, const EReplicatedKind InKind,
+                                       const EScriptFieldType InType, const uint8_t InFlags)
         {
             size_t Length = 0;
             while(InName != nullptr && InName[Length] != '\0') { ++Length; }
             if(Count >= REPLICATED_FIELDS_PER_TYPE_MAX || Length == 0 || Length >= SCRIPT_BINDING_NAME_MAX)
             {
                 ++Rejected;
-                return;
+                return nullptr;
             }
 
             const T Probe{};
@@ -139,6 +227,7 @@ namespace GameCore
             Out.Flags     = InFlags;
             Out.Offset    = uint32_t(reinterpret_cast<const char*>(&(Probe.*InMember)) - reinterpret_cast<const char*>(&Probe));
             Out.Size      = uint32_t(sizeof(TField));
+            return &Out;
         }
 
         ReplicatedFieldEntry Entries[REPLICATED_FIELDS_PER_TYPE_MAX];
@@ -153,10 +242,11 @@ namespace GameCore
     {
     public:
         template<typename TField>
-        void Field(const char*, TField T::*, const uint8_t = RFF_None)
+        ReplicatedFieldOptions Field(const char*, TField T::*, const uint8_t = RFF_None)
         {
             static_assert(!IsScriptStruct<TField>::value, "Rep.Field: script structs do not replicate yet; replicate their fields' owner members");
             (void)ScriptFieldTypeOf<TField>::Value;
+            return ReplicatedFieldOptions(nullptr);
         }
         void Flag(const char*, uint8_t T::*, const uint8_t = RFF_None) {}
         void Entity(const char*, EntityID T::*, const uint8_t = RFF_None) {}
