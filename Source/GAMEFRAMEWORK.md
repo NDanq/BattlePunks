@@ -97,7 +97,7 @@ in its builder, and a script uses `e:AddComponent("PlayerState")`.
 - **`GetPlayer(Index)`** finds a player by its `PlayerIndex`.
 - **Avatars.** A player drives an avatar: an entity with an Avatar Harness,
   possessed with `Possess(World, Player, Avatar)`. The avatar reads the
-  player's input, on a server too. `AvatarGameMode` spawns one per player at
+  player's input, on a server too. `NetGameMode` spawns one per player at
   the level's Player Starts. AVATARS.md has the model.
 
 ## From scripts
@@ -193,7 +193,7 @@ With NetCore built (`NIMBLE_WITH_NETCORE`, on by default), the same game runs as
   `OnPlayerAdded` and `IGameMode::OnClientConnected(Client, Player)` run.
   Give the player its pawn there. `OnClientDisconnected` comes before the
   client's entities are destroyed. The player also has a Possessor: possess
-  an avatar for it (`AvatarGameMode` does), and the avatar is lent to the
+  an avatar for it (`NetGameMode` does), and the avatar is lent to the
   client.
 - **Input goes to the server.** An avatar's harness sends its client's input
   itself, and the server's copy reads the same actions and axes. A

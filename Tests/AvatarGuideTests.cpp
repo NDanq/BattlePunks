@@ -2,7 +2,7 @@
  * NimbleEngineAvatarGuideTests -- Engine/Source/AVATARS_GUIDE.md's examples,
  * built and run, so the guide stays true: the Walker game's C++ (an input
  * map, a pawn component, a simulation, two systems, a native prefab and an
- * AvatarGameMode), the pawn's Lua script, and the pawn's script graph.
+ * NetGameMode), the pawn's Lua script, and the pawn's script graph.
  *
  * Between the "GUIDE" markers is the guide's code (the guide splits
  * WalkerMode across two steps); the rest drives it.
@@ -162,12 +162,12 @@ static void BuildWalkerPawn(GameCore::PrefabBuilder& B)
 GAMECORE_DEFINE_NATIVE_PREFAB(WalkerPawn, "Walker.Pawn", &BuildWalkerPawn)
 
 // --- The mode ------------------------------------------------------------------
-class WalkerMode : public NimbleEngine::AvatarGameMode
+class WalkerMode : public NimbleEngine::NetGameMode
 {
 public:
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
-        AvatarGameMode::OnLoad(InSession);
+        NetGameMode::OnLoad(InSession);
         GameCore::World& World = InSession.GetWorld();
         World.RegisterSystem("Walker.Jump",     GameCore::TP_PrePhysics, &WalkerJumpSystem);
         World.RegisterSystem("Walker.Interact", GameCore::TP_PrePhysics, &InteractSystem, this);
@@ -382,7 +382,7 @@ namespace
         Run R(Mode);
         const EntityID Pawn = R.Avatar();
         Expect(Pawn.IsSet() && std::string(R.World().GetEntity(Pawn).GetName()) == "Pawn 1",
-               "AvatarGameMode spawned the pawn prefab and possessed it");
+               "NetGameMode spawned the pawn prefab and possessed it");
         Expect(Pawn.IsSet() && R.World().GetEntity(Pawn).GetComponent<GameCore::TransformComponent>()->Position.GetX() == 100.0,
                "at the Player Start");
 

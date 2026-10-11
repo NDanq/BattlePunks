@@ -8,7 +8,7 @@ plays the same way standalone, in Play-in-Editor, and networked. The steps are:
 2. the pawn prefab, with an **Avatar Harness**
 3. movement as a **simulation**, so a client predicts it
 4. gameplay that reads the harness
-5. a game mode built on **AvatarGameMode**, plus Player Starts
+5. a game mode built on **NetGameMode**, plus Player Starts
 6. a vehicle to possess and leave
 
 Then the same avatar is scripted in **Lua** and in a **script graph**.
@@ -36,7 +36,7 @@ Every example here is compiled and run by `Engine/Tests/AvatarGuideTests.cpp`
 ```
 
 - **The player** is who is playing. Its score and its client stay with it.
-  The engine makes one for every client that joins, and `AvatarGameMode` or
+  The engine makes one for every client that joins, and `NetGameMode` or
   AutoPossess makes one for every local player.
 - **The avatar** is what that player drives right now. It reads the player's
   input through its harness. A player can switch to another avatar (a car)
@@ -283,7 +283,7 @@ Useful questions to ask a harness:
 
 ## Step 5: the game mode
 
-Derive from `NimbleEngine::AvatarGameMode`. Without further code, it:
+Derive from `NimbleEngine::NetGameMode`. Without further code, it:
 
 - gives every local player an avatar when the level starts (not on a client,
   and not on a dedicated server)
@@ -295,12 +295,12 @@ Override `GetAvatarPrefab` and `OnAvatarSpawned`, and call the base when you
 override `OnLoad`, `OnStart` or `OnClientConnected`:
 
 ```cpp
-class WalkerMode : public NimbleEngine::AvatarGameMode
+class WalkerMode : public NimbleEngine::NetGameMode
 {
 public:
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
-        AvatarGameMode::OnLoad(InSession);
+        NetGameMode::OnLoad(InSession);
         GameCore::World& World = InSession.GetWorld();
         World.RegisterSystem("Walker.Jump",     GameCore::TP_PrePhysics, &WalkerJumpSystem);
         World.RegisterSystem("Walker.Interact", GameCore::TP_PrePhysics, &InteractSystem, this);
@@ -485,7 +485,7 @@ return {
 - **`TickPhase.PrePhysics`** runs after the harness is filled, so it sees this
   frame's input.
 - **On a client, this runs only for avatars placed in the level.** A prefab
-  spawned on the server (the pawns `AvatarGameMode` makes) reaches clients as
+  spawned on the server (the pawns `NetGameMode` makes) reaches clients as
   its components, not as an instance, so its script runs on the server only.
   The server half above (`Net.HasAuthority()`) works either way. For client
   feedback on spawned pawns, use a placed object's script or the startup
@@ -656,7 +656,7 @@ Possessed** / **Is Locally Controlled** on its tick.
 ## No mode at all: placing an avatar
 
 A level that only needs "the player drives this" does not need
-`AvatarGameMode`:
+`NetGameMode`:
 
 1. Place the prefab in the level.
 2. Set its harness's **Auto Possess** to `Player 1`.
