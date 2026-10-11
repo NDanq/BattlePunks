@@ -162,6 +162,11 @@ namespace EditorGraphs
     /* Restages the saved graph after unsaved preview changes are discarded. */
     void RestoreMaterial(const QString& InGraphPath);
 
+    /* A graph file that changed on disk (a pull): its material cooked and
+     * reloaded, or the graph staged for Play, from its saved <gen_code>.
+     * False, logged, if it can't be read. */
+    bool RestageGraph(const QString& InGraphPath);
+
     /* Undoably sets the selection's RenderComponent material, InMaterial a
      * graph's runtime path (adding a RenderComponent if needed). False with why. */
     bool ApplyMaterialToSelection(const QString& InMaterial, QString& OutMessage);

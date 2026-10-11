@@ -100,6 +100,7 @@
 #include "Private/Editor/PlayProcesses.h"
 #include "Private/Editor/Collab/CollabSessionWindow.h"
 #include "Private/Editor/Collab/EditorCollabSession.h"
+#include "Public/Editor/EditorContentEvents.h"
 
 /* Edit > Editor Settings > Build. */
 NIMBLE_CONFIG_BOOL(GEditorReloadAfterCompile, "Editor", "ReloadAfterCompile", true, nullptr);
@@ -270,6 +271,38 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     SessionDock->hide();
     connect(&Level, &EditorDocument::WorldSaved, CollabSession, &EditorCollabSession::RequestDirtyRefresh);
     connect(CollabSession, &EditorCollabSession::RosterChanged, this, [this]() { ContentArea->SetRemoteChanges(CollabSession->GetOthersDirty()); });
+
+    /* The branch moving: this editor's pushes told to the others, and theirs
+     * pulled and reloaded here (Pull & Reload). */
+    connect(SourceControl, &SourceControlWindow::Pushed, CollabSession, &EditorCollabSession::AnnouncePush);
+    connect(CollabSession, &EditorCollabSession::PullAndReloadFinished, SourceControl, &SourceControlWindow::RequestRefresh);
+    EditorCollabSession::ReloadHooks Reload;
+    Reload.ConfirmDiscardLevel = [this]()
+    {
+        return QMessageBox::question(this, QStringLiteral("Pull & Reload"),
+                                     QStringLiteral("%1 changed upstream, and you have unsaved edits to it.\n\n"
+                                                    "Reload it and lose your edits?").arg(QFileInfo(CurrentPath).fileName()),
+                                     QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+    };
+    Reload.ReloadLevel = [this]()
+    {
+        /* A run plays the old one: stop it, as File > Open would ask. */
+        if(Context.IsPlaying())
+        {
+            Context.StopPlay();
+        }
+        if(!CurrentPath.isEmpty())
+        {
+            OpenWorldFile(CurrentPath);
+        }
+    };
+    Reload.CompileGameModule = [this]() { CompileSource(); };
+    Reload.ReloadConfig = [this]() { ReloadProjectConfig(); };
+    CollabSession->SetReloadHooks(Reload);
+
+    /* Files changed under the editor (a pull): staged again, so the viewport
+     * and Play see the new ones. */
+    connect(&EditorContentEvents::Get(), &EditorContentEvents::ContentChanged, this, &EditorMainWindow::OnContentChanged);
     ContentDock->raise();
     connect(ContentArea, &ContentBrowserPanel::OpenWorldRequested, this, &EditorMainWindow::OpenWorldFile);
 
@@ -902,6 +935,64 @@ void EditorMainWindow::PostCompileResult(const EditorNotifications::ESeverity In
         Result.Actions = { { QStringLiteral("Show Log"), [this]() { ShowConsole(); } } };
     }
     EditorNotifications::Get()->Post(std::move(Result));
+}
+
+void EditorMainWindow::ReloadProjectConfig()
+{
+    /* The project's own files (a pull changed them, not the staged copies),
+     * then the user's choices over them again, as at startup. */
+    const QString EngineIni = ProjectSettingsDialog::GetProjectConfigPath();
+    const QString GameIni   = QFileInfo(EngineIni).dir().absoluteFilePath(QStringLiteral("DefaultGame.ini"));
+    for(const QString& Each : { EngineIni, GameIni })
+    {
+        if(QFileInfo::exists(Each))
+        {
+            EngineCore::LoadConfigFile(Each.toUtf8().toStdString());
+        }
+    }
+    SettingsDialog::LoadUserSettings();
+    EditorNotifications::Notify(EditorNotifications::ESeverity::Info, QStringLiteral("Config reloaded"),
+                                QStringLiteral("Settings read only at startup -- the renderer, the modules -- apply after a restart."),
+                                QStringLiteral("Collab"), QStringLiteral("collab.config"));
+}
+
+void EditorMainWindow::OnContentChanged(const QStringList& InFiles)
+{
+    QStringList OpenGraphs;
+    for(const QString& File : InFiles)
+    {
+        /* Only what the engine loads: the project's content and graphs. */
+        if(File.endsWith(QStringLiteral(".nmgraph"), Qt::CaseInsensitive))
+        {
+            if(QFileInfo::exists(File))
+            {
+                EditorGraphs::RestageGraph(File);
+            }
+            if(EditorGraphs::IsGraphOpen(File))
+            {
+                OpenGraphs << QFileInfo(File).fileName();
+            }
+        }
+        else if(!EditorContent::ToRuntimePath(File).isEmpty())
+        {
+            if(QFileInfo::exists(File))
+            {
+                EditorContent::StageAsset(File);
+            }
+            else
+            {
+                EditorContent::UnstageAsset(File);
+            }
+        }
+    }
+    /* An open graph keeps its own copy until reopened. */
+    if(!OpenGraphs.isEmpty())
+    {
+        EditorNotifications::Notify(EditorNotifications::ESeverity::Warning, QStringLiteral("Open graphs changed upstream"),
+                                    QStringLiteral("%1 changed in the pull. Close and reopen to see the new version; "
+                                                   "saving now would overwrite it.").arg(OpenGraphs.join(QStringLiteral(", "))),
+                                    QStringLiteral("Collab"), QStringLiteral("collab.graphs"));
+    }
 }
 
 void EditorMainWindow::ShowConsole()

@@ -122,6 +122,43 @@ void NotifyMessage::Serialize(EngineCore::Archive& Ar)
     Ar << Title << Body;
 }
 
+void CommitInfo::Serialize(EngineCore::Archive& Ar)
+{
+    Ar << Oid << Author << Summary;
+}
+
+void BranchMove::Serialize(EngineCore::Archive& Ar)
+{
+    Ar << Branch << OldOid << NewOid;
+    uint32_t Count = uint32_t(Commits.size());
+    Ar << Count;
+    if(Ar.IsLoading())
+    {
+        if(Count > MaxListEntries)
+        {
+            Ar.SetError("Collab: too many commits");
+            return;
+        }
+        Commits.assign(Count, CommitInfo());
+    }
+    for(CommitInfo& Each : Commits)
+    {
+        Each.Serialize(Ar);
+    }
+    SerializeStrings(Ar, Paths);
+}
+
+void PushedMessage::Serialize(EngineCore::Archive& Ar)
+{
+    Move.Serialize(Ar);
+}
+
+void BranchAdvancedMessage::Serialize(EngineCore::Archive& Ar)
+{
+    Ar << PusherId << Pusher;
+    Move.Serialize(Ar);
+}
+
 EMessage PeekType(const std::vector<uint8_t>& InBytes)
 {
     EngineCore::Archive Ar = EngineCore::Archive::ForReading(InBytes);

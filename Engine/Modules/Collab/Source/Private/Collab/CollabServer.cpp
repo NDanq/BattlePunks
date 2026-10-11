@@ -41,6 +41,7 @@ struct CollabServer::Impl
         std::string ProjectId;
         std::string Branch;
         std::string EngineTree;
+        std::string Tip;   // the branch's last pushed commit, as editors announced it
         std::map<uint32_t, Member> Members;
     };
 
@@ -219,6 +220,55 @@ struct CollabServer::Impl
         Broadcast(In, Presence, State.MemberId);
     }
 
+    void OnPushed(const PeerID InPeer, const Peer& InState, const std::vector<uint8_t>& InBytes)
+    {
+        const auto FoundSession = Sessions.find(InState.SessionId);
+        if(FoundSession == Sessions.end())
+        {
+            return;
+        }
+        Session& In = FoundSession->second;
+        const auto FoundMember = In.Members.find(InState.MemberId);
+        if(FoundMember == In.Members.end())
+        {
+            return;
+        }
+        PushedMessage Pushed;
+        if(!Decode(InBytes, Pushed))
+        {
+            CORE_LOG_WARN("[Collab] an unreadable push from " + FoundMember->second.State.User)
+            return;
+        }
+        const std::string& User = FoundMember->second.State.User;
+        if(Pushed.Move.Branch != In.Branch)
+        {
+            /* Another branch is nobody else's business here; say so to the pusher. */
+            NotifyMessage Aside;
+            Aside.Severity = ESeverity::Info;
+            Aside.Title    = "Pushed " + Pushed.Move.Branch + ", not the session branch";
+            Aside.Body     = "The others work on " + In.Branch + " and weren't told.";
+            Send(InPeer, Aside);
+            return;
+        }
+        if(Pushed.Move.NewOid.empty() || Pushed.Move.NewOid == In.Tip)
+        {
+            return;   // nothing new
+        }
+        if(Pushed.Move.OldOid.empty())
+        {
+            Pushed.Move.OldOid = In.Tip;
+        }
+        In.Tip = Pushed.Move.NewOid;
+        CORE_LOG("[Collab] " + User + " pushed " + In.Branch + " to " + Short(In.Tip) + ": "
+                 + std::to_string(Pushed.Move.Commits.size()) + " commit(s), " + std::to_string(Pushed.Move.Paths.size()) + " path(s)")
+
+        BranchAdvancedMessage Advanced;
+        Advanced.PusherId = InState.MemberId;
+        Advanced.Pusher   = User;
+        Advanced.Move     = std::move(Pushed.Move);
+        Broadcast(In, Advanced, InState.MemberId);
+    }
+
     void Drop(const PeerID InPeer, const std::string& InReason)
     {
         const auto Found = Peers.find(InPeer);
@@ -351,6 +401,10 @@ void CollabServer::Poll()
                 {
                     P->OnPresence(Found->second, Event.Data);
                 }
+                else if(Type == EMessage::Pushed)
+                {
+                    P->OnPushed(Event.Peer, Found->second, Event.Data);
+                }
                 break;
             }
         }
@@ -380,6 +434,7 @@ std::vector<SessionSummary> CollabServer::GetSessions() const
         Summary.ProjectId  = Each.second.ProjectId;
         Summary.Branch     = Each.second.Branch;
         Summary.EngineTree = Each.second.EngineTree;
+        Summary.Tip        = Each.second.Tip;
         for(const auto& Member : Each.second.Members)
         {
             Summary.Members.push_back(Member.second.State);

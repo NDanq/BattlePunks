@@ -60,6 +60,10 @@ public:
      * when it ends; InStdin is written then closed. */
     void Run(const QStringList& InArgs, Callback InCallback, const QByteArray& InStdin = QByteArray());
 
+    /* As Run, for a command whose non-zero exit is an answer, not a failure
+     * (`merge-base --is-ancestor`, `diff --quiet`): not logged as a warning. */
+    void RunQuiet(const QStringList& InArgs, Callback InCallback);
+
     bool IsBusy() const { return Process != nullptr || !Queue.empty(); }
 
     /* Tests: pumps events until the queue is empty, or InTimeoutMs passes. */
@@ -107,8 +111,10 @@ private:
         QStringList Args;
         QByteArray  Stdin;
         Callback    Done;
+        bool        bQuiet = false;
     };
 
+    void Enqueue(Job InJob);
     void StartNext();
     void OnFinished(int InExitCode, QProcess::ExitStatus InStatus);
 

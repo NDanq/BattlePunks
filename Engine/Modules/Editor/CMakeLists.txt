@@ -43,6 +43,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/EditorHistory.h
         Source/Private/Editor/EditorCamera.cpp
         Source/Private/Editor/EditorLog.cpp
+        Source/Public/Editor/EditorContentEvents.h
+        Source/Private/Editor/EditorContentEvents.cpp
         Source/Public/Editor/EditorNotifications.h
         Source/Private/Editor/EditorNotifications.cpp
         Source/Private/Editor/NotificationWidgets.cpp

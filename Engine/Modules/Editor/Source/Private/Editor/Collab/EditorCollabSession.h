@@ -3,6 +3,7 @@
 
 #if WITH_EDITOR
 
+#include <functional>
 #include <memory>
 
 #include <QHash>
@@ -74,10 +75,45 @@ public:
     /* "user (branch @ abc1234)" lines, for collab.status. */
     QStringList DescribeRoster() const;
 
+    // --- The branch moving (P3) -------------------------------------------------
+    /*
+     * This editor pushed (Source Control's Pushed): the others are told what
+     * moved, with its commits and changed paths read from git.
+     */
+    void AnnouncePush(const QString& InBranch, const QString& InOldOid, const QString& InNewOid);
+
+    /* What Pull & Reload does after the pull, the main window's to provide. */
+    struct ReloadHooks
+    {
+        /* The open level changed upstream and has unsaved edits: reload anyway? */
+        std::function<bool()> ConfirmDiscardLevel;
+        std::function<void()> ReloadLevel;
+        /* Compile Source; its own toast reports, and it reloads the module. */
+        std::function<void()> CompileGameModule;
+        std::function<void()> ReloadConfig;
+    };
+    void SetReloadHooks(ReloadHooks InHooks) { Hooks = std::move(InHooks); }
+
+    /*
+     * Everything others pushed since the last pull, as one toast's Pull & Reload:
+     * pull (fast-forward, or a rebase over local commits), then reload the
+     * open level if it changed (asking first if it has unsaved edits), compile
+     * the game module if its source changed, reload Config, and announce the
+     * rest (EditorContentEvents). Engine changes are never pulled: the editor
+     * says a rebuild and restart are needed, and leaves the session.
+     */
+    void PullAndReload();
+
+    /* Pushed by others and not pulled yet: repository-relative paths, commits. */
+    QStringList GetPendingPaths() const;
+    int GetPendingCommitCount() const { return int(Pending.Commits.size()); }
+
 signals:
     void StateChanged();
     /* Someone joined, left or changed. */
     void RosterChanged();
+    /* Pull & Reload ended; bInPulled false if it didn't pull. */
+    void PullAndReloadFinished(bool bInPulled);
 
 private:
     void Poll();
@@ -86,6 +122,17 @@ private:
     void ReadDirtyFromGit();
     QString ToRepoRelative(const QString& InPath) const;
     QString ToAbsolute(const QString& InRepoPath) const;
+    void OnBranchAdvanced(const Collab::ClientEvent& InEvent);
+    void PostPending();
+    void ClearPending();
+
+    /* Others' pushes since the last pull, merged. */
+    Collab::BranchMove Pending;
+    QStringList        Pushers;
+    bool               bPulling = false;
+    ReloadHooks        Hooks;
+    QString            SessionBranch;
+    QString            GameDir;     // the project, repository-relative
 
     Collab::CollabClient Client;
     GitClient*  Git = nullptr;

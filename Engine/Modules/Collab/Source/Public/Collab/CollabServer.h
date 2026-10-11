@@ -36,6 +36,7 @@ namespace Collab
         std::string              ProjectId;
         std::string              Branch;
         std::string              EngineTree;
+        std::string              Tip;       // the last pushed commit, if any was announced
         std::vector<MemberState> Members;
     };
 

@@ -2,6 +2,9 @@
 
 #include "Private/Editor/Collab/EditorCollabSession.h"
 
+#include <algorithm>
+#include <memory>
+
 #include <QDir>
 #include <QFileInfo>
 
@@ -9,6 +12,7 @@
 #include "Public/Core/CoreLog.h"
 #include "Private/Editor/ConfigIniFile.h"
 #include "Private/Editor/SourceControl/GitClient.h"
+#include "Public/Editor/EditorContentEvents.h"
 #include "Public/Editor/EditorNotifications.h"
 
 using ESeverity = EditorNotifications::ESeverity;
@@ -63,6 +67,11 @@ EditorCollabSession::EditorCollabSession(const QString& InProjectRoot, const QSt
     if(!RepoRoot.isEmpty())
     {
         Git = new GitClient(RepoRoot, this);
+        GameDir = QDir(RepoRoot).relativeFilePath(ProjectRoot);
+        if(GameDir == QStringLiteral("."))
+        {
+            GameDir.clear();
+        }
     }
 
     PollTimer.setInterval(20);
@@ -128,18 +137,18 @@ void EditorCollabSession::Connect(const QString& InAddress, const QString& InUse
     const auto Text = [](const GitClient::Result& InResult) { return QString::fromUtf8(InResult.Out).trimmed(); };
     if(Found->User.isEmpty())
     {
-        Git->Run({ QStringLiteral("config"), QStringLiteral("--get"), QStringLiteral("user.name") },
+        Git->RunQuiet({ QStringLiteral("config"), QStringLiteral("--get"), QStringLiteral("user.name") },
                  [Found, Text](const GitClient::Result& InResult) { Found->User = Text(InResult); });
     }
-    Git->Run({ QStringLiteral("remote"), QStringLiteral("get-url"), QStringLiteral("origin") },
+    Git->RunQuiet({ QStringLiteral("remote"), QStringLiteral("get-url"), QStringLiteral("origin") },
              [Found, Text](const GitClient::Result& InResult) { Found->Remote = Text(InResult); });
     Git->Run({ QStringLiteral("rev-parse"), QStringLiteral("HEAD") },
              [Found, Text](const GitClient::Result& InResult) { Found->Head = Text(InResult); });
-    Git->Run({ QStringLiteral("rev-parse"), QStringLiteral("HEAD:Engine") },
+    Git->RunQuiet({ QStringLiteral("rev-parse"), QStringLiteral("HEAD:Engine") },
              [Found, Text](const GitClient::Result& InResult) { Found->EngineTree = InResult.Ok() ? Text(InResult) : QString(); });
     Git->Run({ QStringLiteral("rev-parse"), QStringLiteral("--abbrev-ref"), QStringLiteral("HEAD") },
              [Found, Text](const GitClient::Result& InResult) { Found->CurrentBranch = Text(InResult); });
-    Git->Run({ QStringLiteral("diff"), QStringLiteral("--quiet"), QStringLiteral("HEAD"), QStringLiteral("--"), QStringLiteral("Engine") },
+    Git->RunQuiet({ QStringLiteral("diff"), QStringLiteral("--quiet"), QStringLiteral("HEAD"), QStringLiteral("--"), QStringLiteral("Engine") },
              [this, Found](const GitClient::Result& InResult)
     {
         /* Exit 1: differences. Anything else but 0 is git failing; count it as dirty. */
@@ -191,6 +200,7 @@ void EditorCollabSession::Connect(const QString& InAddress, const QString& InUse
 void EditorCollabSession::ConnectAs(const QString& InHost, const uint16_t InPort, const Collab::ClientIdentity& InIdentity)
 {
     ServerAddress = QStringLiteral("%1:%2").arg(InHost).arg(InPort);
+    SessionBranch = ToQ(InIdentity.Branch);
     if(Head.isEmpty())
     {
         Head = ToQ(InIdentity.Head);
@@ -267,6 +277,7 @@ void EditorCollabSession::Handle(const Collab::ClientEvent& InEvent)
             emit StateChanged();
             break;
         case EType::Disconnected:
+            ClearPending();
             EditorNotifications::Notify(InEvent.Text.find("You left") == 0 ? ESeverity::Info : ESeverity::Warning,
                                         QStringLiteral("Out of the session"), ToQ(InEvent.Text), QStringLiteral("Collab"), StateKey);
             emit StateChanged();
@@ -295,6 +306,9 @@ void EditorCollabSession::Handle(const Collab::ClientEvent& InEvent)
                                         QStringLiteral("Collab"), QStringLiteral("collab.overlap.") + Path);
             break;
         }
+        case EType::BranchAdvanced:
+            OnBranchAdvanced(InEvent);
+            break;
         case EType::Notified:
             EditorNotifications::Notify(ToSeverity(InEvent.Severity), ToQ(InEvent.Title), ToQ(InEvent.Text), QStringLiteral("Collab"));
             break;
@@ -360,6 +374,19 @@ void EditorCollabSession::ReadDirtyFromGit()
         GitDirty = Paths;
         Head = ToQ(InStatus.Branch.Oid);
         PushPresence();
+
+        /* Pulled some other way (Source Control, a terminal): the offer is stale. */
+        if(!Pending.NewOid.empty() && !bPulling)
+        {
+            Git->RunQuiet({ QStringLiteral("merge-base"), QStringLiteral("--is-ancestor"), ToQ(Pending.NewOid), QStringLiteral("HEAD") },
+                     [this](const GitClient::Result& InResult)
+            {
+                if(InResult.Ok() && !bPulling)
+                {
+                    ClearPending();
+                }
+            });
+        }
     });
 }
 
@@ -414,6 +441,318 @@ QStringList EditorCollabSession::DescribeRoster() const
         Lines << Line;
     }
     return Lines;
+}
+
+// --- The branch moving ---------------------------------------------------------------
+
+namespace
+{
+    const QString BranchKey = QStringLiteral("collab.branch");
+
+    /* How many paths in each group, for a toast: "12 content files, 2 GameModule source files". */
+    struct GroupCounts
+    {
+        int Counts[size_t(EditorGit::EPathGroup::Count)] = {};
+
+        int  Of(const EditorGit::EPathGroup InGroup) const { return Counts[size_t(InGroup)]; }
+        bool Has(const EditorGit::EPathGroup InGroup) const { return Of(InGroup) > 0; }
+
+        QString Describe() const
+        {
+            static const char* const Names[] = { "content file", "script", "GameModule source file", "config file",
+                                                 "engine file", "other file" };
+            QStringList Parts;
+            for(size_t Index = 0; Index < size_t(EditorGit::EPathGroup::Count); ++Index)
+            {
+                if(Counts[Index] > 0)
+                {
+                    Parts << QStringLiteral("%1 %2%3").arg(Counts[Index]).arg(QString::fromLatin1(Names[Index]))
+                                                      .arg(Counts[Index] == 1 ? QString() : QStringLiteral("s"));
+                }
+            }
+            return Parts.join(QStringLiteral(", "));
+        }
+    };
+
+    GroupCounts Count(const std::vector<std::string>& InPaths, const QString& InGameDir)
+    {
+        GroupCounts Out;
+        const std::string Game = InGameDir.toStdString();
+        for(const std::string& Path : InPaths)
+        {
+            ++Out.Counts[size_t(EditorGit::ClassifyPath(Path, Game))];
+        }
+        return Out;
+    }
+}
+
+void EditorCollabSession::AnnouncePush(const QString& InBranch, const QString& InOldOid, const QString& InNewOid)
+{
+    if(!Git || !Client.IsJoined() || InNewOid.isEmpty())
+    {
+        return;
+    }
+
+    /* What moved: the commits (newest first, at most 200) and the paths they
+     * changed. A branch's first push names its last commit only. */
+    auto Move = std::make_shared<Collab::BranchMove>();
+    Move->Branch = ToStd(InBranch);
+    Move->OldOid = ToStd(InOldOid);
+    Move->NewOid = ToStd(InNewOid);
+    const QString Range = InOldOid.isEmpty() ? InNewOid : InOldOid + QStringLiteral("..") + InNewOid;
+    QStringList LogArgs = { QStringLiteral("log"), QStringLiteral("--max-count=200"), QStringLiteral("--format=%H%x1f%an%x1f%s") };
+    if(InOldOid.isEmpty())
+    {
+        LogArgs << QStringLiteral("-1");
+    }
+    LogArgs << Range;
+    Git->Run(LogArgs, [Move](const GitClient::Result& InResult)
+    {
+        for(const QString& Line : QString::fromUtf8(InResult.Out).split(QLatin1Char('\n'), Qt::SkipEmptyParts))
+        {
+            const QStringList Fields = Line.split(QChar(0x1f));
+            if(Fields.size() == 3)
+            {
+                Move->Commits.push_back({ ToStd(Fields[0]), ToStd(Fields[1]), ToStd(Fields[2]) });
+            }
+        }
+    });
+    const QStringList DiffArgs = InOldOid.isEmpty()
+        ? QStringList{ QStringLiteral("show"), QStringLiteral("--name-only"), QStringLiteral("--format="), InNewOid }
+        : QStringList{ QStringLiteral("diff"), QStringLiteral("--name-only"), InOldOid, InNewOid };
+    Git->Run(DiffArgs, [this, Move](const GitClient::Result& InResult)
+    {
+        for(const QString& Line : QString::fromUtf8(InResult.Out).split(QLatin1Char('\n'), Qt::SkipEmptyParts))
+        {
+            Move->Paths.push_back(ToStd(Line.trimmed()));
+        }
+        Collab::SortUnique(Move->Paths);
+        Client.AnnouncePush(*Move);
+        CORE_LOG("[Collab] announced a push of " + Move->Branch + ": " + std::to_string(Move->Commits.size()) + " commit(s)")
+    });
+}
+
+void EditorCollabSession::OnBranchAdvanced(const Collab::ClientEvent& InEvent)
+{
+    const Collab::BranchMove& Move = InEvent.Move;
+    /* Newest first, as they arrived; a commit already pending isn't repeated. */
+    std::vector<Collab::CommitInfo> Commits = Move.Commits;
+    for(const Collab::CommitInfo& Old : Pending.Commits)
+    {
+        if(std::none_of(Commits.begin(), Commits.end(), [&Old](const Collab::CommitInfo& New) { return New.Oid == Old.Oid; }))
+        {
+            Commits.push_back(Old);
+        }
+    }
+    Pending.Commits.swap(Commits);
+    Pending.Paths.insert(Pending.Paths.end(), Move.Paths.begin(), Move.Paths.end());
+    Collab::SortUnique(Pending.Paths);
+    Pending.Branch = Move.Branch;
+    if(Pending.OldOid.empty())
+    {
+        Pending.OldOid = Move.OldOid;
+    }
+    Pending.NewOid = Move.NewOid;
+    const QString Who = ToQ(InEvent.User);
+    if(!Pushers.contains(Who))
+    {
+        Pushers << Who;
+    }
+    CORE_LOG("[Collab] " + InEvent.User + " pushed " + Move.Branch + ": " + std::to_string(Move.Commits.size()) + " commit(s), "
+             + std::to_string(Move.Paths.size()) + " path(s)")
+    PostPending();
+}
+
+void EditorCollabSession::PostPending()
+{
+    if(Pending.Commits.empty() && Pending.Paths.empty())
+    {
+        return;
+    }
+    const GroupCounts Groups = Count(Pending.Paths, GameDir);
+    const int Commits = int(Pending.Commits.size());
+
+    EditorNotifications::Notification Note;
+    Note.Severity   = Groups.Has(EditorGit::EPathGroup::Engine) ? ESeverity::Warning : ESeverity::Info;
+    Note.Title      = QStringLiteral("%1 pushed %2 commit%3").arg(Pushers.join(QStringLiteral(" and ")))
+                      .arg(Commits).arg(Commits == 1 ? QString() : QStringLiteral("s"));
+    Note.Body       = Groups.Describe() + QLatin1Char('.');
+    if(!Pending.Commits.empty())
+    {
+        Note.Body += QStringLiteral("\nLatest: ") + ToQ(Pending.Commits.front().Summary);
+    }
+    if(Groups.Has(EditorGit::EPathGroup::Engine))
+    {
+        Note.Body += QStringLiteral("\nIt changes the engine: that needs a rebuild and a restart, not a reload.");
+    }
+    Note.Source     = QStringLiteral("Collab");
+    Note.ReplaceKey = BranchKey;
+    Note.Actions    = { { QStringLiteral("Pull & Reload"), [this]() { PullAndReload(); } },
+                        { QStringLiteral("Later"), nullptr } };
+    if(EditorNotifications* Notes = EditorNotifications::Get())
+    {
+        Notes->Post(std::move(Note));
+    }
+}
+
+void EditorCollabSession::ClearPending()
+{
+    Pending = Collab::BranchMove();
+    Pushers.clear();
+    if(EditorNotifications* Notes = EditorNotifications::Get())
+    {
+        if(const EditorNotifications::Notification* Found = Notes->FindByKey(BranchKey))
+        {
+            if(!Found->Actions.isEmpty())   // the offer, not a result
+            {
+                Notes->Remove(Found->Id);
+            }
+        }
+    }
+}
+
+QStringList EditorCollabSession::GetPendingPaths() const
+{
+    QStringList Out;
+    for(const std::string& Each : Pending.Paths)
+    {
+        Out << ToQ(Each);
+    }
+    return Out;
+}
+
+void EditorCollabSession::PullAndReload()
+{
+    if(!Git || bPulling || (Pending.Paths.empty() && Pending.Commits.empty()))
+    {
+        return;
+    }
+    const GroupCounts Groups = Count(Pending.Paths, GameDir);
+    const QString Who = Pushers.join(QStringLiteral(" and "));
+
+    /* The engine: never pulled into a running editor. */
+    if(Groups.Has(EditorGit::EPathGroup::Engine))
+    {
+        EditorNotifications::Notify(ESeverity::Error, QStringLiteral("The session's engine changed"),
+                                    QStringLiteral("%1 pushed engine changes. Engine changes aren't supported during a session: "
+                                                   "pull them, rebuild the engine and restart the editor, then join again. "
+                                                   "Leaving the session.").arg(Who),
+                                    QStringLiteral("Collab"), BranchKey);
+        Pending = Collab::BranchMove();
+        Pushers.clear();
+        Leave();
+        emit PullAndReloadFinished(false);
+        return;
+    }
+
+    /* The open level, with unsaved edits, changed upstream: ask first. */
+    const bool bLevelChanged = !OpenLevel.isEmpty()
+                            && std::binary_search(Pending.Paths.begin(), Pending.Paths.end(), ToStd(OpenLevel));
+    if(bLevelChanged && bLevelUnsaved && Hooks.ConfirmDiscardLevel && !Hooks.ConfirmDiscardLevel())
+    {
+        EditorNotifications::Notify(ESeverity::Info, QStringLiteral("Pull & Reload put off"),
+                                    QStringLiteral("Save or keep your edits; the offer is in the Notifications dock."),
+                                    QStringLiteral("Collab"), QStringLiteral("collab.pull"));
+        PostPending();
+        emit PullAndReloadFinished(false);
+        return;
+    }
+
+    bPulling = true;
+    const Collab::BranchMove Pulling = Pending;
+    const int Commits = int(Pulling.Commits.size());
+    EditorNotifications::Notification Busy;
+    Busy.Title      = QStringLiteral("Pulling %1 commit%2…").arg(Commits).arg(Commits == 1 ? QString() : QStringLiteral("s"));
+    Busy.Source     = QStringLiteral("Collab");
+    Busy.ReplaceKey = BranchKey;
+    Busy.Progress   = EditorNotifications::Indeterminate;
+    if(EditorNotifications* Notes = EditorNotifications::Get())
+    {
+        Notes->Post(std::move(Busy));
+    }
+
+    /* Local commits: a rebase (autostashed) rather than a merge. */
+    Git->Status([this, Pulling, Groups, Who, bLevelChanged, Commits](const bool bInOk, const EditorGit::Status& InStatus, const QString&)
+    {
+        const bool bRebase = bInOk && InStatus.Branch.Ahead > 0;
+        Git->Pull(bRebase, [this, Pulling, Groups, Who, bLevelChanged, Commits](const GitClient::Result& InResult)
+        {
+            bPulling = false;
+            if(!InResult.Ok())
+            {
+                EditorNotifications::Notification Failed;
+                Failed.Severity   = ESeverity::Error;
+                Failed.Title      = QStringLiteral("Pull failed");
+                Failed.Body       = InResult.Summary();
+                Failed.Source     = QStringLiteral("Collab");
+                Failed.ReplaceKey = BranchKey;
+                Failed.Actions    = { { QStringLiteral("Try Again"), [this]() { PullAndReload(); } } };
+                if(EditorNotifications* Notes = EditorNotifications::Get())
+                {
+                    Notes->Post(std::move(Failed));
+                }
+                emit PullAndReloadFinished(false);
+                return;
+            }
+
+            /* What the pull brought in, reloaded. */
+            QStringList Done;
+            if(bLevelChanged && Hooks.ReloadLevel)
+            {
+                Hooks.ReloadLevel();
+                Done << QStringLiteral("reloaded the level");
+            }
+            if(Groups.Has(EditorGit::EPathGroup::GameModule) && Hooks.CompileGameModule)
+            {
+                Hooks.CompileGameModule();
+                Done << QStringLiteral("compiling the game module");
+            }
+            if(Groups.Has(EditorGit::EPathGroup::Config) && Hooks.ReloadConfig)
+            {
+                Hooks.ReloadConfig();
+                Done << QStringLiteral("reloaded Config");
+            }
+            QStringList Files;
+            for(const std::string& Path : Pulling.Paths)
+            {
+                Files << QDir::cleanPath(ToAbsolute(ToQ(Path)));
+            }
+            EditorContentEvents::Get().Announce(Files);
+
+            /* Anything pushed meanwhile stays pending. */
+            std::vector<Collab::CommitInfo> Left;
+            for(const Collab::CommitInfo& Each : Pending.Commits)
+            {
+                if(std::none_of(Pulling.Commits.begin(), Pulling.Commits.end(),
+                                [&Each](const Collab::CommitInfo& Pulled) { return Pulled.Oid == Each.Oid; }))
+                {
+                    Left.push_back(Each);
+                }
+            }
+            const bool bMore = !Left.empty();
+            if(bMore)
+            {
+                Pending.Commits.swap(Left);
+            }
+            else
+            {
+                Pending = Collab::BranchMove();
+                Pushers.clear();
+            }
+
+            EditorNotifications::Notify(ESeverity::Success,
+                                        QStringLiteral("Pulled %1 commit%2 from %3").arg(Commits).arg(Commits == 1 ? QString() : QStringLiteral("s")).arg(Who),
+                                        Done.isEmpty() ? Groups.Describe() + QLatin1Char('.')
+                                                       : Groups.Describe() + QStringLiteral(": ") + Done.join(QStringLiteral(", ")) + QLatin1Char('.'),
+                                        QStringLiteral("Collab"), bMore ? QStringLiteral("collab.pulled") : BranchKey);
+            if(bMore)
+            {
+                PostPending();
+            }
+            ReadDirtyFromGit();
+            emit PullAndReloadFinished(true);
+        });
+    });
 }
 
 QString EditorCollabSession::ToRepoRelative(const QString& InPath) const

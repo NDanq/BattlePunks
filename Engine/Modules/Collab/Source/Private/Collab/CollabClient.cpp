@@ -248,6 +248,21 @@ void CollabClient::Poll()
                         CheckOverlaps();
                         break;
                     }
+                    case EMessage::BranchAdvanced:
+                    {
+                        BranchAdvancedMessage Advanced;
+                        if(!Decode(Event.Data, Advanced))
+                        {
+                            break;
+                        }
+                        ClientEvent Out;
+                        Out.Type     = ClientEvent::EType::BranchAdvanced;
+                        Out.MemberId = Advanced.PusherId;
+                        Out.User     = Advanced.Pusher;
+                        Out.Move     = std::move(Advanced.Move);
+                        Push(std::move(Out));
+                        break;
+                    }
                     case EMessage::Notify:
                     {
                         NotifyMessage Notify;
@@ -333,6 +348,18 @@ void CollabClient::SendPresence(const bool bInFull)
         Self->second.Play      = Mine.Play;
         Self->second.Dirty     = Mine.Dirty;
     }
+}
+
+void CollabClient::AnnouncePush(const BranchMove& InMove)
+{
+    if(State != EState::Joined)
+    {
+        return;
+    }
+    PushedMessage Pushed;
+    Pushed.Move = InMove;
+    P->Transport.Send(P->Server, Encode(Pushed));
+    P->Transport.Flush();
 }
 
 std::vector<std::string> CollabClient::WhoHasDirty(const std::string& InPath) const

@@ -806,12 +806,30 @@ void SourceControlWindow::PushRemote()
         return;
     }
     PostProgress(QStringLiteral("Pushing…"), QStringLiteral("git.sync"));
-    Git->Push(!Last.Branch.bHasUpstream, [this](const GitClient::Result& InResult)
+
+    /* Where the upstream was and where it goes: what the session is told (Pushed). */
+    const QString Branch = ToQ(Last.Branch.Head);
+    auto OldOid = std::make_shared<QString>();
+    if(Last.Branch.bHasUpstream)
+    {
+        Git->RunQuiet({ QStringLiteral("rev-parse"), QStringLiteral("@{u}") }, [OldOid](const GitClient::Result& InResult)
+        {
+            if(InResult.Ok()) { *OldOid = QString::fromUtf8(InResult.Out).trimmed(); }
+        });
+    }
+    Git->Push(!Last.Branch.bHasUpstream, [this, Branch, OldOid](const GitClient::Result& InResult)
     {
         if(ReportFailure(QStringLiteral("Push failed"), InResult.Ok(), InResult.Summary(), QStringLiteral("git.sync")))
         {
-            EditorNotifications::Notify(ESeverity::Success, QStringLiteral("Pushed"), ToQ(Last.Branch.Head),
+            EditorNotifications::Notify(ESeverity::Success, QStringLiteral("Pushed"), Branch,
                                         QStringLiteral("Git"), QStringLiteral("git.sync"));
+            Git->Run({ QStringLiteral("rev-parse"), QStringLiteral("HEAD") }, [this, Branch, OldOid](const GitClient::Result& InHead)
+            {
+                if(InHead.Ok())
+                {
+                    emit Pushed(Branch, *OldOid, QString::fromUtf8(InHead.Out).trimmed());
+                }
+            });
         }
         RefreshNow();
     });
@@ -996,7 +1014,7 @@ void SourceControlWindow::OpenMergeTool()
     }
 
     /* Without merge.tool, git would fall back to a terminal tool nobody can see. */
-    Git->Run({ QStringLiteral("config"), QStringLiteral("--get"), QStringLiteral("merge.tool") },
+    Git->RunQuiet({ QStringLiteral("config"), QStringLiteral("--get"), QStringLiteral("merge.tool") },
              [this, Paths](const GitClient::Result& InResult)
     {
         if(!InResult.Ok() || InResult.Out.trimmed().isEmpty())

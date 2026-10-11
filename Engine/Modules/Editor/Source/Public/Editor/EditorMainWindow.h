@@ -89,6 +89,11 @@ private:
     void PostCompileResult(EditorNotifications::ESeverity InSeverity, const QString& InTitle, const QString& InBody = QString());
     /* The Console dock, shown and in front: a notification's "Show Log". */
     void ShowConsole();
+    /* The project's DefaultEngine.ini and DefaultGame.ini read again (a pull
+     * changed them), the user's settings over them. */
+    void ReloadProjectConfig();
+    /* EditorContentEvents: files a pull changed, staged again. */
+    void OnContentChanged(const QStringList& InFiles);
     void StartRenderer();
     void UpdateTitle();
     void UpdateHistoryActions();

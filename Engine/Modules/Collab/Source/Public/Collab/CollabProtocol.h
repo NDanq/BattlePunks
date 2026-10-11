@@ -23,8 +23,9 @@
  * and have no uncommitted engine changes -- how "engine changes are not
  * supported during a session" is enforced.
  *
- * Messages P2 uses: Hello / Welcome / Reject, Presence, MemberJoined /
- * MemberLeft, Notify. The rest are numbered for P3-P5 and not sent yet.
+ * In use: Hello / Welcome / Reject, Presence, MemberJoined / MemberLeft,
+ * Notify, and (P3) Pushed / BranchAdvanced. The rest are numbered for P4-P5
+ * and not sent yet.
  */
 namespace Collab
 {
@@ -46,9 +47,10 @@ namespace Collab
         MemberLeft,      // S->others
         Notify,          // S->C: a server message, shown as is
 
+        Pushed = 16,     // C->S: this editor pushed the session branch
+        BranchAdvanced,  // S->others: the session branch moved
+
         /* Reserved for later phases; not sent yet. */
-        Pushed = 16,     // P3: C->S branch, oid
-        BranchAdvanced,  // P3: S->all
         BuildStatus,     // P4: S->all
         ValidationReport,// P4: S->author
         PlayRequest,     // P5: C->S
@@ -173,6 +175,52 @@ namespace Collab
         ESeverity   Severity = ESeverity::Info;
         std::string Title;
         std::string Body;
+
+        void Serialize(EngineCore::Archive& Ar);
+    };
+
+    /* One commit, as a notification names it. */
+    struct COLLAB_API CommitInfo
+    {
+        std::string Oid;
+        std::string Author;
+        std::string Summary;   // the subject line
+
+        void Serialize(EngineCore::Archive& Ar);
+    };
+
+    /* What a push moved: OldOid..NewOid on Branch, its commits (newest first)
+     * and every path they changed, repository-relative. */
+    struct COLLAB_API BranchMove
+    {
+        std::string              Branch;
+        std::string              OldOid;    // empty for a branch's first push
+        std::string              NewOid;
+        std::vector<CommitInfo>  Commits;
+        std::vector<std::string> Paths;
+
+        void Serialize(EngineCore::Archive& Ar);
+    };
+
+    /* C->S: this editor pushed the session branch. (P4's worker will notice
+     * pushes from outside the editor; until then only editors announce.) */
+    struct COLLAB_API PushedMessage
+    {
+        static constexpr EMessage Type = EMessage::Pushed;
+
+        BranchMove Move;
+
+        void Serialize(EngineCore::Archive& Ar);
+    };
+
+    /* S->everyone else: the session branch moved, and who moved it. */
+    struct COLLAB_API BranchAdvancedMessage
+    {
+        static constexpr EMessage Type = EMessage::BranchAdvanced;
+
+        uint32_t    PusherId = 0;   // 0: not an editor in the session
+        std::string Pusher;
+        BranchMove  Move;
 
         void Serialize(EngineCore::Archive& Ar);
     };

@@ -26,6 +26,15 @@ QString GitClient::Result::Summary() const
         return QStringLiteral("git didn't start. Is it installed and on PATH?");
     }
     const QString Text = Err.isEmpty() ? QString::fromUtf8(Out).trimmed() : Err;
+    /* git's own verdict first: progress ("From ...") comes before it. */
+    for(const QString& Line : Text.split(QLatin1Char('\n')))
+    {
+        const QString Trimmed = Line.trimmed();
+        if(Trimmed.startsWith(QStringLiteral("error:")) || Trimmed.startsWith(QStringLiteral("fatal:")))
+        {
+            return Trimmed;
+        }
+    }
     for(const QString& Line : Text.split(QLatin1Char('\n')))
     {
         const QString Trimmed = Line.trimmed();
@@ -89,11 +98,25 @@ void GitClient::Run(const QStringList& InArgs, Callback InCallback, const QByteA
     New.Args  = InArgs;
     New.Stdin = InStdin;
     New.Done  = std::move(InCallback);
+    Enqueue(std::move(New));
+}
+
+void GitClient::RunQuiet(const QStringList& InArgs, Callback InCallback)
+{
+    Job New;
+    New.Args   = InArgs;
+    New.Done   = std::move(InCallback);
+    New.bQuiet = true;
+    Enqueue(std::move(New));
+}
+
+void GitClient::Enqueue(Job InJob)
+{
     if(!IsBusy())
     {
         emit BusyChanged(true);
     }
-    Queue.push_back(std::move(New));
+    Queue.push_back(std::move(InJob));
     if(!Process)
     {
         StartNext();
@@ -157,9 +180,9 @@ void GitClient::OnFinished(const int InExitCode, const QProcess::ExitStatus InSt
     Done.Err      = QString::fromUtf8(Process->readAllStandardError()).trimmed();
 
     const QString Command = QStringLiteral("git ") + Current.Args.join(QLatin1Char(' '));
-    if(Done.Ok())
+    if(Done.Ok() || Current.bQuiet)
     {
-        CORE_LOG("[Git] " + ToStd(Command))
+        CORE_LOG("[Git] " + ToStd(Command) + (Done.Ok() ? std::string() : " -> " + std::to_string(Done.ExitCode)))
     }
     else
     {
