@@ -942,6 +942,18 @@ void ContentBrowserPanel::SelectFiles(const QStringList& InPaths)
     }
 }
 
+void ContentBrowserPanel::RevealAndOpen(const QString& InFile)
+{
+    const QFileInfo Info(InFile);
+    if(!Info.isFile()) { return; }
+
+    /* A filter could hide it. */
+    if(Filter && !Filter->text().isEmpty()) { Filter->clear(); }
+    SetCurrentFolder(Info.absolutePath());
+    SelectFiles({ QDir::fromNativeSeparators(Info.absoluteFilePath()) });
+    OpenItem(Info.absoluteFilePath());
+}
+
 // === Opening =========================================================================
 
 void ContentBrowserPanel::OpenItem(const QString& InPath)
@@ -1002,7 +1014,8 @@ void ContentBrowserPanel::OpenItem(const QString& InPath)
         TextureViewerWindow::Open(InPath, window());
         return;
     }
-    if(InPath.endsWith(QStringLiteral(".md"), Qt::CaseInsensitive))
+    /* The Documentation window shows Engine/Docs only; any other .md goes to the system's editor. */
+    if(InPath.endsWith(QStringLiteral(".md"), Qt::CaseInsensitive) && DocumentationWindow::IsDocumentation(InPath))
     {
         DocumentationWindow::Open(InPath);
         return;

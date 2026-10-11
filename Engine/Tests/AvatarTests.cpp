@@ -3,7 +3,7 @@
  * its rules, the harness reading its player's devices, the server's half of
  * the input stream (ServerInput, run here directly as NetSession would), a
  * simulation stepping, and a GameSession's AutoPossess, view target and
- * AvatarGameMode. Standalone: this process has authority, as a server does.
+ * NetGameMode. Standalone: this process has authority, as a server does.
  */
 
 #include <cmath>
@@ -60,7 +60,7 @@ NIMBLE_DEFINE_AVATAR_SIMULATION(AvatarTestSlide, 0.1f)
     Transform->Position.SetX(Transform->Position.GetX() + double(InFrame.Axes[MoveX]) * double(InFrame.Seconds));
 }
 
-/* What AvatarGameMode spawns here: a harness, a place, and a camera child. */
+/* What NetGameMode spawns here: a harness, a place, and a camera child. */
 static void BuildTestPawn(GameCore::PrefabBuilder& B)
 {
     GameCore::PrefabBuilder::Node Root = B.Root("TestPawn");
@@ -417,7 +417,7 @@ namespace
         delete Session;
     }
 
-    class SpawnMode : public AvatarGameMode
+    class SpawnMode : public NetGameMode
     {
     public:
         void OnTick(const FrameContext&) override {}
@@ -454,9 +454,9 @@ namespace
         SpawnMode Mode;
     };
 
-    void TestAvatarGameMode()
+    void TestNetGameMode()
     {
-        std::printf("[AvatarGameMode]\n");
+        std::printf("[NetGameMode]\n");
         TestHost Host;
         GameCore::ScriptEngine Scripts;
         RenderCore::Renderer Rendering;
@@ -518,7 +518,7 @@ int main()
     TestServerInput();
     TestLocalSimulation();
     TestAutoPossess();
-    TestAvatarGameMode();
+    TestNetGameMode();
     TestFreePlayerIndex();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

@@ -15,19 +15,17 @@ class QLineEdit;
 class QTextBrowser;
 class QTreeWidget;
 class QTreeWidgetItem;
+class QEvent;
 
 /*
- * Help > Documentation (F1): every Markdown file of the open project and of
- * the engine -- the modules' READMEs and design notes, a game's Docs/ --
- * listed by folder and rendered in place.
+ * Help > Documentation (F1): the engine's documentation, every Markdown file
+ * under Engine/Docs (guides, and a reference page per component in
+ * Components/), listed by folder and rendered in place. Nothing else is
+ * shown: a path outside Engine/Docs is refused, a link to one too.
  *
  * Relative links to other .md files open here (Back/Forward follow them),
- * "#section" links jump to GitHub-style heading anchors, anything else opens
+ * "#section" links jump to GitHub-style heading anchors, other links open
  * outside the editor. The page reloads when its file changes on disk.
- *
- * Skipped while listing: hidden folders, External/, Binaries/, Build/, Saved/,
- * Intermediate/ and build trees (cmake-build-*, any folder with a
- * CMakeCache.txt).
  *
  * One window; opening it again brings it forward.
  */
@@ -36,16 +34,21 @@ class DocumentationWindow final : public QMainWindow
     Q_OBJECT
 
 public:
-    /* Shows the window, making it if need be, at InPath if given (an .md
-     * file), else where it was, else at the project's or engine's README. */
+    /* Shows the window, making it if need be, at InPath if given (an .md file
+     * under Engine/Docs; any other is ignored), else where it was, else at
+     * the docs' README. */
     static DocumentationWindow* Open(const QString& InPath = QString());
+
+    /* Whether InPath is a file under Engine/Docs -- all this window shows. */
+    static bool IsDocumentation(const QString& InPath);
 
     /* Closes the window if open: it has no parent, so would otherwise keep
      * the editor running after its main window closes. */
     static void CloseIfOpen();
 
-    /* The .md files under InRoot, absolute and sorted, skipping what the
-     * class comment lists. Exposed for tests. */
+    /* The .md files under InRoot, absolute and sorted, skipping hidden folders,
+     * External/, Binaries/, Build/, Saved/, Intermediate/ and build trees.
+     * Exposed for tests. */
     static QStringList FindMarkdownFiles(const QString& InRoot);
 
     /* GitHub's anchor for a heading: lower case, punctuation dropped, spaces
@@ -63,11 +66,14 @@ private:
     void OnFileChanged(const QString& InPath);
     void ApplyFilter(const QString& InText);
     void DecorateDocument();
+
+    /* Images wider than the page are drawn at its width (aspect kept), so a
+     * screenshot is seen whole rather than cut off at the pane's edge; run
+     * again when the page is resized. */
+    void FitImages();
+    bool eventFilter(QObject* InWatched, QEvent* InEvent) override;
     void SelectInTree(const QString& InPath);
     QString DefaultPage() const;
-
-    QString       ProjectRoot;
-    QString       EngineRoot;
 
     QLineEdit*    Filter   = nullptr;
     QTreeWidget*  Files    = nullptr;

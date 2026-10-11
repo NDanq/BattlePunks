@@ -35,9 +35,16 @@
 #include "Private/Editor/Content/AnimStateEditorWindow.h"
 #include "Private/Editor/Content/AnimStateGraph.h"
 #include "Private/Editor/Content/ClipTimeline.h"
+#include "Private/Editor/Build/ProjectBuild.h"
+#include "Private/Editor/ComponentDocs.h"
 #include "Private/Editor/DocumentationWindow.h"
+#include "Private/Editor/Graph/GraphDocument.h"
+#include "Private/Editor/Graph/GraphEditorTab.h"
+#include "Public/NodeGraph/GraphFile.h"
+#include "Public/NodeGraph/Schema.h"
 #include <QDir>
 #include <QFileInfo>
+#include <QImage>
 #include <QTextBlock>
 #include <QTextBrowser>
 #include "Private/Editor/Graph/GraphView.h"
@@ -494,6 +501,7 @@ static void TestDocumentation()
     Write(QStringLiteral("Build/Generated.md"), "# build\n");
     Write(QStringLiteral("Sub/Build/editor-debug/Notes.md"), "# build\n");
     Write(QStringLiteral(".git/Hidden.md"), "# hidden\n");
+    EditorDocs::SetDocsRoot(Dir.path());   // the viewer shows only the docs root
 
     const QStringList Found = DocumentationWindow::FindMarkdownFiles(Dir.path());
     Expect(Found.size() == 2 && Found.first().endsWith(QStringLiteral("Docs/Guide.md")) && Found.last().endsWith(QStringLiteral("README.md")),
@@ -526,6 +534,67 @@ static void TestDocumentation()
     Page->backward();
     Expect(Page->source().toLocalFile().endsWith(QStringLiteral("README.md")), "Back returns to the previous page");
 
+    /* Only the docs root is shown: another folder's .md is refused, by path and by link. */
+    QTemporaryDir Outside;
+    {
+        QFile Stray(Outside.filePath(QStringLiteral("Stray.md")));
+        Stray.open(QIODevice::WriteOnly);
+        Stray.write("# Stray\n");
+    }
+    Expect(!DocumentationWindow::IsDocumentation(Outside.filePath(QStringLiteral("Stray.md"))), "a file outside the docs root is not documentation");
+    DocumentationWindow::Open(Outside.filePath(QStringLiteral("Stray.md")));
+    Expect(Page->source().toLocalFile().endsWith(QStringLiteral("README.md")), "opening a path outside the docs root changes nothing");
+    emit Page->anchorClicked(QUrl::fromLocalFile(Outside.filePath(QStringLiteral("Stray.md"))));
+    Expect(Page->source().toLocalFile().endsWith(QStringLiteral("README.md")), "a link outside the docs root is not followed");
+
+    /* A component's reference page is written on first ask, with both APIs, and kept. */
+    const GameCore::ComponentTypeID Transform = GameCore::TransformComponent::StaticType().ID;
+    const QString TransformDoc = EditorDocs::EnsureComponentDoc(Transform);
+    Expect(TransformDoc == Dir.filePath(QStringLiteral("Components/Transform.md")) && QFileInfo(TransformDoc).isFile(),
+           "a component's page is written under Components/");
+    QFile Generated(TransformDoc);
+    Generated.open(QIODevice::ReadOnly);
+    const QString GeneratedText = QString::fromUtf8(Generated.readAll());
+    Generated.close();
+    Expect(GeneratedText.contains(QStringLiteral("## C++ API")) && GeneratedText.contains(QStringLiteral("## Lua API"))
+           && GeneratedText.contains(QStringLiteral("Position")), "the page has the properties and both APIs");
+    Generated.open(QIODevice::WriteOnly | QIODevice::Truncate);
+    Generated.write("# Edited\n");
+    Generated.close();
+    EditorDocs::EnsureComponentDoc(Transform);
+    Generated.open(QIODevice::ReadOnly);
+    Expect(Generated.readAll().startsWith("# Edited"), "an existing page is never overwritten");
+    Generated.close();
+    Expect(DocumentationWindow::IsDocumentation(TransformDoc), "a component page is documentation");
+
+    /* A screenshot wider than the page is drawn at the page's width, and refits as the window is resized. */
+    QDir().mkpath(Dir.filePath(QStringLiteral("Images")));
+    QImage Wide(2400, 300, QImage::Format_RGB32);
+    Wide.fill(Qt::darkCyan);
+    Expect(Wide.save(Dir.filePath(QStringLiteral("Images/Wide.png"))), "a wide screenshot is written");
+    Write(QStringLiteral("Wide.md"), "# Wide\n\n![a wide shot](Images/Wide.png)\n");
+    DocumentationWindow::Open(Dir.filePath(QStringLiteral("Wide.md")));
+    const auto ImageWidth = [Page]()
+    {
+        for(QTextBlock Block = Page->document()->begin(); Block.isValid(); Block = Block.next())
+        {
+            for(QTextBlock::iterator It = Block.begin(); !It.atEnd(); ++It)
+            {
+                const QTextCharFormat Format = It.fragment().charFormat();
+                if(Format.isImageFormat()) { return Format.toImageFormat().width(); }
+            }
+        }
+        return -1.0;
+    };
+    Window->resize(900, 600);
+    PumpFor(50);
+    const qreal Narrow = ImageWidth();
+    Expect(Narrow > 0.0 && Narrow <= Page->viewport()->width(), "the wide image fits the page instead of running off its edge");
+    Window->resize(1600, 600);
+    PumpFor(50);
+    Expect(ImageWidth() > Narrow + 100.0 && ImageWidth() <= Page->viewport()->width(), "and refits when the window is resized");
+
+    EditorDocs::SetDocsRoot(QString());
     DocumentationWindow::CloseIfOpen();
     PumpFor(10);
 
@@ -535,6 +604,12 @@ static void TestDocumentation()
     {
         DocumentationWindow* Real = DocumentationWindow::Open(QString::fromLocal8Bit(qgetenv("NIMBLE_DOCS_PAGE")));
         PumpFor(200);
+        /* NIMBLE_DOCS_ANCHOR=<heading anchor>: the page scrolled to it. */
+        if(!qEnvironmentVariableIsEmpty("NIMBLE_DOCS_ANCHOR"))
+        {
+            if(auto* Browser = Real->findChild<QTextBrowser*>()) { Browser->scrollToAnchor(QString::fromLocal8Bit(qgetenv("NIMBLE_DOCS_ANCHOR"))); }
+            PumpFor(600);
+        }
         Real->grab().save(QString::fromLocal8Bit(Snapshot));
         DocumentationWindow::CloseIfOpen();
         PumpFor(10);
@@ -591,6 +666,63 @@ static void TestClipTimeline()
     Expect(Added < 0.0f, "read-only, it adds nothing");
 }
 
+/* Build > Build Project's configure: tests and uncooked only in Debug and RelWithDebInfo, never Shipping. */
+static void TestProjectBuildOptions()
+{
+    std::printf("Build Project options\n");
+    using namespace EditorProjectBuild;
+    Expect(IsDevelopment(BC_Debug) && IsDevelopment(BC_RelWithDebInfo) && !IsDevelopment(BC_Shipping),
+           "Debug and RelWithDebInfo are development configurations; Shipping is not");
+
+    BuildOptions Options;
+    Options.bBuildTests  = true;
+    Options.bRunUncooked = true;
+    for(const EConfiguration Each : { BC_Debug, BC_RelWithDebInfo })
+    {
+        Options.Configuration = Each;
+        const QStringList Args = ConfigureArgs(QStringLiteral("client-debug"), Options);
+        Expect(Args.contains(QStringLiteral("-DNIMBLE_BUILD_TESTS=ON")) && Args.contains(QStringLiteral("-DNIMBLE_RUN_UNCOOKED=ON")),
+               "a development build passes its tests and uncooked choices");
+    }
+    Options.Configuration = BC_Shipping;
+    const QStringList Shipping = ConfigureArgs(QStringLiteral("client-shipping"), Options);
+    Expect(Shipping.contains(QStringLiteral("-DNIMBLE_BUILD_TESTS=OFF")) && Shipping.contains(QStringLiteral("-DNIMBLE_RUN_UNCOOKED=OFF")),
+           "Shipping never builds tests or runs uncooked, whatever the options say");
+
+    Options.Configuration = BC_Debug;
+    Options.bBuildTests   = false;
+    Expect(ConfigureArgs(QStringLiteral("client-debug"), Options).contains(QStringLiteral("-DNIMBLE_BUILD_TESTS=OFF")),
+           "tests off is passed too, so a tree that had them loses them");
+}
+
+/* NIMBLE_GRAPH_SNAPSHOT_FILE=<x.nmgraph> NIMBLE_GRAPH_SNAPSHOT=<png> [NIMBLE_GRAPH_SNAPSHOT_SCALE=2]:
+ * a graph as the editor's canvas draws it (GraphEditorTab::SaveCanvasImage), for the docs. */
+static void TestGraphSnapshot()
+{
+    const QByteArray File  = qgetenv("NIMBLE_GRAPH_SNAPSHOT_FILE");
+    const QByteArray Image = qgetenv("NIMBLE_GRAPH_SNAPSHOT");
+    if(File.isEmpty() || Image.isEmpty()) { return; }
+
+    std::printf("Graph snapshot\n");
+    NodeGraph::RefreshSchemas();
+    NodeGraph::Graph Loaded;
+    std::string Error;
+    Expect(NodeGraph::LoadGraphFile(File.toStdString(), Loaded, Error), "the graph loads");
+
+    GraphDocument Document(QString::fromLocal8Bit(File), Loaded);
+    GraphEditorTab Tab(&Document);
+    Tab.resize(1400, 800);
+    Tab.show();
+    PumpFor(300);
+
+    bool bScaleOk = false;
+    double Scale = qEnvironmentVariable("NIMBLE_GRAPH_SNAPSHOT_SCALE").toDouble(&bScaleOk);
+    if(!bScaleOk || Scale <= 0.0) { Scale = 2.0; }
+    QRectF Area;
+    Expect(Tab.SaveCanvasImage(QString::fromLocal8Bit(Image), Scale, Area), "the canvas image is written");
+    std::printf("  scene area %g,%g %gx%g at scale %g\n", Area.x(), Area.y(), Area.width(), Area.height(), Scale);
+}
+
 int main(int argc, char** argv)
 {
     /* No display needed. */
@@ -607,6 +739,8 @@ int main(int argc, char** argv)
     TestClipTimeline();
     TestViewSettings();
     TestDocumentation();
+    TestProjectBuildOptions();
+    TestGraphSnapshot();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

@@ -91,7 +91,7 @@ twice across the range, 4.5 m up.
 
 You play the **RangeShooter** (`Content/Prefabs/ShootingRange/RangeShooter.nmprefab`):
 the engine's crash dummy and its pistol, third person. The Player Start
-spawns it (an `AvatarGameMode`); `RangeMove`, an avatar simulation, walks it on
+spawns it (an `NetGameMode`); `RangeMove`, an avatar simulation, walks it on
 the physics with raycasts -- floors, stairs, catwalks, walls -- and swings the
 camera. `Scripts/ShootingRange/RangeShooter.lua` draws and holsters (the
 pistol moves between holster and hand on the clips' notifies), shoots
@@ -102,9 +102,24 @@ accuracy, crosshair).
 
 WASD walks (Shift runs), Space jumps, H draws, right mouse scopes in (the
 camera slides in over the shoulder, the view narrows to 40 degrees, the look
-slows), left mouse fires, R reloads, Escape frees the mouse. `[WorldsLab] RangeAutoPlay=1` makes
+slows), left mouse fires, R reloads, Escape pauses and opens the pause menu. `[WorldsLab] RangeAutoPlay=1` makes
 it play itself -- shoot from the line, reload, climb to the catwalk, shoot
 down range -- through the avatar input filter.
+
+**The range's interface** is the example for the UI guides
+(`Engine/Docs/Guides/UI`): the HUD, a pause menu and a settings page, each driven
+from C++, Lua and a script graph.
+
+| Document (`Content/UI/ShootingRange/`) | Logic | |
+|---|---|---|
+| `RangeHUD.nmui` | `Scripts/ShootingRange/RangeShooter.lua` (rounds, hits, status), `WorldsLabRange.cpp` (the clock), `RangeHUD.ui.nmgraph` (the controls hint) | opened by the shooter |
+| `PauseMenu.nmui` | `WorldsLabRange.cpp` (opens it on Escape, pauses, `Native:Range.Resume`), `PauseMenu.lua` (Reset Score) | layer 10 |
+| `Settings.nmui` | `Settings.ui.nmgraph`: master and effects volume, look sensitivity, shadows and the hint, written to config vars; `Config.Save` on close | layer 11, over the menu |
+
+The settings are the config vars `Audio.MasterVolume`, `Audio.SFXVolume`,
+`Shadows.Enabled`, `WorldsLab.RangeLookSensitivity` and `WorldsLab.RangeShowHelp`
+(`[WorldsLab]` and `[Audio]` in `Config/DefaultEngine.ini`); what the player changes is
+saved to their `User.ini`, over that file.
 
 Needs JoltPhysics (`[Modules] JoltPhysics=true`, on for this project): the
 shell, range and props are static triangle meshes on layer 1; the stairs,

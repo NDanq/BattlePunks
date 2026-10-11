@@ -3,6 +3,8 @@
 
 #if WITH_EDITOR
 
+#include <functional>
+
 #include <QString>
 
 class QMimeData;
@@ -26,6 +28,16 @@ namespace EditorContent
      * "Engine/Content/..." beside every game.
      */
     QString GetEngineContentRoot();
+
+    /* The file a runtime path names -- the project's, or under Engine/Content/ the engine's -- or
+     * empty if no such file exists (a "transient://" or "native:" value, a typo). */
+    QString FileForRuntimePath(const QString& InRuntimePath);
+
+    /* Shows an asset in the Content Browser: its folder, the asset selected, and
+     * opened in its own editor. The main window installs the handler; false
+     * when there is none or InFile is not a file. */
+    void SetRevealHandler(std::function<void(const QString&)> InHandler);
+    bool RevealAsset(const QString& InFile);
 
     /* Whether InPath is the engine content folder or inside it. */
     bool IsEngineContent(const QString& InPath);

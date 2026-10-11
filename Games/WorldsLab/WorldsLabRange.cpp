@@ -12,18 +12,22 @@
 #include "Public/GameCore/World.h"
 #include "Public/RenderCore/Components/AnimationComponent.h"
 #include "Public/RenderCore/Components/CameraComponent.h"
+#include "Public/UI/UIAction.h"
+#include "Public/UI/UISystem.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <unordered_map>
 
 /*
  * WorldsLabRange: the Shooting Range world's mode
  * (Content/Levels/ShootingRange.nmworld, Tools/ShootingRange/). An
- * AvatarGameMode: the level's Player Start spawns the RangeShooter prefab
+ * NetGameMode: the level's Player Start spawns the RangeShooter prefab
  * (Content/Prefabs/ShootingRange/RangeShooter.nmprefab) for the local player
  * and possesses it.
  *
@@ -44,8 +48,10 @@
  *            anim state's Armed), and tells the anim state Speed and Grounded
  *
  * Shooting, the HUD and the pistol are the prefab's Lua
- * (Scripts/ShootingRange/RangeShooter.lua). Escape frees the mouse; a
- * click takes it back.
+ * (Scripts/ShootingRange/RangeShooter.lua). Escape pauses and opens the pause
+ * menu (Content/UI/ShootingRange/PauseMenu.nmui), which frees the mouse;
+ * Resume closes it and takes the mouse back. The mode also publishes the
+ * HUD's clock, and registers the menu's Native:Range.Resume action (Engine/Docs/Guides/UI).
  *
  * [WorldsLab] RangeAutoPlay=1 drives the shooter by itself, through the
  * avatar input filter (what a bot would use): it draws and shoots the plates
@@ -56,6 +62,7 @@
 
 NIMBLE_CONFIG_FLOAT(GRangeLookSensitivity, "WorldsLab", "RangeLookSensitivity", 1.0f, nullptr);
 NIMBLE_CONFIG_BOOL(GRangeAutoPlay,         "WorldsLab", "RangeAutoPlay",        false, nullptr);
+NIMBLE_CONFIG_BOOL(GRangeShowHelp,         "WorldsLab", "RangeShowHelp",        true,  nullptr);   // the HUD's controls hint (Settings)
 
 /* The shooter's controls. Each entry is also [Input_Range] <Name> in
  * Config/DefaultEngine.ini. */
@@ -535,9 +542,52 @@ namespace
     }
 }
 
+// === The UI ====================================================================
+
+namespace
+{
+    constexpr const char* PauseMenuPath = "Content/UI/ShootingRange/PauseMenu.nmui";
+    constexpr const char* SettingsPath  = "Content/UI/ShootingRange/Settings.nmui";
+
+    /* Escape: the menu opens over the game, the game stops, the cursor comes back. */
+    void OpenPauseMenu(NimbleEngine::GameSession& InSession)
+    {
+        if(InSession.GetUI().IsOpen(PauseMenuPath)) { return; }
+        InSession.GetUI().Open(PauseMenuPath);
+        InSession.SetPaused(true);
+        InSession.SetMouseCaptured(false);
+    }
+
+    /* Resume: the same three things, undone. */
+    void ClosePauseMenu(NimbleEngine::GameSession& InSession)
+    {
+        InSession.GetUI().Close(SettingsPath);
+        InSession.GetUI().Close(PauseMenuPath);
+        InSession.SetPaused(false);
+        InSession.SetMouseCaptured(true);
+    }
+
+    /* "M:SS", for the HUD. */
+    std::string FormatClock(const int InSeconds)
+    {
+        char Text[16];
+        std::snprintf(Text, sizeof(Text), "%d:%02d", InSeconds / 60, InSeconds % 60);
+        return Text;
+    }
+}
+
+/* Native:Range.Resume, for the pause menu's Resume button and its Back. HostData is the GameSession. */
+UI_DEFINE_ACTIONS(Range)
+{
+    Actions.Add("Resume", [](const UI::UIActionContext& InContext)
+    {
+        if(auto* Session = static_cast<NimbleEngine::GameSession*>(InContext.HostData)) { ClosePauseMenu(*Session); }
+    }, "Closes the pause menu, unpauses and takes the mouse back");
+}
+
 // === The mode ==================================================================
 
-class WorldsLabRangeMode : public NimbleEngine::AvatarGameMode
+class WorldsLabRangeMode : public NimbleEngine::NetGameMode
 {
 public:
     /* The shadow atlas: the sun's, and the two lane spots over the targets. */
@@ -560,21 +610,34 @@ public:
         {
             Avatars->SetInputFilter(&AutoPlayFilter, nullptr);
         }
-        return AvatarGameMode::OnLoad(InSession);
+        return NetGameMode::OnLoad(InSession);
     }
 
     void OnStart() override
     {
-        AvatarGameMode::OnStart();
+        NetGameMode::OnStart();
         /* Autoplay leaves the mouse alone: it drives itself, and someone may be using the desktop. */
         if(!GRangeAutoPlay.GetBool()) { Session->SetMouseCaptured(true); }
         CORE_LOG("[ShootingRange] WASD walks (Shift runs), Space jumps, H draws, right mouse aims, left fires, R reloads; "
-                 "Escape frees the mouse")
+                 "Escape pauses")
+
+        /* The HUD's clock starts at zero: a string the HUD's {Bind:Range.Time} follows. */
+        RunSeconds   = 0.0;
+        ShownSeconds = 0;
+        Session->GetUI().SetValue("Range.Time", UI::UIValue::String(FormatClock(0)));
     }
 
     void OnTick(const NimbleEngine::FrameContext& InFrame) override
     {
-        (void)InFrame;
+        /* The clock counts game time: OnTick is not called while paused, so the pause menu stops it.
+         * The store is written when the shown second changes, not every frame. */
+        RunSeconds += InFrame.DeltaSeconds;
+        if(const int Seconds = int(RunSeconds); Seconds != ShownSeconds)
+        {
+            ShownSeconds = Seconds;
+            Session->GetUI().SetValue("Range.Time", UI::UIValue::String(FormatClock(Seconds)));
+        }
+
         GameCore::World& World = Session->GetWorld();
         World.Each<NimbleEngine::AvatarHarnessComponent>([this](const GameCore::Entity&, NimbleEngine::AvatarHarnessComponent& InHarness)
         {
@@ -582,7 +645,7 @@ public:
             if(GRangeAutoPlay.GetBool()) { return; }
             if(InHarness.WasPressed("Pause"))
             {
-                Session->SetMouseCaptured(false);
+                OpenPauseMenu(*Session);
             }
             else if(!Session->IsMouseCaptured() && InHarness.WasPressed("Fire"))
             {
@@ -608,6 +671,8 @@ public:
 
 private:
     int32_t PreviousShadowedLights = -1;
+    double  RunSeconds   = 0.0;   // the HUD's clock
+    int     ShownSeconds = 0;
 };
 
 void WorldsLabRegisterRange()

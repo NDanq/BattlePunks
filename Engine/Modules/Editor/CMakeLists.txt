@@ -33,6 +33,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/EditorMain.cpp
         Source/Private/Editor/AboutDialog.cpp
         Source/Private/Editor/AboutDialog.h
+        Source/Private/Editor/ComponentDocs.cpp
+        Source/Private/Editor/ComponentDocs.h
         Source/Private/Editor/DocumentationWindow.cpp
         Source/Private/Editor/DocumentationWindow.h
         Source/Private/Editor/EditorContext.cpp
@@ -349,6 +351,8 @@ qt_add_resources(NimbleEditor "LucideIcons"
             "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/volume-2.svg"
             "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/audio-waveform.svg"
             "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/captions.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/eye.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/circle-question-mark.svg"
 )
 # The editor's own icons in Lucide's style (the Terrain tools), beside them as :/lucide/<name>.svg.
 set(NIMBLE_EDITOR_OWN_ICONS
@@ -766,5 +770,7 @@ if(TARGET NimbleEditorSequencerTests)
                 "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/volume-2.svg"
                 "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/audio-waveform.svg"
                 "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/captions.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/eye.svg"
+                "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/circle-question-mark.svg"
     )
 endif()

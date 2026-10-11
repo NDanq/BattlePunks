@@ -53,6 +53,8 @@ namespace EditorIcons
         Sound,        // lucide "volume-2": hear the preview
         Scrub,        // lucide "audio-waveform": hear the scrub
         Subtitles,    // lucide "captions"
+        Eye,          // lucide "eye": show an asset field's asset in the Content Browser
+        Help,         // lucide "circle-question-mark": a component's documentation
         Terrain,            // the editor's own (Resources/Icons), drawn to Lucide's grid: a mountain
         TerrainRaise,       // a hump and an arrow up
         TerrainLower,       // a dip and an arrow down

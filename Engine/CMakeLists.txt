@@ -298,6 +298,40 @@ else()
     set(NIMBLE_UNCOOKED_CONTENT OFF CACHE INTERNAL "Stage text worlds and prefabs (every build but Shipping)")
 endif()
 
+# === Tests ==================================================================
+# NIMBLE_BUILD_TESTS is the one switch for every test executable in the
+# engine; each module's own option (UI_BUILD_TESTS, GAMECORE_BUILD_SMOKETEST,
+# ...) still picks among them when it is on. Debug and RelWithDebInfo build
+# them by default; the editor's Build > Build Project passes it from its
+# "Build test executables" option.
+#
+# SHIPPING NEVER BUILDS TESTS. A single-config Shipping tree turns every
+# module's option off whatever NIMBLE_BUILD_TESTS says (a normal variable
+# shadows the option: CMP0077, NEW at 3.16), so the targets never exist; a
+# multi-config tree leaves them out of its Shipping build (the pass at the
+# end of this file).
+option(NIMBLE_BUILD_TESTS "Build the engine's test executables (Debug and RelWithDebInfo; never Shipping)" ON)
+set(NM_TEST_OPTIONS
+        NIMBLEENGINE_BUILD_TESTS NIMBLEEDITOR_BUILD_TESTS
+        CORE_BUILD_SMOKETEST GDI_BUILD_SMOKETEST GAMECORE_BUILD_SMOKETEST
+        RENDERCORE_BUILD_SMOKETEST RENDERCORE_BUILD_ANIMATION_TESTS
+        NETCORE_BUILD_TESTS JOLTPHYSICS_BUILD_TESTS AUDIO_BUILD_TESTS
+        SEQUENCER_BUILD_TESTS UI_BUILD_TESTS NODEGRAPH_BUILD_TESTS)
+if(NOT NM_MULTI_CONFIG AND CMAKE_BUILD_TYPE STREQUAL "Shipping")
+    set(NM_TESTS_ENABLED OFF)
+    if(NIMBLE_BUILD_TESTS)
+        message(STATUS "NimbleEngine: Shipping builds no tests (NIMBLE_BUILD_TESTS is ignored)")
+    endif()
+else()
+    set(NM_TESTS_ENABLED ${NIMBLE_BUILD_TESTS})
+endif()
+if(NOT NM_TESTS_ENABLED)
+    foreach(NM_TEST_OPTION IN LISTS NM_TEST_OPTIONS)
+        set(${NM_TEST_OPTION} OFF)
+    endforeach()
+endif()
+message(STATUS "NimbleEngine: tests ${NM_TESTS_ENABLED}")
+
 # === Packaged content =======================================================
 # NIMBLE_PACKAGE_CONTENT: a game's content in Paks/Engine.nmpak and
 # Paks/Game.nmpak beside the executable instead of loose files
@@ -741,7 +775,7 @@ if(NIMBLEENGINE_BUILD_TESTS)
     set_tests_properties(NimbleEngine.GameFrameworkTests PROPERTIES TIMEOUT 120 LABELS "smoke")
 
     # Avatars (Avatar.h): possession, the harness's input, the server's half of
-    # the input stream, simulations, AutoPossess and AvatarGameMode.
+    # the input stream, simulations, AutoPossess and NetGameMode.
     add_executable(NimbleEngineAvatarTests Tests/AvatarTests.cpp)
     target_link_libraries(NimbleEngineAvatarTests PRIVATE NimbleEngine::NimbleEngine)
     set_target_properties(NimbleEngineAvatarTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
@@ -788,6 +822,12 @@ if(NIMBLEENGINE_BUILD_TESTS)
         add_test(NAME NimbleEngine.AvatarGuideTests COMMAND NimbleEngineAvatarGuideTests
                  WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineAvatarGuideTests>")
         set_tests_properties(NimbleEngine.AvatarGuideTests PROPERTIES TIMEOUT 120 LABELS "smoke")
+        add_executable(NimbleEngineGameModeGuideTests Tests/GameModeGuideTests.cpp)
+        target_link_libraries(NimbleEngineGameModeGuideTests PRIVATE NimbleEngine::NimbleEngine NodeGraph::NodeGraph)
+        set_target_properties(NimbleEngineGameModeGuideTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
+        add_test(NAME NimbleEngine.GameModeGuideTests COMMAND NimbleEngineGameModeGuideTests
+                 WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineGameModeGuideTests>")
+        set_tests_properties(NimbleEngine.GameModeGuideTests PROPERTIES TIMEOUT 120 LABELS "smoke")
     endif()
 endif()
 
@@ -971,4 +1011,28 @@ option(NIMBLE_BUILD_SANDBOX "Build the Games/Sandbox host" ON)
 if(NIMBLE_BUILD_SANDBOX AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../Games/Sandbox/CMakeLists.txt")
     add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../Games/Sandbox"
                      "${CMAKE_CURRENT_BINARY_DIR}/Games/Sandbox")
+endif()
+
+# === Tests: never in Shipping (multi-config) ================================
+# A multi-config generator configures every configuration at once, so the
+# test executables exist in its Shipping configuration too: leave them out of
+# that configuration's build (see "Tests" above). The engine's test targets
+# are named *Tests or *SmokeTest; vendored trees (External/) are not looked at.
+if(NM_MULTI_CONFIG AND NM_TESTS_ENABLED)
+    function(nm_exclude_tests_from_shipping InDir)
+        get_property(NM_TARGETS DIRECTORY "${InDir}" PROPERTY BUILDSYSTEM_TARGETS)
+        foreach(NM_T IN LISTS NM_TARGETS)
+            get_target_property(NM_TYPE ${NM_T} TYPE)
+            if(NM_TYPE STREQUAL "EXECUTABLE" AND NM_T MATCHES "(Tests|SmokeTest)$")
+                set_target_properties(${NM_T} PROPERTIES EXCLUDE_FROM_DEFAULT_BUILD_SHIPPING ON)
+            endif()
+        endforeach()
+        get_property(NM_SUBDIRS DIRECTORY "${InDir}" PROPERTY SUBDIRECTORIES)
+        foreach(NM_SUB IN LISTS NM_SUBDIRS)
+            if(NOT NM_SUB MATCHES "/External/")
+                nm_exclude_tests_from_shipping("${NM_SUB}")
+            endif()
+        endforeach()
+    endfunction()
+    nm_exclude_tests_from_shipping("${CMAKE_CURRENT_SOURCE_DIR}")
 endif()

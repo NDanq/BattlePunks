@@ -2,17 +2,23 @@
 
 #include "Private/Editor/DocumentationWindow.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include <QAction>
 #include <QDesktopServices>
 #include <QDir>
+#include <QEvent>
 #include <QFile>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QFont>
 #include <QHash>
+#include <QImage>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPixmap>
 #include <QPointer>
 #include <QRegularExpression>
 #include <QScrollBar>
@@ -24,6 +30,7 @@
 #include <QTextBrowser>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QTextFormat>
 #include <QTextFrame>
 #include <QTextTable>
 #include <QTimer>
@@ -32,8 +39,7 @@
 #include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 
-#include "Private/Editor/Graph/GraphAssets.h"
-#include "Private/Editor/Project/ProjectTemplate.h"
+#include "Private/Editor/ComponentDocs.h"
 
 namespace
 {
@@ -98,19 +104,31 @@ namespace
     }
 }
 
+bool DocumentationWindow::IsDocumentation(const QString& InPath)
+{
+    return !InPath.isEmpty() && IsUnder(QFileInfo(InPath).absoluteFilePath(), EditorDocs::GetDocsRoot());
+}
+
 DocumentationWindow* DocumentationWindow::Open(const QString& InPath)
 {
+    /* Only Engine/Docs is shown: any other path is the default page instead. */
+    const QString Path = IsDocumentation(InPath) ? InPath : QString();
+
     DocumentationWindow* Window = TheWindow();
     if(!Window)
     {
         Window = new DocumentationWindow();
         TheWindow() = Window;
         Window->resize(1180, 760);
-        Window->ShowFile(InPath.isEmpty() ? Window->DefaultPage() : InPath);
+        Window->ShowFile(Path.isEmpty() ? Window->DefaultPage() : Path);
     }
-    else if(!InPath.isEmpty())
+    else if(!Path.isEmpty())
     {
-        Window->ShowFile(InPath);
+        Window->ShowFile(Path);
+    }
+    if(!InPath.isEmpty() && Path.isEmpty())
+    {
+        Window->statusBar()->showMessage(QStringLiteral("Only files under Engine/Docs are shown here"), 5000);
     }
     Window->show();
     Window->raise();
@@ -150,10 +168,6 @@ DocumentationWindow::DocumentationWindow()
 {
     setAttribute(Qt::WA_DeleteOnClose);
     setWindowTitle(QStringLiteral("Documentation"));
-
-    ProjectRoot = QDir::cleanPath(EditorGraphs::GetProjectRoot());
-    EngineRoot  = QDir::cleanPath(EditorProject::GetEngineDir());
-    if(EngineRoot == QStringLiteral(".")) { EngineRoot.clear(); }
 
     BuildUi();
     Rescan();
@@ -241,6 +255,7 @@ void DocumentationWindow::BuildUi()
     Page = new QTextBrowser(this);
     Page->setOpenLinks(false);
     Page->document()->setDocumentMargin(16);
+    Page->viewport()->installEventFilter(this);   // resized: images refit (FitImages)
     connect(Page, &QTextBrowser::anchorClicked, this, &DocumentationWindow::OnLinkClicked);
     connect(Page, &QTextBrowser::sourceChanged, this, &DocumentationWindow::OnSourceChanged);
     connect(Page, &QTextBrowser::backwardAvailable, BackAction, &QAction::setEnabled);
@@ -284,29 +299,10 @@ void DocumentationWindow::Rescan()
     };
     QList<Group> Groups;
 
-    const bool bProjectInEngine = IsUnder(ProjectRoot, EngineRoot);
-    if(!ProjectRoot.isEmpty())
+    const QString DocsRoot = EditorDocs::GetDocsRoot();
+    if(!DocsRoot.isEmpty())
     {
-        Groups << Group{ QStringLiteral("%1 (Project)").arg(QDir(ProjectRoot).dirName()), ProjectRoot,
-                         FindMarkdownFiles(ProjectRoot) };
-    }
-    if(!EngineRoot.isEmpty())
-    {
-        QStringList EngineFiles;
-        for(const QString& Each : FindMarkdownFiles(EngineRoot))
-        {
-            if(!bProjectInEngine || !IsUnder(Each, ProjectRoot)) { EngineFiles << Each; }
-        }
-        /* The repository's own README, beside Engine/ and Games/. */
-        QDir Repository(EngineRoot);
-        if(Repository.cdUp())
-        {
-            for(const QFileInfo& Each : Repository.entryInfoList({ QStringLiteral("*.md") }, QDir::Files, QDir::Name))
-            {
-                EngineFiles.prepend(Each.absoluteFilePath());
-            }
-        }
-        Groups << Group{ QStringLiteral("Engine"), EngineRoot, EngineFiles };
+        Groups << Group{ QStringLiteral("Documentation"), DocsRoot, FindMarkdownFiles(DocsRoot) };
     }
 
     for(const Group& Each : Groups)
@@ -324,8 +320,7 @@ void DocumentationWindow::Rescan()
         {
             const QFileInfo Info(Path);
             QString Folder = QDir(Each.Root).relativeFilePath(Info.absolutePath());
-            if(Folder == QStringLiteral("."))     { Folder.clear(); }
-            else if(Folder == QStringLiteral("..")) { Folder = QStringLiteral("Repository"); }
+            if(Folder == QStringLiteral(".")) { Folder.clear(); }
 
             QTreeWidgetItem* Parent = Top;
             if(!Folder.isEmpty())
@@ -429,21 +424,8 @@ void DocumentationWindow::SelectInTree(const QString& InPath)
 
 QString DocumentationWindow::DefaultPage() const
 {
-    QStringList Candidates;
-    if(!ProjectRoot.isEmpty())
-    {
-        Candidates << QDir(ProjectRoot).filePath(QStringLiteral("README.md"))
-                   << QDir(ProjectRoot).filePath(QStringLiteral("Docs/GettingStarted.md"));
-    }
-    if(!EngineRoot.isEmpty())
-    {
-        Candidates << QDir(EngineRoot).filePath(QStringLiteral("../README.md"))
-                   << QDir(EngineRoot).filePath(QStringLiteral("README.md"));
-    }
-    for(const QString& Each : Candidates)
-    {
-        if(QFileInfo(Each).isFile()) { return QDir::cleanPath(QFileInfo(Each).absoluteFilePath()); }
-    }
+    const QString Readme = QDir(EditorDocs::GetDocsRoot()).filePath(QStringLiteral("README.md"));
+    if(QFileInfo(Readme).isFile()) { return QDir::cleanPath(Readme); }
     for(QTreeWidgetItemIterator It(Files); *It; ++It)
     {
         const QString Path = (*It)->data(0, PathRole).toString();
@@ -454,7 +436,7 @@ QString DocumentationWindow::DefaultPage() const
 
 void DocumentationWindow::ShowFile(const QString& InPath, const QString& InFragment)
 {
-    if(InPath.isEmpty()) { return; }
+    if(!IsDocumentation(InPath)) { return; }
     QUrl Url = QUrl::fromLocalFile(QFileInfo(InPath).absoluteFilePath());
     if(!InFragment.isEmpty()) { Url.setFragment(InFragment); }
     Page->setSource(Url, QTextDocument::MarkdownResource);
@@ -487,6 +469,11 @@ void DocumentationWindow::OnLinkClicked(const QUrl& InLink)
     if(Resolved.isLocalFile())
     {
         const QString Path = Resolved.toLocalFile();
+        if(!IsDocumentation(Path))
+        {
+            statusBar()->showMessage(QStringLiteral("Only files under Engine/Docs are shown here"), 5000);
+            return;
+        }
         if(IsMarkdown(Path) && QFileInfo(Path).isFile())
         {
             Page->setSource(Resolved, QTextDocument::MarkdownResource);   // or just scrolls, for "#section"
@@ -609,7 +596,71 @@ void DocumentationWindow::DecorateDocument()
         }
     }
 
+    /* After setSource has finished laying the page out (sourceChanged runs inside it). */
+    QTimer::singleShot(0, this, [this]() { if(Page) { FitImages(); } });
     Doc->setModified(false);
+}
+
+void DocumentationWindow::FitImages()
+{
+    QTextDocument* Doc = Page->document();
+    const qreal Available = Page->viewport()->width() - 2.0 * Doc->documentMargin() - 4.0;
+    if(Available < 64.0) { return; }
+
+    /* Gathered first: a format change splits fragments. */
+    struct Found { int Position; int Length; QTextImageFormat Format; };
+    QList<Found> Images;
+    for(QTextBlock Block = Doc->begin(); Block.isValid(); Block = Block.next())
+    {
+        for(QTextBlock::iterator It = Block.begin(); !It.atEnd(); ++It)
+        {
+            const QTextFragment Fragment = It.fragment();
+            if(Fragment.isValid() && Fragment.charFormat().isImageFormat())
+            {
+                Images << Found{ Fragment.position(), Fragment.length(), Fragment.charFormat().toImageFormat() };
+            }
+        }
+    }
+
+    bool bChanged = false;
+    for(Found& Each : Images)
+    {
+        /* Its own size, from the loaded resource (QTextBrowser resolves the name against the page). */
+        const QVariant Resource = Doc->resource(QTextDocument::ImageResource, QUrl(Each.Format.name()));
+        QSize Natural;
+        if(Resource.canConvert<QImage>())       { Natural = qvariant_cast<QImage>(Resource).size(); }
+        else if(Resource.canConvert<QPixmap>()) { Natural = qvariant_cast<QPixmap>(Resource).size(); }
+        if(Natural.isEmpty()) { continue; }
+
+        const qreal Width = std::min<qreal>(Natural.width(), Available);
+        if(std::abs(Each.Format.width() - Width) < 0.5) { continue; }
+
+        /* Only the size is merged into the image's own format: its name, anchor and the rest stay. */
+        QTextImageFormat Size;
+        Size.setWidth(Width);
+        Size.setHeight(Natural.height() * Width / Natural.width());
+        QTextCursor Cursor(Doc);
+        Cursor.setPosition(Each.Position);
+        Cursor.setPosition(Each.Position + Each.Length, QTextCursor::KeepAnchor);
+        Cursor.mergeCharFormat(Size);
+        bChanged = true;
+    }
+    if(bChanged)
+    {
+        /* A resized image moves everything below it: lay the whole page out again, not just its block. */
+        Doc->markContentsDirty(0, Doc->characterCount());
+    }
+    Doc->setModified(false);
+}
+
+bool DocumentationWindow::eventFilter(QObject* InWatched, QEvent* InEvent)
+{
+    if(Page && InWatched == Page->viewport() && InEvent->type() == QEvent::Resize)
+    {
+        /* After the layout settles; several resizes in a drag fit once. */
+        QTimer::singleShot(0, this, [this]() { if(Page) { FitImages(); } });
+    }
+    return QMainWindow::eventFilter(InWatched, InEvent);
 }
 
 #endif // WITH_EDITOR
