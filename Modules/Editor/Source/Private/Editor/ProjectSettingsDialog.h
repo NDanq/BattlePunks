@@ -54,6 +54,9 @@ public:
     /* Shows the Worlds page. */
     void ShowWorlds();
 
+    /* The page named InName (a section: "Net", "Shadows"...), any case; false if there is none. */
+    bool ShowPage(const QString& InName);
+
     /* The world open in the editor (runtime path): Worlds > Add Open World. */
     void SetOpenWorld(const QString& InRuntimePath) { OpenWorld = InRuntimePath; }
 

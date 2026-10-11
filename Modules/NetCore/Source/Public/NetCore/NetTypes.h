@@ -60,6 +60,14 @@ namespace NetCore
          * to rejoin as that client after a restart; 0 joins as a new one. */
         uint64_t ReconnectToken   = 0;
 
+        /* THE BANDWIDTH BUDGET, a server's for each client's state, in
+         * kilobytes a second (0: none). What does not fit in a tick waits for
+         * the next, the client's own entities first, then by the Net
+         * component's Priority, the time waited and nearness to the client's
+         * own avatar (README.md, "Bandwidth budget"). Spawns, RPCs and the
+         * editor link are not counted. */
+        uint32_t ClientBandwidthKBps = 256;
+
         uint32_t RpcPerSecond      = 1000;
         uint32_t RpcFloodPerSecond = 1000;
         uint32_t MaxRpcBytes       = 1024;
@@ -76,6 +84,7 @@ namespace NetCore
         uint64_t PacketsSent   = 0, PacketsReceived = 0;
         float    SendBytesPerSecond    = 0.0f;   // over the last whole second
         float    ReceiveBytesPerSecond = 0.0f;
+        uint32_t StateDeferred         = 0;      // a server's: entities its budget held back last tick
     };
 }
 

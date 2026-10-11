@@ -77,6 +77,7 @@ namespace NimbleEngine
         uint64_t PacketsSent   = 0, PacketsReceived = 0;
         float    SendBytesPerSecond    = 0.0f;   // over the last whole second
         float    ReceiveBytesPerSecond = 0.0f;
+        uint32_t StateDeferred         = 0;      // a server's: entities the bandwidth budget held back last tick
     };
 
     /* A client: its connection to the server (InClient ignored). A server:

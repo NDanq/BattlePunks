@@ -903,6 +903,101 @@ namespace
     }
 }
 
+namespace
+{
+    /* [Net] ClientBandwidthKBps: under a tight budget, a client's own entity
+     * keeps up, a higher Priority is updated more often, and everything
+     * still arrives once things settle. */
+    void TestBandwidthBudget()
+    {
+        std::printf("[bandwidth budget]\n");
+        constexpr int Entities = 300;
+
+        World ServerWorld, ClientWorld;
+        NetSession Server, Client;
+        const Pair Both{ &Server, &Client };
+        NetConfig ServerConfig;
+        ServerConfig.Port = 0;
+        ServerConfig.RpcPerSecond = 0;
+        ServerConfig.ClientBandwidthKBps = 4;
+        Check(Server.Start(ENetRole::Server, ServerConfig), "a server with a 4 KB/s budget per client");
+        Server.BindWorld(ServerWorld, "Budget");
+        NetConfig ClientConfig;
+        std::strcpy(ClientConfig.ServerAddress, "127.0.0.1");
+        ClientConfig.Port = Server.GetPort();
+        ClientConfig.InterpolationDelayMs = 0;
+        Client.Start(ENetRole::Client, ClientConfig);
+        Client.BindWorld(ClientWorld, "Budget");
+        Check(StepUntil(Both, [&] { return Client.IsConnected(); }), "a client joins it");
+
+        /* The client's own at the origin; High and Low the same distance off; a crowd further out. */
+        const auto Make = [&](const char* InName, const float InX, const float InPriority, const NetClientID InOwner)
+        {
+            Entity E = ServerWorld.CreateEntity(InName);
+            NetComponent Net;
+            Net.Priority    = InPriority;
+            Net.OwnerClient = InOwner;
+            E.AddComponent(Net);
+            TransformComponent T;
+            T.Position = EngineCore::Vector3(InX, 0.0f, 0.0f);
+            E.AddComponent(T);
+            E.AddComponent<PawnComponent>();
+            return E;
+        };
+        Entity Own  = Make("Own", 0.0f, 1.0f, Client.GetLocalClientId());
+        Entity High = Make("High", 1000.0f, 8.0f, NET_CLIENT_NONE);
+        Entity Low  = Make("Low", -1000.0f, 1.0f, NET_CLIENT_NONE);
+        std::vector<Entity> Crowd;
+        for(int Index = 0; Index < Entities; ++Index) { Crowd.push_back(Make("Crowd", 3000.0f + float(Index), 1.0f, NET_CLIENT_NONE)); }
+        const auto OnClient = [&](const Entity& InServer) -> const PawnComponent*
+        {
+            const EntityID There = Client.FindEntityByNetId(Server.GetNetId(InServer.GetID()));
+            return There.IsSet() ? Entity(&ClientWorld, There).GetComponent<PawnComponent>() : nullptr;
+        };
+        Check(StepUntil(Both, [&] { return OnClient(Crowd.back()) != nullptr; }, 5000), "everything spawns (spawns are not budgeted)");
+
+        /* Every entity changes every step, for two seconds. */
+        int Steps = 0, OwnSeen = 0, HighSeen = 0, LowSeen = 0;
+        int32_t LastOwn = -1, LastHigh = -1, LastLow = -1;
+        uint32_t MostDeferred = 0;
+        const auto Until = std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
+        while(std::chrono::steady_clock::now() < Until)
+        {
+            ++Steps;
+            for(Entity* E : { &Own, &High, &Low }) { E->GetComponent<PawnComponent>()->Health = 1000 + Steps; }
+            for(Entity& E : Crowd) { E.GetComponent<PawnComponent>()->Health = 1000 + Steps; }
+            Step(Both);
+            const PawnComponent* O = OnClient(Own);
+            const PawnComponent* H = OnClient(High);
+            const PawnComponent* L = OnClient(Low);
+            if(O && O->Health != LastOwn)  { LastOwn = O->Health; ++OwnSeen; }
+            if(H && H->Health != LastHigh) { LastHigh = H->Health; ++HighSeen; }
+            if(L && L->Health != LastLow)  { LastLow = L->Health; ++LowSeen; }
+            NetPeerStats Stats;
+            if(Server.GetClientStats(Client.GetLocalClientId(), Stats)) { MostDeferred = std::max(MostDeferred, Stats.StateDeferred); }
+        }
+        std::printf("budget: %d steps; the client saw its own entity change %d times, Priority 8 %d, Priority 1 %d; "
+                    "up to %u entities held back a tick\n", Steps, OwnSeen, HighSeen, LowSeen, MostDeferred);
+        Check(MostDeferred > 0, "the budget holds entities back when they do not all fit");
+        Check(OwnSeen > Steps / 2, "the client's own entity keeps up regardless");
+        Check(HighSeen > LowSeen * 2, "a higher Priority is updated more often");
+        Check(LowSeen > 0, "but a lower one still gets its turn");
+
+        /* Still now: every last value arrives. */
+        const int32_t Final = 1000 + Steps;
+        Check(StepUntil(Both, [&]
+        {
+            for(const Entity& E : Crowd) { const PawnComponent* P = OnClient(E); if(!P || P->Health != Final) { return false; } }
+            return OnClient(Low) && OnClient(Low)->Health == Final;
+        }, 20000), "once things settle, everything held back arrives");
+
+        Client.Stop();
+        Server.UnbindWorld();
+        Server.Stop();
+        Client.UnbindWorld();
+    }
+}
+
 int main()
 {
     TestEditorLink();
@@ -1244,6 +1339,7 @@ int main()
     TestReconnect();
     TestViewTime();
     TestQuantization();
+    TestBandwidthBudget();
     TestFlushCost();
     TestStructureChanges(0);
     TestStructureChanges(50);
