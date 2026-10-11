@@ -171,7 +171,7 @@ detail):
 |---|---|
 | Moving | `RangeMove`, the Shooting Range's walker: predicted on the client that drives the fighter, stepped on the server from its input, interpolated everywhere else |
 | Firing | the driving process sends `ServerFire(origin, direction)` from its camera, and shows its own muzzle flash and impact at once |
-| Hits | the server only: walls by physics raycast, fighters by a capsule each, rewound by `[Net] InterpolationDelayMs` to where the shooter saw them |
+| Hits | the server only: walls by physics raycast, fighters by a capsule each, rewound to where the shooter saw them: `[Net] InterpolationDelayMs` plus half its round trip (`GetNetStats`) |
 | Health, ammo, kills, deaths | replicated fields of each fighter's `PvpFighter` component |
 | Feedback | `MulticastShot` (everyone else's flash, sound, impact), `MulticastKilled` (the kill feed, the ragdoll), `ClientHitConfirm` (the shooter's hit marker) |
 | The match | a networked `PvpMatch` entity the server makes: the clock, the phase, the winner |
@@ -203,9 +203,6 @@ buildings' footprints, the props and the ground static bodies (layer 1),
 and adds boundary walls, eight Player Starts and an overview camera.
 
 **Not yet:**
-- The hit rewind allows for the interpolation delay but not the client's
-  half of the round trip, which NetCore does not report yet. On a slow link,
-  a shot at a runner lands behind it.
 - Fighters pass through each other.
 - The HUD is XML: Client and Server builds read UI cooked in the editor
   (Build > Cook Content) first.

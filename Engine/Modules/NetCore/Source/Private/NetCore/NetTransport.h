@@ -2,10 +2,13 @@
 #define NETCORE_NETTRANSPORT_H
 
 #include <cstddef>
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include "Public/NetCore/NetTypes.h"
 
 /*
  * A thin layer over ENet, private to NetCore: enet.h (and through it
@@ -83,8 +86,22 @@ namespace NetCore
         /* "1.2.3.4:5678", for logs. */
         std::string DescribePeer(NetPeerID InPeer) const;
 
+        /* InPeer's round trip and loss (ENet's) and traffic (counted here).
+         * False for a peer not connected. */
+        bool GetPeerStats(NetPeerID InPeer, NetPeerStats& OutStats) const;
+
     private:
         NetPeerID Track(_ENetPeer* InPeer);
+
+        /* What went to and came from a peer; the rates over whole seconds, at Flush. */
+        struct Traffic
+        {
+            uint64_t BytesSent = 0, BytesReceived = 0, PacketsSent = 0, PacketsReceived = 0;
+            uint64_t WindowSent = 0, WindowReceived = 0;
+            std::chrono::steady_clock::time_point WindowStart = std::chrono::steady_clock::now();
+            float    SendRate = 0.0f, ReceiveRate = 0.0f;
+        };
+        std::unordered_map<NetPeerID, Traffic> Counters;
 
         _ENetHost*                                Host         = nullptr;
         bool                                      bInitialized = false;

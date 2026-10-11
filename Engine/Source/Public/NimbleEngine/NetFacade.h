@@ -60,6 +60,24 @@ namespace NimbleEngine
     /* A client: connected and welcomed. A server: listening. */
     NE_API bool IsNetConnected();
 
+    /* One connection, as this end sees it. */
+    struct NetStats
+    {
+        uint32_t RoundTripMs         = 0;      // smoothed
+        uint32_t RoundTripVarianceMs = 0;
+        float    PacketLossPercent   = 0.0f;   // estimated from reliable resends
+        uint64_t BytesSent     = 0, BytesReceived   = 0;   // payload, since connected
+        uint64_t PacketsSent   = 0, PacketsReceived = 0;
+        float    SendBytesPerSecond    = 0.0f;   // over the last whole second
+        float    ReceiveBytesPerSecond = 0.0f;
+    };
+
+    /* A client: its connection to the server (InClient ignored). A server:
+     * its connection to InClient -- an RpcContext's SenderClient, say, to
+     * allow for a shooter's latency. False when there is no such
+     * connection, or no networking. */
+    NE_API bool GetNetStats(GameCore::NetClientID InClient, NetStats& OutStats);
+
     /*
      * CLIENT-SIDE PREDICTION. A client shows networked entities a moment in
      * the past, blended between the server's updates ([Net]

@@ -55,7 +55,8 @@
  *              camera, and shows its own muzzle flash and impact at once
  *   hits       the server's alone: the walls by physics raycast, the fighters
  *              by a capsule each, where they were on the shooter's screen
- *              (rewound by [Net] InterpolationDelayMs, see Rewind)
+ *              (rewound by [Net] InterpolationDelayMs and half the shooter's
+ *              round trip, see Rewind)
  *   damage     the server's: Health, Kills, Deaths and Ammo are replicated
  *              fields of each fighter's PvpFighter component
  *   feedback   Multicast RPCs -- MulticastShot (everyone else's flash, sound
@@ -335,10 +336,9 @@ namespace
 
 namespace
 {
-    /* Where InFighter's feet were InSecondsAgo, from its history: what a client
-     * that shows others InterpolationDelayMs in the past was aiming at. No
-     * allowance for the client's half of the round trip -- NetCore does not
-     * report it yet -- so on a slow link a shot at a runner lands behind. */
+    /* Where InFighter's feet were InSecondsAgo, from its history: what a
+     * client was aiming at -- it shows others InterpolationDelayMs in the
+     * past, and its shot took half its round trip to get here. */
     Vec Rewind(GameCore::World& InWorld, const EntityID InFighter, const double InSecondsAgo)
     {
         const auto Found = GHistory.find(InFighter.Pack());
@@ -414,7 +414,9 @@ void PvpFighterComponent::ServerFire(const GameCore::RpcContext& InContext, cons
     if(bWall) { Reach = WallHit.Distance; }
 
     /* Then every other fighter standing, where the shooter saw it. */
-    const double Ago = double(GPvpRewindMs.GetInt()) / 1000.0;
+    NimbleEngine::NetStats Link;
+    const double Latency = InContext.bRemote && NimbleEngine::GetNetStats(InContext.SenderClient, Link) ? Link.RoundTripMs / 2.0 : 0.0;
+    const double Ago = std::min(1.0, (double(GPvpRewindMs.GetInt()) + Latency) / 1000.0);
     EntityID Victim;
     double   Nearest = Reach;
     Vec      VictimFeet{};
@@ -1043,6 +1045,9 @@ private:
         Set(UI, "Pvp.Deaths",     Me ? std::to_string(Me->Deaths) : "0");
         Set(UI, "Pvp.Time",       Match ? Clock(Match->SecondsLeft) : "-");
         Set(UI, "Pvp.Limit",      "FIRST TO " + std::to_string(GPvpFragLimit.GetInt()));
+        NimbleEngine::NetStats Link;
+        Set(UI, "Pvp.Ping", NimbleEngine::IsClient() && NimbleEngine::GetNetStats(GameCore::NET_CLIENT_NONE, Link)
+                                ? std::to_string(Link.RoundTripMs) + " MS" : std::string());
 
         /* The middle of the screen: the round's end, else what just happened. */
         std::string Banner;

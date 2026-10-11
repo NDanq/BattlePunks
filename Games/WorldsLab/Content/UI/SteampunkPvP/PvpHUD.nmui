@@ -5,6 +5,7 @@
   and the match (UISystem::SetValue):
     Pvp.Health, HealthFill, Ammo, AmmoFill, Kills, Deaths   the local fighter
     Pvp.Time, Limit, Leader, Banner                          the match
+    Pvp.Ping                                                 a client's round trip (NetFacade's GetNetStats)
     Pvp.Status                                               what just happened to you
     Pvp.Feed0..3                                             the kill feed, newest last
     Pvp.Score0..7                                            the scoreboard rows
@@ -40,6 +41,9 @@
         </VerticalBox>
       </HorizontalBox>
     </Border>
+
+    <!-- The round trip, top left: a client's only. -->
+    <Text Name="Ping" Class="Label" Position="36,36" AutoSize="true" Visibility="HitTestInvisible" Text="{Bind:Pvp.Ping}"/>
 
     <!-- The kill feed, top right. -->
     <VerticalBox Name="Feed" Anchors="1,0,1,0" Pivot="1,0" Position="-36,36" AutoSize="true" Spacing="4"

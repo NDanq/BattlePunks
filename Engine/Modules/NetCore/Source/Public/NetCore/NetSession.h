@@ -86,6 +86,12 @@ namespace NetCore
         /* A server's welcomed clients. */
         size_t GetClientCount() const;
 
+        /* The connection's round trip, loss and traffic: a client's to its
+         * server, once connected; a server's to InClient, once welcomed.
+         * False otherwise. */
+        bool GetServerStats(NetPeerStats& OutStats) const;
+        bool GetClientStats(GameCore::NetClientID InClient, NetPeerStats& OutStats) const;
+
         /* The World networked entities live in, and the level it was loaded
          * from (sent in the handshake, compared, and only warned about). A
          * server spawns everything it has to its clients; a client binds what
