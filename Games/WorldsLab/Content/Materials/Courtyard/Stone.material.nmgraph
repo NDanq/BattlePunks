@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="04820104ae5e3b2e002fe07d84867a50" Type="Input.TexCoord" Version="1" X="-380" Y="-80" />
+    <Node Id="08680acea11f6690ea8b043f3555ee7e" Type="Texture.Object" Version="1" X="-600" Y="-240">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Courtyard/Stone_Surface.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="1d1201c4764f4df9ae452c8a7b0e5097" Type="Output.Material" Version="1" X="-380" Y="-400">
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Opaque" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+    <Node Id="2af226a4b246428b2b7cc09c621abb19" Type="Texture.Sample" Version="2" X="-380" Y="-240" />
+    <Node Id="350d7f72ba8173a749af63c871127ca7" Type="Texture.Object" Version="1" X="60" Y="-240">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Courtyard/Stone_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="49708065d4dd4720079d09d122243e5a" Type="Texture.Sample" Version="2" X="280" Y="-80" />
+    <Node Id="66d39e6e4504336f78132466ce632ff9" Type="Math.Multiply" Version="1" X="-160" Y="-80" Wildcard="vec2">
+      <Const Pin="B" Value="0.14285714285714285 0.14285714285714285" />
+    </Node>
+    <Node Id="9041eb133a609c619cc88fd3c5dbfa90" Type="Math.Lerp" Version="1" X="500" Y="-80" Wildcard="float">
+      <Const Pin="A" Value="0.9" />
+      <Const Pin="B" Value="1.1" />
+    </Node>
+    <Node Id="9277fb3198bc36d06c0cbd22711546e5" Type="Texture.Sample" Version="2" X="500" Y="-400" />
+    <Node Id="9ded00bb0e8a6ee1b95f5f6c906e29ea" Type="Math.Multiply" Version="1" X="-600" Y="-80" Wildcard="vec3" />
+    <Node Id="a0d6d77fc1054cad248a8223134e956f" Type="Math.Multiply" Version="1" X="60" Y="-400" Wildcard="vec2">
+      <Const Pin="B" Value="0.6666666666666666 0.6666666666666666" />
+    </Node>
+    <Node Id="bc869470a9266851578befe9f2e8d7a3" Type="Texture.Object" Version="1" X="60" Y="-80">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Courtyard/Macro_Noise.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="c0ed4d3165f6ac587f8c374b8df223c3" Type="Texture.NormalMap" Version="1" X="-160" Y="-240">
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+    <Node Id="ddc2122dd41db5d58a2d1f7aaf978ff1" Type="Texture.Sample" Version="2" X="280" Y="-240" />
+    <Node Id="e1130c9a33de74ea12b8e480bcedd502" Type="Math.Multiply" Version="1" X="-380" Y="80" Wildcard="vec3" />
+    <Node Id="e14e3e2ab4a41553b9528a12a980605a" Type="Parameter" Version="1" X="500" Y="-240">
+      <Prop Name="Default" Value="1 1 1" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="ecf37f0a0dc1e17610df38518174ca7b" Type="Input.TexCoord" Version="1" X="-160" Y="-400" />
+    <Node Id="ee4b9f5bded2bded1734c0896e502ebb" Type="Texture.Object" Version="1" X="280" Y="-400">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Courtyard/Stone_BaseColor.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="f0b0ac3672d553aab79ad7801076bbaa" Type="Vector.Make3" Version="1" X="-600" Y="80" />
+  </Nodes>
+  <Links>
+    <Link From="04820104ae5e3b2e002fe07d84867a50.UV" To="66d39e6e4504336f78132466ce632ff9.A" />
+    <Link From="08680acea11f6690ea8b043f3555ee7e.Texture" To="2af226a4b246428b2b7cc09c621abb19.Texture" />
+    <Link From="2af226a4b246428b2b7cc09c621abb19.B" To="1d1201c4764f4df9ae452c8a7b0e5097.Metallic" />
+    <Link From="2af226a4b246428b2b7cc09c621abb19.G" To="1d1201c4764f4df9ae452c8a7b0e5097.AmbientOcclusion" />
+    <Link From="2af226a4b246428b2b7cc09c621abb19.R" To="1d1201c4764f4df9ae452c8a7b0e5097.Roughness" />
+    <Link From="350d7f72ba8173a749af63c871127ca7.Texture" To="ddc2122dd41db5d58a2d1f7aaf978ff1.Texture" />
+    <Link From="49708065d4dd4720079d09d122243e5a.R" To="9041eb133a609c619cc88fd3c5dbfa90.T" />
+    <Link From="66d39e6e4504336f78132466ce632ff9.Out" To="49708065d4dd4720079d09d122243e5a.UV" />
+    <Link From="9041eb133a609c619cc88fd3c5dbfa90.Out" To="f0b0ac3672d553aab79ad7801076bbaa.X" />
+    <Link From="9041eb133a609c619cc88fd3c5dbfa90.Out" To="f0b0ac3672d553aab79ad7801076bbaa.Y" />
+    <Link From="9041eb133a609c619cc88fd3c5dbfa90.Out" To="f0b0ac3672d553aab79ad7801076bbaa.Z" />
+    <Link From="9277fb3198bc36d06c0cbd22711546e5.RGB" To="9ded00bb0e8a6ee1b95f5f6c906e29ea.A" />
+    <Link From="9ded00bb0e8a6ee1b95f5f6c906e29ea.Out" To="e1130c9a33de74ea12b8e480bcedd502.A" />
+    <Link From="a0d6d77fc1054cad248a8223134e956f.Out" To="2af226a4b246428b2b7cc09c621abb19.UV" />
+    <Link From="a0d6d77fc1054cad248a8223134e956f.Out" To="9277fb3198bc36d06c0cbd22711546e5.UV" />
+    <Link From="a0d6d77fc1054cad248a8223134e956f.Out" To="c0ed4d3165f6ac587f8c374b8df223c3.UV" />
+    <Link From="a0d6d77fc1054cad248a8223134e956f.Out" To="ddc2122dd41db5d58a2d1f7aaf978ff1.UV" />
+    <Link From="bc869470a9266851578befe9f2e8d7a3.Texture" To="49708065d4dd4720079d09d122243e5a.Texture" />
+    <Link From="c0ed4d3165f6ac587f8c374b8df223c3.Normal" To="1d1201c4764f4df9ae452c8a7b0e5097.Normal" />
+    <Link From="ddc2122dd41db5d58a2d1f7aaf978ff1.RGB" To="c0ed4d3165f6ac587f8c374b8df223c3.Color" />
+    <Link From="e1130c9a33de74ea12b8e480bcedd502.Out" To="1d1201c4764f4df9ae452c8a7b0e5097.BaseColor" />
+    <Link From="e14e3e2ab4a41553b9528a12a980605a.Value" To="9ded00bb0e8a6ee1b95f5f6c906e29ea.B" />
+    <Link From="ecf37f0a0dc1e17610df38518174ca7b.UV" To="a0d6d77fc1054cad248a8223134e956f.A" />
+    <Link From="ee4b9f5bded2bded1734c0896e502ebb.Texture" To="9277fb3198bc36d06c0cbd22711546e5.Texture" />
+    <Link From="f0b0ac3672d553aab79ad7801076bbaa.Out" To="e1130c9a33de74ea12b8e480bcedd502.B" />
+  </Links>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "Stone". Do not edit.
+// Opaque, Lit. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in Stone.material.
+UBO_BLOCK_BEGIN(2, Stone_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    vec3  Param_Tint;
+UBO_BLOCK_END(Stone_Block)
+
+// Textures, by material texture slot; Stone.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+MATERIAL_SAMPLER2D(6, Material_Texture2)
+MATERIAL_SAMPLER2D(7, Material_Texture3)
+MATERIAL_SAMPLER2D(8, Material_Texture4)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec2 t0 = Inputs.TexCoord * vec2(0.6666667);
+    vec4 t1 = texture(Material_Texture4, t0);
+    vec3 t2 = t1.rgb * Param_Tint;
+    vec2 t3 = Inputs.TexCoord * vec2(0.14285715);
+    vec4 t4 = texture(Material_Texture3, t3);
+    float t5 = mix(0.9, 1.1, t4.r);
+    vec3 t6 = vec3(t5, t5, t5);
+    vec3 t7 = t2 * t6;
+    Surface.BaseColor = t7;
+    vec4 t8 = texture(Material_Texture1, t0);
+    Surface.Metallic = t8.b;
+    Surface.Roughness = t8.r;
+    vec4 t9 = texture(Material_Texture2, t0);
+    vec3 t10 = Material_NormalMap(Inputs, t9.rgb, 1.0, t0, -1.0);
+    Surface.Normal = t10;
+    Surface.AmbientOcclusion = t8.g;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "Stone". Do not edit.
+NimbleMaterial 3
+Domain Opaque
+Shading Lit
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 176
+Param Tint vec3 160 1 1 1 0
+Texture 1 Default Default Content/Textures/Courtyard/Stone_Surface.nmtexture
+Texture 2 Default Default Content/Textures/Courtyard/Stone_Normal.nmtexture
+Texture 3 Default Default Content/Textures/Courtyard/Macro_Noise.nmtexture
+Texture 4 Default Default Content/Textures/Courtyard/Stone_BaseColor.nmtexture
+TextureUV 1 0.6666666666666666
+TextureUV 2 0.6666666666666666
+TextureUV 3 0.14285714285714285
+TextureUV 4 0.6666666666666666
+]]></Output>
+  </gen_code>
+</NodeGraph>

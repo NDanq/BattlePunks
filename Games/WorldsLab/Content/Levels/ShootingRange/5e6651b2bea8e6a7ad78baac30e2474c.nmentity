@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="5e6651b2bea8e6a7ad78baac30e2474c" Name="AmmoCan_4" Mobility="Static">
+  <Component Type="Render" Version="5">
+    <Visible Value="true" />
+    <Material0 Value="" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Content/Meshes/ShootingRange/AmmoCan.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
+    <Occluder Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="25" Y="92" Z="-1160" />
+    <Rotation X="0" Y="-80" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="02f74e85ad2fa645e063120bd5ecf126" Type="Input.TexCoord" Version="1" X="-380" Y="-80" />
+    <Node Id="1316805d68244161e75702c3f75fa0d5" Type="Parameter" Version="1" X="500" Y="-240">
+      <Prop Name="Default" Value="1 1 1" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="24a202df1ee361c84261d22477840ae8" Type="Input.TexCoord" Version="1" X="-160" Y="-400" />
+    <Node Id="3c613e8f9773419e357dcc9430f474de" Type="Texture.NormalMap" Version="1" X="-160" Y="-240">
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+    <Node Id="6ade16594af407a65ec5a370bd316499" Type="Output.Material" Version="1" X="-380" Y="-400">
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Opaque" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+    <Node Id="761dac07fda11be6be5039e0ed8d9613" Type="Math.Multiply" Version="1" X="60" Y="-400" Wildcard="vec2">
+      <Const Pin="B" Value="1 1" />
+    </Node>
+    <Node Id="76821c00d5f4ceead7bf00aea334ef8f" Type="Math.Multiply" Version="1" X="-380" Y="80" Wildcard="vec3" />
+    <Node Id="91eb4d4558676bfaa45bc543a9366045" Type="Texture.Sample" Version="2" X="500" Y="-400" />
+    <Node Id="9b2133bbbc5499ed3c26e494cf3bd909" Type="Texture.Object" Version="1" X="280" Y="-400">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Courtyard/RoofTile_BaseColor.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="9c1901880f964a299d6de8f46bf4946a" Type="Texture.Object" Version="1" X="60" Y="-80">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Courtyard/Macro_Noise.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="a68ff20b979982355ffae3d564f8b58d" Type="Texture.Sample" Version="2" X="280" Y="-240" />
+    <Node Id="b5766ea703ad3127e3868da120a8b61f" Type="Math.Multiply" Version="1" X="-160" Y="-80" Wildcard="vec2">
+      <Const Pin="B" Value="0.2222222222222222 0.2222222222222222" />
+    </Node>
+    <Node Id="b87e98b03d4240057e2840c470f71306" Type="Vector.Make3" Version="1" X="-600" Y="80" />
+    <Node Id="b91413a1021bab89af630e40e5ae01f8" Type="Math.Multiply" Version="1" X="-600" Y="-80" Wildcard="vec3" />
+    <Node Id="c3b9056b9648da6d5a8174bf62b45646" Type="Math.Lerp" Version="1" X="500" Y="-80" Wildcard="float">
+      <Const Pin="A" Value="0.8" />
+      <Const Pin="B" Value="1.2" />
+    </Node>
+    <Node Id="d511314c5286abd05d1403a6ebfb9d2a" Type="Texture.Sample" Version="2" X="280" Y="-80" />
+    <Node Id="db61e7f2fc76c75dc47fb6db3381868d" Type="Texture.Sample" Version="2" X="-380" Y="-240" />
+    <Node Id="e60a09ff796ac216b77805580032a97d" Type="Texture.Object" Version="1" X="-600" Y="-240">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Courtyard/RoofTile_Surface.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="e80bace06beee04d54f9863063de8a6d" Type="Texture.Object" Version="1" X="60" Y="-240">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Courtyard/RoofTile_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+  </Nodes>
+  <Links>
+    <Link From="02f74e85ad2fa645e063120bd5ecf126.UV" To="b5766ea703ad3127e3868da120a8b61f.A" />
+    <Link From="1316805d68244161e75702c3f75fa0d5.Value" To="b91413a1021bab89af630e40e5ae01f8.B" />
+    <Link From="24a202df1ee361c84261d22477840ae8.UV" To="761dac07fda11be6be5039e0ed8d9613.A" />
+    <Link From="3c613e8f9773419e357dcc9430f474de.Normal" To="6ade16594af407a65ec5a370bd316499.Normal" />
+    <Link From="761dac07fda11be6be5039e0ed8d9613.Out" To="3c613e8f9773419e357dcc9430f474de.UV" />
+    <Link From="761dac07fda11be6be5039e0ed8d9613.Out" To="91eb4d4558676bfaa45bc543a9366045.UV" />
+    <Link From="761dac07fda11be6be5039e0ed8d9613.Out" To="a68ff20b979982355ffae3d564f8b58d.UV" />
+    <Link From="761dac07fda11be6be5039e0ed8d9613.Out" To="db61e7f2fc76c75dc47fb6db3381868d.UV" />
+    <Link From="76821c00d5f4ceead7bf00aea334ef8f.Out" To="6ade16594af407a65ec5a370bd316499.BaseColor" />
+    <Link From="91eb4d4558676bfaa45bc543a9366045.RGB" To="b91413a1021bab89af630e40e5ae01f8.A" />
+    <Link From="9b2133bbbc5499ed3c26e494cf3bd909.Texture" To="91eb4d4558676bfaa45bc543a9366045.Texture" />
+    <Link From="9c1901880f964a299d6de8f46bf4946a.Texture" To="d511314c5286abd05d1403a6ebfb9d2a.Texture" />
+    <Link From="a68ff20b979982355ffae3d564f8b58d.RGB" To="3c613e8f9773419e357dcc9430f474de.Color" />
+    <Link From="b5766ea703ad3127e3868da120a8b61f.Out" To="d511314c5286abd05d1403a6ebfb9d2a.UV" />
+    <Link From="b87e98b03d4240057e2840c470f71306.Out" To="76821c00d5f4ceead7bf00aea334ef8f.B" />
+    <Link From="b91413a1021bab89af630e40e5ae01f8.Out" To="76821c00d5f4ceead7bf00aea334ef8f.A" />
+    <Link From="c3b9056b9648da6d5a8174bf62b45646.Out" To="b87e98b03d4240057e2840c470f71306.X" />
+    <Link From="c3b9056b9648da6d5a8174bf62b45646.Out" To="b87e98b03d4240057e2840c470f71306.Y" />
+    <Link From="c3b9056b9648da6d5a8174bf62b45646.Out" To="b87e98b03d4240057e2840c470f71306.Z" />
+    <Link From="d511314c5286abd05d1403a6ebfb9d2a.R" To="c3b9056b9648da6d5a8174bf62b45646.T" />
+    <Link From="db61e7f2fc76c75dc47fb6db3381868d.B" To="6ade16594af407a65ec5a370bd316499.Metallic" />
+    <Link From="db61e7f2fc76c75dc47fb6db3381868d.G" To="6ade16594af407a65ec5a370bd316499.AmbientOcclusion" />
+    <Link From="db61e7f2fc76c75dc47fb6db3381868d.R" To="6ade16594af407a65ec5a370bd316499.Roughness" />
+    <Link From="e60a09ff796ac216b77805580032a97d.Texture" To="db61e7f2fc76c75dc47fb6db3381868d.Texture" />
+    <Link From="e80bace06beee04d54f9863063de8a6d.Texture" To="a68ff20b979982355ffae3d564f8b58d.Texture" />
+  </Links>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "RoofTile". Do not edit.
+// Opaque, Lit. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in RoofTile.material.
+UBO_BLOCK_BEGIN(2, RoofTile_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    vec3  Param_Tint;
+UBO_BLOCK_END(RoofTile_Block)
+
+// Textures, by material texture slot; RoofTile.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+MATERIAL_SAMPLER2D(6, Material_Texture2)
+MATERIAL_SAMPLER2D(7, Material_Texture3)
+MATERIAL_SAMPLER2D(8, Material_Texture4)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec2 t0 = Inputs.TexCoord * vec2(1.0);
+    vec4 t1 = texture(Material_Texture1, t0);
+    vec3 t2 = t1.rgb * Param_Tint;
+    vec2 t3 = Inputs.TexCoord * vec2(0.22222222);
+    vec4 t4 = texture(Material_Texture2, t3);
+    float t5 = mix(0.8, 1.2, t4.r);
+    vec3 t6 = vec3(t5, t5, t5);
+    vec3 t7 = t2 * t6;
+    Surface.BaseColor = t7;
+    vec4 t8 = texture(Material_Texture3, t0);
+    Surface.Metallic = t8.b;
+    Surface.Roughness = t8.r;
+    vec4 t9 = texture(Material_Texture4, t0);
+    vec3 t10 = Material_NormalMap(Inputs, t9.rgb, 1.0, t0, -1.0);
+    Surface.Normal = t10;
+    Surface.AmbientOcclusion = t8.g;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "RoofTile". Do not edit.
+NimbleMaterial 3
+Domain Opaque
+Shading Lit
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 176
+Param Tint vec3 160 1 1 1 0
+Texture 1 Default Default Content/Textures/Courtyard/RoofTile_BaseColor.nmtexture
+Texture 2 Default Default Content/Textures/Courtyard/Macro_Noise.nmtexture
+Texture 3 Default Default Content/Textures/Courtyard/RoofTile_Surface.nmtexture
+Texture 4 Default Default Content/Textures/Courtyard/RoofTile_Normal.nmtexture
+TextureUV 2 0.2222222222222222
+]]></Output>
+  </gen_code>
+</NodeGraph>

@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="187006ff978bac845144b3b0800ee6d6" Type="Input.VertexColor" Version="1" X="0" Y="-400" />
+    <Node Id="1b2ffcc97541f740468d594e8a5013e1" Type="Parameter" Version="1" X="-700" Y="120">
+      <Prop Name="Default" Value="0.833333 0.833333" />
+      <Prop Name="Name" Value="UVScale" />
+      <Prop Name="Type" Value="vec2" />
+    </Node>
+    <Node Id="33bcaad168d98a9a7e887d5ae58775d9" Type="Output.Material" Version="1" X="900" Y="0">
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Opaque" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+    <Node Id="462d878aaec046fd262a32b87d3c4c1a" Type="Math.Multiply" Version="1" X="-480" Y="40" Wildcard="vec2" />
+    <Node Id="48eebd1f5cf4f1c06591a48874baa9c7" Type="Texture.Sample" Version="2" X="-80" Y="-260" />
+    <Node Id="4b2d9767b37d0ca82172ce0be3506a0f" Type="Texture.Sample" Version="2" X="-80" Y="0" />
+    <Node Id="547b47ddf39b5b76e92bc301c79ff36f" Type="Texture.Sample" Version="2" X="-80" Y="260" />
+    <Node Id="55189296f4b79f465e0d76999ba03d44" Type="Texture.Object" Version="1" X="-300" Y="260">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/ShootingRange/Plywood_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="7028a824abbb48164ac1446fe4098c80" Type="Math.Multiply" Version="1" X="220" Y="-300" Wildcard="vec3" />
+    <Node Id="7ada78c903d607bc65674d2af683888c" Type="Texture.Object" Version="1" X="-300" Y="0">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/ShootingRange/Plywood_ORM.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="b0c3e073ce0057ba45fe6c6542a4fcf5" Type="Texture.Object" Version="1" X="-300" Y="-260">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/ShootingRange/Plywood_BaseColor.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="b73138fb0e769a3ded0f260249c92e03" Type="Math.Multiply" Version="1" X="420" Y="20" Wildcard="float" />
+    <Node Id="cb55abb9434d5a725e244f1cccd61028" Type="Parameter" Version="1" X="220" Y="60">
+      <Prop Name="Default" Value="1" />
+      <Prop Name="Name" Value="RoughnessScale" />
+      <Prop Name="Type" Value="float" />
+    </Node>
+    <Node Id="d47aeacacc71d06b0859cb8f55c6ca0f" Type="Texture.NormalMap" Version="1" X="420" Y="260">
+      <Const Pin="Strength" Value="1" />
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+    <Node Id="def9925fd611c469a9dada91cff9f709" Type="Parameter" Version="1" X="0" Y="-300">
+      <Prop Name="Default" Value="1 1 1" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="ed17d6ca943afff70e51371a676223ed" Type="Math.Multiply" Version="1" X="420" Y="-300" Wildcard="vec3" />
+    <Node Id="f40617157fd0e8cbefe862c590385af5" Type="Input.TexCoord" Version="1" X="-700" Y="0" />
+  </Nodes>
+  <Links>
+    <Link From="187006ff978bac845144b3b0800ee6d6.RGB" To="7028a824abbb48164ac1446fe4098c80.B" />
+    <Link From="1b2ffcc97541f740468d594e8a5013e1.Value" To="462d878aaec046fd262a32b87d3c4c1a.B" />
+    <Link From="462d878aaec046fd262a32b87d3c4c1a.Out" To="48eebd1f5cf4f1c06591a48874baa9c7.UV" />
+    <Link From="462d878aaec046fd262a32b87d3c4c1a.Out" To="4b2d9767b37d0ca82172ce0be3506a0f.UV" />
+    <Link From="462d878aaec046fd262a32b87d3c4c1a.Out" To="547b47ddf39b5b76e92bc301c79ff36f.UV" />
+    <Link From="462d878aaec046fd262a32b87d3c4c1a.Out" To="d47aeacacc71d06b0859cb8f55c6ca0f.UV" />
+    <Link From="48eebd1f5cf4f1c06591a48874baa9c7.RGB" To="7028a824abbb48164ac1446fe4098c80.A" />
+    <Link From="4b2d9767b37d0ca82172ce0be3506a0f.B" To="33bcaad168d98a9a7e887d5ae58775d9.Metallic" />
+    <Link From="4b2d9767b37d0ca82172ce0be3506a0f.G" To="b73138fb0e769a3ded0f260249c92e03.A" />
+    <Link From="4b2d9767b37d0ca82172ce0be3506a0f.R" To="33bcaad168d98a9a7e887d5ae58775d9.AmbientOcclusion" />
+    <Link From="547b47ddf39b5b76e92bc301c79ff36f.RGB" To="d47aeacacc71d06b0859cb8f55c6ca0f.Color" />
+    <Link From="55189296f4b79f465e0d76999ba03d44.Texture" To="547b47ddf39b5b76e92bc301c79ff36f.Texture" />
+    <Link From="7028a824abbb48164ac1446fe4098c80.Out" To="ed17d6ca943afff70e51371a676223ed.A" />
+    <Link From="7ada78c903d607bc65674d2af683888c.Texture" To="4b2d9767b37d0ca82172ce0be3506a0f.Texture" />
+    <Link From="b0c3e073ce0057ba45fe6c6542a4fcf5.Texture" To="48eebd1f5cf4f1c06591a48874baa9c7.Texture" />
+    <Link From="b73138fb0e769a3ded0f260249c92e03.Out" To="33bcaad168d98a9a7e887d5ae58775d9.Roughness" />
+    <Link From="cb55abb9434d5a725e244f1cccd61028.Value" To="b73138fb0e769a3ded0f260249c92e03.B" />
+    <Link From="d47aeacacc71d06b0859cb8f55c6ca0f.Normal" To="33bcaad168d98a9a7e887d5ae58775d9.Normal" />
+    <Link From="def9925fd611c469a9dada91cff9f709.Value" To="ed17d6ca943afff70e51371a676223ed.B" />
+    <Link From="ed17d6ca943afff70e51371a676223ed.Out" To="33bcaad168d98a9a7e887d5ae58775d9.BaseColor" />
+    <Link From="f40617157fd0e8cbefe862c590385af5.UV" To="462d878aaec046fd262a32b87d3c4c1a.A" />
+  </Links>
+  <Comments>
+    <Comment X="-700" Y="-420" Width="640" Height="90" Text="Shooting Range Plywood: the Plywood set, 1.2 m a tile on the meshes' metre UVs; base colour times the vertex colour (baked grime) and Tint." />
+  </Comments>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "Plywood". Do not edit.
+// Opaque, Lit. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in Plywood.material.
+UBO_BLOCK_BEGIN(2, Plywood_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    float Param_RoughnessScale;
+    vec3  Param_Tint;
+    vec2  Param_UVScale;
+UBO_BLOCK_END(Plywood_Block)
+
+// Textures, by material texture slot; Plywood.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+MATERIAL_SAMPLER2D(6, Material_Texture2)
+MATERIAL_SAMPLER2D(7, Material_Texture3)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec2 t0 = Inputs.TexCoord * Param_UVScale;
+    vec4 t1 = texture(Material_Texture3, t0);
+    vec3 t2 = t1.rgb * Inputs.Color.rgb;
+    vec3 t3 = t2 * Param_Tint;
+    Surface.BaseColor = t3;
+    vec4 t4 = texture(Material_Texture2, t0);
+    Surface.Metallic = t4.b;
+    float t5 = t4.g * Param_RoughnessScale;
+    Surface.Roughness = t5;
+    vec4 t6 = texture(Material_Texture1, t0);
+    vec3 t7 = Material_NormalMap(Inputs, t6.rgb, 1.0, t0, -1.0);
+    Surface.Normal = t7;
+    Surface.AmbientOcclusion = t4.r;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "Plywood". Do not edit.
+NimbleMaterial 3
+Domain Opaque
+Shading Lit
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 208
+Param RoughnessScale float 160 1 0 0 0
+Param Tint vec3 176 1 1 1 0
+Param UVScale vec2 192 0.833333 0.833333 0 0
+Texture 1 Default Default Content/Textures/ShootingRange/Plywood_Normal.nmtexture
+Texture 2 Default Default Content/Textures/ShootingRange/Plywood_ORM.nmtexture
+Texture 3 Default Default Content/Textures/ShootingRange/Plywood_BaseColor.nmtexture
+TextureUV 1 1 UVScale
+TextureUV 2 1 UVScale
+TextureUV 3 1 UVScale
+]]></Output>
+  </gen_code>
+</NodeGraph>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="c0f0c8da49f73c846a7ef884a5cc2c48" Name="OverviewCamera">
+  <Component Type="Camera" Version="2">
+    <ZNear Value="5" />
+    <ZFar Value="20000" />
+    <Active Value="true" />
+    <Projection Value="1" />
+    <FovY Value="62" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-1100" Y="640" Z="-1500" />
+    <Rotation X="16" Y="28" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

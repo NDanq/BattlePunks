@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="1a85b34d9c61fda0690cfe8d1162abe3" Name="FountainLight2" Mobility="Static">
+  <Component Type="Point Light" Version="2">
+    <Color R="17" G="164" B="255" A="255" />
+    <Intensity Value="20" />
+    <Radius Value="600" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <ShadowTint R="40" G="50" B="80" A="255" />
+    <ShadowBias Value="0.004" />
+    <ShadowNormalBias Value="2" />
+    <SourceRadius Value="600" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-19.080193" Y="16.51919" Z="-141.47406" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

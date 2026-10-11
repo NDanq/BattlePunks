@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="048289c66f7e76c09cf2876e9000b4c4" Type="Input.FragCoord" Version="1" X="260" Y="620" />
+    <Node Id="0b07424a2889d5eb1378a090873c1de6" Type="Parameter" Version="1" X="-300" Y="-120">
+      <Prop Name="Default" Value="0.96 1 1.04 1" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec4" />
+    </Node>
+    <Node Id="0bce7506073d50855e70e4ae570cb866" Type="Parameter" Version="1" X="80" Y="160">
+      <Prop Name="Default" Value="1.12" />
+      <Prop Name="Name" Value="Contrast" />
+      <Prop Name="Type" Value="float" />
+    </Node>
+    <Node Id="1d7df812cdbf49d05f341de6e8261a1d" Type="Math.Lerp" Version="1" X="-300" Y="60" Wildcard="vec4" />
+    <Node Id="205e7c400206273d1c9b41142f49e486" Type="Parameter" Version="1" X="620" Y="440">
+      <Prop Name="Default" Value="0.5" />
+      <Prop Name="Name" Value="Vignette" />
+      <Prop Name="Type" Value="float" />
+    </Node>
+    <Node Id="2716d47bb5d22a608a49ce6481457dc5" Type="Vector.Distance" Version="1" X="440" Y="300" Wildcard="vec2">
+      <Const Pin="B" Value="0.5 0.5" />
+    </Node>
+    <Node Id="2dc1b0eb07d705a912575b5028802ab3" Type="Math.Add" Version="1" X="440" Y="0" Wildcard="vec4">
+      <Const Pin="B" Value="0.18 0.18 0.18 0" />
+    </Node>
+    <Node Id="338fc1c8f91eac6b824502bab626bcfd" Type="Math.Multiply" Version="1" X="1120" Y="640" Wildcard="float">
+      <Const Pin="B" Value="43758.5453" />
+    </Node>
+    <Node Id="390b8766b93b032d032391d5b4c94180" Type="Math.Multiply" Version="1" X="440" Y="760" Wildcard="float">
+      <Const Pin="B" Value="61.7" />
+    </Node>
+    <Node Id="3b703ceb0dc25712c097cf971df91d19" Type="Vector.Dot" Version="1" X="-700" Y="160" Wildcard="vec4">
+      <Const Pin="B" Value="0.2126 0.7152 0.0722 0" />
+    </Node>
+    <Node Id="509f207788d449a67255a7c3a2e8b850" Type="Math.Sin" Version="1" X="960" Y="640" Wildcard="float" />
+    <Node Id="53aa94f3aa4d4c1ee1f5b227fbfb498f" Type="Math.Smoothstep" Version="1" X="620" Y="300" Wildcard="float">
+      <Const Pin="Edge0" Value="0.3" />
+      <Const Pin="Edge1" Value="0.85" />
+    </Node>
+    <Node Id="7cc0c654e32bc23079687791e5a9b59c" Type="Math.Add" Version="1" X="620" Y="640" Wildcard="vec4" />
+    <Node Id="7f2f89fa5a89a72cb64d240bd7dae4f2" Type="Math.Fract" Version="1" X="1280" Y="640" Wildcard="float" />
+    <Node Id="835e978ef58a2a13bdc2d55633b56728" Type="Math.Subtract" Version="1" X="1280" Y="780" Wildcard="float">
+      <Const Pin="B" Value="0.5" />
+    </Node>
+    <Node Id="8d020ed9efe3492e5e3c319096f9358f" Type="Vector.Dot" Version="1" X="800" Y="640" Wildcard="vec4">
+      <Const Pin="B" Value="12.9898 78.233 0 0" />
+    </Node>
+    <Node Id="93b1673574de78931633431849883fd9" Type="Parameter" Version="1" X="-500" Y="300">
+      <Prop Name="Default" Value="0.78" />
+      <Prop Name="Name" Value="Saturation" />
+      <Prop Name="Type" Value="float" />
+    </Node>
+    <Node Id="a5c63baecb8bd649d112e8e4161f602e" Type="Math.Multiply" Version="1" X="1400" Y="780" Wildcard="float" />
+    <Node Id="aba9e6e0a115ccfa8349e9a09bdc8d9e" Type="Math.Max" Version="1" X="620" Y="0" Wildcard="vec4">
+      <Const Pin="B" Value="0 0 0 0" />
+    </Node>
+    <Node Id="b0a35ca417656bc86c6fa4c0e8f1cb3f" Type="Math.Multiply" Version="1" X="800" Y="300" Wildcard="float" />
+    <Node Id="b709d09f06c4e98cd814f32a35f1b213" Type="Math.Multiply" Version="1" X="-100" Y="0" Wildcard="vec4" />
+    <Node Id="cccf52d448e48d5818f246c0c7242dbd" Type="Input.SceneTexture" Version="1" X="-900" Y="0" />
+    <Node Id="cf58da6cc4a0727186b7d7c3b4682fb2" Type="Math.Multiply" Version="1" X="260" Y="0" Wildcard="vec4" />
+    <Node Id="d11a3bbb63682a048c5cdf58bb12e74e" Type="Math.OneMinus" Version="1" X="960" Y="300" Wildcard="float" />
+    <Node Id="d2618d4b6e2f14fa4d18ae9588e040cd" Type="Math.Add" Version="1" X="1300" Y="0" Wildcard="vec4" />
+    <Node Id="d4353cc022db3cde7750d39ad3a8451b" Type="Input.TexCoord" Version="1" X="260" Y="300" />
+    <Node Id="d5f84637efaf264ca0420f1f2db2e008" Type="Math.Subtract" Version="1" X="80" Y="0" Wildcard="vec4">
+      <Const Pin="B" Value="0.18 0.18 0.18 0" />
+    </Node>
+    <Node Id="d723ace1296ca08a2012cd548f4ee6ef" Type="Parameter" Version="1" X="1120" Y="900">
+      <Prop Name="Default" Value="0.035" />
+      <Prop Name="Name" Value="Grain" />
+      <Prop Name="Type" Value="float" />
+    </Node>
+    <Node Id="dbc47269178af12fd28ebeb50b05b57a" Type="Math.Multiply" Version="1" X="1120" Y="0" Wildcard="vec4" />
+    <Node Id="dbd8f3f42db677dd624c162bddb1b2c4" Type="Input.Time" Version="1" X="260" Y="760" />
+    <Node Id="f68021d09e623524886aa8b789d66be3" Type="Math.Multiply" Version="1" X="-500" Y="160" Wildcard="vec4">
+      <Const Pin="A" Value="1 1 1 1" />
+    </Node>
+    <Node Id="ff02e0e67603362d47f2169a62358286" Type="Output.Material" Version="1" X="1500" Y="0">
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="PostProcess" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Unlit" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+  </Nodes>
+  <Links>
+    <Link From="048289c66f7e76c09cf2876e9000b4c4.Coord" To="7cc0c654e32bc23079687791e5a9b59c.A" />
+    <Link From="0b07424a2889d5eb1378a090873c1de6.Value" To="b709d09f06c4e98cd814f32a35f1b213.B" />
+    <Link From="0bce7506073d50855e70e4ae570cb866.Value" To="cf58da6cc4a0727186b7d7c3b4682fb2.B" />
+    <Link From="1d7df812cdbf49d05f341de6e8261a1d.Out" To="b709d09f06c4e98cd814f32a35f1b213.A" />
+    <Link From="205e7c400206273d1c9b41142f49e486.Value" To="b0a35ca417656bc86c6fa4c0e8f1cb3f.B" />
+    <Link From="2716d47bb5d22a608a49ce6481457dc5.Out" To="53aa94f3aa4d4c1ee1f5b227fbfb498f.X" />
+    <Link From="2dc1b0eb07d705a912575b5028802ab3.Out" To="aba9e6e0a115ccfa8349e9a09bdc8d9e.A" />
+    <Link From="338fc1c8f91eac6b824502bab626bcfd.Out" To="7f2f89fa5a89a72cb64d240bd7dae4f2.X" />
+    <Link From="390b8766b93b032d032391d5b4c94180.Out" To="7cc0c654e32bc23079687791e5a9b59c.B" />
+    <Link From="3b703ceb0dc25712c097cf971df91d19.Out" To="f68021d09e623524886aa8b789d66be3.B" />
+    <Link From="509f207788d449a67255a7c3a2e8b850.Out" To="338fc1c8f91eac6b824502bab626bcfd.A" />
+    <Link From="53aa94f3aa4d4c1ee1f5b227fbfb498f.Out" To="b0a35ca417656bc86c6fa4c0e8f1cb3f.A" />
+    <Link From="7cc0c654e32bc23079687791e5a9b59c.Out" To="8d020ed9efe3492e5e3c319096f9358f.A" />
+    <Link From="7f2f89fa5a89a72cb64d240bd7dae4f2.Out" To="835e978ef58a2a13bdc2d55633b56728.A" />
+    <Link From="835e978ef58a2a13bdc2d55633b56728.Out" To="a5c63baecb8bd649d112e8e4161f602e.A" />
+    <Link From="8d020ed9efe3492e5e3c319096f9358f.Out" To="509f207788d449a67255a7c3a2e8b850.X" />
+    <Link From="93b1673574de78931633431849883fd9.Value" To="1d7df812cdbf49d05f341de6e8261a1d.T" />
+    <Link From="a5c63baecb8bd649d112e8e4161f602e.Out" To="d2618d4b6e2f14fa4d18ae9588e040cd.B" />
+    <Link From="aba9e6e0a115ccfa8349e9a09bdc8d9e.Out" To="dbc47269178af12fd28ebeb50b05b57a.A" />
+    <Link From="b0a35ca417656bc86c6fa4c0e8f1cb3f.Out" To="d11a3bbb63682a048c5cdf58bb12e74e.X" />
+    <Link From="b709d09f06c4e98cd814f32a35f1b213.Out" To="d5f84637efaf264ca0420f1f2db2e008.A" />
+    <Link From="cccf52d448e48d5818f246c0c7242dbd.Color" To="1d7df812cdbf49d05f341de6e8261a1d.B" />
+    <Link From="cccf52d448e48d5818f246c0c7242dbd.Color" To="3b703ceb0dc25712c097cf971df91d19.A" />
+    <Link From="cf58da6cc4a0727186b7d7c3b4682fb2.Out" To="2dc1b0eb07d705a912575b5028802ab3.A" />
+    <Link From="d11a3bbb63682a048c5cdf58bb12e74e.Out" To="dbc47269178af12fd28ebeb50b05b57a.B" />
+    <Link From="d2618d4b6e2f14fa4d18ae9588e040cd.Out" To="ff02e0e67603362d47f2169a62358286.Emissive" />
+    <Link From="d4353cc022db3cde7750d39ad3a8451b.UV" To="2716d47bb5d22a608a49ce6481457dc5.A" />
+    <Link From="d5f84637efaf264ca0420f1f2db2e008.Out" To="cf58da6cc4a0727186b7d7c3b4682fb2.A" />
+    <Link From="d723ace1296ca08a2012cd548f4ee6ef.Value" To="a5c63baecb8bd649d112e8e4161f602e.B" />
+    <Link From="dbc47269178af12fd28ebeb50b05b57a.Out" To="d2618d4b6e2f14fa4d18ae9588e040cd.A" />
+    <Link From="dbd8f3f42db677dd624c162bddb1b2c4.Time" To="390b8766b93b032d032391d5b4c94180.A" />
+    <Link From="f68021d09e623524886aa8b789d66be3.Out" To="1d7df812cdbf49d05f341de6e8261a1d.A" />
+  </Links>
+  <Comments>
+    <Comment X="-700" Y="-420" Width="640" Height="90" Text="Shooting Range Grit: the warehouse's grade -- desaturated a touch, cooled, contrast pulled about mid grey, a vignette, and fine film grain that changes every frame." />
+  </Comments>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "Grit". Do not edit.
+// PostProcess, Unlit. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in Grit.material.
+UBO_BLOCK_BEGIN(2, Grit_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    vec4  Param_Contrast;
+    float Param_Grain;
+    vec4  Param_Saturation;
+    vec4  Param_Tint;
+    float Param_Vignette;
+UBO_BLOCK_END(Grit_Block)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    float t0 = dot(texture(Material_SceneColor, Inputs.TexCoord), vec4(0.2126, 0.7152, 0.0722, 0.0));
+    vec4 t1 = vec4(1.0) * vec4(t0);
+    vec4 t2 = mix(t1, texture(Material_SceneColor, Inputs.TexCoord), Param_Saturation);
+    vec4 t3 = t2 * Param_Tint;
+    vec4 t4 = t3 - vec4(0.18, 0.18, 0.18, 0.0);
+    vec4 t5 = t4 * Param_Contrast;
+    vec4 t6 = t5 + vec4(0.18, 0.18, 0.18, 0.0);
+    vec4 t7 = max(t6, vec4(0.0));
+    float t8 = distance(Inputs.TexCoord, vec2(0.5));
+    float t9 = smoothstep(0.3, 0.85, t8);
+    float t10 = t9 * Param_Vignette;
+    float t11 = 1.0 - t10;
+    vec4 t12 = t7 * vec4(t11);
+    float t13 = Scene_Time.x * 61.7;
+    vec4 t14 = Inputs.FragCoord + vec4(t13);
+    float t15 = dot(t14, vec4(12.9898, 78.233, 0.0, 0.0));
+    float t16 = sin(t15);
+    float t17 = t16 * 43758.547;
+    float t18 = fract(t17);
+    float t19 = t18 - 0.5;
+    float t20 = t19 * Param_Grain;
+    vec4 t21 = t12 + vec4(t20);
+    Surface.Emissive = t21.xyz;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "Grit". Do not edit.
+NimbleMaterial 3
+Domain PostProcess
+Shading Unlit
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 240
+Param Contrast vec4 160 1.12 1.12 1.12 1.12
+Param Grain float 176 0.035 0 0 0
+Param Saturation vec4 192 0.78 0.78 0.78 0.78
+Param Tint vec4 208 0.96 1 1.04 1
+Param Vignette float 224 0.5 0 0 0
+]]></Output>
+  </gen_code>
+</NodeGraph>

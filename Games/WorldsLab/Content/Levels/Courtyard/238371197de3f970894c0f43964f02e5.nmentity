@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="238371197de3f970894c0f43964f02e5" Name="ProbeHall" Mobility="Static">
+  <Component Type="Reflection Probe" Version="1">
+    <Radius Value="1200" />
+    <BoxExtent X="1115" Y="370" Z="420" />
+    <Intensity Value="1" />
+    <Resolution Value="256" />
+    <Frequency Value="2" />
+    <Interval Value="1" />
+    <NearClip Value="5" />
+    <FarClip Value="20000" />
+    <CaptureShadows Value="true" />
+    <Enabled Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="390" Z="1265" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

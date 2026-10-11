@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="34d859bcefed0ed3c3388729647a9207" Name="Player">
+  <Component Type="Camera" Version="2">
+    <ZNear Value="5" />
+    <ZFar Value="30000" />
+    <Active Value="true" />
+    <Projection Value="1" />
+    <FovY Value="62" />
+  </Component>
+  <Component Type="Input" Version="1">
+    <Map Value="Default" />
+    <PlayerIndex Value="0" />
+    <Enabled Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-930" Y="175" Z="-690" />
+    <Rotation X="4" Y="38" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

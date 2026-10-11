@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<World Format="1">
+  <Entity Guid="fedcba9876543210fedcba9876543210" />
+  <Instance Guid="0123456789abcdef0123456789abcdef" />
+</World>

@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="01eee1967adf9127cbcab275c5bbb457" Type="Texture.Object" Version="1" X="-300" Y="-260">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Steampunk/Plate_BaseColor.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="3771bfa25721e540cbcfb8729fe86795" Type="Parameter" Version="1" X="0" Y="-300">
+      <Prop Name="Default" Value="1 1 1" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="5b37ed882f872d13124e67ba9cb01472" Type="Output.Material" Version="1" X="900" Y="0">
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Opaque" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+    <Node Id="65940150887bd216b9479e4af4c38234" Type="Math.Multiply" Version="1" X="420" Y="20" Wildcard="float" />
+    <Node Id="86d6519f74da734c2717f0d6873a1914" Type="Texture.Sample" Version="2" X="-80" Y="260" />
+    <Node Id="9d7fc45f38461bfae36545afe89d0031" Type="Texture.NormalMap" Version="1" X="420" Y="260">
+      <Const Pin="Strength" Value="1" />
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+    <Node Id="9faa38b70edea0eadde43a9479d2965f" Type="Texture.Object" Version="1" X="-300" Y="260">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Steampunk/Plate_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="a334c1817f8f4b1472f7fa18675b5c36" Type="Input.TexCoord" Version="1" X="-700" Y="0" />
+    <Node Id="a7b4f81be10cdd495f499774c3cbc0b3" Type="Math.Multiply" Version="1" X="620" Y="20" Wildcard="float" />
+    <Node Id="a7f7e01baf0d5abdfe03c9ea882b09ed" Type="Texture.Object" Version="1" X="-300" Y="0">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Steampunk/Plate_ORM.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="ba1308ebbb705dd5348a1a1ac91ae16f" Type="Math.Multiply" Version="1" X="-480" Y="40" Wildcard="vec2" />
+    <Node Id="d03808c77a7e83a4bb11d572f2e73a79" Type="Texture.Sample" Version="2" X="-80" Y="0" />
+    <Node Id="d53bdcfe05f1c66d0873febfa9b14223" Type="Math.Multiply" Version="1" X="420" Y="-300" Wildcard="vec3" />
+    <Node Id="e79053b590d32d92ac1246702f0ba4be" Type="Parameter" Version="1" X="-700" Y="120">
+      <Prop Name="Default" Value="0.5 0.5" />
+      <Prop Name="Name" Value="UVScale" />
+      <Prop Name="Type" Value="vec2" />
+    </Node>
+    <Node Id="e9c07d90fd7717bc2d839bd8f9cda435" Type="Parameter" Version="1" X="220" Y="60">
+      <Prop Name="Default" Value="1" />
+      <Prop Name="Name" Value="RoughnessScale" />
+      <Prop Name="Type" Value="float" />
+    </Node>
+    <Node Id="f0a3a8d8d605ab907d7a2c6a80ed5a19" Type="Math.Multiply" Version="1" X="220" Y="-300" Wildcard="vec3" />
+    <Node Id="f4727be5aa85a5acb3b27d2ecc0cbb4c" Type="Texture.Sample" Version="2" X="-80" Y="-260" />
+    <Node Id="f5f4a49fa11e1c983362800f876f0d9f" Type="Input.VertexColor" Version="1" X="0" Y="-400" />
+  </Nodes>
+  <Links>
+    <Link From="01eee1967adf9127cbcab275c5bbb457.Texture" To="f4727be5aa85a5acb3b27d2ecc0cbb4c.Texture" />
+    <Link From="3771bfa25721e540cbcfb8729fe86795.Value" To="d53bdcfe05f1c66d0873febfa9b14223.B" />
+    <Link From="65940150887bd216b9479e4af4c38234.Out" To="a7b4f81be10cdd495f499774c3cbc0b3.A" />
+    <Link From="86d6519f74da734c2717f0d6873a1914.RGB" To="9d7fc45f38461bfae36545afe89d0031.Color" />
+    <Link From="9d7fc45f38461bfae36545afe89d0031.Normal" To="5b37ed882f872d13124e67ba9cb01472.Normal" />
+    <Link From="9faa38b70edea0eadde43a9479d2965f.Texture" To="86d6519f74da734c2717f0d6873a1914.Texture" />
+    <Link From="a334c1817f8f4b1472f7fa18675b5c36.UV" To="ba1308ebbb705dd5348a1a1ac91ae16f.A" />
+    <Link From="a7b4f81be10cdd495f499774c3cbc0b3.Out" To="5b37ed882f872d13124e67ba9cb01472.Roughness" />
+    <Link From="a7f7e01baf0d5abdfe03c9ea882b09ed.Texture" To="d03808c77a7e83a4bb11d572f2e73a79.Texture" />
+    <Link From="ba1308ebbb705dd5348a1a1ac91ae16f.Out" To="86d6519f74da734c2717f0d6873a1914.UV" />
+    <Link From="ba1308ebbb705dd5348a1a1ac91ae16f.Out" To="9d7fc45f38461bfae36545afe89d0031.UV" />
+    <Link From="ba1308ebbb705dd5348a1a1ac91ae16f.Out" To="d03808c77a7e83a4bb11d572f2e73a79.UV" />
+    <Link From="ba1308ebbb705dd5348a1a1ac91ae16f.Out" To="f4727be5aa85a5acb3b27d2ecc0cbb4c.UV" />
+    <Link From="d03808c77a7e83a4bb11d572f2e73a79.B" To="5b37ed882f872d13124e67ba9cb01472.Metallic" />
+    <Link From="d03808c77a7e83a4bb11d572f2e73a79.G" To="65940150887bd216b9479e4af4c38234.A" />
+    <Link From="d03808c77a7e83a4bb11d572f2e73a79.R" To="5b37ed882f872d13124e67ba9cb01472.AmbientOcclusion" />
+    <Link From="d53bdcfe05f1c66d0873febfa9b14223.Out" To="5b37ed882f872d13124e67ba9cb01472.BaseColor" />
+    <Link From="e79053b590d32d92ac1246702f0ba4be.Value" To="ba1308ebbb705dd5348a1a1ac91ae16f.B" />
+    <Link From="e9c07d90fd7717bc2d839bd8f9cda435.Value" To="65940150887bd216b9479e4af4c38234.B" />
+    <Link From="f0a3a8d8d605ab907d7a2c6a80ed5a19.Out" To="d53bdcfe05f1c66d0873febfa9b14223.A" />
+    <Link From="f4727be5aa85a5acb3b27d2ecc0cbb4c.RGB" To="f0a3a8d8d605ab907d7a2c6a80ed5a19.A" />
+    <Link From="f5f4a49fa11e1c983362800f876f0d9f.A" To="a7b4f81be10cdd495f499774c3cbc0b3.B" />
+    <Link From="f5f4a49fa11e1c983362800f876f0d9f.RGB" To="f0a3a8d8d605ab907d7a2c6a80ed5a19.B" />
+  </Links>
+  <Comments>
+    <Comment X="-700" Y="-420" Width="640" Height="90" Text="Steampunk Plate: the Plate set, 2.0 m a tile on the meshes' metre UVs; base colour times the vertex colour (baked grime) and Tint." />
+  </Comments>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "Plate". Do not edit.
+// Opaque, Lit. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in Plate.material.
+UBO_BLOCK_BEGIN(2, Plate_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    float Param_RoughnessScale;
+    vec3  Param_Tint;
+    vec2  Param_UVScale;
+UBO_BLOCK_END(Plate_Block)
+
+// Textures, by material texture slot; Plate.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+MATERIAL_SAMPLER2D(6, Material_Texture2)
+MATERIAL_SAMPLER2D(7, Material_Texture3)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec2 t0 = Inputs.TexCoord * Param_UVScale;
+    vec4 t1 = texture(Material_Texture1, t0);
+    vec3 t2 = t1.rgb * Inputs.Color.rgb;
+    vec3 t3 = t2 * Param_Tint;
+    Surface.BaseColor = t3;
+    vec4 t4 = texture(Material_Texture3, t0);
+    Surface.Metallic = t4.b;
+    float t5 = t4.g * Param_RoughnessScale;
+    float t6 = t5 * Inputs.Color.a;
+    Surface.Roughness = t6;
+    vec4 t7 = texture(Material_Texture2, t0);
+    vec3 t8 = Material_NormalMap(Inputs, t7.rgb, 1.0, t0, -1.0);
+    Surface.Normal = t8;
+    Surface.AmbientOcclusion = t4.r;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "Plate". Do not edit.
+NimbleMaterial 3
+Domain Opaque
+Shading Lit
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 208
+Param RoughnessScale float 160 1 0 0 0
+Param Tint vec3 176 1 1 1 0
+Param UVScale vec2 192 0.5 0.5 0 0
+Texture 1 Default Default Content/Textures/Steampunk/Plate_BaseColor.nmtexture
+Texture 2 Default Default Content/Textures/Steampunk/Plate_Normal.nmtexture
+Texture 3 Default Default Content/Textures/Steampunk/Plate_ORM.nmtexture
+TextureUV 1 1 UVScale
+TextureUV 2 1 UVScale
+TextureUV 3 1 UVScale
+]]></Output>
+  </gen_code>
+</NodeGraph>

@@ -1,0 +1,123 @@
+NimbleParticleSystem 1
+
+Emitter Chips
+    Enabled true
+    Type Sprite
+    Modules Shape Velocity Forces
+    Mesh Engine/Content/Meshes/SpriteOctagon.nmmesh
+    Material Content/Materials/Steampunk/Steam.material.nmgraph
+    Offset 0,0,0
+    Billboard FaceCamera
+    VelocityStretch 0
+    MeshOrientation RandomSpin
+    RandomRotation true
+    RotationRate 0.5
+    SpawnMode Burst
+    MaxParticles 64
+    Shape Cone
+    ShapeSurface false
+    BoxSize 10,10,10
+    ConeAngle 40
+    RingWidth 0
+    ShapeSpeed 220
+    SpawnRate 0
+    BurstCount 10
+    BurstInterval 0
+    BurstCycles 1
+    Lifetime 0.5
+    LifetimeVariance 0.4
+    EmitterRadius 1
+    Seed 0
+    CullDistance 6000
+    PauseOffscreen true
+    Velocity 0,0,0
+    VelocitySpread 60
+    Acceleration 0,-700,0
+    Drag 0.5
+    Turbulence 0
+    CollisionResponse None
+    CollisionHeight -100000
+    Bounce 0.3
+    Friction 0.2
+    FlipbookColumns 1
+    FlipbookRows 1
+    FlipbookFrames 0
+    FlipbookRate 0
+    FlipbookCycles 1
+    FlipbookRandomStart false
+    BeamEnd 0,200,0
+    BeamSegments 16
+    BeamNoise 0
+    BeamNoiseSpeed 4
+    SizeMode StartEnd
+    StartSize 2
+    EndSize 2
+    SizeKeys
+    ColorMode StartEnd
+    StartColor 120,110,95,255
+    EndColor 110,100,90,0
+    ColorCurve 0.6
+    FadeIn 0.0
+    FadeOut 0.5
+    ColorKeys
+
+Emitter Dust
+    Enabled true
+    Type Sprite
+    Modules Shape Velocity Forces
+    Mesh Engine/Content/Meshes/SpriteOctagon.nmmesh
+    Material Content/Materials/Steampunk/Steam.material.nmgraph
+    Offset 0,0,0
+    Billboard FaceCamera
+    VelocityStretch 0
+    MeshOrientation RandomSpin
+    RandomRotation true
+    RotationRate 0.5
+    SpawnMode Burst
+    MaxParticles 64
+    Shape Sphere
+    ShapeSurface false
+    BoxSize 10,10,10
+    ConeAngle 25
+    RingWidth 0
+    ShapeSpeed 0
+    SpawnRate 0
+    BurstCount 8
+    BurstInterval 0
+    BurstCycles 1
+    Lifetime 1.2
+    LifetimeVariance 0.4
+    EmitterRadius 4
+    Seed 0
+    CullDistance 6000
+    PauseOffscreen true
+    Velocity 0,20,0
+    VelocitySpread 30
+    Acceleration 0,0,0
+    Drag 0.5
+    Turbulence 15
+    CollisionResponse None
+    CollisionHeight -100000
+    Bounce 0.3
+    Friction 0.2
+    FlipbookColumns 1
+    FlipbookRows 1
+    FlipbookFrames 0
+    FlipbookRate 0
+    FlipbookCycles 1
+    FlipbookRandomStart false
+    BeamEnd 0,200,0
+    BeamSegments 16
+    BeamNoise 0
+    BeamNoiseSpeed 4
+    SizeMode StartEnd
+    StartSize 10
+    EndSize 55
+    SizeKeys
+    ColorMode StartEnd
+    StartColor 165,158,148,80
+    EndColor 160,155,150,0
+    ColorCurve 0.6
+    FadeIn 0.0
+    FadeOut 0.5
+    ColorKeys

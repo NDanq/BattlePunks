@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="11dd940251c10a85dd403de410135bf2" Type="Texture.Object" Version="1" X="-160" Y="-240">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Courtyard/Water_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="1e253ef212987602a1e164a53ac2f757" Type="Input.WorldPosition" Version="1" X="280" Y="80" />
+    <Node Id="1e8c40310dd2da39c83b2d8d215fe7b6" Type="Math.Multiply" Version="1" X="-600" Y="-80" Wildcard="vec2">
+      <Const Pin="B" Value="-0.018 0.03" />
+    </Node>
+    <Node Id="291605e7155210744d85e355d09f8a2c" Type="Math.Subtract" Version="1" X="500" Y="80" Wildcard="vec3" />
+    <Node Id="2d0031da4f2e5c91378652693dcd21c9" Type="Math.Power" Version="1" X="500" Y="240" Wildcard="float">
+      <Const Pin="B" Value="5" />
+    </Node>
+    <Node Id="3c66551d449150800370b34364411614" Type="Texture.NormalMap" Version="1" X="500" Y="-80">
+      <Const Pin="Strength" Value="0.45" />
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+    <Node Id="48ffc9e042796b681534e814805c1b9f" Type="Input.VertexNormal" Version="1" X="-380" Y="240" />
+    <Node Id="551c88ef2408e360ea34ae8a2927fe7a" Type="Math.OneMinus" Version="1" X="280" Y="240" Wildcard="float" />
+    <Node Id="58a101acadd0d859de8d520a209d2a6d" Type="Math.Add" Version="1" X="-380" Y="-240" Wildcard="vec2" />
+    <Node Id="5f0f9c65905f6fae497b2e0205f29601" Type="Math.Multiply" Version="1" X="-600" Y="-240" Wildcard="vec2">
+      <Const Pin="B" Value="0.035 0.021" />
+    </Node>
+    <Node Id="6625fd718ffe1dd9b5f9ae0ec81ddd99" Type="Math.Lerp" Version="1" X="-600" Y="400" Wildcard="float">
+      <Const Pin="A" Value="0.3" />
+      <Const Pin="B" Value="0.95" />
+    </Node>
+    <Node Id="757d77ae0d9776422fcd3265ce5b31e5" Type="Input.TexCoord" Version="1" X="280" Y="-240" />
+    <Node Id="77c523909cade7942e3b514a6bff1b34" Type="Math.Lerp" Version="1" X="280" Y="-80" Wildcard="vec3">
+      <Const Pin="T" Value="0.5 0.5 0.5" />
+    </Node>
+    <Node Id="79286b5dbffc029cecef4e590d450374" Type="Texture.Object" Version="1" X="-160" Y="-80">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Courtyard/Water_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="7c840320ceb89aeaf8c58312fd9634b6" Type="Constant" Version="1" X="-160" Y="80" Wildcard="float">
+      <Const Pin="Value" Value="0.03" />
+    </Node>
+    <Node Id="8575640e898c4ca0e6d00a12bb026d75" Type="Vector.Dot" Version="1" X="-160" Y="240" Wildcard="vec3" />
+    <Node Id="8bb8bb404b6656a0c84c3438663fbda1" Type="Texture.Sample" Version="2" X="60" Y="-240" />
+    <Node Id="8cfea0f1100c2c6854c52e47f13cc2d8" Type="Texture.Sample" Version="2" X="60" Y="-80" />
+    <Node Id="a37e8c5f0141bd514b587d83953605f9" Type="Math.Multiply" Version="1" X="500" Y="-400" Wildcard="vec2">
+      <Const Pin="B" Value="1.3 1.3" />
+    </Node>
+    <Node Id="ad2c3b1d5d347779f8df7f1cb249b46f" Type="Vector.Make2" Version="1" X="60" Y="-400" />
+    <Node Id="b10c509a7e4a825aff2f7b797a9a69e7" Type="Parameter" Version="1" X="-600" Y="80">
+      <Prop Name="Default" Value="0.2 0.25 0.23" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="b26a21c700d0af44bea12a5da0ef8574" Type="Math.Abs" Version="1" X="60" Y="240" Wildcard="float" />
+    <Node Id="bf61d2c9e8e424ce21a541a4c9f4b703" Type="Constant" Version="1" X="-380" Y="80" Wildcard="float">
+      <Const Pin="Value" Value="1" />
+    </Node>
+    <Node Id="c6a50629a7e3f4dadfd47368126706a9" Type="Vector.Normalize" Version="1" X="-600" Y="240" Wildcard="vec3" />
+    <Node Id="d84fcaaefb80d40ac2a4d0cb6154d8fa" Type="Math.Multiply" Version="1" X="500" Y="-240" Wildcard="vec2">
+      <Const Pin="B" Value="0.55 0.55" />
+    </Node>
+    <Node Id="de4277b9693b79e2888dab252f6ce6db" Type="Input.CameraPosition" Version="1" X="60" Y="80" />
+    <Node Id="e4c1370f7353507990ed9a1b925761ff" Type="Output.Material" Version="1" X="-380" Y="-400">
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Translucent" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+    <Node Id="f51b3e168b591086aa412df66518c3fb" Type="Input.Time" Version="1" X="-160" Y="-400" />
+    <Node Id="f967e5fdfee4e2f2e4c39314a4bfd53e" Type="Math.Add" Version="1" X="-380" Y="-80" Wildcard="vec2" />
+    <Node Id="fe65781847e0c630537caf91db2ae62f" Type="Input.TexCoord" Version="1" X="280" Y="-400" />
+  </Nodes>
+  <Links>
+    <Link From="11dd940251c10a85dd403de410135bf2.Texture" To="8bb8bb404b6656a0c84c3438663fbda1.Texture" />
+    <Link From="1e253ef212987602a1e164a53ac2f757.Position" To="291605e7155210744d85e355d09f8a2c.B" />
+    <Link From="1e8c40310dd2da39c83b2d8d215fe7b6.Out" To="f967e5fdfee4e2f2e4c39314a4bfd53e.B" />
+    <Link From="291605e7155210744d85e355d09f8a2c.Out" To="c6a50629a7e3f4dadfd47368126706a9.V" />
+    <Link From="2d0031da4f2e5c91378652693dcd21c9.Out" To="6625fd718ffe1dd9b5f9ae0ec81ddd99.T" />
+    <Link From="3c66551d449150800370b34364411614.Normal" To="e4c1370f7353507990ed9a1b925761ff.Normal" />
+    <Link From="48ffc9e042796b681534e814805c1b9f.Normal" To="8575640e898c4ca0e6d00a12bb026d75.B" />
+    <Link From="551c88ef2408e360ea34ae8a2927fe7a.Out" To="2d0031da4f2e5c91378652693dcd21c9.A" />
+    <Link From="58a101acadd0d859de8d520a209d2a6d.Out" To="3c66551d449150800370b34364411614.UV" />
+    <Link From="58a101acadd0d859de8d520a209d2a6d.Out" To="8bb8bb404b6656a0c84c3438663fbda1.UV" />
+    <Link From="5f0f9c65905f6fae497b2e0205f29601.Out" To="58a101acadd0d859de8d520a209d2a6d.B" />
+    <Link From="6625fd718ffe1dd9b5f9ae0ec81ddd99.Out" To="e4c1370f7353507990ed9a1b925761ff.Opacity" />
+    <Link From="757d77ae0d9776422fcd3265ce5b31e5.UV" To="d84fcaaefb80d40ac2a4d0cb6154d8fa.A" />
+    <Link From="77c523909cade7942e3b514a6bff1b34.Out" To="3c66551d449150800370b34364411614.Color" />
+    <Link From="79286b5dbffc029cecef4e590d450374.Texture" To="8cfea0f1100c2c6854c52e47f13cc2d8.Texture" />
+    <Link From="7c840320ceb89aeaf8c58312fd9634b6.Out" To="e4c1370f7353507990ed9a1b925761ff.Roughness" />
+    <Link From="8575640e898c4ca0e6d00a12bb026d75.Out" To="b26a21c700d0af44bea12a5da0ef8574.X" />
+    <Link From="8bb8bb404b6656a0c84c3438663fbda1.RGB" To="77c523909cade7942e3b514a6bff1b34.A" />
+    <Link From="8cfea0f1100c2c6854c52e47f13cc2d8.RGB" To="77c523909cade7942e3b514a6bff1b34.B" />
+    <Link From="a37e8c5f0141bd514b587d83953605f9.Out" To="58a101acadd0d859de8d520a209d2a6d.A" />
+    <Link From="ad2c3b1d5d347779f8df7f1cb249b46f.Out" To="1e8c40310dd2da39c83b2d8d215fe7b6.A" />
+    <Link From="ad2c3b1d5d347779f8df7f1cb249b46f.Out" To="5f0f9c65905f6fae497b2e0205f29601.A" />
+    <Link From="b10c509a7e4a825aff2f7b797a9a69e7.Value" To="e4c1370f7353507990ed9a1b925761ff.BaseColor" />
+    <Link From="b26a21c700d0af44bea12a5da0ef8574.Out" To="551c88ef2408e360ea34ae8a2927fe7a.X" />
+    <Link From="bf61d2c9e8e424ce21a541a4c9f4b703.Out" To="e4c1370f7353507990ed9a1b925761ff.Metallic" />
+    <Link From="c6a50629a7e3f4dadfd47368126706a9.Out" To="8575640e898c4ca0e6d00a12bb026d75.A" />
+    <Link From="d84fcaaefb80d40ac2a4d0cb6154d8fa.Out" To="f967e5fdfee4e2f2e4c39314a4bfd53e.A" />
+    <Link From="de4277b9693b79e2888dab252f6ce6db.Position" To="291605e7155210744d85e355d09f8a2c.A" />
+    <Link From="f51b3e168b591086aa412df66518c3fb.Time" To="ad2c3b1d5d347779f8df7f1cb249b46f.X" />
+    <Link From="f51b3e168b591086aa412df66518c3fb.Time" To="ad2c3b1d5d347779f8df7f1cb249b46f.Y" />
+    <Link From="f967e5fdfee4e2f2e4c39314a4bfd53e.Out" To="8cfea0f1100c2c6854c52e47f13cc2d8.UV" />
+    <Link From="fe65781847e0c630537caf91db2ae62f.UV" To="a37e8c5f0141bd514b587d83953605f9.A" />
+  </Links>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "Water". Do not edit.
+// Translucent, Lit. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in Water.material.
+UBO_BLOCK_BEGIN(2, Water_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    vec3  Param_Tint;
+UBO_BLOCK_END(Water_Block)
+
+// Textures, by material texture slot; Water.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    Surface.BaseColor = Param_Tint;
+    Surface.Metallic = 1.0;
+    Surface.Roughness = 0.03;
+    vec3 t0 = Scene_CameraPosition.xyz - Inputs.WorldPosition;
+    vec3 t1 = normalize(t0);
+    float t2 = dot(t1, Inputs.WorldNormal);
+    float t3 = abs(t2);
+    float t4 = 1.0 - t3;
+    float t5 = pow(t4, 5.0);
+    float t6 = mix(0.3, 0.95, t5);
+    Surface.Opacity = t6;
+    vec2 t7 = Inputs.TexCoord * vec2(1.3);
+    vec2 t8 = vec2(Scene_Time.x, Scene_Time.x);
+    vec2 t9 = t8 * vec2(0.035, 0.021);
+    vec2 t10 = t7 + t9;
+    vec4 t11 = texture(Material_Texture1, t10);
+    vec2 t12 = Inputs.TexCoord * vec2(0.55);
+    vec2 t13 = t8 * vec2(-0.018, 0.03);
+    vec2 t14 = t12 + t13;
+    vec4 t15 = texture(Material_Texture1, t14);
+    vec3 t16 = mix(t11.rgb, t15.rgb, vec3(0.5));
+    vec3 t17 = Material_NormalMap(Inputs, t16, 0.45, t10, -1.0);
+    Surface.Normal = t17;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "Water". Do not edit.
+NimbleMaterial 3
+Domain Translucent
+Shading Lit
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 176
+Param Tint vec3 160 0.2 0.25 0.23 0
+Texture 1 Default Default Content/Textures/Courtyard/Water_Normal.nmtexture
+]]></Output>
+  </gen_code>
+</NodeGraph>

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="dc58cc05687dacb170ec43e02e76bbd3" Name="Hall_Furnishings" Mobility="Static">
+  <Component Type="Render" Version="5">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/Courtyard/Wood.material.nmgraph" />
+    <Material1 Value="Content/Materials/Courtyard/Plaster.material.nmgraph" />
+    <Material2 Value="Content/Materials/Courtyard/Soot.material.nmgraph" />
+    <Material3 Value="Content/Materials/Courtyard/Stone.material.nmgraph" />
+    <Material4 Value="Content/Materials/Courtyard/Embers.material.nmgraph" />
+    <Material5 Value="Content/Materials/Courtyard/Iron.material.nmgraph" />
+    <Material6 Value="Content/Materials/Courtyard/Wax.material.nmgraph" />
+    <Material7 Value="Content/Materials/Courtyard/Flame.material.nmgraph" />
+    <Mesh Value="Content/Meshes/Courtyard/Hall_Furnishings.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
+    <Occluder Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="0" Z="0" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

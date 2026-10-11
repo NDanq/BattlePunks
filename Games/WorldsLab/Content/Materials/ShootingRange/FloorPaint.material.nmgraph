@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="162f2b5639082dffbf2d9dbdff316564" Type="Texture.Sample" Version="2" X="-80" Y="0" />
+    <Node Id="27ff58187df9e27e6c0ae2d16345e36e" Type="Output.Material" Version="1" X="900" Y="0">
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Opaque" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+    <Node Id="28fdfd3f742390867b0543ce4d843974" Type="Parameter" Version="1" X="-700" Y="120">
+      <Prop Name="Default" Value="1 1" />
+      <Prop Name="Name" Value="UVScale" />
+      <Prop Name="Type" Value="vec2" />
+    </Node>
+    <Node Id="3316c014dddf51d82775826950a223a3" Type="Input.VertexColor" Version="1" X="0" Y="-400" />
+    <Node Id="4644c4862d2b26526716b31c78617bc4" Type="Math.Multiply" Version="1" X="220" Y="-300" Wildcard="vec3" />
+    <Node Id="4ad0ef40f14e4dfea467556360e8cee4" Type="Texture.Sample" Version="2" X="-80" Y="260" />
+    <Node Id="4be6affe839710b0425e3ee6c1d0b686" Type="Parameter" Version="1" X="220" Y="60">
+      <Prop Name="Default" Value="1" />
+      <Prop Name="Name" Value="RoughnessScale" />
+      <Prop Name="Type" Value="float" />
+    </Node>
+    <Node Id="6e042045411efe37117d96a56d3b3cad" Type="Math.Multiply" Version="1" X="420" Y="-300" Wildcard="vec3" />
+    <Node Id="75abcdf872bc0109ca7334b66a921a9b" Type="Texture.Object" Version="1" X="-300" Y="-260">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/ShootingRange/FloorPaint_BaseColor.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="926ef38b7c3e56ffb88225bdf3f96f61" Type="Texture.Object" Version="1" X="-300" Y="0">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/ShootingRange/FloorPaint_ORM.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="a77a7d84de99cc1a16542c5e76ff9b46" Type="Texture.NormalMap" Version="1" X="420" Y="260">
+      <Const Pin="Strength" Value="1" />
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+    <Node Id="b9cb15f92e9a9ec0a4979a75e8f80387" Type="Texture.Sample" Version="2" X="-80" Y="-260" />
+    <Node Id="ba419dd3e4e032575ed66695cd595fca" Type="Texture.Object" Version="1" X="-300" Y="260">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/ShootingRange/FloorPaint_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="bf379706cf645923844453fd50998426" Type="Input.TexCoord" Version="1" X="-700" Y="0" />
+    <Node Id="c5b2d9785206bcae49540b7551290ab4" Type="Parameter" Version="1" X="0" Y="-300">
+      <Prop Name="Default" Value="1 1 1" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="f686724008edeb1e3c70c3cf4a4c2ec9" Type="Math.Multiply" Version="1" X="-480" Y="40" Wildcard="vec2" />
+    <Node Id="fbb4f3941e6b954a04cddc98fb537b94" Type="Math.Multiply" Version="1" X="420" Y="20" Wildcard="float" />
+  </Nodes>
+  <Links>
+    <Link From="162f2b5639082dffbf2d9dbdff316564.B" To="27ff58187df9e27e6c0ae2d16345e36e.Metallic" />
+    <Link From="162f2b5639082dffbf2d9dbdff316564.G" To="fbb4f3941e6b954a04cddc98fb537b94.A" />
+    <Link From="162f2b5639082dffbf2d9dbdff316564.R" To="27ff58187df9e27e6c0ae2d16345e36e.AmbientOcclusion" />
+    <Link From="28fdfd3f742390867b0543ce4d843974.Value" To="f686724008edeb1e3c70c3cf4a4c2ec9.B" />
+    <Link From="3316c014dddf51d82775826950a223a3.RGB" To="4644c4862d2b26526716b31c78617bc4.B" />
+    <Link From="4644c4862d2b26526716b31c78617bc4.Out" To="6e042045411efe37117d96a56d3b3cad.A" />
+    <Link From="4ad0ef40f14e4dfea467556360e8cee4.RGB" To="a77a7d84de99cc1a16542c5e76ff9b46.Color" />
+    <Link From="4be6affe839710b0425e3ee6c1d0b686.Value" To="fbb4f3941e6b954a04cddc98fb537b94.B" />
+    <Link From="6e042045411efe37117d96a56d3b3cad.Out" To="27ff58187df9e27e6c0ae2d16345e36e.BaseColor" />
+    <Link From="75abcdf872bc0109ca7334b66a921a9b.Texture" To="b9cb15f92e9a9ec0a4979a75e8f80387.Texture" />
+    <Link From="926ef38b7c3e56ffb88225bdf3f96f61.Texture" To="162f2b5639082dffbf2d9dbdff316564.Texture" />
+    <Link From="a77a7d84de99cc1a16542c5e76ff9b46.Normal" To="27ff58187df9e27e6c0ae2d16345e36e.Normal" />
+    <Link From="b9cb15f92e9a9ec0a4979a75e8f80387.RGB" To="4644c4862d2b26526716b31c78617bc4.A" />
+    <Link From="ba419dd3e4e032575ed66695cd595fca.Texture" To="4ad0ef40f14e4dfea467556360e8cee4.Texture" />
+    <Link From="bf379706cf645923844453fd50998426.UV" To="f686724008edeb1e3c70c3cf4a4c2ec9.A" />
+    <Link From="c5b2d9785206bcae49540b7551290ab4.Value" To="6e042045411efe37117d96a56d3b3cad.B" />
+    <Link From="f686724008edeb1e3c70c3cf4a4c2ec9.Out" To="162f2b5639082dffbf2d9dbdff316564.UV" />
+    <Link From="f686724008edeb1e3c70c3cf4a4c2ec9.Out" To="4ad0ef40f14e4dfea467556360e8cee4.UV" />
+    <Link From="f686724008edeb1e3c70c3cf4a4c2ec9.Out" To="a77a7d84de99cc1a16542c5e76ff9b46.UV" />
+    <Link From="f686724008edeb1e3c70c3cf4a4c2ec9.Out" To="b9cb15f92e9a9ec0a4979a75e8f80387.UV" />
+    <Link From="fbb4f3941e6b954a04cddc98fb537b94.Out" To="27ff58187df9e27e6c0ae2d16345e36e.Roughness" />
+  </Links>
+  <Comments>
+    <Comment X="-700" Y="-420" Width="640" Height="90" Text="Shooting Range FloorPaint: the FloorPaint set, 1.0 m a tile on the meshes' metre UVs; base colour times the vertex colour (baked grime) and Tint." />
+  </Comments>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "FloorPaint". Do not edit.
+// Opaque, Lit. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in FloorPaint.material.
+UBO_BLOCK_BEGIN(2, FloorPaint_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    float Param_RoughnessScale;
+    vec3  Param_Tint;
+    vec2  Param_UVScale;
+UBO_BLOCK_END(FloorPaint_Block)
+
+// Textures, by material texture slot; FloorPaint.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+MATERIAL_SAMPLER2D(6, Material_Texture2)
+MATERIAL_SAMPLER2D(7, Material_Texture3)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec2 t0 = Inputs.TexCoord * Param_UVScale;
+    vec4 t1 = texture(Material_Texture1, t0);
+    vec3 t2 = t1.rgb * Inputs.Color.rgb;
+    vec3 t3 = t2 * Param_Tint;
+    Surface.BaseColor = t3;
+    vec4 t4 = texture(Material_Texture2, t0);
+    Surface.Metallic = t4.b;
+    float t5 = t4.g * Param_RoughnessScale;
+    Surface.Roughness = t5;
+    vec4 t6 = texture(Material_Texture3, t0);
+    vec3 t7 = Material_NormalMap(Inputs, t6.rgb, 1.0, t0, -1.0);
+    Surface.Normal = t7;
+    Surface.AmbientOcclusion = t4.r;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "FloorPaint". Do not edit.
+NimbleMaterial 3
+Domain Opaque
+Shading Lit
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 208
+Param RoughnessScale float 160 1 0 0 0
+Param Tint vec3 176 1 1 1 0
+Param UVScale vec2 192 1 1 0 0
+Texture 1 Default Default Content/Textures/ShootingRange/FloorPaint_BaseColor.nmtexture
+Texture 2 Default Default Content/Textures/ShootingRange/FloorPaint_ORM.nmtexture
+Texture 3 Default Default Content/Textures/ShootingRange/FloorPaint_Normal.nmtexture
+TextureUV 1 1 UVScale
+TextureUV 2 1 UVScale
+TextureUV 3 1 UVScale
+]]></Output>
+  </gen_code>
+</NodeGraph>
