@@ -311,6 +311,44 @@ resent: a whole round trip of frozen state. So state does not go reliably.
 sends, for testing. In NetArena at 20% on every process, prediction's worst
 correction stays 0: each batch that arrives is enough on its own.
 
+### Reconnecting
+
+A client whose connection is lost can rejoin as itself. It keeps the same
+client id, the same player and avatar, and its score.
+
+- **The server keeps its place.** When a welcomed client times out, the
+  server holds its place for `[Net] ReconnectGraceMs` (default 30000).
+  Everything it owns stays, and its avatar stands idle with no input. A
+  client that quits on purpose (`Stop`, closing the game) or is kicked is
+  gone at once: ENet's disconnect reason tells the cases apart.
+- **The client tries to rejoin** for as long, once a second. Its Hello
+  carries the token the server gave it at its welcome. A token the server
+  knows gets the same client id back. That works from a kept place, or over
+  a connection the server has not yet noticed is dead, which it then drops.
+- **Back in time:** the server sends its snapshot again, then
+  `SnapshotDone`. The client keeps its entities and updates them in place,
+  so its own avatar never blinks out. Anything the snapshot did not mention
+  was destroyed on the server while it was away, so the client removes it.
+  State starts again from a full batch.
+- **Too late:** the server has already given its place up
+  (`OnClientDisconnected`, which destroys what it owned). The token is
+  unknown, so the client joins as a new one. What its old session spawned
+  is cleared first, and the level's own entities are matched again.
+
+| | Server | Client |
+|---|---|---|
+| `IGameMode::OnClientAway(Client, Player)` | lost, place kept | |
+| `IGameMode::OnClientReturned(Client, Player)` | back in time | |
+| `IGameMode::OnClientDisconnected` | quit, kicked, or not back in time | |
+| Lua `ClientAway`, `ClientReturned` events | the same | |
+| `NimbleEngine::IsNetReconnecting()`, Lua `Net.IsReconnecting()` | | trying to rejoin |
+
+`NetSession::GetReconnectToken()` is the client's token, and
+`NetConfig::ReconnectToken` starts a session with one. A game that saves
+the token can rejoin after the client itself restarts. A dropped
+connection is noticed only after `TimeoutMs`, and lost clients count
+against `MaxClients` until their grace ends.
+
 ### Connection stats
 
 `NimbleEngine::GetNetStats(Client, Stats)` (`NetFacade.h`) reports a
@@ -399,6 +437,9 @@ a client in one process over 127.0.0.1. It covers:
 - state under 50% simulated loss each way: changing values, a value changed
   and changed back, and a change just after a spawn
 - a late joiner
+- reconnecting: a lost client kept away and taken back with the same id and
+  entities (updated, with what was destroyed meanwhile removed); one back too
+  late joining as new; one that quits gone at once
 - destroys and disconnects
 - the editor link
 

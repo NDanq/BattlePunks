@@ -38,6 +38,15 @@ namespace NetCore
     using NetPeerID = uint32_t;
     constexpr NetPeerID NET_PEER_NONE = 0xFFFFFFFFu;
 
+    /* Why a peer went, as the other end hears it (ENet's disconnect data). */
+    enum ENetDisconnectReason : uint32_t
+    {
+        NET_DISCONNECT_LOST     = 0,   // timed out, or no word: it may come back (NetSession reconnects)
+        NET_DISCONNECT_QUIT     = 1,   // it left on purpose
+        NET_DISCONNECT_CLOSED   = 2,   // the server shut down
+        NET_DISCONNECT_REJECTED = 3,   // refused or kicked
+    };
+
     struct NetTransportEvent
     {
         enum class EType : uint8_t { Connected, Disconnected, Received };
@@ -45,6 +54,7 @@ namespace NetCore
         EType                EventType = EType::Received;
         NetPeerID            Peer      = NET_PEER_NONE;
         uint8_t              Channel   = 0;
+        uint32_t             Reason    = NET_DISCONNECT_LOST;   // Disconnected's
         std::vector<uint8_t> Data;
     };
 
@@ -73,11 +83,12 @@ namespace NetCore
         void Send(NetPeerID InPeer, uint8_t InChannel, const std::vector<uint8_t>& InBytes, bool bInReliable = true);
         void Flush();
 
-        /* Politely: Disconnected arrives through Service. */
-        void Disconnect(NetPeerID InPeer);
+        /* Politely: Disconnected arrives through Service. InReason is what the
+         * other end hears. */
+        void Disconnect(NetPeerID InPeer, uint32_t InReason = NET_DISCONNECT_REJECTED);
 
-        /* Disconnects every peer at once and closes the socket. */
-        void Close();
+        /* Disconnects every peer at once, telling them InReason, and closes the socket. */
+        void Close(uint32_t InReason = NET_DISCONNECT_QUIT);
 
         bool     IsOpen() const { return Host != nullptr; }
         uint16_t GetPort() const;

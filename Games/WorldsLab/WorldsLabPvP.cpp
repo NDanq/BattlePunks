@@ -1063,6 +1063,7 @@ private:
         {
             Status = (Now < GStatusUntil ? GStatus + "  -  " : std::string()) + "RESPAWNING";
         }
+        if(NimbleEngine::IsNetReconnecting()) { Status = "CONNECTION LOST  -  REJOINING"; }
         Set(UI, "Pvp.Status", Status);
 
         /* The kill feed, newest last. */

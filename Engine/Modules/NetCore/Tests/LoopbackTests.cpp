@@ -565,6 +565,135 @@ namespace
     }
 }
 
+namespace
+{
+    /* A server and a client with short timeouts, counting the server's client events. */
+    struct ReconnectPair
+    {
+        World      ServerWorld, ClientWorld;
+        NetSession Server, Client;
+        Pair       Both{ &Server, &Client };
+        struct Counts { int Connected = 0, Disconnected = 0, Away = 0, Returned = 0; } Seen;
+
+        bool Start(const uint32_t InGraceMs)
+        {
+            NetConfig ServerConfig;
+            ServerConfig.Port             = 0;
+            ServerConfig.TimeoutMs        = 1000;
+            ServerConfig.ReconnectGraceMs = InGraceMs;
+            if(!Server.Start(ENetRole::Server, ServerConfig)) { return false; }
+            Server.BindWorld(ServerWorld, "Rejoin");
+            Server.SetClientEvents([](NetClientID, void* U) { ++static_cast<Counts*>(U)->Connected; },
+                                   [](NetClientID, void* U) { ++static_cast<Counts*>(U)->Disconnected; }, &Seen);
+            Server.SetClientAwayEvents([](NetClientID, void* U) { ++static_cast<Counts*>(U)->Away; },
+                                       [](NetClientID, void* U) { ++static_cast<Counts*>(U)->Returned; });
+
+            NetConfig ClientConfig;
+            std::strcpy(ClientConfig.ServerAddress, "127.0.0.1");
+            ClientConfig.Port             = Server.GetPort();
+            ClientConfig.TimeoutMs        = 1000;
+            ClientConfig.ReconnectGraceMs = 8000;
+            if(!Client.Start(ENetRole::Client, ClientConfig)) { return false; }
+            Client.BindWorld(ClientWorld, "Rejoin");
+            return StepUntil(Both, [&] { return Client.IsConnected() && Seen.Connected == 1; });
+        }
+
+        /* The client stops answering -- a cable pulled -- while the server goes on. */
+        void Stall(const int InMs)
+        {
+            const auto Until = std::chrono::steady_clock::now() + std::chrono::milliseconds(InMs);
+            while(std::chrono::steady_clock::now() < Until)
+            {
+                Server.PollIncoming();
+                Server.FlushOutgoing();
+                EngineCore::Threads::SleepMs(2);
+            }
+        }
+
+        EntityID OnClient(const Entity& InServer) const { return Client.FindEntityByNetId(Server.GetNetId(InServer.GetID())); }
+
+        ~ReconnectPair()
+        {
+            Client.Stop();
+            Server.UnbindWorld();
+            Server.Stop();
+            Client.UnbindWorld();
+        }
+    };
+
+    void TestReconnect()
+    {
+        std::printf("[reconnect]\n");
+        {
+            ReconnectPair Run;
+            Check(Run.Start(6000), "a server keeping lost clients' places takes a client");
+            const NetClientID Id = Run.Client.GetLocalClientId();
+            const uint64_t Token = Run.Client.GetReconnectToken();
+            Check(Token != 0, "the client is given a reconnect token");
+
+            Entity Hero = Run.ServerWorld.CreateEntity("Hero");
+            NetComponent HeroNet;
+            HeroNet.OwnerClient = Id;
+            Hero.AddComponent(HeroNet);
+            Hero.AddComponent<PawnComponent>();
+            Entity Doomed = Run.ServerWorld.CreateEntity("Doomed");
+            Doomed.AddComponent<NetComponent>();
+            Check(StepUntil(Run.Both, [&] { return Run.OnClient(Hero).IsSet() && Run.OnClient(Doomed).IsSet(); }), "both spawn on the client");
+            const EntityID ClientHero = Run.OnClient(Hero);
+            const EntityID ClientDoomed = Run.OnClient(Doomed);
+
+            Run.Stall(2600);   // ENet pings a silent peer after 500 ms, and gives up on it a timeout later
+            Check(Run.Seen.Away == 1 && Run.Seen.Disconnected == 0, "a client that stops answering is away, not gone");
+            Check(Run.ServerWorld.IsAlive(Hero.GetID()), "and what it owns stays");
+
+            /* While it is away the game goes on. */
+            Doomed.Destroy();
+            Entity Fresh = Run.ServerWorld.CreateEntity("Fresh");
+            Fresh.AddComponent<NetComponent>();
+            Hero.GetComponent<PawnComponent>()->Health = 33;
+            Run.Stall(200);
+
+            Check(StepUntil(Run.Both, [&] { return Run.Client.IsReconnecting(); }, 4000), "the client notices, and tries to rejoin");
+            Check(StepUntil(Run.Both, [&] { return Run.Client.IsConnected() && Run.Seen.Returned == 1; }, 6000),
+                  "it is taken back within the grace");
+            Check(Run.Seen.Connected == 1 && Run.Seen.Disconnected == 0, "as a return, not a new client");
+            Check(Run.Client.GetLocalClientId() == Id && Run.Client.GetReconnectToken() == Token, "with the same id and token");
+            Check(StepUntil(Run.Both, [&]
+            {
+                const PawnComponent* Pawn = Entity(&Run.ClientWorld, ClientHero).GetComponent<PawnComponent>();
+                return Pawn && Pawn->Health == 33 && Run.OnClient(Fresh).IsSet();
+            }), "its own entity kept, brought up to date, and what was made meanwhile sent");
+            Check(Run.OnClient(Hero) == ClientHero, "the very same entity, not a copy");
+            Check(!Run.ClientWorld.IsAlive(ClientDoomed), "what was destroyed while it was away is gone");
+            Check(Run.Server.GetClientCount() == 1, "the server counts it once");
+        }
+        {
+            ReconnectPair Run;
+            Check(Run.Start(800), "a server with a short grace takes a client");
+            const NetClientID Id = Run.Client.GetLocalClientId();
+            Entity Mine = Run.ServerWorld.CreateEntity("Mine");
+            NetComponent MineNet;
+            MineNet.OwnerClient = Id;
+            Mine.AddComponent(MineNet);
+            Check(StepUntil(Run.Both, [&] { return Run.OnClient(Mine).IsSet(); }), "its entity spawns");
+            const EntityID OldCopy = Run.OnClient(Mine);
+
+            Run.Stall(4000);   // timed out, then the grace runs out
+            Check(Run.Seen.Away == 1 && Run.Seen.Disconnected == 1, "not back within the grace: gone");
+            Check(StepUntil(Run.Both, [&] { return Run.Client.IsConnected() && Run.Seen.Connected == 2; }, 8000), "the client gets in again");
+            Check(Run.Client.GetLocalClientId() != Id && Run.Seen.Returned == 0, "as a new client");
+            Check(StepUntil(Run.Both, [&] { return !Run.ClientWorld.IsAlive(OldCopy); }), "what the old session spawned is cleared");
+        }
+        {
+            ReconnectPair Run;
+            Check(Run.Start(5000), "a third client joins");
+            Run.Client.Stop();
+            Check(StepUntil(Run.Both, [&] { return Run.Seen.Disconnected == 1; }) && Run.Seen.Away == 0,
+                  "one that quits is gone at once, no place kept");
+        }
+    }
+}
+
 int main()
 {
     TestEditorLink();
@@ -903,6 +1032,7 @@ int main()
 
     TestLossyState();
     TestRpcLimits();
+    TestReconnect();
     TestStructureChanges(0);
     TestStructureChanges(50);
 

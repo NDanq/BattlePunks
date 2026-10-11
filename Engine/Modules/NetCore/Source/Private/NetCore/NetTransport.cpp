@@ -162,6 +162,7 @@ bool NetTransport::Service(NetTransportEvent& OutEvent)
                 OutEvent.EventType = NetTransportEvent::EType::Disconnected;
                 OutEvent.Peer      = ID;
                 OutEvent.Channel   = 0;
+                OutEvent.Reason    = Event.data;
                 OutEvent.Data.clear();
                 return true;
             }
@@ -245,13 +246,13 @@ bool NetTransport::GetPeerStats(const NetPeerID InPeer, NetPeerStats& OutStats) 
     return true;
 }
 
-void NetTransport::Disconnect(const NetPeerID InPeer)
+void NetTransport::Disconnect(const NetPeerID InPeer, const uint32_t InReason)
 {
     const auto Found = Peers.find(InPeer);
-    if(Found != Peers.end()) { enet_peer_disconnect(Found->second, 0); }
+    if(Found != Peers.end()) { enet_peer_disconnect(Found->second, InReason); }
 }
 
-void NetTransport::Close()
+void NetTransport::Close(const uint32_t InReason)
 {
     if(Host)
     {
@@ -260,7 +261,7 @@ void NetTransport::Close()
         for(auto& Entry : Peers)
         {
             Entry.second->data = nullptr;
-            enet_peer_disconnect_now(Entry.second, 0);
+            enet_peer_disconnect_now(Entry.second, InReason);
         }
         enet_host_flush(Host);
         enet_host_destroy(Host);

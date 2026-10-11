@@ -11,8 +11,12 @@
  *
  * GAME CHANNEL (NetTransport.h's NET_CHANNEL_GAME): reliable, in order.
  *
- *   Hello          C->S  u32 version, u64 schema hash, string level
- *   Welcome        S->C  i32 client id
+ *   Hello          C->S  u32 version, u64 schema hash, string level,
+ *                        u64 reconnect token (0: a new client)
+ *   Welcome        S->C  i32 client id, u64 reconnect token, u8 returning
+ *                        (1: the token's client, back -- same id, same entities)
+ *   SnapshotDone   S->C  (nothing): every networked entity has been sent;
+ *                        a returning client drops what was not
  *   Reject         S->C  string reason; the server then disconnects
  *   Spawn          S->C  i32 net id, u64 guid hi, u64 guid lo, string name,
  *                        u64 parent guid hi, u64 parent guid lo (0,0: none),
@@ -57,7 +61,7 @@
 
 namespace NetCore
 {
-    constexpr uint32_t NET_PROTOCOL_VERSION = 4;
+    constexpr uint32_t NET_PROTOCOL_VERSION = 5;
 
     enum class ENetMessage : uint8_t
     {
@@ -72,6 +76,7 @@ namespace NetCore
         AddComponents,        // S->C: components a sent entity gained
         RemoveComponents,     // S->C: components it lost
         Reparent,             // S->C: its new parent
+        SnapshotDone,         // S->C: the snapshot a (re)joining client gets is complete
 
         EditorHello = 64,     // u32 version, string user name
         EditorCommand,        // string user name, string command text (STUB)
