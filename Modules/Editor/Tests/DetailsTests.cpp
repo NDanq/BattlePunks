@@ -37,6 +37,10 @@
 #include "Private/Editor/Content/ClipTimeline.h"
 #include "Private/Editor/ComponentDocs.h"
 #include "Private/Editor/DocumentationWindow.h"
+#include "Private/Editor/Graph/GraphDocument.h"
+#include "Private/Editor/Graph/GraphEditorTab.h"
+#include "Public/NodeGraph/GraphFile.h"
+#include "Public/NodeGraph/Schema.h"
 #include <QDir>
 #include <QFileInfo>
 #include <QTextBlock>
@@ -627,6 +631,33 @@ static void TestClipTimeline()
     Expect(Added < 0.0f, "read-only, it adds nothing");
 }
 
+/* NIMBLE_GRAPH_SNAPSHOT_FILE=<x.nmgraph> NIMBLE_GRAPH_SNAPSHOT=<png> [NIMBLE_GRAPH_SNAPSHOT_SCALE=2]:
+ * a graph as the editor's canvas draws it (GraphEditorTab::SaveCanvasImage), for the docs. */
+static void TestGraphSnapshot()
+{
+    const QByteArray File  = qgetenv("NIMBLE_GRAPH_SNAPSHOT_FILE");
+    const QByteArray Image = qgetenv("NIMBLE_GRAPH_SNAPSHOT");
+    if(File.isEmpty() || Image.isEmpty()) { return; }
+
+    std::printf("Graph snapshot\n");
+    NodeGraph::RefreshSchemas();
+    NodeGraph::Graph Loaded;
+    std::string Error;
+    Expect(NodeGraph::LoadGraphFile(File.toStdString(), Loaded, Error), "the graph loads");
+
+    GraphDocument Document(QString::fromLocal8Bit(File), Loaded);
+    GraphEditorTab Tab(&Document);
+    Tab.resize(1400, 800);
+    Tab.show();
+    PumpFor(300);
+
+    bool bScaleOk = false;
+    double Scale = qEnvironmentVariable("NIMBLE_GRAPH_SNAPSHOT_SCALE").toDouble(&bScaleOk);
+    if(!bScaleOk || Scale <= 0.0) { Scale = 2.0; }
+    QRectF Area;
+    Expect(Tab.SaveCanvasImage(QString::fromLocal8Bit(Image), Scale, Area), "the canvas image is written");
+}
+
 int main(int argc, char** argv)
 {
     /* No display needed. */
@@ -643,6 +674,7 @@ int main(int argc, char** argv)
     TestClipTimeline();
     TestViewSettings();
     TestDocumentation();
+    TestGraphSnapshot();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

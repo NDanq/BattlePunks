@@ -4,6 +4,7 @@ The editor's Help > Documentation shows only this folder.
 
 ## Guides
 
+- [Game modes: a usage guide](Guides/GameModeGuide.md)
 - [Sequencer implementation guide](Guides/SequencerImplementationGuide.md)
 - [Crash dummy animation guide](Guides/CrashDummyAnimationGuide.md)
 
