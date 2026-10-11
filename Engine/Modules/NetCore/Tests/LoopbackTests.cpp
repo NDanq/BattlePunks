@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -812,7 +813,13 @@ namespace
             return std::make_pair(Samples.front(), Samples[Samples.size() / 2]);
         };
         const auto Still  = Measure(0, 0);
+        NetPeerStats Before, After;
+        Server.GetClientStats(ClientSessions.front().GetLocalClientId(), Before);
         const auto Moving = Measure(Movers, 1000);
+        Server.GetClientStats(ClientSessions.front().GetLocalClientId(), After);
+        const double PerTick = double(After.BytesSent - Before.BytesSent) / Ticks;
+        std::printf("state: %.0f bytes a tick to each client with %d moving -- %.1f bytes an entity whose Position changed\n",
+                    PerTick, Movers, PerTick / Movers);
         std::printf("flush cost: %d entities x 3 replicated components, %d clients: all still %.3f ms (median %.3f), "
                     "%d moving %.3f ms (median %.3f), a tick\n",
                     Entities, Clients, Still.first, Still.second, Movers, Moving.first, Moving.second);
@@ -827,6 +834,72 @@ namespace
         for(NetSession& C : ClientSessions) { C.Stop(); C.UnbindWorld(); }
         Server.UnbindWorld();
         Server.Stop();
+    }
+}
+
+namespace
+{
+    /* Quantized fields (ComponentReplication.h): the rounding, and a Transform
+     * arriving as exactly what QuantizeReplicatedFields makes of it. */
+    void TestQuantization()
+    {
+        std::printf("[quantization]\n");
+        namespace Q = GameCore::ReplicationQuantize;
+        Check(Q::SnapStep(1.23456f, 0.01f) == Q::FromSteps(123, 0.01f) && std::fabs(Q::SnapStep(-2.005f, 0.01f) + 2.0f) < 0.0101f,
+              "Precision rounds to the nearest step, either sign");
+        Check(std::fabs(Q::SnapAngle(270.0f) + 90.0f) < 0.01f && std::fabs(Q::SnapAngle(-450.0f) + 90.0f) < 0.01f
+              && std::fabs(Q::SnapAngle(180.0f) + 180.0f) < 0.01f, "Angles wrap into [-180, 180)");
+        Check(std::fabs(Q::SnapAngle(33.3f) - 33.3f) < 360.0f / 65536.0f, "and keep 65536ths of a turn");
+
+        size_t Count = 0;
+        const ReplicatedFieldEntry* Fields = FindComponentReplication(TransformComponent::StaticType().ID, Count);
+        Check(Count == 3 && Fields[0].Quantize == RQ_Step && Fields[1].Quantize == RQ_Angle && Fields[2].Quantize == RQ_Step,
+              "Transform replicates Position and Scale by Precision, Rotation by Angles");
+
+        World ServerWorld, ClientWorld;
+        NetSession Server, Client;
+        const Pair Both{ &Server, &Client };
+        NetConfig ServerConfig;
+        ServerConfig.Port = 0;
+        Check(Server.Start(ENetRole::Server, ServerConfig), "a server for quantized state");
+        Server.BindWorld(ServerWorld, "Quantized");
+        NetConfig ClientConfig;
+        std::strcpy(ClientConfig.ServerAddress, "127.0.0.1");
+        ClientConfig.Port = Server.GetPort();
+        ClientConfig.InterpolationDelayMs = 0;   // Transforms as they arrive
+        Client.Start(ENetRole::Client, ClientConfig);
+        Client.BindWorld(ClientWorld, "Quantized");
+        Check(StepUntil(Both, [&] { return Client.IsConnected(); }), "a client for quantized state");
+
+        Entity Thing = ServerWorld.CreateEntity("Quantized");
+        Thing.AddComponent<NetComponent>();
+        TransformComponent* T = Thing.AddComponent<TransformComponent>();
+        EntityID There;
+        Check(StepUntil(Both, [&] { There = Client.FindEntityByNetId(Server.GetNetId(Thing.GetID())); return There.IsSet(); }), "it spawns");
+
+        T = Thing.GetComponent<TransformComponent>();
+        T->Position = EngineCore::Vector3(1.234567f, -3210.98765f, 100000.004f);
+        T->Rotation = EngineCore::Vector3(270.0f, -12.3456f, 0.0f);
+        T->Scale    = EngineCore::Vector3(1.0f, 0.12345f, 2.0f);
+        TransformComponent Expected = *T;
+        QuantizeReplicatedFields(TransformComponent::StaticType().ID, &Expected);
+        const auto Same = [](const EngineCore::Vector3& A, const EngineCore::Vector3& B)
+        {
+            return A.GetX() == B.GetX() && A.GetY() == B.GetY() && A.GetZ() == B.GetZ();
+        };
+        Check(StepUntil(Both, [&]
+        {
+            const TransformComponent* Got = Entity(&ClientWorld, There).GetComponent<TransformComponent>();
+            return Got && Same(Got->Position, Expected.Position) && Same(Got->Rotation, Expected.Rotation) && Same(Got->Scale, Expected.Scale);
+        }), "the client reads exactly the snapped values -- to the bit");
+        Check(std::fabs(Expected.Position.GetX() - 1.23f) < 0.001f && std::fabs(Expected.Rotation.GetX() + 90.0f) < 0.01f,
+              "which are the values to their precision");
+        Check(T->Position.GetX() == 1.234567f, "the server's own value is left as it was");
+
+        Client.Stop();
+        Server.UnbindWorld();
+        Server.Stop();
+        Client.UnbindWorld();
     }
 }
 
@@ -1170,6 +1243,7 @@ int main()
     TestRpcLimits();
     TestReconnect();
     TestViewTime();
+    TestQuantization();
     TestFlushCost();
     TestStructureChanges(0);
     TestStructureChanges(50);

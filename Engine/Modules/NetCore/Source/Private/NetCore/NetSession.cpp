@@ -110,6 +110,18 @@ struct NetSession::Impl final : public INetEntityMap
     /* Destroyed here: state still in flight for one is not missing a spawn. */
     std::unordered_set<int32_t> DestroyedIds;
 
+    /*
+     * THE SERVER'S WORD, whole. Each replicated component as the server last
+     * stated it (by ShadowKey), from the spawn on, each batch applied over
+     * it. A batch carries only the fields that changed, so the live
+     * component of an entity this client PREDICTS holds its own newer values
+     * in the rest -- and a correction replayed from that mix would apply the
+     * newer input twice. Instead the whole of the server's state is copied
+     * in before the replay (ClientState), so it starts from exactly where
+     * the server was.
+     */
+    std::unordered_map<uint64_t, std::vector<uint8_t>> ServerValues;
+
     /* RECONNECTING. The token the server gave; whether this client is trying
      * to rejoin, since when, and when it tries next. */
     uint64_t Token          = 0;
@@ -371,6 +383,7 @@ struct NetSession::Impl final : public INetEntityMap
             for(const ComponentTypeID Type : Known->second.Types)
             {
                 const uint64_t Key = ShadowKey(InNetId, Type);
+                ServerValues.erase(Key);
                 for(auto& Client : Clients) { Client.second.Baselines.erase(Key); Client.second.UnackedKeys.erase(Key); }
             }
         }
@@ -524,6 +537,28 @@ struct NetSession::Impl final : public INetEntityMap
         }
     }
 
+    /* Every replicated field of every component of InEntity, as the server
+     * last stated it: the whole state a replay starts from. */
+    void RestoreServerValues(const int32_t InNetId, const EntityID InEntity)
+    {
+        const auto Known = Structures.find(InNetId);
+        if(Known == Structures.end()) { return; }
+        const GameCore::Entity Handle(BoundWorld, InEntity);
+        for(const ComponentTypeID Type : Known->second.Types)
+        {
+            const auto Server = ServerValues.find(ShadowKey(InNetId, Type));
+            void* Component = Handle.GetComponentByType(Type);
+            size_t FieldCount = 0;
+            const GameCore::ReplicatedFieldEntry* Fields = GameCore::FindComponentReplication(Type, FieldCount);
+            if(Server == ServerValues.end() || !Component || !Fields) { continue; }
+            for(size_t Field = 0; Field < FieldCount; ++Field)
+            {
+                if(Fields[Field].Offset + Fields[Field].Size > Server->second.size()) { continue; }
+                std::memcpy(static_cast<char*>(Component) + Fields[Field].Offset, Server->second.data() + Fields[Field].Offset, Fields[Field].Size);
+            }
+        }
+    }
+
     /* After the poll's state is written: the game reconciles what it predicts. */
     void FireCorrections()
     {
@@ -532,12 +567,14 @@ struct NetSession::Impl final : public INetEntityMap
         Ids.swap(Corrected);
         std::sort(Ids.begin(), Ids.end());
         Ids.erase(std::unique(Ids.begin(), Ids.end()), Ids.end());
-        if(!OnCorrection || !BoundWorld) { return; }
+        if(!BoundWorld) { return; }
         for(const int32_t NetId : Ids)
         {
             const EntityID Entity = FromNetId(NetId);
-            const NetComponent* Net = Entity.IsSet() ? GameCore::Entity(BoundWorld, Entity).GetComponent<NetComponent>() : nullptr;
-            if(Net && BoundWorld->IsAlive(Entity)) { OnCorrection(*BoundWorld, Entity, Net->InputAck, CorrectionUserData); }
+            if(!Entity.IsSet() || !BoundWorld->IsAlive(Entity)) { continue; }
+            RestoreServerValues(NetId, Entity);   // with or without a handler: it is the server's state
+            const NetComponent* Net = GameCore::Entity(BoundWorld, Entity).GetComponent<NetComponent>();
+            if(Net && OnCorrection) { OnCorrection(*BoundWorld, Entity, Net->InputAck, CorrectionUserData); }
         }
     }
 
@@ -717,10 +754,10 @@ struct NetSession::Impl final : public INetEntityMap
         const uint16_t Wire = Schema.ToWire(InType);
         if(!Fields || InMask == 0 || Wire == NET_WIRE_TYPE_INVALID) { return false; }
 
-        int32_t  NetId    = InNetId;
-        uint16_t WireType = Wire;
-        uint32_t Mask     = InMask;
-        Ar << NetId << WireType << Mask;
+        /* Variable-length: a NetId under 16384 is two bytes, a wire type and a mask of the first 7 fields one each. */
+        WriteVarUInt(Ar, uint32_t(InNetId));
+        WriteVarUInt(Ar, Wire);
+        WriteVarUInt(Ar, InMask);
         for(size_t Field = 0; Field < FieldCount; ++Field)
         {
             if(InMask & (1u << Field)) { WriteReplicatedField(Ar, Fields[Field], InComponent, *this); }
@@ -1203,6 +1240,7 @@ struct NetSession::Impl final : public INetEntityMap
         Interpolations.clear();
         PendingParents.clear();
         CreatedHere.clear();
+        ServerValues.clear();
     }
 
     /* SnapshotDone: whatever the snapshot did not send again is gone on the server. */
@@ -1346,6 +1384,23 @@ struct NetSession::Impl final : public INetEntityMap
                  + " as client " + std::to_string(InId))
     }
 
+    /* InEntity's replicated components as they are now -- what the server just sent -- into ServerValues. */
+    void RememberServerValues(const int32_t InNetId, const EntityID InEntity)
+    {
+        const auto Known = Structures.find(InNetId);
+        if(Known == Structures.end() || !BoundWorld->IsAlive(InEntity)) { return; }
+        const GameCore::Entity Handle(BoundWorld, InEntity);
+        for(const ComponentTypeID Type : Known->second.Types)
+        {
+            size_t FieldCount = 0;
+            if(!GameCore::FindComponentReplication(Type, FieldCount) || FieldCount == 0) { continue; }
+            const void* Component = Handle.GetComponentByType(Type);
+            if(!Component) { continue; }
+            const uint8_t* Bytes = static_cast<const uint8_t*>(Component);
+            ServerValues[ShadowKey(InNetId, Type)].assign(Bytes, Bytes + GameCore::GetComponentType(Type)->SizeBytes);
+        }
+    }
+
     void ClientSpawn(EngineCore::Archive& Ar)
     {
         int32_t              NetId = 0;
@@ -1381,6 +1436,7 @@ struct NetSession::Impl final : public INetEntityMap
 
         if(ParentGuid.IsSet()) { PendingParents.push_back({ Entity, ParentGuid }); }
         ResolveParents();
+        RememberServerValues(NetId, Entity);
 
         /* Where it appeared is the first of its Transform's samples. */
         if(IsInterpolated(Entity))
@@ -1436,6 +1492,7 @@ struct NetSession::Impl final : public INetEntityMap
         const EntityID Entity = FromNetId(NetId);
         if(!Entity.IsSet() || !BoundWorld->IsAlive(Entity)) { return; }
         ReadComponents(Ar, GameCore::Entity(BoundWorld, Entity), NetId, Count);
+        RememberServerValues(NetId, Entity);
     }
 
     void ClientRemoveComponents(EngineCore::Archive& Ar)
@@ -1459,6 +1516,7 @@ struct NetSession::Impl final : public INetEntityMap
                 std::vector<ComponentTypeID>& Told = Found->second.Types;
                 Told.erase(std::remove(Told.begin(), Told.end(), Info->ID), Told.end());
             }
+            ServerValues.erase(ShadowKey(NetId, Info->ID));
             if(BoundWorld->IsAlive(Entity)) { Handle.RemoveComponentByType(Info->ID); }
         }
     }
@@ -1524,11 +1582,14 @@ struct NetSession::Impl final : public INetEntityMap
      * (the batch is then not acknowledged, and the server sends it again). */
     bool ClientState(EngineCore::Archive& Ar)
     {
-        int32_t  NetId    = 0;
-        uint16_t WireType = 0;
-        uint32_t Mask     = 0;
-        Ar << NetId << WireType << Mask;
+        const uint64_t NetId64 = ReadVarUInt(Ar);
+        const uint64_t Wire64  = ReadVarUInt(Ar);
+        const uint64_t Mask64  = ReadVarUInt(Ar);
         if(Ar.HasError()) { return true; }
+        if(NetId64 > 0x7FFFFFFFu || Wire64 > 0xFFFFu || Mask64 > 0xFFFFFFFFu) { Ar.SetError("a state entry's header is out of range"); return true; }
+        const int32_t  NetId    = int32_t(NetId64);
+        const uint16_t WireType = uint16_t(Wire64);
+        const uint32_t Mask     = uint32_t(Mask64);
 
         const ComponentTypeID Type = Schema.FromWire(WireType);
         size_t FieldCount = 0;
@@ -1564,11 +1625,33 @@ struct NetSession::Impl final : public INetEntityMap
             Into = &Smooth->Target;
         }
 
+        /* Otherwise into the server's whole word first (ServerValues), then onto the component. */
+        std::vector<uint8_t>* Server = nullptr;
+        if(Component && !Smooth)
+        {
+            const size_t Size = GameCore::GetComponentType(Type)->SizeBytes;
+            Server = &ServerValues[ShadowKey(NetId, Type)];
+            if(Server->size() != Size) { Server->assign(static_cast<const uint8_t*>(Component), static_cast<const uint8_t*>(Component) + Size); }
+            Into = Server->data();
+        }
+
         for(size_t Field = 0; Field < FieldCount && !Ar.HasError(); ++Field)
         {
             if(Mask & (1u << Field)) { ReadReplicatedField(Ar, Fields[Field], Into, *this); }
         }
         if(Ar.HasError()) { return true; }
+
+        /* What changed goes onto the component -- unless this client
+         * predicts it: then all of the server's state goes on together, every
+         * component, just before the replay (FireCorrections). */
+        if(Server && !IsPredictedHere(Entity))
+        {
+            for(size_t Field = 0; Field < FieldCount; ++Field)
+            {
+                if((Mask & (1u << Field)) == 0) { continue; }
+                std::memcpy(static_cast<char*>(Component) + Fields[Field].Offset, Server->data() + Fields[Field].Offset, Fields[Field].Size);
+            }
+        }
         if(!Component)
         {
             if(!Entity.IsSet()) { return DestroyedIds.count(NetId) != 0; }
@@ -1582,9 +1665,10 @@ struct NetSession::Impl final : public INetEntityMap
 
         if(Smooth) { PushSample(*Smooth); }
 
-        /* The server's word on something this client predicts: the game
-         * reconciles once the poll is done. */
-        if((bTransform || Type == NetComponent::StaticType().ID) && IsPredictedHere(Entity))
+        /* The server's word on something this client predicts -- any of its
+         * components, since each is now the server's state, not the
+         * prediction: the game replays from there once the poll is done. */
+        if(IsPredictedHere(Entity))
         {
             Corrected.push_back(NetId);
         }
@@ -2146,6 +2230,7 @@ void NetSession::UnbindWorld()
     P->Corrected.clear();
     P->bHadSession       = false;
     P->bAwaitingSnapshot = false;
+    P->ServerValues.clear();
     P->Unconfirmed.clear();
     P->CreatedHere.clear();
 }

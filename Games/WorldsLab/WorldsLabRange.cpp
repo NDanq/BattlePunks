@@ -158,11 +158,18 @@ namespace
 
     struct Vec { double X, Y, Z; };
 
+    /* What the walker stands on and slides along: every layer but 4, where
+     * Steampunk PvP's fighters fall as ragdolls. A ragdoll is simulated only
+     * on a process that draws it -- not on a dedicated server -- so a client
+     * walking into one would step where the server does not, and prediction
+     * would part from it. */
+    constexpr int32_t WalkMask = ~int32_t(4);   // Layer and Mask are bits: Layer 4 is the bit worth 4
+
     bool Ray(GameCore::World& InWorld, const Vec& InFrom, const Vec& InDir, const double InLength,
              NimbleEngine::PhysicsRaycastHit& OutHit)
     {
         return NimbleEngine::PhysicsRaycast(InWorld, EngineCore::Vector3(InFrom.X, InFrom.Y, InFrom.Z),
-                                            EngineCore::Vector3(InDir.X, InDir.Y, InDir.Z), float(InLength), OutHit);
+                                            EngineCore::Vector3(InDir.X, InDir.Y, InDir.Z), float(InLength), OutHit, WalkMask);
     }
 
     double Lerp(const double InA, const double InB, const double InT) { return InA + (InB - InA) * InT; }
@@ -442,16 +449,18 @@ GAMECORE_DEFINE_COMPONENT_SERIALIZER(RangeMoverComponent, 1)
     Ar.Flag("Started",    C.bStarted);
 }
 
+/* Quantized (ComponentReplication.h); the avatar system snaps them after
+ * every step on both ends, so prediction stays exact. */
 GAMECORE_DEFINE_COMPONENT_REPLICATION(RangeMoverComponent)
 {
-    Rep.Field("BodyYaw",   &RangeMoverComponent::BodyYaw);
-    Rep.Field("CameraYaw", &RangeMoverComponent::CameraYaw);
-    Rep.Field("Pitch",     &RangeMoverComponent::Pitch);
-    Rep.Field("Scope",     &RangeMoverComponent::Scope);
-    Rep.Field("VelX",      &RangeMoverComponent::VelX);
-    Rep.Field("VelY",      &RangeMoverComponent::VelY);
-    Rep.Field("VelZ",      &RangeMoverComponent::VelZ);
-    Rep.Field("AirTime",   &RangeMoverComponent::AirTime);
+    Rep.Field("BodyYaw",   &RangeMoverComponent::BodyYaw).Angles();
+    Rep.Field("CameraYaw", &RangeMoverComponent::CameraYaw).Angles();
+    Rep.Field("Pitch",     &RangeMoverComponent::Pitch).Precision(0.01f);
+    Rep.Field("Scope",     &RangeMoverComponent::Scope).Precision(0.001f);
+    Rep.Field("VelX",      &RangeMoverComponent::VelX).Precision(0.01f);
+    Rep.Field("VelY",      &RangeMoverComponent::VelY).Precision(0.01f);
+    Rep.Field("VelZ",      &RangeMoverComponent::VelZ).Precision(0.01f);
+    Rep.Field("AirTime",   &RangeMoverComponent::AirTime).Precision(0.001f);
     Rep.Flag("Grounded",   &RangeMoverComponent::bGrounded);
     Rep.Flag("Started",    &RangeMoverComponent::bStarted);
 }

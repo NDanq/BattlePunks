@@ -42,9 +42,11 @@
  * than the newest received is dropped, never delivered late.
  *
  *   StateBatch     S->C  u32 sequence, u32 server time in ms, u16 count, then
- *                        per entry: i32 net id, u16 wire type, u32 field mask,
- *                        each masked field's value in table order
- *                        (NetReplication.h). At least one a server tick, to
+ *                        per entry: net id, wire type and field mask, each a
+ *                        variable-length integer (NetReplication.h's
+ *                        WriteVarUInt), then each masked field's value in
+ *                        table order -- a quantized one as its steps or
+ *                        angles (ComponentReplication.h). At least one a server tick, to
  *                        each client, entries or not: its clock.
  *   StateAck       C->S  u32 newest sequence applied, u32 bits: bit i set if
  *                        sequence - 1 - i was applied too
@@ -66,7 +68,7 @@
 
 namespace NetCore
 {
-    constexpr uint32_t NET_PROTOCOL_VERSION = 6;
+    constexpr uint32_t NET_PROTOCOL_VERSION = 7;
 
     enum class ENetMessage : uint8_t
     {
