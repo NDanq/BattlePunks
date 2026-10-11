@@ -255,7 +255,8 @@ void CollabSessionWindow::UpdateRun()
                    .arg(Run.Port).arg(Playing);
     if(!Run.bNetworked)
     {
-        Text += QStringLiteral(". %1 isn't networked: players won't see each other").arg(ToQ(Run.GameMode));
+        Text += QStringLiteral(". Players won't see each other there: %1")
+                .arg(Run.NetworkNote.empty() ? ToQ(Run.GameMode) + QStringLiteral(" isn't a NetGameMode") : ToQ(Run.NetworkNote));
     }
     if(!Session.GetJoinBlocker().isEmpty())
     {

@@ -714,9 +714,15 @@ namespace
     /* The run's level has a game mode that gives clients no avatars. */
     QString NotNetworkedWarning(const Collab::PlayInviteMessage& InInvite)
     {
-        const QString Mode = InInvite.GameMode.empty() ? QStringLiteral("no game mode") : QString::fromStdString(InInvite.GameMode);
-        return QStringLiteral("Its mode, %1, isn't networked (not a NetGameMode): each player gets no avatar, so you won't "
-                              "see each other. Play Together a level whose mode spawns one per player.").arg(Mode);
+        /* The report's reason when there is one (a newer server); else the mode. */
+        QString Why = QString::fromStdString(InInvite.NetworkNote);
+        if(Why.isEmpty())
+        {
+            Why = InInvite.GameMode.empty() ? QStringLiteral("it has no game mode")
+                                            : QStringLiteral("its mode, %1, isn't a NetGameMode").arg(QString::fromStdString(InInvite.GameMode));
+        }
+        return QStringLiteral("You won't see each other there: %1. Play Together needs a NetGameMode whose avatar prefab "
+                              "has a Net component.").arg(Why);
     }
 }
 

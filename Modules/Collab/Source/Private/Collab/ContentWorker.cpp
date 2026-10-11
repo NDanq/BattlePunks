@@ -392,8 +392,8 @@ bool ParseContentReport(const std::string& InText, ToolchainReport& OutReport)
             /* name, file, mode, networked */
             ToolchainWorld World;
             size_t Start = 0;
-            std::string Fields[4];
-            for(int Index = 0; Index < 4; ++Index)
+            std::string Fields[5];
+            for(int Index = 0; Index < 5; ++Index)
             {
                 const size_t Tab = Value.find('\t', Start);
                 Fields[Index] = Value.substr(Start, Tab == std::string::npos ? std::string::npos : Tab - Start);
@@ -403,6 +403,7 @@ bool ParseContentReport(const std::string& InText, ToolchainReport& OutReport)
             World.File       = Fields[1];
             World.GameMode   = Fields[2];
             World.bNetworked = Fields[3] == "1";
+            World.Why        = Fields[4];
             OutReport.Worlds.push_back(World);
         }
         else if(Key == "problem")
@@ -582,6 +583,7 @@ struct ContentWorker::Impl
                     {
                         State.GameMode   = Each.GameMode;
                         State.bNetworked = Each.bNetworked;
+                        State.NetworkNote = Each.Why;
                     }
                 }
             }
