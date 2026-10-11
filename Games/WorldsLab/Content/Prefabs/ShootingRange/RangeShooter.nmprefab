@@ -17,6 +17,10 @@
       <ViewTarget Value="true" />
       <Requestable Value="false" />
     </Component>
+    <Component Type="Net" Version="2">
+      <Replicate Value="true" />
+      <Predicted Value="true" />
+    </Component>
     <Component Type="Render" Version="5">
       <Visible Value="true" />
       <Material0 Value="Content/Materials/ShootingRange/DummyPaint.material.nmgraph" />
