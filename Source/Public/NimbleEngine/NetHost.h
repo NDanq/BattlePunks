@@ -27,6 +27,10 @@ namespace NimbleEngine
         uint32_t    InterpolationDelayMs = 100;
         /* Testing: this share of state packets is dropped ([Net] SimulatedLossPercent). */
         uint32_t    SimulatedLossPercent = 0;
+        /* A server's limits on each client's RPCs ([Net] RpcPerSecond, RpcFloodPerSecond, MaxRpcBytes; 0: none). */
+        uint32_t    RpcPerSecond      = 1000;
+        uint32_t    RpcFloodPerSecond = 1000;
+        uint32_t    MaxRpcBytes       = 1024;
 
         /*
          * The game's [Net] config. InMode, unless it is Standalone: then
