@@ -278,6 +278,10 @@ void EditorCollabSession::Handle(const Collab::ClientEvent& InEvent)
             break;
         case EType::Disconnected:
             ClearPending();
+            if(bPlayingTogether)
+            {
+                OnPlayEnded(QStringLiteral("You left the session."));
+            }
             EditorNotifications::Notify(InEvent.Text.find("You left") == 0 ? ESeverity::Info : ESeverity::Warning,
                                         QStringLiteral("Out of the session"), ToQ(InEvent.Text), QStringLiteral("Collab"), StateKey);
             emit StateChanged();
@@ -315,9 +319,24 @@ void EditorCollabSession::Handle(const Collab::ClientEvent& InEvent)
         case EType::Validation:
             OnValidation(InEvent.Report);
             break;
-        case EType::Notified:
-            EditorNotifications::Notify(ToSeverity(InEvent.Severity), ToQ(InEvent.Title), ToQ(InEvent.Text), QStringLiteral("Collab"));
+        case EType::PlayInvite:
+            OnPlayInvite(InEvent.Invite);
             break;
+        case EType::PlayEnded:
+            OnPlayEnded(ToQ(InEvent.Text));
+            break;
+        case EType::Notified:
+        {
+            /* Waiting on Play Together, it's the server's answer: in place of "Starting...". */
+            const bool bPlayAnswer = bJoinWhenReady && !Client.IsRunActive();
+            if(bPlayAnswer)
+            {
+                bJoinWhenReady = false;
+            }
+            EditorNotifications::Notify(ToSeverity(InEvent.Severity), ToQ(InEvent.Title), ToQ(InEvent.Text), QStringLiteral("Collab"),
+                                        bPlayAnswer ? QStringLiteral("collab.play") : QString());
+            break;
+        }
     }
 }
 
@@ -407,8 +426,10 @@ void EditorCollabSession::PushPresence()
     {
         Dirty.push_back(ToStd(OpenLevel));
     }
-    Client.SetPresence(ToStd(Head), ToStd(OpenLevel),
-                       bPlaying ? Collab::EPlayState::Playing : Collab::EPlayState::Editing, std::move(Dirty));
+    const Collab::EPlayState Play = bPlayingTogether ? Collab::EPlayState::PlayingTogether
+                                  : bPlaying         ? Collab::EPlayState::Playing
+                                                     : Collab::EPlayState::Editing;
+    Client.SetPresence(ToStd(Head), ToStd(OpenLevel), Play, std::move(Dirty));
 }
 
 QHash<QString, QStringList> EditorCollabSession::GetOthersDirty() const
@@ -677,6 +698,212 @@ void EditorCollabSession::OnValidation(const Collab::ValidationReportMessage& In
     {
         Notes->Post(std::move(Note));
     }
+}
+
+// --- Play Together (P5) ----------------------------------------------------------------
+
+namespace
+{
+    const QString PlayKey = QStringLiteral("collab.play");
+
+    QString Hex(const uint64_t InValue)
+    {
+        return QString::number(qulonglong(InValue), 16).rightJustified(16, QLatin1Char('0'));
+    }
+}
+
+void EditorCollabSession::RequestPlayTogether(const QString& InLevel)
+{
+    if(!Client.IsJoined())
+    {
+        EditorNotifications::Notify(ESeverity::Info, QStringLiteral("Join a session first"),
+                                    QStringLiteral("Play Together runs on the session server's game server."), QStringLiteral("Collab"), PlayKey);
+        return;
+    }
+    if(Client.IsRunActive())
+    {
+        JoinPlayTogether();
+        return;
+    }
+    bJoinWhenReady = true;
+    Client.RequestPlay(ToStd(InLevel));
+    EditorNotifications::Notification Busy;
+    Busy.Title      = QStringLiteral("Starting the game server…");
+    Busy.Body       = InLevel.isEmpty() ? QStringLiteral("The game's start level.") : QFileInfo(InLevel).completeBaseName();
+    Busy.Source     = QStringLiteral("Collab");
+    Busy.ReplaceKey = PlayKey;
+    Busy.Progress   = EditorNotifications::Indeterminate;
+    if(EditorNotifications* Notes = EditorNotifications::Get())
+    {
+        Notes->Post(std::move(Busy));
+    }
+}
+
+void EditorCollabSession::StopPlayTogether()
+{
+    Client.RequestStopPlay();
+}
+
+bool EditorCollabSession::IsRunStarter() const
+{
+    return Client.IsRunActive() && Client.GetActiveRun().FromId == Client.GetMyId();
+}
+
+void EditorCollabSession::OnPlayInvite(const Collab::PlayInviteMessage& InInvite)
+{
+    /* What this editor's game build says, now; its HEAD, from git. */
+    const uint64_t Local = PlayHooksSet.LocalSchemaHash ? PlayHooksSet.LocalSchemaHash() : 0;
+    QString Blocker;
+    if(Local == 0)
+    {
+        Blocker = QStringLiteral("Your editor has no game module loaded. Compile Source, then join.");
+    }
+    else if(Local != InInvite.SchemaHash)
+    {
+        Blocker = QStringLiteral("Your build of the game differs from the server's (schema %1, the server's %2). "
+                                 "Compile Source, then join.").arg(Hex(Local), Hex(InInvite.SchemaHash));
+    }
+    JoinBlocker = Blocker;
+
+    if(!Git || !Blocker.isEmpty() || InInvite.Oid.empty())
+    {
+        PostInvite();
+        return;
+    }
+    const std::string Oid = InInvite.Oid;
+    Git->RunQuiet({ QStringLiteral("merge-base"), QStringLiteral("--is-ancestor"), ToQ(Oid), QStringLiteral("HEAD") },
+                  [this, Oid](const GitClient::Result& InResult)
+    {
+        if(!Client.IsRunActive() || Client.GetActiveRun().Oid != Oid)
+        {
+            return;   // ended or replaced meanwhile
+        }
+        if(!InResult.Ok())
+        {
+            JoinBlocker = QStringLiteral("The run is at %1, which you don't have yet. Pull & Reload first.").arg(ToQ(Oid).left(8));
+        }
+        PostInvite();
+    });
+}
+
+void EditorCollabSession::PostInvite()
+{
+    const Collab::PlayInviteMessage& Invite = Client.GetActiveRun();
+    emit RunChanged();
+
+    /* The one who asked plays at once. */
+    if(bJoinWhenReady && Invite.FromId == Client.GetMyId())
+    {
+        bJoinWhenReady = false;
+        if(JoinBlocker.isEmpty())
+        {
+            JoinPlayTogether();
+            return;
+        }
+    }
+
+    const QString Level = Invite.Level.empty() ? QStringLiteral("the start level") : QFileInfo(ToQ(Invite.Level)).completeBaseName();
+    EditorNotifications::Notification Note;
+    Note.Source     = QStringLiteral("Collab");
+    Note.ReplaceKey = PlayKey;
+    Note.Title      = QStringLiteral("%1 started Play Together").arg(ToQ(Invite.From));
+    if(JoinBlocker.isEmpty())
+    {
+        Note.Severity = ESeverity::Info;
+        Note.Body     = QStringLiteral("%1, on the session server, at %2.").arg(Level, ToQ(Invite.Oid).left(8));
+        Note.Actions  = { { QStringLiteral("Join"), [this]() { JoinPlayTogether(); } },
+                          { QStringLiteral("Decline"), nullptr } };
+    }
+    else
+    {
+        Note.Severity = ESeverity::Warning;
+        Note.Body     = Level + QStringLiteral(". You can't join yet: ") + JoinBlocker;
+        if(JoinBlocker.contains(QStringLiteral("Compile Source")) && Hooks.CompileGameModule)
+        {
+            Note.Actions = { { QStringLiteral("Compile Source"), [this]() { Hooks.CompileGameModule(); } } };
+        }
+        else if(!Pending.Commits.empty())
+        {
+            Note.Actions = { { QStringLiteral("Pull & Reload"), [this]() { PullAndReload(); } } };
+        }
+    }
+    if(EditorNotifications* Notes = EditorNotifications::Get())
+    {
+        Notes->Post(std::move(Note));
+    }
+}
+
+void EditorCollabSession::JoinPlayTogether()
+{
+    if(!Client.IsRunActive() || bPlayingTogether)
+    {
+        return;
+    }
+    const Collab::PlayInviteMessage& Invite = Client.GetActiveRun();
+
+    /* Again, now: a Compile Source since the invite may have fixed it -- or not. */
+    const uint64_t Local = PlayHooksSet.LocalSchemaHash ? PlayHooksSet.LocalSchemaHash() : 0;
+    if(Local != Invite.SchemaHash)
+    {
+        JoinBlocker = QStringLiteral("Your build of the game differs from the server's (schema %1, the server's %2). "
+                                     "Compile Source, then join.").arg(Hex(Local), Hex(Invite.SchemaHash));
+    }
+    else if(JoinBlocker.contains(QStringLiteral("Compile Source")))
+    {
+        JoinBlocker.clear();
+    }
+    if(!JoinBlocker.isEmpty())
+    {
+        EditorNotifications::Notify(ESeverity::Warning, QStringLiteral("You can't join Play Together yet"), JoinBlocker,
+                                    QStringLiteral("Collab"), PlayKey);
+        emit RunChanged();
+        return;
+    }
+
+    /* The game server is on the session server's host, as this editor reached it. */
+    QString Host = ToQ(Invite.Address);
+    if(Host.isEmpty())
+    {
+        Host = ServerAddress.left(ServerAddress.lastIndexOf(QLatin1Char(':')));
+    }
+    if(!PlayHooksSet.JoinRun || !PlayHooksSet.JoinRun(ToQ(Invite.Level), Host, Invite.Port))
+    {
+        EditorNotifications::Notify(ESeverity::Error, QStringLiteral("Couldn't join Play Together"),
+                                    QStringLiteral("Play didn't start; the Console says why."), QStringLiteral("Collab"), PlayKey);
+        return;
+    }
+    bPlayingTogether = true;
+    PushPresence();
+    EditorNotifications::Notify(ESeverity::Success, QStringLiteral("Playing together"),
+                                QStringLiteral("On %1:%2. Stop Play to leave the run.").arg(Host).arg(Invite.Port),
+                                QStringLiteral("Collab"), PlayKey);
+    emit RunChanged();
+}
+
+void EditorCollabSession::SetPlayingTogether(const bool bInPlaying)
+{
+    if(bInPlaying == bPlayingTogether)
+    {
+        return;
+    }
+    bPlayingTogether = bInPlaying;
+    PushPresence();
+    emit RunChanged();
+}
+
+void EditorCollabSession::OnPlayEnded(const QString& InReason)
+{
+    const bool bWasPlaying = bPlayingTogether;
+    bPlayingTogether = false;
+    bJoinWhenReady   = false;
+    JoinBlocker.clear();
+    if(bWasPlaying && PlayHooksSet.LeaveRun)
+    {
+        PlayHooksSet.LeaveRun();
+    }
+    PushPresence();
+    EditorNotifications::Notify(ESeverity::Info, QStringLiteral("Play Together ended"), InReason, QStringLiteral("Collab"), PlayKey);
+    emit RunChanged();
 }
 
 void EditorCollabSession::ClearPending()

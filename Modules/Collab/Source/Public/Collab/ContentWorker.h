@@ -31,8 +31,13 @@
  * transport, framing and messages are the editors'. Game code only ever runs
  * in the <Game>Server child, never in the worker or the server.
  *
- * The build and the report sit behind IWorkerToolchain, so the tests drive
- * the rest with a fake one.
+ * PLAY TOGETHER. Asked (WorkerPlay), it runs that same <Game>Server on a
+ * level and port, for the editors to join -- only on a build that succeeded at
+ * the commit asked for, and never mid-build. While it runs, new commits are
+ * fetched and announced but not built: the running server's files are locked.
+ *
+ * The build, the report and the game server sit behind IWorkerToolchain, so
+ * the tests drive the rest with a fake one.
  */
 namespace Collab
 {
@@ -81,7 +86,18 @@ namespace Collab
         /* Runs the built <Game>Server's content report. */
         virtual ToolchainReport Report(const std::string& InGameDir, const std::string& InEngineDir,
                                        const std::string& InReportPath) = 0;
+
+        /* Play Together: the built <Game>Server on InWorld ([World_*] name;
+         * empty, the game's start level) and InPort, until StopGame. False,
+         * with why, if it doesn't start. */
+        virtual bool StartGame(const std::string& InGameDir, const std::string& InWorld, uint16_t InPort, std::string& OutError) = 0;
+        virtual bool IsGameRunning() = 0;
+        virtual void StopGame() = 0;
     };
+
+    /* InGameDir/Config/DefaultEngine.ini's [World_<Name>] whose File is
+     * InLevel (runtime-relative): Name; empty if none lists it. */
+    COLLAB_API std::string FindWorldName(const std::string& InGameDir, const std::string& InLevel);
 
     /* CMake presets and the game's own server build: the real one. On Windows,
      * outside a developer prompt, vcvarsall (found with vswhere) first; and

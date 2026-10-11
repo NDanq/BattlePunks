@@ -66,6 +66,8 @@ void CollabClient::Reset()
     SessionId = 0;
     SessionEngine.clear();
     LastBuild = BuildStatusMessage();
+    ActiveRun  = PlayInviteMessage();
+    bRunActive = false;
     Roster.clear();
     Sent      = MemberState();
     bSentOnce = false;
@@ -287,6 +289,35 @@ void CollabClient::Poll()
                         Push(std::move(Out));
                         break;
                     }
+                    case EMessage::PlayInvite:
+                    {
+                        ClientEvent Out;
+                        if(!Decode(Event.Data, Out.Invite))
+                        {
+                            break;
+                        }
+                        ActiveRun  = Out.Invite;
+                        bRunActive = true;
+                        Out.Type     = ClientEvent::EType::PlayInvite;
+                        Out.MemberId = Out.Invite.FromId;
+                        Out.User     = Out.Invite.From;
+                        Push(std::move(Out));
+                        break;
+                    }
+                    case EMessage::PlayEnded:
+                    {
+                        PlayEndedMessage Ended;
+                        if(!Decode(Event.Data, Ended))
+                        {
+                            break;
+                        }
+                        bRunActive = false;
+                        ClientEvent Out;
+                        Out.Type = ClientEvent::EType::PlayEnded;
+                        Out.Text = Ended.Reason;
+                        Push(std::move(Out));
+                        break;
+                    }
                     case EMessage::Notify:
                     {
                         NotifyMessage Notify;
@@ -372,6 +403,30 @@ void CollabClient::SendPresence(const bool bInFull)
         Self->second.Play      = Mine.Play;
         Self->second.Dirty     = Mine.Dirty;
     }
+}
+
+void CollabClient::RequestPlay(const std::string& InLevel)
+{
+    if(State != EState::Joined)
+    {
+        return;
+    }
+    PlayRequestMessage Request;
+    Request.Level = InLevel;
+    P->Transport.Send(P->Server, Encode(Request));
+    P->Transport.Flush();
+}
+
+void CollabClient::RequestStopPlay()
+{
+    if(State != EState::Joined)
+    {
+        return;
+    }
+    PlayRequestMessage Request;
+    Request.bStop = true;
+    P->Transport.Send(P->Server, Encode(Request));
+    P->Transport.Flush();
 }
 
 void CollabClient::AnnouncePush(const BranchMove& InMove)

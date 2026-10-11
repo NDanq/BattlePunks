@@ -60,6 +60,11 @@ the editor shows as a warning before git has a conflict to report.
 | `WorkerHello` | worker→S | protocol, session ID, the key the server started it with |
 | `BuildStatus` | worker→S→all | commit, state (building, built, failed), schema hash, author, summary, first error, seconds |
 | `ValidationReport` | worker→S→the author | commit, author, files checked, problems (path, message) |
+| `PlayRequest` | C→S | level (runtime-relative; empty, the start level), or stop |
+| `WorkerPlay` | S→worker | start (level, port, commit) or stop the game server |
+| `WorkerPlayState` | worker→S | running on a port, or not and why |
+| `PlayInvite` | S→all | who started it, level, address (empty: the session server's host), port, commit, schema hash |
+| `PlayEnded` | S→all | why |
 
 The `Play*` messages are numbered for P5 and not sent yet. Appending a field at the end
 of a payload is compatible (Archive skips what a reader doesn't know); any
@@ -99,6 +104,28 @@ tip of the session branch:
 Game code only ever runs in the `<Game>Server` child: never in the worker or
 the server. The worker stops with its session. It builds and runs whatever is
 pushed, so a server with `--repo` is for a trusted team only.
+
+## Play Together
+
+An editor asks for a shared run of a level (`PlayRequest`). The server checks
+the session has a worker and a good build, picks a port (`GamePortBase` +
+session id - 1; 7777 by default) and has the worker run that build's
+`<Game>Server` on the level -- the `[World_*]` whose `File` is that level -- and
+port. Once it's up, everyone gets a `PlayInvite` (late joiners too); whoever
+asked plays at once.
+
+An editor offers Join only when it can play: its own game build's schema hash
+matches the invite's, and its HEAD has the run's commit. Otherwise it says why
+(Compile Source, or Pull & Reload) and never points Play at the server.
+Joining plays as a client of the session server's host and that port,
+whatever Editor Settings > Play says.
+
+Who is playing is presence (`PlayingTogether`). The run ends when its starter
+stops it (anyone may, once the starter has gone), when nobody has been playing
+for `PlayIdleTimeoutMs` (two minutes), or when the game server stops; everyone
+gets `PlayEnded` and those playing stop. While it runs, the worker fetches and
+announces new commits but builds them only after: the running server's files
+are locked.
 
 ## Running the server
 

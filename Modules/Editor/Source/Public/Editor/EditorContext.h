@@ -156,6 +156,14 @@ public:
      * Idempotent. */
     void StopPlay();
 
+    /* Play Together (Collaboration): StartPlay as a client of the session's game
+     * server at InHost:InPort, whatever Editor Settings > Play says -- no
+     * dedicated server of its own, no extra client windows. */
+    bool StartPlayTogether(const QString& InOpenWorld, const QString& InHost, uint16_t InPort);
+
+    /* The run is Play Together's (until StopPlay). */
+    bool IsPlayingTogether() const;
+
     bool IsPlaying() const { return Play != nullptr; }
 
     /* Another client of the networked run, as a game window of its own: the

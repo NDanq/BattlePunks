@@ -7,8 +7,11 @@
  * ConnectAs, not Connect: the identity is made here rather than asked of git.
  */
 
+#include <atomic>
 #include <cstdio>
 #include <functional>
+#include <memory>
+#include <thread>
 
 #include <QApplication>
 #include <QDir>
@@ -20,6 +23,7 @@
 #include <QTreeWidget>
 
 #include "Public/Collab/CollabServer.h"
+#include "Public/Collab/ContentWorker.h"
 #include "Public/Editor/EditorContentEvents.h"
 #include "Public/Editor/EditorNotifications.h"
 #include "Private/Editor/Collab/CollabSessionWindow.h"
@@ -226,6 +230,193 @@ static void TestPullAndReload(Collab::CollabServer& InServer, EditorNotification
     PumpUntil(InServer, [&]() { return InServer.GetSessions().empty(); });
 }
 
+// --- Play Together, with a content worker -----------------------------------------------
+
+/* Builds and reports in no time: schema 0x0abc; the game server is a flag. */
+class FakeToolchain final : public Collab::IWorkerToolchain
+{
+public:
+    Collab::ToolchainBuild Build(const std::string&, const std::string&) override
+    {
+        Collab::ToolchainBuild Out;
+        Out.bOk = true;
+        return Out;
+    }
+    Collab::ToolchainReport Report(const std::string&, const std::string&, const std::string&) override
+    {
+        Collab::ToolchainReport Out;
+        Out.bOk        = true;
+        Out.Module     = "WorldsLabGame";
+        Out.SchemaHash = 0x0abc;
+        return Out;
+    }
+    bool StartGame(const std::string&, const std::string& InWorld, const uint16_t, std::string&) override
+    {
+        World    = InWorld;
+        bRunning = true;
+        return true;
+    }
+    bool IsGameRunning() override { return bRunning; }
+    void StopGame() override { bRunning = false; }
+
+    std::string       World;
+    std::atomic<bool> bRunning{ false };
+};
+
+struct Player
+{
+    QString  Name;
+    uint64_t Schema = 0x0abc;
+    int      Joins  = 0;
+    int      Leaves = 0;
+    QString  Host;
+    uint16_t Port = 0;
+    QString  Level;
+};
+
+static void TestPlayTogether()
+{
+    std::printf("Play Together\n");
+    QTemporaryDir Temp;
+    const QString Remote = QDir(Temp.path()).filePath(QStringLiteral("remote.git"));
+    const auto Clone = [&](const QString& InName)
+    {
+        const QString Dir = QDir(Temp.path()).filePath(InName);
+        RunGit(Temp.path(), { QStringLiteral("-c"), QStringLiteral("core.autocrlf=false"), QStringLiteral("clone"), QStringLiteral("-q"), Remote, Dir });
+        Identify(Dir, InName.toUtf8().constData());
+        return Dir;
+    };
+    RunGit(Temp.path(), { QStringLiteral("init"), QStringLiteral("-q"), QStringLiteral("--bare"), QStringLiteral("-b"), QStringLiteral("main"), Remote });
+    const QString Alice = Clone(QStringLiteral("alice"));
+    RunGit(Alice, { QStringLiteral("switch"), QStringLiteral("-q"), QStringLiteral("-c"), QStringLiteral("main") });
+    WriteFile(QDir(Alice).filePath(QStringLiteral("Games/WorldsLab/Config/DefaultEngine.ini")),
+              "[Game]\nModule=WorldsLabGame\n\n[World_A]\nFile=Content/Levels/A.nmworld\n");
+    WriteFile(QDir(Alice).filePath(QStringLiteral("Games/WorldsLab/Content/Levels/A.nmworld")), "<World Format=\"1\" />\n");
+    WriteFile(QDir(Alice).filePath(QStringLiteral("Engine/Core.cpp")), "// engine\n");
+    RunGit(Alice, { QStringLiteral("add"), QStringLiteral("-A") });
+    RunGit(Alice, { QStringLiteral("commit"), QStringLiteral("-qm"), QStringLiteral("Start") });
+    RunGit(Alice, { QStringLiteral("push"), QStringLiteral("-q"), QStringLiteral("-u"), QStringLiteral("origin"), QStringLiteral("main") });
+    const QString Carol = Clone(QStringLiteral("carol"));   // stays behind
+    WriteFile(QDir(Alice).filePath(QStringLiteral("Games/WorldsLab/Content/Levels/A/more.nmentity")), "<Entity />\n");
+    RunGit(Alice, { QStringLiteral("add"), QStringLiteral("-A") });
+    RunGit(Alice, { QStringLiteral("commit"), QStringLiteral("-qm"), QStringLiteral("More") });
+    RunGit(Alice, { QStringLiteral("push"), QStringLiteral("-q") });
+    const QString Bob  = Clone(QStringLiteral("bob"));
+    const QString Dave = Clone(QStringLiteral("dave"));
+    const QString Host = Clone(QStringLiteral("host"));
+
+    /* The server, its worker in-process with the fake toolchain. */
+    FakeToolchain* Game = nullptr;
+    std::atomic<bool> bStopWorker{ false };
+    std::thread WorkerThread;
+    Collab::CollabServer Server;
+    Collab::ServerConfig Config;
+    Config.Port         = 0;
+    Config.RepoPath     = Host.toStdString();
+    Config.DataDir      = QDir(Temp.path()).filePath(QStringLiteral("data")).toStdString();
+    Config.GamePortBase = 27777;
+    Config.WorkerFetchIntervalMs = 300;
+    Config.LaunchWorker = [&](const Collab::WorkerConfig& InWorker)
+    {
+        auto Toolchain = std::make_unique<FakeToolchain>();
+        Game = Toolchain.get();
+        WorkerThread = std::thread([InWorker, &bStopWorker, Owned = Toolchain.release()]() mutable
+        {
+            Collab::ContentWorker Worker(InWorker, std::unique_ptr<Collab::IWorkerToolchain>(Owned));
+            Worker.Run(bStopWorker);
+        });
+    };
+    Config.StopWorker = [&](uint32_t)
+    {
+        bStopWorker = true;
+        if(WorkerThread.joinable()) { WorkerThread.join(); }
+    };
+    Expect(Server.Start(Config), "a server with a content worker");
+
+    /* Four editors: Bob up to date, Carol behind, Dave on another build of the game. */
+    Player AliceP{ QStringLiteral("alice") }, BobP{ QStringLiteral("bob") }, CarolP{ QStringLiteral("carol") }, DaveP{ QStringLiteral("dave") };
+    DaveP.Schema = 0x0def;
+    EditorCollabSession AliceS(QDir(Alice).filePath(QStringLiteral("Games/WorldsLab")), QString());
+    EditorCollabSession BobS(QDir(Bob).filePath(QStringLiteral("Games/WorldsLab")), QString());
+    EditorCollabSession CarolS(QDir(Carol).filePath(QStringLiteral("Games/WorldsLab")), QString());
+    EditorCollabSession DaveS(QDir(Dave).filePath(QStringLiteral("Games/WorldsLab")), QString());
+    const QList<QPair<EditorCollabSession*, Player*>> All = { { &AliceS, &AliceP }, { &BobS, &BobP }, { &CarolS, &CarolP }, { &DaveS, &DaveP } };
+    for(const auto& Each : All)
+    {
+        Player* P = Each.second;
+        EditorCollabSession::PlayHooks Hooks;
+        Hooks.LocalSchemaHash = [P]() { return P->Schema; };
+        Hooks.JoinRun = [P](const QString& InLevel, const QString& InHost, const uint16_t InPort)
+        {
+            ++P->Joins;
+            P->Level = InLevel;
+            P->Host  = InHost;
+            P->Port  = InPort;
+            return true;
+        };
+        Hooks.LeaveRun = [P]() { ++P->Leaves; };
+        Each.first->SetPlayHooks(Hooks);
+
+        Collab::ClientIdentity Id = Identity(P->Name.toUtf8().constData());
+        Id.ProjectId = Collab::MakeProjectId("WorldsLabGame", Remote.toStdString());
+        Id.Branch    = "main";
+        Each.first->ConnectAs(QStringLiteral("127.0.0.1"), Server.GetPort(), Id);
+    }
+    Expect(PumpUntil(Server, [&]() { return AliceS.IsJoined() && BobS.IsJoined() && CarolS.IsJoined() && DaveS.IsJoined(); }), "four editors join");
+    Expect(PumpUntil(Server, [&]() { return AliceS.GetClient().GetBuildStatus().State == Collab::EBuildState::Succeeded; }, 30000),
+           "the worker builds the branch");
+
+    /* Alice starts it: the server runs the game, she plays at once. */
+    AliceS.RequestPlayTogether(QStringLiteral("Content/Levels/A.nmworld"));
+    Expect(PumpUntil(Server, [&]() { return AliceP.Joins == 1; }, 10000), "Play Together: its starter joins at once");
+    Expect(Game && Game->bRunning && Game->World == "A", "the worker runs the game server on world A");
+    Expect(AliceP.Host == QStringLiteral("127.0.0.1") && AliceP.Port == 27777 && AliceP.Level == QStringLiteral("Content/Levels/A.nmworld"),
+           "as a client of the session server's host, on the run's port and level");
+
+    /* Bob may join; Carol and Dave may not, and say why. */
+    Expect(PumpUntil(Server, [&]()
+    {
+        return BobS.IsRunActive() && CarolS.GetJoinBlocker().contains(QStringLiteral("Pull & Reload"))
+            && DaveS.GetJoinBlocker().contains(QStringLiteral("schema"));
+    }, 10000), "each editor works out whether it can join");
+    PumpUntil(Server, [&]() { return false; }, 300);   // Bob's git check
+    Expect(BobS.GetJoinBlocker().isEmpty(), "Bob can");
+    BobS.JoinPlayTogether();
+    Expect(BobP.Joins == 1 && BobP.Port == 27777, "and joins");
+    CarolS.JoinPlayTogether();
+    DaveS.JoinPlayTogether();
+    Expect(CarolP.Joins == 0, "Carol, behind the run's commit, isn't pointed at the server");
+    Expect(DaveP.Joins == 0, "Dave, on another build of the game, is refused before he connects");
+    Expect(DaveS.GetJoinBlocker().contains(QStringLiteral("0000000000000def")) && DaveS.GetJoinBlocker().contains(QStringLiteral("0000000000000abc")),
+           "naming both schemas");
+
+    /* The server sees who's playing. */
+    Expect(PumpUntil(Server, [&]()
+    {
+        int Playing = 0;
+        for(const auto& Member : DaveS.GetClient().GetRoster())
+        {
+            Playing += Member.second.Play == Collab::EPlayState::PlayingTogether ? 1 : 0;
+        }
+        return Playing == 2;
+    }), "two in the run, as presence");
+
+    /* Alice ends it: everyone in it leaves. */
+    AliceS.StopPlayTogether();
+    Expect(PumpUntil(Server, [&]() { return AliceP.Leaves == 1 && BobP.Leaves == 1; }, 10000), "the starter ends it; the players leave");
+    Expect(CarolP.Leaves == 0 && DaveP.Leaves == 0, "those who weren't in it don't");
+    Expect(PumpUntil(Server, [&]() { return Game && !Game->bRunning; }), "and the game server stops");
+    Expect(!BobS.IsRunActive(), "no run");
+
+    for(const auto& Each : All)
+    {
+        Each.first->Leave();
+    }
+    PumpUntil(Server, [&]() { return Server.GetSessions().empty(); });
+    Server.Stop();
+    RunGit(Host, { QStringLiteral("worktree"), QStringLiteral("prune") });
+}
+
 int main(int argc, char** argv)
 {
     if(qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
@@ -317,6 +508,7 @@ int main(int argc, char** argv)
     if(RunGit(QDir::currentPath(), { QStringLiteral("--version") }))
     {
         TestPullAndReload(Server, Notes);
+        TestPlayTogether();
     }
     else
     {

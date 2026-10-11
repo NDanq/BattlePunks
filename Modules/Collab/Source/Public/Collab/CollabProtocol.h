@@ -24,8 +24,7 @@
  * supported during a session" is enforced.
  *
  * In use: Hello / Welcome / Reject, Presence, MemberJoined / MemberLeft,
- * Notify, and (P3) Pushed / BranchAdvanced. The rest are numbered for P4-P5
- * and not sent yet.
+ * Notify, (P3) Pushed / BranchAdvanced, (P4) the worker's, and (P5) Play*.
  */
 namespace Collab
 {
@@ -53,12 +52,13 @@ namespace Collab
         BuildStatus,     // worker->S->all: the session branch's build
         ValidationReport,// worker->S->the author: content problems
 
-        /* Reserved for P5; not sent yet. */
-        PlayRequest,     // P5: C->S
-        PlayInvite,      // P5: S->all
-        PlayEnded,       // P5: S->all
+        PlayRequest,     // C->S: start a shared run on a level (or stop it)
+        PlayInvite,      // S->all: a run is up; join it
+        PlayEnded,       // S->all: the run is over, and why
 
-        WorkerHello = 32 // worker->S: the session's content worker, by its key
+        WorkerHello = 32,// worker->S: the session's content worker, by its key
+        WorkerPlay,      // S->worker: start (or stop) the game server
+        WorkerPlayState  // worker->S: it's up on a port, or it isn't, and why
     };
 
     enum class EPlayState : uint8_t
@@ -286,6 +286,73 @@ namespace Collab
         std::string Author;
         uint32_t    Checked = 0;
         std::vector<ContentProblem> Problems;
+
+        void Serialize(EngineCore::Archive& Ar);
+    };
+
+    // === Play Together (P5) =================================================
+
+    /* C->S: start a shared run of Level -- runtime-relative, as the game names
+     * worlds ("Content/Levels/Courtyard.nmworld"); empty, the game's start
+     * level -- or, bStop, end the one that's going. */
+    struct COLLAB_API PlayRequestMessage
+    {
+        static constexpr EMessage Type = EMessage::PlayRequest;
+
+        std::string Level;
+        bool        bStop = false;
+
+        void Serialize(EngineCore::Archive& Ar);
+    };
+
+    /* S->all: the session's game server is up. Address empty: the session
+     * server's own host, as each editor reached it. */
+    struct COLLAB_API PlayInviteMessage
+    {
+        static constexpr EMessage Type = EMessage::PlayInvite;
+
+        uint32_t    FromId = 0;
+        std::string From;
+        std::string Level;
+        std::string Address;
+        uint16_t    Port = 0;
+        std::string Oid;          // the build the game server runs
+        uint64_t    SchemaHash = 0;   // its NetCore schema: a client's must match
+
+        void Serialize(EngineCore::Archive& Ar);
+    };
+
+    struct COLLAB_API PlayEndedMessage
+    {
+        static constexpr EMessage Type = EMessage::PlayEnded;
+
+        std::string Reason;
+
+        void Serialize(EngineCore::Archive& Ar);
+    };
+
+    /* S->worker: run <Game>Server on Level and Port, at Oid's build; bStop, end it. */
+    struct COLLAB_API WorkerPlayMessage
+    {
+        static constexpr EMessage Type = EMessage::WorkerPlay;
+
+        bool        bStop = false;
+        std::string Level;
+        uint16_t    Port = 0;
+        std::string Oid;
+
+        void Serialize(EngineCore::Archive& Ar);
+    };
+
+    /* worker->S: the game server is running (on Port), or it isn't (Error says
+     * why: never started, or stopped). */
+    struct COLLAB_API WorkerPlayStateMessage
+    {
+        static constexpr EMessage Type = EMessage::WorkerPlayState;
+
+        bool        bRunning = false;
+        uint16_t    Port = 0;
+        std::string Error;
 
         void Serialize(EngineCore::Archive& Ar);
     };

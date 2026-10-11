@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <functional>
 #include <string>
 #include <thread>
@@ -358,11 +359,42 @@ namespace
         }
     }
 
+    /* The fake game server's state, shared with the test. */
+    struct FakeGame
+    {
+        std::mutex        Mutex;
+        std::atomic<bool> bRunning{ false };
+        std::atomic<int>  Starts{ 0 };
+        std::string       World;
+        uint16_t          Port = 0;
+    };
+
     /* Builds succeed unless the game folder holds BROKEN; the report finds
-     * every .nmentity that says "not xml". */
+     * every .nmentity that says "not xml"; the game server is FakeGame. */
     class FakeToolchain final : public IWorkerToolchain
     {
     public:
+        explicit FakeToolchain(FakeGame* InGame = nullptr) : Game(InGame) {}
+
+        bool StartGame(const std::string&, const std::string& InWorld, const uint16_t InPort, std::string& OutError) override
+        {
+            if(!Game)
+            {
+                OutError = "no fake game";
+                return false;
+            }
+            std::lock_guard<std::mutex> Lock(Game->Mutex);
+            Game->World    = InWorld;
+            Game->Port     = InPort;
+            Game->bRunning = true;
+            ++Game->Starts;
+            return true;
+        }
+        bool IsGameRunning() override { return Game && Game->bRunning; }
+        void StopGame() override { if(Game) { Game->bRunning = false; } }
+
+        FakeGame* Game = nullptr;
+
         ToolchainBuild Build(const std::string& InGameDir, const std::string&) override
         {
             ToolchainBuild Out;
@@ -454,7 +486,8 @@ namespace
         RunGit(Bob, { "config", "user.email", "bob@example.com" });
         RunGit(Bob, { "config", "commit.gpgsign", "false" });
         RunGit(Bob, { "switch", "-q", "-c", "main" });
-        WriteText(Bob / "Games/WorldsLab/Config/DefaultEngine.ini", "[Game]\nModule=WorldsLabGame\n");
+        WriteText(Bob / "Games/WorldsLab/Config/DefaultEngine.ini",
+                  "[Game]\nModule=WorldsLabGame\n\n[World_A]\nFile=Content/Levels/A.nmworld\nGameMode=Arena\n");
         WriteText(Bob / "Games/WorldsLab/Content/Levels/A.nmworld", "<World Format=\"1\" />\n");
         WriteText(Bob / "Games/WorldsLab/Content/Levels/A/good.nmentity", "<Entity />\n");
         WriteText(Bob / "Engine/Core.txt", "engine\n");
@@ -473,14 +506,17 @@ namespace
         Config.RepoPath = Host.generic_u8string();
         Config.DataDir  = (Temp / "data").generic_u8string();
         Config.WorkerFetchIntervalMs = 300;
+        Config.GamePortBase      = 17777;
+        Config.PlayIdleTimeoutMs = 1500;
+        FakeGame Game;
         Config.LaunchWorker = [&](const WorkerConfig& InWorker)
         {
             ++Launched;
             Check(InWorker.Module == "WorldsLabGame" && InWorker.Branch == "main", "the worker is told the game and the branch");
             Check(!InWorker.Key.empty() && InWorker.SessionId != 0, "and its key and session");
-            WorkerThread = std::thread([InWorker, &bStopWorker]()
+            WorkerThread = std::thread([InWorker, &bStopWorker, &Game]()
             {
-                ContentWorker Worker(InWorker, std::make_unique<FakeToolchain>());
+                ContentWorker Worker(InWorker, std::make_unique<FakeToolchain>(&Game));
                 Worker.Run(bStopWorker);
             });
         };
@@ -552,6 +588,117 @@ namespace
               "a failed build is reported");
         Check(Alice.GetBuildStatus().FirstError == "Pickup.cpp(3): error C2065: 'Ammo': undeclared identifier", "with the first error");
         Check(Alice.GetBuildStatus().Author == "bob", "and whose commit");
+
+        // --- Play Together ---------------------------------------------------------
+        std::printf("--- Play Together\n");
+        const std::string Level = "Content/Levels/A.nmworld";
+
+        /* No good build: refused, with why. */
+        AliceLog.Clear();
+        Alice.RequestPlay(Level);
+        Check(PumpUntil(Server, { &Alice, &Carol }, [&]() { AliceLog.Drain(Alice); return AliceLog.Find(ClientEvent::EType::Notified) != nullptr; }),
+              "Play Together on a failed build: told");
+        Check(AliceLog.Find(ClientEvent::EType::Notified) && AliceLog.Find(ClientEvent::EType::Notified)->Title == "The server's build isn't ready", "the build isn't ready");
+        Check(Game.Starts == 0, "and no game server");
+
+        /* Fixed: built, then a run. */
+        fs::remove(Bob / "Games/WorldsLab/BROKEN");
+        RunGit(Bob, { "add", "-A" });
+        RunGit(Bob, { "commit", "-qm", "Fixes the build" });
+        RunGit(Bob, { "push", "-q" });
+        Check(PumpUntil(Server, { &Alice, &Carol }, [&]() { return Alice.GetBuildStatus().State == EBuildState::Succeeded; }, 30000),
+              "the fix builds");
+        const std::string Built = Alice.GetBuildStatus().Oid;
+
+        AliceLog.Clear();
+        CarolLog.Clear();
+        Alice.RequestPlay(Level);
+        Check(PumpUntil(Server, { &Alice, &Carol }, [&]()
+        {
+            AliceLog.Drain(Alice);
+            CarolLog.Drain(Carol);
+            return AliceLog.Find(ClientEvent::EType::PlayInvite) && CarolLog.Find(ClientEvent::EType::PlayInvite);
+        }, 10000), "Play Together: everyone is invited");
+        /* Alice plays: what keeps the run from ending as idle. */
+        Alice.SetPresence("x", Level, EPlayState::PlayingTogether, {});
+        {
+            std::lock_guard<std::mutex> Lock(Game.Mutex);
+            Check(Game.bRunning && Game.World == "A" && Game.Port == 17777, "the worker runs the game server on world A, port 17777");
+        }
+        const ClientEvent* CarolInvite = CarolLog.Find(ClientEvent::EType::PlayInvite);
+        const PlayInviteMessage Invite = CarolInvite ? CarolInvite->Invite : PlayInviteMessage();
+        Check(Invite.From == "alice" && Invite.FromId == Alice.GetMyId(), "from Alice");
+        Check(Invite.Level == Level && Invite.Port == 17777 && Invite.Address.empty(), "the level, the port, on the session's host");
+        Check(Invite.Oid == Built && Invite.SchemaHash == 0x2f8d597745b8342full, "at the build's commit and schema");
+        Check(Carol.IsRunActive() && Carol.GetActiveRun().Port == 17777, "the client knows the run is up");
+
+        /* A second request joins it; only the starter stops it. */
+        CarolLog.Clear();
+        Carol.RequestPlay(Level);
+        Carol.RequestStopPlay();
+        Check(PumpUntil(Server, { &Alice, &Carol }, [&]() { CarolLog.Drain(Carol); return CarolLog.Count(ClientEvent::EType::Notified) >= 2; }),
+              "Carol is told");
+        Check(CarolLog.Find(ClientEvent::EType::Notified) && CarolLog.Find(ClientEvent::EType::Notified)->Title == "A run is already going" && CarolLog.Find(ClientEvent::EType::PlayInvite),
+              "a second request gets the run's invite");
+        Check(!CarolLog.Events.empty() && CarolLog.Events.back().Title == "Only alice can stop this run", "only its starter stops it");
+        Check(Game.Starts == 1 && Game.bRunning, "still the one game server");
+
+        /* A late joiner is invited too. */
+        CollabClient Dave;
+        EventLog DaveLog;
+        ClientIdentity DaveId = AliceId;
+        DaveId.User = "dave";
+        JoinOrRefuse(Server, { &Alice, &Carol }, Dave, DaveLog, DaveId);
+        Check(PumpUntil(Server, { &Alice, &Carol, &Dave }, [&]() { DaveLog.Drain(Dave); return DaveLog.Find(ClientEvent::EType::PlayInvite) != nullptr; }),
+              "a late joiner is invited");
+
+        /* While it runs, a new commit is announced but not built. */
+        AliceLog.Clear();
+        WriteText(Bob / "Games/WorldsLab/Content/Levels/A/more.nmentity", "<Entity />\n");
+        RunGit(Bob, { "add", "-A" });
+        RunGit(Bob, { "commit", "-qm", "More" });
+        RunGit(Bob, { "push", "-q" });
+        Check(PumpUntil(Server, { &Alice, &Carol, &Dave }, [&]() { AliceLog.Drain(Alice); return AliceLog.Find(ClientEvent::EType::BranchAdvanced) != nullptr; }, 10000),
+              "a push during the run is announced");
+        PumpUntil(Server, { &Alice, &Carol, &Dave }, [&]() { return false; }, 800);
+        Check(Alice.GetBuildStatus().Oid == Built, "but not built while the game server runs");
+
+        /* Someone playing keeps it; nobody, and it ends. */
+        PumpUntil(Server, { &Alice, &Carol, &Dave }, [&]() { return false; }, 2000);
+        Check(Alice.IsRunActive() && Game.bRunning, "someone playing keeps the run past the idle timeout");
+        AliceLog.Clear();
+        Alice.SetPresence("x", Level, EPlayState::Editing, {});
+        Check(PumpUntil(Server, { &Alice, &Carol, &Dave }, [&]() { AliceLog.Drain(Alice); return AliceLog.Find(ClientEvent::EType::PlayEnded) != nullptr; }, 5000),
+              "nobody playing: the run ends");
+        Check(AliceLog.Find(ClientEvent::EType::PlayEnded) && AliceLog.Find(ClientEvent::EType::PlayEnded)->Text == "Nobody was playing.", "saying why");
+        Check(PumpUntil(Server, { &Alice, &Carol, &Dave }, [&]() { return !Game.bRunning; }), "the game server stops");
+        Check(PumpUntil(Server, { &Alice, &Carol, &Dave }, [&]() { return Alice.GetBuildStatus().Oid != Built
+                                                                      && Alice.GetBuildStatus().State == EBuildState::Succeeded; }, 30000),
+              "and the held commit builds");
+
+        /* The game server dying ends the run. */
+        AliceLog.Clear();
+        Alice.RequestPlay(Level);
+        Check(PumpUntil(Server, { &Alice, &Carol, &Dave }, [&]() { AliceLog.Drain(Alice); return AliceLog.Find(ClientEvent::EType::PlayInvite) != nullptr; }, 10000),
+              "a second run");
+        AliceLog.Clear();
+        Game.bRunning = false;   // it crashed
+        Check(PumpUntil(Server, { &Alice, &Carol, &Dave }, [&]() { AliceLog.Drain(Alice); return AliceLog.Find(ClientEvent::EType::PlayEnded) != nullptr; }, 5000),
+              "the game server stopping ends it");
+        Check(AliceLog.Find(ClientEvent::EType::PlayEnded) && AliceLog.Find(ClientEvent::EType::PlayEnded)->Text == "The game server stopped.", "saying so");
+
+        /* Its starter ends it. */
+        AliceLog.Clear();
+        Alice.RequestPlay(Level);
+        PumpUntil(Server, { &Alice, &Carol, &Dave }, [&]() { AliceLog.Drain(Alice); return AliceLog.Find(ClientEvent::EType::PlayInvite) != nullptr; }, 10000);
+        CarolLog.Drain(Carol);   // the earlier runs' events, out of the way
+        CarolLog.Clear();
+        Alice.RequestStopPlay();
+        Check(PumpUntil(Server, { &Alice, &Carol, &Dave }, [&]() { CarolLog.Drain(Carol); return CarolLog.Find(ClientEvent::EType::PlayEnded) != nullptr; }, 5000),
+              "the starter stops it; everyone hears");
+        Check(CarolLog.Find(ClientEvent::EType::PlayEnded) && CarolLog.Find(ClientEvent::EType::PlayEnded)->Text == "alice stopped it" && !Carol.IsRunActive(), "who stopped it");
+        Check(PumpUntil(Server, { &Alice, &Carol, &Dave }, [&]() { return !Game.bRunning; }), "and the game server stops");
+        Dave.Leave();
 
         /* The session ends: the worker stops. */
         Alice.Leave();

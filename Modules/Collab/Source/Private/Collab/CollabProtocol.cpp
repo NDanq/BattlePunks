@@ -208,6 +208,31 @@ void ValidationReportMessage::Serialize(EngineCore::Archive& Ar)
     }
 }
 
+void PlayRequestMessage::Serialize(EngineCore::Archive& Ar)
+{
+    Ar << Level << bStop;
+}
+
+void PlayInviteMessage::Serialize(EngineCore::Archive& Ar)
+{
+    Ar << FromId << From << Level << Address << Port << Oid << SchemaHash;
+}
+
+void PlayEndedMessage::Serialize(EngineCore::Archive& Ar)
+{
+    Ar << Reason;
+}
+
+void WorkerPlayMessage::Serialize(EngineCore::Archive& Ar)
+{
+    Ar << bStop << Level << Port << Oid;
+}
+
+void WorkerPlayStateMessage::Serialize(EngineCore::Archive& Ar)
+{
+    Ar << bRunning << Port << Error;
+}
+
 EMessage PeekType(const std::vector<uint8_t>& InBytes)
 {
     EngineCore::Archive Ar = EngineCore::Archive::ForReading(InBytes);

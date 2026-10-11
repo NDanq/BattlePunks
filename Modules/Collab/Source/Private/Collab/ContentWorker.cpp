@@ -211,7 +211,53 @@ namespace
             return Out;
         }
 
+        ~CMakeToolchain() override
+        {
+            StopGame();
+        }
+
+        bool StartGame(const std::string& InGameDir, const std::string& InWorld, const uint16_t InPort, std::string& OutError) override
+        {
+            StopGame();
+            const fs::path Server = FindServerExecutable(fs::u8path(InGameDir) / "Binaries");
+            if(Server.empty())
+            {
+                OutError = "No <Game>Server executable under Binaries/.";
+                return false;
+            }
+            /* Config overrides, as the launcher takes them (ParseLaunchArgs). */
+            std::vector<std::string> Args = { Server.u8string(), "-Net.Port=" + std::to_string(InPort) };
+            if(!InWorld.empty())
+            {
+                Args.push_back("-Game.StartLevel=" + InWorld);
+            }
+            Game = SpawnProcess(Args, Generic(Server.parent_path()));
+            if(!Game.IsValid())
+            {
+                OutError = "Couldn't start " + Server.u8string() + ".";
+                return false;
+            }
+            CORE_LOG("[Worker] game server up on UDP " + std::to_string(InPort) + (InWorld.empty() ? std::string() : ", " + InWorld))
+            return true;
+        }
+
+        bool IsGameRunning() override
+        {
+            return IsProcessRunning(Game);
+        }
+
+        void StopGame() override
+        {
+            if(Game.IsValid())
+            {
+                KillProcess(Game);
+                CORE_LOG("[Worker] game server stopped")
+            }
+        }
+
     private:
+        ChildProcess Game;
+
 #if defined(_WIN32)
         /* The latest Visual Studio with the C++ tools, by vswhere; empty if none. */
         static std::string FindVisualStudio()
@@ -267,6 +313,40 @@ namespace
 std::unique_ptr<IWorkerToolchain> MakeCMakeToolchain(const std::string& InCMake)
 {
     return std::make_unique<CMakeToolchain>(InCMake);
+}
+
+std::string FindWorldName(const std::string& InGameDir, const std::string& InLevel)
+{
+    /* [World_<Name>] sections, and their File= lines. */
+    std::string Section;
+    for(const std::string& Raw : SplitLines(ReadFile(fs::u8path(InGameDir) / "Config" / "DefaultEngine.ini")))
+    {
+        const std::string Line = Trim(Raw);
+        if(Line.size() > 2 && Line.front() == '[' && Line.back() == ']')
+        {
+            Section = Line.substr(1, Line.size() - 2);
+            continue;
+        }
+        if(Section.rfind("World_", 0) != 0 || Line.rfind("File", 0) != 0)
+        {
+            continue;
+        }
+        const size_t Equals = Line.find('=');
+        if(Equals == std::string::npos || Trim(Line.substr(4, Equals - 4)) != "")
+        {
+            continue;
+        }
+        std::string File = Trim(Line.substr(Equals + 1));
+        if(File.size() >= 2 && File.front() == '"' && File.back() == '"')
+        {
+            File = File.substr(1, File.size() - 2);
+        }
+        if(File == InLevel)
+        {
+            return Section.substr(6);
+        }
+    }
+    return std::string();
 }
 
 std::string FindFirstBuildError(const std::string& InOutput)
@@ -337,6 +417,15 @@ struct ContentWorker::Impl
     /* The job thread's own. */
     std::string LastTip;    // origin's, as last fetched
     std::string BuiltTip;   // the last one built (or failed)
+    std::atomic<bool> bLastBuildOk{ false };   // BuiltTip built and its report ran
+    std::atomic<bool> bBuilding{ false };      // the worktree's build tree is being written: no game server now
+    std::string       LastGameDir;             // BuiltTip's game folder; read only between jobs
+    std::mutex        BuildMutex;              // BuiltTip and LastGameDir, which HandlePlay reads
+
+    /* The main loop's: Play Together's game server. */
+    bool     bGameRunning = false;
+    uint16_t GamePort     = 0;
+    std::atomic<bool> bHoldBuilds{ false };   // a game server runs: fetch and announce, don't build
 
     template<typename TMessage>
     void Post(TMessage& InMessage)
@@ -419,6 +508,75 @@ struct ContentWorker::Impl
         return Move;
     }
 
+    /* WorkerPlay: start or stop the game server, on the main loop. */
+    void HandlePlay(const std::vector<uint8_t>& InBytes)
+    {
+        WorkerPlayMessage Play;
+        if(!Decode(InBytes, Play))
+        {
+            return;
+        }
+        std::string Tip, GameDir;
+        {
+            std::lock_guard<std::mutex> Lock(BuildMutex);
+            Tip     = BuiltTip;
+            GameDir = LastGameDir;
+        }
+        WorkerPlayStateMessage State;
+        if(Play.bStop)
+        {
+            Toolchain->StopGame();
+            bGameRunning = false;
+            bHoldBuilds  = false;
+            State.Error  = "Stopped.";
+            Post(State);
+            return;
+        }
+        if(bBuilding)
+        {
+            State.Error = "The server is building the branch; try again when it's built.";   // BuiltTip is the job's now
+        }
+        else if(!bLastBuildOk || (!Play.Oid.empty() && Play.Oid != Tip))
+        {
+            State.Error = "The server has no good build of " + (Play.Oid.empty() ? std::string("the branch") : Play.Oid.substr(0, 10)) + ".";
+        }
+        else
+        {
+            const std::string World = Play.Level.empty() ? std::string() : FindWorldName(GameDir, Play.Level);
+            if(!Play.Level.empty() && World.empty())
+            {
+                State.Error = Play.Level + " isn't in the game's world list (Project Settings > Worlds).";
+            }
+            else if(Toolchain->StartGame(GameDir, World, Play.Port, State.Error))
+            {
+                bGameRunning   = true;
+                bHoldBuilds    = true;
+                GamePort       = Play.Port;
+                State.bRunning = true;
+                State.Port     = Play.Port;
+            }
+        }
+        if(!State.bRunning)
+        {
+            CORE_LOG_WARN("[Worker] no game server: " + State.Error)
+        }
+        Post(State);
+    }
+
+    /* The game server stopped by itself (a crash, a quit): say so. */
+    void WatchGame()
+    {
+        if(bGameRunning && !Toolchain->IsGameRunning())
+        {
+            bGameRunning = false;
+            bHoldBuilds  = false;
+            WorkerPlayStateMessage State;
+            State.Error = "The game server stopped.";
+            CORE_LOG_WARN("[Worker] the game server stopped by itself")
+            Post(State);
+        }
+    }
+
     void Cycle()
     {
         if(!EnsureWorktree())
@@ -441,6 +599,10 @@ struct ContentWorker::Impl
             Post(Moved);
         }
         LastTip = Tip;
+        if(bHoldBuilds)
+        {
+            return;   // built once the run ends: the running server's files are locked
+        }
 
         Git(Config.WorktreeDir, { "checkout", "--quiet", "--detach", "--force", Tip });
         /* Not -x, and Build/ and Binaries/ kept by name too: on a case-sensitive
@@ -458,11 +620,21 @@ struct ContentWorker::Impl
         Post(Status);
         CORE_LOG("[Worker] building " + Tip.substr(0, 10) + " (" + Status.Summary + ")")
         const Clock::time_point Started = Clock::now();
-        BuiltTip = Tip;
+        {
+            std::lock_guard<std::mutex> Lock(BuildMutex);
+            BuiltTip = Tip;
+        }
+        bLastBuildOk = false;
+        bBuilding    = true;
 
         const std::string GameDir = FindGameDir();
+        {
+            std::lock_guard<std::mutex> Lock(BuildMutex);
+            LastGameDir = GameDir;
+        }
         if(GameDir.empty())
         {
+            bBuilding         = false;
             Status.State      = EBuildState::Failed;
             Status.FirstError = "No game in the worktree has [Game] Module = " + Config.Module + ".";
             Post(Status);
@@ -473,6 +645,7 @@ struct ContentWorker::Impl
         Status.Seconds = uint32_t(std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - Started).count());
         if(!Built.bOk)
         {
+            bBuilding         = false;
             Status.State      = EBuildState::Failed;
             Status.FirstError = Built.FirstError;
             CORE_LOG_WARN("[Worker] " + Tip.substr(0, 10) + " failed: " + Built.FirstError)
@@ -485,11 +658,14 @@ struct ContentWorker::Impl
         Status.Seconds = uint32_t(std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - Started).count());
         if(!Report.bOk)
         {
+            bBuilding         = false;
             Status.State      = EBuildState::Failed;
             Status.FirstError = Report.Error;
             Post(Status);
             return;
         }
+        bLastBuildOk      = true;
+        bBuilding         = false;
         Status.State      = EBuildState::Succeeded;
         Status.SchemaHash = Report.SchemaHash;
         Post(Status);
@@ -561,6 +737,10 @@ int ContentWorker::Run(const std::atomic<bool>& InStop)
             {
                 P->bFetchNow = true;   // an editor pushed: no need to wait
             }
+            else if(PeekType(Event.Data) == EMessage::WorkerPlay)
+            {
+                P->HandlePlay(Event.Data);
+            }
         }
         if(bGone)
         {
@@ -569,6 +749,7 @@ int ContentWorker::Run(const std::atomic<bool>& InStop)
             break;
         }
 
+        P->WatchGame();
         {
             std::lock_guard<std::mutex> Lock(P->OutboxMutex);
             for(const std::vector<uint8_t>& Each : P->Outbox)
@@ -598,6 +779,7 @@ int ContentWorker::Run(const std::atomic<bool>& InStop)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
+    P->Toolchain->StopGame();
     if(P->Job.joinable())
     {
         P->Job.join();

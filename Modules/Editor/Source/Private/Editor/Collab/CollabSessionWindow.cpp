@@ -75,6 +75,18 @@ CollabSessionWindow::CollabSessionWindow(EditorCollabSession& InSession, QWidget
     BuildLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     Column->addWidget(BuildLabel);
 
+    auto* RunRow = new QHBoxLayout();
+    RunLabel = new QLabel(Body);
+    RunLabel->setObjectName(QStringLiteral("CollabRun"));
+    RunLabel->setWordWrap(true);
+    RunRow->addWidget(RunLabel, 1);
+    JoinRunButton = new QPushButton(QStringLiteral("Join"), Body);
+    JoinRunButton->setObjectName(QStringLiteral("CollabJoinRun"));
+    JoinRunButton->setAutoDefault(false);
+    RunRow->addWidget(JoinRunButton);
+    Column->addLayout(RunRow);
+    connect(JoinRunButton, &QPushButton::clicked, this, [this]() { Session.JoinPlayTogether(); });
+
     Roster = new QTreeWidget(Body);
     Roster->setObjectName(QStringLiteral("CollabRoster"));
     Roster->setColumnCount(4);
@@ -110,11 +122,15 @@ CollabSessionWindow::CollabSessionWindow(EditorCollabSession& InSession, QWidget
     });
     connect(&Session, &EditorCollabSession::RosterChanged, this, &CollabSessionWindow::UpdateRoster);
     connect(&Session, &EditorCollabSession::BuildChanged, this, &CollabSessionWindow::UpdateBuild);
+    connect(&Session, &EditorCollabSession::RunChanged, this, &CollabSessionWindow::UpdateRun);
+    connect(&Session, &EditorCollabSession::RosterChanged, this, &CollabSessionWindow::UpdateRun);
+    connect(&Session, &EditorCollabSession::StateChanged, this, &CollabSessionWindow::UpdateRun);
     connect(&Session, &EditorCollabSession::StateChanged, this, &CollabSessionWindow::UpdateBuild);
 
     UpdateState();
     UpdateRoster();
     UpdateBuild();
+    UpdateRun();
 }
 
 void CollabSessionWindow::UpdateState()
@@ -216,6 +232,36 @@ void CollabSessionWindow::UpdateBuild()
             break;
     }
     BuildLabel->setVisible(!BuildLabel->text().isEmpty());
+}
+
+
+void CollabSessionWindow::UpdateRun()
+{
+    const Collab::CollabClient& Client = Session.GetClient();
+    if(!Session.IsJoined() || !Client.IsRunActive())
+    {
+        RunLabel->hide();
+        JoinRunButton->hide();
+        return;
+    }
+    const Collab::PlayInviteMessage& Run = Client.GetActiveRun();
+    int Playing = 0;
+    for(const auto& Each : Client.GetRoster())
+    {
+        Playing += Each.second.Play == Collab::EPlayState::PlayingTogether ? 1 : 0;
+    }
+    QString Text = QStringLiteral("Play Together: %1's run of %2, UDP %3, %4 playing")
+                   .arg(ToQ(Run.From), Run.Level.empty() ? QStringLiteral("the start level") : QFileInfo(ToQ(Run.Level)).completeBaseName())
+                   .arg(Run.Port).arg(Playing);
+    if(!Session.GetJoinBlocker().isEmpty())
+    {
+        Text += QStringLiteral(". ") + Session.GetJoinBlocker();
+    }
+    RunLabel->setText(Text);
+    RunLabel->show();
+    const bool bMine = Client.GetRoster().count(Client.GetMyId()) && Client.GetRoster().at(Client.GetMyId()).Play == Collab::EPlayState::PlayingTogether;
+    JoinRunButton->setVisible(!bMine);
+    JoinRunButton->setEnabled(Session.GetJoinBlocker().isEmpty());
 }
 
 #endif // WITH_EDITOR
