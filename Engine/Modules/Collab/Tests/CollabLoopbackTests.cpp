@@ -508,7 +508,13 @@ namespace
               "Building first, then Succeeded");
         Check(Alice.GetBuildStatus().SchemaHash == 0x2f8d597745b8342full, "with the schema hash");
         Check(Alice.GetBuildStatus().Author == "bob" && Alice.GetBuildStatus().Summary == "Start", "naming the commit");
-        Check(fs::exists(Temp / "data/Worktrees/WorldsLabGame-main/Games/WorldsLab/Content/Levels/A.nmworld"), "in its own worktree");
+        bool bInWorktree = false;
+        for(const fs::directory_entry& Each : fs::directory_iterator(Temp / "data/wt"))
+        {
+            bInWorktree = bInWorktree || fs::exists(Each.path() / "Games/WorldsLab/Content/Levels/A.nmworld");
+            Check(Each.path().filename().u8string().size() == 8, "the worktree's folder name is short");
+        }
+        Check(bInWorktree, "in its own worktree");
 
         /* A push from a terminal, with a broken entity file: the worker finds it. */
         AliceLog.Clear();
