@@ -18,8 +18,12 @@
  *                        u64 parent guid hi, u64 parent guid lo (0,0: none),
  *                        u16 count, then per component:
  *                            string type name, then its serializer's DATA chunk
- *                        (versioned, as a cooked world; EntityIDs as net ids)
- *   Destroy        S->C  i32 net id
+ *                        (versioned, as a cooked world; EntityIDs as net ids),
+ *                        then u16 part count and per part (a descendant with
+ *                        no Net component, parents first): u64 guid hi, u64
+ *                        guid lo, string name, u64 parent guid hi, u64 parent
+ *                        guid lo, then its components as above
+ *   Destroy       S->C  i32 net id
  *   Rpc            both  i32 net id, u16 wire type, u8 rpc index, u32 bytes, bytes
  *
  * STATE CHANNEL (NET_CHANNEL_STATE): unreliable, sequenced -- a packet older
@@ -46,7 +50,7 @@
 
 namespace NetCore
 {
-    constexpr uint32_t NET_PROTOCOL_VERSION = 3;
+    constexpr uint32_t NET_PROTOCOL_VERSION = 4;
 
     enum class ENetMessage : uint8_t
     {

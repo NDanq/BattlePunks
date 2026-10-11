@@ -236,7 +236,10 @@ There is one view, so split-screen shows local player 1's.
 - One renderer view, so no split-screen rendering.
 - One player per networked client: NetHost makes one per connection.
 - A prefab **spawned** on the server reaches clients as its components, not
-  as a prefab instance, so its script runs on the server only. An avatar's
+  as a prefab instance. Its descendants without a Net component (a camera
+  boom, a weapon) come with its spawn, as they were then; the owning client
+  moves them itself after (a simulation's step does). Its script runs on the
+  server only. An avatar's
   `OnPossessed` and its Lua or graph therefore run on clients only for avatars
   placed in the level (NetArena's karts). For spawned pawns, react on clients
   from a placed or startup script (`Events.On(Game.Possessed, ...)`), or in

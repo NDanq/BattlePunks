@@ -446,12 +446,35 @@ struct NetSession::Impl final : public INetEntityMap
         GameCore::EntityGuid ParentGuid;
         if(Handle.HasParent()) { ParentGuid = GameCore::Entity(BoundWorld, Handle.GetParent()).GetGuid(); }
         Ar << NetId << Guid.Hi << Guid.Lo << Name << ParentGuid.Hi << ParentGuid.Lo;
+        WriteComponents(Ar, Handle);
 
+        /* Its parts: the descendants with no Net of their own (a spawned
+         * avatar's camera boom, its weapon), parents first. They are sent
+         * once, as they are now; each client moves them itself after. */
+        std::vector<EntityID> Parts;
+        CollectParts(InEntity, Parts);
+        uint16_t PartCount = uint16_t(std::min<size_t>(Parts.size(), UINT16_MAX));
+        Ar << PartCount;
+        for(uint16_t Index = 0; Index < PartCount; ++Index)
+        {
+            GameCore::Entity Part(BoundWorld, Parts[Index]);
+            GameCore::EntityGuid PartGuid = Part.GetGuid();
+            GameCore::EntityGuid PartParent = GameCore::Entity(BoundWorld, Part.GetParent()).GetGuid();
+            std::string PartName = Part.GetName();
+            Ar << PartGuid.Hi << PartGuid.Lo << PartName << PartParent.Hi << PartParent.Lo;
+            WriteComponents(Ar, Part);
+        }
+        return Ar;
+    }
+
+    /* u16 count, then per component its type name and its serializer's DATA chunk. */
+    void WriteComponents(EngineCore::Archive& Ar, GameCore::Entity InHandle)
+    {
         std::vector<ComponentTypeID> Types;
         for(size_t Index = 0; Index < GameCore::GetComponentTypeCount(); ++Index)
         {
             const ComponentTypeID Type = ComponentTypeID(Index);
-            if(GameCore::FindComponentSerializer(Type) && Handle.HasComponentByType(Type)) { Types.push_back(Type); }
+            if(GameCore::FindComponentSerializer(Type) && InHandle.HasComponentByType(Type)) { Types.push_back(Type); }
         }
 
         uint16_t Count = uint16_t(Types.size());
@@ -460,9 +483,21 @@ struct NetSession::Impl final : public INetEntityMap
         {
             std::string TypeName = GameCore::GetComponentType(Type)->Name;
             Ar << TypeName;
-            WriteComponentData(Ar, Type, Handle.GetComponentByType(Type), *this);
+            WriteComponentData(Ar, Type, InHandle.GetComponentByType(Type), *this);
         }
-        return Ar;
+    }
+
+    /* InEntity's descendants down to, not into, the ones with a Net component:
+     * those are sent on their own. Depth first, so a parent precedes its children. */
+    void CollectParts(const EntityID InEntity, std::vector<EntityID>& OutParts)
+    {
+        for(EntityID Child = BoundWorld->GetEntity(InEntity).GetFirstChild(); Child.IsSet();
+            Child = BoundWorld->GetEntity(Child).GetNextSibling())
+        {
+            if(BoundWorld->GetEntity(Child).HasComponent<NetComponent>()) { continue; }
+            OutParts.push_back(Child);
+            CollectParts(Child, OutParts);
+        }
     }
 
     /* One state entry: InMask's fields of InType on InComponent. */
@@ -835,7 +870,48 @@ struct NetSession::Impl final : public INetEntityMap
         if(!Entity.IsSet())                                 { Entity = BoundWorld->CreateEntity(Name.c_str(), Guid).GetID(); }
         MapEntity(NetId, Entity);
         GameCore::Entity Handle(BoundWorld, Entity);
+        ReadComponents(Ar, Handle, Count);
 
+        /* Its id, whatever the component data said. */
+        NetComponent* Net = Handle.GetComponent<NetComponent>();
+        if(!Net) { Net = Handle.AddComponent<NetComponent>(); }
+        if(Net) { Net->NetId = NetId; }
+
+        if(ParentGuid.IsSet()) { PendingParents.push_back({ Entity, ParentGuid }); }
+
+        /* Its parts, parents first. The level's own if this client has them. */
+        uint16_t PartCount = 0;
+        Ar << PartCount;
+        for(uint16_t Part = 0; Part < PartCount && !Ar.HasError(); ++Part)
+        {
+            GameCore::EntityGuid PartGuid, PartParent;
+            std::string          PartName;
+            uint16_t             PartComponents = 0;
+            Ar << PartGuid.Hi << PartGuid.Lo << PartName << PartParent.Hi << PartParent.Lo << PartComponents;
+            if(Ar.HasError()) { break; }
+
+            EntityID PartEntity = PartGuid.IsSet() ? BoundWorld->FindEntityByGuid(PartGuid) : EntityID();
+            if(!PartEntity.IsSet()) { PartEntity = BoundWorld->CreateEntity(PartName.c_str(), PartGuid).GetID(); }
+            GameCore::Entity PartHandle(BoundWorld, PartEntity);
+            ReadComponents(Ar, PartHandle, PartComponents);
+            if(PartParent.IsSet()) { PendingParents.push_back({ PartEntity, PartParent }); }
+        }
+        ResolveParents();
+
+        /* Where it appeared is the first of its Transform's samples. */
+        if(IsInterpolated(Entity))
+        {
+            Interpolation& Smooth = Interpolations[NetId];
+            Smooth.Samples.clear();
+            Smooth.Target = *Handle.GetComponent<GameCore::TransformComponent>();
+            PushSample(Smooth);
+        }
+    }
+
+    /* InCount components, as WriteComponents wrote them: into the ones InHandle
+     * has, else added. A type this build lacks is skipped. */
+    void ReadComponents(EngineCore::Archive& Ar, GameCore::Entity& Handle, const uint16_t Count)
+    {
         for(uint16_t Index = 0; Index < Count && !Ar.HasError(); ++Index)
         {
             std::string TypeName;
@@ -860,23 +936,6 @@ struct NetSession::Impl final : public INetEntityMap
                 if(Serializer->DefaultsFn) { Serializer->DefaultsFn(Bytes.data()); }
                 if(ReadComponentData(Ar, Info->ID, Bytes.data(), *this)) { Handle.AddComponentByType(Info->ID, Bytes.data()); }
             }
-        }
-
-        /* Its id, whatever the component data said. */
-        NetComponent* Net = Handle.GetComponent<NetComponent>();
-        if(!Net) { Net = Handle.AddComponent<NetComponent>(); }
-        if(Net) { Net->NetId = NetId; }
-
-        if(ParentGuid.IsSet()) { PendingParents.push_back({ Entity, ParentGuid }); }
-        ResolveParents();
-
-        /* Where it appeared is the first of its Transform's samples. */
-        if(IsInterpolated(Entity))
-        {
-            Interpolation& Smooth = Interpolations[NetId];
-            Smooth.Samples.clear();
-            Smooth.Target = *Handle.GetComponent<GameCore::TransformComponent>();
-            PushSample(Smooth);
         }
     }
 
