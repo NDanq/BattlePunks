@@ -259,6 +259,24 @@ On Linux, use `client-shipping-clang`.
 
 Or configure the engine directly: `cmake -S Engine -B build -DNIMBLE_TARGET=Client -DCMAKE_BUILD_TYPE=Shipping`.
 
+### Recording a video
+
+A game launcher from an Editor-target build records itself with
+`-record=<file.mp4>`:
+
+```
+WorldsLab -Game.StartLevel=SteampunkPvP -record=match.mp4 -Record.Seconds=30 -Record.StartSeconds=5
+```
+
+Each frame is the finished picture with the UI over it, but without the
+`stat` panels. Frames go raw to `ffmpeg`, which must be on the PATH, and come
+out as H.264 at `[Record] Fps` (30). Frames are taken on the wall clock, and
+a late one is repeated, so the video keeps real time. Reading each picture
+back stalls the GPU briefly. `FrameRecorder.h` has the details.
+
+Screen capture tools cannot help on a Linux Wayland desktop: a Vulkan window
+under XWayland has no image for X11 capture to read.
+
 ## Conventions
 
 ### Coordinate system

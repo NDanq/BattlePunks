@@ -624,6 +624,8 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/AudioFacade.cpp
         Source/Private/NimbleEngine/NetFacade.cpp
         Source/Private/NimbleEngine/LagCompensation.cpp
+        Source/Private/NimbleEngine/FrameRecorder.cpp
+        Source/Private/NimbleEngine/FrameRecorder.h
         Source/Private/NimbleEngine/NetHost.cpp
         Source/Private/NimbleEngine/NetScript.cpp
         Source/Private/NimbleEngine/PhysicsFacade.cpp
