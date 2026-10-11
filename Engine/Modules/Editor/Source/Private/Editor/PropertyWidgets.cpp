@@ -31,6 +31,7 @@
 #include "Public/GameCore/AABB.h"
 #include "Public/Math/Vector.h"
 #include "Private/Editor/Content/ContentPaths.h"
+#include "Private/Editor/EditorIcons.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/Particles/ParticleAssets.h"
 #include "Private/Editor/Sequencer/SequencerAssets.h"
@@ -485,9 +486,31 @@ namespace
             const bool bSequence  = (Entry.Flags & GameCore::PF_AssetSequence) != 0;
             const bool bTerrain   = (Entry.Flags & GameCore::PF_AssetTerrain) != 0;
             const bool bFoliage   = (Entry.Flags & GameCore::PF_AssetFoliage) != 0;
-            if((bMesh || bMaterial || bPost || bTarget || bTexture || bParticles || bAnimation || bSound || bPrefab || bSequence
-                || bTerrain || bFoliage)
-               && !Entry.IsReadOnly())
+            const bool bAssetField = bMesh || bMaterial || bPost || bTarget || bTexture || bParticles || bAnimation || bSound
+                                  || bPrefab || bSequence || bTerrain || bFoliage;
+
+            /* The eye: the Content Browser goes to the asset's folder and opens it in its editor. */
+            if(bAssetField)
+            {
+                auto* Eye = new QToolButton(this);
+                Eye->setIcon(EditorIcons::Get(EditorIcons::EIcon::Eye));
+                Eye->setToolTip(QStringLiteral("Show this asset in the Content Browser and open it"));
+                Eye->setAutoRaise(true);
+                Layout->addWidget(Eye);
+                connect(Eye, &QToolButton::clicked, this, [this, Eye]()
+                {
+                    const QString Value = Edit->text().trimmed();
+                    const QString File  = EditorContent::FileForRuntimePath(Value);
+                    if(File.isEmpty() || !EditorContent::RevealAsset(File))
+                    {
+                        QToolTip::showText(Eye->mapToGlobal(QPoint(0, Eye->height())),
+                                           Value.isEmpty() ? QStringLiteral("The field is empty")
+                                                           : QStringLiteral("No asset file for \"%1\"").arg(Value), Eye);
+                    }
+                });
+            }
+
+            if(bAssetField && !Entry.IsReadOnly())
             {
                 /* What each kind of asset field offers. */
                 struct AssetUi { EAsset Kind; const char* Placeholder; const char* Tip; const char* PickTip; const char* Title; const char* Filter; };

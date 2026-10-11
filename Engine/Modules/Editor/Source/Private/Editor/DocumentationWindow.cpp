@@ -32,8 +32,7 @@
 #include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 
-#include "Private/Editor/Graph/GraphAssets.h"
-#include "Private/Editor/Project/ProjectTemplate.h"
+#include "Private/Editor/ComponentDocs.h"
 
 namespace
 {
@@ -98,19 +97,31 @@ namespace
     }
 }
 
+bool DocumentationWindow::IsDocumentation(const QString& InPath)
+{
+    return !InPath.isEmpty() && IsUnder(QFileInfo(InPath).absoluteFilePath(), EditorDocs::GetDocsRoot());
+}
+
 DocumentationWindow* DocumentationWindow::Open(const QString& InPath)
 {
+    /* Only Engine/Docs is shown: any other path is the default page instead. */
+    const QString Path = IsDocumentation(InPath) ? InPath : QString();
+
     DocumentationWindow* Window = TheWindow();
     if(!Window)
     {
         Window = new DocumentationWindow();
         TheWindow() = Window;
         Window->resize(1180, 760);
-        Window->ShowFile(InPath.isEmpty() ? Window->DefaultPage() : InPath);
+        Window->ShowFile(Path.isEmpty() ? Window->DefaultPage() : Path);
     }
-    else if(!InPath.isEmpty())
+    else if(!Path.isEmpty())
     {
-        Window->ShowFile(InPath);
+        Window->ShowFile(Path);
+    }
+    if(!InPath.isEmpty() && Path.isEmpty())
+    {
+        Window->statusBar()->showMessage(QStringLiteral("Only files under Engine/Docs are shown here"), 5000);
     }
     Window->show();
     Window->raise();
@@ -150,10 +161,6 @@ DocumentationWindow::DocumentationWindow()
 {
     setAttribute(Qt::WA_DeleteOnClose);
     setWindowTitle(QStringLiteral("Documentation"));
-
-    ProjectRoot = QDir::cleanPath(EditorGraphs::GetProjectRoot());
-    EngineRoot  = QDir::cleanPath(EditorProject::GetEngineDir());
-    if(EngineRoot == QStringLiteral(".")) { EngineRoot.clear(); }
 
     BuildUi();
     Rescan();
@@ -284,29 +291,10 @@ void DocumentationWindow::Rescan()
     };
     QList<Group> Groups;
 
-    const bool bProjectInEngine = IsUnder(ProjectRoot, EngineRoot);
-    if(!ProjectRoot.isEmpty())
+    const QString DocsRoot = EditorDocs::GetDocsRoot();
+    if(!DocsRoot.isEmpty())
     {
-        Groups << Group{ QStringLiteral("%1 (Project)").arg(QDir(ProjectRoot).dirName()), ProjectRoot,
-                         FindMarkdownFiles(ProjectRoot) };
-    }
-    if(!EngineRoot.isEmpty())
-    {
-        QStringList EngineFiles;
-        for(const QString& Each : FindMarkdownFiles(EngineRoot))
-        {
-            if(!bProjectInEngine || !IsUnder(Each, ProjectRoot)) { EngineFiles << Each; }
-        }
-        /* The repository's own README, beside Engine/ and Games/. */
-        QDir Repository(EngineRoot);
-        if(Repository.cdUp())
-        {
-            for(const QFileInfo& Each : Repository.entryInfoList({ QStringLiteral("*.md") }, QDir::Files, QDir::Name))
-            {
-                EngineFiles.prepend(Each.absoluteFilePath());
-            }
-        }
-        Groups << Group{ QStringLiteral("Engine"), EngineRoot, EngineFiles };
+        Groups << Group{ QStringLiteral("Documentation"), DocsRoot, FindMarkdownFiles(DocsRoot) };
     }
 
     for(const Group& Each : Groups)
@@ -324,8 +312,7 @@ void DocumentationWindow::Rescan()
         {
             const QFileInfo Info(Path);
             QString Folder = QDir(Each.Root).relativeFilePath(Info.absolutePath());
-            if(Folder == QStringLiteral("."))     { Folder.clear(); }
-            else if(Folder == QStringLiteral("..")) { Folder = QStringLiteral("Repository"); }
+            if(Folder == QStringLiteral(".")) { Folder.clear(); }
 
             QTreeWidgetItem* Parent = Top;
             if(!Folder.isEmpty())
@@ -429,21 +416,8 @@ void DocumentationWindow::SelectInTree(const QString& InPath)
 
 QString DocumentationWindow::DefaultPage() const
 {
-    QStringList Candidates;
-    if(!ProjectRoot.isEmpty())
-    {
-        Candidates << QDir(ProjectRoot).filePath(QStringLiteral("README.md"))
-                   << QDir(ProjectRoot).filePath(QStringLiteral("Docs/GettingStarted.md"));
-    }
-    if(!EngineRoot.isEmpty())
-    {
-        Candidates << QDir(EngineRoot).filePath(QStringLiteral("../README.md"))
-                   << QDir(EngineRoot).filePath(QStringLiteral("README.md"));
-    }
-    for(const QString& Each : Candidates)
-    {
-        if(QFileInfo(Each).isFile()) { return QDir::cleanPath(QFileInfo(Each).absoluteFilePath()); }
-    }
+    const QString Readme = QDir(EditorDocs::GetDocsRoot()).filePath(QStringLiteral("README.md"));
+    if(QFileInfo(Readme).isFile()) { return QDir::cleanPath(Readme); }
     for(QTreeWidgetItemIterator It(Files); *It; ++It)
     {
         const QString Path = (*It)->data(0, PathRole).toString();
@@ -454,7 +428,7 @@ QString DocumentationWindow::DefaultPage() const
 
 void DocumentationWindow::ShowFile(const QString& InPath, const QString& InFragment)
 {
-    if(InPath.isEmpty()) { return; }
+    if(!IsDocumentation(InPath)) { return; }
     QUrl Url = QUrl::fromLocalFile(QFileInfo(InPath).absoluteFilePath());
     if(!InFragment.isEmpty()) { Url.setFragment(InFragment); }
     Page->setSource(Url, QTextDocument::MarkdownResource);
@@ -487,6 +461,11 @@ void DocumentationWindow::OnLinkClicked(const QUrl& InLink)
     if(Resolved.isLocalFile())
     {
         const QString Path = Resolved.toLocalFile();
+        if(!IsDocumentation(Path))
+        {
+            statusBar()->showMessage(QStringLiteral("Only files under Engine/Docs are shown here"), 5000);
+            return;
+        }
         if(IsMarkdown(Path) && QFileInfo(Path).isFile())
         {
             Page->setSource(Resolved, QTextDocument::MarkdownResource);   // or just scrolls, for "#section"

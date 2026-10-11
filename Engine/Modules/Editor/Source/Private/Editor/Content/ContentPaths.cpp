@@ -49,6 +49,36 @@ namespace EditorContent
         return RelativeTo(EditorGraphs::GetProjectRoot(), InPath);
     }
 
+    QString FileForRuntimePath(const QString& InRuntimePath)
+    {
+        const QString EnginePrefix = QStringLiteral("Engine/Content/");
+        const QString File = InRuntimePath.startsWith(EnginePrefix)
+            ? QDir(GetEngineContentRoot()).absoluteFilePath(InRuntimePath.mid(EnginePrefix.size()))
+            : QDir(EditorGraphs::GetProjectRoot()).absoluteFilePath(InRuntimePath);
+        return !InRuntimePath.isEmpty() && QFileInfo(File).isFile() ? QDir::fromNativeSeparators(File) : QString();
+    }
+
+    namespace
+    {
+        std::function<void(const QString&)>& RevealHandler()
+        {
+            static std::function<void(const QString&)> Handler;
+            return Handler;
+        }
+    }
+
+    void SetRevealHandler(std::function<void(const QString&)> InHandler)
+    {
+        RevealHandler() = std::move(InHandler);
+    }
+
+    bool RevealAsset(const QString& InFile)
+    {
+        if(!RevealHandler() || !QFileInfo(InFile).isFile()) { return false; }
+        RevealHandler()(InFile);
+        return true;
+    }
+
     QString GetEngineContentRoot()
     {
         static const QString Root = []()

@@ -35,6 +35,7 @@
 #include "Private/Editor/Content/AnimStateEditorWindow.h"
 #include "Private/Editor/Content/AnimStateGraph.h"
 #include "Private/Editor/Content/ClipTimeline.h"
+#include "Private/Editor/ComponentDocs.h"
 #include "Private/Editor/DocumentationWindow.h"
 #include <QDir>
 #include <QFileInfo>
@@ -494,6 +495,7 @@ static void TestDocumentation()
     Write(QStringLiteral("Build/Generated.md"), "# build\n");
     Write(QStringLiteral("Sub/Build/editor-debug/Notes.md"), "# build\n");
     Write(QStringLiteral(".git/Hidden.md"), "# hidden\n");
+    EditorDocs::SetDocsRoot(Dir.path());   // the viewer shows only the docs root
 
     const QStringList Found = DocumentationWindow::FindMarkdownFiles(Dir.path());
     Expect(Found.size() == 2 && Found.first().endsWith(QStringLiteral("Docs/Guide.md")) && Found.last().endsWith(QStringLiteral("README.md")),
@@ -526,6 +528,40 @@ static void TestDocumentation()
     Page->backward();
     Expect(Page->source().toLocalFile().endsWith(QStringLiteral("README.md")), "Back returns to the previous page");
 
+    /* Only the docs root is shown: another folder's .md is refused, by path and by link. */
+    QTemporaryDir Outside;
+    {
+        QFile Stray(Outside.filePath(QStringLiteral("Stray.md")));
+        Stray.open(QIODevice::WriteOnly);
+        Stray.write("# Stray\n");
+    }
+    Expect(!DocumentationWindow::IsDocumentation(Outside.filePath(QStringLiteral("Stray.md"))), "a file outside the docs root is not documentation");
+    DocumentationWindow::Open(Outside.filePath(QStringLiteral("Stray.md")));
+    Expect(Page->source().toLocalFile().endsWith(QStringLiteral("README.md")), "opening a path outside the docs root changes nothing");
+    emit Page->anchorClicked(QUrl::fromLocalFile(Outside.filePath(QStringLiteral("Stray.md"))));
+    Expect(Page->source().toLocalFile().endsWith(QStringLiteral("README.md")), "a link outside the docs root is not followed");
+
+    /* A component's reference page is written on first ask, with both APIs, and kept. */
+    const GameCore::ComponentTypeID Transform = GameCore::TransformComponent::StaticType().ID;
+    const QString TransformDoc = EditorDocs::EnsureComponentDoc(Transform);
+    Expect(TransformDoc == Dir.filePath(QStringLiteral("Components/Transform.md")) && QFileInfo(TransformDoc).isFile(),
+           "a component's page is written under Components/");
+    QFile Generated(TransformDoc);
+    Generated.open(QIODevice::ReadOnly);
+    const QString GeneratedText = QString::fromUtf8(Generated.readAll());
+    Generated.close();
+    Expect(GeneratedText.contains(QStringLiteral("## C++ API")) && GeneratedText.contains(QStringLiteral("## Lua API"))
+           && GeneratedText.contains(QStringLiteral("Position")), "the page has the properties and both APIs");
+    Generated.open(QIODevice::WriteOnly | QIODevice::Truncate);
+    Generated.write("# Edited\n");
+    Generated.close();
+    EditorDocs::EnsureComponentDoc(Transform);
+    Generated.open(QIODevice::ReadOnly);
+    Expect(Generated.readAll().startsWith("# Edited"), "an existing page is never overwritten");
+    Generated.close();
+    Expect(DocumentationWindow::IsDocumentation(TransformDoc), "a component page is documentation");
+
+    EditorDocs::SetDocsRoot(QString());
     DocumentationWindow::CloseIfOpen();
     PumpFor(10);
 

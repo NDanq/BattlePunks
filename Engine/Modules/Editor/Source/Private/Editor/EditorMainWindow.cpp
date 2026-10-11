@@ -242,6 +242,14 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     SequencerWindow::Install(*this, ContentDock);
     ContentDock->raise();
     connect(ContentArea, &ContentBrowserPanel::OpenWorldRequested, this, &EditorMainWindow::OpenWorldFile);
+
+    /* The eye button on a Details asset field: its folder, selected, and opened. */
+    EditorContent::SetRevealHandler([this, ContentDock](const QString& InFile)
+    {
+        ContentDock->show();
+        ContentDock->raise();
+        ContentArea->RevealAndOpen(InFile);
+    });
     connect(ViewportArea, &ViewportPanel::StatusMessage, this, [this](const QString& InText) { statusBar()->showMessage(InText, 6000); });
     connect(ContentArea, &ContentBrowserPanel::StatusMessage, this, [this](const QString& InText)
     {
@@ -320,6 +328,8 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
 
 EditorMainWindow::~EditorMainWindow()
 {
+    EditorContent::SetRevealHandler(nullptr);
+
     /* Normally already done by closeEvent; this covers a window destroyed
      * without being closed. The viewport's native window is still alive here. */
     if(InputProbe)
@@ -586,7 +596,7 @@ void EditorMainWindow::BuildHelpMenu()
 
     QAction* Docs = Help->addAction(QStringLiteral("&Documentation"));
     Docs->setShortcut(QKeySequence::HelpContents);
-    Docs->setToolTip(QStringLiteral("The project's and the engine's .md files, rendered (F1)"));
+    Docs->setToolTip(QStringLiteral("The engine's documentation (Engine/Docs), rendered (F1)"));
     connect(Docs, &QAction::triggered, this, []() { DocumentationWindow::Open(); });
 
     Help->addSeparator();

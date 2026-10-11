@@ -44,6 +44,10 @@ public:
     /* Shows InFolder (inside the project), remembering where it came from. */
     void SetCurrentFolder(const QString& InFolder);
 
+    /* Goes to InFile's folder, selects it and opens it in its own editor (as a
+     * double-click does). The Details panel's eye button. */
+    void RevealAndOpen(const QString& InFile);
+
     /* The current folder, or <root>/Content at the root. */
     QString GetImportFolder() const;
 
