@@ -420,10 +420,16 @@ namespace
         { AutoStep::Press, "Fire" }, { AutoStep::Wait, nullptr, 0.5 },
         { AutoStep::Press, "Fire" }, { AutoStep::Wait, nullptr, 0.5 },
         { AutoStep::Press, "Fire" }, { AutoStep::Wait, nullptr, 0.5 },
+        { AutoStep::AimAt, nullptr, -165.0, 500.0, false, 135.0 },    // the lane 3 dummy's chest: three shots drop it (a ragdoll)
+        { AutoStep::Press, "Fire" }, { AutoStep::Wait, nullptr, 0.4 },
+        { AutoStep::Press, "Fire" }, { AutoStep::Wait, nullptr, 0.4 },
+        { AutoStep::Press, "Fire" }, { AutoStep::Wait, nullptr, 2.0 },
         { AutoStep::AimAt, nullptr, -300.0, 1100.0, false, 124.0 },  // the lane 2 paper, 28 m (clear of the booth divider)
         { AutoStep::Press, "Fire" }, { AutoStep::Wait, nullptr, 0.5 },
         { AutoStep::Press, "Fire" }, { AutoStep::Wait, nullptr, 0.5 },
         { AutoStep::Press, "Reload" }, { AutoStep::Wait, nullptr, 2.0 },
+        { AutoStep::AimAt, nullptr, -165.0, 500.0, false, 178.0 },   // its replacement (RangeDummy's graph respawns it): one to the head
+        { AutoStep::Press, "Fire" }, { AutoStep::Wait, nullptr, 2.0 },
         { AutoStep::Release, "Aim" },
         { AutoStep::Press, "Holster" }, { AutoStep::Wait, nullptr, 1.2 },
         { AutoStep::Goto, nullptr, -1415.0, -2430.0, true },    // the foot of the stairs

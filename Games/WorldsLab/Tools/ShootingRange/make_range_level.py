@@ -234,12 +234,12 @@ def render_xml(mesh, casts=True, tint=None, occluder=False, materials=()):
 
 
 def rigid_body_xml(motion, layer=LAYER_WORLD, mass=0.0, shape=0, linear_damping=0.05, angular_damping=0.05,
-                   friction=0.6, restitution=0.0, mask=-1):
+                   friction=0.6, restitution=0.0, mask=-1, enabled=True, source=0, continuous=False):
     motion_value = {"Dynamic": 0, "Kinematic": 1, "Static": 2}[motion]
     return nm.component_xml("Rigid Body", 1, [
-        ("Enabled", True), ("Motion", motion_value), ("Shape", shape), ("ShapeSource", 0), ("Mass", mass),
+        ("Enabled", enabled), ("Motion", motion_value), ("Shape", shape), ("ShapeSource", source), ("Mass", mass),
         ("Friction", friction), ("Restitution", restitution), ("LinearDamping", linear_damping),
-        ("AngularDamping", angular_damping), ("GravityFactor", 1), ("Continuous", False), ("Sensor", False),
+        ("AngularDamping", angular_damping), ("GravityFactor", 1), ("Continuous", continuous), ("Sensor", False),
         ("AllowSleeping", True), ("Layer", layer), ("Mask", mask)]).replace(
         "  </Component>\n",
         "    <InitialLinearVelocity X=\"0\" Y=\"0\" Z=\"0\" />\n"
@@ -833,11 +833,40 @@ def make_prefabs(level):
     ], script="Scripts/ShootingRange/RangeShooter.lua", tick="Tick")
     (PREFABS / "RangeShooter.nmprefab").write_text(shooter, newline="\n")
 
+    # A target dummy: the crash dummy standing armed, its pistol in hand. Shot dead it ragdolls
+    # (the engine's Ragdoll component: hit boxes while alive, Jolt's ragdoll once killed) and lets
+    # the pistol go -- a disabled Rigid Body the ragdoll enables as it drops it.
+    ragdoll = nm.component_xml("Ragdoll", 1, [
+        ("Enabled", True), ("HitBoxes", True), ("StartActive", False), ("DropProps", True), ("Mass", 70),
+        ("Thickness", 1), ("JointFriction", 1), ("Friction", 0.8), ("LinearDamping", 0.05), ("AngularDamping", 0.5),
+        ("Layer", LAYER_WORLD), ("Mask", -1)])
+    hand = ("  <Component Type=\"Anim Socket\" Version=\"1\">\n"
+            "    <Bone Value=\"DEF-hand.R\" />\n"
+            "    <PositionOffset X=\"-2.11\" Y=\"7.087\" Z=\"-0.769\" />\n"
+            "    <RotationOffset X=\"-85.592\" Y=\"13.264\" Z=\"175.197\" />\n"
+            "  </Component>\n")
+    dummy = prefab_text("RangeDummy", [
+        entity_block(1, "Dummy", [("Animation", animation), ("Ragdoll", ragdoll),
+                                  ("Render", render_xml(DUMMY + "CrashDummy.nmmesh", materials=[mat("DummyPaint")] * 6)),
+                                  ("Transform", nm.transform_xml((0, 0, 0)))]),
+        entity_block(2, "Pistol", [("Anim Socket", hand),
+                                   ("Render", render_xml(DUMMY + "Weapon_Pistol.nmmesh", materials=[mat("GunMetal")] * 2)),
+                                   ("Rigid Body", rigid_body_xml("Dynamic", mass=1.1, shape=5, source=2, enabled=False,
+                                                                 continuous=True, angular_damping=0.2)),
+                                   ("Transform", nm.transform_xml((0, 0, 0)))], parent=1),
+    ], script="Scripts/ShootingRange/RangeDummy.script.nmgraph", tick="Tick")
+    (PREFABS / "RangeDummy.nmprefab").write_text(dummy, newline="\n")
+
     # The targets down range: steel at 14 m and 22 m, alternating lanes; paper at 18 m.
     for k in range(LANES):
         x = LANE_X0 + (k + 0.5) * LANE_W
         level.instance(f"Steel{k}", PREFAB_PATH + "SteelPlate.nmprefab", (x, 0, FIRING_Z + (1400 if k % 2 == 0 else 2200)))
         level.instance(f"Paper{k}", PREFAB_PATH + "PaperTarget.nmprefab", (x, 0, FIRING_Z + 1800))
+    # Dummies at 10-12 m in every other lane, beside the lane's centre (away from the camera's shoulder) so the plate and paper
+    # behind stay in sight; facing the line (imported characters face -Z).
+    for k in (0, 2, 4):
+        x = LANE_X0 + (k + 0.5) * LANE_W - 65
+        level.instance(f"Dummy{k}", PREFAB_PATH + "RangeDummy.nmprefab", (x, 0, FIRING_Z + (1000 if k != 2 else 1200)))
 
 
 # ==============================================================================================

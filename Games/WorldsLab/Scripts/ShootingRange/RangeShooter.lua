@@ -8,7 +8,10 @@
 --   Fire  hit-scan from the camera through the crosshair (Physics.Raycast,
 --        Jolt), skipping layer 2 -- the catwalks' grating. A steel plate is
 --        knocked swinging on its hinge (an impulse), and rings; paper scores;
---        anything else kicks up dust. Muzzle flash and smoke at the barrel.
+--        a target dummy (its Ragdoll's hit boxes) takes three body shots or
+--        one to the head, then falls along the shot and drops its pistol --
+--        a shot body is kicked again; anything else kicks up dust. Muzzle
+--        flash and smoke at the barrel.
 --   Aim   scope in: RangeMove draws the camera in over the shoulder and narrows
 --        the view; tighter spread, a slower walk
 --   R     reload: 17 a magazine, from the reserve
@@ -29,6 +32,9 @@ local FIRE_DELAY   = 0.11     -- seconds between shots (it is semi-automatic: on
 local RANGE        = 6000
 local SHOT_MASK    = 32767 - 2 -- every layer but 2: rounds pass the catwalks' grating
 local STEEL_KICK   = 2400     -- impulse along the shot into a steel plate
+local DUMMY_HEALTH = 3        -- body shots a dummy takes; a head shot is all of them
+local KILL_KICK    = 6000     -- impulse along the killing shot (kg cm/s), at the part hit
+local BODY_KICK    = 2500     -- along a shot into one already down
 local SPREAD_HIP   = 0.9      -- degrees
 local SPREAD_AIM   = 0.15
 
@@ -58,6 +64,8 @@ return {
         self.Reloading, self.Cooldown = 0.0, 0.0
         self.StatusTime = 0.0
         self.Effects = {}
+        self.Wounds = {}   -- hits taken, by dummy entity id
+        self.Kills = 0
         Seat(self.Socket, HOLSTER)
         self.Animation:SetBool("Armed", false)
 
@@ -165,6 +173,10 @@ return {
                 if body then body:AddImpulse(dx * STEEL_KICK, dy * STEEL_KICK, dz * STEEL_KICK) end
                 self:Effect("Sparks", bx, by, bz, 1.0)
                 Audio.PlaySoundAt(SOUNDS .. "SteelHit.nmsound", hx, hy, hz, 1.0)
+            elseif entity:GetComponent("Ragdoll") then
+                self:HitDummy(entity, entity:GetComponent("Ragdoll"), dx, dy, dz, hx, hy, hz)
+                self:Effect("Dust", bx, by, bz, 1.0)
+                Audio.PlaySoundAt(SOUNDS .. "Impact.nmsound", hx, hy, hz, 0.8)
             elseif name == "PaperStand" then
                 self.Hits = self.Hits + 1
                 self:Effect("Dust", bx, by, bz, 1.4)
@@ -176,6 +188,27 @@ return {
         end
         if self.Mag == 0 then self:SetStatus(self.Reserve > 0 and "EMPTY  -  R TO RELOAD" or "OUT OF AMMO") end
         self:UpdateHud()
+    end,
+
+    -- A shot into a target dummy: wounds while it stands, its death on the last,
+    -- a kick once it is down. The Ragdoll component applies the impulse at the
+    -- part nearest the hit.
+    HitDummy = function(self, entity, ragdoll, dx, dy, dz, hx, hy, hz)
+        self.Hits = self.Hits + 1
+        if ragdoll:IsActive() then
+            ragdoll:AddImpulse(dx * BODY_KICK, dy * BODY_KICK, dz * BODY_KICK, hx, hy, hz)
+            return
+        end
+        local id = entity:GetID()
+        local head = ragdoll:GetPartAt(hx, hy, hz) == "Head"   -- the limb the round hit
+        local wounds = (self.Wounds[id] or 0) + (head and DUMMY_HEALTH or 1)
+        self.Wounds[id] = wounds
+        if wounds >= DUMMY_HEALTH then
+            self.Wounds[id] = nil
+            self.Kills = self.Kills + 1
+            ragdoll:ActivateWithImpulse(dx * KILL_KICK, dy * KILL_KICK, dz * KILL_KICK, hx, hy, hz)
+            self:SetStatus(head and "HEADSHOT" or "DOWN", 1.0)
+        end
     end,
 
     -- A particle burst at a point, destroyed after its life.
