@@ -245,6 +245,11 @@ namespace EngineCore
 
     CORE_API uint32_t appProcessID();
 
+    /* Is a process with InPid running? True when it cannot be told (no
+     * permission to look): callers use it to leave a live process's files
+     * alone, so they err toward keeping them. A reused id reads as running. */
+    CORE_API bool appProcessIsRunning(uint32_t InPid);
+
     // === Virtual memory =====================================================
     // Reserve/commit, as distinct from malloc. This exists for the pool
     // allocators in CoreMemoryPool.h, which want a large CONTIGUOUS address
