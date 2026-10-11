@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="00ff478e1fe2bf06a7e6506a9d8d2053" Type="Texture.Sample" Version="2" X="280" Y="-80" />
+    <Node Id="079975f6d0aaf95f20b0752c6e516117" Type="Output.Material" Version="1" X="-380" Y="-400">
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Opaque" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+    <Node Id="0dfed95d53b25bf6efd0f9f472c4eaff" Type="Input.TexCoord" Version="1" X="-160" Y="-400" />
+    <Node Id="28ab65a4f575234b202a89ce1d09ad24" Type="Math.Multiply" Version="1" X="-600" Y="-80" Wildcard="vec3" />
+    <Node Id="47e7be838612b33e5dae9e073227e372" Type="Texture.Object" Version="1" X="60" Y="-240">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Courtyard/Stucco_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="5584cce8172e568708bb32343e16f23f" Type="Vector.Make3" Version="1" X="-600" Y="80" />
+    <Node Id="700381f8ee323bc9133e4fe453345c73" Type="Texture.Object" Version="1" X="-600" Y="-240">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Courtyard/Stucco_Surface.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="70fc1d3d991508bf238ebc47a63bf812" Type="Parameter" Version="1" X="500" Y="-240">
+      <Prop Name="Default" Value="1 0.975 0.93" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="79fe6189faf251ffa102c6de40fbf13f" Type="Texture.Object" Version="1" X="60" Y="-80">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Courtyard/Macro_Noise.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="84be7c0e4557d979e9e32557bf671011" Type="Math.Multiply" Version="1" X="-160" Y="-80" Wildcard="vec2">
+      <Const Pin="B" Value="0.14285714285714285 0.14285714285714285" />
+    </Node>
+    <Node Id="86301ca3aa285c39cea94a8f18f1ba55" Type="Texture.Sample" Version="2" X="-380" Y="-240" />
+    <Node Id="8ed6585dc5aea5ac05a5dbb99d10b8b6" Type="Math.Multiply" Version="1" X="60" Y="-400" Wildcard="vec2">
+      <Const Pin="B" Value="0.5 0.5" />
+    </Node>
+    <Node Id="9390ce1071013bb951cfcd64c2c5e11d" Type="Math.Multiply" Version="1" X="-380" Y="80" Wildcard="vec3" />
+    <Node Id="9b48e1ab849692c6ec9efcc0cfa6b51b" Type="Math.Lerp" Version="1" X="500" Y="-80" Wildcard="float">
+      <Const Pin="A" Value="0.94" />
+      <Const Pin="B" Value="1.06" />
+    </Node>
+    <Node Id="c18b3e8d51fcb633708bd62a835d43b0" Type="Input.TexCoord" Version="1" X="-380" Y="-80" />
+    <Node Id="c20025590f5c3ad1264d3e9f25a385d9" Type="Texture.Sample" Version="2" X="280" Y="-240" />
+    <Node Id="c522eca460168ec1dbc756ddc3565696" Type="Texture.NormalMap" Version="1" X="-160" Y="-240">
+      <Const Pin="Strength" Value="0.35" />
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+    <Node Id="d6a07ae64479bd16de6477090b6660a0" Type="Texture.Object" Version="1" X="280" Y="-400">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Courtyard/Stucco_BaseColor.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="ffc4a17dbfbede8399d81ad6a38c73fd" Type="Texture.Sample" Version="2" X="500" Y="-400" />
+  </Nodes>
+  <Links>
+    <Link From="00ff478e1fe2bf06a7e6506a9d8d2053.R" To="9b48e1ab849692c6ec9efcc0cfa6b51b.T" />
+    <Link From="0dfed95d53b25bf6efd0f9f472c4eaff.UV" To="8ed6585dc5aea5ac05a5dbb99d10b8b6.A" />
+    <Link From="28ab65a4f575234b202a89ce1d09ad24.Out" To="9390ce1071013bb951cfcd64c2c5e11d.A" />
+    <Link From="47e7be838612b33e5dae9e073227e372.Texture" To="c20025590f5c3ad1264d3e9f25a385d9.Texture" />
+    <Link From="5584cce8172e568708bb32343e16f23f.Out" To="9390ce1071013bb951cfcd64c2c5e11d.B" />
+    <Link From="700381f8ee323bc9133e4fe453345c73.Texture" To="86301ca3aa285c39cea94a8f18f1ba55.Texture" />
+    <Link From="70fc1d3d991508bf238ebc47a63bf812.Value" To="28ab65a4f575234b202a89ce1d09ad24.B" />
+    <Link From="79fe6189faf251ffa102c6de40fbf13f.Texture" To="00ff478e1fe2bf06a7e6506a9d8d2053.Texture" />
+    <Link From="84be7c0e4557d979e9e32557bf671011.Out" To="00ff478e1fe2bf06a7e6506a9d8d2053.UV" />
+    <Link From="86301ca3aa285c39cea94a8f18f1ba55.B" To="079975f6d0aaf95f20b0752c6e516117.Metallic" />
+    <Link From="86301ca3aa285c39cea94a8f18f1ba55.G" To="079975f6d0aaf95f20b0752c6e516117.AmbientOcclusion" />
+    <Link From="86301ca3aa285c39cea94a8f18f1ba55.R" To="079975f6d0aaf95f20b0752c6e516117.Roughness" />
+    <Link From="8ed6585dc5aea5ac05a5dbb99d10b8b6.Out" To="86301ca3aa285c39cea94a8f18f1ba55.UV" />
+    <Link From="8ed6585dc5aea5ac05a5dbb99d10b8b6.Out" To="c20025590f5c3ad1264d3e9f25a385d9.UV" />
+    <Link From="8ed6585dc5aea5ac05a5dbb99d10b8b6.Out" To="c522eca460168ec1dbc756ddc3565696.UV" />
+    <Link From="8ed6585dc5aea5ac05a5dbb99d10b8b6.Out" To="ffc4a17dbfbede8399d81ad6a38c73fd.UV" />
+    <Link From="9390ce1071013bb951cfcd64c2c5e11d.Out" To="079975f6d0aaf95f20b0752c6e516117.BaseColor" />
+    <Link From="9b48e1ab849692c6ec9efcc0cfa6b51b.Out" To="5584cce8172e568708bb32343e16f23f.X" />
+    <Link From="9b48e1ab849692c6ec9efcc0cfa6b51b.Out" To="5584cce8172e568708bb32343e16f23f.Y" />
+    <Link From="9b48e1ab849692c6ec9efcc0cfa6b51b.Out" To="5584cce8172e568708bb32343e16f23f.Z" />
+    <Link From="c18b3e8d51fcb633708bd62a835d43b0.UV" To="84be7c0e4557d979e9e32557bf671011.A" />
+    <Link From="c20025590f5c3ad1264d3e9f25a385d9.RGB" To="c522eca460168ec1dbc756ddc3565696.Color" />
+    <Link From="c522eca460168ec1dbc756ddc3565696.Normal" To="079975f6d0aaf95f20b0752c6e516117.Normal" />
+    <Link From="d6a07ae64479bd16de6477090b6660a0.Texture" To="ffc4a17dbfbede8399d81ad6a38c73fd.Texture" />
+    <Link From="ffc4a17dbfbede8399d81ad6a38c73fd.RGB" To="28ab65a4f575234b202a89ce1d09ad24.A" />
+  </Links>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "Plaster". Do not edit.
+// Opaque, Lit. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in Plaster.material.
+UBO_BLOCK_BEGIN(2, Plaster_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    vec3  Param_Tint;
+UBO_BLOCK_END(Plaster_Block)
+
+// Textures, by material texture slot; Plaster.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+MATERIAL_SAMPLER2D(6, Material_Texture2)
+MATERIAL_SAMPLER2D(7, Material_Texture3)
+MATERIAL_SAMPLER2D(8, Material_Texture4)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec2 t0 = Inputs.TexCoord * vec2(0.5);
+    vec4 t1 = texture(Material_Texture4, t0);
+    vec3 t2 = t1.rgb * Param_Tint;
+    vec2 t3 = Inputs.TexCoord * vec2(0.14285715);
+    vec4 t4 = texture(Material_Texture3, t3);
+    float t5 = mix(0.94, 1.06, t4.r);
+    vec3 t6 = vec3(t5, t5, t5);
+    vec3 t7 = t2 * t6;
+    Surface.BaseColor = t7;
+    vec4 t8 = texture(Material_Texture2, t0);
+    Surface.Metallic = t8.b;
+    Surface.Roughness = t8.r;
+    vec4 t9 = texture(Material_Texture1, t0);
+    vec3 t10 = Material_NormalMap(Inputs, t9.rgb, 0.35, t0, -1.0);
+    Surface.Normal = t10;
+    Surface.AmbientOcclusion = t8.g;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "Plaster". Do not edit.
+NimbleMaterial 3
+Domain Opaque
+Shading Lit
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 176
+Param Tint vec3 160 1 0.975 0.93 0
+Texture 1 Default Default Content/Textures/Courtyard/Stucco_Normal.nmtexture
+Texture 2 Default Default Content/Textures/Courtyard/Stucco_Surface.nmtexture
+Texture 3 Default Default Content/Textures/Courtyard/Macro_Noise.nmtexture
+Texture 4 Default Default Content/Textures/Courtyard/Stucco_BaseColor.nmtexture
+TextureUV 1 0.5
+TextureUV 2 0.5
+TextureUV 3 0.14285714285714285
+TextureUV 4 0.5
+]]></Output>
+  </gen_code>
+</NodeGraph>

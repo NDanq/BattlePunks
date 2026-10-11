@@ -21,6 +21,7 @@
 // they are explicit now, and each one disappears as its type converts.
 #include <vector>
 #include <string>
+#include "Public/GDI/Vulkan/VKMemoryHeap.h"
 
 class VKDevice;
 class VKCommandManager;
@@ -343,6 +344,7 @@ public:
     GDITextureResource* CreateTextureResource(GDITexture2D* InParent, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) override;
     GDITextureResource* CreateTextureResourceMips(const EngineCore::Image* InLevels, uint32_t InCount, EGDITextureBorder InBorder, EGDITextureFilter InFilter) override;
     bool                SupportsCompressedFormat(EGDICompressedFormat InFormat) const override;
+    bool                GetTextureMemoryStats(GDITextureMemoryStats& OutStats) const override;
     GDITextureResource* CreateCompressedTextureResource(EGDICompressedFormat InFormat, const GDICompressedLevel* InLevels, uint32_t InCount,
                                                         EGDITextureBorder InBorder, EGDITextureFilter InFilter) override;
 
@@ -499,7 +501,14 @@ public:
      * in flight before it) and destroyed once that frame has finished.
      */
     void DeferDestroyImage(VkImage InImage, VkDeviceMemory InMemory, VkImageView InView, VkSampler InSampler);
+    /* The same for an image whose memory came from VKImageHeap: given back to it. */
+    void DeferDestroyImage(VkImage InImage, const VKAllocation& InAllocation, VkImageView InView, VkSampler InSampler);
+    /* The frame being recorded, as DoneAt: what the staging ring tags an upload with. */
+    inline uint64_t GetRecordingDoneAt() const { return RenderTimelineCounter + 1; }
     void DeferDestroyBuffer(VkBuffer InBuffer, VkDeviceMemory InMemory);
+    /* A transient pool whose one command buffer was submitted without a wait
+     * (EndAndSubmitTransientCmdAsync): freed with the frame being recorded. */
+    void DeferDestroyCommandPool(VkCommandPool InPool);
     /** Destroy what is queued above for frames up to InDoneAt (all of it by default). Caller
      *  must guarantee the GPU has finished those frames. */
     void DrainDeferredDestruction(uint64_t InDoneAt = ~0ull);
@@ -604,12 +613,15 @@ private:
     // Deferred-destruction queues (render thread only), each entry tagged with
     // the frame that may still use it. Drained after each frame-fence wait
     // (BeginRendering: what has finished; FlushForReadback: all) and at Destroy.
-    struct DeferredImage     { VkImage Image; VkDeviceMemory Memory; VkImageView View; VkSampler Sampler; uint64_t DoneAt; };
+    struct DeferredImage     { VkImage Image; VkDeviceMemory Memory; VkImageView View; VkSampler Sampler; uint64_t DoneAt;
+                               VKAllocation Allocation; };   // Allocation valid: Memory is the heap's, given back
     struct DeferredBuffer    { VkBuffer Buffer; VkDeviceMemory Memory; uint64_t DoneAt; };
     struct DeferredQueryPool { VkQueryPool Pool; uint64_t DoneAt; };
+    struct DeferredCmdPool   { VkCommandPool Pool; uint64_t DoneAt; };
     std::vector<DeferredImage>     DeferredImages;
     std::vector<DeferredBuffer>    DeferredBuffers;
     std::vector<DeferredQueryPool> DeferredQueryPools;   // released occlusion query sets'
+    std::vector<DeferredCmdPool>   DeferredCmdPools;     // texture uploads submitted without a wait
 };
 
 #endif //CORECLIENT_VULKANDYNAMICGDI_H

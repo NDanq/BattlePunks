@@ -146,6 +146,41 @@ namespace RenderCore
         return InTimer < RGT_Count ? Names[InTimer] : "";
     }
 
+    /* TEXTURE STREAMING (TEXTURE_STREAMING.md, "stat streaming"): bytes are
+     * the levels' own, per texture file -- a texture sampled with two
+     * sampler settings is on the GPU twice but counted once. */
+    struct TextureStreamingStats
+    {
+        bool     bEnabled        = false;
+        uint32_t Textures        = 0;   // streamed files
+        uint64_t ResidentBytes   = 0;   // the levels held now
+        uint64_t WantedBytes     = 0;   // ... the levels the draws ask for, after the pool's bias
+        uint64_t FullBytes       = 0;   // ... every level of every streamed file: what no streaming holds
+        uint64_t PoolBytes       = 0;   // [Rendering] TextureStreamingPoolMB
+        int32_t  BudgetBias      = 0;   // levels every wanted level was raised by to fit the pool
+        uint32_t PendingLoads    = 0;   // on the streaming thread now
+        uint32_t WaitingLoads    = 0;   // wanted, not yet asked for (the in-flight cap)
+        uint32_t CommitsLastFrame     = 0;
+        uint64_t UploadBytesLastFrame = 0;
+        uint64_t Loads           = 0;   // over the streamer's life
+        uint64_t BytesRead       = 0;
+        uint64_t Drops           = 0;
+        float    LoadMs          = 0.0f;   // the streaming thread's last load, read to built
+        float    UpdateMs        = 0.0f;   // the render thread's last Update
+        float    CreateMs        = 0.0f;   // the render thread making streamed GPU textures, the last frame
+        float    CreateMsPeak    = 0.0f;   // ... the most in one frame of the last 120
+        /* The "Textures" memory pool (TextureAsset.h): every texture file's
+         * levels on the CPU, streamed or not, and the freed blocks it keeps. */
+        uint64_t CpuBytes        = 0;
+        uint64_t CpuCachedBytes  = 0;
+        /* The backend's texture memory (GDIGetTextureMemoryStats): every
+         * texture's, streamed or not, where the backend tracks it. */
+        uint64_t GpuBlockBytes   = 0;   // blocks images are carved from
+        uint64_t GpuBlockUsed    = 0;
+        uint64_t GpuDedicated    = 0;   // images on their own allocation
+        uint64_t GpuStaging      = 0;   // the upload ring
+    };
+
     struct RenderStats
     {
         uint64_t FramesRendered         = 0;
@@ -209,6 +244,8 @@ namespace RenderCore
         uint32_t ParallelRecordingWorkers    = 0;
         /* Stages recorded in parallel chunks, over the renderer's life. */
         uint64_t ParallelPasses              = 0;
+
+        TextureStreamingStats TextureStreaming;
     };
 }
 

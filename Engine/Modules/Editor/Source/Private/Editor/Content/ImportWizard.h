@@ -69,6 +69,7 @@ private:
     QCheckBox*      LightmapUVs   = nullptr;
     QCheckBox*      Combine       = nullptr;
     QCheckBox*      MeshTextures  = nullptr;
+    QCheckBox*      MaterialColors = nullptr;
     QListWidget*    ImageList     = nullptr;
 
     QCheckBox*      SRGB          = nullptr;

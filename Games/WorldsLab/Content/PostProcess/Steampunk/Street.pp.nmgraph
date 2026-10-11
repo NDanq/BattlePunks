@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="PostProcess">
+  <Nodes>
+    <Node Id="1b382548b477efa93b6f772eca154cf6" Type="Effect.ScreenSpaceReflections" Version="1" X="-209" Y="72">
+      <Prop Name="Intensity" Value="1" />
+      <Prop Name="Max Distance" Value="2500" />
+      <Prop Name="Max Roughness" Value="0.5" />
+      <Prop Name="Steps" Value="32" />
+      <Prop Name="Thickness" Value="25" />
+    </Node>
+    <Node Id="913bda94718a40a6961682413e4ac1c2" Type="Effect.AmbientOcclusion" Version="1" X="-372" Y="0">
+      <Prop Name="Blur" Value="true" />
+      <Prop Name="Intensity" Value="1.1" />
+      <Prop Name="Power" Value="1.6" />
+      <Prop Name="Radius" Value="70" />
+      <Prop Name="Samples" Value="12" />
+    </Node>
+    <Node Id="af261d8c5dd5a10d229775731962d281" Type="Effect.Bloom" Version="1" X="150" Y="0">
+      <Prop Name="Intensity" Value="0.45" />
+      <Prop Name="Levels" Value="6" />
+      <Prop Name="Radius" Value="0.75" />
+      <Prop Name="Threshold" Value="0.95" />
+      <Prop Name="Tint" Value="1 0.92 0.82" />
+    </Node>
+    <Node Id="af73328e9130a406aaf06dc95d223d43" Type="Effect.ToneMapping" Version="1" X="450" Y="0">
+      <Prop Name="Exposure" Value="0.9" />
+      <Prop Name="Tone Mapper" Value="ACES" />
+    </Node>
+    <Node Id="b8629003ed0dc64196f1f554ea3c150a" Type="Effect.AutoExposure" Version="1" X="256" Y="58">
+      <Prop Name="Centre Weight" Value="0.5" />
+      <Prop Name="Key" Value="0.16" />
+      <Prop Name="Max EV" Value="4" />
+      <Prop Name="Min EV" Value="-3" />
+      <Prop Name="Speed Down" Value="1" />
+      <Prop Name="Speed Up" Value="2" />
+    </Node>
+    <Node Id="c8f51d3761f540d54b5391a72c9606d1" Type="Effect.VolumetricFog" Version="1" X="-85" Y="-24">
+      <Prop Name="Albedo" Value="1 0.92 0.8" />
+      <Prop Name="Anisotropy" Value="0.65" />
+      <Prop Name="Base Height" Value="0" />
+      <Prop Name="Density" Value="0.0001" />
+      <Prop Name="Height Falloff" Value="0.00045" />
+      <Prop Name="Light Scattering" Value="1.4" />
+      <Prop Name="Max Distance" Value="12000" />
+      <Prop Name="Shadows" Value="true" />
+      <Prop Name="Sky Scattering" Value="0.8" />
+      <Prop Name="Steps" Value="32" />
+      <Prop Name="Sun Scattering" Value="1.2" />
+    </Node>
+    <Node Id="f778a02ce60b464ffe5300a55cd89371" Type="Effect.Antialiasing" Version="1" X="601" Y="2">
+      <Prop Name="Edge Threshold" Value="0.125" />
+      <Prop Name="Method" Value="FXAA" />
+      <Prop Name="Quality" Value="High" />
+      <Prop Name="Sharpness" Value="0.35" />
+    </Node>
+  </Nodes>
+  <Comments>
+    <Comment X="-350" Y="-120" Width="1100" Height="90" Text="The Steampunk street: corners darkened (AO), wet cobbles and glass reflecting (SSR), a warm industrial haze the low sun shafts through (fog), lamps blooming, eye adaptation, ACES, TAA. No Bounds: everywhere." />
+  </Comments>
+  <gen_code>
+    <Output Extension=".ppstack"><![CDATA[# Post process stack Street
+Effect AmbientOcclusion Intensity=1.1 Radius=70 Samples=12 Power=1.6 Blur=true
+Effect ScreenSpaceReflections Intensity=1 MaxRoughness=0.5 MaxDistance=2500 Thickness=25 Steps=32
+Effect VolumetricFog Density=1e-04 HeightFalloff=0.00045 BaseHeight=0 MaxDistance=12000 Anisotropy=0.65 SunScattering=1.2 SkyScattering=0.8 LightScattering=1.4 Albedo=1,0.92,0.8 Steps=32 Shadows=true
+Effect Bloom Threshold=0.95 Intensity=0.45 Radius=0.75 Levels=6 Tint=1,0.92,0.82
+Effect ToneMapping Exposure=0.9 ToneMapper=ACES
+Effect AutoExposure Key=0.16 MinEV=-3 MaxEV=4 SpeedUp=2 SpeedDown=1 CentreWeight=0.5
+Effect Antialiasing EdgeThreshold=0.125 Sharpness=0.35 Method=FXAA Quality=High
+]]></Output>
+  </gen_code>
+</NodeGraph>

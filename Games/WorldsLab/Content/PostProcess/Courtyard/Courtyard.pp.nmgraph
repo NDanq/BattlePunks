@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="PostProcess">
+  <Nodes>
+    <Node Id="2d1a693ec6c185ab8fe19628e6f03062" Type="Effect.AmbientOcclusion" Version="1" X="-597" Y="-240">
+      <Prop Name="Blur" Value="true" />
+      <Prop Name="Intensity" Value="3" />
+      <Prop Name="Power" Value="1.4" />
+      <Prop Name="Radius" Value="60" />
+      <Prop Name="Samples" Value="16" />
+    </Node>
+    <Node Id="312483a321259efbabbffa6b5d6549af" Type="Effect.Bloom" Version="1" X="60" Y="-400">
+      <Prop Name="Intensity" Value="0.6" />
+      <Prop Name="Radius" Value="0.65" />
+      <Prop Name="Threshold" Value="1" />
+    </Node>
+    <Node Id="6b6c2258d5500bf1f0dac5d9a92e8874" Type="Effect.VolumetricFog" Version="1" X="280" Y="-400">
+      <Prop Name="Albedo" Value="1 0.96 0.92" />
+      <Prop Name="Anisotropy" Value="0.65" />
+      <Prop Name="Base Height" Value="0" />
+      <Prop Name="Density" Value="0.0001" />
+      <Prop Name="Height Falloff" Value="0.0005" />
+      <Prop Name="Light Scattering" Value="2" />
+      <Prop Name="Max Distance" Value="9000" />
+      <Prop Name="Shadows" Value="true" />
+      <Prop Name="Sky Scattering" Value="0.6" />
+      <Prop Name="Steps" Value="24" />
+      <Prop Name="Sun Scattering" Value="1.5" />
+    </Node>
+    <Node Id="6ee5e56909def2423a83db1e0e3408bb" Type="Effect.ToneMapping" Version="1" X="-380" Y="-400">
+      <Prop Name="Exposure" Value="0" />
+      <Prop Name="Tone Mapper" Value="ACES" />
+    </Node>
+    <Node Id="72a01120e11efb063ebc569dd9907f08" Type="Effect.Antialiasing" Version="1" X="-380" Y="-240">
+      <Prop Name="Method" Value="TAA" />
+      <Prop Name="Quality" Value="Low" />
+    </Node>
+    <Node Id="82b4d6bd7a2bb5ed1ecec5f9cbed5af7" Type="Effect.AutoExposure" Version="1" X="-160" Y="-400">
+      <Prop Name="Centre Weight" Value="0.5" />
+      <Prop Name="Key" Value="0.12" />
+      <Prop Name="Max EV" Value="2.5" />
+      <Prop Name="Min EV" Value="-2" />
+      <Prop Name="Speed Down" Value="1" />
+      <Prop Name="Speed Up" Value="2.5" />
+    </Node>
+    <Node Id="9d0337161b96b9bfde066a7b124fe6cf" Type="Effect.ScreenSpaceReflections" Version="1" X="500" Y="-400">
+      <Prop Name="Intensity" Value="1" />
+      <Prop Name="Max Distance" Value="1500" />
+      <Prop Name="Max Roughness" Value="0.5" />
+      <Prop Name="Steps" Value="32" />
+      <Prop Name="Thickness" Value="25" />
+    </Node>
+  </Nodes>
+  <gen_code>
+    <Output Extension=".ppstack"><![CDATA[# Post process stack Courtyard
+Effect AmbientOcclusion Intensity=3 Radius=60 Samples=16 Power=1.4 Blur=true
+Effect ScreenSpaceReflections Intensity=1 MaxRoughness=0.5 MaxDistance=1500 Thickness=25 Steps=32
+Effect VolumetricFog Density=1e-04 HeightFalloff=5e-04 BaseHeight=0 MaxDistance=9000 Anisotropy=0.65 SunScattering=1.5 SkyScattering=0.6 LightScattering=2 Albedo=1,0.96,0.92 Steps=24 Shadows=true
+Effect Bloom Threshold=1 Intensity=0.6 Radius=0.65 Levels=5 Tint=1,1,1
+Effect ToneMapping Exposure=0 ToneMapper=ACES
+Effect AutoExposure Key=0.12 MinEV=-2 MaxEV=2.5 SpeedUp=2.5 SpeedDown=1 CentreWeight=0.5
+Effect Antialiasing EdgeThreshold=0.125 Sharpness=0.35 Method=TAA Quality=Low
+]]></Output>
+  </gen_code>
+</NodeGraph>

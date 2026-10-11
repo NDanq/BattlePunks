@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "Public/NimbleEngine/Avatar.h"
+#include "Public/NimbleEngine/Ragdoll.h"
 #include "Public/NimbleEngine/GameConsole.h"
 #include "Public/NimbleEngine/PlayerStart.h"
 #include "Public/NimbleEngine/NetFacade.h"
@@ -270,6 +271,10 @@ namespace NimbleEngine
         Avatars->Attach(*LevelWorld);
         Avatars->SetInput(&FilteredInput);
 
+        /* Ragdolls: after physics and the animation system, which it runs
+         * between (TP_PostPhysics, and TP_PostUpdate after the animation). */
+        RagdollWorld::Attach(*LevelWorld);
+
         /* Cutscenes: the level's Sequence Players, from TP_PostPhysics.
          * Before OnLoad, so an AutoPlay player starts with the level. */
         bCinematic    = false;
@@ -476,6 +481,9 @@ namespace NimbleEngine
                 Avatars = nullptr;
             }
             ViewTarget = GameCore::EntityID();
+
+            /* Before the physics and animation it holds ragdolls in. */
+            RagdollWorld::Detach(*LevelWorld);
 
             /* While scripts are bound: what sequences spawned is destroyed
              * with its OnDestroy run. The overlay closed with the level's
@@ -885,12 +893,13 @@ namespace NimbleEngine
                           "  Sensors %6u\n"
                           "Joints    %6u\n"
                           "Vehicles  %6u\n"
+                          "Ragdolls  %6u\n"
                           "Contacts  %6u\n"
                           "Steps     %6u\n"
                           "Step   %6.2f ms\n"
                           "Sync   %6.2f ms",
                           Stats.Bodies, Stats.ActiveBodies, Stats.DynamicBodies, Stats.KinematicBodies,
-                          Stats.StaticBodies, Stats.Sensors, Stats.Constraints, Stats.Vehicles, Stats.Contacts,
+                          Stats.StaticBodies, Stats.Sensors, Stats.Constraints, Stats.Vehicles, Stats.Ragdolls, Stats.Contacts,
                           Stats.StepsLastFrame, double(Stats.StepMs), double(Stats.SyncMs));
             Text = Buffer;
         }

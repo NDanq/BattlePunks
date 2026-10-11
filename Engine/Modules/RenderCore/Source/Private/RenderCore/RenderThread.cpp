@@ -433,6 +433,7 @@ namespace RenderCore
         OutStats.ParallelPasses              = P->Context.GetParallelPassCount();
         GetStaticDrawStats(OutStats.StaticProxiesDrawn, OutStats.StaticListBuilds);
         GetOcclusionStats(OutStats.ProxiesOccludedLastFrame, OutStats.OcclusionQueriesLastFrame);
+        OutStats.TextureStreaming = P->Context.GetTextureStreamingStats();
     }
 
     // === The locator (RenderThreadInternal.h) ==================================
@@ -525,6 +526,35 @@ namespace RenderCore
     {
         std::lock_guard<std::mutex> Lock(GStatUnitLock);
         return GStatUnit;
+    }
+
+    std::string FormatStatStreaming(const TextureStreamingStats& InStats)
+    {
+        if(!InStats.bEnabled) { return "off ([Rendering] TextureStreaming)"; }
+        const auto Mb = [](const uint64_t InBytes) { return double(InBytes) / (1024.0 * 1024.0); };
+        char Buffer[768];
+        std::snprintf(Buffer, sizeof(Buffer),
+                      "Textures  %6u\n"
+                      "Resident  %7.1f MB\n"
+                      "Wanted    %7.1f MB\n"
+                      "All mips  %7.1f MB\n"
+                      "Pool      %7.1f MB  bias %d\n"
+                      "Loading   %6u  waiting %u\n"
+                      "Loads     %6llu  %.1f MB read\n"
+                      "Drops     %6llu\n"
+                      "Commits   %6u  %.1f MB\n"
+                      "Update    %6.2f ms  load %.2f ms\n"
+                      "Create    %6.2f ms  peak %.2f ms\n"
+                      "CPU       %7.1f MB  kept %.1f MB\n"
+                      "GPU       %7.1f MB  in blocks %.1f/%.1f MB, ring %.0f MB",
+                      InStats.Textures, Mb(InStats.ResidentBytes), Mb(InStats.WantedBytes), Mb(InStats.FullBytes),
+                      Mb(InStats.PoolBytes), InStats.BudgetBias, InStats.PendingLoads, InStats.WaitingLoads,
+                      static_cast<unsigned long long>(InStats.Loads), Mb(InStats.BytesRead),
+                      static_cast<unsigned long long>(InStats.Drops), InStats.CommitsLastFrame, Mb(InStats.UploadBytesLastFrame),
+                      double(InStats.UpdateMs), double(InStats.LoadMs), double(InStats.CreateMs), double(InStats.CreateMsPeak),
+                      Mb(InStats.CpuBytes), Mb(InStats.CpuCachedBytes),
+                      Mb(InStats.GpuBlockUsed + InStats.GpuDedicated), Mb(InStats.GpuBlockUsed), Mb(InStats.GpuBlockBytes), Mb(InStats.GpuStaging));
+        return Buffer;
     }
 
     std::string FormatStatUnit(const StatUnitSnapshot& InSnapshot)

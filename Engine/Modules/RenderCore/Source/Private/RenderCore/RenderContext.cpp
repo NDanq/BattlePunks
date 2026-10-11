@@ -40,6 +40,7 @@
 #include "Private/RenderCore/RenderCoreInternal.h"
 #include "Private/RenderCore/SceneTargets.h"
 #include "Private/RenderCore/ShadowSetup.h"
+#include "Private/RenderCore/TextureStreaming.h"
 
 /*
  * DrawQuad: a 1x1 quad mesh, Basic_VS/Basic_PS, and a GDIView whose camera
@@ -87,6 +88,11 @@ namespace RenderCore
          * thread binds these and never looks one up. ResolvedPass: which pass. */
         std::vector<GDITextureResource*> Resolved;
         uint64_t             ResolvedPass = 0;
+        /* TEXTURE STREAMING: its textures' streaming entries, by
+         * Description.Textures' index (null: not streamed), found in
+         * StreamEpoch; a draw notes its demand on them (NoteStreamingDemand). */
+        std::vector<TextureStreamer::Entry*> StreamEntries;
+        uint64_t             StreamEpoch = 0;
     };
 
     /*
@@ -323,6 +329,11 @@ namespace RenderCore
              * draws when nothing poses it. Remade when its skeleton is. */
             std::shared_ptr<const SkeletonData> Skeleton;
             std::vector<float>                  RefPalette;
+
+            /* TEXTURE STREAMING: the world units one UV unit spans, by
+             * section (one for a mesh of none), its triangles' areas
+             * averaged; 0 where UV0 has no area. */
+            std::vector<float>                  WorldPerUV;
         };
         std::unordered_map<std::string, GpuMesh> Meshes;
 
@@ -353,9 +364,129 @@ namespace RenderCore
         {
             std::shared_ptr<const TextureData> Source;
             GDITextureResource*                Gpu = nullptr;
+            bool                               bStreamed = false;   // Source is a streamed resident set
         };
         std::unordered_map<std::string, GpuTexture> Textures;
         std::vector<GDITextureResource*>            RetiredTextures;
+
+        /*
+         * TEXTURE STREAMING (TEXTURE_STREAMING.md). The streamer; the GPU
+         * textures its swaps replaced, each freed once the rendering serial
+         * is past every frame in flight that could sample it; StreamEpoch,
+         * bumped when its entries are forgotten (materials find theirs
+         * again); the frame it was last updated in, and whether it streams
+         * this frame; the screen pixels a world unit spans at what queues
+         * draws now (SetDrawStreamingScale; 0: not known); and whether the
+         * draws being made bypass it (previews).
+         */
+        TextureStreamer Streamer;
+        struct RetiredStream
+        {
+            GDITextureResource* Texture = nullptr;
+            uint64_t            Serial  = 0;
+        };
+        std::vector<RetiredStream> StreamRetired;
+        uint64_t StreamEpoch        = 1;
+        uint64_t StreamUpdatedFrame = ~uint64_t(0);
+        bool     bStreamingThisFrame = false;
+        float    DrawPixelsPerWorld  = 0.0f;
+        bool     bStreamBypass       = false;
+
+        void RetireStreamed(GDITextureResource* InTexture)
+        {
+            StreamRetired.push_back({ InTexture, GDIGetRenderingSerial() });
+        }
+
+        /* The replaced textures no frame in flight can still sample; all of them with bInAll. */
+        void FreeRetiredStreamed(const bool bInAll)
+        {
+            const uint64_t Serial = GDIGetRenderingSerial();
+            const uint64_t Behind = uint64_t(GDIGetFramesInFlight()) + 1;
+            size_t Kept = 0;
+            for(RetiredStream& Each : StreamRetired)
+            {
+                if(bInAll || Serial >= Each.Serial + Behind)
+                {
+                    Each.Texture->Release();
+                    delete Each.Texture;
+                }
+                else
+                {
+                    StreamRetired[Kept++] = Each;
+                }
+            }
+            StreamRetired.resize(Kept);
+        }
+
+        /* A draw queued in a scene: its material's streamed textures asked
+         * for at the level its pixels need -- a mesh section's screen pixels
+         * per UV unit where it is; anything else, or a draw where that is
+         * not known, all of each. */
+        void NoteStreamingDemand(const DrawCommand& InItem)
+        {
+            if(!bStreamingThisFrame || bStreamBypass || !InItem.Mat) { return; }
+            RenderMaterial& Mat = *InItem.Mat;
+            if(Mat.StreamEpoch != StreamEpoch)
+            {
+                Mat.StreamEntries.assign(Mat.Description.Textures.size(), nullptr);
+                for(size_t Index = 0; Index < Mat.Description.Textures.size(); ++Index)
+                {
+                    const std::string& Path = Mat.Description.Textures[Index].Path;
+                    Mat.StreamEntries[Index] = IsRenderTargetPath(Path) ? nullptr : Streamer.FindEntry(Path);
+                }
+                Mat.StreamEpoch = StreamEpoch;
+            }
+            const float Demand = InItem.Kind == DrawCommand::EKind::MeshSection && InItem.WorldPerUV > 0.0f
+                               ? InItem.WorldPerUV * DrawPixelsPerWorld : 0.0f;
+            /* Per texture: its samples read UV0 times StreamUVScale, so one of its
+             * UV units spans 1 / StreamUVScale of UV0's -- that many times the pixels. */
+            for(size_t Index = 0; Index < Mat.StreamEntries.size(); ++Index)
+            {
+                if(TextureStreamer::Entry* Each = Mat.StreamEntries[Index])
+                {
+                    TextureStreamer::NoteDemand(*Each, Demand / Mat.Description.Textures[Index].StreamUVScale);
+                }
+            }
+        }
+
+        /* Section by section (the whole mesh with none): sqrt of world area
+         * over UV area -- how many world units a UV unit spans on average. */
+        static void MeasureWorldPerUV(const MeshData& InMesh, std::vector<float>& OutWorldPerUV)
+        {
+            const auto Measure = [&InMesh](const uint32_t InFirst, const uint32_t InCount) -> float
+            {
+                const size_t Vertices = InMesh.Positions.size() / 3;
+                if(InMesh.UV0.size() < Vertices * 2) { return 0.0f; }
+                double World = 0.0, Uv = 0.0;
+                const uint32_t End = std::min<uint32_t>(InFirst + InCount, uint32_t(InMesh.Indices.size()));
+                for(uint32_t At = InFirst; At + 3 <= End; At += 3)
+                {
+                    const uint32_t A = InMesh.Indices[At], B = InMesh.Indices[At + 1], C = InMesh.Indices[At + 2];
+                    if(A >= Vertices || B >= Vertices || C >= Vertices) { continue; }
+                    const float* PA = &InMesh.Positions[size_t(A) * 3];
+                    const float* PB = &InMesh.Positions[size_t(B) * 3];
+                    const float* PC = &InMesh.Positions[size_t(C) * 3];
+                    const double E1[3] = { PB[0] - PA[0], PB[1] - PA[1], PB[2] - PA[2] };
+                    const double E2[3] = { PC[0] - PA[0], PC[1] - PA[1], PC[2] - PA[2] };
+                    const double X = E1[1] * E2[2] - E1[2] * E2[1];
+                    const double Y = E1[2] * E2[0] - E1[0] * E2[2];
+                    const double Z = E1[0] * E2[1] - E1[1] * E2[0];
+                    World += std::sqrt(X * X + Y * Y + Z * Z) * 0.5;
+                    const float* UA = &InMesh.UV0[size_t(A) * 2];
+                    const float* UB = &InMesh.UV0[size_t(B) * 2];
+                    const float* UC = &InMesh.UV0[size_t(C) * 2];
+                    Uv += std::abs(double(UB[0] - UA[0]) * double(UC[1] - UA[1]) - double(UB[1] - UA[1]) * double(UC[0] - UA[0])) * 0.5;
+                }
+                return Uv > 1.0e-12 && World > 0.0 ? float(std::sqrt(World / Uv)) : 0.0f;
+            };
+            OutWorldPerUV.clear();
+            if(InMesh.Sections.empty())
+            {
+                OutWorldPerUV.push_back(Measure(0, uint32_t(InMesh.Indices.size())));
+                return;
+            }
+            for(const MeshSection& Section : InMesh.Sections) { OutWorldPerUV.push_back(Measure(Section.FirstIndex, Section.IndexCount)); }
+        }
 
         /*
          * SCENE CAPTURE (RENDERPIPELINE.md): each render target by path -- its
@@ -652,10 +783,12 @@ namespace RenderCore
         }
 
         /* Null if unloadable or unbuildable; OutSource is set if found. */
-        GDIMesh* FindMesh(const std::string& InPath, std::shared_ptr<const MeshData>& OutSource)
+        GDIMesh* FindMesh(const std::string& InPath, std::shared_ptr<const MeshData>& OutSource,
+                          const std::vector<float>** OutWorldPerUV = nullptr)
         {
             OutSource = MeshAssetCache::Find(InPath);
             GpuMesh& Entry = Meshes[InPath];
+            if(OutWorldPerUV) { *OutWorldPerUV = &Entry.WorldPerUV; }
             if(Entry.Source == OutSource)
             {
                 return Entry.Gpu;
@@ -689,6 +822,7 @@ namespace RenderCore
                 Desc.Weights = OutSource->Weights.data();
             }
             Entry.Gpu = GDICreateMesh(Desc);
+            MeasureWorldPerUV(*OutSource, Entry.WorldPerUV);
             GDISetDebugName(Entry.Gpu, InPath);   // its buffers in a capture tool; and its draws' labels (Issue)
             if(!Entry.Gpu)
             {
@@ -699,35 +833,55 @@ namespace RenderCore
 
         /* A material texture's GPU copy with its sampler: the node's settings
          * where it overrides them, else the asset's. Null (warned by the
-         * cache) if the file cannot be loaded: the slot reads transparent. */
-        GDITextureResource* FindTexture(const MaterialTexture& InTexture)
+         * cache) if the file cannot be loaded: the slot reads transparent.
+         * Streamed (TEXTURE_STREAMING.md) unless bInWhole -- what keeps the
+         * pointer (the UI), or draws outside a view (previews) -- or
+         * streaming is off: then every level, from TextureAssetCache. */
+        GDITextureResource* FindTexture(const MaterialTexture& InTexture, const bool bInWhole = false)
         {
             /* A render target (a scene capture), not a file. */
             if(IsRenderTargetPath(InTexture.Path))
             {
                 return RenderTargetTexture(InTexture.Path);
             }
-            std::shared_ptr<const TextureData> Source = TextureAssetCache::Find(InTexture.Path);
+            TextureStreamer::Entry* Stream = bInWhole || bStreamBypass ? nullptr : Streamer.FindEntry(InTexture.Path);
+            std::shared_ptr<const TextureData> Source = Stream ? TextureStreamer::GetResident(*Stream) : TextureAssetCache::Find(InTexture.Path);
             if(!Source)
             {
                 return nullptr;
             }
 
+            /* The streamed copy's sampler is the file's: a resident set has no say. */
             const ETextureFilter Filter = InTexture.bFilter ? InTexture.Filter : Source->Filter;
             const ETextureWrap   Wrap   = InTexture.bWrap ? InTexture.Wrap : Source->Wrap;
-            const std::string    Key    = InTexture.Path + "|" + std::to_string(int(Filter)) + std::to_string(int(Wrap));
+            const std::string    Key    = InTexture.Path + "|" + std::to_string(int(Filter)) + std::to_string(int(Wrap))
+                                        + ((Stream || !Streamer.IsEnabled()) ? "" : "|whole");
 
             GpuTexture& Entry = Textures[Key];
             if(Entry.Source == Source)
             {
                 return Entry.Gpu;
             }
-            if(Entry.Gpu) { RetiredTextures.push_back(Entry.Gpu); }
-            Entry.Source = Source;
+            /* A streamed texture is replaced as its levels change: freed once
+             * no frame in flight can sample it, not kept to the end. */
+            if(Entry.Gpu && (Stream || Entry.bStreamed)) { RetireStreamed(Entry.Gpu); }
+            else if(Entry.Gpu)                           { RetiredTextures.push_back(Entry.Gpu); }
+            Entry.Source    = Source;
+            Entry.bStreamed = Stream != nullptr;
 
             const EGDITextureBorder Border = Wrap == ETextureWrap::Clamp  ? GDI_TB_Clamp_To_Edge
                                            : Wrap == ETextureWrap::Mirror ? GDI_TB_Mirrored_Repeat : GDI_TB_Repeat;
             const EGDITextureFilter GpuFilter = Filter == ETextureFilter::Nearest ? GDI_TF_Nearest : GDI_TF_Linear;
+            const auto Began = std::chrono::steady_clock::now();
+            struct NoteCreate   // "stat streaming": what making a streamed texture costs this thread
+            {
+                TextureStreamer* Streamer;
+                std::chrono::steady_clock::time_point Began;
+                ~NoteCreate()
+                {
+                    if(Streamer) { Streamer->NoteCreateMs(std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - Began).count()); }
+                }
+            } Noted{ Stream ? &Streamer : nullptr, Began };
             if(!Source->Blocks.empty())
             {
                 Entry.Gpu = CreateBlockTexture(*Source, InTexture.Path, Border, GpuFilter);
@@ -1147,7 +1301,7 @@ namespace RenderCore
             Lightmap.Filter  = ETextureFilter::Nearest;
             Lightmap.bWrap   = true;
             Lightmap.Wrap    = ETextureWrap::Clamp;
-            return Lightmap.Path.empty() ? nullptr : FindTexture(Lightmap);
+            return Lightmap.Path.empty() ? nullptr : FindTexture(Lightmap, true);
         }
 
         GDITextureResource* IBLAtlasTexture() const
@@ -1180,7 +1334,7 @@ namespace RenderCore
                 Hdri.Filter  = ETextureFilter::Nearest;
                 Hdri.bWrap   = true;
                 Hdri.Wrap    = ETextureWrap::Repeat;
-                Environment = FindTexture(Hdri);
+                Environment = FindTexture(Hdri, true);
             }
             OutBlock.A[0] = Environment ? 1.0f : 0.0f;
             OutBlock.A[1] = Lighting.SkyEnvironmentIntensity;
@@ -2179,6 +2333,7 @@ namespace RenderCore
                 Capture->push_back({ InItem, InStage });   // a static list's: it never moves
                 return;
             }
+            if(bDeferring) { NoteStreamingDemand(InItem); }   // a static list's replay too: this view's demand
             if(bDrawMotion && !InItem.bStatic)
             {
                 InItem.bMoved = true;
@@ -3079,11 +3234,15 @@ namespace RenderCore
         }
 
         std::shared_ptr<const MeshData> Source;
-        GDIMesh* Mesh = P->FindMesh(InMeshPath, Source);
+        const std::vector<float>* WorldPerUV = nullptr;
+        GDIMesh* Mesh = P->FindMesh(InMeshPath, Source, &WorldPerUV);
         if(!Mesh || !Source)
         {
             return false;
         }
+        /* TEXTURE STREAMING: its largest scale stretches its UVs as far. */
+        const EngineCore::Vector3& Scale = InTransform.Scale;
+        const float MaxScale = float(std::max({ std::abs(double(Scale.GetX())), std::abs(double(Scale.GetY())), std::abs(double(Scale.GetZ())) }));
 
         /* A skinned mesh nothing poses draws in its reference pose. */
         const float* SkinPalette = InOverrides.SkinPalette;
@@ -3128,6 +3287,7 @@ namespace RenderCore
             Item.SkinBones     = SkinBones;
             Item.PrevSkinPalette = SkinPalette == InOverrides.SkinPalette ? InOverrides.PrevSkinPalette : nullptr;
             Item.MaterialSlot  = uint8_t(SlotIndex);   // the section's slot, whichever material it fell back to
+            Item.WorldPerUV    = WorldPerUV && Index < WorldPerUV->size() ? (*WorldPerUV)[Index] * MaxScale : 0.0f;
             if(InOverrides.Instances)
             {
                 Item.Instances     = InOverrides.Instances->Buffer;
@@ -3333,6 +3493,7 @@ namespace RenderCore
         for(DrawPolicy& Policy : P->Policies) { Policy.Clear(); }
         P->ForgetOcclusion();   // a scene's own, set again by RenderScene
         P->bDeferring        = true;
+        P->DrawPixelsPerWorld = 0.0f;   // a scene's RenderScene sets it per proxy
         P->Shadows.ViewCount = 0;   // a preview has none; a scene's PrepareShadows adds them
         P->CasterView        = -1;
     }
@@ -3595,6 +3756,37 @@ namespace RenderCore
     void RenderContext::EndCapture()
     {
         P->Capture = nullptr;
+    }
+
+    void RenderContext::SetDrawStreamingScale(const float InPixelsPerWorldUnit)
+    {
+        P->DrawPixelsPerWorld = InPixelsPerWorldUnit;
+    }
+
+    void RenderContext::UpdateTextureStreaming()
+    {
+        if(P->StreamUpdatedFrame == P->FrameNumber) { return; }
+        P->StreamUpdatedFrame = P->FrameNumber;
+        P->FreeRetiredStreamed(false);
+        const bool bWas = P->bStreamingThisFrame;
+        P->bStreamingThisFrame = TextureStreamer::IsEnabled();
+        if(bWas && !P->bStreamingThisFrame)
+        {
+            /* Turned off: forget the entries; materials find them again if it comes back. */
+            P->Streamer.ReleaseAll();
+            ++P->StreamEpoch;
+        }
+        if(P->bStreamingThisFrame) { P->Streamer.Update(); }
+    }
+
+    void RenderContext::FlushTextureStreaming()
+    {
+        if(TextureStreamer::IsEnabled()) { P->Streamer.Flush(); }
+    }
+
+    TextureStreamingStats RenderContext::GetTextureStreamingStats() const
+    {
+        return P->Streamer.GetStats();
     }
 
     void RenderContext::SetDrawMotion(const EngineCore::Matrix4x4* InMotion)
@@ -4434,7 +4626,7 @@ namespace RenderCore
                 {
                     MaterialTexture Texture;
                     Texture.Path = Key;
-                    ByTexture[At] = P->FindTexture(Texture);
+                    ByTexture[At] = P->FindTexture(Texture, true);   // kept in the UI state: never swapped
                 }
             }
             InState.CommandTextures.resize(List.CommandCount);
@@ -4709,6 +4901,14 @@ namespace RenderCore
         const int Width  = Clamp(InRequest.Width);
         const int Height = Clamp(InRequest.Height);
 
+        /* Every level of its textures: a preview is drawn once and kept. */
+        struct BypassStreaming
+        {
+            bool& Flag;
+            explicit BypassStreaming(bool& InFlag) : Flag(InFlag) { Flag = true; }
+            ~BypassStreaming() { Flag = false; }
+        } Bypass(P->bStreamBypass);
+
         /* Loaded (or failed) exactly as the viewport's draw would. */
         Material* Found = Name.empty() ? nullptr : &P->FindMaterial(Name);
         if(Found && !Found->Pixel)
@@ -4883,6 +5083,9 @@ namespace RenderCore
             if(Each.second.Gpu) { P->RetiredTextures.push_back(Each.second.Gpu); }
         }
         P->Textures.clear();
+        P->Streamer.ReleaseAll();
+        ++P->StreamEpoch;
+        P->FreeRetiredStreamed(true);
         if(P->OverlayFont) { P->RetiredTextures.push_back(P->OverlayFont); }
         P->OverlayFont = nullptr;
         if(P->UIWhite) { P->RetiredTextures.push_back(P->UIWhite); }

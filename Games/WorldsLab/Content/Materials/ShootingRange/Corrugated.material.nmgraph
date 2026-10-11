@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="0943adfd08824a97237ae57afa42196d" Type="Input.TexCoord" Version="1" X="-700" Y="0" />
+    <Node Id="1873565ebb73c8e5feaafe50a000a641" Type="Parameter" Version="1" X="-700" Y="120">
+      <Prop Name="Default" Value="0.5 0.5" />
+      <Prop Name="Name" Value="UVScale" />
+      <Prop Name="Type" Value="vec2" />
+    </Node>
+    <Node Id="2012dd8fdc15bc6fdf219ed35ff20efb" Type="Parameter" Version="1" X="220" Y="60">
+      <Prop Name="Default" Value="1" />
+      <Prop Name="Name" Value="RoughnessScale" />
+      <Prop Name="Type" Value="float" />
+    </Node>
+    <Node Id="208bfdb41056233bd81f1177dd7ecabd" Type="Math.Multiply" Version="1" X="-480" Y="40" Wildcard="vec2" />
+    <Node Id="3633005aa9b8ccc797de27546cc49c58" Type="Math.Multiply" Version="1" X="420" Y="-300" Wildcard="vec3" />
+    <Node Id="48ee15e623af7cf72c915b21d176a017" Type="Math.Multiply" Version="1" X="220" Y="-300" Wildcard="vec3" />
+    <Node Id="6dcf50eee85ed8a57667389797f6f533" Type="Texture.Sample" Version="2" X="-80" Y="0" />
+    <Node Id="7b5bdad3a3543fa88d3895f61e23e878" Type="Texture.Object" Version="1" X="-300" Y="-260">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/ShootingRange/Corrugated_BaseColor.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="8a4e8a6f3faf36ae3f57f3b8e2983f40" Type="Input.VertexColor" Version="1" X="0" Y="-400" />
+    <Node Id="902e6f189315d83573c6964a84792f50" Type="Texture.NormalMap" Version="1" X="420" Y="260">
+      <Const Pin="Strength" Value="1" />
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+    <Node Id="b67bf71aaeaab1a2637350e3c27574ba" Type="Parameter" Version="1" X="0" Y="-300">
+      <Prop Name="Default" Value="1 1 1" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="baeeca32d37144854cfd9b2c4bc1c255" Type="Math.Multiply" Version="1" X="420" Y="20" Wildcard="float" />
+    <Node Id="c64d39784f0b506664f9aab66f9cc846" Type="Output.Material" Version="1" X="900" Y="0">
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Opaque" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+    <Node Id="cac960422116aed6e7207b50d7e52118" Type="Texture.Sample" Version="2" X="-80" Y="260" />
+    <Node Id="f1162a89d97dceb3d8e87b9f70e620b5" Type="Texture.Sample" Version="2" X="-80" Y="-260" />
+    <Node Id="f4fe006d73b225b05705daa6e5e1a556" Type="Texture.Object" Version="1" X="-300" Y="260">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/ShootingRange/Corrugated_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="ffb7a29e8b86e68d7c7db3c9b63351db" Type="Texture.Object" Version="1" X="-300" Y="0">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/ShootingRange/Corrugated_ORM.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+  </Nodes>
+  <Links>
+    <Link From="0943adfd08824a97237ae57afa42196d.UV" To="208bfdb41056233bd81f1177dd7ecabd.A" />
+    <Link From="1873565ebb73c8e5feaafe50a000a641.Value" To="208bfdb41056233bd81f1177dd7ecabd.B" />
+    <Link From="2012dd8fdc15bc6fdf219ed35ff20efb.Value" To="baeeca32d37144854cfd9b2c4bc1c255.B" />
+    <Link From="208bfdb41056233bd81f1177dd7ecabd.Out" To="6dcf50eee85ed8a57667389797f6f533.UV" />
+    <Link From="208bfdb41056233bd81f1177dd7ecabd.Out" To="902e6f189315d83573c6964a84792f50.UV" />
+    <Link From="208bfdb41056233bd81f1177dd7ecabd.Out" To="cac960422116aed6e7207b50d7e52118.UV" />
+    <Link From="208bfdb41056233bd81f1177dd7ecabd.Out" To="f1162a89d97dceb3d8e87b9f70e620b5.UV" />
+    <Link From="3633005aa9b8ccc797de27546cc49c58.Out" To="c64d39784f0b506664f9aab66f9cc846.BaseColor" />
+    <Link From="48ee15e623af7cf72c915b21d176a017.Out" To="3633005aa9b8ccc797de27546cc49c58.A" />
+    <Link From="6dcf50eee85ed8a57667389797f6f533.B" To="c64d39784f0b506664f9aab66f9cc846.Metallic" />
+    <Link From="6dcf50eee85ed8a57667389797f6f533.G" To="baeeca32d37144854cfd9b2c4bc1c255.A" />
+    <Link From="6dcf50eee85ed8a57667389797f6f533.R" To="c64d39784f0b506664f9aab66f9cc846.AmbientOcclusion" />
+    <Link From="7b5bdad3a3543fa88d3895f61e23e878.Texture" To="f1162a89d97dceb3d8e87b9f70e620b5.Texture" />
+    <Link From="8a4e8a6f3faf36ae3f57f3b8e2983f40.RGB" To="48ee15e623af7cf72c915b21d176a017.B" />
+    <Link From="902e6f189315d83573c6964a84792f50.Normal" To="c64d39784f0b506664f9aab66f9cc846.Normal" />
+    <Link From="b67bf71aaeaab1a2637350e3c27574ba.Value" To="3633005aa9b8ccc797de27546cc49c58.B" />
+    <Link From="baeeca32d37144854cfd9b2c4bc1c255.Out" To="c64d39784f0b506664f9aab66f9cc846.Roughness" />
+    <Link From="cac960422116aed6e7207b50d7e52118.RGB" To="902e6f189315d83573c6964a84792f50.Color" />
+    <Link From="f1162a89d97dceb3d8e87b9f70e620b5.RGB" To="48ee15e623af7cf72c915b21d176a017.A" />
+    <Link From="f4fe006d73b225b05705daa6e5e1a556.Texture" To="cac960422116aed6e7207b50d7e52118.Texture" />
+    <Link From="ffb7a29e8b86e68d7c7db3c9b63351db.Texture" To="6dcf50eee85ed8a57667389797f6f533.Texture" />
+  </Links>
+  <Comments>
+    <Comment X="-700" Y="-420" Width="640" Height="90" Text="Shooting Range Corrugated: the Corrugated set, 2.0 m a tile on the meshes' metre UVs; base colour times the vertex colour (baked grime) and Tint." />
+  </Comments>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "Corrugated". Do not edit.
+// Opaque, Lit. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in Corrugated.material.
+UBO_BLOCK_BEGIN(2, Corrugated_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    float Param_RoughnessScale;
+    vec3  Param_Tint;
+    vec2  Param_UVScale;
+UBO_BLOCK_END(Corrugated_Block)
+
+// Textures, by material texture slot; Corrugated.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+MATERIAL_SAMPLER2D(6, Material_Texture2)
+MATERIAL_SAMPLER2D(7, Material_Texture3)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec2 t0 = Inputs.TexCoord * Param_UVScale;
+    vec4 t1 = texture(Material_Texture1, t0);
+    vec3 t2 = t1.rgb * Inputs.Color.rgb;
+    vec3 t3 = t2 * Param_Tint;
+    Surface.BaseColor = t3;
+    vec4 t4 = texture(Material_Texture3, t0);
+    Surface.Metallic = t4.b;
+    float t5 = t4.g * Param_RoughnessScale;
+    Surface.Roughness = t5;
+    vec4 t6 = texture(Material_Texture2, t0);
+    vec3 t7 = Material_NormalMap(Inputs, t6.rgb, 1.0, t0, -1.0);
+    Surface.Normal = t7;
+    Surface.AmbientOcclusion = t4.r;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "Corrugated". Do not edit.
+NimbleMaterial 3
+Domain Opaque
+Shading Lit
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 208
+Param RoughnessScale float 160 1 0 0 0
+Param Tint vec3 176 1 1 1 0
+Param UVScale vec2 192 0.5 0.5 0 0
+Texture 1 Default Default Content/Textures/ShootingRange/Corrugated_BaseColor.nmtexture
+Texture 2 Default Default Content/Textures/ShootingRange/Corrugated_Normal.nmtexture
+Texture 3 Default Default Content/Textures/ShootingRange/Corrugated_ORM.nmtexture
+TextureUV 1 1 UVScale
+TextureUV 2 1 UVScale
+TextureUV 3 1 UVScale
+]]></Output>
+  </gen_code>
+</NodeGraph>

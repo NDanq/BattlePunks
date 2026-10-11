@@ -59,7 +59,8 @@ namespace RenderCore
          * root motion) and the pose stays as it was. */
         void Update(float InDeltaSeconds, bool bInEvaluate = true);
 
-        /* Evaluates where it is, without moving: after a seek or a change. */
+        /* Evaluates where it is, without moving: after a seek or a change.
+         * The look-at goes straight to its target (Update eases it there). */
         void Evaluate();
 
         /* The first layer's current state: its dominant clip's playhead and
@@ -82,6 +83,22 @@ namespace RenderCore
          * Evaluate after. */
         void SetOverlayClip(std::shared_ptr<const AnimClipData> InClip, float InSeconds, float InWeight);
         bool HasOverlayClip() const { return Overlay != nullptr && OverlayWeight > 0.0f; }
+
+        /*
+         * A pose something else owns -- a ragdoll's (NimbleEngine's Ragdoll.h).
+         * Where InMask (one per bone) is set, the bone's model-space rotation
+         * and translation are InModel's, blended over the animated ones by
+         * InWeight (0..1), its scale the animation's; a bone InMask leaves
+         * out keeps its animated transform under its parent, so a ragdoll's
+         * fingers stay curled round the hand physics moves. Applied by every
+         * evaluation after everything else until cleared. At a weight of 1
+         * the layers are not evaluated at all: the bones left out hold the
+         * last animated pose. InModel or InMask of the wrong size, or a
+         * weight of 0, clears it. Call Evaluate after, or let Update.
+         */
+        void SetPoseOverride(const std::vector<AnimMatrix>& InModel, const std::vector<uint8_t>& InMask, float InWeight);
+        void ClearPoseOverride();
+        bool HasPoseOverride() const { return OverrideWeight > 0.0f; }
 
         /* Layers, and what each plays now: its state's name ("" for a lone
          * clip), and whether it is crossfading into it. */
@@ -111,6 +128,10 @@ namespace RenderCore
          * EAnimRootMotion::Extract, blended as their poses are. */
         const AnimVec3& GetRootMotion() const { return RootMotion; }
 
+        /* The look-at's angle now, degrees: its parameter clamped, weighted
+         * and eased toward (AnimStateAsset.h). 0 without one. */
+        float GetLookAngle() const { return LookAngle; }
+
     private:
         struct Sample
         {
@@ -129,6 +150,7 @@ namespace RenderCore
             int32_t             BlendParameterY = -1;   // >= 0: a 2D blend space
             float               Speed = 1.0f;
             EAnimLoop           Loop  = EAnimLoop::Clip;
+            int32_t             SyncGroup = -1;   // in SyncGroups; -1: none
         };
         struct TransitionRuntime
         {
@@ -144,6 +166,7 @@ namespace RenderCore
             int32_t State = -1;
             float   Phase = 0.0f;
             bool    bEnded = false;   // a one-shot reached its end, or a loop wrapped, this update
+            bool    bSynced = false;  // followed its sync group's leader last update (false: it locks on, firing nothing)
         };
         struct LayerRuntime
         {
@@ -169,14 +192,24 @@ namespace RenderCore
         static void SampleWeights2D(const StateRuntime& InState, float InX, float InY, std::vector<float>& OutWeights, size_t& OutDominant);
         float StateDuration(const StateRuntime& InState) const;
         bool  StateLoops(const StateRuntime& InState) const;
-        /* Moves InOutHead; returns its root motion (model space). */
-        AnimVec3 AdvancePlayhead(const LayerRuntime& InLayer, Playhead& InOutHead, float InDelta, bool bInNotify);
+        /* Moves InOutHead -- by InDelta, or to InSyncPhase (0..1) when it
+         * follows its sync group's leader; returns its root motion (model space). */
+        AnimVec3 AdvancePlayhead(const LayerRuntime& InLayer, Playhead& InOutHead, float InDelta, bool bInNotify,
+                                 float InSyncPhase = -1.0f);
         /* InPose's InBone parent's model matrix: its ancestors composed. */
         AnimMatrix ParentModel(const AnimLocalPose& InPose, int32_t InBone) const;
         /* A clip with root motion keeps its root bone's model X and Z at its first frame's. */
         void  HoldRoot(const Sample& InSample, AnimLocalPose& InOutPose) const;
         /* InLayer's state InState at InPhase; an additive layer's as its additive pose. */
         void  EvaluateState(const LayerRuntime& InLayer, const StateRuntime& InState, float InPhase, AnimLocalPose& OutPose);
+        /* The pose where it is, the look-at where it is. */
+        void  EvaluatePose();
+        /* The angle the look-at heads for: its parameter, clamped and weighted. */
+        float LookTarget() const;
+        /* Turns the look-at's bones by LookAngle, after the layers. */
+        void  ApplyLookAt(AnimLocalPose& InOutPose) const;
+        /* ModelPose from LocalPose with the override's bones placed. */
+        void  ApplyPoseOverride();
         bool  ConditionsHold(const TransitionRuntime& InTransition, const LayerRuntime& InLayer) const;
         void  UpdateTransitions(LayerRuntime& InOutLayer);
 
@@ -186,6 +219,8 @@ namespace RenderCore
 
         std::vector<LayerRuntime>   Layers;
         std::vector<float>          Parameters;     // by State's parameter
+        std::vector<std::string>    SyncGroups;     // the states' sync group names, each once
+        std::vector<float>          LeaderPhase;    // by sync group, this update: its leader's phase; < 0: none leads
         std::vector<std::string>    Consumed;
 
         float PlayRate     = 1.0f;
@@ -199,12 +234,27 @@ namespace RenderCore
         AnimVec3                 RootMotion;
         AnimLocalPose            RefPose;          // the skeleton's: what root travel is measured in
 
+        /* The look-at, from State's; no bones: none. */
+        struct LookBoneRuntime { int32_t Bone = -1; float Share = 0.0f; };
+        std::vector<LookBoneRuntime> LookBones;
+        int32_t  LookParameter = -1, LookWeightParameter = -1;
+        float    LookMin = 0.0f, LookMax = 0.0f, LookResponse = 0.0f;
+        AnimVec3 LookAxis;
+        float    LookAngle   = 0.0f;
+        bool     bLookPlaced = false;   // false: the next update starts it at its target, not easing there
+
         /* SetOverlayClip's. */
         std::shared_ptr<const AnimClipData> Overlay;
         AnimClipBinding                     OverlayBinding;
         const SkeletonData*                 OverlayBoundTo = nullptr;
         float                               OverlayTime   = 0.0f;
         float                               OverlayWeight = 0.0f;
+
+        /* SetPoseOverride's; OverrideAnimated is the animated model pose it blends over. */
+        std::vector<AnimMatrix> OverrideModel;
+        std::vector<uint8_t>    OverrideMask;
+        std::vector<AnimMatrix> OverrideAnimated;
+        float                   OverrideWeight = 0.0f;
     };
 }
 

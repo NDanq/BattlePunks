@@ -88,6 +88,8 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/Components/AnimSocketComponent.cpp
         Source/Private/RenderCore/BakedLightingAsset.cpp
         Source/Private/RenderCore/TextureAsset.cpp
+        Source/Private/RenderCore/TextureStreaming.cpp
+        Source/Private/RenderCore/TextureStreaming.h
         Source/Private/RenderCore/TextureCompression.cpp
         Source/Private/RenderCore/RenderTargetAsset.cpp
         Source/Private/RenderCore/SceneCapture.cpp

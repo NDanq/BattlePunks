@@ -214,6 +214,50 @@ static void TestOverlay()
     Expect(!Instance.HasOverlayClip() && Near(Instance.GetModelPose()[2].M[1][3], 0.0f), "cleared, the base clip alone");
 }
 
+/* SetPoseOverride: bones placed from outside (a ragdoll), the rest following their parents. */
+static void TestPoseOverride()
+{
+    std::printf("[pose override]\n");
+    auto Skeleton = std::make_shared<SkeletonData>(MakeSkeleton());
+    auto Clip     = std::make_shared<AnimClipData>(MakeClip());
+
+    AnimInstance Instance;
+    Instance.SetSkeleton(Skeleton);
+    Instance.PlayClip(Clip);
+    Instance.SetTime(0.0f);
+
+    /* The arm turned 90 degrees about Z in model space; the hand is not placed. */
+    AnimTransform Arm;
+    Arm.Translation = { 100.0f, 0.0f, 0.0f };
+    Arm.Rotation    = { 0.0f, 0.0f, std::sin(0.7853982f), std::cos(0.7853982f) };
+    std::vector<AnimMatrix> Model(3);
+    Model[1] = AnimMath::ToMatrix(Arm);
+    const std::vector<uint8_t> Mask = { 0, 1, 0 };
+
+    Instance.SetPoseOverride(Model, Mask, 1.0f);
+    Instance.Evaluate();
+    Expect(Instance.HasPoseOverride() && Near(Instance.GetModelPose()[2].M[0][3], 100.0f, 0.01f)
+           && Near(Instance.GetModelPose()[2].M[1][3], 50.0f, 0.01f), "a placed arm carries the hand it does not place");
+
+    Instance.SetTime(0.5f);
+    Expect(Near(Instance.GetModelPose()[2].M[1][3], 50.0f, 0.01f), "at full weight the animation no longer moves it");
+
+    Instance.SetTime(0.0f);
+    Instance.SetPoseOverride(Model, Mask, 0.5f);
+    Instance.Evaluate();
+    const float Half = Instance.GetModelPose()[2].M[1][3];
+    Expect(Half > 10.0f && Half < 40.0f, "half weight is between the animation and the placed pose");
+
+    Instance.SetPoseOverride(Model, std::vector<uint8_t>(2, 1), 1.0f);
+    Instance.Evaluate();
+    Expect(!Instance.HasPoseOverride() && Near(Instance.GetModelPose()[2].M[1][3], 0.0f), "a mask of the wrong size clears it");
+
+    Instance.SetPoseOverride(Model, Mask, 1.0f);
+    Instance.ClearPoseOverride();
+    Instance.Evaluate();
+    Expect(!Instance.HasPoseOverride() && Near(Instance.GetModelPose()[2].M[0][3], 150.0f), "cleared, the animation alone");
+}
+
 static void TestSystem()
 {
     std::printf("[system]\n");
@@ -556,6 +600,202 @@ static void TestAdditiveLayer()
            "a still clip, from its first frame, adds nothing");
     Expect(Near(HandAngle(Make(EAnimLayerBlend::Additive, EAnimAdditiveBase::ReferencePose, "HandHeld.nmanim"), 0.5f, 1.0f), 90.0f, 0.1f),
            "from the reference pose, it adds its 45");
+}
+
+/*
+ * Sync groups. Base: "Walk" (Bend: the arm turning 90 over 1 s) and "Stride"
+ * (Bend again), both in group "Loco", and "Rest" (Idle) in none; Alt and
+ * Rest switch between them at once. Upper, masked to the hand: "Swing", the
+ * hand turning 90 over 2 s, in "Loco" -- half the base's pace unless synced.
+ */
+static void TestSyncGroups()
+{
+    std::printf("[sync groups]\n");
+    WriteStateClips();
+    AnimClipData Slow;
+    Slow.SampleRate = 30.0f;
+    Slow.FrameCount = 61;
+    AnimTrack Track;
+    Track.Bone = "Hand";
+    Track.Translations.push_back({ 50.0f, 0.0f, 0.0f });
+    Track.Scales.push_back({ 1.0f, 1.0f, 1.0f });
+    for(uint32_t Frame = 0; Frame < Slow.FrameCount; ++Frame)
+    {
+        const float Angle = 0.5f * 1.5707963f * float(Frame) / 60.0f;
+        Track.Rotations.push_back({ 0.0f, 0.0f, std::sin(Angle), std::cos(Angle) });
+    }
+    Slow.Tracks.push_back(Track);
+    Slow.Notifies.push_back({ "Swung", 1.2f });   // phase 0.6
+    SaveAnimClipFile(std::string(SCRATCH) + "SwingSlow.nmanim", Slow);
+    AnimClipAssetCache::Invalidate("");
+
+    const auto Make = [](const std::string& InGroup)
+    {
+        AnimStateData Data;
+        Data.Parameters = { { "Alt", EAnimParameterType::Bool, 0.0f }, { "Rest", EAnimParameterType::Bool, 0.0f } };
+        AnimLayer Base;
+        Base.Name = "Base";
+        AnimStateNode Walk;
+        Walk.Name      = "Walk";
+        Walk.SyncGroup = InGroup;
+        Walk.Samples   = { { std::string(SCRATCH) + "Bend.nmanim", 0.0f, 0.0f } };
+        AnimStateNode Stride = Walk;
+        Stride.Name = "Stride";
+        AnimStateNode Rest;
+        Rest.Name    = "Rest";
+        Rest.Samples = { { std::string(SCRATCH) + "Bend.nmanim", 0.0f, 0.0f } };
+        Base.States = { Walk, Stride, Rest };
+        AnimTransition ToStride;
+        ToStride.From = 0;
+        ToStride.To   = 1;
+        ToStride.Duration = 0.0f;
+        ToStride.Conditions.push_back({ "Alt", EAnimCompare::IsTrue, 0.0f });
+        AnimTransition ToRest;
+        ToRest.From = -1;
+        ToRest.To   = 2;
+        ToRest.Duration = 0.0f;
+        ToRest.Conditions.push_back({ "Rest", EAnimCompare::IsTrue, 0.0f });
+        Base.Transitions = { ToStride, ToRest };
+        AnimLayer Upper;
+        Upper.Name      = "Upper";
+        Upper.MaskBones = { "Hand" };
+        AnimStateNode Swing;
+        Swing.Name      = "Swing";
+        Swing.SyncGroup = InGroup;
+        Swing.Samples   = { { std::string(SCRATCH) + "SwingSlow.nmanim", 0.0f, 0.0f } };
+        Upper.States = { Swing };
+        Data.Layers = { Base, Upper };
+        return Data;
+    };
+    /* The hand's angle from the arm's, in degrees. */
+    const auto HandTurn = [](const AnimInstance& InInstance)
+    {
+        const AnimMatrix& Arm  = InInstance.GetModelPose()[1];
+        const AnimMatrix& Hand = InInstance.GetModelPose()[2];
+        return (std::atan2(Hand.M[1][0], Hand.M[0][0]) - std::atan2(Arm.M[1][0], Arm.M[0][0])) * 57.29578f;
+    };
+
+    AnimStateData Synced = Make("Loco");
+    EngineCore::Archive Out = EngineCore::Archive::ForWriting();
+    Expect(SerializeAnimState(Out, Synced), "it saves");
+    EngineCore::Archive In = EngineCore::Archive::ForReading(Out.GetBytes());
+    AnimStateData Read;
+    Expect(SerializeAnimState(In, Read) && Read.Layers[0].States[0].SyncGroup == "Loco" && Read.Layers[0].States[2].SyncGroup.empty()
+           && Read.Layers[1].States[0].SyncGroup == "Loco", "a state's sync group reads back");
+
+    AnimInstance Free;
+    Free.SetSkeleton(std::make_shared<SkeletonData>(MakeSkeleton()));
+    Free.SetState(std::make_shared<AnimStateData>(Make("")));
+    Free.Update(0.5f);
+    Expect(Near(HandTurn(Free), 22.5f, 0.2f), "unsynced, each layer keeps its own pace: the 2 s swing a quarter through");
+
+    AnimInstance Instance;
+    Instance.SetSkeleton(std::make_shared<SkeletonData>(MakeSkeleton()));
+    Instance.SetState(std::make_shared<AnimStateData>(Synced));
+    Instance.Update(0.5f);
+    Expect(Near(HandTurn(Instance), 45.0f, 0.2f), "synced, the later layer's state takes the leader's phase: half through");
+    Expect(Instance.GetFiredNotifies().empty(), "locking on to the leader passes no notifies");
+    Instance.Update(0.25f);
+    Expect(Near(HandTurn(Instance), 67.5f, 0.2f), "and keeps to it");
+    Expect(Instance.GetFiredNotifies().size() == 1 && Instance.GetFiredNotifies()[0].Name == "Swung",
+           "following, it fires the notifies it passes");
+    Instance.Update(0.5f);
+    Expect(Near(HandTurn(Instance), 22.5f, 0.2f), "it wraps when the leader does");
+
+    /* Phase 0.25 now. Into Stride, the same group: it goes on from there. */
+    Instance.SetParameter("Alt", 1.0f);
+    Instance.Update(0.0f);
+    Instance.Update(0.25f);
+    Expect(std::string(Instance.GetCurrentStateName(0)) == "Stride" && Near(Instance.GetTime(), 0.5f, 0.02f),
+           "a transition within a sync group starts where the state it left was");
+    Instance.SetParameter("Rest", 1.0f);
+    Instance.Update(0.0f);
+    Expect(std::string(Instance.GetCurrentStateName(0)) == "Rest" && Near(Instance.GetTime(), 0.0f),
+           "one out of the group starts from the beginning");
+    Instance.Update(0.3f);
+    Expect(Near(HandTurn(Instance), 45.0f + 0.3f * 45.0f, 0.3f), "with no leader in its group, a follower plays on at its own pace");
+}
+
+static void TestLookAt()
+{
+    std::printf("[look-at]\n");
+    /* No clips: the reference pose, so only the look-at turns anything. */
+    AnimStateData Data;
+    Data.Parameters = { { "Pitch", EAnimParameterType::Float, 0.0f }, { "Armed", EAnimParameterType::Bool, 1.0f } };
+    AnimLayer Base;
+    Base.Name = "Base";
+    AnimStateNode Still;
+    Still.Name = "Still";
+    Base.States = { Still };
+    Data.Layers = { Base };
+    Data.LookAt.Parameter       = "Pitch";
+    Data.LookAt.WeightParameter = "Armed";
+    Data.LookAt.MinAngle = -30.0f;
+    Data.LookAt.MaxAngle =  60.0f;
+    Data.LookAt.Axis[0] = 0.0f;
+    Data.LookAt.Axis[2] = 1.0f;
+    Data.LookAt.Response = 0.0f;
+    Data.LookAt.Bones = { { "Hand", 0.5f }, { "Arm", 0.5f } };   // out of order: turned root first anyway
+
+    EngineCore::Archive Out = EngineCore::Archive::ForWriting();
+    Expect(SerializeAnimState(Out, Data), "it saves");
+    EngineCore::Archive In = EngineCore::Archive::ForReading(Out.GetBytes());
+    AnimStateData Read;
+    Expect(SerializeAnimState(In, Read) && Read.LookAt.Parameter == "Pitch" && Read.LookAt.WeightParameter == "Armed"
+           && Read.LookAt.Bones.size() == 2 && Read.LookAt.Bones[1].Bone == "Arm" && Near(Read.LookAt.MaxAngle, 60.0f)
+           && Near(Read.LookAt.Axis[2], 1.0f), "the look-at reads back");
+    AnimStateData Reversed = Data;
+    Reversed.LookAt.MinAngle = 90.0f;
+    EngineCore::Archive Refused = EngineCore::Archive::ForWriting();
+    Expect(!SerializeAnimState(Refused, Reversed), "a reversed range is refused");
+
+    /* Model-space angles of a bone's X axis about Z, degrees. */
+    const auto Turn = [](const AnimInstance& InInstance, const size_t InBone)
+    {
+        const AnimMatrix& Bone = InInstance.GetModelPose()[InBone];
+        return std::atan2(Bone.M[1][0], Bone.M[0][0]) * 57.29578f;
+    };
+    AnimInstance Instance;
+    Instance.SetSkeleton(std::make_shared<SkeletonData>(MakeSkeleton()));
+    Instance.SetState(std::make_shared<AnimStateData>(Data));
+    Instance.SetParameter("Pitch", 40.0f);
+    Instance.Update(0.1f);
+    Expect(Near(Turn(Instance, 1), 20.0f, 0.05f) && Near(Turn(Instance, 2), 40.0f, 0.05f),
+           "each bone takes its share, and the turns add up along the chain");
+    Expect(Near(Instance.GetModelPose()[2].M[1][3], 50.0f * std::sin(20.0f / 57.29578f), 0.05f), "a positive angle turns right-handed about the axis");
+    Expect(Near(Instance.GetLookAngle(), 40.0f), "GetLookAngle says where it is");
+    Instance.SetParameter("Pitch", 100.0f);
+    Instance.Update(0.1f);
+    Expect(Near(Turn(Instance, 2), 60.0f, 0.05f), "the angle is clamped to the range");
+    Instance.SetParameter("Armed", 0.0f);
+    Instance.Update(0.1f);
+    Expect(Near(Turn(Instance, 2), 0.0f, 0.05f) && Near(Instance.GetModelPose()[2].M[0][3], 150.0f, 0.05f),
+           "a weight of 0 leaves the pose as the layers made it");
+
+    Data.LookAt.Response = 10.0f;
+    AnimInstance Eased;
+    Eased.SetSkeleton(std::make_shared<SkeletonData>(MakeSkeleton()));
+    Eased.SetState(std::make_shared<AnimStateData>(Data));
+    Eased.SetParameter("Pitch", 20.0f);
+    Eased.Update(0.05f);
+    Expect(Near(Eased.GetLookAngle(), 20.0f), "the first update starts it where it heads");
+    Eased.SetParameter("Pitch", 40.0f);
+    Eased.Update(0.05f);
+    Expect(Near(Eased.GetLookAngle(), 20.0f + 20.0f * (1.0f - std::exp(-0.5f)), 0.01f), "after that it eases there");
+    Eased.SetPlayRate(0.0f);
+    Eased.Update(1.0f);
+    Expect(Near(Eased.GetLookAngle(), 40.0f, 0.01f), "in real time: a play rate of 0 still looks");
+    Eased.SetParameter("Pitch", -10.0f);
+    Eased.Evaluate();
+    Expect(Near(Eased.GetLookAngle(), -10.0f) && Near(Turn(Eased, 2), -10.0f, 0.05f), "Evaluate, after a change, goes straight there");
+
+    Data.LookAt.Bones = { { "NoSuchBone", 1.0f } };
+    AnimInstance Missing;
+    Missing.SetSkeleton(std::make_shared<SkeletonData>(MakeSkeleton()));
+    Missing.SetState(std::make_shared<AnimStateData>(Data));
+    Missing.SetParameter("Pitch", 40.0f);
+    Missing.Update(0.1f);
+    Expect(Near(Missing.GetLookAngle(), 0.0f) && Near(Turn(Missing, 2), 0.0f, 0.05f), "bones the skeleton lacks: no look-at");
 }
 
 static void TestStateSystem()
@@ -966,11 +1206,14 @@ int main()
     TestTrim();
     TestInstance();
     TestOverlay();
+    TestPoseOverride();
     TestSystem();
     TestStateAsset();
     TestStateMachine();
     TestBlendSpace2D();
     TestAdditiveLayer();
+    TestSyncGroups();
+    TestLookAt();
     TestStateSystem();
     TestSocket();
     TestRootMotion();

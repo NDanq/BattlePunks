@@ -46,9 +46,15 @@ by conjugation for bones (`C M C^-1`), so skinning with converted bones lands
 a converted vertex exactly where glTF puts it. A quaternion becomes
 `(-x, -y, z, w)`.
 
+Materials are not converted: a section keeps its glTF material's name. An
+untextured material's base colour is baked into the vertex colours (Bake
+material colours, on by default), so the mesh draws in its colours with
+DefaultLit. Imported into `Engine/Content`, assets name what they refer to --
+skeleton, source -- as `Engine/Content/...`.
+
 Clips find bones by **name**, so a clip plays on any skeleton with those
-names. Reimporting a clip keeps what the editor set on it: notifies,
-looping and root motion.
+names. Reimporting a clip -- or importing its file again over it -- keeps
+what the editor set on it: notifies, looping, root motion and its root bone.
 
 ## Skinning
 
@@ -93,7 +99,10 @@ Float, Set Bool, Set Trigger, Get Float, Get Bool, Get Bone Location (a
 Vector3), Get State, Is In Transition, Get Time and its fields; the Anim
 Socket's Bone and offsets; and, from the `Animation` script library, typed
 **On AnimNotify** (Entity, Name) and **On AnimEnded** (Entity, State, Layer)
-events, with Emit nodes for each.
+events, with Emit nodes for each. The events fire for every character in the
+world: check the Entity is your own with **Same Entity** (against Self or
+Prefab Root) before acting -- Equal does not take entities, and in Lua compare
+`entity:GetID()`, since two handles to one entity are not `==`.
 
 It replicates what it plays and its parameters; each client animates on its
 own. Poses are never sent.
@@ -219,6 +228,15 @@ Layer Arms   mask spine_02, weight scaled by Armed
   is true, is false, triggered), from its state or from any; At End waits
   for the clip to come within the crossfade of its end. The first that holds
   fires, one per layer per tick; a triggered condition spends its trigger.
+- A **sync group** keeps states in step. Name the same group on states of
+  different layers -- an upper-body walk and the legs' -- and each later
+  layer in one takes the phase (0..1 through the state) of the first layer
+  playing one of the group, instead of keeping its own time: the arms swing
+  with the steps, whatever the clips' lengths. It locks on as it enters,
+  passing no notifies, and fires those it passes from then on. A transition
+  between two states of one layer in the same group starts the new state
+  where the old one was (Unarmed walk to Armed walk keeps the stride). With
+  no layer before it playing the group, a state plays at its own pace.
 - A **layer** after the first is blended over the ones before through its
   mask -- each named bone and every bone below it -- at its weight, scaled by
   its weight parameter if it has one. That is how legs walk while the arms
@@ -229,6 +247,17 @@ Layer Arms   mask spine_02, weight scaled by Armed
   scale) is laid over the layers before it, by weight and mask. Breathing,
   a flinch or a lean then plays over whatever the body is doing. Its clips
   give no root motion.
+- A **look-at**, after the layers, bends a chain of bones by an angle: a
+  float parameter in degrees, clamped to Min..Max, turns each listed bone
+  about one model-space axis by its share of the angle. Each bone turns
+  about its already-turned parent, so the turns add up along the chain and
+  the last bone ends at the whole angle (when the shares add to 1). An
+  optional weight parameter scales it (0..1), and Response eases it toward
+  the parameter (`1 - e^(-Response t)` each update, in real time; 0 snaps).
+  An explicit `Evaluate()` -- after a seek or a change -- goes straight to
+  the target. Everything below the chain follows: arms, and whatever an
+  Anim Socket holds. Stored as the optional ALOK chunk; files without it
+  have none.
 
 ## In the editor
 
@@ -252,17 +281,110 @@ Layer Arms   mask spine_02, weight scaled by Armed
   while it blends in). Right-click to add a state, make a transition (then
   click the state it goes to), set the entry or delete; drag boxes about;
   Delete removes what is picked. What is picked is edited in the form beside
-  it: a state's clips or blend space, a transition's crossfade and
-  conditions. Dashed arrows wait for the clip's end. Where the boxes sit is
+  it: a state's clips or blend space and sync group, a transition's
+  crossfade and conditions. The Look-At box sets the angle and weight
+  parameters, range, axis, response and the chain (`bone:share, ...`).
+  Dashed arrows wait for the clip's end. Where the boxes sit is
   saved in the file (ALYR v4); older files are laid out on opening. A live
   preview you can drive sits alongside. A renamed parameter is renamed where
-  it is used; problems (missing clips, parameters, mask bones) are listed.
+  it is used; problems (missing clips, parameters, mask or look-at bones)
+  are listed.
 - Console, for scripts: `mesh <path> | play | pause | seek <s> | param <n> <v>
   | bones on | windowshot <png>` and `animstate <path> | new | save |
   windowshot <png>`.
 
+## Engine characters
+
+`Engine/Content/Characters/<Name>/` holds characters every project has, staged
+beside every executable at the same path (Engine/CMakeLists.txt): the mesh,
+skeleton, clips and anim states, and the source `.glb` they reimport from
+(not staged).
+
+**CrashDummy** -- a 74-bone Rigify deform skeleton (root `CrashDummy_Rig`),
+six colours baked as vertex colours, and its pistol (`Weapon_Pistol.nmmesh`,
+gripped at its origin). Clips, in place (no root travel):
+
+| Clip | Frames | |
+|---|---|---|
+| `FB_Idle`, `FB_Walk`, `FB_Run` | 60, 32, 24 | full body, looping; the walk's planted foot moves about 145 units/s |
+| `FB_JumpStart`, `FB_Fall`, `FB_Land` | 24 each | full body |
+| `UB_Idle`, `UB_Walk`, `UB_Run` | 60, 32, 24 | upper body (`DEF-spine.002` and below it) |
+| `UB_Idle_Armed`, `UB_Walk_Armed`, `UB_Run_Armed` | 60, 32, 24 | upper body, holding the pistol |
+| `UB_EquipWeapon` | 40 | the right hand draws from the holster; notify `WeaponToHand` at 0.333 s (frame 11, the hand on the grip) |
+| `UB_HolsterWeapon` | 36 | and puts it back; notify `WeaponToHolster` at 0.633 s (frame 20, the gun in the holster) |
+
+`CrashDummy.nmanimstate` puts them together:
+
+```
+Parameters   Speed (float, units/s), Grounded (bool, 1), Jump (trigger), Armed (bool),
+             AimPitch (float, degrees, up positive)
+Layer FullBody
+  Locomotion   blend space on Speed: FB_Idle 0, FB_Walk 150, FB_Run 400    sync group Locomotion
+  JumpStart    once     Locomotion -> JumpStart when Jump triggered, 0.1 s
+  Fall         loop     JumpStart -> Fall at end; Locomotion -> Fall when not Grounded
+  Land         once     Fall -> Land when Grounded; Land -> Locomotion at end, or -> JumpStart on Jump
+Layer UpperBody   mask DEF-spine.002; weight scaled by Grounded (in the air the full body's arms play)
+  Unarmed      blend space on Speed: UB_Idle 0, UB_Walk 150, UB_Run 400    sync group Locomotion
+  Equip        once     Unarmed -> Equip when Armed; Equip -> Armed at end
+  Armed        blend space on Speed: UB_*_Armed at 0, 150, 400              sync group Locomotion
+  Holster      once     Armed (or Equip) -> Holster when not Armed; Holster -> Unarmed at end
+Look-at      AimPitch, -40..55 deg about model X, response 15:
+             DEF-spine.001 0.25, DEF-spine.002 0.35, DEF-spine.003 0.40
+```
+
+The chain stops at the chest, so the arms -- and the pistol -- take the whole
+angle: a game sets AimPitch from its camera's pitch (negated, if the camera's
+is down-positive) and the gun points where the camera does.
+
+The run's 400 is a guess (its foot is planted for two frames); set the
+blend positions to the speeds the character moves at.
+
+**`CrashDummyDemo.nmprefab`** shows it working: the dummy (Render,
+Animation on the anim state) and a child **Pistol** (Render, Anim Socket),
+with `CrashDummyDemo.lua` walking it round a 17-second loop -- idle, walk,
+draw while walking, armed run, stop, jump, land, holster -- nodding AimPitch
+35 degrees up and down every 4 seconds throughout. The script moves the
+pistol as the notifies fire:
+
+| Notify | Socket bone | Position offset | Rotation offset |
+|---|---|---|---|
+| (start), `WeaponToHolster` | `DEF-spine` | -19.719, 0.128, -4.773 | -75.407, 7.744, 2.009 |
+| `WeaponToHand` | `DEF-hand.R` | -2.110, 7.087, -0.769 | -85.592, 13.264, 175.197 |
+
+The offsets are the source `.blend`'s two Child Of constraints on the pistol,
+converted to engine space: what a game copies to hold the pistol itself.
+
 ## Not yet
 
-Inverse kinematics (feet, look-at), morph targets, retargeting between
-differently named skeletons, clip compression, turning root motion, skinned
-meshes on Metal, and an occlusion-aware budget.
+Inverse kinematics (feet, a hand on a weapon), morph targets,
+retargeting between differently named skeletons, clip compression, turning
+root motion, skinned meshes on Metal, and an occlusion-aware budget. Also:
+
+- **Socket swaps as data**: a notify cannot move a socket by itself; a script
+  listens for it and sets the socket's bone and offsets (as
+  `CrashDummyDemo.lua` does).
+- **Saving a level with sockets**: the editor's preview moves a socket's
+  entity, and saving records where it was as an override of the prefab.
+- **Interrupted crossfades** start from the state being left, not the blend
+  on screen: a transition taken mid-fade pops.
+- **Layer weights** follow their parameter at once; nothing eases them.
+- **Look-at** is one angle about one axis: pitch, or yaw, not both, and not
+  aimed at a point. A camera offset to the side (an over-the-shoulder scope)
+  leaves the gun a little off the crosshair; aiming at the camera ray's hit
+  point would need a second axis and a target.
+- **Masks** are whole bones and their children, blended in local space: no
+  partial weights down a spine, no mesh-space blending.
+- **Scripted one-shots**: gameplay plays a clip only through a state and a
+  trigger authored for it; there is no "play this clip on this layer now".
+- **Clip curves and notify windows**: notifies are moments; clips carry no
+  float curves (an IK weight, a footstep volume) or spans.
+- **Ragdoll**: physics can own the pose (`AnimInstance::SetPoseOverride`,
+  driven by NimbleEngine's Ragdoll component -- `Engine/Source/RAGDOLL.md`),
+  but only with Jolt, and nothing blends back out or drives a ragdoll toward
+  an animation (powered ragdolls).
+- **Bone queries**: `GetBoneLocation` only, no rotation or transform.
+- **Parameters**: at most 12 per Animation component.
+- **Playback speed by parameter**: a state's Speed is fixed; nothing scales
+  a walk to the ground speed it moves at.
+- **Engine content in the editor**: anim states and clips under
+  `Engine/Content` open read-only.

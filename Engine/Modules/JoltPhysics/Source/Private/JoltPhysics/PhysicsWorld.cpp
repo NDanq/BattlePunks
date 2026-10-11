@@ -18,12 +18,19 @@
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
+#include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Constraints/DistanceConstraint.h>
 #include <Jolt/Physics/Constraints/FixedConstraint.h>
 #include <Jolt/Physics/Constraints/HingeConstraint.h>
 #include <Jolt/Physics/Constraints/PointConstraint.h>
 #include <Jolt/Physics/Constraints/SliderConstraint.h>
+#include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/Ragdoll/Ragdoll.h>
+#include <Jolt/Skeleton/Skeleton.h>
 #include <Jolt/Physics/Vehicle/VehicleCollisionTester.h>
 #include <Jolt/Physics/Vehicle/VehicleConstraint.h>
 #include <Jolt/Physics/Vehicle/WheeledVehicleController.h>
@@ -232,6 +239,27 @@ namespace JoltPhysics
         std::unordered_map<uint64_t, ConstraintRecord> Constraints;   // by the constraint entity's Pack()
         std::unordered_set<uint64_t>                   Touching;      // body pairs told as touching (PairKey)
         std::unordered_map<uint64_t, VehicleRecord>    Vehicles;      // by the vehicle entity's Pack()
+
+        /* One CreateRagdoll's Jolt ragdoll. Poses in metres. */
+        struct RagdollRecord
+        {
+            JPH::Ref<JPH::Ragdoll>  Ragdoll;
+            GameCore::EntityID      Owner;
+            bool                    bDynamic = false;
+            bool                    bTarget  = false;
+            std::vector<JPH::RVec3> PrevPosition, CurrPosition, TargetPosition;
+            std::vector<JPH::Quat>  PrevRotation, CurrRotation, TargetRotation;
+        };
+        struct RagdollPartRef
+        {
+            uint32_t Ragdoll = 0;
+            int32_t  Part    = -1;
+        };
+        std::unordered_map<uint32_t, RagdollRecord>  Ragdolls;       // by handle
+        std::unordered_map<uint32_t, RagdollPartRef> RagdollParts;   // BodyID -> its ragdoll and part
+        uint32_t NextRagdoll      = 1;
+        uint32_t NextRagdollGroup = 1;   // each ragdoll its own collision group (its parts' filter is per group)
+        float    LastAlpha        = 1.0f;
 
         double   Accumulator = 0.0;
         uint64_t Steps       = 0;
@@ -1150,6 +1178,267 @@ namespace JoltPhysics
             }
         }
 
+        // --- Ragdolls -----------------------------------------------------------
+
+        JPH::RVec3 ToPosition(const RagdollTransform& InT) const
+        {
+            const double M = ToMeters();
+            return JPH::RVec3(JPH::Real(double(InT.Position[0]) * M), JPH::Real(double(InT.Position[1]) * M),
+                              JPH::Real(double(InT.Position[2]) * M));
+        }
+
+        static JPH::Quat ToRotation(const RagdollTransform& InT)
+        {
+            const JPH::Quat Q(InT.Rotation[0], InT.Rotation[1], InT.Rotation[2], InT.Rotation[3]);
+            return Q.LengthSq() > 1.0e-12f ? Q.Normalized() : JPH::Quat::sIdentity();
+        }
+
+        static JPH::Vec3 ToAxis(const float InV[3], const JPH::Vec3 InFallback)
+        {
+            return JPH::Vec3(InV[0], InV[1], InV[2]).NormalizedOr(InFallback);
+        }
+
+        /* InPlane made perpendicular to InTwist (a unit vector). */
+        static JPH::Vec3 PerpendicularTo(const JPH::Vec3 InTwist, const JPH::Vec3 InPlane)
+        {
+            const JPH::Vec3 Plane = InPlane - InTwist * InTwist.Dot(InPlane);
+            return Plane.IsNearZero(1.0e-8f) ? InTwist.GetNormalizedPerpendicular() : Plane.Normalized();
+        }
+
+        /* A part's shape, in its frame, in metres. */
+        JPH::RefConst<JPH::Shape> MakeRagdollShape(const RagdollPartDesc& InPart) const
+        {
+            const float M = float(ToMeters());
+            const float Radius = std::max(InPart.Radius * M, 0.005f);
+            JPH::RefConst<JPH::Shape> Inner;
+            switch(InPart.Shape)
+            {
+                case RGS_Sphere:
+                    Inner = new JPH::SphereShape(Radius);
+                    break;
+                case RGS_Box:
+                {
+                    const JPH::Vec3 Half(std::max(InPart.HalfExtent[0] * M, 0.005f), std::max(InPart.HalfExtent[1] * M, 0.005f),
+                                         std::max(InPart.HalfExtent[2] * M, 0.005f));
+                    Inner = new JPH::BoxShape(Half, std::min(JPH::cDefaultConvexRadius, 0.5f * Half.ReduceMin()));
+                    break;
+                }
+                default:
+                    Inner = new JPH::CapsuleShape(std::max(InPart.HalfHeight * M, 0.001f), Radius);
+                    break;
+            }
+
+            const JPH::Vec3 Offset(InPart.ShapeLocal.Position[0] * M, InPart.ShapeLocal.Position[1] * M, InPart.ShapeLocal.Position[2] * M);
+            const JPH::Quat Turn = ToRotation(InPart.ShapeLocal);
+            if(Offset.IsNearZero(1.0e-10f) && Turn.IsClose(JPH::Quat::sIdentity()))
+            {
+                return Inner;
+            }
+            return new JPH::RotatedTranslatedShape(Offset, Turn, Inner);
+        }
+
+        /* A part's joint to its parent, in rest space (metres). */
+        JPH::Ref<JPH::TwoBodyConstraintSettings> MakeRagdollJoint(const RagdollPartDesc& InPart) const
+        {
+            RagdollTransform At;
+            std::memcpy(At.Position, InPart.JointPosition, sizeof(At.Position));
+            const JPH::RVec3 Point = ToPosition(At);
+            const JPH::Vec3 Twist       = ToAxis(InPart.TwistAxis, JPH::Vec3::sAxisX());
+            const JPH::Vec3 Plane       = PerpendicularTo(Twist, ToAxis(InPart.PlaneAxis, JPH::Vec3::sAxisY()));
+            const JPH::Vec3 ParentTwist = ToAxis(InPart.ParentTwistAxis, Twist);
+            const JPH::Vec3 ParentPlane = PerpendicularTo(ParentTwist, ToAxis(InPart.ParentPlaneAxis, Plane));
+            constexpr float Pi = 3.14159265358979f;
+
+            switch(InPart.Joint)
+            {
+                case RGJ_Fixed:
+                {
+                    JPH::Ref<JPH::FixedConstraintSettings> Fixed = new JPH::FixedConstraintSettings();
+                    Fixed->mAutoDetectPoint = true;
+                    return JPH::Ref<JPH::TwoBodyConstraintSettings>(Fixed.GetPtr());
+                }
+                case RGJ_Hinge:
+                {
+                    JPH::Ref<JPH::HingeConstraintSettings> Hinge = new JPH::HingeConstraintSettings();
+                    Hinge->mPoint1 = Hinge->mPoint2 = Point;
+                    Hinge->mHingeAxis1  = ParentTwist;
+                    Hinge->mNormalAxis1 = ParentPlane;
+                    Hinge->mHingeAxis2  = Twist;
+                    Hinge->mNormalAxis2 = Plane;
+                    Hinge->mLimitsMin   = std::clamp(InPart.TwistMin, -Pi, 0.0f);
+                    Hinge->mLimitsMax   = std::clamp(InPart.TwistMax, 0.0f, Pi);
+                    Hinge->mMaxFrictionTorque = std::max(InPart.FrictionTorque, 0.0f);
+                    return JPH::Ref<JPH::TwoBodyConstraintSettings>(Hinge.GetPtr());
+                }
+                default:
+                {
+                    JPH::Ref<JPH::SwingTwistConstraintSettings> Swing = new JPH::SwingTwistConstraintSettings();
+                    Swing->mPosition1 = Swing->mPosition2 = Point;
+                    Swing->mTwistAxis1 = ParentTwist;
+                    Swing->mPlaneAxis1 = ParentPlane;
+                    Swing->mTwistAxis2 = Twist;
+                    Swing->mPlaneAxis2 = Plane;
+                    Swing->mNormalHalfConeAngle = std::clamp(InPart.NormalHalfCone, 0.0f, Pi);
+                    Swing->mPlaneHalfConeAngle  = std::clamp(InPart.PlaneHalfCone, 0.0f, Pi);
+                    Swing->mTwistMinAngle = std::clamp(InPart.TwistMin, -Pi, Pi);
+                    Swing->mTwistMaxAngle = std::clamp(std::max(InPart.TwistMax, InPart.TwistMin), -Pi, Pi);
+                    Swing->mMaxFrictionTorque = std::max(InPart.FrictionTorque, 0.0f);
+                    return JPH::Ref<JPH::TwoBodyConstraintSettings>(Swing.GetPtr());
+                }
+            }
+        }
+
+        uint32_t CreateRagdoll(const RagdollDesc& InDesc, const RagdollTransform* InPose, const bool bInDynamic)
+        {
+            const size_t Count = InDesc.Parts.size();
+            bool bValid = Count > 0 && InPose != nullptr && InDesc.Parts[0].Parent == -1;
+            for(size_t Index = 1; bValid && Index < Count; ++Index)
+            {
+                const int32_t Parent = InDesc.Parts[Index].Parent;
+                bValid = Parent >= 0 && size_t(Parent) < Index;
+            }
+            if(!bValid)
+            {
+                CORE_LOG_ERROR("[Physics] CreateRagdoll: parts must be parents first, with one root (part 0)")
+                return 0;
+            }
+
+            JPH::Ref<JPH::RagdollSettings> Settings = new JPH::RagdollSettings();
+            Settings->mSkeleton = new JPH::Skeleton();
+            Settings->mParts.resize(Count);
+            std::vector<JPH::Mat44> Rest(Count);
+            const JPH::ObjectLayer Layer = Layers::Make(InDesc.Layer, InDesc.Mask, true);
+            for(size_t Index = 0; Index < Count; ++Index)
+            {
+                const RagdollPartDesc& Desc = InDesc.Parts[Index];
+                Settings->mSkeleton->AddJoint("Part" + std::to_string(Index), int(Desc.Parent));
+
+                JPH::RagdollSettings::Part& Part = Settings->mParts[Index];
+                Part.SetShape(MakeRagdollShape(Desc));
+                Part.mPosition    = ToPosition(Desc.Rest);
+                Part.mRotation    = ToRotation(Desc.Rest);
+                Part.mMotionType  = bInDynamic ? JPH::EMotionType::Dynamic : JPH::EMotionType::Kinematic;
+                Part.mAllowDynamicOrKinematic = true;
+                Part.mObjectLayer    = Layer;
+                Part.mFriction       = std::max(InDesc.Friction, 0.0f);
+                Part.mRestitution    = std::clamp(InDesc.Restitution, 0.0f, 1.0f);
+                Part.mLinearDamping  = std::max(InDesc.LinearDamping, 0.0f);
+                Part.mAngularDamping = std::max(InDesc.AngularDamping, 0.0f);
+                Part.mMotionQuality  = InDesc.bContinuous ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete;
+                Part.mOverrideMassProperties       = JPH::EOverrideMassProperties::CalculateInertia;
+                Part.mMassPropertiesOverride.mMass = std::max(Desc.Mass, 0.05f);
+                if(Desc.Parent >= 0)
+                {
+                    Part.mToParent = MakeRagdollJoint(Desc);
+                }
+                Rest[Index] = JPH::Mat44::sRotationTranslation(Part.mRotation, JPH::Vec3(Part.mPosition));
+            }
+
+            /* Jolt's recipe (Samples/Utils/RagdollLoader.cpp): even out the
+             * mass ratios across joints, keep parts that touch at rest from
+             * colliding, solve the joints root first. */
+            Settings->Stabilize();
+            Settings->DisableParentChildCollisions(Rest.data(), 0.0f);
+            Settings->CalculateConstraintPriorities();
+            Settings->CalculateBodyIndexToConstraintIndex();
+            Settings->CalculateConstraintIndexToBodyIdxPair();
+
+            JPH::Ref<JPH::Ragdoll> Ragdoll = Settings->CreateRagdoll(JPH::CollisionGroup::GroupID(NextRagdollGroup++),
+                                                                    InDesc.Owner.Pack(), System);
+            if(!Ragdoll)
+            {
+                CORE_LOG_ERROR("[Physics] out of bodies ([Physics] MaxBodies) making a ragdoll")
+                return 0;
+            }
+
+            const uint32_t Handle = NextRagdoll++;
+            RagdollRecord& Record = Ragdolls[Handle];
+            Record.Ragdoll  = Ragdoll;
+            Record.Owner    = InDesc.Owner;
+            Record.bDynamic = bInDynamic;
+            Record.PrevPosition.resize(Count);
+            Record.PrevRotation.resize(Count);
+            Record.TargetPosition.resize(Count);
+            Record.TargetRotation.resize(Count);
+            for(size_t Index = 0; Index < Count; ++Index)
+            {
+                const JPH::BodyID Id = Ragdoll->GetBodyID(int(Index));
+                Record.PrevPosition[Index] = Record.TargetPosition[Index] = ToPosition(InPose[Index]);
+                Record.PrevRotation[Index] = Record.TargetRotation[Index] = ToRotation(InPose[Index]);
+                Interface().SetPositionAndRotation(Id, Record.PrevPosition[Index], Record.PrevRotation[Index], JPH::EActivation::DontActivate);
+                RagdollParts[Id.GetIndexAndSequenceNumber()] = RagdollPartRef{ Handle, int32_t(Index) };
+            }
+            Record.CurrPosition = Record.PrevPosition;
+            Record.CurrRotation = Record.PrevRotation;
+            Ragdoll->AddToPhysicsSystem(JPH::EActivation::Activate, false);
+            return Handle;
+        }
+
+        void DestroyRagdoll(RagdollRecord& InRecord)
+        {
+            if(!InRecord.Ragdoll) { return; }
+            for(const JPH::BodyID Id : InRecord.Ragdoll->GetBodyIDs())
+            {
+                RagdollParts.erase(Id.GetIndexAndSequenceNumber());
+            }
+            InRecord.Ragdoll->RemoveFromPhysicsSystem(false);
+            InRecord.Ragdoll = nullptr;   // the last reference: its bodies are destroyed
+        }
+
+        RagdollRecord* FindRagdoll(const uint32_t InHandle)
+        {
+            const auto Found = Ragdolls.find(InHandle);
+            return Found != Ragdolls.end() && Found->second.Ragdoll ? &Found->second : nullptr;
+        }
+
+        const RagdollRecord* FindRagdoll(const uint32_t InHandle) const
+        {
+            const auto Found = Ragdolls.find(InHandle);
+            return Found != Ragdolls.end() && Found->second.Ragdoll ? &Found->second : nullptr;
+        }
+
+        /* Kinematic ragdolls to their targets, over this frame's steps. */
+        void DriveRagdolls(const uint32_t InSteps)
+        {
+            if(InSteps == 0) { return; }
+            const float Seconds = float(InSteps) * FixedDelta();
+            for(auto& Entry : Ragdolls)
+            {
+                RagdollRecord& Record = Entry.second;
+                if(!Record.Ragdoll || Record.bDynamic || !Record.bTarget) { continue; }
+                for(size_t Index = 0; Index < Record.TargetPosition.size(); ++Index)
+                {
+                    Interface().MoveKinematic(Record.Ragdoll->GetBodyID(int(Index)), Record.TargetPosition[Index],
+                                              Record.TargetRotation[Index], Seconds);
+                }
+            }
+        }
+
+        void ReadRagdolls(const bool bInBefore)
+        {
+            for(auto& Entry : Ragdolls)
+            {
+                RagdollRecord& Record = Entry.second;
+                if(!Record.Ragdoll) { continue; }
+                if(bInBefore)
+                {
+                    Record.PrevPosition = Record.CurrPosition;
+                    Record.PrevRotation = Record.CurrRotation;
+                    continue;
+                }
+                for(size_t Index = 0; Index < Record.CurrPosition.size(); ++Index)
+                {
+                    Interface().GetPositionAndRotation(Record.Ragdoll->GetBodyID(int(Index)), Record.CurrPosition[Index],
+                                                       Record.CurrRotation[Index]);
+                }
+            }
+        }
+
+        bool IsRagdollBody(const JPH::BodyID InBody) const
+        {
+            return RagdollParts.count(InBody.GetIndexAndSequenceNumber()) != 0;
+        }
+
         // --- Stepping and writing back ---------------------------------------
 
         void StepOnce()
@@ -1165,6 +1454,8 @@ namespace JoltPhysics
                 Record.PrevRotation = Record.CurrRotation;
             }
 
+            ReadRagdolls(true);
+
             const JPH::EPhysicsUpdateError Error = System->Update(FixedDelta(), 1, &Runtime::GetTempAllocator(), &Runtime::GetJobSystem());
             if(Error != JPH::EPhysicsUpdateError::None)
             {
@@ -1178,6 +1469,7 @@ namespace JoltPhysics
                 if(Record.Motion != GameCore::RBM_Dynamic || Record.Id.IsInvalid()) { continue; }
                 BodiesI.GetPositionAndRotation(Record.Id, Record.CurrPosition, Record.CurrRotation);
             }
+            ReadRagdolls(false);
 
             FlushContacts();
         }
@@ -1185,6 +1477,7 @@ namespace JoltPhysics
         void WriteBack()
         {
             const float Alpha = Settings.bInterpolate ? float(std::clamp(Accumulator / FixedDelta(), 0.0, 1.0)) : 1.0f;
+            LastAlpha = Alpha;
             JPH::BodyInterface& BodiesI = Interface();
 
             for(auto& Entry : Bodies)
@@ -1283,6 +1576,8 @@ namespace JoltPhysics
         {
             for(const ContactQueue::Event& Event : Contacts.Take())
             {
+                /* A ragdoll's parts tell nothing: dozens of touches a fall. */
+                if(IsRagdollBody(Event.A) || IsRagdollBody(Event.B)) { continue; }
                 const uint64_t Key = PairKey(Event.A, Event.B);
                 if(Event.bAdded)
                 {
@@ -1337,6 +1632,7 @@ namespace JoltPhysics
             SyncBodies(StepsNow);
             SyncConstraints();
             SyncVehicles();
+            DriveRagdolls(StepsNow);
             const Clock::time_point StepStart = Clock::now();
 
             for(uint32_t Step = 0; Step < StepsNow; ++Step)
@@ -1431,6 +1727,9 @@ namespace JoltPhysics
 
         for(auto& Entry : P->Vehicles) { P->RemoveVehicle(Entry.second); }
         P->Vehicles.clear();
+        for(auto& Entry : P->Ragdolls) { P->DestroyRagdoll(Entry.second); }
+        P->Ragdolls.clear();
+        P->RagdollParts.clear();
         for(auto& Entry : P->Constraints) { P->RemoveConstraint(Entry.second); }
         P->Constraints.clear();
         P->Touching.clear();   // no ends told: the World is going
@@ -1484,6 +1783,14 @@ namespace JoltPhysics
 
         const JPH::RVec3 Point = Ray.GetPointOnRay(Hit.mFraction);
         OutHit.Entity   = P->EntityOf(Hit.mBodyID);
+        const auto Part = P->RagdollParts.find(Hit.mBodyID.GetIndexAndSequenceNumber());
+        if(Part != P->RagdollParts.end())
+        {
+            const Impl::RagdollRecord* Ragdoll = P->FindRagdoll(Part->second.Ragdoll);
+            OutHit.Entity      = Ragdoll ? Ragdoll->Owner : GameCore::EntityID();
+            OutHit.Ragdoll     = Part->second.Ragdoll;
+            OutHit.RagdollPart = Part->second.Part;
+        }
         OutHit.Distance = Hit.mFraction * InMaxDistance;
         OutHit.Point    = Convert::FromRVec3(Point, P->FromMeters());
 
@@ -1520,9 +1827,131 @@ namespace JoltPhysics
         {
             if(Entry.second.Constraint) { ++OutStats.Vehicles; }
         }
+        for(const auto& Entry : P->Ragdolls)
+        {
+            if(!Entry.second.Ragdoll) { continue; }
+            ++OutStats.Ragdolls;
+            OutStats.RagdollParts += uint32_t(Entry.second.Ragdoll->GetBodyCount());
+        }
         OutStats.StepsLastFrame = P->StepsLastFrame;
         OutStats.StepMs         = P->StepMs;
         OutStats.SyncMs         = P->SyncMs;
+    }
+
+    // --- Ragdolls -------------------------------------------------------------
+
+    uint32_t PhysicsWorld::CreateRagdoll(const RagdollDesc& InDesc, const RagdollTransform* InPose, const bool bInDynamic)
+    {
+        return P ? P->CreateRagdoll(InDesc, InPose, bInDynamic) : 0;
+    }
+
+    void PhysicsWorld::DestroyRagdoll(const uint32_t InRagdoll)
+    {
+        if(!P) { return; }
+        const auto Found = P->Ragdolls.find(InRagdoll);
+        if(Found == P->Ragdolls.end()) { return; }
+        P->DestroyRagdoll(Found->second);
+        P->Ragdolls.erase(Found);
+    }
+
+    bool PhysicsWorld::HasRagdoll(const uint32_t InRagdoll) const
+    {
+        return P && P->FindRagdoll(InRagdoll) != nullptr;
+    }
+
+    bool PhysicsWorld::IsRagdollDynamic(const uint32_t InRagdoll) const
+    {
+        const Impl::RagdollRecord* Record = P ? P->FindRagdoll(InRagdoll) : nullptr;
+        return Record && Record->bDynamic;
+    }
+
+    void PhysicsWorld::SetRagdollTarget(const uint32_t InRagdoll, const RagdollTransform* InPose)
+    {
+        Impl::RagdollRecord* Record = P ? P->FindRagdoll(InRagdoll) : nullptr;
+        if(!Record || !InPose || Record->bDynamic) { return; }
+        for(size_t Index = 0; Index < Record->TargetPosition.size(); ++Index)
+        {
+            Record->TargetPosition[Index] = P->ToPosition(InPose[Index]);
+            Record->TargetRotation[Index] = Impl::ToRotation(InPose[Index]);
+        }
+        Record->bTarget = true;
+    }
+
+    void PhysicsWorld::SetRagdollDynamic(const uint32_t InRagdoll, const EngineCore::Vector3* InLinear, const EngineCore::Vector3* InAngular)
+    {
+        Impl::RagdollRecord* Record = P ? P->FindRagdoll(InRagdoll) : nullptr;
+        if(!Record) { return; }
+        JPH::BodyInterface& BodiesI = P->Interface();
+        const double M = P->ToMeters();
+        for(int Index = 0; Index < int(Record->Ragdoll->GetBodyCount()); ++Index)
+        {
+            const JPH::BodyID Id = Record->Ragdoll->GetBodyID(Index);
+            if(!Record->bDynamic)
+            {
+                BodiesI.SetMotionType(Id, JPH::EMotionType::Dynamic, JPH::EActivation::Activate);
+            }
+            if(InLinear)  { BodiesI.SetLinearVelocity(Id, Convert::ToVec3(InLinear[Index], M)); }
+            if(InAngular) { BodiesI.SetAngularVelocity(Id, Convert::ToVec3(InAngular[Index], Convert::DegToRad(1.0))); }
+            BodiesI.ActivateBody(Id);
+        }
+        Record->bDynamic = true;
+        Record->bTarget  = false;
+    }
+
+    bool PhysicsWorld::GetRagdollPose(const uint32_t InRagdoll, RagdollTransform* OutPose) const
+    {
+        const Impl::RagdollRecord* Record = P ? P->FindRagdoll(InRagdoll) : nullptr;
+        if(!Record || !OutPose) { return false; }
+        const float  Alpha = Record->bDynamic ? P->LastAlpha : 1.0f;
+        const double Units = P->FromMeters();
+        for(size_t Index = 0; Index < Record->CurrPosition.size(); ++Index)
+        {
+            const JPH::RVec3 Position = Record->PrevPosition[Index] + (Record->CurrPosition[Index] - Record->PrevPosition[Index]) * JPH::Real(Alpha);
+            const JPH::Quat  Rotation = Record->PrevRotation[Index].SLERP(Record->CurrRotation[Index], Alpha).Normalized();
+            RagdollTransform& Out = OutPose[Index];
+            Out.Position[0] = float(double(Position.GetX()) * Units);
+            Out.Position[1] = float(double(Position.GetY()) * Units);
+            Out.Position[2] = float(double(Position.GetZ()) * Units);
+            Out.Rotation[0] = Rotation.GetX();
+            Out.Rotation[1] = Rotation.GetY();
+            Out.Rotation[2] = Rotation.GetZ();
+            Out.Rotation[3] = Rotation.GetW();
+        }
+        return true;
+    }
+
+    bool PhysicsWorld::IsRagdollAwake(const uint32_t InRagdoll) const
+    {
+        const Impl::RagdollRecord* Record = P ? P->FindRagdoll(InRagdoll) : nullptr;
+        return Record && Record->Ragdoll->IsActive(false);
+    }
+
+    void PhysicsWorld::AddRagdollImpulse(const uint32_t InRagdoll, const EngineCore::Vector3& InImpulse, const EngineCore::Vector3& InAt,
+                                         const int32_t InPart)
+    {
+        Impl::RagdollRecord* Record = P ? P->FindRagdoll(InRagdoll) : nullptr;
+        if(!Record || !Record->bDynamic) { return; }
+        JPH::BodyInterface& BodiesI = P->Interface();
+        const double     M  = P->ToMeters();
+        const JPH::RVec3 At = Convert::ToRVec3(InAt, M);
+
+        int32_t Part = InPart;
+        if(Part < 0 || size_t(Part) >= Record->Ragdoll->GetBodyCount())
+        {
+            /* The part whose centre of mass is nearest. */
+            float Nearest = 0.0f;
+            Part = 0;
+            for(int Index = 0; Index < int(Record->Ragdoll->GetBodyCount()); ++Index)
+            {
+                const float Distance = JPH::Vec3(BodiesI.GetCenterOfMassPosition(Record->Ragdoll->GetBodyID(Index)) - At).LengthSq();
+                if(Index == 0 || Distance < Nearest)
+                {
+                    Nearest = Distance;
+                    Part    = Index;
+                }
+            }
+        }
+        BodiesI.AddImpulse(Record->Ragdoll->GetBodyID(int(Part)), Convert::ToVec3(InImpulse, M), At);
     }
 
     PhysicsWorld* PhysicsWorld::Find(const GameCore::World& InWorld)

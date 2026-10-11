@@ -10,3 +10,4 @@ BlockSize 160
 Texture 1 Default Default Content/Textures/Brick.nmtexture
 Texture 2 Nearest Clamp Content/Textures/Brick.nmtexture
 Texture 3 Default Default Content/Textures/Height Map.nmtexture
+TextureUV 2 4

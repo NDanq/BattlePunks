@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="51f2e1e9065fc1633b356c7b4405f7f1" Name="EastRow2Wall" Mobility="Static">
+  <Component Type="Bounds" Version="1">
+    <Local MinX="-5" MinY="0" MinZ="-5" MaxX="485" MaxY="1820" MaxZ="805" />
+    <Static Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="4035" Y="0" Z="630" />
+    <Rotation X="0" Y="90" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

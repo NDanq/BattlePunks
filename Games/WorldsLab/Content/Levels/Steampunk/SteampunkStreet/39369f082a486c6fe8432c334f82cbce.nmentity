@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="39369f082a486c6fe8432c334f82cbce" Name="NorthW0Wall" Mobility="Static">
+  <Component Type="Bounds" Version="1">
+    <Local MinX="-5" MinY="0" MinZ="-5" MaxX="635" MaxY="1480" MaxZ="1805" />
+    <Static Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-4835" Y="0" Z="2090" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

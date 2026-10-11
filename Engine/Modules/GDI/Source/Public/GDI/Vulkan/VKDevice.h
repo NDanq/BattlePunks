@@ -4,6 +4,8 @@
 #include <string>
 
 #include <vulkan/vulkan.h>
+
+#include "Public/GDI/Vulkan/VKMemoryHeap.h"
 #include <mutex>
 
 
@@ -107,6 +109,11 @@ public:
     inline bool SupportsInheritedQueries() const              { return bInheritedQueries; }
     inline bool SupportsInheritedConditionalRendering() const { return bInheritedConditionalRendering; }
 
+    /** Sampled images' memory, sub-allocated from blocks, and the upload ring
+     *  (VKMemoryHeap.h). Freed at Shutdown, before the device. */
+    inline VKImageHeap&   GetImageHeap()   { return ImageHeap; }
+    inline VKStagingRing& GetStagingRing() { return StagingRing; }
+
 private:
     bool PickPhysicalDevice();
     bool CreateLogicalDevice();
@@ -126,6 +133,9 @@ private:
     VkPhysicalDeviceMemoryProperties MemoryProperties{};
 
     std::mutex              QueueMutex;
+
+    VKImageHeap             ImageHeap;
+    VKStagingRing           StagingRing;
 };
 
 #endif //CORECLIENT_VKDEVICE_H

@@ -188,6 +188,7 @@ if(GDI_WITH_VULKAN)
             Source/Private/GDI/Vulkan/VKRecordingContext.cpp
             Source/Private/GDI/Vulkan/VKSync.cpp
             Source/Private/GDI/Vulkan/VKDevice.cpp
+            Source/Private/GDI/Vulkan/VKMemoryHeap.cpp
             Source/Private/GDI/Vulkan/VKSwapchain.cpp
             Source/Private/GDI/Vulkan/VKCommandManager.cpp
             Source/Private/GDI/Vulkan/VKPipelineCache.cpp
@@ -205,6 +206,7 @@ if(GDI_WITH_VULKAN)
             Source/Public/GDI/Vulkan/VKRenderTarget.h
             Source/Public/GDI/Vulkan/VKSync.h
             Source/Public/GDI/Vulkan/VKDevice.h
+            Source/Public/GDI/Vulkan/VKMemoryHeap.h
             Source/Public/GDI/Vulkan/VKSwapchain.h
             Source/Public/GDI/Vulkan/VKCommandManager.h
             Source/Public/GDI/Vulkan/VKPipelineCache.h
@@ -230,6 +232,7 @@ if(GDI_WITH_D3D12)
             Source/Private/GDI/D3D12/D3D12Compute.cpp
             Source/Private/GDI/D3D12/D3D12Query.cpp
             Source/Private/GDI/D3D12/D3D12RecordingContext.cpp
+            Source/Private/GDI/D3D12/D3D12MemoryHeap.cpp
             Source/Private/GDI/D3D12/D3D12TransientOps.h
             Source/Public/GDI/D3D12/GDID3D12Platform.h
             Source/Public/GDI/D3D12/D3D12DynamicGDI.h
@@ -245,6 +248,7 @@ if(GDI_WITH_D3D12)
             Source/Public/GDI/D3D12/D3D12Shader.h
             Source/Public/GDI/D3D12/D3D12Sync.h
             Source/Public/GDI/D3D12/D3D12Buffer.h
+            Source/Public/GDI/D3D12/D3D12MemoryHeap.h
     )
 endif()
 

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="926af288218dedc78989c3b807abc193" Name="Hearth">
+  <Component Type="Particle System" Version="3">
+    <System Value="Content/Particles/Courtyard/Hearth.nmparticle" />
+    <Emitting Value="true" />
+    <Tint R="255" G="255" B="255" A="255" />
+    <SpawnRateScale Value="1" />
+    <TimeScale Value="1" />
+    <Seed Value="0" />
+    <UseBeamTarget Value="false" />
+    <BeamTarget X="0" Y="0" Z="0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="1071" Y="37" Z="1265" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

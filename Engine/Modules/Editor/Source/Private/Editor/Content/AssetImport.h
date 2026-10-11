@@ -59,6 +59,11 @@ namespace EditorContent
         /* Import the images the glTF refers to as .nmtexture beside the mesh. */
         bool bImportTextures = true;
 
+        /* An untextured material's base colour baked into the vertex colours,
+         * so the mesh draws in its colours with DefaultLit. Recorded settings
+         * without it reimport as before (off). */
+        bool bBakeMaterialColors = true;
+
         /* A skinned file's skeleton (.nmskel), its meshes skinned, and its
          * animations as .nmanim clips (ANIMATION.md). */
         bool  bImportAnimations   = true;
@@ -109,6 +114,12 @@ namespace EditorContent
         QStringList            Warnings;   // what was skipped or guessed
         QList<ReferencedImage> Images;     // ImportMesh: what the glTF refers to
     };
+
+    /* The engine's content folder (ContentPaths' GetEngineContentRoot), set
+     * once at startup, before any import: what is written inside it names
+     * what it refers to -- a mesh its skeleton, a clip or mesh its source --
+     * as "Engine/Content/...", not by absolute path. Empty: no engine content. */
+    void SetImportEngineContentRoot(const QString& InRoot);
 
     /* Lists InGltfPath's images without importing. */
     bool FindReferencedImages(const QString& InGltfPath, QList<ReferencedImage>& OutImages, QString& OutError);

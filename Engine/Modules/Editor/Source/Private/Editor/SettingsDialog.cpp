@@ -313,6 +313,8 @@ SettingsDialog::SettingsDialog(QWidget* InParent)
              QStringLiteral("One .nmmesh for a whole glTF scene, or one per glTF mesh"));
     AddCheck(Import, "Editor.ImportMeshTextures", QStringLiteral("Import a mesh's textures"),
              QStringLiteral("Import the images a glTF refers to as .nmtexture beside the mesh"));
+    AddCheck(Import, "Editor.ImportMaterialColors", QStringLiteral("Bake material colours"),
+             QStringLiteral("An untextured glTF material's base colour baked into the mesh's vertex colours, so it draws in its colours with DefaultLit"));
     AddCheck(Import, "Editor.ImportTextureSRGB", QStringLiteral("Textures are sRGB"),
              QStringLiteral("Colour images are sRGB; turn off for masks and normal maps"));
     AddChoice(Import, "Editor.ImportTextureMaxSize", QStringLiteral("Largest texture"),

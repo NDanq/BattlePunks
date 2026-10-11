@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "Public/Core/CoreBytes.h"
 #include "Public/Core/CoreImage.h"
 #include "Public/RenderCore/AssetImportInfo.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
@@ -13,6 +14,7 @@
 namespace EngineCore
 {
     class Archive;
+    class BucketMemoryPool;
 }
 
 /*
@@ -59,13 +61,23 @@ namespace RenderCore
 
     enum : int { TEXTURE_MAX_DIMENSION = 16384 };
 
+    /*
+     * Texture memory (CoreMemoryPool.h): the pool every texture file's
+     * levels and blocks are loaded into -- a BucketMemoryPool named
+     * "Textures", registered as RenderCore loads, so a level freed by
+     * streaming is reused for the next one of its size rather than returned
+     * to the system. Its stats are the CPU side of every texture loaded.
+     */
+    RENDERCORE_API EngineCore::PoolID            GetTextureMemoryPool();
+    RENDERCORE_API EngineCore::BucketMemoryPool* GetTextureMemory();
+
     /* One level as its compression's 4x4 blocks, row by row; a partial
      * block at the right or bottom edge repeats the edge texels. */
     struct TextureBlockLevel
     {
         int                  Width  = 0;   // in texels
         int                  Height = 0;
-        std::vector<uint8_t> Bytes;
+        EngineCore::PooledBytes Bytes{ GetTextureMemoryPool() };
     };
 
     /* What LoadTextureFile reads: everything, or what the GPU is given -- the
@@ -137,6 +149,38 @@ namespace RenderCore
      * BC4 8 bytes a block, the rest 16), every level. */
     RENDERCORE_API uint64_t TextureCompressedBytes(int InWidth, int InHeight, int InMipCount, ETextureCompression InCompression);
 
+    /*
+     * TEXTURE STREAMING (TEXTURE_STREAMING.md): where each level of a file's
+     * GPU form lives -- its blocks when it has TBLK, else its RGBA8 levels --
+     * found from the chunk headers with a few small reads, so a streamed
+     * texture reads only the levels it wants. Level 0 first.
+     */
+    struct TextureFileLayout
+    {
+        TextureHeader         Header;
+        bool                  bBlocks = false;   // the levels are Header.Compression's blocks
+        std::vector<uint64_t> LevelOffsets;      // in the file, by level
+        std::vector<uint64_t> LevelBytes;
+
+        int GetMipCount() const { return int(LevelOffsets.size()); }
+        /* Level InLevel's size, in texels. Inline: the struct is not exported. */
+        int LevelWidth(const int InLevel) const  { int Size = Header.Width;  for(int Each = 0; Each < InLevel; ++Each) { Size = Size > 1 ? Size / 2 : 1; } return Size; }
+        int LevelHeight(const int InLevel) const { int Size = Header.Height; for(int Each = 0; Each < InLevel; ++Each) { Size = Size > 1 ? Size / 2 : 1; } return Size; }
+    };
+
+    /* InPath's layout; false (warned) if it is not a texture this build reads. */
+    RENDERCORE_API bool ReadTextureLayout(const std::string& InPath, TextureFileLayout& OutLayout);
+
+    /*
+     * Levels [InFirst, InEnd) of InPath as InLayout found them (InEnd -1: to
+     * the last), in one range read: OutTexture's level 0 is level InFirst --
+     * Pixels and Mips, or Blocks (Pixels then empty), as LoadTextureFile's
+     * ForGpu has them. The settings come from the header. False on a read
+     * that fails or a file that changed under the layout.
+     */
+    RENDERCORE_API bool LoadTextureLevels(const std::string& InPath, const TextureFileLayout& InLayout,
+                                          int InFirst, int InEnd, TextureData& OutTexture);
+
 #if WITH_EDITOR
     /* Encodes the blocks first when Compression asks for them and Blocks
      * do not match (CompressTexture); false, logged, if that fails. */
@@ -158,6 +202,12 @@ namespace RenderCore
 
         /* Forget InPath (or everything, given an empty path). */
         static void Invalidate(const std::string& InPath);
+
+        /* The paths invalidated since *InOutSerial (an empty one: every
+         * path), which then moves past them: how texture streaming hears of
+         * a reimport. False if none were. The log keeps the last few hundred;
+         * a reader further behind is given "" (everything). */
+        static bool ConsumeInvalidations(uint64_t& InOutSerial, std::vector<std::string>& OutPaths);
     };
 }
 

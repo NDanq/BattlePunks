@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <vector>
 
+#include "Public/Core/CoreBytes.h"
+
 #include "Public/Core/CoreAPI.h"
 #include "Public/Core/CoreTypes.h"
 
@@ -47,6 +49,10 @@ namespace EngineCore
     public:
         Image() = default;
         Image(int InWidth, int InHeight, EImageFormat InFormat);
+        /* Its pixels from InPool (CoreMemoryPool.h): a subsystem's own, for
+         * reuse and accounting -- RenderCore's textures. Copies and
+         * conversions keep the pool. */
+        Image(int InWidth, int InHeight, EImageFormat InFormat, PoolID InPool);
 
         /*
          * Copy from a strided source. InSrcStride is the source's bytes per
@@ -68,6 +74,7 @@ namespace EngineCore
         /* Always Width * BytesPerPixel(Format) -- see the note above. */
         size_t GetStride()    const { return size_t(Width) * size_t(BytesPerPixel(Format)); }
         size_t GetSizeBytes() const { return Pixels.size(); }
+        PoolID GetPool()      const { return Pixels.GetPool(); }
 
         uint8_t*       GetData()       { return Pixels.empty() ? nullptr : Pixels.data(); }
         const uint8_t* GetData() const { return Pixels.empty() ? nullptr : Pixels.data(); }
@@ -104,7 +111,7 @@ namespace EngineCore
         void FlipHorizontal();
 
     private:
-        std::vector<uint8_t> Pixels;
+        PooledBytes          Pixels;
         int                  Width  = 0;
         int                  Height = 0;
         EImageFormat         Format = EImageFormat::None;

@@ -19,6 +19,8 @@
 #include <QDockWidget>
 #include <QFileInfo>
 #include <QFontDatabase>
+#include <QImage>
+#include <QPainter>
 #include <QInputDialog>
 #include <QListWidget>
 #include <QMenuBar>
@@ -458,6 +460,22 @@ void GraphEditorTab::ShowPalette(const QPointF& InScenePos, const bool bInFromPi
         QTimer::singleShot(0, this, [this, Added]() { Scene->SelectNodes({ Added }); });   // after the queued rebuild
     });
     Palette->Popup(View->mapToGlobal(View->mapFromScene(InScenePos)));
+}
+
+bool GraphEditorTab::SaveCanvasImage(const QString& InFile, const double InScale, QRectF& OutSceneRect) const
+{
+    const double Scale = InScale > 0.0 ? InScale : 1.0;
+    OutSceneRect = Scene->itemsBoundingRect().adjusted(-40.0, -40.0, 40.0, 40.0);
+    const QSize Size(qMax(1, int(OutSceneRect.width() * Scale)), qMax(1, int(OutSceneRect.height() * Scale)));
+    if(Size.width() > 16384 || Size.height() > 16384) { return false; }   // past what an image (and a GPU upload) wants
+    QImage Image(Size, QImage::Format_ARGB32_Premultiplied);
+    Image.fill(Scene->backgroundBrush().style() != Qt::NoBrush ? Scene->backgroundBrush().color() : palette().color(QPalette::Base));
+    {
+        QPainter Painter(&Image);
+        Painter.setRenderHints(QPainter::Antialiasing | QPainter::TextAntialiasing | QPainter::SmoothPixmapTransform);
+        Scene->render(&Painter, QRectF(QPointF(0.0, 0.0), QSizeF(Size)), OutSceneRect);
+    }
+    return Image.save(InFile);
 }
 
 void GraphEditorTab::RevealNode(const NodeGuid& InNode)

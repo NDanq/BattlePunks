@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="cda8de9872b8a06b6c2d4c6f2a433660" Name="Lantern0" Mobility="Stationary">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="176" B="104" A="255" />
+    <Intensity Value="3.2" />
+    <Radius Value="560" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <ShadowTint R="40" G="50" B="80" A="255" />
+    <ShadowBias Value="0.004" />
+    <ShadowNormalBias Value="2" />
+    <SourceRadius Value="6" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-1085" Y="233" Z="-112" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

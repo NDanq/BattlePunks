@@ -15,7 +15,7 @@ namespace RenderCore
         Skeleton = std::move(InSkeleton);
         Rebuild();
         Restart();
-        Evaluate();
+        EvaluatePose();
     }
 
     void AnimInstance::PlayClip(std::shared_ptr<const AnimClipData> InClip)
@@ -24,7 +24,7 @@ namespace RenderCore
         State = nullptr;
         Rebuild();
         Restart();
-        Evaluate();
+        EvaluatePose();
     }
 
     void AnimInstance::SetState(std::shared_ptr<const AnimStateData> InState)
@@ -33,7 +33,7 @@ namespace RenderCore
         Clip  = nullptr;
         Rebuild();
         Restart();
-        Evaluate();
+        EvaluatePose();
     }
 
     void AnimInstance::SetLoopOverride(const int InLoop)
@@ -49,6 +49,11 @@ namespace RenderCore
     {
         Layers.clear();
         Parameters.clear();
+        SyncGroups.clear();
+        LookBones.clear();
+        LookParameter = LookWeightParameter = -1;
+        LookAngle   = 0.0f;
+        bLookPlaced = false;
         RefPose.clear();
         if(Skeleton) { GetRefPose(*Skeleton, RefPose); }
 
@@ -106,6 +111,12 @@ namespace RenderCore
                 Runtime.BlendParameterY = Node.BlendParameterY.empty() || Runtime.BlendParameter < 0 ? -1 : State->FindParameter(Node.BlendParameterY);
                 Runtime.Speed          = Node.Speed;
                 Runtime.Loop           = Node.Loop;
+                if(!Node.SyncGroup.empty())
+                {
+                    const auto Found = std::find(SyncGroups.begin(), SyncGroups.end(), Node.SyncGroup);
+                    Runtime.SyncGroup = int32_t(Found - SyncGroups.begin());
+                    if(Found == SyncGroups.end()) { SyncGroups.push_back(Node.SyncGroup); }
+                }
                 for(const AnimBlendSample& Each : Node.Samples)
                 {
                     Runtime.Samples.push_back(MakeSample(AnimClipAssetCache::Find(Each.Clip), Each.Position, Each.PositionY));
@@ -129,6 +140,26 @@ namespace RenderCore
             }
             Layers.push_back(std::move(Layer));
         }
+
+        const AnimLookAt& Look = State->LookAt;
+        LookParameter = Look.IsSet() ? State->FindParameter(Look.Parameter) : -1;
+        if(Skeleton && LookParameter >= 0)
+        {
+            for(const AnimLookBone& Each : Look.Bones)
+            {
+                const int32_t Bone = Skeleton->FindBone(Each.Bone);
+                if(Bone >= 0) { LookBones.push_back({ Bone, Each.Share }); }
+            }
+            /* Root first, whatever order the asset lists them in: each turns about its turned parent. */
+            std::stable_sort(LookBones.begin(), LookBones.end(), [](const LookBoneRuntime& InA, const LookBoneRuntime& InB) { return InA.Bone < InB.Bone; });
+            LookWeightParameter = Look.WeightParameter.empty() ? -1 : State->FindParameter(Look.WeightParameter);
+            LookMin      = Look.MinAngle;
+            LookMax      = Look.MaxAngle;
+            LookResponse = Look.Response;
+            const float Length = std::sqrt(Look.Axis[0] * Look.Axis[0] + Look.Axis[1] * Look.Axis[1] + Look.Axis[2] * Look.Axis[2]);
+            LookAxis = Length > 1e-6f ? AnimVec3{ Look.Axis[0] / Length, Look.Axis[1] / Length, Look.Axis[2] / Length } : AnimVec3{ 1.0f, 0.0f, 0.0f };
+        }
+        if(LookBones.empty()) { LookParameter = -1; }
     }
 
     void AnimInstance::Restart()
@@ -285,6 +316,38 @@ namespace RenderCore
         return Model;
     }
 
+    float AnimInstance::LookTarget() const
+    {
+        if(LookParameter < 0 || size_t(LookParameter) >= Parameters.size()) { return 0.0f; }
+        float Angle = std::clamp(Parameters[size_t(LookParameter)], LookMin, LookMax);
+        if(LookWeightParameter >= 0 && size_t(LookWeightParameter) < Parameters.size())
+        {
+            Angle *= std::clamp(Parameters[size_t(LookWeightParameter)], 0.0f, 1.0f);
+        }
+        return Angle;
+    }
+
+    void AnimInstance::ApplyLookAt(AnimLocalPose& InOutPose) const
+    {
+        /* Not placed yet (evaluated before any update): where it is heading. */
+        const float Angle = bLookPlaced ? LookAngle : LookTarget();
+        if(LookParameter < 0 || std::fabs(Angle) < 1e-4f) { return; }
+        constexpr float DegreesToRadians = 3.14159265358979f / 180.0f;
+        for(const LookBoneRuntime& Each : LookBones)
+        {
+            if(size_t(Each.Bone) >= InOutPose.size() || Each.Share == 0.0f) { continue; }
+            /* Its share about the model axis, said in its parent's space -- the parent
+             * already turned, so the turns add up along the chain. */
+            const AnimQuat ParentRotation = AnimMath::ToTransform(ParentModel(InOutPose, Each.Bone)).Rotation;
+            const AnimVec3 Axis = AnimMath::Rotate(AnimMath::Conjugate(ParentRotation), LookAxis);
+            const float    Half = 0.5f * Angle * Each.Share * DegreesToRadians;
+            const float    Sin  = std::sin(Half);
+            const AnimQuat Turn { Axis.X * Sin, Axis.Y * Sin, Axis.Z * Sin, std::cos(Half) };
+            AnimQuat& Rotation = InOutPose[size_t(Each.Bone)].Rotation;
+            Rotation = AnimMath::Normalize(AnimMath::Mul(Turn, Rotation));
+        }
+    }
+
     void AnimInstance::HoldRoot(const Sample& InSample, AnimLocalPose& InOutPose) const
     {
         if(InSample.RootBone < 0 || InSample.RootTrack < 0 || size_t(InSample.RootBone) >= InOutPose.size()) { return; }
@@ -297,9 +360,13 @@ namespace RenderCore
         Local = AnimMath::TransformPoint(AnimMath::Inverse(Parent), { First.X, Now.Y, First.Z });
     }
 
-    AnimVec3 AnimInstance::AdvancePlayhead(const LayerRuntime& InLayer, Playhead& InOutHead, const float InDelta, const bool bInNotify)
+    AnimVec3 AnimInstance::AdvancePlayhead(const LayerRuntime& InLayer, Playhead& InOutHead, const float InDelta, const bool bInNotify,
+                                           const float InSyncPhase)
     {
         InOutHead.bEnded = false;
+        const bool bFollowing = InSyncPhase >= 0.0f;
+        const bool bLockingOn = bFollowing && !InOutHead.bSynced;
+        InOutHead.bSynced = bFollowing;
         if(InOutHead.State < 0 || size_t(InOutHead.State) >= InLayer.States.size())
         {
             return AnimVec3();
@@ -315,7 +382,15 @@ namespace RenderCore
         const float From  = InOutHead.Phase;
         float       To    = From + InDelta * State.Speed / Duration;
         bool        bWrap = false;
-        if(StateLoops(State))
+        if(bFollowing)
+        {
+            /* Where the leader is: forward, round the end if it is behind.
+             * Locking on jumps there, passing nothing. */
+            To    = std::clamp(InSyncPhase, 0.0f, 1.0f);
+            bWrap = !bLockingOn && To < From && StateLoops(State);
+            InOutHead.bEnded = StateLoops(State) ? bWrap : To >= 1.0f;
+        }
+        else if(StateLoops(State))
         {
             if(To >= 1.0f || To < 0.0f)
             {
@@ -337,7 +412,8 @@ namespace RenderCore
         SampleWeights(State, Weights, Dominant);
 
         /* The dominant clip's notifies, moving forward. */
-        if(bInNotify && To != From && InDelta * State.Speed > 0.0f)
+        const bool bForward = bFollowing ? !bLockingOn && (To > From || bWrap) : InDelta * State.Speed > 0.0f;
+        if(bInNotify && To != From && bForward)
         {
             if(Dominant < State.Samples.size() && State.Samples[Dominant].Clip)
             {
@@ -488,6 +564,13 @@ namespace RenderCore
             InOutLayer.Previous     = InOutLayer.Current;
             InOutLayer.Current      = Playhead();
             InOutLayer.Current.State = Transition.To;
+            /* Within a sync group it goes on from where the state it leaves was. */
+            const int32_t Group = InOutLayer.States[size_t(Transition.To)].SyncGroup;
+            if(Group >= 0 && Group == Leaving.SyncGroup)
+            {
+                InOutLayer.Current.Phase   = InOutLayer.Previous.Phase;
+                InOutLayer.Current.bSynced = InOutLayer.Previous.bSynced;
+            }
             InOutLayer.FadeTime     = 0.0f;
             InOutLayer.FadeDuration = Transition.Duration;
             if(Transition.Duration <= 0.0f) { InOutLayer.Previous.State = -1; }
@@ -506,11 +589,18 @@ namespace RenderCore
         if(Skeleton)
         {
             const float Delta = InDeltaSeconds * PlayRate;
+            LeaderPhase.assign(SyncGroups.size(), -1.0f);
             for(size_t Index = 0; Index < Layers.size(); ++Index)
             {
                 LayerRuntime& Layer = Layers[Index];
                 const bool bWasEnded = Layer.Current.State >= 0 && Layer.Current.Phase >= 1.0f;
-                AnimVec3 Travel = AdvancePlayhead(Layer, Layer.Current, Delta, /*bInNotify*/ true);
+
+                /* The first layer playing a state of a sync group leads it;
+                 * a later one in a state of that group goes where it went. */
+                const int32_t Group = Layer.Current.State >= 0 ? Layer.States[size_t(Layer.Current.State)].SyncGroup : -1;
+                const float   Lead  = Group >= 0 ? LeaderPhase[size_t(Group)] : -1.0f;
+                AnimVec3 Travel = AdvancePlayhead(Layer, Layer.Current, Delta, /*bInNotify*/ true, Lead);
+                if(Group >= 0 && Lead < 0.0f) { LeaderPhase[size_t(Group)] = Layer.Current.Phase; }
 
                 /* A one-shot reaching its end: once, as it gets there. */
                 if(Layer.Current.State >= 0 && !bWasEnded && Layer.Current.Phase >= 1.0f
@@ -530,16 +620,44 @@ namespace RenderCore
                 if(Index == 0) { RootMotion = Travel; }
                 UpdateTransitions(Layer);
             }
+
+            /* The look-at eases toward its target, in real time: a play rate of 0 still looks. */
+            if(LookParameter >= 0)
+            {
+                const float Target = LookTarget();
+                if(!bLookPlaced || LookResponse <= 0.0f) { LookAngle = Target; }
+                else { LookAngle += (Target - LookAngle) * (1.0f - std::exp(-LookResponse * std::max(InDeltaSeconds, 0.0f))); }
+                bLookPlaced = true;
+            }
         }
-        if(bInEvaluate) { Evaluate(); }
+        if(bInEvaluate) { EvaluatePose(); }
     }
 
     void AnimInstance::Evaluate()
+    {
+        /* A change or a seek: the look-at goes straight to its target too. */
+        if(LookParameter >= 0)
+        {
+            LookAngle   = LookTarget();
+            bLookPlaced = true;
+        }
+        EvaluatePose();
+    }
+
+    void AnimInstance::EvaluatePose()
     {
         if(!Skeleton)
         {
             LocalPose.clear();
             ModelPose.clear();
+            return;
+        }
+        const size_t Bones = Skeleton->Bones.size();
+        const bool bOverride = OverrideWeight > 0.0f && OverrideModel.size() == Bones && OverrideMask.size() == Bones;
+        if(bOverride && OverrideWeight >= 1.0f && LocalPose.size() == Bones)
+        {
+            /* Held: physics has the pose, the rest keeps its last animated one. */
+            ApplyPoseOverride();
             return;
         }
         GetRefPose(*Skeleton, LocalPose);
@@ -583,7 +701,56 @@ namespace RenderCore
             SampleClip(*Overlay, OverlayBinding, OverlayTime, Scratch[2]);
             BlendPoses(LocalPose, Scratch[2], std::min(OverlayWeight, 1.0f));
         }
+        ApplyLookAt(LocalPose);
+        if(bOverride)
+        {
+            ApplyPoseOverride();
+            return;
+        }
         LocalToModel(*Skeleton, LocalPose, ModelPose);
+    }
+
+    void AnimInstance::ApplyPoseOverride()
+    {
+        LocalToModel(*Skeleton, LocalPose, OverrideAnimated);
+        const size_t Bones  = Skeleton->Bones.size();
+        const float  Weight = std::min(OverrideWeight, 1.0f);
+        ModelPose.resize(Bones);
+        for(size_t Bone = 0; Bone < Bones; ++Bone)
+        {
+            const int32_t Parent = Skeleton->Bones[Bone].Parent;
+            if(!OverrideMask[Bone])
+            {
+                /* Its animated self, under wherever its parent now is. */
+                ModelPose[Bone] = Parent >= 0 ? AnimMath::Mul(ModelPose[size_t(Parent)], AnimMath::ToMatrix(LocalPose[Bone]))
+                                              : OverrideAnimated[Bone];
+                continue;
+            }
+            const AnimTransform Animated = AnimMath::ToTransform(OverrideAnimated[Bone]);
+            AnimTransform Placed = AnimMath::ToTransform(OverrideModel[Bone]);
+            Placed.Scale = Animated.Scale;
+            ModelPose[Bone] = AnimMath::ToMatrix(Weight >= 1.0f ? Placed : AnimMath::Lerp(Animated, Placed, Weight));
+        }
+    }
+
+    void AnimInstance::SetPoseOverride(const std::vector<AnimMatrix>& InModel, const std::vector<uint8_t>& InMask, const float InWeight)
+    {
+        if(InWeight <= 0.0f || InModel.empty() || InModel.size() != InMask.size()
+           || (Skeleton && InModel.size() != Skeleton->Bones.size()))
+        {
+            ClearPoseOverride();
+            return;
+        }
+        OverrideModel  = InModel;
+        OverrideMask   = InMask;
+        OverrideWeight = InWeight;
+    }
+
+    void AnimInstance::ClearPoseOverride()
+    {
+        OverrideModel.clear();
+        OverrideMask.clear();
+        OverrideWeight = 0.0f;
     }
 
     void AnimInstance::SetOverlayClip(std::shared_ptr<const AnimClipData> InClip, const float InSeconds, const float InWeight)

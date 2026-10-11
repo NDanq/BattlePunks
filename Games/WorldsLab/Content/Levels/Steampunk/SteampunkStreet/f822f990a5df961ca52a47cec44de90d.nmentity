@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="f822f990a5df961ca52a47cec44de90d" Name="ChimneySmoke_7">
+  <Component Type="Particle System" Version="3">
+    <System Value="Content/Particles/Steampunk/ChimneySmoke.nmparticle" />
+    <Emitting Value="true" />
+    <Tint R="255" G="255" B="255" A="255" />
+    <SpawnRateScale Value="1" />
+    <TimeScale Value="1" />
+    <Seed Value="0" />
+    <UseBeamTarget Value="false" />
+    <BeamTarget X="0" Y="200" Z="0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-3345.3029" Y="2118.8338" Z="2900" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

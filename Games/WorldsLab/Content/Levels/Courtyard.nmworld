@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<World Format="1">
+  <Settings>
+    <Lighting BakedLighting="true" TexelsPerUnit="0.12" ProbeSpacing="150" BakedData="Content/Levels/Courtyard/Lighting/Lighting.nmlighting" />
+  </Settings>
+  <Entity Guid="aeac12d3cb4ba66c2202b4c3d57100fc" />
+  <Entity Guid="c30bad356d46a886bc74b25fa8963ca5" />
+  <Entity Guid="b29903cce11b3f59580f70490ecd3bfe" />
+  <Entity Guid="195c2cd4831a733a4de3cef438dcd8c3" />
+  <Entity Guid="a6f31218be7d9f1f6a90d7f2b9cd9e00" />
+  <Entity Guid="72f24d6720ff33b9c5b20a619a28c4f8" />
+  <Entity Guid="e4836dbe84e0b7dca8e4c7f07b5ae77c" />
+  <Entity Guid="7a1f3f45f10517c3a53f004e2e438061" />
+  <Entity Guid="874a549715d088c0c63ee5bb4a4007e7" />
+  <Entity Guid="2eddb46be424d3239ed52512de394600" />
+  <Entity Guid="1973122124c0f2af1e2b4c74dea5db97" />
+  <Entity Guid="840ac6666e5f86d3a494495e0baf4b46" />
+  <Entity Guid="b1602208dd9d4fc1c658322db3ff19fc" />
+  <Entity Guid="7c02f88cdb775eb82fa49e773a86f94e" />
+  <Entity Guid="42ef33127e238718ca7e6069979a9b53" />
+  <Entity Guid="1074856dcd5bb299a7f1a7ce7319e8e6" />
+  <Entity Guid="3cfb3b23730abe971c83e18f2d9cc06d" />
+  <Entity Guid="6844046e339d2fb5a5633ab1fdbca2b1" />
+  <Entity Guid="4d431d1af945357c01c539b820629fba" />
+  <Entity Guid="840ead2e346223454ef5bd92a6617bff" />
+  <Entity Guid="c74593f3e93affb15b3150aea4e5fcbd" />
+  <Entity Guid="dc58cc05687dacb170ec43e02e76bbd3" />
+  <Entity Guid="4c9828f82703924bd3691216e8a3562c" />
+  <Entity Guid="c52ba33d6f6d7fd4c1e0a8631756cfc8" />
+  <Entity Guid="f499c8765b84e01aa5439b20f7e27887" />
+  <Entity Guid="c9c99523993f602d1551749b0333114a" />
+  <Entity Guid="f95c3b052ff68ea20b9bc193395df2c3" />
+  <Entity Guid="1951448832fc437e268e035009e76c60" />
+  <Entity Guid="238371197de3f970894c0f43964f02e5" />
+  <Entity Guid="01de85e0ec9e391ab1bc0c1dcbbc3289" />
+  <Entity Guid="58db50a70fbfcbf9b77bdfbc19d248b1" />
+  <Entity Guid="d942778a1f840ed482872f099276166b" />
+  <Entity Guid="d091b63623e52c0186d02fabfd88dbe8" />
+  <Entity Guid="cda8de9872b8a06b6c2d4c6f2a433660" />
+  <Entity Guid="e0a0163eba00d93823f1eadd2326af17" />
+  <Entity Guid="5fb239b6c52324d8e68399d90a0886b3" />
+  <Entity Guid="c28ee49ea46f4fbc34eae932e50a0dca" />
+  <Entity Guid="7f4f711f43951f11f7edea6b6ae8c6e5" />
+  <Entity Guid="659e3b514fed1b0a6c98aa41e47fcfcb" />
+  <Entity Guid="144ce1934b0a9a607e372f42b89d9ba8" />
+  <Entity Guid="1e771cfea4d99098aec4c5b015d37344" />
+  <Entity Guid="34d859bcefed0ed3c3388729647a9207" />
+  <Entity Guid="61725ad9f855bd35d5e87bd2fece287d" />
+  <Entity Guid="926af288218dedc78989c3b807abc193" />
+  <Entity Guid="00235fc6c2b5f6f9031fd7b60c4afc29" />
+  <Entity Guid="27a9fdbbfbfe34ff1aa63065c6da98b4" />
+  <Entity Guid="1a85b34d9c61fda0690cfe8d1162abe3" />
+</World>

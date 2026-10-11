@@ -377,9 +377,15 @@ bool D3D12DynamicGDI::IsFrameComplete(const uint64_t InValue) const
     return !CommandManager || CommandManager->IsComplete(InValue);
 }
 
-void D3D12DynamicGDI::DeferRelease(Microsoft::WRL::ComPtr<ID3D12Resource> InResource)
+void D3D12DynamicGDI::DeferRelease(Microsoft::WRL::ComPtr<ID3D12Resource> InResource, const D3D12Allocation& InAllocation)
 {
-    if(InResource) DeferredResources.push_back({ std::move(InResource), GetRecordingFenceValue() });
+    if(InResource || InAllocation.IsValid()) DeferredResources.push_back({ std::move(InResource), InAllocation, GetRecordingFenceValue() });
+}
+
+void D3D12DynamicGDI::DeferReleaseTransient(Microsoft::WRL::ComPtr<ID3D12CommandAllocator>    InAllocator,
+                                            Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> InList)
+{
+    DeferredTransients.push_back({ std::move(InAllocator), std::move(InList), GetRecordingFenceValue() });
 }
 
 void D3D12DynamicGDI::DeferFreeSRV(uint32_t InSlot)
@@ -397,8 +403,23 @@ void D3D12DynamicGDI::DrainDeferredDestruction(const bool bInAll)
     /* Each queue in the order released, so in DoneAt order: what has finished is a prefix. */
     const auto Done = [this, bInAll](const uint64_t InDoneAt) { return bInAll || IsFrameComplete(InDoneAt); };
     size_t Count = 0;
-    while(Count < DeferredResources.size() && Done(DeferredResources[Count].DoneAt)) { ++Count; }
+    while(Count < DeferredResources.size() && Done(DeferredResources[Count].DoneAt))
+    {
+        /* The placed texture first, then its range: never a live resource over a reused range. */
+        DeferredResources[Count].Resource.Reset();
+        if(DeviceObj) { DeviceObj->GetTextureHeap().Free(DeferredResources[Count].Allocation); }
+        ++Count;
+    }
     DeferredResources.erase(DeferredResources.begin(), DeferredResources.begin() + ptrdiff_t(Count));
+
+    Count = 0;
+    while(Count < DeferredTransients.size() && Done(DeferredTransients[Count].DoneAt)) { ++Count; }
+    DeferredTransients.erase(DeferredTransients.begin(), DeferredTransients.begin() + ptrdiff_t(Count));
+
+    if(DeviceObj)
+    {
+        DeviceObj->GetStagingRing().Reclaim(bInAll || !CommandManager ? ~0ull : CommandManager->GetCompletedValue());
+    }
 
     Count = 0;
     while(Count < DeferredQueryHeaps.size() && Done(DeferredQueryHeaps[Count].DoneAt)) { ++Count; }
@@ -635,6 +656,21 @@ namespace
         }
         return DXGI_FORMAT_UNKNOWN;
     }
+}
+
+bool D3D12DynamicGDI::GetTextureMemoryStats(GDITextureMemoryStats& OutStats) const
+{
+    if(!DeviceObj || !DeviceObj->IsValid()) { return false; }
+    const D3D12TextureHeap::Stats Heap = DeviceObj->GetTextureHeap().GetStats();
+    OutStats.BlockBytes      = Heap.BlockBytes;
+    OutStats.BlockUsedBytes  = Heap.UsedBytes;
+    OutStats.DedicatedBytes  = Heap.DedicatedBytes;
+    OutStats.Blocks          = Heap.Blocks;
+    OutStats.BlockImages     = Heap.Allocations;
+    OutStats.DedicatedImages = Heap.Dedicated;
+    OutStats.StagingBytes    = DeviceObj->GetStagingRing().GetCapacity();
+    OutStats.StagingInUse    = DeviceObj->GetStagingRing().GetBytesInUse();
+    return true;
 }
 
 bool D3D12DynamicGDI::SupportsCompressedFormat(const EGDICompressedFormat InFormat) const

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Instance Guid="0123456789abcdef0123456789abcdef" Name="CrashDummyDemo" Prefab="Engine/Content/Characters/CrashDummy/CrashDummyDemo.nmprefab">
+  <Entity Id="2">
+    <Component Type="Transform" Version="1">
+      <Position X="-19.88465" Y="98.94625" Z="0.8661642" />
+      <Rotation X="-89.99917" Y="7.9988127" Z="0.37813732" />
+    </Component>
+  </Entity>
+</Instance>

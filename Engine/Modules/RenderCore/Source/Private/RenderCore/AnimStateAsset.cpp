@@ -12,6 +12,7 @@ namespace RenderCore
         constexpr uint32_t TAG_STATE      = EngineCore::MakeArchiveTag('N','A','S','T');
         constexpr uint32_t TAG_PARAMETERS = EngineCore::MakeArchiveTag('A','P','R','M');
         constexpr uint32_t TAG_LAYERS     = EngineCore::MakeArchiveTag('A','L','Y','R');
+        constexpr uint32_t TAG_LOOK_AT    = EngineCore::MakeArchiveTag('A','L','O','K');
 
         /* Counts past these are a corrupt file, not a big anim state. */
         constexpr uint32_t MAX_ITEMS = 4096;
@@ -51,6 +52,7 @@ namespace RenderCore
         {
             const bool b2D     = InVersion >= 2;
             const bool bPlaced = InVersion >= 4;
+            const bool bSync   = InVersion >= 5;
             Ar << InOutLayer.Name << InOutLayer.Weight << InOutLayer.WeightParameter << InOutLayer.EntryState;
             if(InVersion >= 3)
             {
@@ -59,12 +61,13 @@ namespace RenderCore
             }
             SerializeList(Ar, InOutLayer.MaskBones, [](EngineCore::Archive& InAr, std::string& InOutBone) { InAr << InOutBone; });
             if(bPlaced) { Ar << InOutLayer.bEditorPlaced << InOutLayer.AnyEditorX << InOutLayer.AnyEditorY; }
-            SerializeList(Ar, InOutLayer.States, [b2D, bPlaced](EngineCore::Archive& InAr, AnimStateNode& InOutState)
+            SerializeList(Ar, InOutLayer.States, [b2D, bPlaced, bSync](EngineCore::Archive& InAr, AnimStateNode& InOutState)
             {
                 InAr << InOutState.Name << InOutState.BlendParameter << InOutState.Speed;
                 if(b2D) { InAr << InOutState.BlendParameterY; }
                 if(bPlaced) { InAr << InOutState.EditorX << InOutState.EditorY; }
                 SerializeEnum(InAr, InOutState.Loop);
+                if(bSync) { InAr << InOutState.SyncGroup; }
                 SerializeList(InAr, InOutState.Samples, [b2D](EngineCore::Archive& InSampleAr, AnimBlendSample& InOutSample)
                 {
                     InSampleAr << InOutSample.Clip << InOutSample.Position;
@@ -81,6 +84,26 @@ namespace RenderCore
                     InConditionAr << InOutCondition.Value;
                 });
             });
+        }
+
+        /* The optional ALOK chunk: written only when it says anything. */
+        void SerializeLookAt(EngineCore::Archive& Ar, AnimLookAt& InOutLookAt)
+        {
+            if(Ar.IsSaving() && InOutLookAt.Parameter.empty() && InOutLookAt.Bones.empty()) { return; }
+            if(Ar.IsLoading() && Ar.PeekChunkTag() != TAG_LOOK_AT) { return; }
+
+            uint16_t Version = 1;
+            if(!Ar.OpenChunk(TAG_LOOK_AT, Version)) { return; }
+            Ar << InOutLookAt.Parameter << InOutLookAt.WeightParameter << InOutLookAt.MinAngle << InOutLookAt.MaxAngle;
+            Ar << InOutLookAt.Axis[0] << InOutLookAt.Axis[1] << InOutLookAt.Axis[2] << InOutLookAt.Response;
+            SerializeList(Ar, InOutLookAt.Bones, [](EngineCore::Archive& InAr, AnimLookBone& InOutBone) { InAr << InOutBone.Bone << InOutBone.Share; });
+            Ar.CloseChunk();
+        }
+
+        bool IsLookAtValid(const AnimLookAt& InLookAt)
+        {
+            const float Length2 = InLookAt.Axis[0] * InLookAt.Axis[0] + InLookAt.Axis[1] * InLookAt.Axis[1] + InLookAt.Axis[2] * InLookAt.Axis[2];
+            return InLookAt.MinAngle <= InLookAt.MaxAngle && Length2 > 1e-8f && InLookAt.Response >= 0.0f;
         }
 
         TAssetCache<AnimStateData>& GetCache()
@@ -129,6 +152,11 @@ namespace RenderCore
                 }
             }
         }
+        if(!IsLookAtValid(LookAt)) { return "anim state: the look-at's range is reversed, its axis zero or its response negative"; }
+        for(const AnimLookBone& Bone : LookAt.Bones)
+        {
+            if(Bone.Bone.empty()) { return "anim state: a look-at bone has no name"; }
+        }
         return nullptr;
     }
 
@@ -156,12 +184,13 @@ namespace RenderCore
             });
             Ar.CloseChunk();
         }
-        if(!Ar.HasError() && OpenRequiredChunk(Ar, TAG_LAYERS, 4, "anim state: no ALYR chunk"))
+        if(!Ar.HasError() && OpenRequiredChunk(Ar, TAG_LAYERS, 5, "anim state: no ALYR chunk"))
         {
             const uint16_t Version = Ar.GetChunkVersion();
             SerializeList(Ar, InOutState.Layers, [Version](EngineCore::Archive& InAr, AnimLayer& InOutLayer) { SerializeLayer(InAr, InOutLayer, Version); });
             Ar.CloseChunk();
         }
+        if(!Ar.HasError()) { SerializeLookAt(Ar, InOutState.LookAt); }
         Ar.CloseChunk();
 
         if(Ar.IsLoading() && !Ar.HasError())

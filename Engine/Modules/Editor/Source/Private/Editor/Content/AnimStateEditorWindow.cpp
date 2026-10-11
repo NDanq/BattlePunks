@@ -157,6 +157,7 @@ void AnimStateEditorWindow::BuildUi()
     auto* Layout = new QVBoxLayout(Forms);
     Layout->addWidget(BuildParameters());
     Layout->addWidget(BuildLayers());
+    Layout->addWidget(BuildLookAt());
     Layout->addWidget(BuildStates(), 1);
     Layout->addWidget(BuildTransitions(), 1);
     Layout->addStretch(0);
@@ -423,6 +424,11 @@ QWidget* AnimStateEditorWindow::BuildStates()
     StateSpeed->setSingleStep(0.1);
     StateLoop = new QComboBox(StateForm);
     StateLoop->addItems(LOOP_NAMES);
+    StateSync = new QLineEdit(StateForm);
+    StateSync->setPlaceholderText(QStringLiteral("none"));
+    StateSync->setToolTip(QStringLiteral("States with one sync group name keep in step: a later layer's state follows the first layer "
+                                         "playing one of the group (arms swinging with the legs), and a transition between two of a "
+                                         "layer's states in the group goes on from where the first was"));
     StateBlend = new QComboBox(StateForm);
     StateBlend->setToolTip(QStringLiteral("None: the first clip alone. A float parameter: a blend space -- each clip plays fully at its "
                                           "position, and between two the parameter blends them"));
@@ -439,6 +445,7 @@ QWidget* AnimStateEditorWindow::BuildStates()
     Form->addRow(QStringLiteral("Name"), StateName);
     Form->addRow(QStringLiteral("Speed"), StateSpeed);
     Form->addRow(QStringLiteral("Loop"), StateLoop);
+    Form->addRow(QStringLiteral("Sync Group"), StateSync);
     Form->addRow(QStringLiteral("Blend Parameter"), StateBlend);
     Form->addRow(QStringLiteral("Blend Parameter Y"), StateBlendY);
     Form->addRow(QStringLiteral("Clips"), SampleColumn);
@@ -452,6 +459,12 @@ QWidget* AnimStateEditorWindow::BuildStates()
     connect(StateSpeed, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](const double InValue)
     {
         if(RenderCore::AnimStateNode* State = CurrentState(); State && !bFilling) { State->Speed = float(InValue); Edited(); }
+    });
+    connect(StateSync, &QLineEdit::editingFinished, this, [this]()
+    {
+        RenderCore::AnimStateNode* State = CurrentState();
+        const std::string Group = StateSync->text().trimmed().toStdString();
+        if(State && !bFilling && State->SyncGroup != Group) { State->SyncGroup = Group; Edited(); }
     });
     connect(StateLoop, QOverload<int>::of(&QComboBox::activated), this, [this](const int InIndex)
     {
@@ -787,6 +800,8 @@ void AnimStateEditorWindow::RenameParameter(const std::string& InOld, const std:
     {
         if(Parameter.Name == InOld) { Parameter.Name = InNew; }
     }
+    if(Edit.LookAt.Parameter == InOld)       { Edit.LookAt.Parameter = InNew; }
+    if(Edit.LookAt.WeightParameter == InOld) { Edit.LookAt.WeightParameter = InNew; }
     for(RenderCore::AnimLayer& Layer : Edit.Layers)
     {
         if(Layer.WeightParameter == InOld) { Layer.WeightParameter = InNew; }
@@ -803,6 +818,106 @@ void AnimStateEditorWindow::RenameParameter(const std::string& InOld, const std:
             }
         }
     }
+}
+
+QWidget* AnimStateEditorWindow::BuildLookAt()
+{
+    auto* Box = new QGroupBox(QStringLiteral("Look-At -- a chain of bones turned by an angle, after the layers"), this);
+    auto* Form = new QFormLayout(Box);
+    LookParameter = new QComboBox(Box);
+    LookParameter->setToolTip(QStringLiteral("A float parameter: the angle, in degrees -- the camera's pitch, say (animation:SetFloat). "
+                                             "None: no look-at"));
+    LookWeightParameter = new QComboBox(Box);
+    LookWeightParameter->setToolTip(QStringLiteral("Scales the angle (clamped 0..1): Armed, to look only with a weapon up. None: always"));
+    const auto MakeAngle = [Box](const double InMin, const double InMax)
+    {
+        auto* Spin = new QDoubleSpinBox(Box);
+        Spin->setRange(InMin, InMax);
+        Spin->setSingleStep(5.0);
+        Spin->setSuffix(QStringLiteral(" deg"));
+        return Spin;
+    };
+    LookMin = MakeAngle(-180.0, 180.0);
+    LookMax = MakeAngle(-180.0, 180.0);
+    LookMin->setToolTip(QStringLiteral("The parameter is clamped to Min..Max"));
+    LookMax->setToolTip(LookMin->toolTip());
+    auto* AxisRow = new QHBoxLayout();
+    for(int Index = 0; Index < 3; ++Index)
+    {
+        LookAxis[Index] = new QDoubleSpinBox(Box);
+        LookAxis[Index]->setRange(-1.0, 1.0);
+        LookAxis[Index]->setSingleStep(0.1);
+        LookAxis[Index]->setDecimals(3);
+        LookAxis[Index]->setPrefix(QString(QLatin1Char("XYZ"[Index])) + QStringLiteral(" "));
+        LookAxis[Index]->setToolTip(QStringLiteral("What it turns about, in model space; a positive angle turns right-handed about it. "
+                                                   "Pitch on a character imported facing -Z: X 1 -- or X -1 if positive should look down"));
+        AxisRow->addWidget(LookAxis[Index]);
+    }
+    LookResponse = new QDoubleSpinBox(Box);
+    LookResponse->setRange(0.0, 100.0);
+    LookResponse->setSingleStep(1.0);
+    LookResponse->setSuffix(QStringLiteral(" /s"));
+    LookResponse->setToolTip(QStringLiteral("How fast it follows the parameter: higher is snappier. 0: at once"));
+    LookBones = new QLineEdit(Box);
+    LookBones->setPlaceholderText(QStringLiteral("spine_01:0.3, spine_02:0.3, neck:0.4"));
+    LookBones->setToolTip(QStringLiteral("The chain, comma-separated, each bone:share -- its share of the angle. The shares usually "
+                                         "add to 1; turns add up along the chain, so the last bone ends at the whole angle"));
+    Form->addRow(QStringLiteral("Angle Parameter"), LookParameter);
+    Form->addRow(QStringLiteral("Weight Parameter"), LookWeightParameter);
+    Form->addRow(QStringLiteral("Min"), LookMin);
+    Form->addRow(QStringLiteral("Max"), LookMax);
+    Form->addRow(QStringLiteral("Axis"), AxisRow);
+    Form->addRow(QStringLiteral("Response"), LookResponse);
+    Form->addRow(QStringLiteral("Bones"), LookBones);
+
+    const auto PickedName = [](QComboBox* InCombo, const int InIndex)
+    {
+        return InIndex <= 0 ? std::string() : InCombo->itemText(InIndex).toStdString();
+    };
+    connect(LookParameter, QOverload<int>::of(&QComboBox::activated), this, [this, PickedName](const int InIndex)
+    {
+        Edit.LookAt.Parameter = PickedName(LookParameter, InIndex);
+        Edited();
+        FillLookAt();
+    });
+    connect(LookWeightParameter, QOverload<int>::of(&QComboBox::activated), this, [this, PickedName](const int InIndex)
+    {
+        Edit.LookAt.WeightParameter = PickedName(LookWeightParameter, InIndex);
+        Edited();
+    });
+    const auto OnSpin = [this](QDoubleSpinBox* InSpin, float& OutValue)
+    {
+        connect(InSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this, &OutValue](const double InValue)
+        {
+            if(!bFilling) { OutValue = float(InValue); Edited(); }
+        });
+    };
+    OnSpin(LookMin, Edit.LookAt.MinAngle);
+    OnSpin(LookMax, Edit.LookAt.MaxAngle);
+    OnSpin(LookResponse, Edit.LookAt.Response);
+    for(int Index = 0; Index < 3; ++Index) { OnSpin(LookAxis[Index], Edit.LookAt.Axis[Index]); }
+    connect(LookBones, &QLineEdit::editingFinished, this, [this]()
+    {
+        std::vector<RenderCore::AnimLookBone> Bones;
+        for(const QString& Each : LookBones->text().split(QLatin1Char(','), Qt::SkipEmptyParts))
+        {
+            const QStringList Parts = Each.split(QLatin1Char(':'));
+            RenderCore::AnimLookBone Bone;
+            Bone.Bone  = Parts[0].trimmed().toStdString();
+            Bone.Share = Parts.size() > 1 ? Parts[1].trimmed().toFloat() : 1.0f;
+            if(!Bone.Bone.empty()) { Bones.push_back(Bone); }
+        }
+        if(Bones.size() == Edit.LookAt.Bones.size()
+           && std::equal(Bones.begin(), Bones.end(), Edit.LookAt.Bones.begin(),
+                         [](const RenderCore::AnimLookBone& InA, const RenderCore::AnimLookBone& InB) { return InA.Bone == InB.Bone && InA.Share == InB.Share; }))
+        {
+            return;
+        }
+        Edit.LookAt.Bones = std::move(Bones);
+        Edited();
+        FillLookAt();
+    });
+    return Box;
 }
 
 void AnimStateEditorWindow::Edited(const bool bInStructure, const bool bInDirty)
@@ -858,6 +973,15 @@ void AnimStateEditorWindow::Edited(const bool bInStructure, const bool bInDirty)
                 CheckParameter(Condition.Parameter, QStringLiteral("Transition %1").arg(DescribeTransition(Layer, Transition)));
             }
         }
+    }
+    const RenderCore::AnimLookAt& Look = Edit.LookAt;
+    CheckParameter(Look.Parameter, QStringLiteral("The look-at"));
+    CheckParameter(Look.WeightParameter, QStringLiteral("The look-at"));
+    if(!Look.Parameter.empty() && Look.Bones.empty()) { Found << QStringLiteral("The look-at has an angle parameter but no bones: it turns nothing"); }
+    if(Look.Parameter.empty() && !Look.Bones.empty()) { Found << QStringLiteral("The look-at has bones but no angle parameter: it turns nothing"); }
+    for(const RenderCore::AnimLookBone& Bone : Look.Bones)
+    {
+        if(Skeleton && Skeleton->FindBone(Bone.Bone) < 0) { Found << QStringLiteral("The look-at turns a bone the skeleton lacks: %1").arg(ToQ(Bone.Bone)); }
     }
     QStringList Escaped;
     for(const QString& Each : Found) { Escaped << Each.toHtmlEscaped(); }
@@ -939,7 +1063,45 @@ void AnimStateEditorWindow::FillAll()
 {
     FillParameters();
     FillLayers();
+    FillLookAt();
     FillLive();
+}
+
+void AnimStateEditorWindow::FillLookAt()
+{
+    const bool bWas = bFilling;
+    bFilling = true;
+    const RenderCore::AnimLookAt& Look = Edit.LookAt;
+    const auto FillCombo = [this](QComboBox* InCombo, const QStringList& InNames, const std::string& InPicked)
+    {
+        InCombo->clear();
+        InCombo->addItem(QStringLiteral("(none)"));
+        InCombo->addItems(InNames);
+        InCombo->setCurrentIndex(std::max(InCombo->findText(ToQ(InPicked)), 0));
+    };
+    FillCombo(LookParameter, ParameterNames(true), Look.Parameter);
+    QStringList Weights;
+    for(const RenderCore::AnimStateParameter& Parameter : Edit.Parameters)
+    {
+        if(Parameter.Type != RenderCore::EAnimParameterType::Trigger) { Weights << ToQ(Parameter.Name); }
+    }
+    FillCombo(LookWeightParameter, Weights, Look.WeightParameter);
+    LookMin->setValue(double(Look.MinAngle));
+    LookMax->setValue(double(Look.MaxAngle));
+    LookResponse->setValue(double(Look.Response));
+    for(int Index = 0; Index < 3; ++Index) { LookAxis[Index]->setValue(double(Look.Axis[Index])); }
+    QStringList Bones;
+    for(const RenderCore::AnimLookBone& Bone : Look.Bones) { Bones << QStringLiteral("%1:%2").arg(ToQ(Bone.Bone)).arg(double(Bone.Share)); }
+    LookBones->setText(Bones.join(QStringLiteral(", ")));
+
+    /* The rest only means something with an angle to follow. */
+    LookParameter->setEnabled(!bReadOnly);
+    const bool bOn = !Look.Parameter.empty() && !bReadOnly;
+    for(QWidget* Each : std::initializer_list<QWidget*>{ LookWeightParameter, LookMin, LookMax, LookAxis[0], LookAxis[1], LookAxis[2], LookResponse, LookBones })
+    {
+        Each->setEnabled(bOn);
+    }
+    bFilling = bWas;
 }
 
 void AnimStateEditorWindow::FillParameters()
@@ -1051,6 +1213,7 @@ void AnimStateEditorWindow::FillState()
         StateName->setText(ToQ(State->Name));
         StateSpeed->setValue(double(State->Speed));
         StateLoop->setCurrentIndex(int(State->Loop));
+        StateSync->setText(ToQ(State->SyncGroup));
         StateBlend->setCurrentIndex(std::max(StateBlend->findText(ToQ(State->BlendParameter)), 0));
         StateBlendY->setCurrentIndex(std::max(StateBlendY->findText(ToQ(State->BlendParameterY)), 0));
         StateBlendY->setEnabled(!State->BlendParameter.empty() || !State->BlendParameterY.empty());

@@ -69,7 +69,8 @@ static bool ReadTexture(const QString& InPath, RenderCore::TextureData& OutTextu
 /*
  * Scene.gltf, beside Checker.png:
  *   node "Moved"  (translation 1,2,3)  -> mesh "Box", two primitives:
- *       0: a triangle at z=0, indexed, normals +Z, material "Red"
+ *       0: a triangle at z=0, indexed, normals +Z, material "Red" (base
+ *          colour 1,0,0 and no texture: baked into its vertex colours)
  *       1: a triangle at z=1, no indices, no normals, COLOR_0 as
  *          normalised bytes: red, green, half-transparent blue
  *   node "Mirror" (scale -1,1,1)       -> mesh "Tri": primitive 0's data again
@@ -106,7 +107,7 @@ static void WriteScene(const QDir& InFolder)
     { "name": "Tri", "primitives": [
         { "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 }, "indices": 3 } ] }
   ],
-  "materials": [ { "name": "Red" } ],
+  "materials": [ { "name": "Red", "pbrMetallicRoughness": { "baseColorFactor": [1, 0, 0, 1] } } ],
   "images": [ { "uri": "Checker.png" } ],
   "textures": [ { "source": 0 } ],
   "buffers": [ { "byteLength": %1, "uri": "data:application/octet-stream;base64,%2" } ],
@@ -292,11 +293,37 @@ static void TestAnimationImport(const QDir& InRoot)
     RenderCore::AnimClipData Back;
     Expect(ReadAsset(ClipPath, Back, &RenderCore::SerializeAnimClip) && Back.Notifies.size() == 1 && !Back.bLoop,
            "keeping its notifies and looping");
+    const ImportResult Fresh = ImportMesh(Source, Content, QStringLiteral("Arm"), Options, TextureImportOptions(), InRoot.absolutePath());
+    RenderCore::AnimClipData FreshBack;
+    Expect(Fresh.bOK && ReadAsset(ClipPath, FreshBack, &RenderCore::SerializeAnimClip) && FreshBack.Notifies.size() == 1 && !FreshBack.bLoop,
+           "importing the file again over the clip keeps them too");
     Expect(Reimport(QDir(Content).filePath(QStringLiteral("Arm_Skeleton.nmskel")), InRoot.absolutePath()).bOK, "the skeleton reimports");
     const ImportResult MeshAgain = Reimport(QDir(Content).filePath(QStringLiteral("Arm.nmmesh")), InRoot.absolutePath());
     RenderCore::MeshData MeshBack;
     Expect(MeshAgain.bOK && ReadMesh(QDir(Content).filePath(QStringLiteral("Arm.nmmesh")), MeshBack) && MeshBack.Skeleton == Mesh.Skeleton,
            "the mesh reimports, still naming its skeleton");
+
+    /* Into the engine's content (outside the project): what it refers to is
+     * named "Engine/Content/...", its source too, so it reimports anywhere. */
+    {
+        const QString EngineContent = InRoot.filePath(QStringLiteral("EngineTree/Content"));
+        const QString Folder        = QDir(EngineContent).filePath(QStringLiteral("Characters/Arm"));
+        QDir().mkpath(Folder);
+        QFile::remove(QDir(Folder).filePath(QStringLiteral("Skinned.gltf")));
+        QFile::copy(Source, QDir(Folder).filePath(QStringLiteral("Skinned.gltf")));
+        SetImportEngineContentRoot(EngineContent);
+        const QString Project = InRoot.filePath(QStringLiteral("SomeProject"));
+        const ImportResult Engine = ImportMesh(QDir(Folder).filePath(QStringLiteral("Skinned.gltf")), Folder, QStringLiteral("Arm"),
+                                               Options, TextureImportOptions(), Project);
+        RenderCore::MeshData EngineMesh;
+        Expect(Engine.bOK && ReadMesh(QDir(Folder).filePath(QStringLiteral("Arm.nmmesh")), EngineMesh)
+               && EngineMesh.Skeleton == "Engine/Content/Characters/Arm/Arm_Skeleton.nmskel"
+               && EngineMesh.ImportInfo.SourcePath == "Engine/Content/Characters/Arm/Skinned.gltf",
+               "imported into the engine's content, it names its skeleton and source as Engine/Content/...");
+        Expect(Reimport(QDir(Folder).filePath(QStringLiteral("Arm_Bend.nmanim")), Project).bOK,
+               "and reimports from its Engine/Content source");
+        SetImportEngineContentRoot(QString());
+    }
 
     /* Without animation import, the same file is a static mesh. */
     MeshImportOptions Static;
@@ -323,6 +350,8 @@ static void TestClassify()
     const MeshImportOptions MeshBack = MeshImportOptions::FromSettings(Mesh.ToSettings());
     Expect(Near(MeshBack.Scale, 2.5f) && !MeshBack.bCombineMeshes && MeshBack.bConvertCoordinates,
            "mesh options survive their settings text");
+    Expect(MeshBack.bBakeMaterialColors && !MeshImportOptions::FromSettings(QStringLiteral("Scale=1\n")).bBakeMaterialColors,
+           "material colours are baked unless older settings, recorded without them, say otherwise");
 
     TextureImportOptions Texture;
     Texture.bSRGB = false;
@@ -380,11 +409,12 @@ static void TestMeshImport(const QDir& InRoot)
         Expect(Near(Mesh.Positions[0], 1.0f) && Near(Mesh.Positions[1], 2.0f) && Near(Mesh.Positions[2], -3.0f),
                "the node's translation is baked in, then z flips into the engine's left-handed space");
         Expect(Near(Mesh.Normals[2], -1.0f), "a +Z normal faces -Z in engine space");
-        Expect(Mesh.Colors.size() == 9 * 4, "one primitive's COLOR_0 gives the whole mesh colours");
+        Expect(Mesh.Colors.size() == 9 * 4, "one primitive's colours give the whole mesh colours");
         if(Mesh.Colors.size() == 9 * 4)
         {
-            Expect(Near(Mesh.Colors[0], 1.0f) && Near(Mesh.Colors[1], 1.0f) && Near(Mesh.Colors[3], 1.0f),
-                   "vertices before the coloured primitive are white");
+            Expect(Near(Mesh.Colors[0], 1.0f) && Near(Mesh.Colors[1], 0.0f) && Near(Mesh.Colors[2], 0.0f)
+                   && Near(Mesh.Colors[2 * 4 + 1], 0.0f) && Near(Mesh.Colors[3], 1.0f),
+                   "the first primitive's untextured base colour is baked into its vertex colours");
             Expect(Near(Mesh.Colors[3 * 4 + 0], 1.0f) && Near(Mesh.Colors[3 * 4 + 1], 0.0f) && Near(Mesh.Colors[3 * 4 + 3], 1.0f),
                    "normalised byte colours read as 0-1 floats");
             Expect(std::fabs(Mesh.Colors[5 * 4 + 3] - 128.0f / 255.0f) < 1e-3f, "alpha comes through");

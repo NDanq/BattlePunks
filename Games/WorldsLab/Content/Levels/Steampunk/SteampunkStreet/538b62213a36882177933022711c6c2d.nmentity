@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="538b62213a36882177933022711c6c2d" Name="SouthW5Wall" Mobility="Static">
+  <Component Type="Bounds" Version="1">
+    <Local MinX="-5" MinY="0" MinZ="-5" MaxX="635" MaxY="1820" MaxZ="1805" />
+    <Static Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-3515" Y="0" Z="-2090" />
+    <Rotation X="0" Y="180" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

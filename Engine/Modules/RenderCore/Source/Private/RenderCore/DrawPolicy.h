@@ -38,6 +38,7 @@ namespace RenderCore
         int32_t           Occlusion  = -1;       // the occlusion query the GPU skips it on (RenderContext::SetDrawOcclusion); -1: none
         uint8_t           PostStage  = 1;        // PostProcess stage: EPostProcessStage, before or after the effects
         bool              bStatic    = false;    // replayed from a static draw list (SubmitCaptured): its own draw event
+        float             WorldPerUV = 0.0f;     // MeshSection: world units one UV unit spans, scaled (texture streaming); 0: not known
 
         /* The entity's parameter overrides; those for MaterialSlot apply. */
         const RenderMaterialParameter* Overrides     = nullptr;

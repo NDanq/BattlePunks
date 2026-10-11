@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="8dfe9e49c0067338f443816cbed19c2d" Name="Rail16" Mobility="Static">
+  <Component Type="Bounds" Version="1">
+    <Local MinX="-1330" MinY="-55" MinZ="-2" MaxX="1330" MaxY="55" MaxZ="2" />
+    <Static Value="true" />
+  </Component>
+  <Component Type="Rigid Body" Version="1">
+    <Enabled Value="true" />
+    <Motion Value="2" />
+    <Shape Value="0" />
+    <ShapeSource Value="0" />
+    <Mass Value="0" />
+    <Friction Value="0.6" />
+    <Restitution Value="0" />
+    <LinearDamping Value="0.05" />
+    <AngularDamping Value="0.05" />
+    <GravityFactor Value="1" />
+    <Continuous Value="false" />
+    <Sensor Value="false" />
+    <AllowSleeping Value="true" />
+    <Layer Value="2" />
+    <Mask Value="-1" />
+    <InitialLinearVelocity X="0" Y="0" Z="0" />
+    <InitialAngularVelocity X="0" Y="0" Z="0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="505" Z="-1194" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

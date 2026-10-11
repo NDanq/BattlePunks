@@ -573,6 +573,8 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/NetHost.cpp
         Source/Private/NimbleEngine/NetScript.cpp
         Source/Private/NimbleEngine/PhysicsFacade.cpp
+        Source/Private/NimbleEngine/Ragdoll.cpp
+        Source/Private/NimbleEngine/RagdollProfile.cpp
         Source/Private/NimbleEngine/TerrainFacade.cpp
         Source/Private/NimbleEngine/SequenceFacade.cpp
         Source/Private/NimbleEngine/InactiveModules.cpp
@@ -596,6 +598,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/NetFacade.h
         Source/Public/NimbleEngine/NetHost.h
         Source/Public/NimbleEngine/PhysicsFacade.h
+        Source/Public/NimbleEngine/Ragdoll.h
         Source/Public/NimbleEngine/TerrainFacade.h
         Source/Public/NimbleEngine/SequenceFacade.h
 )
@@ -755,6 +758,14 @@ if(NIMBLEENGINE_BUILD_TESTS)
         add_test(NAME NimbleEngine.PhysicsTests COMMAND NimbleEnginePhysicsTests
                  WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEnginePhysicsTests>")
         set_tests_properties(NimbleEngine.PhysicsTests PROPERTIES TIMEOUT 120 LABELS "smoke")
+
+        # Ragdolls (Ragdoll.h): CrashDummy's profile, joint limits, a death.
+        add_executable(NimbleEngineRagdollTests Tests/RagdollTests.cpp)
+        target_link_libraries(NimbleEngineRagdollTests PRIVATE NimbleEngine::NimbleEngine JoltPhysics::JoltPhysics)
+        set_target_properties(NimbleEngineRagdollTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
+        add_test(NAME NimbleEngine.RagdollTests COMMAND NimbleEngineRagdollTests
+                 WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineRagdollTests>")
+        set_tests_properties(NimbleEngine.RagdollTests PROPERTIES TIMEOUT 120 LABELS "smoke")
     endif()
 
     # Sound from scripts: the Audio library, Audio Source from Lua, and the
@@ -856,26 +867,38 @@ if(TARGET GDI AND CMAKE_RUNTIME_OUTPUT_DIRECTORY
     endif()
 endif()
 
-# === Engine/Content/Meshes =================================================
+# === Engine/Content/Meshes and Characters ==================================
 # The engine's primitive meshes (Box, Sphere, Plane, Cylinder, Capsule; made by
-# Scripts/generate_primitive_meshes.py), staged beside the executable at the
-# same path, so a RenderComponent names one "Engine/Content/Meshes/Box.nmmesh"
-# in every target. Single-config only, as the shader staging above.
+# Scripts/generate_primitive_meshes.py) and its characters (Characters/<Name>/:
+# a skinned mesh, its skeleton, clips, anim states and props, and prefabs with
+# their Lua -- ANIMATION.md, "Engine characters"), staged beside the executable
+# at the same path, so a RenderComponent names one "Engine/Content/Meshes/Box.nmmesh"
+# in every target.
+# Single-config only, as the shader staging above.
 file(GLOB NM_ENGINE_MESHES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/Meshes/*.nmmesh")
+file(GLOB_RECURSE NM_ENGINE_CHARACTERS CONFIGURE_DEPENDS
+     "${CMAKE_CURRENT_SOURCE_DIR}/Content/Characters/*.nmmesh"
+     "${CMAKE_CURRENT_SOURCE_DIR}/Content/Characters/*.nmskel"
+     "${CMAKE_CURRENT_SOURCE_DIR}/Content/Characters/*.nmanim"
+     "${CMAKE_CURRENT_SOURCE_DIR}/Content/Characters/*.nmanimstate"
+     "${CMAKE_CURRENT_SOURCE_DIR}/Content/Characters/*.nmprefab"
+     "${CMAKE_CURRENT_SOURCE_DIR}/Content/Characters/*.lua")
+list(APPEND NM_ENGINE_MESHES ${NM_ENGINE_CHARACTERS})
 get_filename_component(NM_ENGINE_PARENT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)   # "Engine/Content/..." below it
 if(NIMBLE_PACKAGE_CONTENT)
     nimble_pack_add_files(Engine "${NM_ENGINE_PARENT}" ${NM_ENGINE_MESHES})
 elseif(TARGET NimbleEngine AND CMAKE_RUNTIME_OUTPUT_DIRECTORY AND NM_ENGINE_MESHES)
     set(NM_MESH_OUTPUTS)
     foreach(NM_MESH ${NM_ENGINE_MESHES})
-        get_filename_component(NM_MESH_NAME "${NM_MESH}" NAME)
-        set(NM_MESH_DST "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Engine/Content/Meshes/${NM_MESH_NAME}")
+        file(RELATIVE_PATH NM_MESH_REL "${CMAKE_CURRENT_SOURCE_DIR}/Content" "${NM_MESH}")
+        get_filename_component(NM_MESH_DIR "${NM_MESH_REL}" DIRECTORY)
+        set(NM_MESH_DST "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Engine/Content/${NM_MESH_REL}")
         add_custom_command(
                 OUTPUT  "${NM_MESH_DST}"
-                COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Engine/Content/Meshes"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Engine/Content/${NM_MESH_DIR}"
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different "${NM_MESH}" "${NM_MESH_DST}"
                 DEPENDS "${NM_MESH}"
-                COMMENT "NimbleEngine: staging Engine/Content/Meshes/${NM_MESH_NAME}"
+                COMMENT "NimbleEngine: staging Engine/Content/${NM_MESH_REL}"
                 VERBATIM)
         list(APPEND NM_MESH_OUTPUTS "${NM_MESH_DST}")
     endforeach()

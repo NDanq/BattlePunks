@@ -689,6 +689,7 @@ registered:
 | `cook project` | As Build > Cook Content: the listed worlds, every prefab and UI document, with the stats |
 | `cook [world] [out]` | Cook a world file to binary -- by default the open world's saved file, to `<project>/Saved/Cooked/<its path>` |
 | `cook ui [out]`, `cook <doc.nmui> [out]` | Cook every UI document to `<project>/Saved/Cooked/Content/UI/` (what a Client build stages), or one |
+| `graph <path \| windowshot <file.png> \| canvasshot <file.png> [scale]>` | Open a material or script graph in the graph editor; save the graph editor's window; or draw the whole graph -- every node, link and comment -- at a scale (default 2), whatever the window shows, and print the scene area it covers (see **Capturing graphs for documentation**) |
 | `ui <path \| new \| close \| select <name> \| resolution <w>x<h> \| preview <on\|off> \| screenshot <file.png>>` | Open a `.nmui` in the UI Designer, make one, or drive the one in front -- from `--command` scripts too |
 | `compile [cancel]` | As Build > Compile Source, or cancel the build running |
 | `settings` | Open Edit > Editor Settings, and print where they are saved |
@@ -979,6 +980,43 @@ reloads when its file changes on disk, so a doc being written can be watched;
 Refresh (F5) picks up added and removed files. Hidden folders, `External/`,
 `Binaries/`, `Build/`, `Saved/`, `Intermediate/` and build trees (`cmake-build-*`, any
 folder with a `CMakeCache.txt`) are not listed.
+
+### Capturing graphs for documentation
+
+A guide, README or review that shows a script or material graph must show it
+**legibly**: a reader has to be able to read every node title, pin name and
+constant without zooming the page. A window capture with the graph framed to
+fit (`graph windowshot`, or a screenshot of the editor) shrinks the nodes to a
+few pixels and is not enough on its own. The rules:
+
+1. **Render the canvas, not the window.** `graph canvasshot <file.png> 2`
+   draws the whole graph at twice on-screen size. Use the window capture only
+   as an overview (where the graph sits, the generated code, "Compiled
+   cleanly").
+2. **One image per chain.** Crop each event chain (or comment box) to its own
+   image from the canvas render. The command prints the scene area the image
+   covers -- its top-left is the leftmost and topmost item less a 40-unit
+   margin -- so a comment's scene rectangle maps to pixels as
+   `(x - left) * scale`, `(y - top) * scale`. Keep a small margin round it.
+3. **Text at least 11 px tall where it is shown.** At scale 2, keep crops no
+   wider than about 2200 px, and lay them out full width; never scale a chain
+   down to fit a column. A chain too wide for that is split into two images
+   or laid out more compactly.
+4. **Lay the graph out for its pictures.** Every node inside its comment box,
+   chains stacked rather than side by side, no node overlapping another's
+   pins. Fix the graph, not the crop.
+5. **Check before publishing.** Open each crop at the size the page shows it
+   and read a constant (`Bone = "DEF-hand.R"`, `X = -2.11`) from it. If it
+   cannot be read, raise the scale or split the chain.
+6. **Caption every chain** with what it does, and list its nodes in order in
+   text beside it, so the guide works for a reader who cannot see the image.
+
+From a script, with the editor's binaries folder as the working directory:
+
+    ./NimbleEditor --command "after 2500 graph Scripts/Driver.script.nmgraph" \
+                   --command "after 5000 graph canvasshot /tmp/driver.png 2" \
+                   --command "after 5500 graph windowshot /tmp/driver-window.png" \
+                   --command "after 6000 quit"
 
 ## Known limits
 

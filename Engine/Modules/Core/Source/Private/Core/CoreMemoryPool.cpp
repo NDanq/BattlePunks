@@ -616,4 +616,148 @@ void LinearMemoryPool::GetStats(MemoryPoolStats& OutStats) const
     OutStats.BytesReserved  = Region.GetReservedBytes();
     OutStats.BytesCommitted = Region.GetCommittedBytes();
 }
+
+// === BucketMemoryPool =======================================================
+
+BucketMemoryPool::BucketMemoryPool(const char* InName, const size_t InMinBytes, const size_t InMaxBytes,
+                                   const size_t InMaxCachedBytes, const size_t InHeaderSlack)
+    : MaxCachedBytes(InMaxCachedBytes)
+{
+    CopyName(Name, NAME_CAPACITY, InName);
+
+    /* 2^k and 1.5 x 2^k from the first power of two at or above InMinBytes. */
+    size_t Power = 64;
+    while(Power < InMinBytes) { Power *= 2; }
+    while(ClassCount < CLASS_MAX && Power <= InMaxBytes)
+    {
+        ClassBytes[ClassCount++] = Power + InHeaderSlack;
+        if(ClassCount < CLASS_MAX && Power + Power / 2 <= InMaxBytes) { ClassBytes[ClassCount++] = Power + Power / 2 + InHeaderSlack; }
+        Power *= 2;
+    }
+}
+
+BucketMemoryPool::~BucketMemoryPool()
+{
+    std::lock_guard<std::mutex> Lock(Mutex);
+    TrimTo(0);
+    if(Stats.LiveAllocations > 0)
+    {
+        CORE_LOG_ERROR(std::string("Memory: BucketMemoryPool '") + Name + "' destroyed with " +
+                       std::to_string(Stats.LiveAllocations) + " live allocation(s), " +
+                       std::to_string(Stats.BytesInUse) + " bytes leaked")
+    }
+}
+
+int BucketMemoryPool::ClassOf(const size_t InBytes, const size_t InAlign) const
+{
+    if(InAlign > BLOCK_ALIGN || ClassCount == 0 || InBytes > ClassBytes[ClassCount - 1]) { return -1; }
+    /* The classes ascend: the first that holds it. Few enough that a walk beats a search. */
+    for(int Class = 0; Class < ClassCount; ++Class)
+    {
+        if(InBytes <= ClassBytes[Class]) { return Class; }
+    }
+    return -1;
+}
+
+void* BucketMemoryPool::Allocate(const size_t InBytes, const size_t InAlign)
+{
+    const int Class = ClassOf(InBytes, InAlign);
+    if(Class < 0)
+    {
+        void* Block = SystemAlignedAlloc(InBytes, InAlign < BLOCK_ALIGN ? size_t(BLOCK_ALIGN) : InAlign);
+        if(!Block) { return nullptr; }
+        std::lock_guard<std::mutex> Lock(Mutex);
+        RecordAllocation(Stats, InBytes);
+        return Block;
+    }
+
+    const size_t Bytes = ClassBytes[Class];
+    {
+        std::lock_guard<std::mutex> Lock(Mutex);
+        if(void* Kept = FreeHead[Class])
+        {
+            std::memcpy(&FreeHead[Class], Kept, sizeof(void*));
+            --FreeCount[Class];
+            CachedBytes -= Bytes;
+            RecordAllocation(Stats, Bytes);
+            return Kept;
+        }
+    }
+
+    /* Nothing kept: a new block, outside the lock. */
+    void* Block = SystemAlignedAlloc(Bytes, BLOCK_ALIGN);
+    if(!Block) { return nullptr; }
+    std::lock_guard<std::mutex> Lock(Mutex);
+    RecordAllocation(Stats, Bytes);
+    return Block;
+}
+
+void BucketMemoryPool::Deallocate(void* InPtr, const size_t InBytes, const size_t InAlign)
+{
+    if(!InPtr) { return; }
+    const int Class = ClassOf(InBytes, InAlign);
+    if(Class >= 0)
+    {
+        const size_t Bytes = ClassBytes[Class];
+        std::lock_guard<std::mutex> Lock(Mutex);
+        RecordFree(Stats, Bytes);
+        if(CachedBytes + Bytes <= MaxCachedBytes)
+        {
+            std::memcpy(InPtr, &FreeHead[Class], sizeof(void*));
+            FreeHead[Class] = InPtr;
+            ++FreeCount[Class];
+            CachedBytes += Bytes;
+            return;
+        }
+    }
+    else
+    {
+        std::lock_guard<std::mutex> Lock(Mutex);
+        RecordFree(Stats, InBytes);
+    }
+    SystemAlignedFree(InPtr);
+}
+
+void BucketMemoryPool::GetStats(MemoryPoolStats& OutStats) const
+{
+    std::lock_guard<std::mutex> Lock(Mutex);
+    OutStats = Stats;
+    OutStats.BytesCommitted = Stats.BytesInUse + CachedBytes;
+    OutStats.BytesReserved  = OutStats.BytesCommitted;
+}
+
+void BucketMemoryPool::TrimTo(const size_t InBytes)
+{
+    /* The largest classes first: fewest frees for the most bytes. */
+    for(int Class = ClassCount - 1; Class >= 0 && CachedBytes > InBytes; --Class)
+    {
+        while(FreeHead[Class] && CachedBytes > InBytes)
+        {
+            void* Block = FreeHead[Class];
+            std::memcpy(&FreeHead[Class], Block, sizeof(void*));
+            --FreeCount[Class];
+            CachedBytes -= ClassBytes[Class];
+            SystemAlignedFree(Block);
+        }
+    }
+}
+
+void BucketMemoryPool::Trim()
+{
+    std::lock_guard<std::mutex> Lock(Mutex);
+    TrimTo(0);
+}
+
+void BucketMemoryPool::SetMaxCachedBytes(const size_t InBytes)
+{
+    std::lock_guard<std::mutex> Lock(Mutex);
+    MaxCachedBytes = InBytes;
+    TrimTo(InBytes);
+}
+
+size_t BucketMemoryPool::GetCachedBytes() const
+{
+    std::lock_guard<std::mutex> Lock(Mutex);
+    return CachedBytes;
+}
 }
