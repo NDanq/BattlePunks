@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "Public/JoltPhysics/JoltPhysicsAPI.h"
+#include "Public/JoltPhysics/PhysicsRagdoll.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/Math/Vector.h"
 
@@ -53,6 +54,11 @@ namespace JoltPhysics
         float               Distance = 0.0f;
         EngineCore::Vector3 Point;
         EngineCore::Vector3 Normal;
+
+        /* A ragdoll's part (Entity is the ragdoll's owner): its handle and
+         * the part; 0 and -1 for anything else. */
+        uint32_t Ragdoll     = 0;
+        int32_t  RagdollPart = -1;
     };
 
     struct PhysicsStats
@@ -73,6 +79,10 @@ namespace JoltPhysics
 
         /* Vehicle components with a running vehicle. */
         uint32_t Vehicles = 0;
+
+        /* Ragdolls, and their parts' bodies (not among Bodies). */
+        uint32_t Ragdolls     = 0;
+        uint32_t RagdollParts = 0;
 
         /* The last frame: fixed steps taken, milliseconds in Jolt's steps and
          * in the sync before them (making, moving and pushing bodies). */
@@ -137,6 +147,47 @@ namespace JoltPhysics
                      float InMaxDistance, PhysicsHit& OutHit, int32_t InMask = -1) const;
 
         void GetStats(PhysicsStats& OutStats) const;
+
+        // --- Ragdolls (PhysicsRagdoll.h) ----------------------------------
+        /*
+         * Not components: NimbleEngine's Ragdoll component makes and drives
+         * these through a handle. A ragdoll is kinematic -- its parts follow
+         * SetRagdollTarget, hit boxes for raycasts that push dynamic bodies
+         * aside -- or dynamic, simulated. Its parts tell no contact events.
+         * Detach destroys what is left.
+         */
+
+        /* A ragdoll from InDesc, its parts at InPose (InDesc.Parts.size()
+         * of them, world space); 0 if InDesc is malformed or Jolt is out of
+         * bodies (both logged). */
+        uint32_t CreateRagdoll(const RagdollDesc& InDesc, const RagdollTransform* InPose, bool bInDynamic);
+        void     DestroyRagdoll(uint32_t InRagdoll);
+        bool     HasRagdoll(uint32_t InRagdoll) const;
+        bool     IsRagdollDynamic(uint32_t InRagdoll) const;
+
+        /* Kinematic: where the parts are to be after this frame's steps;
+         * they move there over the steps (with the velocity that takes, so
+         * what they hit is pushed, and a switch to dynamic keeps it). */
+        void SetRagdollTarget(uint32_t InRagdoll, const RagdollTransform* InPose);
+
+        /* Simulated from the next step. Each part's velocity (world units
+         * per second, degrees per second) if given, else what it had --
+         * a kinematic ragdoll's is its animation's. */
+        void SetRagdollDynamic(uint32_t InRagdoll, const EngineCore::Vector3* InLinear = nullptr,
+                               const EngineCore::Vector3* InAngular = nullptr);
+
+        /* Its parts now (world space), blended between the last two steps
+         * as dynamic bodies' Transforms are; false if no such ragdoll. */
+        bool GetRagdollPose(uint32_t InRagdoll, RagdollTransform* OutPose) const;
+
+        /* Any part awake: false once a dynamic ragdoll has come to rest. */
+        bool IsRagdollAwake(uint32_t InRagdoll) const;
+
+        /* An impulse (world units: kg * units / s) at InAt on part InPart,
+         * or the part nearest InAt when -1; wakes it. A kinematic ragdoll
+         * ignores it. */
+        void AddRagdollImpulse(uint32_t InRagdoll, const EngineCore::Vector3& InImpulse, const EngineCore::Vector3& InAt,
+                               int32_t InPart = -1);
 
         /* The PhysicsWorld attached to InWorld, or nullptr. */
         static PhysicsWorld* Find(const GameCore::World& InWorld);

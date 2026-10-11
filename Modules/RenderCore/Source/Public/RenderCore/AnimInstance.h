@@ -84,6 +84,22 @@ namespace RenderCore
         void SetOverlayClip(std::shared_ptr<const AnimClipData> InClip, float InSeconds, float InWeight);
         bool HasOverlayClip() const { return Overlay != nullptr && OverlayWeight > 0.0f; }
 
+        /*
+         * A pose something else owns -- a ragdoll's (NimbleEngine's Ragdoll.h).
+         * Where InMask (one per bone) is set, the bone's model-space rotation
+         * and translation are InModel's, blended over the animated ones by
+         * InWeight (0..1), its scale the animation's; a bone InMask leaves
+         * out keeps its animated transform under its parent, so a ragdoll's
+         * fingers stay curled round the hand physics moves. Applied by every
+         * evaluation after everything else until cleared. At a weight of 1
+         * the layers are not evaluated at all: the bones left out hold the
+         * last animated pose. InModel or InMask of the wrong size, or a
+         * weight of 0, clears it. Call Evaluate after, or let Update.
+         */
+        void SetPoseOverride(const std::vector<AnimMatrix>& InModel, const std::vector<uint8_t>& InMask, float InWeight);
+        void ClearPoseOverride();
+        bool HasPoseOverride() const { return OverrideWeight > 0.0f; }
+
         /* Layers, and what each plays now: its state's name ("" for a lone
          * clip), and whether it is crossfading into it. */
         size_t      GetLayerCount() const { return Layers.size(); }
@@ -192,6 +208,8 @@ namespace RenderCore
         float LookTarget() const;
         /* Turns the look-at's bones by LookAngle, after the layers. */
         void  ApplyLookAt(AnimLocalPose& InOutPose) const;
+        /* ModelPose from LocalPose with the override's bones placed. */
+        void  ApplyPoseOverride();
         bool  ConditionsHold(const TransitionRuntime& InTransition, const LayerRuntime& InLayer) const;
         void  UpdateTransitions(LayerRuntime& InOutLayer);
 
@@ -231,6 +249,12 @@ namespace RenderCore
         const SkeletonData*                 OverlayBoundTo = nullptr;
         float                               OverlayTime   = 0.0f;
         float                               OverlayWeight = 0.0f;
+
+        /* SetPoseOverride's; OverrideAnimated is the animated model pose it blends over. */
+        std::vector<AnimMatrix> OverrideModel;
+        std::vector<uint8_t>    OverrideMask;
+        std::vector<AnimMatrix> OverrideAnimated;
+        float                   OverrideWeight = 0.0f;
     };
 }
 

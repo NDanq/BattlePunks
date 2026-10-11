@@ -378,7 +378,10 @@ root motion, skinned meshes on Metal, and an occlusion-aware budget. Also:
   trigger authored for it; there is no "play this clip on this layer now".
 - **Clip curves and notify windows**: notifies are moments; clips carry no
   float curves (an IK weight, a footstep volume) or spans.
-- **Ragdoll**: Jolt has one; nothing drives a skeleton from physics.
+- **Ragdoll**: physics can own the pose (`AnimInstance::SetPoseOverride`,
+  driven by NimbleEngine's Ragdoll component -- `Engine/Source/RAGDOLL.md`),
+  but only with Jolt, and nothing blends back out or drives a ragdoll toward
+  an animation (powered ragdolls).
 - **Bone queries**: `GetBoneLocation` only, no rotation or transform.
 - **Parameters**: at most 12 per Animation component.
 - **Playback speed by parameter**: a state's Speed is fixed; nothing scales

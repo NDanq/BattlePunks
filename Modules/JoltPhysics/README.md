@@ -343,7 +343,10 @@ I/O. Two headers that sources include unconditionally are kept too:
 
 ## What is not here yet
 
-- Character controllers (`CharacterVirtual`), tracked vehicles and motorcycles, soft bodies, ragdolls.
+- Character controllers (`CharacterVirtual`), tracked vehicles and motorcycles, soft bodies.
+- Powered ragdolls. Ragdolls themselves are here (`PhysicsRagdoll.h`, `PhysicsWorld::CreateRagdoll`),
+  driven by NimbleEngine's Ragdoll component (`Engine/Source/RAGDOLL.md`): kinematic hit boxes,
+  then simulated; nothing drives one with motors (`Ragdoll::DriveToPoseUsingMotors`).
 - Debug drawing of shapes and contacts.
 - Saving simulation state. A saved game stores the components; after a load,
   bodies start from their Transforms as if new (with their initial
