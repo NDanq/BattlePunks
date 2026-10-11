@@ -1,12 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   The Shooting Range's HUD, opened by Scripts/ShootingRange/RangeShooter.lua as
-  its shooter starts. The script writes the Range.* strings (UI.SetString):
-  Mag and Reserve the rounds, Hits / Shots / Accuracy the score, Status a
-  word under the crosshair (RELOADING, EMPTY), and shows the crosshair while
-  the pistol is drawn. Nothing here takes input.
+  its shooter starts. Three things feed it:
+    RangeShooter.lua   Range.Mag, Reserve, MagFill, Hits, Shots, Accuracy and Status (UI.SetString
+                       and SetNumber), and shows the crosshair while the pistol is drawn
+    WorldsLabRange.cpp Range.Time, from the mode's OnTick (UISystem::SetValue)
+    RangeHUD.ui.nmgraph the controls hint's visibility, from the [WorldsLab] RangeShowHelp setting
+  Nothing here takes input. See Engine/Docs/Guides/UI/HudGuide.md.
 -->
-<UI Format="1" ReferenceSize="1920,1080" ScaleMode="FitHeight" InputMode="GameOnly">
+<UI Format="1" ReferenceSize="1920,1080" ScaleMode="FitHeight" InputMode="GameOnly"
+    Graph="Content/UI/ShootingRange/RangeHUD.ui.nmgraph">
   <Styles>
     <Style Name="Label" Type="Text" FontSize="20" Color="#B8B2A6FF" ShadowOffset="0,2" ShadowColor="#000000C0"/>
     <Style Name="Value" Type="Text" FontSize="38" Color="#F2EEE4FF" ShadowOffset="0,2" ShadowColor="#000000C0"/>
@@ -28,6 +31,10 @@
         <VerticalBox>
           <Text Class="Label" Text="ACCURACY"/>
           <Text Name="Accuracy" Class="Value" Text="{Bind:Range.Accuracy}"/>
+        </VerticalBox>
+        <VerticalBox>
+          <Text Class="Label" Text="TIME"/>
+          <Text Name="Time" Class="Value" Text="{Bind:Range.Time}"/>
         </VerticalBox>
       </HorizontalBox>
     </Border>
@@ -61,6 +68,6 @@
     <!-- The controls, bottom centre. -->
     <Text Name="Help" Class="Label" Anchors="0.5,1,0.5,1" Pivot="0.5,1" Position="0,-30" AutoSize="true"
           Visibility="HitTestInvisible" FontSize="18" Color="#B8B2A6C0"
-          Text="WASD move   SHIFT run   SPACE jump   H draw   RMB aim   LMB fire   R reload   ESC mouse"/>
+          Text="WASD move   SHIFT run   SPACE jump   H draw   RMB aim   LMB fire   R reload   ESC pause"/>
   </Canvas>
 </UI>

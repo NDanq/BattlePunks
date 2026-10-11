@@ -7,6 +7,9 @@ a button is clicked. Its values can follow a data store the game fills.
 `NimbleEditor` has a WYSIWYG designer for these documents: **UI Designer**, which
 opens from the Content Browser.
 
+A walkthrough, in three pages built on WorldsLab's Shooting Range (menu, HUD, settings;
+C++, Lua and script graphs): `Engine/Docs/Guides/UI/`.
+
 The MVP is a static UI. Animations and visual-state transitions are specified,
 parsed and kept in every save and cook, but they do not play yet. See
 [Reserved: animations and visual states](#reserved-animations-and-visual-states).
@@ -88,6 +91,8 @@ Inside the root element come `<Styles>`, exactly one root widget (usually a
   in the log and a newer file still opens.
 - Shipped examples: `Games/Sandbox/Content/UI/` (`HUD.nmui`, `MainMenu.nmui` with
   `MainMenu.lua`, and `Settings.nmui`, tabbed pages) and `Games/LightLab/Content/UI/PauseMenu.nmui`.
+  `Games/WorldsLab/Content/UI/ShootingRange/` is the example the guides use: a HUD, a pause
+  menu and a settings page (`Docs/Guides/UI`).
 
 ## Widgets
 

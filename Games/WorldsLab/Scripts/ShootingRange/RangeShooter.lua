@@ -16,7 +16,8 @@
 --        the view; tighter spread, a slower walk
 --   R     reload: 17 a magazine, from the reserve
 --
--- The HUD is Content/UI/ShootingRange/RangeHUD.nmui, fed through UI strings.
+-- The HUD is Content/UI/ShootingRange/RangeHUD.nmui, fed through UI strings (the clock is
+-- the mode's, WorldsLabRange.cpp). The pause menu's Reset Score arrives as an event.
 
 local HUD = "Content/UI/ShootingRange/RangeHUD.nmui"
 local SOUNDS = "Content/Sounds/ShootingRange/"
@@ -72,6 +73,13 @@ return {
         UI.Open(HUD)
         self:UpdateHud()
 
+        -- The pause menu's Reset Score (PauseMenu.lua) is only an event: the tally is ours.
+        self.ResetHandle = Events.On("Range.ResetScore", function()
+            self.Shots, self.Hits, self.Kills = 0, 0, 0
+            self.Wounds = {}
+            self:UpdateHud()
+        end)
+
         local id = self.Root:GetID()
         Events.On("AnimNotify", function(entity, name)
             if entity:GetID() ~= id then return end
@@ -86,6 +94,7 @@ return {
     end,
 
     OnDestroy = function(self)
+        Events.Off(self.ResetHandle)
         UI.Close(HUD)
     end,
 

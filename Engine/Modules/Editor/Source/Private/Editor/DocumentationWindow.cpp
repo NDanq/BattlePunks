@@ -2,17 +2,23 @@
 
 #include "Private/Editor/DocumentationWindow.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include <QAction>
 #include <QDesktopServices>
 #include <QDir>
+#include <QEvent>
 #include <QFile>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QFont>
 #include <QHash>
+#include <QImage>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPixmap>
 #include <QPointer>
 #include <QRegularExpression>
 #include <QScrollBar>
@@ -24,6 +30,7 @@
 #include <QTextBrowser>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QTextFormat>
 #include <QTextFrame>
 #include <QTextTable>
 #include <QTimer>
@@ -248,6 +255,7 @@ void DocumentationWindow::BuildUi()
     Page = new QTextBrowser(this);
     Page->setOpenLinks(false);
     Page->document()->setDocumentMargin(16);
+    Page->viewport()->installEventFilter(this);   // resized: images refit (FitImages)
     connect(Page, &QTextBrowser::anchorClicked, this, &DocumentationWindow::OnLinkClicked);
     connect(Page, &QTextBrowser::sourceChanged, this, &DocumentationWindow::OnSourceChanged);
     connect(Page, &QTextBrowser::backwardAvailable, BackAction, &QAction::setEnabled);
@@ -588,7 +596,71 @@ void DocumentationWindow::DecorateDocument()
         }
     }
 
+    /* After setSource has finished laying the page out (sourceChanged runs inside it). */
+    QTimer::singleShot(0, this, [this]() { if(Page) { FitImages(); } });
     Doc->setModified(false);
+}
+
+void DocumentationWindow::FitImages()
+{
+    QTextDocument* Doc = Page->document();
+    const qreal Available = Page->viewport()->width() - 2.0 * Doc->documentMargin() - 4.0;
+    if(Available < 64.0) { return; }
+
+    /* Gathered first: a format change splits fragments. */
+    struct Found { int Position; int Length; QTextImageFormat Format; };
+    QList<Found> Images;
+    for(QTextBlock Block = Doc->begin(); Block.isValid(); Block = Block.next())
+    {
+        for(QTextBlock::iterator It = Block.begin(); !It.atEnd(); ++It)
+        {
+            const QTextFragment Fragment = It.fragment();
+            if(Fragment.isValid() && Fragment.charFormat().isImageFormat())
+            {
+                Images << Found{ Fragment.position(), Fragment.length(), Fragment.charFormat().toImageFormat() };
+            }
+        }
+    }
+
+    bool bChanged = false;
+    for(Found& Each : Images)
+    {
+        /* Its own size, from the loaded resource (QTextBrowser resolves the name against the page). */
+        const QVariant Resource = Doc->resource(QTextDocument::ImageResource, QUrl(Each.Format.name()));
+        QSize Natural;
+        if(Resource.canConvert<QImage>())       { Natural = qvariant_cast<QImage>(Resource).size(); }
+        else if(Resource.canConvert<QPixmap>()) { Natural = qvariant_cast<QPixmap>(Resource).size(); }
+        if(Natural.isEmpty()) { continue; }
+
+        const qreal Width = std::min<qreal>(Natural.width(), Available);
+        if(std::abs(Each.Format.width() - Width) < 0.5) { continue; }
+
+        /* Only the size is merged into the image's own format: its name, anchor and the rest stay. */
+        QTextImageFormat Size;
+        Size.setWidth(Width);
+        Size.setHeight(Natural.height() * Width / Natural.width());
+        QTextCursor Cursor(Doc);
+        Cursor.setPosition(Each.Position);
+        Cursor.setPosition(Each.Position + Each.Length, QTextCursor::KeepAnchor);
+        Cursor.mergeCharFormat(Size);
+        bChanged = true;
+    }
+    if(bChanged)
+    {
+        /* A resized image moves everything below it: lay the whole page out again, not just its block. */
+        Doc->markContentsDirty(0, Doc->characterCount());
+    }
+    Doc->setModified(false);
+}
+
+bool DocumentationWindow::eventFilter(QObject* InWatched, QEvent* InEvent)
+{
+    if(Page && InWatched == Page->viewport() && InEvent->type() == QEvent::Resize)
+    {
+        /* After the layout settles; several resizes in a drag fit once. */
+        QTimer::singleShot(0, this, [this]() { if(Page) { FitImages(); } });
+    }
+    return QMainWindow::eventFilter(InWatched, InEvent);
 }
 
 #endif // WITH_EDITOR

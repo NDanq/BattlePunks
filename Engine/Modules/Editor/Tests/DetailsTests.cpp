@@ -43,6 +43,7 @@
 #include "Public/NodeGraph/Schema.h"
 #include <QDir>
 #include <QFileInfo>
+#include <QImage>
 #include <QTextBlock>
 #include <QTextBrowser>
 #include "Private/Editor/Graph/GraphView.h"
@@ -565,6 +566,33 @@ static void TestDocumentation()
     Generated.close();
     Expect(DocumentationWindow::IsDocumentation(TransformDoc), "a component page is documentation");
 
+    /* A screenshot wider than the page is drawn at the page's width, and refits as the window is resized. */
+    QDir().mkpath(Dir.filePath(QStringLiteral("Images")));
+    QImage Wide(2400, 300, QImage::Format_RGB32);
+    Wide.fill(Qt::darkCyan);
+    Expect(Wide.save(Dir.filePath(QStringLiteral("Images/Wide.png"))), "a wide screenshot is written");
+    Write(QStringLiteral("Wide.md"), "# Wide\n\n![a wide shot](Images/Wide.png)\n");
+    DocumentationWindow::Open(Dir.filePath(QStringLiteral("Wide.md")));
+    const auto ImageWidth = [Page]()
+    {
+        for(QTextBlock Block = Page->document()->begin(); Block.isValid(); Block = Block.next())
+        {
+            for(QTextBlock::iterator It = Block.begin(); !It.atEnd(); ++It)
+            {
+                const QTextCharFormat Format = It.fragment().charFormat();
+                if(Format.isImageFormat()) { return Format.toImageFormat().width(); }
+            }
+        }
+        return -1.0;
+    };
+    Window->resize(900, 600);
+    PumpFor(50);
+    const qreal Narrow = ImageWidth();
+    Expect(Narrow > 0.0 && Narrow <= Page->viewport()->width(), "the wide image fits the page instead of running off its edge");
+    Window->resize(1600, 600);
+    PumpFor(50);
+    Expect(ImageWidth() > Narrow + 100.0 && ImageWidth() <= Page->viewport()->width(), "and refits when the window is resized");
+
     EditorDocs::SetDocsRoot(QString());
     DocumentationWindow::CloseIfOpen();
     PumpFor(10);
@@ -575,6 +603,12 @@ static void TestDocumentation()
     {
         DocumentationWindow* Real = DocumentationWindow::Open(QString::fromLocal8Bit(qgetenv("NIMBLE_DOCS_PAGE")));
         PumpFor(200);
+        /* NIMBLE_DOCS_ANCHOR=<heading anchor>: the page scrolled to it. */
+        if(!qEnvironmentVariableIsEmpty("NIMBLE_DOCS_ANCHOR"))
+        {
+            if(auto* Browser = Real->findChild<QTextBrowser*>()) { Browser->scrollToAnchor(QString::fromLocal8Bit(qgetenv("NIMBLE_DOCS_ANCHOR"))); }
+            PumpFor(600);
+        }
         Real->grab().save(QString::fromLocal8Bit(Snapshot));
         DocumentationWindow::CloseIfOpen();
         PumpFor(10);
@@ -656,6 +690,7 @@ static void TestGraphSnapshot()
     if(!bScaleOk || Scale <= 0.0) { Scale = 2.0; }
     QRectF Area;
     Expect(Tab.SaveCanvasImage(QString::fromLocal8Bit(Image), Scale, Area), "the canvas image is written");
+    std::printf("  scene area %g,%g %gx%g at scale %g\n", Area.x(), Area.y(), Area.width(), Area.height(), Scale);
 }
 
 int main(int argc, char** argv)

@@ -15,6 +15,7 @@ class QLineEdit;
 class QTextBrowser;
 class QTreeWidget;
 class QTreeWidgetItem;
+class QEvent;
 
 /*
  * Help > Documentation (F1): the engine's documentation, every Markdown file
@@ -65,6 +66,12 @@ private:
     void OnFileChanged(const QString& InPath);
     void ApplyFilter(const QString& InText);
     void DecorateDocument();
+
+    /* Images wider than the page are drawn at its width (aspect kept), so a
+     * screenshot is seen whole rather than cut off at the pane's edge; run
+     * again when the page is resized. */
+    void FitImages();
+    bool eventFilter(QObject* InWatched, QEvent* InEvent) override;
     void SelectInTree(const QString& InPath);
     QString DefaultPage() const;
 

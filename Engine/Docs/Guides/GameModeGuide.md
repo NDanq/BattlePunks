@@ -607,7 +607,7 @@ prefab that the level (or the startup script: `World.SpawnPrefab("native:CoinRus
 places. It adds two rules to Coin Rush: **a bonus life when the score reaches
 exactly 2**, and **a line in the log whenever the phase changes.**
 
-![The Coin Rush director graph in the editor: On ScoreChanged feeds an Equal and a Branch that Add Lives; On PhaseChanged appends the phase to a message and prints it](Images/GameMode/director-graph.png)
+[![The Coin Rush director graph in the editor: On ScoreChanged feeds an Equal and a Branch that Add Lives; On PhaseChanged appends the phase to a message and prints it](Images/GameMode/director-graph.png)](Images/GameMode/director-graph.png)
 
 *The graph as the editor's canvas draws it. Top: the bonus life. Bottom: the
 phase log. The file itself is `Images/GameMode/CoinRushDirector.script.nmgraph`:

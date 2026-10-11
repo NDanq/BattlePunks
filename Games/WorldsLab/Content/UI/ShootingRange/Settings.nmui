@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Shooting Range's settings, opened from the pause menu (a layer above it, so Back
+  closes this and the pause menu stays). Every control is bound two-way to a data store key
+  (RangeSettings.*); Settings.ui.nmgraph fills the keys from the config vars as the
+  document opens, writes a var when its control changes, and saves the player's
+  User.ini as it closes. See Engine/Docs/Guides/UI/SettingsUIGuide.md.
+-->
+<UI Format="1" ReferenceSize="1920,1080" ScaleMode="FitHeight" InputMode="UIOnly" Layer="11"
+    Graph="Content/UI/ShootingRange/Settings.ui.nmgraph" OnBack="Native:UI.Close">
+  <Styles>
+    <Style Name="MenuButton" Type="Button" Padding="32,14" Margin="0,8" Size="260,0"
+           Normal.Tint="#14181FE6" Normal.OutlineColor="#E0A82040" Normal.OutlineThickness="1"
+           Hovered.Tint="#E0A820F2" Hovered.OutlineColor="#FFE9A8E6" Hovered.OutlineThickness="2"
+           Pressed.Tint="#9A7414F2"/>
+    <Style Name="MenuLabel" Type="Text" FontSize="30" Color="#F2EEE4FF" HAlign="Center" VAlign="Center"/>
+    <Style Name="Heading" Type="Text" FontSize="64" Color="#F2EEE4FF" HAlign="Center" Margin="0,0,0,28"
+           ShadowOffset="0,3" ShadowColor="#000000A0"/>
+    <Style Name="Setting" Type="CheckBox" Margin="0,10" BoxSize="34" Spacing="18"
+           Box.Tint="#0A0C10E6" Box.OutlineColor="#FFFFFF4D" Box.OutlineThickness="2"
+           BoxHovered.Tint="#14181FF2" BoxHovered.OutlineColor="#E0A820FF" BoxHovered.OutlineThickness="2"
+           Check.Tint="#E0A820FF"/>
+    <Style Name="SettingLabel" Type="Text" FontSize="30" Color="#F2EEE4FF" VAlign="Center"/>
+    <Style Name="SliderLabel" Type="Text" FontSize="30" Color="#F2EEE4FF" Margin="0,18,0,4"/>
+    <Style Name="SliderValue" Type="Text" FontSize="28" Color="#FFFFFFB3" VAlign="Center" Margin="24,0,0,0"/>
+    <Style Name="SettingSlider" Type="Slider" Size="460,40" ThumbSize="22,40" TrackHeight="8"
+           Track.Tint="#0A0C10E6" Track.OutlineColor="#FFFFFF33" Track.OutlineThickness="1"
+           FillBrush.Tint="#E0A820F2" Thumb.Tint="#E6EBF2FF"
+           ThumbHovered.Tint="#FFD66AFF" ThumbHovered.OutlineColor="#FFFFFFFF" ThumbHovered.OutlineThickness="2"/>
+  </Styles>
+  <Canvas Name="Root">
+    <Border Name="Dim" Anchors="0,0,1,1" Background.Tint="#05060A80"/>
+    <Border Name="Panel" Anchors="0.5,0.5,0.5,0.5" Pivot="0.5,0.5" AutoSize="true" Padding="64,48"
+            Background.Tint="#0B0D12FF" Background.OutlineColor="#E0A82033" Background.OutlineThickness="1">
+      <VerticalBox Name="Content">
+        <Text Name="Title" Class="Heading" Text="Settings"/>
+
+        <Text Class="SliderLabel" Text="Master volume"/>
+        <HorizontalBox>
+          <Slider Name="Master" Class="SettingSlider" Min="0" Max="1" Step="0.05" InitialFocus="true"
+                  Value="{Bind:RangeSettings.Master}" OnChanged="Graph:Master_OnChanged"/>
+          <Text Class="SliderValue" Text="{Bind:RangeSettings.Master}"/>
+        </HorizontalBox>
+
+        <Text Class="SliderLabel" Text="Effects volume"/>
+        <HorizontalBox>
+          <Slider Name="Effects" Class="SettingSlider" Min="0" Max="1" Step="0.05"
+                  Value="{Bind:RangeSettings.Effects}" OnChanged="Graph:Effects_OnChanged"/>
+          <Text Class="SliderValue" Text="{Bind:RangeSettings.Effects}"/>
+        </HorizontalBox>
+
+        <Text Class="SliderLabel" Text="Look sensitivity"/>
+        <HorizontalBox>
+          <Slider Name="Look" Class="SettingSlider" Min="0.25" Max="3" Step="0.05"
+                  Value="{Bind:RangeSettings.Look}" OnChanged="Graph:Look_OnChanged"/>
+          <Text Class="SliderValue" Text="{Bind:RangeSettings.Look}x"/>
+        </HorizontalBox>
+
+        <CheckBox Name="Shadows" Class="Setting" Margin="0,28,0,10" Checked="{Bind:RangeSettings.Shadows}"
+                  OnChanged="Graph:Shadows_OnChanged">
+          <Text Class="SettingLabel" Text="Shadows"/>
+        </CheckBox>
+        <CheckBox Name="Help" Class="Setting" Checked="{Bind:RangeSettings.Help}" OnChanged="Graph:Help_OnChanged">
+          <Text Class="SettingLabel" Text="Show the controls hint"/>
+        </CheckBox>
+
+        <HorizontalBox Margin="0,36,0,0">
+          <Button Name="Defaults" Class="MenuButton" Margin="0,8,16,8" OnClick="Graph:Defaults_OnClick">
+            <Text Class="MenuLabel" Text="Defaults"/>
+          </Button>
+          <Button Name="Back" Class="MenuButton" OnClick="Native:UI.Close">
+            <Text Class="MenuLabel" Text="Back"/>
+          </Button>
+        </HorizontalBox>
+        <Text Name="Hint" Text="Saved when you leave: Esc or (B) to go back" FontSize="20" Color="#FFFFFF73"
+              HAlign="Center" Margin="0,24,0,0"/>
+      </VerticalBox>
+    </Border>
+  </Canvas>
+</UI>
