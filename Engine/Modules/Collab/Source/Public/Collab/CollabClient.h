@@ -50,6 +50,8 @@ namespace Collab
             BranchAdvanced, // MemberId, User (who pushed), Move: the session branch moved
             BuildStatus,    // Build: the session's server build moved on (GetBuildStatus too)
             Validation,     // Report: content problems the worker found in a commit
+            PlayInvite,     // Invite: a shared run is up (GetActiveRun too)
+            PlayEnded,      // Text: the run is over, and why
             Notified        // Severity, Title, Text
         };
 
@@ -64,6 +66,7 @@ namespace Collab
         BranchMove    Move;
         BuildStatusMessage      Build;
         ValidationReportMessage Report;
+        PlayInviteMessage       Invite;
     };
 
     class COLLAB_API CollabClient
@@ -106,6 +109,16 @@ namespace Collab
         /* This editor pushed the session branch: the others hear BranchAdvanced. */
         void AnnouncePush(const BranchMove& InMove);
 
+        /* Play Together: a shared run of InLevel (runtime-relative; empty, the
+         * start level) on the server's game server; the invite follows. */
+        void RequestPlay(const std::string& InLevel);
+        /* Ends the run, if this editor started it (or its starter has gone). */
+        void RequestStopPlay();
+
+        /* The run that's going, if any. */
+        bool IsRunActive() const { return bRunActive; }
+        const PlayInviteMessage& GetActiveRun() const { return ActiveRun; }
+
         /* Who else has InPath dirty. */
         std::vector<std::string> WhoHasDirty(const std::string& InPath) const;
 
@@ -126,6 +139,8 @@ namespace Collab
         uint32_t SessionId = 0;
         std::string SessionEngine;
         BuildStatusMessage LastBuild;
+        PlayInviteMessage  ActiveRun;
+        bool               bRunActive = false;
         std::map<uint32_t, MemberState> Roster;
         std::deque<ClientEvent>        Events;
 

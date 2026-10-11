@@ -36,6 +36,7 @@ private:
     void UpdateState();
     void UpdateRoster();
     void UpdateBuild();
+    void UpdateRun();
 
     EditorCollabSession& Session;
     QLineEdit*   Address   = nullptr;
@@ -45,6 +46,8 @@ private:
     QPushButton* LeaveButton = nullptr;
     QLabel*      StateLabel = nullptr;
     QLabel*      BuildLabel = nullptr;   // the server's build of the session branch
+    QLabel*      RunLabel   = nullptr;   // Play Together's run, if any
+    QPushButton* JoinRunButton = nullptr;
     QTreeWidget* Roster     = nullptr;
 };
 

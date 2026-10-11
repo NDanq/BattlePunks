@@ -39,6 +39,12 @@ namespace Collab
         std::string WorkerCMake;               // empty: the worker finds one (ContentWorker.h)
         uint32_t    WorkerFetchIntervalMs = 30000;
 
+        /* Play Together: a session's game server listens on GamePortBase plus
+         * (session id - 1) % 100, and stops once nobody has been playing for
+         * PlayIdleTimeoutMs. */
+        uint16_t    GamePortBase      = 7777;
+        uint32_t    PlayIdleTimeoutMs = 120000;
+
         /* Tests: a worker started (and stopped, by session id) in-process
          * instead of as NimbleContentWorker. */
         std::function<void(const WorkerConfig&)> LaunchWorker;
@@ -58,6 +64,8 @@ namespace Collab
         std::string              Tip;       // the last pushed commit, if any was announced
         BuildStatusMessage       LastBuild; // the worker's last report; Idle without one
         bool                     bWorkerConnected = false;
+        bool                     bPlaying = false;   // a shared run is up
+        PlayInviteMessage        Invite;             // bPlaying: what was sent
         std::vector<MemberState> Members;
     };
 

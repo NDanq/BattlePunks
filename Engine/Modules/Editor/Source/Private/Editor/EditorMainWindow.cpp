@@ -101,6 +101,9 @@
 #include "Private/Editor/Collab/CollabSessionWindow.h"
 #include "Private/Editor/Collab/EditorCollabSession.h"
 #include "Public/Editor/EditorContentEvents.h"
+#if WITH_NETCORE
+#include "Public/NetCore/NetSession.h"
+#endif
 
 /* Edit > Editor Settings > Build. */
 NIMBLE_CONFIG_BOOL(GEditorReloadAfterCompile, "Editor", "ReloadAfterCompile", true, nullptr);
@@ -299,6 +302,33 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     Reload.CompileGameModule = [this]() { CompileSource(); };
     Reload.ReloadConfig = [this]() { ReloadProjectConfig(); };
     CollabSession->SetReloadHooks(Reload);
+
+    /* Play Together: this editor's game build checked against the server's,
+     * and Play started as a client of the session's game server. */
+    EditorCollabSession::PlayHooks Together;
+    Together.LocalSchemaHash = [this]() -> uint64_t
+    {
+#if WITH_NETCORE
+        return Context.IsAuthoringGameLoaded() || Context.IsPlaying() ? NetCore::ComputeSchemaHash() : 0;
+#else
+        return 0;
+#endif
+    };
+    Together.JoinRun = [this](const QString& InLevel, const QString& InHost, const uint16_t InPort)
+    {
+        if(Context.IsPlaying())
+        {
+            Context.StopPlay();
+        }
+        if(!Context.StartPlayTogether(InLevel, InHost, InPort))
+        {
+            return false;
+        }
+        Viewport->setFocus(Qt::OtherFocusReason);
+        return true;
+    };
+    Together.LeaveRun = [this]() { Context.StopPlay(); };
+    CollabSession->SetPlayHooks(Together);
 
     /* Files changed under the editor (a pull): staged again, so the viewport
      * and Play see the new ones. */
@@ -740,6 +770,26 @@ void EditorMainWindow::BuildPlayControls()
     QAction* PlaySettings = PlayMenu->addAction(QStringLiteral("Network &Settings..."));
     PlaySettings->setToolTip(QStringLiteral("How Play runs: standalone, as a listen server, or as a client (Editor Settings > Play)"));
     connect(PlaySettings, &QAction::triggered, this, [this]() { OpenSettings(QStringLiteral("Play")); });
+
+    /* Play Together: everyone in the collaboration session, on the server
+     * host's game server (EditorCollabSession). */
+    PlayMenu->addSeparator();
+    QAction* PlayTogether = PlayMenu->addAction(QStringLiteral("Play &Together"));
+    PlayTogether->setToolTip(QStringLiteral("Start a run of the open level on the session server's game server and invite everyone "
+                                            "in the session (or join the one that's going)"));
+    connect(PlayTogether, &QAction::triggered, this, [this]()
+    {
+        CollabSession->RequestPlayTogether(CurrentPath.isEmpty() ? QString() : EditorContent::ToRuntimePath(CurrentPath));
+    });
+    QAction* StopTogether = PlayMenu->addAction(QStringLiteral("Stop Play T&ogether"));
+    StopTogether->setToolTip(QStringLiteral("End the shared run you started, for everyone"));
+    connect(StopTogether, &QAction::triggered, this, [this]() { CollabSession->StopPlayTogether(); });
+    connect(PlayMenu, &QMenu::aboutToShow, this, [this, PlayTogether, StopTogether]()
+    {
+        PlayTogether->setEnabled(CollabSession->IsJoined());
+        PlayTogether->setText(CollabSession->IsRunActive() ? QStringLiteral("Join Play &Together") : QStringLiteral("Play &Together"));
+        StopTogether->setEnabled(CollabSession->IsRunStarter());
+    });
 
     /* In front of the navigation buttons, where a run is started and ended. */
     QToolBar* Bar = ViewportArea->GetToolbar();
@@ -2506,6 +2556,10 @@ void EditorMainWindow::UpdateTitle()
         CollabSession->SetOpenLevel(CurrentPath);
         CollabSession->SetLevelUnsaved(!Level.GetHistory().isClean());
         CollabSession->SetPlaying(Context.IsPlaying());
+        if(!Context.IsPlaying())
+        {
+            CollabSession->SetPlayingTogether(false);   // Stop Play leaves the shared run
+        }
     }
 }
 

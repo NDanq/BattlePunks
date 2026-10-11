@@ -641,12 +641,45 @@ bool EditorContext::StartPlay(const QString& InOpenWorld)
     return true;
 }
 
+bool EditorContext::StartPlayTogether(const QString& InOpenWorld, const QString& InHost, const uint16_t InPort)
+{
+#if WITH_NETCORE
+    if(Play)
+    {
+        return false;   // stop the run that's going first
+    }
+    PlayNetSettings Settings;
+    Settings.Mode          = NimbleEngine::ENetMode::Client;
+    Settings.ServerAddress = InHost.toStdString();
+    Settings.Port          = InPort;
+    Settings.bLaunchServer = false;
+    Settings.ClientWindows = 0;
+    PlayNetSettings::SetOverride(Settings);
+    if(!StartPlay(InOpenWorld))
+    {
+        PlayNetSettings::ClearOverride();
+        return false;
+    }
+    return true;
+#else
+    (void)InOpenWorld; (void)InHost; (void)InPort;
+    CORE_LOG_ERROR("[PIE] Play Together needs NetCore: this build has networking compiled out")
+    return false;
+#endif
+}
+
+bool EditorContext::IsPlayingTogether() const
+{
+    return Play && PlayNetSettings::HasOverride();
+}
+
 void EditorContext::StopPlay()
 {
     if(!Play)
     {
         return;
     }
+    PlayNetSettings::ClearOverride();
 
     /* The playing World is still alive here; Stop frees it. */
     Level->UnhookBorrowedWorld();

@@ -108,6 +108,12 @@ struct CollabServer::Impl
         PeerID             WorkerPeer = PEER_NONE;
         ChildProcess       Worker;
         BuildStatusMessage LastBuild;   // State Idle until the worker reports
+
+        /* Play Together: the shared run, if any. */
+        enum class EPlay : uint8_t { None, Starting, Running };
+        EPlay             Play = EPlay::None;
+        PlayInviteMessage Invite;        // Starting: what it will say; Running: what it said
+        Clock::time_point LastPlayers;   // the last time someone was in it
     };
 
     ServerConfig    Config;
@@ -349,6 +355,9 @@ struct CollabServer::Impl
                 Broadcast(In, Status, 0);
                 break;
             }
+            case EMessage::WorkerPlayState:
+                OnWorkerPlayState(In, InBytes);
+                break;
             case EMessage::ValidationReport:
             {
                 ValidationReportMessage Report;
@@ -376,6 +385,180 @@ struct CollabServer::Impl
             }
             default:
                 break;
+        }
+    }
+
+    // --- Play Together -------------------------------------------------------------
+
+    void Tell(const PeerID InPeer, const ESeverity InSeverity, const std::string& InTitle, const std::string& InBody)
+    {
+        NotifyMessage Note;
+        Note.Severity = InSeverity;
+        Note.Title    = InTitle;
+        Note.Body     = InBody;
+        Send(InPeer, Note);
+    }
+
+    void EndRun(Session& In, const std::string& InReason, const bool bInStopWorker)
+    {
+        if(In.Play == Session::EPlay::None)
+        {
+            return;
+        }
+        if(bInStopWorker && In.WorkerPeer != PEER_NONE)
+        {
+            WorkerPlayMessage Stop;
+            Stop.bStop = true;
+            Send(In.WorkerPeer, Stop);
+        }
+        const bool bWasRunning = In.Play == Session::EPlay::Running;
+        In.Play = Session::EPlay::None;
+        CORE_LOG("[Collab] session " + std::to_string(In.Id) + ": Play Together ended (" + InReason + ")")
+        if(bWasRunning)
+        {
+            PlayEndedMessage Ended;
+            Ended.Reason = InReason;
+            Broadcast(In, Ended, 0);
+        }
+    }
+
+    void OnPlayRequest(const PeerID InPeer, const Peer& InState, const std::vector<uint8_t>& InBytes)
+    {
+        const auto FoundSession = Sessions.find(InState.SessionId);
+        PlayRequestMessage Request;
+        if(FoundSession == Sessions.end() || !Decode(InBytes, Request))
+        {
+            return;
+        }
+        Session& In = FoundSession->second;
+        const auto FoundMember = In.Members.find(InState.MemberId);
+        if(FoundMember == In.Members.end())
+        {
+            return;
+        }
+        const std::string& User = FoundMember->second.State.User;
+
+        if(Request.bStop)
+        {
+            if(In.Play == Session::EPlay::None)
+            {
+                return;
+            }
+            /* The one who started it, or anyone once they've gone. */
+            const bool bInitiatorHere = In.Members.count(In.Invite.FromId) != 0;
+            if(InState.MemberId != In.Invite.FromId && bInitiatorHere)
+            {
+                Tell(InPeer, ESeverity::Info, "Only " + In.Invite.From + " can stop this run",
+                     "Leave it by stopping Play; it ends on its own once nobody is playing.");
+                return;
+            }
+            EndRun(In, User + " stopped it", true);
+            return;
+        }
+
+        if(In.Play == Session::EPlay::Running)
+        {
+            Tell(InPeer, ESeverity::Info, "A run is already going", In.Invite.From + " started it: join that one.");
+            Send(InPeer, In.Invite);
+            return;
+        }
+        if(In.Play == Session::EPlay::Starting)
+        {
+            Tell(InPeer, ESeverity::Info, "The game server is starting", In.Invite.From + " asked first; the invite follows.");
+            return;
+        }
+        if(In.WorkerPeer == PEER_NONE)
+        {
+            Tell(InPeer, ESeverity::Error, "This server can't host Play Together",
+                 "It runs no content worker: start NimbleEditorServer with --repo <its checkout of the project>.");
+            return;
+        }
+        if(In.LastBuild.State != EBuildState::Succeeded)
+        {
+            Tell(InPeer, ESeverity::Warning, "The server's build isn't ready",
+                 In.LastBuild.State == EBuildState::Failed ? "Its last build failed: " + In.LastBuild.FirstError
+                                                           : std::string("It's ") + GetBuildStateName(In.LastBuild.State)
+                                                             + "; try again when it's built.");
+            return;
+        }
+
+        In.Play               = Session::EPlay::Starting;
+        In.Invite             = PlayInviteMessage();
+        In.Invite.FromId      = InState.MemberId;
+        In.Invite.From        = User;
+        In.Invite.Level       = Request.Level;
+        In.Invite.Port        = uint16_t(Config.GamePortBase + (In.Id - 1) % 100);
+        In.Invite.Oid         = In.LastBuild.Oid;
+        In.Invite.SchemaHash  = In.LastBuild.SchemaHash;
+
+        WorkerPlayMessage Start;
+        Start.Level = Request.Level;
+        Start.Port  = In.Invite.Port;
+        Start.Oid   = In.LastBuild.Oid;
+        Send(In.WorkerPeer, Start);
+        CORE_LOG("[Collab] session " + std::to_string(In.Id) + ": " + User + " asked for Play Together on "
+                 + (Request.Level.empty() ? std::string("the start level") : Request.Level) + ", UDP " + std::to_string(Start.Port))
+    }
+
+    void OnWorkerPlayState(Session& In, const std::vector<uint8_t>& InBytes)
+    {
+        WorkerPlayStateMessage State;
+        if(!Decode(InBytes, State))
+        {
+            return;
+        }
+        if(State.bRunning && In.Play == Session::EPlay::Starting)
+        {
+            In.Play        = Session::EPlay::Running;
+            In.LastPlayers = Clock::now();
+            In.Invite.Port = State.Port;
+            CORE_LOG("[Collab] session " + std::to_string(In.Id) + ": Play Together is up on UDP " + std::to_string(State.Port))
+            Broadcast(In, In.Invite, 0);
+            return;
+        }
+        if(State.bRunning)
+        {
+            return;
+        }
+        if(In.Play == Session::EPlay::Starting)
+        {
+            /* Never came up: only the one who asked hears. */
+            In.Play = Session::EPlay::None;
+            const auto Initiator = In.Members.find(In.Invite.FromId);
+            if(Initiator != In.Members.end())
+            {
+                Tell(Initiator->second.Peer, ESeverity::Error, "The game server didn't start", State.Error);
+            }
+            CORE_LOG_WARN("[Collab] session " + std::to_string(In.Id) + ": the game server didn't start: " + State.Error)
+            return;
+        }
+        EndRun(In, State.Error.empty() ? std::string("The game server stopped.") : State.Error, false);
+    }
+
+    /* A run nobody is in ends; how many are in it is presence (PlayingTogether). */
+    void CheckIdleRuns()
+    {
+        const Clock::time_point Now = Clock::now();
+        for(auto& Each : Sessions)
+        {
+            Session& In = Each.second;
+            if(In.Play != Session::EPlay::Running)
+            {
+                continue;
+            }
+            bool bAnyone = false;
+            for(const auto& Member : In.Members)
+            {
+                bAnyone = bAnyone || Member.second.State.Play == EPlayState::PlayingTogether;
+            }
+            if(bAnyone)
+            {
+                In.LastPlayers = Now;
+            }
+            else if(Now - In.LastPlayers > std::chrono::milliseconds(Config.PlayIdleTimeoutMs))
+            {
+                EndRun(In, "Nobody was playing.", true);
+            }
         }
     }
 
@@ -462,6 +645,11 @@ struct CollabServer::Impl
         if(Joined->LastBuild.State != EBuildState::Idle)
         {
             Send(InPeer, Joined->LastBuild);
+        }
+        /* And a run that's going. */
+        if(Joined->Play == Session::EPlay::Running)
+        {
+            Send(InPeer, Joined->Invite);
         }
 
         MemberJoinedMessage Joining;
@@ -568,6 +756,7 @@ struct CollabServer::Impl
             if(In.WorkerPeer == InPeer)
             {
                 In.WorkerPeer = PEER_NONE;
+                EndRun(In, "The content worker went away.", false);
                 CORE_LOG_WARN("[Collab] session " + std::to_string(In.Id) + ": content worker disconnected")
             }
             return;
@@ -589,6 +778,7 @@ struct CollabServer::Impl
 
         if(In.Members.empty())
         {
+            EndRun(In, "The session ended.", true);
             CORE_LOG("[Collab] session " + std::to_string(In.Id) + " ended")
             StopWorker(In);
             Sessions.erase(FoundSession);
@@ -707,10 +897,16 @@ void CollabServer::Poll()
                 {
                     P->OnPushed(Event.Peer, Found->second, Event.Data);
                 }
+                else if(Type == EMessage::PlayRequest)
+                {
+                    P->OnPlayRequest(Event.Peer, Found->second, Event.Data);
+                }
                 break;
             }
         }
     }
+
+    P->CheckIdleRuns();
 
     /* A connection that never says hello isn't kept. */
     const Clock::time_point Now = Clock::now();
@@ -739,6 +935,8 @@ std::vector<SessionSummary> CollabServer::GetSessions() const
         Summary.Tip        = Each.second.Tip;
         Summary.LastBuild  = Each.second.LastBuild;
         Summary.bWorkerConnected = Each.second.WorkerPeer != PEER_NONE;
+        Summary.bPlaying = Each.second.Play == Impl::Session::EPlay::Running;
+        Summary.Invite   = Each.second.Invite;
         for(const auto& Member : Each.second.Members)
         {
             Summary.Members.push_back(Member.second.State);

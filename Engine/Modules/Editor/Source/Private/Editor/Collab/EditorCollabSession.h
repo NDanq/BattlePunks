@@ -108,8 +108,47 @@ public:
     QStringList GetPendingPaths() const;
     int GetPendingCommitCount() const { return int(Pending.Commits.size()); }
 
+    // --- Play Together (P5) ------------------------------------------------------
+    /*
+     * A shared run on the server host's game server (the content worker's
+     * <Game>Server build), everyone invited. Asking starts it; its starter
+     * joins at once, the others get Join / Decline.
+     *
+     * Before offering Join, the editor checks it can play: its game build's
+     * NetCore schema must match the server's (else "Recompile first", with
+     * Compile Source), and its HEAD must have the run's commit (else "Pull &
+     * Reload first"). A mismatched editor is never pointed at the server.
+     */
+    struct PlayHooks
+    {
+        /* This editor's game build's schema (NetCore::ComputeSchemaHash with
+         * the module loaded); 0 if it has none loaded. */
+        std::function<uint64_t()> LocalSchemaHash;
+        /* Play as a client of InHost:InPort on InLevel (runtime-relative). */
+        std::function<bool(const QString& InLevel, const QString& InHost, uint16_t InPort)> JoinRun;
+        std::function<void()> LeaveRun;
+    };
+    void SetPlayHooks(PlayHooks InHooks) { PlayHooksSet = std::move(InHooks); }
+
+    /* InLevel: runtime-relative; empty, the game's start level. */
+    void RequestPlayTogether(const QString& InLevel);
+    /* Ends the run (if this editor started it). */
+    void StopPlayTogether();
+    /* Join the run that's going, if this editor can. */
+    void JoinPlayTogether();
+
+    bool IsRunActive() const { return Client.IsRunActive(); }
+    /* This editor started the run that's going. */
+    bool IsRunStarter() const;
+    /* Why this editor can't join the run; empty if it can. */
+    QString GetJoinBlocker() const { return JoinBlocker; }
+    /* The main window: this editor's Play stopped (or started) on its own. */
+    void SetPlayingTogether(bool bInPlaying);
+
 signals:
     void StateChanged();
+    /* A shared run started, ended, or who can join changed. */
+    void RunChanged();
     /* Someone joined, left or changed. */
     void RosterChanged();
     /* Pull & Reload ended; bInPulled false if it didn't pull. */
@@ -126,6 +165,14 @@ private:
     QString ToAbsolute(const QString& InRepoPath) const;
     void OnBranchAdvanced(const Collab::ClientEvent& InEvent);
     void OnBuildStatus(const Collab::BuildStatusMessage& InStatus);
+    void OnPlayInvite(const Collab::PlayInviteMessage& InInvite);
+    void OnPlayEnded(const QString& InReason);
+    void PostInvite();
+
+    PlayHooks PlayHooksSet;
+    QString   JoinBlocker;          // why not; empty: can join
+    bool      bPlayingTogether = false;
+    bool      bJoinWhenReady   = false;   // the starter joins as soon as it's up
     void OnValidation(const Collab::ValidationReportMessage& InReport);
     void PostPending();
     void ClearPending();
