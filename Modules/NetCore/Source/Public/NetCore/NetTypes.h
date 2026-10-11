@@ -50,6 +50,16 @@ namespace NetCore
          * (0: never). An RPC's own RateLimit applies on top. One whose
          * arguments are longer than MaxRpcBytes is malformed. Generous by
          * default: an avatar sends its input once a frame. */
+        /* RECONNECTING (README.md, "Reconnecting"). A server keeps the place
+         * of a client whose connection was lost -- not one that quit -- this
+         * long: its player, what it owns, its id. A client that lost its
+         * server tries to rejoin for as long, with the token the server gave
+         * it. 0 turns it off: a lost client is gone at once. */
+        uint32_t ReconnectGraceMs = 30000;
+        /* A client's token from an earlier connection (GetReconnectToken),
+         * to rejoin as that client after a restart; 0 joins as a new one. */
+        uint64_t ReconnectToken   = 0;
+
         uint32_t RpcPerSecond      = 1000;
         uint32_t RpcFloodPerSecond = 1000;
         uint32_t MaxRpcBytes       = 1024;

@@ -41,6 +41,8 @@ NIMBLE_CONFIG_INT(GNetInterpolationDelayMs, "Net", "InterpolationDelayMs", 100, 
 NIMBLE_CONFIG_INT(GNetSimulatedLossPercent, "Net", "SimulatedLossPercent", 0, nullptr);
 /* A server's limits on each client's RPCs (NetCore/README.md, "RPC limits"). */
 NIMBLE_CONFIG_INT(GNetRpcPerSecond, "Net", "RpcPerSecond", 1000, nullptr);
+/* How long a lost client's place is kept, and a client tries to rejoin (NetCore/README.md, "Reconnecting"). */
+NIMBLE_CONFIG_INT(GNetReconnectGraceMs, "Net", "ReconnectGraceMs", 30000, nullptr);
 NIMBLE_CONFIG_INT(GNetRpcFloodPerSecond, "Net", "RpcFloodPerSecond", 1000, nullptr);
 NIMBLE_CONFIG_INT(GNetMaxRpcBytes, "Net", "MaxRpcBytes", 1024, nullptr);
 #endif
@@ -62,6 +64,7 @@ namespace NimbleEngine
         Desc.InterpolationDelayMs  = uint32_t(GNetInterpolationDelayMs.GetInt() > 0 ? GNetInterpolationDelayMs.GetInt() : 0);
         Desc.SimulatedLossPercent  = uint32_t(std::clamp(GNetSimulatedLossPercent.GetInt(), 0, 100));
         Desc.RpcPerSecond          = uint32_t(std::max(0, GNetRpcPerSecond.GetInt()));
+        Desc.ReconnectGraceMs      = uint32_t(std::max(0, GNetReconnectGraceMs.GetInt()));
         Desc.RpcFloodPerSecond     = uint32_t(std::max(0, GNetRpcFloodPerSecond.GetInt()));
         Desc.MaxRpcBytes           = uint32_t(std::max(0, GNetMaxRpcBytes.GetInt()));
 #endif
@@ -149,6 +152,40 @@ namespace NimbleEngine
             if(const NetCorrectionFn Handler = GetNetCorrectionHandler(UserData)) { Handler(InWorld, InEntity, InAck, UserData); }
         }
 
+        /* InClient's player: what it owns that has a PlayerState. */
+        static GameCore::EntityID FindClientPlayer(GameCore::World& InWorld, const GameCore::NetClientID InClient)
+        {
+            GameCore::EntityID Player;
+            InWorld.Each<GameCore::NetComponent>([&](GameCore::Entity InEntity, GameCore::NetComponent& InNet)
+            {
+                if(!Player.IsSet() && InNet.OwnerClient == InClient && InEntity.HasComponent<PlayerStateComponent>()) { Player = InEntity.GetID(); }
+            });
+            return Player;
+        }
+
+        /* Lost, its place kept: everything it owns stays, its avatar idle (no input). */
+        static void OnClientAway(const GameCore::NetClientID InClient, void* InUserData)
+        {
+            Impl& Self = *static_cast<Impl*>(InUserData);
+            if(!Self.Session || !Self.Session->HasWorld()) { return; }
+            GameCore::World& World = Self.Session->GetWorld();
+            const GameCore::EntityID Player = FindClientPlayer(World, InClient);
+            ILevel* Level = Self.Session->GetLevel();
+            if(IGameMode* Mode = Level ? Level->GetGameMode() : nullptr) { Mode->OnClientAway(InClient, Player); }
+            EmitClientEvent(World, "ClientAway", InClient, Player);
+        }
+
+        static void OnClientReturned(const GameCore::NetClientID InClient, void* InUserData)
+        {
+            Impl& Self = *static_cast<Impl*>(InUserData);
+            if(!Self.Session || !Self.Session->HasWorld()) { return; }
+            GameCore::World& World = Self.Session->GetWorld();
+            const GameCore::EntityID Player = FindClientPlayer(World, InClient);
+            ILevel* Level = Self.Session->GetLevel();
+            if(IGameMode* Mode = Level ? Level->GetGameMode() : nullptr) { Mode->OnClientReturned(InClient, Player); }
+            EmitClientEvent(World, "ClientReturned", InClient, Player);
+        }
+
         static void OnClientDisconnected(const GameCore::NetClientID InClient, void* InUserData)
         {
             Impl& Self = *static_cast<Impl*>(InUserData);
@@ -203,11 +240,13 @@ namespace NimbleEngine
         Config.InterpolationDelayMs = InDesc.InterpolationDelayMs;
         Config.SimulatedLossPercent = InDesc.SimulatedLossPercent;
         Config.RpcPerSecond         = InDesc.RpcPerSecond;
+        Config.ReconnectGraceMs     = InDesc.ReconnectGraceMs;
         Config.RpcFloodPerSecond    = InDesc.RpcFloodPerSecond;
         Config.MaxRpcBytes          = InDesc.MaxRpcBytes;
 
         P->Net = new NetCore::NetSession();
         P->Net->SetClientEvents(&Impl::OnClientConnected, &Impl::OnClientDisconnected, P);
+        P->Net->SetClientAwayEvents(&Impl::OnClientAway, &Impl::OnClientReturned);   // SetClientEvents's user data
         P->Net->SetCorrectionHandler(&Impl::OnCorrection, P);
 
         /* Bound before starting, so a client's handshake names its level. */

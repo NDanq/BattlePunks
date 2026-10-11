@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <iterator>
+#include <random>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -108,6 +110,22 @@ struct NetSession::Impl final : public INetEntityMap
     /* Destroyed here: state still in flight for one is not missing a spawn. */
     std::unordered_set<int32_t> DestroyedIds;
 
+    /* RECONNECTING. The token the server gave; whether this client is trying
+     * to rejoin, since when, and when it tries next. */
+    uint64_t Token          = 0;
+    bool     bReconnecting  = false;
+    uint32_t LostAtMs       = 0;
+    uint32_t NextAttemptMs  = 0;
+
+    /* A welcome came before in this bound World: a later one is a rejoin.
+     * The entities a spawn created here (by EntityID::Pack()), which a new
+     * session must remove; and, until the snapshot is complete, the NetIds
+     * held from before that it has not sent again -- gone on the server. */
+    bool                         bHadSession       = false;
+    bool                         bAwaitingSnapshot = false;
+    std::unordered_set<int32_t>  Unconfirmed;
+    std::unordered_set<uint64_t> CreatedHere;
+
     // --- server ---------------------------------------------------------
 
     /*
@@ -163,6 +181,7 @@ struct NetSession::Impl final : public INetEntityMap
         uint32_t                               DroppedSecond     = 0;   // NowMs() / 1000 the count is for
         uint64_t                               DroppedTotal      = 0;
         bool                                   bKicked           = false;
+        uint64_t                               Token             = 0;   // what rejoins as this client
         uint32_t                               RefusedLogSecond  = 0xFFFFFFFFu;
 
         uint32_t                               NextBatch = 1;
@@ -172,8 +191,19 @@ struct NetSession::Impl final : public INetEntityMap
     std::unordered_map<NetPeerID, ClientInfo> Clients;
     NetClientID                               NextClientID = 0;
 
+    /* Clients whose connection was lost, their places kept until ExpiresMs. */
+    struct AwayClient
+    {
+        NetClientID ID        = NET_CLIENT_NONE;
+        uint64_t    Token     = 0;
+        uint32_t    ExpiresMs = 0;
+    };
+    std::vector<AwayClient> Away;
+
     ClientEventFn OnConnected    = nullptr;
     ClientEventFn OnDisconnected = nullptr;
+    ClientEventFn OnAway         = nullptr;
+    ClientEventFn OnReturned     = nullptr;
     void*         EventUserData  = nullptr;
 
     // --- the World ------------------------------------------------------
@@ -880,12 +910,13 @@ struct NetSession::Impl final : public INetEntityMap
         uint32_t    Version = NET_PROTOCOL_VERSION;
         uint64_t    Hash    = Schema.GetHash();
         std::string Level   = LevelName;
-        Ar << Version << Hash << Level;
+        uint64_t    Rejoin  = Token;
+        Ar << Version << Hash << Level << Rejoin;
         SendTo(InPeer, Ar);
-        CORE_LOG("NetCore: connected to " + Transport.DescribePeer(InPeer) + "; saying hello")
+        CORE_LOG("NetCore: connected to " + Transport.DescribePeer(InPeer) + (Token ? "; asking to rejoin" : "; saying hello"))
     }
 
-    void HandleDisconnected(const NetPeerID InPeer)
+    void HandleDisconnected(const NetPeerID InPeer, const uint32_t InReason)
     {
         if(Role == ENetRole::Server)
         {
@@ -893,22 +924,135 @@ struct NetSession::Impl final : public INetEntityMap
             if(Found == Clients.end()) { return; }
             const ClientInfo Info = Found->second;
             Clients.erase(Found);
-            if(Info.bWelcomed)
+            if(!Info.bWelcomed) { return; }
+
+            /* Lost, not quit or kicked: keep its place for a while. */
+            if(Config.ReconnectGraceMs > 0 && InReason == NET_DISCONNECT_LOST && !Info.bKicked)
             {
-                CORE_LOG("NetCore: client " + std::to_string(Info.ID) + " disconnected")
-                if(OnDisconnected) { OnDisconnected(Info.ID, EventUserData); }
+                Away.push_back({ Info.ID, Info.Token, NowMs() + Config.ReconnectGraceMs });
+                char Grace[32];
+                std::snprintf(Grace, sizeof(Grace), "%.1f s", double(Config.ReconnectGraceMs) / 1000.0);
+                CORE_LOG_WARN("NetCore: lost client " + std::to_string(Info.ID) + "; keeping its place for " + Grace)
+                if(OnAway) { OnAway(Info.ID, EventUserData); }
+                return;
             }
+            CORE_LOG("NetCore: client " + std::to_string(Info.ID) + (InReason == NET_DISCONNECT_QUIT ? " left" : " disconnected"))
+            if(OnDisconnected) { OnDisconnected(Info.ID, EventUserData); }
             return;
         }
 
-        if(InPeer == ServerPeer)
+        if(InPeer != ServerPeer) { return; }
+        const bool bWasWelcomed = bWelcomed;
+        bWelcomed  = false;
+        ServerPeer = NET_PEER_NONE;
+
+        const bool bMayReturn = InReason == NET_DISCONNECT_LOST && Config.ReconnectGraceMs > 0 && Token != 0;
+        if(bWasWelcomed && bMayReturn)
         {
-            CORE_LOG_WARN(bWelcomed ? "NetCore: lost the connection to the server"
-                                    : "NetCore: could not connect to the server")
-            bWelcomed   = false;
-            LocalClient = NET_CLIENT_NONE;
-            ServerPeer  = NET_PEER_NONE;
+            /* Its entities, and its id, stay while it tries: its own still read as its own. */
+            bReconnecting = true;
+            LostAtMs      = NowMs();
+            NextAttemptMs = LostAtMs;
+            char Grace[32];
+            std::snprintf(Grace, sizeof(Grace), "%.1f s", double(Config.ReconnectGraceMs) / 1000.0);
+            CORE_LOG_WARN(std::string("NetCore: lost the connection to the server; trying to rejoin for ") + Grace)
+            return;
         }
+        if(bReconnecting && bMayReturn)
+        {
+            NextAttemptMs = NowMs() + 1000;   // that attempt failed; another in a second
+            return;
+        }
+        if(bReconnecting)
+        {
+            CORE_LOG_WARN("NetCore: the server would not take this client back")
+            bReconnecting = false;
+        }
+        else
+        {
+            CORE_LOG_WARN(InReason == NET_DISCONNECT_CLOSED ? "NetCore: the server shut down"
+                          : bWasWelcomed                     ? "NetCore: lost the connection to the server"
+                                                             : "NetCore: could not connect to the server")
+        }
+        LocalClient = NET_CLIENT_NONE;
+    }
+
+    /* A server: places kept past their grace are given up. */
+    void ExpireAway()
+    {
+        const uint32_t Now = NowMs();
+        for(size_t Index = 0; Index < Away.size();)
+        {
+            if(int32_t(Now - Away[Index].ExpiresMs) < 0) { ++Index; continue; }
+            const NetClientID ID = Away[Index].ID;
+            Away.erase(Away.begin() + std::ptrdiff_t(Index));
+            CORE_LOG("NetCore: client " + std::to_string(ID) + " did not come back; gone")
+            if(OnDisconnected) { OnDisconnected(ID, EventUserData); }
+        }
+    }
+
+    /* A client: the next attempt to rejoin, or giving up once the grace is over. */
+    void TickReconnect()
+    {
+        if(!bReconnecting) { return; }
+        const uint32_t Now = NowMs();
+        if(Now - LostAtMs > Config.ReconnectGraceMs)
+        {
+            CORE_LOG_WARN("NetCore: could not rejoin the server in time; giving up")
+            if(ServerPeer != NET_PEER_NONE) { Transport.Close(NET_DISCONNECT_QUIT); }
+            ServerPeer    = NET_PEER_NONE;
+            bReconnecting = false;
+            LocalClient   = NET_CLIENT_NONE;
+            return;
+        }
+        if(ServerPeer != NET_PEER_NONE || int32_t(Now - NextAttemptMs) < 0) { return; }
+        NextAttemptMs = Now + 1000;
+        if(!Transport.Connect(Config.ServerAddress, Config.Port, Config.TimeoutMs, ServerPeer)) { ServerPeer = NET_PEER_NONE; }
+    }
+
+    static uint64_t NewToken()
+    {
+        static std::mt19937_64 Random(uint64_t(std::random_device{}()) ^ uint64_t(std::chrono::steady_clock::now().time_since_epoch().count()));
+        uint64_t Token = 0;
+        while(Token == 0) { Token = Random(); }
+        return Token;
+    }
+
+    /* A client welcomed as a new one into a World an earlier session left
+     * entities in: what that session spawned goes, the level's own stay
+     * unbound, ready to be matched again. */
+    void ForgetSession()
+    {
+        std::vector<std::pair<int32_t, EntityID>> Mapped(NetToEntity.begin(), NetToEntity.end());
+        for(const auto& Entry : Mapped)
+        {
+            if(!BoundWorld->IsAlive(Entry.second)) { continue; }
+            if(CreatedHere.count(Entry.second.Pack()) != 0) { BoundWorld->DestroyEntity(Entry.second); continue; }
+            if(NetComponent* Net = GameCore::Entity(BoundWorld, Entry.second).GetComponent<NetComponent>()) { Net->NetId = 0; }
+        }
+        NetToEntity.clear();
+        EntityToNet.clear();
+        Structures.clear();
+        Interpolations.clear();
+        PendingParents.clear();
+        CreatedHere.clear();
+    }
+
+    /* SnapshotDone: whatever the snapshot did not send again is gone on the server. */
+    void ClientSnapshotDone()
+    {
+        if(!bAwaitingSnapshot || !BoundWorld) { return; }
+        bAwaitingSnapshot = false;
+        const std::vector<int32_t> Gone(Unconfirmed.begin(), Unconfirmed.end());
+        Unconfirmed.clear();
+        for(const int32_t NetId : Gone)
+        {
+            const EntityID Entity = FromNetId(NetId);
+            UnmapEntity(NetId);
+            CreatedHere.erase(Entity.Pack());
+            if(Entity.IsSet() && BoundWorld->IsAlive(Entity)) { BoundWorld->DestroyEntity(Entity); }
+        }
+        if(!Gone.empty()) { CORE_LOG("NetCore: rejoined; " + std::to_string(Gone.size()) + " entities gone while away removed") }
     }
 
     void Reject(const NetPeerID InPeer, const std::string& InReason)
@@ -939,6 +1083,9 @@ struct NetSession::Impl final : public INetEntityMap
                            + std::to_string(NET_PROTOCOL_VERSION));
             return;
         }
+        uint64_t Rejoin = 0;
+        Ar << Rejoin;
+        if(Ar.HasError()) { return; }
         if(Hash != Schema.GetHash())
         {
             Reject(InPeer, "its replicated components or RPCs differ from the server's (a different build of the game)");
@@ -949,23 +1096,54 @@ struct NetSession::Impl final : public INetEntityMap
             CORE_LOG_WARN("NetCore: " + Transport.DescribePeer(InPeer) + " is in level '" + Level
                           + "', the server in '" + LevelName + "'")
         }
-        if(Config.MaxClients != 0 && GetWelcomedCount() >= Config.MaxClients)
+        /* A token the server knows: that client, back -- from its kept place,
+         * or over a connection the server has not yet noticed is dead. */
+        NetClientID Returning = NET_CLIENT_NONE;
+        if(Rejoin != 0)
+        {
+            const auto Kept = std::find_if(Away.begin(), Away.end(), [Rejoin](const AwayClient& InAway) { return InAway.Token == Rejoin; });
+            if(Kept != Away.end())
+            {
+                Returning = Kept->ID;
+                Away.erase(Kept);
+            }
+            else
+            {
+                for(auto It = Clients.begin(); It != Clients.end(); ++It)
+                {
+                    if(It->first == InPeer || !It->second.bWelcomed || It->second.Token != Rejoin) { continue; }
+                    Returning = It->second.ID;
+                    const NetPeerID Stale = It->first;
+                    Clients.erase(It);   // its Disconnected, later, finds nothing
+                    Transport.Disconnect(Stale, NET_DISCONNECT_REJECTED);
+                    break;
+                }
+                Found = Clients.find(InPeer);
+            }
+        }
+        if(Returning == NET_CLIENT_NONE && Config.MaxClients != 0 && GetWelcomedCount() + Away.size() >= Config.MaxClients)
         {
             Reject(InPeer, "the server is full");
             return;
         }
 
-        Found->second.ID        = NextClientID++;
+        const bool bReturning   = Returning != NET_CLIENT_NONE;
+        Found->second.ID        = bReturning ? Returning : NextClientID++;
+        Found->second.Token     = bReturning ? Rejoin : NewToken();
         Found->second.bWelcomed = true;
 
         EngineCore::Archive Welcome = BeginMessage(ENetMessage::Welcome);
-        int32_t ID = Found->second.ID;
-        Welcome << ID;
+        int32_t  ID    = Found->second.ID;
+        uint64_t Given = Found->second.Token;
+        uint8_t  bBack = bReturning ? 1 : 0;
+        Welcome << ID << Given << bBack;
         SendTo(InPeer, Welcome);
-        CORE_LOG("NetCore: " + Transport.DescribePeer(InPeer) + " is client " + std::to_string(ID))
+        CORE_LOG("NetCore: " + Transport.DescribePeer(InPeer) + " is client " + std::to_string(ID) + (bReturning ? ", back" : ""))
 
         SendSnapshot(InPeer);
-        if(OnConnected) { OnConnected(ID, EventUserData); }
+        SendTo(InPeer, BeginMessage(ENetMessage::SnapshotDone));
+        if(bReturning) { if(OnReturned) { OnReturned(ID, EventUserData); } }
+        else if(OnConnected) { OnConnected(ID, EventUserData); }
     }
 
     size_t GetWelcomedCount() const
@@ -973,6 +1151,32 @@ struct NetSession::Impl final : public INetEntityMap
         size_t Count = 0;
         for(const auto& Entry : Clients) { if(Entry.second.bWelcomed) { ++Count; } }
         return Count;
+    }
+
+    /* Welcomed: as a new client, or back as the one this token named. A
+     * session before this one in the same World leaves entities: a new
+     * client drops what it spawned; one back keeps everything until the
+     * snapshot says what is still there. */
+    void ClientWelcome(const int32_t InId, const uint64_t InToken, const bool bInReturning)
+    {
+        if(bHadSession && BoundWorld)
+        {
+            if(!bInReturning) { ForgetSession(); }
+            ResetBatches();
+            Interpolations.clear();
+            PendingParents.clear();
+            bHaveServerTime = false;
+            Unconfirmed.clear();
+            for(const auto& Entry : NetToEntity) { Unconfirmed.insert(Entry.first); }
+            bAwaitingSnapshot = true;
+        }
+        bWelcomed     = true;
+        bReconnecting = false;
+        LocalClient   = InId;
+        Token         = InToken;
+        bHadSession   = BoundWorld != nullptr;
+        CORE_LOG(std::string("NetCore: the server ") + (bInReturning ? "took this process back" : "welcomed this process")
+                 + " as client " + std::to_string(InId))
     }
 
     void ClientSpawn(EngineCore::Archive& Ar)
@@ -992,8 +1196,13 @@ struct NetSession::Impl final : public INetEntityMap
         /* The level's own entity if this client has it; a new one if not. */
         EntityID Entity = FromNetId(NetId);
         if(!Entity.IsSet() || !BoundWorld->IsAlive(Entity)) { Entity = Guid.IsSet() ? BoundWorld->FindEntityByGuid(Guid) : EntityID(); }
-        if(!Entity.IsSet())                                 { Entity = BoundWorld->CreateEntity(Name.c_str(), Guid).GetID(); }
+        if(!Entity.IsSet())
+        {
+            Entity = BoundWorld->CreateEntity(Name.c_str(), Guid).GetID();
+            CreatedHere.insert(Entity.Pack());
+        }
         MapEntity(NetId, Entity);
+        Unconfirmed.erase(NetId);
         GameCore::Entity Handle(BoundWorld, Entity);
         Structures[NetId] = Structure();
         ReadComponents(Ar, Handle, NetId, Count);
@@ -1137,6 +1346,8 @@ struct NetSession::Impl final : public INetEntityMap
         if(Ar.HasError() || !BoundWorld) { return; }
         const EntityID Entity = FromNetId(NetId);
         UnmapEntity(NetId);
+        Unconfirmed.erase(NetId);
+        CreatedHere.erase(Entity.Pack());
         DestroyedIds.insert(NetId);
         if(Entity.IsSet() && BoundWorld->IsAlive(Entity)) { BoundWorld->DestroyEntity(Entity); }
     }
@@ -1404,14 +1615,11 @@ struct NetSession::Impl final : public INetEntityMap
             {
                 case ENetMessage::Welcome:
                 {
-                    int32_t ID = NET_CLIENT_NONE;
-                    Ar << ID;
-                    if(!Ar.HasError())
-                    {
-                        bWelcomed   = true;
-                        LocalClient = ID;
-                        CORE_LOG("NetCore: the server welcomed this process as client " + std::to_string(ID))
-                    }
+                    int32_t  ID    = NET_CLIENT_NONE;
+                    uint64_t Given = 0;
+                    uint8_t  bBack = 0;
+                    Ar << ID << Given << bBack;
+                    if(!Ar.HasError()) { ClientWelcome(ID, Given, bBack != 0); }
                     break;
                 }
                 case ENetMessage::Reject:
@@ -1426,6 +1634,7 @@ struct NetSession::Impl final : public INetEntityMap
                 case ENetMessage::AddComponents:    ClientAddComponents(Ar);    break;
                 case ENetMessage::RemoveComponents: ClientRemoveComponents(Ar); break;
                 case ENetMessage::Reparent:         ClientReparent(Ar);         break;
+                case ENetMessage::SnapshotDone:     ClientSnapshotDone();       break;
                 case ENetMessage::StateBatch: ReceiveStateBatch(Ar); break;
                 case ENetMessage::Rpc:     ReceiveRpc(InPeer, Ar);  break;
                 default:                   Ar.SetError("a message a server does not send"); break;
@@ -1533,6 +1742,7 @@ struct NetSession::Impl final : public INetEntityMap
             GameCore::InvokeRpc(InWorld, InEntity, InType, InRpc, InArgs, LocalClient, false);
             return;
         }
+        if(!bWelcomed && bReconnecting) { return; }   // its input, while it rejoins: nowhere to go
         if(!bWelcomed || NetId == 0)
         {
             CORE_LOG_WARN(std::string("NetCore: Server RPC ") + InRpc.Name
@@ -1648,6 +1858,7 @@ bool NetSession::Start(const ENetRole InRole, const NetConfig& InConfig)
     Stop();
     P->Role   = InRole;
     P->Config = InConfig;
+    P->Token  = InRole == ENetRole::Client ? InConfig.ReconnectToken : 0;
 
     if(InRole == ENetRole::Server)
     {
@@ -1674,8 +1885,11 @@ void NetSession::Stop()
 {
     if(!P->bStarted) { return; }
 
-    P->Transport.Close();
+    P->Transport.Close(P->Role == ENetRole::Server ? NET_DISCONNECT_CLOSED : NET_DISCONNECT_QUIT);
     P->Clients.clear();
+    P->Away.clear();
+    P->bReconnecting = false;
+    P->Token         = 0;
     P->ServerPeer  = NET_PEER_NONE;
     P->bWelcomed   = false;
     P->LocalClient = NET_CLIENT_NONE;
@@ -1699,6 +1913,8 @@ bool NetSession::IsConnected() const
 }
 
 NetClientID NetSession::GetLocalClientId() const { return P->LocalClient; }
+bool        NetSession::IsReconnecting() const   { return P->bReconnecting; }
+uint64_t    NetSession::GetReconnectToken() const { return P->Token; }
 uint16_t    NetSession::GetPort() const          { return P->Transport.GetPort(); }
 size_t      NetSession::GetClientCount() const   { return P->GetWelcomedCount(); }
 
@@ -1747,6 +1963,10 @@ void NetSession::UnbindWorld()
     P->PendingParents.clear();
     P->Interpolations.clear();
     P->Corrected.clear();
+    P->bHadSession       = false;
+    P->bAwaitingSnapshot = false;
+    P->Unconfirmed.clear();
+    P->CreatedHere.clear();
 }
 
 GameCore::World* NetSession::GetBoundWorld() const { return P->BoundWorld; }
@@ -1761,10 +1981,13 @@ void NetSession::PollIncoming()
         switch(Event.EventType)
         {
             case NetTransportEvent::EType::Connected:    P->HandleConnected(Event.Peer); break;
-            case NetTransportEvent::EType::Disconnected: P->HandleDisconnected(Event.Peer); break;
+            case NetTransportEvent::EType::Disconnected: P->HandleDisconnected(Event.Peer, Event.Reason); break;
             case NetTransportEvent::EType::Received:     P->HandleReceived(Event.Peer, Event.Channel, Event.Data); break;
         }
     }
+
+    if(P->Role == ENetRole::Server)      { P->ExpireAway(); }
+    else if(P->Role == ENetRole::Client) { P->TickReconnect(); }
 
     /* A client: other entities where they were a moment ago, smoothly; then
      * what it predicts, reconciled with what just arrived. */
@@ -1789,6 +2012,12 @@ void NetSession::SetClientEvents(const ClientEventFn InConnected, const ClientEv
     P->OnConnected    = InConnected;
     P->OnDisconnected = InDisconnected;
     P->EventUserData  = InUserData;
+}
+
+void NetSession::SetClientAwayEvents(const ClientEventFn InAway, const ClientEventFn InReturned)
+{
+    P->OnAway     = InAway;
+    P->OnReturned = InReturned;
 }
 
 void NetSession::SetCorrectionHandler(const CorrectionFn InFn, void* InUserData)

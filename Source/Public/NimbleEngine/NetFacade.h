@@ -60,6 +60,9 @@ namespace NimbleEngine
     /* A client: connected and welcomed. A server: listening. */
     NE_API bool IsNetConnected();
 
+    /* A client that lost its server and is trying to rejoin ([Net] ReconnectGraceMs). */
+    NE_API bool IsNetReconnecting();
+
     /* One connection, as this end sees it. */
     struct NetStats
     {
