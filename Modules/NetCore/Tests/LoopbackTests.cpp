@@ -65,6 +65,7 @@ namespace
         void MulticastFlash(const EngineCore::Color& InColor, const RpcString<16>& InText, EntityID InAbout);
         void ServerPoke();                                  // RateLimit(10)
         void ServerShout(const RpcString<200>& InText);     // longer than a strict MaxRpcBytes
+        void ServerStamp(const RpcContext& InContext);      // records the call's view time
     };
 
     struct RpcLog
@@ -79,6 +80,9 @@ namespace
         uint8_t     LastFlashRed    = 0;
         int         Pokes           = 0;
         int         Shouts          = 0;
+        uint32_t    StampView       = 0xFFFFFFFFu;
+        uint32_t    StampServerTime = 0;
+        bool        bStampRemote    = false;
     };
     RpcLog GServerLog;
     RpcLog GClientLog;
@@ -112,6 +116,13 @@ namespace
 
     void PawnComponent::ServerPoke()                            { ++LogFor(Owner).Pokes; }
     void PawnComponent::ServerShout(const RpcString<200>&)      { ++LogFor(Owner).Shouts; }
+    void PawnComponent::ServerStamp(const RpcContext& InContext)
+    {
+        RpcLog& Log = LogFor(Owner);
+        Log.StampView       = InContext.ViewTimeMs;
+        Log.bStampRemote    = InContext.bRemote;
+        Log.StampServerTime = NetSession::GetActive() ? NetSession::GetActive()->GetTimeMs() : 0;
+    }
 
     GAMECORE_DEFINE_COMPONENT(PawnComponent, "TestPawn")
 
@@ -138,6 +149,7 @@ namespace
         Rpc.Multicast<&PawnComponent::MulticastFlash>("MulticastFlash");
         Rpc.Server<&PawnComponent::ServerPoke>("ServerPoke").RateLimit(10);
         Rpc.Server<&PawnComponent::ServerShout>("ServerShout");
+        Rpc.Server<&PawnComponent::ServerStamp>("ServerStamp");
     }
 
     // === Stepping ============================================================
@@ -621,6 +633,31 @@ namespace
         }
     };
 
+    /* A client's Server RPC says what server time it was showing: its render
+     * time, an interpolation delay behind the server's clock. A local call says nothing. */
+    void TestViewTime()
+    {
+        std::printf("[view time]\n");
+        LimitedPair Run;
+        Check(Run.Start(1024), "a server and client for view times");
+        const auto Until = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+        while(std::chrono::steady_clock::now() < Until) { Step(Run.Both); }   // the client learns the server's clock
+        Check(Run.Client.GetTimeMs() != 0 && Run.Server.GetTimeMs() != 0, "both have the server's clock");
+        const int32_t Skew = int32_t(Run.Server.GetTimeMs()) - int32_t(Run.Client.GetTimeMs());
+        Check(Skew > -60 && Skew < 60, "the client's estimate is close, on loopback");
+
+        GServerLog = RpcLog();
+        GAMECORE_RPC(PawnComponent, ServerStamp)(Run.ClientPawn);
+        Check(StepUntil(Run.Both, [&] { return GServerLog.StampView != 0xFFFFFFFFu; }), "a client's call arrives");
+        const int32_t Behind = int32_t(GServerLog.StampServerTime) - int32_t(GServerLog.StampView);
+        Check(GServerLog.bStampRemote && GServerLog.StampView != 0 && Behind >= 80 && Behind <= 200,
+              "stamped with what it showed: about its 100 ms interpolation delay back");
+
+        GServerLog = RpcLog();
+        GAMECORE_RPC(PawnComponent, ServerStamp)(Run.ServerPawn);
+        Check(!GServerLog.bStampRemote && GServerLog.StampView == 0, "a local call has no view time: now");
+    }
+
     void TestReconnect()
     {
         std::printf("[reconnect]\n");
@@ -1033,6 +1070,7 @@ int main()
     TestLossyState();
     TestRpcLimits();
     TestReconnect();
+    TestViewTime();
     TestStructureChanges(0);
     TestStructureChanges(50);
 

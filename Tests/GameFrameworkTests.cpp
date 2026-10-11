@@ -6,6 +6,7 @@
  * draws nothing, and says so once per load).
  */
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -23,6 +24,7 @@
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/GameState.h"
+#include "Public/NimbleEngine/LagCompensation.h"
 #include "Public/NimbleEngine/Level.h"
 #include "Public/NimbleEngine/NetFacade.h"
 #include "Public/NimbleEngine/PhysicsFacade.h"
@@ -896,6 +898,74 @@ namespace
     }
 }
 
+/* A target that ran across a ray's path: hit where it stood at the time
+ * asked for, missed where it is now, blended between its kept positions. */
+static void TestLagCompensation()
+{
+    std::printf("[lag compensation]\n");
+    using EngineCore::Vector3;
+
+    GameCore::World World;
+    GameCore::Entity Runner = World.CreateEntity("Runner");
+    Runner.AddComponent<GameCore::TransformComponent>();
+    LagCompensatedComponent Shape;
+    Shape.Radius = 30.0f;
+    Shape.Bottom = 0.0f;
+    Shape.Top    = 180.0f;
+    Runner.AddComponent(Shape);
+    GameCore::Entity Shooter = World.CreateEntity("Shooter");
+    LagCompensatedComponent ShooterShape;
+    Shooter.AddComponent(ShooterShape);
+
+    /* At 1000 ms it stood on the ray's line; by 1100 it is 5 m along. */
+    auto At = [&](const float InX) { Runner.GetComponent<GameCore::TransformComponent>()->Position = Vector3(InX, 0.0f, 0.0f); };
+    At(0.0f);
+    RecordLagCompensation(World, 1000);
+    At(500.0f);
+    RecordLagCompensation(World, 1100);
+
+    const Vector3 Origin(0.0f, 100.0f, -1000.0f), Along(0.0f, 0.0f, 1.0f);   // through the capsule's straight middle
+    LagCompensatedHit Hit;
+    Expect(LagCompensatedRaycastAt(World, 1000, Shooter.GetID(), Origin, Along, 5000.0f, Hit) && Hit.bCompensated
+           && Hit.Entity == Runner.GetID(), "a ray at the time it stood there hits it");
+    Expect(std::fabs(Hit.Distance - 970.0f) < 1.0f && std::fabs(Hit.Height - 100.0f) < 1.0f,
+           "at its capsule's surface, and says how high above its feet");
+    Expect(!LagCompensatedRaycastAt(World, 1100, Shooter.GetID(), Origin, Along, 5000.0f, Hit), "where it is now, it is missed");
+    Expect(!LagCompensatedRaycastAt(World, 0, Shooter.GetID(), Origin, Along, 5000.0f, Hit), "time 0 is now");
+    Expect(!LagCompensatedRaycastAt(World, 1050, Shooter.GetID(), Origin, Along, 5000.0f, Hit), "halfway, it was 2.5 m off: missed");
+    Expect(LagCompensatedRaycastAt(World, 1005, Shooter.GetID(), Origin, Along, 5000.0f, Hit), "5 ms in, 25 cm off: inside its radius");
+    Expect(LagCompensatedRaycastAt(World, 400, Shooter.GetID(), Origin, Along, 5000.0f, Hit), "older than it was kept: its oldest");
+
+    Vector3 Then;
+    Expect(GetLagCompensatedPosition(World, Runner.GetID(), 1050, Then) && std::fabs(Then.GetX() - 250.0f) < 0.5f,
+           "its position at a time between two samples is blended");
+    Expect(!GetLagCompensatedPosition(World, World.CreateEntity("Plain").GetID(), 1050, Then), "an entity without the component has none");
+
+    /* The shooter's own capsule, on the ray's start, is skipped; another's is not. */
+    Shooter.AddComponent<GameCore::TransformComponent>()->Position = Vector3(0.0f, 0.0f, -1000.0f);
+    RecordLagCompensation(World, 1100);
+    Expect(LagCompensatedRaycastAt(World, 1000, Shooter.GetID(), Origin, Along, 5000.0f, Hit) && Hit.Entity == Runner.GetID(),
+           "the shooter's own capsule is skipped");
+    Expect(LagCompensatedRaycastAt(World, 1000, GameCore::EntityID(), Origin, Along, 5000.0f, Hit) && Hit.Entity == Shooter.GetID(),
+           "but not anyone else's");
+
+    /* A local call -- the host's own player -- tests now. */
+    GameCore::RpcContext Local;
+    Local.OwningWorld = &World;
+    Local.Entity      = Shooter.GetID();
+    Local.ViewTimeMs  = 1000;   // ignored: not remote
+    Expect(!LagCompensatedRaycast(World, Local, Origin, Along, 5000.0f, Hit), "a local call tests where things are now");
+    GameCore::RpcContext Remote = Local;
+    Remote.bRemote = true;
+    Expect(LagCompensatedRaycast(World, Remote, Origin, Along, 5000.0f, Hit) && Hit.Entity == Runner.GetID(),
+           "a client's call tests where it saw them");
+
+    Runner.GetComponent<LagCompensatedComponent>()->bEnabled = 0;
+    RecordLagCompensation(World, 1200);
+    Expect(!LagCompensatedRaycastAt(World, 1000, Shooter.GetID(), Origin, Along, 5000.0f, Hit), "a disabled capsule is not hit");
+    ClearLagCompensation(World);
+}
+
 int main()
 {
     std::printf("NimbleEngineGameFrameworkTests\n");
@@ -910,6 +980,7 @@ int main()
     TestSessionUI();
     TestConsole();
     TestNetworkingStandalone();
+    TestLagCompensation();
     TestNetScripting();
     TestPhysicsInSession();
     TestHeadlessApplication();   // last: the Application claims the main thread

@@ -80,6 +80,11 @@ namespace NetCore
         /* A client's id on its server, once welcomed; NET_CLIENT_NONE otherwise. */
         GameCore::NetClientID GetLocalClientId() const;
 
+        /* The server's clock, in ms: a server's own (what its batches are
+         * stamped with, and an RpcContext's ViewTimeMs is on), a client's
+         * estimate of it. 0 for a client before its first batch. */
+        uint32_t GetTimeMs() const;
+
         /* A client trying to rejoin a server it lost (NetConfig::ReconnectGraceMs). */
         bool IsReconnecting() const;
 

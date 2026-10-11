@@ -13,6 +13,7 @@
 #include "Public/NimbleEngine/Avatar.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameSession.h"
+#include "Public/NimbleEngine/LagCompensation.h"
 #include "Public/NimbleEngine/Level.h"
 #include "Public/NimbleEngine/PlayerState.h"
 
@@ -272,6 +273,7 @@ namespace NimbleEngine
         if(P->Net)
         {
             P->Net->FlushOutgoing();
+            if(GameCore::World* Bound = P->Net->GetBoundWorld()) { ClearLagCompensation(*Bound); }
             P->Net->UnbindWorld();
             P->Net->Stop();
             delete P->Net;
@@ -287,7 +289,11 @@ namespace NimbleEngine
     {
 #if WITH_NETCORE
         /* The World is about to be freed: let go of it first. */
-        if(P->Net && P->Session && P->Session->HasPendingLevel()) { P->Net->UnbindWorld(); }
+        if(P->Net && P->Session && P->Session->HasPendingLevel())
+        {
+            if(GameCore::World* Bound = P->Net->GetBoundWorld()) { ClearLagCompensation(*Bound); }
+            P->Net->UnbindWorld();
+        }
 #endif
     }
 
@@ -303,7 +309,10 @@ namespace NimbleEngine
     void NetHost::Flush()
     {
 #if WITH_NETCORE
-        if(P->Net) { P->Net->FlushOutgoing(); }
+        if(!P->Net) { return; }
+        /* Where every lag-compensated entity stood this frame, for the shots that arrive later (LagCompensation.h). */
+        if(P->Net->IsServer() && P->Net->GetBoundWorld()) { RecordLagCompensation(*P->Net->GetBoundWorld(), P->Net->GetTimeMs()); }
+        P->Net->FlushOutgoing();
 #endif
     }
 

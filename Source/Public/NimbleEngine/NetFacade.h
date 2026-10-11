@@ -60,6 +60,10 @@ namespace NimbleEngine
     /* A client: connected and welcomed. A server: listening. */
     NE_API bool IsNetConnected();
 
+    /* The server's clock in ms: a server's own, a client's estimate of it;
+     * 0 when not networked. RpcContext::ViewTimeMs is on it (LagCompensation.h). */
+    NE_API uint32_t GetNetTimeMs();
+
     /* A client that lost its server and is trying to rejoin ([Net] ReconnectGraceMs). */
     NE_API bool IsNetReconnecting();
 

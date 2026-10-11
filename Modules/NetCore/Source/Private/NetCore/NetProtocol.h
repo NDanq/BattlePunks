@@ -31,7 +31,12 @@
  *                        type name
  *   Reparent       S->C  i32 net id, u64 parent guid hi, u64 parent guid lo
  *                        (0,0: none)
- *   Rpc            both  i32 net id, u16 wire type, u8 rpc index, u32 bytes, bytes
+ *   Rpc            both  i32 net id, u16 wire type, u8 rpc index, u32 view time,
+ *                        u32 bytes, bytes. View time: from a client, the server
+ *                        time of what it was showing others (its interpolation
+ *                        render time; 0 before it has the server's clock) --
+ *                        RpcContext::ViewTimeMs, for lag compensation; from
+ *                        the server, its own clock
  *
  * STATE CHANNEL (NET_CHANNEL_STATE): unreliable, sequenced -- a packet older
  * than the newest received is dropped, never delivered late.
@@ -61,7 +66,7 @@
 
 namespace NetCore
 {
-    constexpr uint32_t NET_PROTOCOL_VERSION = 5;
+    constexpr uint32_t NET_PROTOCOL_VERSION = 6;
 
     enum class ENetMessage : uint8_t
     {

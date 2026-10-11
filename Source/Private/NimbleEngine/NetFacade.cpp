@@ -38,6 +38,12 @@ namespace NimbleEngine
         return Session && Session->IsConnected();
     }
 
+    uint32_t GetNetTimeMs()
+    {
+        const NetCore::NetSession* Session = NetCore::NetSession::GetActive();
+        return Session ? Session->GetTimeMs() : 0u;
+    }
+
     bool IsNetReconnecting()
     {
         const NetCore::NetSession* Session = NetCore::NetSession::GetActive();
@@ -67,6 +73,7 @@ namespace NimbleEngine
     bool                  IsNetConnected()        { return false; }
     bool                  GetNetStats(GameCore::NetClientID, NetStats&) { return false; }
     bool                  IsNetReconnecting()     { return false; }
+    uint32_t              GetNetTimeMs()          { return 0; }
 #endif
 
     namespace
