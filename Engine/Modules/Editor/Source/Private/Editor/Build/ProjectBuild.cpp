@@ -90,6 +90,11 @@ namespace EditorProjectBuild
         }
     }
 
+    bool IsDevelopment(const EConfiguration InConfiguration)
+    {
+        return InConfiguration == BC_Debug || InConfiguration == BC_RelWithDebInfo;
+    }
+
     EConfiguration ParseConfiguration(const QString& InText)
     {
         for(int Index = 0; Index < BC_Count; ++Index)
@@ -118,6 +123,7 @@ namespace EditorProjectBuild
         Options.bCompile    = ParseBool(File.Get(Section, QStringLiteral("Compile")), Options.bCompile);
         Options.bOpenOutput = ParseBool(File.Get(Section, QStringLiteral("OpenOutput")), Options.bOpenOutput);
         Options.bRunUncooked = ParseBool(File.Get(Section, QStringLiteral("RunUncooked")), Options.bRunUncooked);
+        Options.bBuildTests  = ParseBool(File.Get(Section, QStringLiteral("BuildTests")), Options.bBuildTests);
         return Options;
     }
 
@@ -139,6 +145,7 @@ namespace EditorProjectBuild
             { QStringLiteral("Compile"),       Bool(InOptions.bCompile) },
             { QStringLiteral("OpenOutput"),    Bool(InOptions.bOpenOutput) },
             { QStringLiteral("RunUncooked"),   Bool(InOptions.bRunUncooked) },
+            { QStringLiteral("BuildTests"),    Bool(InOptions.bBuildTests) },
         };
         bool bChanged = false;
         for(const QPair<QString, QString>& Key : Wanted)
@@ -199,13 +206,22 @@ namespace EditorProjectBuild
                                             .arg(BinariesPlatform(), QLatin1String(GetConfigurationName(InConfiguration))));
     }
 
-    QStringList ConfigureArgs(const QString& InPreset, const bool bInRunUncooked)
+    QStringList ConfigureArgs(const QString& InPreset, const BuildOptions& InOptions)
     {
         /* Always packaged: the content in Paks/ (NimblePack.cmake), with each
          * path kept beside its hash in every configuration but Shipping.
-         * Uncooked: the game reads the project's raw files over the packs. */
+         * Uncooked: the game reads the project's raw files over the packs.
+         * Tests: the engine's test executables, beside the game -- never in
+         * Shipping, which the engine's CMakeLists enforces as well. Passed
+         * either way, so turning it off removes them from a tree that had them. */
+        const bool bDevelopment = IsDevelopment(InOptions.Configuration);
+        const auto Flag = [](const char* InName, const bool bIn)
+        {
+            return QStringLiteral("-D%1=%2").arg(QLatin1String(InName), bIn ? QStringLiteral("ON") : QStringLiteral("OFF"));
+        };
         return { QStringLiteral("--preset"), InPreset, QStringLiteral("-DNIMBLE_PACKAGE_CONTENT=ON"),
-                 bInRunUncooked ? QStringLiteral("-DNIMBLE_RUN_UNCOOKED=ON") : QStringLiteral("-DNIMBLE_RUN_UNCOOKED=OFF") };
+                 Flag("NIMBLE_RUN_UNCOOKED", bDevelopment && InOptions.bRunUncooked),
+                 Flag("NIMBLE_BUILD_TESTS",  bDevelopment && InOptions.bBuildTests) };
     }
 
     QStringList BuildArgs(const QString& InPreset)

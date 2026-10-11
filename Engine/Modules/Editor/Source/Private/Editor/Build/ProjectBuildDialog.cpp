@@ -20,6 +20,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollBar>
+#include <QSignalBlocker>
 #include <QTableWidget>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -80,6 +81,14 @@ ProjectBuildDialog::ProjectBuildDialog(QWidget* InParent, std::function<void()> 
                                            "on its command line runs it on the packed content. Not in Shipping"));
     Form->addRow(QString(), RunUncooked);
 
+    BuildTests = new QCheckBox(QStringLiteral("Build test executables (Debug, RelWithDebInfo)"), OptionsBox);
+    BuildTests->setToolTip(QStringLiteral("Also compile the engine's test programs (UITests, NimbleEngine*Tests, the smoke "
+                                          "tests, ...) into the output folder beside the game, to run them against this "
+                                          "build. Shipping never builds tests"));
+    Form->addRow(QString(), BuildTests);
+    connect(RunUncooked, &QCheckBox::toggled, this, [this](const bool bInOn) { bWantsUncooked = bInOn; });
+    connect(BuildTests,  &QCheckBox::toggled, this, [this](const bool bInOn) { bWantsTests = bInOn; });
+
     Target = new QLabel(OptionsBox);
     Target->setWordWrap(true);
     Target->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -99,8 +108,7 @@ ProjectBuildDialog::ProjectBuildDialog(QWidget* InParent, std::function<void()> 
     connect(Configuration, &QComboBox::currentIndexChanged, this, [this](int)
     {
         RefreshTarget();
-        RunUncooked->setEnabled(Configuration->isEnabled()
-                                && EditorProjectBuild::EConfiguration(Configuration->currentIndex()) != EditorProjectBuild::BC_Shipping);
+        RefreshDevelopmentOptions(!Configuration->isEnabled());
     });
 
     // --- Stats and output --------------------------------------------------------
@@ -175,8 +183,22 @@ void ProjectBuildDialog::ReadOptions()
     CookContent->setChecked(Options.bCook);
     CompileGame->setChecked(Options.bCompile);
     OpenOutput->setChecked(Options.bOpenOutput);
-    RunUncooked->setChecked(Options.bRunUncooked);
-    RunUncooked->setEnabled(Options.Configuration != EditorProjectBuild::BC_Shipping);
+    bWantsUncooked = Options.bRunUncooked;
+    bWantsTests    = Options.bBuildTests;
+    RefreshDevelopmentOptions(false);
+}
+
+void ProjectBuildDialog::RefreshDevelopmentOptions(const bool bInRunning)
+{
+    /* Shipping shows both unticked and disabled; going back to Debug or
+     * RelWithDebInfo restores what was chosen. */
+    const bool bDevelopment = EditorProjectBuild::IsDevelopment(EditorProjectBuild::EConfiguration(Configuration->currentIndex()));
+    const QSignalBlocker BlockUncooked(RunUncooked);
+    const QSignalBlocker BlockTests(BuildTests);
+    RunUncooked->setChecked(bDevelopment && bWantsUncooked);
+    BuildTests->setChecked(bDevelopment && bWantsTests);
+    RunUncooked->setEnabled(bDevelopment && !bInRunning);
+    BuildTests->setEnabled(bDevelopment && !bInRunning);
 }
 
 EditorProjectBuild::BuildOptions ProjectBuildDialog::GatherOptions() const
@@ -186,7 +208,9 @@ EditorProjectBuild::BuildOptions ProjectBuildDialog::GatherOptions() const
     Options.bCook         = CookContent->isChecked();
     Options.bCompile      = CompileGame->isChecked();
     Options.bOpenOutput   = OpenOutput->isChecked();
-    Options.bRunUncooked  = RunUncooked->isChecked();
+    /* What was chosen, kept for Debug and RelWithDebInfo even while Shipping is picked. */
+    Options.bRunUncooked  = bWantsUncooked;
+    Options.bBuildTests   = bWantsTests;
     return Options;
 }
 
@@ -244,7 +268,7 @@ void ProjectBuildDialog::SetRunning(const bool bInRunning)
     CookContent->setEnabled(!bInRunning);
     CompileGame->setEnabled(!bInRunning);
     OpenOutput->setEnabled(!bInRunning);
-    RunUncooked->setEnabled(!bInRunning && EditorProjectBuild::EConfiguration(Configuration->currentIndex()) != EditorProjectBuild::BC_Shipping);
+    RefreshDevelopmentOptions(bInRunning);
 }
 
 void ProjectBuildDialog::Log(const QString& InLine)
@@ -423,9 +447,12 @@ void ProjectBuildDialog::StartCompile()
     SetRunning(true);
     Status->setText(QStringLiteral("Configuring %1...").arg(Preset));
     Log(QStringLiteral("== cmake --preset %1").arg(Preset));
-    const bool bUncooked = RunUncooked->isChecked()
-                           && EditorProjectBuild::EConfiguration(Configuration->currentIndex()) != EditorProjectBuild::BC_Shipping;
-    if(!Builder->StartCommand(EditorProjectBuild::ConfigureArgs(Preset, bUncooked), ProjectRoot, Preset))
+    const EditorProjectBuild::BuildOptions Options = GatherOptions();
+    if(EditorProjectBuild::IsDevelopment(Options.Configuration) && Options.bBuildTests)
+    {
+        Log(QStringLiteral("   with the engine's test executables (NIMBLE_BUILD_TESTS), into the output folder"));
+    }
+    if(!Builder->StartCommand(EditorProjectBuild::ConfigureArgs(Preset, Options), ProjectRoot, Preset))
     {
         Finish(false, QStringLiteral("cmake could not be started; see the Console."));
     }

@@ -34,7 +34,14 @@ namespace EditorProjectBuild
         /* Debug, RelWithDebInfo: the game reads the project's raw files by
          * default (NIMBLE_RUN_UNCOOKED; -cooked overrides). Not Shipping. */
         bool           bRunUncooked  = false;
+        /* Debug, RelWithDebInfo: also build the engine's test executables
+         * (NIMBLE_BUILD_TESTS), beside the game. Never in Shipping. */
+        bool           bBuildTests   = false;
     };
+
+    /* Whether InConfiguration may build tests or run uncooked: Debug and
+     * RelWithDebInfo; Shipping never does either. */
+    bool IsDevelopment(EConfiguration InConfiguration);
 
     /* From / to [Build] in the project's config file (ProjectSettingsDialog's). */
     BuildOptions LoadOptions();
@@ -53,10 +60,11 @@ namespace EditorProjectBuild
      * (Engine/CMakeLists.txt's NIMBLE_BINARIES_DIR layout). */
     QString GetOutputDir(const QString& InProjectRoot, EConfiguration InConfiguration);
 
-    /* `cmake --preset <p> -DNIMBLE_PACKAGE_CONTENT=ON
-     * -DNIMBLE_RUN_UNCOOKED=<bInRunUncooked>` -- a packaged game, its content
-     * in Paks/ -- and `cmake --build --preset <p>`. */
-    QStringList ConfigureArgs(const QString& InPreset, bool bInRunUncooked);
+    /* `cmake --preset <p> -DNIMBLE_PACKAGE_CONTENT=ON -DNIMBLE_RUN_UNCOOKED=<...>
+     * -DNIMBLE_BUILD_TESTS=<...>` -- a packaged game, its content in Paks/ --
+     * and `cmake --build --preset <p>`. Run uncooked and tests come from
+     * InOptions, and are OFF whatever it says for Shipping. */
+    QStringList ConfigureArgs(const QString& InPreset, const BuildOptions& InOptions);
     QStringList BuildArgs(const QString& InPreset);
 }
 
