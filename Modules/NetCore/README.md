@@ -307,6 +307,21 @@ resent: a whole round trip of frozen state. So state does not go reliably.
   only for components the client has been told of, and a batch naming one
   whose `AddComponents` has not landed is not acknowledged.
 
+- **What changed is found once a tick, not once per client.** Each
+  replicated component is compared with its own copy from the last flush,
+  with one `memcmp` shared by every client. A client in step then looks only
+  at this tick's changes and its own unacknowledged components. Everything
+  else it already has, so it costs that client nothing. Only a changed
+  component is diffed field by field against the client's baseline. A
+  client's first tick (new, back, or after a module reload) looks at
+  everything once.
+
+  With 2000 entities of three replicated components and 12 clients, a
+  RelWithDebInfo server's flush went from about 2 ms a tick to 0.1 ms with
+  everything still, and to 0.3 ms with 100 moving (the `[flush cost]` line
+  of `NetCore.Loopback` prints it). What is left grows with the entity
+  count, not the clients: the shared comparison.
+
 `[Net] SimulatedLossPercent` drops that share of the state packets a process
 sends, for testing. In NetArena at 20% on every process, prediction's worst
 correction stays 0: each batch that arrives is enough on its own.
@@ -466,6 +481,8 @@ a client in one process over 127.0.0.1. It covers:
 - state under 50% simulated loss each way: changing values, a value changed
   and changed back, and a change just after a spawn
 - a late joiner
+- the flush's cost with 2000 entities and 4 clients, printed (and the
+  movers' state checked to arrive)
 - view times: a client's Server RPC stamped about its interpolation delay
   behind the server's clock, a local call with none
 - reconnecting: a lost client kept away and taken back with the same id and
