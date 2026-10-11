@@ -197,13 +197,51 @@ GAMECORE_RPC(ShipComponent, ServerFire)(Ship, Aim);
 | `Client`    | sent to the owning client (runs if the server owns it) | runs |
 | `Multicast` | runs, and sent to every client   | runs                      |
 
-- The server accepts a Server RPC only from the entity's owner.
+- The server accepts a Server RPC only from the entity's owner, and only so
+  many a second (RPC limits, below).
 - Argument types: `float`, `double`, `int32_t`, `uint32_t`, `uint8_t`, `bool`,
   `Vector3`, `Color`, `EntityID` / `Entity` (as a `NetId`) and
   `RpcString<N>`, each by value or `const&`.
 - A call made with the wrong argument types is refused, not misread.
 - An RPC on an entity created this frame stays local until the entity has been
   sent, which happens at the end of the frame.
+
+### RPC limits
+
+A server holds each client to a budget, so a broken or hostile client cannot
+make it run handlers without end:
+
+| `[Net]` | Default | |
+|---|---|---|
+| `RpcPerSecond` | 1000 | Server RPCs a second from one client, all together. It may burst to two seconds' worth; past that its calls are dropped |
+| `RpcFloodPerSecond` | 1000 | more than this many dropped in one second, and the client is disconnected |
+| `MaxRpcBytes` | 1024 | an RPC whose arguments are longer is malformed, and its sender is disconnected |
+
+0 turns any of them off. Every call costs a token, even one the server then
+refuses: an RPC on an entity the client does not own, or one that names no
+entity. Drops are logged once a second per client, not once per call, and so
+are refusals.
+
+The defaults are generous because an avatar sends its input once a frame. A
+client running uncapped at 1000 fps would fill the budget alone, so give
+such a game a `[Display] FrameRateLimit`.
+
+**One RPC can be held to less.** This keeps a client from doing something
+faster than the game allows, such as firing faster than the gun:
+
+```cpp
+GAMECORE_DEFINE_COMPONENT_RPCS(ShipComponent)
+{
+    Rpc.Server<&ShipComponent::ServerFire>("ServerFire").RateLimit(8);   // at most 8 a second, from one client
+}
+```
+
+It allows a burst of up to one second's worth. The limit is the server's
+own, so it is not part of the handshake's schema.
+
+The limits stop floods. They do not check what a call asks for: that an aim
+is a unit vector, that a shot starts near the shooter. Each handler checks
+its own arguments, as `PvpFighterComponent::ServerFire` does.
 
 ### Smoothing and prediction
 
@@ -354,6 +392,8 @@ a client in one process over 127.0.0.1. It covers:
   turned off and on, clean and under 50% loss
 - replicated and initial-only fields, and entity references
 - all three RPC targets, and the ownership check
+- RPC limits: a RateLimit and its refill, the overall budget, a flood
+  disconnect, and MaxRpcBytes
 - a 6 s client stall
 - interpolation, and the prediction handler
 - state under 50% simulated loss each way: changing values, a value changed

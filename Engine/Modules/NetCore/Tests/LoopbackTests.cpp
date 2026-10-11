@@ -63,6 +63,8 @@ namespace
         void ServerMove(const RpcContext& InContext, const EngineCore::Vector3& InTo);
         void ClientPing(int32_t InValue);
         void MulticastFlash(const EngineCore::Color& InColor, const RpcString<16>& InText, EntityID InAbout);
+        void ServerPoke();                                  // RateLimit(10)
+        void ServerShout(const RpcString<200>& InText);     // longer than a strict MaxRpcBytes
     };
 
     struct RpcLog
@@ -75,6 +77,8 @@ namespace
         std::string LastFlashText;
         EntityID    LastFlashAbout;
         uint8_t     LastFlashRed    = 0;
+        int         Pokes           = 0;
+        int         Shouts          = 0;
     };
     RpcLog GServerLog;
     RpcLog GClientLog;
@@ -106,6 +110,9 @@ namespace
         Log.LastFlashRed   = InColor.R;
     }
 
+    void PawnComponent::ServerPoke()                            { ++LogFor(Owner).Pokes; }
+    void PawnComponent::ServerShout(const RpcString<200>&)      { ++LogFor(Owner).Shouts; }
+
     GAMECORE_DEFINE_COMPONENT(PawnComponent, "TestPawn")
 
     GAMECORE_DEFINE_COMPONENT_SERIALIZER(PawnComponent, 1)
@@ -129,6 +136,8 @@ namespace
         Rpc.Server<&PawnComponent::ServerMove>("ServerMove");
         Rpc.Client<&PawnComponent::ClientPing>("ClientPing");
         Rpc.Multicast<&PawnComponent::MulticastFlash>("MulticastFlash");
+        Rpc.Server<&PawnComponent::ServerPoke>("ServerPoke").RateLimit(10);
+        Rpc.Server<&PawnComponent::ServerShout>("ServerShout");
     }
 
     // === Stepping ============================================================
@@ -447,6 +456,112 @@ namespace
         Server.UnbindWorld();
         Server.Stop();
         Client.UnbindWorld();
+    }
+}
+
+namespace
+{
+    /* A server with tight RPC limits, and a client that owns one pawn on it. */
+    struct LimitedPair
+    {
+        World       ServerWorld, ClientWorld;
+        NetSession  Server, Client;
+        Pair        Both{ &Server, &Client };
+        Entity      ServerPawn;
+        Entity      ClientPawn;
+
+        bool Start(const uint32_t InMaxRpcBytes)
+        {
+            GServerWorld = &ServerWorld;
+            NetConfig ServerConfig;
+            ServerConfig.Port              = 0;
+            ServerConfig.RpcPerSecond      = 50;    // a 100-call burst
+            ServerConfig.RpcFloodPerSecond = 200;
+            ServerConfig.MaxRpcBytes       = InMaxRpcBytes;
+            if(!Server.Start(ENetRole::Server, ServerConfig)) { return false; }
+            Server.BindWorld(ServerWorld, "Limits");
+
+            NetConfig ClientConfig;
+            std::strcpy(ClientConfig.ServerAddress, "127.0.0.1");
+            ClientConfig.Port = Server.GetPort();
+            if(!Client.Start(ENetRole::Client, ClientConfig)) { return false; }
+            Client.BindWorld(ClientWorld, "Limits");
+            if(!StepUntil(Both, [&] { return Client.IsConnected(); })) { return false; }
+
+            ServerPawn = ServerWorld.CreateEntity("Limited");
+            NetComponent Net;
+            Net.OwnerClient = Client.GetLocalClientId();
+            ServerPawn.AddComponent(Net);
+            ServerPawn.AddComponent<PawnComponent>();
+            EntityID There;
+            if(!StepUntil(Both, [&] { There = Client.FindEntityByNetId(Server.GetNetId(ServerPawn.GetID())); return There.IsSet(); })) { return false; }
+            ClientPawn = Entity(&ClientWorld, There);
+            return true;
+        }
+
+        void Settle() { for(int Index = 0; Index < 100; ++Index) { Step(Both); } }
+
+        ~LimitedPair()
+        {
+            Client.Stop();
+            Server.UnbindWorld();
+            Server.Stop();
+            Client.UnbindWorld();
+            GServerWorld = nullptr;
+        }
+    };
+
+    /* A server takes so many Server RPCs a second from each client, and so many of one with a RateLimit. */
+    void TestRpcLimits()
+    {
+        std::printf("[rpc limits]\n");
+        {
+            LimitedPair Run;
+            Check(Run.Start(1024), "a server with tight RPC limits takes a client");
+            GServerLog = RpcLog();
+
+            /* Thirty pokes at once: RateLimit(10) lets a second's worth through. */
+            for(int Index = 0; Index < 30; ++Index) { GAMECORE_RPC(PawnComponent, ServerPoke)(Run.ClientPawn); }
+            Run.Settle();
+            Check(GServerLog.Pokes >= 10 && GServerLog.Pokes <= 12, "an RPC's RateLimit drops what is over it");
+
+            /* A second on, there is room again. */
+            const auto Until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1100);
+            while(std::chrono::steady_clock::now() < Until) { Step(Run.Both); }
+            const int Before = GServerLog.Pokes;
+            for(int Index = 0; Index < 5; ++Index) { GAMECORE_RPC(PawnComponent, ServerPoke)(Run.ClientPawn); }
+            Run.Settle();
+            Check(GServerLog.Pokes == Before + 5, "and refills at its rate");
+
+            /* 150 moves at once against a 50/s budget: about its 100-call burst lands, the client stays. */
+            for(int Index = 0; Index < 150; ++Index)
+            {
+                GAMECORE_RPC(PawnComponent, ServerMove)(Run.ClientPawn, EngineCore::Vector3(float(Index), 0.0f, 0.0f));
+            }
+            Run.Settle();
+            Check(GServerLog.ServerMoves >= 95 && GServerLog.ServerMoves <= 115, "the overall budget drops the rest of a burst");
+            Check(Run.Client.IsConnected(), "a client a little over its budget stays connected");
+
+            /* Hundreds over it in a second: a flood, and the client is let go. */
+            for(int Index = 0; Index < 800; ++Index)
+            {
+                GAMECORE_RPC(PawnComponent, ServerMove)(Run.ClientPawn, EngineCore::Vector3(0.0f, 0.0f, 0.0f));
+            }
+            Check(StepUntil(Run.Both, [&] { return !Run.Client.IsConnected() && Run.Server.GetClientCount() == 0; }),
+                  "a client flooding RPCs is disconnected");
+        }
+        {
+            LimitedPair Run;
+            Check(Run.Start(64), "a server with a 64-byte MaxRpcBytes takes a client");
+            GServerLog = RpcLog();
+            GAMECORE_RPC(PawnComponent, ServerShout)(Run.ClientPawn, "short");
+            Run.Settle();
+            Check(GServerLog.Shouts == 1 && Run.Client.IsConnected(), "an RPC under MaxRpcBytes runs");
+            std::string Long(150, 'x');
+            GAMECORE_RPC(PawnComponent, ServerShout)(Run.ClientPawn, Long.c_str());
+            Check(StepUntil(Run.Both, [&] { return !Run.Client.IsConnected(); }) && GServerLog.Shouts == 1,
+                  "one over it is malformed: refused, and its sender disconnected");
+        }
     }
 }
 
@@ -787,6 +902,7 @@ int main()
     Check(GServerLog.ServerMoves == MovesBefore + 1, "stopping the last session restores local RPCs");
 
     TestLossyState();
+    TestRpcLimits();
     TestStructureChanges(0);
     TestStructureChanges(50);
 

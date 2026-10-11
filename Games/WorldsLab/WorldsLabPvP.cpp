@@ -170,8 +170,9 @@ GAMECORE_DEFINE_COMPONENT_REPLICATION(PvpFighterComponent)
 
 GAMECORE_DEFINE_COMPONENT_RPCS(PvpFighterComponent)
 {
-    Rpc.Server<&PvpFighterComponent::ServerFire>("ServerFire");
-    Rpc.Server<&PvpFighterComponent::ServerReload>("ServerReload");
+    /* No faster than the gun (FireDelay), with room for a little jitter; the server drops the rest. */
+    Rpc.Server<&PvpFighterComponent::ServerFire>("ServerFire").RateLimit(8);
+    Rpc.Server<&PvpFighterComponent::ServerReload>("ServerReload").RateLimit(4);
     Rpc.Multicast<&PvpFighterComponent::MulticastShot>("MulticastShot");
     Rpc.Multicast<&PvpFighterComponent::MulticastKilled>("MulticastKilled");
     Rpc.Client<&PvpFighterComponent::ClientHitConfirm>("ClientHitConfirm");

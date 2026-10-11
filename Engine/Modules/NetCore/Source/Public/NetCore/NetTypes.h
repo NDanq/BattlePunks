@@ -42,6 +42,17 @@ namespace NetCore
          * sends (a server's batches, a client's acks) is dropped, as a lossy
          * network would. 0 in a real game. */
         uint32_t SimulatedLossPercent = 0;
+
+        /* RPC LIMITS, a server's on each client (README.md, "RPC limits").
+         * RpcPerSecond Server RPCs a second in all, in bursts of up to two
+         * seconds' worth; past that they are dropped, and a client that has
+         * more than RpcFloodPerSecond dropped in one second is disconnected
+         * (0: never). An RPC's own RateLimit applies on top. One whose
+         * arguments are longer than MaxRpcBytes is malformed. Generous by
+         * default: an avatar sends its input once a frame. */
+        uint32_t RpcPerSecond      = 1000;
+        uint32_t RpcFloodPerSecond = 1000;
+        uint32_t MaxRpcBytes       = 1024;
     };
 
     /* One connection, as seen from this end: what NetSession::GetServerStats

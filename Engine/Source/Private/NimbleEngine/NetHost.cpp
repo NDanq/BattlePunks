@@ -39,6 +39,10 @@ NIMBLE_CONFIG_BOOL(GNetSpawnPlayerPerClient, "Net", "SpawnPlayerPerClient", true
  * server's updates; 0 snaps to each (NetComponent.h). */
 NIMBLE_CONFIG_INT(GNetInterpolationDelayMs, "Net", "InterpolationDelayMs", 100, nullptr);
 NIMBLE_CONFIG_INT(GNetSimulatedLossPercent, "Net", "SimulatedLossPercent", 0, nullptr);
+/* A server's limits on each client's RPCs (NetCore/README.md, "RPC limits"). */
+NIMBLE_CONFIG_INT(GNetRpcPerSecond, "Net", "RpcPerSecond", 1000, nullptr);
+NIMBLE_CONFIG_INT(GNetRpcFloodPerSecond, "Net", "RpcFloodPerSecond", 1000, nullptr);
+NIMBLE_CONFIG_INT(GNetMaxRpcBytes, "Net", "MaxRpcBytes", 1024, nullptr);
 #endif
 
 namespace NimbleEngine
@@ -57,6 +61,9 @@ namespace NimbleEngine
         Desc.bSpawnPlayerPerClient = GNetSpawnPlayerPerClient.GetBool();
         Desc.InterpolationDelayMs  = uint32_t(GNetInterpolationDelayMs.GetInt() > 0 ? GNetInterpolationDelayMs.GetInt() : 0);
         Desc.SimulatedLossPercent  = uint32_t(std::clamp(GNetSimulatedLossPercent.GetInt(), 0, 100));
+        Desc.RpcPerSecond          = uint32_t(std::max(0, GNetRpcPerSecond.GetInt()));
+        Desc.RpcFloodPerSecond     = uint32_t(std::max(0, GNetRpcFloodPerSecond.GetInt()));
+        Desc.MaxRpcBytes           = uint32_t(std::max(0, GNetMaxRpcBytes.GetInt()));
 #endif
         return Desc;
     }
@@ -195,6 +202,9 @@ namespace NimbleEngine
         Config.TimeoutMs  = InDesc.TimeoutMs;
         Config.InterpolationDelayMs = InDesc.InterpolationDelayMs;
         Config.SimulatedLossPercent = InDesc.SimulatedLossPercent;
+        Config.RpcPerSecond         = InDesc.RpcPerSecond;
+        Config.RpcFloodPerSecond    = InDesc.RpcFloodPerSecond;
+        Config.MaxRpcBytes          = InDesc.MaxRpcBytes;
 
         P->Net = new NetCore::NetSession();
         P->Net->SetClientEvents(&Impl::OnClientConnected, &Impl::OnClientDisconnected, P);

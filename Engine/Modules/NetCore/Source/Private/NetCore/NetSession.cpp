@@ -133,10 +133,37 @@ struct NetSession::Impl final : public INetEntityMap
         std::vector<std::pair<uint64_t, uint32_t>> Entries;   // ShadowKey, field mask
     };
 
+    /* RPC LIMITS: a token bucket per client for all its Server RPCs, and one
+     * per RPC that declares a RateLimit. A call takes a token; without one
+     * it is dropped. Tokens come back at the rate, up to the bucket's size. */
+    struct Bucket
+    {
+        double Tokens = -1.0;    // < 0: full, first use
+        double LastMs = 0.0;
+
+        bool Take(const double InPerSecond, const double InCapacity, const double InNowMs)
+        {
+            if(Tokens < 0.0) { Tokens = InCapacity; LastMs = InNowMs; }
+            Tokens = std::min(InCapacity, Tokens + (InNowMs - LastMs) * InPerSecond / 1000.0);
+            LastMs = InNowMs;
+            if(Tokens < 1.0) { return false; }
+            Tokens -= 1.0;
+            return true;
+        }
+    };
+
     struct ClientInfo
     {
         NetClientID ID        = NET_CLIENT_NONE;
         bool        bWelcomed = false;
+
+        Bucket                                 RpcBudget;
+        std::unordered_map<uint32_t, Bucket>   RpcLimits;     // by wire type << 8 | rpc index
+        uint32_t                               DroppedThisSecond = 0;
+        uint32_t                               DroppedSecond     = 0;   // NowMs() / 1000 the count is for
+        uint64_t                               DroppedTotal      = 0;
+        bool                                   bKicked           = false;
+        uint32_t                               RefusedLogSecond  = 0xFFFFFFFFu;
 
         uint32_t                               NextBatch = 1;
         std::unordered_map<uint64_t, Baseline> Baselines;   // by ShadowKey
@@ -1242,6 +1269,25 @@ struct NetSession::Impl final : public INetEntityMap
         uint32_t             Size     = 0;
         Ar << NetId << WireType << Index << Size;
         if(Ar.HasError() || Size > Ar.GetSize() - Ar.GetCursor()) { Ar.SetError("an RPC's arguments run past the packet"); return; }
+        if(Role == ENetRole::Server && Config.MaxRpcBytes != 0 && Size > Config.MaxRpcBytes)
+        {
+            Ar.SetError("an RPC's arguments are longer than [Net] MaxRpcBytes");
+            return;
+        }
+
+        /* Every call a client makes costs it a token, whatever it names. */
+        ClientInfo* From = nullptr;
+        if(Role == ENetRole::Server)
+        {
+            const auto Found = Clients.find(InPeer);
+            if(Found == Clients.end() || !Found->second.bWelcomed || Found->second.bKicked) { return; }
+            From = &Found->second;
+            if(Config.RpcPerSecond != 0)
+            {
+                const double Rate = double(Config.RpcPerSecond);
+                if(!TakeRpcToken(InPeer, *From, From->RpcBudget, Rate, Rate * 2.0, nullptr)) { return; }
+            }
+        }
         Args.resize(Size);
         if(Size > 0) { Ar.SerializeBytes(Args.data(), Size); }
         if(Ar.HasError() || !BoundWorld) { return; }
@@ -1256,16 +1302,29 @@ struct NetSession::Impl final : public INetEntityMap
         NetClientID Sender = NET_CLIENT_NONE;
         if(Role == ENetRole::Server)
         {
-            const auto Found = Clients.find(InPeer);
-            if(Found == Clients.end() || !Found->second.bWelcomed) { return; }
-            Sender = Found->second.ID;
+            Sender = From->ID;
+            if(Rpc.MaxPerSecond > 0.0f)
+            {
+                const double Rate = double(Rpc.MaxPerSecond);
+                Bucket& Limit = From->RpcLimits[(uint32_t(WireType) << 8) | Rpc.Index];
+                if(!TakeRpcToken(InPeer, *From, Limit, Rate, std::max(1.0, Rate), Rpc.Name))
+                {
+                    return;
+                }
+            }
 
             /* A client may only ask for Server RPCs, and only on what it owns. */
             const NetComponent* Net = GameCore::Entity(BoundWorld, Entity).GetComponent<NetComponent>();
             if(Rpc.Target != GameCore::ERpcTarget::Server || !Net || Net->OwnerClient != Sender)
             {
-                CORE_LOG_WARN("NetCore: client " + std::to_string(Sender) + " asked for " + Rpc.Name
-                              + " on an entity it does not own, or that is not a Server RPC; refused")
+                /* Once a second at most: a client could otherwise fill the log within its budget. */
+                const uint32_t Second = NowMs() / 1000u;
+                if(Second != From->RefusedLogSecond)
+                {
+                    From->RefusedLogSecond = Second;
+                    CORE_LOG_WARN("NetCore: client " + std::to_string(Sender) + " asked for " + Rpc.Name
+                                  + " on an entity it does not own, or that is not a Server RPC; refused")
+                }
                 return;
             }
         }
@@ -1277,6 +1336,42 @@ struct NetSession::Impl final : public INetEntityMap
         bDecodingRemote = true;
         GameCore::InvokeRpc(*BoundWorld, Entity, Type, Rpc, Args, Sender, true);
         bDecodingRemote = false;
+    }
+
+    /* One of a client's Server RPCs against a bucket: its overall budget
+     * (InRpc null), or InRpc's own RateLimit. False drops the call; a
+     * client that drops more than RpcFloodPerSecond in a second is
+     * disconnected. */
+    bool TakeRpcToken(const NetPeerID InPeer, ClientInfo& InClient, Bucket& InBucket, const double InPerSecond,
+                      const double InCapacity, const char* InRpcName)
+    {
+        const double Now = double(NowMs());
+        if(InBucket.Take(InPerSecond, InCapacity, Now)) { return true; }
+
+        const uint32_t Second = uint32_t(Now / 1000.0);
+        if(Second != InClient.DroppedSecond)
+        {
+            if(InClient.DroppedThisSecond > 1)
+            {
+                CORE_LOG_WARN("NetCore: client " + std::to_string(InClient.ID) + ": "
+                              + std::to_string(InClient.DroppedThisSecond) + " RPCs dropped over its limits in a second")
+            }
+            InClient.DroppedSecond     = Second;
+            InClient.DroppedThisSecond = 0;
+        }
+        if(++InClient.DroppedThisSecond == 1)
+        {
+            CORE_LOG_WARN("NetCore: client " + std::to_string(InClient.ID) + ": "
+                          + (InRpcName ? std::string(InRpcName) + " over its RateLimit" : std::string("over [Net] RpcPerSecond"))
+                          + "; dropping its RPCs")
+        }
+        ++InClient.DroppedTotal;
+        if(Config.RpcFloodPerSecond != 0 && InClient.DroppedThisSecond > Config.RpcFloodPerSecond && !InClient.bKicked)
+        {
+            InClient.bKicked = true;
+            Reject(InPeer, "it sent RPCs far over its limit ([Net] RpcFloodPerSecond)");
+        }
+        return false;
     }
 
     void HandleReceived(const NetPeerID InPeer, const uint8_t InChannel, const std::vector<uint8_t>& InData)
