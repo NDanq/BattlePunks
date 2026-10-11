@@ -264,6 +264,8 @@ static void TestFileMetadataSeam()
 
     Expect(appProcessID() != 0, "appProcessID is non-zero");
     Expect(appProcessID() == appProcessID(), "appProcessID is stable");
+    Expect(appProcessIsRunning(appProcessID()), "appProcessIsRunning: this process is");
+    Expect(!appProcessIsRunning(0x7FFFFFF0u), "appProcessIsRunning: an id no process has is not");
 }
 
 static void TestDLLSeam()
@@ -1525,7 +1527,7 @@ static void TestConfigRegistry()
     // destructor must unlink it, cleanly, with no trace left behind.
     const int Before = ConfigGetVarCount();
     {
-        ConfigVar Temp(EConfigType::CT_Int, "Smoke", "Scoped", MakeConfigInt(1), nullptr);
+        ConfigVar Temp(EConfigType::CT_Int, "Smoke", "Scoped", MakeConfigInt(1), nullptr, EConfigScope::CS_Engine);
         Expect(ConfigFindVar("Smoke", "Scoped") == &Temp, "a scoped var registers on construction");
         Expect(ConfigGetVarCount() == Before + 1, "the count tracks registration");
     }
@@ -1536,7 +1538,7 @@ static void TestConfigRegistry()
     // warned about) but does not shadow the first in lookup order, and does
     // NOT inherit the first's value -- only a load or a console set touches
     // every var sharing a key, see A DUPLICATE KEY IS A WARNING in CoreConfig.h.
-    ConfigVar Dup(EConfigType::CT_Int, "Smoke", "MaxFPS", MakeConfigInt(999), nullptr);
+    ConfigVar Dup(EConfigType::CT_Int, "Smoke", "MaxFPS", MakeConfigInt(999), nullptr, EConfigScope::CS_Engine);
     Expect(ConfigFindVar("Smoke", "MaxFPS") == &Dup, "the most recently registered duplicate is found first");
     Expect(Dup.GetInt() == 999, "a duplicate holds its own compiled default when no file has set the key yet");
 
@@ -1618,7 +1620,7 @@ static void TestConfigCallbacks()
     // the file's value -- the mechanism that makes a hot module's config work.
     LoadConfigText("[Smoke]\nLateVar = 42\n");
     {
-        ConfigVar LateVar(EConfigType::CT_Int, "Smoke", "LateVar", MakeConfigInt(0), nullptr);
+        ConfigVar LateVar(EConfigType::CT_Int, "Smoke", "LateVar", MakeConfigInt(0), nullptr, EConfigScope::CS_Engine);
         Expect(LateVar.GetInt() == 42, "a var registered after its file was loaded is back-filled from the retained entry");
     }
 
@@ -1908,6 +1910,45 @@ static void TestModuleLoad()
     }
 
     SetLogHandler(nullptr);
+}
+
+/*
+ * The sweep a registration runs reclaims the shadow directories of processes
+ * that have exited, and leaves a running one's alone: a second instance
+ * starting beside this one is copying its module into its directory right
+ * then, and deleting it under that copy failed the other's load.
+ */
+static void TestModuleShadowSweep()
+{
+    std::printf("[module shadow sweep]\n");
+
+    const std::string Root = "SmokeScratch/Modules/ShadowSweep";
+#if defined(_WIN32)
+    const uint32_t Live = 4;            // System: always there, never ours to open
+#else
+    const uint32_t Live = 1;            // init: always there, never ours to signal
+#endif
+    const uint32_t Dead = 0x7FFFFFF0u;  // no process has it
+    const std::string LiveDir = Root + "/" + std::to_string(Live) + "-0001";
+    const std::string DeadDir = Root + "/" + std::to_string(Dead) + "-0001";
+    for(const std::string& Dir : { LiveDir, DeadDir })
+    {
+        Expect(appCreateDirectories(Dir), "a generation directory is staged");
+        if(FileHandle Handle = appFileOpenWrite(Dir + "/Watched.dll")) { appFileClose(Handle); }
+    }
+
+    {
+        ModuleManager Manager(Root);
+        Expect(appCreateDirectories(GWatchDir), "the module scratch directory is created");
+        Expect(StageVariant(CORE_SMOKE_MODULE_A), "variant A is staged at the watched path");
+        Expect(Manager.RegisterModule("Example", GWatchedPath), "a registration sweeps the shadow root");
+    }
+    Expect(!appFileExists(DeadDir + "/Watched.dll"), "an exited process's generation is reclaimed");
+    Expect(appFileExists(LiveDir + "/Watched.dll"), "a running process's generation is left alone");
+
+    appFileDelete(LiveDir + "/Watched.dll");
+    appDirectoryDelete(LiveDir);
+    appDirectoryDelete(Root);
 }
 
 /*
@@ -2792,6 +2833,7 @@ static void RunModuleTests()
 #if defined(CORE_SMOKE_MODULE_A)
     TestModuleLoad();
     TestModuleShadowPdb();
+    TestModuleShadowSweep();
     TestModuleReload();
     TestModuleSettleWindow();
     TestModuleAbiMismatch();
