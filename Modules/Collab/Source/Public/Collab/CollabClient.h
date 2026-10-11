@@ -47,6 +47,7 @@ namespace Collab
             MemberLeft,     // MemberId (gone from the roster already), User, Text
             MemberChanged,  // MemberId: presence
             Overlap,        // Path, User: someone else also has Path dirty
+            BranchAdvanced, // MemberId, User (who pushed), Move: the session branch moved
             Notified        // Severity, Title, Text
         };
 
@@ -58,6 +59,7 @@ namespace Collab
         std::string   Text;
         ERejectReason Reason   = ERejectReason::BadHello;
         ESeverity     Severity = ESeverity::Info;
+        BranchMove    Move;
     };
 
     class COLLAB_API CollabClient
@@ -93,6 +95,9 @@ namespace Collab
         uint32_t GetMyId() const { return MyId; }
         uint32_t GetSessionId() const { return SessionId; }
         const std::string& GetSessionEngineTree() const { return SessionEngine; }
+
+        /* This editor pushed the session branch: the others hear BranchAdvanced. */
+        void AnnouncePush(const BranchMove& InMove);
 
         /* Who else has InPath dirty. */
         std::vector<std::string> WhoHasDirty(const std::string& InPath) const;

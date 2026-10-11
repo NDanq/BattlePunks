@@ -89,6 +89,10 @@ signals:
     /* A status read finished; bInOk false if git failed. */
     void Refreshed(bool bInOk);
 
+    /* Push moved InBranch's upstream from InOldOid (empty: it had none) to
+     * InNewOid: the collaboration session tells the others. */
+    void Pushed(const QString& InBranch, const QString& InOldOid, const QString& InNewOid);
+
 private:
     void BuildUi();
     void WatchGitFolder();

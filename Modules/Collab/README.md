@@ -55,11 +55,21 @@ the editor shows as a warning before git has a conflict to report.
 | `Presence` | C→S→others | member ID (from the server), HEAD, open level, play state, full flag, dirty added, dirty removed |
 | `MemberJoined` / `MemberLeft` | S→others | the member · member ID, reason |
 | `Notify` | S→C | severity, title, body |
+| `Pushed` | C→S | branch, old commit, new commit, the commits (oid, author, summary), changed paths |
+| `BranchAdvanced` | S→others | the pusher's member ID and name, and the push as above |
 
-`Pushed`, `BranchAdvanced`, `BuildStatus`, `ValidationReport` and the `Play*`
-messages are numbered for P3–P5 and not sent yet. Appending a field at the end
+`BuildStatus`, `ValidationReport` and the `Play*` messages are numbered for
+P4–P5 and not sent yet. Appending a field at the end
 of a payload is compatible (Archive skips what a reader doesn't know); any
 other layout change bumps `ProtocolVersion`.
+
+## The branch moving
+
+An editor that pushes the session branch sends `Pushed`, with what moved as
+its own git reads it. The server keeps the session's tip and relays the push to
+everyone else as `BranchAdvanced`; a push of the same tip again, or of another
+branch, isn't relayed (the pusher is told the latter). Pushes made outside the
+editor aren't seen until P4's worker fetches the branch itself.
 
 ## Running the server
 

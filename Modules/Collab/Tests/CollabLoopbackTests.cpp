@@ -259,6 +259,68 @@ namespace
         Check(PumpUntil(Server, { &Alice, &Carol }, [&]() { return Server.GetSessions().empty(); }), "an empty session ends");
     }
 
+    void TestPushes()
+    {
+        std::printf("--- pushes\n");
+        CollabServer Server;
+        ServerConfig Config;
+        Config.Port = 0;
+        Server.Start(Config);
+
+        CollabClient Alice, Bob;
+        EventLog AliceLog, BobLog;
+        JoinOrRefuse(Server, {}, Alice, AliceLog, Identity("alice"));
+        Check(JoinOrRefuse(Server, { &Alice }, Bob, BobLog, Identity("bob")) && BobLog.Find(ClientEvent::EType::Joined), "two editors");
+        AliceLog.Clear();
+        BobLog.Clear();
+
+        BranchMove Move;
+        Move.Branch  = "collab/forest";
+        Move.OldOid  = "1111111111111111111111111111111111111111";
+        Move.NewOid  = "2222222222222222222222222222222222222222";
+        Move.Commits = { { "2222222222222222222222222222222222222222", "alice", "Trees" },
+                         { "1515151515151515151515151515151515151515", "alice", "Pickup" } };
+        Move.Paths   = { "Games/WorldsLab/Content/Levels/Forest.nmworld", "Games/WorldsLab/Source/Pickup.cpp" };
+        Alice.AnnouncePush(Move);
+        Check(PumpUntil(Server, { &Alice, &Bob }, [&]() { BobLog.Drain(Bob); return BobLog.Find(ClientEvent::EType::BranchAdvanced) != nullptr; }),
+              "Bob hears Alice's push");
+        const ClientEvent* Advanced = BobLog.Find(ClientEvent::EType::BranchAdvanced);
+        Check(Advanced && Advanced->User == "alice" && Advanced->MemberId == Alice.GetMyId(), "from Alice");
+        Check(Advanced && Advanced->Move.NewOid == Move.NewOid && Advanced->Move.OldOid == Move.OldOid, "old and new commit");
+        Check(Advanced && Advanced->Move.Commits.size() == 2 && Advanced->Move.Commits[0].Summary == "Trees", "the commits");
+        Check(Advanced && Advanced->Move.Paths == Move.Paths, "the changed paths");
+        AliceLog.Drain(Alice);
+        Check(!AliceLog.Find(ClientEvent::EType::BranchAdvanced), "not echoed to the pusher");
+        Check(!Server.GetSessions().empty() && Server.GetSessions()[0].Tip == Move.NewOid, "the session's tip follows");
+
+        /* The same tip again is nothing new; no old commit given, the tip stands in. */
+        BobLog.Clear();
+        Alice.AnnouncePush(Move);
+        BranchMove Next = Move;
+        Next.OldOid.clear();
+        Next.NewOid = "3333333333333333333333333333333333333333";
+        Bob.AnnouncePush(Next);
+        Check(PumpUntil(Server, { &Alice, &Bob }, [&]() { AliceLog.Drain(Alice); return AliceLog.Find(ClientEvent::EType::BranchAdvanced) != nullptr; }),
+              "Alice hears Bob's push");
+        Advanced = AliceLog.Find(ClientEvent::EType::BranchAdvanced);
+        Check(Advanced && Advanced->Move.OldOid == Move.NewOid, "its old commit is the session's tip");
+        PumpUntil(Server, { &Alice, &Bob }, [&]() { return false; }, 100);
+        BobLog.Drain(Bob);
+        Check(BobLog.Count(ClientEvent::EType::BranchAdvanced) == 0, "a repeated push isn't relayed");
+
+        /* Another branch: only the pusher is told, that nobody else was. */
+        AliceLog.Clear();
+        BobLog.Clear();
+        BranchMove Elsewhere = Move;
+        Elsewhere.Branch = "main";
+        Elsewhere.NewOid = "4444444444444444444444444444444444444444";
+        Alice.AnnouncePush(Elsewhere);
+        Check(PumpUntil(Server, { &Alice, &Bob }, [&]() { AliceLog.Drain(Alice); return AliceLog.Find(ClientEvent::EType::Notified) != nullptr; }),
+              "pushing another branch: the pusher is told");
+        BobLog.Drain(Bob);
+        Check(!BobLog.Find(ClientEvent::EType::BranchAdvanced), "and the others aren't");
+    }
+
     void TestRefusals()
     {
         std::printf("--- refusals\n");
@@ -397,6 +459,7 @@ int main()
 {
     TestHelpers();
     TestSession();
+    TestPushes();
     TestRefusals();
     TestTimeouts();
 
