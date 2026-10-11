@@ -171,7 +171,7 @@ detail):
 |---|---|
 | Moving | `RangeMove`, the Shooting Range's walker: predicted on the client that drives the fighter, stepped on the server from its input, interpolated everywhere else |
 | Firing | the driving process sends `ServerFire(origin, direction)` from its camera, and shows its own muzzle flash and impact at once |
-| Hits | the server only: walls by physics raycast, fighters by a capsule each, rewound to where the shooter saw them: `[Net] InterpolationDelayMs` plus half its round trip (`GetNetStats`) |
+| Hits | the server only, by the engine's lag compensation (`LagCompensation.h`): the street as it is, each fighter's `LagCompensated` capsule where the shooter saw it |
 | Health, ammo, kills, deaths | replicated fields of each fighter's `PvpFighter` component |
 | Feedback | `MulticastShot` (everyone else's flash, sound, impact), `MulticastKilled` (the kill feed, the ragdoll), `ClientHitConfirm` (the shooter's hit marker) |
 | The match | a networked `PvpMatch` entity the server makes: the clock, the phase, the winner |
@@ -190,7 +190,9 @@ WorldsLab -headless -connect=127.0.0.1 -Game.StartLevel=SteampunkPvP -WorldsLab.
 `-headless` runs the launcher with no window, input or renderer. A client
 with `[WorldsLab] PvpNetStats=1` logs its prediction every 5 s: the worst
 correction while running should read 0.00. Respawns show up as one large
-correction each.
+correction each. The server logs each fighter's hits and shots every 30 s.
+`PvpLagCompensation=0` judges shots against where targets are now, for
+comparison.
 
 The level is generated from the street, which has to be generated first:
 

@@ -977,6 +977,26 @@ struct NetSession::Impl final : public INetEntityMap
         LocalClient = NET_CLIENT_NONE;
     }
 
+    /* The server's clock: its own, or a client's estimate of it. 0 for a
+     * client before its first batch. */
+    uint32_t GetTimeMs() const
+    {
+        if(Role == ENetRole::Server) { return NowMs(); }
+        if(!bHaveServerTime) { return 0; }
+        const double Server = double(NowMs()) - ServerOffsetMs;
+        return Server > 1.0 ? uint32_t(Server) : 1u;
+    }
+
+    /* What an RPC this process sends says it was showing: a client's render
+     * time on the server's clock (Interpolate's), the server's own now. */
+    uint32_t GetViewTimeMs() const
+    {
+        if(Role == ENetRole::Server) { return NowMs(); }
+        if(!bHaveServerTime) { return 0; }
+        const double Render = double(NowMs()) - ServerOffsetMs - double(Config.InterpolationDelayMs);
+        return Render > 1.0 ? uint32_t(Render) : 1u;
+    }
+
     /* A server: places kept past their grace are given up. */
     void ExpireAway()
     {
@@ -1476,9 +1496,10 @@ struct NetSession::Impl final : public INetEntityMap
         int32_t              NetId    = 0;
         uint16_t             WireType = 0;
         uint8_t              Index    = 0;
+        uint32_t             ViewTime = 0;
         std::vector<uint8_t> Args;
         uint32_t             Size     = 0;
-        Ar << NetId << WireType << Index << Size;
+        Ar << NetId << WireType << Index << ViewTime << Size;
         if(Ar.HasError() || Size > Ar.GetSize() - Ar.GetCursor()) { Ar.SetError("an RPC's arguments run past the packet"); return; }
         if(Role == ENetRole::Server && Config.MaxRpcBytes != 0 && Size > Config.MaxRpcBytes)
         {
@@ -1544,8 +1565,15 @@ struct NetSession::Impl final : public INetEntityMap
             return;   // the server never sends those
         }
 
+        /* A client's view of the past can be no later than now, nor older than a second. */
+        if(Role == ENetRole::Server && ViewTime != 0)
+        {
+            const uint32_t Now = NowMs();
+            if(int32_t(ViewTime - Now) > 0)   { ViewTime = Now; }
+            if(Now - ViewTime > 1000u)        { ViewTime = Now - 1000u; }
+        }
         bDecodingRemote = true;
-        GameCore::InvokeRpc(*BoundWorld, Entity, Type, Rpc, Args, Sender, true);
+        GameCore::InvokeRpc(*BoundWorld, Entity, Type, Rpc, Args, Sender, true, Role == ENetRole::Server ? ViewTime : 0u);
         bDecodingRemote = false;
     }
 
@@ -1685,8 +1713,9 @@ struct NetSession::Impl final : public INetEntityMap
         int32_t  NetId    = InNetId;
         uint16_t WireType = Wire;
         uint8_t  Index    = InRpc.Index;
+        uint32_t ViewTime = GetViewTimeMs();
         uint32_t Size     = uint32_t(InArgs.size());
-        Ar << NetId << WireType << Index << Size;
+        Ar << NetId << WireType << Index << ViewTime << Size;
         if(Size > 0)
         {
             std::vector<uint8_t> Copy = InArgs;
@@ -1914,6 +1943,7 @@ bool NetSession::IsConnected() const
 
 NetClientID NetSession::GetLocalClientId() const { return P->LocalClient; }
 bool        NetSession::IsReconnecting() const   { return P->bReconnecting; }
+uint32_t    NetSession::GetTimeMs() const        { return P->GetTimeMs(); }
 uint64_t    NetSession::GetReconnectToken() const { return P->Token; }
 uint16_t    NetSession::GetPort() const          { return P->Transport.GetPort(); }
 size_t      NetSession::GetClientCount() const   { return P->GetWelcomedCount(); }

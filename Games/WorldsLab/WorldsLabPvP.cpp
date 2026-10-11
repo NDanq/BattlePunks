@@ -4,6 +4,7 @@
 #include "Public/NimbleEngine/Avatar.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameSession.h"
+#include "Public/NimbleEngine/LagCompensation.h"
 #include "Public/NimbleEngine/NetFacade.h"
 #include "Public/NimbleEngine/PhysicsFacade.h"
 #include "Public/NimbleEngine/PlayerStart.h"
@@ -53,10 +54,9 @@
  *              stepped on the server from its input, interpolated on the rest
  *   firing     the driving process sends ServerFire(origin, direction) from its
  *              camera, and shows its own muzzle flash and impact at once
- *   hits       the server's alone: the walls by physics raycast, the fighters
- *              by a capsule each, where they were on the shooter's screen
- *              (rewound by [Net] InterpolationDelayMs and half the shooter's
- *              round trip, see Rewind)
+ *   hits       the server's alone, by the engine's lag compensation
+ *              (LagCompensation.h): the street as it is, each fighter's
+ *              LagCompensated capsule where the shooter saw it
  *   damage     the server's: Health, Kills, Deaths and Ammo are replicated
  *              fields of each fighter's PvpFighter component
  *   feedback   Multicast RPCs -- MulticastShot (everyone else's flash, sound
@@ -85,8 +85,8 @@ NIMBLE_CONFIG_INT(GPvpFragLimit,     "WorldsLab", "PvpFragLimit",     15,  nullp
 NIMBLE_CONFIG_INT(GPvpMatchSeconds,  "WorldsLab", "PvpMatchSeconds",  600, nullptr);
 NIMBLE_CONFIG_INT(GPvpBots,          "WorldsLab", "PvpBots",          0,   nullptr);   // extra players the authority drives
 NIMBLE_CONFIG_BOOL(GPvpBot,          "WorldsLab", "PvpBot",           false, nullptr); // this process's own player too
+NIMBLE_CONFIG_BOOL(GPvpLagCompensation, "WorldsLab", "PvpLagCompensation", true, nullptr); // off: shots judged against now (to compare)
 NIMBLE_CONFIG_BOOL(GPvpNetStats,     "WorldsLab", "PvpNetStats",      false, nullptr); // a client logs its prediction every 5 s
-NIMBLE_CONFIG_INT(GPvpRewindMs,      "Net",       "InterpolationDelayMs", 100, nullptr);
 
 namespace
 {
@@ -105,9 +105,7 @@ namespace
     constexpr float   RoundBreak    = 8.0f;      // the winner's banner, before the next round
     constexpr float   ShotRange     = 8000.0f;
     constexpr int32_t ShotMask      = 1;         // the street's static bodies; fighters are hit by capsule
-    constexpr double  HitRadius     = 34.0;      // a fighter's capsule
-    constexpr double  HitBottom     = 10.0, HitTop = 182.0;
-    constexpr double  HeadFrom      = 150.0;     // a hit above this is a head shot
+    constexpr double  HeadFrom      = 150.0;     // a hit this far above the feet is a head shot (the prefab's capsule tops at 182)
     constexpr double  BoomHeight    = 150.0;     // RangeMove's camera pivot over the feet
     constexpr double  MaxOriginSlop = 350.0;     // how far from its pivot a shot may start
     constexpr double  KillKick      = 6000.0;    // the killing round's impulse into the ragdoll
@@ -129,6 +127,7 @@ struct PvpFighterComponent
     uint8_t bReloading = 0;
 
     // The server's, never sent.
+    int32_t Shots   = 0, Hits = 0;   // this round, for the accuracy log
     float Cooldown  = 0.0f;
     float ReloadIn  = 0.0f;
     float RespawnIn = 0.0f;
@@ -221,10 +220,6 @@ namespace
         static const auto Start = std::chrono::steady_clock::now();
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - Start).count();
     }
-
-    /* Where each fighter's feet were, a second back: the server's, for Rewind. */
-    struct Sample { double Time; Vec Feet; };
-    std::unordered_map<uint64_t, std::deque<Sample>> GHistory;
 
     /* What the HUD shows that is not a replicated field. */
     struct FeedLine { std::string Text; double Until; };
@@ -337,52 +332,6 @@ namespace
 
 namespace
 {
-    /* Where InFighter's feet were InSecondsAgo, from its history: what a
-     * client was aiming at -- it shows others InterpolationDelayMs in the
-     * past, and its shot took half its round trip to get here. */
-    Vec Rewind(GameCore::World& InWorld, const EntityID InFighter, const double InSecondsAgo)
-    {
-        const auto Found = GHistory.find(InFighter.Pack());
-        if(Found == GHistory.end() || Found->second.empty() || InSecondsAgo <= 0.0) { return FeetOf(InWorld, InFighter); }
-        const double At = NowSeconds() - InSecondsAgo;
-        const std::deque<Sample>& H = Found->second;
-        if(At <= H.front().Time) { return H.front().Feet; }
-        for(size_t I = 1; I < H.size(); ++I)
-        {
-            if(H[I].Time >= At)
-            {
-                const double A = (At - H[I - 1].Time) / std::max(1e-6, H[I].Time - H[I - 1].Time);
-                return { H[I - 1].Feet.X + (H[I].Feet.X - H[I - 1].Feet.X) * A,
-                         H[I - 1].Feet.Y + (H[I].Feet.Y - H[I - 1].Feet.Y) * A,
-                         H[I - 1].Feet.Z + (H[I].Feet.Z - H[I - 1].Feet.Z) * A };
-            }
-        }
-        return H.back().Feet;
-    }
-
-    /* The ray (unit InDir) against a standing capsule at InFeet: the distance along it, or -1. */
-    double RayCapsule(const Vec& InOrigin, const Vec& InDir, const Vec& InFeet)
-    {
-        /* Closest approach of the ray to the capsule's axis, a vertical segment. */
-        const Vec A { InFeet.X, InFeet.Y + HitBottom + HitRadius, InFeet.Z };
-        const double SegLen = (HitTop - HitRadius) - (HitBottom + HitRadius);
-        const Vec W { InOrigin.X - A.X, InOrigin.Y - A.Y, InOrigin.Z - A.Z };
-        const double B = InDir.Y;                       // dir . axis (axis is +Y)
-        const double D = InDir.X * W.X + InDir.Y * W.Y + InDir.Z * W.Z;
-        const double E = W.Y;
-        const double Den = 1.0 - B * B;
-        double T = Den > 1e-6 ? (B * E - D) / Den : -D;
-        double S = std::clamp(E + T * B, 0.0, SegLen);
-        T = std::max(0.0, (S - E) * B - D);             // the ray's point nearest that axis point
-        S = std::clamp(E + T * B, 0.0, SegLen);
-        const Vec P { InOrigin.X + InDir.X * T, InOrigin.Y + InDir.Y * T, InOrigin.Z + InDir.Z * T };
-        const Vec Q { A.X, A.Y + S, A.Z };
-        const double DX = P.X - Q.X, DY = P.Y - Q.Y, DZ = P.Z - Q.Z;
-        const double Dist2 = DX * DX + DY * DY + DZ * DZ;
-        if(Dist2 > HitRadius * HitRadius) { return -1.0; }
-        return std::max(0.0, T - std::sqrt(HitRadius * HitRadius - Dist2));
-    }
-
     void Respawn(GameCore::World& InWorld, EntityID InFighter);
 }
 
@@ -407,42 +356,26 @@ void PvpFighterComponent::ServerFire(const GameCore::RpcContext& InContext, cons
     --Ammo;
     Cooldown = FireDelay;
 
-    /* The street first: how far the round can go. */
-    double Reach = ShotRange;
-    NimbleEngine::PhysicsRaycastHit WallHit;
-    const bool bWall = NimbleEngine::PhysicsRaycast(World, Vector3(Origin.X, Origin.Y, Origin.Z), Vector3(Dir.X, Dir.Y, Dir.Z),
-                                                     ShotRange, WallHit, ShotMask);
-    if(bWall) { Reach = WallHit.Distance; }
-
-    /* Then every other fighter standing, where the shooter saw it. */
-    NimbleEngine::NetStats Link;
-    const double Latency = InContext.bRemote && NimbleEngine::GetNetStats(InContext.SenderClient, Link) ? Link.RoundTripMs / 2.0 : 0.0;
-    const double Ago = std::min(1.0, (double(GPvpRewindMs.GetInt()) + Latency) / 1000.0);
-    EntityID Victim;
-    double   Nearest = Reach;
-    Vec      VictimFeet{};
-    World.Each<PvpFighterComponent>([&](GameCore::Entity InOther, PvpFighterComponent& InFighter)
-    {
-        if(InOther.GetID() == Self || InFighter.bDead) { return; }
-        const bool bRemoteShooter = InContext.bRemote;
-        const Vec At = bRemoteShooter ? Rewind(World, InOther.GetID(), Ago) : FeetOf(World, InOther.GetID());
-        const double T = RayCapsule(Origin, Dir, At);
-        if(T >= 0.0 && T < Nearest)
-        {
-            Nearest = T;
-            Victim = InOther.GetID();
-            VictimFeet = At;
-        }
-    });
-
+    /* The street as it is, and every other fighter where this shooter saw it (LagCompensation.h). */
+    NimbleEngine::LagCompensatedHit Hit;
+    const bool bAny = GPvpLagCompensation.GetBool()
+        ? NimbleEngine::LagCompensatedRaycast(World, InContext, Vector3(Origin.X, Origin.Y, Origin.Z), Vector3(Dir.X, Dir.Y, Dir.Z),
+                                              ShotRange, Hit, ShotMask)
+        : NimbleEngine::LagCompensatedRaycastAt(World, 0, Self, Vector3(Origin.X, Origin.Y, Origin.Z), Vector3(Dir.X, Dir.Y, Dir.Z),
+                                                ShotRange, Hit, ShotMask);
+    ++Shots;
+    PvpFighterComponent* Target = bAny && Hit.bCompensated ? FighterOf(World, Hit.Entity) : nullptr;
+    if(Target && Target->bDead) { Target = nullptr; }
+    const EntityID Victim  = Target ? Hit.Entity : EntityID();
+    const double   Nearest = bAny ? double(Hit.Distance) : double(ShotRange);
+    const bool     bWall   = bAny && !Hit.bCompensated;
     const Vec End { Origin.X + Dir.X * Nearest, Origin.Y + Dir.Y * Nearest, Origin.Z + Dir.Z * Nearest };
     GAMECORE_RPC(PvpFighterComponent, MulticastShot)(World.GetEntity(Self), Vector3(End.X, End.Y, End.Z),
                                                      uint8_t(Victim.IsSet() ? 2 : (bWall ? 1 : 0)));
     if(!Victim.IsSet()) { return; }
 
-    PvpFighterComponent* Target = FighterOf(World, Victim);
-    if(!Target) { return; }
-    const bool bHead = End.Y - VictimFeet.Y >= HeadFrom;
+    ++Hits;
+    const bool bHead = double(Hit.Height) >= HeadFrom;
     const int32_t Damage = bHead ? HeadDamage : BodyDamage;
     Target->Health = std::max(0, Target->Health - Damage);
     const bool bKill = Target->Health == 0;
@@ -451,6 +384,11 @@ void PvpFighterComponent::ServerFire(const GameCore::RpcContext& InContext, cons
         Target->bDead     = 1;
         Target->RespawnIn = RespawnDelay;
         ++Target->Deaths;
+        /* Its body is a ragdoll now: no capsule standing where it fell. */
+        if(NimbleEngine::LagCompensatedComponent* Capsule = World.GetEntity(Victim).GetComponent<NimbleEngine::LagCompensatedComponent>())
+        {
+            Capsule->bEnabled = 0;
+        }
         if(NimbleEngine::AvatarHarnessComponent* Harness = World.GetEntity(Victim).GetComponent<NimbleEngine::AvatarHarnessComponent>())
         {
             Harness->bEnabled = 0;
@@ -576,7 +514,10 @@ namespace
         {
             Harness->bEnabled = 1;
         }
-        GHistory.erase(InFighter.Pack());
+        if(NimbleEngine::LagCompensatedComponent* Capsule = InWorld.GetEntity(InFighter).GetComponent<NimbleEngine::LagCompensatedComponent>())
+        {
+            Capsule->bEnabled = 1;
+        }
     }
 }
 
@@ -753,7 +694,6 @@ class WorldsLabPvPMode : public NimbleEngine::NetGameMode
 public:
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
-        GHistory.clear();
         GFeed.clear();
         GEffects.clear();
         GBots.clear();
@@ -809,7 +749,6 @@ public:
     void OnUnload() override
     {
         if(NimbleEngine::AvatarWorld* Avatars = Session ? Session->GetAvatars() : nullptr) { Avatars->SetInputFilter(nullptr, nullptr); }
-        GHistory.clear();
         GEffects.clear();
         GBots.clear();
     }
@@ -844,11 +783,13 @@ private:
             }
             if(InFighter.bDead && (InFighter.RespawnIn -= Dt) <= 0.0f) { ToRespawn.push_back(InEntity.GetID()); }
 
-            /* A second of where it stood, for Rewind. */
-            std::deque<Sample>& H = GHistory[InEntity.GetID().Pack()];
-            H.push_back({ Now, FeetOf(World, InEntity.GetID()) });
-            while(H.size() > 2 && H.front().Time < Now - 1.0) { H.pop_front(); }
         });
+
+        if(Now >= NextAccuracyAt)
+        {
+            if(NextAccuracyAt > 0.0) { LogAccuracy(World); }
+            NextAccuracyAt = Now + 30.0;
+        }
 
         PvpMatchComponent* Match = FindMatch(World);
         if(Match && Match->Phase == 0)
@@ -877,12 +818,15 @@ private:
             Match->SecondsLeft = std::max(0, int(RoundBreak - Match->Clock + 0.999f));
             if(Match->Clock >= RoundBreak)
             {
+                LogAccuracy(World);
                 /* A new round: scores cleared, everyone somewhere new. */
                 std::vector<EntityID> All;
                 World.Each<PvpFighterComponent>([&All](GameCore::Entity InEntity, PvpFighterComponent& InFighter)
                 {
                     InFighter.Kills = 0;
                     InFighter.Deaths = 0;
+                    InFighter.Shots = 0;
+                    InFighter.Hits = 0;
                     All.push_back(InEntity.GetID());
                 });
                 for(const EntityID Fighter : All) { Respawn(World, Fighter); }
@@ -892,6 +836,17 @@ private:
                 CORE_LOG("[SteampunkPvP] a new round")
             }
         }
+    }
+
+    /* Each fighter's hits of its shots, this round: how lag compensation is doing. */
+    static void LogAccuracy(GameCore::World& InWorld)
+    {
+        std::string Line = std::string("[SteampunkPvP] accuracy") + (GPvpLagCompensation.GetBool() ? "" : " (no lag compensation)") + ":";
+        InWorld.Each<PvpFighterComponent>([&Line](GameCore::Entity, PvpFighterComponent& InFighter)
+        {
+            Line += std::string("  ") + InFighter.Name + " " + std::to_string(InFighter.Hits) + "/" + std::to_string(InFighter.Shots);
+        });
+        CORE_LOG(Line)
     }
 
     /* What every process does for every fighter: the anim state for those it
@@ -1104,6 +1059,7 @@ private:
     }
 
     double NextStatsAt = 0.0;
+    double NextAccuracyAt = 0.0;   // the server's accuracy log
 
     static void Set(UI::UISystem& InUI, const std::string& InKey, const std::string& InText)
     {

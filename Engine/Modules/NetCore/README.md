@@ -349,6 +349,36 @@ the token can rejoin after the client itself restarts. A dropped
 connection is noticed only after `TimeoutMs`, and lost clients count
 against `MaxClients` until their grace ends.
 
+### Lag compensation
+
+A client shows other players in the past: its interpolation delay, plus the
+time their state took to arrive. Its shot then takes as long again to reach
+the server. Judged against where targets are now, a shot at a runner lands
+behind it.
+
+- **Every Server RPC from a client carries a view time.** That is the server
+  time of what the client was showing as it called: its interpolation render
+  time, on its estimate of the server's clock. The server clamps it to the
+  last second and hands it to the handler as `RpcContext::ViewTimeMs`. A
+  local call (the host's own player, a bot) has none.
+- **The server keeps positions.** It records a second of positions for every
+  entity with a **LagCompensated** component (a standing capsule: `Radius`,
+  `Bottom`, `Top`). `NetHost` records them each server frame, on the server's
+  clock (`NetSession::GetTimeMs`, `NimbleEngine::GetNetTimeMs`).
+- **`NimbleEngine::LagCompensatedRaycast(World, Context, ...)`**
+  (`NimbleEngine/LagCompensation.h`) tests the world as it is, plus each
+  compensated capsule where the caller saw it, skipping the caller. It
+  reports the hit, whether it was a capsule, and how high above the
+  target's feet (a head shot). `GetLagCompensatedPosition` gives the
+  rewound position for a test of the game's own.
+
+Keep compensated entities out of the world mask, by giving any body they
+have a layer of its own. Otherwise their current place is hit first.
+
+There is no allowance past one second, and the rewind moves only the
+capsules, not physics bodies. Steampunk PvP uses it for every shot, and
+`[WorldsLab] PvpLagCompensation=0` judges shots against now to compare.
+
 ### Connection stats
 
 `NimbleEngine::GetNetStats(Client, Stats)` (`NetFacade.h`) reports a
@@ -361,8 +391,7 @@ on a server, its link to `Client` (an RPC's `SenderClient`, say). It gives:
 - each direction's rate over the last whole second
 
 `NetSession::GetServerStats` / `GetClientStats` are the same, inside NetCore.
-Steampunk PvP shows a client's ping with it, and rewinds a shot by half its
-shooter's round trip.
+Steampunk PvP shows a client's ping with it.
 
 ### Timeouts
 
@@ -437,6 +466,8 @@ a client in one process over 127.0.0.1. It covers:
 - state under 50% simulated loss each way: changing values, a value changed
   and changed back, and a change just after a spawn
 - a late joiner
+- view times: a client's Server RPC stamped about its interpolation delay
+  behind the server's clock, a local call with none
 - reconnecting: a lost client kept away and taken back with the same id and
   entities (updated, with what was destroyed meanwhile removed); one back too
   late joining as new; one that quits gone at once

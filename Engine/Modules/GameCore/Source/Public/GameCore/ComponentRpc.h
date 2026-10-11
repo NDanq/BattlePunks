@@ -83,6 +83,11 @@ namespace GameCore
         EntityID    Entity;
         NetClientID SenderClient = NET_CLIENT_NONE;   // who asked; NONE for the server or a local call
         bool        bRemote      = false;             // arrived over the network
+        /* A client's call, on the server: the server time (NetFacade's
+         * GetNetTimeMs) of what that client was showing as it called -- how
+         * far back to look for what it aimed at (LagCompensation.h). 0 for a
+         * local call: now. */
+        uint32_t    ViewTimeMs   = 0;
     };
 
     /* A NUL-terminated text argument of at most N - 1 bytes. */
@@ -193,9 +198,11 @@ namespace GameCore
     GAMECORE_API IRpcSink& GetRpcSink();
 
     /* Runs InRpc on InEntity's InType component with InArgs. False (warned)
-     * if the entity or component is gone, or the arguments did not decode. */
+     * if the entity or component is gone, or the arguments did not decode.
+     * InViewTimeMs is RpcContext::ViewTimeMs. */
     GAMECORE_API bool InvokeRpc(World& InWorld, EntityID InEntity, ComponentTypeID InType, const RpcEntry& InRpc,
-                                const std::vector<uint8_t>& InArgs, NetClientID InSender, bool bInRemote);
+                                const std::vector<uint8_t>& InArgs, NetClientID InSender, bool bInRemote,
+                                uint32_t InViewTimeMs = 0);
 
     /* Used by CallRpc: logs why a call was refused. */
     GAMECORE_API void ReportRpcCallError(ComponentTypeID InType, const char* InName, const char* InReason);

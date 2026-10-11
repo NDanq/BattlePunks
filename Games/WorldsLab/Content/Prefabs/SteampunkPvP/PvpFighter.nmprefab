@@ -5,6 +5,12 @@
       <Replicate Value="true" />
       <Predicted Value="true" />
     </Component>
+    <Component Type="LagCompensated" Version="1">
+      <Radius Value="34" />
+      <Bottom Value="10" />
+      <Top Value="182" />
+      <Enabled Value="true" />
+    </Component>
     <Component Type="PvpFighter" Version="1">
       <Name Value="Fighter" />
     </Component>

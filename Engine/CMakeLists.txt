@@ -623,6 +623,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/CollisionMeshes.cpp
         Source/Private/NimbleEngine/AudioFacade.cpp
         Source/Private/NimbleEngine/NetFacade.cpp
+        Source/Private/NimbleEngine/LagCompensation.cpp
         Source/Private/NimbleEngine/NetHost.cpp
         Source/Private/NimbleEngine/NetScript.cpp
         Source/Private/NimbleEngine/PhysicsFacade.cpp
@@ -635,6 +636,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/GameMode.h
         Source/Public/NimbleEngine/Avatar.h
         Source/Public/NimbleEngine/PlayerStart.h
+        Source/Public/NimbleEngine/LagCompensation.h
         Source/Public/NimbleEngine/GameSession.h
         Source/Public/NimbleEngine/GameConsole.h
         Source/Public/NimbleEngine/GameModule.h
