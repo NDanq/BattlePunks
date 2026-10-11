@@ -51,6 +51,7 @@
 #include "Private/Editor/EditorLights.h"
 #include "Private/Editor/EditorPrimitives.h"
 #include "Private/Editor/NotificationWidgets.h"
+#include "Private/Editor/SourceControl/SourceControlWindow.h"
 #include "Public/Editor/EditorNotifications.h"
 #include "Private/Editor/AboutDialog.h"
 #include "Private/Editor/DocumentationWindow.h"
@@ -251,6 +252,14 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     tabifyDockWidget(ConsoleDock, Notifications);
     Notifications->hide();
     Toasts = new NotificationToasts(*this);
+
+    /* Source Control, hidden until View > Source Control: the project's git,
+     * wide along the bottom for its diff. */
+    auto* SourceControl = new SourceControlWindow(EditorGraphs::GetProjectRoot(), ProjectSettingsDialog::GetProjectConfigPath(), this);
+    addDockWidget(Qt::BottomDockWidgetArea, SourceControl);
+    tabifyDockWidget(ConsoleDock, SourceControl);
+    SourceControl->hide();
+    connect(&Level, &EditorDocument::WorldSaved, SourceControl, &SourceControlWindow::RequestRefresh);
     ContentDock->raise();
     connect(ContentArea, &ContentBrowserPanel::OpenWorldRequested, this, &EditorMainWindow::OpenWorldFile);
 
