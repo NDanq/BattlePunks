@@ -125,6 +125,7 @@ NetPeerID NetTransport::Track(ENetPeer* InPeer)
     const NetPeerID ID = NextPeer++;
     InPeer->data = reinterpret_cast<void*>(uintptr_t(ID));
     Peers[ID] = InPeer;
+    Counters[ID] = Traffic();
     return ID;
 }
 
@@ -157,6 +158,7 @@ bool NetTransport::Service(NetTransportEvent& OutEvent)
                 const NetPeerID ID = PeerIdOf(Event.peer);
                 Event.peer->data = nullptr;
                 Peers.erase(ID);
+                Counters.erase(ID);
                 OutEvent.EventType = NetTransportEvent::EType::Disconnected;
                 OutEvent.Peer      = ID;
                 OutEvent.Channel   = 0;
@@ -169,6 +171,11 @@ bool NetTransport::Service(NetTransportEvent& OutEvent)
                 OutEvent.Peer      = PeerIdOf(Event.peer);
                 OutEvent.Channel   = Event.channelID;
                 OutEvent.Data.assign(Event.packet->data, Event.packet->data + Event.packet->dataLength);
+                if(auto Found = Counters.find(OutEvent.Peer); Found != Counters.end())
+                {
+                    Found->second.BytesReceived += Event.packet->dataLength;
+                    ++Found->second.PacketsReceived;
+                }
                 enet_packet_destroy(Event.packet);
                 return true;
             }
@@ -191,12 +198,51 @@ void NetTransport::Send(const NetPeerID InPeer, const uint8_t InChannel, const s
     {
         /* Not queued, so still ours to free. */
         enet_packet_destroy(Packet);
+        return;
     }
+    Traffic& Count = Counters[InPeer];
+    Count.BytesSent += InBytes.size();
+    ++Count.PacketsSent;
 }
 
 void NetTransport::Flush()
 {
-    if(Host) { enet_host_flush(Host); }
+    if(!Host) { return; }
+    enet_host_flush(Host);
+
+    const auto Now = std::chrono::steady_clock::now();
+    for(auto& Entry : Counters)
+    {
+        Traffic& T = Entry.second;
+        const double Seconds = std::chrono::duration<double>(Now - T.WindowStart).count();
+        if(Seconds < 1.0) { continue; }
+        T.SendRate       = float(double(T.BytesSent - T.WindowSent) / Seconds);
+        T.ReceiveRate    = float(double(T.BytesReceived - T.WindowReceived) / Seconds);
+        T.WindowSent     = T.BytesSent;
+        T.WindowReceived = T.BytesReceived;
+        T.WindowStart    = Now;
+    }
+}
+
+bool NetTransport::GetPeerStats(const NetPeerID InPeer, NetPeerStats& OutStats) const
+{
+    const auto Found = Peers.find(InPeer);
+    if(Found == Peers.end() || Found->second->state != ENET_PEER_STATE_CONNECTED) { return false; }
+    const ENetPeer* Peer = Found->second;
+    OutStats = NetPeerStats();
+    OutStats.RoundTripMs         = Peer->roundTripTime;
+    OutStats.RoundTripVarianceMs = Peer->roundTripTimeVariance;
+    OutStats.PacketLossPercent   = 100.0f * float(Peer->packetLoss) / float(ENET_PEER_PACKET_LOSS_SCALE);
+    if(const auto Count = Counters.find(InPeer); Count != Counters.end())
+    {
+        OutStats.BytesSent             = Count->second.BytesSent;
+        OutStats.BytesReceived         = Count->second.BytesReceived;
+        OutStats.PacketsSent           = Count->second.PacketsSent;
+        OutStats.PacketsReceived       = Count->second.PacketsReceived;
+        OutStats.SendBytesPerSecond    = Count->second.SendRate;
+        OutStats.ReceiveBytesPerSecond = Count->second.ReceiveRate;
+    }
+    return true;
 }
 
 void NetTransport::Disconnect(const NetPeerID InPeer)
@@ -221,6 +267,7 @@ void NetTransport::Close()
         Host = nullptr;
     }
     Peers.clear();
+    Counters.clear();
     if(bInitialized)
     {
         ReleaseENet();

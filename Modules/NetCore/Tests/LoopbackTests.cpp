@@ -503,6 +503,23 @@ int main()
     Check(Client.GetLocalClientId() == ConnectedId && ConnectedId != NET_CLIENT_NONE, "the client knows its id");
     Check(Server.GetClientCount() == 1, "the server counts one client");
 
+    // --- connection stats ----------------------------------------------------------
+    {
+        /* Long enough for a whole second of rates. */
+        const auto Until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1300);
+        while(std::chrono::steady_clock::now() < Until) { Step(Both); }
+        NetPeerStats ToServer, ToClient, Nobody;
+        Check(Client.GetServerStats(ToServer) && ToServer.BytesSent > 0 && ToServer.BytesReceived > 0 && ToServer.PacketsReceived > 0,
+              "a client reports its traffic with the server");
+        Check(Server.GetClientStats(ConnectedId, ToClient) && ToClient.BytesSent > 0 && ToClient.PacketsReceived > 0,
+              "the server reports its traffic with that client");
+        Check(ToServer.RoundTripMs < 500 && ToClient.RoundTripMs < 500, "both report a round trip, a loopback's");
+        Check(ToClient.SendBytesPerSecond > 0.0f && ToServer.ReceiveBytesPerSecond > 0.0f,
+              "and the last second's rates: a batch every tick, and its acks");
+        Check(!Server.GetClientStats(ConnectedId + 99, Nobody) && !Server.GetServerStats(Nobody) && !Client.GetClientStats(0, Nobody),
+              "no stats for a client that is not there, or from the wrong end");
+    }
+
     // --- the level's own entity is matched by GUID, not duplicated --------------
     Check(StepUntil(Both, [&] { return ClientDoor.GetComponent<NetComponent>()->NetId != 0; }), "the level entity is bound by GUID");
     Check(ClientWorld.GetEntityCount() == 1, "no duplicate was created for it");

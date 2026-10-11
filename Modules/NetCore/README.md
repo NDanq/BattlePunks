@@ -273,6 +273,21 @@ resent: a whole round trip of frozen state. So state does not go reliably.
 sends, for testing. In NetArena at 20% on every process, prediction's worst
 correction stays 0: each batch that arrives is enough on its own.
 
+### Connection stats
+
+`NimbleEngine::GetNetStats(Client, Stats)` (`NetFacade.h`) reports a
+connection as this end sees it. On a client that is its link to the server;
+on a server, its link to `Client` (an RPC's `SenderClient`, say). It gives:
+
+- the round trip and its variance (ENet's smoothed estimate)
+- packet loss (ENet's, from reliable resends)
+- bytes and packets each way since connecting
+- each direction's rate over the last whole second
+
+`NetSession::GetServerStats` / `GetClientStats` are the same, inside NetCore.
+Steampunk PvP shows a client's ping with it, and rewinds a shot by half its
+shooter's round trip.
+
 ### Timeouts
 
 `TimeoutMs` is both ENet's minimum and its maximum: how long either end
@@ -333,6 +348,7 @@ The road from here:
 a client in one process over 127.0.0.1. It covers:
 
 - the handshake
+- connection stats: traffic, round trip and rates, from both ends
 - spawning, both matched by GUID and new
 - components added and removed after a spawn, reparenting, and replication
   turned off and on, clean and under 50% loss

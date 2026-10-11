@@ -43,6 +43,19 @@ namespace NetCore
          * network would. 0 in a real game. */
         uint32_t SimulatedLossPercent = 0;
     };
+
+    /* One connection, as seen from this end: what NetSession::GetServerStats
+     * (a client) and GetClientStats (a server) report. */
+    struct NetPeerStats
+    {
+        uint32_t RoundTripMs         = 0;      // ENet's smoothed round trip
+        uint32_t RoundTripVarianceMs = 0;
+        float    PacketLossPercent   = 0.0f;   // ENet's estimate, from reliable resends
+        uint64_t BytesSent     = 0, BytesReceived   = 0;   // payload, since connected
+        uint64_t PacketsSent   = 0, PacketsReceived = 0;
+        float    SendBytesPerSecond    = 0.0f;   // over the last whole second
+        float    ReceiveBytesPerSecond = 0.0f;
+    };
 }
 
 #endif //NETCORE_NETTYPES_H

@@ -1607,6 +1607,18 @@ NetClientID NetSession::GetLocalClientId() const { return P->LocalClient; }
 uint16_t    NetSession::GetPort() const          { return P->Transport.GetPort(); }
 size_t      NetSession::GetClientCount() const   { return P->GetWelcomedCount(); }
 
+bool NetSession::GetServerStats(NetPeerStats& OutStats) const
+{
+    return P->Role == ENetRole::Client && P->ServerPeer != NET_PEER_NONE && P->Transport.GetPeerStats(P->ServerPeer, OutStats);
+}
+
+bool NetSession::GetClientStats(const NetClientID InClient, NetPeerStats& OutStats) const
+{
+    if(P->Role != ENetRole::Server) { return false; }
+    const NetPeerID Peer = P->PeerOfClient(InClient);
+    return Peer != NET_PEER_NONE && P->Transport.GetPeerStats(Peer, OutStats);
+}
+
 void NetSession::BindWorld(GameCore::World& InWorld, const char* InLevelName)
 {
     UnbindWorld();
