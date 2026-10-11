@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Instance Guid="78c2efa7abacf93890278ddcc4486d28" Name="Ball" Prefab="Content/Prefabs/Ball.nmprefab">
-  <Entity Id="1">
-    <Component Type="Transform" Version="1">
-      <Position X="640" Y="70" Z="0" />
-      <Scale X="14" Y="14" Z="1" />
-    </Component>
-  </Entity>
-</Instance>

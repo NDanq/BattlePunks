@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Instance Guid="99606bf85bb4de43ab9a2be309ef6fe0" Name="Buggy" Prefab="Content/Prefabs/Vehicle.nmprefab">
-  <Entity Id="1" Name="Buggy">
-    <Component Type="Transform" Version="1">
-      <Position X="3000" Y="80" Z="-3550" />
-    </Component>
-  </Entity>
-</Instance>

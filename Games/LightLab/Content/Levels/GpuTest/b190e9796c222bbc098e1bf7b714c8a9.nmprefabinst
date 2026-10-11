@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Instance Guid="b190e9796c222bbc098e1bf7b714c8a9" Name="SteerableFox" Prefab="Content/Prefabs/SteerableFox.nmprefab">
-  <Entity Id="1">
-    <Component Type="Transform" Version="1">
-      <Position X="180" Y="0" Z="-5120" />
-      <Rotation X="0" Y="0" Z="0" />
-    </Component>
-  </Entity>
-</Instance>
