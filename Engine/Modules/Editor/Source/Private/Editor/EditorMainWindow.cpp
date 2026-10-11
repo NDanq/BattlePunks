@@ -2407,6 +2407,33 @@ void EditorMainWindow::RegisterConsoleCommands()
     {
         CollabSession->Leave();
     });
+    Console.Register(QStringLiteral("collab.play"), QStringLiteral("[stop]"),
+                     QStringLiteral("Play Together: start a shared run of the open level on the session server (Play > Play Together), "
+                                    "or stop the one you started"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.value(0) == QStringLiteral("stop"))
+        {
+            CollabSession->StopPlayTogether();
+            return;
+        }
+        CollabSession->RequestPlayTogether(CurrentPath.isEmpty() ? QString() : EditorContent::ToRuntimePath(CurrentPath));
+    });
+    Console.Register(QStringLiteral("collab.join"), QString(), QStringLiteral("Join the Play Together run that's going"),
+                     [this](const QStringList&)
+    {
+        if(!CollabSession->IsRunActive())
+        {
+            Console.Print(QStringLiteral("No run is going"));
+            return;
+        }
+        if(!CollabSession->GetJoinBlocker().isEmpty())
+        {
+            Console.PrintError(CollabSession->GetJoinBlocker());
+            return;
+        }
+        CollabSession->JoinPlayTogether();
+    });
     Console.Register(QStringLiteral("collab.status"), QString(), QStringLiteral("Who is in the collaboration session, and what they're doing"),
                      [this](const QStringList&)
     {
