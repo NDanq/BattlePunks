@@ -309,6 +309,12 @@ void EditorCollabSession::Handle(const Collab::ClientEvent& InEvent)
         case EType::BranchAdvanced:
             OnBranchAdvanced(InEvent);
             break;
+        case EType::BuildStatus:
+            OnBuildStatus(InEvent.Build);
+            break;
+        case EType::Validation:
+            OnValidation(InEvent.Report);
+            break;
         case EType::Notified:
             EditorNotifications::Notify(ToSeverity(InEvent.Severity), ToQ(InEvent.Title), ToQ(InEvent.Text), QStringLiteral("Collab"));
             break;
@@ -589,6 +595,84 @@ void EditorCollabSession::PostPending()
     Note.ReplaceKey = BranchKey;
     Note.Actions    = { { QStringLiteral("Pull & Reload"), [this]() { PullAndReload(); } },
                         { QStringLiteral("Later"), nullptr } };
+    if(EditorNotifications* Notes = EditorNotifications::Get())
+    {
+        Notes->Post(std::move(Note));
+    }
+}
+
+// --- The server's build (P4) ----------------------------------------------------------
+
+void EditorCollabSession::OnBuildStatus(const Collab::BuildStatusMessage& InStatus)
+{
+    const QString Short   = ToQ(InStatus.Oid).left(8);
+    const QString Commit  = InStatus.Summary.empty() ? Short : QStringLiteral("%1 (%2)").arg(Short, ToQ(InStatus.Summary));
+    const QString BuildKey = QStringLiteral("collab.build");
+    EditorNotifications::Notification Note;
+    Note.Source     = QStringLiteral("Collab");
+    Note.ReplaceKey = BuildKey;
+    switch(InStatus.State)
+    {
+        case Collab::EBuildState::Building:
+            Note.Severity = ESeverity::Info;
+            Note.Title    = QStringLiteral("The server is building %1").arg(Short);
+            Note.Body     = QStringLiteral("%1's %2: the game module and its server, then every world and prefab.")
+                            .arg(ToQ(InStatus.Author), Commit);
+            Note.Progress = EditorNotifications::Indeterminate;
+            break;
+        case Collab::EBuildState::Succeeded:
+            Note.Severity = ESeverity::Success;
+            Note.Title    = QStringLiteral("The server built %1").arg(Short);
+            Note.Body     = QStringLiteral("%1, in %2 s.").arg(Commit).arg(InStatus.Seconds);
+            break;
+        case Collab::EBuildState::Failed:
+            Note.Severity = ESeverity::Error;
+            Note.Title    = QStringLiteral("The session's build failed");
+            Note.Body     = QStringLiteral("%1's %2:\n%3").arg(ToQ(InStatus.Author), Commit, ToQ(InStatus.FirstError));
+            break;
+        case Collab::EBuildState::Idle:
+            emit BuildChanged();
+            return;
+    }
+    if(EditorNotifications* Notes = EditorNotifications::Get())
+    {
+        Notes->Post(std::move(Note));
+    }
+    emit BuildChanged();
+}
+
+void EditorCollabSession::OnValidation(const Collab::ValidationReportMessage& InReport)
+{
+    if(InReport.Problems.empty())
+    {
+        return;
+    }
+    const QString Short = ToQ(InReport.Oid).left(8);
+    const int Count = int(InReport.Problems.size());
+    QStringList Lines;
+    for(const Collab::ContentProblem& Each : InReport.Problems)
+    {
+        Lines << QStringLiteral("%1: %2").arg(ToQ(Each.Path), ToQ(Each.Message));
+    }
+
+    EditorNotifications::Notification Note;
+    Note.Severity   = ESeverity::Warning;
+    Note.Title      = QStringLiteral("%1 content problem%2 in %3").arg(Count).arg(Count == 1 ? QString() : QStringLiteral("s")).arg(Short);
+    Note.Body       = Lines.mid(0, 3).join(QLatin1Char('\n'));
+    if(Count > 3)
+    {
+        Note.Body += QStringLiteral("\n… and %1 more").arg(Count - 3);
+    }
+    Note.Source     = QStringLiteral("Collab");
+    Note.ReplaceKey = QStringLiteral("collab.validation");
+    Note.Actions    = { { QStringLiteral("Show in Console"), [Lines, Short]()
+    {
+        CORE_LOG_WARN("[Collab] content problems in " + ToStd(Short) + ":")
+        for(const QString& Line : Lines)
+        {
+            CORE_LOG_WARN("[Collab]   " + ToStd(Line))
+        }
+    } } };
     if(EditorNotifications* Notes = EditorNotifications::Get())
     {
         Notes->Post(std::move(Note));

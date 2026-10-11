@@ -3,12 +3,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "Public/Collab/CollabAPI.h"
 #include "Public/Collab/CollabProtocol.h"
+#include "Public/Collab/ContentWorker.h"
 
 /*
  * The server side of Collab: what NimbleEditorServer runs. Many sessions at
@@ -27,7 +29,24 @@ namespace Collab
         uint32_t    TimeoutMs = 15000;         // an editor silent this long is gone
         uint32_t    HelloTimeoutMs = 10000;    // a connection that never says Hello
         size_t      MaxPeers  = 64;
+
+        /* Content workers (ContentWorker.h), one per session, when RepoPath is
+         * this host's checkout of the project; empty, none. */
+        std::string RepoPath;
+        std::string DataDir;                   // worktrees and worker logs; empty: Saved/CollabWorkers
+        std::string WorkerExecutable;          // empty: NimbleContentWorker beside this executable
+        std::string WorkerPreset;              // empty: GetDefaultWorkerPreset()
+        std::string WorkerCMake;               // empty: the worker finds one (ContentWorker.h)
+        uint32_t    WorkerFetchIntervalMs = 30000;
+
+        /* Tests: a worker started (and stopped, by session id) in-process
+         * instead of as NimbleContentWorker. */
+        std::function<void(const WorkerConfig&)> LaunchWorker;
+        std::function<void(uint32_t)>            StopWorker;
     };
+
+    /* server-relwithdebinfo-msvc on Windows, -clang elsewhere. */
+    COLLAB_API const char* GetDefaultWorkerPreset();
 
     /* For the server's status line and the tests. */
     struct COLLAB_API SessionSummary
@@ -37,6 +56,8 @@ namespace Collab
         std::string              Branch;
         std::string              EngineTree;
         std::string              Tip;       // the last pushed commit, if any was announced
+        BuildStatusMessage       LastBuild; // the worker's last report; Idle without one
+        bool                     bWorkerConnected = false;
         std::vector<MemberState> Members;
     };
 

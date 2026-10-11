@@ -73,6 +73,10 @@ set(COLLAB_SOURCES
         Source/Private/Collab/CollabProtocol.cpp
         Source/Private/Collab/CollabClient.cpp
         Source/Private/Collab/CollabServer.cpp
+        Source/Public/Collab/ContentWorker.h
+        Source/Private/Collab/ContentWorker.cpp
+        Source/Private/Collab/CollabProcess.h
+        Source/Private/Collab/CollabProcess.cpp
 )
 
 # ENet is PRIVATE -- no public header includes enet.h.

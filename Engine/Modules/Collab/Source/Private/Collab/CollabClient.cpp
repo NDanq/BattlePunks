@@ -65,6 +65,7 @@ void CollabClient::Reset()
     MyId      = 0;
     SessionId = 0;
     SessionEngine.clear();
+    LastBuild = BuildStatusMessage();
     Roster.clear();
     Sent      = MemberState();
     bSentOnce = false;
@@ -260,6 +261,29 @@ void CollabClient::Poll()
                         Out.MemberId = Advanced.PusherId;
                         Out.User     = Advanced.Pusher;
                         Out.Move     = std::move(Advanced.Move);
+                        Push(std::move(Out));
+                        break;
+                    }
+                    case EMessage::BuildStatus:
+                    {
+                        ClientEvent Out;
+                        if(!Decode(Event.Data, Out.Build))
+                        {
+                            break;
+                        }
+                        LastBuild = Out.Build;
+                        Out.Type = ClientEvent::EType::BuildStatus;
+                        Push(std::move(Out));
+                        break;
+                    }
+                    case EMessage::ValidationReport:
+                    {
+                        ClientEvent Out;
+                        if(!Decode(Event.Data, Out.Report))
+                        {
+                            break;
+                        }
+                        Out.Type = ClientEvent::EType::Validation;
                         Push(std::move(Out));
                         break;
                     }

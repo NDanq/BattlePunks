@@ -1,6 +1,6 @@
 # Editor Collaboration — design and implementation plan
 
-Status: **P0–P3 done**; P4–P6 planned (2026-10-11). Branch `feat-editor-collab`.
+Status: **P0–P4 done**; P5–P6 planned (2026-10-11). Branch `feat-editor-collab`.
 
 Several people work on one game project at once. An **EditorServer** on a host
 machine tracks who is in the session, tells everyone when the shared branch
@@ -188,8 +188,10 @@ engine change is refused.
 ### P4 · Content worker (L)
 
 - **`NimbleContentWorker`**, started by the server per session; talks to it
-  over stdin/stdout length-prefixed frames using the same message types as
-  the network protocol.
+  with the same message types as the network protocol. *As built:* over the
+  Collab connection itself, on loopback, introduced by a one-time key
+  (`WorkerHello`), rather than stdin/stdout frames: one transport and framing,
+  and no pipe code per platform.
 - Keeps its own `git worktree` of the session branch under the server's data
   folder and fast-forwards it on every `BranchAdvanced`.
 - Builds GameModule and `<Game>Server` with a server preset —

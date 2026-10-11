@@ -8,17 +8,22 @@
  * Real sockets on 127.0.0.1, on ports the OS picks. Every wait is bounded.
  */
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
+#include <memory>
 #include <functional>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include "Private/Collab/CollabProcess.h"
 #include "Private/Collab/CollabTransport.h"
 #include "Public/Collab/CollabClient.h"
 #include "Public/Collab/CollabProtocol.h"
 #include "Public/Collab/CollabServer.h"
+#include "Public/Collab/ContentWorker.h"
 
 using namespace Collab;
 
@@ -321,6 +326,239 @@ namespace
         Check(!BobLog.Find(ClientEvent::EType::BranchAdvanced), "and the others aren't");
     }
 
+    // === The content worker ================================================
+
+    namespace fs = std::filesystem;
+
+    bool RunGit(const fs::path& InDir, std::vector<std::string> InArgs, std::string* OutText = nullptr)
+    {
+        InArgs.insert(InArgs.begin(), { "git", "-C", InDir.generic_u8string() });
+        const ProcessResult Result = RunProcess(InArgs);
+        if(OutText)
+        {
+            *OutText = Result.Output;
+            while(!OutText->empty() && (OutText->back() == '\n' || OutText->back() == '\r')) { OutText->pop_back(); }
+        }
+        return Result.bStarted && Result.ExitCode == 0;
+    }
+
+    void WriteText(const fs::path& InPath, const std::string& InText)
+    {
+        fs::create_directories(InPath.parent_path());
+        FILE* File = nullptr;
+#if defined(_WIN32)
+        _wfopen_s(&File, InPath.wstring().c_str(), L"wb");
+#else
+        File = std::fopen(InPath.c_str(), "wb");
+#endif
+        if(File)
+        {
+            std::fwrite(InText.data(), 1, InText.size(), File);
+            std::fclose(File);
+        }
+    }
+
+    /* Builds succeed unless the game folder holds BROKEN; the report finds
+     * every .nmentity that says "not xml". */
+    class FakeToolchain final : public IWorkerToolchain
+    {
+    public:
+        ToolchainBuild Build(const std::string& InGameDir, const std::string&) override
+        {
+            ToolchainBuild Out;
+            if(fs::exists(fs::u8path(InGameDir) / "BROKEN"))
+            {
+                Out.Output     = "[1/2] Building Pickup.cpp\nFAILED: Pickup.cpp.obj\nPickup.cpp(3): error C2065: 'Ammo': undeclared identifier\n";
+                Out.FirstError = FindFirstBuildError(Out.Output);
+                return Out;
+            }
+            Out.bOk = true;
+            return Out;
+        }
+
+        ToolchainReport Report(const std::string& InGameDir, const std::string&, const std::string&) override
+        {
+            ToolchainReport Out;
+            Out.bOk        = true;
+            Out.Module     = "WorldsLabGame";
+            Out.SchemaHash = 0x2f8d597745b8342full;
+            for(const fs::directory_entry& Each : fs::recursive_directory_iterator(fs::u8path(InGameDir) / "Content"))
+            {
+                const std::string Name = Each.path().generic_u8string();
+                if(Name.size() > 8 && Name.compare(Name.size() - 8, 8, ".nmworld") == 0)
+                {
+                    ++Out.Checked;
+                }
+                if(Name.size() > 9 && Name.compare(Name.size() - 9, 9, ".nmentity") == 0)
+                {
+                    FILE* File = nullptr;
+#if defined(_WIN32)
+                    _wfopen_s(&File, Each.path().wstring().c_str(), L"rb");
+#else
+                    File = std::fopen(Each.path().c_str(), "rb");
+#endif
+                    char Buffer[64] = {};
+                    if(File)
+                    {
+                        std::fread(Buffer, 1, sizeof(Buffer) - 1, File);
+                        std::fclose(File);
+                    }
+                    if(std::string(Buffer).find("not xml") != std::string::npos)
+                    {
+                        Out.Problems.push_back({ fs::relative(Each.path(), fs::u8path(InGameDir)).generic_u8string(),
+                                                 "is not valid XML" });
+                    }
+                }
+            }
+            return Out;
+        }
+    };
+
+    void TestWorkerHelpers()
+    {
+        std::printf("--- worker helpers\n");
+        Check(FindFirstBuildError("ninja: Entering\nFAILED: a.obj\nC:/x/a.cpp(12): error C2065: 'X': undeclared\nmore\n")
+              == "C:/x/a.cpp(12): error C2065: 'X': undeclared", "the compiler's error, not Ninja's FAILED");
+        Check(FindFirstBuildError("a.cpp:3:7: error: use of undeclared identifier\n") == "a.cpp:3:7: error: use of undeclared identifier",
+              "clang's");
+        Check(FindFirstBuildError("CMake Error at CMakeLists.txt:4 (add_library):\n") == "CMake Error at CMakeLists.txt:4 (add_library):",
+              "CMake's");
+        Check(FindFirstBuildError("FAILED: link\n") == "FAILED: link", "Ninja's when there's nothing better");
+        Check(FindFirstBuildError("all good\n").empty(), "none in a clean log");
+
+        ToolchainReport Report;
+        Check(ParseContentReport("module\tWorldsLabGame\nschema\t2f8d597745b8342f\nchecked\t13\n"
+                                 "problem\tContent/Levels/A/x.nmentity\tis not valid XML\n", Report), "a report parses");
+        Check(Report.Module == "WorldsLabGame" && Report.SchemaHash == 0x2f8d597745b8342full && Report.Checked == 13, "its fields");
+        Check(Report.Problems.size() == 1 && Report.Problems[0].Path == "Content/Levels/A/x.nmentity"
+              && Report.Problems[0].Message == "is not valid XML", "its problem");
+        Check(!ParseContentReport("module\t\nschema\t0\n", Report), "no module: no report");
+    }
+
+    void TestWorker()
+    {
+        std::printf("--- the content worker\n");
+        if(!RunGit(fs::current_path(), { "--version" }))
+        {
+            std::printf("  (git isn't on PATH: skipped)\n");
+            return;
+        }
+        const fs::path Temp = fs::temp_directory_path() / ("CollabWorkerTest-" + std::to_string(Clock::now().time_since_epoch().count()));
+        fs::create_directories(Temp);
+        const fs::path Remote = Temp / "remote.git";
+        const fs::path Host   = Temp / "host";
+        const fs::path Bob    = Temp / "bob";
+        RunGit(Temp, { "init", "-q", "--bare", "-b", "main", Remote.generic_u8string() });
+        RunGit(Temp, { "-c", "core.autocrlf=false", "clone", "-q", Remote.generic_u8string(), Bob.generic_u8string() });
+        RunGit(Bob, { "config", "user.name", "bob" });
+        RunGit(Bob, { "config", "user.email", "bob@example.com" });
+        RunGit(Bob, { "config", "commit.gpgsign", "false" });
+        RunGit(Bob, { "switch", "-q", "-c", "main" });
+        WriteText(Bob / "Games/WorldsLab/Config/DefaultEngine.ini", "[Game]\nModule=WorldsLabGame\n");
+        WriteText(Bob / "Games/WorldsLab/Content/Levels/A.nmworld", "<World Format=\"1\" />\n");
+        WriteText(Bob / "Games/WorldsLab/Content/Levels/A/good.nmentity", "<Entity />\n");
+        WriteText(Bob / "Engine/Core.txt", "engine\n");
+        RunGit(Bob, { "add", "-A" });
+        RunGit(Bob, { "commit", "-qm", "Start" });
+        Check(RunGit(Bob, { "push", "-q", "-u", "origin", "main" }), "a shared repository");
+        RunGit(Temp, { "-c", "core.autocrlf=false", "clone", "-q", Remote.generic_u8string(), Host.generic_u8string() });
+
+        /* The worker, in-process with the fake toolchain. */
+        std::atomic<bool> bStopWorker{ false };
+        std::thread       WorkerThread;
+        int               Launched = 0;
+        CollabServer Server;
+        ServerConfig Config;
+        Config.Port     = 0;
+        Config.RepoPath = Host.generic_u8string();
+        Config.DataDir  = (Temp / "data").generic_u8string();
+        Config.WorkerFetchIntervalMs = 300;
+        Config.LaunchWorker = [&](const WorkerConfig& InWorker)
+        {
+            ++Launched;
+            Check(InWorker.Module == "WorldsLabGame" && InWorker.Branch == "main", "the worker is told the game and the branch");
+            Check(!InWorker.Key.empty() && InWorker.SessionId != 0, "and its key and session");
+            WorkerThread = std::thread([InWorker, &bStopWorker]()
+            {
+                ContentWorker Worker(InWorker, std::make_unique<FakeToolchain>());
+                Worker.Run(bStopWorker);
+            });
+        };
+        Config.StopWorker = [&](uint32_t)
+        {
+            bStopWorker = true;
+            if(WorkerThread.joinable()) { WorkerThread.join(); }
+        };
+        Check(Server.Start(Config), "a server with a checkout");
+
+        ClientIdentity AliceId = Identity("alice");
+        AliceId.ProjectId = MakeProjectId("WorldsLabGame", Remote.generic_u8string());
+        AliceId.Branch    = "main";
+        CollabClient Alice;
+        EventLog AliceLog;
+        Check(JoinOrRefuse(Server, {}, Alice, AliceLog, AliceId) && AliceLog.Find(ClientEvent::EType::Joined), "Alice joins");
+        Check(Launched == 1, "a new session starts its worker");
+        Check(PumpUntil(Server, { &Alice }, [&]() { return !Server.GetSessions().empty() && Server.GetSessions()[0].bWorkerConnected; }, 10000),
+              "the worker connects with its key");
+
+        /* The first build. */
+        Check(PumpUntil(Server, { &Alice }, [&]() { AliceLog.Drain(Alice); return Alice.GetBuildStatus().State == EBuildState::Succeeded; }, 30000),
+              "it builds the branch");
+        Check(AliceLog.Find(ClientEvent::EType::BuildStatus) && AliceLog.Find(ClientEvent::EType::BuildStatus)->Build.State == EBuildState::Building,
+              "Building first, then Succeeded");
+        Check(Alice.GetBuildStatus().SchemaHash == 0x2f8d597745b8342full, "with the schema hash");
+        Check(Alice.GetBuildStatus().Author == "bob" && Alice.GetBuildStatus().Summary == "Start", "naming the commit");
+        Check(fs::exists(Temp / "data/Worktrees/WorldsLabGame-main/Games/WorldsLab/Content/Levels/A.nmworld"), "in its own worktree");
+
+        /* A push from a terminal, with a broken entity file: the worker finds it. */
+        AliceLog.Clear();
+        WriteText(Bob / "Games/WorldsLab/Content/Levels/A/bad.nmentity", "not xml at all\n");
+        RunGit(Bob, { "add", "-A" });
+        RunGit(Bob, { "commit", "-qm", "Bad entity" });
+        RunGit(Bob, { "push", "-q" });
+        Check(PumpUntil(Server, { &Alice }, [&]() { AliceLog.Drain(Alice); return AliceLog.Find(ClientEvent::EType::Validation) != nullptr; }, 30000),
+              "a push outside the editor is found and checked");
+        const ClientEvent* Advanced = AliceLog.Find(ClientEvent::EType::BranchAdvanced);
+        Check(Advanced && Advanced->MemberId == 0 && Advanced->User == "bob", "relayed as bob's push, found by the worker");
+        Check(Advanced && Advanced->Move.Commits.size() == 1 && Advanced->Move.Commits[0].Summary == "Bad entity", "with its commit");
+        Check(Advanced && Advanced->Move.Paths == std::vector<std::string>{ "Games/WorldsLab/Content/Levels/A/bad.nmentity" }, "and its path");
+        const ClientEvent* Validation = AliceLog.Find(ClientEvent::EType::Validation);
+        Check(Validation && Validation->Report.Problems.size() == 1
+              && Validation->Report.Problems[0].Path == "Games/WorldsLab/Content/Levels/A/bad.nmentity", "the broken entity file is flagged");
+        Check(Validation && Validation->Report.Author == "bob" && Validation->Report.Checked == 1, "bob's, one world checked");
+
+        /* A late joiner hears where the build stands. */
+        CollabClient Carol;
+        EventLog CarolLog;
+        ClientIdentity CarolId = AliceId;
+        CarolId.User = "carol";
+        JoinOrRefuse(Server, { &Alice }, Carol, CarolLog, CarolId);
+        Check(PumpUntil(Server, { &Alice, &Carol }, [&]() { return Carol.GetBuildStatus().State == EBuildState::Succeeded; }),
+              "a late joiner gets the last build status");
+
+        /* A build that fails says why. */
+        AliceLog.Clear();
+        WriteText(Bob / "Games/WorldsLab/BROKEN", "x\n");
+        RunGit(Bob, { "add", "-A" });
+        RunGit(Bob, { "commit", "-qm", "Breaks the build" });
+        RunGit(Bob, { "push", "-q" });
+        Check(PumpUntil(Server, { &Alice, &Carol }, [&]() { return Alice.GetBuildStatus().State == EBuildState::Failed; }, 30000),
+              "a failed build is reported");
+        Check(Alice.GetBuildStatus().FirstError == "Pickup.cpp(3): error C2065: 'Ammo': undeclared identifier", "with the first error");
+        Check(Alice.GetBuildStatus().Author == "bob", "and whose commit");
+
+        /* The session ends: the worker stops. */
+        Alice.Leave();
+        Carol.Leave();
+        Check(PumpUntil(Server, { &Alice, &Carol }, [&]() { return Server.GetSessions().empty(); }), "the session ends");
+        Check(bStopWorker.load() && !WorkerThread.joinable(), "and its worker stops");
+        Server.Stop();
+
+        std::error_code Ignored;
+        RunGit(Host, { "worktree", "prune" });
+        fs::remove_all(Temp, Ignored);
+    }
+
     void TestRefusals()
     {
         std::printf("--- refusals\n");
@@ -460,6 +698,8 @@ int main()
     TestHelpers();
     TestSession();
     TestPushes();
+    TestWorkerHelpers();
+    TestWorker();
     TestRefusals();
     TestTimeouts();
 

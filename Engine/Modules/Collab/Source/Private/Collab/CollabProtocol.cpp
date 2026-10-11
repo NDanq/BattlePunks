@@ -159,6 +159,55 @@ void BranchAdvancedMessage::Serialize(EngineCore::Archive& Ar)
     Move.Serialize(Ar);
 }
 
+void WorkerHelloMessage::Serialize(EngineCore::Archive& Ar)
+{
+    Ar << Protocol << SessionId << Key;
+}
+
+const char* GetBuildStateName(const EBuildState InState)
+{
+    switch(InState)
+    {
+        case EBuildState::Idle:      return "idle";
+        case EBuildState::Building:  return "building";
+        case EBuildState::Succeeded: return "built";
+        case EBuildState::Failed:    return "failed";
+    }
+    return "unknown";
+}
+
+void BuildStatusMessage::Serialize(EngineCore::Archive& Ar)
+{
+    Ar << Oid;
+    SerializeEnum(Ar, State);
+    Ar << SchemaHash << Author << Summary << FirstError << Seconds;
+}
+
+void ContentProblem::Serialize(EngineCore::Archive& Ar)
+{
+    Ar << Path << Message;
+}
+
+void ValidationReportMessage::Serialize(EngineCore::Archive& Ar)
+{
+    Ar << Oid << Author << Checked;
+    uint32_t Count = uint32_t(Problems.size());
+    Ar << Count;
+    if(Ar.IsLoading())
+    {
+        if(Count > MaxListEntries)
+        {
+            Ar.SetError("Collab: too many problems");
+            return;
+        }
+        Problems.assign(Count, ContentProblem());
+    }
+    for(ContentProblem& Each : Problems)
+    {
+        Each.Serialize(Ar);
+    }
+}
+
 EMessage PeekType(const std::vector<uint8_t>& InBytes)
 {
     EngineCore::Archive Ar = EngineCore::Archive::ForReading(InBytes);

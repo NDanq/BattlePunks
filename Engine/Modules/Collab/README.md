@@ -57,9 +57,11 @@ the editor shows as a warning before git has a conflict to report.
 | `Notify` | S→C | severity, title, body |
 | `Pushed` | C→S | branch, old commit, new commit, the commits (oid, author, summary), changed paths |
 | `BranchAdvanced` | S→others | the pusher's member ID and name, and the push as above |
+| `WorkerHello` | worker→S | protocol, session ID, the key the server started it with |
+| `BuildStatus` | worker→S→all | commit, state (building, built, failed), schema hash, author, summary, first error, seconds |
+| `ValidationReport` | worker→S→the author | commit, author, files checked, problems (path, message) |
 
-`BuildStatus`, `ValidationReport` and the `Play*` messages are numbered for
-P4–P5 and not sent yet. Appending a field at the end
+The `Play*` messages are numbered for P5 and not sent yet. Appending a field at the end
 of a payload is compatible (Archive skips what a reader doesn't know); any
 other layout change bumps `ProtocolVersion`.
 
@@ -71,10 +73,36 @@ everyone else as `BranchAdvanced`; a push of the same tip again, or of another
 branch, isn't relayed (the pusher is told the latter). Pushes made outside the
 editor aren't seen until P4's worker fetches the branch itself.
 
+## The content worker
+
+Given `--repo` (this host's checkout of the project), the server starts a
+`NimbleContentWorker` for each session. It connects back over loopback as a
+Collab client, introduced by a one-time key (`WorkerHello`), and for each new
+tip of the session branch:
+
+1. keeps a detached `git worktree` of it under `--data` (one per game and
+   branch, kept between sessions so builds are incremental), fetching every
+   30 s and at once when an editor pushes;
+2. tells the server what moved if no editor did -- a push from a terminal
+   reaches the editors as a `BranchAdvanced` too;
+3. builds the game module and `<Game>Server` with `--preset`
+   (`server-relwithdebinfo-msvc` on Windows, `-clang` elsewhere; Visual
+   Studio's own CMake and Ninja on Windows unless `--cmake` says otherwise);
+4. runs `<Game>Server -collab-report=<file>` (`Application::ExecReport`):
+   the NetCore schema hash, and every world and prefab loaded by that build,
+   their warnings and errors and any asset path they name that doesn't exist;
+5. reports `BuildStatus` to everyone (a late joiner gets the last one) and the
+   `ValidationReport` to the commit's author, if they're in the session.
+
+Game code only ever runs in the `<Game>Server` child: never in the worker or
+the server. The worker stops with its session. It builds and runs whatever is
+pushed, so a server with `--repo` is for a trusted team only.
+
 ## Running the server
 
 ```
 NimbleEditorServer [--port 7788] [--password TEXT] [--logs Saved/Logs]
+                   [--repo DIR [--data DIR] [--preset NAME] [--cmake PATH]]
 ```
 
 `NIMBLE_COLLAB_PASSWORD` can stand in for `--password`, so it stays out of
@@ -90,7 +118,11 @@ dock, or `collab.connect host[:port] [name] [password]`, `collab.leave`,
 `CollabLoopbackTests` (`Collab.Loopback`): a server and several clients over
 127.0.0.1 covering the helpers, joining, presence and its changes, overlaps,
 another branch's own session, leaving, every refusal, and both timeouts
-(nothing answering, an editor gone silent). The editor's side is
+(nothing answering, an editor gone silent). And the content worker on real git
+repositories with a fake build: its first build and schema hash, a push from
+outside the editor found and relayed, a broken entity file reported, a failed
+build's first error, a late joiner's build status, and the worker stopping
+with its session. The editor's side is
 `NimbleEditorCollabTests` (`Editor.Collab`).
 
 ## Sources

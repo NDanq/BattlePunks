@@ -114,6 +114,8 @@ signals:
     void RosterChanged();
     /* Pull & Reload ended; bInPulled false if it didn't pull. */
     void PullAndReloadFinished(bool bInPulled);
+    /* The server's build of the session branch moved on (GetClient().GetBuildStatus()). */
+    void BuildChanged();
 
 private:
     void Poll();
@@ -123,6 +125,8 @@ private:
     QString ToRepoRelative(const QString& InPath) const;
     QString ToAbsolute(const QString& InRepoPath) const;
     void OnBranchAdvanced(const Collab::ClientEvent& InEvent);
+    void OnBuildStatus(const Collab::BuildStatusMessage& InStatus);
+    void OnValidation(const Collab::ValidationReportMessage& InReport);
     void PostPending();
     void ClearPending();
 

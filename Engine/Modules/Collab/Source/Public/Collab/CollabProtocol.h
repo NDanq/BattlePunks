@@ -50,12 +50,15 @@ namespace Collab
         Pushed = 16,     // C->S: this editor pushed the session branch
         BranchAdvanced,  // S->others: the session branch moved
 
-        /* Reserved for later phases; not sent yet. */
-        BuildStatus,     // P4: S->all
-        ValidationReport,// P4: S->author
+        BuildStatus,     // worker->S->all: the session branch's build
+        ValidationReport,// worker->S->the author: content problems
+
+        /* Reserved for P5; not sent yet. */
         PlayRequest,     // P5: C->S
         PlayInvite,      // P5: S->all
-        PlayEnded        // P5: S->all
+        PlayEnded,       // P5: S->all
+
+        WorkerHello = 32 // worker->S: the session's content worker, by its key
     };
 
     enum class EPlayState : uint8_t
@@ -221,6 +224,68 @@ namespace Collab
         uint32_t    PusherId = 0;   // 0: not an editor in the session
         std::string Pusher;
         BranchMove  Move;
+
+        void Serialize(EngineCore::Archive& Ar);
+    };
+
+    /* The content worker (ContentWorker.h) introducing itself: the key the
+     * server started it with, for the session it was started for. */
+    struct COLLAB_API WorkerHelloMessage
+    {
+        static constexpr EMessage Type = EMessage::WorkerHello;
+
+        uint32_t    Protocol  = ProtocolVersion;
+        uint32_t    SessionId = 0;
+        std::string Key;
+
+        void Serialize(EngineCore::Archive& Ar);
+    };
+
+    enum class EBuildState : uint8_t
+    {
+        Idle = 0,     // nothing built yet
+        Building,     // Oid, being built and checked
+        Succeeded,    // Oid built; SchemaHash is its
+        Failed        // Oid didn't build: FirstError
+    };
+
+    COLLAB_API const char* GetBuildStateName(EBuildState InState);
+
+    /* The session branch's build on the server host: GameModule and the game's
+     * dedicated server, at Oid. */
+    struct COLLAB_API BuildStatusMessage
+    {
+        static constexpr EMessage Type = EMessage::BuildStatus;
+
+        std::string Oid;
+        EBuildState State = EBuildState::Idle;
+        uint64_t    SchemaHash = 0;   // NetCore's, for Oid's build: what a Play Together client must match
+        std::string Author;           // Oid's
+        std::string Summary;          // Oid's subject line
+        std::string FirstError;       // Failed: the first compiler or linker error
+        uint32_t    Seconds = 0;      // how long it took
+
+        void Serialize(EngineCore::Archive& Ar);
+    };
+
+    struct COLLAB_API ContentProblem
+    {
+        std::string Path;      // repository-relative
+        std::string Message;
+
+        void Serialize(EngineCore::Archive& Ar);
+    };
+
+    /* What the worker's check of Oid's content found: every world and prefab
+     * loaded by the game's own build (Application::ExecReport). */
+    struct COLLAB_API ValidationReportMessage
+    {
+        static constexpr EMessage Type = EMessage::ValidationReport;
+
+        std::string Oid;
+        std::string Author;
+        uint32_t    Checked = 0;
+        std::vector<ContentProblem> Problems;
 
         void Serialize(EngineCore::Archive& Ar);
     };
