@@ -214,6 +214,50 @@ static void TestOverlay()
     Expect(!Instance.HasOverlayClip() && Near(Instance.GetModelPose()[2].M[1][3], 0.0f), "cleared, the base clip alone");
 }
 
+/* SetPoseOverride: bones placed from outside (a ragdoll), the rest following their parents. */
+static void TestPoseOverride()
+{
+    std::printf("[pose override]\n");
+    auto Skeleton = std::make_shared<SkeletonData>(MakeSkeleton());
+    auto Clip     = std::make_shared<AnimClipData>(MakeClip());
+
+    AnimInstance Instance;
+    Instance.SetSkeleton(Skeleton);
+    Instance.PlayClip(Clip);
+    Instance.SetTime(0.0f);
+
+    /* The arm turned 90 degrees about Z in model space; the hand is not placed. */
+    AnimTransform Arm;
+    Arm.Translation = { 100.0f, 0.0f, 0.0f };
+    Arm.Rotation    = { 0.0f, 0.0f, std::sin(0.7853982f), std::cos(0.7853982f) };
+    std::vector<AnimMatrix> Model(3);
+    Model[1] = AnimMath::ToMatrix(Arm);
+    const std::vector<uint8_t> Mask = { 0, 1, 0 };
+
+    Instance.SetPoseOverride(Model, Mask, 1.0f);
+    Instance.Evaluate();
+    Expect(Instance.HasPoseOverride() && Near(Instance.GetModelPose()[2].M[0][3], 100.0f, 0.01f)
+           && Near(Instance.GetModelPose()[2].M[1][3], 50.0f, 0.01f), "a placed arm carries the hand it does not place");
+
+    Instance.SetTime(0.5f);
+    Expect(Near(Instance.GetModelPose()[2].M[1][3], 50.0f, 0.01f), "at full weight the animation no longer moves it");
+
+    Instance.SetTime(0.0f);
+    Instance.SetPoseOverride(Model, Mask, 0.5f);
+    Instance.Evaluate();
+    const float Half = Instance.GetModelPose()[2].M[1][3];
+    Expect(Half > 10.0f && Half < 40.0f, "half weight is between the animation and the placed pose");
+
+    Instance.SetPoseOverride(Model, std::vector<uint8_t>(2, 1), 1.0f);
+    Instance.Evaluate();
+    Expect(!Instance.HasPoseOverride() && Near(Instance.GetModelPose()[2].M[1][3], 0.0f), "a mask of the wrong size clears it");
+
+    Instance.SetPoseOverride(Model, Mask, 1.0f);
+    Instance.ClearPoseOverride();
+    Instance.Evaluate();
+    Expect(!Instance.HasPoseOverride() && Near(Instance.GetModelPose()[2].M[0][3], 150.0f), "cleared, the animation alone");
+}
+
 static void TestSystem()
 {
     std::printf("[system]\n");
@@ -1162,6 +1206,7 @@ int main()
     TestTrim();
     TestInstance();
     TestOverlay();
+    TestPoseOverride();
     TestSystem();
     TestStateAsset();
     TestStateMachine();

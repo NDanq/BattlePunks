@@ -652,6 +652,14 @@ namespace RenderCore
             ModelPose.clear();
             return;
         }
+        const size_t Bones = Skeleton->Bones.size();
+        const bool bOverride = OverrideWeight > 0.0f && OverrideModel.size() == Bones && OverrideMask.size() == Bones;
+        if(bOverride && OverrideWeight >= 1.0f && LocalPose.size() == Bones)
+        {
+            /* Held: physics has the pose, the rest keeps its last animated one. */
+            ApplyPoseOverride();
+            return;
+        }
         GetRefPose(*Skeleton, LocalPose);
         for(const LayerRuntime& Layer : Layers)
         {
@@ -694,7 +702,55 @@ namespace RenderCore
             BlendPoses(LocalPose, Scratch[2], std::min(OverlayWeight, 1.0f));
         }
         ApplyLookAt(LocalPose);
+        if(bOverride)
+        {
+            ApplyPoseOverride();
+            return;
+        }
         LocalToModel(*Skeleton, LocalPose, ModelPose);
+    }
+
+    void AnimInstance::ApplyPoseOverride()
+    {
+        LocalToModel(*Skeleton, LocalPose, OverrideAnimated);
+        const size_t Bones  = Skeleton->Bones.size();
+        const float  Weight = std::min(OverrideWeight, 1.0f);
+        ModelPose.resize(Bones);
+        for(size_t Bone = 0; Bone < Bones; ++Bone)
+        {
+            const int32_t Parent = Skeleton->Bones[Bone].Parent;
+            if(!OverrideMask[Bone])
+            {
+                /* Its animated self, under wherever its parent now is. */
+                ModelPose[Bone] = Parent >= 0 ? AnimMath::Mul(ModelPose[size_t(Parent)], AnimMath::ToMatrix(LocalPose[Bone]))
+                                              : OverrideAnimated[Bone];
+                continue;
+            }
+            const AnimTransform Animated = AnimMath::ToTransform(OverrideAnimated[Bone]);
+            AnimTransform Placed = AnimMath::ToTransform(OverrideModel[Bone]);
+            Placed.Scale = Animated.Scale;
+            ModelPose[Bone] = AnimMath::ToMatrix(Weight >= 1.0f ? Placed : AnimMath::Lerp(Animated, Placed, Weight));
+        }
+    }
+
+    void AnimInstance::SetPoseOverride(const std::vector<AnimMatrix>& InModel, const std::vector<uint8_t>& InMask, const float InWeight)
+    {
+        if(InWeight <= 0.0f || InModel.empty() || InModel.size() != InMask.size()
+           || (Skeleton && InModel.size() != Skeleton->Bones.size()))
+        {
+            ClearPoseOverride();
+            return;
+        }
+        OverrideModel  = InModel;
+        OverrideMask   = InMask;
+        OverrideWeight = InWeight;
+    }
+
+    void AnimInstance::ClearPoseOverride()
+    {
+        OverrideModel.clear();
+        OverrideMask.clear();
+        OverrideWeight = 0.0f;
     }
 
     void AnimInstance::SetOverlayClip(std::shared_ptr<const AnimClipData> InClip, const float InSeconds, const float InWeight)

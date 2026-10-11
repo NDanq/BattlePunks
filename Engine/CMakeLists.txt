@@ -573,6 +573,8 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/NetHost.cpp
         Source/Private/NimbleEngine/NetScript.cpp
         Source/Private/NimbleEngine/PhysicsFacade.cpp
+        Source/Private/NimbleEngine/Ragdoll.cpp
+        Source/Private/NimbleEngine/RagdollProfile.cpp
         Source/Private/NimbleEngine/TerrainFacade.cpp
         Source/Private/NimbleEngine/SequenceFacade.cpp
         Source/Private/NimbleEngine/InactiveModules.cpp
@@ -596,6 +598,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/NetFacade.h
         Source/Public/NimbleEngine/NetHost.h
         Source/Public/NimbleEngine/PhysicsFacade.h
+        Source/Public/NimbleEngine/Ragdoll.h
         Source/Public/NimbleEngine/TerrainFacade.h
         Source/Public/NimbleEngine/SequenceFacade.h
 )
@@ -755,6 +758,14 @@ if(NIMBLEENGINE_BUILD_TESTS)
         add_test(NAME NimbleEngine.PhysicsTests COMMAND NimbleEnginePhysicsTests
                  WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEnginePhysicsTests>")
         set_tests_properties(NimbleEngine.PhysicsTests PROPERTIES TIMEOUT 120 LABELS "smoke")
+
+        # Ragdolls (Ragdoll.h): CrashDummy's profile, joint limits, a death.
+        add_executable(NimbleEngineRagdollTests Tests/RagdollTests.cpp)
+        target_link_libraries(NimbleEngineRagdollTests PRIVATE NimbleEngine::NimbleEngine JoltPhysics::JoltPhysics)
+        set_target_properties(NimbleEngineRagdollTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
+        add_test(NAME NimbleEngine.RagdollTests COMMAND NimbleEngineRagdollTests
+                 WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineRagdollTests>")
+        set_tests_properties(NimbleEngine.RagdollTests PROPERTIES TIMEOUT 120 LABELS "smoke")
     endif()
 
     # Sound from scripts: the Audio library, Audio Source from Lua, and the
