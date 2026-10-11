@@ -47,6 +47,10 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/EditorNotifications.cpp
         Source/Private/Editor/NotificationWidgets.cpp
         Source/Private/Editor/NotificationWidgets.h
+        Source/Private/Editor/SourceControl/GitClient.cpp
+        Source/Private/Editor/SourceControl/GitClient.h
+        Source/Private/Editor/SourceControl/SourceControlWindow.cpp
+        Source/Private/Editor/SourceControl/SourceControlWindow.h
         Source/Private/Editor/EditorConsole.cpp
         Source/Private/Editor/ConsolePanel.cpp
         Source/Private/Editor/EditorMainWindow.cpp
@@ -215,6 +219,14 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/Project/NewProjectWizard.cpp
         Source/Private/Editor/Project/NewProjectWizard.h
 )
+
+# git status parsing and the Source Control dock's path groups. No Qt, so the
+# source control tests build it alone.
+set(NIMBLE_EDITOR_GIT_SOURCES
+        Source/Private/Editor/SourceControl/GitStatus.cpp
+        Source/Private/Editor/SourceControl/GitStatus.h
+)
+list(APPEND NIMBLE_EDITOR_SOURCES ${NIMBLE_EDITOR_GIT_SOURCES})
 
 # File > New Project's generator. Widget-free, so the project tests build it alone.
 set(NIMBLE_EDITOR_PROJECT_SOURCES
@@ -472,6 +484,27 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     add_test(NAME Editor.Notifications COMMAND NimbleEditorNotificationTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorNotificationTests>")
 
+    # Source control: porcelain v2 fixtures, path groups, and git itself
+    # against a local bare repository (skipped without git), then the dock.
+    add_executable(NimbleEditorSourceControlTests Tests/SourceControlTests.cpp
+            ${NIMBLE_EDITOR_GIT_SOURCES}
+            Source/Private/Editor/SourceControl/GitClient.cpp
+            Source/Private/Editor/SourceControl/GitClient.h
+            Source/Private/Editor/SourceControl/SourceControlWindow.cpp
+            Source/Private/Editor/SourceControl/SourceControlWindow.h
+            Source/Private/Editor/ConfigIniFile.cpp
+            Source/Private/Editor/ConfigIniFile.h
+            Source/Public/Editor/EditorNotifications.h
+            Source/Private/Editor/EditorNotifications.cpp
+            Source/Private/Editor/EditorIcons.h
+            Source/Private/Editor/EditorIcons.cpp)
+    target_include_directories(NimbleEditorSourceControlTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
+    target_link_libraries(NimbleEditorSourceControlTests PRIVATE EngineCore::EngineCore Qt6::Core Qt6::Gui Qt6::Widgets)
+    set_target_properties(NimbleEditorSourceControlTests PROPERTIES FOLDER "Editor" AUTOMOC ON)
+    add_dependencies(NimbleEditorSourceControlTests NimbleEditor)
+    add_test(NAME Editor.SourceControl COMMAND NimbleEditorSourceControlTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorSourceControlTests>")
+
     # File > New Project from the real template, into a temporary folder.
     # And Project Settings' world list, as ConfigIniFile writes it.
     add_executable(NimbleEditorProjectTests Tests/ProjectTests.cpp ${NIMBLE_EDITOR_PROJECT_SOURCES}
@@ -611,7 +644,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     # The offscreen tests compile EditorIcons.cpp too (no resources: fallback icons).
     if(TARGET Qt6::Svg)
         foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests NimbleEditorSequencerTests
-                NimbleEditorTerrainTests NimbleEditorNotificationTests)
+                NimbleEditorTerrainTests NimbleEditorNotificationTests NimbleEditorSourceControlTests)
             if(TARGET ${NM_EDITOR_TEST})
                 target_link_libraries(${NM_EDITOR_TEST} PRIVATE Qt6::Svg)
             endif()
