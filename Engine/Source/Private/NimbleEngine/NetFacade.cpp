@@ -64,6 +64,7 @@ namespace NimbleEngine
         OutStats.PacketsReceived       = Peer.PacketsReceived;
         OutStats.SendBytesPerSecond    = Peer.SendBytesPerSecond;
         OutStats.ReceiveBytesPerSecond = Peer.ReceiveBytesPerSecond;
+        OutStats.StateDeferred         = Peer.StateDeferred;
         return true;
     }
 #else

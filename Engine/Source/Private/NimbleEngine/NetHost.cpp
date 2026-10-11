@@ -46,6 +46,8 @@ NIMBLE_CONFIG_INT(GNetRpcPerSecond, "Net", "RpcPerSecond", 1000, nullptr);
 NIMBLE_CONFIG_INT(GNetReconnectGraceMs, "Net", "ReconnectGraceMs", 30000, nullptr);
 NIMBLE_CONFIG_INT(GNetRpcFloodPerSecond, "Net", "RpcFloodPerSecond", 1000, nullptr);
 NIMBLE_CONFIG_INT(GNetMaxRpcBytes, "Net", "MaxRpcBytes", 1024, nullptr);
+/* A server's budget for each client's state, KB a second; 0 none (NetCore/README.md, "Bandwidth budget"). */
+NIMBLE_CONFIG_INT(GNetClientBandwidthKBps, "Net", "ClientBandwidthKBps", 256, nullptr);
 #endif
 
 namespace NimbleEngine
@@ -66,6 +68,7 @@ namespace NimbleEngine
         Desc.SimulatedLossPercent  = uint32_t(std::clamp(GNetSimulatedLossPercent.GetInt(), 0, 100));
         Desc.RpcPerSecond          = uint32_t(std::max(0, GNetRpcPerSecond.GetInt()));
         Desc.ReconnectGraceMs      = uint32_t(std::max(0, GNetReconnectGraceMs.GetInt()));
+        Desc.ClientBandwidthKBps   = uint32_t(std::max(0, GNetClientBandwidthKBps.GetInt()));
         Desc.RpcFloodPerSecond     = uint32_t(std::max(0, GNetRpcFloodPerSecond.GetInt()));
         Desc.MaxRpcBytes           = uint32_t(std::max(0, GNetMaxRpcBytes.GetInt()));
 #endif
@@ -242,6 +245,7 @@ namespace NimbleEngine
         Config.SimulatedLossPercent = InDesc.SimulatedLossPercent;
         Config.RpcPerSecond         = InDesc.RpcPerSecond;
         Config.ReconnectGraceMs     = InDesc.ReconnectGraceMs;
+        Config.ClientBandwidthKBps  = InDesc.ClientBandwidthKBps;
         Config.RpcFloodPerSecond    = InDesc.RpcFloodPerSecond;
         Config.MaxRpcBytes          = InDesc.MaxRpcBytes;
 

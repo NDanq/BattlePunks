@@ -349,6 +349,34 @@ resent: a whole round trip of frozen state. So state does not go reliably.
 sends, for testing. In NetArena at 20% on every process, prediction's worst
 correction stays 0: each batch that arrives is enough on its own.
 
+### Bandwidth budget
+
+A server sends each client at most `[Net] ClientBandwidthKBps` of state
+(default 256, which is 2 Mbit/s). Set it in **Project Settings > Net >
+Bandwidth per client**; 0 means no limit. It meters the state batches
+only. Spawns, destroys, RPCs and the editor link are reliable and are not
+counted.
+
+- **A token budget.** Each client earns bytes at the rate, up to a quarter
+  second's worth (never under one packet). An entity's entry goes out
+  whole or not at all.
+- **What goes first.** The client's own entities always go, and are never
+  held back. Then the rest, by score: the entity's `Net` component
+  **Priority** (1 normally; 4 is four times as eager), times the ticks it
+  has waited plus one, times how near it is to the client's own avatar
+  (1 at its feet, a half at 20 m).
+- **Nothing is lost.** Whatever does not fit is looked at again the next
+  tick, diffed in full against what the client has. Waiting raises its
+  score, so a low priority is late, never starved. A joining client's first
+  full pass spreads over as many ticks as it needs.
+- `GetNetStats` (`StateDeferred`) reports how many entities a client's
+  budget held back last tick.
+
+Under a 4 KB/s budget with 300 entities all changing, `NetCore.Loopback`
+sees the client's own entity get every change, a Priority 8 entity about
+six times as many updates as a Priority 1 one at the same distance, and
+everything arrive once things settle.
+
 ### Reconnecting
 
 A client whose connection is lost can rejoin as itself. It keeps the same
@@ -506,6 +534,8 @@ a client in one process over 127.0.0.1. It covers:
 - a late joiner
 - the flush's cost with 2000 entities and 4 clients, printed (and the
   movers' state checked to arrive)
+- the bandwidth budget: entities held back, the client's own entity
+  keeping up, Priority, and everything arriving once things settle
 - quantization: the rounding, and a Transform arriving bit for bit as
   `QuantizeReplicatedFields` predicts
 - view times: a client's Server RPC stamped about its interpolation delay

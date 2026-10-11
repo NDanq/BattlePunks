@@ -38,6 +38,12 @@ namespace GameCore
         uint8_t bReplicate  = 1;                 // off: the entity stays local to each process
         uint8_t bPredicted  = 0;                 // its owner moves it ahead of the server: never interpolated there
 
+        /* Under a bandwidth budget ([Net] ClientBandwidthKBps): how much sooner
+         * this entity's changes go out than others' when they do not all fit
+         * in a tick -- 1 as usual, 4 four times as eager, 0.25 a quarter. What
+         * a client owns goes first whatever this says. */
+        float   Priority    = 1.0f;
+
         /* The server's: the last input (by the game's own sequence numbers) it
          * applied to this entity. Replicated, so the owner knows which of its
          * predicted moves the server's state already includes. */

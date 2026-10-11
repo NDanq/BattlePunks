@@ -203,6 +203,18 @@ struct NetSession::Impl final : public INetEntityMap
          * after its first full pass (new, back, or after a table reload). */
         std::unordered_set<uint64_t>           UnackedKeys;
         bool                                   bNeedsFullPass = true;
+
+        /* THE BANDWIDTH BUDGET ([Net] ClientBandwidthKBps): bytes it may be
+         * sent now, refilled with time; what was held back for want of it
+         * (looked at again next tick); and, by NetId, the ticks an entity has
+         * been waiting -- its priority grows with them, so nothing starves. */
+        double                                 BudgetBytes   = 0.0;
+        uint32_t                               BudgetAtMs    = 0;
+        bool                                   bBudgetStarted = false;
+        std::unordered_set<uint64_t>           DeferredKeys;
+        std::unordered_map<int32_t, uint32_t>  Waiting;
+        uint32_t                               LastDeferred  = 0;
+        EntityID                               ViewEntity;   // its own entity with a Transform: where it looks from
         std::deque<SentBatch>                  InFlight;    // oldest first
     };
     std::unordered_map<NetPeerID, ClientInfo> Clients;
@@ -384,18 +396,24 @@ struct NetSession::Impl final : public INetEntityMap
             {
                 const uint64_t Key = ShadowKey(InNetId, Type);
                 ServerValues.erase(Key);
-                for(auto& Client : Clients) { Client.second.Baselines.erase(Key); Client.second.UnackedKeys.erase(Key); }
+                for(auto& Client : Clients)
+                {
+                    Client.second.Baselines.erase(Key);
+                    Client.second.UnackedKeys.erase(Key);
+                    Client.second.DeferredKeys.erase(Key);
+                }
             }
         }
         Interpolations.erase(InNetId);
         Structures.erase(InNetId);
+        for(auto& Client : Clients) { Client.second.Waiting.erase(InNetId); }
     }
 
     /* Every client's baseline for one component, gone with it. */
     void DropBaselines(const int32_t InNetId, const ComponentTypeID InType)
     {
         const uint64_t Key = ShadowKey(InNetId, InType);
-        for(auto& Client : Clients) { Client.second.Baselines.erase(Key); Client.second.UnackedKeys.erase(Key); }
+        for(auto& Client : Clients) { Client.second.Baselines.erase(Key); Client.second.UnackedKeys.erase(Key); Client.second.DeferredKeys.erase(Key); }
     }
 
     // === A client's smoothing and prediction ==============================
@@ -847,6 +865,67 @@ struct NetSession::Impl final : public INetEntityMap
         }
     }
 
+    /* Tokens for InClient's state: the rate times the time since, up to a
+     * quarter second's worth (and never under one packet), so a quiet spell
+     * cannot bank a flood. */
+    void RefillBudget(ClientInfo& InClient)
+    {
+        const double Rate     = double(Config.ClientBandwidthKBps) * 1024.0;
+        const double Capacity = std::max(double(NET_STATE_PACKET_BYTES), Rate * 0.25);
+        const uint32_t Now = NowMs();
+        if(!InClient.bBudgetStarted)
+        {
+            InClient.BudgetBytes    = Capacity;
+            InClient.bBudgetStarted = true;
+        }
+        else
+        {
+            InClient.BudgetBytes = std::min(Capacity, InClient.BudgetBytes + Rate * double(Now - InClient.BudgetAtMs) / 1000.0);
+        }
+        InClient.BudgetAtMs = Now;
+    }
+
+    /* Where InClient looks from: its own entity with a Transform (its
+     * avatar), found again only when the last one is gone. Origin if none. */
+    EngineCore::Vector3 ViewPointOf(ClientInfo& InClient)
+    {
+        const auto Usable = [&](const EntityID InEntity)
+        {
+            if(!InEntity.IsSet() || !BoundWorld->IsAlive(InEntity)) { return false; }
+            const GameCore::Entity Handle(BoundWorld, InEntity);
+            const NetComponent* Net = Handle.GetComponent<NetComponent>();
+            return Net && Net->OwnerClient == InClient.ID && Handle.HasComponent<GameCore::TransformComponent>();
+        };
+        if(!Usable(InClient.ViewEntity))
+        {
+            InClient.ViewEntity = EntityID();
+            for(const auto& Entry : NetToEntity)
+            {
+                if(Usable(Entry.second)) { InClient.ViewEntity = Entry.second; break; }
+            }
+        }
+        if(!InClient.ViewEntity.IsSet()) { return EngineCore::Vector3(); }
+        return GameCore::Entity(BoundWorld, InClient.ViewEntity).GetWorldPose().Position;
+    }
+
+    /* How much an entity's changes want to go to InClient this tick: its
+     * Net component's Priority, times the ticks it has waited plus one, times
+     * nearness to where the client looks from (1 at its feet, a half at 20 m). */
+    double SendScore(const ClientInfo& InClient, const int32_t InNetId, const GameCore::Entity& InHandle, const NetComponent* InNet,
+                     const EngineCore::Vector3& InView) const
+    {
+        const double Priority = InNet ? std::max(0.01, double(InNet->Priority)) : 1.0;
+        const auto   Waited   = InClient.Waiting.find(InNetId);
+        const double Age      = 1.0 + (Waited != InClient.Waiting.end() ? double(Waited->second) : 0.0);
+        double Near = 1.0;
+        if(InHandle.HasComponent<GameCore::TransformComponent>())
+        {
+            const EngineCore::Vector3 Delta = InHandle.GetWorldPose().Position - InView;
+            Near = 1.0 / (1.0 + double(Delta.GetLength()) / 2000.0);
+        }
+        return Priority * Age * Near;
+    }
+
     /* This tick's state for one client, against what it has acknowledged:
      * one batch or more (split between entities, never within one, so an
      * entity's fields always arrive together), and at least one, entries or
@@ -887,60 +966,81 @@ struct NetSession::Impl final : public INetEntityMap
         };
 
         /* What to look at: everything, on a client's first pass; else this
-         * tick's changes and this client's unacknowledged components -- the
-         * rest it has, as they are. Grouped by entity, as batches split. */
+         * tick's changes, this client's unacknowledged components, and what
+         * the budget held back last time -- the rest it has, as they are. */
         std::vector<const TickItem*> Candidates;
-        std::deque<TickItem>         Resolved;   // unacknowledged and unchanged: found here, held stable
+        std::deque<TickItem>         Resolved;   // not changed this tick: found here, held stable
         if(InClient.bNeedsFullPass)
         {
             Candidates.reserve(TickItems.size());
             for(const TickItem& Tick : TickItems) { Candidates.push_back(&Tick); }
             InClient.bNeedsFullPass = false;
+            InClient.DeferredKeys.clear();
         }
         else
         {
             for(const size_t Index : TickChanged) { Candidates.push_back(&TickItems[Index]); }
-            for(auto It = InClient.UnackedKeys.begin(); It != InClient.UnackedKeys.end();)
+            /* A held-back one is diffed again in full against the baseline: it
+             * may not have changed since, but the client still lacks it. */
+            const auto Resolve = [&](std::unordered_set<uint64_t>& InKeys, const bool bInForceDiff, const std::unordered_set<uint64_t>* InSkip)
             {
-                const uint64_t Key = *It;
-                if(TickChangedKeys.count(Key) != 0) { ++It; continue; }
-                const int32_t         NetId  = int32_t(uint32_t(Key >> 16));
-                const ComponentTypeID Type   = ComponentTypeID(Key & 0xFFFFu);
-                const EntityID        Entity = FromNetId(NetId);
-                const bool  bReplicates = size_t(Type) < RepFields.size() && RepFields[Type] != nullptr;
-                const GameCore::ReplicatedFieldEntry* Fields = bReplicates ? RepFields[Type] : nullptr;
-                const size_t FieldCount = bReplicates ? RepCounts[Type] : 0;
-                const void* Component = Entity.IsSet() && Fields ? GameCore::Entity(BoundWorld, Entity).GetComponentByType(Type) : nullptr;
-                if(!Component) { It = InClient.UnackedKeys.erase(It); continue; }   // gone: nothing left to send
-                TickItem Tick;
-                Tick.NetId      = NetId;
-                Tick.Key        = Key;
-                Tick.Type       = Type;
-                Tick.Component  = Component;
-                Tick.Size       = GameCore::GetComponentType(Type)->SizeBytes;
-                Tick.Fields     = Fields;
-                Tick.FieldCount = FieldCount;
-                Resolved.push_back(Tick);
-                Candidates.push_back(&Resolved.back());
-                ++It;
-            }
+                for(auto It = InKeys.begin(); It != InKeys.end();)
+                {
+                    const uint64_t Key = *It;
+                    if(TickChangedKeys.count(Key) != 0 || (InSkip && InSkip->count(Key) != 0)) { ++It; continue; }
+                    const int32_t         NetId  = int32_t(uint32_t(Key >> 16));
+                    const ComponentTypeID Type   = ComponentTypeID(Key & 0xFFFFu);
+                    const EntityID        Entity = FromNetId(NetId);
+                    const bool  bReplicates = size_t(Type) < RepFields.size() && RepFields[Type] != nullptr;
+                    const GameCore::ReplicatedFieldEntry* Fields = bReplicates ? RepFields[Type] : nullptr;
+                    const size_t FieldCount = bReplicates ? RepCounts[Type] : 0;
+                    const void* Component = Entity.IsSet() && Fields ? GameCore::Entity(BoundWorld, Entity).GetComponentByType(Type) : nullptr;
+                    if(!Component) { It = InKeys.erase(It); continue; }   // gone: nothing left to send
+                    TickItem Tick;
+                    Tick.NetId      = NetId;
+                    Tick.Key        = Key;
+                    Tick.Type       = Type;
+                    Tick.Component  = Component;
+                    Tick.Size       = GameCore::GetComponentType(Type)->SizeBytes;
+                    Tick.Fields     = Fields;
+                    Tick.FieldCount = FieldCount;
+                    Tick.bChanged   = bInForceDiff;
+                    Resolved.push_back(Tick);
+                    Candidates.push_back(&Resolved.back());
+                    ++It;
+                }
+            };
+            Resolve(InClient.UnackedKeys, false, nullptr);
+            Resolve(InClient.DeferredKeys, true, &InClient.UnackedKeys);
             std::stable_sort(Candidates.begin(), Candidates.end(),
                              [](const TickItem* A, const TickItem* B) { return A->NetId < B->NetId; });
         }
 
-        std::vector<Item> Items;
+        /* Each entity's entry, ready to go, and how much it wants to. */
+        struct Group
+        {
+            int32_t             NetId = 0;
+            std::vector<Item>   Items;
+            EngineCore::Archive Bytes = EngineCore::Archive::ForWriting();
+            bool                bOwn  = false;   // the client's own: never held back
+            double              Score = 0.0;
+        };
+        std::vector<Group> Groups;
+        const bool bBudget = Config.ClientBandwidthKBps != 0;
+        const EngineCore::Vector3 View = bBudget ? ViewPointOf(InClient) : EngineCore::Vector3();
         for(size_t First = 0; First < Candidates.size();)
         {
             size_t Last = First + 1;
             while(Last < Candidates.size() && Candidates[Last]->NetId == Candidates[First]->NetId) { ++Last; }
-            Items.clear();
+            Group Next;
+            Next.NetId = Candidates[First]->NetId;
             for(size_t Index = First; Index < Last; ++Index)
             {
                 const TickItem& Tick  = *Candidates[Index];
                 const auto      Found = InClient.Baselines.find(Tick.Key);
                 const bool      bKnown = Found != InClient.Baselines.end() && Found->second.Sent.size() == Tick.Size;
                 const uint32_t  Unacked = bKnown ? Found->second.Unacked : 0u;
-                if(bKnown && !Tick.bChanged && Unacked == 0) { continue; }   // the client has it all
+                if(bKnown && !Tick.bChanged && Unacked == 0) { InClient.DeferredKeys.erase(Tick.Key); continue; }   // the client has it all
 
                 uint32_t Changed = 0;
                 if(!bKnown)
@@ -959,26 +1059,61 @@ struct NetSession::Impl final : public INetEntityMap
                     }
                 }
                 const uint32_t Mask = Changed | Unacked;
-                if(Mask != 0) { Items.push_back({ &Tick, Mask, Changed }); }
+                if(Mask != 0 && WriteStateEntry(Next.Bytes, Tick.NetId, Tick.Type, Tick.Component, Mask))
+                {
+                    Next.Items.push_back({ &Tick, Mask, Changed });
+                }
+                else
+                {
+                    InClient.DeferredKeys.erase(Tick.Key);   // nothing to send after all
+                }
             }
             First = Last;
-            if(Items.empty()) { continue; }
-
-            EngineCore::Archive EntityAr = EngineCore::Archive::ForWriting();
-            size_t Written = 0;
-            for(Item& Each : Items)
+            if(Next.Items.empty()) { continue; }
+            if(bBudget)
             {
-                if(WriteStateEntry(EntityAr, Each.Tick->NetId, Each.Tick->Type, Each.Tick->Component, Each.Mask)) { Items[Written++] = Each; }
+                const EntityID Entity = FromNetId(Next.NetId);
+                const GameCore::Entity Handle(BoundWorld, Entity);
+                const NetComponent* Net = Handle.GetComponent<NetComponent>();
+                Next.bOwn  = Net && Net->OwnerClient == InClient.ID;
+                Next.Score = SendScore(InClient, Next.NetId, Handle, Net, View);
             }
-            Items.resize(Written);
-            if(Items.empty()) { continue; }
+            Groups.push_back(std::move(Next));
+        }
+
+        /* Under a budget: the client's own first, then the eager, the long
+         * waiting and the near; what does not fit waits for the next tick. */
+        if(bBudget)
+        {
+            std::stable_sort(Groups.begin(), Groups.end(), [](const Group& A, const Group& B)
+            {
+                return A.bOwn != B.bOwn ? A.bOwn : A.Score > B.Score;
+            });
+            RefillBudget(InClient);
+        }
+
+        uint32_t Deferred = 0;
+        for(Group& Each : Groups)
+        {
+            const size_t Size = Each.Bytes.GetSize();
+            if(bBudget && !Each.bOwn && InClient.BudgetBytes < double(Size))
+            {
+                /* Held back: kept to look at next tick, and a tick older for it. */
+                for(const Item& Held : Each.Items) { InClient.DeferredKeys.insert(Held.Tick->Key); }
+                ++InClient.Waiting[Each.NetId];
+                ++Deferred;
+                continue;
+            }
+            if(bBudget) { InClient.BudgetBytes -= double(Size); }
+            InClient.Waiting.erase(Each.NetId);
 
             /* Full: this entity starts the next batch. */
-            if(Count > 0 && Body.size() + EntityAr.GetSize() > NET_STATE_PACKET_BYTES) { Emit(); }
+            if(Count > 0 && Body.size() + Size > NET_STATE_PACKET_BYTES) { Emit(); }
 
-            Body.insert(Body.end(), EntityAr.GetBytes().begin(), EntityAr.GetBytes().end());
-            for(const Item& Sent : Items)
+            Body.insert(Body.end(), Each.Bytes.GetBytes().begin(), Each.Bytes.GetBytes().end());
+            for(const Item& Sent : Each.Items)
             {
+                InClient.DeferredKeys.erase(Sent.Tick->Key);
                 Baseline& Base = InClient.Baselines[Sent.Tick->Key];
                 const uint8_t* Bytes = static_cast<const uint8_t*>(Sent.Tick->Component);
                 Base.Sent.assign(Bytes, Bytes + Sent.Tick->Size);
@@ -992,6 +1127,7 @@ struct NetSession::Impl final : public INetEntityMap
                 ++Count;
             }
         }
+        InClient.LastDeferred = Deferred;
         Emit();
     }
 
@@ -1042,6 +1178,8 @@ struct NetSession::Impl final : public INetEntityMap
                 Client.second.Baselines.clear();
                 Client.second.InFlight.clear();
                 Client.second.UnackedKeys.clear();
+                Client.second.DeferredKeys.clear();
+                Client.second.Waiting.clear();
                 Client.second.bNeedsFullPass = true;
             }
             for(auto& Entry : Structures) { for(std::vector<uint8_t>& Shadow : Entry.second.Shadows) { Shadow.clear(); } }
@@ -2188,7 +2326,10 @@ bool NetSession::GetClientStats(const NetClientID InClient, NetPeerStats& OutSta
 {
     if(P->Role != ENetRole::Server) { return false; }
     const NetPeerID Peer = P->PeerOfClient(InClient);
-    return Peer != NET_PEER_NONE && P->Transport.GetPeerStats(Peer, OutStats);
+    if(Peer == NET_PEER_NONE || !P->Transport.GetPeerStats(Peer, OutStats)) { return false; }
+    const auto Found = P->Clients.find(Peer);
+    if(Found != P->Clients.end()) { OutStats.StateDeferred = Found->second.LastDeferred; }
+    return true;
 }
 
 void NetSession::BindWorld(GameCore::World& InWorld, const char* InLevelName)
@@ -2222,6 +2363,8 @@ void NetSession::UnbindWorld()
         Client.second.Baselines.clear();
         Client.second.InFlight.clear();
         Client.second.UnackedKeys.clear();
+        Client.second.DeferredKeys.clear();
+        Client.second.Waiting.clear();
         Client.second.bNeedsFullPass = true;
     }
     P->ResetBatches();
