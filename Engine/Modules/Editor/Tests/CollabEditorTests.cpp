@@ -248,6 +248,7 @@ public:
         Out.bOk        = true;
         Out.Module     = "WorldsLabGame";
         Out.SchemaHash = 0x0abc;
+        Out.Worlds     = { { "A", "Content/Levels/A.nmworld", "Arena", true } };
         return Out;
     }
     bool StartGame(const std::string&, const std::string& InWorld, const uint16_t, std::string&) override
@@ -370,6 +371,8 @@ static void TestPlayTogether()
     AliceS.RequestPlayTogether(QStringLiteral("Content/Levels/A.nmworld"));
     Expect(PumpUntil(Server, [&]() { return AliceP.Joins == 1; }, 10000), "Play Together: its starter joins at once");
     Expect(Game && Game->bRunning && Game->World == "A", "the worker runs the game server on world A");
+    Expect(AliceS.GetClient().GetActiveRun().GameMode == "Arena" && AliceS.GetClient().GetActiveRun().bNetworked,
+           "the invite names the level's mode, networked");
     Expect(AliceP.Host == QStringLiteral("127.0.0.1") && AliceP.Port == 27777 && AliceP.Level == QStringLiteral("Content/Levels/A.nmworld"),
            "as a client of the session server's host, on the run's port and level");
 

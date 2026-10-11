@@ -710,6 +710,14 @@ namespace
     {
         return QString::number(qulonglong(InValue), 16).rightJustified(16, QLatin1Char('0'));
     }
+
+    /* The run's level has a game mode that gives clients no avatars. */
+    QString NotNetworkedWarning(const Collab::PlayInviteMessage& InInvite)
+    {
+        const QString Mode = InInvite.GameMode.empty() ? QStringLiteral("no game mode") : QString::fromStdString(InInvite.GameMode);
+        return QStringLiteral("Its mode, %1, isn't networked (not a NetGameMode): each player gets no avatar, so you won't "
+                              "see each other. Play Together a level whose mode spawns one per player.").arg(Mode);
+    }
 }
 
 void EditorCollabSession::RequestPlayTogether(const QString& InLevel)
@@ -809,8 +817,12 @@ void EditorCollabSession::PostInvite()
     Note.Title      = QStringLiteral("%1 started Play Together").arg(ToQ(Invite.From));
     if(JoinBlocker.isEmpty())
     {
-        Note.Severity = ESeverity::Info;
+        Note.Severity = Invite.bNetworked ? ESeverity::Info : ESeverity::Warning;
         Note.Body     = QStringLiteral("%1, on the session server, at %2.").arg(Level, ToQ(Invite.Oid).left(8));
+        if(!Invite.bNetworked)
+        {
+            Note.Body += QStringLiteral("\n") + NotNetworkedWarning(Invite);
+        }
         Note.Actions  = { { QStringLiteral("Join"), [this]() { JoinPlayTogether(); } },
                           { QStringLiteral("Decline"), nullptr } };
     }
@@ -874,9 +886,19 @@ void EditorCollabSession::JoinPlayTogether()
     }
     bPlayingTogether = true;
     PushPresence();
-    EditorNotifications::Notify(ESeverity::Success, QStringLiteral("Playing together"),
-                                QStringLiteral("On %1:%2. Stop Play to leave the run.").arg(Host).arg(Invite.Port),
-                                QStringLiteral("Collab"), PlayKey);
+    /* Connected, but a level whose mode isn't networked shows nobody else: say so. */
+    if(Invite.bNetworked)
+    {
+        EditorNotifications::Notify(ESeverity::Success, QStringLiteral("Playing together"),
+                                    QStringLiteral("On %1:%2. Stop Play to leave the run.").arg(Host).arg(Invite.Port),
+                                    QStringLiteral("Collab"), PlayKey);
+    }
+    else
+    {
+        EditorNotifications::Notify(ESeverity::Warning, QStringLiteral("Playing together, but you won't see each other"),
+                                    NotNetworkedWarning(Invite) + QStringLiteral(" Stop Play to leave the run."),
+                                    QStringLiteral("Collab"), PlayKey);
+    }
     emit RunChanged();
 }
 

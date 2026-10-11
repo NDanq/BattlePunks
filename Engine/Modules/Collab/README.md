@@ -62,12 +62,14 @@ the editor shows as a warning before git has a conflict to report.
 | `ValidationReport` | worker→S→the author | commit, author, files checked, problems (path, message) |
 | `PlayRequest` | C→S | level (runtime-relative; empty, the start level), or stop |
 | `WorkerPlay` | S→worker | start (level, port, commit) or stop the game server |
-| `WorkerPlayState` | worker→S | running on a port, or not and why |
-| `PlayInvite` | S→all | who started it, level, address (empty: the session server's host), port, commit, schema hash |
+| `WorkerPlayState` | worker→S | running on a port, or not and why; the level's game mode and whether it's networked |
+| `PlayInvite` | S→all | who started it, level, address (empty: the session server's host), port, commit, schema hash, the level's game mode and whether it's networked |
 | `PlayEnded` | S→all | why |
 
-The `Play*` messages are numbered for P5 and not sent yet. Appending a field at the end
-of a payload is compatible (Archive skips what a reader doesn't know); any
+Appending a field at the end of a payload is compatible both ways: a newer
+message's extra fields are skipped by an older reader (Archive's chunk rule),
+and a newer reader reads them only if the message has them
+(`if(Ar.IsSaving() || !Ar.IsAtEnd())`, as `PlayInvite`'s game mode does). Any
 other layout change bumps `ProtocolVersion`.
 
 ## The branch moving

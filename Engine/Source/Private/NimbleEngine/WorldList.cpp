@@ -9,6 +9,7 @@
 #include "Public/GameCore/WorldPackage.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/Level.h"
+#include "Public/NimbleEngine/PlayerStart.h"
 #include "Public/NimbleEngine/SaveGame.h"
 
 /* The project's world list, the game-mode registry, and the level each
@@ -221,6 +222,19 @@ size_t GetGameModeCount() { return GGameModeCount; }
 const char* GetGameModeName(const size_t InIndex)
 {
     return InIndex < GGameModeCount ? GGameModes[InIndex].Name : nullptr;
+}
+
+bool IsNetworkedGameMode(const char* InName)
+{
+    const GameModeType* Type = FindGameMode(InName);
+    if(!Type)
+    {
+        return false;
+    }
+    IGameMode* Mode = Type->Create();
+    const bool bNetworked = dynamic_cast<NetGameMode*>(Mode) != nullptr;
+    Type->Destroy(Mode);
+    return bNetworked;
 }
 
 void RegisterWorldLevels()

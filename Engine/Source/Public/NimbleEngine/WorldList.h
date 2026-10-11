@@ -57,6 +57,13 @@ namespace NimbleEngine
     NE_API size_t      GetGameModeCount();
     NE_API const char* GetGameModeName(size_t InIndex);
 
+    /* Whether InName's mode is a NetGameMode (PlayerStart.h): one that gives
+     * each connected client an avatar. Made and destroyed to find out, as a
+     * level load would -- no OnLoad, no World. False for a name not
+     * registered. Collaboration's content report: Play Together warns of a
+     * level where players won't see each other. */
+    NE_API bool IsNetworkedGameMode(const char* InName);
+
     /* RegisterGameMode<BrickBreakerMode>("BrickBreaker"): new and delete in the
      * caller's image. */
     template <class ModeType>

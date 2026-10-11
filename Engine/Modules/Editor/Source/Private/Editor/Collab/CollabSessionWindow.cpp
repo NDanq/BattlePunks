@@ -253,6 +253,10 @@ void CollabSessionWindow::UpdateRun()
     QString Text = QStringLiteral("Play Together: %1's run of %2, UDP %3, %4 playing")
                    .arg(ToQ(Run.From), Run.Level.empty() ? QStringLiteral("the start level") : QFileInfo(ToQ(Run.Level)).completeBaseName())
                    .arg(Run.Port).arg(Playing);
+    if(!Run.bNetworked)
+    {
+        Text += QStringLiteral(". %1 isn't networked: players won't see each other").arg(ToQ(Run.GameMode));
+    }
     if(!Session.GetJoinBlocker().isEmpty())
     {
         Text += QStringLiteral(". ") + Session.GetJoinBlocker();
