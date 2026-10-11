@@ -539,6 +539,7 @@ namespace
         size_t Waypoint = 0;
         double LastX = 0.0, LastZ = 0.0, StuckFor = 0.0, Strafe = 1.0, StrafeFor = 0.0;
         double LastTime = 0.0;
+        double NextSightCheck = 0.0;
         bool   bStarted = false;
         bool   bFireHeld = false;
     };
@@ -624,7 +625,6 @@ namespace
             const double Yaw = std::atan2(DX, DZ) * 180.0 / 3.14159265358979323846;
             const double Pitch = -std::atan2(DY, std::sqrt(DX * DX + DZ * DZ)) * 180.0 / 3.14159265358979323846;
             const double Error = Turn(Yaw, Pitch);
-            InOutInput.Down |= Bit("Aim");   // over the shoulder, and steadier
             /* Strafe while shooting, switching sides now and then. */
             Bot.StrafeFor -= Dt;
             if(Bot.StrafeFor <= 0.0) { Bot.Strafe = -Bot.Strafe; Bot.StrafeFor = 0.6 + std::fmod(Now * 7.31, 1.0); }
@@ -646,7 +646,23 @@ namespace
         Bot.bFireHeld = false;
         if(Self->Ammo < Magazine && !Self->bReloading) { InOutInput.Pressed |= Bit("Reload"); }
 
-        /* Nobody in sight: round the loop, running. */
+        /* Nobody in sight: round the loop, running -- toward a point it can see.
+         * After a respawn the last one is often behind a block of houses; the
+         * nearest in sight is the way back onto the loop. */
+        if(Now >= Bot.NextSightCheck)
+        {
+            Bot.NextSightCheck = Now + 0.5;
+            const auto InSight = [&](const Vec& InPoint) { return LineOfSight(InWorld, Pivot, { InPoint.X, Pivot.Y, InPoint.Z }); };
+            if(!InSight(GWaypoints[Bot.Waypoint % WaypointCount]))
+            {
+                double Best = 1e18;
+                for(size_t Index = 0; Index < WaypointCount; ++Index)
+                {
+                    const double D2 = std::pow(GWaypoints[Index].X - Feet.X, 2.0) + std::pow(GWaypoints[Index].Z - Feet.Z, 2.0);
+                    if(D2 < Best && InSight(GWaypoints[Index])) { Best = D2; Bot.Waypoint = Index; }
+                }
+            }
+        }
         const Vec& Goal = GWaypoints[Bot.Waypoint % WaypointCount];
         const double DX = Goal.X - Feet.X, DZ = Goal.Z - Feet.Z;
         const double Distance = std::sqrt(DX * DX + DZ * DZ);
@@ -1011,6 +1027,7 @@ private:
         {
             Banner = std::string(Match->Winner) + " WINS  -  NEXT ROUND IN " + std::to_string(Match->SecondsLeft);
         }
+        if(NimbleEngine::IsNetReconnecting()) { Banner = "CONNECTION LOST  -  REJOINING"; }
         Set(UI, "Pvp.Banner", Banner);
         std::string Status = Now < GStatusUntil ? GStatus : std::string();
         if(Me && Me->bReloading) { Status = "RELOADING"; }
@@ -1018,7 +1035,7 @@ private:
         {
             Status = (Now < GStatusUntil ? GStatus + "  -  " : std::string()) + "RESPAWNING";
         }
-        if(NimbleEngine::IsNetReconnecting()) { Status = "CONNECTION LOST  -  REJOINING"; }
+
         Set(UI, "Pvp.Status", Status);
 
         /* The kill feed, newest last. */

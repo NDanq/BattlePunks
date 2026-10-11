@@ -205,8 +205,10 @@ def add_starts(level):
         level.add(f"PlayerStart{index + 1}", [("PlayerStart", start),
                                               ("Transform", nm.transform_xml((x, 0, z), (0, yaw_toward((x, z), target), 0)))])
     camera = nm.component_xml("Camera", 2, [("ZNear", 5), ("ZFar", 40000), ("Active", True), ("Projection", 1), ("FovY", 62)])
+    # High over the front street's west end, looking east along it: what a fighter
+    # sees while it waits to respawn (its own camera is off then), and before it spawns.
     level.add("OverviewCamera", [("Camera", camera),
-                                 ("Transform", nm.transform_xml((-2600, 1500, FRONT_C - 600), (24, 55, 0)))])
+                                 ("Transform", nm.transform_xml((-SIDE_C, 650, FRONT_C), (14, 90, 0)))])
     print(f"  {len(spots)} player starts and an overview camera")
 
 
