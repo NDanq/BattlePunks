@@ -23,7 +23,7 @@
 /*
  * WorldsLabRange: the Shooting Range world's mode
  * (Content/Levels/ShootingRange.nmworld, Tools/ShootingRange/). An
- * AvatarGameMode: the level's Player Start spawns the RangeShooter prefab
+ * NetGameMode: the level's Player Start spawns the RangeShooter prefab
  * (Content/Prefabs/ShootingRange/RangeShooter.nmprefab) for the local player
  * and possesses it.
  *
@@ -537,7 +537,7 @@ namespace
 
 // === The mode ==================================================================
 
-class WorldsLabRangeMode : public NimbleEngine::AvatarGameMode
+class WorldsLabRangeMode : public NimbleEngine::NetGameMode
 {
 public:
     /* The shadow atlas: the sun's, and the two lane spots over the targets. */
@@ -560,12 +560,12 @@ public:
         {
             Avatars->SetInputFilter(&AutoPlayFilter, nullptr);
         }
-        return AvatarGameMode::OnLoad(InSession);
+        return NetGameMode::OnLoad(InSession);
     }
 
     void OnStart() override
     {
-        AvatarGameMode::OnStart();
+        NetGameMode::OnStart();
         /* Autoplay leaves the mouse alone: it drives itself, and someone may be using the desktop. */
         if(!GRangeAutoPlay.GetBool()) { Session->SetMouseCaptured(true); }
         CORE_LOG("[ShootingRange] WASD walks (Shift runs), Space jumps, H draws, right mouse aims, left fires, R reloads; "

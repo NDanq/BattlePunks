@@ -22,7 +22,7 @@ player (PlayerState, Net, Possessor) ──possesses──► avatar (AvatarHarn
 | `PossessorComponent` | `"Possessor"` | On the player: the avatar it drives, and which local player's pad it reads (`LocalPlayer`). |
 | `Possess` / `Unpossess` | `Avatar.h` | Possession, which is the server's to change. |
 | `PlayerStartComponent` | `"PlayerStart"` | A place an avatar spawns, optionally kept for one player and naming the prefab. |
-| `AvatarGameMode` | `PlayerStart.h` | The default rules: every local player and every joining client gets an avatar at a start. |
+| `NetGameMode` | `PlayerStart.h` | The default rules: every local player and every joining client gets an avatar at a start. |
 | `AvatarWorld` | `Avatar.h` | Each level's avatars. Runs as the `Engine.Avatar` system. `GameSession::GetAvatars()`. |
 
 ## The player and the avatar
@@ -41,7 +41,7 @@ Where players come from:
   (`[Net] SpawnPlayerPerClient`): PlayerState, Net owned by the client, and
   Possessor.
 - **Local users.** `CreateLocalPlayer(World, N)` gives the same three
-  components, with Net owned by nobody (the server's). `AvatarGameMode` and
+  components, with Net owned by nobody (the server's). `NetGameMode` and
   `AutoPossess` call it for you.
 
 ## Possession
@@ -184,7 +184,7 @@ by another player is the server's to say.
   `[Avatar] DefaultPrefab`. It spawns at the start, gives the avatar's Net
   component to the player's client before the avatar is first sent, then
   possesses it.
-- **`AvatarGameMode`.** Derive from it.
+- **`NetGameMode`.** Derive from it.
   - Its `OnStart` gives each of `[Avatar] LocalPlayers` (1) local players an
     avatar, unless one was placed for that player.
   - Its `OnClientConnected` gives each joining client one.
@@ -229,7 +229,7 @@ There is one view, so split-screen shows local player 1's.
 |---|---|---|
 | `[Avatar] InputTimeoutMs` | 500 | a remote client's avatar reads nothing after this long without input |
 | `[Avatar] DefaultPrefab` | "" | what `SpawnAvatarFor` spawns when nothing else names a prefab |
-| `[Avatar] LocalPlayers` | 1 | local players `AvatarGameMode` gives avatars |
+| `[Avatar] LocalPlayers` | 1 | local players `NetGameMode` gives avatars |
 
 ## Not here yet
 
@@ -249,7 +249,7 @@ There is one view, so split-screen shows local player 1's.
 `Games/NetArena`: `Content/Prefabs/Pawn.nmprefab` is a harness with the
 `NetArenaMove` simulation and a predicted Net component.
 `Content/Levels/NetArena.nmworld` has four Player Starts. `NetArenaGameMode`
-is an `AvatarGameMode` that colours the capsules and reports.
+is an `NetGameMode` that colours the capsules and reports.
 
 ## Tests
 
@@ -261,7 +261,7 @@ covers:
 - local input and filters
 - the server's half of the input stream
 - simulations
-- AutoPossess, the view target and AvatarGameMode through a GameSession
+- AutoPossess, the view target and NetGameMode through a GameSession
 
 The client half runs in NetArena's unattended runs (`NetCore/GUIDE.md` §9).
 `Engine/Tests/AvatarGuideTests.cpp` builds and runs every example in

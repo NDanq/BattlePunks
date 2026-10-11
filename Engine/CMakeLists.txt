@@ -741,7 +741,7 @@ if(NIMBLEENGINE_BUILD_TESTS)
     set_tests_properties(NimbleEngine.GameFrameworkTests PROPERTIES TIMEOUT 120 LABELS "smoke")
 
     # Avatars (Avatar.h): possession, the harness's input, the server's half of
-    # the input stream, simulations, AutoPossess and AvatarGameMode.
+    # the input stream, simulations, AutoPossess and NetGameMode.
     add_executable(NimbleEngineAvatarTests Tests/AvatarTests.cpp)
     target_link_libraries(NimbleEngineAvatarTests PRIVATE NimbleEngine::NimbleEngine)
     set_target_properties(NimbleEngineAvatarTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")

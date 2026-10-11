@@ -161,7 +161,7 @@ player's own pawn answer at once, predict it (section 8).
 
 > **The short way: avatars** (`Engine/Source/AVATARS.md`). Put an **Avatar
 > Harness** on the pawn prefab and derive the mode from
-> `NimbleEngine::AvatarGameMode`. Each player then gets a pawn at a Player
+> `NimbleEngine::NetGameMode`. Each player then gets a pawn at a Player
 > Start, owned by its client and possessed. The harness carries the input to
 > the server (section 8 by itself), and a harness Simulation predicts it.
 > NetArena works this way. The rest of this section, and section 8, is what
@@ -610,7 +610,7 @@ Compile Source.
 - [ ] Simulation systems that change shared state early-out unless
       `HasAuthority()`.
 - [ ] `OnClientConnected` turns the engine's player entity into a pawn
-      (or the mode is an `AvatarGameMode`, and the pawn has an Avatar Harness).
+      (or the mode is an `NetGameMode`, and the pawn has an Avatar Harness).
 - [ ] `OnStart` gives a listen server's (and standalone) user a pawn when
       `HasAuthority() && !IsDedicatedServer()`.
 - [ ] Input is read locally and sent as a Server RPC on the owned pawn, on

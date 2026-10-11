@@ -19,11 +19,11 @@
 #include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/World.h"
 
-/* PlayerStart.h: spawn points, spawning an avatar, AutoPossess, AvatarGameMode. */
+/* PlayerStart.h: spawn points, spawning an avatar, AutoPossess, NetGameMode. */
 
 /* The avatar a player gets when neither the mode nor the start names one. */
 NIMBLE_CONFIG_STRING(GAvatarDefaultPrefab, "Avatar", "DefaultPrefab", "", nullptr);
-/* Local players AvatarGameMode gives avatars on a listen server or standalone. */
+/* Local players NetGameMode gives avatars on a listen server or standalone. */
 NIMBLE_CONFIG_INT(GAvatarLocalPlayers, "Avatar", "LocalPlayers", 1, nullptr);
 
 namespace NimbleEngine
@@ -121,16 +121,16 @@ void ApplyAutoPossess(GameCore::World& InWorld)
     }
 }
 
-// === AvatarGameMode ===========================================================
+// === NetGameMode ===========================================================
 
-bool AvatarGameMode::OnLoad(GameSession& InSession)
+bool NetGameMode::OnLoad(GameSession& InSession)
 {
     Session     = &InSession;
     NextOrdinal = 0;
     return true;
 }
 
-void AvatarGameMode::OnStart()
+void NetGameMode::OnStart()
 {
     if(!Session || !HasAuthority() || IsDedicatedServer()) { return; }
     GameCore::World& World = Session->GetWorld();
@@ -143,13 +143,13 @@ void AvatarGameMode::OnStart()
     }
 }
 
-void AvatarGameMode::OnClientConnected(const int32_t InClient, const GameCore::EntityID InPlayer)
+void NetGameMode::OnClientConnected(const int32_t InClient, const GameCore::EntityID InPlayer)
 {
     (void)InClient;
     if(Session && InPlayer.IsSet()) { SpawnFor(InPlayer); }
 }
 
-GameCore::EntityID AvatarGameMode::SpawnFor(const GameCore::EntityID InPlayer)
+GameCore::EntityID NetGameMode::SpawnFor(const GameCore::EntityID InPlayer)
 {
     GameCore::World& World = Session->GetWorld();
     const uint32_t Ordinal = NextOrdinal++;

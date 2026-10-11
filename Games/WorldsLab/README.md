@@ -91,7 +91,7 @@ twice across the range, 4.5 m up.
 
 You play the **RangeShooter** (`Content/Prefabs/ShootingRange/RangeShooter.nmprefab`):
 the engine's crash dummy and its pistol, third person. The Player Start
-spawns it (an `AvatarGameMode`); `RangeMove`, an avatar simulation, walks it on
+spawns it (an `NetGameMode`); `RangeMove`, an avatar simulation, walks it on
 the physics with raycasts -- floors, stairs, catwalks, walls -- and swings the
 camera. `Scripts/ShootingRange/RangeShooter.lua` draws and holsters (the
 pistol moves between holster and hand on the clips' notifies), shoots

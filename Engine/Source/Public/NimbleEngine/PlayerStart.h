@@ -63,7 +63,7 @@ namespace NimbleEngine
      * Spawns at FindPlayerStart(join order). GetAvatarPrefab picks the
      * prefab; OnAvatarSpawned dresses the result (colour, name).
      */
-    class NE_API AvatarGameMode : public IGameMode
+    class NE_API NetGameMode : public IGameMode
     {
     public:
         bool OnLoad(GameSession& InSession) override;
