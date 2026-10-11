@@ -160,6 +160,14 @@ void SourceBuild::OnOutput()
     }
 }
 
+bool SourceBuild::IsErrorLine(const QString& InLine)
+{
+    /* MSVC "x.cpp(12): error C2065", "LINK : fatal error LNK1104", clang and
+     * gcc "x.cpp:12:3: error:", and Ninja's own "FAILED:". */
+    static const QRegularExpression Error(QStringLiteral(R"(:\s*(fatal\s+)?error\b)"));
+    return InLine.startsWith(QStringLiteral("FAILED:")) || Error.match(InLine).hasMatch();
+}
+
 void SourceBuild::LogLine(const QString& InLine)
 {
     if(InLine.isEmpty())
@@ -167,15 +175,12 @@ void SourceBuild::LogLine(const QString& InLine)
         return;
     }
 
-    /* MSVC "x.cpp(12): error C2065", "LINK : fatal error LNK1104", clang and
-     * gcc "x.cpp:12:3: error:", and Ninja's own "FAILED:". */
-    static const QRegularExpression Error(QStringLiteral(R"(:\s*(fatal\s+)?error\b)"));
     static const QRegularExpression Warning(QStringLiteral(R"(:\s*warning\b)"));
 
     emit OutputLine(InLine);
 
     const std::string Line = "[Build] " + ToStd(InLine);
-    if(InLine.startsWith(QStringLiteral("FAILED:")) || Error.match(InLine).hasMatch())
+    if(IsErrorLine(InLine))
     {
         CORE_LOG_ERROR(Line)
     }

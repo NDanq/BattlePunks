@@ -68,6 +68,22 @@ namespace
         { "terrain-smooth-paint.svg", QStyle::SP_DialogResetButton },
         { "foliage.svg",              QStyle::SP_DialogYesButton },
         { "foliage-erase.svg",        QStyle::SP_DialogNoButton },
+        { "bell.svg",                 QStyle::SP_MessageBoxInformation },
+        { "bell-off.svg",             QStyle::SP_MediaVolumeMuted },
+        { "circle-x.svg",             QStyle::SP_MessageBoxCritical },
+        { "circle-check.svg",         QStyle::SP_DialogApplyButton },
+        { "triangle-alert.svg",       QStyle::SP_MessageBoxWarning },
+        { "info.svg",                 QStyle::SP_MessageBoxInformation },
+        { "x.svg",                    QStyle::SP_TitleBarCloseButton },
+        { "git-branch.svg",           QStyle::SP_DirLinkIcon },
+        { "refresh-cw.svg",           QStyle::SP_BrowserReload },
+        { "arrow-up.svg",             QStyle::SP_ArrowUp },
+        { "arrow-down.svg",           QStyle::SP_ArrowDown },
+        { "cloud-download.svg",       QStyle::SP_ArrowDown },
+        { "upload.svg",               QStyle::SP_ArrowUp },
+        { "git-commit-horizontal.svg", QStyle::SP_DialogSaveButton },
+        { "lock.svg",                 QStyle::SP_MessageBoxWarning },
+        { "git-merge.svg",            QStyle::SP_MessageBoxWarning },
     }};
 
     QIcon FallbackIcon(const EditorIcons::EIcon InIcon)
@@ -81,7 +97,8 @@ namespace
     class LucideIconEngine final : public QIconEngine
     {
     public:
-        explicit LucideIconEngine(QByteArray InSvg) : Svg(std::move(InSvg)) {}
+        /* InColor: drawn in it instead of the palette's; invalid for the palette's. */
+        LucideIconEngine(QByteArray InSvg, const QColor& InColor) : Svg(std::move(InSvg)), Fixed(InColor) {}
 
         void paint(QPainter* InPainter, const QRect& InRect, const QIcon::Mode InMode, QIcon::State) override
         {
@@ -123,13 +140,17 @@ namespace
             return Pixmap;
         }
 
-        QIconEngine* clone() const override { return new LucideIconEngine(Svg); }
+        QIconEngine* clone() const override { return new LucideIconEngine(Svg, Fixed); }
         QString key() const override { return QStringLiteral("NimbleLucideIconEngine"); }
 
     private:
-        static QColor ColorFor(const QIcon::Mode InMode)
+        QColor ColorFor(const QIcon::Mode InMode) const
         {
             const QPalette Palette = QApplication::palette();
+            if(Fixed.isValid() && InMode != QIcon::Disabled)
+            {
+                return Fixed;
+            }
             switch(InMode)
             {
                 case QIcon::Disabled: return Palette.color(QPalette::Disabled, QPalette::ButtonText);
@@ -146,6 +167,7 @@ namespace
         }
 
         QByteArray              Svg;
+        QColor                  Fixed;
         QHash<QString, QPixmap> Cache;
     };
 #endif // NIMBLEEDITOR_HAS_QTSVG
@@ -155,6 +177,11 @@ namespace EditorIcons
 {
     QIcon Get(const EIcon InIcon)
     {
+        return Get(InIcon, QColor());
+    }
+
+    QIcon Get(const EIcon InIcon, const QColor& InColor)
+    {
         if(size_t(InIcon) >= Icons.size())
         {
             return QIcon();
@@ -163,8 +190,10 @@ namespace EditorIcons
         QFile File(QStringLiteral(":/lucide/") + QLatin1String(Icons[size_t(InIcon)].Resource));
         if(File.open(QIODevice::ReadOnly))
         {
-            return QIcon(new LucideIconEngine(File.readAll()));
+            return QIcon(new LucideIconEngine(File.readAll(), InColor));
         }
+#else
+        (void)InColor;
 #endif
         return FallbackIcon(InIcon);
     }

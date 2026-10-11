@@ -39,6 +39,9 @@ public:
      * if already running or unable to start. */
     bool StartCommand(const QStringList& InArgs, const QString& InWorkingDir, const QString& InLabel);
 
+    /* A compiler, linker or Ninja error line, as logged in red. */
+    static bool IsErrorLine(const QString& InLine);
+
     /* The cmake this editor was configured with. */
     static QString GetCMakeCommand();
 
@@ -46,6 +49,9 @@ public:
     void Cancel();
 
     bool IsRunning() const { return Process != nullptr; }
+
+    /* The last build ended by Cancel (valid from Finished until the next Start). */
+    bool WasCancelled() const { return bCancelled; }
 
     /* The target being built, or the last one. */
     const QString& GetTarget() const { return Target; }

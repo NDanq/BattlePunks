@@ -50,6 +50,8 @@
 #include "Private/Editor/EditorEditActions.h"
 #include "Private/Editor/EditorLights.h"
 #include "Private/Editor/EditorPrimitives.h"
+#include "Private/Editor/NotificationWidgets.h"
+#include "Public/Editor/EditorNotifications.h"
 #include "Private/Editor/AboutDialog.h"
 #include "Private/Editor/DocumentationWindow.h"
 #include "Private/Editor/Content/AssetImport.h"
@@ -240,6 +242,15 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
 
     /* The Sequencer, hidden until a sequence opens: tabbed with them. */
     SequencerWindow::Install(*this, ContentDock);
+
+    /* Notifications: the history, hidden until the status bar's bell, tabbed
+     * with them too; the toasts over the viewport's corner. */
+    EditorNotifications::Install();   // EditorMain's already; a no-op then
+    Notifications = new NotificationCenter(this);
+    addDockWidget(Qt::BottomDockWidgetArea, Notifications);
+    tabifyDockWidget(ConsoleDock, Notifications);
+    Notifications->hide();
+    Toasts = new NotificationToasts(*this);
     ContentDock->raise();
     connect(ContentArea, &ContentBrowserPanel::OpenWorldRequested, this, &EditorMainWindow::OpenWorldFile);
 
@@ -272,6 +283,9 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     BakeLabel->setStyleSheet(QStringLiteral("QLabel { color: rgb(230, 170, 60); }"));
     BakeLabel->setToolTip(QStringLiteral("A static entity or light changed since Build > Bake Lightmaps"));
     statusBar()->addPermanentWidget(BakeLabel);
+
+    /* Rightmost: Do Not Disturb and the bell. */
+    statusBar()->addPermanentWidget(new NotificationStatusItem(*Notifications, this));
 
     /* Re-gathering the static scene costs a little: once edits settle. */
     BakeCheckTimer.setSingleShot(true);
@@ -692,7 +706,14 @@ void EditorMainWindow::StartPlay()
     /* The open world's level, if the project lists it (Project Settings > Worlds). */
     if(!Context.StartPlay(CurrentPath.isEmpty() ? QString() : EditorContent::ToRuntimePath(CurrentPath)))
     {
-        statusBar()->showMessage(QStringLiteral("Play failed -- see the Console"), 5000);
+        EditorNotifications::Notification Failed;
+        Failed.Severity   = EditorNotifications::ESeverity::Error;
+        Failed.Title      = QStringLiteral("Play failed");
+        Failed.Body       = QStringLiteral("The Console says why.");
+        Failed.Source     = QStringLiteral("Play");
+        Failed.ReplaceKey = QStringLiteral("play.failed");
+        Failed.Actions    = { { QStringLiteral("Show Log"), [this]() { ShowConsole(); } } };
+        EditorNotifications::Get()->Post(std::move(Failed));
         return;
     }
     /* So keys reach the viewport (Esc to stop) rather than the last panel. */
@@ -707,6 +728,20 @@ void EditorMainWindow::BuildBuildMenu()
     connect(Compiler, &SourceBuild::Finished, this, [this](const bool bInSucceeded, const QString&)
     {
         OnCompileFinished(bInSucceeded);
+    });
+    /* The first compiler error, for the failure's toast. Ninja's "FAILED:"
+     * comes before it, so only while there is nothing better. */
+    connect(Compiler, &SourceBuild::OutputLine, this, [this](const QString& InLine)
+    {
+        if(!SourceBuild::IsErrorLine(InLine))
+        {
+            return;
+        }
+        const bool bNinja = InLine.startsWith(QStringLiteral("FAILED:"));
+        if(FirstCompileError.isEmpty() || (FirstCompileError.startsWith(QStringLiteral("FAILED:")) && !bNinja))
+        {
+            FirstCompileError = InLine.trimmed();
+        }
     });
 
     CompileAction = BuildMenu->addAction(QStringLiteral("&Compile Source"));
@@ -735,7 +770,15 @@ void EditorMainWindow::BuildBuildMenu()
                                              "beside the world (World > World Settings turns baked lighting on)"));
     connect(BakeLightmaps, &QAction::triggered, this, [this]()
     {
-        EditorLighting::BakeLightmaps(Level, Context, CurrentPath, this, [this](const QString& InText) { statusBar()->showMessage(InText, 10000); });
+        QString Outcome;
+        const bool bBaked = EditorLighting::BakeLightmaps(Level, Context, CurrentPath, this,
+                                                          [&Outcome](const QString& InText) { Outcome = InText; });
+        if(!Outcome.isEmpty())
+        {
+            EditorNotifications::Notify(bBaked ? EditorNotifications::ESeverity::Success : EditorNotifications::ESeverity::Warning,
+                                        bBaked ? QStringLiteral("Lightmaps baked") : QStringLiteral("Lightmaps not baked"),
+                                        Outcome, QStringLiteral("Bake"), QStringLiteral("bake.lightmaps"));
+        }
     });
     SceneActions.push_back(BakeLightmaps);
 
@@ -766,7 +809,8 @@ void EditorMainWindow::CompileSource()
     if(Module.isEmpty())
     {
         CORE_LOG_ERROR("[Build] no game module to compile -- set [Game] Module in Config/DefaultEngine.ini")
-        statusBar()->showMessage(QStringLiteral("Compile failed -- see the Console"), 5000);
+        PostCompileResult(EditorNotifications::ESeverity::Error, QStringLiteral("Nothing to compile"),
+                          QStringLiteral("Set [Game] Module in Config/DefaultEngine.ini."));
         return;
     }
 
@@ -787,17 +831,48 @@ void EditorMainWindow::CompileSource()
         }
     }
 
+    FirstCompileError.clear();
     if(!Compiler->Start(Targets))
     {
-        statusBar()->showMessage(QStringLiteral("Compile failed -- see the Console"), 5000);
+        PostCompileResult(EditorNotifications::ESeverity::Error, QStringLiteral("Compile didn't start"),
+                          QStringLiteral("The Console says why."));
         return;
     }
     if(Compiler->IsRunning())
     {
         CompileAction->setEnabled(false);
         CancelCompileAction->setEnabled(true);
-        statusBar()->showMessage(QStringLiteral("Compiling %1...").arg(Module));
+
+        EditorNotifications::Notification Running;
+        Running.Title      = QStringLiteral("Compiling %1…").arg(Module);
+        Running.Source     = QStringLiteral("Build");
+        Running.ReplaceKey = QStringLiteral("build.compile");
+        Running.Progress   = EditorNotifications::Indeterminate;
+        Running.Actions    = { { QStringLiteral("Cancel"), [this]() { Compiler->Cancel(); } } };
+        EditorNotifications::Get()->Post(std::move(Running));
     }
+}
+
+void EditorMainWindow::PostCompileResult(const EditorNotifications::ESeverity InSeverity, const QString& InTitle, const QString& InBody)
+{
+    EditorNotifications::Notification Result;
+    Result.Severity   = InSeverity;
+    Result.Title      = InTitle;
+    Result.Body       = InBody;
+    Result.Source     = QStringLiteral("Build");
+    Result.ReplaceKey = QStringLiteral("build.compile");
+    if(InSeverity == EditorNotifications::ESeverity::Error)
+    {
+        Result.Actions = { { QStringLiteral("Show Log"), [this]() { ShowConsole(); } } };
+    }
+    EditorNotifications::Get()->Post(std::move(Result));
+}
+
+void EditorMainWindow::ShowConsole()
+{
+    auto* Dock = static_cast<QDockWidget*>(ConsoleArea->parentWidget());
+    Dock->show();
+    Dock->raise();
 }
 
 void EditorMainWindow::OnCompileFinished(const bool bInSucceeded)
@@ -806,9 +881,16 @@ void EditorMainWindow::OnCompileFinished(const bool bInSucceeded)
     CancelCompileAction->setEnabled(false);
 
     const QString Module = Compiler->GetTarget();
+    using ESeverity = EditorNotifications::ESeverity;
+    if(!bInSucceeded && Compiler->WasCancelled())
+    {
+        PostCompileResult(ESeverity::Info, QStringLiteral("Compile of %1 cancelled").arg(Module));
+        return;
+    }
     if(!bInSucceeded)
     {
-        statusBar()->showMessage(QStringLiteral("Compiling %1 failed -- see the Console").arg(Module), 5000);
+        PostCompileResult(ESeverity::Error, QStringLiteral("Compiling %1 failed").arg(Module),
+                          FirstCompileError.isEmpty() ? QStringLiteral("The Console has the build's output.") : FirstCompileError);
         return;
     }
 
@@ -818,15 +900,19 @@ void EditorMainWindow::OnCompileFinished(const bool bInSucceeded)
     if(Context.IsPlaying() && !GEditorReloadAfterCompile.GetBool())
     {
         CORE_LOG("[Build] " + std::string(Module.toUtf8().constData()) + " is loaded at the next Play; the run keeps the old one")
-        statusBar()->showMessage(QStringLiteral("Compiled %1 -- Stop and Play to load it").arg(Module), 5000);
+        PostCompileResult(ESeverity::Success, QStringLiteral("Compiled %1").arg(Module),
+                          QStringLiteral("The run keeps the old build: Stop and Play to load it."));
         bDeclarationsStale = true;
         return;
     }
     if(!Context.IsPlaying())
     {
         CORE_LOG("[Build] " + std::string(Module.toUtf8().constData()) + " reloaded for editing, and loaded at the next Play")
-        statusBar()->showMessage(QStringLiteral("Compiled %1").arg(Module), 5000);
-        EditorGraphs::RefreshGameDeclarations(Context.ReloadAuthoringGame());
+        const bool bReloaded = Context.ReloadAuthoringGame();
+        PostCompileResult(bReloaded ? ESeverity::Success : ESeverity::Warning, QStringLiteral("Compiled %1").arg(Module),
+                          bReloaded ? QStringLiteral("Reloaded for editing.")
+                                    : QStringLiteral("It didn't reload for editing; the Console says why."));
+        EditorGraphs::RefreshGameDeclarations(bReloaded);
         return;
     }
 
@@ -835,7 +921,12 @@ void EditorMainWindow::OnCompileFinished(const bool bInSucceeded)
     StartPlay();
     if(Context.IsPlaying())
     {
-        statusBar()->showMessage(QStringLiteral("Compiled and reloaded %1").arg(Module), 5000);
+        PostCompileResult(ESeverity::Success, QStringLiteral("Compiled %1").arg(Module), QStringLiteral("The run restarted on it."));
+    }
+    else
+    {
+        /* StartPlay posted why; this one replaces the progress. */
+        PostCompileResult(ESeverity::Warning, QStringLiteral("Compiled %1").arg(Module), QStringLiteral("The run didn't restart."));
     }
     EditorGraphs::RefreshGameDeclarations(Context.IsPlaying());
 }
