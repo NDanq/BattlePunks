@@ -19,6 +19,9 @@
     #if defined(__APPLE__)
         #include <mach-o/dyld.h>
     #endif
+    #if defined(__linux__)
+        #include <sys/prctl.h>
+    #endif
     extern char** environ;
 #endif
 
@@ -27,6 +30,41 @@ namespace Collab
 #if defined(_WIN32)
 namespace
 {
+    /* Every child goes in this job, which ends them when this process ends,
+     * however it ends: a worker the server terminates takes its game server
+     * and its build with it. Never closed; the system closes it at exit. */
+    HANDLE ChildJob()
+    {
+        static const HANDLE Job = []() -> HANDLE
+        {
+            HANDLE Made = CreateJobObjectW(nullptr, nullptr);
+            if(!Made)
+            {
+                return nullptr;
+            }
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION Limits = {};
+            Limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if(!SetInformationJobObject(Made, JobObjectExtendedLimitInformation, &Limits, sizeof(Limits)))
+            {
+                CloseHandle(Made);
+                return nullptr;
+            }
+            return Made;
+        }();
+        return Job;
+    }
+
+    /* A child created suspended joins the job before it runs (so before it
+     * starts children of its own), then goes. */
+    void JoinJobAndResume(const PROCESS_INFORMATION& InInfo)
+    {
+        if(const HANDLE Job = ChildJob())
+        {
+            AssignProcessToJobObject(Job, InInfo.hProcess);
+        }
+        ResumeThread(InInfo.hThread);
+    }
+
     std::wstring Widen(const std::string& InText)
     {
         if(InText.empty())
@@ -167,7 +205,7 @@ ProcessResult RunProcess(const std::vector<std::string>& InArgs, const std::stri
     std::wstring Line = CommandLine(InArgs);
     std::wstring Environment = EnvironmentBlock(InEnvironment);
     const std::wstring Dir = Widen(InWorkingDir);
-    const BOOL bCreated = CreateProcessW(nullptr, Line.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+    const BOOL bCreated = CreateProcessW(nullptr, Line.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED,
                                          Environment.data(), Dir.empty() ? nullptr : Dir.c_str(), &Startup, &Info);
     CloseHandle(WriteEnd);
     if(NullIn != INVALID_HANDLE_VALUE)
@@ -179,6 +217,7 @@ ProcessResult RunProcess(const std::vector<std::string>& InArgs, const std::stri
         CloseHandle(ReadEnd);
         return Result;
     }
+    JoinJobAndResume(Info);
     Result.bStarted = true;
 
     char Buffer[4096];
@@ -210,8 +249,9 @@ ChildProcess SpawnProcess(const std::vector<std::string>& InArgs, const std::str
     PROCESS_INFORMATION Info = {};
     std::wstring Line = CommandLine(InArgs);
     const std::wstring Dir = Widen(InWorkingDir);
-    if(CreateProcessW(nullptr, Line.data(), nullptr, nullptr, FALSE, 0, nullptr, Dir.empty() ? nullptr : Dir.c_str(), &Startup, &Info))
+    if(CreateProcessW(nullptr, Line.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED, nullptr, Dir.empty() ? nullptr : Dir.c_str(), &Startup, &Info))
     {
+        JoinJobAndResume(Info);
         CloseHandle(Info.hThread);
         Child.Handle = uintptr_t(Info.hProcess);
     }
@@ -264,6 +304,16 @@ std::string GetExecutableDir()
 
 namespace
 {
+    /* In the child, before exec: end with this process, however it ends (a
+     * worker the server kills takes its game server with it). Linux only;
+     * elsewhere a child outlives a killed parent. */
+    void DieWithParent()
+    {
+#if defined(__linux__)
+        prctl(PR_SET_PDEATHSIG, SIGTERM);
+#endif
+    }
+
     std::vector<char*> Argv(const std::vector<std::string>& InArgs)
     {
         std::vector<char*> Out;
@@ -298,6 +348,7 @@ ProcessResult RunProcess(const std::vector<std::string>& InArgs, const std::stri
     }
     if(Pid == 0)
     {
+        DieWithParent();
         dup2(Pipe[1], STDOUT_FILENO);
         dup2(Pipe[1], STDERR_FILENO);
         close(Pipe[0]);
@@ -351,6 +402,7 @@ ChildProcess SpawnProcess(const std::vector<std::string>& InArgs, const std::str
     const pid_t Pid = fork();
     if(Pid == 0)
     {
+        DieWithParent();
         if(!InWorkingDir.empty() && chdir(InWorkingDir.c_str()) != 0)
         {
             _exit(127);

@@ -31,7 +31,11 @@ namespace Collab
         bool IsValid() const { return Handle != 0; }
     };
 
-    /* Starts InArgs without waiting; its output goes where this process's does. */
+    /* Starts InArgs without waiting; its output goes where this process's does.
+     * Children of both kinds end when this process does, however it ends (a
+     * kill-on-close job on Windows, PR_SET_PDEATHSIG on Linux). On Linux that
+     * is when the calling thread ends, so spawn from a thread that lives as
+     * long as the child should. */
     ChildProcess SpawnProcess(const std::vector<std::string>& InArgs, const std::string& InWorkingDir = std::string());
 
     bool IsProcessRunning(const ChildProcess& InChild);
