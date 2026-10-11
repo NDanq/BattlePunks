@@ -1,6 +1,7 @@
 #include "Private/Collab/CollabTransport.h"
 
 #include <cstring>
+#include <mutex>
 
 #include <enet/enet.h>
 
@@ -14,10 +15,13 @@ namespace Collab
 {
 namespace
 {
-    int GENetUsers = 0;
+    /* A mutex: the content worker's tests run a worker on its own thread. */
+    std::mutex GENetMutex;
+    int        GENetUsers = 0;
 
     bool AcquireENet()
     {
+        std::lock_guard<std::mutex> Lock(GENetMutex);
         if(GENetUsers == 0 && enet_initialize() != 0)
         {
             CORE_LOG_ERROR("Collab: ENet failed to initialize")
@@ -29,6 +33,7 @@ namespace
 
     void ReleaseENet()
     {
+        std::lock_guard<std::mutex> Lock(GENetMutex);
         if(GENetUsers > 0 && --GENetUsers == 0) { enet_deinitialize(); }
     }
 

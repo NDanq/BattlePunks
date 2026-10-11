@@ -48,6 +48,8 @@ namespace Collab
             MemberChanged,  // MemberId: presence
             Overlap,        // Path, User: someone else also has Path dirty
             BranchAdvanced, // MemberId, User (who pushed), Move: the session branch moved
+            BuildStatus,    // Build: the session's server build moved on (GetBuildStatus too)
+            Validation,     // Report: content problems the worker found in a commit
             Notified        // Severity, Title, Text
         };
 
@@ -60,6 +62,8 @@ namespace Collab
         ERejectReason Reason   = ERejectReason::BadHello;
         ESeverity     Severity = ESeverity::Info;
         BranchMove    Move;
+        BuildStatusMessage      Build;
+        ValidationReportMessage Report;
     };
 
     class COLLAB_API CollabClient
@@ -96,6 +100,9 @@ namespace Collab
         uint32_t GetSessionId() const { return SessionId; }
         const std::string& GetSessionEngineTree() const { return SessionEngine; }
 
+        /* The session's server build, as the worker last reported it; Idle without one. */
+        const BuildStatusMessage& GetBuildStatus() const { return LastBuild; }
+
         /* This editor pushed the session branch: the others hear BranchAdvanced. */
         void AnnouncePush(const BranchMove& InMove);
 
@@ -118,6 +125,7 @@ namespace Collab
         uint32_t MyId      = 0;
         uint32_t SessionId = 0;
         std::string SessionEngine;
+        BuildStatusMessage LastBuild;
         std::map<uint32_t, MemberState> Roster;
         std::deque<ClientEvent>        Events;
 

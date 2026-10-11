@@ -69,6 +69,12 @@ CollabSessionWindow::CollabSessionWindow(EditorCollabSession& InSession, QWidget
     Buttons->addWidget(LeaveButton);
     Column->addLayout(Buttons);
 
+    BuildLabel = new QLabel(Body);
+    BuildLabel->setObjectName(QStringLiteral("CollabBuild"));
+    BuildLabel->setWordWrap(true);
+    BuildLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    Column->addWidget(BuildLabel);
+
     Roster = new QTreeWidget(Body);
     Roster->setObjectName(QStringLiteral("CollabRoster"));
     Roster->setColumnCount(4);
@@ -103,9 +109,12 @@ CollabSessionWindow::CollabSessionWindow(EditorCollabSession& InSession, QWidget
         UpdateState();
     });
     connect(&Session, &EditorCollabSession::RosterChanged, this, &CollabSessionWindow::UpdateRoster);
+    connect(&Session, &EditorCollabSession::BuildChanged, this, &CollabSessionWindow::UpdateBuild);
+    connect(&Session, &EditorCollabSession::StateChanged, this, &CollabSessionWindow::UpdateBuild);
 
     UpdateState();
     UpdateRoster();
+    UpdateBuild();
 }
 
 void CollabSessionWindow::UpdateState()
@@ -182,6 +191,31 @@ void CollabSessionWindow::UpdateRoster()
             Item->setText(3, QStringLiteral("%1 (%2 also yours)").arg(Member.Dirty.size()).arg(Shared));
         }
     }
+}
+
+
+void CollabSessionWindow::UpdateBuild()
+{
+    const Collab::BuildStatusMessage& Build = Session.GetClient().GetBuildStatus();
+    const QString Short = ToQ(Build.Oid).left(8);
+    switch(Session.IsJoined() ? Build.State : Collab::EBuildState::Idle)
+    {
+        case Collab::EBuildState::Idle:
+            BuildLabel->setText(Session.IsJoined() ? QStringLiteral("Server build: none yet (the server runs no content worker, or it hasn't reported)")
+                                                   : QString());
+            break;
+        case Collab::EBuildState::Building:
+            BuildLabel->setText(QStringLiteral("Server build: building %12026").arg(Short));
+            break;
+        case Collab::EBuildState::Succeeded:
+            BuildLabel->setText(QStringLiteral("Server build: %1 built, schema %2").arg(Short)
+                                .arg(QString::number(qulonglong(Build.SchemaHash), 16).rightJustified(16, QLatin1Char('0'))));
+            break;
+        case Collab::EBuildState::Failed:
+            BuildLabel->setText(QStringLiteral("Server build: %1 failed: %2").arg(Short, ToQ(Build.FirstError)));
+            break;
+    }
+    BuildLabel->setVisible(!BuildLabel->text().isEmpty());
 }
 
 #endif // WITH_EDITOR

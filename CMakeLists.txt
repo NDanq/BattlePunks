@@ -594,6 +594,7 @@ endif()
 # the hot-reload sibling rule requires.
 set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/NimbleEngine.cpp
+        Source/Private/NimbleEngine/ContentReport.cpp
         Source/Private/NimbleEngine/GameSession.cpp
         Source/Private/NimbleEngine/GameFramework.cpp
         Source/Private/NimbleEngine/GameUI.cpp
@@ -995,6 +996,12 @@ if(TARGET Collab)
     add_executable(NimbleEditorServer Tools/EditorServer/EditorServerMain.cpp)
     target_link_libraries(NimbleEditorServer PRIVATE EngineCore::EngineCore Collab::Collab)
     set_target_properties(NimbleEditorServer PROPERTIES FOLDER "Engine")
+
+    # Its content worker, one per session when it has --repo: started beside it.
+    add_executable(NimbleContentWorker Tools/ContentWorker/ContentWorkerMain.cpp)
+    target_link_libraries(NimbleContentWorker PRIVATE EngineCore::EngineCore Collab::Collab)
+    set_target_properties(NimbleContentWorker PROPERTIES FOLDER "Engine")
+    add_dependencies(NimbleEditorServer NimbleContentWorker)
 endif()
 
 # === Editor ================================================================

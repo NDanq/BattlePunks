@@ -3,12 +3,20 @@
  * (Engine/Modules/Editor/COLLABORATION.md).
  *
  *   NimbleEditorServer [--port N] [--password TEXT] [--logs DIR]
+ *                      [--repo DIR [--data DIR] [--preset NAME]]
  *
  * Editors connect over UDP (7788 by default) and are put in a session per
  * project and branch; see Modules/Collab. No Qt, no game code: Core, Collab
  * and ENet. Logs to <DIR>/EditorServer-<time>.log (Saved/Logs by default).
  * The password may come from NIMBLE_COLLAB_PASSWORD instead of the command
  * line, so it stays out of process listings. Ctrl+C stops it.
+ *
+ * --repo is this host's checkout of the project: each session then gets a
+ * content worker (NimbleContentWorker, beside this executable) that builds the
+ * session branch with --preset (server-relwithdebinfo-msvc on Windows) in a
+ * worktree under --data (Saved/CollabWorkers), checks its content, and
+ * catches pushes made outside the editor. It builds and runs whatever is
+ * pushed: a trusted team's server only.
  *
  * A session is for a trusted team on a LAN or VPN: don't expose it to the
  * internet.
@@ -37,11 +45,15 @@ namespace
 
     void PrintUsage()
     {
-        std::printf("NimbleEditorServer [--port N] [--password TEXT] [--logs DIR]\n"
+        std::printf("NimbleEditorServer [--port N] [--password TEXT] [--logs DIR] [--repo DIR [--data DIR] [--preset NAME]]\n"
                     "  --port      UDP port to listen on (default %u)\n"
                     "  --password  session password (or set NIMBLE_COLLAB_PASSWORD)\n"
-                    "  --logs      folder for the run log (default Saved/Logs)\n",
-                    unsigned(Collab::DefaultPort));
+                    "  --logs      folder for the run log (default Saved/Logs)\n"
+                    "  --repo      this host's checkout of the project: a content worker builds and checks each session\n"
+                    "  --data      worktrees and worker logs (default Saved/CollabWorkers)\n"
+                    "  --preset    the game's CMake preset for the worker (default %s)\n"
+                    "  --cmake     the CMake the worker builds with (default: Visual Studio's own on Windows, else cmake)\n",
+                    unsigned(Collab::DefaultPort), Collab::GetDefaultWorkerPreset());
     }
 }
 
@@ -75,6 +87,22 @@ int main(int argc, char** argv)
         else if(Arg == "--logs" && bHasValue)
         {
             LogsDir = argv[++Index];
+        }
+        else if(Arg == "--repo" && bHasValue)
+        {
+            Config.RepoPath = argv[++Index];
+        }
+        else if(Arg == "--data" && bHasValue)
+        {
+            Config.DataDir = argv[++Index];
+        }
+        else if(Arg == "--preset" && bHasValue)
+        {
+            Config.WorkerPreset = argv[++Index];
+        }
+        else if(Arg == "--cmake" && bHasValue)
+        {
+            Config.WorkerCMake = argv[++Index];
         }
         else if(Arg == "--help" || Arg == "-h")
         {

@@ -1455,4 +1455,11 @@ void NetSession::SetCorrectionHandler(const CorrectionFn InFn, void* InUserData)
 }
 
 NetSession* NetSession::GetActive() { return GStarted.empty() ? nullptr : GStarted.front()->Self; }
+
+uint64_t ComputeSchemaHash()
+{
+    NetSchema Schema;
+    Schema.Refresh();
+    return Schema.GetHash();
+}
 }

@@ -35,6 +35,7 @@ public:
 private:
     void UpdateState();
     void UpdateRoster();
+    void UpdateBuild();
 
     EditorCollabSession& Session;
     QLineEdit*   Address   = nullptr;
@@ -43,6 +44,7 @@ private:
     QPushButton* JoinButton  = nullptr;
     QPushButton* LeaveButton = nullptr;
     QLabel*      StateLabel = nullptr;
+    QLabel*      BuildLabel = nullptr;   // the server's build of the session branch
     QTreeWidget* Roster     = nullptr;
 };
 
