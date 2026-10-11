@@ -68,6 +68,9 @@ namespace NimbleEngine
      *                            project's raw files -- the folder, else the one
      *                            the game was built from (SetProjectDir)
      *     -cooked                not uncooked, whatever the build's default
+     *     -headless              the game launcher runs without a window, input or
+     *                            renderer (ApplicationDesc::bHeadless): a client
+     *                            for bots and soak tests; no override here
      *
      * Anything else is warned about and ignored. Each entry of the result is
      * an ExecConfigCommand line ("Net.Port 7777").
