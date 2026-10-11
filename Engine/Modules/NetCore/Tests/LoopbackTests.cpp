@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreThread.h"
@@ -731,6 +732,104 @@ namespace
     }
 }
 
+namespace
+{
+    /* What a server's flush costs with many entities and several clients:
+     * printed, not checked (timings vary); the state is checked to arrive. */
+    void TestFlushCost()
+    {
+        std::printf("[flush cost]\n");
+        constexpr int Entities = 2000, Clients = 4, Movers = 100, Ticks = 120;
+
+        World ServerWorld;
+        NetSession Server;
+        NetConfig ServerConfig;
+        ServerConfig.Port = 0;
+        ServerConfig.RpcPerSecond = 0;
+        Check(Server.Start(ENetRole::Server, ServerConfig), "a server for the flush benchmark");
+        Server.BindWorld(ServerWorld, "Bench");
+
+        std::vector<World> ClientWorlds(Clients);
+        std::vector<NetSession> ClientSessions(Clients);
+        for(int Index = 0; Index < Clients; ++Index)
+        {
+            NetConfig Config;
+            std::strcpy(Config.ServerAddress, "127.0.0.1");
+            Config.Port = Server.GetPort();
+            Config.InterpolationDelayMs = 0;
+            ClientSessions[Index].Start(ENetRole::Client, Config);
+            ClientSessions[Index].BindWorld(ClientWorlds[Index], "Bench");
+        }
+        const auto StepAll = [&]
+        {
+            Server.PollIncoming();
+            for(NetSession& C : ClientSessions) { C.PollIncoming(); }
+            Server.FlushOutgoing();
+            for(NetSession& C : ClientSessions) { C.FlushOutgoing(); }
+        };
+        const auto Until = [&](auto&& InDone, const int InMax)
+        {
+            for(int Step = 0; Step < InMax; ++Step) { if(InDone()) { return true; } StepAll(); EngineCore::Threads::SleepMs(1); }
+            return InDone();
+        };
+        Check(Until([&] { return Server.GetClientCount() == size_t(Clients); }, 3000), "four clients join");
+
+        std::vector<Entity> Spawned;
+        for(int Index = 0; Index < Entities; ++Index)
+        {
+            Entity E = ServerWorld.CreateEntity("Bench");
+            E.AddComponent<NetComponent>();
+            E.AddComponent<TransformComponent>();
+            E.AddComponent<PawnComponent>();
+            Spawned.push_back(E);
+        }
+        Check(Until([&]
+        {
+            for(NetSession& C : ClientSessions) { if(!C.FindEntityByNetId(Server.GetNetId(Spawned.back().GetID())).IsSet()) { return false; } }
+            return true;
+        }, 5000), "every client has all 2000");
+        for(int Index = 0; Index < 300; ++Index) { StepAll(); EngineCore::Threads::SleepMs(1); }   // acks settle
+
+        const auto Measure = [&](const int InMovers, const int InTick0)
+        {
+            std::vector<double> Samples;
+            for(int Tick = 0; Tick < Ticks; ++Tick)
+            {
+                for(int Index = 0; Index < InMovers; ++Index)
+                {
+                    Spawned[size_t(Index)].GetComponent<TransformComponent>()->Position = EngineCore::Vector3(float(InTick0 + Tick), 0.0f, float(Index));
+                }
+                Server.PollIncoming();
+                for(NetSession& C : ClientSessions) { C.PollIncoming(); }
+                const auto Start = std::chrono::steady_clock::now();
+                Server.FlushOutgoing();
+                Samples.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - Start).count());
+                for(NetSession& C : ClientSessions) { C.FlushOutgoing(); }
+                EngineCore::Threads::SleepMs(1);
+            }
+            std::sort(Samples.begin(), Samples.end());
+            /* The fastest tick is the work itself; the median adds what else the machine was doing. */
+            return std::make_pair(Samples.front(), Samples[Samples.size() / 2]);
+        };
+        const auto Still  = Measure(0, 0);
+        const auto Moving = Measure(Movers, 1000);
+        std::printf("flush cost: %d entities x 3 replicated components, %d clients: all still %.3f ms (median %.3f), "
+                    "%d moving %.3f ms (median %.3f), a tick\n",
+                    Entities, Clients, Still.first, Still.second, Movers, Moving.first, Moving.second);
+
+        const EntityID Last = ClientSessions.back().FindEntityByNetId(Server.GetNetId(Spawned[Movers - 1].GetID()));
+        Check(Until([&]
+        {
+            const TransformComponent* T = Entity(&ClientWorlds.back(), Last).GetComponent<TransformComponent>();
+            return T && Near(T->Position.GetX(), float(1000 + Ticks - 1));
+        }, 2000), "and the movers' state still reaches every client");
+
+        for(NetSession& C : ClientSessions) { C.Stop(); C.UnbindWorld(); }
+        Server.UnbindWorld();
+        Server.Stop();
+    }
+}
+
 int main()
 {
     TestEditorLink();
@@ -1071,6 +1170,7 @@ int main()
     TestRpcLimits();
     TestReconnect();
     TestViewTime();
+    TestFlushCost();
     TestStructureChanges(0);
     TestStructureChanges(50);
 

@@ -186,6 +186,11 @@ struct NetSession::Impl final : public INetEntityMap
 
         uint32_t                               NextBatch = 1;
         std::unordered_map<uint64_t, Baseline> Baselines;   // by ShadowKey
+        /* The keys whose Baseline has fields unacknowledged: with this tick's
+         * changes, all a client in step needs looked at. A client is in step
+         * after its first full pass (new, back, or after a table reload). */
+        std::unordered_set<uint64_t>           UnackedKeys;
+        bool                                   bNeedsFullPass = true;
         std::deque<SentBatch>                  InFlight;    // oldest first
     };
     std::unordered_map<NetPeerID, ClientInfo> Clients;
@@ -230,6 +235,11 @@ struct NetSession::Impl final : public INetEntityMap
     {
         std::vector<ComponentTypeID> Types;
         GameCore::EntityGuid         Parent;
+        /* The server's: the entity, and each of Types as it was at the last
+         * flush (empty until first seen, or for a type that does not
+         * replicate) -- what tells this tick's changes (BuildTickItems). */
+        EntityID                          Entity;
+        std::vector<std::vector<uint8_t>> Shadows;
     };
     std::unordered_map<int32_t, Structure> Structures;   // by NetId
 
@@ -238,6 +248,49 @@ struct NetSession::Impl final : public INetEntityMap
 
     /* The replication tables' generation the baselines were made under. */
     uint32_t BaselineGeneration = 0;
+
+    /*
+     * WHAT CHANGED THIS TICK, found once for every client: each replicated
+     * component against its shadow from the last flush (Structure::Shadows).
+     * One that matches has not changed, so a client that has acknowledged
+     * all of it needs nothing; a client in step looks only at this tick's
+     * changes and its own unacknowledged components (SendBatches). Only a
+     * changed component is diffed field by field against a client's
+     * baseline. (A change to a field that does not replicate makes it look
+     * changed; the diff then finds nothing.)
+     */
+
+    /* Each type's replication table, by ComponentTypeID: looked up once per
+     * table generation, not once a component a tick. */
+    std::vector<const GameCore::ReplicatedFieldEntry*> RepFields;
+    std::vector<size_t>                                RepCounts;
+    uint32_t                                           RepGeneration = 0xFFFFFFFFu;
+
+    void RefreshRepTables()
+    {
+        const size_t TypeCount = GameCore::GetComponentTypeCount();
+        if(RepGeneration == GameCore::GetNetTablesGeneration() && RepFields.size() == TypeCount) { return; }
+        RepFields.assign(TypeCount, nullptr);
+        RepCounts.assign(TypeCount, 0);
+        for(size_t Type = 0; Type < TypeCount; ++Type) { RepFields[Type] = GameCore::FindComponentReplication(ComponentTypeID(Type), RepCounts[Type]); }
+        RepGeneration = GameCore::GetNetTablesGeneration();
+    }
+
+    struct TickItem
+    {
+        int32_t                               NetId      = 0;
+        uint64_t                              Key        = 0;
+        ComponentTypeID                       Type       = GameCore::COMPONENT_TYPE_INVALID;
+        const void*                           Component  = nullptr;
+        uint32_t                              Size       = 0;
+        const GameCore::ReplicatedFieldEntry* Fields     = nullptr;
+        size_t                                FieldCount = 0;
+        bool                                  bChanged   = false;
+    };
+    std::vector<TickItem>        TickItems;        // this flush's, entity by entity
+    std::vector<size_t>          TickEntities;     // where each entity's items start in TickItems
+    std::vector<size_t>          TickChanged;      // the items that changed, in order
+    std::unordered_set<uint64_t> TickChangedKeys;  // and their keys
 
     /* SimulatedLossPercent's dice. */
     uint32_t LossRandom = 0x9E3779B9u;
@@ -312,13 +365,13 @@ struct NetSession::Impl final : public INetEntityMap
         if(Found == NetToEntity.end()) { return; }
         EntityToNet.erase(Found->second.Pack());
         NetToEntity.erase(Found);
-        for(auto& Client : Clients)
+        /* Only its own keys: one per component clients were told of (state goes for no other). */
+        if(const auto Known = Structures.find(InNetId); Known != Structures.end())
         {
-            std::unordered_map<uint64_t, Baseline>& Baselines = Client.second.Baselines;
-            for(auto It = Baselines.begin(); It != Baselines.end();)
+            for(const ComponentTypeID Type : Known->second.Types)
             {
-                if(int32_t(uint32_t(It->first >> 16)) == InNetId) { It = Baselines.erase(It); }
-                else                                             { ++It; }
+                const uint64_t Key = ShadowKey(InNetId, Type);
+                for(auto& Client : Clients) { Client.second.Baselines.erase(Key); Client.second.UnackedKeys.erase(Key); }
             }
         }
         Interpolations.erase(InNetId);
@@ -329,7 +382,7 @@ struct NetSession::Impl final : public INetEntityMap
     void DropBaselines(const int32_t InNetId, const ComponentTypeID InType)
     {
         const uint64_t Key = ShadowKey(InNetId, InType);
-        for(auto& Client : Clients) { Client.second.Baselines.erase(Key); }
+        for(auto& Client : Clients) { Client.second.Baselines.erase(Key); Client.second.UnackedKeys.erase(Key); }
     }
 
     // === A client's smoothing and prediction ==============================
@@ -616,7 +669,17 @@ struct NetSession::Impl final : public INetEntityMap
                     }
                     Broadcast(Ar);
                 }
-                Known.Types = std::move(Types);
+                std::vector<std::vector<uint8_t>> Shadows(Types.size());
+                for(size_t Index = 0; Index < Types.size(); ++Index)
+                {
+                    const auto Old = std::find(Known.Types.begin(), Known.Types.end(), Types[Index]);
+                    if(Old != Known.Types.end() && size_t(Old - Known.Types.begin()) < Known.Shadows.size())
+                    {
+                        Shadows[Index] = std::move(Known.Shadows[size_t(Old - Known.Types.begin())]);
+                    }
+                }
+                Known.Types   = std::move(Types);
+                Known.Shadows = std::move(Shadows);
             }
 
             const GameCore::EntityGuid Parent = ParentGuidOf(Handle);
@@ -672,15 +735,6 @@ struct NetSession::Impl final : public INetEntityMap
         return FieldCount >= 32 ? 0xFFFFFFFFu : ((1u << FieldCount) - 1u);
     }
 
-    std::vector<ComponentTypeID> ReplicatedTypes() const
-    {
-        std::vector<ComponentTypeID> Types;
-        GameCore::ForEachReplicatedType([](const ComponentTypeID InType, void* InUser)
-        {
-            static_cast<std::vector<ComponentTypeID>*>(InUser)->push_back(InType);
-        }, &Types);
-        return Types;
-    }
 
     /* Testing: true for SimulatedLossPercent of calls. */
     bool SimulateLoss()
@@ -707,20 +761,67 @@ struct NetSession::Impl final : public INetEntityMap
         for(const int32_t NetId : Ids) { SendTo(InPeer, BuildSpawn(NetId, NetToEntity[NetId])); }
     }
 
+    /* This flush's replicated components, entity by entity, each marked
+     * changed or not against its shadow -- once, for every client. Only
+     * what clients were told an entity has: state for anything else would
+     * wait on a spawn that never comes. */
+    void BuildTickItems()
+    {
+        RefreshRepTables();
+        TickItems.clear();
+        TickEntities.clear();
+        TickChanged.clear();
+        TickChangedKeys.clear();
+        for(auto& Entry : Structures)
+        {
+            Structure& Known = Entry.second;
+            if(!Known.Entity.IsSet()) { continue; }
+            if(Known.Shadows.size() != Known.Types.size()) { Known.Shadows.resize(Known.Types.size()); }
+            const GameCore::Entity Handle(BoundWorld, Known.Entity);
+            const size_t Start = TickItems.size();
+            for(size_t Index = 0; Index < Known.Types.size(); ++Index)
+            {
+                const ComponentTypeID Type = Known.Types[Index];
+                if(size_t(Type) >= RepFields.size() || !RepFields[Type] || RepCounts[Type] == 0) { continue; }
+                const void* Component = Handle.GetComponentByType(Type);
+                if(!Component) { continue; }
+
+                TickItem Item;
+                Item.NetId      = Entry.first;
+                Item.Key        = ShadowKey(Entry.first, Type);
+                Item.Type       = Type;
+                Item.Component  = Component;
+                Item.Size       = GameCore::GetComponentType(Type)->SizeBytes;
+                Item.Fields     = RepFields[Type];
+                Item.FieldCount = RepCounts[Type];
+
+                std::vector<uint8_t>& Shadow = Known.Shadows[Index];
+                const uint8_t* Bytes = static_cast<const uint8_t*>(Component);
+                Item.bChanged = Shadow.size() != Item.Size || std::memcmp(Shadow.data(), Bytes, Item.Size) != 0;
+                if(Item.bChanged)
+                {
+                    Shadow.assign(Bytes, Bytes + Item.Size);
+                    TickChanged.push_back(TickItems.size());
+                    TickChangedKeys.insert(Item.Key);
+                }
+                TickItems.push_back(Item);
+            }
+            if(TickItems.size() > Start) { TickEntities.push_back(Start); }
+        }
+    }
+
     /* This tick's state for one client, against what it has acknowledged:
      * one batch or more (split between entities, never within one, so an
      * entity's fields always arrive together), and at least one, entries or
-     * not, so the client's clock keeps time. */
-    void SendBatches(const NetPeerID InPeer, ClientInfo& InClient, const std::vector<ComponentTypeID>& InTypes,
-                     const uint32_t InNowMs)
+     * not, so the client's clock keeps time. A client in step pays for what
+     * changed and what it has not acknowledged, not for the whole World. */
+    void SendBatches(const NetPeerID InPeer, ClientInfo& InClient, const uint32_t InNowMs)
     {
         struct Item
         {
-            uint64_t    Key;
-            const void* Component;
-            uint32_t    Size;
-            uint32_t    Mask;      // what is sent
-            uint32_t    Changed;   // of those, what changed since last sent
+            const TickItem* Tick;
+            uint32_t        Mask;      // what is sent
+            uint32_t        Changed;   // of those, what changed since last sent
         };
 
         std::vector<uint8_t> Body;   // the open batch's entries
@@ -748,55 +849,91 @@ struct NetSession::Impl final : public INetEntityMap
             Count = 0;
         };
 
-        std::vector<Item> Items;
-        for(const auto& Entry : NetToEntity)
+        /* What to look at: everything, on a client's first pass; else this
+         * tick's changes and this client's unacknowledged components -- the
+         * rest it has, as they are. Grouped by entity, as batches split. */
+        std::vector<const TickItem*> Candidates;
+        std::deque<TickItem>         Resolved;   // unacknowledged and unchanged: found here, held stable
+        if(InClient.bNeedsFullPass)
         {
-            const GameCore::Entity Handle(BoundWorld, Entry.second);
-            Items.clear();
-            EngineCore::Archive EntityAr = EngineCore::Archive::ForWriting();
-
-            /* Only what clients were told it has: state for anything else would wait on a spawn that never comes. */
-            const auto Known = Structures.find(Entry.first);
-            if(Known == Structures.end()) { continue; }
-            const std::vector<ComponentTypeID>& KnownTypes = Known->second.Types;
-
-            for(const ComponentTypeID Type : InTypes)
+            Candidates.reserve(TickItems.size());
+            for(const TickItem& Tick : TickItems) { Candidates.push_back(&Tick); }
+            InClient.bNeedsFullPass = false;
+        }
+        else
+        {
+            for(const size_t Index : TickChanged) { Candidates.push_back(&TickItems[Index]); }
+            for(auto It = InClient.UnackedKeys.begin(); It != InClient.UnackedKeys.end();)
             {
-                if(!std::binary_search(KnownTypes.begin(), KnownTypes.end(), Type)) { continue; }
-                const void* Component = Handle.GetComponentByType(Type);
-                if(!Component) { continue; }
+                const uint64_t Key = *It;
+                if(TickChangedKeys.count(Key) != 0) { ++It; continue; }
+                const int32_t         NetId  = int32_t(uint32_t(Key >> 16));
+                const ComponentTypeID Type   = ComponentTypeID(Key & 0xFFFFu);
+                const EntityID        Entity = FromNetId(NetId);
+                const bool  bReplicates = size_t(Type) < RepFields.size() && RepFields[Type] != nullptr;
+                const GameCore::ReplicatedFieldEntry* Fields = bReplicates ? RepFields[Type] : nullptr;
+                const size_t FieldCount = bReplicates ? RepCounts[Type] : 0;
+                const void* Component = Entity.IsSet() && Fields ? GameCore::Entity(BoundWorld, Entity).GetComponentByType(Type) : nullptr;
+                if(!Component) { It = InClient.UnackedKeys.erase(It); continue; }   // gone: nothing left to send
+                TickItem Tick;
+                Tick.NetId      = NetId;
+                Tick.Key        = Key;
+                Tick.Type       = Type;
+                Tick.Component  = Component;
+                Tick.Size       = GameCore::GetComponentType(Type)->SizeBytes;
+                Tick.Fields     = Fields;
+                Tick.FieldCount = FieldCount;
+                Resolved.push_back(Tick);
+                Candidates.push_back(&Resolved.back());
+                ++It;
+            }
+            std::stable_sort(Candidates.begin(), Candidates.end(),
+                             [](const TickItem* A, const TickItem* B) { return A->NetId < B->NetId; });
+        }
 
-                size_t FieldCount = 0;
-                const GameCore::ReplicatedFieldEntry* Fields = GameCore::FindComponentReplication(Type, FieldCount);
-                const uint32_t Size  = GameCore::GetComponentType(Type)->SizeBytes;
-                const uint64_t Key   = ShadowKey(Entry.first, Type);
-                const auto     Found = InClient.Baselines.find(Key);
+        std::vector<Item> Items;
+        for(size_t First = 0; First < Candidates.size();)
+        {
+            size_t Last = First + 1;
+            while(Last < Candidates.size() && Candidates[Last]->NetId == Candidates[First]->NetId) { ++Last; }
+            Items.clear();
+            for(size_t Index = First; Index < Last; ++Index)
+            {
+                const TickItem& Tick  = *Candidates[Index];
+                const auto      Found = InClient.Baselines.find(Tick.Key);
+                const bool      bKnown = Found != InClient.Baselines.end() && Found->second.Sent.size() == Tick.Size;
+                const uint32_t  Unacked = bKnown ? Found->second.Unacked : 0u;
+                if(bKnown && !Tick.bChanged && Unacked == 0) { continue; }   // the client has it all
 
                 uint32_t Changed = 0;
-                if(Found == InClient.Baselines.end() || Found->second.Sent.size() != Size)
+                if(!bKnown)
                 {
-                    Changed = FullMask(Type);   // new to this client: everything
+                    Changed = FullMask(Tick.Type);   // new to this client: everything
                 }
-                else
+                else if(Tick.bChanged)
                 {
-                    for(size_t Field = 0; Field < FieldCount; ++Field)
+                    for(size_t Field = 0; Field < Tick.FieldCount; ++Field)
                     {
-                        if((Fields[Field].Flags & GameCore::RFF_InitialOnly) == 0
-                           && ReplicatedFieldDiffers(Fields[Field], Component, Found->second.Sent.data()))
+                        if((Tick.Fields[Field].Flags & GameCore::RFF_InitialOnly) == 0
+                           && ReplicatedFieldDiffers(Tick.Fields[Field], Tick.Component, Found->second.Sent.data()))
                         {
                             Changed |= 1u << Field;
                         }
                     }
                 }
-                const uint32_t Unacked = Found != InClient.Baselines.end() ? Found->second.Unacked : 0u;
-                const uint32_t Mask    = Changed | Unacked;
-                if(Mask == 0) { continue; }
-
-                if(WriteStateEntry(EntityAr, Entry.first, Type, Component, Mask))
-                {
-                    Items.push_back({ Key, Component, Size, Mask, Changed });
-                }
+                const uint32_t Mask = Changed | Unacked;
+                if(Mask != 0) { Items.push_back({ &Tick, Mask, Changed }); }
             }
+            First = Last;
+            if(Items.empty()) { continue; }
+
+            EngineCore::Archive EntityAr = EngineCore::Archive::ForWriting();
+            size_t Written = 0;
+            for(Item& Each : Items)
+            {
+                if(WriteStateEntry(EntityAr, Each.Tick->NetId, Each.Tick->Type, Each.Tick->Component, Each.Mask)) { Items[Written++] = Each; }
+            }
+            Items.resize(Written);
             if(Items.empty()) { continue; }
 
             /* Full: this entity starts the next batch. */
@@ -805,14 +942,16 @@ struct NetSession::Impl final : public INetEntityMap
             Body.insert(Body.end(), EntityAr.GetBytes().begin(), EntityAr.GetBytes().end());
             for(const Item& Sent : Items)
             {
-                Baseline& Base = InClient.Baselines[Sent.Key];
-                Base.Sent.assign(static_cast<const uint8_t*>(Sent.Component), static_cast<const uint8_t*>(Sent.Component) + Sent.Size);
+                Baseline& Base = InClient.Baselines[Sent.Tick->Key];
+                const uint8_t* Bytes = static_cast<const uint8_t*>(Sent.Tick->Component);
+                Base.Sent.assign(Bytes, Bytes + Sent.Tick->Size);
                 for(uint32_t Field = 0; Field < 32; ++Field)
                 {
                     if(Sent.Changed & (1u << Field)) { Base.ValueSeq[Field] = Record.Seq; }
                 }
                 Base.Unacked |= Sent.Mask;
-                Record.Entries.emplace_back(Sent.Key, Sent.Mask);
+                InClient.UnackedKeys.insert(Sent.Tick->Key);
+                Record.Entries.emplace_back(Sent.Tick->Key, Sent.Mask);
                 ++Count;
             }
         }
@@ -845,6 +984,7 @@ struct NetSession::Impl final : public INetEntityMap
                     {
                         if((Entry.second & (1u << Field)) && Base.ValueSeq[Field] <= Batch.Seq) { Base.Unacked &= ~(1u << Field); }
                     }
+                    if(Base.Unacked == 0) { InClient.UnackedKeys.erase(Entry.first); }
                 }
             }
             InClient.InFlight.pop_front();
@@ -864,7 +1004,10 @@ struct NetSession::Impl final : public INetEntityMap
             {
                 Client.second.Baselines.clear();
                 Client.second.InFlight.clear();
+                Client.second.UnackedKeys.clear();
+                Client.second.bNeedsFullPass = true;
             }
+            for(auto& Entry : Structures) { for(std::vector<uint8_t>& Shadow : Entry.second.Shadows) { Shadow.clear(); } }
             BaselineGeneration = GameCore::GetNetTablesGeneration();
         }
 
@@ -876,7 +1019,11 @@ struct NetSession::Impl final : public INetEntityMap
             InNet.NetId = NextNetId++;
             MapEntity(InNet.NetId, InEntity.GetID());
             Spawned.emplace_back(InNet.NetId, InEntity.GetID());
-            Structures[InNet.NetId] = Structure{ SerializedTypes(InEntity), ParentGuidOf(InEntity) };
+            Structure& Known = Structures[InNet.NetId];
+            Known.Types  = SerializedTypes(InEntity);
+            Known.Parent = ParentGuidOf(InEntity);
+            Known.Entity = InEntity.GetID();
+            Known.Shadows.assign(Known.Types.size(), std::vector<uint8_t>());
         });
         for(const auto& Entry : Spawned) { Broadcast(BuildSpawn(Entry.first, Entry.second)); }
 
@@ -885,11 +1032,11 @@ struct NetSession::Impl final : public INetEntityMap
         if(!HasWelcomedClients()) { return; }
 
         /* Then each client's state, unreliably. */
-        const std::vector<ComponentTypeID> Types = ReplicatedTypes();
+        BuildTickItems();
         const uint32_t Now = NowMs();
         for(auto& Client : Clients)
         {
-            if(Client.second.bWelcomed) { SendBatches(Client.first, Client.second, Types, Now); }
+            if(Client.second.bWelcomed) { SendBatches(Client.first, Client.second, Now); }
         }
     }
 
@@ -1984,10 +2131,14 @@ void NetSession::UnbindWorld()
     P->EntityToNet.clear();
     P->Structures.clear();
     P->StructureDirty.clear();
+    P->TickItems.clear();
+    P->TickEntities.clear();
     for(auto& Client : P->Clients)
     {
         Client.second.Baselines.clear();
         Client.second.InFlight.clear();
+        Client.second.UnackedKeys.clear();
+        Client.second.bNeedsFullPass = true;
     }
     P->ResetBatches();
     P->PendingParents.clear();
