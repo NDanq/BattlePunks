@@ -1,6 +1,7 @@
 #include "Public/Collab/CollabServer.h"
 
 #include <cctype>
+#include <cstdio>
 #include <chrono>
 #include <filesystem>
 #include <map>
@@ -35,14 +36,18 @@ namespace
         return Key;
     }
 
-    /* A folder name from free text: letters, digits, '-', '_'. */
-    std::string FolderName(const std::string& InText)
+    /* Eight hex digits naming InText (FNV-1a), for a short, stable folder name:
+     * a game's build tree under a worktree is deep, and Windows' 260-character
+     * path limit is close (SDL's objects alone are 120 characters in). */
+    std::string ShortName(const std::string& InText)
     {
-        std::string Out;
+        uint32_t Hash = 2166136261u;
         for(const char Each : InText)
         {
-            Out += std::isalnum(static_cast<unsigned char>(Each)) || Each == '-' || Each == '_' ? Each : '-';
+            Hash = (Hash ^ uint8_t(Each)) * 16777619u;
         }
+        char Out[9] = {};
+        std::snprintf(Out, sizeof(Out), "%08x", Hash);
         return Out;
     }
 
@@ -178,8 +183,16 @@ struct CollabServer::Impl
         Worker.SessionId       = InSession.Id;
         Worker.Key             = RandomKey();
         Worker.RepoPath        = fs::absolute(fs::u8path(Config.RepoPath), Error).generic_u8string();
-        /* One per game and branch, kept between sessions: the next build is incremental. */
-        Worker.WorktreeDir     = (Data / "Worktrees" / (FolderName(Module) + "-" + FolderName(InSession.Branch))).generic_u8string();
+        /* One per game and branch, kept between sessions: the next build is
+         * incremental. Short: <data>/wt/<8 hex>, see ShortName. */
+        Worker.WorktreeDir     = (Data / "wt" / ShortName(Module + "/" + InSession.Branch)).generic_u8string();
+#if defined(_WIN32)
+        if(Worker.WorktreeDir.size() > 80)
+        {
+            CORE_LOG_WARN("[Collab] the worktree path is " + std::to_string(Worker.WorktreeDir.size()) + " characters ("
+                          + Worker.WorktreeDir + "); a build under it may pass Windows' 260-character limit. Give --data a short folder.")
+        }
+#endif
         Worker.Branch          = InSession.Branch;
         Worker.Module          = Module;
         Worker.Preset          = Config.WorkerPreset.empty() ? std::string(GetDefaultWorkerPreset()) : Config.WorkerPreset;

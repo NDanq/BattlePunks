@@ -80,8 +80,10 @@ Given `--repo` (this host's checkout of the project), the server starts a
 Collab client, introduced by a one-time key (`WorkerHello`), and for each new
 tip of the session branch:
 
-1. keeps a detached `git worktree` of it under `--data` (one per game and
-   branch, kept between sessions so builds are incremental), fetching every
+1. keeps a detached `git worktree` of it under `--data`, at `wt/<8 hex>` (one
+   per game and branch, kept between sessions so builds are incremental;
+   short, because a game's build tree is deep and Windows' 260-character path
+   limit is near -- give `--data` a short folder), fetching every
    30 s and at once when an editor pushes;
 2. tells the server what moved if no editor did -- a push from a terminal
    reaches the editors as a `BranchAdvanced` too;
