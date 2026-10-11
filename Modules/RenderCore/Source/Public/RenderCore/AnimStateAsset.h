@@ -36,6 +36,13 @@ namespace EngineCore
  *     first frame (or the reference pose) -- so breathing or a flinch plays
  *     over whatever the layers before are doing.
  *
+ * And, after the layers, an optional LOOK-AT: a float parameter (an angle in
+ * degrees, clamped to a range) turns a chain of bones -- a spine, a neck --
+ * about one model-space axis, each bone taking its share of the angle. The
+ * upper body pitching with the camera: gameplay sets the camera's pitch, the
+ * spine bends to it, and whatever rides the chest (arms, a socketed weapon)
+ * follows.
+ *
  * An EngineCore::Archive of chunks:
  *
  *   NAST v1      the file
@@ -43,6 +50,7 @@ namespace EngineCore
  *     ALYR v5    the layers, each with its states and transitions
  *                (v4: no sync groups; v3: no editor positions; v2: nor Blend or AdditiveBase;
  *                v1: nor 2D blend spaces -- BlendParameterY, PositionY)
+ *     ALOK v1    the look-at; optional (none: no look-at)
  *
  * Clips are named by runtime path; skeletons are not -- a state plays on
  * whatever skeleton its entity's mesh has, its clips binding by bone name.
@@ -136,10 +144,31 @@ namespace RenderCore
         bool                        bEditorPlaced = false;                  // false: the editor lays the states out
     };
 
+    /* A bone a look-at turns, and its share of the angle. */
+    struct AnimLookBone
+    {
+        std::string Bone;
+        float       Share = 0.0f;   // of the angle; a chain's shares usually add to 1
+    };
+
+    struct AnimLookAt
+    {
+        std::string               Parameter;         // a Float: the angle, degrees; empty: no look-at
+        std::string               WeightParameter;   // scales the angle (clamped 0..1): Armed, say; empty: none
+        float                     MinAngle = -45.0f; // the parameter is clamped to these, degrees
+        float                     MaxAngle =  45.0f;
+        float                     Axis[3]  = { 1.0f, 0.0f, 0.0f };   // model space; a positive angle turns about it right-handed
+        float                     Response = 12.0f;  // how fast it follows, per second (1 - e^(-Response t)); 0: at once
+        std::vector<AnimLookBone> Bones;             // root first: each is turned after its parent
+
+        bool IsSet() const { return !Parameter.empty() && !Bones.empty(); }
+    };
+
     struct AnimStateData
     {
         std::vector<AnimStateParameter> Parameters;
         std::vector<AnimLayer>          Layers;
+        AnimLookAt                      LookAt;
 
         /* -1 if there is none. */
         RENDERCORE_API int32_t FindParameter(const std::string& InName) const;

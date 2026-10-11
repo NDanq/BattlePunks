@@ -10,8 +10,13 @@
 -- The Pistol's Anim Socket rides one bone or the other; the offsets are the
 -- Blender file's Child Of constraints, converted to the engine's axes.
 --
+-- Through all of it the upper body nods up and down: AimPitch, the anim
+-- state's look-at, which bends the spine by that many degrees (up positive,
+-- clamped to -40..55).
+--
 -- A game drives the same parameters from its own movement instead:
--- Speed (units/s), Grounded, Jump (a trigger) and Armed.
+-- Speed (units/s), Grounded, Jump (a trigger) and Armed -- and AimPitch from
+-- its camera's pitch.
 
 local HOLSTER = { Bone = "DEF-spine",  Position = { -19.719, 0.128, -4.773 }, Rotation = { -75.407,  7.744,   2.009 } }
 local HAND    = { Bone = "DEF-hand.R", Position = {  -2.110, 7.087, -0.769 }, Rotation = { -85.592, 13.264, 175.197 } }
@@ -29,6 +34,8 @@ local TIMELINE = {
 local LOOP_SECONDS = 17.0
 local AIR_SECONDS  = 0.6     -- from the jump's take-off to touching down
 local ACCELERATION = 400.0   -- units/s each second, toward the timeline's Speed
+local NOD_DEGREES  = 35.0    -- how far AimPitch swings each way
+local NOD_SECONDS  = 4.0     -- one swing up and back down
 
 local function Seat(socket, where)
     socket:SetBone(where.Bone)
@@ -79,6 +86,7 @@ return {
         local change = ACCELERATION * dt
         self.Speed = self.Speed + math.max(-change, math.min(change, self.Target - self.Speed))
         self.Animation:SetFloat("Speed", self.Speed)
+        self.Animation:SetFloat("AimPitch", NOD_DEGREES * math.sin(self.Time * 2.0 * math.pi / NOD_SECONDS))
 
         if self.AirLeft >= 0.0 then
             self.AirLeft = self.AirLeft - dt

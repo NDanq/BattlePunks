@@ -247,6 +247,17 @@ Layer Arms   mask spine_02, weight scaled by Armed
   scale) is laid over the layers before it, by weight and mask. Breathing,
   a flinch or a lean then plays over whatever the body is doing. Its clips
   give no root motion.
+- A **look-at**, after the layers, bends a chain of bones by an angle: a
+  float parameter in degrees, clamped to Min..Max, turns each listed bone
+  about one model-space axis by its share of the angle. Each bone turns
+  about its already-turned parent, so the turns add up along the chain and
+  the last bone ends at the whole angle (when the shares add to 1). An
+  optional weight parameter scales it (0..1), and Response eases it toward
+  the parameter (`1 - e^(-Response t)` each update, in real time; 0 snaps).
+  An explicit `Evaluate()` -- after a seek or a change -- goes straight to
+  the target. Everything below the chain follows: arms, and whatever an
+  Anim Socket holds. Stored as the optional ALOK chunk; files without it
+  have none.
 
 ## In the editor
 
@@ -271,10 +282,13 @@ Layer Arms   mask spine_02, weight scaled by Armed
   click the state it goes to), set the entry or delete; drag boxes about;
   Delete removes what is picked. What is picked is edited in the form beside
   it: a state's clips or blend space and sync group, a transition's
-  crossfade and conditions. Dashed arrows wait for the clip's end. Where the boxes sit is
+  crossfade and conditions. The Look-At box sets the angle and weight
+  parameters, range, axis, response and the chain (`bone:share, ...`).
+  Dashed arrows wait for the clip's end. Where the boxes sit is
   saved in the file (ALYR v4); older files are laid out on opening. A live
   preview you can drive sits alongside. A renamed parameter is renamed where
-  it is used; problems (missing clips, parameters, mask bones) are listed.
+  it is used; problems (missing clips, parameters, mask or look-at bones)
+  are listed.
 - Console, for scripts: `mesh <path> | play | pause | seek <s> | param <n> <v>
   | bones on | windowshot <png>` and `animstate <path> | new | save |
   windowshot <png>`.
@@ -302,7 +316,8 @@ gripped at its origin). Clips, in place (no root travel):
 `CrashDummy.nmanimstate` puts them together:
 
 ```
-Parameters   Speed (float, units/s), Grounded (bool, 1), Jump (trigger), Armed (bool)
+Parameters   Speed (float, units/s), Grounded (bool, 1), Jump (trigger), Armed (bool),
+             AimPitch (float, degrees, up positive)
 Layer FullBody
   Locomotion   blend space on Speed: FB_Idle 0, FB_Walk 150, FB_Run 400    sync group Locomotion
   JumpStart    once     Locomotion -> JumpStart when Jump triggered, 0.1 s
@@ -313,7 +328,13 @@ Layer UpperBody   mask DEF-spine.002; weight scaled by Grounded (in the air the 
   Equip        once     Unarmed -> Equip when Armed; Equip -> Armed at end
   Armed        blend space on Speed: UB_*_Armed at 0, 150, 400              sync group Locomotion
   Holster      once     Armed (or Equip) -> Holster when not Armed; Holster -> Unarmed at end
+Look-at      AimPitch, -40..55 deg about model X, response 15:
+             DEF-spine.001 0.25, DEF-spine.002 0.35, DEF-spine.003 0.40
 ```
+
+The chain stops at the chest, so the arms -- and the pistol -- take the whole
+angle: a game sets AimPitch from its camera's pitch (negated, if the camera's
+is down-positive) and the gun points where the camera does.
 
 The run's 400 is a guess (its foot is planted for two frames); set the
 blend positions to the speeds the character moves at.
@@ -321,8 +342,9 @@ blend positions to the speeds the character moves at.
 **`CrashDummyDemo.nmprefab`** shows it working: the dummy (Render,
 Animation on the anim state) and a child **Pistol** (Render, Anim Socket),
 with `CrashDummyDemo.lua` walking it round a 17-second loop -- idle, walk,
-draw while walking, armed run, stop, jump, land, holster. The script moves
-the pistol as the notifies fire:
+draw while walking, armed run, stop, jump, land, holster -- nodding AimPitch
+35 degrees up and down every 4 seconds throughout. The script moves the
+pistol as the notifies fire:
 
 | Notify | Socket bone | Position offset | Rotation offset |
 |---|---|---|---|
@@ -334,7 +356,7 @@ converted to engine space: what a game copies to hold the pistol itself.
 
 ## Not yet
 
-Inverse kinematics (feet, look-at, a hand on a weapon), morph targets,
+Inverse kinematics (feet, a hand on a weapon), morph targets,
 retargeting between differently named skeletons, clip compression, turning
 root motion, skinned meshes on Metal, and an occlusion-aware budget. Also:
 
@@ -346,6 +368,10 @@ root motion, skinned meshes on Metal, and an occlusion-aware budget. Also:
 - **Interrupted crossfades** start from the state being left, not the blend
   on screen: a transition taken mid-fade pops.
 - **Layer weights** follow their parameter at once; nothing eases them.
+- **Look-at** is one angle about one axis: pitch, or yaw, not both, and not
+  aimed at a point. A camera offset to the side (an over-the-shoulder scope)
+  leaves the gun a little off the crosshair; aiming at the camera ray's hit
+  point would need a second axis and a target.
 - **Masks** are whole bones and their children, blended in local space: no
   partial weights down a spine, no mesh-space blending.
 - **Scripted one-shots**: gameplay plays a clip only through a state and a

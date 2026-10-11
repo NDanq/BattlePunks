@@ -15,7 +15,7 @@ namespace RenderCore
         Skeleton = std::move(InSkeleton);
         Rebuild();
         Restart();
-        Evaluate();
+        EvaluatePose();
     }
 
     void AnimInstance::PlayClip(std::shared_ptr<const AnimClipData> InClip)
@@ -24,7 +24,7 @@ namespace RenderCore
         State = nullptr;
         Rebuild();
         Restart();
-        Evaluate();
+        EvaluatePose();
     }
 
     void AnimInstance::SetState(std::shared_ptr<const AnimStateData> InState)
@@ -33,7 +33,7 @@ namespace RenderCore
         Clip  = nullptr;
         Rebuild();
         Restart();
-        Evaluate();
+        EvaluatePose();
     }
 
     void AnimInstance::SetLoopOverride(const int InLoop)
@@ -50,6 +50,10 @@ namespace RenderCore
         Layers.clear();
         Parameters.clear();
         SyncGroups.clear();
+        LookBones.clear();
+        LookParameter = LookWeightParameter = -1;
+        LookAngle   = 0.0f;
+        bLookPlaced = false;
         RefPose.clear();
         if(Skeleton) { GetRefPose(*Skeleton, RefPose); }
 
@@ -136,6 +140,26 @@ namespace RenderCore
             }
             Layers.push_back(std::move(Layer));
         }
+
+        const AnimLookAt& Look = State->LookAt;
+        LookParameter = Look.IsSet() ? State->FindParameter(Look.Parameter) : -1;
+        if(Skeleton && LookParameter >= 0)
+        {
+            for(const AnimLookBone& Each : Look.Bones)
+            {
+                const int32_t Bone = Skeleton->FindBone(Each.Bone);
+                if(Bone >= 0) { LookBones.push_back({ Bone, Each.Share }); }
+            }
+            /* Root first, whatever order the asset lists them in: each turns about its turned parent. */
+            std::stable_sort(LookBones.begin(), LookBones.end(), [](const LookBoneRuntime& InA, const LookBoneRuntime& InB) { return InA.Bone < InB.Bone; });
+            LookWeightParameter = Look.WeightParameter.empty() ? -1 : State->FindParameter(Look.WeightParameter);
+            LookMin      = Look.MinAngle;
+            LookMax      = Look.MaxAngle;
+            LookResponse = Look.Response;
+            const float Length = std::sqrt(Look.Axis[0] * Look.Axis[0] + Look.Axis[1] * Look.Axis[1] + Look.Axis[2] * Look.Axis[2]);
+            LookAxis = Length > 1e-6f ? AnimVec3{ Look.Axis[0] / Length, Look.Axis[1] / Length, Look.Axis[2] / Length } : AnimVec3{ 1.0f, 0.0f, 0.0f };
+        }
+        if(LookBones.empty()) { LookParameter = -1; }
     }
 
     void AnimInstance::Restart()
@@ -290,6 +314,38 @@ namespace RenderCore
             Model = AnimMath::Mul(Model, AnimMath::ToMatrix(InPose[size_t(Chain[Index])]));
         }
         return Model;
+    }
+
+    float AnimInstance::LookTarget() const
+    {
+        if(LookParameter < 0 || size_t(LookParameter) >= Parameters.size()) { return 0.0f; }
+        float Angle = std::clamp(Parameters[size_t(LookParameter)], LookMin, LookMax);
+        if(LookWeightParameter >= 0 && size_t(LookWeightParameter) < Parameters.size())
+        {
+            Angle *= std::clamp(Parameters[size_t(LookWeightParameter)], 0.0f, 1.0f);
+        }
+        return Angle;
+    }
+
+    void AnimInstance::ApplyLookAt(AnimLocalPose& InOutPose) const
+    {
+        /* Not placed yet (evaluated before any update): where it is heading. */
+        const float Angle = bLookPlaced ? LookAngle : LookTarget();
+        if(LookParameter < 0 || std::fabs(Angle) < 1e-4f) { return; }
+        constexpr float DegreesToRadians = 3.14159265358979f / 180.0f;
+        for(const LookBoneRuntime& Each : LookBones)
+        {
+            if(size_t(Each.Bone) >= InOutPose.size() || Each.Share == 0.0f) { continue; }
+            /* Its share about the model axis, said in its parent's space -- the parent
+             * already turned, so the turns add up along the chain. */
+            const AnimQuat ParentRotation = AnimMath::ToTransform(ParentModel(InOutPose, Each.Bone)).Rotation;
+            const AnimVec3 Axis = AnimMath::Rotate(AnimMath::Conjugate(ParentRotation), LookAxis);
+            const float    Half = 0.5f * Angle * Each.Share * DegreesToRadians;
+            const float    Sin  = std::sin(Half);
+            const AnimQuat Turn { Axis.X * Sin, Axis.Y * Sin, Axis.Z * Sin, std::cos(Half) };
+            AnimQuat& Rotation = InOutPose[size_t(Each.Bone)].Rotation;
+            Rotation = AnimMath::Normalize(AnimMath::Mul(Turn, Rotation));
+        }
     }
 
     void AnimInstance::HoldRoot(const Sample& InSample, AnimLocalPose& InOutPose) const
@@ -564,11 +620,31 @@ namespace RenderCore
                 if(Index == 0) { RootMotion = Travel; }
                 UpdateTransitions(Layer);
             }
+
+            /* The look-at eases toward its target, in real time: a play rate of 0 still looks. */
+            if(LookParameter >= 0)
+            {
+                const float Target = LookTarget();
+                if(!bLookPlaced || LookResponse <= 0.0f) { LookAngle = Target; }
+                else { LookAngle += (Target - LookAngle) * (1.0f - std::exp(-LookResponse * std::max(InDeltaSeconds, 0.0f))); }
+                bLookPlaced = true;
+            }
         }
-        if(bInEvaluate) { Evaluate(); }
+        if(bInEvaluate) { EvaluatePose(); }
     }
 
     void AnimInstance::Evaluate()
+    {
+        /* A change or a seek: the look-at goes straight to its target too. */
+        if(LookParameter >= 0)
+        {
+            LookAngle   = LookTarget();
+            bLookPlaced = true;
+        }
+        EvaluatePose();
+    }
+
+    void AnimInstance::EvaluatePose()
     {
         if(!Skeleton)
         {
@@ -617,6 +693,7 @@ namespace RenderCore
             SampleClip(*Overlay, OverlayBinding, OverlayTime, Scratch[2]);
             BlendPoses(LocalPose, Scratch[2], std::min(OverlayWeight, 1.0f));
         }
+        ApplyLookAt(LocalPose);
         LocalToModel(*Skeleton, LocalPose, ModelPose);
     }
 
