@@ -272,14 +272,18 @@ correction stays 0: each batch that arrives is enough on its own.
 
 ### Timeouts
 
-`TimeoutMs` is ENet's maximum. The minimum stays at ENet's 5 s, with its
-resend limit.
+`TimeoutMs` is both ENet's minimum and its maximum: how long either end
+waits on an unanswered peer before dropping it.
 
-ENet checks timeouts *before* it reads the socket. With minimum equal to
-maximum, a frame longer than that loses the connection, even though the
-answer is already waiting. A client's first frame, while it compiles
-pipelines, can take that long. `NetCore.Loopback` stalls a client for 6 s to
-keep this honest.
+ENet drops a peer once a command has been resent enough times *and* the
+minimum has passed. On a fast link the resends run out in milliseconds, so
+with ENet's default 5 s minimum, the end still running dropped a peer stalled
+for just over 5 s, whatever `TimeoutMs` said. A client's first frame, while it
+compiles pipelines, can take that long. The stalled end, waking, has resent
+nothing, so only the maximum applies to it; ENet checks timeouts *before* it
+reads the socket, so a stall longer than `TimeoutMs` drops it even with the
+answer waiting. `NetCore.Loopback` stalls a client for 6 s to keep this
+honest.
 
 ---
 

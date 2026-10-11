@@ -33,16 +33,21 @@ namespace
     }
 
     /*
-     * InTimeoutMs is the most a peer may go unanswered. The minimum stays
-     * ENet's 5s, with its 32-resend limit, and that matters: ENet checks
-     * timeouts BEFORE it reads the socket, so after a long frame (a client's
-     * first, compiling pipelines) the ack that arrived meanwhile is not seen
-     * yet. Minimum == maximum would drop the connection on any hitch that long.
+     * InTimeoutMs is the most a peer may go unanswered, on both ends: ENet's
+     * minimum AND maximum. ENet drops a peer once a command has been resent
+     * enough times (its limit, 32: six tries, doubling) and the minimum has
+     * passed. On a fast link the tries run out in milliseconds, so a minimum
+     * below InTimeoutMs is the real timeout of the end still running: ENet's
+     * 5s default dropped a client stalled 6s in a long first frame (compiling
+     * pipelines) however long InTimeoutMs was. The stalled end itself, waking,
+     * has resent nothing meanwhile, so only the maximum can drop it -- and ENet
+     * checks timeouts BEFORE it reads the socket, so that holds even though
+     * the answer is waiting: a stall longer than InTimeoutMs still loses the
+     * connection.
      */
     void ApplyTimeout(ENetPeer* InPeer, const uint32_t InTimeoutMs)
     {
-        const uint32_t Minimum = InTimeoutMs < 5000u ? InTimeoutMs : 5000u;
-        enet_peer_timeout(InPeer, 0, Minimum, InTimeoutMs);
+        enet_peer_timeout(InPeer, 0, InTimeoutMs, InTimeoutMs);
     }
 
     NetPeerID PeerIdOf(const ENetPeer* InPeer)
