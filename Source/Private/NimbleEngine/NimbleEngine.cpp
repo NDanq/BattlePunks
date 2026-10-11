@@ -261,6 +261,7 @@ namespace NimbleEngine
             }
             else if(Key == "cooked") { Overrides.push_back("Content.Uncooked 0"); }
             else if(Key == "listen") { Overrides.push_back("Net.Listen 1"); }
+            else if(Key == "headless") {}   // the game launcher's own (ApplicationDesc::bHeadless), not a setting
             else if(Key.find('.') != std::string::npos && Equals != std::string::npos)
             {
                 Overrides.push_back(Key + " " + Value);
@@ -268,7 +269,7 @@ namespace NimbleEngine
             else
             {
                 CORE_LOG_WARN("Ignoring the argument '" + Arg + "' -- expected -Section.Key=Value, -connect=host[:port], "
-                              "-port=N or -listen")
+                              "-port=N, -listen or -headless")
             }
         }
 
