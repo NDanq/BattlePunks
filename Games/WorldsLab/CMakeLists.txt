@@ -1,5 +1,13 @@
 cmake_minimum_required(VERSION 3.16)
 
+# Linux builds with Clang only (Engine/CMakeLists.txt refuses anything else).
+# Before project(), so a new build tree picks it up; one already made with
+# another compiler needs cmake --fresh.
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND NOT DEFINED CMAKE_CXX_COMPILER)
+    set(CMAKE_C_COMPILER   clang)
+    set(CMAKE_CXX_COMPILER clang++)
+endif()
+
 project(WorldsLab VERSION 0.1 LANGUAGES CXX)
 
 # ===========================================================================

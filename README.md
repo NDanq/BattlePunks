@@ -19,6 +19,12 @@ Two settings pick a build: the **target** (`NIMBLE_TARGET`) and the
 
 Shipping is Client/Server only. Configuring Editor + Shipping fails on purpose.
 
+**Linux builds with Clang only.** A game's CMakeLists picks `clang` and
+`clang++` before `project()`, and the engine refuses to configure on Linux
+with anything else. A build tree made with GCC has to be configured again
+from scratch: `cmake --fresh`, with the tree's own `-D` options. Windows uses
+MSVC.
+
 Every configuration but Shipping runs **uncooked** (`WITH_UNCOOKED=1`). The
 build stages the project's text worlds and prefabs, and a Debug or
 RelWithDebInfo Client or Server cooks each one the first time it loads it,
