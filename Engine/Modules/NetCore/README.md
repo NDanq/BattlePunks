@@ -235,6 +235,11 @@ GAMECORE_RPC(ShipComponent, ServerFire)(Ship, Aim);
   replicated fields and RPCs (`NetSchema`), so two builds that disagree refuse
   each other. Types travel by name, never `ComponentTypeID`, because ids are
   assigned in first-use order.
+- **A spawn carries the entity's parts:** its descendants with no Net
+  component of their own (an avatar's camera boom, its weapon), parents
+  first, as they are at that moment. They are not networked after: each
+  process moves its copy itself. A descendant with a Net component is sent
+  as its own entity.
 
 ### Unreliable state, acknowledged baselines
 
@@ -303,7 +308,7 @@ started: snapshots, edits as data, applying them undoably, ownership).
 a client in one process over 127.0.0.1. It covers:
 
 - the handshake
-- spawning, both matched by GUID and new
+- spawning, both matched by GUID and new, and a spawn's parts
 - replicated and initial-only fields, and entity references
 - all three RPC targets, and the ownership check
 - a 6 s client stall
