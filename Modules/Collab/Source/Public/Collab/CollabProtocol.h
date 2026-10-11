@@ -318,6 +318,8 @@ namespace Collab
         uint16_t    Port = 0;
         std::string Oid;          // the build the game server runs
         uint64_t    SchemaHash = 0;   // its NetCore schema: a client's must match
+        std::string GameMode;         // the level's game mode
+        bool        bNetworked = true;// false: players won't see each other (not a NetGameMode)
 
         void Serialize(EngineCore::Archive& Ar);
     };
@@ -353,6 +355,8 @@ namespace Collab
         bool        bRunning = false;
         uint16_t    Port = 0;
         std::string Error;
+        std::string GameMode;           // the level's
+        bool        bNetworked = true;  // its mode gives each client an avatar (a NetGameMode)
 
         void Serialize(EngineCore::Archive& Ar);
     };

@@ -387,6 +387,24 @@ bool ParseContentReport(const std::string& InText, ToolchainReport& OutReport)
         {
             OutReport.Checked = uint32_t(std::strtoul(Value.c_str(), nullptr, 10));
         }
+        else if(Key == "world")
+        {
+            /* name, file, mode, networked */
+            ToolchainWorld World;
+            size_t Start = 0;
+            std::string Fields[4];
+            for(int Index = 0; Index < 4; ++Index)
+            {
+                const size_t Tab = Value.find('\t', Start);
+                Fields[Index] = Value.substr(Start, Tab == std::string::npos ? std::string::npos : Tab - Start);
+                Start = Tab == std::string::npos ? Value.size() : Tab + 1;
+            }
+            World.Name       = Fields[0];
+            World.File       = Fields[1];
+            World.GameMode   = Fields[2];
+            World.bNetworked = Fields[3] == "1";
+            OutReport.Worlds.push_back(World);
+        }
         else if(Key == "problem")
         {
             const size_t Second = Value.find('\t');
@@ -421,6 +439,7 @@ struct ContentWorker::Impl
     std::atomic<bool> bBuilding{ false };      // the worktree's build tree is being written: no game server now
     std::string       LastGameDir;             // BuiltTip's game folder; read only between jobs
     std::mutex        BuildMutex;              // BuiltTip and LastGameDir, which HandlePlay reads
+    std::vector<ToolchainWorld> LastWorlds;     // BuiltTip's, from its report; under BuildMutex
 
     /* The main loop's: Play Together's game server. */
     bool     bGameRunning = false;
@@ -517,10 +536,12 @@ struct ContentWorker::Impl
             return;
         }
         std::string Tip, GameDir;
+        std::vector<ToolchainWorld> Worlds;
         {
             std::lock_guard<std::mutex> Lock(BuildMutex);
             Tip     = BuiltTip;
             GameDir = LastGameDir;
+            Worlds  = LastWorlds;
         }
         WorkerPlayStateMessage State;
         if(Play.bStop)
@@ -554,6 +575,15 @@ struct ContentWorker::Impl
                 GamePort       = Play.Port;
                 State.bRunning = true;
                 State.Port     = Play.Port;
+                /* Whether players will see each other there: its mode, from the report. */
+                for(const ToolchainWorld& Each : Worlds)
+                {
+                    if(Each.Name == World)
+                    {
+                        State.GameMode   = Each.GameMode;
+                        State.bNetworked = Each.bNetworked;
+                    }
+                }
             }
         }
         if(!State.bRunning)
@@ -666,6 +696,10 @@ struct ContentWorker::Impl
         }
         bLastBuildOk      = true;
         bBuilding         = false;
+        {
+            std::lock_guard<std::mutex> Lock(BuildMutex);
+            LastWorlds = Report.Worlds;
+        }
         Status.State      = EBuildState::Succeeded;
         Status.SchemaHash = Report.SchemaHash;
         Post(Status);

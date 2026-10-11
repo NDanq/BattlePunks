@@ -17,6 +17,7 @@
 #include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldPackage.h"
 #include "Public/NimbleEngine/GameModule.h"
+#include "Public/NimbleEngine/WorldList.h"
 #if WITH_NETCORE
 #include "Public/NetCore/NetSession.h"
 #endif
@@ -30,6 +31,8 @@
  *     module  <name>              the game module that loaded ("" if none)
  *     schema  <16 hex digits>     NetCore's ComputeSchemaHash (0 without NetCore)
  *     checked <count>             worlds and prefabs loaded
+ *     world   <name> <file> <mode> <1|0>   each [World_*]: its game mode,
+ *                                 and whether that's a NetGameMode
  *     problem <path>  <message>   <path> relative to the project, '/' separated
  *
  * A problem is a warning or error logged while loading a file (an unknown
@@ -184,6 +187,7 @@ int Application::ExecReport(const char* InDefaultModule, const ContentReportOpti
 
     std::vector<Problem> Problems;
     std::string ModuleName;
+    std::string WorldLines;
     uint64_t    SchemaHash = 0;
     int         Checked = 0;
     bool        bWritten = false;
@@ -194,6 +198,12 @@ int Application::ExecReport(const char* InDefaultModule, const ContentReportOpti
 #if WITH_NETCORE
         SchemaHash = NetCore::ComputeSchemaHash();
 #endif
+        /* Each listed world's mode: networked or not (Play Together warns). */
+        for(const WorldEntry& Each : ReadWorldList())
+        {
+            WorldLines += "world\t" + OneLine(Each.Name) + "\t" + OneLine(Each.File) + "\t" + OneLine(Each.GameMode) + "\t"
+                        + (IsNetworkedGameMode(Each.GameMode.c_str()) ? "1" : "0") + "\n";
+        }
         const fs::path Project = fs::u8path(InOptions.ProjectDir);
         const fs::path Engine  = InOptions.EngineDir.empty() ? fs::path() : fs::u8path(InOptions.EngineDir);
 
@@ -283,6 +293,7 @@ int Application::ExecReport(const char* InDefaultModule, const ContentReportOpti
         char Hex[17] = {};
         std::snprintf(Hex, sizeof(Hex), "%016llx", static_cast<unsigned long long>(SchemaHash));
         std::string Text = "module\t" + ModuleName + "\nschema\t" + Hex + "\nchecked\t" + std::to_string(Checked) + "\n";
+        Text += WorldLines;
         for(const Problem& Each : Problems)
         {
             Text += "problem\t" + OneLine(Each.Path) + "\t" + OneLine(Each.Message) + "\n";

@@ -216,6 +216,11 @@ void PlayRequestMessage::Serialize(EngineCore::Archive& Ar)
 void PlayInviteMessage::Serialize(EngineCore::Archive& Ar)
 {
     Ar << FromId << From << Level << Address << Port << Oid << SchemaHash;
+    /* Appended: an older sender's invite ends before them. */
+    if(Ar.IsSaving() || !Ar.IsAtEnd())
+    {
+        Ar << GameMode << bNetworked;
+    }
 }
 
 void PlayEndedMessage::Serialize(EngineCore::Archive& Ar)
@@ -231,6 +236,10 @@ void WorkerPlayMessage::Serialize(EngineCore::Archive& Ar)
 void WorkerPlayStateMessage::Serialize(EngineCore::Archive& Ar)
 {
     Ar << bRunning << Port << Error;
+    if(Ar.IsSaving() || !Ar.IsAtEnd())
+    {
+        Ar << GameMode << bNetworked;
+    }
 }
 
 EMessage PeekType(const std::vector<uint8_t>& InBytes)

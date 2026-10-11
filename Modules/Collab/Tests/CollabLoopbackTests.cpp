@@ -414,6 +414,7 @@ namespace
             Out.bOk        = true;
             Out.Module     = "WorldsLabGame";
             Out.SchemaHash = 0x2f8d597745b8342full;
+            Out.Worlds     = { { "A", "Content/Levels/A.nmworld", "Arena", true }, { "B", "Content/Levels/B.nmworld", "Explore", false } };
             for(const fs::directory_entry& Each : fs::recursive_directory_iterator(fs::u8path(InGameDir) / "Content"))
             {
                 const std::string Name = Each.path().generic_u8string();
@@ -460,7 +461,11 @@ namespace
 
         ToolchainReport Report;
         Check(ParseContentReport("module\tWorldsLabGame\nschema\t2f8d597745b8342f\nchecked\t13\n"
+                                 "world\tShootingRange\tContent/Levels/ShootingRange.nmworld\tWorldsLabRange\t1\n"
+                                 "world\tCourtyard\tContent/Levels/Courtyard.nmworld\tWorldsLabCourtyard\t0\n"
                                  "problem\tContent/Levels/A/x.nmentity\tis not valid XML\n", Report), "a report parses");
+        Check(Report.Worlds.size() == 2 && Report.Worlds[0].Name == "ShootingRange" && Report.Worlds[0].bNetworked
+              && Report.Worlds[1].GameMode == "WorldsLabCourtyard" && !Report.Worlds[1].bNetworked, "its worlds, networked or not");
         Check(Report.Module == "WorldsLabGame" && Report.SchemaHash == 0x2f8d597745b8342full && Report.Checked == 13, "its fields");
         Check(Report.Problems.size() == 1 && Report.Problems[0].Path == "Content/Levels/A/x.nmentity"
               && Report.Problems[0].Message == "is not valid XML", "its problem");
@@ -487,7 +492,8 @@ namespace
         RunGit(Bob, { "config", "commit.gpgsign", "false" });
         RunGit(Bob, { "switch", "-q", "-c", "main" });
         WriteText(Bob / "Games/WorldsLab/Config/DefaultEngine.ini",
-                  "[Game]\nModule=WorldsLabGame\n\n[World_A]\nFile=Content/Levels/A.nmworld\nGameMode=Arena\n");
+                  "[Game]\nModule=WorldsLabGame\n\n[World_A]\nFile=Content/Levels/A.nmworld\nGameMode=Arena\n\n"
+                  "[World_B]\nFile=Content/Levels/B.nmworld\nGameMode=Explore\n");
         WriteText(Bob / "Games/WorldsLab/Content/Levels/A.nmworld", "<World Format=\"1\" />\n");
         WriteText(Bob / "Games/WorldsLab/Content/Levels/A/good.nmentity", "<Entity />\n");
         WriteText(Bob / "Engine/Core.txt", "engine\n");
@@ -630,6 +636,7 @@ namespace
         Check(Invite.From == "alice" && Invite.FromId == Alice.GetMyId(), "from Alice");
         Check(Invite.Level == Level && Invite.Port == 17777 && Invite.Address.empty(), "the level, the port, on the session's host");
         Check(Invite.Oid == Built && Invite.SchemaHash == 0x2f8d597745b8342full, "at the build's commit and schema");
+        Check(Invite.GameMode == "Arena" && Invite.bNetworked, "with its level's game mode, networked");
         Check(Carol.IsRunActive() && Carol.GetActiveRun().Port == 17777, "the client knows the run is up");
 
         /* A second request joins it; only the starter stops it. */
@@ -699,6 +706,16 @@ namespace
         Check(CarolLog.Find(ClientEvent::EType::PlayEnded) && CarolLog.Find(ClientEvent::EType::PlayEnded)->Text == "alice stopped it" && !Carol.IsRunActive(), "who stopped it");
         Check(PumpUntil(Server, { &Alice, &Carol, &Dave }, [&]() { return !Game.bRunning; }), "and the game server stops");
         Dave.Leave();
+
+        /* A level whose mode isn't networked: the invite says so. */
+        AliceLog.Clear();
+        Alice.RequestPlay("Content/Levels/B.nmworld");
+        Check(PumpUntil(Server, { &Alice, &Carol }, [&]() { AliceLog.Drain(Alice); return AliceLog.Find(ClientEvent::EType::PlayInvite) != nullptr; }, 10000),
+              "a run of world B");
+        const ClientEvent* BInvite = AliceLog.Find(ClientEvent::EType::PlayInvite);
+        Check(BInvite && BInvite->Invite.GameMode == "Explore" && !BInvite->Invite.bNetworked, "its invite says the mode isn't networked");
+        Alice.RequestStopPlay();
+        PumpUntil(Server, { &Alice, &Carol }, [&]() { return !Game.bRunning; });
 
         /* The session ends: the worker stops. */
         Alice.Leave();

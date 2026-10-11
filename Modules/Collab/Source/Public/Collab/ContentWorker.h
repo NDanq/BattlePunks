@@ -65,6 +65,15 @@ namespace Collab
         std::string Output;
     };
 
+    /* A [World_*] as the game build sees it. */
+    struct COLLAB_API ToolchainWorld
+    {
+        std::string Name;
+        std::string File;          // runtime-relative
+        std::string GameMode;
+        bool        bNetworked = false;   // a NetGameMode: each client gets an avatar
+    };
+
     struct COLLAB_API ToolchainReport
     {
         bool        bOk = false;
@@ -73,6 +82,7 @@ namespace Collab
         uint64_t    SchemaHash = 0;
         uint32_t    Checked = 0;
         std::vector<ContentProblem> Problems;   // paths relative to the game's folder
+        std::vector<ToolchainWorld> Worlds;
     };
 
     class COLLAB_API IWorkerToolchain
