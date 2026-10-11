@@ -51,6 +51,10 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/SourceControl/GitClient.h
         Source/Private/Editor/SourceControl/SourceControlWindow.cpp
         Source/Private/Editor/SourceControl/SourceControlWindow.h
+        Source/Private/Editor/Collab/CollabSessionWindow.cpp
+        Source/Private/Editor/Collab/CollabSessionWindow.h
+        Source/Private/Editor/Collab/EditorCollabSession.cpp
+        Source/Private/Editor/Collab/EditorCollabSession.h
         Source/Private/Editor/EditorConsole.cpp
         Source/Private/Editor/ConsolePanel.cpp
         Source/Private/Editor/EditorMainWindow.cpp
@@ -263,12 +267,6 @@ list(APPEND NIMBLE_EDITOR_SOURCES ${NIMBLE_EDITOR_LIGHTING_SOURCES}
         Source/Private/Editor/Lighting/BakeLightmaps.cpp
         Source/Private/Editor/Lighting/BakeLightmaps.h
 )
-# STUB(NetCore-Editor): the editor link (EditorNetSession.h), when NetCore is built.
-if(TARGET NetCore)
-    list(APPEND NIMBLE_EDITOR_SOURCES
-            Source/Private/Editor/EditorNetSession.cpp
-            Source/Private/Editor/EditorNetSession.h)
-endif()
 
 if(NOT MSVC)
     set_source_files_properties(
@@ -320,6 +318,7 @@ target_link_libraries(NimbleEditor PRIVATE
         EngineCore::QtBridge
         NodeGraph::NodeGraph
         NimbleXatlas
+        Collab::Collab
         Qt6::Core
         Qt6::Gui
         Qt6::Widgets
@@ -535,6 +534,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
             EngineCore::QtBridge
             NodeGraph::NodeGraph
             NimbleXatlas
+            Collab::Collab
             Qt6::Core
             Qt6::Gui
             Qt6::Widgets
@@ -558,6 +558,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
             EngineCore::QtBridge
             NodeGraph::NodeGraph
             NimbleXatlas
+            Collab::Collab
             Qt6::Core
             Qt6::Gui
             Qt6::Widgets
@@ -581,6 +582,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
             EngineCore::QtBridge
             NodeGraph::NodeGraph
             NimbleXatlas
+            Collab::Collab
             Qt6::Core
             Qt6::Gui
             Qt6::Widgets
@@ -605,6 +607,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
                 EngineCore::QtBridge
                 NodeGraph::NodeGraph
                 NimbleXatlas
+                Collab::Collab
                 Qt6::Core
                 Qt6::Gui
                 Qt6::Widgets
@@ -629,6 +632,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
             EngineCore::QtBridge
             NodeGraph::NodeGraph
             NimbleXatlas
+            Collab::Collab
             Qt6::Core
             Qt6::Gui
             Qt6::Widgets
@@ -641,10 +645,34 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     add_test(NAME Editor.Terrain COMMAND NimbleEditorTerrainTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorTerrainTests>")
 
+    # Collaboration: two editors' sessions against an in-process server, offscreen.
+    add_executable(NimbleEditorCollabTests Tests/CollabEditorTests.cpp ${NIMBLE_EDITOR_DETAILS_SOURCES})
+    target_include_directories(NimbleEditorCollabTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source "${NIMBLE_EDITOR_CGLTF_DIR}")
+    target_link_libraries(NimbleEditorCollabTests PRIVATE
+            GameCore::GameCore
+            RenderCore::RenderCore
+            GameWindow::GameWindow
+            NimbleEngine::NimbleEngine
+            EngineCore::QtBridge
+            NodeGraph::NodeGraph
+            NimbleXatlas
+            Collab::Collab
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Widgets
+    )
+    if(TARGET NetCore)
+        target_link_libraries(NimbleEditorCollabTests PRIVATE NetCore::NetCore)
+    endif()
+    set_target_properties(NimbleEditorCollabTests PROPERTIES FOLDER "Editor" AUTOMOC ON)
+    add_dependencies(NimbleEditorCollabTests NimbleEditor)
+    add_test(NAME Editor.Collab COMMAND NimbleEditorCollabTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorCollabTests>")
+
     # The offscreen tests compile EditorIcons.cpp too (no resources: fallback icons).
     if(TARGET Qt6::Svg)
         foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests NimbleEditorSequencerTests
-                NimbleEditorTerrainTests NimbleEditorNotificationTests NimbleEditorSourceControlTests)
+                NimbleEditorTerrainTests NimbleEditorNotificationTests NimbleEditorSourceControlTests NimbleEditorCollabTests)
             if(TARGET ${NM_EDITOR_TEST})
                 target_link_libraries(${NM_EDITOR_TEST} PRIVATE Qt6::Svg)
             endif()
@@ -655,7 +683,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     if(TARGET Audio)
         foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorImportTests NimbleEditorLightingTests NimbleEditorDocumentTests
                 NimbleEditorProjectTests NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests
-                NimbleEditorSequencerTests NimbleEditorTerrainTests)
+                NimbleEditorSequencerTests NimbleEditorTerrainTests NimbleEditorCollabTests)
             if(TARGET ${NM_EDITOR_TEST})
                 target_link_libraries(${NM_EDITOR_TEST} PRIVATE Audio::Audio)
             endif()
@@ -664,7 +692,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     # And the content cook, which cooks sequences.
     if(TARGET Sequencer)
         foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests NimbleEditorSequencerTests
-                NimbleEditorTerrainTests)
+                NimbleEditorTerrainTests NimbleEditorCollabTests)
             if(TARGET ${NM_EDITOR_TEST})
                 target_link_libraries(${NM_EDITOR_TEST} PRIVATE Sequencer::Sequencer)
             endif()
@@ -800,6 +828,9 @@ if(TARGET NimbleEditorUIDesignerTests)
 endif()
 if(TARGET NimbleEditorParticleTests)
     target_include_directories(NimbleEditorParticleTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
+endif()
+if(TARGET NimbleEditorCollabTests)
+    target_include_directories(NimbleEditorCollabTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
 endif()
 if(TARGET NimbleEditorTerrainTests)
     target_include_directories(NimbleEditorTerrainTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")

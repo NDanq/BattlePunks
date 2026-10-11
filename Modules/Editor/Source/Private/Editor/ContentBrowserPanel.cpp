@@ -26,6 +26,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QIcon>
 #include <QPainter>
 #include <QProcess>
 #include <QSortFilterProxyModel>
@@ -231,6 +232,34 @@ private:
 
 /* One folder's contents: folders first, name filter, thumbnails, asset
  * tooltips; renames go through the panel so companions follow. */
+/* InDecoration (a pixmap or icon) with an amber dot in its top right corner:
+ * another editor in the session has the file changed. */
+static QPixmap WithRemoteBadge(const QVariant& InDecoration)
+{
+    QPixmap Base;
+    if(InDecoration.canConvert<QPixmap>() && !InDecoration.value<QPixmap>().isNull())
+    {
+        Base = InDecoration.value<QPixmap>();
+    }
+    else
+    {
+        Base = InDecoration.value<QIcon>().pixmap(64, 64);
+    }
+    if(Base.isNull())
+    {
+        Base = QPixmap(64, 64);
+        Base.fill(Qt::transparent);
+    }
+    QPainter Painter(&Base);
+    Painter.setRenderHint(QPainter::Antialiasing);
+    const qreal Size = qMax(6.0, Base.width() / Base.devicePixelRatio() * 0.28);
+    const QRectF Dot(Base.width() / Base.devicePixelRatio() - Size - 1.0, 1.0, Size, Size);
+    Painter.setPen(QPen(QColor(30, 30, 30), 1.0));
+    Painter.setBrush(QColor(230, 170, 60));
+    Painter.drawEllipse(Dot);
+    return Base;
+}
+
 class ContentListProxy final : public QSortFilterProxyModel
 {
 public:
@@ -253,10 +282,21 @@ public:
             {
                 const QFileInfo Info = Source->fileInfo(SourceIndex);
                 const Preview& Found = FindPreview(Info);
-                if(InRole == Qt::DecorationRole && !Found.Thumbnail.isNull()) { return Found.Thumbnail; }
-                if(InRole == Qt::ToolTipRole && !Found.Summary.isEmpty())
+                /* Someone else in the session has it changed: a badge, and who. */
+                const QStringList Others = Panel->GetRemoteChanges(Info.absoluteFilePath());
+                if(InRole == Qt::DecorationRole)
                 {
-                    return QStringLiteral("%1\n%2").arg(Info.fileName(), Found.Summary);
+                    QVariant Base = !Found.Thumbnail.isNull() ? QVariant(Found.Thumbnail) : QSortFilterProxyModel::data(InIndex, InRole);
+                    return Others.isEmpty() ? Base : QVariant(WithRemoteBadge(Base));
+                }
+                if(InRole == Qt::ToolTipRole)
+                {
+                    QString Tip = Found.Summary.isEmpty() ? Info.fileName() : QStringLiteral("%1\n%2").arg(Info.fileName(), Found.Summary);
+                    if(!Others.isEmpty())
+                    {
+                        Tip += QStringLiteral("\nChanged by %1 (not pushed yet)").arg(Others.join(QStringLiteral(", ")));
+                    }
+                    return Tip;
                 }
             }
         }
@@ -805,6 +845,30 @@ void ContentBrowserPanel::BuildToolBar(QHBoxLayout* InLayout)
 }
 
 // === Navigation ======================================================================
+
+void ContentBrowserPanel::SetRemoteChanges(const QHash<QString, QStringList>& InByPath)
+{
+    QHash<QString, QStringList> Keyed;
+    for(auto It = InByPath.cbegin(); It != InByPath.cend(); ++It)
+    {
+        Keyed.insert(QDir::cleanPath(QDir::fromNativeSeparators(It.key())).toLower(), It.value());
+    }
+    if(Keyed == RemoteChanges)
+    {
+        return;
+    }
+    RemoteChanges.swap(Keyed);
+    List->viewport()->update();
+}
+
+QStringList ContentBrowserPanel::GetRemoteChanges(const QString& InPath) const
+{
+    if(RemoteChanges.isEmpty())
+    {
+        return QStringList();
+    }
+    return RemoteChanges.value(QDir::cleanPath(QDir::fromNativeSeparators(InPath)).toLower());
+}
 
 void ContentBrowserPanel::SetCurrentFolder(const QString& InFolder)
 {

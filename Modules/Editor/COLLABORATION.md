@@ -1,6 +1,6 @@
 # Editor Collaboration — design and implementation plan
 
-Status: **P0 and P1 done**; P2–P6 planned (2026-10-11). Branch `feat-editor-collab`.
+Status: **P0, P1 and P2 done**; P3–P6 planned (2026-10-11). Branch `feat-editor-collab`.
 
 Several people work on one game project at once. An **EditorServer** on a host
 machine tracks who is in the session, tells everyone when the shared branch

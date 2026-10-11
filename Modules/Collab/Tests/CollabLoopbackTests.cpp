@@ -1,0 +1,410 @@
+/*
+ * Collab over the loopback interface: a CollabServer and several CollabClients
+ * in one process. Covers the protocol helpers, joining, presence and its dirty
+ * paths sent as changes, overlaps, leaving, the refusals (engine mismatch,
+ * uncommitted engine changes, password, protocol version, no hello) and
+ * timeouts (nothing answering, an editor gone silent).
+ *
+ * Real sockets on 127.0.0.1, on ports the OS picks. Every wait is bounded.
+ */
+
+#include <chrono>
+#include <cstdio>
+#include <functional>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include "Private/Collab/CollabTransport.h"
+#include "Public/Collab/CollabClient.h"
+#include "Public/Collab/CollabProtocol.h"
+#include "Public/Collab/CollabServer.h"
+
+using namespace Collab;
+
+namespace
+{
+    int GFailures = 0;
+
+    void Check(const bool bInCondition, const char* InWhat)
+    {
+        if(!bInCondition)
+        {
+            ++GFailures;
+            std::fprintf(stderr, "FAILED: %s\n", InWhat);
+        }
+        else
+        {
+            std::printf("ok: %s\n", InWhat);
+        }
+    }
+
+    using Clock = std::chrono::steady_clock;
+
+    /* Polls InServer and InClients until InDone or InMs pass. */
+    bool PumpUntil(CollabServer& InServer, const std::vector<CollabClient*>& InClients, const std::function<bool()>& InDone,
+                   const int InMs = 3000)
+    {
+        const Clock::time_point End = Clock::now() + std::chrono::milliseconds(InMs);
+        while(Clock::now() < End)
+        {
+            InServer.Poll();
+            for(CollabClient* Each : InClients)
+            {
+                Each->Poll();
+            }
+            if(InDone())
+            {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return InDone();
+    }
+
+    /* Drains InClient's events into a list, for assertions. */
+    struct EventLog
+    {
+        std::vector<ClientEvent> Events;
+
+        void Drain(CollabClient& InClient)
+        {
+            ClientEvent Event;
+            while(InClient.NextEvent(Event))
+            {
+                Events.push_back(Event);
+            }
+        }
+
+        const ClientEvent* Find(const ClientEvent::EType InType) const
+        {
+            for(const ClientEvent& Each : Events)
+            {
+                if(Each.Type == InType)
+                {
+                    return &Each;
+                }
+            }
+            return nullptr;
+        }
+
+        int Count(const ClientEvent::EType InType) const
+        {
+            int N = 0;
+            for(const ClientEvent& Each : Events)
+            {
+                N += Each.Type == InType ? 1 : 0;
+            }
+            return N;
+        }
+
+        void Clear() { Events.clear(); }
+    };
+
+    ClientIdentity Identity(const char* InUser, const char* InEngine = "aaaaaaaaaaaa1111", const char* InBranch = "collab/forest")
+    {
+        ClientIdentity Out;
+        Out.User       = InUser;
+        Out.ProjectId  = MakeProjectId("WorldsLab", "git@github.com:Nimble/WorldsLab.git");
+        Out.Branch     = InBranch;
+        Out.Head       = "1111111111111111111111111111111111111111";
+        Out.EngineTree = InEngine;
+        return Out;
+    }
+
+    /* Connects InClient and pumps until it is joined or refused; its events in OutLog. */
+    bool JoinOrRefuse(CollabServer& InServer, std::vector<CollabClient*> InOthers, CollabClient& InClient, EventLog& OutLog,
+                      const ClientIdentity& InIdentity)
+    {
+        if(!InClient.Connect("127.0.0.1", InServer.GetPort(), InIdentity, 3000))
+        {
+            return false;
+        }
+        InOthers.push_back(&InClient);
+        return PumpUntil(InServer, InOthers, [&]()
+        {
+            OutLog.Drain(InClient);
+            return OutLog.Find(ClientEvent::EType::Joined) || OutLog.Find(ClientEvent::EType::Rejected)
+                || OutLog.Find(ClientEvent::EType::ConnectFailed);
+        });
+    }
+
+    void TestHelpers()
+    {
+        std::printf("--- protocol helpers\n");
+        Check(NormalizeRemoteUrl("git@GitHub.com:Nimble/WorldsLab.git") == "github.com/Nimble/WorldsLab", "scp syntax");
+        Check(NormalizeRemoteUrl("https://me@github.com/Nimble/WorldsLab") == "github.com/Nimble/WorldsLab", "https with a user");
+        Check(NormalizeRemoteUrl("ssh://git@github.com:22/Nimble/WorldsLab.git/") == "github.com/Nimble/WorldsLab", "ssh with a port");
+        Check(NormalizeRemoteUrl("  https://GITHUB.com/Nimble/WorldsLab.GIT\n") == "github.com/Nimble/WorldsLab", "case and whitespace");
+        Check(NormalizeRemoteUrl("C:\\Repos\\WorldsLab.git") == "C:/Repos/WorldsLab", "a Windows path");
+        Check(NormalizeRemoteUrl("/srv/git/WorldsLab.git") == "/srv/git/WorldsLab", "a POSIX path");
+        Check(MakeProjectId("WorldsLab", "git@github.com:Nimble/WorldsLab.git")
+              == MakeProjectId("WorldsLab", "https://github.com/Nimble/WorldsLab"), "one project however it's cloned");
+
+        Check(ConstantTimeEquals("hunter2", "hunter2"), "equal passwords");
+        Check(!ConstantTimeEquals("hunter2", "hunter3") && !ConstantTimeEquals("hunter2", "hunter22")
+              && !ConstantTimeEquals("", "x"), "unequal passwords");
+
+        std::vector<std::string> Old = { "a", "b", "c" }, New = { "b", "c", "d" }, Added, Removed;
+        DiffSorted(Old, New, Added, Removed);
+        Check(Added == std::vector<std::string>{ "d" } && Removed == std::vector<std::string>{ "a" }, "DiffSorted");
+        ApplyDiff(Old, Added, Removed);
+        Check(Old == New, "ApplyDiff undoes it");
+
+        PresenceMessage Out;
+        Out.MemberId   = 7;
+        Out.OpenLevel  = "Games/WorldsLab/Content/Levels/Forest.nmworld";
+        Out.Play       = EPlayState::Playing;
+        Out.bFullDirty = true;
+        Out.DirtyAdded = { "x", "y" };
+        const std::vector<uint8_t> Bytes = Encode(Out);
+        Check(PeekType(Bytes) == EMessage::Presence, "PeekType");
+        PresenceMessage In;
+        Check(Decode(Bytes, In) && In.MemberId == 7 && In.OpenLevel == Out.OpenLevel && In.Play == EPlayState::Playing
+              && In.bFullDirty && In.DirtyAdded == Out.DirtyAdded, "a message round-trips");
+        HelloMessage Wrong;
+        Check(!Decode(Bytes, Wrong), "decoding as another type fails");
+        std::vector<uint8_t> Cut(Bytes.begin(), Bytes.begin() + long(Bytes.size() / 2));
+        Check(!Decode(Cut, In), "a cut-short message fails");
+        Check(PeekType({ 1, 2, 3 }) == EMessage::None, "garbage is no message");
+    }
+
+    void TestSession()
+    {
+        std::printf("--- join, presence, overlaps, leave\n");
+        CollabServer Server;
+        ServerConfig Config;
+        Config.Port = 0;
+        Check(Server.Start(Config) && Server.GetPort() != 0, "the server listens");
+
+        CollabClient Alice, Bob;
+        EventLog AliceLog, BobLog;
+        Check(JoinOrRefuse(Server, {}, Alice, AliceLog, Identity("alice")) && AliceLog.Find(ClientEvent::EType::Joined),
+              "Alice joins");
+        Check(Alice.GetRoster().size() == 1 && Alice.GetMyId() != 0, "alone in the session");
+
+        Alice.SetPresence("1111", "Games/WorldsLab/Content/Levels/Forest.nmworld", EPlayState::Editing,
+                          { "Games/WorldsLab/Content/Levels/Forest.nmworld", "Games/WorldsLab/Source/Pickup.cpp" });
+
+        Check(JoinOrRefuse(Server, { &Alice }, Bob, BobLog, Identity("bob")) && BobLog.Find(ClientEvent::EType::Joined), "Bob joins");
+        Check(Bob.GetRoster().size() == 2, "Bob's roster has both");
+        Check(PumpUntil(Server, { &Alice, &Bob }, [&]() { AliceLog.Drain(Alice); return AliceLog.Find(ClientEvent::EType::MemberJoined) != nullptr; }),
+              "Alice hears Bob joined");
+        Check(Alice.GetRoster().size() == 2, "Alice's roster has both");
+        Check(Server.GetSessions().size() == 1 && Server.GetMemberCount() == 2, "one session, two members");
+
+        /* Bob's roster entry for Alice carries her presence, sent before he joined. */
+        const auto AliceSeen = Bob.GetRoster().find(Alice.GetMyId());
+        Check(AliceSeen != Bob.GetRoster().end() && AliceSeen->second.Dirty.size() == 2
+              && AliceSeen->second.OpenLevel == "Games/WorldsLab/Content/Levels/Forest.nmworld", "a joiner sees earlier presence");
+
+        /* A change goes as a change. */
+        BobLog.Clear();
+        Alice.SetPresence("2222", "Games/WorldsLab/Content/Levels/Forest.nmworld", EPlayState::Playing,
+                          { "Games/WorldsLab/Content/Levels/Forest.nmworld" });
+        Check(PumpUntil(Server, { &Alice, &Bob }, [&]() { BobLog.Drain(Bob); return BobLog.Find(ClientEvent::EType::MemberChanged) != nullptr; }),
+              "Bob hears Alice's presence");
+        const MemberState& AliceNow = Bob.GetRoster().at(Alice.GetMyId());
+        Check(AliceNow.Head == "2222" && AliceNow.Play == EPlayState::Playing, "her HEAD and play state");
+        Check(AliceNow.Dirty == std::vector<std::string>{ "Games/WorldsLab/Content/Levels/Forest.nmworld" }, "her dirty paths, one removed");
+
+        /* The same file dirty for both: an overlap, each way. */
+        AliceLog.Clear();
+        BobLog.Clear();
+        Bob.SetPresence("2222", std::string(), EPlayState::Editing, { "Games/WorldsLab/Content/Levels/Forest.nmworld", "Games/WorldsLab/Config/DefaultGame.ini" });
+        Check(BobLog.Count(ClientEvent::EType::Overlap) == 0, "(nothing until polled)");
+        Bob.Poll();
+        BobLog.Drain(Bob);
+        const ClientEvent* BobOverlap = BobLog.Find(ClientEvent::EType::Overlap);
+        Check(BobOverlap && BobOverlap->User == "alice" && BobOverlap->Path == "Games/WorldsLab/Content/Levels/Forest.nmworld",
+              "Bob is warned Alice has the level dirty too");
+        Check(PumpUntil(Server, { &Alice, &Bob }, [&]() { AliceLog.Drain(Alice); return AliceLog.Find(ClientEvent::EType::Overlap) != nullptr; }),
+              "and Alice that Bob has");
+        Check(Bob.WhoHasDirty("Games/WorldsLab/Content/Levels/Forest.nmworld") == std::vector<std::string>{ "alice" }, "WhoHasDirty");
+        Check(Alice.GetOthersDirty().size() == 2, "GetOthersDirty: Bob's two");
+
+        /* Not again for the same pair. */
+        BobLog.Clear();
+        Bob.SetPresence("3333", std::string(), EPlayState::Editing, { "Games/WorldsLab/Content/Levels/Forest.nmworld", "Games/WorldsLab/Config/DefaultGame.ini" });
+        PumpUntil(Server, { &Alice, &Bob }, [&]() { return false; }, 100);
+        BobLog.Drain(Bob);
+        Check(BobLog.Count(ClientEvent::EType::Overlap) == 0, "an overlap is reported once");
+
+        /* Another branch is another session -- another engine is fine there. */
+        CollabClient Carol;
+        EventLog CarolLog;
+        Check(JoinOrRefuse(Server, { &Alice, &Bob }, Carol, CarolLog, Identity("carol", "bbbbbbbbbbbb2222", "main"))
+              && CarolLog.Find(ClientEvent::EType::Joined), "another branch: its own session");
+        Check(Server.GetSessions().size() == 2 && Carol.GetRoster().size() == 1, "two sessions");
+        AliceLog.Clear();
+        PumpUntil(Server, { &Alice, &Bob, &Carol }, [&]() { return false; }, 100);
+        AliceLog.Drain(Alice);
+        Check(!AliceLog.Find(ClientEvent::EType::MemberJoined), "and nobody else hears of her");
+
+        /* Leaving. */
+        AliceLog.Clear();
+        BobLog.Clear();
+        Bob.Leave();
+        Check(PumpUntil(Server, { &Alice, &Bob, &Carol }, [&]()
+        {
+            AliceLog.Drain(Alice);
+            BobLog.Drain(Bob);
+            return AliceLog.Find(ClientEvent::EType::MemberLeft) && BobLog.Find(ClientEvent::EType::Disconnected);
+        }), "Bob leaves; Alice hears");
+        Check(AliceLog.Find(ClientEvent::EType::MemberLeft) && AliceLog.Find(ClientEvent::EType::MemberLeft)->User == "bob", "by name");
+        Check(Alice.GetRoster().size() == 1 && Bob.GetState() == CollabClient::EState::Idle, "the rosters follow");
+
+        Alice.Leave();
+        Carol.Leave();
+        Check(PumpUntil(Server, { &Alice, &Carol }, [&]() { return Server.GetSessions().empty(); }), "an empty session ends");
+    }
+
+    void TestRefusals()
+    {
+        std::printf("--- refusals\n");
+        CollabServer Server;
+        ServerConfig Config;
+        Config.Port     = 0;
+        Config.Password = "sesame";
+        Config.HelloTimeoutMs = 500;
+        Check(Server.Start(Config), "a server with a password");
+
+        CollabClient Alice;
+        EventLog AliceLog;
+        ClientIdentity AliceId = Identity("alice");
+        AliceId.Password = "sesame";
+        Check(JoinOrRefuse(Server, {}, Alice, AliceLog, AliceId) && AliceLog.Find(ClientEvent::EType::Joined), "the right password joins");
+
+        CollabClient Mallory;
+        EventLog MalloryLog;
+        ClientIdentity Wrong = Identity("mallory");
+        Wrong.Password = "open";
+        JoinOrRefuse(Server, { &Alice }, Mallory, MalloryLog, Wrong);
+        const ClientEvent* Refused = MalloryLog.Find(ClientEvent::EType::Rejected);
+        Check(Refused && Refused->Reason == ERejectReason::Password, "a wrong password is refused");
+        Check(PumpUntil(Server, { &Alice, &Mallory }, [&]() { return Mallory.GetState() == CollabClient::EState::Idle; }),
+              "and disconnected");
+
+        CollabClient Bob;
+        EventLog BobLog;
+        ClientIdentity Other = Identity("bob", "zzzzzzzzzzzz9999");
+        Other.Password = "sesame";
+        JoinOrRefuse(Server, { &Alice }, Bob, BobLog, Other);
+        Refused = BobLog.Find(ClientEvent::EType::Rejected);
+        Check(Refused && Refused->Reason == ERejectReason::EngineMismatch, "another engine is refused");
+        Check(Refused && Refused->Text.find("zzzzzzzzzz") != std::string::npos && Refused->Text.find("aaaaaaaaaa") != std::string::npos, "saying which engines differ");
+
+        CollabClient Dirty;
+        EventLog DirtyLog;
+        ClientIdentity DirtyId = Identity("dora");
+        DirtyId.Password     = "sesame";
+        DirtyId.bEngineDirty = true;
+        JoinOrRefuse(Server, { &Alice }, Dirty, DirtyLog, DirtyId);
+        Refused = DirtyLog.Find(ClientEvent::EType::Rejected);
+        Check(Refused && Refused->Reason == ERejectReason::EngineDirty, "uncommitted engine changes are refused");
+        Check(Server.GetMemberCount() == 1, "only Alice is in");
+
+        /* A hello from another protocol version, by hand. */
+        {
+            CollabTransport Raw;
+            PeerID ToServer = PEER_NONE;
+            Check(Raw.Connect("127.0.0.1", Server.GetPort(), 3000, ToServer), "a raw connection");
+            bool bRefused = false;
+            PumpUntil(Server, { &Alice }, [&]()
+            {
+                TransportEvent Event;
+                while(Raw.Service(Event))
+                {
+                    if(Event.EventType == TransportEvent::EType::Connected)
+                    {
+                        HelloMessage Old = HelloMessage();
+                        Old.Protocol = ProtocolVersion + 98;
+                        Old.User = "old";
+                        Raw.Send(ToServer, Encode(Old));
+                        Raw.Flush();
+                    }
+                    else if(Event.EventType == TransportEvent::EType::Received && PeekType(Event.Data) == EMessage::Reject)
+                    {
+                        RejectMessage Reject;
+                        bRefused = Decode(Event.Data, Reject) && Reject.Reason == ERejectReason::Protocol;
+                    }
+                }
+                return bRefused;
+            });
+            Check(bRefused, "another protocol version is refused");
+
+            /* A connection that never says hello. */
+            CollabTransport Quiet;
+            PeerID QuietServer = PEER_NONE;
+            Quiet.Connect("127.0.0.1", Server.GetPort(), 3000, QuietServer);
+            bool bDropped = false;
+            PumpUntil(Server, { &Alice }, [&]()
+            {
+                TransportEvent Event;
+                while(Quiet.Service(Event))
+                {
+                    if(Event.EventType == TransportEvent::EType::Received && PeekType(Event.Data) == EMessage::Reject)
+                    {
+                        bDropped = true;
+                    }
+                }
+                return bDropped;
+            }, 3000);
+            Check(bDropped, "no hello in time is refused");
+        }
+    }
+
+    void TestTimeouts()
+    {
+        std::printf("--- timeouts\n");
+
+        /* Nothing listening: a port that was free a moment ago. */
+        uint16_t FreePort = 0;
+        {
+            CollabServer Gone;
+            ServerConfig Config;
+            Config.Port = 0;
+            Gone.Start(Config);
+            FreePort = Gone.GetPort();
+        }
+        CollabServer Server;
+        ServerConfig Config;
+        Config.Port      = 0;
+        Config.TimeoutMs = 1000;
+        Server.Start(Config);
+
+        CollabClient Lonely;
+        EventLog LonelyLog;
+        Check(Lonely.Connect("127.0.0.1", FreePort, Identity("lonely"), 1000), "connecting to nothing starts");
+        Check(PumpUntil(Server, { &Lonely }, [&]() { LonelyLog.Drain(Lonely); return LonelyLog.Find(ClientEvent::EType::ConnectFailed) != nullptr; }, 8000),
+              "and fails with no answer");
+
+        /* An editor that stops answering is dropped. */
+        CollabClient Alice, Silent;
+        EventLog AliceLog, SilentLog;
+        JoinOrRefuse(Server, {}, Alice, AliceLog, Identity("alice"));
+        Check(JoinOrRefuse(Server, { &Alice }, Silent, SilentLog, Identity("silent")) && SilentLog.Find(ClientEvent::EType::Joined),
+              "a second editor joins");
+        /* From here Silent is never polled again. */
+        AliceLog.Clear();
+        Check(PumpUntil(Server, { &Alice }, [&]() { AliceLog.Drain(Alice); return AliceLog.Find(ClientEvent::EType::MemberLeft) != nullptr; }, 15000),
+              "a silent editor times out; the others hear");
+        Check(Server.GetMemberCount() == 1, "and the server forgets it");
+    }
+}
+
+int main()
+{
+    TestHelpers();
+    TestSession();
+    TestRefusals();
+    TestTimeouts();
+
+    if(GFailures != 0)
+    {
+        std::fprintf(stderr, "%d check(s) failed\n", GFailures);
+        return 1;
+    }
+    std::printf("all passed\n");
+    return 0;
+}
