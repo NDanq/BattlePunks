@@ -135,6 +135,10 @@ The launchers' command line is config overrides (`ParseLaunchArgs`,
   by `EntityGuid`; otherwise the client creates it.
 - After that, the server sends each replicated field whenever it changes,
   diffed against what it last sent. It also sends the entity's destruction.
+- Its shape follows it too: components added or removed on the server, and
+  a new parent, reach the client. Turning `bReplicate` off, or removing the
+  `NetComponent`, destroys the entity on clients; turned back on, it spawns
+  again under a new `NetId`.
 - A client that joins late gets everything at once.
 - Clients never send state. They send Server RPCs.
 
@@ -258,7 +262,9 @@ resent: a whole round trip of frozen state. So state does not go reliably.
 - **State may outrun a spawn,** since they travel on different channels. A
   client does not acknowledge a batch that mentions an entity it has not
   been sent yet, so the server keeps sending that state until the spawn has
-  landed.
+  landed. The same goes for a component added after the spawn: state goes
+  only for components the client has been told of, and a batch naming one
+  whose `AddComponents` has not landed is not acknowledged.
 
 `[Net] SimulatedLossPercent` drops that share of the state packets a process
 sends, for testing. In NetArena at 20% on every process, prediction's worst
@@ -321,6 +327,8 @@ a client in one process over 127.0.0.1. It covers:
 
 - the handshake
 - spawning, both matched by GUID and new
+- components added and removed after a spawn, reparenting, and replication
+  turned off and on, clean and under 50% loss
 - replicated and initial-only fields, and entity references
 - all three RPC targets, and the ownership check
 - a 6 s client stall
