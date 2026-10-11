@@ -30,6 +30,7 @@
 #include "Public/GameWindow/GameWindow.h"
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/RenderCore/Renderer.h"
+#include "Private/NimbleEngine/FrameRecorder.h"
 
 #if defined(_WIN32)
 /*
@@ -262,6 +263,7 @@ namespace NimbleEngine
             else if(Key == "cooked") { Overrides.push_back("Content.Uncooked 0"); }
             else if(Key == "listen") { Overrides.push_back("Net.Listen 1"); }
             else if(Key == "headless") {}   // the game launcher's own (ApplicationDesc::bHeadless), not a setting
+            else if(Key == "record")   { Overrides.push_back("Record.File " + Value); }
             else if(Key.find('.') != std::string::npos && Equals != std::string::npos)
             {
                 Overrides.push_back(Key + " " + Value);
@@ -269,7 +271,7 @@ namespace NimbleEngine
             else
             {
                 CORE_LOG_WARN("Ignoring the argument '" + Arg + "' -- expected -Section.Key=Value, -connect=host[:port], "
-                              "-port=N, -listen or -headless")
+                              "-port=N, -listen, -record=<file> or -headless")
             }
         }
 
@@ -500,6 +502,17 @@ namespace NimbleEngine
             return false;
         }
 
+        /* -record: the game as a video, from the first frame (or [Record] StartSeconds in). */
+        if(!Desc.bHeadless)
+        {
+            Recorder = EngineCore::Memory::Alloc<FrameRecorder>();
+            if(!Recorder->Start())
+            {
+                EngineCore::Memory::Dealloc(Recorder);
+                Recorder = nullptr;
+            }
+        }
+
         /* The game runs in this; the host lends it the two services above. */
         Session = EngineCore::Memory::Alloc<GameSession>(*this, *Scripts, *Rendering);
         Net     = EngineCore::Memory::Alloc<NetHost>();
@@ -663,6 +676,7 @@ namespace NimbleEngine
         Info.DeltaSeconds   = Frame.DeltaSeconds;
         Info.ViewportPixels = Frame.ViewportPixels;
         Rendering->EndFrame(Info);
+        if(Recorder) { Recorder->Tick(*Rendering); }
 
         ++FrameNumber;
         if(InMaxFrames != 0 && FrameNumber >= InMaxFrames)
@@ -827,6 +841,12 @@ namespace NimbleEngine
             Scripts->Shutdown();
             EngineCore::Memory::Dealloc(Scripts);
             Scripts = nullptr;
+        }
+        if(Recorder)
+        {
+            Recorder->Stop();
+            EngineCore::Memory::Dealloc(Recorder);
+            Recorder = nullptr;
         }
         if(Rendering)
         {
