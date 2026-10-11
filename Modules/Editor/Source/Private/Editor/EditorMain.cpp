@@ -21,6 +21,7 @@
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/Editor/EditorContext.h"
 #include "Public/Editor/EditorLog.h"
+#include "Public/Editor/EditorNotifications.h"
 #include "Public/Editor/EditorMainWindow.h"
 #include "Private/Editor/Build/ContentCook.h"
 #include "Private/Editor/Content/AssetImport.h"
@@ -75,6 +76,7 @@ int main(int argc, char* argv[])
     /* First, so the Console panel's history starts with everything logged
      * from here on -- config load and renderer startup included. */
     EditorLog::Install();
+    EditorNotifications::Install();
 
     EditorContent::SetImportEngineContentRoot(EditorContent::GetEngineContentRoot());
 
@@ -186,6 +188,7 @@ int main(int argc, char* argv[])
     /* The window and every Play session are gone, and their voices with them. */
     NimbleEngine::StopAudio();
 
+    EditorNotifications::Uninstall();
     EditorLog::Uninstall();
     EngineCore::CloseRunLog();
     return Result;

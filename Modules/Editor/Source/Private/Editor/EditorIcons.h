@@ -8,6 +8,7 @@
 
 #include <cstdint>
 
+#include <QColor>
 #include <QIcon>
 
 /*
@@ -66,10 +67,30 @@ namespace EditorIcons
         TerrainSmoothPaint, // two overlapping circles
         Foliage,            // a tree
         FoliageErase,       // a small tree and a cross
+        Bell,         // lucide "bell": notifications
+        BellOff,      // lucide "bell-off": do not disturb
+        Error,        // lucide "circle-x"
+        Success,      // lucide "circle-check"
+        Warning,      // lucide "triangle-alert"
+        Info,         // lucide "info"
+        Close,        // lucide "x"
+        Branch,       // lucide "git-branch"
+        Refresh,      // lucide "refresh-cw"
+        Ahead,        // lucide "arrow-up": commits to push
+        Behind,       // lucide "arrow-down": commits to pull
+        Fetch,        // lucide "cloud-download"
+        Push,         // lucide "upload"
+        Commit,       // lucide "git-commit-horizontal"
+        Lock,         // lucide "lock": an LFS lock
+        Merge,        // lucide "git-merge": a conflict
         Count
     };
 
     QIcon Get(EIcon InIcon);
+
+    /* Drawn in InColor rather than the palette's (the notification severities);
+     * disabled, still in the palette's. */
+    QIcon Get(EIcon InIcon, const QColor& InColor);
 }
 
 #endif // WITH_EDITOR

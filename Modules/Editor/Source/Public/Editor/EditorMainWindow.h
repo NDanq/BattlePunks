@@ -11,6 +11,7 @@
 
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/Editor/EditorConsole.h"
+#include "Public/Editor/EditorNotifications.h"
 
 class ConsolePanel;
 class ContentBrowserPanel;
@@ -18,6 +19,8 @@ class DetailsPanel;
 class EditorContext;
 class EditorDocument;
 class OutlinerPanel;
+class NotificationCenter;
+class NotificationToasts;
 class ProjectBuildDialog;
 class QAction;
 class QLabel;
@@ -82,6 +85,10 @@ private:
     /* bInWorlds: at the Worlds page. */
     void OpenProjectSettings(bool bInWorlds = false);
     void OnCompileFinished(bool bInSucceeded);
+    /* Build > Compile Source's outcome, replacing its progress toast; errors offer Show Log. */
+    void PostCompileResult(EditorNotifications::ESeverity InSeverity, const QString& InTitle, const QString& InBody = QString());
+    /* The Console dock, shown and in front: a notification's "Show Log". */
+    void ShowConsole();
     void StartRenderer();
     void UpdateTitle();
     void UpdateHistoryActions();
@@ -117,6 +124,10 @@ private:
     QLabel*         PlayLabel  = nullptr;
     QLabel*         BakeLabel  = nullptr;   // "Lighting needs to be rebuilt"
 
+    /* EditorNotifications on screen (NotificationWidgets.h). */
+    NotificationCenter* Notifications = nullptr;
+    NotificationToasts* Toasts        = nullptr;
+
     QAction*        UndoAction  = nullptr;
     QAction*        RedoAction  = nullptr;
 
@@ -128,6 +139,7 @@ private:
     SourceBuild*    Compiler            = nullptr;
     QAction*        CompileAction       = nullptr;
     QAction*        CancelCompileAction = nullptr;
+    QString         FirstCompileError;   // the build output's first error line, for its notification
 
     /* Replace the edited World, so unavailable while playing. */
     QList<QAction*> SceneActions;
