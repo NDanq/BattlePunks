@@ -23,7 +23,9 @@ class SourceBuild;
 /*
  * Build > Build Project: the project as a game, in one place.
  *
- *   Options   configuration, cook, compile, open the folder after -- kept in
+ *   Options   configuration, cook, compile, open the folder after, run
+ *             uncooked and build test executables (Debug and RelWithDebInfo
+ *             only; Shipping never builds tests) -- kept in
  *             [Build] of Config/DefaultEngine.ini; which worlds are cooked is
  *             Project Settings > Worlds' (shown here, edited there)
  *   Cook      ContentCook.h: the included worlds and the project's content,
@@ -56,6 +58,8 @@ private:
     EditorProjectBuild::BuildOptions GatherOptions() const;
     void RefreshWorlds();
     void RefreshTarget();
+    /* Run uncooked and Build tests: Debug and RelWithDebInfo only. */
+    void RefreshDevelopmentOptions(bool bInRunning);
     void SetRunning(bool bInRunning);
     void Log(const QString& InLine);
 
@@ -76,6 +80,9 @@ private:
     QCheckBox*      CompileGame   = nullptr;
     QCheckBox*      OpenOutput    = nullptr;
     QCheckBox*      RunUncooked   = nullptr;
+    QCheckBox*      BuildTests    = nullptr;
+    bool            bWantsUncooked = false;   // the choices, kept while Shipping shows them off
+    bool            bWantsTests    = false;
     QLabel*         Target        = nullptr;
     QLabel*         WorldList     = nullptr;
     QTableWidget*   Stats         = nullptr;

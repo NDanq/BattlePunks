@@ -35,6 +35,7 @@
 #include "Private/Editor/Content/AnimStateEditorWindow.h"
 #include "Private/Editor/Content/AnimStateGraph.h"
 #include "Private/Editor/Content/ClipTimeline.h"
+#include "Private/Editor/Build/ProjectBuild.h"
 #include "Private/Editor/ComponentDocs.h"
 #include "Private/Editor/DocumentationWindow.h"
 #include "Private/Editor/Graph/GraphDocument.h"
@@ -665,6 +666,35 @@ static void TestClipTimeline()
     Expect(Added < 0.0f, "read-only, it adds nothing");
 }
 
+/* Build > Build Project's configure: tests and uncooked only in Debug and RelWithDebInfo, never Shipping. */
+static void TestProjectBuildOptions()
+{
+    std::printf("Build Project options\n");
+    using namespace EditorProjectBuild;
+    Expect(IsDevelopment(BC_Debug) && IsDevelopment(BC_RelWithDebInfo) && !IsDevelopment(BC_Shipping),
+           "Debug and RelWithDebInfo are development configurations; Shipping is not");
+
+    BuildOptions Options;
+    Options.bBuildTests  = true;
+    Options.bRunUncooked = true;
+    for(const EConfiguration Each : { BC_Debug, BC_RelWithDebInfo })
+    {
+        Options.Configuration = Each;
+        const QStringList Args = ConfigureArgs(QStringLiteral("client-debug"), Options);
+        Expect(Args.contains(QStringLiteral("-DNIMBLE_BUILD_TESTS=ON")) && Args.contains(QStringLiteral("-DNIMBLE_RUN_UNCOOKED=ON")),
+               "a development build passes its tests and uncooked choices");
+    }
+    Options.Configuration = BC_Shipping;
+    const QStringList Shipping = ConfigureArgs(QStringLiteral("client-shipping"), Options);
+    Expect(Shipping.contains(QStringLiteral("-DNIMBLE_BUILD_TESTS=OFF")) && Shipping.contains(QStringLiteral("-DNIMBLE_RUN_UNCOOKED=OFF")),
+           "Shipping never builds tests or runs uncooked, whatever the options say");
+
+    Options.Configuration = BC_Debug;
+    Options.bBuildTests   = false;
+    Expect(ConfigureArgs(QStringLiteral("client-debug"), Options).contains(QStringLiteral("-DNIMBLE_BUILD_TESTS=OFF")),
+           "tests off is passed too, so a tree that had them loses them");
+}
+
 /* NIMBLE_GRAPH_SNAPSHOT_FILE=<x.nmgraph> NIMBLE_GRAPH_SNAPSHOT=<png> [NIMBLE_GRAPH_SNAPSHOT_SCALE=2]:
  * a graph as the editor's canvas draws it (GraphEditorTab::SaveCanvasImage), for the docs. */
 static void TestGraphSnapshot()
@@ -709,6 +739,7 @@ int main(int argc, char** argv)
     TestClipTimeline();
     TestViewSettings();
     TestDocumentation();
+    TestProjectBuildOptions();
     TestGraphSnapshot();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
