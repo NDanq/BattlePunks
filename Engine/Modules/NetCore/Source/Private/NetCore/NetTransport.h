@@ -23,7 +23,7 @@ namespace NetCore
     enum : uint8_t
     {
         NET_CHANNEL_GAME   = 0,   // reliable, ordered: handshake, spawns, destroys, RPCs
-        NET_CHANNEL_EDITOR = 1,   // reliable, ordered: the editor link
+        NET_CHANNEL_EDITOR = 1,   // unused: was the editor link (Modules/Collab now); kept so STATE stays 2
         NET_CHANNEL_STATE  = 2,   // unreliable, sequenced: replicated state and its acks
         NET_CHANNEL_COUNT  = 3,
     };

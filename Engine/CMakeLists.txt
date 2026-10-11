@@ -524,6 +524,14 @@ if(NIMBLE_WITH_NETCORE AND TARGET GameCore
     add_subdirectory(Modules/NetCore)
 endif()
 
+# Collab: editor collaboration -- the protocol, server sessions and client
+# (Modules/Editor/COLLABORATION.md). Core and ENet only, so after NetCore,
+# whose vendored ENet it shares, but not needing it on. Editor and Server
+# targets: what NimbleEditorServer and the editor link.
+if(NOT NIMBLE_TARGET STREQUAL "Client" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/Collab/CMakeLists.txt")
+    add_subdirectory(Modules/Collab)
+endif()
+
 # JoltPhysics: rigid-body physics, when NIMBLE_WITH_JOLTPHYSICS is on (the
 # Physics block above). After GameCore, whose components it simulates, and
 # before NimbleEngine, which attaches it to each level's World.
@@ -979,6 +987,15 @@ endif()
 add_executable(NimblePak Tools/NimblePak.cpp)
 target_link_libraries(NimblePak PRIVATE EngineCore::EngineCore GameCore Lua::Lua)
 set_target_properties(NimblePak PROPERTIES FOLDER "Engine")
+
+# === NimbleEditorServer =====================================================
+# The editor collaboration server (Tools/EditorServer; Modules/Collab): Core,
+# Collab and ENet, no Qt and no game code, so a host needs only a compiler.
+if(TARGET Collab)
+    add_executable(NimbleEditorServer Tools/EditorServer/EditorServerMain.cpp)
+    target_link_libraries(NimbleEditorServer PRIVATE EngineCore::EngineCore Collab::Collab)
+    set_target_properties(NimbleEditorServer PROPERTIES FOLDER "Engine")
+endif()
 
 # === Editor ================================================================
 # The Qt editor: after NimbleStageShaders, and needs RenderCore. Skips itself

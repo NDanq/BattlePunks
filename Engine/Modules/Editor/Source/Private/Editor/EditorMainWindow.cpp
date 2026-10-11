@@ -20,6 +20,7 @@
 #include <QFileInfo>
 #include <QKeySequence>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QSignalBlocker>
@@ -97,9 +98,8 @@
 #include "Private/Editor/SettingsDialog.h"
 #include "Private/Editor/SourceBuild.h"
 #include "Private/Editor/PlayProcesses.h"
-#if WITH_NETCORE
-#include "Private/Editor/EditorNetSession.h"
-#endif
+#include "Private/Editor/Collab/CollabSessionWindow.h"
+#include "Private/Editor/Collab/EditorCollabSession.h"
 
 /* Edit > Editor Settings > Build. */
 NIMBLE_CONFIG_BOOL(GEditorReloadAfterCompile, "Editor", "ReloadAfterCompile", true, nullptr);
@@ -260,6 +260,16 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     tabifyDockWidget(ConsoleDock, SourceControl);
     SourceControl->hide();
     connect(&Level, &EditorDocument::WorldSaved, SourceControl, &SourceControlWindow::RequestRefresh);
+
+    /* The collaboration session, and its dock beside them: who else is working
+     * and on what; their changed files badged in the Content Browser. */
+    CollabSession = new EditorCollabSession(EditorGraphs::GetProjectRoot(), ProjectSettingsDialog::GetProjectConfigPath(), this);
+    auto* SessionDock = new CollabSessionWindow(*CollabSession, this);
+    addDockWidget(Qt::BottomDockWidgetArea, SessionDock);
+    tabifyDockWidget(ConsoleDock, SessionDock);
+    SessionDock->hide();
+    connect(&Level, &EditorDocument::WorldSaved, CollabSession, &EditorCollabSession::RequestDirtyRefresh);
+    connect(CollabSession, &EditorCollabSession::RosterChanged, this, [this]() { ContentArea->SetRemoteChanges(CollabSession->GetOthersDirty()); });
     ContentDock->raise();
     connect(ContentArea, &ContentBrowserPanel::OpenWorldRequested, this, &EditorMainWindow::OpenWorldFile);
 
@@ -359,10 +369,6 @@ EditorMainWindow::~EditorMainWindow()
     {
         InputProbe->Stop();
     }
-#if WITH_NETCORE
-    delete NetLink;
-    NetLink = nullptr;
-#endif
     EditorGraphs::SetEditorContext(nullptr);
     EditorPrefabs::SetEditorContext(nullptr);
     EditorParticles::SetEditorContext(nullptr);
@@ -451,6 +457,27 @@ void EditorMainWindow::BuildMenus()
         const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Graph"), EditorGraphs::GetProjectRoot(),
                                                           EditorGraphs::GetFileFilter());
         if(!Path.isEmpty()) { EditorGraphs::OpenGraph(Path, this); }
+    });
+
+    File->addSeparator();
+
+    /* The collaboration session: the Session dock, and leaving it. */
+    QAction* JoinSession = File->addAction(QStringLiteral("Collaboration &Session..."));
+    JoinSession->setToolTip(QStringLiteral("Join others working on this project through NimbleEditorServer (the Session dock)"));
+    connect(JoinSession, &QAction::triggered, this, [this]()
+    {
+        if(auto* Dock = findChild<CollabSessionWindow*>())
+        {
+            Dock->show();
+            Dock->raise();
+            Dock->GetAddressEdit()->setFocus();
+        }
+    });
+    QAction* LeaveSession = File->addAction(QStringLiteral("&Leave Session"));
+    connect(LeaveSession, &QAction::triggered, this, [this]() { CollabSession->Leave(); });
+    connect(File, &QMenu::aboutToShow, this, [this, LeaveSession]()
+    {
+        LeaveSession->setEnabled(CollabSession->GetState() != ::Collab::CollabClient::EState::Idle);
     });
 
     File->addSeparator();
@@ -2220,10 +2247,40 @@ void EditorMainWindow::RegisterConsoleCommands()
         else                                 { Console.PrintError(QStringLiteral("No client window -- see above")); }
     });
 
-#if WITH_NETCORE
-    /* net.host / net.join / net.leave / net.status. */
-    if(!NetLink) { NetLink = new EditorNetSession(Level, Console); }
-#endif
+
+    /* The collaboration session (EditorCollabSession.h; the Session dock does the same). */
+    Console.Register(QStringLiteral("collab.connect"), QStringLiteral("host[:port] [name] [password]"),
+                     QStringLiteral("Join the collaboration session on NimbleEditorServer at host (UDP 7788 by default)"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("Usage: collab.connect host[:port] [name] [password]"));
+            return;
+        }
+        CollabSession->Connect(InArgs.value(0), InArgs.value(1), InArgs.value(2));
+        Console.Print(QStringLiteral("Joining %1 -- the notification says how it went").arg(InArgs.value(0)));
+    });
+    Console.Register(QStringLiteral("collab.leave"), QString(), QStringLiteral("Leave the collaboration session"),
+                     [this](const QStringList&)
+    {
+        CollabSession->Leave();
+    });
+    Console.Register(QStringLiteral("collab.status"), QString(), QStringLiteral("Who is in the collaboration session, and what they're doing"),
+                     [this](const QStringList&)
+    {
+        if(!CollabSession->IsJoined())
+        {
+            Console.Print(CollabSession->GetState() == ::Collab::CollabClient::EState::Connecting ? QStringLiteral("Joining %1").arg(CollabSession->GetServerAddress())
+                                                                                         : QStringLiteral("Not in a session"));
+            return;
+        }
+        Console.Print(QStringLiteral("In the session at %1:").arg(CollabSession->GetServerAddress()));
+        for(const QString& Line : CollabSession->DescribeRoster())
+        {
+            Console.Print(QStringLiteral("  ") + Line);
+        }
+    });
 }
 
 void EditorMainWindow::showEvent(QShowEvent* InEvent)
@@ -2351,6 +2408,14 @@ void EditorMainWindow::UpdateTitle()
 
     /* The browser will not move or delete the world that is open. */
     if(ContentArea) { ContentArea->SetOpenWorld(CurrentPath); }
+
+    /* What the session sees of this editor. */
+    if(CollabSession)
+    {
+        CollabSession->SetOpenLevel(CurrentPath);
+        CollabSession->SetLevelUnsaved(!Level.GetHistory().isClean());
+        CollabSession->SetPlaying(Context.IsPlaying());
+    }
 }
 
 void EditorMainWindow::UpdateHistoryActions()

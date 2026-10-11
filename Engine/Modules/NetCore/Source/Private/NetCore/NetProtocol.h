@@ -41,7 +41,7 @@
  * Wire types index NetSchema's name-sorted list of the types that replicate
  * or have RPCs -- identical on both ends because the schema hash matched.
  *
- * EDITOR CHANNEL: the Editor* messages (NetEditorLink.h).
+ * 64-66 were the editor link's (retired: editor collaboration is Modules/Collab); not reused.
  */
 
 namespace NetCore
@@ -58,10 +58,6 @@ namespace NetCore
         Rpc,
         StateBatch,           // S->C, unreliable: replicated fields, against the acknowledged baseline
         StateAck,             // C->S, unreliable: which batches were applied
-
-        EditorHello = 64,     // u32 version, string user name
-        EditorCommand,        // string user name, string command text (STUB)
-        EditorPropertyEdit,   // reserved: guid, type name, field name, value (STUB)
     };
 }
 

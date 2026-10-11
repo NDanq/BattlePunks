@@ -24,7 +24,6 @@
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/World.h"
-#include "Public/NetCore/NetEditorLink.h"
 #include "Public/NetCore/NetSession.h"
 
 using namespace GameCore;
@@ -193,51 +192,6 @@ namespace
 
 namespace
 {
-    /* STUB(NetCore-Editor): one editor hosts, two join; what one announces
-     * reaches the others, relayed by the host. */
-    void TestEditorLink()
-    {
-        struct Heard { int Count = 0; std::string User, Text; };
-        const NetEditorLink::CommandFn Listen = [](const char* InUser, const char* InText, void* InHeard)
-        {
-            Heard& H = *static_cast<Heard*>(InHeard);
-            ++H.Count;
-            H.User = InUser;
-            H.Text = InText;
-        };
-
-        NetEditorLink Host, Alice, Bob;
-        Heard HostHeard, AliceHeard, BobHeard;
-        Host.SetUserName("host");   Host.SetCommandHandler(Listen, &HostHeard);
-        Alice.SetUserName("alice"); Alice.SetCommandHandler(Listen, &AliceHeard);
-        Bob.SetUserName("bob");     Bob.SetCommandHandler(Listen, &BobHeard);
-
-        Check(Host.Host(0), "an editor hosts");
-        Check(Alice.Join("127.0.0.1", Host.GetPort()) && Bob.Join("127.0.0.1", Host.GetPort()), "two editors join it");
-
-        const auto PollAll = [&]
-        {
-            Host.Poll(); Alice.Poll(); Bob.Poll();
-            EngineCore::Threads::SleepMs(1);
-        };
-        for(int Index = 0; Index < 3000 && Host.GetPeerCount() < 2; ++Index) { PollAll(); }
-        for(int Index = 0; Index < 50; ++Index) { PollAll(); }   // the hellos
-        Check(Host.GetPeerCount() == 2, "the host sees both");
-
-        Alice.SendCommand("Move Crate");
-        for(int Index = 0; Index < 3000 && (HostHeard.Count == 0 || BobHeard.Count == 0); ++Index) { PollAll(); }
-        Check(HostHeard.Count == 1 && HostHeard.User == "alice" && HostHeard.Text == "Move Crate", "the host hears an edit");
-        Check(BobHeard.Count == 1 && BobHeard.Text == "Move Crate", "and relays it to the other editor");
-        Check(AliceHeard.Count == 0, "but not back to its author");
-
-        Host.SendCommand("Delete Lamp");
-        for(int Index = 0; Index < 3000 && (AliceHeard.Count == 0 || BobHeard.Count < 2); ++Index) { PollAll(); }
-        Check(AliceHeard.Text == "Delete Lamp" && BobHeard.Text == "Delete Lamp", "the host's own edits reach everyone");
-    }
-}
-
-namespace
-{
     /* State is unreliable: half of every batch and every ack is dropped here
      * (SimulatedLossPercent), yet the client must end up exactly where the
      * server is -- the acknowledged baselines resend whatever it may lack. */
@@ -326,7 +280,6 @@ namespace
 
 int main()
 {
-    TestEditorLink();
     TestReplicationTable();
     TestRpcLocalWithoutSession();
     GServerLog = RpcLog();

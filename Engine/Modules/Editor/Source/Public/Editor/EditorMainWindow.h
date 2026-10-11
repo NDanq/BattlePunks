@@ -26,7 +26,7 @@ class QAction;
 class QLabel;
 class SDLInputProbe;
 class SourceBuild;
-class EditorNetSession;
+class EditorCollabSession;
 class ViewportPanel;
 class ViewportWidget;
 
@@ -117,9 +117,8 @@ private:
     ContentBrowserPanel* ContentArea = nullptr;
     EditorConsole   Console;
 
-    /* STUB(NetCore-Editor): the editor link's console commands; nullptr
-     * without NetCore. After Console, which it registers into. */
-    EditorNetSession* NetLink = nullptr;
+    /* This editor in a collaboration session (EditorCollabSession.h). */
+    EditorCollabSession* CollabSession = nullptr;
     QLabel*         StatsLabel = nullptr;
     QLabel*         PlayLabel  = nullptr;
     QLabel*         BakeLabel  = nullptr;   // "Lighting needs to be rebuilt"

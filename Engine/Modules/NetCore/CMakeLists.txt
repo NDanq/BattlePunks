@@ -87,11 +87,9 @@ set(NETCORE_SOURCES
         Source/Private/NetCore/NetReplication.h
         Source/Private/NetCore/NetReplication.cpp
         Source/Private/NetCore/NetSession.cpp
-        Source/Private/NetCore/NetEditorLink.cpp
         Source/Public/NetCore/NetCoreAPI.h
         Source/Public/NetCore/NetTypes.h
         Source/Public/NetCore/NetSession.h
-        Source/Public/NetCore/NetEditorLink.h
 )
 
 # SHARED, like GameCore: one session and one installed RPC sink per process.

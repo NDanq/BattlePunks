@@ -385,8 +385,7 @@ signals:
     void HistoryChanged();
 
     /* A new step joined the history (not one merged into the last, as a
-     * drag's steps are), with its undo text. What the editor link announces
-     * (EditorNetSession.h). */
+     * drag's steps are), with its undo text. */
     void CommandRecorded(const QString& InText);
 
 private:

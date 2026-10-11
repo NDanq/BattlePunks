@@ -1,8 +1,8 @@
 # NetCore
 
 Networking: an ENet transport, a server-authoritative session that replicates
-networked entities and routes RPCs, the dedicated server's host, and a stub
-of the editor link.
+networked entities and routes RPCs, and the dedicated server's host. (Editor
+collaboration is `Modules/Collab`, which replaced the editor link.)
 
 `NetCore` is written for this repository and is **optional**. A game that never
 networks configures without it and nothing networked is compiled or linked.
@@ -226,7 +226,8 @@ GAMECORE_RPC(ShipComponent, ServerFire)(Ship, Aim);
 - **Transport.** ENet, with three channels:
   - **game** (reliable, ordered): the handshake, spawns, destroys and RPCs;
   - **state** (unreliable, sequenced): replicated fields and their acks;
-  - **editor** (reliable, ordered): the editor link.
+  - channel 1 is unused: it was the editor link's, kept so the state channel
+    keeps its number.
 - **Packets.** Every packet is an `EngineCore::Archive` (little-endian). A
   packet that does not parse disconnects its sender.
   `Private/NetCore/NetProtocol.h` has the layouts.
@@ -277,31 +278,12 @@ keep this honest.
 
 ---
 
-## Editor link (stub)
+## Editor link (retired)
 
-Run these in the editor console:
-
-- `net.host [port]`, then `net.join host[:port]` from another editor (default
-  port 7787)
-- `net.leave`
-- `net.status`
-
-Every undo step one editor records is announced to the others by its text,
-relayed by the host, and printed. **Nothing is applied.** Look for
-`STUB(NetCore-Editor)`.
-
-The road from here (superseded by the Collab plan in
-`Engine/Modules/Editor/COLLABORATION.md`, whose P6 finishes it):
-
-1. **A snapshot of the host's world** for an editor that joins, through
-   `SerializeWorld`.
-2. **Edits as data.** An edit is entity GUID, component type *name*, field
-   *name*, and the value encoded by field type: `EditorPropertyEdit` in
-   `NetProtocol.h`, reserved. It must never be the undo history's raw
-   component bytes, whose layout is the build's.
-3. **Remote edits applied through `EditorDocument`,** so they are undoable and
-   every panel hears of them.
-4. **Ownership while editing,** so two people do not drag the same entity.
+The `net.host` / `net.join` editor link and `NetEditorLink` are gone. Editors
+work together through `NimbleEditorServer` and `Modules/Collab` instead
+(`Engine/Modules/Editor/COLLABORATION.md`; P6 there finishes what the link
+started: snapshots, edits as data, applying them undoably, ownership).
 
 ---
 
@@ -330,7 +312,6 @@ a client in one process over 127.0.0.1. It covers:
   and changed back, and a change just after a spawn
 - a late joiner
 - destroys and disconnects
-- the editor link
 
 `NimbleEngine.GameFrameworkTests` covers what every build has: local RPCs,
 the facade, `ParseLaunchArgs` and a headless Application.

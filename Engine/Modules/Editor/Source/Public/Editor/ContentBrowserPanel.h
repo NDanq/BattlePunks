@@ -3,6 +3,7 @@
 
 #if WITH_EDITOR
 
+#include <QHash>
 #include <QStringList>
 #include <QWidget>
 
@@ -60,6 +61,13 @@ public:
     /* The open world's file, protected from moves and deletes. */
     void SetOpenWorld(const QString& InPath) { OpenWorld = InPath; }
 
+    /* Files someone else in the collaboration session has changed, absolute
+     * path -> who: badged in the list, named in the tooltip (EditorCollabSession). */
+    void SetRemoteChanges(const QHash<QString, QStringList>& InByPath);
+
+    /* Who else has InPath changed; empty if nobody. */
+    QStringList GetRemoteChanges(const QString& InPath) const;
+
 signals:
     void OpenWorldRequested(const QString& InPath);
 
@@ -107,6 +115,7 @@ private:
     QString EngineRoot;      // the engine's content (EditorContent::GetEngineContentRoot), read-only here; may be empty
     QString CurrentFolder;
     QString OpenWorld;
+    QHash<QString, QStringList> RemoteChanges;   // keys lowercased, '/' separated
     QStringList History;
 
     QFileSystemModel*  Model     = nullptr;
