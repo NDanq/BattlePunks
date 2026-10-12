@@ -21,15 +21,18 @@ namespace
 
     /* Where worktrees and worker logs go without --data: a short per-user
      * folder, since a build under a deep one passes Windows' 260-character
-     * path limit (%LOCALAPPDATA%/NimbleCollab; elsewhere
-     * $XDG_DATA_HOME/NimbleCollab or ~/.local/share/NimbleCollab). */
+     * path limit. On Windows %USERPROFILE%/.nimblecollab, not under AppData:
+     * a packaged (MSIX) app's AppData writes are redirected into its package,
+     * and the Store's Python, which the build's cook steps run, would not
+     * see them. Elsewhere $XDG_DATA_HOME/NimbleCollab or
+     * ~/.local/share/NimbleCollab. */
     std::string DefaultDataDir()
     {
 #if defined(_WIN32)
-        const char* Base = std::getenv("LOCALAPPDATA");
+        const char* Base = std::getenv("USERPROFILE");
         if(Base && Base[0] != '\0')
         {
-            return std::string(Base) + "/NimbleCollab";
+            return std::string(Base) + "/.nimblecollab";
         }
 #else
         const char* Xdg = std::getenv("XDG_DATA_HOME");
