@@ -145,7 +145,7 @@ void SetRpcSink(IRpcSink* InSink) { GSink = InSink ? InSink : &GLocalSink; }
 IRpcSink& GetRpcSink() { return *GSink; }
 
 bool InvokeRpc(World& InWorld, const EntityID InEntity, const ComponentTypeID InType, const RpcEntry& InRpc,
-               const std::vector<uint8_t>& InArgs, const NetClientID InSender, const bool bInRemote)
+               const std::vector<uint8_t>& InArgs, const NetClientID InSender, const bool bInRemote, const uint32_t InViewTimeMs)
 {
     void* Component = Entity(&InWorld, InEntity).GetComponentByType(InType);
     if(!Component)
@@ -161,6 +161,7 @@ bool InvokeRpc(World& InWorld, const EntityID InEntity, const ComponentTypeID In
     Context.Entity       = InEntity;
     Context.SenderClient = InSender;
     Context.bRemote      = bInRemote;
+    Context.ViewTimeMs   = InViewTimeMs;
 
     EngineCore::Archive Ar = EngineCore::Archive::ForReading(InArgs);
     if(!InRpc.Invoker(Component, Ar, Context))

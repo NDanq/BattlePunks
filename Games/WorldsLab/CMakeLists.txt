@@ -1,5 +1,13 @@
 cmake_minimum_required(VERSION 3.16)
 
+# Linux builds with Clang only (Engine/CMakeLists.txt refuses anything else).
+# Before project(), so a new build tree picks it up; one already made with
+# another compiler needs cmake --fresh.
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND NOT DEFINED CMAKE_CXX_COMPILER)
+    set(CMAKE_C_COMPILER   clang)
+    set(CMAKE_CXX_COMPILER clang++)
+endif()
+
 project(WorldsLab VERSION 0.1 LANGUAGES CXX)
 
 # ===========================================================================
@@ -62,7 +70,7 @@ endif()
 # Loaded by name (NimbleEngine/GameModule.h) by the launcher and the editor's
 # Play-in-Editor, never linked. Add new sources here.
 nimble_add_hot_module(${GAME_MODULE}
-        SOURCES      WorldsLabGame.cpp WorldsLabExplore.cpp WorldsLabRange.cpp
+        SOURCES      WorldsLabGame.cpp WorldsLabExplore.cpp WorldsLabRange.cpp WorldsLabWalker.h WorldsLabPvP.cpp
         PRIVATE_DEPS NimbleEngine::NimbleEngine)
 set_target_properties(${GAME_MODULE} PROPERTIES FOLDER "Games")
 

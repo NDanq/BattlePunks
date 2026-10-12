@@ -33,16 +33,21 @@ namespace
     }
 
     /*
-     * InTimeoutMs is the most a peer may go unanswered. The minimum stays
-     * ENet's 5s, with its 32-resend limit, and that matters: ENet checks
-     * timeouts BEFORE it reads the socket, so after a long frame (a client's
-     * first, compiling pipelines) the ack that arrived meanwhile is not seen
-     * yet. Minimum == maximum would drop the connection on any hitch that long.
+     * InTimeoutMs is the most a peer may go unanswered, on both ends: ENet's
+     * minimum AND maximum. ENet drops a peer once a command has been resent
+     * enough times (its limit, 32: six tries, doubling) and the minimum has
+     * passed. On a fast link the tries run out in milliseconds, so a minimum
+     * below InTimeoutMs is the real timeout of the end still running: ENet's
+     * 5s default dropped a client stalled 6s in a long first frame (compiling
+     * pipelines) however long InTimeoutMs was. The stalled end itself, waking,
+     * has resent nothing meanwhile, so only the maximum can drop it -- and ENet
+     * checks timeouts BEFORE it reads the socket, so that holds even though
+     * the answer is waiting: a stall longer than InTimeoutMs still loses the
+     * connection.
      */
     void ApplyTimeout(ENetPeer* InPeer, const uint32_t InTimeoutMs)
     {
-        const uint32_t Minimum = InTimeoutMs < 5000u ? InTimeoutMs : 5000u;
-        enet_peer_timeout(InPeer, 0, Minimum, InTimeoutMs);
+        enet_peer_timeout(InPeer, 0, InTimeoutMs, InTimeoutMs);
     }
 
     NetPeerID PeerIdOf(const ENetPeer* InPeer)
@@ -120,6 +125,7 @@ NetPeerID NetTransport::Track(ENetPeer* InPeer)
     const NetPeerID ID = NextPeer++;
     InPeer->data = reinterpret_cast<void*>(uintptr_t(ID));
     Peers[ID] = InPeer;
+    Counters[ID] = Traffic();
     return ID;
 }
 
@@ -152,9 +158,11 @@ bool NetTransport::Service(NetTransportEvent& OutEvent)
                 const NetPeerID ID = PeerIdOf(Event.peer);
                 Event.peer->data = nullptr;
                 Peers.erase(ID);
+                Counters.erase(ID);
                 OutEvent.EventType = NetTransportEvent::EType::Disconnected;
                 OutEvent.Peer      = ID;
                 OutEvent.Channel   = 0;
+                OutEvent.Reason    = Event.data;
                 OutEvent.Data.clear();
                 return true;
             }
@@ -164,6 +172,11 @@ bool NetTransport::Service(NetTransportEvent& OutEvent)
                 OutEvent.Peer      = PeerIdOf(Event.peer);
                 OutEvent.Channel   = Event.channelID;
                 OutEvent.Data.assign(Event.packet->data, Event.packet->data + Event.packet->dataLength);
+                if(auto Found = Counters.find(OutEvent.Peer); Found != Counters.end())
+                {
+                    Found->second.BytesReceived += Event.packet->dataLength;
+                    ++Found->second.PacketsReceived;
+                }
                 enet_packet_destroy(Event.packet);
                 return true;
             }
@@ -174,33 +187,75 @@ bool NetTransport::Service(NetTransportEvent& OutEvent)
     return false;
 }
 
-void NetTransport::Send(const NetPeerID InPeer, const uint8_t InChannel, const std::vector<uint8_t>& InBytes, const bool bInReliable)
+void NetTransport::Send(const NetPeerID InPeer, const uint8_t InChannel, const std::vector<uint8_t>& InBytes, const bool bInReliable,
+                        const bool bInUnsequenced)
 {
     const auto Found = Peers.find(InPeer);
     if(!Host || Found == Peers.end() || InBytes.empty()) { return; }
 
     /* Unreliable is sequenced: ENet drops one older than the newest that
      * arrived on its channel. */
-    ENetPacket* Packet = enet_packet_create(InBytes.data(), InBytes.size(), bInReliable ? ENET_PACKET_FLAG_RELIABLE : 0);
+    /* Unsequenced: delivered as it arrives, not dropped for coming after a newer one. */
+    const enet_uint32 Flags = bInReliable ? ENET_PACKET_FLAG_RELIABLE : (bInUnsequenced ? ENET_PACKET_FLAG_UNSEQUENCED : 0u);
+    ENetPacket* Packet = enet_packet_create(InBytes.data(), InBytes.size(), Flags);
     if(Packet && enet_peer_send(Found->second, InChannel, Packet) != 0)
     {
         /* Not queued, so still ours to free. */
         enet_packet_destroy(Packet);
+        return;
     }
+    Traffic& Count = Counters[InPeer];
+    Count.BytesSent += InBytes.size();
+    ++Count.PacketsSent;
 }
 
 void NetTransport::Flush()
 {
-    if(Host) { enet_host_flush(Host); }
+    if(!Host) { return; }
+    enet_host_flush(Host);
+
+    const auto Now = std::chrono::steady_clock::now();
+    for(auto& Entry : Counters)
+    {
+        Traffic& T = Entry.second;
+        const double Seconds = std::chrono::duration<double>(Now - T.WindowStart).count();
+        if(Seconds < 1.0) { continue; }
+        T.SendRate       = float(double(T.BytesSent - T.WindowSent) / Seconds);
+        T.ReceiveRate    = float(double(T.BytesReceived - T.WindowReceived) / Seconds);
+        T.WindowSent     = T.BytesSent;
+        T.WindowReceived = T.BytesReceived;
+        T.WindowStart    = Now;
+    }
 }
 
-void NetTransport::Disconnect(const NetPeerID InPeer)
+bool NetTransport::GetPeerStats(const NetPeerID InPeer, NetPeerStats& OutStats) const
 {
     const auto Found = Peers.find(InPeer);
-    if(Found != Peers.end()) { enet_peer_disconnect(Found->second, 0); }
+    if(Found == Peers.end() || Found->second->state != ENET_PEER_STATE_CONNECTED) { return false; }
+    const ENetPeer* Peer = Found->second;
+    OutStats = NetPeerStats();
+    OutStats.RoundTripMs         = Peer->roundTripTime;
+    OutStats.RoundTripVarianceMs = Peer->roundTripTimeVariance;
+    OutStats.PacketLossPercent   = 100.0f * float(Peer->packetLoss) / float(ENET_PEER_PACKET_LOSS_SCALE);
+    if(const auto Count = Counters.find(InPeer); Count != Counters.end())
+    {
+        OutStats.BytesSent             = Count->second.BytesSent;
+        OutStats.BytesReceived         = Count->second.BytesReceived;
+        OutStats.PacketsSent           = Count->second.PacketsSent;
+        OutStats.PacketsReceived       = Count->second.PacketsReceived;
+        OutStats.SendBytesPerSecond    = Count->second.SendRate;
+        OutStats.ReceiveBytesPerSecond = Count->second.ReceiveRate;
+    }
+    return true;
 }
 
-void NetTransport::Close()
+void NetTransport::Disconnect(const NetPeerID InPeer, const uint32_t InReason)
+{
+    const auto Found = Peers.find(InPeer);
+    if(Found != Peers.end()) { enet_peer_disconnect(Found->second, InReason); }
+}
+
+void NetTransport::Close(const uint32_t InReason)
 {
     if(Host)
     {
@@ -209,13 +264,14 @@ void NetTransport::Close()
         for(auto& Entry : Peers)
         {
             Entry.second->data = nullptr;
-            enet_peer_disconnect_now(Entry.second, 0);
+            enet_peer_disconnect_now(Entry.second, InReason);
         }
         enet_host_flush(Host);
         enet_host_destroy(Host);
         Host = nullptr;
     }
     Peers.clear();
+    Counters.clear();
     if(bInitialized)
     {
         ReleaseENet();

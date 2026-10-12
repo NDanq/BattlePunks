@@ -143,8 +143,18 @@ namespace NimbleEngine
         virtual void OnClientConnected(int32_t InClient, GameCore::EntityID InPlayer) { (void)InClient; (void)InPlayer; }
 
         /* A client left. Its entities -- every NetComponent it owned -- are
-         * still alive, and are destroyed when this returns. */
+         * still alive, and are destroyed when this returns. A client that
+         * lost its connection (not one that quit) is first Away, and this
+         * comes only if it is not back within [Net] ReconnectGraceMs. */
         virtual void OnClientDisconnected(int32_t InClient, GameCore::EntityID InPlayer) { (void)InClient; (void)InPlayer; }
+
+        /* A client's connection was lost; its place is kept -- InPlayer and
+         * everything it owns stay, its avatar idle -- while it tries to rejoin.
+         * Pause its respawn timer, mark it on the scoreboard. */
+        virtual void OnClientAway(int32_t InClient, GameCore::EntityID InPlayer) { (void)InClient; (void)InPlayer; }
+
+        /* It rejoined in time: the same id, the same InPlayer, driving what it drove. */
+        virtual void OnClientReturned(int32_t InClient, GameCore::EntityID InPlayer) { (void)InClient; (void)InPlayer; }
     };
 }
 

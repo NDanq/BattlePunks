@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
 
+# Configured on its own: Clang on Linux, as a game's CMakeLists picks (see "Compiler" below).
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND NOT DEFINED CMAKE_CXX_COMPILER)
+    set(CMAKE_C_COMPILER   clang)
+    set(CMAKE_CXX_COMPILER clang++)
+endif()
+
 project(NimbleEngine VERSION 0.1 LANGUAGES CXX)
 
 # ===========================================================================
@@ -51,6 +57,19 @@ enable_testing()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# === Compiler ===============================================================
+# Linux builds with Clang, and only Clang: one compiler to keep working beside
+# MSVC rather than two, each with its own idea of what is valid. A game's
+# CMakeLists picks clang/clang++ before project() (Engine/Templates/Game), so
+# a new tree gets it; a tree configured with another compiler has to be
+# reconfigured from scratch (cmake --fresh), since CMake fixes the compiler
+# when a tree is first made.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "NimbleEngine: Linux builds with Clang only; this tree uses ${CMAKE_CXX_COMPILER_ID} "
+                        "(${CMAKE_CXX_COMPILER}). Reconfigure it from scratch with "
+                        "-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ --fresh.")
+endif()
 
 # === Compiler cache =========================================================
 # sccache, when it is installed. Objects are cached by content hash, so the
@@ -613,6 +632,9 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/CollisionMeshes.cpp
         Source/Private/NimbleEngine/AudioFacade.cpp
         Source/Private/NimbleEngine/NetFacade.cpp
+        Source/Private/NimbleEngine/LagCompensation.cpp
+        Source/Private/NimbleEngine/FrameRecorder.cpp
+        Source/Private/NimbleEngine/FrameRecorder.h
         Source/Private/NimbleEngine/NetHost.cpp
         Source/Private/NimbleEngine/NetScript.cpp
         Source/Private/NimbleEngine/PhysicsFacade.cpp
@@ -625,6 +647,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/GameMode.h
         Source/Public/NimbleEngine/Avatar.h
         Source/Public/NimbleEngine/PlayerStart.h
+        Source/Public/NimbleEngine/LagCompensation.h
         Source/Public/NimbleEngine/GameSession.h
         Source/Public/NimbleEngine/GameConsole.h
         Source/Public/NimbleEngine/GameModule.h

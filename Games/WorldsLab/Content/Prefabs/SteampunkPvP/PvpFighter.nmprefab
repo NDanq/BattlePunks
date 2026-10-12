@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Prefab Format="1" Name="PvpFighter" NextId="2">
+  <Entity Id="1" Name="Fighter">
+    <Component Type="Net" Version="2">
+      <Replicate Value="true" />
+      <Predicted Value="true" />
+    </Component>
+    <Component Type="LagCompensated" Version="1">
+      <Radius Value="34" />
+      <Bottom Value="10" />
+      <Top Value="182" />
+      <Enabled Value="true" />
+    </Component>
+    <Component Type="PvpFighter" Version="1">
+      <Name Value="Fighter" />
+    </Component>
+    <Component Type="RangeMover" Version="1">
+      <BodyYaw Value="0" />
+      <CameraYaw Value="0" />
+      <Pitch Value="8" />
+      <Scope Value="0" />
+      <VelX Value="0" />
+      <VelY Value="0" />
+      <VelZ Value="0" />
+      <AirTime Value="0" />
+      <Grounded Value="false" />
+      <Started Value="false" />
+    </Component>
+    <Component Type="Ragdoll" Version="1">
+      <Enabled Value="true" />
+      <HitBoxes Value="false" />
+      <StartActive Value="false" />
+      <DropProps Value="false" />
+      <Mass Value="70" />
+      <Thickness Value="1" />
+      <JointFriction Value="1" />
+      <Friction Value="0.8" />
+      <LinearDamping Value="0.05" />
+      <AngularDamping Value="0.5" />
+      <Layer Value="4" />
+      <Mask Value="1" />
+    </Component>
+    <Component Type="Animation" Version="1">
+      <Animation Value="Engine/Content/Characters/CrashDummy/CrashDummy.nmanimstate" />
+      <PlayRate Value="1" />
+      <Paused Value="false" />
+      <ParameterCount Value="0" />
+    </Component>
+    <Component Type="AvatarHarness" Version="1">
+      <InputMap Value="Range" />
+      <Simulation Value="RangeMove" />
+      <AutoPossess Value="0" />
+      <Enabled Value="true" />
+      <ViewTarget Value="true" />
+      <Requestable Value="false" />
+    </Component>
+    <Component Type="Render" Version="5">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/ShootingRange/DummyPaint.material.nmgraph" />
+      <Material1 Value="Content/Materials/ShootingRange/DummyPaint.material.nmgraph" />
+      <Material2 Value="Content/Materials/ShootingRange/DummyPaint.material.nmgraph" />
+      <Material3 Value="Content/Materials/ShootingRange/DummyPaint.material.nmgraph" />
+      <Material4 Value="Content/Materials/ShootingRange/DummyPaint.material.nmgraph" />
+      <Material5 Value="Content/Materials/ShootingRange/DummyPaint.material.nmgraph" />
+      <Material6 Value="" />
+      <Material7 Value="" />
+      <Mesh Value="Engine/Content/Characters/CrashDummy/CrashDummy.nmmesh" />
+      <ParameterCount Value="0" />
+      <CastShadows Value="true" />
+      <CastInsetShadow Value="false" />
+      <Occluder Value="false" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+    </Component>
+  </Entity>
+</Prefab>
