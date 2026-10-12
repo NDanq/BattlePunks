@@ -20,7 +20,7 @@
 -- the shooter's RangeGun component, which this script keeps. A spawned prefab's script runs on
 -- the authority only, so on a Play Together client the gun arrives replicated. The clock is
 -- the mode's too. The pause menu's Reset Score reaches the server as an RPC; its tally is the
--- gun's, and the script hears Range.ScoreReset for its own (kills, wounds). The flash, the
+-- gun's, and the script hears Range.ScoreReset for its own kills. The flash, the
 -- sounds and the impacts are every process's to show (gun:Shot, gun:Sound: multicast RPCs), and
 -- the mode poses every shooter's pistol from its gun (holstered, or in hand once Ready).
 
@@ -65,16 +65,15 @@ return {
         self.DrawTime = 0.0
         self.Reloading, self.Cooldown = 0.0, 0.0
         self.StatusTime = 0.0
-        self.Wounds = {}   -- hits taken, by dummy entity id
         self.Kills = 0
         self.Animation:SetBool("Armed", false)
         self:SetStatus("")
         self:UpdateHud()
 
-        -- Reset Score: the gun's tally was zeroed by its RPC (WorldsLabRange.cpp); ours goes too.
+        -- Reset Score: the gun's tally was zeroed by its RPC (WorldsLabRange.cpp); our kills go too.
+        -- A dummy's wounds are the dummy's, shared by every shooter, so they stay.
         self.ResetHandle = Events.On("Range.ScoreReset", function()
             self.Kills = 0
-            self.Wounds = {}
         end)
 
         local id = self.Root:GetID()
@@ -207,12 +206,13 @@ return {
             ragdoll:AddImpulse(dx * BODY_KICK, dy * BODY_KICK, dz * BODY_KICK, hx, hy, hz)
             return HIT_DUMMY, BODY_KICK
         end
-        local id = entity:GetID()
+        -- Its wounds are on the dummy (RangeTarget): one count, whoever shoots it.
+        local target = entity:GetComponent("RangeTarget") or entity:AddComponent("RangeTarget")
         local head = ragdoll:GetPartAt(hx, hy, hz) == "Head"   -- the limb the round hit
-        local wounds = (self.Wounds[id] or 0) + (head and DUMMY_HEALTH or 1)
-        self.Wounds[id] = wounds
+        local wounds = target:GetWounds() + (head and DUMMY_HEALTH or 1)
+        target:SetWounds(wounds)
         if wounds >= DUMMY_HEALTH then
-            self.Wounds[id] = nil
+            target:SetWounds(0)
             self.Kills = self.Kills + 1
             ragdoll:ActivateWithImpulse(dx * KILL_KICK, dy * KILL_KICK, dz * KILL_KICK, hx, hy, hz)
             self:SetStatus(head and "HEADSHOT" or "DOWN", 1.0)

@@ -788,11 +788,36 @@ struct RangeGunComponent
     void MulticastSound(const GameCore::RpcContext& InContext, uint8_t InSound);
 };
 
+/*
+ * "RangeTarget": a target dummy's wounds, on the dummy -- one count however
+ * many shooters hit it (RangeShooter.lua adds it on the first hit). Kept on
+ * the authority, where the scripts run; not replicated.
+ */
+struct RangeTargetComponent
+{
+    GAMECORE_COMPONENT_BODY()
+
+    int32_t Wounds = 0;   // body shots taken while standing; a head shot is all of them
+};
+
 /* What a shot hit, for its effect and sound (gun:Shot's last argument). */
 enum ERangeHit : uint8_t { RangeHit_Nothing = 0, RangeHit_Steel, RangeHit_Dummy, RangeHit_Paper, RangeHit_Other,
                           RangeHit_DummyDown };   // the shot that put a dummy down
 /* gun:Sound's argument. */
 enum ERangeSound : uint8_t { RangeSound_Reload = 0, RangeSound_DryFire };
+
+GAMECORE_DEFINE_COMPONENT(RangeTargetComponent, "RangeTarget")
+
+GAMECORE_DEFINE_COMPONENT_SERIALIZER(RangeTargetComponent, 1)
+{
+    Ar.Field("Wounds", C.Wounds);
+}
+
+/* target:GetWounds() / target:SetWounds(n). */
+GAMECORE_DEFINE_COMPONENT_SCRIPT(RangeTargetComponent)
+{
+    Bind.Field("Wounds", &RangeTargetComponent::Wounds);
+}
 
 GAMECORE_DEFINE_COMPONENT(RangeGunComponent, "RangeGun")
 
