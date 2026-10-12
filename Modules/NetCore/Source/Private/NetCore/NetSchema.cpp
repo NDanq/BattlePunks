@@ -79,6 +79,10 @@ void NetSchema::Rebuild()
             Hasher.Byte(uint8_t(Fields[Field].Kind));
             Hasher.Byte(uint8_t(Fields[Field].FieldType));
             Hasher.Byte(Fields[Field].Flags);
+            Hasher.Byte(Fields[Field].Quantize);   // the encoding: both ends must read it the same
+            uint32_t StepBits = 0;
+            std::memcpy(&StepBits, &Fields[Field].Step, sizeof(StepBits));
+            for(int Shift = 0; Shift < 32; Shift += 8) { Hasher.Byte(uint8_t(StepBits >> Shift)); }
         }
 
         size_t RpcCount = 0;

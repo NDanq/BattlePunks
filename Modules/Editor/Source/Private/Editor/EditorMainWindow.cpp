@@ -1633,11 +1633,19 @@ void EditorMainWindow::RegisterConsoleCommands()
         QMetaObject::invokeMethod(this, &QWidget::close, Qt::QueuedConnection);
     });
 
-    Console.Register(QStringLiteral("projectsettings"), QString(),
-                     QStringLiteral("Open Edit > Project Settings"),
-                     [this](const QStringList&)
+    Console.Register(QStringLiteral("projectsettings"), QStringLiteral("[page]"),
+                     QStringLiteral("Open Edit > Project Settings, on a page if named (Net, Shadows, Worlds...)"),
+                     [this](const QStringList& InArgs)
     {
         OpenProjectSettings();
+        if(!InArgs.isEmpty())
+        {
+            auto* Dialog = findChild<ProjectSettingsDialog*>();
+            if(!Dialog || !Dialog->ShowPage(InArgs.join(QLatin1Char(' '))))
+            {
+                Console.PrintError(QStringLiteral("No Project Settings page named %1").arg(InArgs.join(QLatin1Char(' '))));
+            }
+        }
         Console.Print(QStringLiteral("Project settings are saved to %1")
                       .arg(QDir::toNativeSeparators(ProjectSettingsDialog::GetProjectConfigPath())));
     });

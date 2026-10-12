@@ -16,6 +16,10 @@
  *
  * The command line is config overrides (ParseLaunchArgs): -connect=host:port
  * joins a server, -listen hosts one, -Section.Key=Value sets anything else.
+ * -headless runs it with no window, input or renderer -- a client a bot
+ * drives, for an unattended network test:
+ *
+ *     WorldsLab -headless -connect=127.0.0.1 -WorldsLab.PvpBot=1
  *
  * No log handler, deliberately: without one a Fatal aborts instead of
  * continuing.
@@ -36,7 +40,13 @@ int main(int argc, char** argv)
         EngineCore::JobSystem Jobs;
         EngineCore::SetJobSystem(&Jobs);
         {
-            NimbleEngine::Application App;
+            NimbleEngine::ApplicationDesc Desc;
+            for(int Index = 1; Index < argc; ++Index)
+            {
+                const std::string Arg = argv[Index] ? argv[Index] : "";
+                if(Arg == "-headless" || Arg == "--headless") { Desc.bHeadless = true; }
+            }
+            NimbleEngine::Application App(Desc);
 #if defined(NIMBLE_PROJECT_DIR)
             App.SetProjectDir(NIMBLE_PROJECT_DIR);   // -uncooked reads its raw files
 #endif

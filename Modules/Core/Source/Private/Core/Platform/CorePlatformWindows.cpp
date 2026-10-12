@@ -463,6 +463,15 @@ uint32_t appProcessID()
     return uint32_t(::GetCurrentProcessId());
 }
 
+bool appProcessIsRunning(const uint32_t InPid)
+{
+    HANDLE Process = ::OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, DWORD(InPid));
+    if(!Process) { return ::GetLastError() == ERROR_ACCESS_DENIED; }   // there, but not ours to open
+    const bool bRunning = ::WaitForSingleObject(Process, 0) == WAIT_TIMEOUT;
+    ::CloseHandle(Process);
+    return bRunning;
+}
+
 ThreadID appThreadID()
 {
     return ThreadID(::GetCurrentThreadId());

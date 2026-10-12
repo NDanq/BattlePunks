@@ -23,6 +23,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <sched.h>          // cpu_set_t, sched_get_priority_min/max
+#include <signal.h>         // kill(pid, 0): is it running
 #include <cerrno>
 #include <dlfcn.h>
 #include <dirent.h>
@@ -399,6 +400,12 @@ std::string appDLLGetLastError()
 uint32_t appProcessID()
 {
     return uint32_t(::getpid());
+}
+
+bool appProcessIsRunning(const uint32_t InPid)
+{
+    /* Signal 0 checks without sending; EPERM means it exists, someone else's. */
+    return ::kill(pid_t(InPid), 0) == 0 || errno == EPERM;
 }
 
 ThreadID appThreadID()

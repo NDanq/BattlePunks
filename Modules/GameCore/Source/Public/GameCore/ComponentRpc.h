@@ -36,6 +36,19 @@
  *
  *     GAMECORE_RPC(ShipComponent, ServerFire)(Ship, Aim);                         // the call
  *
+ * RATE LIMITS. A server takes only so many Server RPCs from each client
+ * ([Net] RpcPerSecond, all of them together) and drops the rest; a client
+ * that keeps flooding is disconnected (NetCore/README.md, "RPC limits"). One
+ * RPC can be held to less, so a client cannot fire faster than its gun:
+ *
+ *         Rpc.Server<&ShipComponent::ServerFire>("ServerFire").RateLimit(8);   // calls a second, at most
+ *
+ * UNRELIABLE. A call is reliable and ordered by default: resent until it
+ * arrives, after everything sent before it. One that is stale a moment
+ * later -- a muzzle flash, a hit marker -- can skip that:
+ *
+ *         Rpc.Multicast<&ShipComponent::MulticastFlash>("MulticastFlash").Unreliable();
+ *
  * Targets:
  *     Server      a client asks the server; on the server it simply runs.
  *     Client      the server asks the entity's owning client (NetComponent).
@@ -76,6 +89,11 @@ namespace GameCore
         EntityID    Entity;
         NetClientID SenderClient = NET_CLIENT_NONE;   // who asked; NONE for the server or a local call
         bool        bRemote      = false;             // arrived over the network
+        /* A client's call, on the server: the server time (NetFacade's
+         * GetNetTimeMs) of what that client was showing as it called -- how
+         * far back to look for what it aimed at (LagCompensation.h). 0 for a
+         * local call: now. */
+        uint32_t    ViewTimeMs   = 0;
     };
 
     /* A NUL-terminated text argument of at most N - 1 bytes. */
@@ -127,6 +145,41 @@ namespace GameCore
          * refused rather than misread. */
         char       ArgSignature[RPC_ARG_SIGNATURE_MAX] = {};
         RpcInvoker Invoker = nullptr;
+        /* The most a second one client may send of it (a Server RPC, on the
+         * server); 0: only the client's overall budget. Not in the schema:
+         * it is the server's own rule. */
+        float      MaxPerSecond = 0.0f;
+        /* Sent once, unordered, never resent (NetCore's unreliable channel):
+         * for what is stale a moment later -- a muzzle flash, a hit marker. */
+        uint8_t    bUnreliable  = 0;
+    };
+
+    /* What Rpc.Server/Client/Multicast return: options for the RPC just
+     * declared. Inert if the declaration was refused. */
+    class RpcDeclaration
+    {
+    public:
+        explicit RpcDeclaration(RpcEntry* InEntry) : Entry(InEntry) {}
+
+        /* At most InPerSecond calls a second from one client; past it the
+         * server drops them. Bursts of up to a second's worth pass. */
+        RpcDeclaration& RateLimit(const float InPerSecond)
+        {
+            if(Entry) { Entry->MaxPerSecond = InPerSecond > 0.0f ? InPerSecond : 0.0f; }
+            return *this;
+        }
+
+        /* Sent once and forgotten: it may be lost, or arrive out of order
+         * with other calls, and nothing waits behind it. For effects that
+         * mean nothing late. Runs locally as ever where it runs locally. */
+        RpcDeclaration& Unreliable()
+        {
+            if(Entry) { Entry->bUnreliable = 1; }
+            return *this;
+        }
+
+    private:
+        RpcEntry* Entry;
     };
 
     /* Called by the macro; sorts InEntries by name and numbers them. False on
@@ -163,9 +216,11 @@ namespace GameCore
     GAMECORE_API IRpcSink& GetRpcSink();
 
     /* Runs InRpc on InEntity's InType component with InArgs. False (warned)
-     * if the entity or component is gone, or the arguments did not decode. */
+     * if the entity or component is gone, or the arguments did not decode.
+     * InViewTimeMs is RpcContext::ViewTimeMs. */
     GAMECORE_API bool InvokeRpc(World& InWorld, EntityID InEntity, ComponentTypeID InType, const RpcEntry& InRpc,
-                                const std::vector<uint8_t>& InArgs, NetClientID InSender, bool bInRemote);
+                                const std::vector<uint8_t>& InArgs, NetClientID InSender, bool bInRemote,
+                                uint32_t InViewTimeMs = 0);
 
     /* Used by CallRpc: logs why a call was refused. */
     GAMECORE_API void ReportRpcCallError(ComponentTypeID InType, const char* InName, const char* InReason);
@@ -372,15 +427,15 @@ namespace GameCore
     class ComponentRpcBinder
     {
     public:
-        template<auto TFn> void Server(const char* InName)    { Add<TFn>(InName, ERpcTarget::Server); }
-        template<auto TFn> void Client(const char* InName)    { Add<TFn>(InName, ERpcTarget::Client); }
-        template<auto TFn> void Multicast(const char* InName) { Add<TFn>(InName, ERpcTarget::Multicast); }
+        template<auto TFn> RpcDeclaration Server(const char* InName)    { return RpcDeclaration(Add<TFn>(InName, ERpcTarget::Server)); }
+        template<auto TFn> RpcDeclaration Client(const char* InName)    { return RpcDeclaration(Add<TFn>(InName, ERpcTarget::Client)); }
+        template<auto TFn> RpcDeclaration Multicast(const char* InName) { return RpcDeclaration(Add<TFn>(InName, ERpcTarget::Multicast)); }
 
         bool Commit() { return RegisterComponentRpcs(T::StaticType().ID, Entries, Count, Rejected); }
 
     private:
         template<auto TFn>
-        void Add(const char* InName, const ERpcTarget InTarget)
+        RpcEntry* Add(const char* InName, const ERpcTarget InTarget)
         {
             using FT = RpcArgs::FnTraits<decltype(TFn)>;
             static_assert(FT::bKnown, "Rpc.Server/Client/Multicast take a non-const member function: &Component::Function");
@@ -393,7 +448,7 @@ namespace GameCore
             if(Count >= RPCS_PER_TYPE_MAX || Length == 0 || Length >= SCRIPT_BINDING_NAME_MAX)
             {
                 ++Rejected;
-                return;
+                return nullptr;
             }
 
             RpcEntry& Entry = Entries[Count++];
@@ -401,6 +456,7 @@ namespace GameCore
             Entry.Target  = InTarget;
             Entry.Invoker = &Thunk<TFn>;
             RpcArgs::Codec<Params>::Signature(Entry.ArgSignature);
+            return &Entry;
         }
 
         template<auto TFn>

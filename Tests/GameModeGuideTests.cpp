@@ -420,7 +420,7 @@ namespace
 
         GameCore::World& World() { return Session->GetWorld(); }
         Entity Player() { return World().GetEntity(Session->GetPlayer(0)); }
-        PlayerStateComponent& State() { return *Player().GetComponent<PlayerStateComponent>(); }
+        PlayerStateComponent& State() { return *Player().template GetComponent<PlayerStateComponent>(); }
         uint64_t Frame_ = 1;
     };
 

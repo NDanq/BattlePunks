@@ -178,6 +178,39 @@ namespace
         { "Shadows", "ContactLocalLights", "Contact shadows for point and spot lights",
           "The shadowed point and spot lights (MaxShadowedLights) march too, no further than the light: a march per "
           "light per pixel it reaches" },
+        { "Net",     "ClientBandwidthKBps", "Bandwidth per client (KB/s)",
+          "The most state a server sends each client a second, in kilobytes; 0 is no limit. What does not fit in a "
+          "tick waits for the next: the client's own entities first, then by each Net component's Priority, how "
+          "long it has waited and how near the client's avatar it is. Spawns and RPCs are not counted" },
+        { "Net",     "ServerTickRate",    "Server tick rate",
+          "A dedicated server's frames a second, and so how often it sends state" },
+        { "Net",     "InterpolationDelayMs", "Interpolation delay (ms)",
+          "How far in the past a client shows other entities, blending between the server's updates; 0 snaps "
+          "to each update" },
+        { "Net",     "MaxClients",        "Max clients",
+          "Clients a server takes; those whose connection was lost count until their place is given up" },
+        { "Net",     "TimeoutMs",         "Timeout (ms)",
+          "How long either end waits on a silent peer before dropping it" },
+        { "Net",     "ReconnectGraceMs",  "Reconnect grace (ms)",
+          "How long a server keeps the place of a client whose connection was lost, and a client tries to rejoin; "
+          "0 turns reconnecting off" },
+        { "Net",     "RpcPerSecond",      "RPCs per client a second",
+          "Server RPCs a server takes from each client a second, in bursts of up to two seconds' worth; the rest "
+          "are dropped. 0 is no limit" },
+        { "Net",     "RpcFloodPerSecond", "RPC flood limit",
+          "More than this many of a client's RPCs dropped in one second, and it is disconnected; 0 never" },
+        { "Net",     "MaxRpcBytes",       "Largest RPC (bytes)",
+          "An RPC whose arguments are longer is malformed, and its sender disconnected; 0 is no limit" },
+        { "Net",     "SpawnPlayerPerClient", "A player per client",
+          "The server makes each joining client a player entity (PlayerState, Possessor) it owns" },
+        { "Net",     "Port",              "Port",
+          "A server listens here; a client connects here (-port)" },
+        { "Net",     "ServerAddress",     "Server address",
+          "A client's server (-connect); empty plays standalone" },
+        { "Net",     "Listen",            "Listen server",
+          "A windowed game hosts, as a listen server (-listen)" },
+        { "Net",     "SimulatedLossPercent", "Simulated loss (%)",
+          "Testing: this share of the state packets each process sends is dropped. 0 in a real game" },
         { "Modules", "NetCore",           "Networking (NetCore)",
           "Build the game with networking: replication, RPCs, its dedicated server (<Game>Server) and -connect. "
           "Off, Net components load but do not replicate. Takes effect at the game's next build" },
@@ -404,14 +437,20 @@ void ProjectSettingsDialog::BuildProjectPage()
 
 void ProjectSettingsDialog::ShowWorlds()
 {
+    ShowPage(QString::fromLatin1(WorldsPageName));
+}
+
+bool ProjectSettingsDialog::ShowPage(const QString& InName)
+{
     for(int Index = 0; Index < Pages->count(); ++Index)
     {
-        if(Pages->item(Index)->text() == QLatin1String(WorldsPageName))
+        if(Pages->item(Index)->text().compare(InName, Qt::CaseInsensitive) == 0)
         {
             Pages->setCurrentRow(Index);
-            return;
+            return true;
         }
     }
+    return false;
 }
 
 void ProjectSettingsDialog::BuildWorldsPage()

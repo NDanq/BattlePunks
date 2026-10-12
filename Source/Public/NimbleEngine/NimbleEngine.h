@@ -42,6 +42,7 @@ namespace NimbleEngine
 {
     class ILevel;
     class InputRouter;
+    class FrameRecorder;
 
     /* How an Application runs. */
     struct ApplicationDesc
@@ -68,6 +69,11 @@ namespace NimbleEngine
      *                            project's raw files -- the folder, else the one
      *                            the game was built from (SetProjectDir)
      *     -cooked                not uncooked, whatever the build's default
+     *     -record=<file.mp4>     [Record] File: the game as a video, through
+     *                            ffmpeg (Editor-target builds; FrameRecorder.h)
+     *     -headless              the game launcher runs without a window, input or
+     *                            renderer (ApplicationDesc::bHeadless): a client
+     *                            for bots and soak tests; no override here
      *
      * Anything else is warned about and ignored. Each entry of the result is
      * an ExecConfigCommand line ("Net.Port 7777").
@@ -221,6 +227,9 @@ namespace NimbleEngine
 
         /* Created after Scripts and Rendering; destroyed before them. */
         GameSession*             Session   = nullptr;
+
+        /* -record=<file.mp4>: the game as a video (FrameRecorder.h); null otherwise. */
+        FrameRecorder*           Recorder  = nullptr;
 
         bool                     bQuitRequested    = false;
         uint64_t                 FrameNumber       = 0;
