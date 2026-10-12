@@ -62,19 +62,19 @@
       "name": "server",
       "hidden": true,
       "inherits": "base",
-      "cacheVariables": { "NIMBLE_TARGET": "Server" }
+      "cacheVariables": { "NIMBLE_TARGET": "Server", "NIMBLE_BUILD_TESTS": "OFF" }
     },
     {
       "name": "server-relwithdebinfo-msvc",
       "displayName": "Server - RelWithDebInfo (MSVC)",
-      "description": "The dedicated server and the game module with WITH_EDITOR=0, optimised with debug info, by MSVC (VS2022; from a developer prompt). What Collaboration's content worker builds on Windows.",
+      "description": "The dedicated server and the game module with WITH_EDITOR=0, optimised with debug info, by MSVC (VS2022; from a developer prompt). What Collaboration's content worker builds on Windows. No tests (NIMBLE_BUILD_TESTS off for every server preset).",
       "inherits": "server",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "CMAKE_C_COMPILER": "cl", "CMAKE_CXX_COMPILER": "cl" }
     },
     {
       "name": "server-relwithdebinfo-clang",
       "displayName": "Server - RelWithDebInfo (Clang)",
-      "description": "The dedicated server and the game module with WITH_EDITOR=0, optimised with debug info, by clang and lld (Linux, WSL included). What Collaboration's content worker builds elsewhere.",
+      "description": "The dedicated server and the game module with WITH_EDITOR=0, optimised with debug info, by clang and lld (Linux, WSL included). What Collaboration's content worker builds elsewhere. No tests (NIMBLE_BUILD_TESTS off for every server preset).",
       "inherits": "server",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
