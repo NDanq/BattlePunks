@@ -265,6 +265,41 @@ void GitClient::Unstage(const QStringList& InPaths, const bool bInInitial, Callb
     Run(Args + InPaths, std::move(InCallback));
 }
 
+void GitClient::Discard(const QStringList& InTracked, const QStringList& InUntracked, const bool bInInitial, Callback InCallback)
+{
+    if(InTracked.isEmpty() && InUntracked.isEmpty())
+    {
+        if(InCallback) { Result Nothing; Nothing.bStarted = true; Nothing.ExitCode = 0; InCallback(Nothing); }
+        return;
+    }
+    const QStringList Clean = { QStringLiteral("clean"), QStringLiteral("-f"), QStringLiteral("-q"), QStringLiteral("--") };
+    if(InTracked.isEmpty())
+    {
+        Run(Clean + InUntracked, std::move(InCallback));
+        return;
+    }
+    /* Before the first commit there is no HEAD: what is staged is new, and goes. */
+    const QStringList Args = bInInitial
+        ? QStringList{ QStringLiteral("rm"), QStringLiteral("-f"), QStringLiteral("-r"), QStringLiteral("-q"), QStringLiteral("--") }
+        : QStringList{ QStringLiteral("restore"), QStringLiteral("--source=HEAD"), QStringLiteral("--staged"), QStringLiteral("--worktree"),
+                       QStringLiteral("--") };
+    if(InUntracked.isEmpty())
+    {
+        Run(Args + InTracked, std::move(InCallback));
+        return;
+    }
+    /* The untracked go only if the tracked did: one answer, the first failure. */
+    Run(Args + InTracked, [this, Clean, InUntracked, InCallback](const Result& InResult)
+    {
+        if(!InResult.Ok())
+        {
+            if(InCallback) { InCallback(InResult); }
+            return;
+        }
+        Run(Clean + InUntracked, InCallback);
+    });
+}
+
 void GitClient::Commit(const QString& InMessage, Callback InCallback)
 {
     Run({ QStringLiteral("commit"), QStringLiteral("-F"), QStringLiteral("-") }, std::move(InCallback), InMessage.toUtf8());

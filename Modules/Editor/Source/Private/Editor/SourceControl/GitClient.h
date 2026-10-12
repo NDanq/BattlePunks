@@ -80,6 +80,11 @@ public:
     /* Back out of the index; bInInitial before the first commit (no HEAD). */
     void Unstage(const QStringList& InPaths, bool bInInitial, Callback InCallback);
 
+    /* Back to HEAD, index and working tree both: InTracked restored (a new
+     * file deleted), InUntracked deleted. bInInitial before the first commit,
+     * where everything is new. Both empty does nothing. */
+    void Discard(const QStringList& InTracked, const QStringList& InUntracked, bool bInInitial, Callback InCallback);
+
     void Commit(const QString& InMessage, Callback InCallback);
     void Fetch(Callback InCallback);
 
