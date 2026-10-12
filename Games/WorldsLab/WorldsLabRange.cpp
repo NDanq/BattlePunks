@@ -4,12 +4,15 @@
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/Input.h"
+#include "Public/NimbleEngine/NetFacade.h"
 #include "Public/NimbleEngine/PhysicsFacade.h"
 #include "Public/NimbleEngine/PlayerStart.h"
 #include "Public/NimbleEngine/WorldList.h"
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/ComponentReplication.h"
+#include "Public/GameCore/ComponentRpc.h"
+#include "Public/GameCore/ComponentScript.h"
 #include "Public/GameCore/ComponentSerializer.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
@@ -17,7 +20,9 @@
 #include "Public/RenderCore/Components/AnimationComponent.h"
 #include "Public/RenderCore/Components/CameraComponent.h"
 #include "Public/UI/UIAction.h"
+#include "Public/UI/UIDocument.h"
 #include "Public/UI/UISystem.h"
+#include "Public/UI/UIWidget.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -53,11 +58,14 @@
  *   body     turns to the way it moves, or to the view when armed (the
  *            anim state's Armed), and tells the anim state Speed and Grounded
  *
- * Shooting, the HUD and the pistol are the prefab's Lua
+ * Shooting and the pistol are the prefab's Lua
  * (Scripts/ShootingRange/RangeShooter.lua). Escape pauses and opens the pause
  * menu (Content/UI/ShootingRange/PauseMenu.nmui), which frees the mouse;
  * Resume closes it and takes the mouse back. The mode also publishes the
  * HUD's clock, and registers the menu's Native:Range.Resume action (Engine/Docs/Guides/UI).
+ * The HUD itself is the mode's (TickHud), on every process with a player: it
+ * reads that player's shooter's RangeGun, which the Lua keeps where it runs (the
+ * authority) and which replicates -- so a networked client has its HUD too.
  *
  * [WorldsLab] RangeAutoPlay=1 drives the shooter by itself, through the
  * avatar input filter (what a bot would use): it draws and shoots the plates
@@ -710,6 +718,103 @@ UI_DEFINE_ACTIONS(Range)
     }, "Closes the pause menu, unpauses and takes the mouse back");
 }
 
+// === The shooter's gun, as the HUD shows it =====================================
+
+/*
+ * "RangeGun": what the HUD shows of the shooter's pistol. RangeShooter.lua keeps
+ * it, on the authority (a spawned prefab's script runs there only); it
+ * replicates, and every process with a player feeds its HUD from its own
+ * avatar's (TickHud) -- so a Play Together client sees its own ammo and score.
+ */
+struct RangeGunComponent
+{
+    GAMECORE_COMPONENT_BODY()
+
+    int32_t Mag      = 17;
+    int32_t Capacity = 17;     // a full magazine, for the HUD's bar
+    int32_t Reserve  = 68;
+    int32_t Shots    = 0;
+    int32_t Hits     = 0;
+    uint8_t bDrawn   = 0;
+    uint8_t bReady   = 0;      // the hand has the grip: the crosshair shows
+    char    Status[32] = "";   // "RELOADING", "HEADSHOT", ...
+
+    /* The pause menu's Reset Score, from the shooter's own process. */
+    void ServerResetScore(const GameCore::RpcContext& InContext);
+};
+
+GAMECORE_DEFINE_COMPONENT(RangeGunComponent, "RangeGun")
+
+GAMECORE_DEFINE_COMPONENT_SERIALIZER(RangeGunComponent, 1)
+{
+    Ar.Field("Mag",      C.Mag);
+    Ar.Field("Capacity", C.Capacity);
+    Ar.Field("Reserve",  C.Reserve);
+    Ar.Field("Shots",    C.Shots);
+    Ar.Field("Hits",     C.Hits);
+    Ar.Flag("Drawn",     C.bDrawn);
+    Ar.Flag("Ready",     C.bReady);
+    Ar.Field("Status",   C.Status);
+}
+
+GAMECORE_DEFINE_COMPONENT_REPLICATION(RangeGunComponent)
+{
+    Rep.Field("Mag",      &RangeGunComponent::Mag);
+    Rep.Field("Capacity", &RangeGunComponent::Capacity);
+    Rep.Field("Reserve",  &RangeGunComponent::Reserve);
+    Rep.Field("Shots",    &RangeGunComponent::Shots);
+    Rep.Field("Hits",     &RangeGunComponent::Hits);
+    Rep.Flag("Drawn",     &RangeGunComponent::bDrawn);
+    Rep.Flag("Ready",     &RangeGunComponent::bReady);
+    Rep.Field("Status",   &RangeGunComponent::Status);
+}
+
+GAMECORE_DEFINE_COMPONENT_RPCS(RangeGunComponent)
+{
+    Rpc.Server<&RangeGunComponent::ServerResetScore>("ServerResetScore").RateLimit(2);
+}
+
+/* RangeShooter.lua's view: gun:GetMag() / gun:SetMag(n) and the rest; Status as text. */
+GAMECORE_DEFINE_COMPONENT_SCRIPT(RangeGunComponent)
+{
+    Bind.Field("Mag",      &RangeGunComponent::Mag);
+    Bind.Field("Capacity", &RangeGunComponent::Capacity);
+    Bind.Field("Reserve",  &RangeGunComponent::Reserve);
+    Bind.Field("Shots",    &RangeGunComponent::Shots);
+    Bind.Field("Hits",     &RangeGunComponent::Hits);
+    Bind.Flag("Drawn",     &RangeGunComponent::bDrawn);
+    Bind.Flag("Ready",     &RangeGunComponent::bReady);
+    Bind.Method("GetStatus", [](RangeGunComponent& C, GameCore::ScriptCall& Call) { Call.PushString(C.Status); });
+    Bind.Method("SetStatus", [](RangeGunComponent& C, GameCore::ScriptCall& Call)
+    {
+        std::snprintf(C.Status, sizeof(C.Status), "%s", Call.GetString(1));
+    });
+}
+
+void RangeGunComponent::ServerResetScore(const GameCore::RpcContext&)
+{
+    Shots = 0;
+    Hits  = 0;
+    /* The script's own tally (its kills, the dummies' wounds) hears it here, on the authority. */
+    if(GameCore::World* World = Owner.OwningWorld)
+    {
+        GameCore::EventArgs None;
+        World->GetEvents().Emit("Range.ScoreReset", None);
+    }
+}
+
+namespace
+{
+    constexpr const char* HudPath = "Content/UI/ShootingRange/RangeHUD.nmui";
+
+    /* This process's avatar's gun, if it has a player driving a shooter. */
+    RangeGunComponent* LocalGun(GameCore::World& InWorld)
+    {
+        const GameCore::EntityID Avatar = NimbleEngine::GetLocalAvatar(InWorld, 0);
+        return Avatar.IsSet() && InWorld.IsAlive(Avatar) ? InWorld.GetEntity(Avatar).GetComponent<RangeGunComponent>() : nullptr;
+    }
+}
+
 // === The mode ==================================================================
 
 class WorldsLabRangeMode : public NimbleEngine::NetGameMode
@@ -749,6 +854,11 @@ public:
         RunSeconds   = 0.0;
         ShownSeconds = 0;
         Session->GetUI().SetValue("Range.Time", UI::UIValue::String(FormatClock(0)));
+
+        /* The pause menu's Reset Score (PauseMenu.lua) is an event on this
+         * process; the tally is the server's (RangeGun), so ask it. */
+        Session->GetWorld().GetEvents().Subscribe("Range.ResetScore", &WorldsLabRangeMode::OnResetScore, this);
+        ShownHud = HudState();
     }
 
     void OnTick(const NimbleEngine::FrameContext& InFrame) override
@@ -763,9 +873,12 @@ public:
         }
 
         GameCore::World& World = Session->GetWorld();
+        TickHud(World);
+
+        /* This process's own shooter only: a client's Escape is its own pause menu, not the server's. */
         World.Each<NimbleEngine::AvatarHarnessComponent>([this](const GameCore::Entity&, NimbleEngine::AvatarHarnessComponent& InHarness)
         {
-            if(!InHarness.Possessor.IsSet()) { return; }
+            if(!InHarness.IsLocallyControlled()) { return; }
             if(GRangeAutoPlay.GetBool()) { return; }
             if(InHarness.WasPressed("Pause"))
             {
@@ -780,6 +893,11 @@ public:
 
     void OnUnload() override
     {
+        if(Session)
+        {
+            Session->GetWorld().GetEvents().UnsubscribeAll(this);
+            Session->GetUI().Close(HudPath);
+        }
         EngineCore::ConfigVar* MaxShadowed = EngineCore::ConfigFindVarByPath("Shadows.MaxShadowedLights");
         if(MaxShadowed && PreviousShadowedLights >= 0)
         {
@@ -793,6 +911,92 @@ public:
     }
 
 private:
+    /* What the HUD shows, to write the store only when it changes. */
+    struct HudState
+    {
+        int32_t     Mag = -1, Capacity = 0, Reserve = -1, Shots = -1, Hits = -1;
+        bool        bCrosshair = false;
+        std::string Status = "\x01";   // nothing shown yet: the first tick writes everything
+
+        bool operator==(const HudState& In) const
+        {
+            return Mag == In.Mag && Capacity == In.Capacity && Reserve == In.Reserve && Shots == In.Shots
+                && Hits == In.Hits && bCrosshair == In.bCrosshair && Status == In.Status;
+        }
+    };
+
+    /*
+     * The HUD, on every process with a player (not a dedicated server): open
+     * while this process drives a shooter, fed from its avatar's RangeGun --
+     * kept by the script where it runs, replicated to the rest.
+     */
+    void TickHud(GameCore::World& InWorld)
+    {
+        if(NimbleEngine::IsDedicatedServer()) { return; }
+        UI::UISystem& UI = Session->GetUI();
+        const RangeGunComponent* Gun = LocalGun(InWorld);
+        if(!Gun)
+        {
+            if(UI.IsOpen(HudPath)) { UI.Close(HudPath); }
+            ShownHud = HudState();
+            return;
+        }
+        if(!UI.IsOpen(HudPath))
+        {
+            UI.Open(HudPath);
+            ShownHud = HudState();
+            CORE_LOG(std::string("[ShootingRange] HUD open, from this ") + (NimbleEngine::IsClient() ? "client's" : "process's")
+                     + " shooter's RangeGun")
+        }
+        /* Autoplay's result as the HUD has it -- on a client, what the server's script sent. */
+        if(GRangeAutoPlay.GetBool() && GAuto.bDone && !bReportedAutoPlay)
+        {
+            bReportedAutoPlay = true;
+            CORE_LOG("[ShootingRange] HUD after autoplay: " + std::to_string(Gun->Mag) + " + " + std::to_string(Gun->Reserve)
+                     + " rounds, " + std::to_string(Gun->Hits) + " hits of " + std::to_string(Gun->Shots) + " shots")
+        }
+
+        HudState Now;
+        Now.Mag        = Gun->Mag;
+        Now.Capacity   = Gun->Capacity;
+        Now.Reserve    = Gun->Reserve;
+        Now.Shots      = Gun->Shots;
+        Now.Hits       = Gun->Hits;
+        Now.bCrosshair = Gun->bDrawn && Gun->bReady;
+        Now.Status     = Gun->Status;
+        if(Now == ShownHud) { return; }
+        ShownHud = Now;
+
+        const auto Text = [&UI](const char* InKey, const std::string& InValue) { UI.SetValue(InKey, UI::UIValue::String(InValue)); };
+        Text("Range.Mag", std::to_string(Now.Mag));
+        Text("Range.Reserve", std::to_string(Now.Reserve));
+        UI.SetValue("Range.MagFill", UI::UIValue::Number(Now.Capacity > 0 ? double(Now.Mag) / double(Now.Capacity) : 0.0));
+        Text("Range.Hits", std::to_string(Now.Hits));
+        Text("Range.Shots", std::to_string(Now.Shots));
+        Text("Range.Accuracy", Now.Shots > 0 ? std::to_string(int(100.0 * Now.Hits / Now.Shots + 0.5)) + "%" : std::string("--"));
+        Text("Range.Status", Now.Status);
+        if(UI::UIDocumentInstance* Hud = UI.Find(HudPath))
+        {
+            if(UI::UIWidget* Crosshair = Hud->FindWidget("Crosshair"))
+            {
+                Crosshair->Visibility = Now.bCrosshair ? UI::EUIVisibility::Visible : UI::EUIVisibility::Collapsed;
+            }
+        }
+    }
+
+    /* Range.ResetScore, from the pause menu on this process: the server zeroes the tally. */
+    static void OnResetScore(GameCore::EventID, const GameCore::EventArgs&, void* InSelf)
+    {
+        auto* Self = static_cast<WorldsLabRangeMode*>(InSelf);
+        GameCore::World& World = Self->Session->GetWorld();
+        if(RangeGunComponent* Gun = LocalGun(World))
+        {
+            GAMECORE_RPC(RangeGunComponent, ServerResetScore)(World.GetEntity(Gun->Owner.Entity));
+        }
+    }
+
+    HudState ShownHud;
+    bool     bReportedAutoPlay = false;
     int32_t PreviousShadowedLights = -1;
     double  RunSeconds   = 0.0;   // the HUD's clock
     int     ShownSeconds = 0;

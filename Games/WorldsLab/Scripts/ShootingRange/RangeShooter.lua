@@ -1,4 +1,4 @@
--- RangeShooter.nmprefab's script: the shooter's pistol, its shots and the HUD.
+-- RangeShooter.nmprefab's script: the shooter's pistol, its shots and what the HUD shows.
 -- Its movement and camera are RangeMove's (WorldsLabRange.cpp); this reads
 -- the same harness (input map "Range").
 --
@@ -16,10 +16,13 @@
 --        the view; tighter spread, a slower walk
 --   R     reload: 17 a magazine, from the reserve
 --
--- The HUD is Content/UI/ShootingRange/RangeHUD.nmui, fed through UI strings (the clock is
--- the mode's, WorldsLabRange.cpp). The pause menu's Reset Score arrives as an event.
+-- The HUD (Content/UI/ShootingRange/RangeHUD.nmui) is the mode's (WorldsLabRange.cpp): it reads
+-- the shooter's RangeGun component, which this script keeps. A spawned prefab's script runs on
+-- the authority only, so on a Play Together client the gun arrives replicated. The clock is
+-- the mode's too. The pause menu's Reset Score reaches the server as an RPC; its tally is the
+-- gun's, and the script hears Range.ScoreReset for its own (kills, wounds).
 
-local HUD = "Content/UI/ShootingRange/RangeHUD.nmui"
+local DRAW_SECONDS = 0.5   -- a dedicated server runs no animation, so no WeaponToHand: in hand after this
 local SOUNDS = "Content/Sounds/ShootingRange/"
 local PARTICLES = "Content/Particles/ShootingRange/"
 
@@ -59,9 +62,14 @@ return {
         self.Muzzle    = self.Instance:Find("Muzzle"):GetComponent("Transform")
         self.Camera    = self.Instance:Find("Camera"):GetComponent("Transform")
         self.Boom      = self.Instance:Find("CameraBoom"):GetComponent("Transform")
+        -- What the HUD shows, wherever it is shown (RangeGun, WorldsLabRange.cpp).
+        self.Gun = self.Root:GetComponent("RangeGun") or self.Root:AddComponent("RangeGun")
         self.Mag, self.Reserve = MAGAZINE, RESERVE
-        self.Shots, self.Hits = 0, 0
+        self.Gun:SetCapacity(MAGAZINE)
+        self.Gun:SetShots(0)
+        self.Gun:SetHits(0)
         self.Drawn, self.Ready = false, false
+        self.DrawTime = 0.0
         self.Reloading, self.Cooldown = 0.0, 0.0
         self.StatusTime = 0.0
         self.Effects = {}
@@ -69,15 +77,13 @@ return {
         self.Kills = 0
         Seat(self.Socket, HOLSTER)
         self.Animation:SetBool("Armed", false)
-
-        UI.Open(HUD)
+        self:SetStatus("")
         self:UpdateHud()
 
-        -- The pause menu's Reset Score (PauseMenu.lua) is only an event: the tally is ours.
-        self.ResetHandle = Events.On("Range.ResetScore", function()
-            self.Shots, self.Hits, self.Kills = 0, 0, 0
+        -- Reset Score: the gun's tally was zeroed by its RPC (WorldsLabRange.cpp); ours goes too.
+        self.ResetHandle = Events.On("Range.ScoreReset", function()
+            self.Kills = 0
             self.Wounds = {}
-            self:UpdateHud()
         end)
 
         local id = self.Root:GetID()
@@ -95,7 +101,6 @@ return {
 
     OnDestroy = function(self)
         Events.Off(self.ResetHandle)
-        UI.Close(HUD)
     end,
 
     OnPostPhysics = function(self, dt)
@@ -116,9 +121,19 @@ return {
             end
         end
 
+        -- No animation on a dedicated server, so no WeaponToHand: the pistol is in hand a moment after the draw.
+        if self.DrawTime > 0.0 then
+            self.DrawTime = self.DrawTime - dt
+            if self.DrawTime <= 0.0 and self.Drawn and not self.Ready then
+                self.Ready = true
+                self:UpdateHud()
+            end
+        end
+
         local h = self.Harness
-        -- With the mouse free a click takes it back (the mode), and shoots nothing.
-        if not Input.IsMouseCaptured() and not Config.GetBool("WorldsLab.RangeAutoPlay") then return end
+        -- With the mouse free a click takes it back (the mode), and shoots nothing. Only where the
+        -- shooter is driven: on a server a client's shooter fires from its input, whatever the mouse.
+        if h:IsLocallyControlled() and not Input.IsMouseCaptured() and not Config.GetBool("WorldsLab.RangeAutoPlay") then return end
         if h:WasPressed("Holster") then
             self:SetDrawn(not self.Drawn)
         elseif h:WasPressed("Fire") then
@@ -131,6 +146,7 @@ return {
     SetDrawn = function(self, drawn)
         self.Drawn = drawn
         self.Ready = false            -- until the hand has the grip (WeaponToHand)
+        self.DrawTime = (drawn and Net.IsDedicatedServer()) and DRAW_SECONDS or 0.0
         self.Reloading = 0.0
         self.Animation:SetBool("Armed", drawn)
         self:SetStatus("")
@@ -152,7 +168,7 @@ return {
             return
         end
         self.Mag = self.Mag - 1
-        self.Shots = self.Shots + 1
+        self.Gun:SetShots(self.Gun:GetShots() + 1)
         self.Cooldown = FIRE_DELAY
 
         -- Through the crosshair: from the camera, along its view, a little spread.
@@ -177,7 +193,7 @@ return {
             local name = entity:GetName()
             local bx, by, bz = hx - dx * 3, hy - dy * 3, hz - dz * 3
             if name == "SteelPlate" then
-                self.Hits = self.Hits + 1
+                self.Gun:SetHits(self.Gun:GetHits() + 1)
                 local body = entity:GetComponent("Rigid Body")
                 if body then body:AddImpulse(dx * STEEL_KICK, dy * STEEL_KICK, dz * STEEL_KICK) end
                 self:Effect("Sparks", bx, by, bz, 1.0)
@@ -187,7 +203,7 @@ return {
                 self:Effect("Dust", bx, by, bz, 1.0)
                 Audio.PlaySoundAt(SOUNDS .. "Impact.nmsound", hx, hy, hz, 0.8)
             elseif name == "PaperStand" then
-                self.Hits = self.Hits + 1
+                self.Gun:SetHits(self.Gun:GetHits() + 1)
                 self:Effect("Dust", bx, by, bz, 1.4)
                 Audio.PlaySoundAt(SOUNDS .. "PaperHit.nmsound", hx, hy, hz, 0.7)
             else
@@ -203,7 +219,7 @@ return {
     -- a kick once it is down. The Ragdoll component applies the impulse at the
     -- part nearest the hit.
     HitDummy = function(self, entity, ragdoll, dx, dy, dz, hx, hy, hz)
-        self.Hits = self.Hits + 1
+        self.Gun:SetHits(self.Gun:GetHits() + 1)
         if ragdoll:IsActive() then
             ragdoll:AddImpulse(dx * BODY_KICK, dy * BODY_KICK, dz * BODY_KICK, hx, hy, hz)
             return
@@ -242,17 +258,15 @@ return {
     end,
 
     SetStatus = function(self, text, seconds)
-        UI.SetString("Range.Status", text)
+        self.Gun:SetStatus(text)
         self.StatusTime = seconds or 0.0
     end,
 
+    -- The gun as the HUD shows it; the mode's HUD reads it wherever this shooter is driven.
     UpdateHud = function(self)
-        UI.SetString("Range.Mag", tostring(self.Mag))
-        UI.SetString("Range.Reserve", tostring(self.Reserve))
-        UI.SetNumber("Range.MagFill", self.Mag / MAGAZINE)
-        UI.SetString("Range.Hits", tostring(self.Hits))
-        UI.SetString("Range.Shots", tostring(self.Shots))
-        UI.SetString("Range.Accuracy", self.Shots > 0 and string.format("%d%%", math.floor(100 * self.Hits / self.Shots + 0.5)) or "--")
-        UI.SetVisible(HUD, "Crosshair", self.Drawn and self.Ready)
+        self.Gun:SetMag(self.Mag)
+        self.Gun:SetReserve(self.Reserve)
+        self.Gun:SetDrawn(self.Drawn)
+        self.Gun:SetReady(self.Ready)
     end,
 }

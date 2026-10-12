@@ -6,8 +6,8 @@ local MENU = "Content/UI/ShootingRange/PauseMenu.nmui"
 
 RangeMenu = RangeMenu or {}
 
--- Reset Score: the shooter (RangeShooter.lua) listens for the event and zeroes its
--- tally; the menu says it happened.
+-- Reset Score: the mode (WorldsLabRange.cpp) hears the event on this process and asks the
+-- server to zero the shooter's tally (RangeGun's ServerResetScore); the menu says it happened.
 function RangeMenu.ResetScore()
     Events.Emit("Range.ResetScore")
     UI.SetText(MENU, "Notice", "Score reset")
