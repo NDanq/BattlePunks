@@ -42,9 +42,15 @@ namespace GameCore
 {
     enum : size_t
     {
-        /* One bit each in a uint32_t change mask. */
-        REPLICATED_FIELDS_PER_TYPE_MAX = 32,
+        /* One bit each in a ReplicatedFieldMask. */
+        REPLICATED_FIELDS_PER_TYPE_MAX = 64,
     };
+
+    /* A set of a type's fields, bit N for its Nth: what a state entry carries. */
+    using ReplicatedFieldMask = uint64_t;
+    static_assert(sizeof(ReplicatedFieldMask) * 8 >= REPLICATED_FIELDS_PER_TYPE_MAX, "a change mask has a bit for every field");
+
+    inline constexpr ReplicatedFieldMask ReplicatedFieldBit(const size_t InField) { return ReplicatedFieldMask(1) << InField; }
 
     /* How a field is encoded. Value covers every EScriptFieldType but Struct. */
     enum class EReplicatedKind : uint8_t

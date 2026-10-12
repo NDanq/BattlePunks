@@ -50,6 +50,27 @@ namespace
         enet_peer_timeout(InPeer, 0, InTimeoutMs, InTimeoutMs);
     }
 
+    /*
+     * ENet's packet throttle off: it never slows below everything. When a
+     * round trip comes in well over the last, ENet sheds unreliable packets
+     * at random, down to 1 in 32, and climbs back only slowly -- a burst of
+     * reliable traffic (a big spawn) on a fast link was enough to lose 97%
+     * of the state for seconds. The bandwidth budget ([Net]
+     * ClientBandwidthKBps) decides what to leave out, and leaves out the
+     * least important, not whatever comes.
+     *
+     * Once connected, each end for its own sends, and only locally: the
+     * handshake carries the values and a client refuses a server that
+     * answers with others than it asked for, and enet_peer_throttle_configure
+     * would tell the other end.
+     */
+    void DisableThrottle(ENetPeer* InPeer)
+    {
+        InPeer->packetThrottleDeceleration = 0;
+        InPeer->packetThrottleAcceleration = ENET_PEER_PACKET_THROTTLE_SCALE;
+        InPeer->packetThrottle             = ENET_PEER_PACKET_THROTTLE_SCALE;
+    }
+
     NetPeerID PeerIdOf(const ENetPeer* InPeer)
     {
         return InPeer && InPeer->data ? NetPeerID(reinterpret_cast<uintptr_t>(InPeer->data)) : NET_PEER_NONE;
@@ -147,6 +168,7 @@ bool NetTransport::Service(NetTransportEvent& OutEvent)
                     ID = Track(Event.peer);
                     ApplyTimeout(Event.peer, TimeoutMs);
                 }
+                DisableThrottle(Event.peer);
                 OutEvent.EventType = NetTransportEvent::EType::Connected;
                 OutEvent.Peer      = ID;
                 OutEvent.Channel   = 0;

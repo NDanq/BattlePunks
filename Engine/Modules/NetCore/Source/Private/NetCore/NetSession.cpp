@@ -152,15 +152,15 @@ struct NetSession::Impl final : public INetEntityMap
     struct Baseline
     {
         std::vector<uint8_t> Sent;              // the component's bytes as last sent
-        uint32_t             Unacked = 0;       // fields the client may not have
-        uint32_t             ValueSeq[32] = {}; // per field: the batch its current value was first sent in
+        GameCore::ReplicatedFieldMask Unacked = 0;   // fields the client may not have
+        std::vector<uint32_t>         ValueSeq;      // per field: the batch its current value was first sent in
     };
 
     /* What a batch carried: acknowledged, those fields' values are the client's. */
     struct SentBatch
     {
         uint32_t                                   Seq = 0;
-        std::vector<std::pair<uint64_t, uint32_t>> Entries;   // ShadowKey, field mask
+        std::vector<std::pair<uint64_t, GameCore::ReplicatedFieldMask>> Entries;   // ShadowKey, field mask
     };
 
     /* RPC LIMITS: a token bucket per client for all its Server RPCs, and one
@@ -358,7 +358,7 @@ struct NetSession::Impl final : public INetEntityMap
 
     /* A Smooth() field (ComponentReplication.h) of a remote entity over time,
      * as the server sent it; Interpolate() writes the component. By
-     * ShadowKey << 5 | the field's index. */
+     * ShadowKey << 6 | the field's index. */
     struct FieldSample
     {
         uint32_t TimeMs = 0;
@@ -374,7 +374,7 @@ struct NetSession::Impl final : public INetEntityMap
 
     static uint64_t FieldKey(const int32_t InNetId, const ComponentTypeID InType, const size_t InField)
     {
-        return (ShadowKey(InNetId, InType) << 5) | uint64_t(InField & 31u);
+        return (ShadowKey(InNetId, InType) << 6) | uint64_t(InField & 63u);
     }
 
     /* Every smoothing of InNetId's InType component: it went, or the entity did. */
@@ -435,8 +435,8 @@ struct NetSession::Impl final : public INetEntityMap
     {
         for(auto It = FieldSmooths.begin(); It != FieldSmooths.end();)
         {
-            const uint64_t        Shadow = It->first >> 5;
-            const size_t          Index  = size_t(It->first & 31u);
+            const uint64_t        Shadow = It->first >> 6;
+            const size_t          Index  = size_t(It->first & 63u);
             const int32_t         NetId  = int32_t(uint32_t(Shadow >> 16));
             const ComponentTypeID Type   = ComponentTypeID(Shadow & 0xFFFFu);
             const EntityID        Entity = FromNetId(NetId);
@@ -918,7 +918,7 @@ struct NetSession::Impl final : public INetEntityMap
 
     /* One state entry: InMask's fields of InType on InComponent. */
     bool WriteStateEntry(EngineCore::Archive& Ar, const int32_t InNetId, const ComponentTypeID InType,
-                         const void* InComponent, const uint32_t InMask)
+                         const void* InComponent, const GameCore::ReplicatedFieldMask InMask)
     {
         size_t FieldCount = 0;
         const GameCore::ReplicatedFieldEntry* Fields = GameCore::FindComponentReplication(InType, FieldCount);
@@ -931,16 +931,22 @@ struct NetSession::Impl final : public INetEntityMap
         WriteVarUInt(Ar, InMask);
         for(size_t Field = 0; Field < FieldCount; ++Field)
         {
-            if(InMask & (1u << Field)) { WriteReplicatedField(Ar, Fields[Field], InComponent, *this); }
+            if(InMask & GameCore::ReplicatedFieldBit(Field)) { WriteReplicatedField(Ar, Fields[Field], InComponent, *this); }
         }
         return !Ar.HasError();
     }
 
-    uint32_t FullMask(const ComponentTypeID InType) const
+    static GameCore::ReplicatedFieldMask FieldsMask(const size_t InFieldCount)
+    {
+        return InFieldCount >= GameCore::REPLICATED_FIELDS_PER_TYPE_MAX ? ~GameCore::ReplicatedFieldMask(0)
+                                                                        : GameCore::ReplicatedFieldBit(InFieldCount) - 1u;
+    }
+
+    GameCore::ReplicatedFieldMask FullMask(const ComponentTypeID InType) const
     {
         size_t FieldCount = 0;
         GameCore::FindComponentReplication(InType, FieldCount);
-        return FieldCount >= 32 ? 0xFFFFFFFFu : ((1u << FieldCount) - 1u);
+        return FieldsMask(FieldCount);
     }
 
 
@@ -1089,8 +1095,8 @@ struct NetSession::Impl final : public INetEntityMap
         struct Item
         {
             const TickItem* Tick;
-            uint32_t        Mask;      // what is sent
-            uint32_t        Changed;   // of those, what changed since last sent
+            GameCore::ReplicatedFieldMask Mask;      // what is sent
+            GameCore::ReplicatedFieldMask Changed;   // of those, what changed since last sent
         };
 
         std::vector<uint8_t> Body;   // the open batch's entries
@@ -1192,10 +1198,10 @@ struct NetSession::Impl final : public INetEntityMap
                 const TickItem& Tick  = *Candidates[Index];
                 const auto      Found = InClient.Baselines.find(Tick.Key);
                 const bool      bKnown = Found != InClient.Baselines.end() && Found->second.Sent.size() == Tick.Size;
-                const uint32_t  Unacked = bKnown ? Found->second.Unacked : 0u;
+                const GameCore::ReplicatedFieldMask Unacked = bKnown ? Found->second.Unacked : 0u;
                 if(bKnown && !Tick.bChanged && Unacked == 0) { InClient.DeferredKeys.erase(Tick.Key); continue; }   // the client has it all
 
-                uint32_t Changed = 0;
+                GameCore::ReplicatedFieldMask Changed = 0;
                 if(!bKnown)
                 {
                     Changed = FullMask(Tick.Type);   // new to this client: everything
@@ -1207,11 +1213,11 @@ struct NetSession::Impl final : public INetEntityMap
                         if((Tick.Fields[Field].Flags & GameCore::RFF_InitialOnly) == 0
                            && ReplicatedFieldDiffers(Tick.Fields[Field], Tick.Component, Found->second.Sent.data()))
                         {
-                            Changed |= 1u << Field;
+                            Changed |= GameCore::ReplicatedFieldBit(Field);
                         }
                     }
                 }
-                const uint32_t Mask = Changed | Unacked;
+                const GameCore::ReplicatedFieldMask Mask = Changed | Unacked;
                 if(Mask != 0 && WriteStateEntry(Next.Bytes, Tick.NetId, Tick.Type, Tick.Component, Mask))
                 {
                     Next.Items.push_back({ &Tick, Mask, Changed });
@@ -1270,9 +1276,10 @@ struct NetSession::Impl final : public INetEntityMap
                 Baseline& Base = InClient.Baselines[Sent.Tick->Key];
                 const uint8_t* Bytes = static_cast<const uint8_t*>(Sent.Tick->Component);
                 Base.Sent.assign(Bytes, Bytes + Sent.Tick->Size);
-                for(uint32_t Field = 0; Field < 32; ++Field)
+                if(Base.ValueSeq.size() != Sent.Tick->FieldCount) { Base.ValueSeq.assign(Sent.Tick->FieldCount, 0u); }
+                for(size_t Field = 0; Field < Sent.Tick->FieldCount; ++Field)
                 {
-                    if(Sent.Changed & (1u << Field)) { Base.ValueSeq[Field] = Record.Seq; }
+                    if(Sent.Changed & GameCore::ReplicatedFieldBit(Field)) { Base.ValueSeq[Field] = Record.Seq; }
                 }
                 Base.Unacked |= Sent.Mask;
                 InClient.UnackedKeys.insert(Sent.Tick->Key);
@@ -1306,9 +1313,10 @@ struct NetSession::Impl final : public INetEntityMap
                     const auto Found = InClient.Baselines.find(Entry.first);
                     if(Found == InClient.Baselines.end()) { continue; }
                     Baseline& Base = Found->second;
-                    for(uint32_t Field = 0; Field < 32; ++Field)
+                    for(size_t Field = 0; Field < Base.ValueSeq.size(); ++Field)
                     {
-                        if((Entry.second & (1u << Field)) && Base.ValueSeq[Field] <= Batch.Seq) { Base.Unacked &= ~(1u << Field); }
+                        const GameCore::ReplicatedFieldMask Bit = GameCore::ReplicatedFieldBit(Field);
+                        if((Entry.second & Bit) && Base.ValueSeq[Field] <= Batch.Seq) { Base.Unacked &= ~Bit; }
                     }
                     if(Base.Unacked == 0) { InClient.UnackedKeys.erase(Entry.first); }
                 }
@@ -1905,10 +1913,10 @@ struct NetSession::Impl final : public INetEntityMap
         const uint64_t Wire64  = ReadVarUInt(Ar);
         const uint64_t Mask64  = ReadVarUInt(Ar);
         if(Ar.HasError()) { return true; }
-        if(NetId64 > 0x7FFFFFFFu || Wire64 > 0xFFFFu || Mask64 > 0xFFFFFFFFu) { Ar.SetError("a state entry's header is out of range"); return true; }
-        const int32_t  NetId    = int32_t(NetId64);
-        const uint16_t WireType = uint16_t(Wire64);
-        const uint32_t Mask     = uint32_t(Mask64);
+        if(NetId64 > 0x7FFFFFFFu || Wire64 > 0xFFFFu) { Ar.SetError("a state entry's header is out of range"); return true; }
+        const int32_t                       NetId    = int32_t(NetId64);
+        const uint16_t                      WireType = uint16_t(Wire64);
+        const GameCore::ReplicatedFieldMask Mask     = Mask64;
 
         const ComponentTypeID Type = Schema.FromWire(WireType);
         size_t FieldCount = 0;
@@ -1917,6 +1925,11 @@ struct NetSession::Impl final : public INetEntityMap
         if(!Fields)
         {
             Ar.SetError("state for a type that does not replicate");
+            return true;
+        }
+        if((Mask & ~FieldsMask(FieldCount)) != 0)
+        {
+            Ar.SetError("a state entry names fields its type does not have");
             return true;
         }
 
@@ -1956,7 +1969,7 @@ struct NetSession::Impl final : public INetEntityMap
 
         for(size_t Field = 0; Field < FieldCount && !Ar.HasError(); ++Field)
         {
-            if(Mask & (1u << Field)) { ReadReplicatedField(Ar, Fields[Field], Into, *this); }
+            if(Mask & GameCore::ReplicatedFieldBit(Field)) { ReadReplicatedField(Ar, Fields[Field], Into, *this); }
         }
         if(Ar.HasError()) { return true; }
 
@@ -1968,7 +1981,7 @@ struct NetSession::Impl final : public INetEntityMap
             const bool bSmoothing = Config.InterpolationDelayMs > 0;
             for(size_t Field = 0; Field < FieldCount; ++Field)
             {
-                if((Mask & (1u << Field)) == 0) { continue; }
+                if((Mask & GameCore::ReplicatedFieldBit(Field)) == 0) { continue; }
                 /* A Smooth() field goes into its samples; Interpolate() writes it. Its first is written at once. */
                 if(bSmoothing && (Fields[Field].Flags & GameCore::RFF_Smooth) != 0)
                 {
