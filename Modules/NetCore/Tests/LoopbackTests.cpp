@@ -165,6 +165,53 @@ namespace
         Rpc.Server<&PawnComponent::ServerSpark>("ServerSpark").Unreliable();
     }
 
+    /* As many fields as a type may replicate, and one more, which is refused.
+     * The last is Smooth(): its bit and its smoothing key are the top ones. */
+    #define WIDE_FIELDS_8(N) float F##N##0 = 0.0f, F##N##1 = 0.0f, F##N##2 = 0.0f, F##N##3 = 0.0f, \
+                                   F##N##4 = 0.0f, F##N##5 = 0.0f, F##N##6 = 0.0f, F##N##7 = 0.0f;
+    #define WIDE_REP_8(N) Rep.Field("F" #N "0", &WideComponent::F##N##0); Rep.Field("F" #N "1", &WideComponent::F##N##1); \
+                          Rep.Field("F" #N "2", &WideComponent::F##N##2); Rep.Field("F" #N "3", &WideComponent::F##N##3); \
+                          Rep.Field("F" #N "4", &WideComponent::F##N##4); Rep.Field("F" #N "5", &WideComponent::F##N##5); \
+                          Rep.Field("F" #N "6", &WideComponent::F##N##6);
+    #define WIDE_SAVE_8(N) Ar.Field("F" #N "0", C.F##N##0); Ar.Field("F" #N "1", C.F##N##1); Ar.Field("F" #N "2", C.F##N##2); \
+                           Ar.Field("F" #N "3", C.F##N##3); Ar.Field("F" #N "4", C.F##N##4); Ar.Field("F" #N "5", C.F##N##5); \
+                           Ar.Field("F" #N "6", C.F##N##6); Ar.Field("F" #N "7", C.F##N##7);
+
+    struct WideComponent
+    {
+        GAMECORE_COMPONENT_BODY()
+
+        WIDE_FIELDS_8(0) WIDE_FIELDS_8(1) WIDE_FIELDS_8(2) WIDE_FIELDS_8(3)
+        WIDE_FIELDS_8(4) WIDE_FIELDS_8(5) WIDE_FIELDS_8(6) WIDE_FIELDS_8(7)
+        float Extra = 0.0f;   // the 65th: refused
+    };
+
+    GAMECORE_DEFINE_COMPONENT(WideComponent, "TestWide")
+
+    /* What a spawn carries (a component without one is not sent). */
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(WideComponent, 1)
+    {
+        WIDE_SAVE_8(0) WIDE_SAVE_8(1) WIDE_SAVE_8(2) WIDE_SAVE_8(3)
+        WIDE_SAVE_8(4) WIDE_SAVE_8(5) WIDE_SAVE_8(6) WIDE_SAVE_8(7)
+    }
+
+    GAMECORE_DEFINE_COMPONENT_REPLICATION(WideComponent)
+    {
+        WIDE_REP_8(0) Rep.Field("F07", &WideComponent::F07);
+        WIDE_REP_8(1) Rep.Field("F17", &WideComponent::F17);
+        WIDE_REP_8(2) Rep.Field("F27", &WideComponent::F27);
+        WIDE_REP_8(3) Rep.Field("F37", &WideComponent::F37);
+        WIDE_REP_8(4) Rep.Field("F47", &WideComponent::F47);
+        WIDE_REP_8(5) Rep.Field("F57", &WideComponent::F57);
+        WIDE_REP_8(6) Rep.Field("F67", &WideComponent::F67);
+        WIDE_REP_8(7) Rep.Field("F77", &WideComponent::F77).Smooth();
+        Rep.Field("Extra", &WideComponent::Extra);
+    }
+
+    #undef WIDE_SAVE_8
+    #undef WIDE_REP_8
+    #undef WIDE_FIELDS_8
+
     // === Stepping ============================================================
 
     struct Pair
@@ -224,6 +271,13 @@ namespace
             Check(Fields[2].Kind == EReplicatedKind::Entity, "an EntityID field replicates as an entity");
             Check((Fields[3].Flags & RFF_InitialOnly) != 0, "RFF_InitialOnly is recorded");
         }
+
+        size_t WideCount = 0;
+        const ReplicatedFieldEntry* Wide = FindComponentReplication(WideComponent::StaticType().ID, WideCount);
+        Check(Wide && WideCount == REPLICATED_FIELDS_PER_TYPE_MAX && REPLICATED_FIELDS_PER_TYPE_MAX == 64,
+              "a type replicates up to 64 fields, and a 65th is refused");
+        Check(Wide && WideCount == 64 && Wide[63].Offset == offsetof(WideComponent, F77) && (Wide[63].Flags & RFF_Smooth) != 0,
+              "the 64th is the last declared");
     }
 }
 
@@ -1138,6 +1192,60 @@ namespace
     }
 }
 
+namespace
+{
+    /* A 64-field type: the high fields arrive, alone and together, clean and
+     * under loss, and the top one smooths. */
+    void TestWideType(const int InLossPercent)
+    {
+        std::printf("[64 fields, %d%% loss]\n", InLossPercent);
+        World ServerWorld, ClientWorld;
+        NetSession Server, Client;
+        const Pair Both{ &Server, &Client };
+        NetConfig ServerConfig;
+        ServerConfig.Port = 0;
+        ServerConfig.SimulatedLossPercent = InLossPercent;
+        Server.Start(ENetRole::Server, ServerConfig);
+        Server.BindWorld(ServerWorld, "Wide");
+        NetConfig ClientConfig;
+        std::strcpy(ClientConfig.ServerAddress, "127.0.0.1");
+        ClientConfig.Port = Server.GetPort();
+        ClientConfig.InterpolationDelayMs = 50;
+        ClientConfig.SimulatedLossPercent = InLossPercent;
+        Client.Start(ENetRole::Client, ClientConfig);
+        Client.BindWorld(ClientWorld, "Wide");
+        Check(StepUntil(Both, [&] { return Client.IsConnected(); }), "connected");
+
+        Entity Board = ServerWorld.CreateEntity("Board");
+        Board.AddComponent<NetComponent>();
+        WideComponent Initial;
+        Initial.F00 = 1.0f; Initial.F37 = 2.0f; Initial.F40 = 3.0f; Initial.F76 = 4.0f; Initial.F77 = 5.0f;
+        Initial.Extra = 9.0f;
+        Board.AddComponent(Initial);
+        EntityID There;
+        Check(StepUntil(Both, [&] { There = Client.FindEntityByNetId(Server.GetNetId(Board.GetID())); return There.IsSet(); }), "it spawns");
+        const auto Theirs = [&] { return Entity(&ClientWorld, There).GetComponent<WideComponent>(); };
+        Check(StepUntil(Both, [&] { const WideComponent* W = Theirs(); return W && W->F00 == 1.0f && W->F37 == 2.0f && W->F40 == 3.0f && W->F76 == 4.0f && Near(W->F77, 5.0f); }),
+              "every field arrives with the spawn, the 33rd to the 64th too");
+        Check(Theirs() && Theirs()->Extra == 0.0f, "the refused 65th does not");
+        if(!Theirs()) { Client.Stop(); Server.UnbindWorld(); Server.Stop(); Client.UnbindWorld(); return; }
+
+        /* Only fields above the 32nd change: alone, then a low and a high one together. */
+        WideComponent& Mine = *Board.GetComponent<WideComponent>();
+        Mine.F76 = 40.0f;
+        Check(StepUntil(Both, [&] { return Theirs()->F76 == 40.0f; }), "a change to the 63rd field alone arrives");
+        Mine.F01 = 11.0f; Mine.F75 = 41.0f; Mine.F77 = 50.0f;
+        Check(StepUntil(Both, [&] { return Theirs()->F01 == 11.0f && Theirs()->F75 == 41.0f && Near(Theirs()->F77, 50.0f); }),
+              "low and high fields changed together arrive, the smoothed 64th settling");
+        Check(Theirs()->F00 == 1.0f && Theirs()->F40 == 3.0f, "and the rest are left as they were");
+
+        Client.Stop();
+        Server.UnbindWorld();
+        Server.Stop();
+        Client.UnbindWorld();
+    }
+}
+
 int main()
 {
     TestEditorLink();
@@ -1482,6 +1590,8 @@ int main()
     TestBandwidthBudget();
     TestUnreliableRpcs();
     TestFieldSmoothing();
+    TestWideType(0);
+    TestWideType(50);
     TestFlushCost();
     TestStructureChanges(0);
     TestStructureChanges(50);

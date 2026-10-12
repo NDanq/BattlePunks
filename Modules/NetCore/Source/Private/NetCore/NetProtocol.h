@@ -42,7 +42,8 @@
  * than the newest received is dropped, never delivered late.
  *
  *   StateBatch     S->C  u32 sequence, u32 server time in ms, u16 count, then
- *                        per entry: net id, wire type and field mask, each a
+ *                        per entry: net id, wire type and field mask (bit N
+ *                        the Nth field, up to 64; none past the type's), each a
  *                        variable-length integer (NetReplication.h's
  *                        WriteVarUInt), then each masked field's value in
  *                        table order -- a quantized one as its steps or
@@ -73,7 +74,7 @@
 
 namespace NetCore
 {
-    constexpr uint32_t NET_PROTOCOL_VERSION = 8;
+    constexpr uint32_t NET_PROTOCOL_VERSION = 9;
 
     enum class ENetMessage : uint8_t
     {

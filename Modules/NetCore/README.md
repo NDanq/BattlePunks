@@ -190,7 +190,10 @@ GAMECORE_DEFINE_COMPONENT_REPLICATION(TurretComponent)   // in one .cpp
   Rep.Field("Pitch", &MoverComponent::Pitch).Precision(0.01f).Smooth();
   Rep.Field("Yaw",   &MoverComponent::Yaw).Angles().Smooth();
   ```
-- A type allows at most 32 fields, one bit each in the change mask.
+- A type allows at most 64 fields (`REPLICATED_FIELDS_PER_TYPE_MAX`), one bit
+  each in the change mask. A 65th is refused with an error at startup. The
+  mask is a variable-length integer, so a type with few fields pays no more
+  for the room.
 - `TransformComponent` replicates Position, Rotation and Scale out of the box.
 
 ### RPCs
@@ -562,6 +565,8 @@ a client in one process over 127.0.0.1. It covers:
   disconnect, and MaxRpcBytes
 - a 6 s client stall
 - interpolation, and the prediction handler
+- a 64-field type, clean and under 50% loss: fields past the 32nd arriving
+  alone and with low ones, the top one smoothed, a 65th refused
 - smooth fields: in-between values while a field steps, an unsmoothed field
   never in between, settling on the last value without overshooting
 - state under 50% simulated loss each way: changing values, a value changed

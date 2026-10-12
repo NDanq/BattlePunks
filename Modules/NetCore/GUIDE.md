@@ -239,7 +239,7 @@ GAMECORE_DEFINE_COMPONENT_REPLICATION(DoorComponent)
 - **Field types:** `float`, `double`, `int32_t`, `uint8_t`, `bool`, `Vector3`,
   `AABB`, `Color`, `char[N]`, `EntityID` (through `Rep.Entity`). Script
   structs are not supported yet.
-- **At most 32 fields per component.**
+- **At most 64 fields per component.**
 - **`RFF_InitialOnly`** sends the field when the entity appears and never
   again.
 - **The server sends a field only when its bytes change.** It compares with
