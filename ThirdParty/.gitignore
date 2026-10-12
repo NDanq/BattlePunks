@@ -1,9 +1,9 @@
 # ===========================================================================
-# GameWindow .gitignore
+# ThirdParty .gitignore
 #
-# The module itself produces nothing that needs ignoring -- it has no
-# standalone configure, so there is no Build/ tree inside it. This file exists
-# for the vendored SDL tree under External/.
+# Source/ holds the vendored libraries, each a faithful copy of its upstream
+# release. This file only drops the parts of those releases the engine never
+# builds.
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
@@ -11,15 +11,16 @@
 # this engine never builds.
 #
 # Both are gated in SDL's own CMakeLists, and both gates are forced OFF in
-# ours: add_subdirectory(examples) happens only under if(SDL_EXAMPLES), and
-# add_subdirectory(test) only under if(SDL_TESTS). Turning either on against
-# this checkout fails the configure with a missing-directory error, which is
-# the intended outcome -- the directories genuinely are not here.
+# ThirdParty/CMakeLists.txt: add_subdirectory(examples) happens only under
+# if(SDL_EXAMPLES), and add_subdirectory(test) only under if(SDL_TESTS).
+# Turning either on against this checkout fails the configure with a
+# missing-directory error, which is the intended outcome -- the directories
+# genuinely are not here.
 #
 # NOT excluded, and easy to confuse with the above: src/test/. That is where
 # the SDL3_test library's sources actually live (SDL globs
-# src/test/*.c for it), so it stays tracked. The pattern below is anchored to
-# this module's root and does not reach it.
+# src/test/*.c for it), so it stays tracked. The patterns below are anchored to
+# the SDL root and do not reach it.
 #
 # The VisualC/ paths are the .vcxproj files that BUILD the examples and tests
 # -- useless without the sources, and VisualC/VisualC/ is a nested duplicate
@@ -41,8 +42,8 @@
 # from the release and makes the next version bump diff against phantom
 # changes.
 # ---------------------------------------------------------------------------
-/External/SDL-release-3.4.16/examples/
-/External/SDL-release-3.4.16/test/
-/External/SDL-release-3.4.16/VisualC/examples/
-/External/SDL-release-3.4.16/VisualC/tests/
-/External/SDL-release-3.4.16/VisualC/VisualC/
+/Source/SDL-release-3.4.16/examples/
+/Source/SDL-release-3.4.16/test/
+/Source/SDL-release-3.4.16/VisualC/examples/
+/Source/SDL-release-3.4.16/VisualC/tests/
+/Source/SDL-release-3.4.16/VisualC/VisualC/

@@ -279,11 +279,11 @@ if(NOT MSVC)
 endif()
 
 # cgltf (MIT), vendored; implemented in GltfImporter.cpp.
-set(NIMBLE_EDITOR_CGLTF_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/cgltf-1.15")
+set(NIMBLE_EDITOR_CGLTF_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../ThirdParty/Source/cgltf-1.15")
 
 # xatlas (MIT), vendored at jpcy/xatlas f700c77: lightmap UV charts (LightmapUVs.cpp).
 # Its own library, built without the engine's warnings.
-set(NIMBLE_EDITOR_XATLAS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/xatlas-f700c77")
+set(NIMBLE_EDITOR_XATLAS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../ThirdParty/Source/xatlas-f700c77")
 add_library(NimbleXatlas STATIC "${NIMBLE_EDITOR_XATLAS_DIR}/xatlas.cpp")
 target_include_directories(NimbleXatlas PUBLIC "${NIMBLE_EDITOR_XATLAS_DIR}")
 find_package(Threads REQUIRED)

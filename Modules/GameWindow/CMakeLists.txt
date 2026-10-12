@@ -86,7 +86,7 @@ set(SDL_INSTALL      OFF CACHE BOOL "" FORCE)
 # option() call leaves an existing cache entry alone.
 set(SDL_RENDER       OFF CACHE BOOL "" FORCE)
 
-set(GAMEWINDOW_SDL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/SDL-release-3.4.16")
+set(GAMEWINDOW_SDL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../ThirdParty/Source/SDL-release-3.4.16")
 
 if(NOT EXISTS "${GAMEWINDOW_SDL_DIR}/CMakeLists.txt")
     message(FATAL_ERROR
