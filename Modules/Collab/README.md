@@ -141,6 +141,11 @@ process listings. In the editor: **File > Collaboration Session**, the Session
 dock, or `collab.connect host[:port] [name] [password]`, `collab.leave`,
 `collab.status` in the console.
 
+**Play > Net > Launch Local Server** starts one from the editor: the
+NimbleEditorServer beside it, with `--repo` the project's checkout, `--data`
+`Saved/CollabWorkers` and `--logs` `Saved/Logs`. Its output goes to the
+Console. It stops with **Stop Local Server** or when that editor closes.
+
 > **Trust boundary.** A session is for a trusted team on a LAN or VPN. Don't
 > expose the server to the internet.
 

@@ -23,6 +23,8 @@
 #include <QLineEdit>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QCoreApplication>
+#include <QProcess>
 #include <QSignalBlocker>
 #include <QStatusBar>
 #include <QToolBar>
@@ -100,6 +102,7 @@
 #include "Private/Editor/PlayProcesses.h"
 #include "Private/Editor/Collab/CollabSessionWindow.h"
 #include "Private/Editor/Collab/EditorCollabSession.h"
+#include "Public/Collab/CollabProtocol.h"
 #include "Public/Editor/EditorContentEvents.h"
 #if WITH_NETCORE
 #include "Public/NetCore/NetSession.h"
@@ -771,6 +774,18 @@ void EditorMainWindow::BuildPlayControls()
     PlaySettings->setToolTip(QStringLiteral("How Play runs: standalone, as a listen server, or as a client (Editor Settings > Play)"));
     connect(PlaySettings, &QAction::triggered, this, [this]() { OpenSettings(QStringLiteral("Play")); });
 
+    /* A session server on this machine, for Play Together without hosting one by hand. */
+    QMenu*   NetMenu = PlayMenu->addMenu(QStringLiteral("&Net"));
+    QAction* LocalServer = NetMenu->addAction(QStringLiteral("Launch &Local Server"));
+    LocalServer->setToolTip(QStringLiteral("Start NimbleEditorServer on this machine for this project's checkout; join it "
+                                           "with File > Collaboration Session. It stops when this editor closes."));
+    connect(LocalServer, &QAction::triggered, this, &EditorMainWindow::ToggleLocalSessionServer);
+    connect(NetMenu, &QMenu::aboutToShow, this, [this, LocalServer]()
+    {
+        const bool bRunning = LocalSessionServer && LocalSessionServer->state() != QProcess::NotRunning;
+        LocalServer->setText(bRunning ? QStringLiteral("Stop &Local Server") : QStringLiteral("Launch &Local Server"));
+    });
+
     /* Play Together: everyone in the collaboration session, on the server
      * host's game server (EditorCollabSession). */
     PlayMenu->addSeparator();
@@ -837,6 +852,100 @@ void EditorMainWindow::StartPlay()
     }
     /* So keys reach the viewport (Esc to stop) rather than the last panel. */
     Viewport->setFocus(Qt::OtherFocusReason);
+}
+
+void EditorMainWindow::ToggleLocalSessionServer()
+{
+    if(LocalSessionServer && LocalSessionServer->state() != QProcess::NotRunning)
+    {
+        /* A console program: killed, not asked. Its workers and game servers go with it. */
+        LocalSessionServer->setProperty("Stopping", true);
+        LocalSessionServer->kill();
+        LocalSessionServer->waitForFinished(5000);
+        statusBar()->showMessage(QStringLiteral("Local session server stopped"), 5000);
+        return;
+    }
+
+    const auto Fail = [](const QString& InTitle, const QString& InBody)
+    {
+        EditorNotifications::Notification Failed;
+        Failed.Severity   = EditorNotifications::ESeverity::Error;
+        Failed.Title      = InTitle;
+        Failed.Body       = InBody;
+        Failed.Source     = QStringLiteral("Session");
+        Failed.ReplaceKey = QStringLiteral("session.localserver");
+        EditorNotifications::Get()->Post(std::move(Failed));
+    };
+
+    /* NimbleEditorServer is built beside the editor. */
+#if defined(_WIN32)
+    const QString Executable = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("NimbleEditorServer.exe"));
+#else
+    const QString Executable = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("NimbleEditorServer"));
+#endif
+    if(!QFileInfo::exists(Executable))
+    {
+        Fail(QStringLiteral("No session server"), QStringLiteral("NimbleEditorServer isn't built beside the editor. Build its target, then try again."));
+        return;
+    }
+
+    /* This project's checkout hosts the content worker, which builds and checks
+     * each session's commit and runs Play Together's game server. */
+    const QDir    Project(EditorGraphs::GetProjectRoot());
+    QStringList   Args = { QStringLiteral("--logs"), Project.filePath(QStringLiteral("Saved/Logs")) };
+    const QString Repo = CollabSession->GetRepositoryRoot();
+    if(!Repo.isEmpty())
+    {
+        Args << QStringLiteral("--repo") << Repo << QStringLiteral("--data") << Project.filePath(QStringLiteral("Saved/CollabWorkers"));
+    }
+
+    if(!LocalSessionServer)
+    {
+        LocalSessionServer = new QProcess(this);   // killed with the editor
+        LocalSessionServer->setProcessChannelMode(QProcess::MergedChannels);
+        connect(LocalSessionServer, &QProcess::readyRead, this, [this]()
+        {
+            while(LocalSessionServer->canReadLine())
+            {
+                const QString Line = QString::fromUtf8(LocalSessionServer->readLine()).trimmed();
+                if(!Line.isEmpty()) { CORE_LOG("[Session server] " + Line.toStdString()) }
+            }
+        });
+        connect(LocalSessionServer, &QProcess::finished, this, [this, Fail](const int InExitCode, const QProcess::ExitStatus)
+        {
+            if(LocalSessionServer->property("Stopping").toBool()) { return; }
+            Fail(QStringLiteral("Local session server stopped"),
+                 QStringLiteral("It exited with code %1; the Console says why (is another server on UDP %2?).")
+                     .arg(InExitCode).arg(Collab::DefaultPort));
+        });
+    }
+    LocalSessionServer->setProperty("Stopping", false);
+    LocalSessionServer->setWorkingDirectory(QFileInfo(Executable).absolutePath());
+    LocalSessionServer->start(Executable, Args);
+    if(!LocalSessionServer->waitForStarted(5000))
+    {
+        Fail(QStringLiteral("No session server"), QStringLiteral("NimbleEditorServer didn't start: ") + LocalSessionServer->errorString());
+        return;
+    }
+
+    EditorNotifications::Notification Started;
+    Started.Severity   = EditorNotifications::ESeverity::Success;
+    Started.Title      = QStringLiteral("Local session server started");
+    Started.Body       = QStringLiteral("Listening on UDP %1. Join it at localhost; others join at this machine's address.")
+                             .arg(Collab::DefaultPort);
+    Started.Source     = QStringLiteral("Session");
+    Started.ReplaceKey = QStringLiteral("session.localserver");
+    Started.Actions    = { { QStringLiteral("Join..."), [this]()
+    {
+        if(auto* Dock = findChild<CollabSessionWindow*>())
+        {
+            Dock->show();
+            Dock->raise();
+            Dock->GetAddressEdit()->setText(QStringLiteral("localhost"));
+            Dock->GetAddressEdit()->setFocus();
+        }
+    } } };
+    EditorNotifications::Get()->Post(std::move(Started));
 }
 
 void EditorMainWindow::BuildBuildMenu()

@@ -23,6 +23,7 @@ class NotificationCenter;
 class NotificationToasts;
 class ProjectBuildDialog;
 class QAction;
+class QProcess;
 class QLabel;
 class SDLInputProbe;
 class SourceBuild;
@@ -139,6 +140,10 @@ private:
     QAction*        StopAction  = nullptr;
     QAction*        EjectAction = nullptr;
     QAction*        ClientWindowAction = nullptr;
+
+    /* Play > Net > Launch Local Server: a NimbleEditorServer on this machine, ended with the editor. */
+    QProcess*       LocalSessionServer = nullptr;
+    void            ToggleLocalSessionServer();
 
     SourceBuild*    Compiler            = nullptr;
     QAction*        CompileAction       = nullptr;
