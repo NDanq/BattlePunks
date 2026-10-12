@@ -13,7 +13,7 @@
 #include "Private/Editor/Content/AssetImport.h"
 
 /*
- * The glTF side of AssetImport: cgltf (External/cgltf-1.15) reads the file and
+ * The glTF side of AssetImport: cgltf (ThirdParty/Source/cgltf-1.15) reads the file and
  * its buffers, and this turns the scene into MeshData -- node transforms
  * baked in, InOptions applied. Private to Content/; AssetImport writes files.
  */

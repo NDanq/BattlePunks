@@ -7,8 +7,8 @@ plan and the phases still to come are in
 `Engine/Modules/Editor/COLLABORATION.md`.
 
 **No Qt, no GameCore.** Core and ENet only, so the server builds anywhere a
-compiler and CMake are, and no game code can take it down. ENet is NetCore's
-vendored copy (`Modules/NetCore/External/enet-1.3.18`); Collab doesn't need
+compiler and CMake are, and no game code can take it down. ENet is the vendored copy
+NetCore uses too (`Engine/ThirdParty/Source/enet-1.3.18`); Collab doesn't need
 NetCore to be on. Built STATIC, for Editor and Server targets.
 
 ## Pieces

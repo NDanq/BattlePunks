@@ -177,26 +177,10 @@ nimble_add_module(RenderCore SHARED
         PUBLIC_DEPS  GameCore::GameCore
         PRIVATE_DEPS GDI::GDI)
 
-# bc7enc_rdo (MIT or public domain), vendored at richgel999/bc7enc_rdo
-# b943862: BC1-BC5 (rgbcx) and BC7 (bc7enc) blocks; TextureCompression.cpp.
-# The decoders are for a backend without block formats, so every build has
-# them; the encoder only an editor build. Its own library, built without the
-# engine's warnings and, off MSVC (where /O2 clashes with Debug's /RTC1),
-# optimised even in Debug -- unoptimised, BC7 is many times slower.
-set(RENDERCORE_BC7ENC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../ThirdParty/Source/bc7enc_rdo-b943862")
-add_library(NimbleBc7enc STATIC
-        "${RENDERCORE_BC7ENC_DIR}/rgbcx.cpp"
-        "${RENDERCORE_BC7ENC_DIR}/bc7decomp.cpp")
-if(NIMBLE_WITH_EDITOR)
-    target_sources(NimbleBc7enc PRIVATE "${RENDERCORE_BC7ENC_DIR}/bc7enc.cpp")
-endif()
-target_include_directories(NimbleBc7enc PUBLIC "${RENDERCORE_BC7ENC_DIR}")
-if(MSVC)
-    target_compile_options(NimbleBc7enc PRIVATE /w)
-else()
-    target_compile_options(NimbleBc7enc PRIVATE -w -O2)
-endif()
-set_target_properties(NimbleBc7enc PROPERTIES FOLDER "RenderCore/External" POSITION_INDEPENDENT_CODE ON)
+# bc7enc_rdo (MIT or public domain) at richgel999/bc7enc_rdo b943862, for
+# TextureCompression.cpp: BC1-BC5 (rgbcx) and BC7 (bc7enc) blocks. Vendored at
+# Engine/ThirdParty/Source and built by Engine/ThirdParty/CMakeLists.txt as
+# NimbleBc7enc. Every build decodes; only an editor build encodes.
 target_link_libraries(RenderCore PRIVATE NimbleBc7enc)
 
 # PRIVATE, not PUBLIC: RenderCoreInternal.h is included as

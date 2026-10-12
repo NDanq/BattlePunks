@@ -7,7 +7,7 @@ Constraint** components join them with joints. Both components belong to
 GameCore. This module simulates them.
 
 `JoltPhysics` is written for this repository and uses `nimble_add_module()`.
-It vendors Jolt under `External/`.
+It links Jolt, vendored at `Engine/ThirdParty/Source/JoltPhysics-5.6.0`.
 
 ---
 
@@ -296,10 +296,7 @@ local hit, entity, x, y, z = Physics.Raycast(ox, oy, oz, dx, dy, dz, 5000)
 
 ```
 Engine/Modules/JoltPhysics/
-|-- CMakeLists.txt                    the Jolt library (glob of the vendored sources) and the module
-|-- External/JoltPhysics-5.6.0/
-|   |-- LICENSE                       MIT
-|   `-- Jolt/                         only what Jolt.cmake compiles with every option off
+|-- CMakeLists.txt                    the module (Jolt itself is built by Engine/ThirdParty)
 `-- Source/
     |-- Public/JoltPhysics/
     |   |-- JoltPhysicsAPI.h          JOLTPHYSICS_API; #error without WITH_JOLTPHYSICS
@@ -315,17 +312,20 @@ Engine/Modules/JoltPhysics/
 
 ### The vendored Jolt
 
-`External/JoltPhysics-5.6.0` holds the release's `LICENSE` and the library
+`Engine/ThirdParty/Source/JoltPhysics-5.6.0` holds the release's `LICENSE` and the library
 sources that `Jolt/Jolt.cmake` compiles with every option off. It has none of
 Jolt's samples, tests, viewer, GPU compute backends, shaders or object-stream
 I/O. Two headers that sources include unconditionally are kept too:
 `ObjectStream/ObjectStreamTypes.h`, and `Shaders/HairStructs.h` with its
-`ShaderCore.h`.
+`ShaderCore.h`. `Engine/ThirdParty/CMakeLists.txt` builds it as
+`Jolt::Jolt` (STATIC, a glob of those sources), prebuilt once per toolchain like
+every vendored library.
 
 **Build flags:**
 
 - **Shared defines:** `JPH_OBJECT_LAYER_BITS=32` and, in Debug,
-  `JPH_ENABLE_ASSERTS`. They are PUBLIC on the `Jolt` target, so every
+  `JPH_ENABLE_ASSERTS`. They are part of `Jolt::Jolt`'s usage requirements
+  (`Engine/ThirdParty/cmake/NimbleThirdPartyUsage.cmake`), so every
   translation unit agrees with the library.
 - **SIMD:** Jolt takes EngineCore's SIMD flags (`-mavx2 -mfma` /
   `/arch:AVX2`). With GCC and Clang it also needs `-mbmi -mlzcnt -mf16c`,
@@ -337,7 +337,8 @@ I/O. Two headers that sources include unconditionally are kept too:
 
 1. Extract the same file list from the new release's `Jolt/Jolt.cmake`.
 2. Keep any new header that a source includes unconditionally.
-3. Rename the directory and change `JOLTPHYSICS_JOLT_DIR`.
+3. Rename the directory and change `NIMBLE_THIRDPARTY_JOLT_DIR` in
+   `Engine/ThirdParty/cmake/NimbleThirdPartyUsage.cmake`.
 
 ---
 

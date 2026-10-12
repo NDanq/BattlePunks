@@ -8,8 +8,8 @@ plays them. It also owns the output device and mixer (`AudioDevice`), the
 `.nmsound` asset (`SoundAsset`), and each World's voices (`AudioWorld`).
 
 `Audio` is written for this repository and uses `nimble_add_module()`. It
-vendors miniaudio, with the `stb_vorbis` miniaudio ships for `.ogg`, under
-`External/`. Both are MIT-0 / public domain.
+links miniaudio, with the `stb_vorbis` miniaudio ships for `.ogg`, vendored at
+`Engine/ThirdParty/Source/miniaudio-0.11.25`. Both are MIT-0 / public domain.
 
 ---
 

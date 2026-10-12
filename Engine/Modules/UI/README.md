@@ -32,7 +32,7 @@ parsed and kept in every save and cook, but they do not play yet. See
 | System | `UISystem.h` | The open documents, the data store, the fonts and the action queue for one viewport. |
 | Actions | `UIAction.h` | `Native:`, `Lua:` and `Event:` actions, and the native registry (`UI_DEFINE_ACTIONS`). |
 | Bindings | `UIBinding.h` | The data store and `{Bind:Key}`. |
-| Fonts | `UIFont.h` | TrueType fonts baked to atlases with stb_truetype (`External/stb`). |
+| Fonts | `UIFont.h` | TrueType fonts baked to atlases with stb_truetype (`Engine/ThirdParty/Source/stb`). |
 | Lua | `UIScriptLibrary.cpp` | The `UI` library. |
 | Draw list | RenderCore's `UIDrawList.h` | What a document paints. RenderCore draws it (RENDERPIPELINE.md, "UI"). |
 

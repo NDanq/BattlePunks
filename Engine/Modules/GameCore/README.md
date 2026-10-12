@@ -38,9 +38,6 @@ own comment in `Engine/CMakeLists.txt` for the full reasoning.
 Engine/Modules/GameCore/
 |-- CMakeLists.txt
 |-- README.md                       (this file)
-|-- External/
-|   |-- lua-5.4.8/                  vendored Lua source; see "Lua" below
-|   `-- pugixml-1.16/               vendored XML parser, editor builds only; see "World files" below
 |-- Source/
 |   |-- Public/GameCore/
 |   |   |-- GameCoreAPI.h           GAMECORE_API three-state export macro (always SHARED)
@@ -859,9 +856,9 @@ GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 1)
 In text a missing field keeps its default and an unknown one is skipped; binary
 is positional, so new fields go at the end behind a version check.
 
-pugixml 1.16 is vendored at `External/pugixml-1.16/` (MIT, `LICENSE.md`
-there) the way Lua is, built by `CMakeLists.txt` only when `WITH_EDITOR`, with
-`PUGIXML_NO_XPATH`. `pugixml.hpp` is included only by `WorldPackage.cpp`.
+pugixml 1.16 is vendored at `Engine/ThirdParty/Source/pugixml-1.16/` (MIT,
+`LICENSE.md` there) the way Lua is, built by `Engine/ThirdParty` with
+`PUGIXML_NO_XPATH`, and linked by every build but Shipping. `pugixml.hpp` is included only by `WorldPackage.cpp`.
 
 ---
 
@@ -876,23 +873,25 @@ thread. The same contract `GameWindowSystem.h` states for itself.
 
 ## Lua
 
-Lua 5.4.8 is vendored in source form at:
+Lua 5.4.8 is vendored in source form, with the engine's other third-party
+libraries, at:
 
 ```
-Engine/Modules/GameCore/External/lua-5.4.8/
+Engine/ThirdParty/Source/lua-5.4.8/
 ```
 
-Mirroring how `Modules/GameWindow` carries `External/SDL-release-3.4.16`: the
-dependency lives with the one module that needs it, there is no
-`find_package`, no `FetchContent`, and no fallback to a system Lua. Lua ships
-no CMakeLists of its own (unlike SDL); `CMakeLists.txt` builds it directly
-from `src/*.c`, excluding `lua.c` and `luac.c` -- the standalone interpreter
-and compiler's own `main()`s, listed explicitly so a future Lua source
-addition does not silently join the target without review.
+There is no `find_package`, no `FetchContent`, and no fallback to a system
+Lua. Lua ships no CMakeLists of its own (unlike SDL);
+`Engine/ThirdParty/CMakeLists.txt` builds it as `Lua::Lua` directly from
+`src/*.c`, excluding `lua.c` and `luac.c` -- the standalone interpreter and
+compiler's own `main()`s, listed explicitly so a future Lua source addition
+does not silently join the target without review. Like every vendored library
+it is prebuilt once per toolchain and imported (`NIMBLE_PREBUILT_THIRDPARTY`,
+`Engine/cmake/NimbleThirdParty.cmake`).
 
 `luaconf.h` auto-detects `_WIN32` into `LUA_USE_WINDOWS` on its own; Linux and
 macOS get `LUA_USE_LINUX` / `LUA_USE_MACOSX` defined explicitly by
-`CMakeLists.txt`, matching what `lua.c`'s own build would set.
+`Engine/ThirdParty/CMakeLists.txt`, matching what `lua.c`'s own build would set.
 
 **lua.h never appears in `Public/`.** `GameCoreInternal.h`, under `Private/`,
 is the only header that includes it; `ScriptEngine.h` forward-declares
@@ -901,6 +900,8 @@ links `GameCore` and nothing else -- **not** `Lua::Lua` -- which is the
 structural check that this stays true: if it ever fails to link because
 something needs a raw Lua symbol, that property has broken.
 
-**Bumping Lua** is two edits: drop the new tree in beside the old one and
-change `GAMECORE_LUA_DIR` in `CMakeLists.txt`, plus the source list if any
-file was added, removed or renamed upstream.
+**Bumping Lua**: drop the new tree in beside the old one under
+`Engine/ThirdParty/Source/` and change `NIMBLE_THIRDPARTY_LUA_DIR` in
+`Engine/ThirdParty/cmake/NimbleThirdPartyUsage.cmake`, plus the source list in
+`Engine/ThirdParty/CMakeLists.txt` if any file was added, removed or renamed
+upstream.

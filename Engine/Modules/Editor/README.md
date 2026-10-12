@@ -84,7 +84,7 @@ uses it.
 | `WorldSettingsDialog` (private) | World > World Settings: the edited world's `GameCore::WorldSettings` -- baked lighting on or off, lightmap density, bounces, samples, probe spacing, lightmap size -- one undo step, saved with the world |
 | `Lighting/LightBaker`, `LightBakeBVH`, `LightBakeScene` (private) | The light baker: a multithreaded CPU path tracer over a bake scene -- lightmap layout, texels, direct and bounced light, filtering, light probes (RenderCore's RENDERPIPELINE.md, "Baked lighting"). No World, no Qt; built with optimisation even in Debug; tested by `NimbleEditorLightingTests` |
 | `Lighting/LightBakeWorld`, `BakeLightmaps` (private) | A World's static meshes and lights to a bake scene, and the bake to files beside the world (`Levels/<World>/Lighting/`, staged too); Build > Bake Lightmaps' worker thread and progress dialog |
-| `Content/LightmapUVs` (private) | Lightmap UVs (UV1) for a mesh without: xatlas (`External/xatlas-f700c77`) charts and packs it, every vertex keeping its index |
+| `Content/LightmapUVs` (private) | Lightmap UVs (UV1) for a mesh without: xatlas (`Engine/ThirdParty/Source/xatlas-f700c77`) charts and packs it, every vertex keeping its index |
 | `TransformGizmo` | Move / rotate / scale handles on the selection: drawing, hit testing and drag math, with no Qt input or World access of its own |
 | `OutlinerPanel` | Entity hierarchy with component summary, filter, create, drag to reparent, folders; Ctrl/Shift multiple selection, F2 renames in the row, and the edit actions (below) in its context menu |
 | `PlaySession` (private) | Play-in-Editor: the editor as an `IGameHost` -- game module, ScriptEngine, `GameSession`, `InputRouter` |
@@ -112,7 +112,7 @@ uses it.
 | `Content/TextureViewerWindow` (private) | A `.nmtexture` opened from the Content Browser: the image by mip level and channel, its statistics, and its settings -- sRGB, filter, wrap, mip generation, compression (see Content Browser) |
 | `Content/MeshPreviewView` (private) | The image both of those draw into: one renderer preview at a time at the widget's size, drag to orbit, wheel to zoom |
 | `Content/ImportWizard` (private) | File > Import and drops from outside: the wizard that turns glTF and images into `.nmmesh` / `.nmtexture` |
-| `Content/AssetImport`, `GltfImporter` (private) | The conversions themselves, no widgets (cgltf, `External/cgltf-1.15`, reads glTF); tested by `NimbleEditorImportTests` |
+| `Content/AssetImport`, `GltfImporter` (private) | The conversions themselves, no widgets (cgltf, `Engine/ThirdParty/Source/cgltf-1.15`, reads glTF); tested by `NimbleEditorImportTests` |
 | `Content/ContentPaths` (private) | Project files as the engine names them: runtime-relative paths (the engine's content as `Engine/Content/...`), material names, staging beside the executable |
 | `Project/NewProjectWizard` (private) | File > New Project: a new game in `Games/<Name>` from `Engine/Templates/Game` -- module, level, game mode, game state, launcher, `Config/`, `Scripts/`, `Content/` -- configured standalone, so the engine is never edited |
 | `Project/ProjectTemplate` (private) | The copy itself, no widgets: name checks, `@PROJECT_NAME@` / `@ENGINE_DIR@` / `__PROJECT__` replaced; tested by `NimbleEditorProjectTests`, which also checks `Engine/Binaries/NewProject.cmake` (the same, without the editor) writes an identical project |
@@ -982,7 +982,7 @@ Alt+Left/Right), `#section` links jump to GitHub-style heading anchors, and
 anything else -- web links, source files -- opens outside the editor. The page
 reloads when its file changes on disk, so a doc being written can be watched;
 Refresh (F5) picks up added and removed files. Hidden folders, `External/`,
-`Binaries/`, `Build/`, `Saved/`, `Intermediate/` and build trees (`cmake-build-*`, any
+`ThirdParty/`, `Binaries/`, `Build/`, `Saved/`, `Intermediate/` and build trees (`cmake-build-*`, any
 folder with a `CMakeCache.txt`) are not listed.
 
 ### Capturing graphs for documentation

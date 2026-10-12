@@ -1,15 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(GameCore VERSION 0.1 LANGUAGES C CXX)
+project(GameCore VERSION 0.1 LANGUAGES CXX)
 
 # ===========================================================================
 # GameCore -- gameplay: entities, components (an ECS built for cache-friendly
 # iteration), a phased tick, delegates/events, and Lua scripting, on Lua 5.4.
-#
-# LANGUAGES C CXX, unlike GameWindow's CXX-only: Lua is a C library, and its
-# sources are added to THIS project's own target list (Lua has no CMakeLists
-# of its own -- unlike SDL, it is built by hand below), so C has to be enabled
-# here rather than falling out of add_subdirectory() the way it does for SDL.
 #
 # Deliberately NOT standalone-configurable, matching GameWindow: GameCore lives
 # in this repository and is free to use nimble_add_module().
@@ -25,137 +20,11 @@ endif()
 
 option(GAMECORE_BUILD_SMOKETEST "Build GameCoreSmokeTest" OFF)
 
-# === Vendored Lua ===========================================================
-# Lua 5.4 lives in source form under External/, exactly as GameWindow vendors
-# SDL3 under its own External/: the dependency sits with the one module that
-# needs it, nothing engine-wide has to know Lua exists, there is no
-# find_package and no FetchContent, and a fresh clone configures with no
-# per-machine setup.
-#
-# Version spelled out rather than globbed, for the same reason
-# GAMEWINDOW_SDL_DIR is: which Lua a given commit builds against is answerable
-# from the source, not from whatever happens to be on disk. Bumping it is one
-# edit here plus the matching path in this module's .gitignore.
-set(GAMECORE_LUA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../ThirdParty/Source/lua-5.4.8")
-
-if(NOT EXISTS "${GAMECORE_LUA_DIR}/src/lua.h")
-    message(FATAL_ERROR
-            "Vendored Lua not found at ${GAMECORE_LUA_DIR}. GameCore does not fall "
-            "back to a system Lua -- see the Lua section of Modules/GameCore/README.md.")
-endif()
-
-# Lua ships no CMakeLists.txt of its own (unlike SDL) -- its own Makefile is
-# make-specific and platform-switched by hand. Built directly here instead,
-# from the library sources only: lua.c and luac.c are the STANDALONE
-# INTERPRETER AND COMPILER'S OWN main()s and are excluded, listed explicitly
-# rather than globbed so that a future Lua source added upstream does not
-# silently join this target without a review of what it is.
-set(GAMECORE_LUA_SOURCES
-        ${GAMECORE_LUA_DIR}/src/lapi.c
-        ${GAMECORE_LUA_DIR}/src/lauxlib.c
-        ${GAMECORE_LUA_DIR}/src/lbaselib.c
-        ${GAMECORE_LUA_DIR}/src/lcode.c
-        ${GAMECORE_LUA_DIR}/src/lcorolib.c
-        ${GAMECORE_LUA_DIR}/src/lctype.c
-        ${GAMECORE_LUA_DIR}/src/ldblib.c
-        ${GAMECORE_LUA_DIR}/src/ldebug.c
-        ${GAMECORE_LUA_DIR}/src/ldo.c
-        ${GAMECORE_LUA_DIR}/src/ldump.c
-        ${GAMECORE_LUA_DIR}/src/lfunc.c
-        ${GAMECORE_LUA_DIR}/src/lgc.c
-        ${GAMECORE_LUA_DIR}/src/linit.c
-        ${GAMECORE_LUA_DIR}/src/liolib.c
-        ${GAMECORE_LUA_DIR}/src/llex.c
-        ${GAMECORE_LUA_DIR}/src/lmathlib.c
-        ${GAMECORE_LUA_DIR}/src/lmem.c
-        ${GAMECORE_LUA_DIR}/src/loadlib.c
-        ${GAMECORE_LUA_DIR}/src/lobject.c
-        ${GAMECORE_LUA_DIR}/src/lopcodes.c
-        ${GAMECORE_LUA_DIR}/src/loslib.c
-        ${GAMECORE_LUA_DIR}/src/lparser.c
-        ${GAMECORE_LUA_DIR}/src/lstate.c
-        ${GAMECORE_LUA_DIR}/src/lstring.c
-        ${GAMECORE_LUA_DIR}/src/lstrlib.c
-        ${GAMECORE_LUA_DIR}/src/ltable.c
-        ${GAMECORE_LUA_DIR}/src/ltablib.c
-        ${GAMECORE_LUA_DIR}/src/ltm.c
-        ${GAMECORE_LUA_DIR}/src/lundump.c
-        ${GAMECORE_LUA_DIR}/src/lutf8lib.c
-        ${GAMECORE_LUA_DIR}/src/lvm.c
-        ${GAMECORE_LUA_DIR}/src/lzio.c
-)
-
-if(NOT TARGET Lua::Lua)
-    add_library(Lua STATIC ${GAMECORE_LUA_SOURCES})
-    add_library(Lua::Lua ALIAS Lua)
-
-    target_include_directories(Lua PUBLIC "${GAMECORE_LUA_DIR}/src")
-
-    # luaconf.h auto-detects _WIN32 into LUA_USE_WINDOWS on its own (see the
-    # #if defined(_WIN32) block near its top), so nothing is defined for
-    # Windows here. LUA_USE_LINUX / LUA_USE_MACOSX are NOT auto-detected the
-    # same way and must be requested explicitly to get dlopen-based
-    # require("lib") support, readline-backed line editing in a REPL (this
-    # engine never builds lua.c, so that half does not apply) and the POSIX
-    # extras luaconf.h gates behind them.
-    if(UNIX AND NOT APPLE)
-        target_compile_definitions(Lua PRIVATE LUA_USE_LINUX)
-        target_link_libraries(Lua PRIVATE m ${CMAKE_DL_LIBS})
-    elseif(APPLE)
-        target_compile_definitions(Lua PRIVATE LUA_USE_MACOSX)
-    endif()
-
-    # lprefix.h already #defines _CRT_SECURE_NO_WARNINGS itself for every
-    # translation unit that includes it (which is all of them -- every Lua .c
-    # file starts with #define LUA_CORE/LUA_LIB then includes lprefix.h
-    # indirectly through lua.h), so this is a defensive belt-and-braces rather
-    # than a fix for an observed warning: nothing here should be silently
-    # relying on a lucky include order.
-    if(MSVC)
-        target_compile_definitions(Lua PRIVATE _CRT_SECURE_NO_WARNINGS)
-    endif()
-
-    # Lua links into GameCore.dll (a SHARED module -- see the note on
-    # nimble_add_module() below), so its objects must be position-independent
-    # on a platform that distinguishes PIC from non-PIC code. A no-op on
-    # Windows and harmless to set unconditionally elsewhere.
-    set_target_properties(Lua PROPERTIES
-            POSITION_INDEPENDENT_CODE ON
-            AUTOMOC OFF
-            AUTOUIC OFF
-            AUTORCC OFF
-    )
-
-    source_group("External/Lua" FILES ${GAMECORE_LUA_SOURCES})
-endif()
-
-# === Vendored pugixml (uncooked builds) =====================================
-# Text worlds and prefabs are XML (WorldPackage.h). Every build but Shipping
-# reads them (WITH_UNCOOKED); Shipping links none of it. Built by hand, like Lua.
-# PUGIXML_NO_XPATH: unused, and most of the library.
-set(GAMECORE_PUGIXML_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../ThirdParty/Source/pugixml-1.16")
-
-if(NOT TARGET PugiXml::PugiXml)
-    if(NOT EXISTS "${GAMECORE_PUGIXML_DIR}/src/pugixml.hpp")
-        message(FATAL_ERROR "Vendored pugixml not found at ${GAMECORE_PUGIXML_DIR}.")
-    endif()
-
-    # EXCLUDE_FROM_ALL: built only where linked, so never for Shipping.
-    add_library(PugiXml STATIC EXCLUDE_FROM_ALL "${GAMECORE_PUGIXML_DIR}/src/pugixml.cpp")
-    add_library(PugiXml::PugiXml ALIAS PugiXml)
-    target_include_directories(PugiXml PUBLIC "${GAMECORE_PUGIXML_DIR}/src")
-    target_compile_definitions(PugiXml PUBLIC PUGIXML_NO_XPATH)
-    target_compile_features(PugiXml PUBLIC cxx_std_17)
-
-    # Linked into GameCore.dll, so position-independent for Lua's reason.
-    set_target_properties(PugiXml PROPERTIES
-            POSITION_INDEPENDENT_CODE ON
-            AUTOMOC OFF
-            AUTOUIC OFF
-            AUTORCC OFF
-    )
-    source_group("External/pugixml" FILES "${GAMECORE_PUGIXML_DIR}/src/pugixml.cpp")
-endif()
+# === Lua and pugixml ========================================================
+# Lua 5.4.8 (Lua::Lua) and pugixml 1.16 (PugiXml::PugiXml, for the text worlds
+# and prefabs every build but Shipping reads) are vendored at
+# Engine/ThirdParty/Source and built by Engine/ThirdParty/CMakeLists.txt.
+# No find_package and no fallback to a system Lua.
 
 # ===========================================================================
 # Sources
