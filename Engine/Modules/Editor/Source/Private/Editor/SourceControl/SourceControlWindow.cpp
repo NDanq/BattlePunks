@@ -20,6 +20,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QProcess>
@@ -318,6 +319,8 @@ void SourceControlWindow::BuildUi()
     Tree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     connect(Tree, &QTreeWidget::itemChanged, this, &SourceControlWindow::OnItemChanged);
     connect(Tree, &QTreeWidget::itemSelectionChanged, this, &SourceControlWindow::OnSelectionChanged);
+    Tree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(Tree, &QTreeWidget::customContextMenuRequested, this, &SourceControlWindow::ShowTreeMenu);
     Column->addWidget(Tree, 1);
 
     NoRepoLabel = new QLabel(QStringLiteral("This project isn't in a git repository."), Left);
@@ -354,6 +357,18 @@ void SourceControlWindow::BuildUi()
         }
     });
     DiffRow->addWidget(DiffStageButton);
+    DiffDiscardButton = new QPushButton(QStringLiteral("Discard"), Right);
+    DiffDiscardButton->setAutoDefault(false);
+    DiffDiscardButton->setToolTip(QStringLiteral("Throw this file's changes away, staged and unstaged, back to the last commit"));
+    DiffDiscardButton->hide();
+    connect(DiffDiscardButton, &QPushButton::clicked, this, [this]()
+    {
+        if(!DiffPath.isEmpty() && ConfirmDiscard({ DiffPath }))
+        {
+            DiscardPaths({ DiffPath });
+        }
+    });
+    DiffRow->addWidget(DiffDiscardButton);
     DiffColumn->addLayout(DiffRow);
     DiffView = new QPlainTextEdit(Right);
     DiffView->setObjectName(QStringLiteral("SourceControlDiff"));
@@ -461,6 +476,7 @@ void SourceControlWindow::Apply(const EditorGit::Status& InStatus)
             DiffPath.clear();
             DiffTitle->setText(QStringLiteral("Select a file to see its changes."));
             DiffStageButton->hide();
+            DiffDiscardButton->hide();
             DiffView->clear();
         }
     }
@@ -730,6 +746,104 @@ void SourceControlWindow::UnstagePaths(const QStringList& InPaths)
     });
 }
 
+void SourceControlWindow::DiscardPaths(const QStringList& InPaths)
+{
+    if(!Git)
+    {
+        return;
+    }
+    QStringList Tracked, Untracked;
+    for(const QString& Path : InPaths)
+    {
+        const FileEntry* Entry = FindEntry(Path);
+        if(!Entry)
+        {
+            continue;
+        }
+        if(Entry->Kind == EEntryKind::Untracked)
+        {
+            Untracked << Path;
+            continue;
+        }
+        Tracked << Path;
+        /* A rename is undone from both ends: the old name comes back. */
+        if(Entry->Kind == EEntryKind::Renamed && !Entry->OrigPath.empty())
+        {
+            Tracked << ToQ(Entry->OrigPath);
+        }
+    }
+    Git->Discard(Tracked, Untracked, Last.Branch.bInitial, [this](const GitClient::Result& InResult)
+    {
+        ReportFailure(QStringLiteral("Couldn't discard"), InResult.Ok(), InResult.Summary(), QStringLiteral("git.discard"));
+        RefreshNow();
+    });
+}
+
+void SourceControlWindow::ShowTreeMenu(const QPoint& InPos)
+{
+    QTreeWidgetItem* Item = Tree->itemAt(InPos);
+    if(!Item || !Git)
+    {
+        return;
+    }
+    QStringList Paths;
+    if(Item->data(0, PathRole).isValid())
+    {
+        Paths << Item->data(0, PathRole).toString();
+    }
+    else
+    {
+        for(int Child = 0; Child < Item->childCount(); ++Child)
+        {
+            Paths << Item->child(Child)->data(0, PathRole).toString();
+        }
+    }
+    if(Paths.isEmpty())
+    {
+        return;
+    }
+
+    QMenu Menu(this);
+    QAction* Discard = Menu.addAction(Paths.size() == 1 ? QStringLiteral("Discard Changes…")
+                                                        : QStringLiteral("Discard Changes to %1 Files…").arg(Paths.size()));
+    Discard->setEnabled(!Git->IsBusy());
+    if(Menu.exec(Tree->viewport()->mapToGlobal(InPos)) == Discard && ConfirmDiscard(Paths))
+    {
+        DiscardPaths(Paths);
+    }
+}
+
+bool SourceControlWindow::ConfirmDiscard(const QStringList& InPaths)
+{
+    int New = 0;
+    for(const QString& Path : InPaths)
+    {
+        const FileEntry* Entry = FindEntry(Path);
+        New += Entry && (Entry->Kind == EEntryKind::Untracked || Entry->Index == 'A' || Last.Branch.bInitial) ? 1 : 0;
+    }
+    constexpr int MaxListed = 10;
+    QStringList Listed = InPaths.mid(0, MaxListed);
+    if(InPaths.size() > MaxListed)
+    {
+        Listed << QStringLiteral("…and %1 more").arg(InPaths.size() - MaxListed);
+    }
+    QString Text = InPaths.size() == 1 ? QStringLiteral("Discard all changes to %1?").arg(QFileInfo(InPaths.first()).fileName())
+                                       : QStringLiteral("Discard all changes to %1 files?").arg(InPaths.size());
+    QString Info = QStringLiteral("Staged and unstaged changes go back to the last commit. This can't be undone.");
+    if(New > 0)
+    {
+        Info += New == 1 ? QStringLiteral("\n\n1 new file will be deleted.") : QStringLiteral("\n\n%1 new files will be deleted.").arg(New);
+    }
+
+    QMessageBox Box(QMessageBox::Warning, QStringLiteral("Discard Changes"), Text, QMessageBox::Cancel, this);
+    Box.setInformativeText(Info);
+    Box.setDetailedText(Listed.join(QLatin1Char('\n')));
+    QPushButton* Yes = Box.addButton(QStringLiteral("Discard"), QMessageBox::DestructiveRole);
+    Box.setDefaultButton(QMessageBox::Cancel);
+    Box.exec();
+    return Box.clickedButton() == Yes;
+}
+
 void SourceControlWindow::CommitStaged(const QString& InMessage)
 {
     if(!Git)
@@ -853,6 +967,7 @@ void SourceControlWindow::ShowDiff(const QString& InPath)
                        .arg(InPath.toHtmlEscaped(), QString::fromLatin1(EditorGit::GetGroupName(Group)), State));
     DiffStageButton->setText(Entry->IsUnstaged() ? QStringLiteral("Stage") : QStringLiteral("Unstage"));
     DiffStageButton->show();
+    DiffDiscardButton->show();
 
     if(Entry->Kind == EEntryKind::Untracked)
     {

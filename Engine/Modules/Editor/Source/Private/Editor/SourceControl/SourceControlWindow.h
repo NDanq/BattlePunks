@@ -28,7 +28,8 @@ class QWidget;
  * commit message, and the changed files grouped by GitStatus's ClassifyPath --
  * Content, Scripts, GameModule source, Config, Engine (flagged: not supported
  * during a collaboration session), Other. A file's box stages or unstages it;
- * a group's, the whole group. Right: the selected file's text diff.
+ * a group's, the whole group; right-click either to discard it back to HEAD.
+ * Right: the selected file's text diff.
  *
  * Pull is fast-forward only; with local commits it offers a rebase instead
  * (autostashing local edits). Never a merge. Conflicts go to the user's own
@@ -71,6 +72,9 @@ public:
     // --- What the buttons do, for tests ---------------------------------------
     void StagePaths(const QStringList& InPaths);
     void UnstagePaths(const QStringList& InPaths);
+    /* Back to HEAD, staged and unstaged alike; new files deleted. No prompt:
+     * the menu and the diff pane's button ask first (ConfirmDiscard). */
+    void DiscardPaths(const QStringList& InPaths);
     void CommitStaged(const QString& InMessage);
     void FetchRemote();
     void PullRemote();
@@ -102,6 +106,9 @@ private:
     void UpdateBanners();
     void OnItemChanged(QTreeWidgetItem* InItem, int InColumn);
     void OnSelectionChanged();
+    void ShowTreeMenu(const QPoint& InPos);
+    /* Asks, naming the files; true if the user agreed. */
+    bool ConfirmDiscard(const QStringList& InPaths);
     void FillSessionMenu();
     void OpenMergeTool();
     void FetchLocks();
@@ -142,6 +149,7 @@ private:
     QTreeWidget*    Tree         = nullptr;
     QLabel*         DiffTitle    = nullptr;
     QPushButton*    DiffStageButton = nullptr;
+    QPushButton*    DiffDiscardButton = nullptr;
     QPlainTextEdit* DiffView     = nullptr;
     QLabel*         NoRepoLabel  = nullptr;
 };

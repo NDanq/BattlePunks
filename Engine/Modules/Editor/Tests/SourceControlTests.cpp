@@ -285,6 +285,20 @@ static void TestRepositories(const QString& InTemp)
     Expect(Find(Unstaged, "Games/WorldsLab/Source/Pickup.cpp") && Find(Unstaged, "Games/WorldsLab/Source/Pickup.cpp")->Kind == EEntryKind::Untracked,
            "back to untracked");
 
+    /* Discard before the first commit: a staged file and an untracked one, both new, both gone. */
+    Write(QDir(Alice).filePath(QStringLiteral("Scratch.txt")), "scratch\n");
+    Write(QDir(Alice).filePath(QStringLiteral("Stray.txt")), "stray\n");
+    RunOk(AliceGit, [&](GitClient::Callback Done) { AliceGit.Stage({ QStringLiteral("Scratch.txt") }, Done); });
+    Expect(RunOk(AliceGit, [&](GitClient::Callback Done)
+    {
+        AliceGit.Discard({ QStringLiteral("Scratch.txt") }, { QStringLiteral("Stray.txt") }, true, Done);
+    }), "Discard before the first commit");
+    Status Discarded = ReadStatus(AliceGit);
+    Expect(!Find(Discarded, "Scratch.txt") && !QFileInfo::exists(QDir(Alice).filePath(QStringLiteral("Scratch.txt"))),
+           "a staged new file is deleted");
+    Expect(!Find(Discarded, "Stray.txt") && !QFileInfo::exists(QDir(Alice).filePath(QStringLiteral("Stray.txt"))),
+           "an untracked file is deleted");
+
     Expect(RunOk(AliceGit, [&](GitClient::Callback Done) { AliceGit.Commit(QStringLiteral("Forest level\n\nWith a \"quoted\" body; and $SHELL."), Done); }),
            "Commit, the message on stdin");
     QString Subject;
@@ -494,6 +508,36 @@ static void TestDock(const QString& InTemp)
     Expect(Dock.GetConflictBanner()->isVisible(), "a conflict shows the banner");
     Expect(FindGroup(Dock.GetTree(), "Config") != nullptr, "the conflicted file is listed");
     Git(Alice, { QStringLiteral("rebase"), QStringLiteral("--abort") });
+    WaitRefreshed(Dock);
+
+    /* Discard: an edit (staged and not), a new staged file, a rename, an untracked file. */
+    const QString Level = QDir(Project).filePath(QStringLiteral("Content/Forest.nmworld"));
+    QFile Before(Level);
+    Before.open(QIODevice::ReadOnly);
+    const QByteArray Committed = Before.readAll();
+    Before.close();
+    Write(Level, "<World/>\n");
+    Git(Alice, { QStringLiteral("add"), QStringLiteral("--"), Level });
+    Write(Level, "<World>edited twice</World>\n");
+    Write(QDir(Project).filePath(QStringLiteral("Content/Cave.nmworld")), "<World/>\n");
+    Git(Alice, { QStringLiteral("add"), QStringLiteral("--"), QStringLiteral("Games/WorldsLab/Content/Cave.nmworld") });
+    Git(Alice, { QStringLiteral("mv"), QStringLiteral("Games/WorldsLab/Scripts/Door.nmgraph"), QStringLiteral("Games/WorldsLab/Scripts/Gate.nmgraph") });
+    WaitRefreshed(Dock);
+    Expect(FindGroup(Dock.GetTree(), "Content") && FindGroup(Dock.GetTree(), "Content")->childCount() == 2, "the edits are listed");
+    Dock.DiscardPaths({ QStringLiteral("Games/WorldsLab/Content/Forest.nmworld"), QStringLiteral("Games/WorldsLab/Content/Cave.nmworld"),
+                        QStringLiteral("Games/WorldsLab/Scripts/Gate.nmgraph"), QStringLiteral("Engine/Core.cpp") });
+    Dock.GetGit()->WaitForIdle();
+    WaitRefreshed(Dock);
+    QFile After(Level);
+    After.open(QIODevice::ReadOnly);
+    Expect(After.readAll() == Committed, "DiscardPaths puts an edited file back as committed, staged edits too");
+    After.close();
+    Expect(!QFileInfo::exists(QDir(Project).filePath(QStringLiteral("Content/Cave.nmworld"))), "a new staged file is deleted");
+    Expect(QFileInfo::exists(QDir(Project).filePath(QStringLiteral("Scripts/Door.nmgraph")))
+           && !QFileInfo::exists(QDir(Project).filePath(QStringLiteral("Scripts/Gate.nmgraph"))), "a rename is undone");
+    Expect(!QFileInfo::exists(QDir(Alice).filePath(QStringLiteral("Engine/Core.cpp"))), "an untracked file is deleted");
+    Expect(!FindGroup(Dock.GetTree(), "Content") && !FindGroup(Dock.GetTree(), "Scripts") && !FindGroup(Dock.GetTree(), "Engine"),
+           "and none of them are listed");
 }
 
 int main(int argc, char** argv)
