@@ -8,6 +8,7 @@
 #include "Public/NimbleEngine/NetFacade.h"
 #include "Public/NimbleEngine/PhysicsFacade.h"
 #include "Public/NimbleEngine/PlayerStart.h"
+#include "Public/NimbleEngine/Ragdoll.h"
 #include "Public/NimbleEngine/WorldList.h"
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
@@ -604,10 +605,42 @@ namespace
     };
     AutoPlayer GAuto;
 
-    void AutoPlayFilter(GameCore::World& InWorld, GameCore::EntityID InAvatar, NimbleEngine::InputSnapshot& InOutInput, void*)
+    constexpr const char* PauseMenuPath = "Content/UI/ShootingRange/PauseMenu.nmui";
+    constexpr const char* SettingsPath  = "Content/UI/ShootingRange/Settings.nmui";
+
+    /*
+     * With the mouse free (the pause menu closed by its Back, a window
+     * switch), the gun takes nothing: Fire, Holster and Reload are dropped
+     * here, on the process that drives the shooter, before the frame is sent
+     * -- so a server never fires on the click that takes the mouse back. That
+     * click takes it back (unless a menu is open, which has the mouse).
+     */
+    void FreeMouseFilter(NimbleEngine::GameSession& InSession, NimbleEngine::InputSnapshot& InOutInput)
+    {
+        if(InSession.IsMouseCaptured()) { return; }
+        static const auto Bit = [](const char* InAction) { const int I = NimbleEngine::FindInputAction("Range", InAction); return I >= 0 ? 1u << I : 0u; };
+        static const uint32_t Fire = Bit("Fire");
+        static const uint32_t Gun  = Fire | Bit("Holster") | Bit("Reload");
+        const bool bClick = (InOutInput.Pressed & Fire) != 0;
+        InOutInput.Down     &= ~Gun;
+        InOutInput.Pressed  &= ~Gun;
+        InOutInput.Released &= ~Gun;
+        if(bClick && !InSession.GetUI().IsOpen(PauseMenuPath) && !InSession.GetUI().IsOpen(SettingsPath))
+        {
+            InSession.SetMouseCaptured(true);
+        }
+    }
+
+    /* The shooter's input on the process that drives it. InSession: the GameSession. */
+    void AutoPlayFilter(GameCore::World& InWorld, GameCore::EntityID InAvatar, NimbleEngine::InputSnapshot& InOutInput, void* InSession)
     {
         WorldsLabWalker::ApplyLookSensitivity(InOutInput);
-        if(!GRangeAutoPlay.GetBool() || GAuto.bDone) { return; }
+        if(!GRangeAutoPlay.GetBool())
+        {
+            if(InSession) { FreeMouseFilter(*static_cast<NimbleEngine::GameSession*>(InSession), InOutInput); }
+            return;
+        }
+        if(GAuto.bDone) { return; }
         const auto Now = std::chrono::steady_clock::now();
         const double Dt = GAuto.bStarted ? std::clamp(std::chrono::duration<double>(Now - GAuto.Last).count(), 0.0, 0.1) : 0.0;
         GAuto.Last = Now;
@@ -683,8 +716,6 @@ namespace
 
 namespace
 {
-    constexpr const char* PauseMenuPath = "Content/UI/ShootingRange/PauseMenu.nmui";
-    constexpr const char* SettingsPath  = "Content/UI/ShootingRange/Settings.nmui";
 
     /* Escape: the menu opens over the game, the game stops, the cursor comes back. */
     void OpenPauseMenu(NimbleEngine::GameSession& InSession)
@@ -748,14 +779,18 @@ struct RangeGunComponent
 
     /* What the script decided, shown and heard on every process with a player
      * (the authority's script calls gun:Shot / gun:Sound): the shot's flash and
-     * report, and at InAt -- reached along InDir -- what InHit (ERangeHit) did. */
-    void MulticastShot(const GameCore::RpcContext& InContext, const EngineCore::Vector3& InAt, const EngineCore::Vector3& InDir, uint8_t InHit);
+     * report, and at InAt -- reached along InDir -- what InHit (ERangeHit) did. InKick
+     * (kg cm/s along InDir) is what the authority's physics took -- a plate's
+     * swing, a dummy's fall; the rest apply it to their own copy (ReactHere). */
+    void MulticastShot(const GameCore::RpcContext& InContext, const EngineCore::Vector3& InAt, const EngineCore::Vector3& InDir, uint8_t InHit,
+                       float InKick);
     /* The gun's other sounds (ERangeSound). */
     void MulticastSound(const GameCore::RpcContext& InContext, uint8_t InSound);
 };
 
 /* What a shot hit, for its effect and sound (gun:Shot's last argument). */
-enum ERangeHit : uint8_t { RangeHit_Nothing = 0, RangeHit_Steel, RangeHit_Dummy, RangeHit_Paper, RangeHit_Other };
+enum ERangeHit : uint8_t { RangeHit_Nothing = 0, RangeHit_Steel, RangeHit_Dummy, RangeHit_Paper, RangeHit_Other,
+                          RangeHit_DummyDown };   // the shot that put a dummy down
 /* gun:Sound's argument. */
 enum ERangeSound : uint8_t { RangeSound_Reload = 0, RangeSound_DryFire };
 
@@ -808,12 +843,12 @@ GAMECORE_DEFINE_COMPONENT_SCRIPT(RangeGunComponent)
     {
         std::snprintf(C.Status, sizeof(C.Status), "%s", Call.GetString(1));
     });
-    /* gun:Shot(hx, hy, hz, dx, dy, dz, hit): the shot, for every process to show (MulticastShot). */
+    /* gun:Shot(hx, hy, hz, dx, dy, dz, hit, kick): the shot, for every process to show (MulticastShot). */
     Bind.Method("Shot", [](RangeGunComponent& C, GameCore::ScriptCall& Call)
     {
         if(!C.Owner.OwningWorld) { return; }
         GAMECORE_RPC(RangeGunComponent, MulticastShot)(C.Owner.OwningWorld->GetEntity(C.Owner.Entity), Call.GetVector3(1),
-                                                       Call.GetVector3(4), uint8_t(Call.GetInt(7)));
+                                                       Call.GetVector3(4), uint8_t(Call.GetInt(7)), Call.GetFloat(8));
     });
     /* gun:Sound(n): 0 the reload, 1 a dry fire (MulticastSound). */
     Bind.Method("Sound", [](RangeGunComponent& C, GameCore::ScriptCall& Call)
@@ -934,16 +969,53 @@ namespace
     }
 }
 
+namespace
+{
+    /* What the script's rounds see: every layer but 2, the catwalks' grating (RangeShooter.lua's SHOT_MASK). */
+    constexpr int32_t ShotMask = 32767 - 2;
+
+    /* What this process has shown, by ERangeHit, for autoplay's report. */
+    int GHitsShown[6] = {};
+    int GPlatesKicked = 0, GDummiesDowned = 0, GBodiesKicked = 0;   // ReactHere's, on a client
+
+    /*
+     * The authority's physics took the shot's kick; here, a client's copy of
+     * the level takes it too, so a plate swings and a dummy falls for every
+     * player. The target is not networked (it is the level's), so it is found
+     * again here: a short ray along the shot onto where it hit.
+     */
+    void ReactHere(GameCore::World& InWorld, const EngineCore::Vector3& InAt, const EngineCore::Vector3& InDir, const uint8_t InHit,
+                   const float InKick)
+    {
+        if(NimbleEngine::HasAuthority() || InKick <= 0.0f) { return; }   // the authority's script already did
+        NimbleEngine::PhysicsRaycastHit Hit;
+        if(!NimbleEngine::PhysicsRaycast(InWorld, InAt - InDir * 20.0f, InDir, 40.0f, Hit, ShotMask) || !InWorld.IsAlive(Hit.Entity)) { return; }
+        GameCore::Entity Target(&InWorld, Hit.Entity);
+        const EngineCore::Vector3 Impulse = InDir * InKick;
+        if(InHit == RangeHit_Steel)
+        {
+            if(auto* Body = Target.GetComponent<GameCore::RigidBodyComponent>()) { Body->AddImpulse(Impulse); ++GPlatesKicked; }
+            return;
+        }
+        auto* Ragdoll = Target.GetComponent<NimbleEngine::RagdollComponent>();
+        if(!Ragdoll) { return; }
+        if(InHit == RangeHit_DummyDown && !Ragdoll->IsActive()) { Ragdoll->ActivateWithImpulse(Impulse, InAt); ++GDummiesDowned; }
+        else if(Ragdoll->IsActive())                            { Ragdoll->AddImpulse(Impulse, InAt); ++GBodiesKicked; }
+    }
+}
+
 void RangeGunComponent::MulticastShot(const GameCore::RpcContext&, const EngineCore::Vector3& InAt, const EngineCore::Vector3& InDir,
-                                      const uint8_t InHit)
+                                      const uint8_t InHit, const float InKick)
 {
     GameCore::World* World = Owner.OwningWorld;
     if(!World || !IsPresentation()) { return; }
     const GameCore::EntityID Shooter = Owner.Entity;
 
     ++GShotsShown;
+    if(InHit < sizeof(GHitsShown) / sizeof(GHitsShown[0])) { ++GHitsShown[InHit]; }
     SpawnRangeEffect(*World, "MuzzleFlash", MuzzleOf(*World, Shooter), 1.2);
     PlayGunSound(*World, Shooter, "Gunshot.nmsound", 1.0f);
+    ReactHere(*World, InAt, InDir, InHit, InKick);
 
     /* The effect a little short of the hit, out of the surface. */
     const EngineCore::Vector3 Short = InAt - InDir * 3.0f;
@@ -954,10 +1026,11 @@ void RangeGunComponent::MulticastShot(const GameCore::RpcContext&, const EngineC
     };
     switch(InHit)
     {
-        case RangeHit_Steel: Impact("Sparks", 1.0, "SteelHit.nmsound", 1.0f); break;
-        case RangeHit_Dummy: Impact("Dust",   1.0, "Impact.nmsound",   0.8f); break;
-        case RangeHit_Paper: Impact("Dust",   1.4, "PaperHit.nmsound", 0.7f); break;
-        case RangeHit_Other: Impact("Dust",   1.4, "Impact.nmsound",   0.6f); break;
+        case RangeHit_Steel:     Impact("Sparks", 1.0, "SteelHit.nmsound", 1.0f); break;
+        case RangeHit_Dummy:
+        case RangeHit_DummyDown: Impact("Dust",   1.0, "Impact.nmsound",   0.8f); break;
+        case RangeHit_Paper:     Impact("Dust",   1.4, "PaperHit.nmsound", 0.7f); break;
+        case RangeHit_Other:     Impact("Dust",   1.4, "Impact.nmsound",   0.6f); break;
         default: break;
     }
 }
@@ -1005,7 +1078,7 @@ public:
         GAuto = AutoPlayer();
         if(NimbleEngine::AvatarWorld* Avatars = InSession.GetAvatars())
         {
-            Avatars->SetInputFilter(&AutoPlayFilter, nullptr);
+            Avatars->SetInputFilter(&AutoPlayFilter, &InSession);   // a free mouse fires nothing (FreeMouseFilter)
         }
         return NetGameMode::OnLoad(InSession);
     }
@@ -1048,19 +1121,13 @@ public:
             TickRangeEffects(World, InFrame.DeltaSeconds);
         }
 
-        /* This process's own shooter only: a client's Escape is its own pause menu, not the server's. */
+        /* This process's own shooter only: a client's Escape is its own pause menu, not the server's.
+         * (A click with the mouse free takes it back in the input filter, FreeMouseFilter.) */
         World.Each<NimbleEngine::AvatarHarnessComponent>([this](const GameCore::Entity&, NimbleEngine::AvatarHarnessComponent& InHarness)
         {
             if(!InHarness.IsLocallyControlled()) { return; }
             if(GRangeAutoPlay.GetBool()) { return; }
-            if(InHarness.WasPressed("Pause"))
-            {
-                OpenPauseMenu(*Session);
-            }
-            else if(!Session->IsMouseCaptured() && InHarness.WasPressed("Fire"))
-            {
-                Session->SetMouseCaptured(true);
-            }
+            if(InHarness.WasPressed("Pause")) { OpenPauseMenu(*Session); }
         });
     }
 
@@ -1129,7 +1196,11 @@ private:
             CORE_LOG("[ShootingRange] HUD after autoplay: " + std::to_string(Gun->Mag) + " + " + std::to_string(Gun->Reserve)
                      + " rounds, " + std::to_string(Gun->Hits) + " hits of " + std::to_string(Gun->Shots) + " shots; shown here: "
                      + std::to_string(GShotsShown) + " shots, " + std::to_string(GSoundsShown) + " gun sounds, "
-                     + std::to_string(GPistolDraws) + " draws")
+                     + std::to_string(GPistolDraws) + " draws; hits shown: " + std::to_string(GHitsShown[RangeHit_Steel]) + " steel, "
+                     + std::to_string(GHitsShown[RangeHit_Dummy] + GHitsShown[RangeHit_DummyDown]) + " dummy ("
+                     + std::to_string(GHitsShown[RangeHit_DummyDown]) + " down), " + std::to_string(GHitsShown[RangeHit_Paper]) + " paper, "
+                     + std::to_string(GHitsShown[RangeHit_Other]) + " other; reacted here: " + std::to_string(GPlatesKicked)
+                     + " plates kicked, " + std::to_string(GDummiesDowned) + " dummies down, " + std::to_string(GBodiesKicked) + " bodies kicked")
         }
 
         HudState Now;

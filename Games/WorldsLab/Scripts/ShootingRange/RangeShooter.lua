@@ -26,7 +26,7 @@
 
 local DRAW_SECONDS = 0.5   -- a dedicated server runs no animation, so no WeaponToHand: in hand after this
 -- What a shot hit, for the effect and sound every process shows (gun:Shot; ERangeHit in WorldsLabRange.cpp).
-local HIT_NOTHING, HIT_STEEL, HIT_DUMMY, HIT_PAPER, HIT_OTHER = 0, 1, 2, 3, 4
+local HIT_NOTHING, HIT_STEEL, HIT_DUMMY, HIT_PAPER, HIT_OTHER, HIT_DUMMY_DOWN = 0, 1, 2, 3, 4, 5
 -- gun:Sound's (ERangeSound).
 local SOUND_RELOAD, SOUND_DRY_FIRE = 0, 1
 
@@ -153,7 +153,7 @@ return {
         if self.Mag <= 0 then
             self.Gun:Sound(SOUND_DRY_FIRE)
             self:SetStatus(self.Reserve > 0 and "EMPTY  -  R TO RELOAD" or "OUT OF AMMO", 1.5)
-            return
+            return HIT_DUMMY, BODY_KICK
         end
         self.Mag = self.Mag - 1
         self.Gun:SetShots(self.Gun:GetShots() + 1)
@@ -174,17 +174,16 @@ return {
 
         -- What it hit decides here; every process shows it (gun:Shot, MulticastShot in WorldsLabRange.cpp).
         local hit, entity, hx, hy, hz = Physics.Raycast(ox, oy, oz, dx, dy, dz, RANGE, SHOT_MASK)
-        local kind = HIT_NOTHING
+        local kind, kick = HIT_NOTHING, 0   -- kick: what physics took here; the clients' copies take it too
         if hit and entity then
             local name = entity:GetName()
             if name == "SteelPlate" then
-                kind = HIT_STEEL
+                kind, kick = HIT_STEEL, STEEL_KICK
                 self.Gun:SetHits(self.Gun:GetHits() + 1)
                 local body = entity:GetComponent("Rigid Body")
                 if body then body:AddImpulse(dx * STEEL_KICK, dy * STEEL_KICK, dz * STEEL_KICK) end
             elseif entity:GetComponent("Ragdoll") then
-                kind = HIT_DUMMY
-                self:HitDummy(entity, entity:GetComponent("Ragdoll"), dx, dy, dz, hx, hy, hz)
+                kind, kick = self:HitDummy(entity, entity:GetComponent("Ragdoll"), dx, dy, dz, hx, hy, hz)
             elseif name == "PaperStand" then
                 kind = HIT_PAPER
                 self.Gun:SetHits(self.Gun:GetHits() + 1)
@@ -194,19 +193,19 @@ return {
         else
             hx, hy, hz = ox + dx * RANGE, oy + dy * RANGE, oz + dz * RANGE
         end
-        self.Gun:Shot(hx, hy, hz, dx, dy, dz, kind)
+        self.Gun:Shot(hx, hy, hz, dx, dy, dz, kind, kick)
         if self.Mag == 0 then self:SetStatus(self.Reserve > 0 and "EMPTY  -  R TO RELOAD" or "OUT OF AMMO") end
         self:UpdateHud()
     end,
 
     -- A shot into a target dummy: wounds while it stands, its death on the last,
     -- a kick once it is down. The Ragdoll component applies the impulse at the
-    -- part nearest the hit.
+    -- part nearest the hit. Returns the hit's kind and the kick physics took, for gun:Shot.
     HitDummy = function(self, entity, ragdoll, dx, dy, dz, hx, hy, hz)
         self.Gun:SetHits(self.Gun:GetHits() + 1)
         if ragdoll:IsActive() then
             ragdoll:AddImpulse(dx * BODY_KICK, dy * BODY_KICK, dz * BODY_KICK, hx, hy, hz)
-            return
+            return HIT_DUMMY, BODY_KICK
         end
         local id = entity:GetID()
         local head = ragdoll:GetPartAt(hx, hy, hz) == "Head"   -- the limb the round hit
@@ -217,7 +216,9 @@ return {
             self.Kills = self.Kills + 1
             ragdoll:ActivateWithImpulse(dx * KILL_KICK, dy * KILL_KICK, dz * KILL_KICK, hx, hy, hz)
             self:SetStatus(head and "HEADSHOT" or "DOWN", 1.0)
+            return HIT_DUMMY_DOWN, KILL_KICK
         end
+        return HIT_DUMMY, 0
     end,
 
     SetStatus = function(self, text, seconds)
