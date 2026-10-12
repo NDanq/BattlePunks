@@ -183,7 +183,7 @@ nimble_add_module(RenderCore SHARED
 # them; the encoder only an editor build. Its own library, built without the
 # engine's warnings and, off MSVC (where /O2 clashes with Debug's /RTC1),
 # optimised even in Debug -- unoptimised, BC7 is many times slower.
-set(RENDERCORE_BC7ENC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/bc7enc_rdo-b943862")
+set(RENDERCORE_BC7ENC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../ThirdParty/Source/bc7enc_rdo-b943862")
 add_library(NimbleBc7enc STATIC
         "${RENDERCORE_BC7ENC_DIR}/rgbcx.cpp"
         "${RENDERCORE_BC7ENC_DIR}/bc7decomp.cpp")

@@ -1094,7 +1094,7 @@ endif()
 # A multi-config generator configures every configuration at once, so the
 # test executables exist in its Shipping configuration too: leave them out of
 # that configuration's build (see "Tests" above). The engine's test targets
-# are named *Tests or *SmokeTest; vendored trees (External/) are not looked at.
+# are named *Tests or *SmokeTest; vendored trees (ThirdParty/) are not looked at.
 if(NM_MULTI_CONFIG AND NM_TESTS_ENABLED)
     function(nm_exclude_tests_from_shipping InDir)
         get_property(NM_TARGETS DIRECTORY "${InDir}" PROPERTY BUILDSYSTEM_TARGETS)
@@ -1106,7 +1106,7 @@ if(NM_MULTI_CONFIG AND NM_TESTS_ENABLED)
         endforeach()
         get_property(NM_SUBDIRS DIRECTORY "${InDir}" PROPERTY SUBDIRECTORIES)
         foreach(NM_SUB IN LISTS NM_SUBDIRS)
-            if(NOT NM_SUB MATCHES "/External/")
+            if(NOT NM_SUB MATCHES "/ThirdParty/")
                 nm_exclude_tests_from_shipping("${NM_SUB}")
             endif()
         endforeach()

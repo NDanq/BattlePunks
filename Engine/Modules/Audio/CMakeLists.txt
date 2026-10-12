@@ -31,7 +31,7 @@ option(AUDIO_BUILD_TESTS "Build the Audio tests" ON)
 # Vorbis through the stb_vorbis it ships in extras/), a resource manager with
 # its own job threads, a node-graph mixer and a 3D spatializer. One header;
 # MiniaudioImpl.c is its single implementation unit.
-set(AUDIO_MINIAUDIO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/miniaudio-0.11.25")
+set(AUDIO_MINIAUDIO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../ThirdParty/Source/miniaudio-0.11.25")
 
 if(NOT EXISTS "${AUDIO_MINIAUDIO_DIR}/miniaudio.h")
     message(FATAL_ERROR "Vendored miniaudio not found at ${AUDIO_MINIAUDIO_DIR}.")

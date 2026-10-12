@@ -28,22 +28,22 @@ option(NETCORE_BUILD_TESTS "Build the NetCore loopback test" ON)
 # over UDP, connection handling and fragmentation in nine C files. Source form
 # under External/, as GameCore vendors Lua: no find_package, no FetchContent,
 # a fresh clone configures with no per-machine setup.
-set(NETCORE_ENET_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/enet-1.3.18")
+set(NETCORE_ENET_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../ThirdParty/Source/enet-1.3.18")
 
 if(NOT EXISTS "${NETCORE_ENET_DIR}/include/enet/enet.h")
     message(FATAL_ERROR "Vendored ENet not found at ${NETCORE_ENET_DIR}.")
 endif()
 
 set(NETCORE_ENET_SOURCES
-        External/enet-1.3.18/callbacks.c
-        External/enet-1.3.18/compress.c
-        External/enet-1.3.18/host.c
-        External/enet-1.3.18/list.c
-        External/enet-1.3.18/packet.c
-        External/enet-1.3.18/peer.c
-        External/enet-1.3.18/protocol.c
-        External/enet-1.3.18/unix.c
-        External/enet-1.3.18/win32.c
+        ${NETCORE_ENET_DIR}/callbacks.c
+        ${NETCORE_ENET_DIR}/compress.c
+        ${NETCORE_ENET_DIR}/host.c
+        ${NETCORE_ENET_DIR}/list.c
+        ${NETCORE_ENET_DIR}/packet.c
+        ${NETCORE_ENET_DIR}/peer.c
+        ${NETCORE_ENET_DIR}/protocol.c
+        ${NETCORE_ENET_DIR}/unix.c
+        ${NETCORE_ENET_DIR}/win32.c
 )
 
 if(NOT TARGET ENet::ENet)

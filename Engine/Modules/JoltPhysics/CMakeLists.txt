@@ -29,7 +29,7 @@ option(JOLTPHYSICS_BUILD_TESTS "Build the JoltPhysics tests (Engine/Tests/Physic
 # backends, shaders or object streams. The vendored tree IS the source list,
 # so it is globbed; bumping Jolt is the same extraction from the new release
 # plus JOLTPHYSICS_JOLT_DIR below.
-set(JOLTPHYSICS_JOLT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/JoltPhysics-5.6.0")
+set(JOLTPHYSICS_JOLT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../ThirdParty/Source/JoltPhysics-5.6.0")
 if(NOT EXISTS "${JOLTPHYSICS_JOLT_DIR}/Jolt/Jolt.h")
     message(FATAL_ERROR "JoltPhysics: no vendored Jolt at '${JOLTPHYSICS_JOLT_DIR}'")
 endif()

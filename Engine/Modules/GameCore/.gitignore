@@ -12,11 +12,6 @@
 # directory, which the directory patterns alone would miss. The Qt moc/qrc/ui
 # entries those two files also carry are deliberately absent: nothing in this
 # module is built with Qt.
-#
-# Nothing under External/lua-5.4.8/ needs excluding: unlike SDL, Lua's
-# official distribution ships no examples/ or test/ tree alongside its library
-# sources -- src/ is the interpreter and library, doc/ is the HTML manual
-# (including its logo.gif and OSIApproved png), and both are committed in full.
 # ---------------------------------------------------------------------------
 
 # Build trees

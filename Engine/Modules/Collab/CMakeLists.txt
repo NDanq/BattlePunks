@@ -27,7 +27,7 @@ option(COLLAB_BUILD_TESTS "Build the Collab loopback test" ON)
 # NetCore's vendored ENet 1.3.18 (MIT), one copy in the tree. Whichever of
 # NetCore and Collab configures first defines the target; Collab must not
 # depend on NetCore being on.
-set(COLLAB_ENET_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../NetCore/External/enet-1.3.18")
+set(COLLAB_ENET_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../ThirdParty/Source/enet-1.3.18")
 if(NOT TARGET ENet::ENet)
     if(NOT EXISTS "${COLLAB_ENET_DIR}/include/enet/enet.h")
         message(FATAL_ERROR "Vendored ENet not found at ${COLLAB_ENET_DIR}.")

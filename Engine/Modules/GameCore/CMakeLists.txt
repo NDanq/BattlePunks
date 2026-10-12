@@ -36,7 +36,7 @@ option(GAMECORE_BUILD_SMOKETEST "Build GameCoreSmokeTest" OFF)
 # GAMEWINDOW_SDL_DIR is: which Lua a given commit builds against is answerable
 # from the source, not from whatever happens to be on disk. Bumping it is one
 # edit here plus the matching path in this module's .gitignore.
-set(GAMECORE_LUA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/lua-5.4.8")
+set(GAMECORE_LUA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../ThirdParty/Source/lua-5.4.8")
 
 if(NOT EXISTS "${GAMECORE_LUA_DIR}/src/lua.h")
     message(FATAL_ERROR
@@ -51,38 +51,38 @@ endif()
 # rather than globbed so that a future Lua source added upstream does not
 # silently join this target without a review of what it is.
 set(GAMECORE_LUA_SOURCES
-        External/lua-5.4.8/src/lapi.c
-        External/lua-5.4.8/src/lauxlib.c
-        External/lua-5.4.8/src/lbaselib.c
-        External/lua-5.4.8/src/lcode.c
-        External/lua-5.4.8/src/lcorolib.c
-        External/lua-5.4.8/src/lctype.c
-        External/lua-5.4.8/src/ldblib.c
-        External/lua-5.4.8/src/ldebug.c
-        External/lua-5.4.8/src/ldo.c
-        External/lua-5.4.8/src/ldump.c
-        External/lua-5.4.8/src/lfunc.c
-        External/lua-5.4.8/src/lgc.c
-        External/lua-5.4.8/src/linit.c
-        External/lua-5.4.8/src/liolib.c
-        External/lua-5.4.8/src/llex.c
-        External/lua-5.4.8/src/lmathlib.c
-        External/lua-5.4.8/src/lmem.c
-        External/lua-5.4.8/src/loadlib.c
-        External/lua-5.4.8/src/lobject.c
-        External/lua-5.4.8/src/lopcodes.c
-        External/lua-5.4.8/src/loslib.c
-        External/lua-5.4.8/src/lparser.c
-        External/lua-5.4.8/src/lstate.c
-        External/lua-5.4.8/src/lstring.c
-        External/lua-5.4.8/src/lstrlib.c
-        External/lua-5.4.8/src/ltable.c
-        External/lua-5.4.8/src/ltablib.c
-        External/lua-5.4.8/src/ltm.c
-        External/lua-5.4.8/src/lundump.c
-        External/lua-5.4.8/src/lutf8lib.c
-        External/lua-5.4.8/src/lvm.c
-        External/lua-5.4.8/src/lzio.c
+        ${GAMECORE_LUA_DIR}/src/lapi.c
+        ${GAMECORE_LUA_DIR}/src/lauxlib.c
+        ${GAMECORE_LUA_DIR}/src/lbaselib.c
+        ${GAMECORE_LUA_DIR}/src/lcode.c
+        ${GAMECORE_LUA_DIR}/src/lcorolib.c
+        ${GAMECORE_LUA_DIR}/src/lctype.c
+        ${GAMECORE_LUA_DIR}/src/ldblib.c
+        ${GAMECORE_LUA_DIR}/src/ldebug.c
+        ${GAMECORE_LUA_DIR}/src/ldo.c
+        ${GAMECORE_LUA_DIR}/src/ldump.c
+        ${GAMECORE_LUA_DIR}/src/lfunc.c
+        ${GAMECORE_LUA_DIR}/src/lgc.c
+        ${GAMECORE_LUA_DIR}/src/linit.c
+        ${GAMECORE_LUA_DIR}/src/liolib.c
+        ${GAMECORE_LUA_DIR}/src/llex.c
+        ${GAMECORE_LUA_DIR}/src/lmathlib.c
+        ${GAMECORE_LUA_DIR}/src/lmem.c
+        ${GAMECORE_LUA_DIR}/src/loadlib.c
+        ${GAMECORE_LUA_DIR}/src/lobject.c
+        ${GAMECORE_LUA_DIR}/src/lopcodes.c
+        ${GAMECORE_LUA_DIR}/src/loslib.c
+        ${GAMECORE_LUA_DIR}/src/lparser.c
+        ${GAMECORE_LUA_DIR}/src/lstate.c
+        ${GAMECORE_LUA_DIR}/src/lstring.c
+        ${GAMECORE_LUA_DIR}/src/lstrlib.c
+        ${GAMECORE_LUA_DIR}/src/ltable.c
+        ${GAMECORE_LUA_DIR}/src/ltablib.c
+        ${GAMECORE_LUA_DIR}/src/ltm.c
+        ${GAMECORE_LUA_DIR}/src/lundump.c
+        ${GAMECORE_LUA_DIR}/src/lutf8lib.c
+        ${GAMECORE_LUA_DIR}/src/lvm.c
+        ${GAMECORE_LUA_DIR}/src/lzio.c
 )
 
 if(NOT TARGET Lua::Lua)
@@ -133,7 +133,7 @@ endif()
 # Text worlds and prefabs are XML (WorldPackage.h). Every build but Shipping
 # reads them (WITH_UNCOOKED); Shipping links none of it. Built by hand, like Lua.
 # PUGIXML_NO_XPATH: unused, and most of the library.
-set(GAMECORE_PUGIXML_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/pugixml-1.16")
+set(GAMECORE_PUGIXML_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../ThirdParty/Source/pugixml-1.16")
 
 if(NOT TARGET PugiXml::PugiXml)
     if(NOT EXISTS "${GAMECORE_PUGIXML_DIR}/src/pugixml.hpp")
