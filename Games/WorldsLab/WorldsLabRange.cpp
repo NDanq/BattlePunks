@@ -1,5 +1,6 @@
 #include "WorldsLabWalker.h"
 
+#include "Public/NimbleEngine/AudioFacade.h"
 #include "Public/NimbleEngine/Avatar.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameSession.h"
@@ -17,8 +18,10 @@
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
+#include "Public/RenderCore/Components/AnimSocketComponent.h"
 #include "Public/RenderCore/Components/AnimationComponent.h"
 #include "Public/RenderCore/Components/CameraComponent.h"
+#include "Public/RenderCore/Components/ParticleSystemComponent.h"
 #include "Public/UI/UIAction.h"
 #include "Public/UI/UIDocument.h"
 #include "Public/UI/UISystem.h"
@@ -32,6 +35,7 @@
 #include <cstring>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 /*
  * WorldsLabRange: the Shooting Range world's mode
@@ -741,7 +745,19 @@ struct RangeGunComponent
 
     /* The pause menu's Reset Score, from the shooter's own process. */
     void ServerResetScore(const GameCore::RpcContext& InContext);
+
+    /* What the script decided, shown and heard on every process with a player
+     * (the authority's script calls gun:Shot / gun:Sound): the shot's flash and
+     * report, and at InAt -- reached along InDir -- what InHit (ERangeHit) did. */
+    void MulticastShot(const GameCore::RpcContext& InContext, const EngineCore::Vector3& InAt, const EngineCore::Vector3& InDir, uint8_t InHit);
+    /* The gun's other sounds (ERangeSound). */
+    void MulticastSound(const GameCore::RpcContext& InContext, uint8_t InSound);
 };
+
+/* What a shot hit, for its effect and sound (gun:Shot's last argument). */
+enum ERangeHit : uint8_t { RangeHit_Nothing = 0, RangeHit_Steel, RangeHit_Dummy, RangeHit_Paper, RangeHit_Other };
+/* gun:Sound's argument. */
+enum ERangeSound : uint8_t { RangeSound_Reload = 0, RangeSound_DryFire };
 
 GAMECORE_DEFINE_COMPONENT(RangeGunComponent, "RangeGun")
 
@@ -772,6 +788,9 @@ GAMECORE_DEFINE_COMPONENT_REPLICATION(RangeGunComponent)
 GAMECORE_DEFINE_COMPONENT_RPCS(RangeGunComponent)
 {
     Rpc.Server<&RangeGunComponent::ServerResetScore>("ServerResetScore").RateLimit(2);
+    /* Stale a moment later, so sent once. */
+    Rpc.Multicast<&RangeGunComponent::MulticastShot>("MulticastShot").Unreliable();
+    Rpc.Multicast<&RangeGunComponent::MulticastSound>("MulticastSound").Unreliable();
 }
 
 /* RangeShooter.lua's view: gun:GetMag() / gun:SetMag(n) and the rest; Status as text. */
@@ -789,6 +808,19 @@ GAMECORE_DEFINE_COMPONENT_SCRIPT(RangeGunComponent)
     {
         std::snprintf(C.Status, sizeof(C.Status), "%s", Call.GetString(1));
     });
+    /* gun:Shot(hx, hy, hz, dx, dy, dz, hit): the shot, for every process to show (MulticastShot). */
+    Bind.Method("Shot", [](RangeGunComponent& C, GameCore::ScriptCall& Call)
+    {
+        if(!C.Owner.OwningWorld) { return; }
+        GAMECORE_RPC(RangeGunComponent, MulticastShot)(C.Owner.OwningWorld->GetEntity(C.Owner.Entity), Call.GetVector3(1),
+                                                       Call.GetVector3(4), uint8_t(Call.GetInt(7)));
+    });
+    /* gun:Sound(n): 0 the reload, 1 a dry fire (MulticastSound). */
+    Bind.Method("Sound", [](RangeGunComponent& C, GameCore::ScriptCall& Call)
+    {
+        if(!C.Owner.OwningWorld) { return; }
+        GAMECORE_RPC(RangeGunComponent, MulticastSound)(C.Owner.OwningWorld->GetEntity(C.Owner.Entity), uint8_t(Call.GetInt(1)));
+    });
 }
 
 void RangeGunComponent::ServerResetScore(const GameCore::RpcContext&)
@@ -801,6 +833,142 @@ void RangeGunComponent::ServerResetScore(const GameCore::RpcContext&)
         GameCore::EventArgs None;
         World->GetEvents().Emit("Range.ScoreReset", None);
     }
+}
+
+namespace
+{
+    constexpr const char* RangeSounds    = "Content/Sounds/ShootingRange/";
+    constexpr const char* RangeParticles = "Content/Particles/ShootingRange/";
+
+    /* A process that shows the game: not a dedicated server. */
+    bool IsPresentation() { return !NimbleEngine::IsDedicatedServer(); }
+
+    /* Particle bursts this process made, destroyed after their life (TickRangeEffects). */
+    struct RangeEffect { GameCore::EntityID Entity; double Left; };
+    std::vector<RangeEffect> GRangeEffects;
+
+    /* What this process has shown, for autoplay's report. */
+    int GShotsShown = 0, GSoundsShown = 0, GPistolDraws = 0;
+
+    void SpawnRangeEffect(GameCore::World& InWorld, const char* InSystem, const EngineCore::Vector3& InAt, const double InLife)
+    {
+        GameCore::Entity Fx = InWorld.CreateEntity("RangeEffect");
+        GameCore::TransformComponent Transform;
+        Transform.Position = InAt;
+        Fx.AddComponent(Transform);
+        RenderCore::ParticleSystemComponent Emitter;
+        std::snprintf(Emitter.System, sizeof(Emitter.System), "%s%s.nmparticle", RangeParticles, InSystem);
+        Fx.AddComponent(Emitter);
+        GRangeEffects.push_back({ Fx.GetID(), InLife });
+    }
+
+    void TickRangeEffects(GameCore::World& InWorld, const double InSeconds)
+    {
+        for(size_t Index = GRangeEffects.size(); Index-- > 0;)
+        {
+            RangeEffect& Each = GRangeEffects[Index];
+            Each.Left -= InSeconds;
+            if(Each.Left > 0.0) { continue; }
+            if(InWorld.IsAlive(Each.Entity)) { InWorld.DestroyEntity(Each.Entity); }
+            GRangeEffects.erase(GRangeEffects.begin() + std::ptrdiff_t(Index));
+        }
+    }
+
+    void ClearRangeEffects(GameCore::World* InWorld)
+    {
+        for(const RangeEffect& Each : GRangeEffects)
+        {
+            if(InWorld && InWorld->IsAlive(Each.Entity)) { InWorld->DestroyEntity(Each.Entity); }
+        }
+        GRangeEffects.clear();
+    }
+
+    /* A sound from InShooter's gun: in the ear of its own player, from where it stands for everyone else. */
+    void PlayGunSound(GameCore::World& InWorld, const GameCore::EntityID InShooter, const char* InName, const float InVolume)
+    {
+        const std::string Path = std::string(RangeSounds) + InName;
+        if(InShooter == NimbleEngine::GetLocalAvatar(InWorld, 0))
+        {
+            NimbleEngine::PlaySound2D(InWorld, Path.c_str(), InVolume);
+        }
+        else
+        {
+            NimbleEngine::PlaySoundAttached(InWorld, Path.c_str(), InShooter, InVolume);
+        }
+    }
+
+    /* Where the pistol sits: holstered on the spine, or in the right hand (the
+     * Blender file's Child Of offsets). Every process with a player poses every
+     * shooter's pistol from its RangeGun (PoseShooters). */
+    struct PistolSeat { const char* Bone; EngineCore::Vector3 Position, Rotation; };
+    const PistolSeat HolsterSeat{ "DEF-spine",  EngineCore::Vector3(-19.719f, 0.128f, -4.773f), EngineCore::Vector3(-75.407f,  7.744f,   2.009f) };
+    const PistolSeat HandSeat   { "DEF-hand.R", EngineCore::Vector3( -2.110f, 7.087f, -0.769f), EngineCore::Vector3(-85.592f, 13.264f, 175.197f) };
+
+    void PoseShooters(GameCore::World& InWorld)
+    {
+        InWorld.Each<RangeGunComponent>([&InWorld](GameCore::Entity InShooter, RangeGunComponent& InGun)
+        {
+            if(auto* Animation = InShooter.GetComponent<RenderCore::AnimationComponent>())
+            {
+                if(Animation->GetBool("Armed") != (InGun.bDrawn != 0)) { Animation->SetBool("Armed", InGun.bDrawn != 0); }
+            }
+            const GameCore::EntityID Pistol = WorldsLabWalker::FindChild(InWorld, InShooter.GetID(), "Pistol");
+            auto* Socket = Pistol.IsSet() ? InWorld.GetEntity(Pistol).GetComponent<RenderCore::AnimSocketComponent>() : nullptr;
+            if(!Socket) { return; }
+            const PistolSeat& Seat = InGun.bReady ? HandSeat : HolsterSeat;
+            if(&Seat == &HandSeat && std::strcmp(Socket->Bone, Seat.Bone) != 0) { ++GPistolDraws; }
+            if(std::strcmp(Socket->Bone, Seat.Bone) == 0) { return; }
+            std::snprintf(Socket->Bone, sizeof(Socket->Bone), "%s", Seat.Bone);
+            Socket->PositionOffset = Seat.Position;
+            Socket->RotationOffset = Seat.Rotation;
+        });
+    }
+
+    /* InShooter's muzzle in the world, here: its pistol is posed here (PoseShooters). */
+    EngineCore::Vector3 MuzzleOf(GameCore::World& InWorld, const GameCore::EntityID InShooter)
+    {
+        const GameCore::EntityID Pistol = WorldsLabWalker::FindChild(InWorld, InShooter, "Pistol");
+        const GameCore::EntityID Muzzle = Pistol.IsSet() ? WorldsLabWalker::FindChild(InWorld, Pistol, "Muzzle") : GameCore::EntityID();
+        if(Muzzle.IsSet()) { return InWorld.GetEntity(Muzzle).GetWorldPose().Position; }
+        return InWorld.GetEntity(InShooter).GetWorldPose().Position + EngineCore::Vector3(0.0f, 140.0f, 0.0f);
+    }
+}
+
+void RangeGunComponent::MulticastShot(const GameCore::RpcContext&, const EngineCore::Vector3& InAt, const EngineCore::Vector3& InDir,
+                                      const uint8_t InHit)
+{
+    GameCore::World* World = Owner.OwningWorld;
+    if(!World || !IsPresentation()) { return; }
+    const GameCore::EntityID Shooter = Owner.Entity;
+
+    ++GShotsShown;
+    SpawnRangeEffect(*World, "MuzzleFlash", MuzzleOf(*World, Shooter), 1.2);
+    PlayGunSound(*World, Shooter, "Gunshot.nmsound", 1.0f);
+
+    /* The effect a little short of the hit, out of the surface. */
+    const EngineCore::Vector3 Short = InAt - InDir * 3.0f;
+    const auto Impact = [World, &InAt, &Short](const char* InSystem, const double InLife, const char* InSound, const float InVolume)
+    {
+        SpawnRangeEffect(*World, InSystem, Short, InLife);
+        NimbleEngine::PlaySoundAt(*World, (std::string(RangeSounds) + InSound).c_str(), InAt, InVolume);
+    };
+    switch(InHit)
+    {
+        case RangeHit_Steel: Impact("Sparks", 1.0, "SteelHit.nmsound", 1.0f); break;
+        case RangeHit_Dummy: Impact("Dust",   1.0, "Impact.nmsound",   0.8f); break;
+        case RangeHit_Paper: Impact("Dust",   1.4, "PaperHit.nmsound", 0.7f); break;
+        case RangeHit_Other: Impact("Dust",   1.4, "Impact.nmsound",   0.6f); break;
+        default: break;
+    }
+}
+
+void RangeGunComponent::MulticastSound(const GameCore::RpcContext&, const uint8_t InSound)
+{
+    GameCore::World* World = Owner.OwningWorld;
+    if(!World || !IsPresentation()) { return; }
+    ++GSoundsShown;
+    if(InSound == RangeSound_Reload)  { PlayGunSound(*World, Owner.Entity, "Reload.nmsound", 0.8f); }
+    if(InSound == RangeSound_DryFire) { PlayGunSound(*World, Owner.Entity, "DryFire.nmsound", 0.9f); }
 }
 
 namespace
@@ -874,6 +1042,11 @@ public:
 
         GameCore::World& World = Session->GetWorld();
         TickHud(World);
+        if(IsPresentation())
+        {
+            PoseShooters(World);
+            TickRangeEffects(World, InFrame.DeltaSeconds);
+        }
 
         /* This process's own shooter only: a client's Escape is its own pause menu, not the server's. */
         World.Each<NimbleEngine::AvatarHarnessComponent>([this](const GameCore::Entity&, NimbleEngine::AvatarHarnessComponent& InHarness)
@@ -898,6 +1071,7 @@ public:
             Session->GetWorld().GetEvents().UnsubscribeAll(this);
             Session->GetUI().Close(HudPath);
         }
+        ClearRangeEffects(Session ? &Session->GetWorld() : nullptr);
         EngineCore::ConfigVar* MaxShadowed = EngineCore::ConfigFindVarByPath("Shadows.MaxShadowedLights");
         if(MaxShadowed && PreviousShadowedLights >= 0)
         {
@@ -953,7 +1127,9 @@ private:
         {
             bReportedAutoPlay = true;
             CORE_LOG("[ShootingRange] HUD after autoplay: " + std::to_string(Gun->Mag) + " + " + std::to_string(Gun->Reserve)
-                     + " rounds, " + std::to_string(Gun->Hits) + " hits of " + std::to_string(Gun->Shots) + " shots")
+                     + " rounds, " + std::to_string(Gun->Hits) + " hits of " + std::to_string(Gun->Shots) + " shots; shown here: "
+                     + std::to_string(GShotsShown) + " shots, " + std::to_string(GSoundsShown) + " gun sounds, "
+                     + std::to_string(GPistolDraws) + " draws")
         }
 
         HudState Now;

@@ -20,14 +20,15 @@
 -- the shooter's RangeGun component, which this script keeps. A spawned prefab's script runs on
 -- the authority only, so on a Play Together client the gun arrives replicated. The clock is
 -- the mode's too. The pause menu's Reset Score reaches the server as an RPC; its tally is the
--- gun's, and the script hears Range.ScoreReset for its own (kills, wounds).
+-- gun's, and the script hears Range.ScoreReset for its own (kills, wounds). The flash, the
+-- sounds and the impacts are every process's to show (gun:Shot, gun:Sound: multicast RPCs), and
+-- the mode poses every shooter's pistol from its gun (holstered, or in hand once Ready).
 
 local DRAW_SECONDS = 0.5   -- a dedicated server runs no animation, so no WeaponToHand: in hand after this
-local SOUNDS = "Content/Sounds/ShootingRange/"
-local PARTICLES = "Content/Particles/ShootingRange/"
-
-local HOLSTER = { Bone = "DEF-spine",  Position = { -19.719, 0.128, -4.773 }, Rotation = { -75.407,  7.744,   2.009 } }
-local HAND    = { Bone = "DEF-hand.R", Position = {  -2.110, 7.087, -0.769 }, Rotation = { -85.592, 13.264, 175.197 } }
+-- What a shot hit, for the effect and sound every process shows (gun:Shot; ERangeHit in WorldsLabRange.cpp).
+local HIT_NOTHING, HIT_STEEL, HIT_DUMMY, HIT_PAPER, HIT_OTHER = 0, 1, 2, 3, 4
+-- gun:Sound's (ERangeSound).
+local SOUND_RELOAD, SOUND_DRY_FIRE = 0, 1
 
 local MAGAZINE     = 17
 local RESERVE      = 68
@@ -42,12 +43,6 @@ local BODY_KICK    = 2500     -- along a shot into one already down
 local SPREAD_HIP   = 0.9      -- degrees
 local SPREAD_AIM   = 0.15
 
-local function Seat(socket, where)
-    socket:SetBone(where.Bone)
-    socket:SetPositionOffset(where.Position[1], where.Position[2], where.Position[3])
-    socket:SetRotationOffset(where.Rotation[1], where.Rotation[2], where.Rotation[3])
-end
-
 -- The view direction of a rotation (pitch, yaw) in degrees: +Z turned (Rz * Ry * Rx).
 local function Forward(pitch, yaw)
     local p, y = math.rad(pitch), math.rad(yaw)
@@ -58,8 +53,6 @@ return {
     OnStart = function(self)
         self.Animation = self.Root:GetComponent("Animation")
         self.Harness   = self.Root:GetComponent("AvatarHarness")
-        self.Socket    = self.Instance:Find("Pistol"):GetComponent("Anim Socket")
-        self.Muzzle    = self.Instance:Find("Muzzle"):GetComponent("Transform")
         self.Camera    = self.Instance:Find("Camera"):GetComponent("Transform")
         self.Boom      = self.Instance:Find("CameraBoom"):GetComponent("Transform")
         -- What the HUD shows, wherever it is shown (RangeGun, WorldsLabRange.cpp).
@@ -72,10 +65,8 @@ return {
         self.DrawTime = 0.0
         self.Reloading, self.Cooldown = 0.0, 0.0
         self.StatusTime = 0.0
-        self.Effects = {}
         self.Wounds = {}   -- hits taken, by dummy entity id
         self.Kills = 0
-        Seat(self.Socket, HOLSTER)
         self.Animation:SetBool("Armed", false)
         self:SetStatus("")
         self:UpdateHud()
@@ -89,12 +80,10 @@ return {
         local id = self.Root:GetID()
         Events.On("AnimNotify", function(entity, name)
             if entity:GetID() ~= id then return end
+            -- The mode seats the pistol in the hand once the gun is Ready (PoseShooters).
             if name == "WeaponToHand" then
-                Seat(self.Socket, HAND)
                 self.Ready = self.Drawn
                 self:UpdateHud()
-            elseif name == "WeaponToHolster" then
-                Seat(self.Socket, HOLSTER)
             end
         end)
     end,
@@ -105,7 +94,6 @@ return {
 
     OnPostPhysics = function(self, dt)
         self.Cooldown = math.max(0.0, self.Cooldown - dt)
-        self:TickEffects(dt)
         if self.StatusTime > 0.0 then
             self.StatusTime = self.StatusTime - dt
             if self.StatusTime <= 0.0 then self:SetStatus("") end
@@ -157,13 +145,13 @@ return {
         if not self.Ready or self.Reloading > 0.0 or self.Mag >= MAGAZINE or self.Reserve <= 0 then return end
         self.Reloading = RELOAD_TIME
         self:SetStatus("RELOADING")
-        Audio.PlaySound2D(SOUNDS .. "Reload.nmsound", 0.8)
+        self.Gun:Sound(SOUND_RELOAD)
     end,
 
     Fire = function(self, aiming)
         if not self.Ready or self.Reloading > 0.0 or self.Cooldown > 0.0 then return end
         if self.Mag <= 0 then
-            Audio.PlaySound2D(SOUNDS .. "DryFire.nmsound", 0.9)
+            self.Gun:Sound(SOUND_DRY_FIRE)
             self:SetStatus(self.Reserve > 0 and "EMPTY  -  R TO RELOAD" or "OUT OF AMMO", 1.5)
             return
         end
@@ -184,33 +172,29 @@ return {
         local ahead = math.max(0, (bx0 - cx) * dx + (by0 - cy) * dy + (bz0 - cz) * dz)
         local ox, oy, oz = cx + dx * ahead, cy + dy * ahead, cz + dz * ahead
 
-        local mx, my, mz = self.Muzzle:GetWorldPosition()
-        self:Effect("MuzzleFlash", mx, my, mz, 1.2)
-        Audio.PlaySound2D(SOUNDS .. "Gunshot.nmsound", 1.0)
-
+        -- What it hit decides here; every process shows it (gun:Shot, MulticastShot in WorldsLabRange.cpp).
         local hit, entity, hx, hy, hz = Physics.Raycast(ox, oy, oz, dx, dy, dz, RANGE, SHOT_MASK)
+        local kind = HIT_NOTHING
         if hit and entity then
             local name = entity:GetName()
-            local bx, by, bz = hx - dx * 3, hy - dy * 3, hz - dz * 3
             if name == "SteelPlate" then
+                kind = HIT_STEEL
                 self.Gun:SetHits(self.Gun:GetHits() + 1)
                 local body = entity:GetComponent("Rigid Body")
                 if body then body:AddImpulse(dx * STEEL_KICK, dy * STEEL_KICK, dz * STEEL_KICK) end
-                self:Effect("Sparks", bx, by, bz, 1.0)
-                Audio.PlaySoundAt(SOUNDS .. "SteelHit.nmsound", hx, hy, hz, 1.0)
             elseif entity:GetComponent("Ragdoll") then
+                kind = HIT_DUMMY
                 self:HitDummy(entity, entity:GetComponent("Ragdoll"), dx, dy, dz, hx, hy, hz)
-                self:Effect("Dust", bx, by, bz, 1.0)
-                Audio.PlaySoundAt(SOUNDS .. "Impact.nmsound", hx, hy, hz, 0.8)
             elseif name == "PaperStand" then
+                kind = HIT_PAPER
                 self.Gun:SetHits(self.Gun:GetHits() + 1)
-                self:Effect("Dust", bx, by, bz, 1.4)
-                Audio.PlaySoundAt(SOUNDS .. "PaperHit.nmsound", hx, hy, hz, 0.7)
             else
-                self:Effect("Dust", bx, by, bz, 1.4)
-                Audio.PlaySoundAt(SOUNDS .. "Impact.nmsound", hx, hy, hz, 0.6)
+                kind = HIT_OTHER
             end
+        else
+            hx, hy, hz = ox + dx * RANGE, oy + dy * RANGE, oz + dz * RANGE
         end
+        self.Gun:Shot(hx, hy, hz, dx, dy, dz, kind)
         if self.Mag == 0 then self:SetStatus(self.Reserve > 0 and "EMPTY  -  R TO RELOAD" or "OUT OF AMMO") end
         self:UpdateHud()
     end,
@@ -233,27 +217,6 @@ return {
             self.Kills = self.Kills + 1
             ragdoll:ActivateWithImpulse(dx * KILL_KICK, dy * KILL_KICK, dz * KILL_KICK, hx, hy, hz)
             self:SetStatus(head and "HEADSHOT" or "DOWN", 1.0)
-        end
-    end,
-
-    -- A particle burst at a point, destroyed after its life.
-    Effect = function(self, system, x, y, z, life)
-        local fx = World.CreateEntity("RangeEffect")
-        fx:AddComponent("Transform"):SetPosition(x, y, z)
-        local particles = fx:AddComponent("Particle System")
-        particles:SetSystem(PARTICLES .. system .. ".nmparticle")
-        particles:SetEmitting(true)
-        self.Effects[#self.Effects + 1] = { Entity = fx, Left = life }
-    end,
-
-    TickEffects = function(self, dt)
-        for i = #self.Effects, 1, -1 do
-            local e = self.Effects[i]
-            e.Left = e.Left - dt
-            if e.Left <= 0.0 then
-                if e.Entity:IsValid() then e.Entity:Destroy() end
-                table.remove(self.Effects, i)
-            end
         end
     end,
 
