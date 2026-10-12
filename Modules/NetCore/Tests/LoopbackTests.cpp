@@ -61,6 +61,7 @@ namespace
         EntityID            Target;
         char                Label[16] = "pawn";
         int32_t             Secret   = 7;   // never replicated
+        float               Glow     = 0.0f;   // replicated Smooth()
 
         void ServerMove(const RpcContext& InContext, const EngineCore::Vector3& InTo);
         void ClientPing(int32_t InValue);
@@ -149,6 +150,7 @@ namespace
         Rep.Field("Health",   &PawnComponent::Health);
         Rep.Entity("Target",  &PawnComponent::Target);
         Rep.Field("Label",    &PawnComponent::Label, RFF_InitialOnly);
+        Rep.Field("Glow",     &PawnComponent::Glow).Smooth();
     }
 
     GAMECORE_DEFINE_COMPONENT_RPCS(PawnComponent)
@@ -213,8 +215,9 @@ namespace
     {
         size_t Count = 0;
         const ReplicatedFieldEntry* Fields = FindComponentReplication(PawnComponent::StaticType().ID, Count);
-        Check(Fields && Count == 4, "the replication table has its four fields");
-        if(Fields && Count == 4)
+        Check(Fields && Count == 5, "the replication table has its five fields");
+        Check(Fields && (Fields[4].Flags & RFF_Smooth) != 0 && (Fields[1].Flags & RFF_Smooth) == 0, "Smooth() marks its field, and only its field");
+        if(Fields && Count == 5)
         {
             Check(Fields[0].Offset == offsetof(PawnComponent, Position) && Fields[1].Offset == offsetof(PawnComponent, Health),
                   "replicated field offsets match offsetof");
@@ -1075,6 +1078,66 @@ namespace
     }
 }
 
+namespace
+{
+    /* A Smooth() field: a client blends it between the server's updates, as a
+     * Transform, so a step from 0 to 100 passes through what lies between --
+     * while a plain field jumps. */
+    void TestFieldSmoothing()
+    {
+        std::printf("[field smoothing]\n");
+        World ServerWorld, ClientWorld;
+        NetSession Server, Client;
+        const Pair Both{ &Server, &Client };
+        NetConfig ServerConfig;
+        ServerConfig.Port = 0;
+        Server.Start(ENetRole::Server, ServerConfig);
+        Server.BindWorld(ServerWorld, "Smooth");
+        NetConfig ClientConfig;
+        std::strcpy(ClientConfig.ServerAddress, "127.0.0.1");
+        ClientConfig.Port = Server.GetPort();
+        ClientConfig.InterpolationDelayMs = 200;
+        Client.Start(ENetRole::Client, ClientConfig);
+        Client.BindWorld(ClientWorld, "Smooth");
+        Check(StepUntil(Both, [&] { return Client.IsConnected(); }), "a client showing others 200 ms back");
+
+        Entity Lamp = ServerWorld.CreateEntity("Lamp");
+        Lamp.AddComponent<NetComponent>();
+        Lamp.AddComponent<PawnComponent>();
+        EntityID There;
+        Check(StepUntil(Both, [&] { There = Client.FindEntityByNetId(Server.GetNetId(Lamp.GetID())); return There.IsSet(); }), "it spawns");
+        const auto Pawn = [&] { return Entity(&ClientWorld, There).GetComponent<PawnComponent>(); };
+        for(int Index = 0; Index < 300; ++Index) { Step(Both); }   // settled at Glow 0
+
+        /* From 0 to 100 over half a second, in ten steps; Health jumps once. */
+        bool bBetween = false, bHealthBetween = false;
+        float Highest = 0.0f;
+        const auto Start = std::chrono::steady_clock::now();
+        Lamp.GetComponent<PawnComponent>()->Health = 500;
+        for(int Leg = 1; Leg <= 10; ++Leg)
+        {
+            Lamp.GetComponent<PawnComponent>()->Glow = 10.0f * float(Leg);
+            while(std::chrono::steady_clock::now() < Start + std::chrono::milliseconds(50 * Leg))
+            {
+                Step(Both);
+                const float Glow = Pawn()->Glow;
+                if(std::fabs(Glow - std::round(Glow / 10.0f) * 10.0f) > 0.5f) { bBetween = true; }
+                Highest = std::max(Highest, Glow);
+                if(Pawn()->Health != 100 && Pawn()->Health != 500) { bHealthBetween = true; }
+            }
+        }
+        Check(bBetween, "a smoothed field shows values between the server's updates");
+        Check(!bHealthBetween, "a plain one only ever shows what was sent");
+        Check(StepUntil(Both, [&] { return Near(Pawn()->Glow, 100.0f); }, 3000), "and the smoothed one settles on the last value");
+        Check(Highest <= 100.0f + 0.01f, "never past it");
+
+        Client.Stop();
+        Server.UnbindWorld();
+        Server.Stop();
+        Client.UnbindWorld();
+    }
+}
+
 int main()
 {
     TestEditorLink();
@@ -1418,6 +1481,7 @@ int main()
     TestQuantization();
     TestBandwidthBudget();
     TestUnreliableRpcs();
+    TestFieldSmoothing();
     TestFlushCost();
     TestStructureChanges(0);
     TestStructureChanges(50);
