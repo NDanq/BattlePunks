@@ -14,7 +14,7 @@
  * --repo is this host's checkout of the project: each session then gets a
  * content worker (NimbleContentWorker, beside this executable) that builds the
  * session branch with --preset (server-relwithdebinfo-msvc on Windows) in a
- * worktree under --data (Saved/CollabWorkers), checks its content, and
+ * worktree under --data (a short per-user folder), checks its content, and
  * catches pushes made outside the editor. It builds and runs whatever is
  * pushed: a trusted team's server only.
  *
@@ -50,7 +50,7 @@ namespace
                     "  --password  session password (or set NIMBLE_COLLAB_PASSWORD)\n"
                     "  --logs      folder for the run log (default Saved/Logs)\n"
                     "  --repo      this host's checkout of the project: a content worker builds and checks each session\n"
-                    "  --data      worktrees and worker logs (default Saved/CollabWorkers)\n"
+                    "  --data      worktrees and worker logs (default %%LOCALAPPDATA%%/NimbleCollab, ~/.local/share/NimbleCollab)\n"
                     "  --preset    the game's CMake preset for the worker (default %s)\n"
                     "  --cmake     the CMake the worker builds with (default: Visual Studio's own on Windows, else cmake)\n",
                     unsigned(Collab::DefaultPort), Collab::GetDefaultWorkerPreset());

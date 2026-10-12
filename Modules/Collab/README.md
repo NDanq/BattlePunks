@@ -87,10 +87,12 @@ Given `--repo` (this host's checkout of the project), the server starts a
 Collab client, introduced by a one-time key (`WorkerHello`), and for each new
 tip of the session branch:
 
-1. keeps a detached `git worktree` of it under `--data`, at `wt/<8 hex>` (one
-   per game and branch, kept between sessions so builds are incremental;
-   short, because a game's build tree is deep and Windows' 260-character path
-   limit is near -- give `--data` a short folder), fetching every
+1. keeps a detached `git worktree` of it under `--data` (by default
+   `%LOCALAPPDATA%/NimbleCollab`, or `~/.local/share/NimbleCollab`), at
+   `wt/<8 hex>` (one per checkout, game and branch, kept between sessions so
+   builds are incremental; short, because a game's build tree is deep and
+   Windows' 260-character path limit is near -- a `--data` of your own should
+   be short too), fetching every
    30 s and at once when an editor pushes;
 2. tells the server what moved if no editor did -- a push from a terminal
    reaches the editors as a `BranchAdvanced` too;
@@ -142,8 +144,8 @@ dock, or `collab.connect host[:port] [name] [password]`, `collab.leave`,
 `collab.status` in the console.
 
 **Play > Net > Launch Local Server** starts one from the editor: the
-NimbleEditorServer beside it, with `--repo` the project's checkout, `--data`
-`Saved/CollabWorkers` and `--logs` `Saved/Logs`. Its output goes to the
+NimbleEditorServer beside it, with `--repo` the project's checkout and
+`--logs` `Saved/Logs`. Its output goes to the
 Console. It stops with **Stop Local Server** or when that editor closes.
 
 > **Trust boundary.** A session is for a trusted team on a LAN or VPN. Don't
