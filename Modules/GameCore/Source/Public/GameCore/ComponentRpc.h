@@ -43,6 +43,12 @@
  *
  *         Rpc.Server<&ShipComponent::ServerFire>("ServerFire").RateLimit(8);   // calls a second, at most
  *
+ * UNRELIABLE. A call is reliable and ordered by default: resent until it
+ * arrives, after everything sent before it. One that is stale a moment
+ * later -- a muzzle flash, a hit marker -- can skip that:
+ *
+ *         Rpc.Multicast<&ShipComponent::MulticastFlash>("MulticastFlash").Unreliable();
+ *
  * Targets:
  *     Server      a client asks the server; on the server it simply runs.
  *     Client      the server asks the entity's owning client (NetComponent).
@@ -143,6 +149,9 @@ namespace GameCore
          * server); 0: only the client's overall budget. Not in the schema:
          * it is the server's own rule. */
         float      MaxPerSecond = 0.0f;
+        /* Sent once, unordered, never resent (NetCore's unreliable channel):
+         * for what is stale a moment later -- a muzzle flash, a hit marker. */
+        uint8_t    bUnreliable  = 0;
     };
 
     /* What Rpc.Server/Client/Multicast return: options for the RPC just
@@ -157,6 +166,15 @@ namespace GameCore
         RpcDeclaration& RateLimit(const float InPerSecond)
         {
             if(Entry) { Entry->MaxPerSecond = InPerSecond > 0.0f ? InPerSecond : 0.0f; }
+            return *this;
+        }
+
+        /* Sent once and forgotten: it may be lost, or arrive out of order
+         * with other calls, and nothing waits behind it. For effects that
+         * mean nothing late. Runs locally as ever where it runs locally. */
+        RpcDeclaration& Unreliable()
+        {
+            if(Entry) { Entry->bUnreliable = 1; }
             return *this;
         }
 

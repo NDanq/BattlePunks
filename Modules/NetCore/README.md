@@ -218,6 +218,20 @@ GAMECORE_RPC(ShipComponent, ServerFire)(Ship, Aim);
 - A call made with the wrong argument types is refused, not misread.
 - An RPC on an entity created this frame stays local until the entity has been
   sent, which happens at the end of the frame.
+- **Reliable by default.** A call is resent until it arrives, in order with
+  everything else on the game channel. One that is stale a moment later,
+  such as a muzzle flash or a hit marker, can be sent once instead:
+
+  ```cpp
+  Rpc.Multicast<&ShipComponent::MulticastFlash>("MulticastFlash").Unreliable();
+  ```
+
+  It goes on its own unsequenced channel, so a lost packet holds nothing up
+  and nothing is resent. It may be lost, or arrive before or after other
+  calls; one that reaches a client before its entity's spawn is dropped. It
+  runs locally exactly as a reliable one does. Rate limits apply the same.
+  `[Net] SimulatedLossPercent` drops it as it drops state. Steampunk PvP
+  sends shots and hit markers this way, and kills reliably.
 
 ### RPC limits
 
@@ -287,9 +301,10 @@ its own arguments, as `PvpFighterComponent::ServerFire` does.
 
 ## Wire
 
-- **Transport.** ENet, with three channels:
+- **Transport.** ENet, with four channels:
   - **game** (reliable, ordered): the handshake, spawns, destroys and RPCs;
   - **state** (unreliable, sequenced): replicated fields and their acks;
+  - **unreliable** (unreliable, unsequenced): RPCs declared `Unreliable`;
   - **editor** (reliable, ordered): the editor link.
 - **Packets.** Every packet is an `EngineCore::Archive` (little-endian). A
   packet that does not parse disconnects its sender.
@@ -534,6 +549,8 @@ a client in one process over 127.0.0.1. It covers:
 - a late joiner
 - the flush's cost with 2000 entities and 4 clients, printed (and the
   movers' state checked to arrive)
+- unreliable RPCs: arriving on a clean link, lost under total loss while a
+  reliable one sent with them still arrives
 - the bandwidth budget: entities held back, the client's own entity
   keeping up, Priority, and everything arriving once things settle
 - quantization: the rounding, and a Transform arriving bit for bit as

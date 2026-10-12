@@ -1984,15 +1984,19 @@ struct NetSession::Impl final : public INetEntityMap
 
     void HandleReceived(const NetPeerID InPeer, const uint8_t InChannel, const std::vector<uint8_t>& InData)
     {
-        if(InChannel != NET_CHANNEL_GAME && InChannel != NET_CHANNEL_STATE) { return; }
+        if(InChannel != NET_CHANNEL_GAME && InChannel != NET_CHANNEL_STATE && InChannel != NET_CHANNEL_UNRELIABLE) { return; }
 
         EngineCore::Archive Ar = EngineCore::Archive::ForReading(InData);
         uint8_t Type = 0;
         Ar << Type;
 
-        /* State and its acks go unreliably on their channel; everything else reliably on the game one. */
+        /* State and its acks go unreliably on their channel; an Unreliable RPC on its own; everything else
+         * reliably on the game one. */
         const bool bStateMessage = ENetMessage(Type) == ENetMessage::StateBatch || ENetMessage(Type) == ENetMessage::StateAck;
-        if(bStateMessage != (InChannel == NET_CHANNEL_STATE)) { Ar.SetError("a message on the wrong channel"); }
+        const bool bRightChannel = InChannel == NET_CHANNEL_STATE      ? bStateMessage
+                                 : InChannel == NET_CHANNEL_UNRELIABLE ? ENetMessage(Type) == ENetMessage::Rpc
+                                                                       : !bStateMessage;
+        if(!bRightChannel) { Ar.SetError("a message on the wrong channel"); }
 
         if(Role == ENetRole::Server)
         {
@@ -2089,6 +2093,18 @@ struct NetSession::Impl final : public INetEntityMap
         {
             std::vector<uint8_t> Copy = InArgs;
             Ar.SerializeBytes(Copy.data(), Size);
+        }
+        if(Ar.HasError()) { return; }
+        if(InRpc.bUnreliable)
+        {
+            /* Once, on its own channel, lost as state is under SimulatedLossPercent. */
+            const auto Send = [&](const NetPeerID InTo)
+            {
+                if(!SimulateLoss()) { Transport.Send(InTo, NET_CHANNEL_UNRELIABLE, Ar.GetBytes(), false, true); }
+            };
+            if(!bInBroadcast) { Send(InPeer); return; }
+            for(const auto& Entry : Clients) { if(Entry.second.bWelcomed) { Send(Entry.first); } }
+            return;
         }
         if(bInBroadcast) { Broadcast(Ar); }
         else             { SendTo(InPeer, Ar); }
