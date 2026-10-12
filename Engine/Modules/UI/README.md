@@ -529,9 +529,10 @@ apart. A game build has no XML parser, so it reads only the cooked form.
 | `cook ui` | Cooks every document to `<project>/Saved/Cooked/Content/UI/...`. |
 | `cook <doc.nmui> [out]` | Cooks one document. |
 
-- An Editor build stages `Content/UI/`. A Client or Server build stages
-  `Saved/Cooked/Content/UI/`, as prefabs are staged. The game's CMakeLists warns when
-  nothing is cooked.
+- Every build but Shipping stages `Content/UI/`, the XML, as prefabs are
+  staged; so does a fresh checkout's server build (a content worker's), with
+  nothing cooked. Shipping and packaged builds stage `Saved/Cooked/Content/UI/`,
+  and the game's CMakeLists warns when nothing is cooked.
 - The cooked form has styles applied, keeps every property as text so an
   unknown property survives, and keeps the reserved sections as written. It is
   deterministic: the same document always cooks to the same bytes.
