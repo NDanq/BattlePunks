@@ -400,6 +400,10 @@ counted.
   full pass spreads over as many ticks as it needs.
 - `GetNetStats` (`StateDeferred`) reports how many entities a client's
   budget held back last tick.
+- **ENet's own packet throttle is off.** It sheds unreliable packets at
+  random, down to 1 in 32, whenever a round trip jumps: a big spawn's
+  reliable burst was enough to lose most state for seconds. The budget
+  chooses what waits instead.
 
 Under a 4 KB/s budget with 300 entities all changing, `NetCore.Loopback`
 sees the client's own entity get every change, a Priority 8 entity about
