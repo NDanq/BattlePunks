@@ -122,7 +122,7 @@ input or renderer: a client a bot drives, for an unattended test or a soak.
 | `MaxClients` | 16 | |
 | `TimeoutMs` | 30000 | the most a peer may go unanswered (see Timeouts) |
 | `ServerTickRate` | 30 | a headless server's frame rate, and so its send rate |
-| `InterpolationDelayMs` | 100 | how far in the past a client shows remote Transforms; 0 shows them as they arrive |
+| `InterpolationDelayMs` | 100 | how far in the past a client shows remote Transforms and `Smooth()` fields; 0 shows them as they arrive |
 | `SimulatedLossPercent` | 0 | testing: this share of the state packets the process sends is dropped |
 | `SpawnPlayerPerClient` | true | the host makes each client a player entity |
 
@@ -182,6 +182,14 @@ GAMECORE_DEFINE_COMPONENT_REPLICATION(TurretComponent)   // in one .cpp
   snapped after every simulation step on both ends
   (`QuantizeEntityReplicatedFields`), so prediction stays exact. The
   encoding is part of the schema hash.
+- **`Smooth()` fields are interpolated** on clients, as the Transform is
+  (see Smoothing and prediction). `float` and `Vector3` only; with
+  `Angles()` they blend the short way round:
+
+  ```cpp
+  Rep.Field("Pitch", &MoverComponent::Pitch).Precision(0.01f).Smooth();
+  Rep.Field("Yaw",   &MoverComponent::Yaw).Angles().Smooth();
+  ```
 - A type allows at most 32 fields, one bit each in the change mask.
 - `TransformComponent` replicates Position, Rotation and Scale out of the box.
 
@@ -279,12 +287,18 @@ its own arguments, as `PvpFighterComponent::ServerFire` does.
 - It shows the Transform `InterpolationDelayMs` in the past, blended between
   the samples on either side. If the server goes quiet, it holds the newest
   sample rather than guessing ahead.
-- Nothing else is interpolated: other replicated fields are written as they
-  arrive.
+- Fields declared `Smooth()` get the same treatment, per field: about a
+  second of samples, shown the same delay behind, held at the newest. A
+  field that sat unchanged through a batch is taken as true at that batch
+  too, so a step after a pause blends over one interval, not the whole
+  pause.
+- Everything else (flags, integers, entity references, fields without
+  `Smooth()`) is written as it arrives.
 
 **Prediction.**
 - An entity with `NetComponent::bPredicted`, on the client that owns it, is
-  never interpolated. The server's Transform is written as it arrives.
+  never interpolated. The server's Transform and smooth fields are written
+  as they arrive.
 - **Replays start from the server's whole state.** A batch carries only the
   fields that changed. So the client keeps every replicated component as the
   server last stated it, and before a replay it copies all of them, every
@@ -544,6 +558,8 @@ a client in one process over 127.0.0.1. It covers:
   disconnect, and MaxRpcBytes
 - a 6 s client stall
 - interpolation, and the prediction handler
+- smooth fields: in-between values while a field steps, an unsmoothed field
+  never in between, settling on the last value without overshooting
 - state under 50% simulated loss each way: changing values, a value changed
   and changed back, and a change just after a spawn
 - a late joiner

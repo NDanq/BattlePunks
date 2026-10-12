@@ -450,16 +450,19 @@ GAMECORE_DEFINE_COMPONENT_SERIALIZER(RangeMoverComponent, 1)
 }
 
 /* Quantized (ComponentReplication.h); the avatar system snaps them after
- * every step on both ends, so prediction stays exact. */
+ * every step on both ends, so prediction stays exact. The view and the
+ * velocity are Smooth() for everyone else: another fighter's spine pitch and
+ * stride (Steampunk PvP's anim state follows them) blend between updates as
+ * its Transform does. */
 GAMECORE_DEFINE_COMPONENT_REPLICATION(RangeMoverComponent)
 {
-    Rep.Field("BodyYaw",   &RangeMoverComponent::BodyYaw).Angles();
-    Rep.Field("CameraYaw", &RangeMoverComponent::CameraYaw).Angles();
-    Rep.Field("Pitch",     &RangeMoverComponent::Pitch).Precision(0.01f);
+    Rep.Field("BodyYaw",   &RangeMoverComponent::BodyYaw).Angles().Smooth();
+    Rep.Field("CameraYaw", &RangeMoverComponent::CameraYaw).Angles().Smooth();
+    Rep.Field("Pitch",     &RangeMoverComponent::Pitch).Precision(0.01f).Smooth();
     Rep.Field("Scope",     &RangeMoverComponent::Scope).Precision(0.001f);
-    Rep.Field("VelX",      &RangeMoverComponent::VelX).Precision(0.01f);
+    Rep.Field("VelX",      &RangeMoverComponent::VelX).Precision(0.01f).Smooth();
     Rep.Field("VelY",      &RangeMoverComponent::VelY).Precision(0.01f);
-    Rep.Field("VelZ",      &RangeMoverComponent::VelZ).Precision(0.01f);
+    Rep.Field("VelZ",      &RangeMoverComponent::VelZ).Precision(0.01f).Smooth();
     Rep.Field("AirTime",   &RangeMoverComponent::AirTime).Precision(0.001f);
     Rep.Flag("Grounded",   &RangeMoverComponent::bGrounded);
     Rep.Flag("Started",    &RangeMoverComponent::bStarted);

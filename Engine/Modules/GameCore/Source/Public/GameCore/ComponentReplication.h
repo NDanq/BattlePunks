@@ -57,6 +57,7 @@ namespace GameCore
     {
         RFF_None        = 0,
         RFF_InitialOnly = 1 << 0,   // sent when the entity spawns on a client, never after
+        RFF_Smooth      = 1 << 1,   // a client blends between updates, as it does a Transform (ReplicatedFieldOptions::Smooth)
     };
 
     /*
@@ -132,6 +133,17 @@ namespace GameCore
         ReplicatedFieldOptions& Angles()
         {
             if(Accepts()) { Entry->Quantize = RQ_Angle; Entry->Step = 0.0f; }
+            return *this;
+        }
+
+        /* A client shows it [Net] InterpolationDelayMs in the past, blended
+         * between the server's updates, as it shows a Transform -- the long
+         * way round never: an Angles() field turns the short way. Not on an
+         * entity the client predicts, nor with a delay of 0: then it is
+         * written as it arrives, like any other field. */
+        ReplicatedFieldOptions& Smooth()
+        {
+            if(Accepts()) { Entry->Flags |= RFF_Smooth; }
             return *this;
         }
 

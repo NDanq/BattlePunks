@@ -356,6 +356,127 @@ struct NetSession::Impl final : public INetEntityMap
     };
     std::unordered_map<int32_t, Interpolation> Interpolations;   // by NetId
 
+    /* A Smooth() field (ComponentReplication.h) of a remote entity over time,
+     * as the server sent it; Interpolate() writes the component. By
+     * ShadowKey << 5 | the field's index. */
+    struct FieldSample
+    {
+        uint32_t TimeMs = 0;
+        float    Value[3] = {};
+    };
+    struct FieldSmoothing
+    {
+        std::vector<FieldSample> Samples;
+        uint8_t                  Components = 1;   // 1 a Float, 3 a Vector3
+        bool                     bAngle     = false;
+    };
+    std::unordered_map<uint64_t, FieldSmoothing> FieldSmooths;
+
+    static uint64_t FieldKey(const int32_t InNetId, const ComponentTypeID InType, const size_t InField)
+    {
+        return (ShadowKey(InNetId, InType) << 5) | uint64_t(InField & 31u);
+    }
+
+    /* Every smoothing of InNetId's InType component: it went, or the entity did. */
+    void ForgetFieldSmooths(const int32_t InNetId, const ComponentTypeID InType)
+    {
+        for(size_t Field = 0; Field < GameCore::REPLICATED_FIELDS_PER_TYPE_MAX; ++Field) { FieldSmooths.erase(FieldKey(InNetId, InType, Field)); }
+    }
+
+    /* The value of InField in InBytes (a component's), as up to three floats. */
+    static uint8_t ReadFloats(const GameCore::ReplicatedFieldEntry& InField, const uint8_t* InBytes, float OutValue[3])
+    {
+        if(InField.FieldType == GameCore::EScriptFieldType::Float)
+        {
+            std::memcpy(&OutValue[0], InBytes + InField.Offset, sizeof(float));
+            return 1;
+        }
+        EngineCore::Vector3 Vector;
+        std::memcpy(&Vector, InBytes + InField.Offset, sizeof(Vector));
+        OutValue[0] = float(Vector.GetX());
+        OutValue[1] = float(Vector.GetY());
+        OutValue[2] = float(Vector.GetZ());
+        return 3;
+    }
+
+    static void WriteFloats(const GameCore::ReplicatedFieldEntry& InField, void* InComponent, const float InValue[3])
+    {
+        char* At = static_cast<char*>(InComponent) + InField.Offset;
+        if(InField.FieldType == GameCore::EScriptFieldType::Float) { std::memcpy(At, &InValue[0], sizeof(float)); return; }
+        const EngineCore::Vector3 Vector(InValue[0], InValue[1], InValue[2]);
+        std::memcpy(At, &Vector, sizeof(Vector));
+    }
+
+    /* A new value for a smoothed field, at the batch's server time -- with the
+     * same care as a Transform's (PushSample) for a field that sat still. */
+    void PushFieldSample(const uint64_t InKey, const GameCore::ReplicatedFieldEntry& InField, const float InValue[3])
+    {
+        FieldSmoothing& Smooth = FieldSmooths[InKey];
+        Smooth.Components = InField.FieldType == GameCore::EScriptFieldType::Float ? 1 : 3;
+        Smooth.bAngle     = InField.Quantize == GameCore::RQ_Angle;
+
+        FieldSample Sample;
+        Sample.TimeMs = LastServerTimeMs;
+        std::memcpy(Sample.Value, InValue, sizeof(Sample.Value));
+        std::vector<FieldSample>& Samples = Smooth.Samples;
+        if(!Samples.empty() && PrevServerTimeMs != 0 && Samples.back().TimeMs < PrevServerTimeMs && PrevServerTimeMs < Sample.TimeMs)
+        {
+            FieldSample Held = Samples.back();
+            Held.TimeMs = PrevServerTimeMs;
+            Samples.push_back(Held);
+        }
+        if(!Samples.empty() && Samples.back().TimeMs >= Sample.TimeMs) { Samples.back() = Sample; }
+        else                                                           { Samples.push_back(Sample); }
+        while(Samples.size() > 2 && Samples.front().TimeMs + 1000 < Sample.TimeMs) { Samples.erase(Samples.begin()); }
+    }
+
+    /* Every smoothed field, at the render time: between its samples, else held at the nearest. */
+    void InterpolateFields(const double InRenderMs)
+    {
+        for(auto It = FieldSmooths.begin(); It != FieldSmooths.end();)
+        {
+            const uint64_t        Shadow = It->first >> 5;
+            const size_t          Index  = size_t(It->first & 31u);
+            const int32_t         NetId  = int32_t(uint32_t(Shadow >> 16));
+            const ComponentTypeID Type   = ComponentTypeID(Shadow & 0xFFFFu);
+            const EntityID        Entity = FromNetId(NetId);
+            size_t FieldCount = 0;
+            const GameCore::ReplicatedFieldEntry* Fields = GameCore::FindComponentReplication(Type, FieldCount);
+            void* Component = Entity.IsSet() && Fields && Index < FieldCount ? GameCore::Entity(BoundWorld, Entity).GetComponentByType(Type) : nullptr;
+            const std::vector<FieldSample>& Samples = It->second.Samples;
+            if(!Component || Samples.empty()) { It = FieldSmooths.erase(It); continue; }
+
+            /* Became this client's to predict: the server's latest, and no more blending. */
+            if(IsPredictedHere(Entity))
+            {
+                WriteFloats(Fields[Index], Component, Samples.back().Value);
+                It = FieldSmooths.erase(It);
+                continue;
+            }
+
+            size_t After = 0;
+            while(After < Samples.size() && double(Samples[After].TimeMs) <= InRenderMs) { ++After; }
+            float Value[3] = {};
+            if(After == 0 || After == Samples.size())
+            {
+                std::memcpy(Value, (After == 0 ? Samples.front() : Samples.back()).Value, sizeof(Value));
+            }
+            else
+            {
+                const FieldSample& A = Samples[After - 1];
+                const FieldSample& B = Samples[After];
+                const double Alpha = (InRenderMs - double(A.TimeMs)) / double(B.TimeMs - A.TimeMs);
+                for(uint8_t C = 0; C < It->second.Components; ++C)
+                {
+                    Value[C] = It->second.bAngle ? float(LerpAngle(A.Value[C], B.Value[C], Alpha))
+                                                 : float(double(A.Value[C]) + (double(B.Value[C]) - double(A.Value[C])) * Alpha);
+                }
+            }
+            WriteFloats(Fields[Index], Component, Value);
+            ++It;
+        }
+    }
+
     /* Owned, predicted entities whose server state arrived this poll. */
     std::vector<int32_t> Corrected;
     CorrectionFn         OnCorrection        = nullptr;
@@ -396,6 +517,7 @@ struct NetSession::Impl final : public INetEntityMap
             {
                 const uint64_t Key = ShadowKey(InNetId, Type);
                 ServerValues.erase(Key);
+                ForgetFieldSmooths(InNetId, Type);
                 for(auto& Client : Clients)
                 {
                     Client.second.Baselines.erase(Key);
@@ -509,6 +631,7 @@ struct NetSession::Impl final : public INetEntityMap
     {
         if(Role != ENetRole::Client || !BoundWorld || !bHaveServerTime) { return; }
         const double RenderMs = double(NowMs()) - ServerOffsetMs - double(Config.InterpolationDelayMs);
+        InterpolateFields(RenderMs);
 
         for(auto It = Interpolations.begin(); It != Interpolations.end();)
         {
@@ -1379,6 +1502,7 @@ struct NetSession::Impl final : public INetEntityMap
         PendingParents.clear();
         CreatedHere.clear();
         ServerValues.clear();
+        FieldSmooths.clear();
     }
 
     /* SnapshotDone: whatever the snapshot did not send again is gone on the server. */
@@ -1507,6 +1631,7 @@ struct NetSession::Impl final : public INetEntityMap
             if(!bInReturning) { ForgetSession(); }
             ResetBatches();
             Interpolations.clear();
+            FieldSmooths.clear();
             PendingParents.clear();
             bHaveServerTime = false;
             Unconfirmed.clear();
@@ -1655,6 +1780,7 @@ struct NetSession::Impl final : public INetEntityMap
                 Told.erase(std::remove(Told.begin(), Told.end(), Info->ID), Told.end());
             }
             ServerValues.erase(ShadowKey(NetId, Info->ID));
+            ForgetFieldSmooths(NetId, Info->ID);
             if(BoundWorld->IsAlive(Entity)) { Handle.RemoveComponentByType(Info->ID); }
         }
     }
@@ -1784,9 +1910,20 @@ struct NetSession::Impl final : public INetEntityMap
          * component, just before the replay (FireCorrections). */
         if(Server && !IsPredictedHere(Entity))
         {
+            const bool bSmoothing = Config.InterpolationDelayMs > 0;
             for(size_t Field = 0; Field < FieldCount; ++Field)
             {
                 if((Mask & (1u << Field)) == 0) { continue; }
+                /* A Smooth() field goes into its samples; Interpolate() writes it. Its first is written at once. */
+                if(bSmoothing && (Fields[Field].Flags & GameCore::RFF_Smooth) != 0)
+                {
+                    const uint64_t Key = FieldKey(NetId, Type, Field);
+                    const bool bFirst = FieldSmooths.find(Key) == FieldSmooths.end();
+                    float Value[3] = {};
+                    ReadFloats(Fields[Field], Server->data(), Value);
+                    PushFieldSample(Key, Fields[Field], Value);
+                    if(!bFirst) { continue; }
+                }
                 std::memcpy(static_cast<char*>(Component) + Fields[Field].Offset, Server->data() + Fields[Field].Offset, Fields[Field].Size);
             }
         }
@@ -2390,6 +2527,7 @@ void NetSession::UnbindWorld()
     P->bHadSession       = false;
     P->bAwaitingSnapshot = false;
     P->ServerValues.clear();
+    P->FieldSmooths.clear();
     P->Unconfirmed.clear();
     P->CreatedHere.clear();
 }
