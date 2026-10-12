@@ -60,8 +60,9 @@
  *   damage     the server's: Health, Kills, Deaths and Ammo are replicated
  *              fields of each fighter's PvpFighter component
  *   feedback   Multicast RPCs -- MulticastShot (everyone else's flash, sound
- *              and impact), MulticastKilled (the kill feed, the ragdoll) -- and
- *              ClientHitConfirm to the shooter (the hit marker)
+ *              and impact; unreliable), MulticastKilled (the kill feed, the
+ *              ragdoll; reliable) -- and ClientHitConfirm to the shooter (the
+ *              hit marker; unreliable)
  *   the match  a networked PvpMatch entity the server makes: the clock, the
  *              phase, the winner; first to [WorldsLab] PvpFragLimit kills, or the
  *              most when [WorldsLab] PvpMatchSeconds run out, then a new round
@@ -172,9 +173,11 @@ GAMECORE_DEFINE_COMPONENT_RPCS(PvpFighterComponent)
     /* No faster than the gun (FireDelay), with room for a little jitter; the server drops the rest. */
     Rpc.Server<&PvpFighterComponent::ServerFire>("ServerFire").RateLimit(8);
     Rpc.Server<&PvpFighterComponent::ServerReload>("ServerReload").RateLimit(4);
-    Rpc.Multicast<&PvpFighterComponent::MulticastShot>("MulticastShot");
+    /* Effects: stale a moment later, so sent once (Unreliable). A kill is
+     * not: the feed and the ragdoll must hear of every one. */
+    Rpc.Multicast<&PvpFighterComponent::MulticastShot>("MulticastShot").Unreliable();
     Rpc.Multicast<&PvpFighterComponent::MulticastKilled>("MulticastKilled");
-    Rpc.Client<&PvpFighterComponent::ClientHitConfirm>("ClientHitConfirm");
+    Rpc.Client<&PvpFighterComponent::ClientHitConfirm>("ClientHitConfirm").Unreliable();
 }
 
 // === The match ===================================================================

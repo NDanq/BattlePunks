@@ -28,7 +28,8 @@ namespace NetCore
         NET_CHANNEL_GAME   = 0,   // reliable, ordered: handshake, spawns, destroys, RPCs
         NET_CHANNEL_EDITOR = 1,   // reliable, ordered: the editor link
         NET_CHANNEL_STATE  = 2,   // unreliable, sequenced: replicated state and its acks
-        NET_CHANNEL_COUNT  = 3,
+        NET_CHANNEL_UNRELIABLE = 3,   // unreliable, unsequenced: RPCs declared Unreliable
+        NET_CHANNEL_COUNT  = 4,
     };
 
     /* The most a state packet carries, so it fits one UDP datagram under the
@@ -80,7 +81,8 @@ namespace NetCore
         /* Reliable: delivered, in order on its channel, resent until it is.
          * Unreliable: once; lost, or dropped if a newer one on its channel
          * arrived first. */
-        void Send(NetPeerID InPeer, uint8_t InChannel, const std::vector<uint8_t>& InBytes, bool bInReliable = true);
+        void Send(NetPeerID InPeer, uint8_t InChannel, const std::vector<uint8_t>& InBytes, bool bInReliable = true,
+                  bool bInUnsequenced = false);
         void Flush();
 
         /* Politely: Disconnected arrives through Service. InReason is what the

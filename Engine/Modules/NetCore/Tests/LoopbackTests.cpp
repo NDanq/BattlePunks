@@ -68,6 +68,8 @@ namespace
         void ServerPoke();                                  // RateLimit(10)
         void ServerShout(const RpcString<200>& InText);     // longer than a strict MaxRpcBytes
         void ServerStamp(const RpcContext& InContext);      // records the call's view time
+        void MulticastSpark(int32_t InValue);               // Unreliable
+        void ServerSpark(int32_t InValue);                  // Unreliable
     };
 
     struct RpcLog
@@ -85,6 +87,8 @@ namespace
         uint32_t    StampView       = 0xFFFFFFFFu;
         uint32_t    StampServerTime = 0;
         bool        bStampRemote    = false;
+        int         Sparks          = 0;
+        int32_t     LastSpark       = 0;
     };
     RpcLog GServerLog;
     RpcLog GClientLog;
@@ -118,6 +122,9 @@ namespace
 
     void PawnComponent::ServerPoke()                            { ++LogFor(Owner).Pokes; }
     void PawnComponent::ServerShout(const RpcString<200>&)      { ++LogFor(Owner).Shouts; }
+    void PawnComponent::MulticastSpark(const int32_t InValue) { RpcLog& Log = LogFor(Owner); ++Log.Sparks; Log.LastSpark = InValue; }
+    void PawnComponent::ServerSpark(const int32_t InValue)    { RpcLog& Log = LogFor(Owner); ++Log.Sparks; Log.LastSpark = InValue; }
+
     void PawnComponent::ServerStamp(const RpcContext& InContext)
     {
         RpcLog& Log = LogFor(Owner);
@@ -152,6 +159,8 @@ namespace
         Rpc.Server<&PawnComponent::ServerPoke>("ServerPoke").RateLimit(10);
         Rpc.Server<&PawnComponent::ServerShout>("ServerShout");
         Rpc.Server<&PawnComponent::ServerStamp>("ServerStamp");
+        Rpc.Multicast<&PawnComponent::MulticastSpark>("MulticastSpark").Unreliable();
+        Rpc.Server<&PawnComponent::ServerSpark>("ServerSpark").Unreliable();
     }
 
     // === Stepping ============================================================
@@ -998,6 +1007,74 @@ namespace
     }
 }
 
+namespace
+{
+    /* RPCs declared Unreliable: sent once on their own channel. They arrive on
+     * a clean link; under total loss they never do, while reliable ones still do. */
+    void TestUnreliableRpcs()
+    {
+        std::printf("[unreliable rpcs]\n");
+        size_t Count = 0;
+        const RpcEntry* Rpcs = FindComponentRpcs(PawnComponent::StaticType().ID, Count);
+        bool bFlagged = false;
+        for(size_t Index = 0; Index < Count; ++Index) { if(std::strcmp(Rpcs[Index].Name, "MulticastSpark") == 0) { bFlagged = Rpcs[Index].bUnreliable != 0; } }
+        Check(bFlagged, "Unreliable() marks the RPC's entry");
+
+        for(const uint32_t Loss : { 0u, 100u })
+        {
+            World ServerWorld, ClientWorld;
+            NetSession Server, Client;
+            const Pair Both{ &Server, &Client };
+            GServerWorld = &ServerWorld;
+            NetConfig ServerConfig;
+            ServerConfig.Port = 0;
+            ServerConfig.SimulatedLossPercent = Loss;
+            Server.Start(ENetRole::Server, ServerConfig);
+            Server.BindWorld(ServerWorld, "Unreliable");
+            NetConfig ClientConfig;
+            std::strcpy(ClientConfig.ServerAddress, "127.0.0.1");
+            ClientConfig.Port = Server.GetPort();
+            Client.Start(ENetRole::Client, ClientConfig);
+            Client.BindWorld(ClientWorld, "Unreliable");
+            Check(StepUntil(Both, [&] { return Client.IsConnected(); }), Loss ? "a server losing every unreliable packet takes a client"
+                                                                            : "a server and client for unreliable RPCs");
+            Entity Pawn = ServerWorld.CreateEntity("Sparky");
+            NetComponent Net;
+            Net.OwnerClient = Client.GetLocalClientId();
+            Pawn.AddComponent(Net);
+            Pawn.AddComponent<PawnComponent>();
+            EntityID There;
+            Check(StepUntil(Both, [&] { There = Client.FindEntityByNetId(Server.GetNetId(Pawn.GetID())); return There.IsSet(); }),
+                  "its pawn spawns (spawns are reliable)");
+            GServerLog = RpcLog();
+            GClientLog = RpcLog();
+
+            GAMECORE_RPC(PawnComponent, MulticastSpark)(Pawn, 7);
+            GAMECORE_RPC(PawnComponent, ClientPing)(Pawn, 9);   // reliable, alongside
+            for(int Index = 0; Index < 200; ++Index) { Step(Both); }
+            if(Loss == 0)
+            {
+                Check(GServerLog.Sparks == 1 && GClientLog.Sparks == 1 && GClientLog.LastSpark == 7,
+                      "an unreliable Multicast runs on the server and reaches the client");
+                GAMECORE_RPC(PawnComponent, ServerSpark)(Entity(&ClientWorld, There), 11);
+                Check(StepUntil(Both, [&] { return GServerLog.Sparks == 2 && GServerLog.LastSpark == 11; }),
+                      "an unreliable Server RPC reaches the server");
+            }
+            else
+            {
+                Check(GServerLog.Sparks == 1 && GClientLog.Sparks == 0, "lost on the way, an unreliable one never arrives");
+                Check(GClientLog.Pings == 1 && GClientLog.LastPing == 9, "while a reliable one sent with it does");
+            }
+
+            Client.Stop();
+            Server.UnbindWorld();
+            Server.Stop();
+            Client.UnbindWorld();
+            GServerWorld = nullptr;
+        }
+    }
+}
+
 int main()
 {
     TestEditorLink();
@@ -1340,6 +1417,7 @@ int main()
     TestViewTime();
     TestQuantization();
     TestBandwidthBudget();
+    TestUnreliableRpcs();
     TestFlushCost();
     TestStructureChanges(0);
     TestStructureChanges(50);

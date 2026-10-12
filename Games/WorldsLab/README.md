@@ -173,7 +173,7 @@ detail):
 | Firing | the driving process sends `ServerFire(origin, direction)` from its camera, and shows its own muzzle flash and impact at once |
 | Hits | the server only, by the engine's lag compensation (`LagCompensation.h`): the street as it is, each fighter's `LagCompensated` capsule where the shooter saw it |
 | Health, ammo, kills, deaths | replicated fields of each fighter's `PvpFighter` component |
-| Feedback | `MulticastShot` (everyone else's flash, sound, impact), `MulticastKilled` (the kill feed, the ragdoll), `ClientHitConfirm` (the shooter's hit marker) |
+| Feedback | `MulticastShot` (everyone else's flash, sound, impact) and `ClientHitConfirm` (the shooter's hit marker), both Unreliable; `MulticastKilled` (the kill feed, the ragdoll), reliable |
 | The match | a networked `PvpMatch` entity the server makes: the clock, the phase, the winner |
 | The pistol and camera boom | made by each process for each fighter (`DressFighter`) and never sent |
 

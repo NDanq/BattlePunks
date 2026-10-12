@@ -63,12 +63,17 @@
  * Wire types index NetSchema's name-sorted list of the types that replicate
  * or have RPCs -- identical on both ends because the schema hash matched.
  *
+ * UNRELIABLE CHANNEL (NET_CHANNEL_UNRELIABLE): unreliable, unsequenced --
+ * once, in whatever order it arrives. Rpc only, for an RPC declared
+ * Unreliable (ComponentRpc.h); the same layout as on the game channel. One
+ * for an entity the receiver does not know yet is dropped.
+ *
  * EDITOR CHANNEL: the Editor* messages (NetEditorLink.h).
  */
 
 namespace NetCore
 {
-    constexpr uint32_t NET_PROTOCOL_VERSION = 7;
+    constexpr uint32_t NET_PROTOCOL_VERSION = 8;
 
     enum class ENetMessage : uint8_t
     {

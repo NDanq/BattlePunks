@@ -38,9 +38,9 @@ namespace NetCore
          * sends: 100ms at a 30Hz server. 0 snaps to each update. */
         uint32_t InterpolationDelayMs = 100;
 
-        /* Testing: this percentage of the unreliable state packets this end
-         * sends (a server's batches, a client's acks) is dropped, as a lossy
-         * network would. 0 in a real game. */
+        /* Testing: this percentage of the unreliable packets this end sends
+         * (a server's state batches, a client's acks, Unreliable RPCs either
+         * way) is dropped, as a lossy network would. 0 in a real game. */
         uint32_t SimulatedLossPercent = 0;
 
         /* RPC LIMITS, a server's on each client (README.md, "RPC limits").
