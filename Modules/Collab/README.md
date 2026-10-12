@@ -88,7 +88,8 @@ Collab client, introduced by a one-time key (`WorkerHello`), and for each new
 tip of the session branch:
 
 1. keeps a detached `git worktree` of it under `--data` (by default
-   `%LOCALAPPDATA%/NimbleCollab`, or `~/.local/share/NimbleCollab`), at
+   `%USERPROFILE%/.nimblecollab`, not AppData, which packaged apps see
+   redirected; or `~/.local/share/NimbleCollab`), at
    `wt/<8 hex>` (one per checkout, game and branch, kept between sessions so
    builds are incremental; short, because a game's build tree is deep and
    Windows' 260-character path limit is near -- a `--data` of your own should

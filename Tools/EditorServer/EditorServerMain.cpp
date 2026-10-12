@@ -50,7 +50,7 @@ namespace
                     "  --password  session password (or set NIMBLE_COLLAB_PASSWORD)\n"
                     "  --logs      folder for the run log (default Saved/Logs)\n"
                     "  --repo      this host's checkout of the project: a content worker builds and checks each session\n"
-                    "  --data      worktrees and worker logs (default %%LOCALAPPDATA%%/NimbleCollab, ~/.local/share/NimbleCollab)\n"
+                    "  --data      worktrees and worker logs (default %%USERPROFILE%%/.nimblecollab, ~/.local/share/NimbleCollab)\n"
                     "  --preset    the game's CMake preset for the worker (default %s)\n"
                     "  --cmake     the CMake the worker builds with (default: Visual Studio's own on Windows, else cmake)\n",
                     unsigned(Collab::DefaultPort), Collab::GetDefaultWorkerPreset());

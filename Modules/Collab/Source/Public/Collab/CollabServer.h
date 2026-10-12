@@ -33,7 +33,7 @@ namespace Collab
         /* Content workers (ContentWorker.h), one per session, when RepoPath is
          * this host's checkout of the project; empty, none. */
         std::string RepoPath;
-        std::string DataDir;                   // worktrees and worker logs; empty: a per-user folder (%LOCALAPPDATA%/NimbleCollab)
+        std::string DataDir;                   // worktrees and worker logs; empty: a per-user folder (%USERPROFILE%/.nimblecollab)
         std::string WorkerExecutable;          // empty: NimbleContentWorker beside this executable
         std::string WorkerPreset;              // empty: GetDefaultWorkerPreset()
         std::string WorkerCMake;               // empty: the worker finds one (ContentWorker.h)
