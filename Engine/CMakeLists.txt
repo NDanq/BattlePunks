@@ -72,12 +72,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Cla
 endif()
 
 # === Compiler cache =========================================================
-# sccache, when it is installed. Objects are cached by content hash, so the
-# expensive thing this repository builds -- the vendored SDL, ~260 translation
-# units of it -- is compiled once per MACHINE rather than once per build tree.
-# A second tree (a standalone Games/Sandbox configure, a CLion tree beside a
-# command-line one, a tree recreated after a wipe) then links SDL instead of
-# rebuilding it.
+# sccache, when it is installed. Objects are cached by content hash, per build
+# tree (NIMBLE_BUILD_TREE_ID below): a tree recreated after a wipe, or rebuilt
+# after a branch switch, takes its objects -- the vendored SDL's ~260
+# translation units among them -- from the cache instead of compiling them.
+# Trees do not share entries; see "ONE CACHE KEY PER BUILD TREE".
 #
 # MUST be set before the first target is created: CMAKE_<LANG>_COMPILER_LAUNCHER
 # is captured into each target as it is declared, so a value set after
@@ -124,7 +123,38 @@ if(NIMBLE_USE_SCCACHE)
             endforeach()
         endif()
 
-        message(STATUS "NimbleEngine: compiler cache enabled -- ${NM_SCCACHE_PROGRAM}")
+        # ONE CACHE KEY PER BUILD TREE. A hit from another tree is unsafe with
+        # MSVC and Ninja: sccache replays the /showIncludes of the compile that
+        # filled the entry, so this tree's .ninja_deps record THAT tree's
+        # headers. Change a header here and nothing here rebuilds -- objects go
+        # stale against it (an engine object calling a game module's virtuals
+        # through the old vtable; SDL relinked on every build once the other
+        # tree was deleted). Trees whose commands match (relative paths: the
+        # vendored SDL, every git worktree of the project) are exactly the ones
+        # that hit.
+        #
+        # sccache keys a compile by its PREPROCESSED text, not its -D flags, and
+        # MSVC's (/EP) carries no file paths -- so a define does not separate
+        # trees. A declaration does: every compile force-includes this tree's
+        # NimbleBuildTree.h, one typedef named for the tree. A tree still hits
+        # its own entries after a wipe or a branch switch.
+        string(SHA1 NM_SCCACHE_TREE "${CMAKE_BINARY_DIR}")
+        string(SUBSTRING "${NM_SCCACHE_TREE}" 0 12 NM_SCCACHE_TREE)
+        set(NM_SCCACHE_TREE_HEADER "${CMAKE_BINARY_DIR}/NimbleBuildTree.h")
+        set(NM_SCCACHE_TREE_TEXT "/* This build tree's compiler-cache key (Engine/CMakeLists.txt). */\ntypedef int NimbleBuildTree_${NM_SCCACHE_TREE};\n")
+        if(EXISTS "${NM_SCCACHE_TREE_HEADER}")
+            file(READ "${NM_SCCACHE_TREE_HEADER}" NM_SCCACHE_TREE_OLD)
+        endif()
+        if(NOT NM_SCCACHE_TREE_OLD STREQUAL NM_SCCACHE_TREE_TEXT)
+            file(WRITE "${NM_SCCACHE_TREE_HEADER}" "${NM_SCCACHE_TREE_TEXT}")   # only when it changes: every object depends on it
+        endif()
+        if(MSVC)
+            add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:/FI${NM_SCCACHE_TREE_HEADER}>")
+        else()
+            add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-include;${NM_SCCACHE_TREE_HEADER}>")
+        endif()
+
+        message(STATUS "NimbleEngine: compiler cache enabled -- ${NM_SCCACHE_PROGRAM} (keys for this tree: ${NM_SCCACHE_TREE})")
     else()
         message(STATUS "NimbleEngine: sccache not found; compiling without a compiler cache")
     endif()
