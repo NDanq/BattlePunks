@@ -55,8 +55,8 @@ nimble_add_module(UI SHARED
         SOURCES     ${UI_SOURCES}
         PUBLIC_DEPS GameCore::GameCore RenderCore::RenderCore)
 
-# Private/ includes, and stb (External/stb, compiled into UIFont.cpp only).
-target_include_directories(UI PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source ${CMAKE_CURRENT_SOURCE_DIR}/../../ThirdParty/Source/stb)
+# Private/ includes, and stb (Engine/ThirdParty/Source/stb, compiled into UIFont.cpp only).
+target_include_directories(UI PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source ${NIMBLE_THIRDPARTY_STB_DIR})
 
 # XML is read by every build but Shipping (WITH_UNCOOKED): the editor, and a
 # Debug or RelWithDebInfo game run uncooked. PRIVATE: no public header

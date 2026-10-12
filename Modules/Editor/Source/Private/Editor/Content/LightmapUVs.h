@@ -9,7 +9,7 @@
 
 /*
  * Lightmap UVs (MeshData::UV1) for a mesh that has none: xatlas
- * (External/xatlas) cuts it into charts and packs them into 0-1 without
+ * (ThirdParty/Source/xatlas-f700c77) cuts it into charts and packs them into 0-1 without
  * overlap, leaving a gutter between charts for a lightmap of at least
  * MIN_LIGHTMAP_RESOLUTION texels across (baked lighting; RENDERPIPELINE.md).
  *

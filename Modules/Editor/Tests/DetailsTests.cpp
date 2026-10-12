@@ -496,6 +496,7 @@ static void TestDocumentation()
     Write(QStringLiteral("README.md"), "# Readme\n\nSee [the guide](Docs/Guide.md#c--you).\n");
     Write(QStringLiteral("Docs/Guide.md"), "# Guide\n\n## Intro\n\ntext\n\n## Intro\n\n## C++ & You\n\n| A | B |\n|---|---|\n| 1 | 2 |\n");
     Write(QStringLiteral("External/Lib/README.md"), "# vendored\n");
+    Write(QStringLiteral("ThirdParty/Source/Lib/README.md"), "# vendored\n");
     Write(QStringLiteral("cmake-build-debug/Notes.md"), "# build\n");
     Write(QStringLiteral("Build/CMakeCache.txt"), "");
     Write(QStringLiteral("Build/Generated.md"), "# build\n");
@@ -505,7 +506,7 @@ static void TestDocumentation()
 
     const QStringList Found = DocumentationWindow::FindMarkdownFiles(Dir.path());
     Expect(Found.size() == 2 && Found.first().endsWith(QStringLiteral("Docs/Guide.md")) && Found.last().endsWith(QStringLiteral("README.md")),
-           "the .md files are found, skipping External/, build trees and hidden folders");
+           "the .md files are found, skipping External/, ThirdParty/, build trees and hidden folders");
 
     Expect(DocumentationWindow::HeadingAnchor(QStringLiteral("Position in the tree")) == QStringLiteral("position-in-the-tree"),
            "a heading's anchor is GitHub's");

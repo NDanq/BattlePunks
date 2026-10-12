@@ -13,7 +13,7 @@
  *
  * A texture records the compression it asks for (TextureData::Compression),
  * and the Texture Viewer edits it. An editor build encodes it on save with
- * the built-in encoder, bc7enc_rdo (External/), into TextureData::Blocks,
+ * the built-in encoder, bc7enc_rdo (ThirdParty/Source/), into TextureData::Blocks,
  * which TBLK stores beside the RGBA8 source. The renderer uploads the blocks
  * as they are where the backend samples the format, and decodes them to
  * RGBA8 where it does not, so the image is the same either way.

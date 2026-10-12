@@ -74,9 +74,10 @@ endif()
 # === Compiler cache =========================================================
 # sccache, when it is installed. Objects are cached by content hash, per build
 # tree (NIMBLE_BUILD_TREE_ID below): a tree recreated after a wipe, or rebuilt
-# after a branch switch, takes its objects -- the vendored SDL's ~260
-# translation units among them -- from the cache instead of compiling them.
-# Trees do not share entries; see "ONE CACHE KEY PER BUILD TREE".
+# after a branch switch, takes its objects from the cache instead of compiling
+# them. Trees do not share entries; see "ONE CACHE KEY PER BUILD TREE". What
+# trees DO share is the third-party libraries, built once per toolchain rather
+# than cached ("Third-party libraries" below).
 #
 # MUST be set before the first target is created: CMAKE_<LANG>_COMPILER_LAUNCHER
 # is captured into each target as it is declared, so a value set after
@@ -520,6 +521,16 @@ target_compile_definitions(EngineCore PUBLIC
         WITH_AUDIO=${NIMBLE_AUDIO_DEFINE}
         NIMBLE_SHIPPING=$<IF:$<CONFIG:Shipping>,1,0>
         WITH_UNCOOKED=$<IF:$<CONFIG:Shipping>,0,1>)
+
+# === Third-party libraries ==================================================
+# SDL3, Jolt, Lua, pugixml, ENet, miniaudio, bc7enc_rdo and xatlas, vendored in
+# ThirdParty/Source. Prebuilt once per toolchain into Intermediate/ThirdParty
+# and IMPORTED here, so no build tree compiles them itself
+# (NIMBLE_PREBUILT_THIRDPARTY; see cmake/NimbleThirdParty.cmake).
+#
+# ORDER IS LOAD-BEARING: after Modules/Core, whose SIMD flags Jolt is built
+# with, and before every module that links one of them.
+include(cmake/NimbleThirdParty.cmake)
 
 # The engine cooks its own shader set from Content/Shaders (see "Cooked
 # shaders" below), so GDI's cook -- its full Odessa set, into its own source

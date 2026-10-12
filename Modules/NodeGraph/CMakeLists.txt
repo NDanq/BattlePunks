@@ -18,7 +18,7 @@ if(NOT COMMAND nimble_add_module)
 endif()
 
 if(NOT TARGET PugiXml::PugiXml)
-    message(FATAL_ERROR "NodeGraph needs PugiXml::PugiXml, which GameCore declares for editor targets.")
+    message(FATAL_ERROR "NodeGraph needs PugiXml::PugiXml (Engine/ThirdParty).")
 endif()
 
 option(NODEGRAPH_BUILD_TESTS "Build NodeGraphTests (golden-file codegen tests)" ON)
