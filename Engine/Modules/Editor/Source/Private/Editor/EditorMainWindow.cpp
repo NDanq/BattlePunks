@@ -896,7 +896,7 @@ void EditorMainWindow::ToggleLocalSessionServer()
     const QString Repo = CollabSession->GetRepositoryRoot();
     if(!Repo.isEmpty())
     {
-        Args << QStringLiteral("--repo") << Repo << QStringLiteral("--data") << Project.filePath(QStringLiteral("Saved/CollabWorkers"));
+        Args << QStringLiteral("--repo") << Repo;   // worktrees: the server's short per-user folder
     }
 
     if(!LocalSessionServer)

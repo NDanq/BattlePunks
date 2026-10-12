@@ -1,6 +1,7 @@
 #include "Public/Collab/CollabServer.h"
 
 #include <cctype>
+#include <cstdlib>
 #include <cstdio>
 #include <chrono>
 #include <filesystem>
@@ -17,6 +18,33 @@ namespace Collab
 namespace
 {
     using Clock = std::chrono::steady_clock;
+
+    /* Where worktrees and worker logs go without --data: a short per-user
+     * folder, since a build under a deep one passes Windows' 260-character
+     * path limit (%LOCALAPPDATA%/NimbleCollab; elsewhere
+     * $XDG_DATA_HOME/NimbleCollab or ~/.local/share/NimbleCollab). */
+    std::string DefaultDataDir()
+    {
+#if defined(_WIN32)
+        const char* Base = std::getenv("LOCALAPPDATA");
+        if(Base && Base[0] != '\0')
+        {
+            return std::string(Base) + "/NimbleCollab";
+        }
+#else
+        const char* Xdg = std::getenv("XDG_DATA_HOME");
+        if(Xdg && Xdg[0] != '\0')
+        {
+            return std::string(Xdg) + "/NimbleCollab";
+        }
+        const char* Home = std::getenv("HOME");
+        if(Home && Home[0] != '\0')
+        {
+            return std::string(Home) + "/.local/share/NimbleCollab";
+        }
+#endif
+        return "Saved/CollabWorkers";
+    }
 
     std::string Short(const std::string& InOid)
     {
@@ -181,7 +209,7 @@ struct CollabServer::Impl
         namespace fs = std::filesystem;
         const std::string Module = InSession.ProjectId.substr(0, InSession.ProjectId.find('@'));
         std::error_code Error;
-        const fs::path Data = fs::absolute(fs::u8path(Config.DataDir.empty() ? std::string("Saved/CollabWorkers") : Config.DataDir), Error);
+        const fs::path Data = fs::absolute(fs::u8path(Config.DataDir.empty() ? DefaultDataDir() : Config.DataDir), Error);
 
         WorkerConfig Worker;
         Worker.ServerHost      = "127.0.0.1";
@@ -189,9 +217,9 @@ struct CollabServer::Impl
         Worker.SessionId       = InSession.Id;
         Worker.Key             = RandomKey();
         Worker.RepoPath        = fs::absolute(fs::u8path(Config.RepoPath), Error).generic_u8string();
-        /* One per game and branch, kept between sessions: the next build is
+        /* One per checkout, game and branch, kept between sessions: the next build is
          * incremental. Short: <data>/wt/<8 hex>, see ShortName. */
-        Worker.WorktreeDir     = (Data / "wt" / ShortName(Module + "/" + InSession.Branch)).generic_u8string();
+        Worker.WorktreeDir     = (Data / "wt" / ShortName(Worker.RepoPath + "|" + Module + "/" + InSession.Branch)).generic_u8string();
 #if defined(_WIN32)
         if(Worker.WorktreeDir.size() > 80)
         {
