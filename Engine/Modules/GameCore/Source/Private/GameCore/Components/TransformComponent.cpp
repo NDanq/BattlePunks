@@ -47,9 +47,12 @@ namespace GameCore
      * changes. Local, like the component itself. */
     GAMECORE_DEFINE_COMPONENT_REPLICATION(TransformComponent)
     {
-        Rep.Field("Position", &TransformComponent::Position);
-        Rep.Field("Rotation", &TransformComponent::Rotation);
-        Rep.Field("Scale",    &TransformComponent::Scale);
+        /* Quantized (ComponentReplication.h): 0.01 units -- a tenth of a
+         * millimetre at a centimetre a unit -- in about 3 bytes a coordinate
+         * near the origin, angles in 2 bytes, scale to a thousandth. */
+        Rep.Field("Position", &TransformComponent::Position).Precision(0.01f);
+        Rep.Field("Rotation", &TransformComponent::Rotation).Angles();
+        Rep.Field("Scale",    &TransformComponent::Scale).Precision(0.001f);
     }
 
     /* GetPosition/SetPosition, GetRotation/SetRotation, GetScale/SetScale, as

@@ -31,7 +31,18 @@ namespace NetCore
         virtual GameCore::EntityID FromNetId(int32_t InNetId) const = 0;
     };
 
-    /* InField of InComponent (the start of the component's bytes). */
+    /* An unsigned integer in 7-bit groups, low first, the top bit set on all
+     * but the last: 1 byte under 128, 2 under 16384. Reading more than 10
+     * bytes, or past the end, is an error. */
+    void     WriteVarUInt(EngineCore::Archive& Ar, uint64_t InValue);
+    uint64_t ReadVarUInt(EngineCore::Archive& Ar);
+
+    /* A signed one, zigzagged first (0, -1, 1, -2... -> 0, 1, 2, 3...), so a small magnitude is short either way. */
+    void    WriteVarInt(EngineCore::Archive& Ar, int64_t InValue);
+    int64_t ReadVarInt(EngineCore::Archive& Ar);
+
+    /* InField of InComponent (the start of the component's bytes); a
+     * quantized one (ReplicatedFieldEntry::Quantize) as its steps or angles. */
     void WriteReplicatedField(EngineCore::Archive& Ar, const GameCore::ReplicatedFieldEntry& InField,
                               const void* InComponent, const INetEntityMap& InMap);
     void ReadReplicatedField(EngineCore::Archive& Ar, const GameCore::ReplicatedFieldEntry& InField,

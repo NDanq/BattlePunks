@@ -19,6 +19,12 @@ Two settings pick a build: the **target** (`NIMBLE_TARGET`) and the
 
 Shipping is Client/Server only. Configuring Editor + Shipping fails on purpose.
 
+**Linux builds with Clang only.** A game's CMakeLists picks `clang` and
+`clang++` before `project()`, and the engine refuses to configure on Linux
+with anything else. A build tree made with GCC has to be configured again
+from scratch: `cmake --fresh`, with the tree's own `-D` options. Windows uses
+MSVC.
+
 Every configuration but Shipping runs **uncooked** (`WITH_UNCOOKED=1`). The
 build stages the project's text worlds and prefabs, and a Debug or
 RelWithDebInfo Client or Server cooks each one the first time it loads it,
@@ -252,6 +258,24 @@ cmake --build --preset client-shipping
 On Linux, use `client-shipping-clang`.
 
 Or configure the engine directly: `cmake -S Engine -B build -DNIMBLE_TARGET=Client -DCMAKE_BUILD_TYPE=Shipping`.
+
+### Recording a video
+
+A game launcher from an Editor-target build records itself with
+`-record=<file.mp4>`:
+
+```
+WorldsLab -Game.StartLevel=SteampunkPvP -record=match.mp4 -Record.Seconds=30 -Record.StartSeconds=5
+```
+
+Each frame is the finished picture with the UI over it, but without the
+`stat` panels. Frames go raw to `ffmpeg`, which must be on the PATH, and come
+out as H.264 at `[Record] Fps` (30). Frames are taken on the wall clock, and
+a late one is repeated, so the video keeps real time. Reading each picture
+back stalls the GPU briefly. `FrameRecorder.h` has the details.
+
+Screen capture tools cannot help on a Linux Wayland desktop: a Vulkan window
+under XWayland has no image for X11 capture to read.
 
 ## Conventions
 

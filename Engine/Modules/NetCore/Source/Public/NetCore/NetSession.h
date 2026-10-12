@@ -80,11 +80,29 @@ namespace NetCore
         /* A client's id on its server, once welcomed; NET_CLIENT_NONE otherwise. */
         GameCore::NetClientID GetLocalClientId() const;
 
+        /* The server's clock, in ms: a server's own (what its batches are
+         * stamped with, and an RpcContext's ViewTimeMs is on), a client's
+         * estimate of it. 0 for a client before its first batch. */
+        uint32_t GetTimeMs() const;
+
+        /* A client trying to rejoin a server it lost (NetConfig::ReconnectGraceMs). */
+        bool IsReconnecting() const;
+
+        /* The token the server gave this client: what rejoins as it, after a
+         * restart too (NetConfig::ReconnectToken). 0 before a welcome. */
+        uint64_t GetReconnectToken() const;
+
         /* The port a server is listening on -- what a Port of 0 became. */
         uint16_t GetPort() const;
 
         /* A server's welcomed clients. */
         size_t GetClientCount() const;
+
+        /* The connection's round trip, loss and traffic: a client's to its
+         * server, once connected; a server's to InClient, once welcomed.
+         * False otherwise. */
+        bool GetServerStats(NetPeerStats& OutStats) const;
+        bool GetClientStats(GameCore::NetClientID InClient, NetPeerStats& OutStats) const;
 
         /* The World networked entities live in, and the level it was loaded
          * from (sent in the handshake, compared, and only warned about). A
@@ -112,6 +130,13 @@ namespace NetCore
          * the disconnect). The host makes the client's player here. */
         using ClientEventFn = void (*)(GameCore::NetClientID InClient, void* InUserData);
         void SetClientEvents(ClientEventFn InConnected, ClientEventFn InDisconnected, void* InUserData);
+
+        /* A server's client whose connection was lost (InAway: its place is
+         * kept, everything it owns stays) and came back in time (InReturned:
+         * same id, its entities sent again). One that does not come back
+         * within NetConfig::ReconnectGraceMs gets InDisconnected then. Same
+         * user data as SetClientEvents. */
+        void SetClientAwayEvents(ClientEventFn InAway, ClientEventFn InReturned);
 
         /*
          * A client's prediction hook. For each entity this client owns and

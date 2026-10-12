@@ -14,10 +14,11 @@ namespace GameCore
     GAMECORE_DEFINE_COMPONENT(NetComponent, "Net")
 
     /* Only the authored switches: the ids are a session's. */
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(NetComponent, 2)
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(NetComponent, 3)
     {
         Ar.Flag("Replicate", C.bReplicate);
         if(Ar.GetVersion() >= 2) { Ar.Flag("Predicted", C.bPredicted); }
+        if(Ar.GetVersion() >= 3) { Ar.Field("Priority", C.Priority); }
     }
 
     /* A client learns which entity is its own from the owner, and how far the
@@ -34,6 +35,7 @@ namespace GameCore
         Bind.ReadOnly("OwnerClient", &NetComponent::OwnerClient);
         Bind.Flag("Replicate",       &NetComponent::bReplicate);
         Bind.Flag("Predicted",       &NetComponent::bPredicted);
+        Bind.Field("Priority",       &NetComponent::Priority);
         Bind.ReadOnly("InputAck",    &NetComponent::InputAck);
     }
 
@@ -42,6 +44,7 @@ namespace GameCore
     {
         Props.Flag("Replicate", &NetComponent::bReplicate);
         Props.Flag("Predicted", &NetComponent::bPredicted);
+        Props.Field("Priority",  &NetComponent::Priority);
     }
 #endif
 }

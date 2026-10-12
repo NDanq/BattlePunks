@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="f61971ac8064258ec8747f05d97da7ff" Name="Airship">
+  <Component Type="Render" Version="5">
+    <Visible Value="true" />
+    <Material0 Value="" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Content/Meshes/Steampunk/Airship.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
+    <Occluder Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-1200" Y="5200" Z="3400" />
+    <Rotation X="0" Y="-18" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

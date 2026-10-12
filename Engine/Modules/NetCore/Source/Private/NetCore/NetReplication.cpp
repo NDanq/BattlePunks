@@ -89,6 +89,85 @@ namespace
     };
 }
 
+void WriteVarUInt(EngineCore::Archive& Ar, uint64_t InValue)
+{
+    do
+    {
+        uint8_t Byte = uint8_t(InValue & 0x7Fu);
+        InValue >>= 7;
+        if(InValue != 0) { Byte |= 0x80u; }
+        Ar << Byte;
+    }
+    while(InValue != 0);
+}
+
+uint64_t ReadVarUInt(EngineCore::Archive& Ar)
+{
+    uint64_t Value = 0;
+    for(int Shift = 0; Shift < 70; Shift += 7)
+    {
+        uint8_t Byte = 0;
+        Ar << Byte;
+        if(Ar.HasError()) { return 0; }
+        Value |= uint64_t(Byte & 0x7Fu) << Shift;
+        if((Byte & 0x80u) == 0) { return Value; }
+    }
+    Ar.SetError("a variable-length integer longer than 10 bytes");
+    return 0;
+}
+
+void WriteVarInt(EngineCore::Archive& Ar, const int64_t InValue)
+{
+    WriteVarUInt(Ar, (uint64_t(InValue) << 1) ^ uint64_t(InValue >> 63));
+}
+
+int64_t ReadVarInt(EngineCore::Archive& Ar)
+{
+    const uint64_t Zig = ReadVarUInt(Ar);
+    return int64_t(Zig >> 1) ^ -int64_t(Zig & 1u);
+}
+
+namespace
+{
+    /* One float of a quantized field, either direction. */
+    void SerializeQuantized(EngineCore::Archive& Ar, const GameCore::ReplicatedFieldEntry& InField, float& InOut)
+    {
+        namespace Q = GameCore::ReplicationQuantize;
+        if(InField.Quantize == GameCore::RQ_Angle)
+        {
+            uint16_t Angle = Ar.IsLoading() ? 0 : Q::ToAngle(InOut);
+            Ar << Angle;
+            if(Ar.IsLoading() && !Ar.HasError()) { InOut = Q::FromAngle(Angle); }
+            return;
+        }
+        if(Ar.IsLoading())
+        {
+            const int64_t Steps = ReadVarInt(Ar);
+            if(!Ar.HasError()) { InOut = Q::FromSteps(Steps, InField.Step); }
+        }
+        else
+        {
+            WriteVarInt(Ar, Q::ToSteps(InOut, InField.Step));
+        }
+    }
+
+    /* A quantized Float or Vector3 at InField, in a scratch copy of its bytes. */
+    void SerializeQuantizedField(EngineCore::Archive& Ar, const GameCore::ReplicatedFieldEntry& InField, void* InBytes)
+    {
+        if(InField.FieldType == GameCore::EScriptFieldType::Float)
+        {
+            SerializeQuantized(Ar, InField, *static_cast<float*>(InBytes));
+            return;
+        }
+        EngineCore::Vector3& Vector = *static_cast<EngineCore::Vector3*>(InBytes);
+        float X = float(Vector.GetX()), Y = float(Vector.GetY()), Z = float(Vector.GetZ());
+        SerializeQuantized(Ar, InField, X);
+        SerializeQuantized(Ar, InField, Y);
+        SerializeQuantized(Ar, InField, Z);
+        if(Ar.IsLoading() && !Ar.HasError()) { Vector = EngineCore::Vector3(X, Y, Z); }
+    }
+}
+
 void WriteReplicatedField(EngineCore::Archive& Ar, const GameCore::ReplicatedFieldEntry& InField,
                           const void* InComponent, const INetEntityMap& InMap)
 {
@@ -103,7 +182,8 @@ void WriteReplicatedField(EngineCore::Archive& Ar, const GameCore::ReplicatedFie
     alignas(16) char Scratch[256];
     if(InField.Size > sizeof(Scratch)) { Ar.SetError("a replicated field larger than 256 bytes"); return; }
     std::memcpy(Scratch, static_cast<const char*>(InComponent) + InField.Offset, InField.Size);
-    SerializeValue(Ar, InField.FieldType, Scratch, InField.Size);
+    if(InField.Quantize != GameCore::RQ_None) { SerializeQuantizedField(Ar, InField, Scratch); }
+    else                                      { SerializeValue(Ar, InField.FieldType, Scratch, InField.Size); }
 }
 
 void ReadReplicatedField(EngineCore::Archive& Ar, const GameCore::ReplicatedFieldEntry& InField,
@@ -121,7 +201,8 @@ void ReadReplicatedField(EngineCore::Archive& Ar, const GameCore::ReplicatedFiel
     alignas(16) char Scratch[256];
     if(InField.Size > sizeof(Scratch)) { Ar.SetError("a replicated field larger than 256 bytes"); return; }
     std::memcpy(Scratch, static_cast<const char*>(InOutComponent) + InField.Offset, InField.Size);
-    SerializeValue(Ar, InField.FieldType, Scratch, InField.Size);
+    if(InField.Quantize != GameCore::RQ_None) { SerializeQuantizedField(Ar, InField, Scratch); }
+    else                                      { SerializeValue(Ar, InField.FieldType, Scratch, InField.Size); }
     if(!Ar.HasError()) { std::memcpy(static_cast<char*>(InOutComponent) + InField.Offset, Scratch, InField.Size); }
 }
 

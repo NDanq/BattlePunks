@@ -799,11 +799,12 @@ void ModuleManager::SweepShadowDirectory()
         for(const std::string& Name : Names)
         {
             /*
-             * Reclaim only directories belonging to a process that is not us.
-             * A concurrently running editor's working set is off limits, and an
-             * entry whose name does not parse is left alone rather than
-             * guessed at -- this function deletes things, so it errs toward
-             * doing nothing.
+             * Reclaim only directories belonging to a process that has exited.
+             * A concurrently running instance's working set is off limits --
+             * an editor, or a second game starting beside this one and copying
+             * its module right now -- and an entry whose name does not parse is
+             * left alone rather than guessed at. This function deletes things,
+             * so it errs toward doing nothing.
              */
             const size_t Dash = Name.find('-');
             if(Dash == std::string::npos || Dash == 0) continue;
@@ -816,7 +817,7 @@ void ModuleManager::SweepShadowDirectory()
             if(!bAllDigits) continue;
 
             const unsigned long Pid = std::strtoul(Name.substr(0, Dash).c_str(), nullptr, 10);
-            if(uint32_t(Pid) == SelfPid) continue;
+            if(uint32_t(Pid) == SelfPid || appProcessIsRunning(uint32_t(Pid))) continue;
 
             DeleteGenerationDirectory(Join(Root, Name), Record.Name);
         }

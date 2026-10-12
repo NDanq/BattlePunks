@@ -77,6 +77,8 @@ void WorldsLabUnregisterExplore();
 /* WorldsLabRange.cpp: the Shooting Range's mode and its shooter's movement. */
 void WorldsLabRegisterRange();
 void WorldsLabUnregisterRange();
+void WorldsLabRegisterPvP();
+void WorldsLabUnregisterPvP();
 
 // === State ==================================================================
 
@@ -184,6 +186,7 @@ public:
         NimbleEngine::RegisterGameMode<WorldsLabGameMode>("WorldsLab");
         WorldsLabRegisterExplore();
         WorldsLabRegisterRange();
+        WorldsLabRegisterPvP();
         return true;
     }
 
@@ -193,6 +196,7 @@ public:
         NimbleEngine::UnregisterGameMode("WorldsLab");
         WorldsLabUnregisterExplore();
         WorldsLabUnregisterRange();
+        WorldsLabUnregisterPvP();
     }
 };
 

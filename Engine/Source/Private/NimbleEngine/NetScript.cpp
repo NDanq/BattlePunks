@@ -58,6 +58,10 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(Net)
              "-> Connected:bool")
        .Tooltip("A client welcomed by its server, or a server listening");
 
+    Lib.Pure("IsReconnecting", [](GameCore::ScriptCall& Call) { Call.PushBool(NimbleEngine::IsNetReconnecting()); },
+             "-> Reconnecting:bool")
+       .Tooltip("A client that lost its server and is trying to rejoin ([Net] ReconnectGraceMs)");
+
     Lib.Pure("GetLocalClientId", [](GameCore::ScriptCall& Call) { Call.PushInteger(NimbleEngine::GetLocalClientId()); },
              "-> Client:integer")
        .Tooltip("This client's id on its server; -1 on a server or when not networked");
@@ -112,5 +116,9 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(Net)
     Lib.Event("ClientConnected", "Client:integer, Player:Entity")
        .Tooltip("Server: a client joined; Player is the entity made for it (unset with [Net] SpawnPlayerPerClient off)");
     Lib.Event("ClientDisconnected", "Client:integer, Player:Entity")
-       .Tooltip("Server: a client left; its entities are destroyed right after");
+       .Tooltip("Server: a client left, or was not back in time; its entities are destroyed right after");
+    Lib.Event("ClientAway", "Client:integer, Player:Entity")
+       .Tooltip("Server: a client's connection was lost; its place is kept while it tries to rejoin ([Net] ReconnectGraceMs)");
+    Lib.Event("ClientReturned", "Client:integer, Player:Entity")
+       .Tooltip("Server: a lost client rejoined in time, as the same client with the same player");
 }

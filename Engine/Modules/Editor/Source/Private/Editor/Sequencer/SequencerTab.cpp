@@ -218,6 +218,12 @@ SequencerTab::SequencerTab(EditorContext& InContext, QWidget* InParent)
 
 SequencerTab::~SequencerTab()
 {
+    /* The document and its history are children, destroyed after this body
+     * by ~QObject -- when this is no longer a SequencerTab. The history
+     * signals as it clears; nothing here may still be listening. */
+    Document->GetHistory().disconnect(this);
+    Document->disconnect(this);
+
     SetViewLocked(false);
     ReleasePreview();
     Sound.reset();

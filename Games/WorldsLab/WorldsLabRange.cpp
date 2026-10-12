@@ -1,3 +1,5 @@
+#include "WorldsLabWalker.h"
+
 #include "Public/NimbleEngine/Avatar.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameSession.h"
@@ -7,6 +9,8 @@
 #include "Public/NimbleEngine/WorldList.h"
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
+#include "Public/GameCore/ComponentReplication.h"
+#include "Public/GameCore/ComponentSerializer.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
@@ -33,7 +37,9 @@
  *
  * The shooter moves by RangeMove, an avatar simulation: a third-person walker
  * on the world's physics, made of raycasts (Jolt has no character controller
- * here) --
+ * here). Steampunk PvP's fighters walk with it too (WorldsLabPvP.cpp); what
+ * it keeps between frames is the avatar's RangeMover component
+ * (WorldsLabWalker.h), so it predicts and replays over the network --
  *
  *   ground   rays down round the feet find the highest walkable surface
  *            within a step: floors, the stairs' ramp, the catwalk's deck
@@ -75,6 +81,7 @@ NIMBLE_DEFINE_INPUT_MAP(Range)
     Map.Action("Reload",  "R, Gamepad.West");
     Map.Action("Holster", "H, 1, Gamepad.North");
     Map.Action("Pause",   "Escape, Gamepad.Start");
+    Map.Action("Scores",  "Tab, Gamepad.Back");   // Steampunk PvP's scoreboard, held
 
     Map.Axis("MoveForward", "W, Up, -S, -Down, -Gamepad.LeftY");
     Map.Axis("MoveRight",   "D, Right, -A, -Left, Gamepad.LeftX");
@@ -117,7 +124,7 @@ namespace
      * walker's forward is +Z: the body's Transform is turned this much from where it faces. */
     constexpr double MeshYaw     = 180.0;
 
-    /* What RangeMove keeps between frames, per avatar. */
+    /* A step's working copy of the avatar's RangeMover, in doubles. */
     struct MoverState
     {
         double BodyYaw   = 0.0;     // where the body faces (+Z at 0); its Transform adds MeshYaw
@@ -130,39 +137,53 @@ namespace
         bool   bGrounded = false;
         bool   bStarted  = false;
     };
-    std::unordered_map<uint64_t, MoverState> GMovers;
+
+    MoverState LoadMover(const RangeMoverComponent& In)
+    {
+        MoverState S;
+        S.BodyYaw = In.BodyYaw; S.CameraYaw = In.CameraYaw; S.Pitch = In.Pitch; S.Scope = In.Scope;
+        S.VelX = In.VelX; S.VelY = In.VelY; S.VelZ = In.VelZ; S.AirTime = In.AirTime;
+        S.bGrounded = In.bGrounded != 0; S.bStarted = In.bStarted != 0;
+        S.CameraX = In.CameraX; S.CameraY = In.CameraY; S.CameraZ = In.CameraZ;
+        return S;
+    }
+
+    void StoreMover(const MoverState& S, RangeMoverComponent& Out)
+    {
+        Out.BodyYaw = float(S.BodyYaw); Out.CameraYaw = float(S.CameraYaw); Out.Pitch = float(S.Pitch); Out.Scope = float(S.Scope);
+        Out.VelX = float(S.VelX); Out.VelY = float(S.VelY); Out.VelZ = float(S.VelZ); Out.AirTime = float(S.AirTime);
+        Out.bGrounded = S.bGrounded ? 1 : 0; Out.bStarted = S.bStarted ? 1 : 0;
+        Out.CameraX = float(S.CameraX); Out.CameraY = float(S.CameraY); Out.CameraZ = float(S.CameraZ);
+    }
 
     struct Vec { double X, Y, Z; };
+
+    /* What the walker stands on and slides along: every layer but 4, where
+     * Steampunk PvP's fighters fall as ragdolls. A ragdoll is simulated only
+     * on a process that draws it -- not on a dedicated server -- so a client
+     * walking into one would step where the server does not, and prediction
+     * would part from it. */
+    constexpr int32_t WalkMask = ~int32_t(4);   // Layer and Mask are bits: Layer 4 is the bit worth 4
 
     bool Ray(GameCore::World& InWorld, const Vec& InFrom, const Vec& InDir, const double InLength,
              NimbleEngine::PhysicsRaycastHit& OutHit)
     {
         return NimbleEngine::PhysicsRaycast(InWorld, EngineCore::Vector3(InFrom.X, InFrom.Y, InFrom.Z),
-                                            EngineCore::Vector3(InDir.X, InDir.Y, InDir.Z), float(InLength), OutHit);
+                                            EngineCore::Vector3(InDir.X, InDir.Y, InDir.Z), float(InLength), OutHit, WalkMask);
     }
 
     double Lerp(const double InA, const double InB, const double InT) { return InA + (InB - InA) * InT; }
 
-    /* What the look axes are multiplied by: the setting, less when scoped. */
+    /* What the look axes are multiplied by: less when scoped. The setting is
+     * applied before the input is sent (ApplyLookSensitivity), so the server
+     * turns the same. */
     double LookScale(const MoverState& InState)
     {
-        return double(GRangeLookSensitivity.GetFloat()) * Lerp(1.0, ScopeLook, InState.Scope);
+        return Lerp(1.0, ScopeLook, InState.Scope);
     }
 
-    double WrapDegrees(double InDegrees)
-    {
-        InDegrees = std::fmod(InDegrees + 180.0, 360.0);
-        return (InDegrees < 0.0 ? InDegrees + 360.0 : InDegrees) - 180.0;
-    }
-
-    GameCore::EntityID FindChild(GameCore::World& InWorld, const GameCore::EntityID InParent, const char* InName)
-    {
-        for(GameCore::EntityID C = InWorld.GetEntity(InParent).GetFirstChild(); C.IsSet(); C = InWorld.GetEntity(C).GetNextSibling())
-        {
-            if(std::strcmp(InWorld.GetEntity(C).GetName(), InName) == 0) { return C; }
-        }
-        return GameCore::EntityID();
-    }
+    using WorldsLabWalker::FindChild;
+    using WorldsLabWalker::WrapDegrees;
 
     /* The move (DX, DZ) from (X, FeetY, Z), slid along whatever the probes hit. */
     void SlideMove(GameCore::World& InWorld, double& InOutX, const double InFeetY, double& InOutZ, double DX, double DZ)
@@ -257,13 +278,17 @@ NIMBLE_DEFINE_AVATAR_SIMULATION(RangeMove, 0.1f)
     static const int AimAction   = NimbleEngine::FindInputAction("Range", "Aim");
 
     GameCore::Entity Avatar = InWorld.GetEntity(InAvatar);
+    if(InFrame.Seconds <= 0.0f) { return; }
+    /* First: adding it may move the avatar's other components. */
+    RangeMoverComponent* Mover = Avatar.GetComponent<RangeMoverComponent>();
+    if(!Mover) { Mover = Avatar.AddComponent<RangeMoverComponent>(); }
     GameCore::TransformComponent* Body = Avatar.GetComponent<GameCore::TransformComponent>();
-    if(!Body || InFrame.Seconds <= 0.0f)
+    if(!Mover || !Body)
     {
         return;
     }
     RenderCore::AnimationComponent* Animation = Avatar.GetComponent<RenderCore::AnimationComponent>();
-    MoverState& S = GMovers[InAvatar.Pack()];
+    MoverState S = LoadMover(*Mover);
     const double Dt = double(InFrame.Seconds);
     if(!S.bStarted)
     {
@@ -361,6 +386,8 @@ NIMBLE_DEFINE_AVATAR_SIMULATION(RangeMove, 0.1f)
         Animation->SetFloat("AimPitch", float(-S.Pitch));
     }
 
+    StoreMover(S, *Mover);
+
     // --- The camera: the boom turned to the view, the camera kept out of walls ------------
     const GameCore::EntityID BoomId = FindChild(InWorld, InAvatar, "CameraBoom");
     if(!BoomId.IsSet()) { return; }
@@ -396,13 +423,109 @@ NIMBLE_DEFINE_AVATAR_SIMULATION(RangeMove, 0.1f)
         {
             Lens->FovY = float(Lerp(FovNormal, FovScope, Ease));
         }
-        S.CameraX = Pivot.X + Off.X * Scale;
-        S.CameraY = Pivot.Y + Off.Y * Scale;
-        S.CameraZ = Pivot.Z + Off.Z * Scale;
+        Mover->CameraX = float(Pivot.X + Off.X * Scale);
+        Mover->CameraY = float(Pivot.Y + Off.Y * Scale);
+        Mover->CameraZ = float(Pivot.Z + Off.Z * Scale);
         Camera->Rotation = EngineCore::Vector3(0.0, 0.0, 0.0);
     }
 }
 
+
+// === The walker, for other modes (WorldsLabWalker.h) =================================
+
+GAMECORE_DEFINE_COMPONENT(RangeMoverComponent, "RangeMover")
+
+GAMECORE_DEFINE_COMPONENT_SERIALIZER(RangeMoverComponent, 1)
+{
+    Ar.Field("BodyYaw",   C.BodyYaw);
+    Ar.Field("CameraYaw", C.CameraYaw);
+    Ar.Field("Pitch",     C.Pitch);
+    Ar.Field("Scope",     C.Scope);
+    Ar.Field("VelX",      C.VelX);
+    Ar.Field("VelY",      C.VelY);
+    Ar.Field("VelZ",      C.VelZ);
+    Ar.Field("AirTime",   C.AirTime);
+    Ar.Flag("Grounded",   C.bGrounded);
+    Ar.Flag("Started",    C.bStarted);
+}
+
+/* Quantized (ComponentReplication.h); the avatar system snaps them after
+ * every step on both ends, so prediction stays exact. The view and the
+ * velocity are Smooth() for everyone else: another fighter's spine pitch and
+ * stride (Steampunk PvP's anim state follows them) blend between updates as
+ * its Transform does. */
+GAMECORE_DEFINE_COMPONENT_REPLICATION(RangeMoverComponent)
+{
+    Rep.Field("BodyYaw",   &RangeMoverComponent::BodyYaw).Angles().Smooth();
+    Rep.Field("CameraYaw", &RangeMoverComponent::CameraYaw).Angles().Smooth();
+    Rep.Field("Pitch",     &RangeMoverComponent::Pitch).Precision(0.01f).Smooth();
+    Rep.Field("Scope",     &RangeMoverComponent::Scope).Precision(0.001f);
+    Rep.Field("VelX",      &RangeMoverComponent::VelX).Precision(0.01f).Smooth();
+    Rep.Field("VelY",      &RangeMoverComponent::VelY).Precision(0.01f);
+    Rep.Field("VelZ",      &RangeMoverComponent::VelZ).Precision(0.01f).Smooth();
+    Rep.Field("AirTime",   &RangeMoverComponent::AirTime).Precision(0.001f);
+    Rep.Flag("Grounded",   &RangeMoverComponent::bGrounded);
+    Rep.Flag("Started",    &RangeMoverComponent::bStarted);
+}
+
+namespace WorldsLabWalker
+{
+    void Forward(const double InPitch, const double InYaw, double& OutX, double& OutY, double& OutZ)
+    {
+        const double P = InPitch * DegToRad, Y = InYaw * DegToRad;
+        OutX = std::sin(Y) * std::cos(P);
+        OutY = -std::sin(P);
+        OutZ = std::cos(Y) * std::cos(P);
+    }
+
+    double WrapDegrees(double InDegrees)
+    {
+        InDegrees = std::fmod(InDegrees + 180.0, 360.0);
+        return (InDegrees < 0.0 ? InDegrees + 360.0 : InDegrees) - 180.0;
+    }
+
+    GameCore::EntityID FindChild(GameCore::World& InWorld, const GameCore::EntityID InParent, const char* InName)
+    {
+        for(GameCore::EntityID C = InWorld.GetEntity(InParent).GetFirstChild(); C.IsSet(); C = InWorld.GetEntity(C).GetNextSibling())
+        {
+            if(std::strcmp(InWorld.GetEntity(C).GetName(), InName) == 0) { return C; }
+        }
+        return GameCore::EntityID();
+    }
+
+    void ApplyLookSensitivity(NimbleEngine::InputSnapshot& InOutInput)
+    {
+        static const int LookX = NimbleEngine::FindInputAxis("Range", "LookX");
+        static const int LookY = NimbleEngine::FindInputAxis("Range", "LookY");
+        const float Sensitivity = GRangeLookSensitivity.GetFloat();
+        if(LookX >= 0) { InOutInput.Axes[LookX] *= Sensitivity; }
+        if(LookY >= 0) { InOutInput.Axes[LookY] *= Sensitivity; }
+    }
+
+    void PlaceWalker(GameCore::World& InWorld, const GameCore::EntityID InAvatar, const double InX, const double InY, const double InZ,
+                     const double InYaw)
+    {
+        GameCore::Entity Avatar = InWorld.GetEntity(InAvatar);
+        RangeMoverComponent* Mover = Avatar.GetComponent<RangeMoverComponent>();
+        if(!Mover) { Mover = Avatar.AddComponent<RangeMoverComponent>(); }
+        if(Mover)
+        {
+            Mover->BodyYaw   = float(WrapDegrees(InYaw));
+            Mover->CameraYaw = Mover->BodyYaw;
+            Mover->Pitch     = 8.0f;
+            Mover->Scope     = 0.0f;
+            Mover->VelX = Mover->VelY = Mover->VelZ = 0.0f;
+            Mover->AirTime   = 0.0f;
+            Mover->bGrounded = 0;
+            Mover->bStarted  = 1;
+        }
+        if(GameCore::TransformComponent* Body = Avatar.GetComponent<GameCore::TransformComponent>())
+        {
+            Body->Position = EngineCore::Vector3(InX, InY, InZ);
+            Body->Rotation = EngineCore::Vector3(0.0, WrapDegrees(InYaw + MeshYaw), 0.0);
+        }
+    }
+}
 
 // === Autoplay ====================================================================
 
@@ -471,6 +594,7 @@ namespace
 
     void AutoPlayFilter(GameCore::World& InWorld, GameCore::EntityID InAvatar, NimbleEngine::InputSnapshot& InOutInput, void*)
     {
+        WorldsLabWalker::ApplyLookSensitivity(InOutInput);
         if(!GRangeAutoPlay.GetBool() || GAuto.bDone) { return; }
         const auto Now = std::chrono::steady_clock::now();
         const double Dt = GAuto.bStarted ? std::clamp(std::chrono::duration<double>(Now - GAuto.Last).count(), 0.0, 0.1) : 0.0;
@@ -485,7 +609,8 @@ namespace
         static const int LookY = NimbleEngine::FindInputAxis("Range", "LookY");
         static const int MoveForward = NimbleEngine::FindInputAxis("Range", "MoveForward");
 
-        const MoverState& Mover = GMovers[InAvatar.Pack()];
+        const RangeMoverComponent* MoverC = InWorld.GetEntity(InAvatar).GetComponent<RangeMoverComponent>();
+        const MoverState Mover = MoverC ? LoadMover(*MoverC) : MoverState();
         const GameCore::TransformComponent* Body = InWorld.GetEntity(InAvatar).GetComponent<GameCore::TransformComponent>();
         if(GAuto.Step >= sizeof(GAutoPlay) / sizeof(GAutoPlay[0]) || !Body)
         {
@@ -595,7 +720,6 @@ public:
 
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
-        GMovers.clear();
         if(EngineCore::ConfigVar* MaxShadowed = EngineCore::ConfigFindVarByPath("Shadows.MaxShadowedLights"))
         {
             PreviousShadowedLights = MaxShadowed->GetInt();
@@ -666,7 +790,6 @@ public:
         {
             Avatars->SetInputFilter(nullptr, nullptr);
         }
-        GMovers.clear();
     }
 
 private:

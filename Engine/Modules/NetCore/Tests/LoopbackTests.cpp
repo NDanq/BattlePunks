@@ -3,7 +3,8 @@
  * one process, each with its own World, stepped together. Covers the
  * handshake, spawning (a new entity, and one the client's level already has),
  * field replication, entity references, Server / Client / Multicast RPCs, the
- * ownership check, a late joiner's snapshot, destruction and disconnects.
+ * ownership check, a late joiner's snapshot, destruction and disconnects,
+ * and an entity changing shape after its spawn.
  *
  * Real sockets on 127.0.0.1, on a port the OS picks, so it runs beside
  * anything else. Every wait is bounded.
@@ -11,9 +12,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreThread.h"
@@ -58,10 +61,16 @@ namespace
         EntityID            Target;
         char                Label[16] = "pawn";
         int32_t             Secret   = 7;   // never replicated
+        float               Glow     = 0.0f;   // replicated Smooth()
 
         void ServerMove(const RpcContext& InContext, const EngineCore::Vector3& InTo);
         void ClientPing(int32_t InValue);
         void MulticastFlash(const EngineCore::Color& InColor, const RpcString<16>& InText, EntityID InAbout);
+        void ServerPoke();                                  // RateLimit(10)
+        void ServerShout(const RpcString<200>& InText);     // longer than a strict MaxRpcBytes
+        void ServerStamp(const RpcContext& InContext);      // records the call's view time
+        void MulticastSpark(int32_t InValue);               // Unreliable
+        void ServerSpark(int32_t InValue);                  // Unreliable
     };
 
     struct RpcLog
@@ -74,6 +83,13 @@ namespace
         std::string LastFlashText;
         EntityID    LastFlashAbout;
         uint8_t     LastFlashRed    = 0;
+        int         Pokes           = 0;
+        int         Shouts          = 0;
+        uint32_t    StampView       = 0xFFFFFFFFu;
+        uint32_t    StampServerTime = 0;
+        bool        bStampRemote    = false;
+        int         Sparks          = 0;
+        int32_t     LastSpark       = 0;
     };
     RpcLog GServerLog;
     RpcLog GClientLog;
@@ -105,6 +121,19 @@ namespace
         Log.LastFlashRed   = InColor.R;
     }
 
+    void PawnComponent::ServerPoke()                            { ++LogFor(Owner).Pokes; }
+    void PawnComponent::ServerShout(const RpcString<200>&)      { ++LogFor(Owner).Shouts; }
+    void PawnComponent::MulticastSpark(const int32_t InValue) { RpcLog& Log = LogFor(Owner); ++Log.Sparks; Log.LastSpark = InValue; }
+    void PawnComponent::ServerSpark(const int32_t InValue)    { RpcLog& Log = LogFor(Owner); ++Log.Sparks; Log.LastSpark = InValue; }
+
+    void PawnComponent::ServerStamp(const RpcContext& InContext)
+    {
+        RpcLog& Log = LogFor(Owner);
+        Log.StampView       = InContext.ViewTimeMs;
+        Log.bStampRemote    = InContext.bRemote;
+        Log.StampServerTime = NetSession::GetActive() ? NetSession::GetActive()->GetTimeMs() : 0;
+    }
+
     GAMECORE_DEFINE_COMPONENT(PawnComponent, "TestPawn")
 
     GAMECORE_DEFINE_COMPONENT_SERIALIZER(PawnComponent, 1)
@@ -121,6 +150,7 @@ namespace
         Rep.Field("Health",   &PawnComponent::Health);
         Rep.Entity("Target",  &PawnComponent::Target);
         Rep.Field("Label",    &PawnComponent::Label, RFF_InitialOnly);
+        Rep.Field("Glow",     &PawnComponent::Glow).Smooth();
     }
 
     GAMECORE_DEFINE_COMPONENT_RPCS(PawnComponent)
@@ -128,7 +158,59 @@ namespace
         Rpc.Server<&PawnComponent::ServerMove>("ServerMove");
         Rpc.Client<&PawnComponent::ClientPing>("ClientPing");
         Rpc.Multicast<&PawnComponent::MulticastFlash>("MulticastFlash");
+        Rpc.Server<&PawnComponent::ServerPoke>("ServerPoke").RateLimit(10);
+        Rpc.Server<&PawnComponent::ServerShout>("ServerShout");
+        Rpc.Server<&PawnComponent::ServerStamp>("ServerStamp");
+        Rpc.Multicast<&PawnComponent::MulticastSpark>("MulticastSpark").Unreliable();
+        Rpc.Server<&PawnComponent::ServerSpark>("ServerSpark").Unreliable();
     }
+
+    /* As many fields as a type may replicate, and one more, which is refused.
+     * The last is Smooth(): its bit and its smoothing key are the top ones. */
+    #define WIDE_FIELDS_8(N) float F##N##0 = 0.0f, F##N##1 = 0.0f, F##N##2 = 0.0f, F##N##3 = 0.0f, \
+                                   F##N##4 = 0.0f, F##N##5 = 0.0f, F##N##6 = 0.0f, F##N##7 = 0.0f;
+    #define WIDE_REP_8(N) Rep.Field("F" #N "0", &WideComponent::F##N##0); Rep.Field("F" #N "1", &WideComponent::F##N##1); \
+                          Rep.Field("F" #N "2", &WideComponent::F##N##2); Rep.Field("F" #N "3", &WideComponent::F##N##3); \
+                          Rep.Field("F" #N "4", &WideComponent::F##N##4); Rep.Field("F" #N "5", &WideComponent::F##N##5); \
+                          Rep.Field("F" #N "6", &WideComponent::F##N##6);
+    #define WIDE_SAVE_8(N) Ar.Field("F" #N "0", C.F##N##0); Ar.Field("F" #N "1", C.F##N##1); Ar.Field("F" #N "2", C.F##N##2); \
+                           Ar.Field("F" #N "3", C.F##N##3); Ar.Field("F" #N "4", C.F##N##4); Ar.Field("F" #N "5", C.F##N##5); \
+                           Ar.Field("F" #N "6", C.F##N##6); Ar.Field("F" #N "7", C.F##N##7);
+
+    struct WideComponent
+    {
+        GAMECORE_COMPONENT_BODY()
+
+        WIDE_FIELDS_8(0) WIDE_FIELDS_8(1) WIDE_FIELDS_8(2) WIDE_FIELDS_8(3)
+        WIDE_FIELDS_8(4) WIDE_FIELDS_8(5) WIDE_FIELDS_8(6) WIDE_FIELDS_8(7)
+        float Extra = 0.0f;   // the 65th: refused
+    };
+
+    GAMECORE_DEFINE_COMPONENT(WideComponent, "TestWide")
+
+    /* What a spawn carries (a component without one is not sent). */
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(WideComponent, 1)
+    {
+        WIDE_SAVE_8(0) WIDE_SAVE_8(1) WIDE_SAVE_8(2) WIDE_SAVE_8(3)
+        WIDE_SAVE_8(4) WIDE_SAVE_8(5) WIDE_SAVE_8(6) WIDE_SAVE_8(7)
+    }
+
+    GAMECORE_DEFINE_COMPONENT_REPLICATION(WideComponent)
+    {
+        WIDE_REP_8(0) Rep.Field("F07", &WideComponent::F07);
+        WIDE_REP_8(1) Rep.Field("F17", &WideComponent::F17);
+        WIDE_REP_8(2) Rep.Field("F27", &WideComponent::F27);
+        WIDE_REP_8(3) Rep.Field("F37", &WideComponent::F37);
+        WIDE_REP_8(4) Rep.Field("F47", &WideComponent::F47);
+        WIDE_REP_8(5) Rep.Field("F57", &WideComponent::F57);
+        WIDE_REP_8(6) Rep.Field("F67", &WideComponent::F67);
+        WIDE_REP_8(7) Rep.Field("F77", &WideComponent::F77).Smooth();
+        Rep.Field("Extra", &WideComponent::Extra);
+    }
+
+    #undef WIDE_SAVE_8
+    #undef WIDE_REP_8
+    #undef WIDE_FIELDS_8
 
     // === Stepping ============================================================
 
@@ -180,14 +262,22 @@ namespace
     {
         size_t Count = 0;
         const ReplicatedFieldEntry* Fields = FindComponentReplication(PawnComponent::StaticType().ID, Count);
-        Check(Fields && Count == 4, "the replication table has its four fields");
-        if(Fields && Count == 4)
+        Check(Fields && Count == 5, "the replication table has its five fields");
+        Check(Fields && (Fields[4].Flags & RFF_Smooth) != 0 && (Fields[1].Flags & RFF_Smooth) == 0, "Smooth() marks its field, and only its field");
+        if(Fields && Count == 5)
         {
             Check(Fields[0].Offset == offsetof(PawnComponent, Position) && Fields[1].Offset == offsetof(PawnComponent, Health),
                   "replicated field offsets match offsetof");
             Check(Fields[2].Kind == EReplicatedKind::Entity, "an EntityID field replicates as an entity");
             Check((Fields[3].Flags & RFF_InitialOnly) != 0, "RFF_InitialOnly is recorded");
         }
+
+        size_t WideCount = 0;
+        const ReplicatedFieldEntry* Wide = FindComponentReplication(WideComponent::StaticType().ID, WideCount);
+        Check(Wide && WideCount == REPLICATED_FIELDS_PER_TYPE_MAX && REPLICATED_FIELDS_PER_TYPE_MAX == 64,
+              "a type replicates up to 64 fields, and a 65th is refused");
+        Check(Wide && WideCount == 64 && Wide[63].Offset == offsetof(WideComponent, F77) && (Wide[63].Flags & RFF_Smooth) != 0,
+              "the 64th is the last declared");
     }
 }
 
@@ -324,6 +414,838 @@ namespace
     }
 }
 
+namespace
+{
+    /* An entity changing shape after its spawn: components gained and lost,
+     * a new parent, and replication turned off and on. Run clean, then with
+     * state packets lost each way, where a batch can outrun the
+     * AddComponents it depends on. */
+    void TestStructureChanges(const uint32_t InLossPercent)
+    {
+        const std::string Run = InLossPercent == 0 ? "" : " (" + std::to_string(InLossPercent) + "% loss)";
+        auto Say = [&](const char* InWhat) { return std::string(InWhat) + Run; };
+
+        World ServerWorld;
+        World ClientWorld;
+        NetSession Server;
+        NetSession Client;
+        const Pair Both{ &Server, &Client };
+
+        NetConfig ServerConfig;
+        ServerConfig.Port                 = 0;
+        ServerConfig.SimulatedLossPercent = InLossPercent;
+        Check(Server.Start(ENetRole::Server, ServerConfig), Say("a server listens").c_str());
+        Server.BindWorld(ServerWorld, "Shapes");
+
+        NetConfig ClientConfig;
+        std::strcpy(ClientConfig.ServerAddress, "127.0.0.1");
+        ClientConfig.Port                 = Server.GetPort();
+        ClientConfig.SimulatedLossPercent = InLossPercent;
+        ClientConfig.InterpolationDelayMs = 0;   // Transforms as they arrive, to compare them
+        Check(Client.Start(ENetRole::Client, ClientConfig), Say("a client connects").c_str());
+        Client.BindWorld(ClientWorld, "Shapes");
+        Check(StepUntil(Both, [&] { return Client.IsConnected(); }), Say("it is welcomed").c_str());
+
+        /* The client's copy of a server entity, as of now; unset if it has none. */
+        auto ClientOf = [&](const Entity& InServer) -> Entity
+        {
+            const NetComponent* Net = InServer.GetComponent<NetComponent>();
+            const EntityID There = Net && Net->NetId != 0 ? Client.FindEntityByNetId(Net->NetId) : EntityID();
+            return Entity(&ClientWorld, There.IsSet() && ClientWorld.IsAlive(There) ? There : EntityID());
+        };
+        auto HealthThere = [&](const Entity& InServer) -> int32_t
+        {
+            const Entity There = ClientOf(InServer);
+            const PawnComponent* Pawn = There.GetID().IsSet() ? There.GetComponent<PawnComponent>() : nullptr;
+            return Pawn ? Pawn->Health : -1;
+        };
+        auto XThere = [&](const Entity& InServer) -> float
+        {
+            const Entity There = ClientOf(InServer);
+            const TransformComponent* Transform = There.GetID().IsSet() ? There.GetComponent<TransformComponent>() : nullptr;
+            return Transform ? Transform->Position.GetX() : -1.0f;
+        };
+
+        Entity Shape = ServerWorld.CreateEntity("Shape");
+        Shape.AddComponent<NetComponent>();
+        Shape.AddComponent<TransformComponent>();
+        Entity Anchor = ServerWorld.CreateEntity("Anchor");
+        Anchor.AddComponent<NetComponent>();
+        Anchor.AddComponent<TransformComponent>();
+        Check(StepUntil(Both, [&] { return ClientOf(Shape).GetID().IsSet() && ClientOf(Anchor).GetID().IsSet(); }),
+              Say("both entities spawn").c_str());
+        Check(!ClientOf(Shape).HasComponent<PawnComponent>(), Say("without the component it does not have yet").c_str());
+
+        // --- a component gained after the spawn -----------------------------------
+        PawnComponent Gained;
+        Gained.Health = 42;
+        Shape.AddComponent(Gained);
+        Check(StepUntil(Both, [&] { return HealthThere(Shape) == 42; }), Say("a component added after the spawn reaches the client").c_str());
+        Shape.GetComponent<PawnComponent>()->Health = 43;
+        Check(StepUntil(Both, [&] { return HealthThere(Shape) == 43; }), Say("and its later changes follow").c_str());
+
+        /* Added and changed in the same frame as its state goes out. */
+        Entity Second = ServerWorld.CreateEntity("Second");
+        Second.AddComponent<NetComponent>();
+        Check(StepUntil(Both, [&] { return ClientOf(Second).GetID().IsSet(); }), Say("a bare entity spawns").c_str());
+        Second.AddComponent<PawnComponent>();
+        Step(Both);
+        Second.GetComponent<PawnComponent>()->Health = 5;
+        Check(StepUntil(Both, [&] { return HealthThere(Second) == 5; }), Say("a change right after the add lands").c_str());
+
+        // --- a component lost -------------------------------------------------------
+        Shape.RemoveComponent<PawnComponent>();
+        Check(StepUntil(Both, [&] { return ClientOf(Shape).GetID().IsSet() && !ClientOf(Shape).HasComponent<PawnComponent>(); }),
+              Say("a removed component goes on the client too").c_str());
+        Shape.GetComponent<TransformComponent>()->Position = EngineCore::Vector3(12.0f, 0.0f, 0.0f);
+        Check(StepUntil(Both, [&] { return Near(XThere(Shape), 12.0f); }), Say("the entity's other state still flows").c_str());
+
+        /* Gained back: everything again, not a diff against the old one. */
+        PawnComponent Back;
+        Back.Health = 7;
+        Shape.AddComponent(Back);
+        Check(StepUntil(Both, [&] { return HealthThere(Shape) == 7; }), Say("re-added, it arrives whole").c_str());
+
+        // --- a new parent ----------------------------------------------------------
+        Shape.SetParent(Anchor.GetID(), false);
+        Check(StepUntil(Both, [&] { return ClientOf(Shape).GetParent() == ClientOf(Anchor).GetID(); }),
+              Say("a new parent reaches the client").c_str());
+        Shape.ClearParent(false);
+        Check(StepUntil(Both, [&] { return ClientOf(Shape).GetID().IsSet() && !ClientOf(Shape).HasParent(); }),
+              Say("and so does losing it").c_str());
+
+        // --- replication turned off and on -------------------------------------------
+        const EntityID Before = ClientOf(Shape).GetID();
+        Shape.GetComponent<NetComponent>()->bReplicate = 0;
+        Check(StepUntil(Both, [&] { return !ClientWorld.IsAlive(Before); }), Say("bReplicate off destroys it on the client").c_str());
+        Check(Shape.GetComponent<NetComponent>()->NetId == 0, Say("and the server forgets its NetId").c_str());
+
+        Shape.GetComponent<NetComponent>()->bReplicate = 1;
+        Check(StepUntil(Both, [&] { return HealthThere(Shape) == 7; }), Say("turned back on, it spawns again, whole").c_str());
+
+        Second.RemoveComponent<NetComponent>();
+        const EntityID SecondThere = Client.FindEntityByNetId(Server.GetNetId(Second.GetID()));
+        Check(StepUntil(Both, [&] { return !ClientWorld.IsAlive(SecondThere); }),
+              Say("removing the NetComponent destroys it on the client").c_str());
+
+        /* Nothing left waiting: a plain change still arrives. */
+        Shape.GetComponent<TransformComponent>()->Position = EngineCore::Vector3(30.0f, 0.0f, 0.0f);
+        Check(StepUntil(Both, [&] { return Near(XThere(Shape), 30.0f); }), Say("state still flows at the end").c_str());
+
+        Client.Stop();
+        Server.UnbindWorld();
+        Server.Stop();
+        Client.UnbindWorld();
+    }
+}
+
+namespace
+{
+    /* A server with tight RPC limits, and a client that owns one pawn on it. */
+    struct LimitedPair
+    {
+        World       ServerWorld, ClientWorld;
+        NetSession  Server, Client;
+        Pair        Both{ &Server, &Client };
+        Entity      ServerPawn;
+        Entity      ClientPawn;
+
+        bool Start(const uint32_t InMaxRpcBytes)
+        {
+            GServerWorld = &ServerWorld;
+            NetConfig ServerConfig;
+            ServerConfig.Port              = 0;
+            ServerConfig.RpcPerSecond      = 50;    // a 100-call burst
+            ServerConfig.RpcFloodPerSecond = 200;
+            ServerConfig.MaxRpcBytes       = InMaxRpcBytes;
+            if(!Server.Start(ENetRole::Server, ServerConfig)) { return false; }
+            Server.BindWorld(ServerWorld, "Limits");
+
+            NetConfig ClientConfig;
+            std::strcpy(ClientConfig.ServerAddress, "127.0.0.1");
+            ClientConfig.Port = Server.GetPort();
+            if(!Client.Start(ENetRole::Client, ClientConfig)) { return false; }
+            Client.BindWorld(ClientWorld, "Limits");
+            if(!StepUntil(Both, [&] { return Client.IsConnected(); })) { return false; }
+
+            ServerPawn = ServerWorld.CreateEntity("Limited");
+            NetComponent Net;
+            Net.OwnerClient = Client.GetLocalClientId();
+            ServerPawn.AddComponent(Net);
+            ServerPawn.AddComponent<PawnComponent>();
+            EntityID There;
+            if(!StepUntil(Both, [&] { There = Client.FindEntityByNetId(Server.GetNetId(ServerPawn.GetID())); return There.IsSet(); })) { return false; }
+            ClientPawn = Entity(&ClientWorld, There);
+            return true;
+        }
+
+        void Settle() { for(int Index = 0; Index < 100; ++Index) { Step(Both); } }
+
+        ~LimitedPair()
+        {
+            Client.Stop();
+            Server.UnbindWorld();
+            Server.Stop();
+            Client.UnbindWorld();
+            GServerWorld = nullptr;
+        }
+    };
+
+    /* A server takes so many Server RPCs a second from each client, and so many of one with a RateLimit. */
+    void TestRpcLimits()
+    {
+        std::printf("[rpc limits]\n");
+        {
+            LimitedPair Run;
+            Check(Run.Start(1024), "a server with tight RPC limits takes a client");
+            GServerLog = RpcLog();
+
+            /* Thirty pokes at once: RateLimit(10) lets a second's worth through. */
+            for(int Index = 0; Index < 30; ++Index) { GAMECORE_RPC(PawnComponent, ServerPoke)(Run.ClientPawn); }
+            Run.Settle();
+            Check(GServerLog.Pokes >= 10 && GServerLog.Pokes <= 12, "an RPC's RateLimit drops what is over it");
+
+            /* A second on, there is room again. */
+            const auto Until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1100);
+            while(std::chrono::steady_clock::now() < Until) { Step(Run.Both); }
+            const int Before = GServerLog.Pokes;
+            for(int Index = 0; Index < 5; ++Index) { GAMECORE_RPC(PawnComponent, ServerPoke)(Run.ClientPawn); }
+            Run.Settle();
+            Check(GServerLog.Pokes == Before + 5, "and refills at its rate");
+
+            /* 150 moves at once against a 50/s budget: about its 100-call burst lands, the client stays. */
+            for(int Index = 0; Index < 150; ++Index)
+            {
+                GAMECORE_RPC(PawnComponent, ServerMove)(Run.ClientPawn, EngineCore::Vector3(float(Index), 0.0f, 0.0f));
+            }
+            Run.Settle();
+            Check(GServerLog.ServerMoves >= 95 && GServerLog.ServerMoves <= 115, "the overall budget drops the rest of a burst");
+            Check(Run.Client.IsConnected(), "a client a little over its budget stays connected");
+
+            /* Hundreds over it in a second: a flood, and the client is let go. */
+            for(int Index = 0; Index < 800; ++Index)
+            {
+                GAMECORE_RPC(PawnComponent, ServerMove)(Run.ClientPawn, EngineCore::Vector3(0.0f, 0.0f, 0.0f));
+            }
+            Check(StepUntil(Run.Both, [&] { return !Run.Client.IsConnected() && Run.Server.GetClientCount() == 0; }),
+                  "a client flooding RPCs is disconnected");
+        }
+        {
+            LimitedPair Run;
+            Check(Run.Start(64), "a server with a 64-byte MaxRpcBytes takes a client");
+            GServerLog = RpcLog();
+            GAMECORE_RPC(PawnComponent, ServerShout)(Run.ClientPawn, "short");
+            Run.Settle();
+            Check(GServerLog.Shouts == 1 && Run.Client.IsConnected(), "an RPC under MaxRpcBytes runs");
+            std::string Long(150, 'x');
+            GAMECORE_RPC(PawnComponent, ServerShout)(Run.ClientPawn, Long.c_str());
+            Check(StepUntil(Run.Both, [&] { return !Run.Client.IsConnected(); }) && GServerLog.Shouts == 1,
+                  "one over it is malformed: refused, and its sender disconnected");
+        }
+    }
+}
+
+namespace
+{
+    /* A server and a client with short timeouts, counting the server's client events. */
+    struct ReconnectPair
+    {
+        World      ServerWorld, ClientWorld;
+        NetSession Server, Client;
+        Pair       Both{ &Server, &Client };
+        struct Counts { int Connected = 0, Disconnected = 0, Away = 0, Returned = 0; } Seen;
+
+        bool Start(const uint32_t InGraceMs)
+        {
+            NetConfig ServerConfig;
+            ServerConfig.Port             = 0;
+            ServerConfig.TimeoutMs        = 1000;
+            ServerConfig.ReconnectGraceMs = InGraceMs;
+            if(!Server.Start(ENetRole::Server, ServerConfig)) { return false; }
+            Server.BindWorld(ServerWorld, "Rejoin");
+            Server.SetClientEvents([](NetClientID, void* U) { ++static_cast<Counts*>(U)->Connected; },
+                                   [](NetClientID, void* U) { ++static_cast<Counts*>(U)->Disconnected; }, &Seen);
+            Server.SetClientAwayEvents([](NetClientID, void* U) { ++static_cast<Counts*>(U)->Away; },
+                                       [](NetClientID, void* U) { ++static_cast<Counts*>(U)->Returned; });
+
+            NetConfig ClientConfig;
+            std::strcpy(ClientConfig.ServerAddress, "127.0.0.1");
+            ClientConfig.Port             = Server.GetPort();
+            ClientConfig.TimeoutMs        = 1000;
+            ClientConfig.ReconnectGraceMs = 8000;
+            if(!Client.Start(ENetRole::Client, ClientConfig)) { return false; }
+            Client.BindWorld(ClientWorld, "Rejoin");
+            return StepUntil(Both, [&] { return Client.IsConnected() && Seen.Connected == 1; });
+        }
+
+        /* The client stops answering -- a cable pulled -- while the server goes on. */
+        void Stall(const int InMs)
+        {
+            const auto Until = std::chrono::steady_clock::now() + std::chrono::milliseconds(InMs);
+            while(std::chrono::steady_clock::now() < Until)
+            {
+                Server.PollIncoming();
+                Server.FlushOutgoing();
+                EngineCore::Threads::SleepMs(2);
+            }
+        }
+
+        EntityID OnClient(const Entity& InServer) const { return Client.FindEntityByNetId(Server.GetNetId(InServer.GetID())); }
+
+        ~ReconnectPair()
+        {
+            Client.Stop();
+            Server.UnbindWorld();
+            Server.Stop();
+            Client.UnbindWorld();
+        }
+    };
+
+    /* A client's Server RPC says what server time it was showing: its render
+     * time, an interpolation delay behind the server's clock. A local call says nothing. */
+    void TestViewTime()
+    {
+        std::printf("[view time]\n");
+        LimitedPair Run;
+        Check(Run.Start(1024), "a server and client for view times");
+        const auto Until = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+        while(std::chrono::steady_clock::now() < Until) { Step(Run.Both); }   // the client learns the server's clock
+        Check(Run.Client.GetTimeMs() != 0 && Run.Server.GetTimeMs() != 0, "both have the server's clock");
+        const int32_t Skew = int32_t(Run.Server.GetTimeMs()) - int32_t(Run.Client.GetTimeMs());
+        Check(Skew > -60 && Skew < 60, "the client's estimate is close, on loopback");
+
+        GServerLog = RpcLog();
+        GAMECORE_RPC(PawnComponent, ServerStamp)(Run.ClientPawn);
+        Check(StepUntil(Run.Both, [&] { return GServerLog.StampView != 0xFFFFFFFFu; }), "a client's call arrives");
+        const int32_t Behind = int32_t(GServerLog.StampServerTime) - int32_t(GServerLog.StampView);
+        Check(GServerLog.bStampRemote && GServerLog.StampView != 0 && Behind >= 80 && Behind <= 200,
+              "stamped with what it showed: about its 100 ms interpolation delay back");
+
+        GServerLog = RpcLog();
+        GAMECORE_RPC(PawnComponent, ServerStamp)(Run.ServerPawn);
+        Check(!GServerLog.bStampRemote && GServerLog.StampView == 0, "a local call has no view time: now");
+    }
+
+    void TestReconnect()
+    {
+        std::printf("[reconnect]\n");
+        {
+            ReconnectPair Run;
+            Check(Run.Start(6000), "a server keeping lost clients' places takes a client");
+            const NetClientID Id = Run.Client.GetLocalClientId();
+            const uint64_t Token = Run.Client.GetReconnectToken();
+            Check(Token != 0, "the client is given a reconnect token");
+
+            Entity Hero = Run.ServerWorld.CreateEntity("Hero");
+            NetComponent HeroNet;
+            HeroNet.OwnerClient = Id;
+            Hero.AddComponent(HeroNet);
+            Hero.AddComponent<PawnComponent>();
+            Entity Doomed = Run.ServerWorld.CreateEntity("Doomed");
+            Doomed.AddComponent<NetComponent>();
+            Check(StepUntil(Run.Both, [&] { return Run.OnClient(Hero).IsSet() && Run.OnClient(Doomed).IsSet(); }), "both spawn on the client");
+            const EntityID ClientHero = Run.OnClient(Hero);
+            const EntityID ClientDoomed = Run.OnClient(Doomed);
+
+            Run.Stall(2600);   // ENet pings a silent peer after 500 ms, and gives up on it a timeout later
+            Check(Run.Seen.Away == 1 && Run.Seen.Disconnected == 0, "a client that stops answering is away, not gone");
+            Check(Run.ServerWorld.IsAlive(Hero.GetID()), "and what it owns stays");
+
+            /* While it is away the game goes on. */
+            Doomed.Destroy();
+            Entity Fresh = Run.ServerWorld.CreateEntity("Fresh");
+            Fresh.AddComponent<NetComponent>();
+            Hero.GetComponent<PawnComponent>()->Health = 33;
+            Run.Stall(200);
+
+            Check(StepUntil(Run.Both, [&] { return Run.Client.IsReconnecting(); }, 4000), "the client notices, and tries to rejoin");
+            Check(StepUntil(Run.Both, [&] { return Run.Client.IsConnected() && Run.Seen.Returned == 1; }, 6000),
+                  "it is taken back within the grace");
+            Check(Run.Seen.Connected == 1 && Run.Seen.Disconnected == 0, "as a return, not a new client");
+            Check(Run.Client.GetLocalClientId() == Id && Run.Client.GetReconnectToken() == Token, "with the same id and token");
+            Check(StepUntil(Run.Both, [&]
+            {
+                const PawnComponent* Pawn = Entity(&Run.ClientWorld, ClientHero).GetComponent<PawnComponent>();
+                return Pawn && Pawn->Health == 33 && Run.OnClient(Fresh).IsSet();
+            }), "its own entity kept, brought up to date, and what was made meanwhile sent");
+            Check(Run.OnClient(Hero) == ClientHero, "the very same entity, not a copy");
+            Check(!Run.ClientWorld.IsAlive(ClientDoomed), "what was destroyed while it was away is gone");
+            Check(Run.Server.GetClientCount() == 1, "the server counts it once");
+        }
+        {
+            ReconnectPair Run;
+            Check(Run.Start(800), "a server with a short grace takes a client");
+            const NetClientID Id = Run.Client.GetLocalClientId();
+            Entity Mine = Run.ServerWorld.CreateEntity("Mine");
+            NetComponent MineNet;
+            MineNet.OwnerClient = Id;
+            Mine.AddComponent(MineNet);
+            Check(StepUntil(Run.Both, [&] { return Run.OnClient(Mine).IsSet(); }), "its entity spawns");
+            const EntityID OldCopy = Run.OnClient(Mine);
+
+            Run.Stall(4000);   // timed out, then the grace runs out
+            Check(Run.Seen.Away == 1 && Run.Seen.Disconnected == 1, "not back within the grace: gone");
+            Check(StepUntil(Run.Both, [&] { return Run.Client.IsConnected() && Run.Seen.Connected == 2; }, 8000), "the client gets in again");
+            Check(Run.Client.GetLocalClientId() != Id && Run.Seen.Returned == 0, "as a new client");
+            Check(StepUntil(Run.Both, [&] { return !Run.ClientWorld.IsAlive(OldCopy); }), "what the old session spawned is cleared");
+        }
+        {
+            ReconnectPair Run;
+            Check(Run.Start(5000), "a third client joins");
+            Run.Client.Stop();
+            Check(StepUntil(Run.Both, [&] { return Run.Seen.Disconnected == 1; }) && Run.Seen.Away == 0,
+                  "one that quits is gone at once, no place kept");
+        }
+    }
+}
+
+namespace
+{
+    /* What a server's flush costs with many entities and several clients:
+     * printed, not checked (timings vary); the state is checked to arrive. */
+    void TestFlushCost()
+    {
+        std::printf("[flush cost]\n");
+        constexpr int Entities = 2000, Clients = 4, Movers = 100, Ticks = 120;
+
+        World ServerWorld;
+        NetSession Server;
+        NetConfig ServerConfig;
+        ServerConfig.Port = 0;
+        ServerConfig.RpcPerSecond = 0;
+        Check(Server.Start(ENetRole::Server, ServerConfig), "a server for the flush benchmark");
+        Server.BindWorld(ServerWorld, "Bench");
+
+        std::vector<World> ClientWorlds(Clients);
+        std::vector<NetSession> ClientSessions(Clients);
+        for(int Index = 0; Index < Clients; ++Index)
+        {
+            NetConfig Config;
+            std::strcpy(Config.ServerAddress, "127.0.0.1");
+            Config.Port = Server.GetPort();
+            Config.InterpolationDelayMs = 0;
+            ClientSessions[Index].Start(ENetRole::Client, Config);
+            ClientSessions[Index].BindWorld(ClientWorlds[Index], "Bench");
+        }
+        const auto StepAll = [&]
+        {
+            Server.PollIncoming();
+            for(NetSession& C : ClientSessions) { C.PollIncoming(); }
+            Server.FlushOutgoing();
+            for(NetSession& C : ClientSessions) { C.FlushOutgoing(); }
+        };
+        const auto Until = [&](auto&& InDone, const int InMax)
+        {
+            for(int Step = 0; Step < InMax; ++Step) { if(InDone()) { return true; } StepAll(); EngineCore::Threads::SleepMs(1); }
+            return InDone();
+        };
+        Check(Until([&] { return Server.GetClientCount() == size_t(Clients); }, 3000), "four clients join");
+
+        std::vector<Entity> Spawned;
+        for(int Index = 0; Index < Entities; ++Index)
+        {
+            Entity E = ServerWorld.CreateEntity("Bench");
+            E.AddComponent<NetComponent>();
+            E.AddComponent<TransformComponent>();
+            E.AddComponent<PawnComponent>();
+            Spawned.push_back(E);
+        }
+        Check(Until([&]
+        {
+            for(NetSession& C : ClientSessions) { if(!C.FindEntityByNetId(Server.GetNetId(Spawned.back().GetID())).IsSet()) { return false; } }
+            return true;
+        }, 5000), "every client has all 2000");
+        for(int Index = 0; Index < 300; ++Index) { StepAll(); EngineCore::Threads::SleepMs(1); }   // acks settle
+
+        const auto Measure = [&](const int InMovers, const int InTick0)
+        {
+            std::vector<double> Samples;
+            for(int Tick = 0; Tick < Ticks; ++Tick)
+            {
+                for(int Index = 0; Index < InMovers; ++Index)
+                {
+                    Spawned[size_t(Index)].GetComponent<TransformComponent>()->Position = EngineCore::Vector3(float(InTick0 + Tick), 0.0f, float(Index));
+                }
+                Server.PollIncoming();
+                for(NetSession& C : ClientSessions) { C.PollIncoming(); }
+                const auto Start = std::chrono::steady_clock::now();
+                Server.FlushOutgoing();
+                Samples.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - Start).count());
+                for(NetSession& C : ClientSessions) { C.FlushOutgoing(); }
+                EngineCore::Threads::SleepMs(1);
+            }
+            std::sort(Samples.begin(), Samples.end());
+            /* The fastest tick is the work itself; the median adds what else the machine was doing. */
+            return std::make_pair(Samples.front(), Samples[Samples.size() / 2]);
+        };
+        const auto Still  = Measure(0, 0);
+        NetPeerStats Before, After;
+        Server.GetClientStats(ClientSessions.front().GetLocalClientId(), Before);
+        const auto Moving = Measure(Movers, 1000);
+        Server.GetClientStats(ClientSessions.front().GetLocalClientId(), After);
+        const double PerTick = double(After.BytesSent - Before.BytesSent) / Ticks;
+        std::printf("state: %.0f bytes a tick to each client with %d moving -- %.1f bytes an entity whose Position changed\n",
+                    PerTick, Movers, PerTick / Movers);
+        std::printf("flush cost: %d entities x 3 replicated components, %d clients: all still %.3f ms (median %.3f), "
+                    "%d moving %.3f ms (median %.3f), a tick\n",
+                    Entities, Clients, Still.first, Still.second, Movers, Moving.first, Moving.second);
+
+        const EntityID Last = ClientSessions.back().FindEntityByNetId(Server.GetNetId(Spawned[Movers - 1].GetID()));
+        Check(Until([&]
+        {
+            const TransformComponent* T = Entity(&ClientWorlds.back(), Last).GetComponent<TransformComponent>();
+            return T && Near(T->Position.GetX(), float(1000 + Ticks - 1));
+        }, 2000), "and the movers' state still reaches every client");
+
+        for(NetSession& C : ClientSessions) { C.Stop(); C.UnbindWorld(); }
+        Server.UnbindWorld();
+        Server.Stop();
+    }
+}
+
+namespace
+{
+    /* Quantized fields (ComponentReplication.h): the rounding, and a Transform
+     * arriving as exactly what QuantizeReplicatedFields makes of it. */
+    void TestQuantization()
+    {
+        std::printf("[quantization]\n");
+        namespace Q = GameCore::ReplicationQuantize;
+        Check(Q::SnapStep(1.23456f, 0.01f) == Q::FromSteps(123, 0.01f) && std::fabs(Q::SnapStep(-2.005f, 0.01f) + 2.0f) < 0.0101f,
+              "Precision rounds to the nearest step, either sign");
+        Check(std::fabs(Q::SnapAngle(270.0f) + 90.0f) < 0.01f && std::fabs(Q::SnapAngle(-450.0f) + 90.0f) < 0.01f
+              && std::fabs(Q::SnapAngle(180.0f) + 180.0f) < 0.01f, "Angles wrap into [-180, 180)");
+        Check(std::fabs(Q::SnapAngle(33.3f) - 33.3f) < 360.0f / 65536.0f, "and keep 65536ths of a turn");
+
+        size_t Count = 0;
+        const ReplicatedFieldEntry* Fields = FindComponentReplication(TransformComponent::StaticType().ID, Count);
+        Check(Count == 3 && Fields[0].Quantize == RQ_Step && Fields[1].Quantize == RQ_Angle && Fields[2].Quantize == RQ_Step,
+              "Transform replicates Position and Scale by Precision, Rotation by Angles");
+
+        World ServerWorld, ClientWorld;
+        NetSession Server, Client;
+        const Pair Both{ &Server, &Client };
+        NetConfig ServerConfig;
+        ServerConfig.Port = 0;
+        Check(Server.Start(ENetRole::Server, ServerConfig), "a server for quantized state");
+        Server.BindWorld(ServerWorld, "Quantized");
+        NetConfig ClientConfig;
+        std::strcpy(ClientConfig.ServerAddress, "127.0.0.1");
+        ClientConfig.Port = Server.GetPort();
+        ClientConfig.InterpolationDelayMs = 0;   // Transforms as they arrive
+        Client.Start(ENetRole::Client, ClientConfig);
+        Client.BindWorld(ClientWorld, "Quantized");
+        Check(StepUntil(Both, [&] { return Client.IsConnected(); }), "a client for quantized state");
+
+        Entity Thing = ServerWorld.CreateEntity("Quantized");
+        Thing.AddComponent<NetComponent>();
+        TransformComponent* T = Thing.AddComponent<TransformComponent>();
+        EntityID There;
+        Check(StepUntil(Both, [&] { There = Client.FindEntityByNetId(Server.GetNetId(Thing.GetID())); return There.IsSet(); }), "it spawns");
+
+        T = Thing.GetComponent<TransformComponent>();
+        T->Position = EngineCore::Vector3(1.234567f, -3210.98765f, 100000.004f);
+        T->Rotation = EngineCore::Vector3(270.0f, -12.3456f, 0.0f);
+        T->Scale    = EngineCore::Vector3(1.0f, 0.12345f, 2.0f);
+        TransformComponent Expected = *T;
+        QuantizeReplicatedFields(TransformComponent::StaticType().ID, &Expected);
+        const auto Same = [](const EngineCore::Vector3& A, const EngineCore::Vector3& B)
+        {
+            return A.GetX() == B.GetX() && A.GetY() == B.GetY() && A.GetZ() == B.GetZ();
+        };
+        Check(StepUntil(Both, [&]
+        {
+            const TransformComponent* Got = Entity(&ClientWorld, There).GetComponent<TransformComponent>();
+            return Got && Same(Got->Position, Expected.Position) && Same(Got->Rotation, Expected.Rotation) && Same(Got->Scale, Expected.Scale);
+        }), "the client reads exactly the snapped values -- to the bit");
+        Check(std::fabs(Expected.Position.GetX() - 1.23f) < 0.001f && std::fabs(Expected.Rotation.GetX() + 90.0f) < 0.01f,
+              "which are the values to their precision");
+        Check(T->Position.GetX() == 1.234567f, "the server's own value is left as it was");
+
+        Client.Stop();
+        Server.UnbindWorld();
+        Server.Stop();
+        Client.UnbindWorld();
+    }
+}
+
+namespace
+{
+    /* [Net] ClientBandwidthKBps: under a tight budget, a client's own entity
+     * keeps up, a higher Priority is updated more often, and everything
+     * still arrives once things settle. */
+    void TestBandwidthBudget()
+    {
+        std::printf("[bandwidth budget]\n");
+        constexpr int Entities = 300;
+
+        World ServerWorld, ClientWorld;
+        NetSession Server, Client;
+        const Pair Both{ &Server, &Client };
+        NetConfig ServerConfig;
+        ServerConfig.Port = 0;
+        ServerConfig.RpcPerSecond = 0;
+        ServerConfig.ClientBandwidthKBps = 4;
+        Check(Server.Start(ENetRole::Server, ServerConfig), "a server with a 4 KB/s budget per client");
+        Server.BindWorld(ServerWorld, "Budget");
+        NetConfig ClientConfig;
+        std::strcpy(ClientConfig.ServerAddress, "127.0.0.1");
+        ClientConfig.Port = Server.GetPort();
+        ClientConfig.InterpolationDelayMs = 0;
+        Client.Start(ENetRole::Client, ClientConfig);
+        Client.BindWorld(ClientWorld, "Budget");
+        Check(StepUntil(Both, [&] { return Client.IsConnected(); }), "a client joins it");
+
+        /* The client's own at the origin; High and Low the same distance off; a crowd further out. */
+        const auto Make = [&](const char* InName, const float InX, const float InPriority, const NetClientID InOwner)
+        {
+            Entity E = ServerWorld.CreateEntity(InName);
+            NetComponent Net;
+            Net.Priority    = InPriority;
+            Net.OwnerClient = InOwner;
+            E.AddComponent(Net);
+            TransformComponent T;
+            T.Position = EngineCore::Vector3(InX, 0.0f, 0.0f);
+            E.AddComponent(T);
+            E.AddComponent<PawnComponent>();
+            return E;
+        };
+        Entity Own  = Make("Own", 0.0f, 1.0f, Client.GetLocalClientId());
+        Entity High = Make("High", 1000.0f, 8.0f, NET_CLIENT_NONE);
+        Entity Low  = Make("Low", -1000.0f, 1.0f, NET_CLIENT_NONE);
+        std::vector<Entity> Crowd;
+        for(int Index = 0; Index < Entities; ++Index) { Crowd.push_back(Make("Crowd", 3000.0f + float(Index), 1.0f, NET_CLIENT_NONE)); }
+        const auto OnClient = [&](const Entity& InServer) -> const PawnComponent*
+        {
+            const EntityID There = Client.FindEntityByNetId(Server.GetNetId(InServer.GetID()));
+            return There.IsSet() ? Entity(&ClientWorld, There).GetComponent<PawnComponent>() : nullptr;
+        };
+        Check(StepUntil(Both, [&] { return OnClient(Crowd.back()) != nullptr; }, 5000), "everything spawns (spawns are not budgeted)");
+
+        /* Every entity changes every step, for two seconds. */
+        int Steps = 0, OwnSeen = 0, HighSeen = 0, LowSeen = 0;
+        int32_t LastOwn = -1, LastHigh = -1, LastLow = -1;
+        uint32_t MostDeferred = 0;
+        const auto Until = std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
+        while(std::chrono::steady_clock::now() < Until)
+        {
+            ++Steps;
+            for(Entity* E : { &Own, &High, &Low }) { E->GetComponent<PawnComponent>()->Health = 1000 + Steps; }
+            for(Entity& E : Crowd) { E.GetComponent<PawnComponent>()->Health = 1000 + Steps; }
+            Step(Both);
+            const PawnComponent* O = OnClient(Own);
+            const PawnComponent* H = OnClient(High);
+            const PawnComponent* L = OnClient(Low);
+            if(O && O->Health != LastOwn)  { LastOwn = O->Health; ++OwnSeen; }
+            if(H && H->Health != LastHigh) { LastHigh = H->Health; ++HighSeen; }
+            if(L && L->Health != LastLow)  { LastLow = L->Health; ++LowSeen; }
+            NetPeerStats Stats;
+            if(Server.GetClientStats(Client.GetLocalClientId(), Stats)) { MostDeferred = std::max(MostDeferred, Stats.StateDeferred); }
+        }
+        std::printf("budget: %d steps; the client saw its own entity change %d times, Priority 8 %d, Priority 1 %d; "
+                    "up to %u entities held back a tick\n", Steps, OwnSeen, HighSeen, LowSeen, MostDeferred);
+        Check(MostDeferred > 0, "the budget holds entities back when they do not all fit");
+        Check(OwnSeen > Steps / 2, "the client's own entity keeps up regardless");
+        Check(HighSeen > LowSeen * 2, "a higher Priority is updated more often");
+        Check(LowSeen > 0, "but a lower one still gets its turn");
+
+        /* Still now: every last value arrives. */
+        const int32_t Final = 1000 + Steps;
+        Check(StepUntil(Both, [&]
+        {
+            for(const Entity& E : Crowd) { const PawnComponent* P = OnClient(E); if(!P || P->Health != Final) { return false; } }
+            return OnClient(Low) && OnClient(Low)->Health == Final;
+        }, 20000), "once things settle, everything held back arrives");
+
+        Client.Stop();
+        Server.UnbindWorld();
+        Server.Stop();
+        Client.UnbindWorld();
+    }
+}
+
+namespace
+{
+    /* RPCs declared Unreliable: sent once on their own channel. They arrive on
+     * a clean link; under total loss they never do, while reliable ones still do. */
+    void TestUnreliableRpcs()
+    {
+        std::printf("[unreliable rpcs]\n");
+        size_t Count = 0;
+        const RpcEntry* Rpcs = FindComponentRpcs(PawnComponent::StaticType().ID, Count);
+        bool bFlagged = false;
+        for(size_t Index = 0; Index < Count; ++Index) { if(std::strcmp(Rpcs[Index].Name, "MulticastSpark") == 0) { bFlagged = Rpcs[Index].bUnreliable != 0; } }
+        Check(bFlagged, "Unreliable() marks the RPC's entry");
+
+        for(const uint32_t Loss : { 0u, 100u })
+        {
+            World ServerWorld, ClientWorld;
+            NetSession Server, Client;
+            const Pair Both{ &Server, &Client };
+            GServerWorld = &ServerWorld;
+            NetConfig ServerConfig;
+            ServerConfig.Port = 0;
+            ServerConfig.SimulatedLossPercent = Loss;
+            Server.Start(ENetRole::Server, ServerConfig);
+            Server.BindWorld(ServerWorld, "Unreliable");
+            NetConfig ClientConfig;
+            std::strcpy(ClientConfig.ServerAddress, "127.0.0.1");
+            ClientConfig.Port = Server.GetPort();
+            Client.Start(ENetRole::Client, ClientConfig);
+            Client.BindWorld(ClientWorld, "Unreliable");
+            Check(StepUntil(Both, [&] { return Client.IsConnected(); }), Loss ? "a server losing every unreliable packet takes a client"
+                                                                            : "a server and client for unreliable RPCs");
+            Entity Pawn = ServerWorld.CreateEntity("Sparky");
+            NetComponent Net;
+            Net.OwnerClient = Client.GetLocalClientId();
+            Pawn.AddComponent(Net);
+            Pawn.AddComponent<PawnComponent>();
+            EntityID There;
+            Check(StepUntil(Both, [&] { There = Client.FindEntityByNetId(Server.GetNetId(Pawn.GetID())); return There.IsSet(); }),
+                  "its pawn spawns (spawns are reliable)");
+            GServerLog = RpcLog();
+            GClientLog = RpcLog();
+
+            GAMECORE_RPC(PawnComponent, MulticastSpark)(Pawn, 7);
+            GAMECORE_RPC(PawnComponent, ClientPing)(Pawn, 9);   // reliable, alongside
+            for(int Index = 0; Index < 200; ++Index) { Step(Both); }
+            if(Loss == 0)
+            {
+                Check(GServerLog.Sparks == 1 && GClientLog.Sparks == 1 && GClientLog.LastSpark == 7,
+                      "an unreliable Multicast runs on the server and reaches the client");
+                GAMECORE_RPC(PawnComponent, ServerSpark)(Entity(&ClientWorld, There), 11);
+                Check(StepUntil(Both, [&] { return GServerLog.Sparks == 2 && GServerLog.LastSpark == 11; }),
+                      "an unreliable Server RPC reaches the server");
+            }
+            else
+            {
+                Check(GServerLog.Sparks == 1 && GClientLog.Sparks == 0, "lost on the way, an unreliable one never arrives");
+                Check(GClientLog.Pings == 1 && GClientLog.LastPing == 9, "while a reliable one sent with it does");
+            }
+
+            Client.Stop();
+            Server.UnbindWorld();
+            Server.Stop();
+            Client.UnbindWorld();
+            GServerWorld = nullptr;
+        }
+    }
+}
+
+namespace
+{
+    /* A Smooth() field: a client blends it between the server's updates, as a
+     * Transform, so a step from 0 to 100 passes through what lies between --
+     * while a plain field jumps. */
+    void TestFieldSmoothing()
+    {
+        std::printf("[field smoothing]\n");
+        World ServerWorld, ClientWorld;
+        NetSession Server, Client;
+        const Pair Both{ &Server, &Client };
+        NetConfig ServerConfig;
+        ServerConfig.Port = 0;
+        Server.Start(ENetRole::Server, ServerConfig);
+        Server.BindWorld(ServerWorld, "Smooth");
+        NetConfig ClientConfig;
+        std::strcpy(ClientConfig.ServerAddress, "127.0.0.1");
+        ClientConfig.Port = Server.GetPort();
+        ClientConfig.InterpolationDelayMs = 200;
+        Client.Start(ENetRole::Client, ClientConfig);
+        Client.BindWorld(ClientWorld, "Smooth");
+        Check(StepUntil(Both, [&] { return Client.IsConnected(); }), "a client showing others 200 ms back");
+
+        Entity Lamp = ServerWorld.CreateEntity("Lamp");
+        Lamp.AddComponent<NetComponent>();
+        Lamp.AddComponent<PawnComponent>();
+        EntityID There;
+        Check(StepUntil(Both, [&] { There = Client.FindEntityByNetId(Server.GetNetId(Lamp.GetID())); return There.IsSet(); }), "it spawns");
+        const auto Pawn = [&] { return Entity(&ClientWorld, There).GetComponent<PawnComponent>(); };
+        for(int Index = 0; Index < 300; ++Index) { Step(Both); }   // settled at Glow 0
+
+        /* From 0 to 100 over half a second, in ten steps; Health jumps once. */
+        bool bBetween = false, bHealthBetween = false;
+        float Highest = 0.0f;
+        const auto Start = std::chrono::steady_clock::now();
+        Lamp.GetComponent<PawnComponent>()->Health = 500;
+        for(int Leg = 1; Leg <= 10; ++Leg)
+        {
+            Lamp.GetComponent<PawnComponent>()->Glow = 10.0f * float(Leg);
+            while(std::chrono::steady_clock::now() < Start + std::chrono::milliseconds(50 * Leg))
+            {
+                Step(Both);
+                const float Glow = Pawn()->Glow;
+                if(std::fabs(Glow - std::round(Glow / 10.0f) * 10.0f) > 0.5f) { bBetween = true; }
+                Highest = std::max(Highest, Glow);
+                if(Pawn()->Health != 100 && Pawn()->Health != 500) { bHealthBetween = true; }
+            }
+        }
+        Check(bBetween, "a smoothed field shows values between the server's updates");
+        Check(!bHealthBetween, "a plain one only ever shows what was sent");
+        Check(StepUntil(Both, [&] { return Near(Pawn()->Glow, 100.0f); }, 3000), "and the smoothed one settles on the last value");
+        Check(Highest <= 100.0f + 0.01f, "never past it");
+
+        Client.Stop();
+        Server.UnbindWorld();
+        Server.Stop();
+        Client.UnbindWorld();
+    }
+}
+
+namespace
+{
+    /* A 64-field type: the high fields arrive, alone and together, clean and
+     * under loss, and the top one smooths. */
+    void TestWideType(const int InLossPercent)
+    {
+        std::printf("[64 fields, %d%% loss]\n", InLossPercent);
+        World ServerWorld, ClientWorld;
+        NetSession Server, Client;
+        const Pair Both{ &Server, &Client };
+        NetConfig ServerConfig;
+        ServerConfig.Port = 0;
+        ServerConfig.SimulatedLossPercent = InLossPercent;
+        Server.Start(ENetRole::Server, ServerConfig);
+        Server.BindWorld(ServerWorld, "Wide");
+        NetConfig ClientConfig;
+        std::strcpy(ClientConfig.ServerAddress, "127.0.0.1");
+        ClientConfig.Port = Server.GetPort();
+        ClientConfig.InterpolationDelayMs = 50;
+        ClientConfig.SimulatedLossPercent = InLossPercent;
+        Client.Start(ENetRole::Client, ClientConfig);
+        Client.BindWorld(ClientWorld, "Wide");
+        Check(StepUntil(Both, [&] { return Client.IsConnected(); }), "connected");
+
+        Entity Board = ServerWorld.CreateEntity("Board");
+        Board.AddComponent<NetComponent>();
+        WideComponent Initial;
+        Initial.F00 = 1.0f; Initial.F37 = 2.0f; Initial.F40 = 3.0f; Initial.F76 = 4.0f; Initial.F77 = 5.0f;
+        Initial.Extra = 9.0f;
+        Board.AddComponent(Initial);
+        EntityID There;
+        Check(StepUntil(Both, [&] { There = Client.FindEntityByNetId(Server.GetNetId(Board.GetID())); return There.IsSet(); }), "it spawns");
+        const auto Theirs = [&] { return Entity(&ClientWorld, There).GetComponent<WideComponent>(); };
+        Check(StepUntil(Both, [&] { const WideComponent* W = Theirs(); return W && W->F00 == 1.0f && W->F37 == 2.0f && W->F40 == 3.0f && W->F76 == 4.0f && Near(W->F77, 5.0f); }),
+              "every field arrives with the spawn, the 33rd to the 64th too");
+        Check(Theirs() && Theirs()->Extra == 0.0f, "the refused 65th does not");
+        if(!Theirs()) { Client.Stop(); Server.UnbindWorld(); Server.Stop(); Client.UnbindWorld(); return; }
+
+        /* Only fields above the 32nd change: alone, then a low and a high one together. */
+        WideComponent& Mine = *Board.GetComponent<WideComponent>();
+        Mine.F76 = 40.0f;
+        Check(StepUntil(Both, [&] { return Theirs()->F76 == 40.0f; }), "a change to the 63rd field alone arrives");
+        Mine.F01 = 11.0f; Mine.F75 = 41.0f; Mine.F77 = 50.0f;
+        Check(StepUntil(Both, [&] { return Theirs()->F01 == 11.0f && Theirs()->F75 == 41.0f && Near(Theirs()->F77, 50.0f); }),
+              "low and high fields changed together arrive, the smoothed 64th settling");
+        Check(Theirs()->F00 == 1.0f && Theirs()->F40 == 3.0f, "and the rest are left as they were");
+
+        Client.Stop();
+        Server.UnbindWorld();
+        Server.Stop();
+        Client.UnbindWorld();
+    }
+}
+
 int main()
 {
     TestEditorLink();
@@ -376,6 +1298,23 @@ int main()
     Check(StepUntil(Both, [&] { return Client.IsConnected() && Connected == 1; }), "the server welcomes the client");
     Check(Client.GetLocalClientId() == ConnectedId && ConnectedId != NET_CLIENT_NONE, "the client knows its id");
     Check(Server.GetClientCount() == 1, "the server counts one client");
+
+    // --- connection stats ----------------------------------------------------------
+    {
+        /* Long enough for a whole second of rates. */
+        const auto Until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1300);
+        while(std::chrono::steady_clock::now() < Until) { Step(Both); }
+        NetPeerStats ToServer, ToClient, Nobody;
+        Check(Client.GetServerStats(ToServer) && ToServer.BytesSent > 0 && ToServer.BytesReceived > 0 && ToServer.PacketsReceived > 0,
+              "a client reports its traffic with the server");
+        Check(Server.GetClientStats(ConnectedId, ToClient) && ToClient.BytesSent > 0 && ToClient.PacketsReceived > 0,
+              "the server reports its traffic with that client");
+        Check(ToServer.RoundTripMs < 500 && ToClient.RoundTripMs < 500, "both report a round trip, a loopback's");
+        Check(ToClient.SendBytesPerSecond > 0.0f && ToServer.ReceiveBytesPerSecond > 0.0f,
+              "and the last second's rates: a batch every tick, and its acks");
+        Check(!Server.GetClientStats(ConnectedId + 99, Nobody) && !Server.GetServerStats(Nobody) && !Client.GetClientStats(0, Nobody),
+              "no stats for a client that is not there, or from the wrong end");
+    }
 
     // --- the level's own entity is matched by GUID, not duplicated --------------
     Check(StepUntil(Both, [&] { return ClientDoor.GetComponent<NetComponent>()->NetId != 0; }), "the level entity is bound by GUID");
@@ -644,6 +1583,18 @@ int main()
     Check(GServerLog.ServerMoves == MovesBefore + 1, "stopping the last session restores local RPCs");
 
     TestLossyState();
+    TestRpcLimits();
+    TestReconnect();
+    TestViewTime();
+    TestQuantization();
+    TestBandwidthBudget();
+    TestUnreliableRpcs();
+    TestFieldSmoothing();
+    TestWideType(0);
+    TestWideType(50);
+    TestFlushCost();
+    TestStructureChanges(0);
+    TestStructureChanges(50);
 
     if(GFailures == 0) { std::printf("NetCore loopback: all passed\n"); }
     else               { std::fprintf(stderr, "NetCore loopback: %d failure(s)\n", GFailures); }

@@ -13,6 +13,7 @@
 #include "Public/NimbleEngine/Avatar.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameSession.h"
+#include "Public/NimbleEngine/LagCompensation.h"
 #include "Public/NimbleEngine/Level.h"
 #include "Public/NimbleEngine/PlayerState.h"
 
@@ -39,6 +40,14 @@ NIMBLE_CONFIG_BOOL(GNetSpawnPlayerPerClient, "Net", "SpawnPlayerPerClient", true
  * server's updates; 0 snaps to each (NetComponent.h). */
 NIMBLE_CONFIG_INT(GNetInterpolationDelayMs, "Net", "InterpolationDelayMs", 100, nullptr);
 NIMBLE_CONFIG_INT(GNetSimulatedLossPercent, "Net", "SimulatedLossPercent", 0, nullptr);
+/* A server's limits on each client's RPCs (NetCore/README.md, "RPC limits"). */
+NIMBLE_CONFIG_INT(GNetRpcPerSecond, "Net", "RpcPerSecond", 1000, nullptr);
+/* How long a lost client's place is kept, and a client tries to rejoin (NetCore/README.md, "Reconnecting"). */
+NIMBLE_CONFIG_INT(GNetReconnectGraceMs, "Net", "ReconnectGraceMs", 30000, nullptr);
+NIMBLE_CONFIG_INT(GNetRpcFloodPerSecond, "Net", "RpcFloodPerSecond", 1000, nullptr);
+NIMBLE_CONFIG_INT(GNetMaxRpcBytes, "Net", "MaxRpcBytes", 1024, nullptr);
+/* A server's budget for each client's state, KB a second; 0 none (NetCore/README.md, "Bandwidth budget"). */
+NIMBLE_CONFIG_INT(GNetClientBandwidthKBps, "Net", "ClientBandwidthKBps", 256, nullptr);
 #endif
 
 namespace NimbleEngine
@@ -57,6 +66,11 @@ namespace NimbleEngine
         Desc.bSpawnPlayerPerClient = GNetSpawnPlayerPerClient.GetBool();
         Desc.InterpolationDelayMs  = uint32_t(GNetInterpolationDelayMs.GetInt() > 0 ? GNetInterpolationDelayMs.GetInt() : 0);
         Desc.SimulatedLossPercent  = uint32_t(std::clamp(GNetSimulatedLossPercent.GetInt(), 0, 100));
+        Desc.RpcPerSecond          = uint32_t(std::max(0, GNetRpcPerSecond.GetInt()));
+        Desc.ReconnectGraceMs      = uint32_t(std::max(0, GNetReconnectGraceMs.GetInt()));
+        Desc.ClientBandwidthKBps   = uint32_t(std::max(0, GNetClientBandwidthKBps.GetInt()));
+        Desc.RpcFloodPerSecond     = uint32_t(std::max(0, GNetRpcFloodPerSecond.GetInt()));
+        Desc.MaxRpcBytes           = uint32_t(std::max(0, GNetMaxRpcBytes.GetInt()));
 #endif
         return Desc;
     }
@@ -142,6 +156,40 @@ namespace NimbleEngine
             if(const NetCorrectionFn Handler = GetNetCorrectionHandler(UserData)) { Handler(InWorld, InEntity, InAck, UserData); }
         }
 
+        /* InClient's player: what it owns that has a PlayerState. */
+        static GameCore::EntityID FindClientPlayer(GameCore::World& InWorld, const GameCore::NetClientID InClient)
+        {
+            GameCore::EntityID Player;
+            InWorld.Each<GameCore::NetComponent>([&](GameCore::Entity InEntity, GameCore::NetComponent& InNet)
+            {
+                if(!Player.IsSet() && InNet.OwnerClient == InClient && InEntity.HasComponent<PlayerStateComponent>()) { Player = InEntity.GetID(); }
+            });
+            return Player;
+        }
+
+        /* Lost, its place kept: everything it owns stays, its avatar idle (no input). */
+        static void OnClientAway(const GameCore::NetClientID InClient, void* InUserData)
+        {
+            Impl& Self = *static_cast<Impl*>(InUserData);
+            if(!Self.Session || !Self.Session->HasWorld()) { return; }
+            GameCore::World& World = Self.Session->GetWorld();
+            const GameCore::EntityID Player = FindClientPlayer(World, InClient);
+            ILevel* Level = Self.Session->GetLevel();
+            if(IGameMode* Mode = Level ? Level->GetGameMode() : nullptr) { Mode->OnClientAway(InClient, Player); }
+            EmitClientEvent(World, "ClientAway", InClient, Player);
+        }
+
+        static void OnClientReturned(const GameCore::NetClientID InClient, void* InUserData)
+        {
+            Impl& Self = *static_cast<Impl*>(InUserData);
+            if(!Self.Session || !Self.Session->HasWorld()) { return; }
+            GameCore::World& World = Self.Session->GetWorld();
+            const GameCore::EntityID Player = FindClientPlayer(World, InClient);
+            ILevel* Level = Self.Session->GetLevel();
+            if(IGameMode* Mode = Level ? Level->GetGameMode() : nullptr) { Mode->OnClientReturned(InClient, Player); }
+            EmitClientEvent(World, "ClientReturned", InClient, Player);
+        }
+
         static void OnClientDisconnected(const GameCore::NetClientID InClient, void* InUserData)
         {
             Impl& Self = *static_cast<Impl*>(InUserData);
@@ -195,9 +243,15 @@ namespace NimbleEngine
         Config.TimeoutMs  = InDesc.TimeoutMs;
         Config.InterpolationDelayMs = InDesc.InterpolationDelayMs;
         Config.SimulatedLossPercent = InDesc.SimulatedLossPercent;
+        Config.RpcPerSecond         = InDesc.RpcPerSecond;
+        Config.ReconnectGraceMs     = InDesc.ReconnectGraceMs;
+        Config.ClientBandwidthKBps  = InDesc.ClientBandwidthKBps;
+        Config.RpcFloodPerSecond    = InDesc.RpcFloodPerSecond;
+        Config.MaxRpcBytes          = InDesc.MaxRpcBytes;
 
         P->Net = new NetCore::NetSession();
         P->Net->SetClientEvents(&Impl::OnClientConnected, &Impl::OnClientDisconnected, P);
+        P->Net->SetClientAwayEvents(&Impl::OnClientAway, &Impl::OnClientReturned);   // SetClientEvents's user data
         P->Net->SetCorrectionHandler(&Impl::OnCorrection, P);
 
         /* Bound before starting, so a client's handshake names its level. */
@@ -223,6 +277,7 @@ namespace NimbleEngine
         if(P->Net)
         {
             P->Net->FlushOutgoing();
+            if(GameCore::World* Bound = P->Net->GetBoundWorld()) { ClearLagCompensation(*Bound); }
             P->Net->UnbindWorld();
             P->Net->Stop();
             delete P->Net;
@@ -238,7 +293,11 @@ namespace NimbleEngine
     {
 #if WITH_NETCORE
         /* The World is about to be freed: let go of it first. */
-        if(P->Net && P->Session && P->Session->HasPendingLevel()) { P->Net->UnbindWorld(); }
+        if(P->Net && P->Session && P->Session->HasPendingLevel())
+        {
+            if(GameCore::World* Bound = P->Net->GetBoundWorld()) { ClearLagCompensation(*Bound); }
+            P->Net->UnbindWorld();
+        }
 #endif
     }
 
@@ -254,7 +313,10 @@ namespace NimbleEngine
     void NetHost::Flush()
     {
 #if WITH_NETCORE
-        if(P->Net) { P->Net->FlushOutgoing(); }
+        if(!P->Net) { return; }
+        /* Where every lag-compensated entity stood this frame, for the shots that arrive later (LagCompensation.h). */
+        if(P->Net->IsServer() && P->Net->GetBoundWorld()) { RecordLagCompensation(*P->Net->GetBoundWorld(), P->Net->GetTimeMs()); }
+        P->Net->FlushOutgoing();
 #endif
     }
 
