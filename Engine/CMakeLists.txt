@@ -72,12 +72,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CXX_COMPILER_ID MATCHES "Cla
 endif()
 
 # === Compiler cache =========================================================
-# sccache, when it is installed. Objects are cached by content hash, so the
-# expensive thing this repository builds -- the vendored SDL, ~260 translation
-# units of it -- is compiled once per MACHINE rather than once per build tree.
-# A second tree (a standalone Games/Sandbox configure, a CLion tree beside a
-# command-line one, a tree recreated after a wipe) then links SDL instead of
-# rebuilding it.
+# sccache, when it is installed. Objects are cached by content hash, per build
+# tree (NIMBLE_BUILD_TREE_ID below): a tree recreated after a wipe, or rebuilt
+# after a branch switch, takes its objects -- the vendored SDL's ~260
+# translation units among them -- from the cache instead of compiling them.
+# Trees do not share entries; see "ONE CACHE KEY PER BUILD TREE".
 #
 # MUST be set before the first target is created: CMAKE_<LANG>_COMPILER_LAUNCHER
 # is captured into each target as it is declared, so a value set after
@@ -124,7 +123,38 @@ if(NIMBLE_USE_SCCACHE)
             endforeach()
         endif()
 
-        message(STATUS "NimbleEngine: compiler cache enabled -- ${NM_SCCACHE_PROGRAM}")
+        # ONE CACHE KEY PER BUILD TREE. A hit from another tree is unsafe with
+        # MSVC and Ninja: sccache replays the /showIncludes of the compile that
+        # filled the entry, so this tree's .ninja_deps record THAT tree's
+        # headers. Change a header here and nothing here rebuilds -- objects go
+        # stale against it (an engine object calling a game module's virtuals
+        # through the old vtable; SDL relinked on every build once the other
+        # tree was deleted). Trees whose commands match (relative paths: the
+        # vendored SDL, every git worktree of the project) are exactly the ones
+        # that hit.
+        #
+        # sccache keys a compile by its PREPROCESSED text, not its -D flags, and
+        # MSVC's (/EP) carries no file paths -- so a define does not separate
+        # trees. A declaration does: every compile force-includes this tree's
+        # NimbleBuildTree.h, one typedef named for the tree. A tree still hits
+        # its own entries after a wipe or a branch switch.
+        string(SHA1 NM_SCCACHE_TREE "${CMAKE_BINARY_DIR}")
+        string(SUBSTRING "${NM_SCCACHE_TREE}" 0 12 NM_SCCACHE_TREE)
+        set(NM_SCCACHE_TREE_HEADER "${CMAKE_BINARY_DIR}/NimbleBuildTree.h")
+        set(NM_SCCACHE_TREE_TEXT "/* This build tree's compiler-cache key (Engine/CMakeLists.txt). */\ntypedef int NimbleBuildTree_${NM_SCCACHE_TREE};\n")
+        if(EXISTS "${NM_SCCACHE_TREE_HEADER}")
+            file(READ "${NM_SCCACHE_TREE_HEADER}" NM_SCCACHE_TREE_OLD)
+        endif()
+        if(NOT NM_SCCACHE_TREE_OLD STREQUAL NM_SCCACHE_TREE_TEXT)
+            file(WRITE "${NM_SCCACHE_TREE_HEADER}" "${NM_SCCACHE_TREE_TEXT}")   # only when it changes: every object depends on it
+        endif()
+        if(MSVC)
+            add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:/FI${NM_SCCACHE_TREE_HEADER}>")
+        else()
+            add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-include;${NM_SCCACHE_TREE_HEADER}>")
+        endif()
+
+        message(STATUS "NimbleEngine: compiler cache enabled -- ${NM_SCCACHE_PROGRAM} (keys for this tree: ${NM_SCCACHE_TREE})")
     else()
         message(STATUS "NimbleEngine: sccache not found; compiling without a compiler cache")
     endif()
@@ -335,7 +365,7 @@ set(NM_TEST_OPTIONS
         CORE_BUILD_SMOKETEST GDI_BUILD_SMOKETEST GAMECORE_BUILD_SMOKETEST
         RENDERCORE_BUILD_SMOKETEST RENDERCORE_BUILD_ANIMATION_TESTS
         NETCORE_BUILD_TESTS JOLTPHYSICS_BUILD_TESTS AUDIO_BUILD_TESTS
-        SEQUENCER_BUILD_TESTS UI_BUILD_TESTS NODEGRAPH_BUILD_TESTS)
+        SEQUENCER_BUILD_TESTS UI_BUILD_TESTS NODEGRAPH_BUILD_TESTS COLLAB_BUILD_TESTS)
 if(NOT NM_MULTI_CONFIG AND CMAKE_BUILD_TYPE STREQUAL "Shipping")
     set(NM_TESTS_ENABLED OFF)
     if(NIMBLE_BUILD_TESTS)
@@ -543,6 +573,14 @@ if(NIMBLE_WITH_NETCORE AND TARGET GameCore
     add_subdirectory(Modules/NetCore)
 endif()
 
+# Collab: editor collaboration -- the protocol, server sessions and client
+# (Modules/Editor/COLLABORATION.md). Core and ENet only, so after NetCore,
+# whose vendored ENet it shares, but not needing it on. Editor and Server
+# targets: what NimbleEditorServer and the editor link.
+if(NOT NIMBLE_TARGET STREQUAL "Client" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/Collab/CMakeLists.txt")
+    add_subdirectory(Modules/Collab)
+endif()
+
 # JoltPhysics: rigid-body physics, when NIMBLE_WITH_JOLTPHYSICS is on (the
 # Physics block above). After GameCore, whose components it simulates, and
 # before NimbleEngine, which attaches it to each level's World.
@@ -605,6 +643,7 @@ endif()
 # the hot-reload sibling rule requires.
 set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/NimbleEngine.cpp
+        Source/Private/NimbleEngine/ContentReport.cpp
         Source/Private/NimbleEngine/GameSession.cpp
         Source/Private/NimbleEngine/GameFramework.cpp
         Source/Private/NimbleEngine/GameUI.cpp
@@ -1002,6 +1041,21 @@ endif()
 add_executable(NimblePak Tools/NimblePak.cpp)
 target_link_libraries(NimblePak PRIVATE EngineCore::EngineCore GameCore Lua::Lua)
 set_target_properties(NimblePak PROPERTIES FOLDER "Engine")
+
+# === NimbleEditorServer =====================================================
+# The editor collaboration server (Tools/EditorServer; Modules/Collab): Core,
+# Collab and ENet, no Qt and no game code, so a host needs only a compiler.
+if(TARGET Collab)
+    add_executable(NimbleEditorServer Tools/EditorServer/EditorServerMain.cpp)
+    target_link_libraries(NimbleEditorServer PRIVATE EngineCore::EngineCore Collab::Collab)
+    set_target_properties(NimbleEditorServer PROPERTIES FOLDER "Engine")
+
+    # Its content worker, one per session when it has --repo: started beside it.
+    add_executable(NimbleContentWorker Tools/ContentWorker/ContentWorkerMain.cpp)
+    target_link_libraries(NimbleContentWorker PRIVATE EngineCore::EngineCore Collab::Collab)
+    set_target_properties(NimbleContentWorker PROPERTIES FOLDER "Engine")
+    add_dependencies(NimbleEditorServer NimbleContentWorker)
+endif()
 
 # === Editor ================================================================
 # The Qt editor: after NimbleStageShaders, and needs RenderCore. Skips itself

@@ -794,7 +794,37 @@ struct NetSession::Impl final : public INetEntityMap
         GameCore::EntityGuid ParentGuid = ParentGuidOf(Handle);
         Ar << NetId << Guid.Hi << Guid.Lo << Name << ParentGuid.Hi << ParentGuid.Lo;
         WriteComponents(Ar, Handle, SerializedTypes(Handle));
+
+        /* Its parts: the descendants with no Net of their own (a spawned
+         * avatar's camera boom, its weapon), parents first. They are sent
+         * once, as they are now; each client moves them itself after. */
+        std::vector<EntityID> Parts;
+        CollectParts(InEntity, Parts);
+        uint16_t PartCount = uint16_t(std::min<size_t>(Parts.size(), UINT16_MAX));
+        Ar << PartCount;
+        for(uint16_t Index = 0; Index < PartCount; ++Index)
+        {
+            GameCore::Entity Part(BoundWorld, Parts[Index]);
+            GameCore::EntityGuid PartGuid = Part.GetGuid();
+            GameCore::EntityGuid PartParent = ParentGuidOf(Part);
+            std::string PartName = Part.GetName();
+            Ar << PartGuid.Hi << PartGuid.Lo << PartName << PartParent.Hi << PartParent.Lo;
+            WriteComponents(Ar, Part, SerializedTypes(Part));
+        }
         return Ar;
+    }
+
+    /* InEntity's descendants down to, not into, the ones with a Net component:
+     * those are sent on their own. Depth first, so a parent precedes its children. */
+    void CollectParts(const EntityID InEntity, std::vector<EntityID>& OutParts)
+    {
+        for(EntityID Child = BoundWorld->GetEntity(InEntity).GetFirstChild(); Child.IsSet();
+            Child = BoundWorld->GetEntity(Child).GetNextSibling())
+        {
+            if(BoundWorld->GetEntity(Child).HasComponent<NetComponent>()) { continue; }
+            OutParts.push_back(Child);
+            CollectParts(Child, OutParts);
+        }
     }
 
     /*
@@ -1706,6 +1736,25 @@ struct NetSession::Impl final : public INetEntityMap
         if(Net) { Net->NetId = NetId; }
 
         if(ParentGuid.IsSet()) { PendingParents.push_back({ Entity, ParentGuid }); }
+
+        /* Its parts, parents first: the level's own if this client has them,
+         * else made here. Not networked after, so not in Structures; they go
+         * when it does, as its children. */
+        uint16_t PartCount = 0;
+        Ar << PartCount;
+        for(uint16_t Part = 0; Part < PartCount && !Ar.HasError(); ++Part)
+        {
+            GameCore::EntityGuid PartGuid, PartParent;
+            std::string          PartName;
+            uint16_t             PartComponents = 0;
+            Ar << PartGuid.Hi << PartGuid.Lo << PartName << PartParent.Hi << PartParent.Lo << PartComponents;
+            if(Ar.HasError()) { break; }
+
+            EntityID PartEntity = PartGuid.IsSet() ? BoundWorld->FindEntityByGuid(PartGuid) : EntityID();
+            if(!PartEntity.IsSet()) { PartEntity = BoundWorld->CreateEntity(PartName.c_str(), PartGuid).GetID(); }
+            ReadComponentList(Ar, GameCore::Entity(BoundWorld, PartEntity), PartComponents, nullptr);
+            if(PartParent.IsSet()) { PendingParents.push_back({ PartEntity, PartParent }); }
+        }
         ResolveParents();
         RememberServerValues(NetId, Entity);
 
@@ -1724,13 +1773,19 @@ struct NetSession::Impl final : public INetEntityMap
      * told, read or not, so state for it is never waited on. */
     void ReadComponents(EngineCore::Archive& Ar, const GameCore::Entity& InHandle, const int32_t InNetId, const uint16_t InCount)
     {
-        std::vector<ComponentTypeID>& Told = Structures[InNetId].Types;
+        ReadComponentList(Ar, InHandle, InCount, &Structures[InNetId].Types);
+    }
+
+    /* The same, recording the types into OutTold when there is one (not for a spawn's parts). */
+    void ReadComponentList(EngineCore::Archive& Ar, const GameCore::Entity& InHandle, const uint16_t InCount,
+                           std::vector<ComponentTypeID>* OutTold)
+    {
         for(uint16_t Index = 0; Index < InCount && !Ar.HasError(); ++Index)
         {
             std::string TypeName;
             Ar << TypeName;
             const GameCore::ComponentTypeInfo* Info = GameCore::FindComponentType(TypeName.c_str());
-            if(Info && std::find(Told.begin(), Told.end(), Info->ID) == Told.end()) { Told.push_back(Info->ID); }
+            if(Info && OutTold && std::find(OutTold->begin(), OutTold->end(), Info->ID) == OutTold->end()) { OutTold->push_back(Info->ID); }
             if(!Info || !GameCore::FindComponentSerializer(Info->ID))
             {
                 /* A type this build lacks: skip its chunk. */
@@ -2603,4 +2658,11 @@ void NetSession::SetCorrectionHandler(const CorrectionFn InFn, void* InUserData)
 }
 
 NetSession* NetSession::GetActive() { return GStarted.empty() ? nullptr : GStarted.front()->Self; }
+
+uint64_t ComputeSchemaHash()
+{
+    NetSchema Schema;
+    Schema.Refresh();
+    return Schema.GetHash();
+}
 }

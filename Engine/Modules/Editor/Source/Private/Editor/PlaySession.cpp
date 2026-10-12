@@ -38,8 +38,34 @@ NIMBLE_CONFIG_BOOL(GPlayLaunchServer, "Editor", "PlayLaunchServer", true, nullpt
 NIMBLE_CONFIG_INT(GPlayClientWindows, "Editor", "PlayClientWindows", 0, nullptr);
 NIMBLE_CONFIG_STRING(GPlayClientArgs, "Editor", "PlayClientArgs", "", nullptr);
 
+namespace
+{
+    PlayNetSettings GOverride;
+    bool            bGOverride = false;
+}
+
+void PlayNetSettings::SetOverride(const PlayNetSettings& InSettings)
+{
+    GOverride  = InSettings;
+    bGOverride = true;
+}
+
+void PlayNetSettings::ClearOverride()
+{
+    bGOverride = false;
+}
+
+bool PlayNetSettings::HasOverride()
+{
+    return bGOverride;
+}
+
 PlayNetSettings PlayNetSettings::FromConfig()
 {
+    if(bGOverride)
+    {
+        return GOverride;
+    }
     PlayNetSettings Settings;
 #if WITH_NETCORE
     switch(GPlayNetMode.GetInt())

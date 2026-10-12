@@ -300,6 +300,13 @@ SettingsDialog::SettingsDialog(QWidget* InParent)
                            "-Section.Key=Value overrides, e.g. -Display.RHI=4"));
 #endif
 
+    /* The Session dock's defaults (CollabSessionWindow.h); it saves back what joined. */
+    QFormLayout* Collaboration = AddGroup(QStringLiteral("Collaboration"));
+    AddText(Collaboration, "Editor.CollabServer", QStringLiteral("Session server"),
+            QStringLiteral("Where NimbleEditorServer runs: host or host:port (UDP, 7788 by default)"));
+    AddText(Collaboration, "Editor.CollabUserName", QStringLiteral("Your name"),
+            QStringLiteral("How the others in a session see you; empty uses git's user.name"));
+
     /* What the Import Wizard starts with; it saves back what was last used. */
     QFormLayout* Import = AddGroup(QStringLiteral("Import"));
     AddFloat(Import, "Editor.ImportMeshScale", QStringLiteral("Mesh scale"),

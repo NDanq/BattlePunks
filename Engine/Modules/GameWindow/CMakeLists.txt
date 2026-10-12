@@ -107,9 +107,9 @@ endif()
 # So when a cache is in play the PCH is turned off and the objects become
 # cacheable instead. It is a straight trade of one speedup for another: a PCH
 # makes a cold compile cheaper, a cache hit skips the compile altogether. The
-# cache wins as soon as the same objects are built a second time anywhere on the
-# machine -- another build tree, a wiped tree, a standalone Games/Sandbox
-# configure -- which is the situation this repository is actually in.
+# cache wins as soon as the same objects are built a second time in the same
+# tree -- after a wipe, or a branch switch and back (trees no longer share
+# entries: "ONE CACHE KEY PER BUILD TREE" in Engine/CMakeLists.txt).
 #
 # Left ON with no cache, where the PCH is a straight win and nothing is lost.
 # Set at THIS directory scope so it reaches SDL through add_subdirectory and

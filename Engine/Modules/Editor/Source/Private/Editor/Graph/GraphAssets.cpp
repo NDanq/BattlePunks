@@ -636,6 +636,27 @@ namespace EditorGraphs
         }
     }
 
+    bool RestageGraph(const QString& InGraphPath)
+    {
+        Graph Saved;
+        std::string Error;
+        if(!LoadGraphFile(ToStd(InGraphPath), Saved, Error))
+        {
+            CORE_LOG_WARN("[Graph] could not restage " + ToStd(InGraphPath) + ": " + Error)
+            return false;
+        }
+        const Schema* S = FindSchema(Saved.SchemaName);
+        if(S && S->GetName() == "Material")
+        {
+            RestoreMaterial(InGraphPath);
+            return true;
+        }
+        /* Everything else stages the file as it is, <gen_code> and all; there
+         * is nothing to compile, so no diagnostics. */
+        QString Message;
+        return StageOutput(InGraphPath, Saved, CompileResult(), Message);
+    }
+
     bool ApplyMaterialToSelection(const QString& InName, QString& OutMessage)
     {
         if(MaterialStem(InName).isEmpty())

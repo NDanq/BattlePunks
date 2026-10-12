@@ -11,6 +11,7 @@
 
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/Editor/EditorConsole.h"
+#include "Public/Editor/EditorNotifications.h"
 
 class ConsolePanel;
 class ContentBrowserPanel;
@@ -18,12 +19,15 @@ class DetailsPanel;
 class EditorContext;
 class EditorDocument;
 class OutlinerPanel;
+class NotificationCenter;
+class NotificationToasts;
 class ProjectBuildDialog;
 class QAction;
+class QProcess;
 class QLabel;
 class SDLInputProbe;
 class SourceBuild;
-class EditorNetSession;
+class EditorCollabSession;
 class ViewportPanel;
 class ViewportWidget;
 
@@ -82,6 +86,15 @@ private:
     /* bInWorlds: at the Worlds page. */
     void OpenProjectSettings(bool bInWorlds = false);
     void OnCompileFinished(bool bInSucceeded);
+    /* Build > Compile Source's outcome, replacing its progress toast; errors offer Show Log. */
+    void PostCompileResult(EditorNotifications::ESeverity InSeverity, const QString& InTitle, const QString& InBody = QString());
+    /* The Console dock, shown and in front: a notification's "Show Log". */
+    void ShowConsole();
+    /* The project's DefaultEngine.ini and DefaultGame.ini read again (a pull
+     * changed them), the user's settings over them. */
+    void ReloadProjectConfig();
+    /* EditorContentEvents: files a pull changed, staged again. */
+    void OnContentChanged(const QStringList& InFiles);
     void StartRenderer();
     void UpdateTitle();
     void UpdateHistoryActions();
@@ -110,12 +123,15 @@ private:
     ContentBrowserPanel* ContentArea = nullptr;
     EditorConsole   Console;
 
-    /* STUB(NetCore-Editor): the editor link's console commands; nullptr
-     * without NetCore. After Console, which it registers into. */
-    EditorNetSession* NetLink = nullptr;
+    /* This editor in a collaboration session (EditorCollabSession.h). */
+    EditorCollabSession* CollabSession = nullptr;
     QLabel*         StatsLabel = nullptr;
     QLabel*         PlayLabel  = nullptr;
     QLabel*         BakeLabel  = nullptr;   // "Lighting needs to be rebuilt"
+
+    /* EditorNotifications on screen (NotificationWidgets.h). */
+    NotificationCenter* Notifications = nullptr;
+    NotificationToasts* Toasts        = nullptr;
 
     QAction*        UndoAction  = nullptr;
     QAction*        RedoAction  = nullptr;
@@ -125,9 +141,14 @@ private:
     QAction*        EjectAction = nullptr;
     QAction*        ClientWindowAction = nullptr;
 
+    /* Play > Net > Launch Local Server: a NimbleEditorServer on this machine, ended with the editor. */
+    QProcess*       LocalSessionServer = nullptr;
+    void            ToggleLocalSessionServer();
+
     SourceBuild*    Compiler            = nullptr;
     QAction*        CompileAction       = nullptr;
     QAction*        CancelCompileAction = nullptr;
+    QString         FirstCompileError;   // the build output's first error line, for its notification
 
     /* Replace the edited World, so unavailable while playing. */
     QList<QAction*> SceneActions;

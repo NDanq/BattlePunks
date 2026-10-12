@@ -22,11 +22,16 @@
  *                        u64 parent guid hi, u64 parent guid lo (0,0: none),
  *                        u16 count, then per component:
  *                            string type name, then its serializer's DATA chunk
- *                        (versioned, as a cooked world; EntityIDs as net ids)
+ *                        (versioned, as a cooked world; EntityIDs as net ids),
+ *                        then u16 part count and per part (a descendant with
+ *                        no Net component, parents first): u64 guid hi, u64
+ *                        guid lo, string name, u64 parent guid hi, u64 parent
+ *                        guid lo, then its components as above. Parts are sent
+ *                        with the spawn only, never updated after
  *   Destroy        S->C  i32 net id; also when the entity stops replicating
  *                        (bReplicate off, or its NetComponent removed)
- *   AddComponents  S->C  i32 net id, then as Spawn from u16 count on: the
- *                        components it gained since it was sent
+ *   AddComponents  S->C  i32 net id, then as Spawn from u16 count on (no
+ *                        parts): the components it gained since it was sent
  *   RemoveComponents S->C i32 net id, u16 count, then per component: string
  *                        type name
  *   Reparent       S->C  i32 net id, u64 parent guid hi, u64 parent guid lo
@@ -69,12 +74,13 @@
  * Unreliable (ComponentRpc.h); the same layout as on the game channel. One
  * for an entity the receiver does not know yet is dropped.
  *
- * EDITOR CHANNEL: the Editor* messages (NetEditorLink.h).
+ * Channel 1 and messages 64-66 were the editor link's (retired: editor
+ * collaboration is Modules/Collab); not reused.
  */
 
 namespace NetCore
 {
-    constexpr uint32_t NET_PROTOCOL_VERSION = 9;
+    constexpr uint32_t NET_PROTOCOL_VERSION = 10;   // 9 on feat-netcore alone (64-field masks); 10 adds a spawn's parts
 
     enum class ENetMessage : uint8_t
     {
@@ -90,10 +96,6 @@ namespace NetCore
         RemoveComponents,     // S->C: components it lost
         Reparent,             // S->C: its new parent
         SnapshotDone,         // S->C: the snapshot a (re)joining client gets is complete
-
-        EditorHello = 64,     // u32 version, string user name
-        EditorCommand,        // string user name, string command text (STUB)
-        EditorPropertyEdit,   // reserved: guid, type name, field name, value (STUB)
     };
 }
 

@@ -43,6 +43,20 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/EditorHistory.h
         Source/Private/Editor/EditorCamera.cpp
         Source/Private/Editor/EditorLog.cpp
+        Source/Public/Editor/EditorContentEvents.h
+        Source/Private/Editor/EditorContentEvents.cpp
+        Source/Public/Editor/EditorNotifications.h
+        Source/Private/Editor/EditorNotifications.cpp
+        Source/Private/Editor/NotificationWidgets.cpp
+        Source/Private/Editor/NotificationWidgets.h
+        Source/Private/Editor/SourceControl/GitClient.cpp
+        Source/Private/Editor/SourceControl/GitClient.h
+        Source/Private/Editor/SourceControl/SourceControlWindow.cpp
+        Source/Private/Editor/SourceControl/SourceControlWindow.h
+        Source/Private/Editor/Collab/CollabSessionWindow.cpp
+        Source/Private/Editor/Collab/CollabSessionWindow.h
+        Source/Private/Editor/Collab/EditorCollabSession.cpp
+        Source/Private/Editor/Collab/EditorCollabSession.h
         Source/Private/Editor/EditorConsole.cpp
         Source/Private/Editor/ConsolePanel.cpp
         Source/Private/Editor/EditorMainWindow.cpp
@@ -212,6 +226,14 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/Project/NewProjectWizard.h
 )
 
+# git status parsing and the Source Control dock's path groups. No Qt, so the
+# source control tests build it alone.
+set(NIMBLE_EDITOR_GIT_SOURCES
+        Source/Private/Editor/SourceControl/GitStatus.cpp
+        Source/Private/Editor/SourceControl/GitStatus.h
+)
+list(APPEND NIMBLE_EDITOR_SOURCES ${NIMBLE_EDITOR_GIT_SOURCES})
+
 # File > New Project's generator. Widget-free, so the project tests build it alone.
 set(NIMBLE_EDITOR_PROJECT_SOURCES
         Source/Private/Editor/Project/ProjectTemplate.cpp
@@ -247,12 +269,6 @@ list(APPEND NIMBLE_EDITOR_SOURCES ${NIMBLE_EDITOR_LIGHTING_SOURCES}
         Source/Private/Editor/Lighting/BakeLightmaps.cpp
         Source/Private/Editor/Lighting/BakeLightmaps.h
 )
-# STUB(NetCore-Editor): the editor link (EditorNetSession.h), when NetCore is built.
-if(TARGET NetCore)
-    list(APPEND NIMBLE_EDITOR_SOURCES
-            Source/Private/Editor/EditorNetSession.cpp
-            Source/Private/Editor/EditorNetSession.h)
-endif()
 
 if(NOT MSVC)
     set_source_files_properties(
@@ -304,6 +320,7 @@ target_link_libraries(NimbleEditor PRIVATE
         EngineCore::QtBridge
         NodeGraph::NodeGraph
         NimbleXatlas
+        Collab::Collab
         Qt6::Core
         Qt6::Gui
         Qt6::Widgets
@@ -353,6 +370,22 @@ qt_add_resources(NimbleEditor "LucideIcons"
             "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/captions.svg"
             "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/eye.svg"
             "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/circle-question-mark.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/bell.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/bell-off.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/circle-x.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/circle-check.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/triangle-alert.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/info.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/x.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/git-branch.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/refresh-cw.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/arrow-up.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/arrow-down.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/cloud-download.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/upload.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/git-commit-horizontal.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/lock.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/git-merge.svg"
 )
 # The editor's own icons in Lucide's style (the Terrain tools), beside them as :/lucide/<name>.svg.
 set(NIMBLE_EDITOR_OWN_ICONS
@@ -437,6 +470,42 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     add_test(NAME Editor.Document COMMAND NimbleEditorDocumentTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorDocumentTests>")
 
+    # Notifications, offscreen: the model, toasts, the dock and the status bar's bell.
+    add_executable(NimbleEditorNotificationTests Tests/NotificationTests.cpp
+            Source/Public/Editor/EditorNotifications.h
+            Source/Private/Editor/EditorNotifications.cpp
+            Source/Private/Editor/NotificationWidgets.h
+            Source/Private/Editor/NotificationWidgets.cpp
+            Source/Private/Editor/EditorIcons.h
+            Source/Private/Editor/EditorIcons.cpp)
+    target_include_directories(NimbleEditorNotificationTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
+    target_link_libraries(NimbleEditorNotificationTests PRIVATE EngineCore::EngineCore Qt6::Core Qt6::Gui Qt6::Widgets)
+    set_target_properties(NimbleEditorNotificationTests PROPERTIES FOLDER "Editor" AUTOMOC ON)
+    add_dependencies(NimbleEditorNotificationTests NimbleEditor)
+    add_test(NAME Editor.Notifications COMMAND NimbleEditorNotificationTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorNotificationTests>")
+
+    # Source control: porcelain v2 fixtures, path groups, and git itself
+    # against a local bare repository (skipped without git), then the dock.
+    add_executable(NimbleEditorSourceControlTests Tests/SourceControlTests.cpp
+            ${NIMBLE_EDITOR_GIT_SOURCES}
+            Source/Private/Editor/SourceControl/GitClient.cpp
+            Source/Private/Editor/SourceControl/GitClient.h
+            Source/Private/Editor/SourceControl/SourceControlWindow.cpp
+            Source/Private/Editor/SourceControl/SourceControlWindow.h
+            Source/Private/Editor/ConfigIniFile.cpp
+            Source/Private/Editor/ConfigIniFile.h
+            Source/Public/Editor/EditorNotifications.h
+            Source/Private/Editor/EditorNotifications.cpp
+            Source/Private/Editor/EditorIcons.h
+            Source/Private/Editor/EditorIcons.cpp)
+    target_include_directories(NimbleEditorSourceControlTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
+    target_link_libraries(NimbleEditorSourceControlTests PRIVATE EngineCore::EngineCore Qt6::Core Qt6::Gui Qt6::Widgets)
+    set_target_properties(NimbleEditorSourceControlTests PROPERTIES FOLDER "Editor" AUTOMOC ON)
+    add_dependencies(NimbleEditorSourceControlTests NimbleEditor)
+    add_test(NAME Editor.SourceControl COMMAND NimbleEditorSourceControlTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorSourceControlTests>")
+
     # File > New Project from the real template, into a temporary folder.
     # And Project Settings' world list, as ConfigIniFile writes it.
     add_executable(NimbleEditorProjectTests Tests/ProjectTests.cpp ${NIMBLE_EDITOR_PROJECT_SOURCES}
@@ -467,6 +536,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
             EngineCore::QtBridge
             NodeGraph::NodeGraph
             NimbleXatlas
+            Collab::Collab
             Qt6::Core
             Qt6::Gui
             Qt6::Widgets
@@ -490,6 +560,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
             EngineCore::QtBridge
             NodeGraph::NodeGraph
             NimbleXatlas
+            Collab::Collab
             Qt6::Core
             Qt6::Gui
             Qt6::Widgets
@@ -513,6 +584,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
             EngineCore::QtBridge
             NodeGraph::NodeGraph
             NimbleXatlas
+            Collab::Collab
             Qt6::Core
             Qt6::Gui
             Qt6::Widgets
@@ -537,6 +609,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
                 EngineCore::QtBridge
                 NodeGraph::NodeGraph
                 NimbleXatlas
+                Collab::Collab
                 Qt6::Core
                 Qt6::Gui
                 Qt6::Widgets
@@ -561,6 +634,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
             EngineCore::QtBridge
             NodeGraph::NodeGraph
             NimbleXatlas
+            Collab::Collab
             Qt6::Core
             Qt6::Gui
             Qt6::Widgets
@@ -573,10 +647,34 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     add_test(NAME Editor.Terrain COMMAND NimbleEditorTerrainTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorTerrainTests>")
 
+    # Collaboration: two editors' sessions against an in-process server, offscreen.
+    add_executable(NimbleEditorCollabTests Tests/CollabEditorTests.cpp ${NIMBLE_EDITOR_DETAILS_SOURCES})
+    target_include_directories(NimbleEditorCollabTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source "${NIMBLE_EDITOR_CGLTF_DIR}")
+    target_link_libraries(NimbleEditorCollabTests PRIVATE
+            GameCore::GameCore
+            RenderCore::RenderCore
+            GameWindow::GameWindow
+            NimbleEngine::NimbleEngine
+            EngineCore::QtBridge
+            NodeGraph::NodeGraph
+            NimbleXatlas
+            Collab::Collab
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Widgets
+    )
+    if(TARGET NetCore)
+        target_link_libraries(NimbleEditorCollabTests PRIVATE NetCore::NetCore)
+    endif()
+    set_target_properties(NimbleEditorCollabTests PROPERTIES FOLDER "Editor" AUTOMOC ON)
+    add_dependencies(NimbleEditorCollabTests NimbleEditor)
+    add_test(NAME Editor.Collab COMMAND NimbleEditorCollabTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorCollabTests>")
+
     # The offscreen tests compile EditorIcons.cpp too (no resources: fallback icons).
     if(TARGET Qt6::Svg)
         foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests NimbleEditorSequencerTests
-                NimbleEditorTerrainTests)
+                NimbleEditorTerrainTests NimbleEditorNotificationTests NimbleEditorSourceControlTests NimbleEditorCollabTests)
             if(TARGET ${NM_EDITOR_TEST})
                 target_link_libraries(${NM_EDITOR_TEST} PRIVATE Qt6::Svg)
             endif()
@@ -587,7 +685,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     if(TARGET Audio)
         foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorImportTests NimbleEditorLightingTests NimbleEditorDocumentTests
                 NimbleEditorProjectTests NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests
-                NimbleEditorSequencerTests NimbleEditorTerrainTests)
+                NimbleEditorSequencerTests NimbleEditorTerrainTests NimbleEditorCollabTests)
             if(TARGET ${NM_EDITOR_TEST})
                 target_link_libraries(${NM_EDITOR_TEST} PRIVATE Audio::Audio)
             endif()
@@ -596,7 +694,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     # And the content cook, which cooks sequences.
     if(TARGET Sequencer)
         foreach(NM_EDITOR_TEST IN ITEMS NimbleEditorDetailsTests NimbleEditorUIDesignerTests NimbleEditorParticleTests NimbleEditorSequencerTests
-                NimbleEditorTerrainTests)
+                NimbleEditorTerrainTests NimbleEditorCollabTests)
             if(TARGET ${NM_EDITOR_TEST})
                 target_link_libraries(${NM_EDITOR_TEST} PRIVATE Sequencer::Sequencer)
             endif()
@@ -732,6 +830,9 @@ if(TARGET NimbleEditorUIDesignerTests)
 endif()
 if(TARGET NimbleEditorParticleTests)
     target_include_directories(NimbleEditorParticleTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
+endif()
+if(TARGET NimbleEditorCollabTests)
+    target_include_directories(NimbleEditorCollabTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
 endif()
 if(TARGET NimbleEditorTerrainTests)
     target_include_directories(NimbleEditorTerrainTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")

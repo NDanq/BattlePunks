@@ -20,8 +20,11 @@
 #include <QFileInfo>
 #include <QKeySequence>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QCoreApplication>
+#include <QProcess>
 #include <QSignalBlocker>
 #include <QStatusBar>
 #include <QToolBar>
@@ -50,6 +53,9 @@
 #include "Private/Editor/EditorEditActions.h"
 #include "Private/Editor/EditorLights.h"
 #include "Private/Editor/EditorPrimitives.h"
+#include "Private/Editor/NotificationWidgets.h"
+#include "Private/Editor/SourceControl/SourceControlWindow.h"
+#include "Public/Editor/EditorNotifications.h"
 #include "Private/Editor/AboutDialog.h"
 #include "Private/Editor/DocumentationWindow.h"
 #include "Private/Editor/Content/AssetImport.h"
@@ -94,8 +100,12 @@
 #include "Private/Editor/SettingsDialog.h"
 #include "Private/Editor/SourceBuild.h"
 #include "Private/Editor/PlayProcesses.h"
+#include "Private/Editor/Collab/CollabSessionWindow.h"
+#include "Private/Editor/Collab/EditorCollabSession.h"
+#include "Public/Collab/CollabProtocol.h"
+#include "Public/Editor/EditorContentEvents.h"
 #if WITH_NETCORE
-#include "Private/Editor/EditorNetSession.h"
+#include "Public/NetCore/NetSession.h"
 #endif
 
 /* Edit > Editor Settings > Build. */
@@ -240,6 +250,92 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
 
     /* The Sequencer, hidden until a sequence opens: tabbed with them. */
     SequencerWindow::Install(*this, ContentDock);
+
+    /* Notifications: the history, hidden until the status bar's bell, tabbed
+     * with them too; the toasts over the viewport's corner. */
+    EditorNotifications::Install();   // EditorMain's already; a no-op then
+    Notifications = new NotificationCenter(this);
+    addDockWidget(Qt::BottomDockWidgetArea, Notifications);
+    tabifyDockWidget(ConsoleDock, Notifications);
+    Notifications->hide();
+    Toasts = new NotificationToasts(*this);
+
+    /* Source Control, hidden until View > Source Control: the project's git,
+     * wide along the bottom for its diff. */
+    auto* SourceControl = new SourceControlWindow(EditorGraphs::GetProjectRoot(), ProjectSettingsDialog::GetProjectConfigPath(), this);
+    addDockWidget(Qt::BottomDockWidgetArea, SourceControl);
+    tabifyDockWidget(ConsoleDock, SourceControl);
+    SourceControl->hide();
+    connect(&Level, &EditorDocument::WorldSaved, SourceControl, &SourceControlWindow::RequestRefresh);
+
+    /* The collaboration session, and its dock beside them: who else is working
+     * and on what; their changed files badged in the Content Browser. */
+    CollabSession = new EditorCollabSession(EditorGraphs::GetProjectRoot(), ProjectSettingsDialog::GetProjectConfigPath(), this);
+    auto* SessionDock = new CollabSessionWindow(*CollabSession, this);
+    addDockWidget(Qt::BottomDockWidgetArea, SessionDock);
+    tabifyDockWidget(ConsoleDock, SessionDock);
+    SessionDock->hide();
+    connect(&Level, &EditorDocument::WorldSaved, CollabSession, &EditorCollabSession::RequestDirtyRefresh);
+    connect(CollabSession, &EditorCollabSession::RosterChanged, this, [this]() { ContentArea->SetRemoteChanges(CollabSession->GetOthersDirty()); });
+
+    /* The branch moving: this editor's pushes told to the others, and theirs
+     * pulled and reloaded here (Pull & Reload). */
+    connect(SourceControl, &SourceControlWindow::Pushed, CollabSession, &EditorCollabSession::AnnouncePush);
+    connect(CollabSession, &EditorCollabSession::PullAndReloadFinished, SourceControl, &SourceControlWindow::RequestRefresh);
+    EditorCollabSession::ReloadHooks Reload;
+    Reload.ConfirmDiscardLevel = [this]()
+    {
+        return QMessageBox::question(this, QStringLiteral("Pull & Reload"),
+                                     QStringLiteral("%1 changed upstream, and you have unsaved edits to it.\n\n"
+                                                    "Reload it and lose your edits?").arg(QFileInfo(CurrentPath).fileName()),
+                                     QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes;
+    };
+    Reload.ReloadLevel = [this]()
+    {
+        /* A run plays the old one: stop it, as File > Open would ask. */
+        if(Context.IsPlaying())
+        {
+            Context.StopPlay();
+        }
+        if(!CurrentPath.isEmpty())
+        {
+            OpenWorldFile(CurrentPath);
+        }
+    };
+    Reload.CompileGameModule = [this]() { CompileSource(); };
+    Reload.ReloadConfig = [this]() { ReloadProjectConfig(); };
+    CollabSession->SetReloadHooks(Reload);
+
+    /* Play Together: this editor's game build checked against the server's,
+     * and Play started as a client of the session's game server. */
+    EditorCollabSession::PlayHooks Together;
+    Together.LocalSchemaHash = [this]() -> uint64_t
+    {
+#if WITH_NETCORE
+        return Context.IsAuthoringGameLoaded() || Context.IsPlaying() ? NetCore::ComputeSchemaHash() : 0;
+#else
+        return 0;
+#endif
+    };
+    Together.JoinRun = [this](const QString& InLevel, const QString& InHost, const uint16_t InPort)
+    {
+        if(Context.IsPlaying())
+        {
+            Context.StopPlay();
+        }
+        if(!Context.StartPlayTogether(InLevel, InHost, InPort))
+        {
+            return false;
+        }
+        Viewport->setFocus(Qt::OtherFocusReason);
+        return true;
+    };
+    Together.LeaveRun = [this]() { Context.StopPlay(); };
+    CollabSession->SetPlayHooks(Together);
+
+    /* Files changed under the editor (a pull): staged again, so the viewport
+     * and Play see the new ones. */
+    connect(&EditorContentEvents::Get(), &EditorContentEvents::ContentChanged, this, &EditorMainWindow::OnContentChanged);
     ContentDock->raise();
     connect(ContentArea, &ContentBrowserPanel::OpenWorldRequested, this, &EditorMainWindow::OpenWorldFile);
 
@@ -272,6 +368,9 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     BakeLabel->setStyleSheet(QStringLiteral("QLabel { color: rgb(230, 170, 60); }"));
     BakeLabel->setToolTip(QStringLiteral("A static entity or light changed since Build > Bake Lightmaps"));
     statusBar()->addPermanentWidget(BakeLabel);
+
+    /* Rightmost: Do Not Disturb and the bell. */
+    statusBar()->addPermanentWidget(new NotificationStatusItem(*Notifications, this));
 
     /* Re-gathering the static scene costs a little: once edits settle. */
     BakeCheckTimer.setSingleShot(true);
@@ -336,10 +435,6 @@ EditorMainWindow::~EditorMainWindow()
     {
         InputProbe->Stop();
     }
-#if WITH_NETCORE
-    delete NetLink;
-    NetLink = nullptr;
-#endif
     EditorGraphs::SetEditorContext(nullptr);
     EditorPrefabs::SetEditorContext(nullptr);
     EditorParticles::SetEditorContext(nullptr);
@@ -428,6 +523,27 @@ void EditorMainWindow::BuildMenus()
         const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Graph"), EditorGraphs::GetProjectRoot(),
                                                           EditorGraphs::GetFileFilter());
         if(!Path.isEmpty()) { EditorGraphs::OpenGraph(Path, this); }
+    });
+
+    File->addSeparator();
+
+    /* The collaboration session: the Session dock, and leaving it. */
+    QAction* JoinSession = File->addAction(QStringLiteral("Collaboration &Session..."));
+    JoinSession->setToolTip(QStringLiteral("Join others working on this project through NimbleEditorServer (the Session dock)"));
+    connect(JoinSession, &QAction::triggered, this, [this]()
+    {
+        if(auto* Dock = findChild<CollabSessionWindow*>())
+        {
+            Dock->show();
+            Dock->raise();
+            Dock->GetAddressEdit()->setFocus();
+        }
+    });
+    QAction* LeaveSession = File->addAction(QStringLiteral("&Leave Session"));
+    connect(LeaveSession, &QAction::triggered, this, [this]() { CollabSession->Leave(); });
+    connect(File, &QMenu::aboutToShow, this, [this, LeaveSession]()
+    {
+        LeaveSession->setEnabled(CollabSession->GetState() != ::Collab::CollabClient::EState::Idle);
     });
 
     File->addSeparator();
@@ -658,6 +774,38 @@ void EditorMainWindow::BuildPlayControls()
     PlaySettings->setToolTip(QStringLiteral("How Play runs: standalone, as a listen server, or as a client (Editor Settings > Play)"));
     connect(PlaySettings, &QAction::triggered, this, [this]() { OpenSettings(QStringLiteral("Play")); });
 
+    /* A session server on this machine, for Play Together without hosting one by hand. */
+    QMenu*   NetMenu = PlayMenu->addMenu(QStringLiteral("&Net"));
+    QAction* LocalServer = NetMenu->addAction(QStringLiteral("Launch &Local Server"));
+    LocalServer->setToolTip(QStringLiteral("Start NimbleEditorServer on this machine for this project's checkout; join it "
+                                           "with File > Collaboration Session. It stops when this editor closes."));
+    connect(LocalServer, &QAction::triggered, this, &EditorMainWindow::ToggleLocalSessionServer);
+    connect(NetMenu, &QMenu::aboutToShow, this, [this, LocalServer]()
+    {
+        const bool bRunning = LocalSessionServer && LocalSessionServer->state() != QProcess::NotRunning;
+        LocalServer->setText(bRunning ? QStringLiteral("Stop &Local Server") : QStringLiteral("Launch &Local Server"));
+    });
+
+    /* Play Together: everyone in the collaboration session, on the server
+     * host's game server (EditorCollabSession). */
+    PlayMenu->addSeparator();
+    QAction* PlayTogether = PlayMenu->addAction(QStringLiteral("Play &Together"));
+    PlayTogether->setToolTip(QStringLiteral("Start a run of the open level on the session server's game server and invite everyone "
+                                            "in the session (or join the one that's going)"));
+    connect(PlayTogether, &QAction::triggered, this, [this]()
+    {
+        CollabSession->RequestPlayTogether(CurrentPath.isEmpty() ? QString() : EditorContent::ToRuntimePath(CurrentPath));
+    });
+    QAction* StopTogether = PlayMenu->addAction(QStringLiteral("Stop Play T&ogether"));
+    StopTogether->setToolTip(QStringLiteral("End the shared run you started, for everyone"));
+    connect(StopTogether, &QAction::triggered, this, [this]() { CollabSession->StopPlayTogether(); });
+    connect(PlayMenu, &QMenu::aboutToShow, this, [this, PlayTogether, StopTogether]()
+    {
+        PlayTogether->setEnabled(CollabSession->IsJoined());
+        PlayTogether->setText(CollabSession->IsRunActive() ? QStringLiteral("Join Play &Together") : QStringLiteral("Play &Together"));
+        StopTogether->setEnabled(CollabSession->IsRunStarter());
+    });
+
     /* In front of the navigation buttons, where a run is started and ended. */
     QToolBar* Bar = ViewportArea->GetToolbar();
     QAction*  First = Bar->actions().isEmpty() ? nullptr : Bar->actions().front();
@@ -692,11 +840,112 @@ void EditorMainWindow::StartPlay()
     /* The open world's level, if the project lists it (Project Settings > Worlds). */
     if(!Context.StartPlay(CurrentPath.isEmpty() ? QString() : EditorContent::ToRuntimePath(CurrentPath)))
     {
-        statusBar()->showMessage(QStringLiteral("Play failed -- see the Console"), 5000);
+        EditorNotifications::Notification Failed;
+        Failed.Severity   = EditorNotifications::ESeverity::Error;
+        Failed.Title      = QStringLiteral("Play failed");
+        Failed.Body       = QStringLiteral("The Console says why.");
+        Failed.Source     = QStringLiteral("Play");
+        Failed.ReplaceKey = QStringLiteral("play.failed");
+        Failed.Actions    = { { QStringLiteral("Show Log"), [this]() { ShowConsole(); } } };
+        EditorNotifications::Get()->Post(std::move(Failed));
         return;
     }
     /* So keys reach the viewport (Esc to stop) rather than the last panel. */
     Viewport->setFocus(Qt::OtherFocusReason);
+}
+
+void EditorMainWindow::ToggleLocalSessionServer()
+{
+    if(LocalSessionServer && LocalSessionServer->state() != QProcess::NotRunning)
+    {
+        /* A console program: killed, not asked. Its workers and game servers go with it. */
+        LocalSessionServer->setProperty("Stopping", true);
+        LocalSessionServer->kill();
+        LocalSessionServer->waitForFinished(5000);
+        statusBar()->showMessage(QStringLiteral("Local session server stopped"), 5000);
+        return;
+    }
+
+    const auto Fail = [](const QString& InTitle, const QString& InBody)
+    {
+        EditorNotifications::Notification Failed;
+        Failed.Severity   = EditorNotifications::ESeverity::Error;
+        Failed.Title      = InTitle;
+        Failed.Body       = InBody;
+        Failed.Source     = QStringLiteral("Session");
+        Failed.ReplaceKey = QStringLiteral("session.localserver");
+        EditorNotifications::Get()->Post(std::move(Failed));
+    };
+
+    /* NimbleEditorServer is built beside the editor. */
+#if defined(_WIN32)
+    const QString Executable = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("NimbleEditorServer.exe"));
+#else
+    const QString Executable = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("NimbleEditorServer"));
+#endif
+    if(!QFileInfo::exists(Executable))
+    {
+        Fail(QStringLiteral("No session server"), QStringLiteral("NimbleEditorServer isn't built beside the editor. Build its target, then try again."));
+        return;
+    }
+
+    /* This project's checkout hosts the content worker, which builds and checks
+     * each session's commit and runs Play Together's game server. */
+    const QDir    Project(EditorGraphs::GetProjectRoot());
+    QStringList   Args = { QStringLiteral("--logs"), Project.filePath(QStringLiteral("Saved/Logs")) };
+    const QString Repo = CollabSession->GetRepositoryRoot();
+    if(!Repo.isEmpty())
+    {
+        Args << QStringLiteral("--repo") << Repo;   // worktrees: the server's short per-user folder
+    }
+
+    if(!LocalSessionServer)
+    {
+        LocalSessionServer = new QProcess(this);   // killed with the editor
+        LocalSessionServer->setProcessChannelMode(QProcess::MergedChannels);
+        connect(LocalSessionServer, &QProcess::readyRead, this, [this]()
+        {
+            while(LocalSessionServer->canReadLine())
+            {
+                const QString Line = QString::fromUtf8(LocalSessionServer->readLine()).trimmed();
+                if(!Line.isEmpty()) { CORE_LOG("[Session server] " + Line.toStdString()) }
+            }
+        });
+        connect(LocalSessionServer, &QProcess::finished, this, [this, Fail](const int InExitCode, const QProcess::ExitStatus)
+        {
+            if(LocalSessionServer->property("Stopping").toBool()) { return; }
+            Fail(QStringLiteral("Local session server stopped"),
+                 QStringLiteral("It exited with code %1; the Console says why (is another server on UDP %2?).")
+                     .arg(InExitCode).arg(Collab::DefaultPort));
+        });
+    }
+    LocalSessionServer->setProperty("Stopping", false);
+    LocalSessionServer->setWorkingDirectory(QFileInfo(Executable).absolutePath());
+    LocalSessionServer->start(Executable, Args);
+    if(!LocalSessionServer->waitForStarted(5000))
+    {
+        Fail(QStringLiteral("No session server"), QStringLiteral("NimbleEditorServer didn't start: ") + LocalSessionServer->errorString());
+        return;
+    }
+
+    EditorNotifications::Notification Started;
+    Started.Severity   = EditorNotifications::ESeverity::Success;
+    Started.Title      = QStringLiteral("Local session server started");
+    Started.Body       = QStringLiteral("Listening on UDP %1. Join it at localhost; others join at this machine's address.")
+                             .arg(Collab::DefaultPort);
+    Started.Source     = QStringLiteral("Session");
+    Started.ReplaceKey = QStringLiteral("session.localserver");
+    Started.Actions    = { { QStringLiteral("Join..."), [this]()
+    {
+        if(auto* Dock = findChild<CollabSessionWindow*>())
+        {
+            Dock->show();
+            Dock->raise();
+            Dock->GetAddressEdit()->setText(QStringLiteral("localhost"));
+            Dock->GetAddressEdit()->setFocus();
+        }
+    } } };
+    EditorNotifications::Get()->Post(std::move(Started));
 }
 
 void EditorMainWindow::BuildBuildMenu()
@@ -707,6 +956,20 @@ void EditorMainWindow::BuildBuildMenu()
     connect(Compiler, &SourceBuild::Finished, this, [this](const bool bInSucceeded, const QString&)
     {
         OnCompileFinished(bInSucceeded);
+    });
+    /* The first compiler error, for the failure's toast. Ninja's "FAILED:"
+     * comes before it, so only while there is nothing better. */
+    connect(Compiler, &SourceBuild::OutputLine, this, [this](const QString& InLine)
+    {
+        if(!SourceBuild::IsErrorLine(InLine))
+        {
+            return;
+        }
+        const bool bNinja = InLine.startsWith(QStringLiteral("FAILED:"));
+        if(FirstCompileError.isEmpty() || (FirstCompileError.startsWith(QStringLiteral("FAILED:")) && !bNinja))
+        {
+            FirstCompileError = InLine.trimmed();
+        }
     });
 
     CompileAction = BuildMenu->addAction(QStringLiteral("&Compile Source"));
@@ -735,7 +998,15 @@ void EditorMainWindow::BuildBuildMenu()
                                              "beside the world (World > World Settings turns baked lighting on)"));
     connect(BakeLightmaps, &QAction::triggered, this, [this]()
     {
-        EditorLighting::BakeLightmaps(Level, Context, CurrentPath, this, [this](const QString& InText) { statusBar()->showMessage(InText, 10000); });
+        QString Outcome;
+        const bool bBaked = EditorLighting::BakeLightmaps(Level, Context, CurrentPath, this,
+                                                          [&Outcome](const QString& InText) { Outcome = InText; });
+        if(!Outcome.isEmpty())
+        {
+            EditorNotifications::Notify(bBaked ? EditorNotifications::ESeverity::Success : EditorNotifications::ESeverity::Warning,
+                                        bBaked ? QStringLiteral("Lightmaps baked") : QStringLiteral("Lightmaps not baked"),
+                                        Outcome, QStringLiteral("Bake"), QStringLiteral("bake.lightmaps"));
+        }
     });
     SceneActions.push_back(BakeLightmaps);
 
@@ -766,7 +1037,8 @@ void EditorMainWindow::CompileSource()
     if(Module.isEmpty())
     {
         CORE_LOG_ERROR("[Build] no game module to compile -- set [Game] Module in Config/DefaultEngine.ini")
-        statusBar()->showMessage(QStringLiteral("Compile failed -- see the Console"), 5000);
+        PostCompileResult(EditorNotifications::ESeverity::Error, QStringLiteral("Nothing to compile"),
+                          QStringLiteral("Set [Game] Module in Config/DefaultEngine.ini."));
         return;
     }
 
@@ -787,17 +1059,106 @@ void EditorMainWindow::CompileSource()
         }
     }
 
+    FirstCompileError.clear();
     if(!Compiler->Start(Targets))
     {
-        statusBar()->showMessage(QStringLiteral("Compile failed -- see the Console"), 5000);
+        PostCompileResult(EditorNotifications::ESeverity::Error, QStringLiteral("Compile didn't start"),
+                          QStringLiteral("The Console says why."));
         return;
     }
     if(Compiler->IsRunning())
     {
         CompileAction->setEnabled(false);
         CancelCompileAction->setEnabled(true);
-        statusBar()->showMessage(QStringLiteral("Compiling %1...").arg(Module));
+
+        EditorNotifications::Notification Running;
+        Running.Title      = QStringLiteral("Compiling %1…").arg(Module);
+        Running.Source     = QStringLiteral("Build");
+        Running.ReplaceKey = QStringLiteral("build.compile");
+        Running.Progress   = EditorNotifications::Indeterminate;
+        Running.Actions    = { { QStringLiteral("Cancel"), [this]() { Compiler->Cancel(); } } };
+        EditorNotifications::Get()->Post(std::move(Running));
     }
+}
+
+void EditorMainWindow::PostCompileResult(const EditorNotifications::ESeverity InSeverity, const QString& InTitle, const QString& InBody)
+{
+    EditorNotifications::Notification Result;
+    Result.Severity   = InSeverity;
+    Result.Title      = InTitle;
+    Result.Body       = InBody;
+    Result.Source     = QStringLiteral("Build");
+    Result.ReplaceKey = QStringLiteral("build.compile");
+    if(InSeverity == EditorNotifications::ESeverity::Error)
+    {
+        Result.Actions = { { QStringLiteral("Show Log"), [this]() { ShowConsole(); } } };
+    }
+    EditorNotifications::Get()->Post(std::move(Result));
+}
+
+void EditorMainWindow::ReloadProjectConfig()
+{
+    /* The project's own files (a pull changed them, not the staged copies),
+     * then the user's choices over them again, as at startup. */
+    const QString EngineIni = ProjectSettingsDialog::GetProjectConfigPath();
+    const QString GameIni   = QFileInfo(EngineIni).dir().absoluteFilePath(QStringLiteral("DefaultGame.ini"));
+    for(const QString& Each : { EngineIni, GameIni })
+    {
+        if(QFileInfo::exists(Each))
+        {
+            EngineCore::LoadConfigFile(Each.toUtf8().toStdString());
+        }
+    }
+    SettingsDialog::LoadUserSettings();
+    EditorNotifications::Notify(EditorNotifications::ESeverity::Info, QStringLiteral("Config reloaded"),
+                                QStringLiteral("Settings read only at startup -- the renderer, the modules -- apply after a restart."),
+                                QStringLiteral("Collab"), QStringLiteral("collab.config"));
+}
+
+void EditorMainWindow::OnContentChanged(const QStringList& InFiles)
+{
+    QStringList OpenGraphs;
+    for(const QString& File : InFiles)
+    {
+        /* Only what the engine loads: the project's content and graphs. */
+        if(File.endsWith(QStringLiteral(".nmgraph"), Qt::CaseInsensitive))
+        {
+            if(QFileInfo::exists(File))
+            {
+                EditorGraphs::RestageGraph(File);
+            }
+            if(EditorGraphs::IsGraphOpen(File))
+            {
+                OpenGraphs << QFileInfo(File).fileName();
+            }
+        }
+        else if(!EditorContent::ToRuntimePath(File).isEmpty())
+        {
+            if(QFileInfo::exists(File))
+            {
+                EditorContent::StageAsset(File);
+            }
+            else
+            {
+                EditorContent::UnstageAsset(File);
+            }
+        }
+    }
+    /* An open graph keeps its own copy until reopened. */
+    if(!OpenGraphs.isEmpty())
+    {
+        EditorNotifications::Notify(EditorNotifications::ESeverity::Warning, QStringLiteral("Open graphs changed upstream"),
+                                    QStringLiteral("%1 changed in the pull. Close and reopen to see the new version; "
+                                                   "saving now would overwrite it.").arg(OpenGraphs.join(QStringLiteral(", "))),
+                                    QStringLiteral("Collab"), QStringLiteral("collab.graphs"));
+    }
+}
+
+void EditorMainWindow::ShowConsole()
+{
+    auto* Dock = static_cast<QDockWidget*>(ConsoleArea->parentWidget());
+    Dock->show();
+    Dock->raise();
 }
 
 void EditorMainWindow::OnCompileFinished(const bool bInSucceeded)
@@ -806,9 +1167,16 @@ void EditorMainWindow::OnCompileFinished(const bool bInSucceeded)
     CancelCompileAction->setEnabled(false);
 
     const QString Module = Compiler->GetTarget();
+    using ESeverity = EditorNotifications::ESeverity;
+    if(!bInSucceeded && Compiler->WasCancelled())
+    {
+        PostCompileResult(ESeverity::Info, QStringLiteral("Compile of %1 cancelled").arg(Module));
+        return;
+    }
     if(!bInSucceeded)
     {
-        statusBar()->showMessage(QStringLiteral("Compiling %1 failed -- see the Console").arg(Module), 5000);
+        PostCompileResult(ESeverity::Error, QStringLiteral("Compiling %1 failed").arg(Module),
+                          FirstCompileError.isEmpty() ? QStringLiteral("The Console has the build's output.") : FirstCompileError);
         return;
     }
 
@@ -818,15 +1186,19 @@ void EditorMainWindow::OnCompileFinished(const bool bInSucceeded)
     if(Context.IsPlaying() && !GEditorReloadAfterCompile.GetBool())
     {
         CORE_LOG("[Build] " + std::string(Module.toUtf8().constData()) + " is loaded at the next Play; the run keeps the old one")
-        statusBar()->showMessage(QStringLiteral("Compiled %1 -- Stop and Play to load it").arg(Module), 5000);
+        PostCompileResult(ESeverity::Success, QStringLiteral("Compiled %1").arg(Module),
+                          QStringLiteral("The run keeps the old build: Stop and Play to load it."));
         bDeclarationsStale = true;
         return;
     }
     if(!Context.IsPlaying())
     {
         CORE_LOG("[Build] " + std::string(Module.toUtf8().constData()) + " reloaded for editing, and loaded at the next Play")
-        statusBar()->showMessage(QStringLiteral("Compiled %1").arg(Module), 5000);
-        EditorGraphs::RefreshGameDeclarations(Context.ReloadAuthoringGame());
+        const bool bReloaded = Context.ReloadAuthoringGame();
+        PostCompileResult(bReloaded ? ESeverity::Success : ESeverity::Warning, QStringLiteral("Compiled %1").arg(Module),
+                          bReloaded ? QStringLiteral("Reloaded for editing.")
+                                    : QStringLiteral("It didn't reload for editing; the Console says why."));
+        EditorGraphs::RefreshGameDeclarations(bReloaded);
         return;
     }
 
@@ -835,7 +1207,12 @@ void EditorMainWindow::OnCompileFinished(const bool bInSucceeded)
     StartPlay();
     if(Context.IsPlaying())
     {
-        statusBar()->showMessage(QStringLiteral("Compiled and reloaded %1").arg(Module), 5000);
+        PostCompileResult(ESeverity::Success, QStringLiteral("Compiled %1").arg(Module), QStringLiteral("The run restarted on it."));
+    }
+    else
+    {
+        /* StartPlay posted why; this one replaces the progress. */
+        PostCompileResult(ESeverity::Warning, QStringLiteral("Compiled %1").arg(Module), QStringLiteral("The run didn't restart."));
     }
     EditorGraphs::RefreshGameDeclarations(Context.IsPlaying());
 }
@@ -2128,10 +2505,67 @@ void EditorMainWindow::RegisterConsoleCommands()
         else                                 { Console.PrintError(QStringLiteral("No client window -- see above")); }
     });
 
-#if WITH_NETCORE
-    /* net.host / net.join / net.leave / net.status. */
-    if(!NetLink) { NetLink = new EditorNetSession(Level, Console); }
-#endif
+
+    /* The collaboration session (EditorCollabSession.h; the Session dock does the same). */
+    Console.Register(QStringLiteral("collab.connect"), QStringLiteral("host[:port] [name] [password]"),
+                     QStringLiteral("Join the collaboration session on NimbleEditorServer at host (UDP 7788 by default)"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("Usage: collab.connect host[:port] [name] [password]"));
+            return;
+        }
+        CollabSession->Connect(InArgs.value(0), InArgs.value(1), InArgs.value(2));
+        Console.Print(QStringLiteral("Joining %1 -- the notification says how it went").arg(InArgs.value(0)));
+    });
+    Console.Register(QStringLiteral("collab.leave"), QString(), QStringLiteral("Leave the collaboration session"),
+                     [this](const QStringList&)
+    {
+        CollabSession->Leave();
+    });
+    Console.Register(QStringLiteral("collab.play"), QStringLiteral("[stop]"),
+                     QStringLiteral("Play Together: start a shared run of the open level on the session server (Play > Play Together), "
+                                    "or stop the one you started"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.value(0) == QStringLiteral("stop"))
+        {
+            CollabSession->StopPlayTogether();
+            return;
+        }
+        CollabSession->RequestPlayTogether(CurrentPath.isEmpty() ? QString() : EditorContent::ToRuntimePath(CurrentPath));
+    });
+    Console.Register(QStringLiteral("collab.join"), QString(), QStringLiteral("Join the Play Together run that's going"),
+                     [this](const QStringList&)
+    {
+        if(!CollabSession->IsRunActive())
+        {
+            Console.Print(QStringLiteral("No run is going"));
+            return;
+        }
+        if(!CollabSession->GetJoinBlocker().isEmpty())
+        {
+            Console.PrintError(CollabSession->GetJoinBlocker());
+            return;
+        }
+        CollabSession->JoinPlayTogether();
+    });
+    Console.Register(QStringLiteral("collab.status"), QString(), QStringLiteral("Who is in the collaboration session, and what they're doing"),
+                     [this](const QStringList&)
+    {
+        if(!CollabSession->IsJoined())
+        {
+            Console.Print(CollabSession->GetState() == ::Collab::CollabClient::EState::Connecting ? QStringLiteral("Joining %1").arg(CollabSession->GetServerAddress())
+                                                                                         : QStringLiteral("Not in a session"));
+            return;
+        }
+        Console.Print(QStringLiteral("In the session at %1:").arg(CollabSession->GetServerAddress()));
+        for(const QString& Line : CollabSession->DescribeRoster())
+        {
+            Console.Print(QStringLiteral("  ") + Line);
+        }
+    });
 }
 
 void EditorMainWindow::showEvent(QShowEvent* InEvent)
@@ -2259,6 +2693,18 @@ void EditorMainWindow::UpdateTitle()
 
     /* The browser will not move or delete the world that is open. */
     if(ContentArea) { ContentArea->SetOpenWorld(CurrentPath); }
+
+    /* What the session sees of this editor. */
+    if(CollabSession)
+    {
+        CollabSession->SetOpenLevel(CurrentPath);
+        CollabSession->SetLevelUnsaved(!Level.GetHistory().isClean());
+        CollabSession->SetPlaying(Context.IsPlaying());
+        if(!Context.IsPlaying())
+        {
+            CollabSession->SetPlayingTogether(false);   // Stop Play leaves the shared run
+        }
+    }
 }
 
 void EditorMainWindow::UpdateHistoryActions()

@@ -17,6 +17,20 @@
       <ViewTarget Value="true" />
       <Requestable Value="false" />
     </Component>
+    <Component Type="Net" Version="2">
+      <Replicate Value="true" />
+      <Predicted Value="true" />
+    </Component>
+    <Component Type="RangeGun" Version="1">
+      <Mag Value="17" />
+      <Capacity Value="17" />
+      <Reserve Value="68" />
+      <Shots Value="0" />
+      <Hits Value="0" />
+      <Drawn Value="false" />
+      <Ready Value="false" />
+      <Status Value="" />
+    </Component>
     <Component Type="RangeMover" Version="1">
       <BodyYaw Value="0" />
       <CameraYaw Value="0" />

@@ -90,6 +90,14 @@ namespace NimbleEngine
      * The render thread is reached only via the Renderer and
      * ENQUEUE_RENDER_COMMAND, with one frame of lag (RenderCommand.h).
      */
+    /* Application::ExecReport's arguments. */
+    struct NE_API ContentReportOptions
+    {
+        std::string ReportPath;   // written as UTF-8 lines; see ContentReport.cpp
+        std::string ProjectDir;   // the game's source folder: Content/ is read from it
+        std::string EngineDir;    // the Engine folder, for "Engine/Content/..." paths; may be empty
+    };
+
     class NE_API Application final : public IGameHost
     {
     public:
@@ -129,6 +137,17 @@ namespace NimbleEngine
         /* Runs the game module named by [Game] Module (else InDefaultModule)
          * from its start level. What a game's launcher calls (GameModule.h). */
         void ExecGame(const char* InDefaultModule);
+
+        /*
+         * Collaboration's content check (ContentReport.cpp): the game module
+         * loaded headless, then its NetCore schema hash and every world and
+         * prefab under InOptions.ProjectDir/Content loaded, each one's
+         * warnings and errors and any asset path it names that doesn't exist
+         * written to InOptions.ReportPath. No level runs. 0 if the report was
+         * written (problems or not), else 1. What NimbleContentWorker runs
+         * through <Game>Server -collab-report=<file>.
+         */
+        int ExecReport(const char* InDefaultModule, const ContentReportOptions& InOptions);
 
         /* Ends the loop after this frame. Games use GameSession::RequestQuit. */
         void RequestQuit() { bQuitRequested = true; }

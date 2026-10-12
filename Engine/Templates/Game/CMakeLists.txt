@@ -204,20 +204,21 @@ endif()
 game_stage(Prefabs "${GAME_PREFAB_ROOT}" ${GAME_PREFAB_FILES})
 
 # Content/UI/: UI documents (Engine/Modules/UI/README.md) and the Lua beside
-# them. As prefabs: an Editor target stages the XML it edits; a Client or
-# Server target cannot read XML, so it stages the cooked ones from
-# Saved/Cooked/Content/UI/ -- made in the editor by Build > Cook Content.
+# them. As prefabs: the Editor and every build but Shipping stage the XML
+# (NIMBLE_STAGE_TEXT_CONTENT; WITH_UNCOOKED reads it); Shipping and packaged
+# builds stage the cooked ones from Saved/Cooked/Content/UI/ -- made in the
+# editor by Build > Cook Content. A fresh checkout (a content worker's) has none.
 file(GLOB_RECURSE GAME_UI_SCRIPTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/UI/*.lua")
 game_stage(UIScripts "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_UI_SCRIPTS})
 
-if(NIMBLE_TARGET STREQUAL "Editor")
+if(NIMBLE_TARGET STREQUAL "Editor" OR NIMBLE_STAGE_TEXT_CONTENT)
     set(GAME_UI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 else()
     set(GAME_UI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Saved/Cooked")
 endif()
 file(GLOB_RECURSE GAME_UI_FILES CONFIGURE_DEPENDS "${GAME_UI_ROOT}/Content/UI/*.nmui")
 file(GLOB_RECURSE GAME_UI_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/UI/*.nmui")
-if(NOT NIMBLE_TARGET STREQUAL "Editor" AND GAME_UI_SOURCES AND NOT GAME_UI_FILES)
+if(NOT NIMBLE_TARGET STREQUAL "Editor" AND NOT NIMBLE_STAGE_TEXT_CONTENT AND GAME_UI_SOURCES AND NOT GAME_UI_FILES)
     message(WARNING "${GAME_NAME}: Content/UI/ has documents but Saved/Cooked/Content/UI/ has none; a ${NIMBLE_TARGET} "
                     "build cannot read XML. Cook them in the editor (console: cook ui).")
 endif()

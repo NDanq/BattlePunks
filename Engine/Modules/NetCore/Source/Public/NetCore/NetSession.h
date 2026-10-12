@@ -37,7 +37,7 @@ namespace GameCore { class World; }
  * the order they were made. Replicated state goes unreliably on its own,
  * each batch against what that client has acknowledged, so a lost packet
  * delays nothing behind it (NetProtocol.h, README.md "Unreliable state").
- * A third channel carries the editor link. Every packet is an EngineCore::Archive (little-endian); one that does not
+ * Every packet is an EngineCore::Archive (little-endian); one that does not
  * parse disconnects its sender. A client whose code differs -- protocol
  * version, or the replication and RPC tables (NetSchema) -- is refused.
  *
@@ -159,6 +159,12 @@ namespace NetCore
     private:
         Impl* P;
     };
+
+    /* The replication and RPC tables' hash, as the handshake compares it, for
+     * the components and RPCs registered now (a loaded game module's too).
+     * Two builds whose hashes differ can't play together: what Collaboration's
+     * content worker publishes per commit (Modules/Editor/COLLABORATION.md). */
+    NETCORE_API uint64_t ComputeSchemaHash();
 }
 
 #endif //NETCORE_NETSESSION_H

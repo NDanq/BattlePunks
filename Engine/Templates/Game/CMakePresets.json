@@ -56,6 +56,34 @@
       "description": "@PROJECT_NAME@ with WITH_EDITOR=0 and NIMBLE_SHIPPING=1: optimised, no debug info. The Editor has no Shipping build.",
       "inherits": "client",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Shipping" }
+    },
+
+    {
+      "name": "server",
+      "hidden": true,
+      "inherits": "base",
+      "cacheVariables": { "NIMBLE_TARGET": "Server", "NIMBLE_BUILD_TESTS": "OFF" }
+    },
+    {
+      "name": "server-relwithdebinfo-msvc",
+      "displayName": "Server - RelWithDebInfo (MSVC)",
+      "description": "The dedicated server and the game module with WITH_EDITOR=0, optimised with debug info, by MSVC (VS2022; from a developer prompt). What Collaboration's content worker builds on Windows. No tests (NIMBLE_BUILD_TESTS off for every server preset).",
+      "inherits": "server",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "CMAKE_C_COMPILER": "cl", "CMAKE_CXX_COMPILER": "cl" }
+    },
+    {
+      "name": "server-relwithdebinfo-clang",
+      "displayName": "Server - RelWithDebInfo (Clang)",
+      "description": "The dedicated server and the game module with WITH_EDITOR=0, optimised with debug info, by clang and lld (Linux, WSL included). What Collaboration's content worker builds elsewhere. No tests (NIMBLE_BUILD_TESTS off for every server preset).",
+      "inherits": "server",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_EXE_LINKER_FLAGS": "-fuse-ld=lld",
+        "CMAKE_SHARED_LINKER_FLAGS": "-fuse-ld=lld",
+        "CMAKE_MODULE_LINKER_FLAGS": "-fuse-ld=lld"
+      }
     }
   ],
   "buildPresets": [
@@ -63,6 +91,8 @@
     { "name": "editor-relwithdebinfo", "displayName": "Editor - RelWithDebInfo", "configurePreset": "editor-relwithdebinfo" },
     { "name": "client-debug",          "displayName": "Client - Debug",          "configurePreset": "client-debug" },
     { "name": "client-relwithdebinfo", "displayName": "Client - RelWithDebInfo", "configurePreset": "client-relwithdebinfo" },
-    { "name": "client-shipping",       "displayName": "Client - Shipping",       "configurePreset": "client-shipping" }
+    { "name": "client-shipping",       "displayName": "Client - Shipping",       "configurePreset": "client-shipping" },
+    { "name": "server-relwithdebinfo-msvc",  "displayName": "Server - RelWithDebInfo (MSVC)",  "configurePreset": "server-relwithdebinfo-msvc" },
+    { "name": "server-relwithdebinfo-clang", "displayName": "Server - RelWithDebInfo (Clang)", "configurePreset": "server-relwithdebinfo-clang" }
   ]
 }

@@ -35,6 +35,13 @@ struct PlayNetSettings
     std::string            ClientArgs;             // more command line for each client window ("-Display.RHI=4")
 
     static PlayNetSettings FromConfig();
+
+    /* Play Together (EditorCollabSession): FromConfig returns InSettings
+     * instead, until ClearOverride -- a client of the session's game server
+     * without touching Editor Settings. */
+    static void SetOverride(const PlayNetSettings& InSettings);
+    static void ClearOverride();
+    static bool HasOverride();
 };
 
 class PlaySession final : public NimbleEngine::IGameHost

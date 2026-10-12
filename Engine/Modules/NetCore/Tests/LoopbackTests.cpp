@@ -27,7 +27,6 @@
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/World.h"
-#include "Public/NetCore/NetEditorLink.h"
 #include "Public/NetCore/NetSession.h"
 
 using namespace GameCore;
@@ -283,51 +282,6 @@ namespace
 
 namespace
 {
-    /* STUB(NetCore-Editor): one editor hosts, two join; what one announces
-     * reaches the others, relayed by the host. */
-    void TestEditorLink()
-    {
-        struct Heard { int Count = 0; std::string User, Text; };
-        const NetEditorLink::CommandFn Listen = [](const char* InUser, const char* InText, void* InHeard)
-        {
-            Heard& H = *static_cast<Heard*>(InHeard);
-            ++H.Count;
-            H.User = InUser;
-            H.Text = InText;
-        };
-
-        NetEditorLink Host, Alice, Bob;
-        Heard HostHeard, AliceHeard, BobHeard;
-        Host.SetUserName("host");   Host.SetCommandHandler(Listen, &HostHeard);
-        Alice.SetUserName("alice"); Alice.SetCommandHandler(Listen, &AliceHeard);
-        Bob.SetUserName("bob");     Bob.SetCommandHandler(Listen, &BobHeard);
-
-        Check(Host.Host(0), "an editor hosts");
-        Check(Alice.Join("127.0.0.1", Host.GetPort()) && Bob.Join("127.0.0.1", Host.GetPort()), "two editors join it");
-
-        const auto PollAll = [&]
-        {
-            Host.Poll(); Alice.Poll(); Bob.Poll();
-            EngineCore::Threads::SleepMs(1);
-        };
-        for(int Index = 0; Index < 3000 && Host.GetPeerCount() < 2; ++Index) { PollAll(); }
-        for(int Index = 0; Index < 50; ++Index) { PollAll(); }   // the hellos
-        Check(Host.GetPeerCount() == 2, "the host sees both");
-
-        Alice.SendCommand("Move Crate");
-        for(int Index = 0; Index < 3000 && (HostHeard.Count == 0 || BobHeard.Count == 0); ++Index) { PollAll(); }
-        Check(HostHeard.Count == 1 && HostHeard.User == "alice" && HostHeard.Text == "Move Crate", "the host hears an edit");
-        Check(BobHeard.Count == 1 && BobHeard.Text == "Move Crate", "and relays it to the other editor");
-        Check(AliceHeard.Count == 0, "but not back to its author");
-
-        Host.SendCommand("Delete Lamp");
-        for(int Index = 0; Index < 3000 && (AliceHeard.Count == 0 || BobHeard.Count < 2); ++Index) { PollAll(); }
-        Check(AliceHeard.Text == "Delete Lamp" && BobHeard.Text == "Delete Lamp", "the host's own edits reach everyone");
-    }
-}
-
-namespace
-{
     /* State is unreliable: half of every batch and every ack is dropped here
      * (SimulatedLossPercent), yet the client must end up exactly where the
      * server is -- the acknowledged baselines resend whatever it may lack. */
@@ -406,6 +360,81 @@ namespace
             const PawnComponent* Pawn = There.IsSet() ? Entity(&ClientWorld, There).GetComponent<PawnComponent>() : nullptr;
             return Pawn && Pawn->Health == 79;
         }), "and a change made just after a spawn reaches it");
+
+        Client.Stop();
+        Server.UnbindWorld();
+        Server.Stop();
+        Client.UnbindWorld();
+    }
+
+    /* A spawned avatar's descendants without a Net component (its camera boom
+     * and camera) come with its spawn; one with its own Net comes by itself. */
+    void TestSpawnedParts()
+    {
+        World ServerWorld;
+        World ClientWorld;
+        NetSession Server;
+        NetSession Client;
+        const Pair Both{ &Server, &Client };
+
+        NetConfig ServerConfig;
+        ServerConfig.Port = 0;
+        Check(Server.Start(ENetRole::Server, ServerConfig), "a parts server listens");
+        Server.BindWorld(ServerWorld, "Parts");
+
+        NetConfig ClientConfig;
+        std::strcpy(ClientConfig.ServerAddress, "127.0.0.1");
+        ClientConfig.Port = Server.GetPort();
+        Check(Client.Start(ENetRole::Client, ClientConfig), "a parts client connects");
+        Client.BindWorld(ClientWorld, "Parts");
+        Check(StepUntil(Both, [&] { return Client.IsConnected(); }), "the parts client is welcomed");
+
+        Entity Avatar = ServerWorld.CreateEntity("Avatar");
+        Avatar.AddComponent<NetComponent>();
+        Avatar.AddComponent<TransformComponent>();
+        Entity Boom = ServerWorld.CreateEntity("Boom");
+        Boom.AddComponent<TransformComponent>()->Position = EngineCore::Vector3(0.0f, 150.0f, 0.0f);
+        Boom.SetParent(Avatar.GetID(), false);
+        Entity Camera = ServerWorld.CreateEntity("Camera");
+        PawnComponent Lens;
+        Lens.Health = 62;
+        Camera.AddComponent(Lens);
+        Camera.SetParent(Boom.GetID(), false);
+        Entity Gun = ServerWorld.CreateEntity("Gun");
+        Gun.AddComponent<NetComponent>();
+        Gun.SetParent(Avatar.GetID(), false);
+
+        EntityID ClientAvatar;
+        Check(StepUntil(Both, [&]
+        {
+            ClientAvatar = Client.FindEntityByNetId(Avatar.GetComponent<NetComponent>()->NetId);
+            return ClientAvatar.IsSet() && Client.FindEntityByNetId(Gun.GetComponent<NetComponent>()->NetId).IsSet();
+        }), "the avatar and its networked gun spawn");
+
+        const EntityID ClientBoom   = ClientWorld.FindEntityByName("Boom");
+        const EntityID ClientCamera = ClientWorld.FindEntityByName("Camera");
+        Check(ClientBoom.IsSet() && ClientWorld.GetEntity(ClientBoom).GetParent() == ClientAvatar,
+              "its boom comes with it, under it");
+        const TransformComponent* BoomTransform = ClientBoom.IsSet() ? ClientWorld.GetEntity(ClientBoom).GetComponent<TransformComponent>() : nullptr;
+        Check(BoomTransform && Near(BoomTransform->Position.GetY(), 150.0f), "with its components");
+        const PawnComponent* CameraPawn = ClientCamera.IsSet() ? ClientWorld.GetEntity(ClientCamera).GetComponent<PawnComponent>() : nullptr;
+        Check(ClientCamera.IsSet() && ClientWorld.GetEntity(ClientCamera).GetParent() == ClientBoom && CameraPawn && CameraPawn->Health == 62,
+              "and so does the boom's camera, under the boom");
+        Check(!ClientWorld.GetEntity(ClientBoom).HasComponent<NetComponent>(), "a part is not made networked");
+
+        const EntityID ClientGun = Client.FindEntityByNetId(Gun.GetComponent<NetComponent>()->NetId);
+        int Entities = 0;
+        ClientWorld.ForEachEntity([](EntityID InEntity, void* InCount)
+        {
+            (void)InEntity;
+            ++*static_cast<int*>(InCount);
+        }, &Entities);
+        Check(Entities == 4, "the gun is not sent twice");
+        Check(ClientWorld.GetEntity(ClientGun).GetParent() == ClientAvatar, "the networked gun is under the avatar too");
+
+        Avatar.Destroy();
+        Check(StepUntil(Both, [&] { return !ClientWorld.IsAlive(ClientAvatar); }), "the avatar goes");
+        Check(!ClientWorld.IsAlive(ClientBoom) && !ClientWorld.IsAlive(ClientCamera), "and its parts with it");
 
         Client.Stop();
         Server.UnbindWorld();
@@ -1248,7 +1277,6 @@ namespace
 
 int main()
 {
-    TestEditorLink();
     TestReplicationTable();
     TestRpcLocalWithoutSession();
     GServerLog = RpcLog();
@@ -1583,6 +1611,7 @@ int main()
     Check(GServerLog.ServerMoves == MovesBefore + 1, "stopping the last session restores local RPCs");
 
     TestLossyState();
+    TestSpawnedParts();
     TestRpcLimits();
     TestReconnect();
     TestViewTime();
