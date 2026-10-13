@@ -6,6 +6,7 @@
 #include "Public/Editor/EditorMainWindow.h"
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 
 #include <QPainter>
@@ -55,6 +56,7 @@
 #include "Private/Editor/Content/RenderTargetAssets.h"
 #include "Private/Editor/EditorEditActions.h"
 #include "Private/Editor/EditorLights.h"
+#include "Private/Editor/EditorPlayerStarts.h"
 #include "Private/Editor/EditorPrimitives.h"
 #include "Private/Editor/NotificationWidgets.h"
 #include "Private/Editor/SourceControl/SourceControlWindow.h"
@@ -633,6 +635,16 @@ void EditorMainWindow::BuildMenus()
     };
     EditorPrimitives::AddPrimitiveActions(World->addMenu(QStringLiteral("Add &Primitive")), Level, InFrontOfCamera);
     EditorLights::AddLightActions(World->addMenu(QStringLiteral("Add &Light")), Level, InFrontOfCamera);
+
+    /* A Player Start there too, facing the way the camera looks (EditorPlayerStarts.h). */
+    QAction* AddPlayerStart = World->addAction(QStringLiteral("Add Pla&yer Start"));
+    AddPlayerStart->setToolTip(QStringLiteral("Where a player's avatar comes into the level"));
+    connect(AddPlayerStart, &QAction::triggered, this, [this, InFrontOfCamera]()
+    {
+        const EngineCore::Vector3 Forward = Viewport->GetCamera().GetForward();
+        const double Yaw = std::atan2(Forward.GetX(), Forward.GetZ()) * 180.0 / 3.14159265358979;
+        EditorPlayerStarts::CreatePlayerStart(Level, InFrontOfCamera(), Yaw);
+    });
 
     /* Terrain mode (TerrainToolsWindow.h): make one, then sculpt and paint it. */
     QAction* TerrainAction = World->addAction(EditorIcons::Get(EditorIcons::EIcon::Terrain), QStringLiteral("&Terrain..."));

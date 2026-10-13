@@ -92,6 +92,10 @@ public:
     void SetShowLightGizmos(bool bInShow) { bShowLightGizmos = bInShow; }
     bool IsShowingLightGizmos() const     { return bShowLightGizmos; }
 
+    /* Draw every Player Start, not just the selected one. */
+    void SetShowPlayerStarts(bool bInShow) { bShowPlayerStarts = bInShow; }
+    bool IsShowingPlayerStarts() const     { return bShowPlayerStarts; }
+
     // === Transform handles ==================================================
 
     void SetGizmoMode(TransformGizmo::EMode InMode);
@@ -187,6 +191,10 @@ private:
      * arrow. The selected light bright; the rest dim, when shown at all. */
     void QueueLightGizmos();
 
+    /* Each Player Start: a capsule where the avatar stands and an arrow the
+     * way it faces, coloured by its slot (grey while disabled). */
+    void QueuePlayerStartGizmos();
+
     /* The selection's centre if it has bounds, else the focus point. */
     EngineCore::Vector3 GetPivot() const;
 
@@ -252,6 +260,7 @@ private:
     bool bHoldingMouse    = false;   // UpdateMouseHold
     bool bShowAllBounds   = false;
     bool bShowLightGizmos = true;
+    bool bShowPlayerStarts = true;
 
     TransformGizmo          Gizmo;
     TransformGizmo::EHandle GizmoHover = TransformGizmo::EHandle::None;

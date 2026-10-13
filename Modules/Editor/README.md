@@ -80,6 +80,7 @@ uses it.
 | `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select (lights by their position), selection bounds, axis gizmo, light gizmos (a point light's sphere, a spot's cone, the sun's arrow, a scene capture probe's mirror rectangle and normal or its box and reach; all lights or the selected one, Show > Editor Gizmos > Light Gizmos), a perspective game camera's frustum |
 | `EditorPrimitives` (private) | World > Add Primitive and the Outliner's Add Primitive: the engine's Box, Sphere, Cylinder, Capsule or Plane mesh on a new entity, sized to see, in one undo step |
 | `EditorLights` (private) | World > Add Light and the Outliner's Add Light: a light entity in one undo step, aimed down when it has a direction; also a Reflection Probe, and a Scene Capture (Omni) or (Mirror) probe |
+| `EditorPlayerStarts` (private) | World > Add Player Start and the Outliner's Add Player Start: a Player Start entity in one undo step (from the World menu, facing the way the camera looks) |
 | `Content/RenderTargetAssets` (private) | Render target assets: New Render Target 2D / 3D (Cube), the settings dialog, World > Bake Scene Captures |
 | `WorldSettingsDialog` (private) | World > World Settings: the edited world's `GameCore::WorldSettings` -- baked lighting on or off, lightmap density, bounces, samples, probe spacing, lightmap size -- one undo step, saved with the world |
 | `Lighting/LightBaker`, `LightBakeBVH`, `LightBakeScene` (private) | The light baker: a multithreaded CPU path tracer over a bake scene -- lightmap layout, texels, direct and bounced light, filtering, light probes (RenderCore's RENDERPIPELINE.md, "Baked lighting"). No World, no Qt; built with optimisation even in Debug; tested by `NimbleEditorLightingTests` |
@@ -383,8 +384,10 @@ take keyboard focus, so the viewport's keys keep working after one is used.
   light live as if there were none (`[Rendering] BakedLighting`; see the Build
   menu's Bake Lightmaps).
 - **Editor Gizmos**: **All Bounds** (every entity's box, not only the
-  selection's) and **Light Gizmos** (every light's reach, not only the
-  selected light's).
+  selection's), **Light Gizmos** (every light's reach, not only the
+  selected light's) and **Player Starts** (every start's capsule and facing
+  arrow, coloured by its slot: Any green, Player 1..4 blue, red, amber,
+  purple, disabled grey).
 "Top" looks down from world +Y: the editor uses the engine's left-handed,
 +Y-up axes (RenderCore's RenderView.h).
 

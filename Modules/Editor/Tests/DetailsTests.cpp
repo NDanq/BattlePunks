@@ -309,7 +309,7 @@ static void TestViewSettings()
 
     const auto Var = [](const char* InPath) { return EngineCore::ConfigFindVarByPath(InPath); };
     const char* const Paths[] = { "Editor.ViewGizmoMode", "Editor.ViewGizmoSpace", "Editor.ViewGizmoSnap", "Editor.ViewMode",
-                                  "Editor.ViewAllBounds", "Editor.ViewLightGizmos", "Editor.ViewCameraSpeed", "Rendering.BakedLighting" };
+                                  "Editor.ViewAllBounds", "Editor.ViewLightGizmos", "Editor.ViewPlayerStarts", "Editor.ViewCameraSpeed", "Rendering.BakedLighting" };
     bool bAll = true;
     for(const char* Path : Paths) { bAll &= Var(Path) != nullptr; }
     Expect(bAll, "every view setting is a config var");
@@ -327,6 +327,7 @@ static void TestViewSettings()
     Var("Editor.ViewMode")->SetInt(1);
     Var("Editor.ViewAllBounds")->SetBool(true);
     Var("Editor.ViewLightGizmos")->SetBool(false);
+    Var("Editor.ViewPlayerStarts")->SetBool(false);
     Var("Editor.ViewCameraSpeed")->SetInt(5);
     Var("Rendering.BakedLighting")->SetBool(false);
     Expect(SettingsDialog::SaveUserSettings(), "the settings save");
@@ -337,7 +338,7 @@ static void TestViewSettings()
     Reset();
     SettingsDialog::LoadUserSettings();
     Expect(Var("Editor.ViewGizmoMode")->GetInt() == 2 && Var("Editor.ViewGizmoSnap")->GetBool() && Var("Editor.ViewMode")->GetInt() == 1
-           && Var("Editor.ViewAllBounds")->GetBool() && !Var("Editor.ViewLightGizmos")->GetBool()
+           && Var("Editor.ViewAllBounds")->GetBool() && !Var("Editor.ViewLightGizmos")->GetBool() && !Var("Editor.ViewPlayerStarts")->GetBool()
            && Var("Editor.ViewCameraSpeed")->GetInt() == 5 && !Var("Rendering.BakedLighting")->GetBool(),
            "and read back");
 
@@ -348,7 +349,7 @@ static void TestViewSettings()
         ViewportPanel Panel(Context, Document);
         ViewportWidget* View = Panel.GetViewport();
         Expect(View->GetGizmoMode() == TransformGizmo::EMode::Rotate && View->IsGizmoSnapEnabled() && View->IsShowingAllBounds()
-               && !View->IsShowingLightGizmos() && Context.GetViewMode() == RenderCore::ERenderViewMode::Unlit,
+               && !View->IsShowingLightGizmos() && !View->IsShowingPlayerStarts() && Context.GetViewMode() == RenderCore::ERenderViewMode::Unlit,
                "a new viewport takes the saved handles, snap, gizmos and view mode");
 
         View->SetGizmoMode(TransformGizmo::EMode::Scale);   // as its 4 key does

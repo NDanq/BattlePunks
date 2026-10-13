@@ -44,7 +44,8 @@
  * component type, an unreadable entity file, a missing instance, ...),
  * blamed on the file the message names when that is one of the world's own,
  * else on the world; a file that doesn't load at all; or an asset path a
- * world, entity or prefab names that doesn't exist.
+ * world, entity or prefab names that doesn't exist; or a listed world whose
+ * NetGameMode has no enabled Player Start to spawn avatars at.
  */
 namespace NimbleEngine
 {
@@ -253,6 +254,24 @@ namespace
         return true;
     }
 
+    /* A NetGameMode world with no enabled Player Start spawns every avatar at
+     * the origin -- unless every one it needs is placed (AutoPossess), which
+     * isn't known here; the report says so, and the reader decides. */
+    bool HasPlayerStart(const WorldEntry& InWorld, const fs::path& InProject)
+    {
+        GameCore::World Scratch;
+        if(!GameCore::LoadWorldFile(Generic(InProject / fs::u8path(InWorld.File)).c_str(), Scratch))
+        {
+            return true;   // "doesn't load" is its own problem
+        }
+        bool bFound = false;
+        Scratch.Each<PlayerStartComponent>([&](const GameCore::Entity&, PlayerStartComponent& InStart)
+        {
+            bFound = bFound || InStart.bEnabled;
+        });
+        return bFound;
+    }
+
     bool EndsWith(const std::string& InText, const char* InSuffix)
     {
         const size_t Length = std::char_traits<char>::length(InSuffix);
@@ -293,6 +312,11 @@ int Application::ExecReport(const char* InDefaultModule, const ContentReportOpti
             const bool bNetworked = CheckWorldNetworked(Each, Project, Why);
             WorldLines += "world\t" + OneLine(Each.Name) + "\t" + OneLine(Each.File) + "\t" + OneLine(Each.GameMode) + "\t"
                         + (bNetworked ? "1" : "0") + "\t" + OneLine(Why) + "\n";
+            if(IsNetworkedGameMode(Each.GameMode.c_str()) && !HasPlayerStart(Each, Project))
+            {
+                Problems.push_back({ Each.File, "has no enabled Player Start, so " + Each.GameMode
+                                                + " spawns avatars at the origin" });
+            }
         }
 
         /* Every world and prefab, in a stable order. */

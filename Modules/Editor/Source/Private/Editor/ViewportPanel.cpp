@@ -51,6 +51,7 @@ NIMBLE_CONFIG_BOOL(GEditorViewGizmoSnap,    "Editor", "ViewGizmoSnap",    false,
 NIMBLE_CONFIG_INT (GEditorViewMode,         "Editor", "ViewMode",         0, nullptr);       // 0 Lit, 1 Unlit (a render target is not kept)
 NIMBLE_CONFIG_BOOL(GEditorViewAllBounds,    "Editor", "ViewAllBounds",    false, nullptr);
 NIMBLE_CONFIG_BOOL(GEditorViewLightGizmos,  "Editor", "ViewLightGizmos",  true, nullptr);
+NIMBLE_CONFIG_BOOL(GEditorViewPlayerStarts, "Editor", "ViewPlayerStarts", true, nullptr);
 #if WITH_AICORE
 /* Show > Editor Gizmos > AI (EditorAI's overlay; the Navigation and AI Debugger docks toggle the same). */
 NIMBLE_CONFIG_BOOL(GEditorViewAINavMesh,    "Editor", "ViewAINavMesh",    false, nullptr);
@@ -138,6 +139,7 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocumen
     Viewport->SetGizmoSnap(GEditorViewGizmoSnap.GetBool());
     Viewport->SetShowAllBounds(GEditorViewAllBounds.GetBool());
     Viewport->SetShowLightGizmos(GEditorViewLightGizmos.GetBool());
+    Viewport->SetShowPlayerStarts(GEditorViewPlayerStarts.GetBool());
 #if WITH_AICORE
     {
         EditorAI::OverlaySettings& AI = EditorAI::GetOverlaySettings();
@@ -310,6 +312,16 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocumen
     {
         Viewport->SetShowLightGizmos(bInOn);
         Remember(GEditorViewLightGizmos.SetBool(bInOn));
+    });
+
+    ShowPlayerStartsAction = GizmoMenu->addAction(QStringLiteral("Player Starts"));
+    ShowPlayerStartsAction->setCheckable(true);
+    ShowPlayerStartsAction->setChecked(Viewport->IsShowingPlayerStarts());
+    ShowPlayerStartsAction->setToolTip(QStringLiteral("Draw every Player Start, not only the selected one"));
+    connect(ShowPlayerStartsAction, &QAction::toggled, this, [this](const bool bInOn)
+    {
+        Viewport->SetShowPlayerStarts(bInOn);
+        Remember(GEditorViewPlayerStarts.SetBool(bInOn));
     });
 
 #if WITH_AICORE

@@ -125,8 +125,9 @@ void ApplyAutoPossess(GameCore::World& InWorld)
 
 bool NetGameMode::OnLoad(GameSession& InSession)
 {
-    Session     = &InSession;
-    NextOrdinal = 0;
+    Session        = &InSession;
+    NextOrdinal    = 0;
+    bWarnedNoStart = false;
     return true;
 }
 
@@ -153,7 +154,13 @@ GameCore::EntityID NetGameMode::SpawnFor(const GameCore::EntityID InPlayer)
 {
     GameCore::World& World = Session->GetWorld();
     const uint32_t Ordinal = NextOrdinal++;
-    const GameCore::EntityID Avatar = SpawnAvatarFor(World, InPlayer, GetAvatarPrefab(InPlayer), FindPlayerStart(World, Ordinal));
+    const GameCore::EntityID Start = FindPlayerStart(World, Ordinal);
+    if(!Start.IsSet() && !bWarnedNoStart)
+    {
+        CORE_LOG_WARN("[Avatar] the level has no enabled Player Start: avatars spawn at the origin")
+        bWarnedNoStart = true;
+    }
+    const GameCore::EntityID Avatar = SpawnAvatarFor(World, InPlayer, GetAvatarPrefab(InPlayer), Start);
     if(Avatar.IsSet()) { OnAvatarSpawned(InPlayer, Avatar, Ordinal); }
     return Avatar;
 }
