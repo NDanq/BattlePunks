@@ -228,7 +228,7 @@ namespace AICore
         }
     }
 
-    bool ParseBehaviorTreeXml(const std::string& InText, BehaviorTreeAsset& OutAsset, std::string* OutError)
+    bool ParseBehaviorTreeXml(const std::string& InText, BehaviorTreeAsset& OutAsset, std::string* OutError, const bool bInResolve)
     {
         const auto Fail = [OutError](const std::string& InWhy) { if(OutError) { *OutError = InWhy; } return false; };
         pugi::xml_document Document;
@@ -266,7 +266,7 @@ namespace AICore
         std::string Error;
         uint32_t RootIndex = 0;
         if(!ReadNode(RootNode, Asset, RootIndex, Error)) { return Fail(Error); }
-        if(!Asset.Resolve(&Error)) { return Fail(Error); }
+        if(bInResolve && !Asset.Resolve(&Error)) { return Fail(Error); }
         OutAsset = std::move(Asset);
         return true;
     }

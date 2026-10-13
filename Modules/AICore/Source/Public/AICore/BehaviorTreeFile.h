@@ -56,7 +56,10 @@ namespace AICore
     AICORE_API bool ReadBehaviorTreeBinary(const std::vector<uint8_t>& InBytes, BehaviorTreeAsset& OutAsset, std::string* OutError = nullptr);
 
 #if WITH_UNCOOKED
-    AICORE_API bool        ParseBehaviorTreeXml(const std::string& InText, BehaviorTreeAsset& OutAsset, std::string* OutError = nullptr);
+    /* bInResolve false keeps a tree whose types this process has not
+     * registered (an editor without the game's module): unresolved. */
+    AICORE_API bool        ParseBehaviorTreeXml(const std::string& InText, BehaviorTreeAsset& OutAsset, std::string* OutError = nullptr,
+                                                bool bInResolve = true);
     /* Deterministic: the same asset always writes the same bytes. */
     AICORE_API std::string WriteBehaviorTreeXml(const BehaviorTreeAsset& InAsset);
     AICORE_API bool        SaveBehaviorTreeXml(const std::string& InDiskPath, const BehaviorTreeAsset& InAsset, std::string* OutError = nullptr);

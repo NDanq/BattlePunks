@@ -22,6 +22,10 @@
 #include "Public/NimbleEngine/ShaderCook.h"
 #include "Public/NimbleEngine/WorldList.h"
 #include "Public/Sequencer/SequenceFile.h"
+#if WITH_AICORE
+#include "Public/AICore/BehaviorTreeFile.h"
+#include "Public/AICore/NavMesh.h"
+#endif
 
 #include "Private/Editor/ConfigIniFile.h"
 #include "Private/Editor/Content/ContentPaths.h"
@@ -135,6 +139,8 @@ namespace EditorCook
         case AT_Prefabs: return "Prefabs";
         case AT_UI:      return "UI documents";
         case AT_Sequences: return "Sequences";
+        case AT_NavMeshes: return "Navmeshes";
+        case AT_BehaviorTrees: return "Behavior trees";
         default:         return "?";
         }
     }
@@ -493,6 +499,71 @@ namespace EditorCook
             }
         }
         Stats.Types[AT_Sequences].Seconds = double(Step.elapsed()) / 1000.0;
+
+#if WITH_AICORE
+        // --- Navmeshes ---------------------------------------------------------
+        /* Already binary (NavMesh::Save): loaded to prove it reads, then copied. */
+        Step.start();
+        {
+            const QList<QPair<QString, QString>> Meshes = ProjectFiles(Root, QStringLiteral("*.nmnav"));
+            Progress(QStringLiteral("Cooking %1 navmesh(es)").arg(Meshes.size()));
+            for(const QPair<QString, QString>& Mesh : Meshes)
+            {
+                const QString Out = GetCookedPath(Root, Mesh.first);
+                QFile SourceFile(Mesh.second);
+                const QByteArray Bytes = SourceFile.open(QIODevice::ReadOnly) ? SourceFile.readAll() : QByteArray();
+                std::string Error;
+                AICore::NavMesh Check;
+                if(Bytes.isEmpty() || !Check.Load(std::vector<uint8_t>(Bytes.begin(), Bytes.end()), &Error))
+                {
+                    ++Stats.Types[AT_NavMeshes].Failed;
+                    Stats.Failures << QStringLiteral("%1: %2").arg(Mesh.first, Error.empty() ? QStringLiteral("could not be read") : QString::fromStdString(Error));
+                    continue;
+                }
+                QDir().mkpath(QFileInfo(Out).absolutePath());
+                QFile::remove(Out);
+                if(QFile::copy(Mesh.second, Out))
+                {
+                    ++Stats.Types[AT_NavMeshes].Cooked;
+                    Stats.Types[AT_NavMeshes].BytesIn  += FileBytes(Mesh.second);
+                    Stats.Types[AT_NavMeshes].BytesOut += FileBytes(Out);
+                }
+                else
+                {
+                    ++Stats.Types[AT_NavMeshes].Failed;
+                    Stats.Failures << QStringLiteral("%1: could not be written").arg(Mesh.first);
+                }
+            }
+        }
+        Stats.Types[AT_NavMeshes].Seconds = double(Step.elapsed()) / 1000.0;
+
+        // --- Behavior trees ----------------------------------------------------
+        /* A tree naming a type no module registered fails here, not in the
+         * shipped game: the game module is loaded while the editor cooks. */
+        Step.start();
+        {
+            const QList<QPair<QString, QString>> Trees = ProjectFiles(Root, QStringLiteral("*.nmbt"));
+            Progress(QStringLiteral("Cooking %1 behavior tree(s)").arg(Trees.size()));
+            for(const QPair<QString, QString>& Tree : Trees)
+            {
+                const QString Out = GetCookedPath(Root, Tree.first);
+                QDir().mkpath(QFileInfo(Out).absolutePath());
+                std::string Error;
+                if(AICore::CookBehaviorTreeFile(ToStd(Tree.second), ToStd(Out), &Error))
+                {
+                    ++Stats.Types[AT_BehaviorTrees].Cooked;
+                    Stats.Types[AT_BehaviorTrees].BytesIn  += FileBytes(Tree.second);
+                    Stats.Types[AT_BehaviorTrees].BytesOut += FileBytes(Out);
+                }
+                else
+                {
+                    ++Stats.Types[AT_BehaviorTrees].Failed;
+                    Stats.Failures << QStringLiteral("%1: %2").arg(Tree.first, QString::fromStdString(Error));
+                }
+            }
+        }
+        Stats.Types[AT_BehaviorTrees].Seconds = double(Step.elapsed()) / 1000.0;
+#endif
 
         Stats.Seconds = double(Total.elapsed()) / 1000.0;
         for(const QString& Line : DescribeStats(Stats))

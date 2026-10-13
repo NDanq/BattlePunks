@@ -200,6 +200,7 @@ namespace
             { PF_AssetAnimation, "animation (.nmanim, .nmanimstate)" }, { PF_AssetSound, "sound (.nmsound)" },
             { PF_AssetPrefab, "prefab (.nmprefab)" },         { PF_AssetSequence, "sequence (.nmseq)" },
             { PF_AssetTerrain, "terrain (.nmterrain)" },      { PF_AssetFoliage, "foliage (.nmfoliage)" },
+            { PF_AssetNavMesh, "navmesh (.nmnav)" },          { PF_AssetBehaviorTree, "behavior tree (.nmbt)" },
         };
         for(const Kind& Each : Kinds)
         {
