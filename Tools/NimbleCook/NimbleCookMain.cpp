@@ -6,7 +6,7 @@
  *
  *   NimbleCook shaders [-engine <Engine dir>] [-project <dir> [-module <name>]]
  *                      [-target <OpenGL|Vulkan|D3D12>]... [-editor] [-shipping]
- *                      [-force] [-python <exe>]
+ *                      [-force] [-jobs <N>] [-python <exe>]
  *
  * The engine always; with -project, that project's Content/Materials too.
  * -module names the project's shader cache (default: its
@@ -30,7 +30,9 @@
  * The targets default to this build's GDI backends. The compiling --
  * preprocessing, permutation keys, glslc, spirv-cross, fxc -- is
  * NodeGraph's cook_material_graphs.py through GDI's cook_shaders.py, run
- * once per variant and platform.
+ * once per variant and platform, one after another: each run compiles its
+ * shaders on several threads already (the script's -jobs, default 32;
+ * -jobs here passes it on).
  *
  * Exits 0 when everything cooked or was up to date, 1 if anything failed,
  * 2 on bad arguments.
@@ -55,6 +57,7 @@ namespace
         std::string              Module;
         std::vector<std::string> Targets;
         std::string              Python;
+        std::string              Jobs;     // the script's -jobs; empty: its default
         bool                     bEditor   = false;
         bool                     bShipping = false;
         bool                     bForce    = false;
@@ -222,6 +225,10 @@ namespace
                 for(const Args& Each : InRuns)
                 {
                     std::vector<std::string> Command{ Opts.Python, ToUtf8(Script), "-target", Target };
+                    if(!Opts.Jobs.empty())
+                    {
+                        Command.insert(Command.end(), { "-jobs", Opts.Jobs });
+                    }
                     for(const std::string& Arg : Each)
                     {
                         Command.push_back(Expand(Arg, ToUtf8(Out), Target));
@@ -315,7 +322,8 @@ int main(int argc, char** argv)
     {
         std::fprintf(stderr,
                      "Usage: NimbleCook shaders [-engine <dir>] [-project <dir> [-module <name>]]\n"
-                     "                          [-target <OpenGL|Vulkan|D3D12>]... [-editor] [-shipping] [-force] [-python <exe>]\n");
+                     "                          [-target <OpenGL|Vulkan|D3D12>]... [-editor] [-shipping] [-force]\n"
+                     "                          [-jobs <N>] [-python <exe>]\n");
         return 2;
     }
 
@@ -333,6 +341,15 @@ int main(int argc, char** argv)
         else if(bHasValue && Name == "-project") { Opts.ProjectDir = fs::u8path(argv[++Index]); }
         else if(bHasValue && Name == "-module")  { Opts.Module = argv[++Index]; }
         else if(bHasValue && Name == "-python")  { Opts.Python = argv[++Index]; }
+        else if(bHasValue && Name == "-jobs")
+        {
+            Opts.Jobs = argv[++Index];
+            if(Opts.Jobs.find_first_not_of("0123456789") != std::string::npos || std::atoi(Opts.Jobs.c_str()) < 1)
+            {
+                std::fprintf(stderr, "NimbleCook: -jobs needs a number above 0, not %s\n", Opts.Jobs.c_str());
+                return 2;
+            }
+        }
         else if(bHasValue && Name == "-target")
         {
             const std::string Target = argv[++Index];

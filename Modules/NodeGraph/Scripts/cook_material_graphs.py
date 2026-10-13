@@ -55,6 +55,12 @@ Usage:
             OpenGL  nothing         the cooked file is already source
         Without -out or -cache, only these are kept.
 
+    -jobs N (either command) compiles up to N shaders at once, default 32:
+    each is a glslc (and spirv-cross and fxc) process, so threads overlap
+    them. -jobs 1 cooks one at a time. Output and caches do not depend on N:
+    each shader's lines are printed in the same order, and a cache is
+    written sorted.
+
 The renderer loads the material "Materials/Glow.material.nmgraph" from
 Materials/Glow.material and
 Shaders/Cooked/<Platform>/Materials/Glow@<key>.<stage>[.spv|.cso]
@@ -64,6 +70,7 @@ with -root at the game's folder -- and the build only stages what it cooked).
 
 import argparse
 import hashlib
+import io
 import xml.etree.ElementTree as ElementTree
 import os
 import re
@@ -72,6 +79,8 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 SCRIPT_DIR         = Path(__file__).parent.resolve()
@@ -89,6 +98,8 @@ SHADINGS   = ["Lit", "Unlit"]                                     # bits 3-4
 VERTEX_INS = ["Quad", "Mesh", "Fullscreen", "InstancedMesh", "SkinnedMesh"]   # bits 8-10
 
 CACHE_VERSION = 1
+
+DEFAULT_JOBS = 32   # shaders compiled at once (-jobs)
 
 
 def pixel_key(domain, shading):
@@ -123,8 +134,9 @@ def template_version():
 
 # --- GDI's toolchain, rerouted -------------------------------------------------
 
-# The material function the templates' <Material.glsl> means right now.
-_current_material = [DEFAULT_MATERIAL]
+# The material function the templates' <Material.glsl> means right now -- on
+# this thread: shaders cook on several at once (run_jobs).
+_current_material = threading.local()
 
 
 def _import_cook_shaders(scripts_dir):
@@ -146,10 +158,32 @@ def _import_cook_shaders(scripts_dir):
 
     def preprocess(file_path, *args, **kwargs):
         if Path(file_path).name == MATERIAL_INCLUDE:
-            file_path = _current_material[0]
+            file_path = getattr(_current_material, "path", DEFAULT_MATERIAL)
         return gdi_preprocess(file_path, *args, **kwargs)
 
     cook_shaders.preprocess = preprocess
+
+    # Its macro expansion, faster: GDI's runs a regex per define on every
+    # line. A name not in the line cannot match \bNAME\b, so it is skipped;
+    # the rest is GDI's, in its order, so the output is the same -- a name an
+    # earlier substitution brings in is still in the line when its turn comes.
+    def substitute(line, defines):
+        for name, value in defines.items():
+            if value and name in line:   # flag-only (empty) defines expand to nothing
+                line = re.sub(rf'\b{re.escape(name)}\b', value, line)
+        return line
+
+    gdi_expand_func_macros = cook_shaders._expand_func_macros
+
+    def expand_func_macros(line, func_macros):
+        # GDI's, one macro at a time in its order: each sees what the last made.
+        for name, macro in func_macros.items():
+            if name in line:
+                line = gdi_expand_func_macros(line, {name: macro})
+        return line
+
+    cook_shaders._substitute         = substitute
+    cook_shaders._expand_func_macros = expand_func_macros
     return cook_shaders
 
 
@@ -175,7 +209,7 @@ STAGE_PROFILE = {"vertex": "vs_5_0", "pixel": "ps_5_0", "compute": "cs_5_0"}
 def _preprocess(cs, job, platform_define):
     shader_type = getattr(cs, STAGE_TYPES[job.stage])
     defines = {shader_type: "1", platform_define: "1", **job.defines}
-    _current_material[0] = job.material or DEFAULT_MATERIAL
+    _current_material.path = job.material or DEFAULT_MATERIAL
     return cs.preprocess(job.source, shader_type, ENGINE_SHADERS_DIR, defines)
 
 
@@ -208,6 +242,62 @@ def _spirv(cs, glslc, job, spv_path, debug_source=None):
         print(f"ERROR: glslc failed for {job.label()}:\n{result.stderr}", file=sys.stderr)
         return False
     return True
+
+
+class _JobOutput:
+    """sys.stdout or sys.stderr while run_jobs runs: a worker's prints -- this
+    script's, and GDI's preprocessor's -- go to its own buffer, the main
+    thread's straight through."""
+
+    def __init__(self, real):
+        self.real  = real
+        self.local = threading.local()
+
+    def write(self, text):
+        buffer = getattr(self.local, "buffer", None)
+        return (buffer if buffer is not None else self.real).write(text)
+
+    def flush(self):
+        self.real.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.real, name)
+
+
+def run_jobs(work, jobs, workers):
+    """work(job) -> bool for every job, on up to `workers` threads; yields
+    (job, ok) in job order, after replaying what that job printed. Each job
+    runs glslc (and spirv-cross and fxc) as processes, which threads overlap."""
+    if workers <= 1 or len(jobs) <= 1:
+        for job in jobs:
+            yield job, work(job)
+        return
+
+    out, err = _JobOutput(sys.stdout), _JobOutput(sys.stderr)
+
+    def run(job):
+        out.local.buffer, err.local.buffer = io.StringIO(), io.StringIO()
+        try:
+            ok = work(job)
+        except SystemExit:   # GDI's preprocessor exits on what it cannot read; it said why
+            ok = False
+        finally:
+            printed = (out.local.buffer.getvalue(), err.local.buffer.getvalue())
+            out.local.buffer = err.local.buffer = None
+        return ok, printed
+
+    sys.stdout, sys.stderr = out, err
+    try:
+        with ThreadPoolExecutor(max_workers=min(workers, len(jobs))) as pool:
+            for job, (ok, (printed_out, printed_err)) in zip(jobs, pool.map(run, jobs)):
+                if printed_out:
+                    out.real.write(printed_out)
+                if printed_err:
+                    out.real.flush()
+                    err.real.write(printed_err)
+                yield job, ok
+    finally:
+        sys.stdout, sys.stderr = out.real, err.real
 
 
 def cook_job(cs, tools, target, job, out_dir, pdb_dir=None):
@@ -430,7 +520,7 @@ def write_cache(cache_path, module, target, files, hash_paths=False):
 
 # --- Commands ------------------------------------------------------------------------
 
-def check(cs, files, root):
+def check(cs, files, root, workers=DEFAULT_JOBS):
     glslc = cs._find_glslc()
     failures = 0
     plain, materials, graphs = collect(files)
@@ -450,8 +540,10 @@ def check(cs, files, root):
                 continue
             jobs += mjobs
 
-        for job in jobs:
-            if _spirv(cs, glslc, job, Path(tmp_dir) / "check.spv"):
+        # Each its own output: they compile at once.
+        scratch = {id(job): Path(tmp_dir) / f"check{index}.spv" for index, job in enumerate(jobs)}
+        for job, ok in run_jobs(lambda job: _spirv(cs, glslc, job, scratch[id(job)]), jobs, workers):
+            if ok:
                 print(f"  ok  {job.label()}")
             else:
                 failures += 1
@@ -459,7 +551,7 @@ def check(cs, files, root):
 
 
 def cook(cs, target, src_paths, out_root=None, subdir="", defaults=False, cache=None, module="", root=None, data_out=None,
-         pdb=None, hash_paths=False):
+         pdb=None, hash_paths=False, workers=DEFAULT_JOBS):
     plain, materials, graphs = collect(src_paths)
     if graphs and not root:
         print("ERROR: material graphs need -root (what their runtime paths are relative to)", file=sys.stderr)
@@ -501,11 +593,13 @@ def cook(cs, target, src_paths, out_root=None, subdir="", defaults=False, cache=
               + (f" (debug info -> {pdb_dir})" if pdb_dir and (cache or out_root) else ""))
         if pdb and not pdb_dir:
             print(f"[{target}] no debug information to write: the cooked shaders are source")
+        # Every folder first: the jobs then compile at once.
         for job in jobs:
             (out_dir / job.out_name).parent.mkdir(parents=True, exist_ok=True)
             if pdb_dir:
                 (pdb_dir / job.out_name).parent.mkdir(parents=True, exist_ok=True)
-            if cook_job(cs, tools, target, job, out_dir, pdb_dir):
+        for job, ok in run_jobs(lambda job: cook_job(cs, tools, target, job, out_dir, pdb_dir), jobs, workers):
+            if ok:
                 print(f"  {job.label()}")
             else:
                 failures += 1
@@ -546,17 +640,21 @@ def main():
                                                    "alone (no -out or -cache), only that")
     parser.add_argument("-gdi-scripts", default=str(GDI_SCRIPTS_DIR), metavar="DIR",
                         help="where GDI's cook_shaders.py lives (default: beside this module)")
+    parser.add_argument("-jobs", type=int, default=DEFAULT_JOBS, metavar="N",
+                        help=f"shaders compiled at once (default {DEFAULT_JOBS}; 1 cooks one at a time)")
     args = parser.parse_args()
+    if args.jobs < 1:
+        parser.error("-jobs needs a number above 0")
 
     cs = _import_cook_shaders(args.gdi_scripts)
 
     if args.check:
-        sys.exit(1 if check(cs, args.check, args.root) else 0)
+        sys.exit(1 if check(cs, args.check, args.root, args.jobs) else 0)
     if args.target and (args.src or args.defaults) and (args.out or args.cache or args.pdb):
         if args.cache and not args.module:
             parser.error("-cache needs -module")
         sys.exit(1 if cook(cs, args.target, args.src or [], args.out, args.subdir, args.defaults, args.cache,
-                           args.module, args.root, args.data_out, args.pdb, args.hash_paths) else 0)
+                           args.module, args.root, args.data_out, args.pdb, args.hash_paths, args.jobs) else 0)
 
     parser.error("give -check FILE..., or -target with -src (or -defaults) and -out, -cache or -pdb")
 
