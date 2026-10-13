@@ -89,6 +89,9 @@ public:
      * the "screenshot" command. 0 when the Renderer is not running; poll
      * TakeMaterialPreview. */
     uint64_t RequestSceneCapture();
+    /* The same with the debug lines: the viewport's gizmos and overlays
+     * ("screenshot -gizmos"). */
+    uint64_t RequestSceneCaptureWithDebugLines();
     /* The same, of another viewport's scene (its GetOverlayScene during PrepareFrame). */
     uint64_t RequestSceneCapture(RenderCore::RenderSceneID InScene);
     /* The same, of the scene InDocument is drawn in (a Prefab or Particle Editor tab's).

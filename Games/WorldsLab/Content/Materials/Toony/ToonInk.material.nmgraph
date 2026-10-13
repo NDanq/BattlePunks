@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="0bb5b0ce231897d3e65f1e4f399cf3c7" Type="Math.Divide" Version="1" X="-600" Y="440" Wildcard="float" />
+    <Node Id="136819adf8a3725d8b4b58c3f3ae4c61" Type="Math.Divide" Version="1" X="50" Y="-160" Wildcard="float" />
+    <Node Id="15633bd5113183ccc51dc037926635f0" Type="Math.Lerp" Version="1" X="1300" Y="100" Wildcard="vec4" />
+    <Node Id="3024429cda12cdabcd804548e9c1d68d" Type="Parameter" Version="1" X="1000" Y="300">
+      <Prop Name="Default" Value="0.08 0.06 0.12 1" />
+      <Prop Name="Name" Value="InkColor" />
+      <Prop Name="Type" Value="vec4" />
+    </Node>
+    <Node Id="350e340fe5f568b11b84713e91620576" Type="Math.Lerp" Version="1" X="800" Y="40" Wildcard="vec4" />
+    <Node Id="37a349afbf89218baa08072563934019" Type="Math.Fwidth" Version="1" X="-600" Y="220" Wildcard="float" />
+    <Node Id="3899face658dcb9f72dd64ee91faf6ff" Type="Parameter" Version="1" X="600" Y="220">
+      <Prop Name="Default" Value="1.15" />
+      <Prop Name="Name" Value="Saturation" />
+      <Prop Name="Type" Value="float" />
+    </Node>
+    <Node Id="45315fd7f2b05672d52cfbe75657d95a" Type="Math.Fwidth" Version="1" X="-800" Y="400" Wildcard="float" />
+    <Node Id="471934acdc649220184e7d523dd91215" Type="Math.Smoothstep" Version="1" X="-400" Y="440" Wildcard="float" />
+    <Node Id="4b97edfee822727fdd2d06a88cad27ea" Type="Math.Multiply" Version="1" X="-400" Y="-160" Wildcard="float" />
+    <Node Id="538c760dddf0e7af390a5f5c50169190" Type="Parameter" Version="1" X="-600" Y="-200">
+      <Prop Name="Default" Value="4" />
+      <Prop Name="Name" Value="Bands" />
+      <Prop Name="Type" Value="float" />
+    </Node>
+    <Node Id="5935e5c849d75490cc0cbd1c93862598" Type="Math.Max" Version="1" X="0" Y="340" Wildcard="float" />
+    <Node Id="59c2a4f90133222a51227cc66f28a258" Type="Math.Smoothstep" Version="1" X="-400" Y="220" Wildcard="float">
+      <Const Pin="Edge0" Value="0.06" />
+      <Const Pin="Edge1" Value="0.16" />
+    </Node>
+    <Node Id="660a67769615632004f45425a037fc85" Type="Math.Max" Version="1" X="50" Y="-40" Wildcard="float">
+      <Const Pin="B" Value="0.001" />
+    </Node>
+    <Node Id="674c4634b3e50e708c236e9344a94858" Type="Parameter" Version="1" X="0" Y="460">
+      <Prop Name="Default" Value="0.9" />
+      <Prop Name="Name" Value="InkStrength" />
+      <Prop Name="Type" Value="float" />
+    </Node>
+    <Node Id="6a64bf2d03b5348afa27e1f078d86515" Type="Parameter" Version="1" X="200" Y="20">
+      <Prop Name="Default" Value="0.35" />
+      <Prop Name="Name" Value="BandStrength" />
+      <Prop Name="Type" Value="float" />
+    </Node>
+    <Node Id="6c18f425bf5924896d8ead28a29d7299" Type="Output.Material" Version="1" X="1900" Y="0">
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="PostProcess" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Unlit" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+    <Node Id="74f2a673b754f163291b063fe4b02704" Type="Parameter" Version="1" X="-400" Y="320">
+      <Prop Name="Default" Value="0.7" />
+      <Prop Name="Name" Value="ColourInk" />
+      <Prop Name="Type" Value="float" />
+    </Node>
+    <Node Id="76f3f5f823a4f122d278c993b62da728" Type="Input.SceneTexture" Version="1" X="-1000" Y="0" />
+    <Node Id="955c54e20eb37e43a312a1a7ccd6044b" Type="Math.Max" Version="1" X="-800" Y="520" Wildcard="float">
+      <Const Pin="B" Value="0.00001" />
+    </Node>
+    <Node Id="968219d9c03c9dd4aaf4bbbb29d86ad2" Type="Math.Max" Version="1" X="1000" Y="40" Wildcard="vec4">
+      <Const Pin="B" Value="0 0 0 0" />
+    </Node>
+    <Node Id="9a2e1399ffea23c25342139deb9aa641" Type="Input.SceneDepth" Version="1" X="-1000" Y="400" />
+    <Node Id="a97cef9f45713d4284fcaa621f3ec894" Type="Math.Multiply" Version="1" X="600" Y="-40" Wildcard="vec4" />
+    <Node Id="aa6a38113f7c24e82e9aa5554228228b" Type="Vector.Dot" Version="1" X="-800" Y="160" Wildcard="vec4">
+      <Const Pin="B" Value="0.2126 0.7152 0.0722 0" />
+    </Node>
+    <Node Id="ab47efd982181eda0de3c03e0a526624" Type="Math.Multiply" Version="1" X="200" Y="360" Wildcard="float" />
+    <Node Id="b91c409bbc4e47359545b7851c641be9" Type="Math.Multiply" Version="1" X="-200" Y="260" Wildcard="float" />
+    <Node Id="be7900108f36f2d50a06ef45b43e28a7" Type="Parameter" Version="1" X="-600" Y="640">
+      <Prop Name="Default" Value="0.08" />
+      <Prop Name="Name" Value="DepthEdge1" />
+      <Prop Name="Type" Value="float" />
+    </Node>
+    <Node Id="c66c2fc9bb64d4f6bec0c4111632a67e" Type="Math.Lerp" Version="1" X="400" Y="-100" Wildcard="float">
+      <Const Pin="A" Value="1" />
+    </Node>
+    <Node Id="cb7800477de90dd96870ad81fcff3ee1" Type="Math.Floor" Version="1" X="-100" Y="-160" Wildcard="float" />
+    <Node Id="d37ed837a3323d8c2b5640a847b74060" Type="Math.OneMinus" Version="1" X="-900" Y="520" Wildcard="float" />
+    <Node Id="e1ad5072a3885a76d5ab051f4fa8b143" Type="Math.Add" Version="1" X="-250" Y="-160" Wildcard="float">
+      <Const Pin="B" Value="0.5" />
+    </Node>
+    <Node Id="e522ee641007e4ed7785430d96befd1d" Type="Parameter" Version="1" X="-600" Y="560">
+      <Prop Name="Default" Value="0.03" />
+      <Prop Name="Name" Value="DepthEdge0" />
+      <Prop Name="Type" Value="float" />
+    </Node>
+    <Node Id="eb3da4e24a94174fbd65f4b81cdd0f0c" Type="Math.Divide" Version="1" X="200" Y="-100" Wildcard="float" />
+    <Node Id="f312c23be17526080c0ed50ec823d20e" Type="Math.Multiply" Version="1" X="600" Y="120" Wildcard="vec4">
+      <Const Pin="A" Value="1 1 1 1" />
+    </Node>
+  </Nodes>
+  <Links>
+    <Link From="0bb5b0ce231897d3e65f1e4f399cf3c7.Out" To="471934acdc649220184e7d523dd91215.X" />
+    <Link From="136819adf8a3725d8b4b58c3f3ae4c61.Out" To="eb3da4e24a94174fbd65f4b81cdd0f0c.A" />
+    <Link From="15633bd5113183ccc51dc037926635f0.Out" To="6c18f425bf5924896d8ead28a29d7299.Emissive" />
+    <Link From="3024429cda12cdabcd804548e9c1d68d.Value" To="15633bd5113183ccc51dc037926635f0.B" />
+    <Link From="350e340fe5f568b11b84713e91620576.Out" To="968219d9c03c9dd4aaf4bbbb29d86ad2.A" />
+    <Link From="37a349afbf89218baa08072563934019.Out" To="59c2a4f90133222a51227cc66f28a258.X" />
+    <Link From="3899face658dcb9f72dd64ee91faf6ff.Value" To="350e340fe5f568b11b84713e91620576.T" />
+    <Link From="45315fd7f2b05672d52cfbe75657d95a.Out" To="0bb5b0ce231897d3e65f1e4f399cf3c7.A" />
+    <Link From="471934acdc649220184e7d523dd91215.Out" To="5935e5c849d75490cc0cbd1c93862598.A" />
+    <Link From="4b97edfee822727fdd2d06a88cad27ea.Out" To="e1ad5072a3885a76d5ab051f4fa8b143.A" />
+    <Link From="538c760dddf0e7af390a5f5c50169190.Value" To="136819adf8a3725d8b4b58c3f3ae4c61.B" />
+    <Link From="538c760dddf0e7af390a5f5c50169190.Value" To="4b97edfee822727fdd2d06a88cad27ea.B" />
+    <Link From="5935e5c849d75490cc0cbd1c93862598.Out" To="ab47efd982181eda0de3c03e0a526624.A" />
+    <Link From="59c2a4f90133222a51227cc66f28a258.Out" To="b91c409bbc4e47359545b7851c641be9.A" />
+    <Link From="660a67769615632004f45425a037fc85.Out" To="eb3da4e24a94174fbd65f4b81cdd0f0c.B" />
+    <Link From="674c4634b3e50e708c236e9344a94858.Value" To="ab47efd982181eda0de3c03e0a526624.B" />
+    <Link From="6a64bf2d03b5348afa27e1f078d86515.Value" To="c66c2fc9bb64d4f6bec0c4111632a67e.T" />
+    <Link From="74f2a673b754f163291b063fe4b02704.Value" To="b91c409bbc4e47359545b7851c641be9.B" />
+    <Link From="76f3f5f823a4f122d278c993b62da728.Color" To="a97cef9f45713d4284fcaa621f3ec894.A" />
+    <Link From="76f3f5f823a4f122d278c993b62da728.Color" To="aa6a38113f7c24e82e9aa5554228228b.A" />
+    <Link From="955c54e20eb37e43a312a1a7ccd6044b.Out" To="0bb5b0ce231897d3e65f1e4f399cf3c7.B" />
+    <Link From="968219d9c03c9dd4aaf4bbbb29d86ad2.Out" To="15633bd5113183ccc51dc037926635f0.A" />
+    <Link From="9a2e1399ffea23c25342139deb9aa641.Depth" To="45315fd7f2b05672d52cfbe75657d95a.X" />
+    <Link From="9a2e1399ffea23c25342139deb9aa641.Depth" To="d37ed837a3323d8c2b5640a847b74060.X" />
+    <Link From="a97cef9f45713d4284fcaa621f3ec894.Out" To="350e340fe5f568b11b84713e91620576.B" />
+    <Link From="aa6a38113f7c24e82e9aa5554228228b.Out" To="37a349afbf89218baa08072563934019.X" />
+    <Link From="aa6a38113f7c24e82e9aa5554228228b.Out" To="4b97edfee822727fdd2d06a88cad27ea.A" />
+    <Link From="aa6a38113f7c24e82e9aa5554228228b.Out" To="660a67769615632004f45425a037fc85.A" />
+    <Link From="aa6a38113f7c24e82e9aa5554228228b.Out" To="f312c23be17526080c0ed50ec823d20e.B" />
+    <Link From="ab47efd982181eda0de3c03e0a526624.Out" To="15633bd5113183ccc51dc037926635f0.T" />
+    <Link From="b91c409bbc4e47359545b7851c641be9.Out" To="5935e5c849d75490cc0cbd1c93862598.B" />
+    <Link From="be7900108f36f2d50a06ef45b43e28a7.Value" To="471934acdc649220184e7d523dd91215.Edge1" />
+    <Link From="c66c2fc9bb64d4f6bec0c4111632a67e.Out" To="a97cef9f45713d4284fcaa621f3ec894.B" />
+    <Link From="cb7800477de90dd96870ad81fcff3ee1.Out" To="136819adf8a3725d8b4b58c3f3ae4c61.A" />
+    <Link From="d37ed837a3323d8c2b5640a847b74060.Out" To="955c54e20eb37e43a312a1a7ccd6044b.A" />
+    <Link From="e1ad5072a3885a76d5ab051f4fa8b143.Out" To="cb7800477de90dd96870ad81fcff3ee1.X" />
+    <Link From="e522ee641007e4ed7785430d96befd1d.Value" To="471934acdc649220184e7d523dd91215.Edge0" />
+    <Link From="eb3da4e24a94174fbd65f4b81cdd0f0c.Out" To="c66c2fc9bb64d4f6bec0c4111632a67e.B" />
+    <Link From="f312c23be17526080c0ed50ec823d20e.Out" To="350e340fe5f568b11b84713e91620576.A" />
+  </Links>
+  <Comments>
+    <Comment X="-700" Y="-420" Width="640" Height="90" Text="Toony ToonInk: ink where the scene's depth jumps (Fwidth of its depth, relative) and where flat colours meet, the brightness banded into a few steps, a little more saturation." />
+  </Comments>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "ToonInk". Do not edit.
+// PostProcess, Unlit. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in ToonInk.material.
+UBO_BLOCK_BEGIN(2, ToonInk_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    float Param_BandStrength;
+    float Param_Bands;
+    float Param_ColourInk;
+    float Param_DepthEdge0;
+    float Param_DepthEdge1;
+    vec4  Param_InkColor;
+    float Param_InkStrength;
+    vec4  Param_Saturation;
+UBO_BLOCK_END(ToonInk_Block)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    float t0 = dot(texture(Material_SceneColor, Inputs.TexCoord), vec4(0.2126, 0.7152, 0.0722, 0.0));
+    vec4 t1 = vec4(1.0) * vec4(t0);
+    float t2 = t0 * Param_Bands;
+    float t3 = t2 + 0.5;
+    float t4 = floor(t3);
+    float t5 = t4 / Param_Bands;
+    float t6 = max(t0, 0.001);
+    float t7 = t5 / t6;
+    float t8 = mix(1.0, t7, Param_BandStrength);
+    vec4 t9 = texture(Material_SceneColor, Inputs.TexCoord) * vec4(t8);
+    vec4 t10 = mix(t1, t9, Param_Saturation);
+    vec4 t11 = max(t10, vec4(0.0));
+    float t12 = fwidth(Material_SceneDepthAt(Inputs.FragCoord.xy));
+    float t13 = 1.0 - Material_SceneDepthAt(Inputs.FragCoord.xy);
+    float t14 = max(t13, 1e-05);
+    float t15 = t12 / t14;
+    float t16 = smoothstep(Param_DepthEdge0, Param_DepthEdge1, t15);
+    float t17 = fwidth(t0);
+    float t18 = smoothstep(0.06, 0.16, t17);
+    float t19 = t18 * Param_ColourInk;
+    float t20 = max(t16, t19);
+    float t21 = t20 * Param_InkStrength;
+    vec4 t22 = mix(t11, Param_InkColor, vec4(t21));
+    Surface.Emissive = t22.xyz;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "ToonInk". Do not edit.
+NimbleMaterial 3
+Domain PostProcess
+Shading Unlit
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 240
+Param BandStrength float 160 0.35 0 0 0
+Param Bands float 164 4 0 0 0
+Param ColourInk float 168 0.7 0 0 0
+Param DepthEdge0 float 172 0.03 0 0 0
+Param DepthEdge1 float 176 0.08 0 0 0
+Param InkColor vec4 192 0.08 0.06 0.12 1
+Param InkStrength float 208 0.9 0 0 0
+Param Saturation vec4 224 1.15 1.15 1.15 1.15
+]]></Output>
+  </gen_code>
+</NodeGraph>

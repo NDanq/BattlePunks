@@ -4,7 +4,8 @@ project(NimbleThirdParty LANGUAGES C CXX)
 
 # ===========================================================================
 # NimbleThirdParty -- every vendored library the engine compiles, in one
-# project: SDL3, Jolt, Lua, pugixml, ENet, miniaudio, bc7enc_rdo and xatlas.
+# project: SDL3, Jolt, Lua, pugixml, ENet, miniaudio, bc7enc_rdo, xatlas and
+# Recast Navigation.
 # Their sources are under Source/, each a faithful copy of its upstream release
 # (SDL carries one local patch; Modules/GameWindow/README.md lists it).
 #
@@ -296,6 +297,32 @@ add_library(NimbleXatlas STATIC "${NIMBLE_THIRDPARTY_XATLAS_DIR}/xatlas.cpp")
 nimble_thirdparty_usage(Xatlas NimbleXatlas BUILD)
 nm_tp_library_properties(NimbleXatlas)
 
+# === Recast Navigation ======================================================
+# Recast Navigation 1.6.0 (zlib), for Modules/AICore: Recast builds navmeshes
+# from triangles, Detour queries them, DetourCrowd steers agents over them,
+# DetourTileCache adds obstacles at runtime, DebugUtils draws them. Only the
+# five libraries are vendored -- no RecastDemo, tests or docs -- and the tree
+# is the source list, so it is globbed.
+#
+# One STATIC library, inside AICore.dll alone; nothing else includes it
+# (the editor draws navmeshes through AICore's NavDebugDraw.h).
+if(NOT EXISTS "${NIMBLE_THIRDPARTY_RECAST_DIR}/Detour/Include/DetourNavMesh.h")
+    message(FATAL_ERROR "Vendored Recast Navigation not found at ${NIMBLE_THIRDPARTY_RECAST_DIR}.")
+endif()
+file(GLOB NM_TP_RECAST_SOURCES CONFIGURE_DEPENDS
+        "${NIMBLE_THIRDPARTY_RECAST_DIR}/Recast/Source/*.cpp"
+        "${NIMBLE_THIRDPARTY_RECAST_DIR}/Detour/Source/*.cpp"
+        "${NIMBLE_THIRDPARTY_RECAST_DIR}/DetourCrowd/Source/*.cpp"
+        "${NIMBLE_THIRDPARTY_RECAST_DIR}/DetourTileCache/Source/*.cpp"
+        "${NIMBLE_THIRDPARTY_RECAST_DIR}/DebugUtils/Source/*.cpp")
+add_library(RecastNav STATIC ${NM_TP_RECAST_SOURCES})
+add_library(RecastNav::RecastNav ALIAS RecastNav)
+nimble_thirdparty_usage(RecastNav RecastNav BUILD)
+# Asserts in Debug only. Shipping links the Release build, so it has none.
+target_compile_definitions(RecastNav PRIVATE $<$<NOT:$<CONFIG:Debug>>:RC_DISABLE_ASSERTS>)
+nm_tp_library_properties(RecastNav)
+source_group(TREE "${NIMBLE_THIRDPARTY_RECAST_DIR}" PREFIX "RecastNav" FILES ${NM_TP_RECAST_SOURCES})
+
 # === Manifest (standalone) ==================================================
 # Per configuration, the files the engine's IMPORTED targets point at:
 # <output>/<Config>/NimbleThirdPartyManifest.cmake. Written at generate time
@@ -305,7 +332,8 @@ if(NM_TP_STANDALONE)
     set(NM_TP_MANIFEST "# Written by Engine/ThirdParty/CMakeLists.txt. Read by Engine/cmake/NimbleThirdParty.cmake.\n")
     # Keyed by the names in NIMBLE_THIRDPARTY_LIBRARIES; SDL3's real target is SDL3-shared.
     foreach(NM_PAIR SDL3:SDL3-shared Jolt:Jolt Lua:Lua PugiXml:PugiXml ENet:ENet miniaudio:miniaudio
-                    Bc7enc:NimbleBc7enc Xatlas:NimbleXatlas)
+                    Bc7enc:NimbleBc7enc Xatlas:NimbleXatlas
+                    RecastNav:RecastNav)
         string(REPLACE ":" ";" NM_PAIR "${NM_PAIR}")
         list(GET NM_PAIR 0 NM_NAME)
         list(GET NM_PAIR 1 NM_TARGET)

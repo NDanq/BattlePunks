@@ -592,6 +592,33 @@ script.
 
 The full guide is `Engine/Source/TERRAIN.md`.
 
+## AI
+
+With AICore built (`WITH_AICORE`), `Source/Private/Editor/AI/` adds the
+following:
+
+- **World > Navigation...**, a dock tabbed with the Details. It builds the
+  level's navmesh, rebuilds it as the level changes, and adds volumes,
+  modifiers and obstacles. Its **Path tester** makes the viewport's left
+  button pick a path's ends (`PathTesterTool`).
+- **World > AI Debugger...**, a dock. While Play runs it shows each brain's
+  running branch, utility scores, blackboard, perception memory and path.
+- **The behavior tree editor** (`BehaviorTreeEditorWindow`), opened from an
+  `.nmbt` in the Content Browser, **New Behavior Tree...**, or an AI Brain's
+  Tree field. It has a blackboard, a palette, the tree, and a node's details
+  with its decorators, services and considerations. It also has undo, and
+  Debug in PIE.
+- **Show > Editor Gizmos > AI**, the viewport's AI gizmos: Nav Mesh, Nav Tile
+  Bounds, Nav Obstacles, Modifiers and Volumes, Agent Paths, Sight and
+  Perception. They are remembered in `[Editor] ViewAI*`. The agent gizmos
+  also draw while Play shows the game's camera (`ViewportWidget::AddOverlay`
+  with `bInWhilePlaying`).
+- The `ai.*` console commands.
+- Build > Cook Content's **Navmeshes** and **Behavior trees** steps.
+
+The full reference is `Engine/Modules/AICore/README.md`, and the walkthrough is
+`Engine/Modules/AICore/GUIDE.md`.
+
 ## Particle Editor
 
 A `.nmparticle` (a particle system: RenderCore's `ParticleSystemAsset.h`) opens
@@ -688,7 +715,7 @@ registered:
 | `save` | File > Save World (the world must have a file) |
 | `quit` | File > Exit, which still asks about unsaved changes |
 | `lighting <bake \| baked \| live>` | Build > Bake Lightmaps, or Show > Lighting > Baked / Live |
-| `screenshot <file.png>` | Save the viewport's next frame, without gizmos or debug lines (`Renderer::RequestSceneCapture`) |
+| `screenshot [-gizmos] <file.png>` | Save the viewport's next frame, without gizmos or debug lines (`Renderer::RequestSceneCapture`); with `-gizmos`, with them (`RequestSceneCaptureWithDebugLines`). `windowshot` takes `-gizmos` too |
 | `import <source> [folder]` | The Content Browser's import with default options: a `.gltf`/`.glb`, an image, or a `.wav`/`.flac`/`.mp3`/`.ogg` (with the Audio module) into the project folder given, `Content` by default |
 | `cook project` | As Build > Cook Content: the listed worlds, every prefab and UI document, with the stats |
 | `cook [world] [out]` | Cook a world file to binary -- by default the open world's saved file, to `<project>/Saved/Cooked/<its path>` |

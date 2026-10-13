@@ -1,5 +1,6 @@
 #include "WorldsLabWalker.h"
 
+#include "Public/NimbleEngine/AIFacade.h"
 #include "Public/NimbleEngine/AudioFacade.h"
 #include "Public/NimbleEngine/Avatar.h"
 #include "Public/NimbleEngine/GameMode.h"
@@ -80,6 +81,14 @@
  * the same prediction path and fire by the same RPC. PvpBot=1 hands this
  * process's own player to it too: two clients with PvpBot=1 against a server
  * play a whole match unattended (the test).
+ *
+ * Where the authority has AI (AICore; NimbleEngine/AIFacade.h) a bot is an AI
+ * Brain (Content/AI/PvpBot.nmbt) on a Nav Agent: the tree picks where to go
+ * -- engage, reload, investigate a shot, patrol -- the crowd walks the street's
+ * navmesh, and SteerInput turns that into the move and look axes; the filter
+ * still aims and pulls the trigger. Every fighter is an AI Stimulus of its own
+ * team (a free-for-all). A client's PvpBot, with no AI of its own, walks the
+ * street's waypoint loop as before.
  */
 
 NIMBLE_CONFIG_INT(GPvpFragLimit,     "WorldsLab", "PvpFragLimit",     15,  nullptr);
@@ -93,6 +102,7 @@ namespace
 {
     constexpr const char* FighterPrefab = "Content/Prefabs/SteampunkPvP/PvpFighter.nmprefab";
     constexpr const char* HudPath       = "Content/UI/SteampunkPvP/PvpHUD.nmui";
+    constexpr const char* BotTree       = "Content/AI/PvpBot.nmbt";
     constexpr const char* Sounds        = "Content/Sounds/ShootingRange/";
     constexpr const char* Particles     = "Content/Particles/ShootingRange/";
 
@@ -136,6 +146,9 @@ struct PvpFighterComponent
     // Each process's own, never sent.
     uint8_t bShownDead = 0;    // its ragdoll has been let go here
     float   LocalCooldown = 0.0f;
+
+    // The server's, never sent: its AI team (a free-for-all: one each).
+    uint8_t AITeam = 0;
 
     /* The driving process's shot: from InOrigin along InDir (normalised here). */
     void ServerFire(const GameCore::RpcContext& InContext, const EngineCore::Vector3& InOrigin, const EngineCore::Vector3& InDir);
@@ -568,6 +581,83 @@ namespace
                                              float(L), Hit, ShotMask);
     }
 
+    /* The AI path of BotFilter (the file's header, "BOTS"): false when this
+     * process has no AI for InAvatar, which then walks the waypoint loop. */
+    bool AiBotFilter(GameCore::World& InWorld, const EntityID InAvatar, const RangeMoverComponent& InMover, const PvpFighterComponent& InSelf,
+                     BotState& InOutBot, const Vec& InEye, const Vec& InPivot, const double InDt, NimbleEngine::InputSnapshot& InOutInput)
+    {
+        static const int LookX = NimbleEngine::FindInputAxis("Range", "LookX");
+        static const int LookY = NimbleEngine::FindInputAxis("Range", "LookY");
+        static const int MoveForward = NimbleEngine::FindInputAxis("Range", "MoveForward");
+        static const int MoveRight = NimbleEngine::FindInputAxis("Range", "MoveRight");
+        const auto Bit = [](const char* InAction) { const int I = NimbleEngine::FindInputAction("Range", InAction); return I >= 0 ? 1u << I : 0u; };
+        if(!NimbleEngine::SetAIKey(InWorld, InAvatar, "Ammo", std::to_string(InSelf.bReloading ? 0.0 : double(InSelf.Ammo) / Magazine).c_str()))
+        {
+            return false;   // no brain here
+        }
+        NimbleEngine::SetAIKey(InWorld, InAvatar, "Health", std::to_string(double(InSelf.Health) / MaxHealth).c_str());
+
+        /* The brain's target, if this pistol can see it from the camera. */
+        const EntityID Target = NimbleEngine::GetAIKeyEntity(InWorld, InAvatar, "TargetActor");
+        const PvpFighterComponent* Foe = Target.IsSet() ? FighterOf(InWorld, Target) : nullptr;
+        Vec Aim{};
+        bool bSees = false;
+        if(Foe && !Foe->bDead && NimbleEngine::GetAIKeyNumber(InWorld, InAvatar, "TargetVisible") > 0.5)
+        {
+            const Vec F = FeetOf(InWorld, Target);
+            Aim = { F.X, F.Y + 120.0, F.Z };
+            bSees = LineOfSight(InWorld, InPivot, Aim);
+        }
+
+        /* Walking: the crowd's velocity as move axes (relative to the view, so
+         * it strafes while it aims); the view itself follows the way it goes
+         * only when there is nothing to aim at. */
+        NimbleEngine::SteerInputMap Map;
+        Map.MoveForward = MoveForward;
+        Map.MoveRight = MoveRight;
+        Map.LookX = bSees ? -1 : LookX;
+        Map.RunBits = Bit("Run");
+        Map.TurnDegreesPerSecond = 220.0f;
+        Map.WalkSpeed = 165.0f;
+        Map.RunSpeed = 200.0f;
+        Map.FaceMoveTolerance = bSees ? 180.0f : 50.0f;
+        NimbleEngine::SteerInput(InWorld, InAvatar, Map, InMover.CameraYaw, float(InDt), InOutInput);
+
+        const double Most = std::max(220.0 * std::max(InDt, 1.0 / 240.0), 0.05);
+        if(!bSees)
+        {
+            InOutBot.bFireHeld = false;
+            if(LookY >= 0) { InOutInput.Axes[LookY] = float(std::clamp(6.0 - double(InMover.Pitch), -Most, Most)); }
+            if(InSelf.Ammo < Magazine && !InSelf.bReloading && NimbleEngine::GetAIKeyNumber(InWorld, InAvatar, "TargetVisible") < 0.5)
+            {
+                InOutInput.Pressed |= Bit("Reload");
+            }
+            return true;
+        }
+
+        /* From the camera, through the crosshair, at most 220 degrees a second. */
+        const double DX = Aim.X - InEye.X, DY = Aim.Y - InEye.Y, DZ = Aim.Z - InEye.Z;
+        const double Yaw = std::atan2(DX, DZ) * 180.0 / 3.14159265358979323846;
+        const double Pitch = -std::atan2(DY, std::sqrt(DX * DX + DZ * DZ)) * 180.0 / 3.14159265358979323846;
+        const double DYaw = WorldsLabWalker::WrapDegrees(Yaw - double(InMover.CameraYaw));
+        const double DPitch = Pitch - double(InMover.Pitch);
+        if(LookX >= 0) { InOutInput.Axes[LookX] = float(std::clamp(DYaw, -Most, Most)); }
+        if(LookY >= 0) { InOutInput.Axes[LookY] = float(std::clamp(DPitch, -Most, Most)); }
+        /* One press a shot: let go between them. */
+        if(std::fabs(DYaw) + std::fabs(DPitch) < 2.5 && !InOutBot.bFireHeld && InSelf.Ammo > 0 && !InSelf.bReloading)
+        {
+            InOutInput.Pressed |= Bit("Fire");
+            InOutInput.Down |= Bit("Fire");
+            InOutBot.bFireHeld = true;
+        }
+        else
+        {
+            InOutBot.bFireHeld = false;
+        }
+        if(InSelf.Ammo == 0 && !InSelf.bReloading) { InOutInput.Pressed |= Bit("Reload"); }
+        return true;
+    }
+
     void BotFilter(GameCore::World& InWorld, const EntityID InAvatar, NimbleEngine::InputSnapshot& InOutInput)
     {
         static const int LookX = NimbleEngine::FindInputAxis("Range", "LookX");
@@ -590,6 +680,9 @@ namespace
         const Vec Feet = FeetOf(InWorld, InAvatar);
         const Vec Eye { Mover->CameraX, Mover->CameraY, Mover->CameraZ };
         const Vec Pivot { Feet.X, Feet.Y + BoomHeight, Feet.Z };
+
+        /* An AI bot: its brain and the crowd say where it goes; aim and fire here. */
+        if(AiBotFilter(InWorld, InAvatar, *Mover, *Self, Bot, Eye, Pivot, Dt, InOutInput)) { return; }
 
         /* The nearest fighter in sight. */
         EntityID Target;
@@ -783,6 +876,25 @@ protected:
         const NimbleEngine::PossessorComponent* Possessor = World.GetEntity(InPlayer).GetComponent<NimbleEngine::PossessorComponent>();
         const bool bBot = Possessor && Possessor->LocalPlayer > 0;
         std::snprintf(Fighter->Name, sizeof(Fighter->Name), "%s %u", bBot ? "Bot" : "Player", unsigned(InOrdinal + 1));
+        /* AI: everyone is seen (a team each); a bot is a brain on a Nav Agent. */
+        Fighter->AITeam = uint8_t(1 + InOrdinal % 250);
+        const uint8_t Team = Fighter->AITeam;
+        if(bBot)
+        {
+            NimbleEngine::AIBotSetup Setup;
+            Setup.Tree = BotTree;
+            Setup.Team = Team;
+            Setup.MaxSpeed = 400.0f;
+            Setup.MeshYaw = 180.0f;
+            Setup.SightRange = 4500.0f;
+            Setup.FovHalfAngle = 80.0f;
+            Setup.TargetHeight = 120.0f;
+            NimbleEngine::MakeAIBot(World, InAvatar, Setup);
+        }
+        else
+        {
+            NimbleEngine::SetAIStimulus(World, InAvatar, Team, true);
+        }
         /* Somewhere nobody is, not the join order's start. */
         Respawn(World, InAvatar);
     }
@@ -792,8 +904,10 @@ private:
     {
         const double Now = NowSeconds();
         std::vector<EntityID> ToRespawn;
+        std::vector<std::pair<EntityID, std::pair<uint8_t, bool>>> Seen;   // who perception sees: the living
         World.Each<PvpFighterComponent>([&](GameCore::Entity InEntity, PvpFighterComponent& InFighter)
         {
+            if(InFighter.AITeam) { Seen.push_back({ InEntity.GetID(), { InFighter.AITeam, InFighter.bDead == 0 } }); }
             InFighter.Cooldown = std::max(0.0f, InFighter.Cooldown - Dt);
             if(InFighter.bReloading && (InFighter.ReloadIn -= Dt) <= 0.0f)
             {
@@ -803,6 +917,8 @@ private:
             if(InFighter.bDead && (InFighter.RespawnIn -= Dt) <= 0.0f) { ToRespawn.push_back(InEntity.GetID()); }
 
         });
+        /* After the pool walk: adding a Stimulus would move the pool under it. */
+        for(const auto& Each : Seen) { NimbleEngine::SetAIStimulus(World, Each.first, Each.second.first, Each.second.second); }
 
         if(Now >= NextAccuracyAt)
         {

@@ -163,7 +163,7 @@ game_stage(Scripts "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_SCRIPT_FILES})
 
 # Content/: imported meshes and textures ("Content/Meshes/Crate.nmmesh"), and
 # post process stacks (a Post Process component's "Content/PostProcess/X.pp.nmgraph", render targets (.nmrt2d / .nmrt3d), particle systems (.nmparticle), animation (.nmskel, .nmanim, .nmanimstate), sounds (.nmsound),
-# baked lighting (a world's Lighting/ folder: .nmlighting and its lightmaps), and terrain heightfields and their foliage
+# baked lighting (a world's Lighting/ folder: .nmlighting and its lightmaps), baked navmeshes (.nmnav), and terrain heightfields and their foliage
 # (a world's Terrain/ folder: .nmterrain, .nmfoliage), read as they are, text in every build).
 file(GLOB_RECURSE GAME_CONTENT_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmmesh"
@@ -178,7 +178,8 @@ file(GLOB_RECURSE GAME_CONTENT_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmsound"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmlighting"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmterrain"
-        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmfoliage")
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmfoliage"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmnav")
 game_stage(Content "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_CONTENT_FILES})
 
 # Content/Prefabs/: every build but Shipping stages the text prefabs -- an
@@ -241,6 +242,23 @@ if(NOT NIMBLE_STAGE_TEXT_CONTENT AND GAME_SEQUENCE_SOURCES AND NOT GAME_SEQUENCE
                     "build cannot read XML sequences. Cook them in the editor (Build > Cook Content).")
 endif()
 game_stage(Sequences "${GAME_SEQUENCE_ROOT}" ${GAME_SEQUENCE_FILES})
+
+# Behavior trees (.nmbt, anywhere under Content/): AI Brains' trees
+# (Engine/Modules/AICore/README.md). As sequences: every build but Shipping
+# stages the XML; Shipping and packaged builds stage the cooked ones from
+# Saved/Cooked/ -- made in the editor by Build > Cook Content.
+if(NIMBLE_STAGE_TEXT_CONTENT)
+    set(GAME_TREE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
+else()
+    set(GAME_TREE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Saved/Cooked")
+endif()
+file(GLOB_RECURSE GAME_TREE_FILES CONFIGURE_DEPENDS "${GAME_TREE_ROOT}/Content/*.nmbt")
+file(GLOB_RECURSE GAME_TREE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmbt")
+if(NOT NIMBLE_STAGE_TEXT_CONTENT AND GAME_TREE_SOURCES AND NOT GAME_TREE_FILES)
+    message(WARNING "${GAME_NAME}: Content/ has behavior trees but Saved/Cooked/Content/ has none; a Shipping "
+                    "build cannot read XML trees. Cook them in the editor (Build > Cook Content).")
+endif()
+game_stage(BehaviorTrees "${GAME_TREE_ROOT}" ${GAME_TREE_FILES})
 
 # Content/Materials/: material graphs, cooked by NimbleCook into the module's shader cache and staged here
 # (Engine/cmake/NimbleMaterials.cmake), named "Content/Materials/<Name>.material.nmgraph".

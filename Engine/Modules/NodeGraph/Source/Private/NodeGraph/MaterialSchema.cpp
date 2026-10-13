@@ -2014,6 +2014,19 @@ namespace
         Unary("Cos",      "Cosine",    "cos({X})", "Math/Trigonometry");
         Unary("Tan",      "Tangent",   "tan({X})", "Math/Trigonometry");
 
+        /* Screen-space derivatives: how fast a value changes from this pixel
+         * to its neighbours. Fwidth of a scene's depth finds its silhouettes
+         * (an ink outline); of a UV, the texel footprint. Fragment stage only. */
+        PixelOnly(Pure("Math.DDX", "DDX", "Math/Derivatives", { In("X", W), Out("Out", W, "dFdx({X})") }, GFloatTypes,
+                       "derivative ddx dfdx partial screen"),
+                  "How much X changes to the next pixel across (the fragment stage's dFdx).");
+        PixelOnly(Pure("Math.DDY", "DDY", "Math/Derivatives", { In("X", W), Out("Out", W, "dFdy({X})") }, GFloatTypes,
+                       "derivative ddy dfdy partial screen"),
+                  "How much X changes to the next pixel down (the fragment stage's dFdy).");
+        PixelOnly(Pure("Math.Fwidth", "Fwidth", "Math/Derivatives", { In("X", W), Out("Out", W, "fwidth({X})") }, GFloatTypes,
+                       "derivative fwidth edge outline screen"),
+                  "|DDX| + |DDY|: how much X changes around this pixel. Large where the scene's depth jumps -- its edges.");
+
         Pure("Math.Lerp", "Lerp", "Math", { In("A", W), In("B", W, "1"), In("T", W, "0.5"), Out("Out", W, "mix({A}, {B}, {T})") },
              GFloatTypes, "mix blend interpolate");
         Pure("Math.Clamp", "Clamp", "Math", { In("X", W), In("Min", W, "0"), In("Max", W, "1"), Out("Out", W, "clamp({X}, {Min}, {Max})") },

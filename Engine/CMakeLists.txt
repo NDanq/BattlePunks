@@ -287,8 +287,36 @@ else()
     set(NIMBLE_AUDIO_DEFINE 0)
 endif()
 
+# === AI ====================================================================
+# AICore (Modules/AICore): navmeshes (Recast), pathfinding and crowds (Detour),
+# behavior trees with utility scoring, and perception. ON by default; a game
+# with no AI turns it off, in its config file (Project Settings > Project >
+# Modules):
+#
+#     [Modules]
+#     AICore=false
+#
+# or in its CMakeLists before adding the engine:
+#
+#     set(NIMBLE_WITH_AICORE OFF CACHE BOOL "" FORCE)
+#
+# Off, nothing of Recast is compiled and NimbleEngine/AIFacade.h answers
+# "unavailable". A game that defines its own behavior tree tasks links AICore
+# itself, under if(TARGET AICore).
+#
+# ONE PER CONFIGURE, like WITH_NETCORE: a PUBLIC definition on EngineCore
+# (below). Always 1 or 0.
+option(NIMBLE_WITH_AICORE "Build the AICore module (off: no navigation or behavior trees)" ON)
+nimble_project_module(AICore NIMBLE_WITH_AICORE "Build the AICore module (off: no navigation or behavior trees)")
+
+if(NIMBLE_WITH_AICORE)
+    set(NIMBLE_AICORE_DEFINE 1)
+else()
+    set(NIMBLE_AICORE_DEFINE 0)
+endif()
+
 message(STATUS "NimbleEngine: target ${NIMBLE_TARGET} (WITH_EDITOR=${NIMBLE_WITH_EDITOR}, WITH_NETCORE=${NIMBLE_NETCORE_DEFINE}, "
-               "WITH_JOLTPHYSICS=${NIMBLE_JOLTPHYSICS_DEFINE}, WITH_AUDIO=${NIMBLE_AUDIO_DEFINE})")
+               "WITH_JOLTPHYSICS=${NIMBLE_JOLTPHYSICS_DEFINE}, WITH_AUDIO=${NIMBLE_AUDIO_DEFINE}, WITH_AICORE=${NIMBLE_AICORE_DEFINE})")
 
 # === Configurations ========================================================
 #   Debug            unoptimised, full debug info.
@@ -519,6 +547,7 @@ target_compile_definitions(EngineCore PUBLIC
         WITH_NETCORE=${NIMBLE_NETCORE_DEFINE}
         WITH_JOLTPHYSICS=${NIMBLE_JOLTPHYSICS_DEFINE}
         WITH_AUDIO=${NIMBLE_AUDIO_DEFINE}
+        WITH_AICORE=${NIMBLE_AICORE_DEFINE}
         NIMBLE_SHIPPING=$<IF:$<CONFIG:Shipping>,1,0>
         WITH_UNCOOKED=$<IF:$<CONFIG:Shipping>,0,1>)
 
@@ -615,6 +644,14 @@ if(TARGET GameCore AND TARGET RenderCore AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}
     add_subdirectory(Modules/Sequencer)
 endif()
 
+# AICore: navigation, behavior trees and perception, when NIMBLE_WITH_AICORE is
+# on (the AI block above). After GameCore, whose World and components it
+# drives, and before NimbleEngine, which attaches it to each level's World.
+if(NIMBLE_WITH_AICORE AND TARGET GameCore
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/AICore/CMakeLists.txt")
+    add_subdirectory(Modules/AICore)
+endif()
+
 # UI: in-game interfaces from XML documents (Modules/UI/README.md). After
 # RenderCore, whose UI draw list it paints into, and before NimbleEngine,
 # which owns a game session's UISystem.
@@ -682,6 +719,8 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/Ragdoll.cpp
         Source/Private/NimbleEngine/RagdollProfile.cpp
         Source/Private/NimbleEngine/TerrainFacade.cpp
+        Source/Private/NimbleEngine/AIFacade.cpp
+        Source/Private/NimbleEngine/AIInternal.h
         Source/Private/NimbleEngine/SequenceFacade.cpp
         Source/Private/NimbleEngine/InactiveModules.cpp
         Source/Private/NimbleEngine/ShaderCook.cpp
@@ -708,6 +747,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/PhysicsFacade.h
         Source/Public/NimbleEngine/Ragdoll.h
         Source/Public/NimbleEngine/TerrainFacade.h
+        Source/Public/NimbleEngine/AIFacade.h
         Source/Public/NimbleEngine/SequenceFacade.h
         Source/Public/NimbleEngine/ShaderCook.h
 )
@@ -787,6 +827,13 @@ endif()
 # Sequence script library and NimbleEngine/SequenceFacade.h.
 if(TARGET Sequencer)
     target_link_libraries(NimbleEngine PRIVATE Sequencer::Sequencer)
+endif()
+
+# PRIVATE: a game reaches AI through its components, the AI script library
+# and NimbleEngine/AIFacade.h. A game that registers behavior tree tasks of
+# its own links AICore itself, under if(TARGET AICore).
+if(TARGET AICore)
+    target_link_libraries(NimbleEngine PRIVATE AICore::AICore)
 endif()
 
 # A session's UISystem (GameSession::GetUI) is game-facing: PUBLIC.

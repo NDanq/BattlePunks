@@ -10,6 +10,9 @@
 
 #include <QPainter>
 #include <QAction>
+#include <QApplication>
+#include <QDebug>
+#include <QTimer>
 #include <QActionGroup>
 #include <QCloseEvent>
 #include <QDir>
@@ -76,6 +79,12 @@
 #include "Private/Editor/Terrain/FoliageEditing.h"
 #include "Private/Editor/Terrain/TerrainEditing.h"
 #include "Private/Editor/Terrain/TerrainToolsWindow.h"
+#if WITH_AICORE
+#include "Private/Editor/AI/AIDebuggerPanel.h"
+#include "Private/Editor/AI/BehaviorTreeEditorWindow.h"
+#include "Private/Editor/AI/EditorAI.h"
+#include "Private/Editor/AI/NavigationPanel.h"
+#endif
 #include "Private/Editor/Particles/ParticleDocument.h"
 #include "Private/Editor/Particles/ParticleEditorTab.h"
 #include "Private/Editor/Particles/ParticleEditorWindow.h"
@@ -247,6 +256,20 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
         }
     });
     connect(&Level, &EditorDocument::EditedWorldAboutToBeDestroyed, this, []() { EditorTerrain::DiscardUnsaved(); });
+
+#if WITH_AICORE
+    /* Navigation and the AI debugger, hidden until the World menu: tabbed
+     * with the Details too (Source/Private/Editor/AI). */
+    EditorAI::Host AIHost;
+    AIHost.Context      = &Context;
+    AIHost.Document     = &Level;
+    AIHost.Viewport     = Viewport;
+    AIHost.GetWorldFile = [this]() { return CurrentPath; };
+    EditorAI::SetHost(AIHost);
+    NavigationPanel::Install(*this, DetailsDock);
+    AIDebuggerPanel::Install(*this, DetailsDock);
+    DetailsDock->raise();
+#endif
 
     /* The Sequencer, hidden until a sequence opens: tabbed with them. */
     SequencerWindow::Install(*this, ContentDock);
@@ -615,6 +638,16 @@ void EditorMainWindow::BuildMenus()
     QAction* TerrainAction = World->addAction(EditorIcons::Get(EditorIcons::EIcon::Terrain), QStringLiteral("&Terrain..."));
     TerrainAction->setToolTip(QStringLiteral("Make, sculpt and paint terrain"));
     connect(TerrainAction, &QAction::triggered, this, []() { TerrainToolsWindow::Show(); });
+
+#if WITH_AICORE
+    /* AI (NavigationPanel.h, AIDebuggerPanel.h): the navmesh, then the agents in Play. */
+    QAction* NavigationAction = World->addAction(QStringLiteral("Na&vigation..."));
+    NavigationAction->setToolTip(QStringLiteral("Build and inspect the level's navmesh; test paths"));
+    connect(NavigationAction, &QAction::triggered, this, []() { NavigationPanel::Show(); });
+    QAction* AIDebuggerAction = World->addAction(QStringLiteral("AI &Debugger..."));
+    AIDebuggerAction->setToolTip(QStringLiteral("Play-in-Editor's agents: their running branch, blackboard and perception"));
+    connect(AIDebuggerAction, &QAction::triggered, this, []() { AIDebuggerPanel::Show(); });
+#endif
 
     /* Del itself belongs to the viewport and the Outliner (EditorEditActions.h). */
     QAction* DeleteEntity = World->addAction(QStringLiteral("&Delete"));
@@ -1437,6 +1470,110 @@ void EditorMainWindow::RegisterConsoleCommands()
         (bAll ? ViewportArea->GetFrameAllAction() : ViewportArea->GetFrameSelectionAction())->trigger();
     });
 
+#if WITH_AICORE
+    /* The AI commands also log (the stderr of a scripted run: -command). */
+    const auto AIReport = [this](const QString& InText) { Console.Print(InText); qInfo().noquote() << InText; };
+    Console.Register(QStringLiteral("ai.navigation"), QString(), QStringLiteral("Show the Navigation dock (World > Navigation)"),
+                     [](const QStringList&) { NavigationPanel::Show(); });
+    Console.Register(QStringLiteral("ai.buildnav"), QString(), QStringLiteral("Build the level's navmesh and write it"),
+                     [this, AIReport](const QStringList&)
+    {
+        NavigationPanel::Show();
+        NavigationPanel* Panel = NavigationPanel::Find();
+        AIReport(Panel && Panel->Build(true) ? QStringLiteral("Navmesh built") : QStringLiteral("Navmesh not built: see the Navigation dock"));
+    });
+    Console.Register(QStringLiteral("ai.debugger"), QStringLiteral("[row]"),
+                     QStringLiteral("Show the AI Debugger (World > AI Debugger); with a row, pick that listed agent"),
+                     [](const QStringList& InArgs)
+    {
+        AIDebuggerPanel::Show();
+        AIDebuggerPanel* Panel = AIDebuggerPanel::Find();
+        if(Panel && !InArgs.isEmpty()) { Panel->PickRow(InArgs.front().toInt()); }
+    });
+    Console.Register(QStringLiteral("ai.opentree"), QStringLiteral("<file.nmbt> [debug] [node]"),
+                     QStringLiteral("Open a behavior tree in its editor, project-relative or absolute; debug lights its running branch in Play; "
+                                    "node selects the node so named"),
+                     [this, AIReport](const QStringList& InArgs)
+    {
+        if(InArgs.isEmpty()) { AIReport(QStringLiteral("Usage: ai.opentree <file.nmbt> [debug]")); return; }
+        QString File = EditorContent::FileForRuntimePath(InArgs.front());
+        if(File.isEmpty()) { File = InArgs.front(); }
+        BehaviorTreeEditorWindow* Window = BehaviorTreeEditorWindow::Open(File, this);
+        QStringList Rest = InArgs.mid(1);
+        if(Window && !Rest.isEmpty() && Rest.front() == QLatin1String("debug"))
+        {
+            Window->SetDebugging(true);
+            Rest.removeFirst();
+        }
+        if(Window && !Rest.isEmpty())
+        {
+            /* After the window's first layout, so it centres in a sized view. */
+            const QString Node = Rest.join(QLatin1Char(' '));
+            QTimer::singleShot(50, Window, [Window, Node, AIReport]()
+            {
+                if(!Window->SelectByName(Node)) { AIReport(QStringLiteral("No node named %1").arg(Node)); }
+            });
+        }
+    });
+    Console.Register(QStringLiteral("ai.testpath"), QStringLiteral("<ax> <ay> <az> <bx> <by> <bz> | clear"),
+                     QStringLiteral("Set the path tester's ends (as clicking them in the viewport) and print the path"),
+                     [this, AIReport](const QStringList& InArgs)
+    {
+        EditorAI::TestPath& Test = EditorAI::GetTestPath();
+        if(InArgs.size() == 1 && InArgs.front() == QLatin1String("clear")) { Test = EditorAI::TestPath(); return; }
+        if(InArgs.size() < 6) { AIReport(QStringLiteral("Usage: ai.testpath <ax> <ay> <az> <bx> <by> <bz> | clear")); return; }
+        /* The dock's tester on first, or it clears the path as it shows. */
+        NavigationPanel::Show();
+        if(NavigationPanel* Panel = NavigationPanel::Find()) { Panel->SetPathTester(true); }
+        Test.Start = EngineCore::Vector3(InArgs[0].toDouble(), InArgs[1].toDouble(), InArgs[2].toDouble());
+        Test.End   = EngineCore::Vector3(InArgs[3].toDouble(), InArgs[4].toDouble(), InArgs[5].toDouble());
+        Test.bHasStart = Test.bHasEnd = true;
+        EditorAI::UpdateTestPath();
+        AIReport(QStringLiteral("[AIPath] status %1, %2 corners, %3 m (from %4 %5 %6)").arg(Test.Status).arg(Test.Points.size()).arg(double(Test.Length) / 100.0, 0, 'f', 1).arg(Test.Start.GetX()).arg(Test.Start.GetY()).arg(Test.Start.GetZ()));
+    });
+    Console.Register(QStringLiteral("ai.overlaystats"), QString(), QStringLiteral("Print how many lines each AI gizmo drew last frame"),
+                     [this, AIReport](const QStringList&)
+    {
+        const EditorAI::OverlayStats& S = EditorAI::GetOverlayStats();
+        const EditorAI::OverlaySettings& O = EditorAI::GetOverlaySettings();
+        AIReport(QStringLiteral("[AIOverlay] navmesh %1(%2) tiles %3(%4) obstacles %5(%6) modifiers %7(%8) testpath %9 paths %10(%11) sight %12(%13)")
+                      .arg(S.NavMesh).arg(int(O.bNavMesh)).arg(S.TileBounds).arg(int(O.bTileBounds)).arg(S.Obstacles).arg(int(O.bObstacles))
+                      .arg(S.Modifiers).arg(int(O.bModifiers)).arg(S.TestPath).arg(S.Paths).arg(int(O.bPaths)).arg(S.Sight).arg(int(O.bSight)));
+    });
+    Console.Register(QStringLiteral("ai.treeshot"), QStringLiteral("<file.png>"), QStringLiteral("Save the front behavior tree window as an image"),
+                     [this, AIReport](const QStringList& InArgs)
+    {
+        BehaviorTreeEditorWindow* Window = nullptr;
+        for(QWidget* Each : QApplication::topLevelWidgets())
+        {
+            if(auto* Tree = qobject_cast<BehaviorTreeEditorWindow*>(Each); Tree && Tree->isVisible()) { Window = Tree; }
+        }
+        const QString File = QFileInfo(InArgs.join(QLatin1Char(' '))).absoluteFilePath();
+        if(!Window || InArgs.isEmpty() || !Window->grab().save(File)) { AIReport(QStringLiteral("No tree window, or cannot write")); return; }
+        AIReport(QStringLiteral("Saved %1").arg(QDir::toNativeSeparators(File)));
+    });
+    Console.Register(QStringLiteral("ai.show"), QStringLiteral("<navmesh|tiles|obstacles|modifiers|paths|sight> <on|off>"),
+                     QStringLiteral("Turn an AI gizmo of the viewport on or off (Show > Editor Gizmos > AI)"),
+                     [this, AIReport](const QStringList& InArgs)
+    {
+        EditorAI::OverlaySettings& Overlay = EditorAI::GetOverlaySettings();
+        const std::pair<const char*, bool*> Flags[] = { { "navmesh", &Overlay.bNavMesh }, { "tiles", &Overlay.bTileBounds },
+                                                        { "obstacles", &Overlay.bObstacles }, { "modifiers", &Overlay.bModifiers },
+                                                        { "paths", &Overlay.bPaths }, { "sight", &Overlay.bSight } };
+        for(const auto& [Name, Flag] : Flags)
+        {
+            if(!InArgs.isEmpty() && InArgs.front().compare(QLatin1String(Name), Qt::CaseInsensitive) == 0)
+            {
+                *Flag = InArgs.value(1).compare(QStringLiteral("off"), Qt::CaseInsensitive) != 0;
+                if(NavigationPanel* Panel = NavigationPanel::Find()) { Panel->SyncToggles(); }
+                if(AIDebuggerPanel* Panel = AIDebuggerPanel::Find()) { Panel->SyncToggles(); }
+                return;
+            }
+        }
+        AIReport(QStringLiteral("Usage: ai.show <navmesh|tiles|obstacles|modifiers|paths|sight> <on|off>"));
+    });
+#endif
+
     Console.Register(QStringLiteral("play"), QString(), QStringLiteral("Run the game in the viewport (F5)"),
                      [this](const QStringList&)
     {
@@ -1588,17 +1725,19 @@ void EditorMainWindow::RegisterConsoleCommands()
         if(SaveWorld()) { Console.Print(QStringLiteral("Saved %1").arg(CurrentPath)); }
     });
 
-    Console.Register(QStringLiteral("screenshot"), QStringLiteral("<file.png>"),
-                     QStringLiteral("Save the viewport's next frame (no gizmos or debug lines) as an image"),
-                     [this](const QStringList& InArgs)
+    Console.Register(QStringLiteral("screenshot"), QStringLiteral("[-gizmos] <file.png>"),
+                     QStringLiteral("Save the viewport's next frame as an image; -gizmos keeps the gizmos and debug lines"),
+                     [this](QStringList InArgs)
     {
+        const bool bGizmos = !InArgs.isEmpty() && InArgs.front() == QLatin1String("-gizmos");
+        if(bGizmos) { InArgs.removeFirst(); }
         if(InArgs.isEmpty())
         {
-            Console.PrintError(QStringLiteral("Usage: screenshot <file.png>"));
+            Console.PrintError(QStringLiteral("Usage: screenshot [-gizmos] <file.png>"));
             return;
         }
         const QString Path = QFileInfo(InArgs.join(QLatin1Char(' '))).absoluteFilePath();
-        const uint64_t Request = Context.RequestSceneCapture();
+        const uint64_t Request = bGizmos ? Context.RequestSceneCaptureWithDebugLines() : Context.RequestSceneCapture();
         if(Request == 0)
         {
             Console.PrintError(QStringLiteral("The viewport's renderer is not running"));
@@ -1607,17 +1746,20 @@ void EditorMainWindow::RegisterConsoleCommands()
         SaveCaptureWhenReady(Request, Path);
     });
 
-    Console.Register(QStringLiteral("windowshot"), QStringLiteral("<file.png>"),
-                     QStringLiteral("Save the whole editor window, panels and docks included, as an image"),
-                     [this](const QStringList& InArgs)
+    Console.Register(QStringLiteral("windowshot"), QStringLiteral("[-gizmos] <file.png>"),
+                     QStringLiteral("Save the whole editor window, panels and docks included, as an image; -gizmos keeps the viewport's gizmos"),
+                     [this](QStringList InArgs)
     {
+        const bool bGizmos = !InArgs.isEmpty() && InArgs.front() == QLatin1String("-gizmos");
+        if(bGizmos) { InArgs.removeFirst(); }
         if(InArgs.isEmpty())
         {
-            Console.PrintError(QStringLiteral("Usage: windowshot <file.png>"));
+            Console.PrintError(QStringLiteral("Usage: windowshot [-gizmos] <file.png>"));
             return;
         }
         const QString File = QFileInfo(InArgs.join(QLatin1Char(' '))).absoluteFilePath();
-        const uint64_t Request = Viewport && Viewport->isVisible() ? Context.RequestSceneCapture() : 0;
+        const uint64_t Request = !Viewport || !Viewport->isVisible() ? 0
+                               : bGizmos ? Context.RequestSceneCaptureWithDebugLines() : Context.RequestSceneCapture();
         if(Request != 0)
         {
             SaveCaptureWhenReady(Request, File, true);

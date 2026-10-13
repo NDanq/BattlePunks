@@ -45,6 +45,7 @@
 #endif
 
 /* Chunk tags shared with SaveGame.cpp. */
+#include "Private/NimbleEngine/AIInternal.h"
 #include "Private/NimbleEngine/InputInternal.h"
 #include "Private/NimbleEngine/SaveGameFormat.h"
 
@@ -293,6 +294,11 @@ namespace NimbleEngine
             Sequences->SetHost(SequenceHost);
         }
 
+        /* AI: navigation, brains and perception (AI.Brains and AI.Nav in
+         * TP_PrePhysics, after the avatars; AI.Perception in TP_PostPhysics).
+         * An authority's only: a client follows the server's. */
+        AIDetail::AttachLevelAI(*LevelWorld);
+
         CORE_LOG("[Level] loading '" + std::string(InLevel.GetName()) + "'")
 
         if(!InLevel.OnLoad(*this))
@@ -481,6 +487,9 @@ namespace NimbleEngine
                 Avatars = nullptr;
             }
             ViewTarget = GameCore::EntityID();
+
+            /* Brains let go of their agents while the components still exist. */
+            AIDetail::DetachLevelAI(*LevelWorld);
 
             /* Before the physics and animation it holds ragdolls in. */
             RagdollWorld::Detach(*LevelWorld);
@@ -853,6 +862,7 @@ namespace NimbleEngine
             if(Avatars) { Avatars->Update(0.0f, false); }
         }
         PublishViewTarget();
+        if(LevelWorld) { AIDetail::DrawAIDebug(*LevelWorld, Rendering); }
 
         PublishPhysicsStat();
         PublishAudioStat();

@@ -3,6 +3,7 @@
 
 #if WITH_EDITOR
 
+#include <functional>
 #include <utility>
 #include <vector>
 
@@ -117,6 +118,17 @@ public:
     /* The ray under the cursor, if it is over the viewport. */
     bool GetCursorRay(ViewportTool::Ray& OutRay) const;
 
+    // === Overlays ===========================================================
+    /* Drawn every frame after the viewport's own and its tool's (debug lines,
+     * EditorContext::DrawDebugLine): what a panel shows over the level --
+     * the navmesh, AI agents. A handle for RemoveOverlay. */
+    using OverlayFn = std::function<void(ViewportWidget&)>;
+    /* bInWhilePlaying: also while Play shows the game's camera (the AI
+     * debugger's agents), not only the editor's own view. */
+    static int  AddOverlay(OverlayFn InOverlay, bool bInWhilePlaying = false);
+    static void RemoveOverlay(int InHandle);
+    EditorContext& GetContext() { return Context; }
+
     QPaintEngine* paintEngine() const override { return nullptr; }
 
 signals:
@@ -162,6 +174,13 @@ private:
 
     /* Selection bounds, all-bounds and the axis gizmo, as debug lines. */
     void QueueOverlay();
+    struct OverlayEntry
+    {
+        int       Handle = 0;
+        OverlayFn Fn;
+        bool      bWhilePlaying = false;
+    };
+    static std::vector<OverlayEntry>& Overlays();
     void QueueAxisGizmo();
 
     /* Each light's reach: a point light's sphere, a spot's cone, the sun's

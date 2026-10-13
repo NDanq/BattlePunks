@@ -54,7 +54,7 @@ namespace GameCore
     /* Same field types as the Lua bindings. */
     using EPropertyType = EScriptFieldType;
 
-    /* 16 bits: the asset hints fill bits 1..12. */
+    /* 16 bits: the asset hints fill bits 1..14. */
     enum EPropertyFlags : uint16_t
     {
         PF_None     = 0,
@@ -73,6 +73,8 @@ namespace GameCore
         PF_AssetSequence = 1 << 10,  // a sequence (*.nmseq; Engine/Modules/Sequencer)
         PF_AssetTerrain  = 1 << 11,  // a terrain heightfield (*.nmterrain; GameCore's Terrain.h)
         PF_AssetFoliage  = 1 << 12,  // a terrain's foliage (*.nmfoliage; GameCore's Foliage.h)
+        PF_AssetNavMesh  = 1 << 13,  // a baked navmesh (*.nmnav; Engine/Modules/AICore)
+        PF_AssetBehaviorTree = 1 << 14,  // a behavior tree (*.nmbt; Engine/Modules/AICore)
     };
 
     enum : size_t

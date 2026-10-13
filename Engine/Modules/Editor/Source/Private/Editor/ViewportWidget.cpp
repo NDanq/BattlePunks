@@ -425,6 +425,11 @@ bool ViewportWidget::PrepareFrame(const float InDeltaSeconds, const bool bInEdit
         if(Tool) { Tool->Tick(*this, InDeltaSeconds); }
         QueueOverlay();
         if(Tool) { Tool->QueueOverlay(*this); }
+        for(const OverlayEntry& Extra : Overlays()) { Extra.Fn(*this); }
+    }
+    else
+    {
+        for(const OverlayEntry& Extra : Overlays()) { if(Extra.bWhilePlaying) { Extra.Fn(*this); } }
     }
 
     OutFrame.Pixels = GetPixelSize();
@@ -499,6 +504,25 @@ void ViewportWidget::ApplyFlyInput(const float InDeltaSeconds)
 }
 
 // === Overlay =================================================================
+
+std::vector<ViewportWidget::OverlayEntry>& ViewportWidget::Overlays()
+{
+    static std::vector<OverlayEntry> List;
+    return List;
+}
+
+int ViewportWidget::AddOverlay(OverlayFn InOverlay, const bool bInWhilePlaying)
+{
+    static int Next = 1;
+    Overlays().push_back({ Next, std::move(InOverlay), bInWhilePlaying });
+    return Next++;
+}
+
+void ViewportWidget::RemoveOverlay(const int InHandle)
+{
+    auto& List = Overlays();
+    List.erase(std::remove_if(List.begin(), List.end(), [InHandle](const OverlayEntry& InEach) { return InEach.Handle == InHandle; }), List.end());
+}
 
 void ViewportWidget::QueueOverlay()
 {

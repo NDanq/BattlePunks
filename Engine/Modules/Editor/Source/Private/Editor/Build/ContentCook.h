@@ -31,12 +31,15 @@
  *             own placements do not say which are needed
  *   UI        every .nmui, for the same reason
  *   Sequences every .nmseq, for the same reason
+ *   Navmeshes every .nmnav (AICore), loaded to check it, then copied
+ *   Behavior trees  every .nmbt (AICore): resolved against the registered
+ *             node types, then written binary
  *
  * Synchronous, on the main thread; InProgress hears each step.
  */
 namespace EditorCook
 {
-    enum EAssetType { AT_Graphs = 0, AT_Shaders, AT_Worlds, AT_Prefabs, AT_UI, AT_Sequences, AT_Count };
+    enum EAssetType { AT_Graphs = 0, AT_Shaders, AT_Worlds, AT_Prefabs, AT_UI, AT_Sequences, AT_NavMeshes, AT_BehaviorTrees, AT_Count };
 
     const char* GetTypeName(EAssetType InType);
 

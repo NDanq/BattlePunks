@@ -86,6 +86,12 @@ namespace EditorContent
     /* A terrain's foliage (*.nmfoliage): every one in the project, and a file's runtime path. */
     QStringList ListFoliagePaths();
     QString     FoliagePathFor(const QString& InPath);
+    /* Baked navmeshes (*.nmnav; AICore): every one in the project, and a file's runtime path. */
+    QStringList ListNavMeshPaths();
+    QString     NavMeshPathFor(const QString& InPath);
+    /* Behavior trees (*.nmbt; AICore): every one in the project, and a file's runtime path. */
+    QStringList ListBehaviorTreePaths();
+    QString     BehaviorTreePathFor(const QString& InPath);
 
     /* An animation field (PF_AssetAnimation): an .nmanim clip or an
      * .nmanimstate anim state. Every one's runtime path in the project and
