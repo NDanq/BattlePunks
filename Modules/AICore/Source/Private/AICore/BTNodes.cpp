@@ -23,6 +23,8 @@
  *                   RepathDistance (a moving target re-requested past it, 100)
  *   MoveToRandom    Radius (1000); Origin (a key; else where it stands);
  *                   Out (a Vector key told the point)
+ *   FindCover       Threat (a key), Out (a Vector key); Radius (1200),
+ *                   Samples (14), MinDistance (400): the nearest hidden point
  *   FaceTarget      Key; Tolerance (degrees, 10); Keep (go on facing after)
  *   PlayAnimParam   Param, Value -- through the AIWorld's BTHost
  *   RunScript       Method, Arg (an Entity key) -- the entity's script
@@ -235,6 +237,52 @@ namespace AICore
     };
     AICORE_DEFINE_BT_TASK(MoveToRandom, "Move To Random Point")
 
+    /* A navmesh point near the brain that its Threat cannot see: up to Samples
+     * random points within Radius, the nearest one hidden (the host's line of
+     * sight, from the threat's eye to the point's chest) and at least
+     * MinDistance from the threat. Out is told it. Failure when none hides. */
+    class FindCover : public BTTask
+    {
+    public:
+        EBTStatus OnEnter(BTContext& InContext) const override
+        {
+            NavWorld* Nav = NavOf(InContext);
+            const int32_t Out = InContext.GetKey("Out");
+            if(!Nav || !Nav->HasNavMesh() || Out < 0) { return EBTStatus::Failure; }
+            EngineCore::Vector3 Threat;
+            if(!BTDetail::ResolveKeyPosition(InContext.Instance, InContext.GetKey("Threat"), Threat)) { return EBTStatus::Failure; }
+            const AIHost& Host = InContext.AI->GetPerception().GetHost();
+            const EngineCore::Vector3 Here = BTDetail::SelfPosition(InContext.Instance);
+            const EngineCore::Vector3 Eye(Threat.GetX(), Threat.GetY() + float(InContext.GetNumber("ThreatHeight", 150.0)), Threat.GetZ());
+            const float Radius   = float(InContext.GetNumber("Radius", 1200.0));
+            const float Away     = float(InContext.GetNumber("MinDistance", 400.0));
+            const int   Samples  = std::clamp(int(InContext.GetNumber("Samples", 14.0)), 1, 64);
+
+            GameCore::EntityID ThreatEntity;
+            if(const int32_t ThreatKey = InContext.GetKey("Threat"); ThreatKey >= 0) { ThreatEntity = InContext.Board.GetValue(ThreatKey).EntityValue; }
+
+            bool bFound = false;
+            float Best = 1e30f;
+            EngineCore::Vector3 Chosen;
+            for(int Sample = 0; Sample < Samples; ++Sample)
+            {
+                EngineCore::Vector3 Point;
+                const uint32_t Seed = uint32_t(InContext.Random() * 4294967040.0f) | 1u;
+                if(!Nav->GetQuery().RandomPointInRadius(Here, Radius, Seed, Point, &Nav->GetDefaultFilter())) { continue; }
+                if(NavDetail::Distance2D(Point, Threat) < Away) { continue; }
+                const EngineCore::Vector3 Chest(Point.GetX(), Point.GetY() + 110.0f, Point.GetZ());
+                /* Hidden: the threat's line of sight is cut (no host: nothing hides). */
+                if(!Host.LineOfSight || Host.LineOfSight(InContext.World, Eye, Chest, ThreatEntity, InContext.Self, Host.UserData)) { continue; }
+                const float D = NavDetail::Distance2D(Point, Here);
+                if(D < Best) { Best = D; Chosen = Point; bFound = true; }
+            }
+            if(!bFound) { return EBTStatus::Failure; }
+            InContext.Board.SetVector(Out, Chosen);
+            return EBTStatus::Success;
+        }
+    };
+    AICORE_DEFINE_BT_TASK(FindCover, "Find Cover")
+
     class FaceTarget : public BTTask
     {
     public:
@@ -265,7 +313,7 @@ namespace AICore
             Agent->FaceTarget = Target;
             Agent->bHasFacing = 1;
             const GameCore::TransformPose Pose = InContext.World.GetEntity(InContext.Self).GetWorldPose();
-            const float Error = std::fabs(WrapDegrees(YawTo(Pose.Position, Target) - float(Pose.Rotation.GetY())));
+            const float Error = std::fabs(WrapDegrees(YawTo(Pose.Position, Target) - GetFacingYaw(InContext.World.GetEntity(InContext.Self))));
             return Error <= float(InContext.GetNumber("Tolerance", 10.0)) ? EBTStatus::Success : EBTStatus::Running;
         }
     };

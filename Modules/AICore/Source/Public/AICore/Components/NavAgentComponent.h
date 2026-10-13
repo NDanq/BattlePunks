@@ -44,6 +44,11 @@ namespace AICore
         float   MaxAcceleration  = 2000.0f;
         float   AcceptanceRadius = 60.0f;
         float   SeparationWeight = 2.0f;
+        /* The yaw its mesh adds to its facing: 180 for a mesh modelled facing
+         * -Z. Facing is yaw 0 down +Z; the entity's Rotation.Y is facing plus
+         * this. */
+        float   MeshYaw          = 0.0f;
+        float   TurnRate         = 540.0f;   // degrees a second, turning a driven agent
         uint8_t AvoidanceQuality = 2;   // 0 (none) .. 3 (best)
         uint8_t bDriveTransform  = 0;
 
@@ -59,6 +64,15 @@ namespace AICore
         EngineCore::Vector3 FaceTarget;  // where the game should turn it to look
         float   RemainingDistance = 0.0f;
     };
+}
+
+namespace GameCore { class Entity; }
+
+namespace AICore
+{
+    /* Where InEntity faces, in degrees (0 down +Z): its world yaw, less its
+     * Nav Agent's MeshYaw if it has one. What sight cones and FaceTarget use. */
+    AICORE_API float GetFacingYaw(const GameCore::Entity& InEntity);
 }
 
 #endif //AICORE_NAVAGENTCOMPONENT_H

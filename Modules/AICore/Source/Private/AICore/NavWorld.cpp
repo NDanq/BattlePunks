@@ -527,10 +527,29 @@ namespace AICore
                 {
                     Pose.Position.SetY(Ground);
                 }
+                /* Turned toward its facing target (aiming while it strafes),
+                 * else the way it goes, at TurnRate. */
                 const double Speed2 = double(Velocity.GetX()) * Velocity.GetX() + double(Velocity.GetZ()) * Velocity.GetZ();
-                if(Speed2 > 100.0)
+                double Want = 0.0;
+                bool   bTurn = false;
+                if(InAgent.bHasFacing)
                 {
-                    Pose.Rotation.SetY(float(std::atan2(double(Velocity.GetX()), double(Velocity.GetZ())) * 180.0 / 3.14159265358979323846));
+                    const double DX = double(InAgent.FaceTarget.GetX()) - At.GetX(), DZ = double(InAgent.FaceTarget.GetZ()) - At.GetZ();
+                    if(DX * DX + DZ * DZ > 1.0) { Want = std::atan2(DX, DZ) * 180.0 / 3.14159265358979323846; bTurn = true; }
+                }
+                else if(Speed2 > 100.0)
+                {
+                    Want = std::atan2(double(Velocity.GetX()), double(Velocity.GetZ())) * 180.0 / 3.14159265358979323846;
+                    bTurn = true;
+                }
+                if(bTurn)
+                {
+                    const double Facing = double(GetFacingYaw(InEntity));
+                    double Delta = Want - Facing;
+                    while(Delta > 180.0)  { Delta -= 360.0; }
+                    while(Delta < -180.0) { Delta += 360.0; }
+                    const double Step = double(std::max(InAgent.TurnRate, 1.0f)) * double(InDeltaSeconds);
+                    Pose.Rotation.SetY(float(Facing + std::clamp(Delta, -Step, Step) + double(InAgent.MeshYaw)));
                 }
                 InEntity.SetWorldPose(Pose);
             }

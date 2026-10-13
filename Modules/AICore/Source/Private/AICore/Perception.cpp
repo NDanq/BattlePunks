@@ -6,6 +6,7 @@
 
 #include "Private/AICore/NavInternal.h"
 #include "Public/AICore/AIWorld.h"
+#include "Public/AICore/Components/NavAgentComponent.h"
 #include "Public/AICore/Components/PerceptionComponent.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
@@ -76,7 +77,7 @@ namespace AICore
         if(!Self) { return; }
         const GameCore::TransformPose Pose = World.GetEntity(InAgent).GetWorldPose();
         const EngineCore::Vector3 Eye(Pose.Position.GetX(), Pose.Position.GetY() + Self->EyeHeight, Pose.Position.GetZ());
-        const double Yaw = double(Pose.Rotation.GetY()) * 3.14159265358979323846 / 180.0;
+        const double Yaw = double(GetFacingYaw(World.GetEntity(InAgent))) * 3.14159265358979323846 / 180.0;
         const double ForwardX = std::sin(Yaw), ForwardZ = std::cos(Yaw);
         const double CosFov = std::cos(double(std::clamp(Self->FovHalfAngle, 0.0f, 180.0f)) * 3.14159265358979323846 / 180.0);
         const GameCore::EntityID SelfRoot = RootOf(World, InAgent);

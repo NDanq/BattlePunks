@@ -303,6 +303,124 @@ static void TestRebuildAndObstacles()
 }
 
 // ============================================================================
+// The Toon Arena (Games/WorldsLab/Tools/Toony/make_toon_arena.py's fixture)
+// ============================================================================
+
+namespace
+{
+    struct Fixture
+    {
+        NavInputGeometry Geometry;
+        std::vector<std::pair<std::string, Vector3>> Points;
+        bool Find(const char* InName, Vector3& OutPoint) const
+        {
+            for(const auto& P : Points) { if(P.first == InName) { OutPoint = P.second; return true; } }
+            return false;
+        }
+    };
+
+    bool LoadFixture(const char* InPath, Fixture& OutFixture)
+    {
+        FILE* File = std::fopen(InPath, "r");
+        if(!File) { return false; }
+        char Line[256];
+        while(std::fgets(Line, sizeof(Line), File))
+        {
+            float X, Y, Z, HX, HY, HZ, Yaw;
+            int A, B, C, Area;
+            char Name[64];
+            if(std::sscanf(Line, "v %f %f %f", &X, &Y, &Z) == 3)
+            {
+                OutFixture.Geometry.Vertices.push_back(X);
+                OutFixture.Geometry.Vertices.push_back(Y);
+                OutFixture.Geometry.Vertices.push_back(Z);
+            }
+            else if(std::sscanf(Line, "f %d %d %d", &A, &B, &C) == 3)
+            {
+                OutFixture.Geometry.Indices.push_back(A - 1);
+                OutFixture.Geometry.Indices.push_back(B - 1);
+                OutFixture.Geometry.Indices.push_back(C - 1);
+            }
+            else if(std::sscanf(Line, "# area %f %f %f %f %f %f %f %d", &X, &Y, &Z, &HX, &HY, &HZ, &Yaw, &Area) == 8)
+            {
+                NavAreaBox Box;
+                Box.Center = Vector3(X, Y, Z);
+                Box.HalfExtents = Vector3(HX, HY, HZ);
+                Box.Yaw = Yaw;
+                Box.Area = uint8_t(Area);
+                OutFixture.Geometry.Areas.push_back(Box);
+            }
+            else if(std::sscanf(Line, "# point %63s %f %f %f", Name, &X, &Y, &Z) == 4)
+            {
+                OutFixture.Points.emplace_back(Name, Vector3(X, Y, Z));
+            }
+        }
+        std::fclose(File);
+        return !OutFixture.Geometry.IsEmpty();
+    }
+
+    bool PassesThrough(const std::vector<Vector3>& InPath, const float InX0, const float InX1, const float InZ0, const float InZ1)
+    {
+        /* Corners, and points along each segment: a path crosses a box between corners. */
+        for(size_t Index = 1; Index < InPath.size(); ++Index)
+        {
+            for(int Step = 0; Step <= 20; ++Step)
+            {
+                const float T = float(Step) / 20.0f;
+                const float X = float(InPath[Index - 1].GetX() + (InPath[Index].GetX() - InPath[Index - 1].GetX()) * T);
+                const float Z = float(InPath[Index - 1].GetZ() + (InPath[Index].GetZ() - InPath[Index - 1].GetZ()) * T);
+                if(X > InX0 && X < InX1 && Z > InZ0 && Z < InZ1) { return true; }
+            }
+        }
+        return false;
+    }
+}
+
+static void TestToonArena()
+{
+    std::printf("Toon Arena\n");
+    Fixture Arena;
+    if(!LoadFixture(AICORE_TEST_DATA_DIR "/ToonArena.obj", Arena))
+    {
+        Expect(false, "the Toon Arena fixture loads (" AICORE_TEST_DATA_DIR "/ToonArena.obj)");
+        return;
+    }
+    Built B;
+    Expect(B.Build(Arena.Geometry), "the arena builds (" + std::to_string(Arena.Geometry.GetTriangleCount()) + " triangles)");
+    const NavBuildStats Stats = B.Mesh.GetStats();
+    std::printf("    %d tiles, %d polygons, %.0f ms\n", Stats.Tiles, Stats.Polygons, Stats.Milliseconds);
+
+    Vector3 Red, Blue, Plaza, MudWest, MudEast, SteepFoot, Pit, TrenchSouth, TrenchNorth, MazeWest, MazeEast;
+    const bool bPoints = Arena.Find("RedBase", Red) && Arena.Find("BlueBase", Blue) && Arena.Find("PlazaTop", Plaza)
+                      && Arena.Find("MudWest", MudWest) && Arena.Find("MudEast", MudEast) && Arena.Find("SteepFoot", SteepFoot)
+                      && Arena.Find("PitFloor", Pit) && Arena.Find("TrenchSouth", TrenchSouth) && Arena.Find("TrenchNorth", TrenchNorth)
+                      && Arena.Find("MazeWest", MazeWest) && Arena.Find("MazeEast", MazeEast);
+    Expect(bPoints, "the fixture names its test points");
+    if(!bPoints) { return; }
+
+    std::vector<Vector3> Path;
+    Expect(B.Query.FindPath(Red, Blue, Path) == ENavPathStatus::Complete, "a path from Red's base to Blue's");
+    Expect(B.Query.FindPath(Red, Plaza, Path) == ENavPathStatus::Complete, "the plaza is reached (ramp or steps)");
+
+    Expect(B.Query.FindPath(MudWest, MudEast, Path) == ENavPathStatus::Complete, "a path past the mud");
+    Expect(!PassesThrough(Path, 1000.0f, 2200.0f, -2200.0f, -1600.0f), "it goes round the mud, not through it ("
+           + Num(NavQuery::GetPathLength(Path)) + ")");
+
+    Expect(B.Query.FindPath(SteepFoot, Plaza, Path) == ENavPathStatus::Complete, "the plaza from the foot of the steep slope");
+    Expect(!PassesThrough(Path, -280.0f, 280.0f, 805.0f, 875.0f), "but not up the slope: round by the ramp or the steps");
+    Expect(NavQuery::GetPathLength(Path) > Straight(SteepFoot, Plaza) * 1.5f, "a long way round (" + Num(NavQuery::GetPathLength(Path)) + ")");
+
+    Expect(B.Query.FindPath(Red, Pit, Path) != ENavPathStatus::Complete, "nothing reaches the pit floor");
+    Vector3 OnPit;
+    Expect(B.Query.ProjectPoint(Pit, OnPit), "though it has navmesh of its own (an island)");
+
+    Expect(B.Query.FindPath(TrenchSouth, TrenchNorth, Path) == ENavPathStatus::Complete, "a path across the trench");
+    Expect(PassesThrough(Path, -2350.0f, -2050.0f, -1300.0f, -900.0f), "over the bridge");
+
+    Expect(B.Query.FindPath(MazeWest, MazeEast, Path) == ENavPathStatus::Complete, "a path through the pillar maze");
+}
+
+// ============================================================================
 // The crowd
 // ============================================================================
 
@@ -899,6 +1017,7 @@ int main()
     TestHeightfield();
     TestFiles();
     TestRebuildAndObstacles();
+    TestToonArena();
     TestCrowd();
     TestVolumeBuild();
     TestStatus();

@@ -93,6 +93,8 @@ if(AICORE_BUILD_TESTS)
     add_executable(AICoreTests Tests/AICoreTests.cpp)
     target_link_libraries(AICoreTests PRIVATE AICore::AICore RecastNav::RecastNav)
     target_include_directories(AICoreTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
+    # The Toon Arena fixture (Games/WorldsLab/Tools/Toony/make_toon_arena.py writes it).
+    target_compile_definitions(AICoreTests PRIVATE "AICORE_TEST_DATA_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data\"")
     set_target_properties(AICoreTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
     add_test(NAME AICore.Tests COMMAND AICoreTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:AICoreTests>")
