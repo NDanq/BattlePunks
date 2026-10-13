@@ -966,6 +966,101 @@ static void TestLagCompensation()
     ClearLagCompensation(World);
 }
 
+// === The mode's context (GameMode.h) and its registration (WorldList.h) =====
+
+namespace
+{
+    /* Keeps its state in members and binds as itself; never unbinds. */
+    class ContextMode : public IGameMode
+    {
+    public:
+        bool OnLoad(GameSession&) override
+        {
+            AddSystem<&ContextMode::Step>("Test.ContextStep", GameCore::TP_PrePhysics);
+            AddSystemBeforeScripts<&ContextMode::EarlyStep>("Test.ContextEarly", GameCore::TP_PrePhysics);
+            Subscribe<&ContextMode::OnPing>("Test.Ping");
+            return true;
+        }
+        void OnTick(const FrameContext&) override {}
+
+        void Step(GameCore::World&, float InDeltaSeconds) { Stepped += double(InDeltaSeconds); }
+        void EarlyStep(GameCore::World&, float)          { ++EarlySteps; }
+        void OnPing(const GameCore::EventArgs&)          { ++Pings; }
+
+        double Stepped    = 0.0;
+        int    EarlySteps = 0;
+        int    Pings      = 0;
+    };
+
+    /* Pokes the World after its mode unloaded: what the mode bound must be gone. */
+    class ContextLevel : public ILevel
+    {
+    public:
+        const char* GetName() const override { return "ContextTest"; }
+        IGameMode*  GetGameMode() override   { return &Mode; }
+        void OnUnload() override
+        {
+            GetWorld().GetEvents().Emit("Test.Ping");
+            GetWorld().Tick(0.25f);
+        }
+
+        ContextMode Mode;
+    };
+
+    class OtherMode : public IGameMode
+    {
+    public:
+        void OnTick(const FrameContext&) override {}
+    };
+
+    class MacroMode : public IGameMode
+    {
+    public:
+        void OnTick(const FrameContext&) override {}
+    };
+}
+
+NIMBLE_REGISTER_GAME_MODE(MacroMode, "MacroMode")
+
+static void TestModeContext()
+{
+    std::printf("[mode context]\n");
+
+    Expect(HasGameMode("MacroMode"), "NIMBLE_REGISTER_GAME_MODE registers before main");
+    {
+        GameModeRegistrar<OtherMode> First("RegistrarMode");
+        Expect(First.bRegistered && HasGameMode("RegistrarMode"), "a registrar registers its mode");
+        {
+            GameModeRegistrar<ContextMode> Duplicate("RegistrarMode");
+            Expect(!Duplicate.bRegistered, "a duplicate name is refused");
+        }
+        Expect(HasGameMode("RegistrarMode"), "and going does not unregister the first");
+    }
+    Expect(!HasGameMode("RegistrarMode"), "a registrar unregisters as it goes");
+
+    Fixture F;
+    ContextLevel Level;
+    Expect(!Level.Mode.HasSession(), "a mode has no session before its level loads");
+    Expect(F.Session->LoadLevel(Level), "the level loads");
+    GameCore::World& World = F.Session->GetWorld();
+    Expect(Level.Mode.HasSession() && &Level.Mode.GetSession() == F.Session && &Level.Mode.GetWorld() == &World,
+           "the session and its World are the mode's from OnLoad");
+    Expect(FindGameMode<ContextMode>(World) == &Level.Mode, "FindGameMode finds the level's mode from its World");
+    Expect(FindGameMode<IGameMode>(World) == &Level.Mode, "as any type it is");
+    Expect(FindGameMode<OtherMode>(World) == nullptr, "and not as one it is not");
+
+    F.Tick(0.25);
+    F.Tick(0.25);
+    Expect(Level.Mode.Stepped > 0.49 && Level.Mode.Stepped < 0.51, "a member-function system ticks with the World");
+    Expect(Level.Mode.EarlySteps == 2, "so does one ahead of the scripts");
+    World.GetEvents().Emit("Test.Ping");
+    Expect(Level.Mode.Pings == 1, "a member-function event handler hears its event");
+
+    F.Session->UnloadLevel();
+    Expect(Level.Mode.Pings == 1 && Level.Mode.Stepped < 0.51, "after OnUnload the session took its systems and handlers back");
+    Expect(!Level.Mode.HasSession(), "and its session");
+}
+
 int main()
 {
     std::printf("NimbleEngineGameFrameworkTests\n");
@@ -977,6 +1072,7 @@ int main()
     TestSave();
     TestLevelByWorldFile();
     TestWorldList();
+    TestModeContext();
     TestSessionUI();
     TestConsole();
     TestNetworkingStandalone();

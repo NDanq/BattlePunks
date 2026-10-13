@@ -125,7 +125,7 @@ void ApplyAutoPossess(GameCore::World& InWorld)
 
 bool NetGameMode::OnLoad(GameSession& InSession)
 {
-    Session        = &InSession;
+    (void)InSession;   // the session set Session already (IGameMode's context)
     NextOrdinal    = 0;
     bWarnedNoStart = false;
     return true;

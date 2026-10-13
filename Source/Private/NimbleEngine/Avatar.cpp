@@ -657,6 +657,11 @@ void AvatarWorld::SetInputFilter(const AvatarInputFilterFn InFilter, void* InUse
     P->FilterData = InFilter ? InUserData : nullptr;
 }
 
+void AvatarWorld::ClearInputFilter(void* InUserData)
+{
+    if(P->Filter && P->FilterData == InUserData) { SetInputFilter(nullptr, nullptr); }
+}
+
 GameCore::EntityID AvatarWorld::GetViewCamera() const { return P->ViewCamera; }
 
 void AvatarWorld::ResetPrediction(const GameCore::EntityID InAvatar)

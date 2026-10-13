@@ -309,6 +309,10 @@ namespace NimbleEngine
 
         /* After the level has populated the World. */
         IGameMode* Mode = InLevel.GetGameMode();
+        if(Mode)
+        {
+            Mode->Session = this;   // its context (GameMode.h), until UnloadLevel takes it back
+        }
         if(Mode && !Mode->OnLoad(*this))
         {
             CORE_LOG_ERROR("Game mode refused to load")
@@ -464,6 +468,21 @@ namespace NimbleEngine
         if(IGameMode* Mode = ActiveLevel->GetGameMode())
         {
             Mode->OnUnload();
+
+            /* What the mode bound as itself (IGameMode::AddSystem, Subscribe,
+             * SetAvatarInputFilter): the level's OnUnload may destroy it, and
+             * the World outlives it a while yet. */
+            void* const Self = static_cast<IGameMode*>(Mode);
+            if(LevelWorld)
+            {
+                LevelWorld->UnregisterAllSystems(Self);
+                LevelWorld->GetEvents().UnsubscribeAll(Self);
+            }
+            if(Avatars)
+            {
+                Avatars->ClearInputFilter(Self);
+            }
+            Mode->Session = nullptr;
         }
 
         ActiveLevel->OnUnload();

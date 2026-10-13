@@ -43,15 +43,19 @@ namespace NimbleEngine
 
     // === Game modes =========================================================
     /*
-     * A game's rules, by name: a [World_*] GameMode names one. Register in the
-     * game module's OnStartup and unregister in OnShutdown -- the functions
-     * are in its image. A mode is created per level load and destroyed when
-     * the level unloads. InName must outlive the registration (a literal).
+     * A game's rules, by name: a [World_*] GameMode names one. A mode is
+     * created per level load and destroyed when the level unloads.
+     *
+     * NIMBLE_REGISTER_GAME_MODE (below) is the usual way: it registers as the
+     * game's image loads and unregisters as it goes. By hand, register in the
+     * module's OnStartup and unregister in OnShutdown -- the functions are in
+     * its image. InName must outlive the registration (a literal).
      */
     using GameModeCreateFn  = IGameMode* (*)();
     using GameModeDestroyFn = void (*)(IGameMode*);
 
-    NE_API void        RegisterGameMode(const char* InName, GameModeCreateFn InCreate, GameModeDestroyFn InDestroy);
+    /* False (logged) for a duplicate name, a full registry or a missing function. */
+    NE_API bool        RegisterGameMode(const char* InName, GameModeCreateFn InCreate, GameModeDestroyFn InDestroy);
     NE_API void        UnregisterGameMode(const char* InName);
     NE_API bool        HasGameMode(const char* InName);
     NE_API size_t      GetGameModeCount();
@@ -71,12 +75,30 @@ namespace NimbleEngine
     /* RegisterGameMode<BrickBreakerMode>("BrickBreaker"): new and delete in the
      * caller's image. */
     template <class ModeType>
-    void RegisterGameMode(const char* InName)
+    bool RegisterGameMode(const char* InName)
     {
-        RegisterGameMode(InName,
+        return RegisterGameMode(InName,
                          []() -> IGameMode* { return new ModeType(); },
                          [](IGameMode* InMode) { delete static_cast<ModeType*>(InMode); });
     }
+
+    /* What NIMBLE_REGISTER_GAME_MODE makes: registers ModeType as the game's
+     * image loads and unregisters it as the image unloads. Header-only, so new
+     * and delete stay in the game's image. A duplicate name is refused and
+     * not unregistered, so it never removes the first mode's entry. */
+    template <class ModeType>
+    struct GameModeRegistrar
+    {
+        explicit GameModeRegistrar(const char* InName)
+            : Name(InName), bRegistered(RegisterGameMode<ModeType>(InName)) {}
+        ~GameModeRegistrar() { if(bRegistered) { UnregisterGameMode(Name); } }
+
+        GameModeRegistrar(const GameModeRegistrar&)            = delete;
+        GameModeRegistrar& operator=(const GameModeRegistrar&) = delete;
+
+        const char* Name;
+        bool        bRegistered;
+    };
 
     // === The levels =========================================================
     /* One level per listed world, registered (SaveGame.h's registry), after
@@ -85,5 +107,17 @@ namespace NimbleEngine
     NE_API void RegisterWorldLevels();
     NE_API void UnregisterWorldLevels();
 }
+
+/*
+ * One per mode, at file scope in the game module's .cpp, after the class:
+ *
+ *     NIMBLE_REGISTER_GAME_MODE(BrickBreakerMode, "BrickBreaker")
+ *
+ * ModeClass is unqualified (it names the registrar); NameLiteral is what a
+ * [World_*] GameMode names. The module's OnStartup and OnShutdown need not
+ * mention it.
+ */
+#define NIMBLE_REGISTER_GAME_MODE(ModeClass, NameLiteral)                                                \
+    static ::NimbleEngine::GameModeRegistrar<ModeClass> GGameModeRegistrar_##ModeClass(NameLiteral);
 
 #endif //NIMBLEENGINE_WORLDLIST_H
