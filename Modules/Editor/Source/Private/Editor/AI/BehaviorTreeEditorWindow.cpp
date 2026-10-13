@@ -922,6 +922,26 @@ void BehaviorTreeEditorWindow::FrameTree()
     View->centerOn(Boxes[Root.get()]->sceneBoundingRect().center().x(), Bounds.top() + double(Port.height()) / (2.0 * Scale));
 }
 
+bool BehaviorTreeEditorWindow::SelectByName(const QString& InName)
+{
+    const std::string Wanted = InName.toStdString();
+    std::function<Node*(Node*)> Find = [&](Node* InNode) -> Node*
+    {
+        if(!InNode) { return nullptr; }
+        if(InNode->Def.GetDisplayName() == Wanted) { return InNode; }
+        for(const std::unique_ptr<Node>& Child : InNode->Children)
+        {
+            if(Node* Found = Find(Child.get())) { return Found; }
+        }
+        return nullptr;
+    };
+    Node* Found = Find(Root.get());
+    if(!Found) { return false; }
+    Select(Found);
+    if(Boxes.count(Found)) { View->centerOn(Boxes[Found]); }
+    return true;
+}
+
 void BehaviorTreeEditorWindow::Select(Node* InNode)
 {
     Selected = InNode;

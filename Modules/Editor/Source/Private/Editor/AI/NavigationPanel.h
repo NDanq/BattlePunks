@@ -47,6 +47,11 @@ public:
 
     /* Builds now; false (and the status says why) if it cannot. */
     bool Build(bool bInSave);
+    /* The Path tester on or off, as its checkbox ("ai.testpath"). */
+    void SetPathTester(bool bInOn);
+    /* The overlay checkboxes from the flags, after something else changed
+     * them ("ai.show"). */
+    void SyncToggles();
 
 private:
     explicit NavigationPanel(QWidget* InParent);

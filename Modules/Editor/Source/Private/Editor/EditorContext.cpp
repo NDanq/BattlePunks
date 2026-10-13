@@ -191,6 +191,15 @@ uint64_t EditorContext::RequestSceneCapture()
     return Renderer->RequestSceneCapture();
 }
 
+uint64_t EditorContext::RequestSceneCaptureWithDebugLines()
+{
+    if(!Renderer || !bRendererReady)
+    {
+        return 0;
+    }
+    return Renderer->RequestSceneCaptureWithDebugLines();
+}
+
 uint64_t EditorContext::RequestSceneCapture(const RenderCore::RenderSceneID InScene)
 {
     if(!Renderer || !bRendererReady)

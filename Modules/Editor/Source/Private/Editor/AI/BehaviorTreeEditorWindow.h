@@ -70,6 +70,9 @@ public:
     void SetDebugging(bool bInOn);
     /* The tree in view: all of it if readable, else from the root down. */
     void FrameTree();
+    /* Selects the first node named (or, unnamed, typed) InName, depth-first,
+     * and centres it ("ai.opentree ... <node>"). False if there is none. */
+    bool SelectByName(const QString& InName);
 
     /* The editable tree; flattened depth-first, as the file reads, for the
      * asset and the debugger. */

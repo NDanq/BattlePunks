@@ -7,12 +7,15 @@ The editor's Help > Documentation shows only this folder.
 - [Game modes: a usage guide](Guides/GameModeGuide.md)
 - UI, built on the Shooting Range: [a menu](Guides/UI/MenuUIGuide.md), [a HUD](Guides/UI/HudGuide.md), [settings that control the game's .ini](Guides/UI/SettingsUIGuide.md)
 - [Sequencer implementation guide](Guides/SequencerImplementationGuide.md)
+- [AICore implementation guide](Guides/AICoreImplementationGuide.md): navigation, crowds, behavior trees, utility, perception
 - [Crash dummy animation guide](Guides/CrashDummyAnimationGuide.md)
 
 ## Component reference
 
 One page per component, with its C++ and Lua API: the **?** in a component's Details header opens it, and writes it here first if it is missing.
 
+- [AI Brain](Components/AIBrain.md)
+- [AI Stimulus](Components/AIStimulus.md)
 - [Anim Socket](Components/AnimSocket.md)
 - [Animation](Components/Animation.md)
 - [Audio Listener](Components/AudioListener.md)
@@ -23,8 +26,13 @@ One page per component, with its C++ and Lua API: the **?** in a component's Det
 - [Collision](Components/Collision.md)
 - [Directional Light](Components/DirectionalLight.md)
 - [Input](Components/Input.md)
+- [Nav Agent](Components/NavAgent.md)
+- [Nav Mesh Volume](Components/NavMeshVolume.md)
+- [Nav Modifier](Components/NavModifier.md)
+- [Nav Obstacle](Components/NavObstacle.md)
 - [Net](Components/Net.md)
 - [Particle System](Components/ParticleSystem.md)
+- [Perception](Components/Perception.md)
 - [Physics Constraint](Components/PhysicsConstraint.md)
 - [PlayerStart](Components/PlayerStart.md)
 - [PlayerState](Components/PlayerState.md)

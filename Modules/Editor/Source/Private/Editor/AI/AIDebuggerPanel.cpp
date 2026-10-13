@@ -134,13 +134,24 @@ AIDebuggerPanel::AIDebuggerPanel(QWidget* InParent) : QDockWidget(QStringLiteral
     }
 }
 
-void AIDebuggerPanel::Refresh()
+void AIDebuggerPanel::SyncToggles()
 {
     for(const auto& Each : Synced)
     {
         const QSignalBlocker Quiet(Each.first);
         Each.first->setChecked(*Each.second);
     }
+}
+
+void AIDebuggerPanel::PickRow(const int InRow)
+{
+    FillAgents();
+    if(InRow >= 0 && InRow < Agents->count()) { Agents->setCurrentRow(InRow); }
+}
+
+void AIDebuggerPanel::Refresh()
+{
+    SyncToggles();
     FillAgents();
     FillAgent();
 }

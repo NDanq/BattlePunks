@@ -256,13 +256,24 @@ bool NavigationPanel::Build(const bool bInSave)
     return true;
 }
 
-void NavigationPanel::Refresh()
+void NavigationPanel::SetPathTester(const bool bInOn)
+{
+    PathTester->setChecked(bInOn);
+    UpdateTool();
+}
+
+void NavigationPanel::SyncToggles()
 {
     for(const auto& Each : Synced)
     {
         const QSignalBlocker Quiet(Each.first);
         Each.first->setChecked(*Each.second);
     }
+}
+
+void NavigationPanel::Refresh()
+{
+    SyncToggles();
     AICore::AIWorld* AI = EditorAI::GetAI();
     BuildButton->setEnabled(!EditorAI::IsPlaying());
     if(!AI)

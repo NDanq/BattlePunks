@@ -253,6 +253,8 @@ namespace RenderCore
         uint64_t RequestSceneCapture();
         /* The same, of InScene (a tool's own viewport -- the UI Designer's). */
         uint64_t RequestSceneCapture(RenderSceneID InScene);
+        /* The default scene's, debug lines (a tool's gizmos) included. */
+        uint64_t RequestSceneCaptureWithDebugLines();
 
         /* The render target at InPath (RenderTargetAsset.h) as a material
          * samples it after the default scene's next captures, through

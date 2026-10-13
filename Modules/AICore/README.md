@@ -11,6 +11,11 @@ Game AI for a GameCore `World`, in four parts:
 - **perception**: sight and hearing, remembered for a while, written to the
   brain's blackboard.
 
+How it is built, and where to change it:
+`Engine/Docs/Guides/AICoreImplementationGuide.md`. One page per component:
+`Engine/Docs/Components/` (AI Brain, Nav Agent, Nav Mesh Volume, Nav
+Modifier, Nav Obstacle, Perception, AI Stimulus).
+
 Each is a set of components a level places, or a game's spawn code adds. The
 World's `AIWorld` runs them. The editor builds navmeshes, edits trees and
 debugs agents while Play runs. The Toon Arena (`Games/WorldsLab`, below) is
@@ -362,11 +367,13 @@ Console commands, also usable from `-command`:
 |-------------------------|-----------------------------------------------------|
 | `ai.navigation`         | show the Navigation dock                            |
 | `ai.buildnav`           | build the level's navmesh and write it              |
-| `ai.debugger`           | show the AI Debugger                                |
-| `ai.opentree <file> [debug]` | open a tree in its editor                      |
+| `ai.debugger [row]`     | show the AI Debugger; with a row, pick that brain   |
+| `ai.opentree <file> [debug] [node]` | open a tree in its editor, a node selected |
+| `ai.testpath ax ay az bx by bz` | set the path tester's ends (`clear` clears) |
 | `ai.show <gizmo> <on/off>` | navmesh, tiles, obstacles, modifiers, paths, sight |
 | `ai.overlaystats`       | the lines each gizmo drew last frame                |
 | `ai.treeshot <file.png>`| save the front tree window as an image              |
+| `screenshot -gizmos <file>` | the viewport with its gizmos (`windowshot -gizmos`: the window) |
 
 A running game has `AI.ShowNavMesh` and `AI.ShowPaths` (config vars).
 
