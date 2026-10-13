@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="0bfca0e78e54a78da07fd4cbf3a287bc" Name="Spawn_Blue_3">
+  <Component Type="Transform" Version="1">
+    <Position X="2550" Y="0" Z="2550" />
+    <Rotation X="0" Y="-135" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

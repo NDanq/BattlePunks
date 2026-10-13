@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ArenaBot: a Toon Arena crash dummy (WorldsLabArena.cpp). One utility selector
+  picks among five branches, re-scored every 0.3 s:
+
+    Engage       a target in sight, healthy enough and armed: close to fighting
+                 range while AimAndFire turns and shoots
+    TakeCover    under fire and hurt: the nearest navmesh point the target cannot
+                 see (FindCover), then a breather
+    Reload       the magazine running low
+    Investigate  a noise heard or a target lost: go to where it was
+    Patrol       the floor: the arena's patrol markers, one after another
+
+  Perception writes TargetActor, TargetVisible, TargetDistance, LastKnownPos,
+  HeardNoise and NoisePos; the ArenaStatus service writes Health, Ammo and
+  UnderFire from the fighter.
+-->
+<BehaviorTree Format="1" Name="ArenaBot">
+  <Blackboard>
+    <Key Name="TargetActor" Type="Entity" />
+    <Key Name="TargetVisible" Type="Bool" Default="false" />
+    <Key Name="TargetDistance" Type="Float" Default="5000" />
+    <Key Name="LastKnownPos" Type="Vector" />
+    <Key Name="HeardNoise" Type="Bool" Default="false" />
+    <Key Name="NoisePos" Type="Vector" />
+    <Key Name="Health" Type="Float" Default="1" />
+    <Key Name="Ammo" Type="Float" Default="1" />
+    <Key Name="UnderFire" Type="Bool" Default="false" />
+    <Key Name="CoverPos" Type="Vector" />
+    <Key Name="PatrolPoint" Type="Vector" />
+  </Blackboard>
+  <UtilitySelector Interval="0.3" Hysteresis="0.2">
+    <Service Type="ArenaStatus" Interval="0.15" />
+    <Parallel Name="Engage" Success="One" Failure="One">
+      <Consideration Input="TargetVisible" Curve="Step" XShift="0.5" />
+      <Consideration Input="Health" Curve="Logistic" Slope="14" XShift="0.25" />
+      <Consideration Input="Ammo" Curve="Step" XShift="0.01" />
+      <Consideration Input="TargetDistance" Max="4000" Curve="InverseLinear" />
+      <Decorator Type="BlackboardCondition" Key="TargetActor" Op="IsSet" Abort="Self" />
+      <Task Type="AimAndFire" Key="TargetActor" />
+      <Sequence Name="Close In">
+        <Decorator Type="Loop" Count="0" />
+        <Task Type="MoveTo" Key="TargetActor" AcceptanceRadius="900" RepathDistance="250" />
+        <Task Type="MoveToRandom" Radius="350" AcceptanceRadius="60" />
+        <Wait Seconds="0.35" RandomDeviation="0.25" />
+      </Sequence>
+    </Parallel>
+    <Sequence Name="TakeCover">
+      <Consideration Input="UnderFire" Curve="Step" XShift="0.5" />
+      <Consideration Input="Health" Curve="InverseLinear" />
+      <Decorator Type="Cooldown" Seconds="5" />
+      <Decorator Type="BlackboardCondition" Key="TargetActor" Op="IsSet" />
+      <Task Type="FindCover" Threat="TargetActor" Out="CoverPos" Radius="1300" />
+      <Task Type="MoveTo" Key="CoverPos" AcceptanceRadius="80" />
+      <Task Type="Reload" />
+      <Wait Seconds="1.2" RandomDeviation="0.4" />
+    </Sequence>
+    <Sequence Name="Reload">
+      <Consideration Input="Ammo" Curve="InverseLinear" />
+      <Task Type="Reload" />
+    </Sequence>
+    <Sequence Name="Investigate" Weight="0.7">
+      <Consideration Input="TargetVisible" Curve="InverseLinear" />
+      <Consideration Input="HeardNoise" Curve="Step" XShift="0.5" />
+      <Decorator Type="Cooldown" Seconds="3" />
+      <Selector>
+        <Task Type="MoveTo" Key="LastKnownPos" AcceptanceRadius="200">
+          <Decorator Type="BlackboardCondition" Key="TargetActor" Op="IsSet" />
+        </Task>
+        <Task Type="MoveTo" Key="NoisePos" AcceptanceRadius="200" />
+      </Selector>
+      <Wait Seconds="0.8" RandomDeviation="0.4" />
+    </Sequence>
+    <Sequence Name="Patrol">
+      <Consideration Curve="Constant" YShift="0.15" />
+      <Task Type="PickPatrolPoint" Out="PatrolPoint" />
+      <Task Type="MoveTo" Key="PatrolPoint" AcceptanceRadius="180" />
+      <Wait Seconds="1.2" RandomDeviation="0.8" />
+    </Sequence>
+  </UtilitySelector>
+</BehaviorTree>
