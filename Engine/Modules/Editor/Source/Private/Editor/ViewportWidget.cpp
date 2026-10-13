@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Public/NimbleEngine/Input.h"
+#include "Public/NimbleEngine/PlayerStart.h"
 #include "Public/NimbleEngine/TerrainFacade.h"
 #include "Public/Editor/ViewportWidget.h"
 
@@ -88,6 +89,17 @@ namespace
     constexpr double LightDimFactor       = 0.45;
     constexpr double SunArrowPixels       = 70.0;
     constexpr double LightPickPixels      = 12.0;
+
+    /* Player Starts: a person-sized capsule standing on the start, and an
+     * arrow along the ground the way the avatar faces (+Z turned by yaw).
+     * Any slot green; Player 1..4 their own; disabled grey. */
+    constexpr double PlayerStartRadius = 40.0;
+    constexpr double PlayerStartHeight = 180.0;
+    constexpr double PlayerStartArrow  = 90.0;   // past the capsule's rim
+    const EngineCore::Color PlayerStartAnyColor(90, 220, 120);
+    const EngineCore::Color PlayerStartSlotColors[4] = { EngineCore::Color(80, 160, 255), EngineCore::Color(255, 90, 90),
+                                                         EngineCore::Color(250, 200, 60), EngineCore::Color(200, 110, 255) };
+    const EngineCore::Color PlayerStartDisabledColor(130, 130, 130);
 
     /* InColor scaled toward black, never so dark it vanishes on the clear. */
     EngineCore::Color GizmoColor(const EngineCore::Color InColor, const bool bInSelected)
@@ -605,6 +617,7 @@ void ViewportWidget::QueueOverlay()
     }
 
     QueueLightGizmos();
+    QueuePlayerStartGizmos();
 
     if(const GameCore::TransformComponent* Target = GetGizmoTarget())
     {
@@ -800,6 +813,90 @@ void ViewportWidget::QueueLightGizmos()
         Ring(Centre, X, Z, Radius, Reach, Thickness * 0.5f);
         Ring(Centre, X, Y, Radius, Reach, Thickness * 0.5f);
         Ring(Centre, Y, Z, Radius, Reach, Thickness * 0.5f);
+    });
+}
+
+void ViewportWidget::QueuePlayerStartGizmos()
+{
+    const float Ratio = float(devicePixelRatioF());
+
+    const auto Segment = [this](const EngineCore::Vector3& InA, const EngineCore::Vector3& InB,
+                                const EngineCore::Color InColor, const float InThickness)
+    {
+        RenderCore::DebugLine Line;
+        Line.Start           = InA;
+        Line.End             = InB;
+        Line.Color           = InColor;
+        Line.ThicknessPixels = InThickness;
+        Context.DrawDebugLine(Line);
+    };
+    /* InFrom..InTo turns (0..1 a full circle) about InCentre in the plane of InU and InV. */
+    const auto Arc = [&Segment](const EngineCore::Vector3& InCentre, const EngineCore::Vector3& InU, const EngineCore::Vector3& InV,
+                                const double InRadius, const double InFrom, const double InTo,
+                                const EngineCore::Color InColor, const float InThickness)
+    {
+        const int Steps = std::max(2, int(LightRingSegments * (InTo - InFrom)));
+        const auto At = [&](const double InTurns)
+        {
+            const double Angle = 2.0 * 3.14159265358979 * InTurns;
+            return InCentre + (InU * std::cos(Angle) + InV * std::sin(Angle)) * InRadius;
+        };
+        EngineCore::Vector3 Previous = At(InFrom);
+        for(int Step = 1; Step <= Steps; ++Step)
+        {
+            const EngineCore::Vector3 Point = At(InFrom + (InTo - InFrom) * double(Step) / double(Steps));
+            Segment(Previous, Point, InColor, InThickness);
+            Previous = Point;
+        }
+    };
+
+    Document.GetWorld().Each<NimbleEngine::PlayerStartComponent>(
+        [&](const GameCore::Entity& InEntity, NimbleEngine::PlayerStartComponent& InStart)
+    {
+        const bool bSelected = Document.IsSelected(InEntity.GetID());
+        if(!bSelected && !bShowPlayerStarts)
+        {
+            return;
+        }
+        const EngineCore::Color Base = !InStart.bEnabled ? PlayerStartDisabledColor
+                                     : InStart.PlayerSlot >= 1 && InStart.PlayerSlot <= 4 ? PlayerStartSlotColors[InStart.PlayerSlot - 1]
+                                     : PlayerStartAnyColor;
+        const EngineCore::Color Color = GizmoColor(Base, bSelected);
+        const float Thickness = (bSelected ? LightSelectedThickness : LightThickness) * Ratio;
+
+        /* Upright whatever its pitch and roll: only the yaw turns an avatar. */
+        const GameCore::TransformPose Pose = InEntity.GetWorldPose();
+        const EngineCore::Vector3 Feet = Pose.Position;
+        const EngineCore::Vector3 Turned = GameCore::TransformMath::EulerToRotation(Pose.Rotation).GetAxis(2);
+        EngineCore::Vector3 Forward(Turned.GetX(), 0.0, Turned.GetZ());
+        Forward = Forward.GetLength() > 1e-6 ? Forward.GetNormalize() : EngineCore::Vector3(0.0, 0.0, 1.0);
+        const EngineCore::Vector3 Up(0.0, 1.0, 0.0);
+        const EngineCore::Vector3 Right = (Up ^ Forward).GetNormalize();
+
+        /* The capsule: rings where its hemispheres meet the sides, the sides,
+         * and the hemispheres' arcs facing and across the arrow. */
+        const double R = PlayerStartRadius;
+        const EngineCore::Vector3 Low  = Feet + Up * R;
+        const EngineCore::Vector3 High = Feet + Up * (PlayerStartHeight - R);
+        Arc(Low,  Forward, Right, R, 0.0, 1.0, Color, Thickness);
+        Arc(High, Forward, Right, R, 0.0, 1.0, Color, Thickness);
+        for(const EngineCore::Vector3& Side : { Forward, Right, Forward * -1.0, Right * -1.0 })
+        {
+            Segment(Low + Side * R, High + Side * R, Color, Thickness);
+        }
+        for(const EngineCore::Vector3& Across : { Forward, Right })
+        {
+            Arc(High, Across, Up, R, 0.0, 0.5, Color, Thickness);
+            Arc(Low,  Across, Up, R, 0.5, 1.0, Color, Thickness);
+        }
+
+        /* The arrow, on the ground, out past the front of the capsule. */
+        const EngineCore::Vector3 Tip = Feet + Forward * (R + PlayerStartArrow);
+        Segment(Feet, Tip, Color, Thickness * 1.5f);
+        for(const EngineCore::Vector3& Side : { Right, Right * -1.0 })
+        {
+            Segment(Tip, Tip - Forward * (PlayerStartArrow * 0.3) + Side * (PlayerStartArrow * 0.2), Color, Thickness * 1.5f);
+        }
     });
 }
 
@@ -1641,7 +1738,7 @@ GameCore::EntityID ViewportWidget::Pick(const QPoint& InLogicalPos) const
         Best  = Ground.Entity;
     }
 
-    /* A light has no shape to hit: its position, within a few pixels, unless
+    /* A light (or a Player Start) has no shape to hit: its position, within a few pixels, unless
      * a mesh is nearer the camera. */
     const double PickX = InLogicalPos.x(), PickY = InLogicalPos.y();
     double BestPixels = LightPickPixels;
@@ -1672,6 +1769,10 @@ GameCore::EntityID ViewportWidget::Pick(const QPoint& InLogicalPos) const
         TryLight(InEntity);
     });
     World.Each<RenderCore::ReflectionProbeComponent>([&](const GameCore::Entity& InEntity, RenderCore::ReflectionProbeComponent&)
+    {
+        TryLight(InEntity);
+    });
+    World.Each<NimbleEngine::PlayerStartComponent>([&](const GameCore::Entity& InEntity, NimbleEngine::PlayerStartComponent&)
     {
         TryLight(InEntity);
     });

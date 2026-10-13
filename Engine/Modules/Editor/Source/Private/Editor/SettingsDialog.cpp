@@ -60,7 +60,7 @@ namespace
     const char* const ViewStatePaths[] =
     {
         "Editor.ViewGizmoMode", "Editor.ViewGizmoSpace", "Editor.ViewGizmoSnap", "Editor.ViewMode",
-        "Editor.ViewAllBounds", "Editor.ViewLightGizmos", "Editor.ViewCameraSpeed", "Rendering.BakedLighting",
+        "Editor.ViewAllBounds", "Editor.ViewLightGizmos", "Editor.ViewPlayerStarts", "Editor.ViewCameraSpeed", "Rendering.BakedLighting",
     };
 }
 
