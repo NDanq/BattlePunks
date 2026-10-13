@@ -120,8 +120,9 @@ namespace RenderCore
         void AddMaterialPreview(const MaterialPreviewRequest& InRequest);
 
         /* EDITOR ONLY. The next Render()'s final colour, without the debug
-         * lines, read back into InMailbox under InRequest. */
-        void AddCapture(uint64_t InRequest, MaterialPreviewMailbox* InMailbox);
+         * lines (or, bInWithDebugLines, with them: a tool's gizmos for a
+         * screenshot), read back into InMailbox under InRequest. */
+        void AddCapture(uint64_t InRequest, MaterialPreviewMailbox* InMailbox, bool bInWithDebugLines = false);
 
         /* The render target at InPath read back after the next Render()'s
          * captures (Renderer::RequestRenderTargetReadback). */

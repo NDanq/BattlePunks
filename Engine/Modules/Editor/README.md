@@ -715,7 +715,7 @@ registered:
 | `save` | File > Save World (the world must have a file) |
 | `quit` | File > Exit, which still asks about unsaved changes |
 | `lighting <bake \| baked \| live>` | Build > Bake Lightmaps, or Show > Lighting > Baked / Live |
-| `screenshot <file.png>` | Save the viewport's next frame, without gizmos or debug lines (`Renderer::RequestSceneCapture`) |
+| `screenshot [-gizmos] <file.png>` | Save the viewport's next frame, without gizmos or debug lines (`Renderer::RequestSceneCapture`); with `-gizmos`, with them (`RequestSceneCaptureWithDebugLines`). `windowshot` takes `-gizmos` too |
 | `import <source> [folder]` | The Content Browser's import with default options: a `.gltf`/`.glb`, an image, or a `.wav`/`.flac`/`.mp3`/`.ogg` (with the Audio module) into the project folder given, `Content` by default |
 | `cook project` | As Build > Cook Content: the listed worlds, every prefab and UI document, with the stats |
 | `cook [world] [out]` | Cook a world file to binary -- by default the open world's saved file, to `<project>/Saved/Cooked/<its path>` |

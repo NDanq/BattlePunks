@@ -536,6 +536,7 @@ namespace RenderCore
         std::vector<DebugLine>    DebugLines;   // consumed by the next Render()
         std::vector<MaterialPreviewRequest> Previews;   // likewise
         std::vector<std::pair<uint64_t, MaterialPreviewMailbox*>> Captures;   // likewise
+        std::vector<std::pair<uint64_t, MaterialPreviewMailbox*>> CapturesWithLines;   // likewise, read after the debug lines
         struct TargetReadback { uint64_t Request; std::string Path; MaterialPreviewMailbox* Mailbox; };
         std::vector<TargetReadback> TargetReadbacks;                           // likewise
 #endif
@@ -956,9 +957,9 @@ namespace RenderCore
         P->Previews.push_back(InRequest);
     }
 
-    void RenderScene::AddCapture(const uint64_t InRequest, MaterialPreviewMailbox* InMailbox)
+    void RenderScene::AddCapture(const uint64_t InRequest, MaterialPreviewMailbox* InMailbox, const bool bInWithDebugLines)
     {
-        P->Captures.emplace_back(InRequest, InMailbox);
+        (bInWithDebugLines ? P->CapturesWithLines : P->Captures).emplace_back(InRequest, InMailbox);
     }
 
     void RenderScene::AddTargetReadback(const uint64_t InRequest, const std::string& InPath, MaterialPreviewMailbox* InMailbox)
@@ -1192,17 +1193,21 @@ namespace RenderCore
 
 #if WITH_EDITOR
         /* Read back before the overlay; the readback flushes and resumes the frame. */
-        for(const auto& Each : P->Captures)
+        const auto DeliverCaptures = [this](std::vector<std::pair<uint64_t, MaterialPreviewMailbox*>>& InCaptures)
         {
-            EngineCore::Image Pixels;
-            if(P->Targets.Final) { Pixels = P->Targets.Final->ToImage(); }
-            if(Each.second)
+            for(const auto& Each : InCaptures)
             {
-                Each.second->Deliver(Each.first, std::move(Pixels),
-                                     P->Targets.Final ? std::string() : std::string("the scene has no render target"));
+                EngineCore::Image Pixels;
+                if(P->Targets.Final) { Pixels = P->Targets.Final->ToImage(); }
+                if(Each.second)
+                {
+                    Each.second->Deliver(Each.first, std::move(Pixels),
+                                         P->Targets.Final ? std::string() : std::string("the scene has no render target"));
+                }
             }
-        }
-        P->Captures.clear();
+            InCaptures.clear();
+        };
+        DeliverCaptures(P->Captures);
 #endif
 
         if(P->bReportsStats)
@@ -1225,6 +1230,8 @@ namespace RenderCore
             }
             P->DebugLines.clear();
         }
+        /* And the captures that want the overlay. */
+        DeliverCaptures(P->CapturesWithLines);
 #endif
 
         /* "stat unit" (Stats.Unit) and "stat frame" (Stats.Frame) over

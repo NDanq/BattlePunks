@@ -616,6 +616,23 @@ namespace RenderCore
         return Request;
     }
 
+    uint64_t Renderer::RequestSceneCaptureWithDebugLines()
+    {
+        const RendererScene* Found = P->Find(RENDER_DEFAULT_SCENE);
+        RenderScene* Scene = Found ? Found->Scene : nullptr;
+        if(!Scene || !P->Thread.IsRunning())
+        {
+            return 0;
+        }
+        const uint64_t Request = ++P->LastPreviewRequest;
+        MaterialPreviewMailbox* Mailbox = &P->Previews;
+        ENQUEUE_RENDER_COMMAND(AddSceneCaptureWithLines)([Scene, Request, Mailbox](RenderContext&)
+        {
+            Scene->AddCapture(Request, Mailbox, true);
+        });
+        return Request;
+    }
+
     uint64_t Renderer::RequestRenderTargetReadback(const std::string& InPath)
     {
         RenderScene* Scene = P->DefaultScene();

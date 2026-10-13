@@ -39,6 +39,10 @@ public:
     static AIDebuggerPanel& Install(QMainWindow& InHost, QDockWidget* InTabifyWith);
     static AIDebuggerPanel* Find();
     static void Show();
+    /* The overlay checkboxes from the flags ("ai.show"). */
+    void SyncToggles();
+    /* Picks the InRow'th listed agent, as a click ("ai.debugger <row>"). */
+    void PickRow(int InRow);
 
 private:
     explicit AIDebuggerPanel(QWidget* InParent);
