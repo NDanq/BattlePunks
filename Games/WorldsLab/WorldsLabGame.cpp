@@ -77,10 +77,9 @@ void WorldsLabUnregisterExplore();
 /* WorldsLabRange.cpp: the Shooting Range's mode and its shooter's movement. */
 void WorldsLabRegisterRange();
 void WorldsLabUnregisterRange();
-void WorldsLabRegisterPvP();
-void WorldsLabUnregisterPvP();
-/* WorldsLabArena.cpp, the Toon Arena (AICore's demo), registers itself
- * (NIMBLE_REGISTER_GAME_MODE); the rest still register here. */
+/* WorldsLabPvP.cpp (Steampunk PvP) and WorldsLabArena.cpp (the Toon Arena,
+ * AICore's demo) register themselves (NIMBLE_REGISTER_GAME_MODE); the rest
+ * still register here. */
 
 // === State ==================================================================
 
@@ -188,7 +187,6 @@ public:
         NimbleEngine::RegisterGameMode<WorldsLabGameMode>("WorldsLab");
         WorldsLabRegisterExplore();
         WorldsLabRegisterRange();
-        WorldsLabRegisterPvP();
         return true;
     }
 
@@ -198,7 +196,6 @@ public:
         NimbleEngine::UnregisterGameMode("WorldsLab");
         WorldsLabUnregisterExplore();
         WorldsLabUnregisterRange();
-        WorldsLabUnregisterPvP();
     }
 };
 

@@ -237,17 +237,6 @@ namespace
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - Start).count();
     }
 
-    /* What the HUD shows that is not a replicated field. */
-    struct FeedLine { std::string Text; double Until; };
-    std::vector<FeedLine> GFeed;
-    std::string GStatus;
-    double      GStatusUntil = 0.0;
-    double      GHitMarkerUntil = 0.0;
-
-    /* Short-lived effects this process made. */
-    struct Effect { EntityID Entity; double Until; };
-    std::vector<Effect> GEffects;
-
     bool IsPresentation() { return !NimbleEngine::IsDedicatedServer(); }
 
     PvpFighterComponent* FighterOf(GameCore::World& InWorld, const EntityID InEntity)
@@ -266,25 +255,6 @@ namespace
     {
         const GameCore::TransformComponent* T = InWorld.GetEntity(InEntity).GetComponent<GameCore::TransformComponent>();
         return T ? V(T->Position) : Vec{ 0, 0, 0 };
-    }
-
-    void SetStatus(const std::string& InText, const double InSeconds)
-    {
-        GStatus = InText;
-        GStatusUntil = NowSeconds() + InSeconds;
-    }
-
-    void SpawnEffect(GameCore::World& InWorld, const char* InSystem, const Vec& InAt, const double InLife)
-    {
-        if(!IsPresentation()) { return; }
-        GameCore::Entity Fx = InWorld.CreateEntity("PvpEffect");
-        GameCore::TransformComponent Transform;
-        Transform.Position = Vector3(InAt.X, InAt.Y, InAt.Z);
-        Fx.AddComponent(Transform);
-        RenderCore::ParticleSystemComponent Emitter;
-        std::snprintf(Emitter.System, sizeof(Emitter.System), "%s%s.nmparticle", Particles, InSystem);
-        Fx.AddComponent(Emitter);
-        GEffects.push_back({ Fx.GetID(), NowSeconds() + InLife });
     }
 
     /* The fighter's muzzle in the world, or its pivot if the pistol is not here yet. */
@@ -335,12 +305,6 @@ namespace
         Lens.Projection = RenderCore::CP_Perspective;
         Lens.FovY = 62.0f;
         Camera.AddComponent(Lens);
-    }
-
-    void AddFeed(const std::string& InText)
-    {
-        GFeed.push_back({ InText, NowSeconds() + 6.0 });
-        if(GFeed.size() > 4) { GFeed.erase(GFeed.begin()); }
     }
 }
 
@@ -430,56 +394,6 @@ void PvpFighterComponent::ServerReload(const GameCore::RpcContext&)
     ReloadIn   = ReloadSeconds;
 }
 
-// === Feedback: every process =====================================================
-
-void PvpFighterComponent::MulticastShot(const GameCore::RpcContext& InContext, const Vector3& InTo, const uint8_t InHit)
-{
-    GameCore::World& World = *InContext.OwningWorld;
-    const NimbleEngine::AvatarHarnessComponent* Harness =
-        World.GetEntity(InContext.Entity).GetComponent<NimbleEngine::AvatarHarnessComponent>();
-    if(Harness && Harness->IsLocallyControlled()) { return; }   // the shooter's process showed it as it fired
-    if(!IsPresentation()) { return; }
-
-    const Vec Muzzle = MuzzleOf(World, InContext.Entity);
-    SpawnEffect(World, "MuzzleFlash", Muzzle, 1.2);
-    NimbleEngine::PlaySoundAt(World, (std::string(Sounds) + "Gunshot.nmsound").c_str(), Vector3(Muzzle.X, Muzzle.Y, Muzzle.Z), 1.0f);
-    if(InHit != 0)
-    {
-        SpawnEffect(World, InHit == 2 ? "Sparks" : "Dust", V(InTo), 1.2);
-        NimbleEngine::PlaySoundAt(World, (std::string(Sounds) + "Impact.nmsound").c_str(), InTo, 0.6f);
-    }
-}
-
-void PvpFighterComponent::MulticastKilled(const GameCore::RpcContext& InContext, const EntityID InKiller, const bool bInHead,
-                                          const Vector3& InImpulse, const Vector3& InAt)
-{
-    GameCore::World& World = *InContext.OwningWorld;
-    const PvpFighterComponent* Killer = FighterOf(World, InKiller);
-    AddFeed(std::string(Killer ? Killer->Name : "?") + (bInHead ? "  [HEADSHOT]  " : "  >  ") + Name);
-
-    if(!IsPresentation()) { return; }
-    if(NimbleEngine::RagdollComponent* Ragdoll = World.GetEntity(InContext.Entity).GetComponent<NimbleEngine::RagdollComponent>())
-    {
-        if(!Ragdoll->IsActive()) { Ragdoll->ActivateWithImpulse(InImpulse, InAt); }
-    }
-    bShownDead = 1;
-    const EntityID Local = NimbleEngine::GetLocalAvatar(World, 0);
-    if(InContext.Entity == Local)
-    {
-        SetStatus(std::string("KILLED BY ") + (Killer ? Killer->Name : "?"), RespawnDelay);
-    }
-}
-
-void PvpFighterComponent::ClientHitConfirm(const GameCore::RpcContext& InContext, const int32_t, const bool bInKill, const bool bInHead)
-{
-    if(!IsPresentation()) { return; }
-    GameCore::World& World = *InContext.OwningWorld;
-    if(InContext.Entity != NimbleEngine::GetLocalAvatar(World, 0)) { return; }   // a bot's
-    GHitMarkerUntil = NowSeconds() + 0.25;
-    if(bInKill) { SetStatus(bInHead ? "HEADSHOT KILL" : "KILL", 1.5); }
-    NimbleEngine::PlaySound2D(World, (std::string(Sounds) + (bInKill ? "SteelHit.nmsound" : "PaperHit.nmsound")).c_str(), 0.7f);
-}
-
 // === Respawning, and the round: the server's =====================================
 
 namespace
@@ -559,8 +473,6 @@ namespace
         bool   bStarted = false;
         bool   bFireHeld = false;
     };
-    std::unordered_map<uint64_t, BotState> GBots;
-
     bool IsBot(GameCore::World& InWorld, const EntityID InAvatar)
     {
         const EntityID Player = NimbleEngine::GetPossessor(InWorld, InAvatar);
@@ -658,7 +570,8 @@ namespace
         return true;
     }
 
-    void BotFilter(GameCore::World& InWorld, const EntityID InAvatar, NimbleEngine::InputSnapshot& InOutInput)
+    /* Bot: the mode's state for this bot (WorldsLabPvPMode::FilterInput). */
+    void BotFilter(GameCore::World& InWorld, const EntityID InAvatar, BotState& Bot, NimbleEngine::InputSnapshot& InOutInput)
     {
         static const int LookX = NimbleEngine::FindInputAxis("Range", "LookX");
         static const int LookY = NimbleEngine::FindInputAxis("Range", "LookY");
@@ -671,7 +584,6 @@ namespace
         const PvpFighterComponent* Self = FighterOf(InWorld, InAvatar);
         if(!Mover || !Self || Self->bDead) { return; }
 
-        BotState& Bot = GBots[InAvatar.Pack()];
         const double Now = NowSeconds();
         const double Dt = Bot.bStarted ? std::clamp(Now - Bot.LastTime, 0.0, 0.1) : 0.0;
         Bot.LastTime = Now;
@@ -781,12 +693,6 @@ namespace
             if(Bot.StuckFor > 2.0) { Bot.Waypoint = (Bot.Waypoint + 1) % WaypointCount; Bot.StuckFor = 0.0; }
         }
     }
-
-    void PvpInputFilter(GameCore::World& InWorld, const EntityID InAvatar, NimbleEngine::InputSnapshot& InOutInput, void*)
-    {
-        if(IsBot(InWorld, InAvatar)) { BotFilter(InWorld, InAvatar, InOutInput); return; }
-        WorldsLabWalker::ApplyLookSensitivity(InOutInput);
-    }
 }
 
 // === The mode ======================================================================
@@ -801,20 +707,22 @@ namespace
     }
 }
 
+/*
+ * What is not a replicated field -- the kill feed, the status line, the hit
+ * marker, effects, the bots' state -- lives here, made and gone with the
+ * level. The feedback RPCs below reach it with FindGameMode.
+ */
 class WorldsLabPvPMode : public NimbleEngine::NetGameMode
 {
 public:
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
-        GFeed.clear();
-        GEffects.clear();
-        GBots.clear();
-        GStatus.clear();
         if(!NimbleEngine::IsPhysicsAvailable())
         {
             CORE_LOG_WARN("[SteampunkPvP] built without JoltPhysics: fighters walk on Bounds alone, and badly")
         }
-        if(NimbleEngine::AvatarWorld* Avatars = InSession.GetAvatars()) { Avatars->SetInputFilter(&PvpInputFilter, nullptr); }
+        /* Taken back by the session after OnUnload. */
+        SetAvatarInputFilter<&WorldsLabPvPMode::FilterInput>();
         return NetGameMode::OnLoad(InSession);
     }
 
@@ -858,12 +766,37 @@ public:
         if(IsPresentation()) { TickPresentation(World); }
     }
 
-    void OnUnload() override
+    // === For the feedback RPCs (FindGameMode<WorldsLabPvPMode>) ==============
+
+    /* A short-lived particle effect, on a process that shows them. */
+    void SpawnEffect(GameCore::World& InWorld, const char* InSystem, const Vec& InAt, const double InLife)
     {
-        if(NimbleEngine::AvatarWorld* Avatars = Session ? Session->GetAvatars() : nullptr) { Avatars->SetInputFilter(nullptr, nullptr); }
-        GEffects.clear();
-        GBots.clear();
+        if(!IsPresentation()) { return; }
+        GameCore::Entity Fx = InWorld.CreateEntity("PvpEffect");
+        GameCore::TransformComponent Transform;
+        Transform.Position = Vector3(InAt.X, InAt.Y, InAt.Z);
+        Fx.AddComponent(Transform);
+        RenderCore::ParticleSystemComponent Emitter;
+        std::snprintf(Emitter.System, sizeof(Emitter.System), "%s%s.nmparticle", Particles, InSystem);
+        Fx.AddComponent(Emitter);
+        LiveEffects.push_back({ Fx.GetID(), NowSeconds() + InLife });
     }
+
+    /* A kill feed line, newest last; four at most. */
+    void AddFeed(const std::string& InText)
+    {
+        FeedLines.push_back({ InText, NowSeconds() + 6.0 });
+        if(FeedLines.size() > 4) { FeedLines.erase(FeedLines.begin()); }
+    }
+
+    /* The middle of the screen, for InSeconds. */
+    void SetStatus(const std::string& InText, const double InSeconds)
+    {
+        StatusText  = InText;
+        StatusUntil = NowSeconds() + InSeconds;
+    }
+
+    void ShowHitMarker() { HitMarkerUntil = NowSeconds() + 0.25; }
 
 protected:
     const char* GetAvatarPrefab(EntityID) override { return FighterPrefab; }
@@ -1052,12 +985,12 @@ private:
 
         /* Effects past their life. */
         const double Now = NowSeconds();
-        for(size_t I = GEffects.size(); I-- > 0;)
+        for(size_t I = LiveEffects.size(); I-- > 0;)
         {
-            if(GEffects[I].Until <= Now)
+            if(LiveEffects[I].Until <= Now)
             {
-                if(World.IsAlive(GEffects[I].Entity)) { World.DestroyEntity(GEffects[I].Entity); }
-                GEffects.erase(GEffects.begin() + std::ptrdiff_t(I));
+                if(World.IsAlive(LiveEffects[I].Entity)) { World.DestroyEntity(LiveEffects[I].Entity); }
+                LiveEffects.erase(LiveEffects.begin() + std::ptrdiff_t(I));
             }
         }
     }
@@ -1148,20 +1081,21 @@ private:
         }
         if(NimbleEngine::IsNetReconnecting()) { Banner = "CONNECTION LOST  -  REJOINING"; }
         Set(UI, "Pvp.Banner", Banner);
-        std::string Status = Now < GStatusUntil ? GStatus : std::string();
+        std::string Status = Now < StatusUntil ? StatusText : std::string();
         if(Me && Me->bReloading) { Status = "RELOADING"; }
         if(Me && Me->bDead)
         {
-            Status = (Now < GStatusUntil ? GStatus + "  -  " : std::string()) + "RESPAWNING";
+            Status = (Now < StatusUntil ? StatusText + "  -  " : std::string()) + "RESPAWNING";
         }
 
         Set(UI, "Pvp.Status", Status);
 
         /* The kill feed, newest last. */
-        GFeed.erase(std::remove_if(GFeed.begin(), GFeed.end(), [Now](const FeedLine& InLine) { return InLine.Until <= Now; }), GFeed.end());
+        FeedLines.erase(std::remove_if(FeedLines.begin(), FeedLines.end(), [Now](const FeedLine& InLine) { return InLine.Until <= Now; }),
+                        FeedLines.end());
         for(size_t Line = 0; Line < 4; ++Line)
         {
-            Set(UI, "Pvp.Feed" + std::to_string(Line), Line < GFeed.size() ? GFeed[Line].Text : std::string());
+            Set(UI, "Pvp.Feed" + std::to_string(Line), Line < FeedLines.size() ? FeedLines[Line].Text : std::string());
         }
 
         /* The scores: every fighter, most kills first; held Tab, or between rounds. */
@@ -1189,13 +1123,33 @@ private:
         {
             const bool bScores = (Harness && Harness->IsDown("Scores")) || (Match && Match->Phase == 1);
             SetVisible(Hud, "Scores", bScores);
-            SetVisible(Hud, "HitMarker", Now < GHitMarkerUntil);
+            SetVisible(Hud, "HitMarker", Now < HitMarkerUntil);
             SetVisible(Hud, "Crosshair", Me && !Me->bDead);
         }
     }
 
+    /* Every local player's input, before its avatar takes it: a bot's made
+     * here, a person's scaled by the look sensitivity. */
+    void FilterInput(GameCore::World& InWorld, const EntityID InAvatar, NimbleEngine::InputSnapshot& InOutInput)
+    {
+        if(IsBot(InWorld, InAvatar)) { BotFilter(InWorld, InAvatar, BotStates[InAvatar.Pack()], InOutInput); return; }
+        WorldsLabWalker::ApplyLookSensitivity(InOutInput);
+    }
+
     double NextStatsAt = 0.0;
     double NextAccuracyAt = 0.0;   // the server's accuracy log
+
+    // === This level's, made and gone with the mode ===========================
+
+    struct FeedLine { std::string Text; double Until; };
+    struct Effect   { EntityID Entity; double Until; };
+
+    std::vector<FeedLine> FeedLines;          // the kill feed
+    std::string           StatusText;         // the middle of the screen...
+    double                StatusUntil = 0.0;  // ...until this (NowSeconds)
+    double                HitMarkerUntil = 0.0;
+    std::vector<Effect>   LiveEffects;        // short-lived effects this process made
+    std::unordered_map<uint64_t, BotState> BotStates;   // by the bot's EntityID
 
     static void Set(UI::UISystem& InUI, const std::string& InKey, const std::string& InText)
     {
@@ -1211,12 +1165,59 @@ private:
     }
 };
 
-void WorldsLabRegisterPvP()
+// === Feedback: every process =====================================================
+
+void PvpFighterComponent::MulticastShot(const GameCore::RpcContext& InContext, const Vector3& InTo, const uint8_t InHit)
 {
-    NimbleEngine::RegisterGameMode<WorldsLabPvPMode>("WorldsLabPvP");
+    GameCore::World& World = *InContext.OwningWorld;
+    const NimbleEngine::AvatarHarnessComponent* Harness =
+        World.GetEntity(InContext.Entity).GetComponent<NimbleEngine::AvatarHarnessComponent>();
+    if(Harness && Harness->IsLocallyControlled()) { return; }   // the shooter's process showed it as it fired
+    WorldsLabPvPMode* Mode = NimbleEngine::FindGameMode<WorldsLabPvPMode>(World);
+    if(!IsPresentation() || !Mode) { return; }
+
+    const Vec Muzzle = MuzzleOf(World, InContext.Entity);
+    Mode->SpawnEffect(World, "MuzzleFlash", Muzzle, 1.2);
+    NimbleEngine::PlaySoundAt(World, (std::string(Sounds) + "Gunshot.nmsound").c_str(), Vector3(Muzzle.X, Muzzle.Y, Muzzle.Z), 1.0f);
+    if(InHit != 0)
+    {
+        Mode->SpawnEffect(World, InHit == 2 ? "Sparks" : "Dust", V(InTo), 1.2);
+        NimbleEngine::PlaySoundAt(World, (std::string(Sounds) + "Impact.nmsound").c_str(), InTo, 0.6f);
+    }
 }
 
-void WorldsLabUnregisterPvP()
+void PvpFighterComponent::MulticastKilled(const GameCore::RpcContext& InContext, const EntityID InKiller, const bool bInHead,
+                                          const Vector3& InImpulse, const Vector3& InAt)
 {
-    NimbleEngine::UnregisterGameMode("WorldsLabPvP");
+    GameCore::World& World = *InContext.OwningWorld;
+    WorldsLabPvPMode* Mode = NimbleEngine::FindGameMode<WorldsLabPvPMode>(World);
+    const PvpFighterComponent* Killer = FighterOf(World, InKiller);
+    if(Mode) { Mode->AddFeed(std::string(Killer ? Killer->Name : "?") + (bInHead ? "  [HEADSHOT]  " : "  >  ") + Name); }
+
+    if(!IsPresentation()) { return; }
+    if(NimbleEngine::RagdollComponent* Ragdoll = World.GetEntity(InContext.Entity).GetComponent<NimbleEngine::RagdollComponent>())
+    {
+        if(!Ragdoll->IsActive()) { Ragdoll->ActivateWithImpulse(InImpulse, InAt); }
+    }
+    bShownDead = 1;
+    const EntityID Local = NimbleEngine::GetLocalAvatar(World, 0);
+    if(InContext.Entity == Local && Mode)
+    {
+        Mode->SetStatus(std::string("KILLED BY ") + (Killer ? Killer->Name : "?"), RespawnDelay);
+    }
 }
+
+void PvpFighterComponent::ClientHitConfirm(const GameCore::RpcContext& InContext, const int32_t, const bool bInKill, const bool bInHead)
+{
+    if(!IsPresentation()) { return; }
+    GameCore::World& World = *InContext.OwningWorld;
+    if(InContext.Entity != NimbleEngine::GetLocalAvatar(World, 0)) { return; }   // a bot's
+    if(WorldsLabPvPMode* Mode = NimbleEngine::FindGameMode<WorldsLabPvPMode>(World))
+    {
+        Mode->ShowHitMarker();
+        if(bInKill) { Mode->SetStatus(bInHead ? "HEADSHOT KILL" : "KILL", 1.5); }
+    }
+    NimbleEngine::PlaySound2D(World, (std::string(Sounds) + (bInKill ? "SteelHit.nmsound" : "PaperHit.nmsound")).c_str(), 0.7f);
+}
+
+NIMBLE_REGISTER_GAME_MODE(WorldsLabPvPMode, "WorldsLabPvP")
