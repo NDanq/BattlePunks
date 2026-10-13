@@ -51,8 +51,10 @@ namespace AICore
          * couple of metres): where an agent that moves its own transform
          * (Nav Agent, Drive Transform) stands. The navmesh's own heights are
          * approximate -- its polygons carry no detail mesh -- so without one
-         * a driven agent walks on them. False: no ground found. */
-        bool (*GroundHeight)(GameCore::World& InWorld, const EngineCore::Vector3& InAt, float& OutHeight, void* InUserData) = nullptr;
+         * a driven agent walks on them. InAgent's own colliders (its hit
+         * boxes) are not ground. False: no ground found (it keeps its height). */
+        bool (*GroundHeight)(GameCore::World& InWorld, const EngineCore::Vector3& InAt, GameCore::EntityID InAgent, float& OutHeight,
+                             void* InUserData) = nullptr;
         void* UserData = nullptr;
     };
 

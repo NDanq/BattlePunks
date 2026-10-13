@@ -523,9 +523,22 @@ namespace AICore
                 GameCore::TransformPose Pose = InEntity.GetWorldPose();
                 Pose.Position = At;
                 float Ground = 0.0f;
-                if(Host.GroundHeight && Host.GroundHeight(World, EngineCore::Vector3(At.GetX(), At.GetY() + InAgent.Height * 0.5f, At.GetZ()), Ground, Host.UserData))
+                if(Host.GroundHeight)
                 {
-                    Pose.Position.SetY(Ground);
+                    /* The ground under it; when the host finds none this frame
+                     * (its own foot over the floor), the height it had, while
+                     * that is within a step of the navmesh -- not the navmesh's
+                     * own approximate height, which would make it flicker. */
+                    const float Previous = float(InEntity.GetWorldPose().Position.GetY());
+                    if(Host.GroundHeight(World, EngineCore::Vector3(At.GetX(), At.GetY() + InAgent.Height * 0.5f, At.GetZ()), InEntity.GetID(),
+                                         Ground, Host.UserData))
+                    {
+                        Pose.Position.SetY(Ground);
+                    }
+                    else if(std::fabs(Previous - float(At.GetY())) <= Mesh.GetSettings().AgentMaxClimb)
+                    {
+                        Pose.Position.SetY(Previous);
+                    }
                 }
                 /* Turned toward its facing target (aiming while it strafes),
                  * else the way it goes, at TurnRate. */
