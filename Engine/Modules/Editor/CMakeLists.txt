@@ -85,6 +85,16 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/EditorTheme.h
         Source/Private/Editor/EditorIcons.cpp
         Source/Private/Editor/EditorIcons.h
+        Source/Private/Editor/AI/AIDebuggerPanel.cpp
+        Source/Private/Editor/AI/AIDebuggerPanel.h
+        Source/Private/Editor/AI/BehaviorTreeEditorWindow.cpp
+        Source/Private/Editor/AI/BehaviorTreeEditorWindow.h
+        Source/Private/Editor/AI/EditorAI.cpp
+        Source/Private/Editor/AI/EditorAI.h
+        Source/Private/Editor/AI/NavigationPanel.cpp
+        Source/Private/Editor/AI/NavigationPanel.h
+        Source/Private/Editor/AI/PathTesterTool.cpp
+        Source/Private/Editor/AI/PathTesterTool.h
         Source/Private/Editor/Sequencer/SequencerAssets.cpp
         Source/Private/Editor/Sequencer/SequencerAssets.h
         Source/Private/Editor/Sequencer/SequencerCurveEditor.cpp
@@ -326,6 +336,10 @@ endif()
 if(TARGET Audio)
     target_link_libraries(NimbleEditor PRIVATE Audio::Audio)
 endif()
+# Navigation, the AI debugger and the behavior tree editor (Source/Private/Editor/AI).
+if(TARGET AICore)
+    target_link_libraries(NimbleEditor PRIVATE AICore::AICore)
+endif()
 
 # === Icons ======================================================================
 # Lucide (ISC), vendored at lucide-static 1.53.0: External/lucide-1.53.0, its
@@ -533,6 +547,9 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     )
     if(TARGET NetCore)
         target_link_libraries(NimbleEditorDetailsTests PRIVATE NetCore::NetCore)
+    endif()
+    if(TARGET AICore)
+        target_link_libraries(NimbleEditorDetailsTests PRIVATE AICore::AICore)
     endif()
     set_target_properties(NimbleEditorDetailsTests PROPERTIES FOLDER "Editor" AUTOMOC ON)
     add_dependencies(NimbleEditorDetailsTests NimbleEditor)

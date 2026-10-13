@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 #include <QAction>
 #include <QActionGroup>
@@ -11,6 +12,7 @@
 #include <QInputDialog>
 #include <QMenu>
 #include <QMessageBox>
+#include <QSignalBlocker>
 #include <QToolBar>
 #include <QTimer>
 #include <QToolButton>
@@ -22,6 +24,9 @@
 #include "Public/Editor/EditorDocument.h"
 #include "Public/Editor/ViewportWidget.h"
 #include "Private/Editor/SettingsDialog.h"
+#if WITH_AICORE
+#include "Private/Editor/AI/EditorAI.h"
+#endif
 
 namespace
 {
@@ -46,6 +51,15 @@ NIMBLE_CONFIG_BOOL(GEditorViewGizmoSnap,    "Editor", "ViewGizmoSnap",    false,
 NIMBLE_CONFIG_INT (GEditorViewMode,         "Editor", "ViewMode",         0, nullptr);       // 0 Lit, 1 Unlit (a render target is not kept)
 NIMBLE_CONFIG_BOOL(GEditorViewAllBounds,    "Editor", "ViewAllBounds",    false, nullptr);
 NIMBLE_CONFIG_BOOL(GEditorViewLightGizmos,  "Editor", "ViewLightGizmos",  true, nullptr);
+#if WITH_AICORE
+/* Show > Editor Gizmos > AI (EditorAI's overlay; the Navigation and AI Debugger docks toggle the same). */
+NIMBLE_CONFIG_BOOL(GEditorViewAINavMesh,    "Editor", "ViewAINavMesh",    false, nullptr);
+NIMBLE_CONFIG_BOOL(GEditorViewAITiles,      "Editor", "ViewAITileBounds", false, nullptr);
+NIMBLE_CONFIG_BOOL(GEditorViewAIObstacles,  "Editor", "ViewAIObstacles",  true, nullptr);
+NIMBLE_CONFIG_BOOL(GEditorViewAIModifiers,  "Editor", "ViewAIModifiers",  true, nullptr);
+NIMBLE_CONFIG_BOOL(GEditorViewAIPaths,      "Editor", "ViewAIPaths",      true, nullptr);
+NIMBLE_CONFIG_BOOL(GEditorViewAISight,      "Editor", "ViewAISight",      true, nullptr);
+#endif
 NIMBLE_CONFIG_INT (GEditorViewCameraSpeed,  "Editor", "ViewCameraSpeed",  3, nullptr);       // 0 (1/8x) .. 6 (8x)
 
 namespace
@@ -124,6 +138,18 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocumen
     Viewport->SetGizmoSnap(GEditorViewGizmoSnap.GetBool());
     Viewport->SetShowAllBounds(GEditorViewAllBounds.GetBool());
     Viewport->SetShowLightGizmos(GEditorViewLightGizmos.GetBool());
+#if WITH_AICORE
+    {
+        EditorAI::OverlaySettings& AI = EditorAI::GetOverlaySettings();
+        AI.bNavMesh    = GEditorViewAINavMesh.GetBool();
+        AI.bTileBounds = GEditorViewAITiles.GetBool();
+        AI.bObstacles  = GEditorViewAIObstacles.GetBool();
+        AI.bModifiers  = GEditorViewAIModifiers.GetBool();
+        AI.bPaths      = GEditorViewAIPaths.GetBool();
+        AI.bSight      = GEditorViewAISight.GetBool();
+        EditorAI::InstallOverlay();
+    }
+#endif
     if(Context.GetViewMode() != RenderCore::ERenderViewMode::RenderTarget)
     {
         Context.SetViewMode(GEditorViewMode.GetInt() == 1 ? RenderCore::ERenderViewMode::Unlit : RenderCore::ERenderViewMode::Lit);
@@ -285,6 +311,44 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocumen
         Viewport->SetShowLightGizmos(bInOn);
         Remember(GEditorViewLightGizmos.SetBool(bInOn));
     });
+
+#if WITH_AICORE
+    /* The AI's: the navmesh and what marks it, and the agents (Play-in-Editor's). */
+    QMenu* AIMenu = GizmoMenu->addMenu(QStringLiteral("AI"));
+    struct AIFlag { const char* Label; const char* Tip; bool EditorAI::OverlaySettings::* Flag; EngineCore::ConfigVar* Var; };
+    static const AIFlag AIFlags[] = {
+        { "Nav Mesh",          "The level's navmesh: walkable polygons, coloured by area",            &EditorAI::OverlaySettings::bNavMesh,    &GEditorViewAINavMesh },
+        { "Nav Tile Bounds",   "Each navmesh tile's box",                                              &EditorAI::OverlaySettings::bTileBounds, &GEditorViewAITiles },
+        { "Nav Obstacles",     "Each Nav Obstacle: red while it blocks the navmesh, faint amber while open",        &EditorAI::OverlaySettings::bObstacles,  &GEditorViewAIObstacles },
+        { "Modifiers and Volumes", "Nav Modifier boxes in their area's colour, and the Nav Mesh Volume", &EditorAI::OverlaySettings::bModifiers,  &GEditorViewAIModifiers },
+        { "Agent Paths",       "Each Nav Agent's corridor ahead of it",                                &EditorAI::OverlaySettings::bPaths,      &GEditorViewAIPaths },
+        { "Sight and Perception", "Sight cones, and lines to what each agent sees (green) or remembers (amber)", &EditorAI::OverlaySettings::bSight, &GEditorViewAISight },
+    };
+    std::vector<std::pair<QAction*, bool EditorAI::OverlaySettings::*>> AIActions;
+    for(const AIFlag& Each : AIFlags)
+    {
+        QAction* Action = AIMenu->addAction(QString::fromLatin1(Each.Label));
+        Action->setCheckable(true);
+        Action->setChecked(EditorAI::GetOverlaySettings().*(Each.Flag));
+        Action->setToolTip(QString::fromLatin1(Each.Tip));
+        const AIFlag* Flag = &Each;
+        connect(Action, &QAction::toggled, this, [this, Flag](const bool bInOn)
+        {
+            EditorAI::GetOverlaySettings().*(Flag->Flag) = bInOn;
+            Remember(Flag->Var->SetBool(bInOn));
+        });
+        AIActions.emplace_back(Action, Each.Flag);
+    }
+    /* The docks toggle the same flags: shown as they are now. */
+    connect(AIMenu, &QMenu::aboutToShow, this, [AIActions]()
+    {
+        for(const auto& Each : AIActions)
+        {
+            const QSignalBlocker Quiet(Each.first);
+            Each.first->setChecked(EditorAI::GetOverlaySettings().*(Each.second));
+        }
+    });
+#endif
 
     ShowButton = new QToolButton(Toolbar);
     ShowButton->setFocusPolicy(Qt::NoFocus);

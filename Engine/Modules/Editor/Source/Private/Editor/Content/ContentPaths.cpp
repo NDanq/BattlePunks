@@ -235,6 +235,26 @@ namespace EditorContent
         return InPath.endsWith(QStringLiteral(".nmfoliage"), Qt::CaseInsensitive) ? ToRuntimePath(InPath) : QString();
     }
 
+    QStringList ListNavMeshPaths()
+    {
+        return ListGraphs(&NavMeshPathFor);
+    }
+
+    QString NavMeshPathFor(const QString& InPath)
+    {
+        return InPath.endsWith(QStringLiteral(".nmnav"), Qt::CaseInsensitive) ? ToRuntimePath(InPath) : QString();
+    }
+
+    QStringList ListBehaviorTreePaths()
+    {
+        return ListGraphs(&BehaviorTreePathFor);
+    }
+
+    QString BehaviorTreePathFor(const QString& InPath)
+    {
+        return InPath.endsWith(QStringLiteral(".nmbt"), Qt::CaseInsensitive) ? ToRuntimePath(InPath) : QString();
+    }
+
     QStringList ListAnimationPaths()
     {
         return ListGraphs(&AnimationPathFor);

@@ -7,6 +7,7 @@
 #include <climits>
 #include <cstring>
 
+#include <QDir>
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
@@ -35,6 +36,9 @@
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/Particles/ParticleAssets.h"
 #include "Private/Editor/Sequencer/SequencerAssets.h"
+#if WITH_AICORE
+#include "Private/Editor/AI/BehaviorTreeEditorWindow.h"
+#endif
 
 using GameCore::EPropertyType;
 
@@ -486,8 +490,10 @@ namespace
             const bool bSequence  = (Entry.Flags & GameCore::PF_AssetSequence) != 0;
             const bool bTerrain   = (Entry.Flags & GameCore::PF_AssetTerrain) != 0;
             const bool bFoliage   = (Entry.Flags & GameCore::PF_AssetFoliage) != 0;
+            const bool bNavMesh   = (Entry.Flags & GameCore::PF_AssetNavMesh) != 0;
+            const bool bTree      = (Entry.Flags & GameCore::PF_AssetBehaviorTree) != 0;
             const bool bAssetField = bMesh || bMaterial || bPost || bTarget || bTexture || bParticles || bAnimation || bSound
-                                  || bPrefab || bSequence || bTerrain || bFoliage;
+                                  || bPrefab || bSequence || bTerrain || bFoliage || bNavMesh || bTree;
 
             /* The eye: the Content Browser goes to the asset's folder and opens it in its editor. */
             if(bAssetField)
@@ -552,9 +558,16 @@ namespace
                     { EAsset::Foliage, "Drop an .nmfoliage here",
                       "A terrain's foliage, by its path: Content/Levels/Hills/Terrain/Ground.nmfoliage -- made by the Terrain dock's Foliage tab",
                       "Choose foliage", "Choose Foliage", "Foliage (*.nmfoliage)" },
+                    { EAsset::NavMesh, "Drop an .nmnav here (empty: beside the level)",
+                      "A baked navmesh, by its path: Content/Levels/Arena.nmnav -- written by World > Navigation > Build",
+                      "Choose a navmesh", "Choose a Navmesh", "Navmeshes (*.nmnav)" },
+                    { EAsset::BehaviorTree, "Drop an .nmbt here",
+                      "A behavior tree, by its path: Content/AI/Guard.nmbt -- made and edited in the behavior tree editor",
+                      "Choose a behavior tree", "Choose a Behavior Tree", "Behavior Trees (*.nmbt)" },
                 };
                 const AssetUi& Ui = Kinds[bMesh ? 0 : bMaterial ? 1 : bPost ? 2 : bTarget ? 3 : bTexture ? 4 : bParticles ? 5
-                                          : bAnimation ? 6 : bSound ? 7 : bPrefab ? 8 : bSequence ? 9 : bTerrain ? 10 : 11];
+                                          : bAnimation ? 6 : bSound ? 7 : bPrefab ? 8 : bSequence ? 9 : bTerrain ? 10
+                                          : bFoliage ? 11 : bNavMesh ? 12 : 13];
                 AssetKind = Ui.Kind;
                 Edit->setPlaceholderText(QString::fromLatin1(Ui.Placeholder));
                 Edit->installEventFilter(this);
@@ -570,6 +583,8 @@ namespace
                                                      : bSequence  ? EditorContent::ListSequencePaths()
                                                      : bTerrain   ? EditorContent::ListTerrainPaths()
                                                      : bFoliage   ? EditorContent::ListFoliagePaths()
+                                                     : bNavMesh   ? EditorContent::ListNavMeshPaths()
+                                                     : bTree      ? EditorContent::ListBehaviorTreePaths()
                                                                   : EditorContent::ListTexturePaths(), Edit);
                     Completer->setCaseSensitivity(Qt::CaseInsensitive);
                     Completer->setFilterMode(Qt::MatchContains);
@@ -614,6 +629,33 @@ namespace
                         EditorSequencer::OpenSequence(EditorParticles::ToProjectPath(Runtime), window());
                     });
                 }
+
+#if WITH_AICORE
+                /* A behavior tree opens in its editor, made first if the field is empty. */
+                if(bTree)
+                {
+                    auto* Open = new QToolButton(this);
+                    Open->setText(QStringLiteral("Edit"));
+                    Open->setToolTip(QStringLiteral("Open this behavior tree in its editor (empty: make a new one)"));
+                    Layout->addWidget(Open);
+                    connect(Open, &QToolButton::clicked, this, [this]()
+                    {
+                        const QString Runtime = Edit->text().trimmed();
+                        if(Runtime.isEmpty())
+                        {
+                            const QString Folder = QDir(EditorGraphs::GetProjectRoot()).filePath(QStringLiteral("Content/AI"));
+                            if(BehaviorTreeEditorWindow* Made = BehaviorTreeEditorWindow::CreateIn(Folder, window()))
+                            {
+                                const QString Value = ValueForFile(Made->GetPath());
+                                if(!Value.isEmpty()) { SetAndCommit(Value); }
+                            }
+                            return;
+                        }
+                        const QString File = EditorContent::FileForRuntimePath(Runtime);
+                        if(!File.isEmpty()) { BehaviorTreeEditorWindow::Open(File, window()); }
+                    });
+                }
+#endif
 
                 /* A particle system opens in the Particle Editor, made first if the field is empty. */
                 if(bParticles)
@@ -687,7 +729,7 @@ namespace
 
     private:
         enum class EAsset { None, Mesh, Material, PostProcess, RenderTarget, Texture, ParticleSystem, Animation, Sound, Prefab, Sequence,
-                            Terrain, Foliage };
+                            Terrain, Foliage, NavMesh, BehaviorTree };
 
         void Commit()
         {
@@ -788,6 +830,14 @@ namespace
             if(AssetKind == EAsset::Foliage)
             {
                 return EditorContent::FoliagePathFor(InFile);
+            }
+            if(AssetKind == EAsset::NavMesh)
+            {
+                return EditorContent::NavMeshPathFor(InFile);
+            }
+            if(AssetKind == EAsset::BehaviorTree)
+            {
+                return EditorContent::BehaviorTreePathFor(InFile);
             }
             return QString();
         }
