@@ -124,6 +124,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/SourceBuild.h
         Source/Private/Editor/Build/ContentCook.cpp
         Source/Private/Editor/Build/ContentCook.h
+        Source/Private/Editor/Build/StartupCook.cpp
+        Source/Private/Editor/Build/StartupCook.h
         Source/Private/Editor/Build/ProjectBuild.cpp
         Source/Private/Editor/Build/ProjectBuild.h
         Source/Private/Editor/Build/ProjectBuildDialog.cpp
@@ -776,9 +778,13 @@ file(GENERATE
 set_source_files_properties(Source/Private/Editor/SourceBuild.cpp PROPERTIES
         COMPILE_DEFINITIONS "NIMBLE_BUILD_CONFIG=$<CONFIG>")
 
-# The cooked shaders the Renderer loads at startup, staged by the engine.
+# The cooked shaders the Renderer loads at startup, staged by the engine; and
+# NimbleCook beside the editor, which Build > Cook Content runs to cook them.
 if(TARGET NimbleStageShaders)
     add_dependencies(NimbleEditor NimbleStageShaders)
+endif()
+if(TARGET NimbleCook)
+    add_dependencies(NimbleEditor NimbleCook)
 endif()
 
 # Qt's DLLs beside the exe, so it runs without Qt on PATH. qoffscreen too:

@@ -19,9 +19,13 @@
  * -- the editor's session log, and one per cook and per Build Project run.
  * The Content Browser and every content walk skip it.
  *
- *   Graphs    every node graph regenerated (EditorGraphs::RegenerateAll): the
- *             build cooks material graphs' saved code into shader caches
- *   Worlds    the [World_*] list's worlds with Cook=true; an excluded world's
+ *   Graphs    every node graph regenerated (EditorGraphs::RegenerateAll), so
+ *             material graphs' saved code is current for the shader cook
+ *   Shaders   NimbleCook, beside the editor: the engine's shaders and the
+ *             project's material permutations, into each one's
+ *             Saved/Cooked/Shaders/ (Tools/NimbleCook). The build only
+ *             stages them; it never compiles a shader
+ *   Worlds   the [World_*] list's worlds with Cook=true; an excluded world's
  *             cooked copy is deleted, so it cannot be staged
  *   Prefabs   every .nmprefab: game code spawns them by path, so a world's
  *             own placements do not say which are needed
@@ -32,9 +36,13 @@
  */
 namespace EditorCook
 {
-    enum EAssetType { AT_Graphs = 0, AT_Worlds, AT_Prefabs, AT_UI, AT_Sequences, AT_Count };
+    enum EAssetType { AT_Graphs = 0, AT_Shaders, AT_Worlds, AT_Prefabs, AT_UI, AT_Sequences, AT_Count };
 
     const char* GetTypeName(EAssetType InType);
+
+    /* Whether InType's stats carry bytes in and out: not graphs, regenerated
+     * in place, or shaders, which NimbleCook counts in variants cooked. */
+    bool IsSized(EAssetType InType);
 
     struct TypeStats
     {
@@ -79,13 +87,26 @@ namespace EditorCook
     /* A run log's first line: "<InKind> log, started <date> <time>". */
     QString LogHeader(const QString& InKind);
 
+    /* NimbleCook beside the editor, or empty. */
+    QString GetCookerPath();
+
+    /* The Engine folder (Engine/Content's parent), or empty. */
+    QString GetEngineDir();
+
+    /* NimbleCook's arguments for InProjectRoot's shaders and the engine's,
+     * loose for the editor too: "shaders -project <root> -editor -engine <dir>
+     * [-module <[Game] Module>] [-shipping]". */
+    QStringList GetCookerArgs(const QString& InProjectRoot, bool bShipping = false);
+
     /* The cooked path for a runtime path ("Content/Levels/A.nmworld"). */
     QString GetCookedPath(const QString& InProjectRoot, const QString& InRuntimePath);
 
     /* InProjectRoot's content, cooked. InProjectRoot empty: the editor's project
-     * (EditorGraphs::GetProjectRoot). */
+     * (EditorGraphs::GetProjectRoot). bShipping also cooks the shader caches
+     * a packaged Shipping build stages (NimbleCook -shipping). */
     CookStats CookProject(const QString& InProjectRoot = QString(),
-                          const std::function<void(const QString&)>& InProgress = {});
+                          const std::function<void(const QString&)>& InProgress = {},
+                          bool bShipping = false);
 
     /* A table of InStats, one line per type and a total, for the Console. */
     QStringList DescribeStats(const CookStats& InStats);

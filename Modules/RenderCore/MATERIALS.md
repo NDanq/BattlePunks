@@ -351,10 +351,13 @@ A later mount shadows an earlier one: game materials override engine
 materials of the same name. A cache cooked for another platform or template
 version is refused and logged, and its materials fall back to loose files.
 
-**Building them.** `nimble_stage_materials(TARGET <game> DIR <folder> MODULE
-<name>)` cooks a game's caches; `NimbleStageShaders` cooks the Engine cache.
-Editor targets also stage loose files; Client and Server targets stage only
-the caches.
+**Building them.** NimbleCook (`Engine/Tools/NimbleCook`) cooks them, never
+the build: `NimbleCook shaders -project <game folder> [-editor] [-shipping]`,
+or the editor's Build > Cook Content, writes the Engine cache and the game's
+into each one's `Saved/Cooked/Shaders/`. The build stages what is there:
+`NimbleStageShaders` the Engine cache, `nimble_stage_materials(TARGET <game>
+DIR <folder> MODULE <name>)` a game's. Editor targets also stage loose files;
+Client and Server targets stage only the caches.
 
 ## Lighting
 
