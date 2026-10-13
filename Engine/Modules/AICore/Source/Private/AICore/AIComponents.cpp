@@ -210,7 +210,16 @@ namespace AICore
 
     GAMECORE_DEFINE_COMPONENT(NavAgentComponent, "Nav Agent")
 
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(NavAgentComponent, 1)
+    float GetFacingYaw(const GameCore::Entity& InEntity)
+    {
+        const NavAgentComponent* Agent = InEntity.GetComponent<NavAgentComponent>();
+        float Yaw = float(InEntity.GetWorldPose().Rotation.GetY()) - (Agent ? Agent->MeshYaw : 0.0f);
+        while(Yaw > 180.0f)  { Yaw -= 360.0f; }
+        while(Yaw < -180.0f) { Yaw += 360.0f; }
+        return Yaw;
+    }
+
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(NavAgentComponent, 2)
     {
         Ar.Field("Radius",           C.Radius);
         Ar.Field("Height",           C.Height);
@@ -220,6 +229,11 @@ namespace AICore
         Ar.Field("SeparationWeight", C.SeparationWeight);
         Ar.Field("AvoidanceQuality", C.AvoidanceQuality);
         Ar.Flag("DriveTransform",    C.bDriveTransform);
+        if(Ar.GetVersion() >= 2)
+        {
+            Ar.Field("MeshYaw",  C.MeshYaw);
+            Ar.Field("TurnRate", C.TurnRate);
+        }
     }
 
     GAMECORE_DEFINE_COMPONENT_SCRIPT(NavAgentComponent)
@@ -245,6 +259,8 @@ namespace AICore
         Props.Field("Separation Weight", &NavAgentComponent::SeparationWeight);
         Props.Choice("Avoidance",        &NavAgentComponent::AvoidanceQuality, "None|Low|Medium|High");
         Props.Flag("Drive Transform",    &NavAgentComponent::bDriveTransform);
+        Props.Field("Mesh Yaw",          &NavAgentComponent::MeshYaw);
+        Props.Field("Turn Rate",         &NavAgentComponent::TurnRate);
     }
 #endif
 

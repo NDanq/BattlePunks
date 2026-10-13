@@ -719,6 +719,8 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/Ragdoll.cpp
         Source/Private/NimbleEngine/RagdollProfile.cpp
         Source/Private/NimbleEngine/TerrainFacade.cpp
+        Source/Private/NimbleEngine/AIFacade.cpp
+        Source/Private/NimbleEngine/AIInternal.h
         Source/Private/NimbleEngine/SequenceFacade.cpp
         Source/Private/NimbleEngine/InactiveModules.cpp
         Source/Private/NimbleEngine/ShaderCook.cpp
@@ -745,6 +747,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/PhysicsFacade.h
         Source/Public/NimbleEngine/Ragdoll.h
         Source/Public/NimbleEngine/TerrainFacade.h
+        Source/Public/NimbleEngine/AIFacade.h
         Source/Public/NimbleEngine/SequenceFacade.h
         Source/Public/NimbleEngine/ShaderCook.h
 )
