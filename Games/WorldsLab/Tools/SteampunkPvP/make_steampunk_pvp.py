@@ -20,6 +20,10 @@ and then:
     of one
   - eight Player Starts round the loop and on the cross street
   - an overview camera, for the moment before a fighter spawns
+  - a Nav Mesh Volume over the playable streets, for the AI bots
+    (WorldsLabPvP.cpp, Content/AI/PvpBot.nmbt): Build Navigation in the
+    editor bakes SteampunkPvP.nmnav beside the level; without one the level
+    builds its own as it starts
 
 The plan (make_steampunk_street.py): two blocks, the front and back streets
 along z = -1545 and +1545, side streets along x = -3490 and +3490, and the
@@ -212,12 +216,29 @@ def add_starts(level):
     print(f"  {len(spots)} player starts and an overview camera")
 
 
+def add_navigation(level):
+    """The streets' navmesh: a volume over them all (AICore's Nav Mesh Volume)."""
+    half = (SIDE_X + 100.0, 800.0, EXT_END + 100.0)
+    fields = (("CellSize", 15), ("CellHeight", 10), ("AgentHeight", 180), ("AgentRadius", 40), ("AgentMaxClimb", 40),
+              ("AgentMaxSlope", 45), ("TileSize", 48), ("RegionMinSize", 8), ("RegionMergeSize", 20),
+              ("EdgeMaxLength", 1200), ("EdgeMaxError", 1.3), ("LayerMask", -1))
+    lines = ['  <Component Type="Nav Mesh Volume" Version="1">',
+             f'    <HalfExtents X="{nm.num(half[0])}" Y="{nm.num(half[1])}" Z="{nm.num(half[2])}" />']
+    lines += [f'    <{k} Value="{nm.num(v)}" />' for k, v in fields]
+    lines += ['    <NavMesh Value="Content/Levels/SteampunkPvP/SteampunkPvP.nmnav" />',
+              '    <BuildAtRuntime Value="true" />', '    <RebuildOnChange Value="true" />', '  </Component>']
+    volume = chr(10).join(lines) + chr(10)
+    level.add("NavMeshVolume", [("Nav Mesh Volume", volume), ("Transform", nm.transform_xml((0, 0, 0)))])
+    print("  a nav mesh volume")
+
+
 def main():
     print("Steampunk PvP:")
     level = Level()
     copy_street(level)
     add_walls(level)
     add_starts(level)
+    add_navigation(level)
     level.write()
     print(f"  wrote {WORLD.relative_to(GAME_DIR)} ({len(level.entities)} entities, {len(level.instances)} instances)")
 

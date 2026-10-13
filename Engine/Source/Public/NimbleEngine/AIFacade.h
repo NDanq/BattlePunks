@@ -86,11 +86,41 @@ namespace NimbleEngine
      */
     NE_API bool BuildNavigation(GameCore::World& InWorld, const char* InDiskPath = nullptr, std::string* OutReport = nullptr);
 
+    /*
+     * Makes InEntity an AI: a Nav Agent, Perception, an AI Stimulus and an AI
+     * Brain running Tree, from InSetup -- what a game's spawn code would
+     * otherwise add component by component. Parts already there are left as
+     * they are. False without AICore (or an AIWorld on InWorld).
+     */
+    struct AIBotSetup
+    {
+        const char* Tree       = nullptr;   // .nmbt; null: no brain
+        uint8_t  Team          = 1;         // Perception and Stimulus; 0 is nobody's enemy
+        bool     bPerceive     = true;      // a Perception component
+        bool     bDriveTransform = false;   // the agent moves its entity (no character controller)
+        float    Radius        = 35.0f;
+        float    Height        = 180.0f;
+        float    MaxSpeed      = 400.0f;
+        float    MeshYaw       = 0.0f;      // 180 for a mesh modelled facing -Z
+        float    SightRange    = 3500.0f;
+        float    FovHalfAngle  = 70.0f;
+        float    EyeHeight     = 160.0f;
+        float    HearingRange  = 2500.0f;
+        float    TargetHeight  = 110.0f;    // where others aim at it
+        float    TickInterval  = 0.0f;      // the brain's
+    };
+    NE_API bool MakeAIBot(GameCore::World& InWorld, GameCore::EntityID InEntity, const AIBotSetup& InSetup);
+
+    /* InEntity seen by perception (an AI Stimulus of InTeam), or not: a dead
+     * fighter, a hidden player. Adds the component if it has none. */
+    NE_API bool SetAIStimulus(GameCore::World& InWorld, GameCore::EntityID InEntity, uint8_t InTeam, bool bInEnabled);
+
     /* The blackboard key InKey of InEntity's running brain, as a number;
      * InDefault if it has none. And its setter from text. */
     NE_API double GetAIKeyNumber(GameCore::World& InWorld, GameCore::EntityID InEntity, const char* InKey, double InDefault = 0.0);
     NE_API bool   SetAIKey(GameCore::World& InWorld, GameCore::EntityID InEntity, const char* InKey, const char* InValue);
     NE_API bool   SetAIKeyEntity(GameCore::World& InWorld, GameCore::EntityID InEntity, const char* InKey, GameCore::EntityID InValue);
+    NE_API GameCore::EntityID GetAIKeyEntity(GameCore::World& InWorld, GameCore::EntityID InEntity, const char* InKey);
 }
 
 #endif //NIMBLEENGINE_AIFACADE_H
