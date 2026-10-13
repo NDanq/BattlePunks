@@ -255,6 +255,8 @@ namespace NimbleEngine
         void SetInput(const InputState* InState);
 
         void SetInputFilter(AvatarInputFilterFn InFilter, void* InUserData);
+        /* The filter, if InUserData set it; another's stays. */
+        void ClearInputFilter(void* InUserData);
 
         /*
          * The system: every harness's input for this frame, and its

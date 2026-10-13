@@ -6,11 +6,51 @@
 #include "Public/NimbleEngine/NimbleEngineAPI.h"
 #include "Public/Core/CoreTypes.h"
 #include "Public/GameCore/EntityID.h"
+#include "Public/GameCore/EventBus.h"     // EventID, EventArgs
+#include "Public/GameCore/TickPhase.h"
+
+namespace GameCore { class World; }
 
 namespace NimbleEngine
 {
     class GameSession;
     class GameState;
+    class IGameMode;
+    struct InputSnapshot;
+
+    namespace GameModeDetail
+    {
+        /* The class a pointer to member function belongs to. */
+        template <class MethodType> struct MethodClass;
+        template <class ClassType, class ReturnType, class... ArgTypes>
+        struct MethodClass<ReturnType (ClassType::*)(ArgTypes...)> { using Type = ClassType; };
+        template <class ClassType, class ReturnType, class... ArgTypes>
+        struct MethodClass<ReturnType (ClassType::*)(ArgTypes...) const> { using Type = const ClassType; };
+
+        template <auto Method>
+        using ClassOf = typename MethodClass<decltype(Method)>::Type;
+    }
+
+    /* The mode of the level running InWorld, as the session has it: nullptr
+     * outside GameSession::LoadLevel..UnloadLevel, or with no mode. */
+    NE_API IGameMode* FindLevelGameMode(const GameCore::World& InWorld);
+
+    /*
+     * The mode running InWorld's level if it is (or derives from) ModeType,
+     * else nullptr -- also outside a loaded level. For code that has only the
+     * World and needs the level's rules or state: a component's RPC handler,
+     * a behaviour-tree task, a native prefab's callback. ModeType may be an
+     * interface the mode implements, so code shared by several modes can ask
+     * for that instead of one mode.
+     *
+     * The mode is the level's context: created as it loads, destroyed as it
+     * unloads, so its members need no resetting between loads.
+     */
+    template <class ModeType>
+    ModeType* FindGameMode(const GameCore::World& InWorld)
+    {
+        return dynamic_cast<ModeType*>(FindLevelGameMode(InWorld));
+    }
 
     /*
      * Per-frame values a game is told, with no pointers into engine state. The
@@ -55,6 +95,13 @@ namespace NimbleEngine
      * life count changes through GameSession::AddScore / AddLives -- from C++,
      * Lua or a script graph alike. Each may call back into the session; a
      * phase change asked for inside one is applied once it returns.
+     *
+     * CONTEXT: the mode itself. GetSession() and GetWorld() are set from
+     * before OnLoad to after OnUnload; keep per-level state in members, and
+     * register systems, event handlers and the avatars' input filter as
+     * member functions (AddSystem, Subscribe, SetAvatarInputFilter below),
+     * which the session takes back after OnUnload. Code with only a World
+     * reaches the mode through FindGameMode<T>.
      *
      * DRAWING: no OnRender. Add a RenderComponent, register a component +
      * RenderProxy pair with RegisterProxyType, or ENQUEUE_RENDER_COMMAND in
@@ -155,6 +202,93 @@ namespace NimbleEngine
 
         /* It rejoined in time: the same id, the same InPlayer, driving what it drove. */
         virtual void OnClientReturned(int32_t InClient, GameCore::EntityID InPlayer) { (void)InClient; (void)InPlayer; }
+
+        // === Context ============================================================
+
+        /* The session running this mode, from before OnLoad until after
+         * OnUnload; CORE_CHECKed outside that (HasSession asks). */
+        NE_API GameSession&     GetSession() const;
+        /* GetSession().GetWorld(). */
+        NE_API GameCore::World& GetWorld() const;
+        bool                    HasSession() const { return Session != nullptr; }
+
+    protected:
+        /*
+         * Member-function bindings on the level's World, taken back by the
+         * session after OnUnload: the mode need not unbind them. Each passes
+         * this mode as its user data, so World::UnregisterSystem(...) and
+         * EventBus::UnsubscribeAll(this) still work for one taken back early.
+         * OnLoad onward.
+         */
+
+        /* &MyMode::Tick, a void (MyMode::*)(GameCore::World&, float), as the
+         * World system InName in InPhase. */
+        template <auto Method>
+        void AddSystem(const char* InName, GameCore::ETickPhase InPhase)
+        {
+            BindSystem(InName, InPhase, &SystemThunk<Method>, false);
+        }
+
+        /* The same, ahead of InPhase's scripts (SO_BeforeScripts). */
+        template <auto Method>
+        void AddSystemBeforeScripts(const char* InName, GameCore::ETickPhase InPhase)
+        {
+            BindSystem(InName, InPhase, &SystemThunk<Method>, true);
+        }
+
+        /* &MyMode::OnX, a void (MyMode::*)(const GameCore::EventArgs&), for
+         * the World event InEvent (Events.Emit in Lua, EventBus::Emit). */
+        template <auto Method>
+        void Subscribe(const char* InEvent)
+        {
+            BindEvent(InEvent, &EventThunk<Method>);
+        }
+
+        /* &MyMode::Filter, a void (MyMode::*)(GameCore::World&, GameCore::EntityID,
+         * InputSnapshot&), as the level's AvatarWorld::SetInputFilter: each
+         * frame of a local player's input before its avatar takes it. */
+        template <auto Method>
+        void SetAvatarInputFilter()
+        {
+            BindAvatarInputFilter(&InputFilterThunk<Method>);
+        }
+
+        /* Set by the session; derived modes read it (or use GetSession()). */
+        GameSession* Session = nullptr;
+
+    private:
+        friend class GameSession;
+
+        using SystemThunkFn = void (*)(GameCore::World&, float, void*);
+        using EventThunkFn  = void (*)(GameCore::EventID, const GameCore::EventArgs&, void*);
+        using FilterThunkFn = void (*)(GameCore::World&, GameCore::EntityID, InputSnapshot&, void*);
+
+        NE_API void BindSystem(const char* InName, GameCore::ETickPhase InPhase, SystemThunkFn InFn, bool bInBeforeScripts);
+        NE_API void BindEvent(const char* InEvent, EventThunkFn InFn);
+        NE_API void BindAvatarInputFilter(FilterThunkFn InFn);
+
+        /* Always this IGameMode* as the void*, so a cast back is exact under
+         * multiple inheritance, and the session can unbind by it. */
+        template <auto Method>
+        static void SystemThunk(GameCore::World& InWorld, float InDeltaSeconds, void* InSelf)
+        {
+            auto* Self = static_cast<GameModeDetail::ClassOf<Method>*>(static_cast<IGameMode*>(InSelf));
+            (Self->*Method)(InWorld, InDeltaSeconds);
+        }
+
+        template <auto Method>
+        static void EventThunk(GameCore::EventID, const GameCore::EventArgs& InArgs, void* InSelf)
+        {
+            auto* Self = static_cast<GameModeDetail::ClassOf<Method>*>(static_cast<IGameMode*>(InSelf));
+            (Self->*Method)(InArgs);
+        }
+
+        template <auto Method>
+        static void InputFilterThunk(GameCore::World& InWorld, GameCore::EntityID InAvatar, InputSnapshot& InOutInput, void* InSelf)
+        {
+            auto* Self = static_cast<GameModeDetail::ClassOf<Method>*>(static_cast<IGameMode*>(InSelf));
+            (Self->*Method)(InWorld, InAvatar, InOutInput);
+        }
     };
 }
 

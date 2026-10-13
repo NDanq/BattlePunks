@@ -180,24 +180,25 @@ std::vector<WorldEntry> ReadWorldList()
     return List;
 }
 
-void RegisterGameMode(const char* InName, const GameModeCreateFn InCreate, const GameModeDestroyFn InDestroy)
+bool RegisterGameMode(const char* InName, const GameModeCreateFn InCreate, const GameModeDestroyFn InDestroy)
 {
     if(InName == nullptr || InName[0] == '\0' || !InCreate || !InDestroy)
     {
         CORE_LOG_ERROR("RegisterGameMode: a mode needs a name and both functions; ignoring it")
-        return;
+        return false;
     }
     if(FindGameMode(InName))
     {
         CORE_LOG_ERROR(std::string("RegisterGameMode: '") + InName + "' is already registered; keeping the first")
-        return;
+        return false;
     }
     if(GGameModeCount >= MAX_GAME_MODES)
     {
         CORE_LOG_ERROR(std::string("RegisterGameMode: the registry is full; '") + InName + "' is not registered")
-        return;
+        return false;
     }
     GGameModes[GGameModeCount++] = GameModeType{ InName, InCreate, InDestroy };
+    return true;
 }
 
 void UnregisterGameMode(const char* InName)

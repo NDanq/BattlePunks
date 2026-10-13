@@ -79,11 +79,8 @@ void WorldsLabRegisterRange();
 void WorldsLabUnregisterRange();
 void WorldsLabRegisterPvP();
 void WorldsLabUnregisterPvP();
-#if WITH_AICORE
-/* WorldsLabArena.cpp: the Toon Arena, AICore's demo. */
-void WorldsLabRegisterArena();
-void WorldsLabUnregisterArena();
-#endif
+/* WorldsLabArena.cpp, the Toon Arena (AICore's demo), registers itself
+ * (NIMBLE_REGISTER_GAME_MODE); the rest still register here. */
 
 // === State ==================================================================
 
@@ -192,9 +189,6 @@ public:
         WorldsLabRegisterExplore();
         WorldsLabRegisterRange();
         WorldsLabRegisterPvP();
-#if WITH_AICORE
-        WorldsLabRegisterArena();
-#endif
         return true;
     }
 
@@ -205,9 +199,6 @@ public:
         WorldsLabUnregisterExplore();
         WorldsLabUnregisterRange();
         WorldsLabUnregisterPvP();
-#if WITH_AICORE
-        WorldsLabUnregisterArena();
-#endif
     }
 };
 

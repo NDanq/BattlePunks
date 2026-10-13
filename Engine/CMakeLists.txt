@@ -694,6 +694,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/ContentReport.cpp
         Source/Private/NimbleEngine/GameSession.cpp
         Source/Private/NimbleEngine/GameFramework.cpp
+        Source/Private/NimbleEngine/GameMode.cpp
         Source/Private/NimbleEngine/GameUI.cpp
         Source/Private/NimbleEngine/GameConsole.cpp
         Source/Private/NimbleEngine/PlayerState.cpp

@@ -43,13 +43,60 @@ StartupScript=Scripts/X.lua                ; run once the world and its mode loa
 Cook=true                                  ; cooked and packaged by Build > Build Project
 ```
 
-The game module registers its modes by name in `OnStartup`
-(`RegisterGameMode<BrickBreakerMode>("BrickBreaker")`). Once it has started,
+The game module registers its modes by name. The usual way is one line at
+file scope after the class, `NIMBLE_REGISTER_GAME_MODE(BrickBreakerMode,
+"BrickBreaker")`: it registers as the module loads and unregisters as it goes,
+so `OnStartup` and `OnShutdown` need not list it. By hand, call
+`RegisterGameMode<BrickBreakerMode>("BrickBreaker")` in `OnStartup` and
+`UnregisterGameMode` in `OnShutdown`. Once the module has started,
 the host makes one level per listed world, named by its section: it loads the
 world file, creates the mode, then runs `IGameMode::OnLoad`, where the mode
 registers its systems and places anything the world does not hold. `[Game]
 StartLevel` names the world the game starts in (else the first listed); saves,
 the console's `open` and `Game.OpenLevel` use the same names.
+
+## The mode is the level's context
+
+The engine makes a mode as its level loads and destroys it as the level
+unloads, so a mode keeps its per-level state in members -- never in globals
+reset by hand in `OnLoad`. What the mode needs is there for it:
+
+- **`GetSession()` and `GetWorld()`** from before `OnLoad` until after
+  `OnUnload` (the protected `Session` too); a mode need not store them.
+- **Member-function bindings.** `AddSystem<&MyMode::Tick>("My.Tick",
+  TP_PrePhysics)` (or `AddSystemBeforeScripts`), `Subscribe<&MyMode::OnHit>("Hit")`
+  and `SetAvatarInputFilter<&MyMode::Filter>()` call a member instead of a
+  free function with a `void*`. The session takes them all back after
+  `OnUnload`, so the mode never unbinds them.
+- **`FindGameMode<MyMode>(World)`** reaches the mode from code that has only
+  a World: a component's RPC handler, a behaviour-tree task, a native
+  prefab's callback. It is nullptr outside a loaded level, and for a mode
+  that is not a `MyMode`; ask for an interface the mode implements to share
+  code between modes.
+
+```cpp
+class ArenaMode : public NimbleEngine::IGameMode
+{
+public:
+    bool OnLoad(NimbleEngine::GameSession&) override
+    {
+        AddSystem<&ArenaMode::PostTick>("Arena.Post", GameCore::TP_PostPhysics);
+        return true;
+    }
+    void OnTick(const NimbleEngine::FrameContext&) override {}
+
+    std::vector<EngineCore::Vector3> Patrol;   // fresh every load
+
+private:
+    void PostTick(GameCore::World& InWorld, float InDeltaSeconds) { /* ... */ }
+};
+NIMBLE_REGISTER_GAME_MODE(ArenaMode, "Arena")
+
+// In a tree node, with only the World:
+if(ArenaMode* Arena = NimbleEngine::FindGameMode<ArenaMode>(InContext.World)) { /* Arena->Patrol */ }
+```
+
+Games/WorldsLab/WorldsLabArena.cpp is the worked example.
 
 ## Phases
 
