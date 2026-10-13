@@ -451,9 +451,11 @@ worlds saved before, still means that graph; they are upgraded on load.) The
 cook reads the graph's `<gen_code>` and writes, named by the path without its
 extension, `Materials/Glow.material` and the permutations its domain and
 shading need, `Materials/Glow@<key>` under `Shaders/Cooked/<Platform>/`; that
-is what RenderCore loads. A game's build cooks its graphs into its module's
-shader cache with `nimble_stage_materials` (`Engine/cmake/NimbleMaterials.cmake`),
-mounted when the module loads; Editor targets also stage them loose. The
+is what RenderCore loads. NimbleCook (`Engine/Tools/NimbleCook`; the editor's
+Build > Cook Content runs it) cooks a game's graphs into its module's shader
+cache, mounted when the module loads, and the build stages it with
+`nimble_stage_materials` (`Engine/cmake/NimbleMaterials.cmake`); Editor
+targets also stage them loose. The
 editor cooks one for its viewport on save and, with Live Preview, on every
 clean recompile. The graph window's **Preview** dock then shows it, drawn by
 that same renderer.
@@ -462,8 +464,8 @@ GDI is a vendored subtree and is never edited from here. So
 `Scripts/cook_material_graphs.py` **imports** its `cook_shaders.py` read-only
 and reuses its preprocessor and tool lookup. `#include <Common.glsl>` resolves
 against `Engine/Content/Shaders`, which holds the engine's own shaders (Basic,
-Mesh, Screen and their includes). The engine's build cooks that folder into
-the runtime directory the same way; GDI's own cook (and its `.qrc` bundles,
+Mesh, Screen and their includes). NimbleCook cooks that folder the same way,
+and the engine's build stages it into the runtime directory; GDI's own cook (and its `.qrc` bundles,
 which only a Qt host needs) is switched off with `GDI_COOK_SHADERS`.
 
 ```

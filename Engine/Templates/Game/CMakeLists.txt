@@ -242,13 +242,13 @@ if(NOT NIMBLE_STAGE_TEXT_CONTENT AND GAME_SEQUENCE_SOURCES AND NOT GAME_SEQUENCE
 endif()
 game_stage(Sequences "${GAME_SEQUENCE_ROOT}" ${GAME_SEQUENCE_FILES})
 
-# Content/Materials/: material graphs, cooked into the module's shader cache
+# Content/Materials/: material graphs, cooked by NimbleCook into the module's shader cache and staged here
 # (Engine/cmake/NimbleMaterials.cmake), named "Content/Materials/<Name>.material.nmgraph".
 if(GAME_RT_DIR AND NOT GAME_MULTI_CONFIG)
     nimble_stage_materials(TARGET ${GAME_NAME} DIR "${CMAKE_CURRENT_SOURCE_DIR}/Content/Materials"
                            ROOT "${CMAKE_CURRENT_SOURCE_DIR}" MODULE ${GAME_MODULE} RUNTIME_DIR "${GAME_RT_DIR}")
     if(TARGET ${GAME_NAME}StageMaterials)
-        add_dependencies(${GAME_MODULE} ${GAME_NAME}StageMaterials)   # the editor's build cooks them too
+        add_dependencies(${GAME_MODULE} ${GAME_NAME}StageMaterials)   # the editor's build stages them too
     endif()
 else()
     nimble_stage_materials(TARGET ${GAME_NAME} DIR "${CMAKE_CURRENT_SOURCE_DIR}/Content/Materials"

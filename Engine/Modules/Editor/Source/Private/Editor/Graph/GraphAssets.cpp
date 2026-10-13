@@ -760,7 +760,7 @@ namespace EditorGraphs
             return;
         }
 
-        /* What the build cooks (Engine/CMakeLists.txt, nimble_stage_materials),
+        /* What NimbleCook cooks (Engine/Tools/NimbleCook),
          * named as it names them, with -pdb alone: only the debug information
          * is kept. The engine's from its source tree; nothing of it to do from
          * a staged copy, whose sources are not there. */

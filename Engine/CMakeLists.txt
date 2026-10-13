@@ -532,8 +532,8 @@ target_compile_definitions(EngineCore PUBLIC
 # with, and before every module that links one of them.
 include(cmake/NimbleThirdParty.cmake)
 
-# The engine cooks its own shader set from Content/Shaders (see "Cooked
-# shaders" below), so GDI's cook -- its full Odessa set, into its own source
+# NimbleCook cooks the engine's own shader set from Content/Shaders (see
+# "Cooked shaders" below), so GDI's cook -- its full Odessa set, into its own source
 # tree, plus .qrc bundles nothing here compiles -- is off. FORCE, as with
 # CORE_SHARED: a stale cache would cook both and stage neither consistently.
 set(GDI_COOK_SHADERS OFF CACHE BOOL "Cook Shaders/ into Shaders/Cooked as part of the GDI build" FORCE)
@@ -684,6 +684,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/TerrainFacade.cpp
         Source/Private/NimbleEngine/SequenceFacade.cpp
         Source/Private/NimbleEngine/InactiveModules.cpp
+        Source/Private/NimbleEngine/ShaderCook.cpp
         Source/Public/NimbleEngine/NimbleEngine.h
         Source/Public/NimbleEngine/GameMode.h
         Source/Public/NimbleEngine/Avatar.h
@@ -708,11 +709,17 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/Ragdoll.h
         Source/Public/NimbleEngine/TerrainFacade.h
         Source/Public/NimbleEngine/SequenceFacade.h
+        Source/Public/NimbleEngine/ShaderCook.h
 )
 
 nimble_add_module(NimbleEngine SHARED
         PREFIX  NIMBLEENGINE
         SOURCES ${NIMBLEENGINE_SOURCES})
+
+# Where a development build finds NimbleCook's output (ShaderCook.h): the
+# Engine folder it was built from. Not in Shipping, which names no source path.
+target_compile_definitions(NimbleEngine PRIVATE
+        "$<$<NOT:$<CONFIG:Shipping>>:NIMBLE_ENGINE_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\">")
 
 # PRIVATE, not PUBLIC: the engine layer's headers must not leak GameWindow
 # types to a game. If this ever has to become a PUBLIC_DEP, something in
@@ -905,78 +912,71 @@ if(NIMBLEENGINE_BUILD_TESTS)
 endif()
 
 # === Cooked shaders ========================================================
-# Content/Shaders cooked straight into the runtime directory, at the paths GDI
-# and RenderCore ask EngineCore::FilesystemProvider for
-# ("Shaders/Cooked/Vulkan/Basic.vsh.spv"). Content/Shaders holds only what the
-# engine draws with -- Basic, Mesh, Screen, the material templates and the
-# shared includes -- not GDI's Odessa set (brush, cursor, layer blit,
-# checkerboard), which GDI registers but only loads on request.
+# NimbleCook (Tools/NimbleCook, built below) cooks the engine's shaders --
+# the build never runs a shader compiler -- into
+# Engine/Saved/Cooked/Shaders/<Variant>/, laid out as the runtime reads it.
+# This stages them:
 #
-# Content/Materials (DefaultLit, a material graph cooked from its <gen_code>,
-# named "Engine/Content/Materials/DefaultLit.material.nmgraph" like the
-# meshes) and the shared MaterialDefault vertex shaders go into the Engine
-# shader cache, Shaders/Cache/Engine.<Platform>.nmsc, which
-# Renderer::Initialize mounts (RenderCore/MATERIALS.md); Editor targets stage
-# them loose too.
+#   Runtime/   Content/Shaders at the paths GDI and RenderCore ask
+#              EngineCore::FilesystemProvider for
+#              ("Shaders/Cooked/Vulkan/Basic.vsh.spv"), and the Engine shader
+#              cache, Shaders/Cache/Engine.<Platform>.nmsc, which
+#              Renderer::Initialize mounts (RenderCore/MATERIALS.md): the
+#              engine's materials (DefaultLit, named
+#              "Engine/Content/Materials/DefaultLit.material.nmgraph" like the
+#              meshes) and the shared MaterialDefault vertex shaders
+#   Editor/    Editor targets: the engine's materials loose too
+#   Shipping/  a packaged Shipping build: the Engine cache naming nothing,
+#              over Runtime/'s
 #
-# Nothing is written into the source tree and no .qrc is generated: the
-# runtime reads plain files, so the cook is a staging step for the host, not
-# a prerequisite of compiling GDI. Stamp-file incremental, like
-# nimble_stage_materials.
+# Content/Shaders holds only what the engine draws with -- Basic, Mesh,
+# Screen, the material templates and the shared includes -- not GDI's Odessa
+# set (brush, cursor, layer blit, checkerboard), which GDI registers but only
+# loads on request.
+#
+# A variant not cooked yet is a warning and a configure dependency, so the
+# cook that makes it re-configures (nimble_cooked_shader_commands,
+# cmake/NimbleMaterials.cmake); after that, each cook restages. Cook with
+#
+#     NimbleCook shaders [-project <game folder>] [-editor] [-shipping]
+#
+# or the editor's Build > Cook Content.
 #
 # Single-config only (needs CMAKE_RUNTIME_OUTPUT_DIRECTORY), as the copy it
 # replaces was.
 if(TARGET GDI AND CMAKE_RUNTIME_OUTPUT_DIRECTORY
    AND (GDI_WITH_OPENGL OR GDI_WITH_VULKAN OR GDI_WITH_D3D12))
-    find_package(Python3 COMPONENTS Interpreter REQUIRED)
-
-    file(GLOB NM_ENGINE_SHADERS CONFIGURE_DEPENDS
-            "${NIMBLE_ENGINE_SHADER_DIR}/*.vsh"
-            "${NIMBLE_ENGINE_SHADER_DIR}/*.fsh"
-            "${NIMBLE_ENGINE_SHADER_DIR}/*.csh")
-    file(GLOB NM_ENGINE_MATERIALS CONFIGURE_DEPENDS "${NIMBLE_ENGINE_MATERIAL_DIR}/*.material.nmgraph")
-    get_filename_component(NM_ENGINE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)   # "Engine/Content/..." below it
-    # Packaged: cooked into the Engine pack's folder, not beside the executable.
+    # Packaged: staged into the Engine pack's folder, not beside the executable.
     set(NM_SHADER_ROOT "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
     if(NIMBLE_PACKAGE_CONTENT)
         nimble_pack_stage_dir(Engine NM_SHADER_ROOT)
     endif()
-    nimble_shader_cook_commands(NM_SHADER_COOK_COMMANDS
-            SRC "${NIMBLE_ENGINE_SHADER_DIR}"
-            OUT "${NM_SHADER_ROOT}/Shaders/Cooked")
-    nimble_shader_cook_commands(NM_ENGINE_CACHE_COMMANDS DEFAULTS
-            SRC    "${NIMBLE_ENGINE_MATERIAL_DIR}"
-            ROOT   "${NM_ENGINE_ROOT}"
-            CACHE  "${NM_SHADER_ROOT}/Shaders/Cache"
-            MODULE Engine
-            SUBDIR Materials)
-    list(APPEND NM_SHADER_COOK_COMMANDS ${NM_ENGINE_CACHE_COMMANDS})
-    if(NIMBLE_WITH_EDITOR)
-        nimble_shader_cook_commands(NM_ENGINE_LOOSE_COMMANDS DEFAULTS
-                SRC      "${NIMBLE_ENGINE_MATERIAL_DIR}"
-                ROOT     "${NM_ENGINE_ROOT}"
-                OUT      "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Shaders/Cooked"
-                DATA_OUT "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
-                SUBDIR   Materials)
-        list(APPEND NM_SHADER_COOK_COMMANDS ${NM_ENGINE_LOOSE_COMMANDS})
+    set(NM_SHADER_VARIANTS Runtime "${NM_SHADER_ROOT}")
+    if(NIMBLE_PACKAGE_CONTENT AND CMAKE_BUILD_TYPE STREQUAL "Shipping")
+        list(APPEND NM_SHADER_VARIANTS Shipping "${NM_SHADER_ROOT}")
     endif()
+    if(NIMBLE_WITH_EDITOR)
+        list(APPEND NM_SHADER_VARIANTS Editor "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+    endif()
+    nimble_cooked_shader_commands(NM_SHADER_STAGE_COMMANDS NM_SHADER_COOKED_STAMPS "NimbleEngine"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Saved/Cooked/Shaders" ${NM_SHADER_VARIANTS})
 
-    set(NM_SHADER_STAMP "${CMAKE_CURRENT_BINARY_DIR}/NimbleEngine_Shaders.stamp")
-    add_custom_command(
-            OUTPUT  "${NM_SHADER_STAMP}"
-            ${NM_SHADER_COOK_COMMANDS}
-            COMMAND ${CMAKE_COMMAND} -E touch "${NM_SHADER_STAMP}"
-            DEPENDS ${NM_ENGINE_SHADERS} ${NM_ENGINE_MATERIALS} ${NIMBLE_SHADER_INCLUDES}
-                    "${NIMBLE_MATERIAL_COOK_SCRIPT}"
-                    "${CMAKE_CURRENT_SOURCE_DIR}/Modules/GDI/Scripts/cook_shaders.py"
-            COMMENT "NimbleEngine: cooking Content/Shaders and the Engine shader cache"
-            VERBATIM)
+    if(NM_SHADER_STAGE_COMMANDS)
+        set(NM_SHADER_STAMP "${CMAKE_CURRENT_BINARY_DIR}/NimbleEngine_Shaders.stamp")
+        add_custom_command(
+                OUTPUT  "${NM_SHADER_STAMP}"
+                ${NM_SHADER_STAGE_COMMANDS}
+                COMMAND ${CMAKE_COMMAND} -E touch "${NM_SHADER_STAMP}"
+                DEPENDS ${NM_SHADER_COOKED_STAMPS}
+                COMMENT "NimbleEngine: staging the shaders NimbleCook cooked"
+                VERBATIM)
 
-    add_custom_target(NimbleStageShaders ALL DEPENDS "${NM_SHADER_STAMP}")
-    add_dependencies(NimbleEngine NimbleStageShaders)
-    set_target_properties(NimbleStageShaders PROPERTIES FOLDER "Engine")
-    if(NIMBLE_PACKAGE_CONTENT)
-        nimble_pack_add_dir(Engine "Shaders" "${NM_SHADER_ROOT}/Shaders" "${NM_SHADER_STAMP}" NimbleStageShaders)
+        add_custom_target(NimbleStageShaders ALL DEPENDS "${NM_SHADER_STAMP}")
+        add_dependencies(NimbleEngine NimbleStageShaders)
+        set_target_properties(NimbleStageShaders PROPERTIES FOLDER "Engine")
+        if(NIMBLE_PACKAGE_CONTENT)
+            nimble_pack_add_dir(Engine "Shaders" "${NM_SHADER_ROOT}/Shaders" "${NM_SHADER_STAMP}" NimbleStageShaders)
+        endif()
     endif()
 endif()
 
@@ -1052,6 +1052,30 @@ endif()
 add_executable(NimblePak Tools/NimblePak.cpp)
 target_link_libraries(NimblePak PRIVATE EngineCore::EngineCore GameCore Lua::Lua)
 set_target_properties(NimblePak PROPERTIES FOLDER "Engine")
+
+# === NimbleCook =============================================================
+# Cooks the engine's shaders and every material's permutations into
+# Saved/Cooked/Shaders/, which the build only stages ("Cooked shaders" above;
+# cmake/NimbleMaterials.cmake). It runs NodeGraph's cook_material_graphs.py,
+# so it is the one tool that needs Python and the shader toolchain; the build
+# needs neither. It defaults to this tree's GDI backends, Engine folder and
+# Python (-target, -engine and -python override them).
+find_package(Python3 COMPONENTS Interpreter QUIET)
+set(NM_COOK_TARGETS)
+foreach(NM_COOK_PLATFORM OpenGL Vulkan D3D12)
+    string(TOUPPER "${NM_COOK_PLATFORM}" NM_COOK_PLATFORM_UPPER)
+    if(GDI_WITH_${NM_COOK_PLATFORM_UPPER})
+        list(APPEND NM_COOK_TARGETS ${NM_COOK_PLATFORM})
+    endif()
+endforeach()
+string(REPLACE ";" "," NM_COOK_TARGETS "${NM_COOK_TARGETS}")
+add_executable(NimbleCook Tools/NimbleCook/NimbleCookMain.cpp)
+target_compile_definitions(NimbleCook PRIVATE
+        "NIMBLECOOK_ENGINE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
+        "NIMBLECOOK_PYTHON=\"${Python3_EXECUTABLE}\""
+        "NIMBLECOOK_TARGETS=\"${NM_COOK_TARGETS}\"")
+target_compile_features(NimbleCook PRIVATE cxx_std_17)
+set_target_properties(NimbleCook PROPERTIES FOLDER "Engine")
 
 # === NimbleEditorServer =====================================================
 # The editor collaboration server (Tools/EditorServer; Modules/Collab): Core,

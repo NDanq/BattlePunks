@@ -362,12 +362,14 @@ bool ProjectBuildDialog::Cook()
     Status->setText(QStringLiteral("Cooking..."));
     QApplication::setOverrideCursor(Qt::WaitCursor);
 
+    /* A Shipping build is packaged, its shader caches naming nothing: cook those too. */
+    const bool bShipping = EditorProjectBuild::EConfiguration(Configuration->currentIndex()) == EditorProjectBuild::BC_Shipping;
     const EditorCook::CookStats Result = EditorCook::CookProject(ProjectRoot, [this](const QString& InText)
     {
         Log(InText);
         Status->setText(InText + QStringLiteral("..."));
         QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
-    });
+    }, bShipping);
 
     QApplication::restoreOverrideCursor();
     for(const QString& Line : EditorCook::DescribeStats(Result))
@@ -428,7 +430,7 @@ void ProjectBuildDialog::ShowStats(const EditorCook::CookStats& InStats)
     for(int Type = 0; Type < EditorCook::AT_Count; ++Type)
     {
         const EditorCook::TypeStats& T = InStats.Types[Type];
-        const bool bSized = Type != EditorCook::AT_Graphs;
+        const bool bSized = EditorCook::IsSized(EditorCook::EAssetType(Type));
         AddRow(QString::fromLatin1(EditorCook::GetTypeName(EditorCook::EAssetType(Type))), T.Cooked, T.Failed,
                bSized ? EditorCook::FormatBytes(T.BytesIn) : QStringLiteral("-"),
                bSized ? EditorCook::FormatBytes(T.BytesOut) : QStringLiteral("-"), T.Seconds, false);
