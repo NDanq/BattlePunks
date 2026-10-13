@@ -17,7 +17,9 @@
 
 #if WITH_AICORE
 #include "Public/AICore/AIWorld.h"
+#include "Public/AICore/Components/AIBrainComponent.h"
 #include "Public/AICore/Components/NavAgentComponent.h"
+#include "Public/AICore/Components/PerceptionComponent.h"
 #include "Public/AICore/NavDebugDraw.h"
 #endif
 
@@ -328,6 +330,61 @@ namespace NimbleEngine
         return true;
     }
 
+    GameCore::EntityID GetAIKeyEntity(GameCore::World& InWorld, const GameCore::EntityID InEntity, const char* InKey)
+    {
+        AICore::AIWorld* AI = AICore::AIWorld::Find(&InWorld);
+        AICore::Blackboard* Board = AI ? AI->GetBlackboard(InEntity) : nullptr;
+        return Board ? Board->GetEntity(InKey) : GameCore::EntityID();
+    }
+
+    bool MakeAIBot(GameCore::World& InWorld, const GameCore::EntityID InEntity, const AIBotSetup& InSetup)
+    {
+        if(!InWorld.IsAlive(InEntity) || !AICore::AIWorld::Find(&InWorld)) { return false; }
+        GameCore::Entity Bot = InWorld.GetEntity(InEntity);
+        if(!Bot.HasComponent<AICore::NavAgentComponent>())
+        {
+            AICore::NavAgentComponent Agent;
+            Agent.Radius = InSetup.Radius;
+            Agent.Height = InSetup.Height;
+            Agent.MaxSpeed = InSetup.MaxSpeed;
+            Agent.MeshYaw = InSetup.MeshYaw;
+            Agent.bDriveTransform = InSetup.bDriveTransform ? 1 : 0;
+            Bot.AddComponent(Agent);
+        }
+        if(InSetup.bPerceive && !Bot.HasComponent<AICore::PerceptionComponent>())
+        {
+            AICore::PerceptionComponent Sight;
+            Sight.Team = InSetup.Team;
+            Sight.SightRange = InSetup.SightRange;
+            Sight.FovHalfAngle = InSetup.FovHalfAngle;
+            Sight.EyeHeight = InSetup.EyeHeight;
+            Sight.HearingRange = InSetup.HearingRange;
+            Bot.AddComponent(Sight);
+        }
+        SetAIStimulus(InWorld, InEntity, InSetup.Team, true);
+        if(AICore::AIStimulusComponent* Stimulus = Bot.GetComponent<AICore::AIStimulusComponent>()) { Stimulus->TargetHeight = InSetup.TargetHeight; }
+        if(InSetup.Tree && InSetup.Tree[0] && !Bot.HasComponent<AICore::AIBrainComponent>())
+        {
+            AICore::AIBrainComponent Brain;
+            std::snprintf(Brain.Tree, sizeof(Brain.Tree), "%s", InSetup.Tree);
+            Brain.TickInterval = InSetup.TickInterval;
+            Bot.AddComponent(Brain);
+        }
+        return true;
+    }
+
+    bool SetAIStimulus(GameCore::World& InWorld, const GameCore::EntityID InEntity, const uint8_t InTeam, const bool bInEnabled)
+    {
+        if(!InWorld.IsAlive(InEntity)) { return false; }
+        GameCore::Entity Entity = InWorld.GetEntity(InEntity);
+        AICore::AIStimulusComponent* Stimulus = Entity.GetComponent<AICore::AIStimulusComponent>();
+        if(!Stimulus) { Stimulus = Entity.AddComponent<AICore::AIStimulusComponent>(); }
+        if(!Stimulus) { return false; }
+        Stimulus->Team = InTeam;
+        Stimulus->bEnabled = bInEnabled ? 1 : 0;
+        return true;
+    }
+
 #else // !WITH_AICORE
 
     namespace AIDetail
@@ -347,6 +404,9 @@ namespace NimbleEngine
     double GetAIKeyNumber(GameCore::World&, GameCore::EntityID, const char*, const double InDefault) { return InDefault; }
     bool  SetAIKey(GameCore::World&, GameCore::EntityID, const char*, const char*) { return false; }
     bool  SetAIKeyEntity(GameCore::World&, GameCore::EntityID, const char*, GameCore::EntityID) { return false; }
+    GameCore::EntityID GetAIKeyEntity(GameCore::World&, GameCore::EntityID, const char*) { return GameCore::EntityID(); }
+    bool  MakeAIBot(GameCore::World&, GameCore::EntityID, const AIBotSetup&) { return false; }
+    bool  SetAIStimulus(GameCore::World&, GameCore::EntityID, uint8_t, bool) { return false; }
 
 #endif // WITH_AICORE
 }
