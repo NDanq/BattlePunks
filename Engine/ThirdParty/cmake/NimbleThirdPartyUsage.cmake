@@ -31,6 +31,7 @@ set(NIMBLE_THIRDPARTY_BC7ENC_DIR   "${NIMBLE_THIRDPARTY_SOURCE_DIR}/bc7enc_rdo-b
 set(NIMBLE_THIRDPARTY_XATLAS_DIR   "${NIMBLE_THIRDPARTY_SOURCE_DIR}/xatlas-f700c77")
 set(NIMBLE_THIRDPARTY_CGLTF_DIR    "${NIMBLE_THIRDPARTY_SOURCE_DIR}/cgltf-1.15")
 set(NIMBLE_THIRDPARTY_STB_DIR      "${NIMBLE_THIRDPARTY_SOURCE_DIR}/stb")
+set(NIMBLE_THIRDPARTY_RECAST_DIR   "${NIMBLE_THIRDPARTY_SOURCE_DIR}/recastnavigation-1.6.0")
 
 # The compiled libraries: <Name> <target> pairs. <Name> is the key both sides
 # use (manifest variables, nimble_thirdparty_usage); <target> is the name the
@@ -43,7 +44,8 @@ set(NIMBLE_THIRDPARTY_LIBRARIES
         ENet      ENet::ENet
         miniaudio miniaudio::miniaudio
         Bc7enc    NimbleBc7enc
-        Xatlas    NimbleXatlas)
+        Xatlas    NimbleXatlas
+        RecastNav RecastNav::RecastNav)
 
 # nimble_thirdparty_usage(<Name> <target> BUILD|IMPORTED)
 #   Applies <Name>'s usage requirements to <target>. BUILD: the real library
@@ -129,6 +131,17 @@ function(nimble_thirdparty_usage NM_NAME NM_TARGET NM_MODE)
         target_include_directories(${NM_TARGET} ${NM_PUBLIC} "${NIMBLE_THIRDPARTY_XATLAS_DIR}")
         find_package(Threads REQUIRED)
         target_link_libraries(${NM_TARGET} ${NM_LINK_ONLY} Threads::Threads)
+
+    elseif(NM_NAME STREQUAL "RecastNav")
+        foreach(NM_PART Recast Detour DetourCrowd DetourTileCache DebugUtils)
+            target_include_directories(${NM_TARGET} ${NM_PUBLIC} "${NIMBLE_THIRDPARTY_RECAST_DIR}/${NM_PART}/Include")
+        endforeach()
+        # dtQueryFilter's passFilter / getCost become virtual, so AICore can
+        # subclass it for team and area costs. It changes the class's layout,
+        # so the library and every unit that includes DetourNavMeshQuery.h
+        # must agree. DT_POLYREF64 stays off: 32-bit poly refs are plenty
+        # for one level's tiles.
+        target_compile_definitions(${NM_TARGET} ${NM_PUBLIC} DT_VIRTUAL_QUERYFILTER)
 
     else()
         message(FATAL_ERROR "nimble_thirdparty_usage: no library named '${NM_NAME}'")
