@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <NodeGraph Version="1" Schema="Material">
   <Nodes>
-    <Node Id="0c2a42b36cde644645ce3fd1763bb0ba" Type="Parameter" Version="1" X="450" Y="400">
-      <Prop Name="Default" Value="0" />
-      <Prop Name="Name" Value="Metallic" />
+    <Node Id="0c2a42b36cde644645ce3fd1763bb0ba" Type="Parameter" Version="1" X="450" Y="300">
+      <Prop Name="Default" Value="0.2" />
+      <Prop Name="Name" Value="Specular" />
       <Prop Name="Type" Value="float" />
     </Node>
     <Node Id="1c6f3820a7a761953364628e0e3e8ffd" Type="Output.Material" Version="1" X="700" Y="0">
@@ -13,43 +13,49 @@
       <Prop Name="Shading" Value="Lit" />
       <Prop Name="TwoSided" Value="false" />
     </Node>
-    <Node Id="39aaa7743dc15ef459246630bfe41bbb" Type="Math.Multiply" Version="1" X="250" Y="-60" Wildcard="vec3" />
+    <Node Id="39aaa7743dc15ef459246630bfe41bbb" Type="Parameter" Version="1" X="0" Y="160">
+      <Prop Name="Default" Value="0.7" />
+      <Prop Name="Name" Value="TeamMix" />
+      <Prop Name="Type" Value="float" />
+    </Node>
     <Node Id="9cf736a52449ae0c66f4509ebd31d689" Type="Input.VertexColor" Version="1" X="0" Y="-100" />
     <Node Id="a78b6699b828dfea11ebbd89c2ef7ef9" Type="Parameter" Version="1" X="0" Y="40">
-      <Prop Name="Default" Value="0.55 0.75 1" />
+      <Prop Name="Default" Value="0.25 0.52 0.95" />
       <Prop Name="Name" Value="Tint" />
       <Prop Name="Type" Value="vec3" />
     </Node>
-    <Node Id="bebd750a20d805080f8fae2a0bdc0b6d" Type="Math.Multiply" Version="1" X="450" Y="80" Wildcard="vec3" />
-    <Node Id="c451305905c0f7539b77578c1389078b" Type="Parameter" Version="1" X="450" Y="200">
+    <Node Id="bebd750a20d805080f8fae2a0bdc0b6d" Type="Parameter" Version="1" X="250" Y="120">
+      <Prop Name="Default" Value="0.15" />
+      <Prop Name="Name" Value="Glow" />
+      <Prop Name="Type" Value="float" />
+    </Node>
+    <Node Id="c451305905c0f7539b77578c1389078b" Type="Math.Multiply" Version="1" X="450" Y="80" Wildcard="vec3" />
+    <Node Id="ee68e1bb2fb9dd7e52007a77133828df" Type="Parameter" Version="1" X="450" Y="200">
       <Prop Name="Default" Value="0.8" />
       <Prop Name="Name" Value="Roughness" />
       <Prop Name="Type" Value="float" />
     </Node>
-    <Node Id="ee68e1bb2fb9dd7e52007a77133828df" Type="Parameter" Version="1" X="450" Y="300">
-      <Prop Name="Default" Value="0.2" />
-      <Prop Name="Name" Value="Specular" />
+    <Node Id="f4d6ed4d396a431baca0967b08710654" Type="Parameter" Version="1" X="450" Y="400">
+      <Prop Name="Default" Value="0" />
+      <Prop Name="Name" Value="Metallic" />
       <Prop Name="Type" Value="float" />
     </Node>
-    <Node Id="f6a5ae6b0322c75e6e2ef598e41519e6" Type="Parameter" Version="1" X="250" Y="120">
-      <Prop Name="Default" Value="0.12" />
-      <Prop Name="Name" Value="Glow" />
-      <Prop Name="Type" Value="float" />
-    </Node>
+    <Node Id="f6a5ae6b0322c75e6e2ef598e41519e6" Type="Math.Lerp" Version="1" X="250" Y="-60" Wildcard="vec3" />
   </Nodes>
   <Links>
-    <Link From="0c2a42b36cde644645ce3fd1763bb0ba.Value" To="1c6f3820a7a761953364628e0e3e8ffd.Metallic" />
-    <Link From="39aaa7743dc15ef459246630bfe41bbb.Out" To="1c6f3820a7a761953364628e0e3e8ffd.BaseColor" />
-    <Link From="39aaa7743dc15ef459246630bfe41bbb.Out" To="bebd750a20d805080f8fae2a0bdc0b6d.A" />
-    <Link From="9cf736a52449ae0c66f4509ebd31d689.RGB" To="39aaa7743dc15ef459246630bfe41bbb.A" />
-    <Link From="a78b6699b828dfea11ebbd89c2ef7ef9.Value" To="39aaa7743dc15ef459246630bfe41bbb.B" />
-    <Link From="bebd750a20d805080f8fae2a0bdc0b6d.Out" To="1c6f3820a7a761953364628e0e3e8ffd.Emissive" />
-    <Link From="c451305905c0f7539b77578c1389078b.Value" To="1c6f3820a7a761953364628e0e3e8ffd.Roughness" />
-    <Link From="ee68e1bb2fb9dd7e52007a77133828df.Value" To="1c6f3820a7a761953364628e0e3e8ffd.Specular" />
-    <Link From="f6a5ae6b0322c75e6e2ef598e41519e6.Value" To="bebd750a20d805080f8fae2a0bdc0b6d.B" />
+    <Link From="0c2a42b36cde644645ce3fd1763bb0ba.Value" To="1c6f3820a7a761953364628e0e3e8ffd.Specular" />
+    <Link From="39aaa7743dc15ef459246630bfe41bbb.Value" To="f6a5ae6b0322c75e6e2ef598e41519e6.T" />
+    <Link From="9cf736a52449ae0c66f4509ebd31d689.RGB" To="f6a5ae6b0322c75e6e2ef598e41519e6.A" />
+    <Link From="a78b6699b828dfea11ebbd89c2ef7ef9.Value" To="f6a5ae6b0322c75e6e2ef598e41519e6.B" />
+    <Link From="bebd750a20d805080f8fae2a0bdc0b6d.Value" To="c451305905c0f7539b77578c1389078b.B" />
+    <Link From="c451305905c0f7539b77578c1389078b.Out" To="1c6f3820a7a761953364628e0e3e8ffd.Emissive" />
+    <Link From="ee68e1bb2fb9dd7e52007a77133828df.Value" To="1c6f3820a7a761953364628e0e3e8ffd.Roughness" />
+    <Link From="f4d6ed4d396a431baca0967b08710654.Value" To="1c6f3820a7a761953364628e0e3e8ffd.Metallic" />
+    <Link From="f6a5ae6b0322c75e6e2ef598e41519e6.Out" To="1c6f3820a7a761953364628e0e3e8ffd.BaseColor" />
+    <Link From="f6a5ae6b0322c75e6e2ef598e41519e6.Out" To="c451305905c0f7539b77578c1389078b.A" />
   </Links>
   <Comments>
-    <Comment X="-700" Y="-420" Width="640" Height="90" Text="Toony ToonDummyBlue: the crash dummy's colours tinted the blue team's." />
+    <Comment X="-700" Y="-420" Width="640" Height="90" Text="Toony ToonDummyBlue: the crash dummy's colours blended toward the blue team's." />
   </Comments>
   <gen_code>
     <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "ToonDummyBlue". Do not edit.
@@ -69,13 +75,14 @@ UBO_BLOCK_BEGIN(2, ToonDummyBlue_Block)
     float Param_Metallic;
     float Param_Roughness;
     float Param_Specular;
+    vec3  Param_TeamMix;
     vec3  Param_Tint;
 UBO_BLOCK_END(ToonDummyBlue_Block)
 
 #if PIXEL_SHADER
 void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
 {
-    vec3 t0 = Inputs.Color.rgb * Param_Tint;
+    vec3 t0 = mix(Inputs.Color.rgb, Param_Tint, Param_TeamMix);
     Surface.BaseColor = t0;
     Surface.Metallic = Param_Metallic;
     Surface.Roughness = Param_Roughness;
@@ -93,12 +100,13 @@ TwoSided 0
 ClipValue 0.5
 MaxOffset 0
 HasOffset 0
-BlockSize 208
-Param Glow vec3 160 0.12 0.12 0.12 0
+BlockSize 224
+Param Glow vec3 160 0.15 0.15 0.15 0
 Param Metallic float 172 0 0 0 0
 Param Roughness float 176 0.8 0 0 0
 Param Specular float 180 0.2 0 0 0
-Param Tint vec3 192 0.55 0.75 1 0
+Param TeamMix vec3 192 0.7 0.7 0.7 0
+Param Tint vec3 208 0.25 0.52 0.95 0
 ]]></Output>
   </gen_code>
 </NodeGraph>

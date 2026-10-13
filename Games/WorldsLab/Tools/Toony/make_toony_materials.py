@@ -6,8 +6,8 @@ the engine's NodeGraphGenerate compile each one's <gen_code>.
 
     ToonPaint     every prop and building: the mesh's vertex colours, Lit, very
                   rough, barely specular -- flat candy paint
-    ToonDummyRed  the crash dummy in a team's colour: its vertex colours times
-    ToonDummyBlue the team's tint, a little emissive so it pops in shade
+    ToonDummyRed  the crash dummy in a team's colour: its vertex colours blended
+    ToonDummyBlue toward the team's, a little emissive so it pops in shade
     ToonGun       the pistol: dark, satin
     ToonInk       the post process (PostProcess, after the effects): ink lines
                   where the scene's depth jumps (Fwidth of the window depth,
@@ -74,15 +74,25 @@ class Graph:
         return path
 
 
-def paint(name, tint, roughness, specular, emissive, comment, metallic=0.0):
-    """Vertex colour x Tint, Lit; Emissive a fraction of the same (shade never goes black)."""
+def paint(name, tint, roughness, specular, emissive, comment, metallic=0.0, team=0.0):
+    """Vertex colour x Tint (or, for a team, blended toward Tint by team), Lit;
+    Emissive a fraction of the same (shade never goes black)."""
     g = Graph(name)
     out = g.output(700, 0)
     vcol = g.node("Input.VertexColor", 0, -100)
     tint_p = g.param("Tint", "vec3", " ".join(f"{c:g}" for c in tint), 0, 40)
-    colour = g.node("Math.Multiply", 250, -60, wildcard="vec3")
-    g.link(vcol, "RGB", colour, "A")
-    g.link(tint_p, "Value", colour, "B")
+    if team:
+        # A team's colour over the mesh's own: blended, not multiplied, so a
+        # dark dummy still reads red or blue from across the yard.
+        mix = g.param("TeamMix", "float", f"{team:g}", 0, 160)
+        colour = g.node("Math.Lerp", 250, -60, wildcard="vec3")
+        g.link(vcol, "RGB", colour, "A")
+        g.link(tint_p, "Value", colour, "B")
+        g.link(mix, "Value", colour, "T")
+    else:
+        colour = g.node("Math.Multiply", 250, -60, wildcard="vec3")
+        g.link(vcol, "RGB", colour, "A")
+        g.link(tint_p, "Value", colour, "B")
     g.link(colour, "Out", out, "BaseColor")
     glow = g.param("Glow", "float", f"{emissive:g}", 250, 120)
     self_lit = g.node("Math.Multiply", 450, 80, wildcard="vec3")
@@ -201,10 +211,10 @@ def main():
         paint("ToonPaint", (1, 1, 1), 0.92, 0.12, 0.06,
               "Toony ToonPaint: the meshes' vertex colours as flat candy paint -- Lit, very rough, barely "
               "specular, a little self-lit so no shade goes black."),
-        paint("ToonDummyRed", kit.RED_LIGHT, 0.8, 0.2, 0.12,
-              "Toony ToonDummyRed: the crash dummy's colours tinted the red team's."),
-        paint("ToonDummyBlue", kit.BLUE_LIGHT, 0.8, 0.2, 0.12,
-              "Toony ToonDummyBlue: the crash dummy's colours tinted the blue team's."),
+        paint("ToonDummyRed", kit.RED, 0.8, 0.2, 0.15, team=0.7, comment=
+              "Toony ToonDummyRed: the crash dummy's colours blended toward the red team's."),
+        paint("ToonDummyBlue", kit.BLUE, 0.8, 0.2, 0.15, team=0.7, comment=
+              "Toony ToonDummyBlue: the crash dummy's colours blended toward the blue team's."),
         paint("ToonGun", (0.35, 0.35, 0.42), 0.5, 0.3, 0.02, "Toony ToonGun: the pistol, dark satin.", metallic=0.3),
         ink(),
     ]

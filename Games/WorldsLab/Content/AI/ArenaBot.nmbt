@@ -45,7 +45,7 @@
         <Wait Seconds="0.35" RandomDeviation="0.25" />
       </Sequence>
     </Parallel>
-    <Sequence Name="TakeCover">
+    <Sequence Name="TakeCover" Weight="1.5">
       <Consideration Input="UnderFire" Curve="Step" XShift="0.5" />
       <Consideration Input="Health" Curve="InverseLinear" />
       <Decorator Type="Cooldown" Seconds="5" />

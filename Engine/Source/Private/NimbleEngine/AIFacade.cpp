@@ -66,7 +66,7 @@ namespace NimbleEngine
             const GameCore::EntityID ViewerRoot = RootOf(InWorld, InViewer);
             const GameCore::EntityID TargetRoot = RootOf(InWorld, InTarget);
             EngineCore::Vector3 From = InFrom;
-            for(int Step = 0; Step < 4; ++Step)
+            for(int Step = 0; Step < 8; ++Step)
             {
                 EngineCore::Vector3 Delta = InTo - From;
                 const float Length = float(Delta.GetLength());
@@ -78,17 +78,45 @@ namespace NimbleEngine
                 const GameCore::EntityID HitRoot = RootOf(InWorld, Hit.Entity);
                 if(HitRoot == TargetRoot) { return true; }
                 if(HitRoot != ViewerRoot) { return false; }
-                From = Hit.Point + Direction * 2.0f;
+                /* Out of its own head and limbs: a ray from inside a capsule
+                 * hits it at once, so a step of a few millimetres never leaves. */
+                From = Hit.Point + Direction * std::max(2.0f, 12.0f - Hit.Distance);
             }
             return false;
         }
 
-        bool GroundHeight(GameCore::World& InWorld, const EngineCore::Vector3& InAt, float& OutHeight, void*)
+        /* The first hit straight down from InFrom that is not an agent's --
+         * InSelf's or any other Nav Agent's (a bot is nobody's floor); false
+         * if it finds only agents or nothing. */
+        bool GroundBelow(GameCore::World& InWorld, const EngineCore::Vector3& InFrom, const GameCore::EntityID InSelf, float& OutHeight)
         {
-            PhysicsRaycastHit Hit;
-            if(!PhysicsRaycast(InWorld, InAt, EngineCore::Vector3(0.0, -1.0, 0.0), 400.0f, Hit)) { return false; }
-            OutHeight = float(Hit.Point.GetY());
-            return true;
+            const EngineCore::Vector3 Down(0.0, -1.0, 0.0);
+            EngineCore::Vector3 From = InFrom;
+            float Left = 400.0f;
+            for(int Step = 0; Step < 6 && Left > 1.0f; ++Step)
+            {
+                PhysicsRaycastHit Hit;
+                if(!PhysicsRaycast(InWorld, From, Down, Left, Hit)) { return false; }
+                const GameCore::EntityID HitRoot = Hit.Entity.IsSet() ? RootOf(InWorld, Hit.Entity) : GameCore::EntityID();
+                if(!HitRoot.IsSet() || (HitRoot != InSelf && !InWorld.GetEntity(HitRoot).HasComponent<AICore::NavAgentComponent>()))
+                {
+                    OutHeight = float(Hit.Point.GetY());
+                    return true;
+                }
+                const float Past = Hit.Distance + 1.0f;
+                From = From + Down * Past;
+                Left -= Past;
+            }
+            return false;
+        }
+
+        /* Where an agent stands: the first surface straight down that is not
+         * an agent's. A ragdoll's hit boxes follow its animation -- a foot on
+         * the floor, a neighbour's head -- and none of them is ground. False
+         * when the ray finds only agents (the agent keeps its height). */
+        bool GroundHeight(GameCore::World& InWorld, const EngineCore::Vector3& InAt, const GameCore::EntityID InAgent, float& OutHeight, void*)
+        {
+            return GroundBelow(InWorld, InAt, RootOf(InWorld, InAgent), OutHeight);
         }
 
         bool SetAnimParam(GameCore::World& InWorld, const GameCore::EntityID InEntity, const char* InParam, const float InValue, void*)

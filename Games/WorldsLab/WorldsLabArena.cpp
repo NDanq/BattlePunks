@@ -169,6 +169,8 @@ namespace
         bool    bStuck   = false;
         Vector3 LastTarget;
         bool    bHadTarget = false;
+        double  LastRise = 0.0;     // last frame's change in height
+        int     Frames   = 0;       // since it (re)spawned
     };
 
     struct Match
@@ -193,6 +195,8 @@ namespace
         int32_t PlayerKills = 0;
         uint32_t FailedMoves = 0;
         uint32_t StuckEvents = 0;
+        uint32_t BobFrames = 0;     // height jumped and came straight back: a flicker
+        uint32_t BotFrames = 0;
         uint32_t MoveRequests = 0;
         double   PathLengthSum = 0.0;
         std::unordered_map<uint64_t, BotTrack> Tracks;
@@ -247,11 +251,11 @@ namespace
     {
         Vector3 From = InFrom;
         float   Left = InLength;
-        for(int Step = 0; Step < 4 && Left > 1.0f; ++Step)
+        for(int Step = 0; Step < 8 && Left > 1.0f; ++Step)
         {
             if(!NimbleEngine::PhysicsRaycast(InWorld, From, InDirection, Left, OutHit)) { return false; }
             if(RootOf(InWorld, OutHit.Entity) != InSelf) { OutHit.Distance += InLength - Left; return true; }
-            const float Past = OutHit.Distance + 2.0f;
+            const float Past = OutHit.Distance + std::max(2.0f, 12.0f - OutHit.Distance);   // out of its own capsules
             From = From + InDirection * Past;
             Left -= Past;
         }
@@ -590,6 +594,13 @@ namespace
             BotTrack& Track = GMatch.Tracks[Bot.Pack()];
             const Vector3 Here = Entity.GetWorldPose().Position;
             const double Moved = Hypot2D(Here, Track.LastPosition);
+            const double Rise = double(Here.GetY()) - double(Track.LastPosition.GetY());
+            if(!Fighter->bDead) { ++GMatch.BotFrames; }
+            if(!Fighter->bDead && ++Track.Frames > 3 && std::fabs(Rise) > 5.0 && std::fabs(Track.LastRise) > 5.0 && (Rise > 0.0) != (Track.LastRise > 0.0))
+            {
+                ++GMatch.BobFrames;
+            }
+            Track.LastRise = Rise;
             Track.LastPosition = Here;
             if(Fighter->bDead) { Track.StuckFor = 0.0; continue; }
             Track.Walked += Moved;
@@ -783,8 +794,8 @@ namespace
                       Shots, Hits, Shots ? 100.0 * Hits / Shots : 0.0);
         CORE_LOG(Line)
         std::snprintf(Line, sizeof(Line), "[ToonArena] navigation: %u moves, average path %.1f m, %.0f m walked, %u failed path requests, "
-                      "%u stuck agents", GMatch.MoveRequests, GMatch.MoveRequests ? GMatch.PathLengthSum / GMatch.MoveRequests / 100.0 : 0.0,
-                      Walked / 100.0, GMatch.FailedMoves, GMatch.StuckEvents);
+                      "%u stuck agents, %u bobbing frames of %u", GMatch.MoveRequests, GMatch.MoveRequests ? GMatch.PathLengthSum / GMatch.MoveRequests / 100.0 : 0.0,
+                      Walked / 100.0, GMatch.FailedMoves, GMatch.StuckEvents, GMatch.BobFrames, GMatch.BotFrames);
         CORE_LOG(Line)
 
         /* Each branch's share of the bots' time: the root's children. */
@@ -814,9 +825,9 @@ namespace
             if(Seconds[Index] <= 0.0) { bAll = false; }
         }
         CORE_LOG(Shares)
-        CORE_LOG(std::string("[ToonArena] ") + (GMatch.TeamKills[TeamRed] > 0 && GMatch.TeamKills[TeamBlue] > 0 && GMatch.StuckEvents == 0 && bAll
-                 ? "PASS: kills on both teams, no stuck agents, every branch ran"
-                 : "CHECK: expected kills on both teams, no stuck agents and every branch to run"))
+        CORE_LOG(std::string("[ToonArena] ") + (GMatch.TeamKills[TeamRed] > 0 && GMatch.TeamKills[TeamBlue] > 0 && GMatch.StuckEvents == 0 && GMatch.BobFrames * 200 < std::max(GMatch.BotFrames, 1u) && bAll
+                 ? "PASS: kills on both teams, no stuck or bobbing agents, every branch ran"
+                 : "CHECK: expected kills on both teams, no stuck or bobbing agents, and every branch to run"))
     }
 }
 
@@ -941,14 +952,27 @@ private:
             const EntityID Bot = GMatch.Bots[size_t(GMatch.View)];
             const Vector3 Feet = FeetOf(InWorld, Bot);
             const double Yaw = double(AICore::GetFacingYaw(InWorld.GetEntity(Bot))) * Pi / 180.0;
-            Eye  = Vector3(Feet.GetX() - std::sin(Yaw) * 520.0, Feet.GetY() + 330.0, Feet.GetZ() - std::cos(Yaw) * 520.0);
-            Look = Vector3(Feet.GetX() + std::sin(Yaw) * 300.0, Feet.GetY() + 120.0, Feet.GetZ() + std::cos(Yaw) * 300.0);
+            Eye  = Vector3(Feet.GetX() - std::sin(Yaw) * 340.0, Feet.GetY() + 210.0, Feet.GetZ() - std::cos(Yaw) * 340.0);
+            Look = Vector3(Feet.GetX() + std::sin(Yaw) * 250.0, Feet.GetY() + 130.0, Feet.GetZ() + std::cos(Yaw) * 250.0);
         }
         else
         {
-            Orbit += InDeltaSeconds * 5.0 * Pi / 180.0;
-            Eye  = Vector3(std::sin(Orbit) * 4600.0, 3000.0, std::cos(Orbit) * 4600.0);
-            Look = Vector3(0.0, 0.0, 0.0);
+            /* Round the yard, close in over the fighting: the camera looks at
+             * the bots' middle and circles it. */
+            Orbit += InDeltaSeconds * 6.0 * Pi / 180.0;
+            Vector3 Middle;
+            int Alive = 0;
+            for(const EntityID Bot : GMatch.Bots)
+            {
+                const ArenaFighterComponent* Fighter = FighterOf(InWorld, Bot);
+                if(!Fighter || Fighter->bDead) { continue; }
+                Middle = Middle + FeetOf(InWorld, Bot);
+                ++Alive;
+            }
+            Middle = Alive ? Middle / float(Alive) : Vector3();
+            Focus = Focus + (Middle - Focus) * float(std::min(1.0, InDeltaSeconds * 0.8));
+            Eye  = Vector3(Focus.GetX() + std::sin(Orbit) * 2300.0, 1400.0, Focus.GetZ() + std::cos(Orbit) * 2300.0);
+            Look = Vector3(Focus.GetX(), 60.0, Focus.GetZ());
         }
         /* Eased, so a cut is a short swoop. */
         const double Ease = std::min(1.0, InDeltaSeconds * 4.0);
@@ -961,7 +985,8 @@ private:
         View->Rotation = Vector3(Pitch, Yaw, 0.0);
     }
 
-    double Orbit = 0.0;
+    double  Orbit = 0.0;
+    Vector3 Focus;
     bool   bReported = false;
 };
 
