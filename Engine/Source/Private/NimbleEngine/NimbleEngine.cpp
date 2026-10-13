@@ -13,6 +13,7 @@
 #include "Public/NimbleEngine/AudioFacade.h"
 #include "Public/NimbleEngine/GameModule.h"
 #include "Public/NimbleEngine/Level.h"
+#include "Public/NimbleEngine/ShaderCook.h"
 
 
 #include "Public/Core/CoreLog.h"
@@ -378,6 +379,42 @@ namespace NimbleEngine
          * the run log is open. */
         const int PackCount = MountPackFiles(LayeredAssets, "Paks");
 
+        /* A development build's shaders as NimbleCook last cooked them, over
+         * what the build staged (ShaderCook.h) -- cooked first, by the
+         * NimbleCook beside this executable, if the engine's never were. Not
+         * a packaged build, whose packs are the whole of it, nor a headless
+         * one, which draws nothing. */
+        std::string CookedShaders;
+#if WITH_UNCOOKED
+        if(PackCount == 0 && !Desc.bHeadless)
+        {
+            const std::string EngineDir = ShaderCook::GetEngineSourceDir();
+            if(!EngineDir.empty() && !ShaderCook::IsCooked(EngineDir, "Runtime"))
+            {
+                const std::string Cooker = ShaderCook::FindCooker(ExecutableDir);
+                if(Cooker.empty())
+                {
+                    CORE_LOG_WARN("[Shaders] the engine's shaders were never cooked, and there is no NimbleCook beside "
+                                  "the executable to cook them: build the NimbleCook target, or nothing will draw")
+                }
+                else
+                {
+                    CORE_LOG("[Shaders] the engine's shaders were never cooked: cooking them now (NimbleCook; the first "
+                             "time takes a while)")
+                    if(!ShaderCook::RunCooker(Cooker, EngineDir, ProjectDir))
+                    {
+                        CORE_LOG_WARN("[Shaders] NimbleCook failed; its lines above say why")
+                    }
+                }
+            }
+            if(ShaderCook::MountCookedShaders(LayeredAssets, EngineDir, ProjectDir) > 0)
+            {
+                CookedShaders = ShaderCook::GetCookedShaderDir(EngineDir)
+                                + (ProjectDir.empty() ? std::string() : " and " + ShaderCook::GetCookedShaderDir(ProjectDir));
+            }
+        }
+#endif
+
         /* Run uncooked: the project's raw files over everything, config included. */
         const std::string UncookedRoot = MountUncookedProject();
 
@@ -410,6 +447,10 @@ namespace NimbleEngine
             if(!UncookedRoot.empty())
             {
                 CORE_LOG("Running uncooked: raw files from " + UncookedRoot + " (-cooked to run on the cooked content)")
+            }
+            if(!CookedShaders.empty())
+            {
+                CORE_LOG("Shaders from " + CookedShaders + " (NimbleCook's), over the staged ones")
             }
         }
         if(!bConfigLoaded)

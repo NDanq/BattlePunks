@@ -124,6 +124,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/SourceBuild.h
         Source/Private/Editor/Build/ContentCook.cpp
         Source/Private/Editor/Build/ContentCook.h
+        Source/Private/Editor/Build/StartupCook.cpp
+        Source/Private/Editor/Build/StartupCook.h
         Source/Private/Editor/Build/ProjectBuild.cpp
         Source/Private/Editor/Build/ProjectBuild.h
         Source/Private/Editor/Build/ProjectBuildDialog.cpp
@@ -278,22 +280,10 @@ if(NOT MSVC)
             PROPERTIES COMPILE_OPTIONS "-O2")
 endif()
 
-# cgltf (MIT), vendored; implemented in GltfImporter.cpp.
-set(NIMBLE_EDITOR_CGLTF_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/cgltf-1.15")
-
-# xatlas (MIT), vendored at jpcy/xatlas f700c77: lightmap UV charts (LightmapUVs.cpp).
-# Its own library, built without the engine's warnings.
-set(NIMBLE_EDITOR_XATLAS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/xatlas-f700c77")
-add_library(NimbleXatlas STATIC "${NIMBLE_EDITOR_XATLAS_DIR}/xatlas.cpp")
-target_include_directories(NimbleXatlas PUBLIC "${NIMBLE_EDITOR_XATLAS_DIR}")
-find_package(Threads REQUIRED)
-target_link_libraries(NimbleXatlas PRIVATE Threads::Threads)
-if(MSVC)
-    target_compile_options(NimbleXatlas PRIVATE /w)
-else()
-    target_compile_options(NimbleXatlas PRIVATE -w)
-endif()
-set_target_properties(NimbleXatlas PROPERTIES FOLDER "Editor/External" POSITION_INDEPENDENT_CODE ON)
+# cgltf (MIT, header-only; implemented in GltfImporter.cpp) and xatlas (MIT,
+# NimbleXatlas: lightmap UV charts, LightmapUVs.cpp) are vendored at
+# Engine/ThirdParty/Source; xatlas is built by Engine/ThirdParty/CMakeLists.txt.
+set(NIMBLE_EDITOR_CGLTF_DIR "${NIMBLE_THIRDPARTY_CGLTF_DIR}")
 
 add_executable(NimbleEditor WIN32 ${NIMBLE_EDITOR_SOURCES})
 # The application icon: the .exe's own icon on Windows (Explorer, the taskbar
@@ -788,9 +778,13 @@ file(GENERATE
 set_source_files_properties(Source/Private/Editor/SourceBuild.cpp PROPERTIES
         COMPILE_DEFINITIONS "NIMBLE_BUILD_CONFIG=$<CONFIG>")
 
-# The cooked shaders the Renderer loads at startup, staged by the engine.
+# The cooked shaders the Renderer loads at startup, staged by the engine; and
+# NimbleCook beside the editor, which Build > Cook Content runs to cook them.
 if(TARGET NimbleStageShaders)
     add_dependencies(NimbleEditor NimbleStageShaders)
+endif()
+if(TARGET NimbleCook)
+    add_dependencies(NimbleEditor NimbleCook)
 endif()
 
 # Qt's DLLs beside the exe, so it runs without Qt on PATH. qoffscreen too:

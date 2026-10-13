@@ -58,8 +58,8 @@ Usage:
 The renderer loads the material "Materials/Glow.material.nmgraph" from
 Materials/Glow.material and
 Shaders/Cooked/<Platform>/Materials/Glow@<key>.<stage>[.spv|.cso]
-(Engine/cmake/NimbleMaterials.cmake cooks a game's graphs with -root at the
-game's folder).
+(NimbleCook, Engine/Tools/NimbleCook, runs this for the engine and a game --
+with -root at the game's folder -- and the build only stages what it cooked).
 """
 
 import argparse

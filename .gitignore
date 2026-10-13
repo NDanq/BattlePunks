@@ -21,6 +21,13 @@
 # (Saved/Cooked/, from the editor's Build > Cook Content) and a log per editor,
 # game, cook and build run (Saved/Logs/).
 /Games/*/Saved/
+# And the engine's: its shaders, cooked by NimbleCook (Saved/Cooked/Shaders/).
+/Engine/Saved/
+
+# The vendored libraries, built once per toolchain and shared by every build
+# tree (Engine/cmake/NimbleThirdParty.cmake).
+/Engine/Intermediate/
+
 /Engine/Binaries/*
 !/Engine/Binaries/NewProject.cmake
 !/Engine/Binaries/NewProject.sh

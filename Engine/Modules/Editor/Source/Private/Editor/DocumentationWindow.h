@@ -47,7 +47,7 @@ public:
     static void CloseIfOpen();
 
     /* The .md files under InRoot, absolute and sorted, skipping hidden folders,
-     * External/, Binaries/, Build/, Saved/, Intermediate/ and build trees.
+     * External/, ThirdParty/, Binaries/, Build/, Saved/, Intermediate/ and build trees.
      * Exposed for tests. */
     static QStringList FindMarkdownFiles(const QString& InRoot);
 

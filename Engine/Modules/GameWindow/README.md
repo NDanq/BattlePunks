@@ -41,8 +41,6 @@ inside GDI's Vulkan and OpenGL backends, which is precisely what
 Engine/Modules/GameWindow/
 |-- CMakeLists.txt
 |-- README.md                       (this file)
-|-- External/
-|   `-- SDL-release-3.4.16/         vendored SDL3 source; see "SDL" below
 |-- Source/
 |   |-- Public/GameWindow/
 |   |   |-- GameWindowAPI.h         GAMEWINDOW_API three-state export macro
@@ -450,26 +448,41 @@ override an explicit `WindowDesc` -- a host that asked for 800x600 meant it.
 
 ## SDL
 
-SDL3 3.4.16 is vendored in source form at:
+SDL3 3.4.16 is vendored in source form, with the engine's other third-party
+libraries, at:
 
 ```
-Engine/Modules/GameWindow/External/SDL-release-3.4.16/
+Engine/ThirdParty/Source/SDL-release-3.4.16/
 ```
 
-This mirrors how `Modules/GDI` carries `External/wglext`: the dependency lives
-with the one module that needs it, so nothing engine-wide has to know SDL
-exists. There is no `find_package(SDL3)` and no `FetchContent`, and no fallback
-to a system SDL -- the module builds SDL **from this source tree**, so a fresh
-clone configures with no per-machine setup and every platform gets the same
-SDL. That is the portability property, and it is why the tree is committed
-rather than downloaded.
+There is no `find_package(SDL3)`, no `FetchContent` and no fallback to a system
+SDL: the engine builds SDL **from this source tree**, so a fresh clone
+configures with no per-machine setup and every platform gets the same SDL. That
+is the portability property, and it is why the tree is committed rather than
+downloaded.
+
+**Who builds it.** `Engine/ThirdParty/CMakeLists.txt`, which adds SDL's own
+CMakeLists with its options forced into the cache first (never by editing SDL's
+files): no test library, tests, examples or install rules, and `SDL_RENDER` off
+-- GDI is the renderer, and nothing calls `SDL_Render*`. By default that project
+is built once per toolchain into `Engine/Intermediate/ThirdParty/<toolchain>/`
+and every build tree links the result through an IMPORTED `SDL3::SDL3`
+(`Engine/cmake/NimbleThirdParty.cmake`); `-DNIMBLE_PREBUILT_THIRDPARTY=OFF`
+builds it inside the tree instead, for stepping through SDL.
+
+**SDL3.dll placement.** The runtime directory (`Binaries/<Platform>_<Config>/`)
+needs SDL beside `EngineCore.dll`. Built in the tree, SDL inherits the root's
+runtime output directories and lands there itself. Prebuilt, it lives in
+`Engine/Intermediate`, so `nimble_stage_thirdparty_runtime(GameWindow)` copies
+it in after GameWindow links (on Linux, as its soname, `libSDL3.so.0`).
 
 **What is committed.** All of it except the examples and the test suite -- 475
 files and ~17 MB that this engine never builds. Both are gated in SDL's own
-CMakeLists and both gates are forced OFF in ours: `add_subdirectory(examples)`
-runs only under `if(SDL_EXAMPLES)`, `add_subdirectory(test)` only under
+CMakeLists and both gates are forced OFF: `add_subdirectory(examples)` runs
+only under `if(SDL_EXAMPLES)`, `add_subdirectory(test)` only under
 `if(SDL_TESTS)`. The excluded paths are `examples/`, `test/`, and the
-`VisualC/` directories holding the `.vcxproj` files that build them.
+`VisualC/` directories holding the `.vcxproj` files that build them
+(`Engine/ThirdParty/.gitignore`).
 
 Two things that are **not** excluded despite the names, because they are not
 what they look like:
@@ -490,38 +503,12 @@ against phantom changes. (The build itself does not need those 14 -- the
 shaders it compiles are the checked-in `.dxil.h` / `.spv.h` / `.msl.h` outputs
 -- but `build-shaders.sh` does.)
 
-**Bumping SDL** is two edits: drop the new tree in beside the old one and
-change `GAMEWINDOW_SDL_DIR` in `CMakeLists.txt`, plus the matching path in this
-module's `.gitignore`. The version is spelled out rather than globbed so that
-which SDL a given commit builds against is answerable from the source, not from
-whatever happens to be on disk.
-
-Three facts about that tree that the module's CMakeLists has to respect:
-
-* **SDL is a C project** -- `project(SDL3 LANGUAGES C VERSION "3.4.16")`. The
-  engine's root project declares `LANGUAGES CXX` only. This is fine:
-  `add_subdirectory` runs SDL's own `project()` call, which enables C in that
-  scope. It is worth knowing before the first "no C compiler" surprise on a
-  minimal toolchain install.
-* **`SDL3::SDL3` is an alias**, resolved at the bottom of SDL's CMakeLists to
-  `SDL3-shared` when `SDL_SHARED` is on and to `SDL3-static` otherwise. Link
-  `SDL3::SDL3` and let the option decide.
-* **`SDL_TEST_LIBRARY` defaults to ON**, building an `SDL3_test` static library
-  this engine never links. Turn it off.
-
-Because the vendored tree is third-party source that should stay unedited (the
-same discipline the root `CMakeLists.txt` applies to the Core and GDI
-subtrees), every SDL option is set as a `CACHE ... FORCE` *before*
-`add_subdirectory`, never by touching SDL's files.
-
-**SDL3.dll placement is already handled.** `Engine/CMakeLists.txt` sets the
-runtime output directories at root scope -- the per-config variables under a
-multi-config generator, the plain ones otherwise -- and those are inherited by
-every target created at or below that scope, which includes SDL, added from
-GameWindow, added from the root. A shared SDL3 therefore lands in
-`Binaries/<Platform>_<Config>/` (`Binaries/Windows_Debug`, and so on) beside
-`EngineCore.dll` with no copy step, satisfying the flat-layout requirement the
-root file explains at length.
+**Bumping SDL**: drop the new tree in beside the old one under
+`Engine/ThirdParty/Source/`, change `NIMBLE_THIRDPARTY_SDL_DIR` in
+`Engine/ThirdParty/cmake/NimbleThirdPartyUsage.cmake` and the paths in
+`Engine/ThirdParty/.gitignore`, and re-apply the local patches below. The
+version is spelled out rather than globbed so that which SDL a given commit
+builds against is answerable from the source, not from whatever is on disk.
 
 ### Local patches to SDL
 
@@ -533,7 +520,7 @@ re-applied (or confirmed fixed upstream) when SDL is bumped:
 |---|---|---|
 | `src/video/windows/SDL_windowsevents.c` | `WIN_UpdateFocus` | For an adopted **child** window (`SDL_WINDOW_EXTERNAL` + `WS_CHILD`), keyboard focus is the Win32 focus (`GetFocus() == hwnd`), not "is the foreground window". A child is never the foreground window, so without this a wrapped editor viewport never gets SDL keyboard focus: its key events carry window 0 and its text is dropped. `SetupWindowData` already applies the same `GetFocus()` test when the window is adopted; this makes later focus changes agree with it. A candidate to upstream. |
 
-`grep -rn "NimbleEngine local patch" External/` lists them.
+`grep -rn "NimbleEngine local patch" Engine/ThirdParty/Source/SDL-release-3.4.16` lists them.
 
 ---
 
@@ -551,26 +538,10 @@ project(GameWindow VERSION 0.1 LANGUAGES CXX)
 
 option(GAMEWINDOW_BUILD_SMOKETEST "Build GameWindowSmokeTest"            OFF)
 
-# === Vendored SDL3 =========================================================
-# Options are forced into the cache BEFORE add_subdirectory so that SDL's tree
-# is never edited -- the same discipline the root CMakeLists applies to the
-# Core and GDI subtrees, and the same FORCE reasoning it gives for CORE_SHARED:
-# a stale cache from an earlier configure would otherwise silently produce a
-# build nobody asked for.
-set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)   # defaults ON; we never link SDL3_test
-set(SDL_TESTS        OFF CACHE BOOL "" FORCE)
-set(SDL_EXAMPLES     OFF CACHE BOOL "" FORCE)
-set(SDL_INSTALL      OFF CACHE BOOL "" FORCE)
-
-set(GAMEWINDOW_SDL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/SDL-release-3.4.16")
-if(NOT EXISTS "${GAMEWINDOW_SDL_DIR}/CMakeLists.txt")
-    message(FATAL_ERROR
-            "Vendored SDL3 not found at ${GAMEWINDOW_SDL_DIR}. GameWindow does not "
-            "fall back to a system SDL -- see the SDL section of its README.")
-endif()
-if(NOT TARGET SDL3::SDL3)
-    add_subdirectory("${GAMEWINDOW_SDL_DIR}" SDLBuild)
-endif()
+# === SDL3 ==================================================================
+# Vendored at Engine/ThirdParty/Source and built by Engine/ThirdParty --
+# prebuilt once per toolchain, or in this tree (NIMBLE_PREBUILT_THIRDPARTY).
+# SDL3::SDL3 is the shared library either way.
 
 # === Sources ===============================================================
 set(GAMEWINDOW_SOURCES
@@ -610,6 +581,9 @@ nimble_add_module(GameWindow SHARED
         PREFIX       GAMEWINDOW
         SOURCES      ${GAMEWINDOW_SOURCES}
         PRIVATE_DEPS SDL3::SDL3)
+
+# A prebuilt SDL3 is copied in beside GameWindow.dll after it links.
+nimble_stage_thirdparty_runtime(GameWindow)
 
 if(GAMEWINDOW_BUILD_SMOKETEST)
     add_executable(GameWindowSmokeTest Tests/SmokeMain.cpp)

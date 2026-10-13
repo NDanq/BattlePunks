@@ -2,7 +2,7 @@
 #define UI_UISTB_H
 
 /*
- * stb_truetype and stb_rect_pack (External/stb), compiled into the one file
+ * stb_truetype and stb_rect_pack (ThirdParty/Source/stb), compiled into the one file
  * that bakes fonts (UIFont.cpp) with internal linkage, so they can never
  * clash with another stb copy in the process. Include nowhere else.
  */

@@ -1319,7 +1319,7 @@ static void TestMaterialRuntime()
     Expect(!ReadShaderCache(Truncated, Contents, Error), "a truncated cache is refused");
     Expect(!ReadShaderCache({ 'n', 'o', 'p', 'e' }, Contents, Error), "a file that is not a cache is refused");
 
-    /* One the build cooked, when this runs from the runtime directory. */
+    /* One NimbleCook cooked and the build staged, when this runs from the runtime directory. */
     std::vector<uint8_t> Cooked;
     if(appFileReadAll(GetShaderCachePath("Engine", ERenderBackend::Vulkan), Cooked))
     {

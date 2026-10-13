@@ -5,17 +5,21 @@
 #include <algorithm>
 #include <string>
 
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QProcess>
 #include <QRegularExpression>
 
+#include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/WorldPackage.h"
+#include "Public/NimbleEngine/ShaderCook.h"
 #include "Public/NimbleEngine/WorldList.h"
 #include "Public/Sequencer/SequenceFile.h"
 
@@ -126,12 +130,18 @@ namespace EditorCook
         switch(InType)
         {
         case AT_Graphs:  return "Node graphs";
+        case AT_Shaders: return "Shaders";
         case AT_Worlds:  return "Worlds";
         case AT_Prefabs: return "Prefabs";
         case AT_UI:      return "UI documents";
         case AT_Sequences: return "Sequences";
         default:         return "?";
         }
+    }
+
+    bool IsSized(const EAssetType InType)
+    {
+        return InType != AT_Graphs && InType != AT_Shaders;
     }
 
     int CookStats::GetFailedCount() const
@@ -174,6 +184,37 @@ namespace EditorCook
                              + QStringLiteral(".log"));
     }
 
+    QString GetCookerPath()
+    {
+        return QString::fromStdString(NimbleEngine::ShaderCook::FindCooker(QCoreApplication::applicationDirPath().toStdString()));
+    }
+
+    QString GetEngineDir()
+    {
+        const QString Content = EditorContent::GetEngineContentRoot();
+        return Content.isEmpty() ? QString() : QFileInfo(Content).absolutePath();   // Engine/Content -> Engine
+    }
+
+    QStringList GetCookerArgs(const QString& InProjectRoot, const bool bShipping)
+    {
+        QStringList Args{ QStringLiteral("shaders"), QStringLiteral("-project"), InProjectRoot, QStringLiteral("-editor") };
+        const QString Engine = GetEngineDir();
+        if(!Engine.isEmpty())
+        {
+            Args << QStringLiteral("-engine") << Engine;
+        }
+        const EngineCore::ConfigVar* ModuleVar = EngineCore::ConfigFindVar("Game", "Module");
+        if(ModuleVar && ModuleVar->GetString()[0] != '\0')
+        {
+            Args << QStringLiteral("-module") << QString::fromUtf8(ModuleVar->GetString());
+        }
+        if(bShipping)
+        {
+            Args << QStringLiteral("-shipping");
+        }
+        return Args;
+    }
+
     QString GetCookedPath(const QString& InProjectRoot, const QString& InRuntimePath)
     {
         return QDir(GetCookedRoot(InProjectRoot)).filePath(InRuntimePath);
@@ -196,7 +237,7 @@ namespace EditorCook
         return QStringLiteral("%1 log, started %2").arg(InKind, QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
     }
 
-    CookStats CookProject(const QString& InProjectRoot, const std::function<void(const QString&)>& InProgress)
+    CookStats CookProject(const QString& InProjectRoot, const std::function<void(const QString&)>& InProgress, const bool bShipping)
     {
         CookStats Stats;
         const QString Root = InProjectRoot.isEmpty() ? EditorGraphs::GetProjectRoot() : InProjectRoot;
@@ -210,7 +251,7 @@ namespace EditorCook
         Total.start();
         QElapsedTimer Step;
 
-        // --- Node graphs: their saved code is what the build cooks -------------
+        // --- Node graphs: their saved code is what the shader cook reads -------
         Step.start();
         Progress(QStringLiteral("Regenerating node graphs"));
         {
@@ -228,6 +269,62 @@ namespace EditorCook
             }
         }
         Stats.Types[AT_Graphs].Seconds = double(Step.elapsed()) / 1000.0;
+
+        // --- Shaders: NimbleCook, the engine's and the project's ----------------
+        Step.start();
+        {
+            const QString Cook = GetCookerPath();
+            Progress(QStringLiteral("Cooking shaders (NimbleCook)"));
+            if(Cook.isEmpty())
+            {
+                ++Stats.Types[AT_Shaders].Failed;
+                Stats.Failures << QStringLiteral("no NimbleCook beside the editor: build the NimbleCook target");
+            }
+            else
+            {
+                QProcess Process;
+                Process.setProcessChannelMode(QProcess::MergedChannels);
+                Process.start(Cook, GetCookerArgs(Root, bShipping));
+                const bool bRan = Process.waitForFinished(-1) && Process.exitStatus() == QProcess::NormalExit;
+
+                /* "NimbleCook: 2 cooked, 1 up to date, 0 failed", and a
+                 * "NimbleCook: FAILED <what>" line per failure. */
+                static const QRegularExpression Summary(QStringLiteral("^NimbleCook: (\\d+) cooked, (\\d+) up to date, (\\d+) failed"));
+                const QString Output = QString::fromLocal8Bit(Process.readAll());
+                bool bSummarized = false;
+                for(const QString& Line : Output.split(QRegularExpression(QStringLiteral("[\r\n]+")), Qt::SkipEmptyParts))
+                {
+                    CORE_LOG("[Cook] " + ToStd(Line))
+                    const QRegularExpressionMatch Match = Summary.match(Line);
+                    if(Match.hasMatch())
+                    {
+                        Stats.Types[AT_Shaders].Cooked = Match.captured(1).toInt() + Match.captured(2).toInt();
+                        Stats.Types[AT_Shaders].Failed = Match.captured(3).toInt();
+                        bSummarized = true;
+                    }
+                    else if(Line.startsWith(QStringLiteral("NimbleCook: FAILED ")))
+                    {
+                        Stats.Failures << QStringLiteral("Shaders: %1 did not cook; the Console's [Cook] lines say why")
+                                              .arg(Line.mid(int(sizeof("NimbleCook: FAILED ")) - 1));
+                    }
+                }
+                if(!bRan || !bSummarized || (Process.exitCode() != 0 && Stats.Types[AT_Shaders].Failed == 0))
+                {
+                    ++Stats.Types[AT_Shaders].Failed;
+                    Stats.Failures << QStringLiteral("NimbleCook did not finish (%1); the Console's [Cook] lines say why")
+                                          .arg(bRan ? QStringLiteral("exit code %1").arg(Process.exitCode()) : Process.errorString());
+                }
+
+                /* Beside the editor too, so it draws with them without a build. */
+                const int Copied = NimbleEngine::ShaderCook::RestageCookedShaders(
+                    QCoreApplication::applicationDirPath().toStdString(), GetEngineDir().toStdString(), Root.toStdString(), true);
+                if(Copied > 0)
+                {
+                    CORE_LOG("[Cook] " + std::to_string(Copied) + " cooked shader file(s) copied beside the editor")
+                }
+            }
+        }
+        Stats.Types[AT_Shaders].Seconds = double(Step.elapsed()) / 1000.0;
 
         // --- Worlds: the list's, Cook=true -----------------------------------
         Step.start();
@@ -421,7 +518,7 @@ namespace EditorCook
         for(int Type = 0; Type < AT_Count; ++Type)
         {
             const TypeStats& T = InStats.Types[Type];
-            const bool bSized = Type != AT_Graphs;
+            const bool bSized = IsSized(EAssetType(Type));
             Lines << QStringLiteral("%1 %2 %3 %4 %5 %6")
                      .arg(QString::fromLatin1(GetTypeName(EAssetType(Type))), -14).arg(T.Cooked, 7).arg(T.Failed, 7)
                      .arg(bSized ? FormatBytes(T.BytesIn) : QStringLiteral("-"), 10)

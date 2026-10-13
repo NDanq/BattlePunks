@@ -418,7 +418,7 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     EditorSequencer::SetEditorContext(&Context);
     EditorSequencer::SetLevelViewport(Viewport);
 
-    /* Editor Settings > Shaders > ShaderPDB: the build cooks without debug
+    /* Editor Settings > Shaders > ShaderPDB: NimbleCook cooks without debug
      * information, so it is written here, in the background. */
     EditorGraphs::CookShaderPDBs(Backend);
 

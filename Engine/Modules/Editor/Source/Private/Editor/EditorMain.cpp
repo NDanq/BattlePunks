@@ -24,6 +24,7 @@
 #include "Public/Editor/EditorNotifications.h"
 #include "Public/Editor/EditorMainWindow.h"
 #include "Private/Editor/Build/ContentCook.h"
+#include "Private/Editor/Build/StartupCook.h"
 #include "Private/Editor/Content/AssetImport.h"
 #include "Private/Editor/ComponentDocs.h"
 #include "Private/Editor/Content/ContentPaths.h"
@@ -158,6 +159,10 @@ int main(int argc, char* argv[])
             CORE_LOG_WARN("[Editor] ignoring --rhi " + Parser.value(RhiOption).toStdString())
         }
     }
+
+    /* The shaders cooked -- whatever changed since last time -- behind a
+     * splash, before the window and its renderer exist (StartupCook.h). */
+    EditorStartupCook::Run(RenderCore::ERenderBackend(Rhi));
 
     /* The job pool (CoreJob.h): physical cores less one, alive before the
      * window loads any module (the game's, at edit or Play) and until the last

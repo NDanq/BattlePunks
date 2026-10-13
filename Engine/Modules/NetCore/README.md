@@ -15,7 +15,7 @@ networks configures without it and nothing networked is compiled or linked.
 
 ```
 Host exe --> NimbleEngine --(PRIVATE)--> NetCore --> GameCore --> EngineCore
-                                            \------(PRIVATE)--> ENet (External/enet-1.3.18) --> ws2_32
+                                            \------(PRIVATE)--> ENet (ThirdParty/Source/enet-1.3.18) --> ws2_32
 ```
 
 Game code never includes a NetCore header. It networks through:
