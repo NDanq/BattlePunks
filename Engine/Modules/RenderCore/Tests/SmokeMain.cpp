@@ -22,7 +22,9 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <vector>
 
 #include "Public/Core/CoreArchive.h"
 #include "Public/Core/CoreConfig.h"
@@ -42,6 +44,7 @@
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/World.h"
+#include "Public/RenderCore/CustomRenderPass.h"
 #include "Public/RenderCore/MaterialDescription.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/ParallelRecording.h"
@@ -97,8 +100,9 @@ static void TestScriptBindings()
     size_t RenderCount = 0;
     const GameCore::ScriptBindingEntry* Render =
         GameCore::FindComponentScript(RenderComponent::StaticType().ID, RenderCount);
-    Expect(Render != nullptr && RenderCount == 12,
-           "Render exposes Visible, Mesh, slots by index, material parameters, CastShadows, CastInsetShadow and Occluder");
+    Expect(Render != nullptr && RenderCount == 13,
+           "Render exposes Visible, Mesh, slots by index, material parameters, CastShadows, CastInsetShadow, Occluder "
+           "and CustomPassGroups");
     const auto HasBinding = [&](const char* InName)
     {
         for(size_t Index = 0; Render && Index < RenderCount; ++Index)
@@ -114,6 +118,7 @@ static void TestScriptBindings()
            && HasBinding("ClearMaterialParameter"), "material parameters can be set, read and cleared");
     Expect(HasBinding("CastShadows"), "and whether it casts shadows");
     Expect(HasBinding("Occluder"), "and whether it occludes");
+    Expect(HasBinding("CustomPassGroups"), "and its custom render pass mesh groups");
 
     bool bProxyExposed = false;
     for(size_t Index = 0; Index < RenderCount; ++Index)
@@ -759,6 +764,134 @@ static void TestRendererWithWorld()
 
     UnregisterProxyType(TestComponent::StaticType().ID);
     Expect(FindProxyFactory(TestComponent::StaticType().ID) == nullptr, "UnregisterProxyType clears the test type's table slot");
+
+    Rend.UnbindWorld();
+    Rend.Shutdown();
+}
+
+// ============================================================================
+// Custom render passes (CustomRenderPass.h): each hook once a frame, in order,
+// for its own World only, and none once unregistered
+// ============================================================================
+
+namespace
+{
+    struct CustomPassLog
+    {
+        std::mutex               Lock;
+        std::vector<std::string> Runs;      // "<pass>@<hook>", render thread
+        std::atomic<int>         Extracts{0};
+        std::atomic<int>         Targets{0};
+
+        std::vector<std::string> Take()
+        {
+            std::lock_guard<std::mutex> Guard(Lock);
+            std::vector<std::string> Out;
+            Out.swap(Runs);
+            return Out;
+        }
+    };
+
+    class LoggingPass final : public CustomRenderPass
+    {
+    public:
+        LoggingPass(CustomPassLog& InLog, std::string InName) : Log(InLog), Name(std::move(InName)) {}
+
+        const char* GetName() const override { return Name.c_str(); }
+        void Extract() override { Log.Extracts.fetch_add(1); }
+        void Execute(RenderPassContext& InContext) override
+        {
+            {
+                std::lock_guard<std::mutex> Guard(Log.Lock);
+                Log.Runs.push_back(Name + "@" + GetRenderHookName(InContext.GetHook()));
+            }
+            /* The API with no GPU: a target is made and kept; a draw whose shader is not cooked fails, quietly after once. */
+            RenderPassTargetDesc Desc;
+            Desc.Width  = 16;
+            Desc.Height = 16;
+            const RenderPassTarget First  = InContext.AcquireTarget("Scratch", Desc);
+            const RenderPassTarget Second = InContext.AcquireTarget("Scratch", Desc);
+            if(First.IsValid() && First.Handle == Second.Handle) { Log.Targets.fetch_add(1); }
+            RenderPassParams Params;
+            InContext.DrawFullscreen("NoSuchPass.fsh", First, {}, Params);
+            Expect(InContext.GetMeshGroupDrawCount(RENDER_PASS_MESH_GROUPS) == 0, "a mesh group past the last has no draws");
+        }
+
+    private:
+        CustomPassLog& Log;
+        std::string    Name;
+    };
+}
+
+static void TestCustomRenderPasses()
+{
+    std::printf("[custom render passes]\n");
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(ERenderBackend::Null, WindowHandle());
+    Expect(bInit, "Renderer::Initialize(Null, {}) succeeds");
+    if(!bInit)
+    {
+        return;
+    }
+    GameCore::World World;
+    GameCore::World Other;
+    Rend.BindWorld(World);
+
+    CustomPassLog Log;
+    const auto Make = [&Log](const char* InName) { return std::make_shared<LoggingPass>(Log, InName); };
+
+    /* One a hook, registered back to front, and two more at AfterForward around the one there. */
+    std::vector<RenderPassHandle> Handles;
+    for(int Hook = int(ERenderHook::Count) - 1; Hook >= 0; --Hook)
+    {
+        Handles.push_back(RegisterCustomRenderPass(&World, Make(GetRenderHookName(ERenderHook(Hook))), ERenderHook(Hook)));
+    }
+    const RenderPassHandle Late  = RegisterCustomRenderPass(&World, Make("Late"), ERenderHook::AfterForward, 5);
+    const RenderPassHandle Early = RegisterCustomRenderPass(&World, Make("Early"), ERenderHook::AfterForward, -5);
+    RegisterCustomRenderPass(&Other, Make("OtherWorld"), ERenderHook::BeforeScene);
+    Expect(RegisterCustomRenderPass(&World, nullptr, ERenderHook::BeforeScene) == 0, "a null pass is not registered");
+    Expect(GetCustomRenderPassCount(&World) == size_t(ERenderHook::Count) + 2, "the World has its passes, not the other World's");
+
+    Rend.EndFrame(FrameInfo{1, 0.016, EngineCore::Size(320, 200)});
+    Rend.WaitForPreviousFrame();
+    FlushRenderCommands();
+
+    std::vector<std::string> Expected;
+    for(int Hook = 0; Hook < int(ERenderHook::Count); ++Hook)
+    {
+        const std::string Name = GetRenderHookName(ERenderHook(Hook));
+        if(ERenderHook(Hook) == ERenderHook::AfterForward) { Expected.push_back("Early@" + Name); }
+        Expected.push_back(Name + "@" + Name);
+        if(ERenderHook(Hook) == ERenderHook::AfterForward) { Expected.push_back("Late@" + Name); }
+    }
+    const std::vector<std::string> Ran = Log.Take();
+    Expect(Ran == Expected, "every hook's passes ran once, in frame order, by Order then registration");
+    if(Ran != Expected)
+    {
+        for(const std::string& Each : Ran) { std::printf("    ran: %s\n", Each.c_str()); }
+    }
+    Expect(Log.Extracts.load() == int(ERenderHook::Count) + 2, "Extract ran once a frame for each of the World's passes");
+    Expect(Log.Targets.load() == int(ERenderHook::Count) + 2, "AcquireTarget made each pass's target once and handed it back");
+
+    /* Unregistered: gone from the next frame on. */
+    Expect(UnregisterCustomRenderPass(Late), "UnregisterCustomRenderPass finds the pass");
+    Expect(!UnregisterCustomRenderPass(Late), "and not a second time");
+    Rend.EndFrame(FrameInfo{2, 0.016, EngineCore::Size(320, 200)});
+    Rend.WaitForPreviousFrame();
+    FlushRenderCommands();
+    const std::vector<std::string> After = Log.Take();
+    Expect(After.size() == Expected.size() - 1 && std::find(After.begin(), After.end(), "Late@AfterForward") == After.end(),
+           "an unregistered pass no longer runs; the rest still do");
+    (void)Early;
+
+    UnregisterCustomRenderPasses(&World);
+    UnregisterCustomRenderPasses(&Other);
+    Expect(GetCustomRenderPassCount(&World) == 0, "UnregisterCustomRenderPasses removes all of a World's");
+    Rend.EndFrame(FrameInfo{3, 0.016, EngineCore::Size(320, 200)});
+    Rend.WaitForPreviousFrame();
+    FlushRenderCommands();
+    Expect(Log.Take().empty(), "with none registered, nothing runs");
 
     Rend.UnbindWorld();
     Rend.Shutdown();
@@ -2599,7 +2732,7 @@ static void TestRenderComponentSerializer()
     };
 
     const GameCore::ComponentSerializerInfo* Info = GameCore::FindComponentSerializer(RenderComponent::StaticType().ID);
-    Expect(Info && Info->Version == 5, "RenderComponent saves as version 5 (material parameters, CastShadows, CastInsetShadow, Occluder)");
+    Expect(Info && Info->Version == 6, "RenderComponent saves as version 6 (material parameters, CastShadows, CastInsetShadow, Occluder, CustomPassGroups)");
     if(!Info) { return; }
 
     RenderComponent Saved;
@@ -6656,6 +6789,7 @@ int main()
     }
 
     TestRendererWithWorld();
+    TestCustomRenderPasses();
     TestStatUnit();
     TestStaticDrawLists();
     TestShadowSetup();

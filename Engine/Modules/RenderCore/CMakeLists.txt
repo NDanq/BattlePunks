@@ -51,6 +51,8 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/RenderCommand.cpp
         Source/Private/RenderCore/RenderContext.cpp
         Source/Private/RenderCore/DrawPolicy.h
+        Source/Private/RenderCore/CustomRenderPassInternal.h
+        Source/Private/RenderCore/CustomRenderPass.cpp
         Source/Private/RenderCore/RenderPipeline.cpp
         Source/Private/RenderCore/SceneTargets.h
         Source/Private/RenderCore/RenderProxy.cpp
@@ -153,6 +155,7 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/Renderer.h
         Source/Public/RenderCore/MaterialDescription.h
         Source/Public/RenderCore/RenderLighting.h
+        Source/Public/RenderCore/CustomRenderPass.h
         Source/Public/RenderCore/RenderPipeline.h
         Source/Public/RenderCore/ShaderCache.h
         Source/Public/RenderCore/UIDrawList.h
