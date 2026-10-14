@@ -85,6 +85,8 @@ namespace RenderCore
                 Density[0]   = 1.0f;
                 Density[1]   = std::clamp(C.LOD1Density, 0.0f, 1.0f);
                 Density[2]   = std::clamp(C.LOD2Density, 0.0f, 1.0f);
+                bFocus       = C.bLODFocus != 0;
+                Focus        = C.LODFocus;
                 for(uint32_t Entry = 0; Entry < PROCEDURAL_MESHES_MAX; ++Entry)
                 {
                     const ProceduralMeshEntry& In = C.Meshes[Entry];
@@ -144,14 +146,32 @@ namespace RenderCore
                 MarkChanged();
             }
 
+            /* The furthest any entry's material moves a vertex (World Position
+             * Offset: wind, a custom pass's trail), so a bent instance near a
+             * cell's edge is not culled with it. Entries without a material
+             * draw their mesh's own, which pad by nothing here. */
+            float GetBoundsPadding(RenderContext& InContext) override
+            {
+                float Padding = 0.0f;
+                for(const EntryNames& Each : Entries)
+                {
+                    if(!Each.Material.empty()) { Padding = std::max(Padding, InContext.GetMaterialMaxOffset(Each.Material.c_str())); }
+                }
+                return Padding;
+            }
+
             void Draw(RenderContext& InContext) override
             {
                 const RenderView& View = InContext.GetView();
                 const EngineCore::Matrix4x4 Clip = View.Projection * View.View * GetLocalToWorld();
-                ChooseLODs(View.Origin);
+                ChooseLODs(bFocus ? Focus : View.Origin);   // the rings round the focus, if the game set one
+                const float Pad = GetBoundsPadding(InContext);
                 for(const Cell& Each : Cells)
                 {
-                    if(Each.bCulled || !CellInFrustum(Clip, Each.Min, Each.Max)) { continue; }
+                    if(Each.bCulled) { continue; }
+                    const float Min[3] = { Each.Min[0] - Pad, Each.Min[1] - Pad, Each.Min[2] - Pad };
+                    const float Max[3] = { Each.Max[0] + Pad, Each.Max[1] + Pad, Each.Max[2] + Pad };
+                    if(!CellInFrustum(Clip, Min, Max)) { continue; }
                     DrawCell(InContext, Each, false);
                 }
             }
@@ -218,7 +238,7 @@ namespace RenderCore
                 }
             }
 
-            /* Each cell's LOD and culling for a view from InEye, by its box's distance in world units. */
+            /* Each cell's LOD and culling by its box's distance, in world units, from InEye: the camera, or the component's LODFocus. */
             void ChooseLODs(const EngineCore::Vector3& InEye)
             {
                 if(Cells.empty()) { return; }
@@ -265,6 +285,8 @@ namespace RenderCore
             std::shared_ptr<const ProceduralResult> Shown;
             std::vector<Cell>                       Cells;
             EntryNames                              Entries[PROCEDURAL_MESHES_MAX];
+            EngineCore::Vector3                     Focus;            // LODFocus, while bFocus
+            bool                                    bFocus = false;
             float                                   Density[PROCEDURAL_LODS] = { 1.0f, 0.5f, 0.25f };
             float                                   CellSize     = 4000.0f;
             float                                   LODDistance  = 0.0f;
