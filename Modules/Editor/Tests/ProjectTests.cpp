@@ -99,7 +99,7 @@ static void TestCreate(const QDir& InRoot)
     Expect(Game.contains(QStringLiteral("class AsteroidsGameMode : public NimbleEngine::IGameMode")), "the game mode is named for the game");
     Expect(Game.contains(QStringLiteral("class AsteroidsGameState : public NimbleEngine::GameState")), "and the game state");
     Expect(Game.contains(QStringLiteral("NIMBLE_IMPLEMENT_GAME_MODULE(AsteroidsGameModule, \"AsteroidsGame\")")), "the module is AsteroidsGame");
-    Expect(Game.contains(QStringLiteral("RegisterGameMode<AsteroidsGameMode>(\"Asteroids\")")), "it registers the mode by the game's name");
+    Expect(Game.contains(QStringLiteral("NIMBLE_REGISTER_GAME_MODE(AsteroidsGameMode, \"Asteroids\")")), "it registers the mode by the game's name");
 
     /* The world list, not C++, makes the start world a level. */
     const QString Ini = ReadText(Project.filePath(QStringLiteral("Config/DefaultEngine.ini")));
