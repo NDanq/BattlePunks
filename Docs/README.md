@@ -10,6 +10,7 @@ The editor's Help > Documentation shows only this folder.
 - [AICore implementation guide](Guides/AICoreImplementationGuide.md): navigation, crowds, behavior trees, utility, perception
 - [Crash dummy animation guide](Guides/CrashDummyAnimationGuide.md)
 - [Procedural content: splines and Procedural Spawners](Guides/ProceduralGuide.md)
+- [Custom render passes](Guides/CustomRenderPassGuide.md): your own GPU work at hooks in the frame, built on WorldsLab's GrassLab
 
 ## Component reference
 
