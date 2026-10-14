@@ -611,7 +611,7 @@ void ProjectSettingsDialog::AddWorldRow(const ConfigIniFile::Section& InSection)
         ModeChoice->addItem(QString::fromUtf8(NimbleEngine::GetGameModeName(Index)));
     }
     ModeChoice->setCurrentText(Mode.isEmpty() ? QString::fromLatin1(NoModeText) : Mode);
-    ModeChoice->setToolTip(QStringLiteral("The rules: a game mode the game module registers (RegisterGameMode). "
+    ModeChoice->setToolTip(QStringLiteral("The rules: a game mode the game module registers (NIMBLE_REGISTER_GAME_MODE). "
                                           "Listed: those the loaded module has"));
     Worlds->setCellWidget(Row, WC_Mode, ModeChoice);
 

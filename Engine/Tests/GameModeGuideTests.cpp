@@ -35,6 +35,7 @@
 #include "Public/NimbleEngine/NimbleEngine.h"
 #include "Public/NimbleEngine/PlayerStart.h"
 #include "Public/NimbleEngine/PlayerState.h"
+#include "Public/NimbleEngine/WorldList.h"
 #include "Public/NodeGraph/GraphCompiler.h"
 #include "Public/NodeGraph/GraphFile.h"
 #include "Public/NodeGraph/Schema.h"
@@ -76,15 +77,11 @@ public:
 class CoinRushMode : public NimbleEngine::IGameMode
 {
 public:
-    bool OnLoad(NimbleEngine::GameSession& InSession) override
-    {
-        Session = &InSession;     // the one handle a mode keeps; it outlives the mode
-        return true;
-    }
-
+    /* GetSession() is set by the engine from before OnLoad until after OnUnload:
+     * the mode keeps no handle of its own. */
     void OnStart() override
     {
-        Session->SetPhase("Playing");
+        GetSession().SetPhase("Playing");
     }
 
     /* Once per frame, while the game is not paused. The FrameContext carries
@@ -94,12 +91,7 @@ public:
         if(!State.IsPhase("Playing")) { return; }
 
         State.SecondsLeft -= InFrame.DeltaSeconds;
-        if(State.SecondsLeft <= 0.0) { Session->SetPhase("GameOver"); }
-    }
-
-    void OnUnload() override
-    {
-        Session = nullptr;
+        if(State.SecondsLeft <= 0.0) { GetSession().SetPhase("GameOver"); }
     }
 
     NimbleEngine::GameState* GetGameState() override { return &State; }
@@ -121,15 +113,14 @@ public:
 
     void OnScoreChanged(GameCore::EntityID /*InPlayer*/, int32_t InScore) override
     {
-        if(InScore >= State.CoinsToWin) { Session->SetPhase("Won"); }
+        if(InScore >= State.CoinsToWin) { GetSession().SetPhase("Won"); }
     }
 
     void OnLivesChanged(GameCore::EntityID /*InPlayer*/, int32_t InLives) override
     {
-        if(InLives <= 0) { Session->SetPhase("GameOver"); }
+        if(InLives <= 0) { GetSession().SetPhase("GameOver"); }
     }
 
-    NimbleEngine::GameSession* Session = nullptr;
     CoinRushState              State;
     std::vector<std::string>   Phases;   // for the test
 };
@@ -137,23 +128,17 @@ public:
 // ==== END GUIDE: C++ state and mode ============================================
 
 // ==== GUIDE: registration =======================================================
-//
+
+NIMBLE_REGISTER_GAME_MODE(CoinRushMode, "CoinRush")
+
 //   class CoinRushModule : public NimbleEngine::IGameModule
 //   {
 //   public:
 //       const char* GetName() const override          { return "CoinRushGame"; }
 //       const char* GetVersionString() const override { return "0.1"; }
 //
-//       bool OnStartup(const EngineCore::ModuleReloadState* /*InPrev*/) override
-//       {
-//           NimbleEngine::RegisterGameMode<CoinRushMode>("CoinRush");
-//           return true;
-//       }
-//
-//       void OnShutdown(EngineCore::ModuleReloadState& /*OutState*/) override
-//       {
-//           NimbleEngine::UnregisterGameMode("CoinRush");
-//       }
+//       bool OnStartup(const EngineCore::ModuleReloadState* /*InPrev*/) override { return true; }
+//       void OnShutdown(EngineCore::ModuleReloadState& /*OutState*/) override {}
 //   };
 //
 //   NIMBLE_IMPLEMENT_GAME_MODULE(CoinRushModule, "CoinRushGame")
@@ -179,7 +164,7 @@ class CoinRushNetMode : public NimbleEngine::NetGameMode
 public:
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
-        return NetGameMode::OnLoad(InSession);          // keeps Session, resets the join order
+        return NetGameMode::OnLoad(InSession);          // resets the join order
     }
 
     void OnStart() override
@@ -550,6 +535,7 @@ namespace
 int main()
 {
     std::printf("NimbleEngineGameModeGuideTests\n");
+    Expect(NimbleEngine::HasGameMode("CoinRush"), "Step 3: NIMBLE_REGISTER_GAME_MODE registered the mode by name");
     TestCpp();
     TestNet();
     TestLua();

@@ -71,12 +71,13 @@ Open `WorldsLabGame.cpp`. Four classes, top to bottom:
 - **`WorldsLabGameMode`** -- the rules for
   `Content/Levels/WorldsLab.nmworld`. The world is loaded before
   `OnLoad`, which places what the world does not hold and registers systems.
-  `OnTick` runs once per frame on the game thread; `Session->GetWorld()` is
-  the scene, `Session->RequestQuit()` ends the game. Cache entity IDs in
+  `OnTick` runs once per frame on the game thread; `GetWorld()` is the
+  scene, `GetSession().RequestQuit()` ends the game. Cache entity IDs in
   `OnLoad`, and find them again in `OnPostLoadSave` after a save is restored.
   It owns the state (`GetGameState`).
-- **`WorldsLabGameModule`** -- registers the mode by name
-  (`RegisterGameMode<...>("WorldsLab")`).
+- **`NIMBLE_REGISTER_GAME_MODE(WorldsLabGameMode, "WorldsLab")`** -- registers the
+  mode by name as the module loads. **`WorldsLabGameModule`** is the module
+  itself, with nothing to list.
 
 Worlds are not declared in C++. Each is a `[World_<Name>]` section of
 `Config/DefaultEngine.ini` -- edited in the editor's **Edit > Project
