@@ -108,6 +108,25 @@ class Mesh:
             if dot(face, face) > 1e-12:   # a pole's sliver triangle has no area
                 assert dot(face, normal) > 0.0, f"{self.name}: triangle {at // 3} is wound backwards"
 
+    def check_closed(self):
+        """A closed surface: with its repeated vertices (seam, poles, a capsule's
+        equators) welded by position, every edge of a triangle with area is
+        shared by exactly two -- a hole (a missing pole fan) leaves edges used once."""
+        weld = {}
+        def key(index):
+            p = self.positions[index]
+            return weld.setdefault((round(p[0], 6), round(p[1], 6), round(p[2], 6)), len(weld))
+        edges = {}
+        for at in range(0, len(self.indices), 3):
+            a, b, c = (key(i) for i in self.indices[at:at + 3])
+            if a == b or b == c or a == c:
+                continue   # a sliver: no area
+            for e in ((a, b), (b, c), (c, a)):
+                edge = (min(e), max(e))
+                edges[edge] = edges.get(edge, 0) + 1
+        open_edges = sum(1 for count in edges.values() if count != 2)
+        assert open_edges == 0, f"{self.name}: not closed -- {open_edges} edges not shared by two triangles"
+
     def check_uv1(self, size=64):
         """UV1 is in 0-1 and no texel centre lies inside two triangles."""
         assert all(0.0 <= c <= 1.0 for t in self.uv1s for c in t), f"{self.name}: UV1 outside 0-1"
@@ -237,10 +256,13 @@ def make_sphere(segments=32, rings=16, radius=0.5):
         for segment in range(segments):
             top_left = ring * stride + segment
             top_right, bottom_left, bottom_right = top_left + 1, top_left + stride, top_left + stride + 1
-            if ring != 0:
-                mesh.triangle(top_left, bottom_left, bottom_right)
+            # At a pole one of the quad's two triangles is a sliver with no area
+            # (its two pole corners are the same point): keep the other one.
             if ring != rings - 1:
+                mesh.triangle(top_left, bottom_left, bottom_right)
+            if ring != 0:
                 mesh.triangle(top_left, bottom_right, top_right)
+    mesh.check_closed()
     return mesh
 
 
@@ -324,10 +346,11 @@ def make_capsule(segments=32, rings=16, radius=0.5, height=2.0):
         for segment in range(segments):
             top_left = row * stride + segment
             top_right, bottom_left, bottom_right = top_left + 1, top_left + stride, top_left + stride + 1
-            if row != 0:
+            if row != len(rows) - 2:   # the bottom pole's sliver, as the sphere's
                 mesh.triangle(top_left, bottom_left, bottom_right)
-            if row != len(rows) - 2:
+            if row != 0:               # and the top pole's
                 mesh.triangle(top_left, bottom_right, top_right)
+    mesh.check_closed()
     return mesh
 
 
