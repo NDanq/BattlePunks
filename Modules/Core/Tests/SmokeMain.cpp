@@ -2857,10 +2857,10 @@ static void TestPack()
     };
     appCreateDirectories("SmokeScratch/Paks");
     std::string Error;
-    Expect(WritePackFile("SmokeScratch/Paks/Named.nmpak", "Named", Inputs, true, false, &Error), "a pack with names is written");
-    Expect(WritePackFile("SmokeScratch/Paks/Bare.nmpak", "Bare", Inputs, false, true, &Error), "a pack without names is written");
+    Expect(WritePackFile("SmokeScratch/Paks/Named.nmpak", "Named", Inputs, true, false, 0, &Error), "a pack with names is written");
+    Expect(WritePackFile("SmokeScratch/Paks/Bare.nmpak", "Bare", Inputs, false, true, 0, &Error), "a pack without names is written");
     std::vector<PackInput> Twice = { { "Content/A.bin", Shared }, { "content/a.bin", Shared } };
-    Expect(!WritePackFile("SmokeScratch/Paks/Twice.nmpak", "Twice", Twice, false, false, &Error), "a path twice is refused");
+    Expect(!WritePackFile("SmokeScratch/Paks/Twice.nmpak", "Twice", Twice, false, false, 0, &Error), "a path twice is refused");
 
     std::vector<uint8_t> NamedBytes, BareBytes;
     appFileReadAll("SmokeScratch/Paks/Named.nmpak", NamedBytes);
@@ -2899,12 +2899,112 @@ static void TestPack()
     Expect(Layered.ReadAll("Config/DefaultEngine.ini", Out) && Out.size() == 3, "a mounted pack answers the provider");
 }
 
+/* Compressed packs: chunked zstd, plain and scrambled; what does not shrink
+ * is stored; range reads decode only their chunks; version 1 still reads. */
+static void TestPackCompressed()
+{
+    std::printf("[pack, compressed]\n");
+
+    /* ~1.2 MB of text-like bytes (several chunks, compresses well), 100 KB
+     * of noise (does not), and the edge sizes. */
+    std::vector<uint8_t> Text;
+    const std::string Line = "Texture 3 Default Default Content/Textures/Brick_Albedo.nmtexture\n";
+    for(int Index = 0; Text.size() < 1200 * 1024 + 123; ++Index)
+    {
+        const std::string Each = Line + std::to_string(Index) + "\n";
+        Text.insert(Text.end(), Each.begin(), Each.end());
+    }
+    std::vector<uint8_t> Noise(100 * 1024);
+    uint64_t State = 0x9E3779B97F4A7C15ull;
+    for(uint8_t& Byte : Noise)
+    {
+        State ^= State << 13; State ^= State >> 7; State ^= State << 17;
+        Byte = uint8_t(State);
+    }
+    const std::vector<PackInput> Inputs = {
+        { "Content/Text.bin", Text }, { "Content/Noise.bin", Noise }, { "Content/Tiny.bin", { 'h', 'i' } }, { "Content/Empty.bin", {} },
+    };
+    const uint64_t RawSize = Text.size() + Noise.size() + 2;
+
+    appCreateDirectories("SmokeScratch/PaksZ");
+    for(const bool bScramble : { false, true })
+    {
+        const std::string File = std::string("SmokeScratch/PaksZ/") + (bScramble ? "Scrambled" : "Plain") + ".nmpak";
+        const std::string What = bScramble ? " (scrambled)" : " (plain)";
+        std::string Error;
+        Expect(WritePackFile(File, "Z", Inputs, true, bScramble, 3, &Error), ("a compressed pack is written" + What).c_str());
+
+        std::vector<uint8_t> Bytes;
+        appFileReadAll(File, Bytes);
+        Expect(Bytes.size() < Noise.size() + RawSize / 10, ("a compressed pack is smaller than its content" + What).c_str());
+        const std::string AsText(Bytes.begin(), Bytes.end());
+        Expect(AsText.find("Brick_Albedo") == std::string::npos, ("compressed content does not show" + What).c_str());
+
+        std::vector<uint8_t> Truncated(Bytes.begin(), Bytes.end() - 16);
+        Expect(!PackFileProvider::Load(Truncated, Error), ("a truncated compressed pack does not load" + What).c_str());
+
+        std::shared_ptr<PackFileProvider> Pack = PackFileProvider::Load(Bytes, Error);
+        Expect(Pack && Pack->IsCompressed() && Pack->IsScrambled() == bScramble && Pack->GetEntryCount() == 4,
+               ("a compressed pack loads" + What).c_str());
+        if(!Pack) { continue; }
+
+        std::vector<uint8_t> Out;
+        Expect(Pack->ReadAll("Content/Text.bin", Out) && Out == Text, ("a compressed entry reads back whole" + What).c_str());
+        Expect(Pack->ReadAll("Content/Noise.bin", Out) && Out == Noise, ("a stored entry reads back" + What).c_str());
+        Expect(Pack->ReadAll("Content/Tiny.bin", Out) && Out.size() == 2 && Out[0] == 'h'
+               && Pack->ReadAll("Content/Empty.bin", Out) && Out.empty(), ("tiny and empty entries read back" + What).c_str());
+
+        uint64_t Size = 0, Stored = 0;
+        Expect(Pack->GetEntrySizes(HashPackPath("Content/Text.bin"), Size, Stored) && Size == Text.size() && Stored * 10 < Size,
+               ("text is stored compressed" + What).c_str());
+        Expect(Pack->GetEntrySizes(HashPackPath("Content/Noise.bin"), Size, Stored) && Size == Noise.size() && Stored == Size,
+               ("noise is stored as it is" + What).c_str());
+
+        /* Ranges: across a chunk boundary, exactly one chunk, inside one, the tail, nothing. */
+        const uint64_t Chunk = 256 * 1024;
+        const std::pair<uint64_t, uint64_t> Ranges[] = {
+            { Chunk - 10, Chunk + 300 }, { Chunk, Chunk }, { 17, 1001 }, { Text.size() - 5, 5 }, { 1000, 0 },
+        };
+        bool bRanges = true;
+        for(const auto& Range : Ranges)
+        {
+            const std::vector<uint8_t> Want(Text.begin() + std::ptrdiff_t(Range.first), Text.begin() + std::ptrdiff_t(Range.first + Range.second));
+            bRanges = bRanges && Pack->ReadRange("Content/Text.bin", Range.first, Range.second, Out) && Out == Want;
+        }
+        Expect(bRanges, ("a compressed entry's ranges read back, across chunks too" + What).c_str());
+        Expect(!Pack->ReadRange("Content/Text.bin", Text.size() - 5, 6, Out) && Out.empty(),
+               ("a range past a compressed entry's end fails" + What).c_str());
+        Expect(Pack->ReadRange("Content/Noise.bin", 99, 5000, Out)
+               && Out == std::vector<uint8_t>(Noise.begin() + 99, Noise.begin() + 5099), ("a stored entry's range reads back" + What).c_str());
+    }
+
+    /* A version 1 pack, as the last build wrote it: one stored blob. */
+    std::vector<uint8_t> Old;
+    const auto Put = [&Old](const uint64_t InValue, const int InBytes)
+    {
+        for(int Byte = 0; Byte < InBytes; ++Byte) { Old.push_back(uint8_t(InValue >> (8 * Byte))); }
+    };
+    Put(0x4B41504Eu, 4); Put(1, 2); Put(0, 2);
+    Put(3, 4); Old.insert(Old.end(), { 'O', 'l', 'd' });
+    const uint64_t BlobAt = Old.size() + 4 + 16 + 4 + 12 + 4;
+    Put(1, 4); Put(BlobAt, 8); Put(3, 8);
+    Put(1, 4); Put(HashPackPath("Old.bin"), 8); Put(0, 4);
+    Put(0, 4);
+    Old.insert(Old.end(), { 'a', 'b', 'c' });
+    std::string Error;
+    std::shared_ptr<PackFileProvider> OldPack = PackFileProvider::Load(Old, Error);
+    std::vector<uint8_t> Out;
+    Expect(OldPack && !OldPack->IsCompressed() && OldPack->ReadAll("Old.bin", Out) && std::string(Out.begin(), Out.end()) == "abc",
+           "a version 1 pack still reads");
+}
+
 int main()
 {
     std::printf("EngineCore smoke test\n");
 
     TestLogging();
     TestPack();
+    TestPackCompressed();
     TestFileSeam();
     TestFileMetadataSeam();
     TestDLLSeam();

@@ -1,7 +1,7 @@
 /*
  * NimblePak: makes and lists content packs (Core's CorePack.h).
  *
- *   NimblePak pack <manifest> <out.nmpak> <name> [--names] [--strip] [--scramble]
+ *   NimblePak pack <manifest> <out.nmpak> <name> [--names] [--strip] [--scramble] [--zstd=<level>]
  *   NimblePak list <pack.nmpak>
  *
  * A manifest is one entry per line, tab separated -- what the build writes
@@ -11,8 +11,12 @@
  *   D <tab> <runtime prefix> <tab> <folder> every file under <folder>, as <prefix>/<its path>
  *
  * --names keeps each path in the pack (a debug-info build's); without it the
- * pack holds only their hashes. `list` prints each entry's hash, size, and
- * path where the pack carries it.
+ * pack holds only their hashes. `list` prints each entry's hash, size (and
+ * stored size, when compressed), and path where the pack carries it.
+ *
+ * --zstd=<level> compresses the content at that zstd level (1-22); without
+ * it, or at 0, it is stored as it is. The build asks for a fast level for a
+ * debug-info build and a small one for Shipping (NimblePack.cmake).
  *
  * --strip (a Shipping build's) packs what the game runs, not what a person
  * reads: a .lua file, and a script or UI graph's generated Lua, as stripped
@@ -25,6 +29,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -208,7 +213,7 @@ namespace
     }
 
     int Pack(const std::string& InManifest, const std::string& InOut, const std::string& InName, const bool bInNames,
-             const bool bInStrip, const bool bInScramble)
+             const bool bInStrip, const bool bInScramble, const int InZstdLevel)
     {
         std::vector<EngineCore::PackInput> Inputs;
         if(!ReadManifest(InManifest, Inputs)) { return 1; }
@@ -223,15 +228,18 @@ namespace
         std::error_code Error;
         fs::create_directories(fs::u8path(InOut).parent_path(), Error);
         std::string Why;
-        if(!EngineCore::WritePackFile(InOut, InName, Inputs, bInNames, bInScramble, &Why))
+        if(!EngineCore::WritePackFile(InOut, InName, Inputs, bInNames, bInScramble, InZstdLevel, &Why))
         {
             std::fprintf(stderr, "NimblePak: %s: %s\n", InOut.c_str(), Why.c_str());
             return 1;
         }
         size_t Bytes = 0;
         for(const EngineCore::PackInput& Input : Inputs) { Bytes += Input.Bytes.size(); }
-        std::printf("NimblePak: %s -- %zu file(s), %zu bytes of content%s%s%s\n", InOut.c_str(), Inputs.size(), Bytes,
-                    bInNames ? ", with names" : "", bInStrip ? ", stripped" : "", bInScramble ? ", scrambled" : "");
+        std::error_code SizeError;
+        const auto PackBytes = static_cast<unsigned long long>(fs::file_size(fs::u8path(InOut), SizeError));
+        std::printf("NimblePak: %s -- %zu file(s), %zu bytes of content in %llu%s%s%s%s\n", InOut.c_str(), Inputs.size(), Bytes,
+                    PackBytes, bInNames ? ", with names" : "", bInStrip ? ", stripped" : "", bInScramble ? ", scrambled" : "",
+                    InZstdLevel > 0 ? (", zstd " + std::to_string(InZstdLevel)).c_str() : "");
         return 0;
     }
 
@@ -250,7 +258,20 @@ namespace
                     Pack->HasNames() ? "" : " (no names: a Shipping pack)", Pack->IsScrambled() ? ", scrambled" : "");
         for(const auto& Entry : Pack->ListEntries())
         {
-            std::printf("  %016llx  %s\n", static_cast<unsigned long long>(Entry.first), Entry.second.c_str());
+            uint64_t Size = 0, Stored = 0;
+            Pack->GetEntrySizes(Entry.first, Size, Stored);
+            const std::string Sizes = Stored == Size ? std::to_string(Size) : std::to_string(Size) + " (" + std::to_string(Stored) + ")";
+            std::printf("  %016llx  %22s  %s\n", static_cast<unsigned long long>(Entry.first), Sizes.c_str(), Entry.second.c_str());
+        }
+        return 0;
+    }
+
+    /* --zstd=<level>'s level; 0 without it. */
+    int ZstdLevel(const std::vector<std::string>& InArgs)
+    {
+        for(const std::string& Arg : InArgs)
+        {
+            if(Arg.compare(0, 7, "--zstd=") == 0) { return std::max(0, std::atoi(Arg.c_str() + 7)); }
         }
         return 0;
     }
@@ -264,13 +285,13 @@ int main(int argc, char** argv)
         const bool bNames = std::find(Args.begin(), Args.end(), "--names") != Args.end();
         const bool bStrip    = std::find(Args.begin(), Args.end(), "--strip") != Args.end();
         const bool bScramble = std::find(Args.begin(), Args.end(), "--scramble") != Args.end();
-        return Pack(Args[1], Args[2], Args[3], bNames, bStrip, bScramble);
+        return Pack(Args[1], Args[2], Args[3], bNames, bStrip, bScramble, ZstdLevel(Args));
     }
     if(Args.size() == 2 && Args[0] == "list")
     {
         return List(Args[1]);
     }
-    std::fprintf(stderr, "usage: NimblePak pack <manifest> <out.nmpak> <name> [--names] [--strip] [--scramble]\n"
+    std::fprintf(stderr, "usage: NimblePak pack <manifest> <out.nmpak> <name> [--names] [--strip] [--scramble] [--zstd=<level>]\n"
                          "       NimblePak list <pack.nmpak>\n");
     return 2;
 }
