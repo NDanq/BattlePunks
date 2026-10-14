@@ -74,12 +74,9 @@ GAMECORE_DEFINE_NATIVE_PREFAB(Player, "WorldsLab.Player", &BuildPlayer)
 void WorldsLabRegisterExplore();
 void WorldsLabUnregisterExplore();
 
-/* WorldsLabRange.cpp: the Shooting Range's mode and its shooter's movement. */
-void WorldsLabRegisterRange();
-void WorldsLabUnregisterRange();
-/* WorldsLabPvP.cpp (Steampunk PvP) and WorldsLabArena.cpp (the Toon Arena,
- * AICore's demo) register themselves (NIMBLE_REGISTER_GAME_MODE); the rest
- * still register here. */
+/* WorldsLabRange.cpp (the Shooting Range), WorldsLabPvP.cpp (Steampunk PvP)
+ * and WorldsLabArena.cpp (the Toon Arena, AICore's demo) register themselves
+ * (NIMBLE_REGISTER_GAME_MODE); the rest still register here. */
 
 // === State ==================================================================
 
@@ -186,7 +183,6 @@ public:
     {
         NimbleEngine::RegisterGameMode<WorldsLabGameMode>("WorldsLab");
         WorldsLabRegisterExplore();
-        WorldsLabRegisterRange();
         return true;
     }
 
@@ -195,7 +191,6 @@ public:
         /* The registry holds this image's functions, and it is about to go. */
         NimbleEngine::UnregisterGameMode("WorldsLab");
         WorldsLabUnregisterExplore();
-        WorldsLabUnregisterRange();
     }
 };
 

@@ -603,7 +603,6 @@ namespace
         bool bStarted = false;
         bool bDone = false;
     };
-    AutoPlayer GAuto;
 
     constexpr const char* PauseMenuPath = "Content/UI/ShootingRange/PauseMenu.nmui";
     constexpr const char* SettingsPath  = "Content/UI/ShootingRange/Settings.nmui";
@@ -631,23 +630,18 @@ namespace
         }
     }
 
-    /* The shooter's input on the process that drives it. InSession: the GameSession. */
-    void AutoPlayFilter(GameCore::World& InWorld, GameCore::EntityID InAvatar, NimbleEngine::InputSnapshot& InOutInput, void* InSession)
+    /* RangeAutoPlay's frame of the shooter's input: the next of GAutoPlay's
+     * steps, from Auto (the mode's, WorldsLabRangeMode::FilterInput). */
+    void AutoPlay(GameCore::World& InWorld, GameCore::EntityID InAvatar, AutoPlayer& Auto, NimbleEngine::InputSnapshot& InOutInput)
     {
-        WorldsLabWalker::ApplyLookSensitivity(InOutInput);
-        if(!GRangeAutoPlay.GetBool())
-        {
-            if(InSession) { FreeMouseFilter(*static_cast<NimbleEngine::GameSession*>(InSession), InOutInput); }
-            return;
-        }
-        if(GAuto.bDone) { return; }
+        if(Auto.bDone) { return; }
         const auto Now = std::chrono::steady_clock::now();
-        const double Dt = GAuto.bStarted ? std::clamp(std::chrono::duration<double>(Now - GAuto.Last).count(), 0.0, 0.1) : 0.0;
-        GAuto.Last = Now;
-        GAuto.bStarted = true;
-        GAuto.StepTime += Dt;
+        const double Dt = Auto.bStarted ? std::clamp(std::chrono::duration<double>(Now - Auto.Last).count(), 0.0, 0.1) : 0.0;
+        Auto.Last = Now;
+        Auto.bStarted = true;
+        Auto.StepTime += Dt;
         InOutInput = NimbleEngine::InputSnapshot();
-        InOutInput.Down = GAuto.Held;
+        InOutInput.Down = Auto.Held;
 
         const auto Bit = [](const char* InAction) { const int I = NimbleEngine::FindInputAction("Range", InAction); return I >= 0 ? 1u << I : 0u; };
         static const int LookX = NimbleEngine::FindInputAxis("Range", "LookX");
@@ -657,13 +651,13 @@ namespace
         const RangeMoverComponent* MoverC = InWorld.GetEntity(InAvatar).GetComponent<RangeMoverComponent>();
         const MoverState Mover = MoverC ? LoadMover(*MoverC) : MoverState();
         const GameCore::TransformComponent* Body = InWorld.GetEntity(InAvatar).GetComponent<GameCore::TransformComponent>();
-        if(GAuto.Step >= sizeof(GAutoPlay) / sizeof(GAutoPlay[0]) || !Body)
+        if(Auto.Step >= sizeof(GAutoPlay) / sizeof(GAutoPlay[0]) || !Body)
         {
-            GAuto.bDone = true;
+            Auto.bDone = true;
             CORE_LOG("[ShootingRange] autoplay done")
             return;
         }
-        const AutoStep& Step = GAutoPlay[GAuto.Step];
+        const AutoStep& Step = GAutoPlay[Auto.Step];
         bool bNext = false;
         /* Turns the view toward (yaw, pitch) at 150 degrees/s; true once there. */
         const auto Turn = [&](const double InYaw, const double InPitch)
@@ -676,18 +670,18 @@ namespace
         };
         switch(Step.Kind)
         {
-            case AutoStep::Wait:    bNext = GAuto.StepTime >= Step.A; break;
+            case AutoStep::Wait:    bNext = Auto.StepTime >= Step.A; break;
             case AutoStep::Press:   InOutInput.Pressed |= Bit(Step.Action); InOutInput.Down |= Bit(Step.Action); bNext = true; break;
-            case AutoStep::Hold:    GAuto.Held |= Bit(Step.Action); InOutInput.Down |= Bit(Step.Action); bNext = true; break;
-            case AutoStep::Release: GAuto.Held &= ~Bit(Step.Action); InOutInput.Down &= ~Bit(Step.Action); bNext = true; break;
-            case AutoStep::Face:    bNext = Turn(Step.A, Step.B) || GAuto.StepTime > 4.0; break;
+            case AutoStep::Hold:    Auto.Held |= Bit(Step.Action); InOutInput.Down |= Bit(Step.Action); bNext = true; break;
+            case AutoStep::Release: Auto.Held &= ~Bit(Step.Action); InOutInput.Down &= ~Bit(Step.Action); bNext = true; break;
+            case AutoStep::Face:    bNext = Turn(Step.A, Step.B) || Auto.StepTime > 4.0; break;
             case AutoStep::AimAt:
             {
                 /* From where the camera is: what the crosshair (the screen's centre) covers. */
                 const double DX = Step.A - Mover.CameraX, DY = Step.C - Mover.CameraY, DZ = Step.B - Mover.CameraZ;
                 const double Yaw   = std::atan2(DX, DZ) / DegToRad;
                 const double Pitch = -std::atan2(DY, std::sqrt(DX * DX + DZ * DZ)) / DegToRad;
-                bNext = (Turn(Yaw, Pitch) && GAuto.StepTime > 0.3) || GAuto.StepTime > 4.0;
+                bNext = (Turn(Yaw, Pitch) && Auto.StepTime > 0.3) || Auto.StepTime > 4.0;
                 break;
             }
             case AutoStep::Goto:
@@ -699,15 +693,15 @@ namespace
                 const bool bFacing = std::fabs(WrapDegrees(Yaw - Mover.CameraYaw)) < 25.0;
                 if(MoveForward >= 0 && bFacing) { InOutInput.Axes[MoveForward] = float(std::clamp(Distance / 120.0, 0.3, 1.0)); }
                 if(Step.bRun && Distance > 200.0) { InOutInput.Down |= Bit("Run"); }
-                bNext = Distance < 35.0 || GAuto.StepTime > 25.0;
-                if(GAuto.StepTime > 25.0) { CORE_LOG_WARN("[ShootingRange] autoplay: gave up walking to a waypoint (stuck)") }
+                bNext = Distance < 35.0 || Auto.StepTime > 25.0;
+                if(Auto.StepTime > 25.0) { CORE_LOG_WARN("[ShootingRange] autoplay: gave up walking to a waypoint (stuck)") }
                 break;
             }
         }
         if(bNext)
         {
-            ++GAuto.Step;
-            GAuto.StepTime = 0.0;
+            ++Auto.Step;
+            Auto.StepTime = 0.0;
         }
     }
 }
@@ -903,45 +897,13 @@ namespace
     /* A process that shows the game: not a dedicated server. */
     bool IsPresentation() { return !NimbleEngine::IsDedicatedServer(); }
 
-    /* Particle bursts this process made, destroyed after their life (TickRangeEffects). */
-    struct RangeEffect { GameCore::EntityID Entity; double Left; };
-    std::vector<RangeEffect> GRangeEffects;
-
-    /* What this process has shown, for autoplay's report. */
-    int GShotsShown = 0, GSoundsShown = 0, GPistolDraws = 0;
-
-    void SpawnRangeEffect(GameCore::World& InWorld, const char* InSystem, const EngineCore::Vector3& InAt, const double InLife)
+    /* What this process has shown, for autoplay's report: the mode's. */
+    struct RangeShown
     {
-        GameCore::Entity Fx = InWorld.CreateEntity("RangeEffect");
-        GameCore::TransformComponent Transform;
-        Transform.Position = InAt;
-        Fx.AddComponent(Transform);
-        RenderCore::ParticleSystemComponent Emitter;
-        std::snprintf(Emitter.System, sizeof(Emitter.System), "%s%s.nmparticle", RangeParticles, InSystem);
-        Fx.AddComponent(Emitter);
-        GRangeEffects.push_back({ Fx.GetID(), InLife });
-    }
-
-    void TickRangeEffects(GameCore::World& InWorld, const double InSeconds)
-    {
-        for(size_t Index = GRangeEffects.size(); Index-- > 0;)
-        {
-            RangeEffect& Each = GRangeEffects[Index];
-            Each.Left -= InSeconds;
-            if(Each.Left > 0.0) { continue; }
-            if(InWorld.IsAlive(Each.Entity)) { InWorld.DestroyEntity(Each.Entity); }
-            GRangeEffects.erase(GRangeEffects.begin() + std::ptrdiff_t(Index));
-        }
-    }
-
-    void ClearRangeEffects(GameCore::World* InWorld)
-    {
-        for(const RangeEffect& Each : GRangeEffects)
-        {
-            if(InWorld && InWorld->IsAlive(Each.Entity)) { InWorld->DestroyEntity(Each.Entity); }
-        }
-        GRangeEffects.clear();
-    }
+        int Shots = 0, Sounds = 0, PistolDraws = 0;
+        int Hits[6] = {};                                    // by ERangeHit
+        int PlatesKicked = 0, DummiesDowned = 0, BodiesKicked = 0;   // ReactHere's, on a client
+    };
 
     /* A sound from InShooter's gun: in the ear of its own player, from where it stands for everyone else. */
     void PlayGunSound(GameCore::World& InWorld, const GameCore::EntityID InShooter, const char* InName, const float InVolume)
@@ -964,9 +926,9 @@ namespace
     const PistolSeat HolsterSeat{ "DEF-spine",  EngineCore::Vector3(-19.719f, 0.128f, -4.773f), EngineCore::Vector3(-75.407f,  7.744f,   2.009f) };
     const PistolSeat HandSeat   { "DEF-hand.R", EngineCore::Vector3( -2.110f, 7.087f, -0.769f), EngineCore::Vector3(-85.592f, 13.264f, 175.197f) };
 
-    void PoseShooters(GameCore::World& InWorld)
+    void PoseShooters(GameCore::World& InWorld, RangeShown& InOutShown)
     {
-        InWorld.Each<RangeGunComponent>([&InWorld](GameCore::Entity InShooter, RangeGunComponent& InGun)
+        InWorld.Each<RangeGunComponent>([&InWorld, &InOutShown](GameCore::Entity InShooter, RangeGunComponent& InGun)
         {
             if(auto* Animation = InShooter.GetComponent<RenderCore::AnimationComponent>())
             {
@@ -976,7 +938,7 @@ namespace
             auto* Socket = Pistol.IsSet() ? InWorld.GetEntity(Pistol).GetComponent<RenderCore::AnimSocketComponent>() : nullptr;
             if(!Socket) { return; }
             const PistolSeat& Seat = InGun.bReady ? HandSeat : HolsterSeat;
-            if(&Seat == &HandSeat && std::strcmp(Socket->Bone, Seat.Bone) != 0) { ++GPistolDraws; }
+            if(&Seat == &HandSeat && std::strcmp(Socket->Bone, Seat.Bone) != 0) { ++InOutShown.PistolDraws; }
             if(std::strcmp(Socket->Bone, Seat.Bone) == 0) { return; }
             std::snprintf(Socket->Bone, sizeof(Socket->Bone), "%s", Seat.Bone);
             Socket->PositionOffset = Seat.Position;
@@ -999,10 +961,6 @@ namespace
     /* What the script's rounds see: every layer but 2, the catwalks' grating (RangeShooter.lua's SHOT_MASK). */
     constexpr int32_t ShotMask = 32767 - 2;
 
-    /* What this process has shown, by ERangeHit, for autoplay's report. */
-    int GHitsShown[6] = {};
-    int GPlatesKicked = 0, GDummiesDowned = 0, GBodiesKicked = 0;   // ReactHere's, on a client
-
     /*
      * The authority's physics took the shot's kick; here, a client's copy of
      * the level takes it too, so a plate swings and a dummy falls for every
@@ -1010,7 +968,7 @@ namespace
      * again here: a short ray along the shot onto where it hit.
      */
     void ReactHere(GameCore::World& InWorld, const EngineCore::Vector3& InAt, const EngineCore::Vector3& InDir, const uint8_t InHit,
-                   const float InKick)
+                   const float InKick, RangeShown& InOutShown)
     {
         if(NimbleEngine::HasAuthority() || InKick <= 0.0f) { return; }   // the authority's script already did
         NimbleEngine::PhysicsRaycastHit Hit;
@@ -1019,55 +977,16 @@ namespace
         const EngineCore::Vector3 Impulse = InDir * InKick;
         if(InHit == RangeHit_Steel)
         {
-            if(auto* Body = Target.GetComponent<GameCore::RigidBodyComponent>()) { Body->AddImpulse(Impulse); ++GPlatesKicked; }
+            if(auto* Body = Target.GetComponent<GameCore::RigidBodyComponent>()) { Body->AddImpulse(Impulse); ++InOutShown.PlatesKicked; }
             return;
         }
         auto* Ragdoll = Target.GetComponent<NimbleEngine::RagdollComponent>();
         if(!Ragdoll) { return; }
-        if(InHit == RangeHit_DummyDown && !Ragdoll->IsActive()) { Ragdoll->ActivateWithImpulse(Impulse, InAt); ++GDummiesDowned; }
-        else if(Ragdoll->IsActive())                            { Ragdoll->AddImpulse(Impulse, InAt); ++GBodiesKicked; }
+        if(InHit == RangeHit_DummyDown && !Ragdoll->IsActive()) { Ragdoll->ActivateWithImpulse(Impulse, InAt); ++InOutShown.DummiesDowned; }
+        else if(Ragdoll->IsActive())                            { Ragdoll->AddImpulse(Impulse, InAt); ++InOutShown.BodiesKicked; }
     }
 }
 
-void RangeGunComponent::MulticastShot(const GameCore::RpcContext&, const EngineCore::Vector3& InAt, const EngineCore::Vector3& InDir,
-                                      const uint8_t InHit, const float InKick)
-{
-    GameCore::World* World = Owner.OwningWorld;
-    if(!World || !IsPresentation()) { return; }
-    const GameCore::EntityID Shooter = Owner.Entity;
-
-    ++GShotsShown;
-    if(InHit < sizeof(GHitsShown) / sizeof(GHitsShown[0])) { ++GHitsShown[InHit]; }
-    SpawnRangeEffect(*World, "MuzzleFlash", MuzzleOf(*World, Shooter), 1.2);
-    PlayGunSound(*World, Shooter, "Gunshot.nmsound", 1.0f);
-    ReactHere(*World, InAt, InDir, InHit, InKick);
-
-    /* The effect a little short of the hit, out of the surface. */
-    const EngineCore::Vector3 Short = InAt - InDir * 3.0f;
-    const auto Impact = [World, &InAt, &Short](const char* InSystem, const double InLife, const char* InSound, const float InVolume)
-    {
-        SpawnRangeEffect(*World, InSystem, Short, InLife);
-        NimbleEngine::PlaySoundAt(*World, (std::string(RangeSounds) + InSound).c_str(), InAt, InVolume);
-    };
-    switch(InHit)
-    {
-        case RangeHit_Steel:     Impact("Sparks", 1.0, "SteelHit.nmsound", 1.0f); break;
-        case RangeHit_Dummy:
-        case RangeHit_DummyDown: Impact("Dust",   1.0, "Impact.nmsound",   0.8f); break;
-        case RangeHit_Paper:     Impact("Dust",   1.4, "PaperHit.nmsound", 0.7f); break;
-        case RangeHit_Other:     Impact("Dust",   1.4, "Impact.nmsound",   0.6f); break;
-        default: break;
-    }
-}
-
-void RangeGunComponent::MulticastSound(const GameCore::RpcContext&, const uint8_t InSound)
-{
-    GameCore::World* World = Owner.OwningWorld;
-    if(!World || !IsPresentation()) { return; }
-    ++GSoundsShown;
-    if(InSound == RangeSound_Reload)  { PlayGunSound(*World, Owner.Entity, "Reload.nmsound", 0.8f); }
-    if(InSound == RangeSound_DryFire) { PlayGunSound(*World, Owner.Entity, "DryFire.nmsound", 0.9f); }
-}
 
 namespace
 {
@@ -1100,11 +1019,8 @@ public:
         {
             CORE_LOG_WARN("[ShootingRange] built without JoltPhysics: the shooter walks on Bounds alone, and badly")
         }
-        GAuto = AutoPlayer();
-        if(NimbleEngine::AvatarWorld* Avatars = InSession.GetAvatars())
-        {
-            Avatars->SetInputFilter(&AutoPlayFilter, &InSession);   // a free mouse fires nothing (FreeMouseFilter)
-        }
+        /* A free mouse fires nothing (FreeMouseFilter); taken back by the session after OnUnload. */
+        SetAvatarInputFilter<&WorldsLabRangeMode::FilterInput>();
         return NetGameMode::OnLoad(InSession);
     }
 
@@ -1123,7 +1039,7 @@ public:
 
         /* The pause menu's Reset Score (PauseMenu.lua) is an event on this
          * process; the tally is the server's (RangeGun), so ask it. */
-        Session->GetWorld().GetEvents().Subscribe("Range.ResetScore", &WorldsLabRangeMode::OnResetScore, this);
+        Subscribe<&WorldsLabRangeMode::OnResetScore>("Range.ResetScore");
         ShownHud = HudState();
     }
 
@@ -1142,8 +1058,8 @@ public:
         TickHud(World);
         if(IsPresentation())
         {
-            PoseShooters(World);
-            TickRangeEffects(World, InFrame.DeltaSeconds);
+            PoseShooters(World, Shown);
+            TickEffects(World, InFrame.DeltaSeconds);
         }
 
         /* This process's own shooter only: a client's Escape is its own pause menu, not the server's.
@@ -1156,25 +1072,35 @@ public:
         });
     }
 
+    /* The event handler and input filter go with the session's take-back; the
+     * effects with the World. */
     void OnUnload() override
     {
-        if(Session)
-        {
-            Session->GetWorld().GetEvents().UnsubscribeAll(this);
-            Session->GetUI().Close(HudPath);
-        }
-        ClearRangeEffects(Session ? &Session->GetWorld() : nullptr);
+        Session->GetUI().Close(HudPath);
         EngineCore::ConfigVar* MaxShadowed = EngineCore::ConfigFindVarByPath("Shadows.MaxShadowedLights");
         if(MaxShadowed && PreviousShadowedLights >= 0)
         {
             MaxShadowed->SetInt(PreviousShadowedLights);
         }
         PreviousShadowedLights = -1;
-        if(NimbleEngine::AvatarWorld* Avatars = Session ? Session->GetAvatars() : nullptr)
-        {
-            Avatars->SetInputFilter(nullptr, nullptr);
-        }
     }
+
+    // === For the gun's multicasts (FindGameMode<WorldsLabRangeMode>) ==========
+
+    /* A particle burst, destroyed after InLife seconds (TickEffects). */
+    void SpawnEffect(GameCore::World& InWorld, const char* InSystem, const EngineCore::Vector3& InAt, const double InLife)
+    {
+        GameCore::Entity Fx = InWorld.CreateEntity("RangeEffect");
+        GameCore::TransformComponent Transform;
+        Transform.Position = InAt;
+        Fx.AddComponent(Transform);
+        RenderCore::ParticleSystemComponent Emitter;
+        std::snprintf(Emitter.System, sizeof(Emitter.System), "%s%s.nmparticle", RangeParticles, InSystem);
+        Fx.AddComponent(Emitter);
+        Effects.push_back({ Fx.GetID(), InLife });
+    }
+
+    RangeShown& GetShown() { return Shown; }
 
 private:
     /* What the HUD shows, to write the store only when it changes. */
@@ -1215,17 +1141,17 @@ private:
                      + " shooter's RangeGun")
         }
         /* Autoplay's result as the HUD has it -- on a client, what the server's script sent. */
-        if(GRangeAutoPlay.GetBool() && GAuto.bDone && !bReportedAutoPlay)
+        if(GRangeAutoPlay.GetBool() && Auto.bDone && !bReportedAutoPlay)
         {
             bReportedAutoPlay = true;
             CORE_LOG("[ShootingRange] HUD after autoplay: " + std::to_string(Gun->Mag) + " + " + std::to_string(Gun->Reserve)
                      + " rounds, " + std::to_string(Gun->Hits) + " hits of " + std::to_string(Gun->Shots) + " shots; shown here: "
-                     + std::to_string(GShotsShown) + " shots, " + std::to_string(GSoundsShown) + " gun sounds, "
-                     + std::to_string(GPistolDraws) + " draws; hits shown: " + std::to_string(GHitsShown[RangeHit_Steel]) + " steel, "
-                     + std::to_string(GHitsShown[RangeHit_Dummy] + GHitsShown[RangeHit_DummyDown]) + " dummy ("
-                     + std::to_string(GHitsShown[RangeHit_DummyDown]) + " down), " + std::to_string(GHitsShown[RangeHit_Paper]) + " paper, "
-                     + std::to_string(GHitsShown[RangeHit_Other]) + " other; reacted here: " + std::to_string(GPlatesKicked)
-                     + " plates kicked, " + std::to_string(GDummiesDowned) + " dummies down, " + std::to_string(GBodiesKicked) + " bodies kicked")
+                     + std::to_string(Shown.Shots) + " shots, " + std::to_string(Shown.Sounds) + " gun sounds, "
+                     + std::to_string(Shown.PistolDraws) + " draws; hits shown: " + std::to_string(Shown.Hits[RangeHit_Steel]) + " steel, "
+                     + std::to_string(Shown.Hits[RangeHit_Dummy] + Shown.Hits[RangeHit_DummyDown]) + " dummy ("
+                     + std::to_string(Shown.Hits[RangeHit_DummyDown]) + " down), " + std::to_string(Shown.Hits[RangeHit_Paper]) + " paper, "
+                     + std::to_string(Shown.Hits[RangeHit_Other]) + " other; reacted here: " + std::to_string(Shown.PlatesKicked)
+                     + " plates kicked, " + std::to_string(Shown.DummiesDowned) + " dummies down, " + std::to_string(Shown.BodiesKicked) + " bodies kicked")
         }
 
         HudState Now;
@@ -1257,15 +1183,44 @@ private:
     }
 
     /* Range.ResetScore, from the pause menu on this process: the server zeroes the tally. */
-    static void OnResetScore(GameCore::EventID, const GameCore::EventArgs&, void* InSelf)
+    void OnResetScore(const GameCore::EventArgs&)
     {
-        auto* Self = static_cast<WorldsLabRangeMode*>(InSelf);
-        GameCore::World& World = Self->Session->GetWorld();
+        GameCore::World& World = GetWorld();
         if(RangeGunComponent* Gun = LocalGun(World))
         {
             GAMECORE_RPC(RangeGunComponent, ServerResetScore)(World.GetEntity(Gun->Owner.Entity));
         }
     }
+
+    /* Every local player's input, before its shooter takes it: the look
+     * sensitivity, then autoplay's steps, or nothing for the gun while the
+     * mouse is free. */
+    void FilterInput(GameCore::World& InWorld, const GameCore::EntityID InAvatar, NimbleEngine::InputSnapshot& InOutInput)
+    {
+        WorldsLabWalker::ApplyLookSensitivity(InOutInput);
+        if(!GRangeAutoPlay.GetBool()) { FreeMouseFilter(GetSession(), InOutInput); return; }
+        AutoPlay(InWorld, InAvatar, Auto, InOutInput);
+    }
+
+    void TickEffects(GameCore::World& InWorld, const double InSeconds)
+    {
+        for(size_t Index = Effects.size(); Index-- > 0;)
+        {
+            Effect& Each = Effects[Index];
+            Each.Left -= InSeconds;
+            if(Each.Left > 0.0) { continue; }
+            if(InWorld.IsAlive(Each.Entity)) { InWorld.DestroyEntity(Each.Entity); }
+            Effects.erase(Effects.begin() + std::ptrdiff_t(Index));
+        }
+    }
+
+    // === This level's, made and gone with the mode ===========================
+
+    struct Effect { GameCore::EntityID Entity; double Left; };
+
+    AutoPlayer          Auto;      // RangeAutoPlay's progress
+    RangeShown          Shown;     // what this process showed, for its report
+    std::vector<Effect> Effects;   // particle bursts this process made
 
     HudState ShownHud;
     bool     bReportedAutoPlay = false;
@@ -1274,12 +1229,49 @@ private:
     int     ShownSeconds = 0;
 };
 
-void WorldsLabRegisterRange()
+// === The gun's multicasts: every process with a player ===========================
+
+void RangeGunComponent::MulticastShot(const GameCore::RpcContext&, const EngineCore::Vector3& InAt, const EngineCore::Vector3& InDir,
+                                      const uint8_t InHit, const float InKick)
 {
-    NimbleEngine::RegisterGameMode<WorldsLabRangeMode>("WorldsLabRange");
+    GameCore::World* World = Owner.OwningWorld;
+    WorldsLabRangeMode* Mode = World ? NimbleEngine::FindGameMode<WorldsLabRangeMode>(*World) : nullptr;
+    if(!Mode || !IsPresentation()) { return; }
+    const GameCore::EntityID Shooter = Owner.Entity;
+
+    RangeShown& Shown = Mode->GetShown();
+    ++Shown.Shots;
+    if(InHit < sizeof(Shown.Hits) / sizeof(Shown.Hits[0])) { ++Shown.Hits[InHit]; }
+    Mode->SpawnEffect(*World, "MuzzleFlash", MuzzleOf(*World, Shooter), 1.2);
+    PlayGunSound(*World, Shooter, "Gunshot.nmsound", 1.0f);
+    ReactHere(*World, InAt, InDir, InHit, InKick, Shown);
+
+    /* The effect a little short of the hit, out of the surface. */
+    const EngineCore::Vector3 Short = InAt - InDir * 3.0f;
+    const auto Impact = [World, Mode, &InAt, &Short](const char* InSystem, const double InLife, const char* InSound, const float InVolume)
+    {
+        Mode->SpawnEffect(*World, InSystem, Short, InLife);
+        NimbleEngine::PlaySoundAt(*World, (std::string(RangeSounds) + InSound).c_str(), InAt, InVolume);
+    };
+    switch(InHit)
+    {
+        case RangeHit_Steel:     Impact("Sparks", 1.0, "SteelHit.nmsound", 1.0f); break;
+        case RangeHit_Dummy:
+        case RangeHit_DummyDown: Impact("Dust",   1.0, "Impact.nmsound",   0.8f); break;
+        case RangeHit_Paper:     Impact("Dust",   1.4, "PaperHit.nmsound", 0.7f); break;
+        case RangeHit_Other:     Impact("Dust",   1.4, "Impact.nmsound",   0.6f); break;
+        default: break;
+    }
 }
 
-void WorldsLabUnregisterRange()
+void RangeGunComponent::MulticastSound(const GameCore::RpcContext&, const uint8_t InSound)
 {
-    NimbleEngine::UnregisterGameMode("WorldsLabRange");
+    GameCore::World* World = Owner.OwningWorld;
+    WorldsLabRangeMode* Mode = World ? NimbleEngine::FindGameMode<WorldsLabRangeMode>(*World) : nullptr;
+    if(!Mode || !IsPresentation()) { return; }
+    ++Mode->GetShown().Sounds;
+    if(InSound == RangeSound_Reload)  { PlayGunSound(*World, Owner.Entity, "Reload.nmsound", 0.8f); }
+    if(InSound == RangeSound_DryFire) { PlayGunSound(*World, Owner.Entity, "DryFire.nmsound", 0.9f); }
 }
+
+NIMBLE_REGISTER_GAME_MODE(WorldsLabRangeMode, "WorldsLabRange")
