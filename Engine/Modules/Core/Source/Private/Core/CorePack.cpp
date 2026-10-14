@@ -1,10 +1,14 @@
 #include "Public/Core/CorePack.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <thread>
+
+#include <zstd.h>
 
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CorePlatform.h"
@@ -14,9 +18,31 @@ namespace EngineCore
 namespace
 {
     constexpr uint32_t PACK_MAGIC   = 0x4B41504Eu;   // "NPAK" read as little-endian bytes
-    constexpr uint16_t PACK_VERSION = 1;
+    constexpr uint16_t PACK_VERSION = 2;
     constexpr uint16_t PF_Names     = 1;
     constexpr uint16_t PF_Scrambled = 2;
+
+    constexpr uint8_t CODEC_STORED = 0;
+    constexpr uint8_t CODEC_ZSTD   = 1;
+
+    /* A zstd blob's bytes per chunk, decoded: what a range read decodes at
+     * least. Big enough that the frames compress nearly as well as one would. */
+    constexpr uint32_t PACK_CHUNK_SIZE = 256 * 1024;
+
+    /* Below this a blob is stored as it is: a frame's own overhead eats it. */
+    constexpr size_t PACK_MIN_COMPRESS = 64;
+
+    /* One decoder per thread: loaders read packs from job threads. */
+    ZSTD_DCtx* ThreadDecoder()
+    {
+        struct Holder
+        {
+            ZSTD_DCtx* Context = ZSTD_createDCtx();
+            ~Holder() { ZSTD_freeDCtx(Context); }
+        };
+        thread_local Holder Decoder;
+        return Decoder.Context;
+    }
 
     /* The scramble's seed. Not a secret worth the name: it only keeps a
      * pack's text out of a hex viewer. */
@@ -127,7 +153,7 @@ uint64_t HashPackPath(const std::string& InPath)
 }
 
 bool WritePackFile(const std::string& InFile, const std::string& InName, const std::vector<PackInput>& InEntries,
-                   const bool bInNames, const bool bInScramble, std::string* OutError)
+                   const bool bInNames, const bool bInScramble, const int InZstdLevel, std::string* OutError)
 {
     const auto Fail = [OutError](const std::string& InWhy)
     {
@@ -173,14 +199,95 @@ bool WritePackFile(const std::string& InFile, const std::string& InName, const s
         Entries[PathHash] = BlobIndex;
     }
 
+    /* Each blob as stored: compressed where that pays, else the input itself. */
+    std::vector<const std::vector<uint8_t>*> Stored(Blobs.begin(), Blobs.end());
+    std::vector<uint8_t>                     Codecs(Blobs.size(), CODEC_STORED);
+    std::vector<std::vector<uint8_t>>        Compressed(Blobs.size());
+    if(InZstdLevel > 0)
+    {
+        /* Every chunk of every blob is a job, so one big texture does not
+         * leave the other cores idle. */
+        struct Job
+        {
+            uint32_t Blob;
+            uint64_t From;
+            size_t   Size;
+        };
+        std::vector<Job>    Jobs;
+        std::vector<size_t> FirstJob(Blobs.size(), 0);
+        for(uint32_t Index = 0; Index < Blobs.size(); ++Index)
+        {
+            FirstJob[Index] = Jobs.size();
+            const size_t Size = Blobs[Index]->size();
+            if(Size < PACK_MIN_COMPRESS) { continue; }
+            for(uint64_t From = 0; From < Size; From += PACK_CHUNK_SIZE)
+            {
+                Jobs.push_back({ Index, From, size_t(std::min<uint64_t>(PACK_CHUNK_SIZE, Size - From)) });
+            }
+        }
+
+        const int Level = std::min(InZstdLevel, ZSTD_maxCLevel());
+        std::vector<std::vector<uint8_t>> Frames(Jobs.size());
+        std::atomic<size_t> Next{ 0 };
+        std::atomic<bool>   bFailed{ false };
+        const auto Work = [&]()
+        {
+            ZSTD_CCtx* Encoder = ZSTD_createCCtx();
+            for(size_t Index = Next++; Index < Jobs.size() && !bFailed; Index = Next++)
+            {
+                const Job& Each = Jobs[Index];
+                std::vector<uint8_t>& Frame = Frames[Index];
+                Frame.resize(ZSTD_compressBound(Each.Size));
+                const size_t Written = Encoder ? ZSTD_compressCCtx(Encoder, Frame.data(), Frame.size(),
+                                                                   Blobs[Each.Blob]->data() + Each.From, Each.Size, Level)
+                                               : size_t(-1);
+                if(!Encoder || ZSTD_isError(Written)) { bFailed = true; break; }
+                Frame.resize(Written);
+            }
+            ZSTD_freeCCtx(Encoder);
+        };
+        const size_t ThreadCount = std::min<size_t>(Jobs.size(), std::max(1u, std::thread::hardware_concurrency()));
+        std::vector<std::thread> Threads;
+        for(size_t Index = 1; Index < ThreadCount; ++Index) { Threads.emplace_back(Work); }
+        Work();
+        for(std::thread& Each : Threads) { Each.join(); }
+        if(bFailed)
+        {
+            return Fail("could not compress the content");
+        }
+
+        for(uint32_t Index = 0; Index < Blobs.size(); ++Index)
+        {
+            const size_t End = Index + 1 < Blobs.size() ? FirstJob[Index + 1] : Jobs.size();
+            const size_t ChunkCount = End - FirstJob[Index];
+            if(ChunkCount == 0) { continue; }
+            size_t Size = 4 + 4 * ChunkCount;
+            for(size_t JobIndex = FirstJob[Index]; JobIndex < End; ++JobIndex) { Size += Frames[JobIndex].size(); }
+            if(Size * 10 > Blobs[Index]->size() * 9) { continue; }   // saves under a tenth: store it
+
+            std::vector<uint8_t>& Out = Compressed[Index];
+            Out.reserve(Size);
+            Put(Out, ChunkCount, 4);
+            for(size_t JobIndex = FirstJob[Index]; JobIndex < End; ++JobIndex) { Put(Out, Frames[JobIndex].size(), 4); }
+            for(size_t JobIndex = FirstJob[Index]; JobIndex < End; ++JobIndex)
+            {
+                Out.insert(Out.end(), Frames[JobIndex].begin(), Frames[JobIndex].end());
+                std::vector<uint8_t>().swap(Frames[JobIndex]);
+            }
+            Stored[Index] = &Out;
+            Codecs[Index] = CODEC_ZSTD;
+        }
+    }
+
     std::vector<uint8_t> Head;
     Put(Head, PACK_MAGIC, 4);
     Put(Head, PACK_VERSION, 2);
     Put(Head, (bInNames ? PF_Names : 0) | (bInScramble ? PF_Scrambled : 0), 2);
     PutString(Head, InName);
+    Put(Head, PACK_CHUNK_SIZE, 4);
 
     /* Offsets are known once the tables' size is: measure them first. */
-    const size_t BlobTable = 4 + Blobs.size() * 16;
+    const size_t BlobTable = 4 + Blobs.size() * 25;
     size_t Tail = 4 + Entries.size() * 12 + 4;
     if(bInNames)
     {
@@ -190,12 +297,14 @@ bool WritePackFile(const std::string& InFile, const std::string& InName, const s
 
     std::vector<uint64_t> BlobOffsets;
     Put(Head, Blobs.size(), 4);
-    for(const std::vector<uint8_t>* Bytes : Blobs)
+    for(size_t Index = 0; Index < Blobs.size(); ++Index)
     {
         BlobOffsets.push_back(Offset);
         Put(Head, Offset, 8);
-        Put(Head, Bytes->size(), 8);
-        Offset += Bytes->size();
+        Put(Head, Stored[Index]->size(), 8);
+        Put(Head, Blobs[Index]->size(), 8);
+        Put(Head, Codecs[Index], 1);
+        Offset += Stored[Index]->size();
     }
     Put(Head, Entries.size(), 4);
     for(const auto& Entry : Entries)
@@ -223,7 +332,7 @@ bool WritePackFile(const std::string& InFile, const std::string& InName, const s
     std::vector<uint8_t> Scrambled;
     for(size_t Index = 0; Index < Blobs.size(); ++Index)
     {
-        const std::vector<uint8_t>* Bytes = Blobs[Index];
+        const std::vector<uint8_t>* Bytes = Stored[Index];
         if(bInScramble)
         {
             Scrambled = *Bytes;
@@ -262,23 +371,61 @@ std::shared_ptr<PackFileProvider> PackFileProvider::Load(std::vector<uint8_t> In
     }
     const uint64_t Version = In.Get(2);
     const uint64_t Flags   = In.Get(2);
-    if(Version != PACK_VERSION)
+    if(Version != 1 && Version != PACK_VERSION)
     {
-        OutError = "pack version " + std::to_string(Version) + "; this build reads " + std::to_string(PACK_VERSION);
+        OutError = "pack version " + std::to_string(Version) + "; this build reads 1 to " + std::to_string(PACK_VERSION);
         return nullptr;
     }
+    Pack->bScrambled = (Flags & PF_Scrambled) != 0;
     Pack->Name = In.GetString();
+    if(Version >= 2)
+    {
+        Pack->ChunkSize = In.Get(4);
+    }
 
     const uint64_t BlobCount = In.Get(4);
     for(uint64_t Index = 0; Index < BlobCount && !In.bError; ++Index)
     {
         Blob Each;
-        Each.Offset = In.Get(8);
-        Each.Size   = In.Get(8);
-        if(Each.Offset > Pack->Data.size() || Each.Size > Pack->Data.size() - Each.Offset)
+        Each.Offset     = In.Get(8);
+        Each.StoredSize = In.Get(8);
+        Each.Size       = Version >= 2 ? In.Get(8) : Each.StoredSize;
+        const uint64_t Codec = Version >= 2 ? In.Get(1) : CODEC_STORED;
+        if(In.bError || Each.Offset > Pack->Data.size() || Each.StoredSize > Pack->Data.size() - Each.Offset)
         {
             In.bError = true;
             break;
+        }
+        if(Codec == CODEC_STORED)
+        {
+            if(Each.Size != Each.StoredSize) { In.bError = true; break; }
+        }
+        else if(Codec == CODEC_ZSTD)
+        {
+            /* The chunk table: as many chunks as the decoded size needs, and
+             * their frames exactly fill the stored bytes. */
+            const uint64_t ChunkCount = Pack->ChunkSize == 0 ? 0 : (Each.Size + Pack->ChunkSize - 1) / Pack->ChunkSize;
+            const uint64_t TableSize  = 4 + 4 * ChunkCount;
+            if(ChunkCount == 0 || ChunkCount > UINT32_MAX || TableSize > Each.StoredSize) { In.bError = true; break; }
+            std::vector<uint8_t> Table(static_cast<size_t>(TableSize));
+            Pack->CopyStored(Each, 0, TableSize, Table.data());
+            Reader TableIn{ Table };
+            if(TableIn.Get(4) != ChunkCount) { In.bError = true; break; }
+            Each.FirstChunk = uint32_t(Pack->Chunks.size());
+            Each.ChunkCount = uint32_t(ChunkCount);
+            uint64_t From = TableSize;
+            for(uint64_t Chunk = 0; Chunk < ChunkCount; ++Chunk)
+            {
+                const uint64_t Size = TableIn.Get(4);
+                Pack->Chunks.push_back({ From, uint32_t(Size) });
+                From += Size;
+            }
+            if(From != Each.StoredSize) { In.bError = true; break; }
+        }
+        else
+        {
+            OutError = "an entry is stored with codec " + std::to_string(Codec) + ", which this build does not read";
+            return nullptr;
         }
         Pack->Blobs.push_back(Each);
     }
@@ -301,8 +448,36 @@ std::shared_ptr<PackFileProvider> PackFileProvider::Load(std::vector<uint8_t> In
         OutError = "the pack is truncated or malformed";
         return nullptr;
     }
-    Pack->bScrambled = (Flags & PF_Scrambled) != 0;
     return Pack;
+}
+
+void PackFileProvider::CopyStored(const Blob& InBlob, const uint64_t InFrom, const uint64_t InSize, uint8_t* OutBytes) const
+{
+    if(InSize == 0)
+    {
+        return;
+    }
+    std::memcpy(OutBytes, Data.data() + InBlob.Offset + InFrom, size_t(InSize));
+    if(bScrambled)
+    {
+        ScrambleRange(OutBytes, size_t(InSize), InBlob.Offset, InFrom);
+    }
+}
+
+bool PackFileProvider::DecodeChunk(const Blob& InBlob, const uint32_t InIndex, uint8_t* OutBytes, const size_t InSize) const
+{
+    const Chunk& Each = Chunks[InBlob.FirstChunk + InIndex];
+    const uint8_t* Frame = Data.data() + InBlob.Offset + Each.From;
+    if(bScrambled)
+    {
+        thread_local std::vector<uint8_t> Unscrambled;
+        Unscrambled.resize(Each.Size);
+        CopyStored(InBlob, Each.From, Each.Size, Unscrambled.data());
+        Frame = Unscrambled.data();
+    }
+    ZSTD_DCtx* Decoder = ThreadDecoder();
+    const size_t Written = Decoder ? ZSTD_decompressDCtx(Decoder, OutBytes, InSize, Frame, Each.Size) : size_t(-1);
+    return !ZSTD_isError(Written) && Written == InSize;
 }
 
 bool PackFileProvider::ReadAll(const std::string& InPath, std::vector<uint8_t>& OutBytes)
@@ -313,10 +488,21 @@ bool PackFileProvider::ReadAll(const std::string& InPath, std::vector<uint8_t>& 
         return false;
     }
     const Blob& Each = Blobs[Found->second];
-    OutBytes.assign(Data.begin() + std::ptrdiff_t(Each.Offset), Data.begin() + std::ptrdiff_t(Each.Offset + Each.Size));
-    if(bScrambled)
+    OutBytes.resize(size_t(Each.Size));
+    if(Each.ChunkCount == 0)
     {
-        Scramble(OutBytes.data(), OutBytes.size(), Each.Offset);
+        CopyStored(Each, 0, Each.Size, OutBytes.data());
+        return true;
+    }
+    for(uint32_t Index = 0; Index < Each.ChunkCount; ++Index)
+    {
+        const uint64_t From = uint64_t(Index) * ChunkSize;
+        if(!DecodeChunk(Each, Index, OutBytes.data() + From, size_t(std::min<uint64_t>(ChunkSize, Each.Size - From))))
+        {
+            CORE_LOG_ERROR("Content pack " + Name + ": '" + InPath + "' does not decompress")
+            OutBytes.clear();
+            return false;
+        }
     }
     return true;
 }
@@ -334,12 +520,53 @@ bool PackFileProvider::ReadRange(const std::string& InPath, const uint64_t InOff
     {
         return false;
     }
-    const uint64_t From = Each.Offset + InOffset;
-    OutBytes.assign(Data.begin() + std::ptrdiff_t(From), Data.begin() + std::ptrdiff_t(From + InSize));
-    if(bScrambled)
+    OutBytes.resize(size_t(InSize));
+    if(Each.ChunkCount == 0)
     {
-        ScrambleRange(OutBytes.data(), OutBytes.size(), Each.Offset, InOffset);
+        CopyStored(Each, InOffset, InSize, OutBytes.data());
+        return true;
     }
+
+    /* Only the chunks the range touches; a whole one decodes in place. */
+    std::vector<uint8_t> Decoded;
+    const uint64_t End = InOffset + InSize;
+    for(uint64_t Index = InOffset / ChunkSize; InSize != 0 && Index <= (End - 1) / ChunkSize; ++Index)
+    {
+        const uint64_t ChunkFrom  = Index * ChunkSize;
+        const size_t   ChunkBytes = size_t(std::min<uint64_t>(ChunkSize, Each.Size - ChunkFrom));
+        const uint64_t From       = std::max(InOffset, ChunkFrom);
+        const uint64_t To         = std::min(End, ChunkFrom + ChunkBytes);
+        uint8_t* Target = OutBytes.data() + (From - InOffset);
+        bool bDecoded;
+        if(From == ChunkFrom && To == ChunkFrom + ChunkBytes)
+        {
+            bDecoded = DecodeChunk(Each, uint32_t(Index), Target, ChunkBytes);
+        }
+        else
+        {
+            Decoded.resize(ChunkBytes);
+            bDecoded = DecodeChunk(Each, uint32_t(Index), Decoded.data(), ChunkBytes);
+            if(bDecoded) { std::memcpy(Target, Decoded.data() + (From - ChunkFrom), size_t(To - From)); }
+        }
+        if(!bDecoded)
+        {
+            CORE_LOG_ERROR("Content pack " + Name + ": '" + InPath + "' does not decompress")
+            OutBytes.clear();
+            return false;
+        }
+    }
+    return true;
+}
+
+bool PackFileProvider::GetEntrySizes(const uint64_t InHash, uint64_t& OutSize, uint64_t& OutStoredSize) const
+{
+    const auto Found = Entries.find(InHash);
+    if(Found == Entries.end())
+    {
+        return false;
+    }
+    OutSize       = Blobs[Found->second].Size;
+    OutStoredSize = Blobs[Found->second].StoredSize;
     return true;
 }
 

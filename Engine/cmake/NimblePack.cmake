@@ -22,6 +22,13 @@
 # Shipping build's instead strips its scripts to bytecode and its config of
 # comments, and scrambles every entry's bytes (NimblePak --strip --scramble).
 #
+# Both compress their content with zstd (NimblePak --zstd=<level>): a fast
+# level for a debug-info build, which is packed on every content change, and
+# a high one for Shipping, smaller and no slower to read. 0 stores it as it is.
+
+set(NIMBLE_PACK_ZSTD_LEVEL 3 CACHE STRING "zstd level for a debug-info build's content packs (0: uncompressed)")
+set(NIMBLE_PACK_ZSTD_LEVEL_SHIPPING 19 CACHE STRING "zstd level for a Shipping build's content packs (0: uncompressed)")
+#
 # Single-config only, as the staging it replaces: a pack needs one runtime
 # directory to land in.
 # ===========================================================================
@@ -69,9 +76,9 @@ function(nimble_package_game)
     # Debug-info builds keep each path; Shipping strips what a person reads
     # (Lua to stripped bytecode, .ini comments) and scrambles the rest.
     if(CMAKE_BUILD_TYPE STREQUAL "Shipping")
-        set(NP_NAMES --strip --scramble)
+        set(NP_NAMES --strip --scramble "--zstd=${NIMBLE_PACK_ZSTD_LEVEL_SHIPPING}")
     else()
-        set(NP_NAMES "--names")
+        set(NP_NAMES "--names" "--zstd=${NIMBLE_PACK_ZSTD_LEVEL}")
     endif()
 
     set(NP_OUTPUTS)

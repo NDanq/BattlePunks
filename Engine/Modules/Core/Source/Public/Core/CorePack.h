@@ -31,14 +31,26 @@
  * viewer either. Undone on read; it deters casual inspection, not a
  * determined one -- the key is in the engine.
  *
- * Content is stored once however many paths name it. Little-endian:
+ * Content is stored once however many paths name it, and COMPRESSED with
+ * zstd when the pack is written with a level (WritePackFile): each blob in
+ * chunks of the pack's chunk size, every chunk its own zstd frame, so a range
+ * read decodes only the chunks it touches. A blob that would not shrink by a
+ * tenth is stored as it is. The scramble is applied to what is stored -- the
+ * compressed bytes -- and undone before decoding. Little-endian:
  *
- *   u32 'NPAK'  u16 version  u16 flags (1: names, 2: scrambled)
+ *   u32 'NPAK'  u16 version (2)  u16 flags (1: names, 2: scrambled)
  *   string name                       (u32 length + UTF-8)
- *   u32 blobs   { u64 offset, u64 size }        from the start of the file
+ *   u32 chunk size                    a zstd blob's bytes per chunk, decoded
+ *   u32 blobs   { u64 offset, u64 stored size, u64 size, u8 codec }
+ *                                     offset from the start of the file;
+ *                                     codec 0: stored, 1: zstd chunks
  *   u32 entries { u64 path hash, u32 blob }     sorted by hash
  *   u32 names   { u64 path hash, string path }  0 without PF_Names
- *   blob bytes
+ *   blob bytes; a zstd blob's are
+ *     u32 chunks, { u32 stored size } per chunk, then each chunk's frame
+ *
+ * Version 1 (no chunk size, blobs { u64 offset, u64 size }, all stored) still
+ * reads.
  */
 namespace EngineCore
 {
@@ -56,10 +68,13 @@ namespace EngineCore
 
     /* Writes InEntries to InFile as pack InName. bInNames: keep each path
      * (a debug-info build's pack); bInScramble: scramble the content (a
-     * Shipping build's). False, with OutError, if two paths hash alike or the
-     * file cannot be written. */
+     * Shipping build's); InZstdLevel: compress the content at that zstd level
+     * (1-22, higher smaller and slower to write, no slower to read), or 0 to
+     * store it as it is. Compression runs on every core. False, with
+     * OutError, if two paths hash alike, compression fails or the file cannot
+     * be written. */
     CORE_API bool WritePackFile(const std::string& InFile, const std::string& InName, const std::vector<PackInput>& InEntries,
-                                bool bInNames, bool bInScramble, std::string* OutError = nullptr);
+                                bool bInNames, bool bInScramble, int InZstdLevel, std::string* OutError = nullptr);
 
     class CORE_API PackFileProvider : public IFileProvider
     {
@@ -83,18 +98,43 @@ namespace EngineCore
         /* Every entry's hash and, with names, its path; by hash. */
         std::vector<std::pair<uint64_t, std::string>> ListEntries() const;
 
+        /* InHash's entry's size as read (OutSize) and as stored in the pack
+         * (OutStoredSize, smaller when compressed); false if no such entry. */
+        bool GetEntrySizes(uint64_t InHash, uint64_t& OutSize, uint64_t& OutStoredSize) const;
+
+        /* Whether any entry is compressed. */
+        bool IsCompressed() const { return !Chunks.empty(); }
+
     private:
         PackFileProvider() = default;
 
         struct Blob
         {
-            uint64_t Offset = 0;
-            uint64_t Size   = 0;
+            uint64_t Offset     = 0;   // in Data
+            uint64_t StoredSize = 0;   // bytes at Offset
+            uint64_t Size       = 0;   // decoded
+            uint32_t FirstChunk = 0;   // in Chunks, when ChunkCount
+            uint32_t ChunkCount = 0;   // 0: stored as it is
         };
+
+        struct Chunk
+        {
+            uint64_t From = 0;   // into its blob's stored bytes
+            uint32_t Size = 0;   // stored (compressed) bytes
+        };
+
+        /* InSize stored bytes of InBlob from InFrom into OutBytes, unscrambled. */
+        void CopyStored(const Blob& InBlob, uint64_t InFrom, uint64_t InSize, uint8_t* OutBytes) const;
+
+        /* InBlob's chunk InIndex decoded into OutBytes, which holds exactly
+         * that chunk's decoded size; false if it does not decode to it. */
+        bool DecodeChunk(const Blob& InBlob, uint32_t InIndex, uint8_t* OutBytes, size_t InSize) const;
 
         std::string                            Name;
         std::vector<uint8_t>                   Data;      // the whole file
         std::vector<Blob>                      Blobs;
+        std::vector<Chunk>                     Chunks;    // every zstd blob's, blob by blob
+        uint64_t                               ChunkSize = 0;
         std::unordered_map<uint64_t, uint32_t> Entries;   // path hash -> blob
         std::unordered_map<uint64_t, std::string> Names;
         bool                                   bScrambled = false;
