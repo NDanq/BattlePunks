@@ -81,6 +81,7 @@
 #include "Private/Editor/Terrain/FoliageEditing.h"
 #include "Private/Editor/Terrain/TerrainEditing.h"
 #include "Private/Editor/Terrain/TerrainToolsWindow.h"
+#include "Private/Editor/Procedural/ProceduralEditing.h"
 #if WITH_AICORE
 #include "Private/Editor/AI/AIDebuggerPanel.h"
 #include "Private/Editor/AI/BehaviorTreeEditorWindow.h"
@@ -258,6 +259,14 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
         }
     });
     connect(&Level, &EditorDocument::EditedWorldAboutToBeDestroyed, this, []() { EditorTerrain::DiscardUnsaved(); });
+
+    /* Splines and Procedural Spawners: their overlay and the point editor (ProceduralEditing.h). */
+    EditorProcedural::Host ProceduralHost;
+    ProceduralHost.Context  = &Context;
+    ProceduralHost.Document = &Level;
+    ProceduralHost.Viewport = Viewport;
+    EditorProcedural::Install(ProceduralHost);
+    connect(&Level, &EditorDocument::WorldReset, this, []() { EditorProcedural::SetEditingPoints(false); });
 
 #if WITH_AICORE
     /* Navigation and the AI debugger, hidden until the World menu: tabbed
@@ -650,6 +659,23 @@ void EditorMainWindow::BuildMenus()
     QAction* TerrainAction = World->addAction(EditorIcons::Get(EditorIcons::EIcon::Terrain), QStringLiteral("&Terrain..."));
     TerrainAction->setToolTip(QStringLiteral("Make, sculpt and paint terrain"));
     connect(TerrainAction, &QAction::triggered, this, []() { TerrainToolsWindow::Show(); });
+
+    /* Splines and Procedural Spawners (ProceduralEditing.h, PROCEDURAL.md). */
+    QAction* AddSpline = World->addAction(QStringLiteral("Add &Spline"));
+    AddSpline->setToolTip(QStringLiteral("A curve to place things along or inside, or for a game to follow"));
+    connect(AddSpline, &QAction::triggered, this, [InFrontOfCamera]() { EditorProcedural::CreateSpline(InFrontOfCamera()); });
+    QAction* AddSpawner = World->addAction(QStringLiteral("Add Procedural Spa&wner"));
+    AddSpawner->setToolTip(QStringLiteral("Meshes placed by rules: along or inside a spline, in a box, or over a mesh"));
+    connect(AddSpawner, &QAction::triggered, this, [InFrontOfCamera]() { EditorProcedural::CreateSpawner(InFrontOfCamera()); });
+    QAction* EditPoints = World->addAction(QStringLiteral("Edit Spline &Points"));
+    EditPoints->setCheckable(true);
+    EditPoints->setToolTip(QStringLiteral("Drag the selected spline's points; Ctrl+click adds one, Delete removes one, Esc stops"));
+    connect(EditPoints, &QAction::toggled, this, [](const bool bInOn) { EditorProcedural::SetEditingPoints(bInOn); });
+    EditorProcedural::SetEditingChangedCallback([EditPoints](const bool bInOn)
+    {
+        const QSignalBlocker Block(EditPoints);
+        EditPoints->setChecked(bInOn);
+    });
 
 #if WITH_AICORE
     /* AI (NavigationPanel.h, AIDebuggerPanel.h): the navmesh, then the agents in Play. */
@@ -2151,6 +2177,14 @@ void EditorMainWindow::RegisterConsoleCommands()
     Console.Register(QStringLiteral("terrain"), EditorTerrain::GetConsoleUsage(),
                      QStringLiteral("Make, sculpt, paint, import or export the level's terrain (for scripts and tests)"),
                      [this](const QStringList& InArgs) { EditorTerrain::RunConsoleCommand(Console, InArgs); });
+
+    Console.Register(QStringLiteral("spline"), EditorProcedural::GetSplineUsage(),
+                     QStringLiteral("Make or edit the selected entity's Spline (points in world space; for scripts and tests)"),
+                     [this](const QStringList& InArgs) { EditorProcedural::RunSplineCommand(Console, InArgs); });
+
+    Console.Register(QStringLiteral("pcg"), EditorProcedural::GetProceduralUsage(),
+                     QStringLiteral("Make or edit the selected Procedural Spawner, regenerate every one, or list them"),
+                     [this](const QStringList& InArgs) { EditorProcedural::RunProceduralCommand(Console, InArgs); });
 
     Console.Register(QStringLiteral("foliage"), EditorFoliage::GetConsoleUsage(),
                      QStringLiteral("Add, edit, paint or erase the selected terrain's foliage (for scripts and tests)"),

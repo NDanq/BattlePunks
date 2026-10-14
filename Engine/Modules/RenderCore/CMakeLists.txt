@@ -30,6 +30,7 @@ endif()
 
 option(RENDERCORE_BUILD_SMOKETEST "Build RenderCoreSmokeTest" OFF)
 option(RENDERCORE_BUILD_ANIMATION_TESTS "Build RenderCoreAnimationTests (headless; no window or GPU)" ON)
+option(RENDERCORE_BUILD_PROCEDURAL_TESTS "Build RenderCoreProceduralTests (headless; no window or GPU)" ON)
 
 # ===========================================================================
 # Sources
@@ -60,6 +61,10 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/Components/RenderComponent.cpp
         Source/Private/RenderCore/Components/ParticleSystemComponent.cpp
         Source/Private/RenderCore/Components/TerrainComponent.cpp
+        Source/Private/RenderCore/Components/ProceduralSpawnerComponent.cpp
+        Source/Private/RenderCore/ProceduralGeneration.cpp
+        Source/Private/RenderCore/ProceduralSystem.cpp
+        Source/Private/RenderCore/ProceduralSystem.h
         Source/Private/RenderCore/ParticleSimulation.h
         Source/Private/RenderCore/ParticleSimulation.cpp
         Source/Private/RenderCore/ParticleSystemAsset.cpp
@@ -131,6 +136,8 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/Components/RenderComponent.h
         Source/Public/RenderCore/Components/ParticleSystemComponent.h
         Source/Public/RenderCore/Components/TerrainComponent.h
+        Source/Public/RenderCore/Components/ProceduralSpawnerComponent.h
+        Source/Public/RenderCore/ProceduralGeneration.h
         Source/Public/RenderCore/ParticleSystemAsset.h
         Source/Public/RenderCore/ParticleTypes.h
         Source/Public/RenderCore/Components/CameraComponent.h
@@ -214,6 +221,19 @@ if(RENDERCORE_BUILD_ANIMATION_TESTS AND NIMBLE_WITH_EDITOR)
     enable_testing()
     add_test(NAME RenderCore.Animation COMMAND RenderCoreAnimationTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:RenderCoreAnimationTests>")
+endif()
+
+# Splines and the Procedural Spawner's placement, headless (PROCEDURAL.md):
+# GameCore's SplineCurve and Spline component, then GenerateProcedural over
+# hand-made terrains and meshes.
+if(RENDERCORE_BUILD_PROCEDURAL_TESTS)
+    add_executable(RenderCoreProceduralTests Tests/ProceduralTests.cpp)
+    target_link_libraries(RenderCoreProceduralTests PRIVATE RenderCore::RenderCore)
+    set_target_properties(RenderCoreProceduralTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "RenderCore")
+
+    enable_testing()
+    add_test(NAME RenderCore.Procedural COMMAND RenderCoreProceduralTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:RenderCoreProceduralTests>")
 endif()
 
 source_group("RenderCore" FILES ${RENDERCORE_SOURCES})
