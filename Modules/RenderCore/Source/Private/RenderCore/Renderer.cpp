@@ -53,12 +53,13 @@ NIMBLE_CONFIG_INT(GRenderingAnisotropy, "Rendering", "Anisotropy", 8, nullptr);
 /* Whether presents wait for the display's vblank (GDISetVSync, which says what
  * each backend does with it). Off by default: the game loop runs as fast as
  * [Display] FrameRateLimit lets it, 0 unlimited. Applies live, at each window's
- * next present -- "Display.VSync true" in the console. */
+ * next present -- "Display.VSync true" in the console. The game's setting, so
+ * its DefaultGame.ini (Project Settings writes it there). */
 namespace
 {
     void OnDisplayVSyncChanged(const EngineCore::ConfigVar& InVar) { GDISetVSync(InVar.GetBool()); }
 }
-NIMBLE_CONFIG_BOOL(GDisplayVSync, "Display", "VSync", false, &OnDisplayVSyncChanged);
+NIMBLE_GAME_CONFIG_BOOL(GDisplayVSync, "Display", "VSync", false, &OnDisplayVSyncChanged);
 
 namespace RenderCore
 {
