@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="622c7c77e4bed830c7d6c3a288bfeab7" Name="Meadow" Mobility="Static">
+  <Component Type="Procedural Spawner" Version="1">
+    <Visible Value="true" />
+    <Source Value="1" />
+    <Project Value="1" />
+    <TerrainLayer Value="1" />
+    <Seed Value="11" />
+    <BoxExtent X="1000" Y="500" Z="1000" />
+    <Spacing Value="55" />
+    <Jitter Value="1" />
+    <ProjectRange Value="6000" />
+    <PathOffset Value="0" />
+    <BothSides Value="false" />
+    <Density Value="1" />
+    <NoiseScale Value="2600" />
+    <NoiseThreshold Value="0.3" />
+    <MaxSlope Value="90" />
+    <MinHeight Value="-1000000" />
+    <MaxHeight Value="1000000" />
+    <LayerThreshold Value="0.55" />
+    <ScaleMin Value="0.45" />
+    <ScaleMax Value="0.85" />
+    <AlignToNormal Value="0.7" />
+    <Sink Value="0" />
+    <ColorVariation Value="0.25" />
+    <RandomYaw Value="true" />
+    <AlignToPath Value="false" />
+    <CastShadows Value="false" />
+    <CellSize Value="2500" />
+    <LODDistance Value="3000" />
+    <LOD1Density Value="0.45" />
+    <LOD2Density Value="0.15" />
+    <CullDistance Value="11000" />
+    <MaxInstances Value="200000" />
+    <MeshCount Value="2" />
+    <Mesh0Path Value="Content/Meshes/Foliage/GrassTuft.nmmesh" />
+    <Mesh0Far Value="" />
+    <Mesh0Material Value="" />
+    <Mesh0Weight Value="1" />
+    <Mesh0Scale Value="1" />
+    <Mesh1Path Value="Content/Meshes/Foliage/Bush.nmmesh" />
+    <Mesh1Far Value="" />
+    <Mesh1Material Value="" />
+    <Mesh1Weight Value="0.012" />
+    <Mesh1Scale Value="1" />
+    <ExclusionCount Value="1" />
+    <Exclusion0 Value="Road" />
+  </Component>
+  <Component Type="Spline" Version="1">
+    <Closed Value="true" />
+    <Type Value="0" />
+    <Width Value="0" />
+    <PointCount Value="8" />
+    <Point0 X="-9500" Y="0" Z="-7500" />
+    <Point1 X="-2500" Y="0" Z="-9000" />
+    <Point2 X="3500" Y="0" Z="-6500" />
+    <Point3 X="5000" Y="0" Z="-1500" />
+    <Point4 X="3500" Y="0" Z="5000" />
+    <Point5 X="-1500" Y="0" Z="7500" />
+    <Point6 X="-7500" Y="0" Z="6000" />
+    <Point7 X="-10000" Y="0" Z="500" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="0" Z="0" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

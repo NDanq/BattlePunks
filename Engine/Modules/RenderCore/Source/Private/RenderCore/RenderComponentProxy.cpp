@@ -30,6 +30,7 @@ namespace RenderCore
         bCastShadows      = Component.bCastShadows != 0;
         bCastInsetShadow  = Component.bCastInsetShadow != 0;
         bOccluder         = Component.bOccluder != 0;
+        SetCustomPassGroups(uint8_t(Component.CustomPassGroups & 0xFF));
 
         /* Bounded copy: the component's buffers need not be NUL-terminated. */
         static_assert(sizeof(Materials) == sizeof(Component.Materials), "RenderComponentProxy::Materials must match the component's");

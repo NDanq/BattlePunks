@@ -8,7 +8,8 @@
  *                      [-target <OpenGL|Vulkan|D3D12>]... [-editor] [-shipping]
  *                      [-force] [-jobs <N>] [-python <exe>]
  *
- * The engine always; with -project, that project's Content/Materials too.
+ * The engine always; with -project, that project's Content/Materials too, and
+ * its Content/Shaders (plain shaders: custom render passes), by file name.
  * -module names the project's shader cache (default: its
  * Config/DefaultEngine.ini [Game] Module). Each is cooked below its own
  * <root>/Saved/Cooked/Shaders/, laid out as the runtime reads it:
@@ -395,13 +396,21 @@ namespace
                 return;
             }
             const fs::path Root = Opts.ProjectDir / "Saved" / "Cooked" / "Shaders";
-            const Args Source{ "-src", ToUtf8(Materials), "-root", ToUtf8(Opts.ProjectDir) };
+            Args Source{ "-src", ToUtf8(Materials), "-root", ToUtf8(Opts.ProjectDir) };
+            std::vector<fs::path> Inputs{ Materials };
+            /* Its own plain shaders too (custom render passes): Content/Shaders, by file name. */
+            const fs::path Shaders = Opts.ProjectDir / "Content" / "Shaders";
+            if(fs::is_directory(Shaders, Error))
+            {
+                Source.insert(Source.end(), { "-src", ToUtf8(Shaders) });
+                Inputs.push_back(Shaders);
+            }
             const std::string What = Opts.Module.empty() ? std::string("Project") : Opts.Module;
 
             // Without a module there is no cache to cook: only an editor's loose files.
             if(!Opts.Module.empty())
             {
-                CookVariant(What, Root, "Runtime", { Materials }, WithCache({}, Source, Opts.Module, false));
+                CookVariant(What, Root, "Runtime", Inputs, WithCache({}, Source, Opts.Module, false));
             }
             else
             {
@@ -412,11 +421,11 @@ namespace
             {
                 Args Loose = Source;
                 Loose.insert(Loose.end(), { "-out", "{out}/Shaders/Cooked", "-data-out", "{out}" });
-                CookVariant(What, Root, "Editor", { Materials }, { Loose });
+                CookVariant(What, Root, "Editor", Inputs, { Loose });
             }
             if(Opts.bShipping && !Opts.Module.empty())
             {
-                CookVariant(What, Root, "Shipping", { Materials }, WithCache({}, Source, Opts.Module, true));
+                CookVariant(What, Root, "Shipping", Inputs, WithCache({}, Source, Opts.Module, true));
             }
         }
 

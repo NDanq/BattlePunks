@@ -106,6 +106,10 @@ namespace RenderCore
          * scene's own pass, so it samples them. */
         void SetCaptures(const SceneCaptureList& InCaptures);
 
+        /* The World whose custom render passes (CustomRenderPass.h) the next
+         * Render() runs, for its captures and its view; consumed by it. */
+        void SetCustomPassWorld(const void* InWorld);
+
         /* The UI over this scene (Renderer::SubmitUIDrawList): InBlock, a packed
          * UIDrawList in EngineCore::Memory, owned from here and drawn by every
          * Render() until the next; null clears it. */

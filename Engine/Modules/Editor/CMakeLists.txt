@@ -112,6 +112,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/Sequencer/SequencerWindow.cpp
         Source/Private/Editor/Sequencer/SequencerWindow.h
         Source/Private/Editor/Terrain/FoliageEditing.cpp
+        Source/Private/Editor/Procedural/ProceduralEditing.cpp
+        Source/Private/Editor/Procedural/ProceduralEditing.h
         Source/Private/Editor/Terrain/FoliageEditing.h
         Source/Private/Editor/Terrain/TerrainEditing.cpp
         Source/Private/Editor/Terrain/TerrainEditing.h

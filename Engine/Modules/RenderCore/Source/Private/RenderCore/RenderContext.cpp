@@ -22,6 +22,7 @@
 #include "Public/Core/CorePack.h"
 #include "Public/GDI/Shaders/Classes/TestbedShaders.h"
 #include "Public/RenderCore/Components/RenderComponent.h"
+#include "Public/RenderCore/CustomRenderPass.h"
 #include "Public/RenderCore/MaterialDescription.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/SkeletonAsset.h"
@@ -33,6 +34,7 @@
 #include "Public/RenderCore/TextureCompression.h"
 #include "Private/RenderCore/ParticleSimulation.h"
 #include "Public/RenderCore/RenderTargetAsset.h"
+#include "Private/RenderCore/CustomRenderPassInternal.h"
 #include "Private/RenderCore/DrawPolicy.h"
 #include "Private/RenderCore/MaterialPreview.h"
 #include "Private/RenderCore/OverlayFont.h"
@@ -1035,6 +1037,60 @@ namespace RenderCore
             return PostShaders[InPass];
         }
 
+        /* How a full-screen pass meets what its target holds. */
+        enum class EFullscreenBlend : uint8_t
+        {
+            Opaque,
+            Additive,
+            Transmit,     // the target times the source's alpha, plus its colour (a medium laid over it: fog)
+            AlphaBlend,   // the source over the target by its alpha
+        };
+
+        /*
+         * One full-screen pass: InPixel into InTarget (InWidth x InHeight at
+         * InX, no depth), InTextures as material slots 0.., InBlock's
+         * InBlockBytes as the material block. False if a shader or the target
+         * is missing.
+         */
+        bool DrawFullscreenShader(GDIShader* InPixel, const char* InEvent, GDIRenderTarget* InTarget, const uint InWidth, const uint InHeight,
+                                  GDITextureResource* const* InTextures, const uint32_t InTextureCount, const void* InBlock,
+                                  const uint InBlockBytes, const EFullscreenBlend InBlend, const uint InX = 0)
+        {
+            GDIShader* Vertex = GetDefaultVertex(EMaterialVertexInput::Fullscreen);
+            if(!InPixel || !Vertex || !InTarget)
+            {
+                return false;
+            }
+            SCOPED_DRAW_EVENT(InEvent);
+            GDISetRenderTargets(&InTarget, 1, nullptr);
+            GDISetViewport(InX, 0, InWidth, InHeight);   // InX: a cube face's place in its strip
+            GDISetColorMask(EColM_RGBA);
+
+            for(uint32_t Slot = 0; Slot < InTextureCount; ++Slot)
+            {
+                GDISetMaterialTexture(Slot, InTextures[Slot]);
+            }
+            EnsureInitialised();
+            Bind(Vertex, InPixel);
+            GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, InBlock, InBlockBytes);
+            GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &Scene, uint(sizeof(Scene)));
+            GDISetDepthState(IDepthStateDesc());
+            switch(InBlend)
+            {
+                case EFullscreenBlend::Opaque:     GDISetBlendState(IBlendStateDesc()); break;
+                case EFullscreenBlend::Additive:   GDISetBlendState(IBlendStateDesc(true, BM_One, BM_One)); break;
+                case EFullscreenBlend::Transmit:   GDISetBlendState(IBlendStateDesc(true, BM_One, BM_Src_Alpha)); break;
+                case EFullscreenBlend::AlphaBlend: GDISetBlendState(IBlendStateDesc(true, BM_Src_Alpha, BM_One_Minus_Src_Alpha)); break;
+            }
+            GDIDrawObject(ScreenObject);
+            DrawCallCount.fetch_add(1, std::memory_order_relaxed);
+            for(uint32_t Slot = 0; Slot < InTextureCount; ++Slot)
+            {
+                GDISetMaterialTexture(Slot, nullptr);
+            }
+            return true;
+        }
+
         /*
          * One full-screen pass of the stack: InPass's shader into InTarget
          * (InWidth x InHeight, no depth), InTextures as material slots 0..,
@@ -1045,46 +1101,15 @@ namespace RenderCore
                       std::initializer_list<GDITextureResource*> InTextures, const PostBlock& InBlock, const bool bInAdditive = false,
                       const uint InX = 0, const bool bInTransmit = false)
         {
-            GDIShader* Pixel  = GetPostShader(InPass);
-            GDIShader* Vertex = GetDefaultVertex(EMaterialVertexInput::Fullscreen);
-            if(!Pixel || !Vertex || !InTarget)
-            {
-                return false;
-            }
-            SCOPED_DRAW_EVENT(POST_PASS_NAMES[InPass]);
-            GDISetRenderTargets(&InTarget, 1, nullptr);
-            GDISetViewport(InX, 0, InWidth, InHeight);   // InX: a cube face's place in its strip
-            GDISetColorMask(EColM_RGBA);
-
-            uint32_t Slot = 0;
-            for(GDITextureResource* Each : InTextures)
-            {
-                GDISetMaterialTexture(Slot++, Each);
-            }
-            EnsureInitialised();
-            Bind(Vertex, Pixel);
             /* These blocks carry their matrix first; the others start at A. */
-            if(InPass == PP_MotionBlur || InPass == PP_AmbientOcclusion || InPass == PP_IBLSky || InPass == PP_Sky
-               || InPass == PP_TemporalAA || InPass == PP_ScreenReflections || InPass == PP_VolumetricFog)
-            {
-                GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, &InBlock, uint(sizeof(InBlock)));
-            }
-            else
-            {
-                GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, InBlock.A, uint(sizeof(InBlock) - sizeof(InBlock.Matrix)));
-            }
-            GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &Scene, uint(sizeof(Scene)));
-            GDISetDepthState(IDepthStateDesc());
-            // bInTransmit: the target times the source's alpha, plus its colour (a medium laid over it: fog).
-            GDISetBlendState(bInAdditive ? IBlendStateDesc(true, BM_One, BM_One)
-                           : bInTransmit ? IBlendStateDesc(true, BM_One, BM_Src_Alpha) : IBlendStateDesc());
-            GDIDrawObject(ScreenObject);
-            DrawCallCount.fetch_add(1, std::memory_order_relaxed);
-            for(uint32_t Each = 0; Each < Slot; ++Each)
-            {
-                GDISetMaterialTexture(Each, nullptr);
-            }
-            return true;
+            const bool bMatrix = InPass == PP_MotionBlur || InPass == PP_AmbientOcclusion || InPass == PP_IBLSky || InPass == PP_Sky
+                              || InPass == PP_TemporalAA || InPass == PP_ScreenReflections || InPass == PP_VolumetricFog;
+            const void* Block      = bMatrix ? static_cast<const void*>(&InBlock) : static_cast<const void*>(InBlock.A);
+            const uint  BlockBytes = uint(bMatrix ? sizeof(InBlock) : sizeof(InBlock) - sizeof(InBlock.Matrix));
+            return DrawFullscreenShader(GetPostShader(InPass), POST_PASS_NAMES[InPass], InTarget, InWidth, InHeight,
+                                        InTextures.begin(), uint32_t(InTextures.size()), Block, BlockBytes,
+                                        bInAdditive ? EFullscreenBlend::Additive
+                                      : bInTransmit ? EFullscreenBlend::Transmit : EFullscreenBlend::Opaque, InX);
         }
 
         /* Auto exposure (RENDERPIPELINE.md, "Auto exposure"): InLinear (the HDR scene colour)
@@ -1259,6 +1284,76 @@ namespace RenderCore
 
         bool                  bDrawMotion = false;       // SetDrawMotion's, for the draws queued now
         EngineCore::Matrix4x4 DrawMotion;
+
+        /*
+         * CUSTOM RENDER PASSES (CustomRenderPass.h). The World whose passes
+         * the next scene's stages run (SetCustomPassWorld; null: none) and
+         * those passes, gathered as RenderSceneStages starts; the custom pass
+         * mesh groups of the draws queued now (SetDrawCustomGroups) and each
+         * group's draws this frame; each registration's own targets and
+         * buffers, by name, freed when it is unregistered; and the shaders
+         * passes name, by file, loaded once (null: missing, warned).
+         */
+        const void*                  PassWorld = nullptr;
+        std::vector<CustomPassEntry> FramePasses;
+        uint8_t                      DrawCustomGroups = 0;
+        std::vector<DrawCommand>     GroupDraws[RENDER_PASS_MESH_GROUPS];
+        struct PassTarget
+        {
+            GDIRenderTarget*  Target = nullptr;
+            ERenderPassFormat Format = ERenderPassFormat::RGBA8;
+        };
+        struct PassResources
+        {
+            std::unordered_map<std::string, PassTarget> Targets;
+            std::unordered_map<std::string, GDIBuffer*> Buffers;
+        };
+        std::unordered_map<RenderPassHandle, PassResources> PassPools;
+        std::unordered_map<std::string, GDIShader*>         PassShaders;
+
+        GDIShader* GetPassShader(const std::string& InFile, const EShaderType InType, const char* InPass)
+        {
+            const auto Found = PassShaders.find(InFile);
+            if(Found != PassShaders.end())
+            {
+                return Found->second;
+            }
+            GDIShader* Shader = InType == ST_Compute && !GDISupportsCompute()
+                              ? nullptr : LoadShader(InFile, InType, std::string("custom render pass '") + InPass + "'", false);
+            PassShaders.emplace(InFile, Shader);
+            return Shader;
+        }
+
+        void ReleasePassResources(PassResources& InOut)
+        {
+            for(auto& Each : InOut.Targets)
+            {
+                if(Each.second.Target) { GDIReleaseRenderTarget(Each.second.Target); delete Each.second.Target; }
+            }
+            for(auto& Each : InOut.Buffers)
+            {
+                if(Each.second) { Each.second->Release(); }
+            }
+            InOut.Targets.clear();
+            InOut.Buffers.clear();
+        }
+
+        /* The unregistered passes' targets and buffers (CustomRenderPass.cpp). */
+        void ReleaseRetiredPasses()
+        {
+            std::vector<RenderPassHandle> Retired;
+            TakeRetiredCustomRenderPasses(Retired);
+            for(const RenderPassHandle Each : Retired)
+            {
+                const auto Found = PassPools.find(Each);
+                if(Found == PassPools.end()) { continue; }
+                ReleasePassResources(Found->second);
+                PassPools.erase(Found);
+            }
+        }
+
+        /* Runs InHook's passes (RenderPassContext::Frame, below); true if any ran. */
+        bool RunHook(ERenderHook InHook, SceneTargets& InTargets, bool bInMainView, GDIRenderTarget** InOutCurrent);
 
         /* OCCLUSION CULLING (SetOcclusionQueries): the scene's query set and
          * the boxes it tests this frame; the query the draws queued now are
@@ -1520,6 +1615,23 @@ namespace RenderCore
         /* Binds InMaterial's shaders for InInput and its blocks with InTint,
          * and InItem's parameter overrides for its slot. False (nothing
          * bound) if a shader is missing. */
+        /* InMaterial's textures, every other slot cleared; slot 0 (a PostProcess
+         * pass's scene) is the caller's. A recording chunk binds those resolved
+         * before it ran (ResolveForParallel). */
+        void BindMaterialTextures(Material& InMaterial)
+        {
+            for(uint32_t Slot = MATERIAL_TEXTURE_SLOT_FIRST; Slot < MATERIAL_TEXTURE_SLOTS; ++Slot)
+            {
+                GDISetMaterialTexture(Slot, nullptr);
+            }
+            for(size_t Index = 0; Index < InMaterial.Description.Textures.size(); ++Index)
+            {
+                const MaterialTexture& Each = InMaterial.Description.Textures[Index];
+                GDISetMaterialTexture(Each.Slot, !GIssueScratch ? FindTexture(Each)
+                                                 : (Index < InMaterial.Resolved.size() ? InMaterial.Resolved[Index] : nullptr));
+            }
+        }
+
         bool BindMaterial(Material& InMaterial, const EMaterialVertexInput InInput, const EngineCore::Color InTint,
                           const DrawCommand* InItem = nullptr)
         {
@@ -1561,18 +1673,7 @@ namespace RenderCore
             GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, Upload.data(), uint(Upload.size()));
             GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &Scene, uint(sizeof(Scene)));
 
-            /* Its textures, every other slot cleared; slot 0 (a PostProcess
-             * pass's scene) is the caller's. */
-            for(uint32_t Slot = MATERIAL_TEXTURE_SLOT_FIRST; Slot < MATERIAL_TEXTURE_SLOTS; ++Slot)
-            {
-                GDISetMaterialTexture(Slot, nullptr);
-            }
-            for(size_t Index = 0; Index < InMaterial.Description.Textures.size(); ++Index)
-            {
-                const MaterialTexture& Each = InMaterial.Description.Textures[Index];
-                GDISetMaterialTexture(Each.Slot, !GIssueScratch ? FindTexture(Each)
-                                                 : (Index < InMaterial.Resolved.size() ? InMaterial.Resolved[Index] : nullptr));
-            }
+            BindMaterialTextures(InMaterial);
             /* Slot 0, its own outside PostProcess (MaterialTemplate_PS.glsl): a Base
              * Pass material's lightmap, a forward Lit material's probe atlas. */
             if(InMaterial.Description.Domain != EMaterialDomain::PostProcess && InMaterial.Description.Shading == EMaterialShading::Lit)
@@ -1846,11 +1947,14 @@ namespace RenderCore
         /* One caster section into the bound atlas tile, with its material's
          * vertex shader (World Position Offset) and ShadowDepth.fsh: depth
          * only. The PrePass draws its occluders, and its query boxes
-         * (!bInDepthWrite: tested, never written), the same way. */
-        void IssueShadowCaster(const DrawCommand& InItem, const bool bInDepthWrite = true)
+         * (!bInDepthWrite: tested, never written), the same way; a custom
+         * pass's mesh group too, with its own pixel shader (InPixel) and
+         * perhaps no depth test. */
+        void IssueShadowCaster(const DrawCommand& InItem, const bool bInDepthWrite = true, GDIShader* InPixel = nullptr,
+                               const bool bInDepthTest = true)
         {
             EnsureInitialised();
-            GDIShader* Pixel  = GetShadowDepthShader();
+            GDIShader* Pixel  = InPixel ? InPixel : GetShadowDepthShader();
             const EMaterialVertexInput Input = InItem.Instances ? EMaterialVertexInput::InstancedMesh : PrepareMeshInput(InItem);
             GDIShader* Vertex = InItem.Mat ? VertexFor(*InItem.Mat, Input) : GetDefaultVertex(Input);
             if(!Pixel || !Vertex)
@@ -1869,6 +1973,11 @@ namespace RenderCore
                 /* The entity's overrides too: a parameter may drive its World Position Offset. */
                 const std::vector<uint8_t>& Block = BlockWithOverrides(*InItem.Mat, &InItem);
                 GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, Block.data(), uint(Block.size()));
+                /* And its textures, which that offset may sample (a custom pass's trail). */
+                if(InItem.Mat->Description.bHasOffset && !InItem.Mat->Description.Textures.empty())
+                {
+                    BindMaterialTextures(*InItem.Mat);
+                }
             }
             else
             {
@@ -1877,8 +1986,8 @@ namespace RenderCore
             GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &Scene, uint(sizeof(Scene)));
 
             IDepthStateDesc Depth;
-            Depth.bDepthTest = true;
-            Depth.bDepthMask = bInDepthWrite;
+            Depth.bDepthTest = bInDepthTest;
+            Depth.bDepthMask = bInDepthTest && bInDepthWrite;
             Depth.DepthMode  = CTM_LEQUAL;
             GDISetDepthState(Depth);
             GDISetBlendState(IBlendStateDesc());
@@ -2328,6 +2437,7 @@ namespace RenderCore
         /* Into InStage's policy inside a scene; at once outside one. */
         void Submit(DrawCommand InItem, const ERenderStage InStage)
         {
+            InItem.CustomGroups = DrawCustomGroups;   // a static list's replay: the proxy's groups now
             if(Capture)
             {
                 Capture->push_back({ InItem, InStage });   // a static list's: it never moves
@@ -2348,6 +2458,16 @@ namespace RenderCore
             const EngineCore::Vector3 Offset = (InItem.Instances ? InItem.SortOrigin : InItem.Transform.Position) - View.Origin;
             InItem.Depth = float(Offset.Dot(ViewForward(View)));
             PolicyFor(InStage).Add(InItem);
+            /* And its custom pass mesh groups' (DrawMeshGroup): a surface's
+             * sections, not its shadow casters or occluders. */
+            if(InItem.CustomGroups != 0 && InItem.Kind == DrawCommand::EKind::MeshSection && InItem.Mesh
+               && InStage != ERenderStage::Shadows && InStage != ERenderStage::PrePass && InStage != ERenderStage::PostProcess)
+            {
+                for(uint32_t Group = 0; Group < RENDER_PASS_MESH_GROUPS; ++Group)
+                {
+                    if(InItem.CustomGroups & (1u << Group)) { GroupDraws[Group].push_back(InItem); }
+                }
+            }
         }
 
         /* A usable material's stage; Unlit for the plain fallbacks. */
@@ -2473,13 +2593,14 @@ namespace RenderCore
                 if(bInShadows)
                 {
                     if(!(Item.Mat ? VertexFor(*Item.Mat, Input) : GetDefaultVertex(Input))) { return false; }
-                    continue;
+                    /* A caster's offset may sample its textures (IssueShadowCaster). */
+                    if(!Item.Mat || !Item.Mat->Description.bHasOffset || Item.Mat->Description.Textures.empty()) { continue; }
                 }
-                Material& Mat = *Item.Mat;
-                if(!VertexFor(Mat, Input))
+                else if(!VertexFor(*Item.Mat, Input))
                 {
                     return false;
                 }
+                Material& Mat = *Item.Mat;
                 if(Mat.ResolvedPass != ParallelPassSerial)
                 {
                     Mat.Resolved.resize(Mat.Description.Textures.size());
@@ -3795,6 +3916,391 @@ namespace RenderCore
         if(InMotion) { P->DrawMotion = *InMotion; }
     }
 
+    void RenderContext::SetDrawCustomGroups(const uint8_t InGroups)
+    {
+        P->DrawCustomGroups = InGroups;
+    }
+
+    void RenderContext::SetCustomPassWorld(const void* InWorld)
+    {
+        P->PassWorld = InWorld;
+    }
+
+    // === Custom render passes (CustomRenderPass.h) ===========================
+
+    /* What a RenderPassContext reads and draws with: the stages under way. */
+    struct RenderPassContext::Frame
+    {
+        RenderContext::Impl*   P       = nullptr;
+        SceneTargets*          Targets = nullptr;
+        const CustomPassEntry* Entry   = nullptr;
+        ERenderHook            Hook    = ERenderHook::BeforeScene;
+        bool                   bMainView = false;
+        GDIRenderTarget**      Current = nullptr;   // the post hooks' picture
+
+        const char* PassName() const { return Entry && Entry->Pass ? Entry->Pass->GetName() : "?"; }
+    };
+
+    bool RenderContext::Impl::RunHook(const ERenderHook InHook, SceneTargets& InTargets, const bool bInMainView,
+                                      GDIRenderTarget** InOutCurrent)
+    {
+        bool bRan = false;
+        for(const CustomPassEntry& Entry : FramePasses)
+        {
+            if(Entry.Hook != InHook || !Entry.Pass)
+            {
+                continue;
+            }
+            RenderPassContext::Frame Frame;
+            Frame.P         = this;
+            Frame.Targets   = &InTargets;
+            Frame.Entry     = &Entry;
+            Frame.Hook      = InHook;
+            Frame.bMainView = bInMainView;
+            Frame.Current   = InOutCurrent;
+            RenderPassContext Context(Frame);
+            if(!Entry.Pass->ShouldRun(Context))
+            {
+                continue;
+            }
+            {
+                SCOPED_DRAW_EVENT(std::string("Custom:") + Frame.PassName());
+                Entry.Pass->Execute(Context);
+            }
+            for(uint32_t Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
+            bRan = true;
+        }
+        return bRan;
+    }
+
+    namespace
+    {
+        GDITextureResource* PassTexture(const RenderPassTexture InTexture)
+        {
+            return static_cast<GDITextureResource*>(const_cast<void*>(InTexture.Handle));
+        }
+        GDIRenderTarget* PassTargetOf(const RenderPassTarget InTarget)
+        {
+            return static_cast<GDIRenderTarget*>(InTarget.Handle);
+        }
+        RenderPassTexture ColorOf(GDIRenderTarget* InTarget)
+        {
+            GDITexture2D* Texture = InTarget ? InTarget->ToGDITexture2D() : nullptr;
+            RenderPassTexture Out;
+            Out.Handle = Texture ? Texture->Resource : nullptr;
+            return Out;
+        }
+        RenderPassTexture DepthOf(GDIRenderTarget* InTarget)
+        {
+            GDITexture2D* Texture = InTarget ? InTarget->ToDepthTexture2D() : nullptr;
+            RenderPassTexture Out;
+            Out.Handle = Texture ? Texture->Resource : nullptr;
+            return Out;
+        }
+        EngineCore::Color ClearColorOf(const float (&InColor)[4])
+        {
+            const auto Byte = [](const float InValue) { return uint8_t(std::clamp(InValue, 0.0f, 1.0f) * 255.0f + 0.5f); };
+            return EngineCore::Color(Byte(InColor[0]), Byte(InColor[1]), Byte(InColor[2]), Byte(InColor[3]));
+        }
+    }
+
+    ERenderHook       RenderPassContext::GetHook() const        { return F->Hook; }
+    const RenderView& RenderPassContext::GetView() const        { return F->P->View; }
+    uint32_t          RenderPassContext::GetWidth() const       { return F->Targets->Width; }
+    uint32_t          RenderPassContext::GetHeight() const      { return F->Targets->Height; }
+    bool              RenderPassContext::IsMainView() const     { return F->bMainView; }
+    bool              RenderPassContext::IsHDR() const          { return F->Targets->bHDR; }
+    uint64_t          RenderPassContext::GetFrameNumber() const { return F->P->FrameNumber; }
+    float             RenderPassContext::GetDeltaSeconds() const { return F->P->FrameDelta; }
+
+    RenderPassTexture RenderPassContext::GetSceneTexture(const ESceneTexture InTexture) const
+    {
+        const SceneTargets& Targets = *F->Targets;
+        /* The G-buffer and velocity only once this frame's Base Pass wrote them. */
+        const bool bWritten = F->Hook >= ERenderHook::AfterBasePass;
+        switch(InTexture)
+        {
+            case ESceneTexture::SceneColor: return ColorOf(Targets.SceneColor);
+            case ESceneTexture::SceneDepth: return DepthOf(Targets.SceneColor);
+            case ESceneTexture::GBuffer0:
+            case ESceneTexture::GBuffer1:
+            case ESceneTexture::GBuffer2:
+            case ESceneTexture::GBuffer3:
+                return bWritten && F->P->bGBufferThisFrame
+                     ? ColorOf(Targets.GBuffer[size_t(InTexture) - size_t(ESceneTexture::GBuffer0)]) : RenderPassTexture();
+            case ESceneTexture::Velocity:
+                return bWritten && F->P->bVelocityThisFrame ? ColorOf(Targets.Velocity) : RenderPassTexture();
+            case ESceneTexture::Current:
+                return ColorOf(F->Current && *F->Current ? *F->Current : Targets.SceneColor);
+            case ESceneTexture::Count: break;
+        }
+        return RenderPassTexture();
+    }
+
+    RenderPassTarget RenderPassContext::AcquireTarget(const char* InName, const RenderPassTargetDesc& InDesc)
+    {
+        RenderPassTarget Out;
+        if(!InName || InName[0] == '\0' || !F->Entry)
+        {
+            return Out;
+        }
+        const SceneTargets& Targets = *F->Targets;
+        const float    Scale  = InDesc.Scale > 0.0f ? InDesc.Scale : 1.0f;
+        const uint32_t Width  = InDesc.Width  > 0 ? InDesc.Width  : std::max<uint32_t>(1u, uint32_t(float(Targets.Width) * Scale + 0.5f));
+        const uint32_t Height = InDesc.Height > 0 ? InDesc.Height : std::max<uint32_t>(1u, uint32_t(float(Targets.Height) * Scale + 0.5f));
+        if(Width == 0 || Height == 0 || Width > RENDER_TARGET_MAX_SIZE || Height > RENDER_TARGET_MAX_SIZE)
+        {
+            return Out;
+        }
+
+        ERenderPassFormat Format = InDesc.Format;
+        if(Format == ERenderPassFormat::RGBA16F && !GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
+        {
+            F->P->WarnOnce(std::string("|pass-format|") + F->PassName(), std::string("custom render pass '") + F->PassName()
+                           + "': this backend has no half float targets; they are RGBA8");
+            Format = ERenderPassFormat::RGBA8;
+        }
+
+        RenderContext::Impl::PassTarget& Entry = F->P->PassPools[F->Entry->Handle].Targets[InName];
+        if(Entry.Target && Entry.Format != Format)
+        {
+            GDIReleaseRenderTarget(Entry.Target);
+            delete Entry.Target;
+            Entry.Target = nullptr;
+        }
+        if(!Entry.Target)
+        {
+            const std::string Name = std::string("RenderCore.Pass.") + F->PassName() + "." + InName;
+            Entry.Target = Format == ERenderPassFormat::RGBA16F ? GDICreateRenderTargetFormat(Name, Width, Height, GDI_RTF_RGBA16F)
+                                                                : GDICreateRenderTarget(Name, Width, Height);
+            Entry.Format = Format;
+        }
+        else if(Entry.Target->GetWidth() != Width || Entry.Target->GetHeight() != Height)
+        {
+            Entry.Target->Resize(Width, Height);
+        }
+        if(Entry.Target && Entry.Target->IsValid())
+        {
+            Out.Handle = Entry.Target;
+        }
+        return Out;
+    }
+
+    RenderPassTarget RenderPassContext::AcquireAssetTarget(const char* InPath)
+    {
+        RenderPassTarget Out;
+        const std::string Path = InPath ? InPath : "";
+        RenderContext::Impl::GpuRenderTarget* Entry = Path.empty() ? nullptr : F->P->FindRenderTarget(Path);
+        if(!Entry || Entry->Source->Desc.Kind != ERenderTargetKind::Tex2D)
+        {
+            F->P->WarnOnce("|pass-asset|" + Path, std::string("custom render pass '") + F->PassName() + "': '" + Path
+                           + "' is not a 2D render target (an .nmrt2d); it draws nothing there");
+            return Out;
+        }
+        const RenderTargetDesc& Desc = Entry->Source->Desc;
+        if(!Entry->Target)
+        {
+            Entry->Target = GDICreateRenderTarget("RenderCore.Capture." + Path, Desc.Width, Desc.Height);
+        }
+        else if(Entry->Desc.Width != Desc.Width || Entry->Desc.Height != Desc.Height)
+        {
+            Entry->Target->Resize(Desc.Width, Desc.Height);
+        }
+        Entry->Desc = Desc;
+        if(!Entry->Target || !Entry->Target->IsValid())
+        {
+            return Out;
+        }
+        /* What materials sample from now: this target, as a capture's would be. */
+        Entry->bCaptured = true;
+        Out.Handle = Entry->Target;
+        return Out;
+    }
+
+    RenderPassTexture RenderPassContext::AsTexture(const RenderPassTarget InTarget) const
+    {
+        return ColorOf(PassTargetOf(InTarget));
+    }
+
+    RenderPassTexture RenderPassContext::AsDepthTexture(const RenderPassTarget InTarget) const
+    {
+        return DepthOf(PassTargetOf(InTarget));
+    }
+
+    bool RenderPassContext::Clear(const RenderPassTarget InTarget, const float (&InColor)[4], const bool bInDepth)
+    {
+        GDIRenderTarget* Target = PassTargetOf(InTarget);
+        if(!Target)
+        {
+            return false;
+        }
+        GDISetRenderTargets(&Target, 1, bInDepth ? Target : nullptr);
+        GDISetViewport(0, 0, Target->GetWidth(), Target->GetHeight());
+        GDISetColorMask(EColM_RGBA);
+        GDIClear(bInDepth ? (CM_Color | CM_Depth) : CM_Color, ClearColorOf(InColor));
+        return true;
+    }
+
+    bool RenderPassContext::DrawFullscreen(const char* InPixelShader, const RenderPassTarget InTarget,
+                                           const std::initializer_list<RenderPassTexture> InInputs, const RenderPassParams& InParams,
+                                           const ERenderPassBlend InBlend)
+    {
+        GDIRenderTarget* Target = InTarget.IsValid() ? PassTargetOf(InTarget) : F->Targets->SceneColor;
+        if(!InPixelShader || !Target)
+        {
+            return false;
+        }
+        if(InInputs.size() > RENDER_PASS_INPUTS_MAX)
+        {
+            F->P->WarnOnce(std::string("|pass-inputs|") + F->PassName(), std::string("custom render pass '") + F->PassName()
+                           + "': more than 7 inputs to a full-screen draw; the rest are not bound");
+        }
+        GDITextureResource* Textures[GDI_MATERIAL_TEXTURE_SLOTS] = {};
+        uint32_t Slot = 0;
+        for(const RenderPassTexture Each : InInputs)
+        {
+            if(Slot >= RENDER_PASS_INPUTS_MAX) { break; }
+            Textures[Slot++] = PassTexture(Each);
+        }
+        Textures[GDI_MATERIAL_TEXTURE_SLOTS - 1] = PassTexture(DepthOf(F->Targets->SceneColor));   // slot 7: the scene depth
+        static_assert(sizeof(RenderPassParams) == 96 && sizeof(RenderPassParams) <= GDI_MATERIAL_BLOCK_MAX_BYTES,
+                      "RenderPassParams is PP_Block: mat4, vec4, vec4");
+        using Blends = RenderContext::Impl::EFullscreenBlend;
+        const Blends Blend = InBlend == ERenderPassBlend::Additive   ? Blends::Additive
+                           : InBlend == ERenderPassBlend::AlphaBlend ? Blends::AlphaBlend : Blends::Opaque;
+        GDIShader* Pixel = F->P->GetPassShader(InPixelShader, ST_Pixel, F->PassName());
+        return F->P->DrawFullscreenShader(Pixel, InPixelShader, Target, Target->GetWidth(), Target->GetHeight(), Textures,
+                                          GDI_MATERIAL_TEXTURE_SLOTS, &InParams, uint(sizeof(InParams)), Blend);
+    }
+
+    uint32_t RenderPassContext::GetMeshGroupDrawCount(const uint32_t InGroup) const
+    {
+        return InGroup < RENDER_PASS_MESH_GROUPS ? uint32_t(F->P->GroupDraws[InGroup].size()) : 0;
+    }
+
+    bool RenderPassContext::DrawMeshGroup(const uint32_t InGroup, const char* InPixelShader, const RenderPassTarget InTarget,
+                                          ERenderPassDepth InDepth, const bool bInClear)
+    {
+        GDIRenderTarget* Target = PassTargetOf(InTarget);
+        if(InGroup >= RENDER_PASS_MESH_GROUPS || !Target)
+        {
+            return false;
+        }
+        RenderContext::Impl& P = *F->P;
+        GDIRenderTarget* SceneColor = F->Targets->SceneColor;
+        if(InDepth == ERenderPassDepth::Scene
+           && (!SceneColor || SceneColor->GetWidth() != Target->GetWidth() || SceneColor->GetHeight() != Target->GetHeight()))
+        {
+            P.WarnOnce(std::string("|pass-depth|") + F->PassName(), std::string("custom render pass '") + F->PassName()
+                       + "': a mesh group drawn against the scene depth needs a target the scene's size; drawn without depth");
+            InDepth = ERenderPassDepth::None;
+        }
+        GDIRenderTarget* DepthFrom = InDepth == ERenderPassDepth::Own ? Target : InDepth == ERenderPassDepth::Scene ? SceneColor : nullptr;
+        GDIShader* Pixel = InPixelShader ? P.GetPassShader(InPixelShader, ST_Pixel, F->PassName()) : nullptr;
+        if(InPixelShader && !Pixel)
+        {
+            return false;   // warned by LoadShader
+        }
+
+        SCOPED_DRAW_EVENT("MeshGroup" + std::to_string(InGroup));
+        GDISetRenderTargets(&Target, 1, DepthFrom);
+        GDISetViewport(0, 0, Target->GetWidth(), Target->GetHeight());
+        GDISetColorMask(EColM_RGBA);
+        if(bInClear)
+        {
+            GDIClear(InDepth == ERenderPassDepth::Own ? (CM_Color | CM_Depth) : CM_Color, EngineCore::Color(0, 0, 0, 0));
+        }
+        const std::vector<DrawCommand>& Draws = P.GroupDraws[InGroup];
+        for(const DrawCommand& Each : Draws)
+        {
+            if(Pixel)
+            {
+                P.IssueShadowCaster(Each, /*bInDepthWrite*/ InDepth == ERenderPassDepth::Own, Pixel,
+                                    /*bInDepthTest*/ InDepth != ERenderPassDepth::None);
+            }
+            else
+            {
+                P.Issue(Each);
+            }
+        }
+        return !Draws.empty();
+    }
+
+    bool RenderPassContext::SupportsCompute() const
+    {
+        return GDISupportsCompute();
+    }
+
+    RenderPassBuffer RenderPassContext::AcquireBuffer(const char* InName, const uint32_t InBytes, const void* InInitialData,
+                                                      const bool bInInstances)
+    {
+        RenderPassBuffer Out;
+        if(!InName || InName[0] == '\0' || InBytes == 0 || !F->Entry || !GDISupportsCompute())
+        {
+            return Out;
+        }
+        GDIBuffer*& Buffer = F->P->PassPools[F->Entry->Handle].Buffers[InName];
+        if(Buffer && Buffer->GetSize() != InBytes)
+        {
+            Buffer->Release();
+            Buffer = nullptr;
+        }
+        if(!Buffer)
+        {
+            Buffer = GDICreateBuffer(InBytes, uint8_t(GDI_BU_Storage | (bInInstances ? GDI_BU_Instance : 0)), InInitialData);
+            GDISetDebugName(Buffer, std::string("RenderCore.Pass.") + F->PassName() + "." + InName);
+        }
+        Out.Handle = Buffer;
+        return Out;
+    }
+
+    bool RenderPassContext::Dispatch(const char* InComputeShader, const void* InParams, const uint32_t InParamBytes,
+                                     const std::initializer_list<RenderPassBuffer> InBuffers, const uint32_t InX, const uint32_t InY,
+                                     const uint32_t InZ)
+    {
+        if(!InComputeShader || InBuffers.size() > RENDER_PASS_BUFFERS_MAX || InParamBytes > RENDER_PASS_COMPUTE_PARAMS_MAX)
+        {
+            return false;
+        }
+        GDIShader* Shader = F->P->GetPassShader(InComputeShader, ST_Compute, F->PassName());
+        if(!Shader)
+        {
+            return false;
+        }
+        GDIBuffer* Buffers[RENDER_PASS_BUFFERS_MAX] = {};
+        uint32_t Count = 0;
+        for(const RenderPassBuffer Each : InBuffers)
+        {
+            if(!Each.IsValid()) { return false; }
+            Buffers[Count++] = static_cast<GDIBuffer*>(Each.Handle);
+        }
+        SCOPED_DRAW_EVENT(InComputeShader);
+        return GDIDispatchCompute(Shader, InParams, InParamBytes, Buffers, Count, InX, InY, InZ);
+    }
+
+    bool RenderPassContext::ReadBuffer(const RenderPassBuffer InBuffer, std::vector<uint8_t>& OutBytes)
+    {
+        return InBuffer.IsValid() && GDIReadBuffer(static_cast<GDIBuffer*>(InBuffer.Handle), OutBytes);
+    }
+
+    void RenderPassContext::SetCurrent(const RenderPassTarget InTarget)
+    {
+        if((F->Hook == ERenderHook::AfterToneMap || F->Hook == ERenderHook::AfterPostProcess) && F->Current && InTarget.IsValid())
+        {
+            *F->Current = PassTargetOf(InTarget);
+        }
+    }
+
+    void RenderPassContext::BeginDrawEvent(const char* InName)
+    {
+        GDIBeginDrawEvent(InName ? InName : "");
+    }
+
+    void RenderPassContext::EndDrawEvent()
+    {
+        GDIEndDrawEvent();
+    }
+
     void RenderContext::SubmitCaptured(const std::vector<StagedDraw>& InDraws, const int32_t InShadowView)
     {
         for(const StagedDraw& Each : InDraws)
@@ -3988,8 +4494,15 @@ namespace RenderCore
         const auto Finish = [this]()
         {
             for(DrawPolicy& Policy : P->Policies) { Policy.Clear(); }
+            for(std::vector<DrawCommand>& Group : P->GroupDraws) { Group.clear(); }
+            P->FramePasses.clear();
             P->ForgetOcclusion();
         };
+
+        /* The World's custom render passes for these stages (CustomRenderPass.h);
+         * the GPU resources of those unregistered since, freed first. */
+        P->ReleaseRetiredPasses();
+        GatherCustomRenderPasses(P->PassWorld, P->FramePasses);
 
         /* Nothing to draw into (an empty viewport): the routing still counts. */
         GDIRenderTarget* SceneColor = InTargets.SceneColor;
@@ -4071,12 +4584,23 @@ namespace RenderCore
             }
         }
 
+        /* Custom passes before the scene: what its materials sample this frame. */
+        GDIRenderTarget* Current = nullptr;   // the post hooks' picture (SetCurrent)
+        if(P->RunHook(ERenderHook::BeforeScene, InTargets, bInTimed, &Current))
+        {
+            BindTargets(&SceneColor, 1, SceneColor);   // the PrePass draws into the bound depth
+        }
+
         /* PrePass: RenderScene culled against the view before the draws were
          * queued; now the occluders' depth and the occlusion queries, which
          * every stage after it may be predicated on. */
         P->StageTimestamp(RGT_PrePass, false);
         P->IssuePrePass();
         P->StageTimestamp(RGT_PrePass, true);
+        if(P->RunHook(ERenderHook::AfterPrePass, InTargets, bInTimed, &Current))
+        {
+            BindTargets(&SceneColor, 1, SceneColor);
+        }
 
         /* Base Pass: the G-buffer, created the first time something needs it. */
         const DrawPolicy& Base = P->PolicyFor(ERenderStage::BasePass);
@@ -4103,6 +4627,10 @@ namespace RenderCore
             P->WarnOnce("|gbuffer", "the Base Pass: this backend could not create the G-buffer; "
                                     "Opaque and Masked Lit materials draw nothing");
         }
+
+        /* Custom passes after the Base Pass (its G-buffer, on a deferred frame);
+         * AO, Shadows and the stages after bind their own. */
+        P->RunHook(ERenderHook::AfterBasePass, InTargets, bInTimed, &Current);
 
         /* Lighting: Shadows (only when something will sample them), then
          * the resolve into the scene colour. */
@@ -4183,12 +4711,16 @@ namespace RenderCore
             P->StageTimestamp(RGT_Lighting, true);
         }
 
+        /* Custom passes over the lit scene; the forward stages bind theirs. */
+        P->RunHook(ERenderHook::AfterLighting, InTargets, bInTimed, &Current);
+
         /* Forward, over the lit scene and against its depth. */
         P->StageTimestamp(RGT_Forward, false);
         BindTargets(&SceneColor, 1, SceneColor);
         P->IssueStage(ERenderStage::Unlit);
         P->IssueStage(ERenderStage::TranslucentLit);
         P->IssueStage(ERenderStage::TranslucentUnlit);
+        P->RunHook(ERenderHook::AfterForward, InTargets, bInTimed, &Current);   // fog and the stack bind their own
 
         /* Volumetric fog (PPVolumetricFog.fsh): marched at half size through the depth and the
          * sun's shadow map, then laid over everything drawn so far, before TAA smooths it. */
@@ -4226,6 +4758,7 @@ namespace RenderCore
             }
         }
         P->StageTimestamp(RGT_Forward, true);
+        P->RunHook(ERenderHook::BeforePostProcess, InTargets, bInTimed, &Current);
 
         /* PostProcess: the stack (RENDERPIPELINE.md, "Post process"), once a
          * scene's; consumed here, so the next call (a preview) runs none. */
@@ -4303,7 +4836,19 @@ namespace RenderCore
                 GDISetMaterialTexture(0, nullptr);
                 GDISetMaterialTexture(1, nullptr);
             }
+            /* Custom passes in display space; one may hand the stack another picture. */
+            Current = Display;
+            P->RunHook(ERenderHook::AfterToneMap, InTargets, bInTimed, &Current);
+            Display = Current ? Current : Display;
             Source = P->RunPostProcessStack(InTargets, Post, bHasPrev, Display);
+
+            /* And over the finished picture, before the UI -- left bound, as the stack leaves it. */
+            Current = Source;
+            if(P->RunHook(ERenderHook::AfterPostProcess, InTargets, bInTimed, &Current))
+            {
+                Source = Current ? Current : Source;
+                BindTargets(&Source, 1, nullptr);
+            }
         }
         P->StageTimestamp(RGT_PostProcess, true);
         P->StageTimestamp(RGT_Total, true);
@@ -5108,6 +5653,11 @@ namespace RenderCore
             delete P->ScreenObject->Mesh;
             P->ScreenObject->Mesh = nullptr;
         }
+
+        for(auto& Each : P->PassPools) { P->ReleasePassResources(Each.second); }
+        P->PassPools.clear();
+        for(auto& Each : P->PassShaders) { if(Each.second) { P->RetiredShaders.push_back(Each.second); } }
+        P->PassShaders.clear();
 
         P->RetireMaterials();
         for(GDIShader* Each : P->RetiredShaders) { delete Each; }   // ~GDIShader releases its resource

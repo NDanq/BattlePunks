@@ -1,4 +1,5 @@
 #include "Private/RenderCore/WorldBridge.h"
+#include "Private/RenderCore/CustomRenderPassInternal.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/MaterialDescription.h"
 
@@ -155,6 +156,7 @@ namespace RenderCore
         }
 
         FlushRenderCommands();
+        Procedural.Reset();
 
         BoundWorld->OnComponentAdded().Remove(AddedHandle);
         BoundWorld->OnComponentRemoved().Remove(RemovedHandle);
@@ -671,6 +673,7 @@ namespace RenderCore
 
         /* Before the records, which carry what it says of each entity. */
         UpdateBake();
+        Procedural.Update(*BoundWorld);
         const ComponentTypeID RenderType = RenderComponent::StaticType().ID;
 
         for(ComponentTypeID Type = 0; Type < COMPONENT_TYPE_MAX; ++Type)
@@ -816,12 +819,18 @@ namespace RenderCore
         const SceneCaptureList  Captures    = BuildCaptures(View, InFrame.DeltaSeconds);
         RenderScene* SceneCapture = Scene;
 
-        ENQUEUE_RENDER_COMMAND(SetViewAndRender)([SceneCapture, View, Lighting, PostProcess, Captures](RenderContext& Ctx)
+        /* Its custom render passes' values for this frame (CustomRenderPass.h);
+         * the render thread finds the passes by the World's address. */
+        ExtractCustomRenderPasses(BoundWorld);
+        const void* PassWorld = BoundWorld;
+
+        ENQUEUE_RENDER_COMMAND(SetViewAndRender)([SceneCapture, View, Lighting, PostProcess, Captures, PassWorld](RenderContext& Ctx)
         {
             SceneCapture->SetView(View);
             SceneCapture->SetLighting(Lighting);
             SceneCapture->SetPostProcess(PostProcess);
             SceneCapture->SetCaptures(Captures);
+            SceneCapture->SetCustomPassWorld(PassWorld);
             SceneCapture->Render(Ctx);
         });
     }

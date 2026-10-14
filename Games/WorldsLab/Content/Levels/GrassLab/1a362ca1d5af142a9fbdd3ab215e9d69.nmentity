@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="1a362ca1d5af142a9fbdd3ab215e9d69" Name="Ball" Mobility="Dynamic">
+  <Component Type="Render" Version="6">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/GrassLab/Ball.material.nmgraph" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="true" />
+    <Occluder Value="false" />
+    <CustomPassGroups Value="1" />
+  </Component>
+  <Component Type="Rigid Body" Version="1">
+    <Enabled Value="true" />
+    <Motion Value="0" />
+    <Shape Value="2" />
+    <ShapeSource Value="0" />
+    <Mass Value="25" />
+    <Friction Value="0.9" />
+    <Restitution Value="0.15" />
+    <LinearDamping Value="0.15" />
+    <AngularDamping Value="0.6" />
+    <GravityFactor Value="1" />
+    <Continuous Value="true" />
+    <Sensor Value="false" />
+    <AllowSleeping Value="false" />
+    <Layer Value="1" />
+    <Mask Value="-1" />
+    <InitialLinearVelocity X="0" Y="0" Z="0" />
+    <InitialAngularVelocity X="0" Y="0" Z="0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="160" Z="0" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="100" Y="100" Z="100" />
+  </Component>
+</Entity>

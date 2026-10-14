@@ -16,6 +16,7 @@
 #include "Public/RenderCore/RenderLighting.h"
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/RenderCore/RenderView.h"
+#include "Private/RenderCore/ProceduralSystem.h"
 #include "Private/RenderCore/SceneCapture.h"
 
 /*
@@ -124,6 +125,10 @@ namespace RenderCore
         /* The bound world's animation (attached while bound), and the
          * proxies ExtractPoses posed last frame. */
         class AnimationSystem*               Animation = nullptr;
+
+        /* The bound world's Procedural Spawners: what they read, and their
+         * generations on worker threads (ProceduralSystem.h). */
+        ProceduralSystem                     Procedural;
         std::unordered_set<const void*>      PosedProxies;
 
         /* A static component's last extraction record (header and bytes), by
