@@ -201,10 +201,9 @@ namespace
         return InT < GTour[Count - 1].T;
     }
 
-    /* PrePhysics: look, then walk (colliding) or fly. */
-    void ExploreSystem(GameCore::World& InWorld, const float InDeltaSeconds, void* InUserData)
+    /* PrePhysics (WorldsLabExploreMode::Step): look, then walk (colliding) or fly. */
+    void StepExplore(GameCore::World& InWorld, const float InDeltaSeconds, ExploreContext& Context)
     {
-        auto& Context = *static_cast<ExploreContext*>(InUserData);
         const double DT = double(InDeltaSeconds);
         Context.Time += DT;
 
@@ -309,8 +308,8 @@ namespace
         Transform->Rotation = EngineCore::Vector3(Context.Pitch, Context.Yaw, 0.0);
     }
 
-    /* What WorldsLab.Flicker's void* points at: a fire's light, its intensity
-     * and place as the world set them. */
+    /* What WorldsLab.Flicker keeps (the Courtyard mode's): a fire's light, its
+     * intensity and place as the world set them. */
     struct FlickerContext
     {
         GameCore::EntityID  Light;
@@ -323,9 +322,8 @@ namespace
      * 60-100% of its intensity, never quite repeating -- and the light wanders
      * a few units round its place, so the shadows the flames would throw shift
      * with it. */
-    void FlickerSystem(GameCore::World& InWorld, const float InDeltaSeconds, void* InUserData)
+    void StepFlicker(GameCore::World& InWorld, const float InDeltaSeconds, FlickerContext& Context)
     {
-        auto& Context = *static_cast<FlickerContext*>(InUserData);
         Context.ElapsedSeconds += double(InDeltaSeconds);
         GameCore::Entity Fire = InWorld.GetEntity(Context.Light);
         /* A point light, or a spot aimed out of a fireplace (so none of it reaches through the wall behind). */
@@ -350,9 +348,7 @@ class WorldsLabExploreMode : public NimbleEngine::IGameMode
 public:
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
-        Session = &InSession;
         GameCore::World& World = InSession.GetWorld();
-        Context = ExploreContext();
         Context.Player  = World.FindEntityByName("Player");
         Context.Airship = World.FindEntityByName("Airship");
         if(!Context.Player.IsSet())
@@ -389,7 +385,7 @@ public:
             }
         }, &Args);
 
-        World.RegisterSystem("WorldsLab.Explore", GameCore::TP_PrePhysics, &ExploreSystem, &Context);
+        AddSystem<&WorldsLabExploreMode::Step>("WorldsLab.Explore", GameCore::TP_PrePhysics);
         return true;
     }
 
@@ -412,19 +408,16 @@ public:
             {
                 Session->SetMouseCaptured(false);
             }
-            else if(!Session->IsMouseCaptured() && Input->WasPressed("Cap the environment whitureMouse"))
+            else if(!Session->IsMouseCaptured() && Input->WasPressed("CaptureMouse"))
             {
                 Session->SetMouseCaptured(true);
             }
         }
     }
 
-    void OnUnload() override
-    {
-        Session = nullptr;
-    }
-
 private:
+    void Step(GameCore::World& InWorld, const float InDeltaSeconds) { StepExplore(InWorld, InDeltaSeconds, Context); }
+
     /* Every two seconds: the renderer's half-second averages and the draws per frame since the last report. */
     void ReportPerf(const double InDeltaSeconds)
     {
@@ -479,12 +472,11 @@ private:
         CORE_LOG(std::string(Streaming))
     }
 
-    NimbleEngine::GameSession* Session = nullptr;
     double   PerfClock  = 0.0;
     double   PerfWorst  = 0.0;
     uint64_t LastFrames = 0;
     uint64_t LastDraws  = 0;
-    /* The system's user data: lives as long as the World it is registered in. */
+    /* This level's walk; made and gone with the mode. */
     ExploreContext Context;
 };
 
@@ -512,7 +504,6 @@ public:
         }
 
         GameCore::World& World = InSession.GetWorld();
-        Flicker = FlickerContext();
         Flicker.Light = World.FindEntityByName("Fire");
         const GameCore::Entity Fire = World.GetEntity(Flicker.Light);
         const RenderCore::PointLightComponent* FirePoint = Fire.GetComponent<RenderCore::PointLightComponent>();
@@ -522,7 +513,7 @@ public:
         {
             Flicker.Intensity = FirePoint ? FirePoint->Intensity : FireSpot->Intensity;
             Flicker.Center    = FirePlace->Position;
-            World.RegisterSystem("WorldsLab.Flicker", GameCore::TP_PrePhysics, &FlickerSystem, &Flicker);
+            AddSystem<&WorldsLabCourtyardMode::StepFire>("WorldsLab.Flicker", GameCore::TP_PrePhysics);
         }
         return WorldsLabExploreMode::OnLoad(InSession);
     }
@@ -542,23 +533,15 @@ public:
             Contact->SetBool(PreviousContactShadows != 0);
         }
         PreviousContactShadows = -1;
-        WorldsLabExploreMode::OnUnload();
     }
 
 private:
+    void StepFire(GameCore::World& InWorld, const float InDeltaSeconds) { StepFlicker(InWorld, InDeltaSeconds, Flicker); }
+
     int32_t        PreviousShadowedLights = -1;
     int32_t        PreviousContactShadows = -1;   // -1: not changed
     FlickerContext Flicker;
 };
 
-void WorldsLabRegisterExplore()
-{
-    NimbleEngine::RegisterGameMode<WorldsLabExploreMode>("WorldsLabExplore");
-    NimbleEngine::RegisterGameMode<WorldsLabCourtyardMode>("WorldsLabCourtyard");
-}
-
-void WorldsLabUnregisterExplore()
-{
-    NimbleEngine::UnregisterGameMode("WorldsLabExplore");
-    NimbleEngine::UnregisterGameMode("WorldsLabCourtyard");
-}
+NIMBLE_REGISTER_GAME_MODE(WorldsLabExploreMode, "WorldsLabExplore")
+NIMBLE_REGISTER_GAME_MODE(WorldsLabCourtyardMode, "WorldsLabCourtyard")

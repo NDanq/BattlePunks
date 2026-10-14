@@ -70,13 +70,10 @@ namespace
 GAMECORE_DEFINE_NATIVE_PREFAB(Camera, "WorldsLab.Camera", &BuildCamera)
 GAMECORE_DEFINE_NATIVE_PREFAB(Player, "WorldsLab.Player", &BuildPlayer)
 
-/* WorldsLabExplore.cpp: the visual-style worlds' walk-and-fly mode. */
-void WorldsLabRegisterExplore();
-void WorldsLabUnregisterExplore();
-
-/* WorldsLabRange.cpp (the Shooting Range), WorldsLabPvP.cpp (Steampunk PvP)
- * and WorldsLabArena.cpp (the Toon Arena, AICore's demo) register themselves
- * (NIMBLE_REGISTER_GAME_MODE); the rest still register here. */
+/* The other modes register themselves (NIMBLE_REGISTER_GAME_MODE):
+ * WorldsLabExplore.cpp (the visual-style worlds' walk and fly, and the
+ * Courtyard's), WorldsLabRange.cpp (the Shooting Range), WorldsLabPvP.cpp
+ * (Steampunk PvP) and WorldsLabArena.cpp (the Toon Arena, AICore's demo). */
 
 // === State ==================================================================
 
@@ -182,7 +179,6 @@ public:
     bool OnStartup(const EngineCore::ModuleReloadState* /*InPrev*/) override
     {
         NimbleEngine::RegisterGameMode<WorldsLabGameMode>("WorldsLab");
-        WorldsLabRegisterExplore();
         return true;
     }
 
@@ -190,7 +186,6 @@ public:
     {
         /* The registry holds this image's functions, and it is about to go. */
         NimbleEngine::UnregisterGameMode("WorldsLab");
-        WorldsLabUnregisterExplore();
     }
 };
 
