@@ -150,6 +150,14 @@ namespace RenderCore
         // === State (this run's, not saved) =======================================
         int32_t  InstanceCount  = 0;        // as of the last generation
         float    GenerateMilliseconds = 0.0f;
+
+        /* The LOD rings' centre: with bLODFocus, LODDistance's rings and
+         * CullDistance are measured from LODFocus (world space) instead of
+         * the camera -- a game keeps full detail round what it is about (a
+         * player, a ball pushing through grass) and thins or drops the rest.
+         * Set each frame by game code; never saved, never regenerates. */
+        EngineCore::Vector3 LODFocus;
+        uint8_t  bLODFocus      = 0;
     };
 
     /* ProceduralSpawnerComponent's proxy factory, for Renderer::Initialize to register. */
