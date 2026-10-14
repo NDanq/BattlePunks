@@ -38,7 +38,7 @@
  * before. What Extract hands Execute must cross safely: RenderPassMailbox
  * below is the simple way.
  *
- * SHADERS are cooked like the engine's own (Content/Shaders/*.fsh, *.csh,
+ * SHADERS are cooked like the engine's own (.fsh and .csh files in Content/Shaders,
  * cooked by NimbleCook into the module's shader cache) and named by file:
  * "GrassTrail.fsh". A full-screen pixel shader includes PostProcessCommon.glsl
  * and declares its PP_Block at binding 2 as RenderPassParams lays it out

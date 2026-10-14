@@ -41,6 +41,11 @@
  *                   CustomPassGroups) into a mask with its own depth, then, where
  *                   the scene's depth is nearer -- grass in front of it -- its
  *                   silhouette over the scene, tinted (GrassLabBallXRay.fsh).
+ *   VignettePass    AfterPostProcess. Darkens the picture's corners
+ *                   (GrassLabVignette.fsh), then hands it on with SetCurrent:
+ *                   the smallest pass, the guide's first example
+ *                   (Engine/Docs/Guides/CustomRenderPassGuide.md). Off
+ *                   until GrassLabVignette is above 0.
  *   TrailStatsPass  BeforeScene. A compute shader adds up how far the ball has
  *                   rolled, in a buffer only the GPU writes (GrassLabTrailStats.csh);
  *                   GrassLabStats=1 reads it back now and then and logs it.
@@ -69,6 +74,7 @@ NIMBLE_CONFIG_BOOL(GGrassLabRings,           "WorldsLab", "GrassLabRings",      
 NIMBLE_CONFIG_FLOAT(GGrassLabCullRadius,     "WorldsLab", "GrassLabCullRadius",     3200.0f, nullptr);
 NIMBLE_CONFIG_FLOAT(GGrassLabCameraHeight,   "WorldsLab", "GrassLabCameraHeight",   520.0f, nullptr);   // the follow camera, above the ball
 NIMBLE_CONFIG_FLOAT(GGrassLabCameraDistance, "WorldsLab", "GrassLabCameraDistance", 900.0f, nullptr);   // and back from it
+NIMBLE_CONFIG_FLOAT(GGrassLabVignette, "WorldsLab", "GrassLabVignette", 0.0f, nullptr);    // VignettePass's strength; 0: off
 NIMBLE_CONFIG_FLOAT(GGrassLabRecovery, "WorldsLab", "GrassLabRecovery", 1.4f, nullptr);    // seconds for the grass to come back most of the way
 
 namespace
@@ -259,6 +265,47 @@ namespace
         bool     bStarted = false;
     };
 
+    struct VignetteSettings
+    {
+        float Strength = 0.0f;
+    };
+
+    class VignettePass final : public RenderCore::CustomRenderPass
+    {
+    public:
+        const char* GetName() const override { return "Vignette"; }
+
+        /* Game thread, once a frame: hand the render thread this frame's values. */
+        void Extract() override
+        {
+            VignetteSettings Now;
+            Now.Strength = GGrassLabVignette.GetFloat();
+            Settings.Put(Now);
+        }
+
+        /* Render thread. */
+        void Execute(RenderCore::RenderPassContext& InContext) override
+        {
+            using namespace RenderCore;
+            const VignetteSettings Now = Settings.Get();
+            if(Now.Strength <= 0.0f)
+            {
+                return;
+            }
+            const RenderPassTarget Out = InContext.AcquireTarget("Picture", RenderPassTargetDesc());   // the view's size, RGBA8
+            RenderPassParams Params;
+            Params.A[0] = Now.Strength;
+            Params.A[1] = 0.55f;                                                                      // where the darkening starts
+            if(InContext.DrawFullscreen("GrassLabVignette.fsh", Out, { InContext.GetSceneTexture(ESceneTexture::Current) }, Params))
+            {
+                InContext.SetCurrent(Out);                                                            // the UI draws over this now
+            }
+        }
+
+    private:
+        RenderCore::RenderPassMailbox<VignetteSettings> Settings;
+    };
+
     /* (Pitch, Yaw) in degrees looking along InDirection (WorldsLabExplore's ViewForward, inverted). */
     void LookAlong(const EngineCore::Vector3& InDirection, double& OutPitch, double& OutYaw)
     {
@@ -294,6 +341,7 @@ public:
         Passes.push_back(RenderCore::RegisterCustomRenderPass(&World, std::make_shared<TrailStatsPass>(Feed, Results),
                                                               RenderCore::ERenderHook::BeforeScene, 10));
         Passes.push_back(RenderCore::RegisterCustomRenderPass(&World, std::make_shared<BallXRayPass>(Feed), RenderCore::ERenderHook::AfterForward));
+        Passes.push_back(RenderCore::RegisterCustomRenderPass(&World, std::make_shared<VignettePass>(), RenderCore::ERenderHook::AfterPostProcess));
 
         AddSystem<&WorldsLabGrassLabMode::StepBall>("WorldsLab.GrassLabBall", GameCore::TP_PrePhysics);
         AddSystem<&WorldsLabGrassLabMode::StepCamera>("WorldsLab.GrassLabCamera", GameCore::TP_PostPhysics);

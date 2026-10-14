@@ -1580,8 +1580,10 @@ samples a texture has its textures bound in the depth-only draws too
 surface does.
 
 WorldsLab's GrassLab world (`WorldsLabGrassLab.cpp`) uses all three kinds: a
-trail map the grass's offset samples (`BeforeScene`), a compute tally, and
-an x-ray of a mesh group (`AfterForward`).
+trail map the grass's offset samples (`BeforeScene`), a compute tally, an
+x-ray of a mesh group (`AfterForward`), and a vignette over the finished
+picture (`AfterPostProcess`). `Engine/Docs/Guides/CustomRenderPassGuide.md`
+walks through them.
 
 Not yet: compute writing textures (GDI binds storage buffers only), passes
 joining the parallel recording of the Base Pass and Shadows, and a pass's own
