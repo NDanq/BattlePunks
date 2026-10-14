@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="c24b1d6fa4513f21c0c06eb4fa3e29d0" Name="Field" Mobility="Static">
+  <Component Type="Procedural Spawner" Version="1">
+    <Visible Value="true" />
+    <Source Value="2" />
+    <Project Value="1" />
+    <TerrainLayer Value="0" />
+    <Seed Value="17" />
+    <BoxExtent X="2340" Y="600" Z="2340" />
+    <Spacing Value="19" />
+    <Jitter Value="1" />
+    <ProjectRange Value="3000" />
+    <PathOffset Value="0" />
+    <BothSides Value="false" />
+    <Density Value="1" />
+    <NoiseScale Value="0" />
+    <NoiseThreshold Value="0.5" />
+    <MaxSlope Value="90" />
+    <MinHeight Value="-1000000" />
+    <MaxHeight Value="1000000" />
+    <LayerThreshold Value="0.5" />
+    <ScaleMin Value="0.75" />
+    <ScaleMax Value="1.2" />
+    <AlignToNormal Value="0.4" />
+    <Sink Value="0" />
+    <ColorVariation Value="0.18" />
+    <RandomYaw Value="true" />
+    <AlignToPath Value="false" />
+    <CastShadows Value="false" />
+    <CellSize Value="400" />
+    <LODDistance Value="900" />
+    <LOD1Density Value="0.8" />
+    <LOD2Density Value="0.55" />
+    <CullDistance Value="0" />
+    <MaxInstances Value="200000" />
+    <MeshCount Value="1" />
+    <Mesh0Path Value="Content/Meshes/GrassLab/GrassClump.nmmesh" />
+    <Mesh0Far Value="Content/Meshes/GrassLab/GrassClump_Far.nmmesh" />
+    <Mesh0Material Value="Content/Materials/GrassLab/GrassBlade.material.nmgraph" />
+    <Mesh0Weight Value="1" />
+    <Mesh0Scale Value="1" />
+    <ExclusionCount Value="0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="0" Z="0" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>
