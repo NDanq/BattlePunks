@@ -155,6 +155,7 @@ namespace RenderCore
         }
 
         FlushRenderCommands();
+        Procedural.Reset();
 
         BoundWorld->OnComponentAdded().Remove(AddedHandle);
         BoundWorld->OnComponentRemoved().Remove(RemovedHandle);
@@ -671,6 +672,7 @@ namespace RenderCore
 
         /* Before the records, which carry what it says of each entity. */
         UpdateBake();
+        Procedural.Update(*BoundWorld);
         const ComponentTypeID RenderType = RenderComponent::StaticType().ID;
 
         for(ComponentTypeID Type = 0; Type < COMPONENT_TYPE_MAX; ++Type)

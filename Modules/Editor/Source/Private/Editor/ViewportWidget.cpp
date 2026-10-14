@@ -1420,6 +1420,45 @@ bool ViewportWidget::GetCursorRay(ViewportTool::Ray& OutRay) const
     return true;
 }
 
+bool ViewportWidget::RaycastScene(const ViewportTool::Ray& InRay, EngineCore::Vector3& OutPoint, const GameCore::EntityID InIgnore) const
+{
+    double BestT = std::numeric_limits<double>::max();
+    Document.GetWorld().Each<RenderCore::RenderComponent>(
+        [&](const GameCore::Entity& InEntity, RenderCore::RenderComponent& InRender)
+    {
+        if(!InRender.bVisible || InEntity.GetID() == InIgnore || !InEntity.GetComponent<GameCore::TransformComponent>()) { return; }
+        const std::string MeshPath(InRender.Mesh, strnlen(InRender.Mesh, RenderCore::RENDER_MESH_PATH_MAX));
+        const std::shared_ptr<const RenderCore::MeshData> Mesh = MeshPath.empty() ? nullptr : RenderCore::MeshAssetCache::Find(MeshPath);
+        Affine3x4 Inverse;
+        if(!Mesh || !InvertAffine(InEntity.GetWorldMatrix(), Inverse)) { return; }
+        const double T = RayHitsMesh(*Mesh, Inverse.Apply(InRay.Origin, 1.0), Inverse.Apply(InRay.Direction, 0.0));
+        if(T > 0.0 && T < BestT) { BestT = T; }
+    });
+    NimbleEngine::TerrainRaycastHit Ground;
+    if(NimbleEngine::RaycastTerrain(Document.GetWorld(), InRay.Origin, InRay.Direction, float(std::min(BestT, 1.0e9)), Ground, false)
+       && double(Ground.Distance) < BestT)
+    {
+        BestT = Ground.Distance;
+    }
+    if(BestT == std::numeric_limits<double>::max()) { return false; }
+    OutPoint = InRay.Origin + InRay.Direction * BestT;
+    return true;
+}
+
+bool ViewportWidget::ProjectToScreen(const EngineCore::Vector3& InPoint, QPointF& OutPosition) const
+{
+    double X = 0.0, Y = 0.0;
+    if(!Camera.WorldToScreen(InPoint, GetLogicalSize(), X, Y)) { return false; }
+    OutPosition = QPointF(X, Y);
+    return true;
+}
+
+double ViewportWidget::GetWorldPerPixelAt(const EngineCore::Vector3& InPoint) const
+{
+    const double Depth = std::max(double((InPoint - Camera.Position).Dot(Camera.GetForward())), double(Camera.ZNear));
+    return Camera.GetWorldPerPixel(Depth, height());
+}
+
 // === Transform handles =======================================================
 
 void ViewportWidget::SetGizmoMode(const TransformGizmo::EMode InMode)

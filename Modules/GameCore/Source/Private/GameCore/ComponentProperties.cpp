@@ -14,7 +14,7 @@ namespace GameCore
 namespace
 {
     /* Constant-initialised, so static-init registrars find a valid table. */
-    enum : size_t { PROPERTY_ENTRY_MAX = 1024 };
+    enum : size_t { PROPERTY_ENTRY_MAX = 1536 };
 
     struct PropertyTypeRange
     {

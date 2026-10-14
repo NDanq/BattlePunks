@@ -160,4 +160,6 @@ once.
 - **Gameplay queries:** nothing in game code asks "what foliage is here?".
 - **Run-time changes:** foliage isn't added or removed while the game runs.
 - **Impostors:** distant trees don't use billboard impostors.
-- **Procedural fill:** there is no "fill from these rules" generator.
+- **Procedural fill:** painted foliage has no "fill from these rules" generator; a
+  Procedural Spawner does that instead, with its own instances
+  (`Engine/Modules/RenderCore/PROCEDURAL.md`).
