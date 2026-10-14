@@ -71,12 +71,13 @@ Open `@PROJECT_NAME@Game.cpp`. Four classes, top to bottom:
 - **`@PROJECT_NAME@GameMode`** -- the rules for
   `Content/Levels/@PROJECT_NAME@.nmworld`. The world is loaded before
   `OnLoad`, which places what the world does not hold and registers systems.
-  `OnTick` runs once per frame on the game thread; `Session->GetWorld()` is
-  the scene, `Session->RequestQuit()` ends the game. Cache entity IDs in
+  `OnTick` runs once per frame on the game thread; `GetWorld()` is the
+  scene, `GetSession().RequestQuit()` ends the game. Cache entity IDs in
   `OnLoad`, and find them again in `OnPostLoadSave` after a save is restored.
   It owns the state (`GetGameState`).
-- **`@PROJECT_NAME@GameModule`** -- registers the mode by name
-  (`RegisterGameMode<...>("@PROJECT_NAME@")`).
+- **`NIMBLE_REGISTER_GAME_MODE(@PROJECT_NAME@GameMode, "@PROJECT_NAME@")`** -- registers the
+  mode by name as the module loads. **`@PROJECT_NAME@GameModule`** is the module
+  itself, with nothing to list.
 
 Worlds are not declared in C++. Each is a `[World_<Name>]` section of
 `Config/DefaultEngine.ini` -- edited in the editor's **Edit > Project

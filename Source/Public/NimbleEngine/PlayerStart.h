@@ -89,8 +89,8 @@ namespace NimbleEngine
         /* An avatar for InPlayer, the next in join order. */
         GameCore::EntityID SpawnFor(GameCore::EntityID InPlayer);
 
-        GameSession* Session     = nullptr;
-        uint32_t     NextOrdinal = 0;
+        uint32_t     NextOrdinal    = 0;
+        bool         bWarnedNoStart = false;   // once a level: no enabled Player Start
     };
 }
 

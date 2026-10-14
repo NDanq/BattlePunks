@@ -25,9 +25,10 @@ namespace NimbleEngine
      * both the game's launcher and the editor's Play-in-Editor can load it by
      * name (GameModuleHost). As an IModule it gets the ABI check and:
      *
-     *   OnStartup   RegisterGameMode every mode (WorldList.h); the project's
-     *               [World_*] list names them
-     *   OnShutdown  unregister them; the registry points into this DLL
+     *   OnStartup   RegisterGameMode every mode not registered by
+     *               NIMBLE_REGISTER_GAME_MODE (WorldList.h), which does it as
+     *               the DLL loads; the project's [World_*] list names them
+     *   OnShutdown  unregister those; the registry points into this DLL
      *
      * Its levels are not its own: one per world in the project's list, made
      * by the host once the module has started. The host unloads the level

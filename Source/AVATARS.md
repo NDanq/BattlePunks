@@ -178,7 +178,11 @@ by another player is the server's to say.
 
 - **Player Start** (`"PlayerStart"`): an entity with a Transform. It can be
   kept for one player (`PlayerSlot` 1..4, by join order) and can name the
-  `AvatarPrefab` to spawn there.
+  `AvatarPrefab` to spawn there. Add one with the editor's World > Add
+  Player Start. The viewport draws each one as a capsule with an arrow the
+  way the avatar will face (its yaw). A `NetGameMode` level with no enabled
+  start spawns at the origin: it logs a warning once, and the content report
+  lists it as a problem.
 - **`SpawnAvatarFor(World, Player, Prefab, Start)`** works only with
   authority. The prefab is the one passed, else the start's, else
   `[Avatar] DefaultPrefab`. It spawns at the start, gives the avatar's Net
