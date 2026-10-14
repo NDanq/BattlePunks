@@ -68,8 +68,35 @@ public:
         HWND hwnd = static_cast<HWND>(InNativeWindow);
         HDC hdc = GetDC(hwnd);
         m_MainContext = InitContext(hwnd, hdc, InMajorVersion, InMinorVersion, nullptr);
+        ApplyVSyncToMainContext();   // InitContext left it current on the window
         ReleaseDC(hwnd, hdc);
         return m_MainContext;
+    }
+
+    /*
+     * VSync for the window the host presents (GDIGetVSync): the swap interval
+     * of the main context, which must be current on the calling thread against
+     * that window. Applied at InitMainContext; a host that lets VSync change at
+     * runtime calls this before each swap of the window -- it does nothing
+     * unless the setting changed since the last call.
+     */
+    void ApplyVSyncToMainContext()
+    {
+        const int Interval = GDIGetVSync() ? 1 : 0;
+        if(Interval == MainSwapInterval) return;
+        SetCurrentSwapInterval(Interval);
+        MainSwapInterval = Interval;
+    }
+
+    /*
+     * Swap interval of the context current on this thread, for the drawable it
+     * is current on (WGL_EXT_swap_control): 1 waits for the vblank, 0 does not.
+     * A driver without the extension keeps its own default.
+     */
+    static void SetCurrentSwapInterval(int InInterval)
+    {
+        auto SwapIntervalEXT = (PFNWGLSWAPINTERVALEXTPROC)wglGetProcAddress("wglSwapIntervalEXT");
+        if(SwapIntervalEXT) SwapIntervalEXT(InInterval);
     }
 
     void* InitSharedContext(void* InNativeWindow, int InMajorVersion, int InMinorVersion)
@@ -140,6 +167,7 @@ private:
     }
 
     IGDIGLContext* GLContextInterface = nullptr;
+    int            MainSwapInterval   = -1;   // ApplyVSyncToMainContext's last; -1 none yet
 
 #if _WINDOWS
     HGLRC   m_MainContext = nullptr;
@@ -172,6 +200,10 @@ public:
             {
                 MakeCurrentSafe();
                 GDI_CHECK( GDIGLFunctions::initializeOpenGLFunctions(), "[GDIThread] Failed to initialize OpenGL Functions");
+                // The render thread swaps a hidden offscreen drawable, never the
+                // window, so it never waits for a vblank: VSync is the host's
+                // present (OpenGLGDIContext::ApplyVSyncToMainContext).
+                OpenGLGDIContext::SetCurrentSwapInterval(0);
                 GDI_LOG("[DynamicGDI] Initialized OpenGL Functions in Render Thread");
 
                 bInitialized = true;

@@ -1,5 +1,6 @@
 #include "Public/GDI/Vulkan/VKSwapchain.h"
 #include "Public/GDI/GDIPlatform.h"
+#include "Public/GDI/GDI.h"
 #include <mutex>
 #include "Public/GDI/Vulkan/VKDevice.h"
 #include "Public/GDI/Vulkan/VKRenderTarget.h"
@@ -122,15 +123,19 @@ bool VKSwapchain::CreateSwapchain()
     // render frame, and each queued present waits its own vblank — 3-4 frames of
     // stroke latency at 60Hz. MAILBOX replaces the pending image with the newest
     // frame (no queue buildup, no tearing); IMMEDIATE skips the queue entirely
-    // (composited windowed mode doesn't tear). Prefer MAILBOX > IMMEDIATE > FIFO.
+    // (composited windowed mode doesn't tear). With VSync off (GDIGetVSync), prefer
+    // MAILBOX > IMMEDIATE > FIFO. With it on, FIFO is the point: its acquire and
+    // fence waits are what hold the game loop to the display's refresh.
     uint32_t PresentModeCount = 0;
     vkGetPhysicalDeviceSurfacePresentModesKHR(Device->GetPhysicalDevice(), Surface, &PresentModeCount, nullptr);
     std::vector<VkPresentModeKHR> PresentModes(PresentModeCount);
     vkGetPhysicalDeviceSurfacePresentModesKHR(Device->GetPhysicalDevice(), Surface, &PresentModeCount, PresentModes.data());
 
+    bVSync = GDIGetVSync();
     VkPresentModeKHR PresentMode = VK_PRESENT_MODE_FIFO_KHR;
     for(const VkPresentModeKHR Mode : PresentModes)
     {
+        if(bVSync) break;
         if(Mode == VK_PRESENT_MODE_MAILBOX_KHR)
         {
             PresentMode = Mode;
@@ -144,7 +149,8 @@ bool VKSwapchain::CreateSwapchain()
     GDI_LOG(std::string("[VKSwapchain] Present mode: ")
           + (PresentMode == VK_PRESENT_MODE_MAILBOX_KHR   ? "MAILBOX"
            : PresentMode == VK_PRESENT_MODE_IMMEDIATE_KHR ? "IMMEDIATE"
-                                                          : "FIFO"))
+                                                          : "FIFO")
+          + (bVSync ? " (VSync on)" : " (VSync off)"))
 
     // Choose extent.
     if(Caps.currentExtent.width != UINT32_MAX)
@@ -569,6 +575,10 @@ void VKSwapchain::PresentFrame(VKRenderTarget* InMainRT, VkSemaphore InRenderTim
     // NOT transition or overwrite it here — doing so poisoned the render thread's
     // layout tracking and broke every subsequent RT-sampling draw (brush strokes).
     if(InMainRT->GetCurrentLayout() != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) return;
+
+    // The present mode is fixed at creation: a VSync change rebuilds the chain.
+    // Recreate idles the device, which a settings toggle can afford.
+    if(GDIGetVSync() != bVSync && !Recreate()) return;
 
     VkDevice Dev = Device->GetDevice();
     vkWaitForFences(Dev, 1, &InFlightFence, VK_TRUE, UINT64_MAX);

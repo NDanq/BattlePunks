@@ -539,9 +539,10 @@ namespace RenderCore
         bool DrawMaterialPreview(const MaterialPreviewRequest& InRequest, std::unique_ptr<GDIReadback>& OutReadback,
                                  std::string& OutError);
 
-    public:
 #endif
 
+    /* Public in every build: RenderPassContext::Frame (CustomRenderPass) names it. */
+    public:
         struct Impl;
         Impl* P;
     };

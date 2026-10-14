@@ -913,6 +913,26 @@ std::string GDIGetShaderPDBPath(const std::string& InCookedPath);
 void  GDISetMaxAnisotropy(float InMax);
 float GDIGetMaxAnisotropy();
 
+/*
+ * VSync: whether a present waits for the display's vertical blank.
+ *
+ * On, every window shows whole frames at its refresh rate, and the present
+ * itself holds the UI thread -- and so the game loop -- to that rate: Vulkan
+ * FIFO, D3D12 sync interval 1, Metal's displaySyncEnabled, a GL swap interval
+ * of 1. Off (the default), a present never waits for the display, so the loop
+ * runs as fast as [Display] FrameRateLimit lets it (0: unlimited): Vulkan
+ * MAILBOX where the surface has it, else IMMEDIATE; D3D12 sync interval 0 with
+ * frames DXGI is not ready for dropped; Metal and GL with sync off. MAILBOX and
+ * DXGI's flip model show the newest whole frame at each refresh and do not
+ * tear; IMMEDIATE and an unsynced GL or Metal window may.
+ *
+ * Any thread, any time, before or after the device exists: each backend reads
+ * it at a window's next present and rebuilds what it must (a Vulkan swapchain).
+ * RenderCore sets it from [Display] VSync.
+ */
+void GDISetVSync(bool bInEnabled);
+bool GDIGetVSync();
+
 GDIRenderTarget* GDICreateRenderTargetFormat(std::string InName, uint InWidth, uint InHeight, EGDIRenderTargetFormat InFormat);
 bool             GDISupportsRenderTargetFormat(EGDIRenderTargetFormat InFormat);
 

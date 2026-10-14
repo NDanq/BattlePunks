@@ -3,6 +3,7 @@
 #include "Public/GDI/D3D12/D3D12RenderTarget.h"
 #include "Public/GDI/D3D12/GDID3D12Platform.h"
 #include "Public/GDI/GDIPlatform.h"
+#include "Public/GDI/GDI.h"
 #include "Private/GDI/D3D12/D3D12TransientOps.h"
 
 #include <climits>
@@ -72,6 +73,7 @@ void D3D12Swapchain::Shutdown()
     UICommands.Shutdown();
     ReleaseBackBuffers();
     if(FrameLatencyWaitable) { CloseHandle(FrameLatencyWaitable); FrameLatencyWaitable = nullptr; }
+    bLatencySignalHeld = false;
     BackBufferRTVs.Reset();
     QuadVertexBuffer.Reset();
     BlitSRVHeap.Reset();
@@ -266,6 +268,18 @@ void D3D12Swapchain::PresentFrame(D3D12RenderTarget* InMainRT)
 
     if(!ResizeIfNeeded()) return;
 
+    /* VSync on: wait here, outside the queue mutex, for DXGI to take another
+     * frame -- with sync interval 1 and a maximum latency of 1 that is the next
+     * vblank, and the wait is what holds the game loop to the display. Off,
+     * the poll under the mutex below drops the frame instead. A signal taken
+     * by a present that then skips is held for the next one, never lost. */
+    const bool bVSync = GDIGetVSync();
+    if(bVSync && FrameLatencyWaitable && !bLatencySignalHeld)
+    {
+        bLatencySignalHeld = WaitForSingleObjectEx(FrameLatencyWaitable, kVSyncWaitMs, FALSE) == WAIT_OBJECT_0;
+        if(!bLatencySignalHeld) return;
+    }
+
     // Waits for the present that last used this slot -- kBufferCount presents
     // back -- so rewriting its SRV below is safe.
     ID3D12GraphicsCommandList* List = UICommands.BeginFrame();
@@ -314,15 +328,17 @@ void D3D12Swapchain::PresentFrame(D3D12RenderTarget* InMainRT)
      * waited: a wait here is the game loop held to DXGI's pace. Taken last,
      * just before the Present it pays for -- a signal taken and not presented
      * is never given back, and presenting would stop. */
-    if(FrameLatencyWaitable && WaitForSingleObjectEx(FrameLatencyWaitable, 0, FALSE) != WAIT_OBJECT_0) return;
+    if(FrameLatencyWaitable && !bLatencySignalHeld && WaitForSingleObjectEx(FrameLatencyWaitable, 0, FALSE) != WAIT_OBJECT_0) return;
+    bLatencySignalHeld = false;
 
     UICommands.SubmitLocked();
     UICommands.Advance();   // a dropped list (above) stays on its slot, to be rewound by the next BeginFrame
 
-    // Sync interval 0: no vblank wait. On its own that still blocked whenever
-    // DXGI's queue was full; the waitable poll above is what makes this the
-    // MAILBOX behaviour the Vulkan backend prefers.
-    const HRESULT Result = SwapChain->Present(0, 0);
+    // VSync off, sync interval 0: no vblank wait. On its own that still blocked
+    // whenever DXGI's queue was full; the waitable poll above is what makes this
+    // the MAILBOX behaviour the Vulkan backend prefers. On, interval 1: shown at
+    // the next vblank, which the wait at the top already waited for.
+    const HRESULT Result = SwapChain->Present(bVSync ? 1 : 0, 0);
     if(Result == DXGI_ERROR_DEVICE_REMOVED || Result == DXGI_ERROR_DEVICE_RESET)
     {
         GDI_LOG_ERROR("[D3D12Swapchain] Device lost during Present (" +
