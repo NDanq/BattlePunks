@@ -20,6 +20,8 @@ A frame runs these stages, in this order (`ERenderStage`, RenderPipeline.h):
 | **Translucent Unlit** | Translucent, **Unlit** | scene colour | as above |
 | **PostProcess** | the post process stack: its PostProcess materials and effects (Post Process volumes) | two full-size targets in turn, and smaller ones | full screen; a fixed order. See [Post process](#post-process) |
 
+A module's own passes run between these at named hooks: see [Custom render passes](#custom-render-passes).
+
 Translucent Lit runs after Lighting, not before it: a deferred resolve writes
 every lit pixel, so anything drawn earlier would be overwritten, and a
 translucent surface cannot be in the G-buffer (one surface per pixel). It is
@@ -1492,6 +1494,98 @@ emissive (`FlareFlame`) flickers past 10 for Bloom, a red point light, and
 smoke (`Content/Particles/FlareSmoke.nmparticle` with the `FlareSmoke` material,
 Translucent Unlit: soft round puffs) born red and black well before it fades
 (Color Curve 0.45).
+
+### Custom render passes
+
+A module adds its own GPU work to a World's frames through
+`CustomRenderPass.h`: a subclass of `CustomRenderPass`, registered for a
+World at a named point between the stages. No GDI type is involved; a pass
+draws through the `RenderPassContext` it is handed.
+
+```cpp
+class Outline final : public RenderCore::CustomRenderPass
+{
+    const char* GetName() const override { return "Outline"; }
+    void Execute(RenderCore::RenderPassContext& InContext) override { /* draw */ }
+};
+RenderPassHandle Handle = RegisterCustomRenderPass(&World, std::make_shared<Outline>(), ERenderHook::AfterForward);
+...
+UnregisterCustomRenderPass(Handle);   // before the World goes
+```
+
+**Where** (`ERenderHook`, in frame order; each runs once per frame, whatever
+was drawn):
+
+| Hook | Runs | The scene has |
+|---|---|---|
+| `BeforeScene` | after the background, before the PrePass | nothing yet: write here what this frame's materials sample |
+| `AfterPrePass` | after the occluders and queries | the occluders' depth |
+| `AfterBasePass` | before ambient occlusion and Shadows | the G-buffer, velocity and depth (a deferred frame) |
+| `AfterLighting` | after IBL and screen-space reflections | the lit scene colour, linear |
+| `AfterForward` | after the translucent stages, before volumetric fog | every surface |
+| `BeforePostProcess` | before TAA and the tone map | the final linear scene colour |
+| `AfterToneMap` | before the post process stack | the picture in display space; `SetCurrent` replaces it |
+| `AfterPostProcess` | before the UI | the finished picture; `SetCurrent` replaces it |
+
+Passes at one hook run by their `Order`, then in registration order. Every
+stage after a hook binds its own targets, and the backend moves a target's
+layout when it is bound, so a pass binds whatever it likes and leaves nothing
+to undo. Each pass draws under a `Custom:<Name>` draw event.
+
+**What it draws with** (`RenderPassContext`, inside `Execute` only):
+
+- `GetSceneTexture`: the scene colour and depth, the G-buffer, velocity, or
+  the post hooks' picture so far; null where this frame has none.
+- `AcquireTarget(Name, Desc)`: the pass's own target, made once and kept
+  (with what it holds) while its size and format stay -- ping-pong two for
+  state across frames. RGBA8 or RGBA16F; a fixed size or the view's times a
+  scale.
+- `AcquireAssetTarget(Path)`: a render target asset (`.nmrt2d`) to draw into.
+  Every material naming that asset samples what the pass drew, from the same
+  frame on if the pass runs before the scene -- the way a pass feeds a
+  material (a trail, a mask, a wind field), in the vertex stage too.
+- `DrawFullscreen(Shader, Target, Inputs, Params, Blend)`: a pixel shader over
+  a target (the scene colour by default): up to seven inputs as material
+  textures 0-6, slot 7 the scene depth, and `RenderPassParams` as `PP_Block`
+  (binding 2: `mat4`, `vec4`, `vec4`). Opaque, additive or alpha blended.
+- `DrawMeshGroup(Group, Shader, Target, Depth, Clear)`: the frame's mesh draws
+  of entities in that group (`RenderComponent::CustomPassGroups`, a bit a
+  group) again, from the view, with each material's vertex shader (World
+  Position Offset kept) and the pass's pixel shader -- or, with none, their
+  own materials. Depth: none, the target's own, or the scene's (tested, not
+  written; the target must be the scene's size).
+- `AcquireBuffer` / `Dispatch` / `ReadBuffer`: compute over the pass's own
+  storage buffers, where the backend has compute. `ReadBuffer` waits for the
+  GPU: now and then, for tools.
+
+**Threads.** Register and unregister on the game thread. `Extract` runs
+there once a frame, from WorldBridge, before the frame is handed over;
+`ShouldRun` and `Execute` run on the render thread, which may still be
+drawing the frame before -- so what `Extract` hands `Execute` must cross
+safely (`RenderPassMailbox<T>`). A pass runs for the World's main view only
+unless `ShouldRun` says otherwise (`IsMainView`: scene captures ask too).
+An unregistered pass's targets and buffers are freed on the render thread.
+A pass in a hot-reloaded module: unregister in the mode's `OnUnload`, then
+`FlushRenderCommands()`, so no frame in flight still holds its code.
+
+**Shaders** are plain cooked shaders named by file (`"Trail.fsh"`):
+a game's go in its `Content/Shaders/`, which NimbleCook cooks into the
+game's shader cache beside its materials. A full-screen pass includes
+`PostProcessCommon.glsl`; a mesh group's pixel shader `MaterialPlatform.glsl`
+and `Common.glsl` (as `ShadowDepth.fsh`); a compute one `ComputeCommon.glsl`.
+
+**Depth-only draws and offsets.** A material whose World Position Offset
+samples a texture has its textures bound in the depth-only draws too
+(Shadows, the PrePass's occluders, mesh groups), so a caster bends as its
+surface does.
+
+WorldsLab's GrassLab world (`WorldsLabGrassLab.cpp`) uses all three kinds: a
+trail map the grass's offset samples (`BeforeScene`), a compute tally, and
+an x-ray of a mesh group (`AfterForward`).
+
+Not yet: compute writing textures (GDI binds storage buffers only), passes
+joining the parallel recording of the Base Pass and Shadows, and a pass's own
+GPU timer in "stat frame" (its time is in the stage it runs in).
 
 ## GDI
 

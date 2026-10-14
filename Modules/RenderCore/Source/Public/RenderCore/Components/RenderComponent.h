@@ -72,6 +72,11 @@ namespace RenderCore
          * they save. An occluder itself is never occlusion culled. */
         uint8_t           bOccluder = 0;
 
+        /* Which custom render pass mesh groups its mesh draws join, a bit a
+         * group (0-7; CustomRenderPass.h, DrawMeshGroup): drawn again by the
+         * passes that ask for the group -- an outline, a mask, an x-ray. */
+        int32_t           CustomPassGroups = 0;
+
         /* Slot InSlot's material path; "" if unset or out of range. */
         const char* GetMaterial(int32_t InSlot) const;
         /* False if InSlot is out of range. */

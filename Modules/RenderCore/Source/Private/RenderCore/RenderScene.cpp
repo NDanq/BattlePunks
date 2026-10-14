@@ -391,6 +391,7 @@ namespace RenderCore
                     const double StreamScale = !bProxyHasBounds || StreamK <= 0.0 ? 0.0
                                              : (bStreamPerspective ? StreamK / std::max(DistanceToBox(Bounds, InView.Origin), StreamNear) : StreamK);
                     InContext.SetDrawStreamingScale(float(StreamScale));
+                    InContext.SetDrawCustomGroups(Proxy->GetCustomPassGroups());   // a custom pass's mesh groups (CustomRenderPass.h)
                     if(Proxy->IsStatic())
                     {
                         StaticDrawList& List = ListFor(Proxy, Generation);
@@ -414,6 +415,7 @@ namespace RenderCore
                         Proxy->Draw(InContext);
                         InContext.SetDrawMotion(nullptr);
                     }
+                    InContext.SetDrawCustomGroups(0);
                     InContext.SetDrawOcclusion(-1);
                     InContext.SetDrawStreamingScale(0.0f);
                     ++VisibleCount;
@@ -542,6 +544,7 @@ namespace RenderCore
 #endif
         RenderView                View;
         SceneCaptureList          CaptureList;                         // SetCaptures; consumed by Render
+        const void*               PassWorld = nullptr;                 // SetCustomPassWorld; consumed by Render
         EngineCore::Color         ClearColor{24, 26, 32, 255};        // the top, with a gradient
         EngineCore::Color         ClearBottom{24, 26, 32, 255};
         bool                      bClearGradient = false;
@@ -968,6 +971,11 @@ namespace RenderCore
     }
 #endif
 
+    void RenderScene::SetCustomPassWorld(const void* InWorld)
+    {
+        P->PassWorld = InWorld;
+    }
+
     void RenderScene::Render(RenderContext& InContext)
     {
         /* Pushed here, not in SetView(), so GetView() is always in step with
@@ -1045,6 +1053,10 @@ namespace RenderCore
          * EndRendering pair), so a bind placed above it would be a silent no-op.
          */
         uint64_t VisibleCount = 0, CulledCount = 0, StaticCount = 0;
+
+        /* Its World's custom render passes (CustomRenderPass.h), for the
+         * captures and the view below; never the previews above. */
+        InContext.SetCustomPassWorld(P->PassWorld);
 
         /*
          * SCENE CAPTURES (RENDERPIPELINE.md), before the scene's own pass so it
@@ -1166,6 +1178,8 @@ namespace RenderCore
         InContext.SetUnlit(P->ViewMode == ERenderViewMode::Unlit);
         InContext.RenderSceneStages(P->Targets, P->ClearColor, /*bInTimed*/ true, P->bClearGradient ? &P->ClearBottom : nullptr);
         InContext.SetUnlit(false);
+        InContext.SetCustomPassWorld(nullptr);
+        P->PassWorld = nullptr;   // set again by the next frame's SetCustomPassWorld, if it has a World
         {
             float   CpuMs[RGT_Count];
             int32_t Draws[RGT_Count];

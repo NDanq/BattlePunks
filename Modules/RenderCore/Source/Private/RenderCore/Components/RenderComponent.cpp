@@ -188,11 +188,12 @@ namespace RenderCore
      */
     /* Each slot's material is a graph path. 2: the parameter overrides, a
      * count then that many (up to the last in use, so an empty one between
-     * keeps its place), so a component with none writes one field. 5: Occluder
+     * keeps its place), so a component with none writes one field. 6:
+     * CustomPassGroups (an older save keeps the default, none). 5: Occluder
      * (an older save keeps the default, off). 4: CastInsetShadow
      * (an older save keeps the default, off). 3: CastShadows (an
      * older save keeps the default, on). */
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 5)
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 6)
     {
         Ar.Flag("Visible",   C.bVisible);
         for(size_t Slot = 0; Slot < RENDER_MATERIAL_SLOTS; ++Slot)
@@ -238,6 +239,10 @@ namespace RenderCore
         if(Ar.GetVersion() >= 5)
         {
             Ar.Flag("Occluder", C.bOccluder);
+        }
+        if(Ar.GetVersion() >= 6)
+        {
+            Ar.Field("CustomPassGroups", C.CustomPassGroups);
         }
     }
 
@@ -303,6 +308,7 @@ namespace RenderCore
         Bind.Flag("CastShadows", &RenderComponent::bCastShadows);
         Bind.Flag("CastInsetShadow", &RenderComponent::bCastInsetShadow);
         Bind.Flag("Occluder", &RenderComponent::bOccluder);
+        Bind.Field("CustomPassGroups", &RenderComponent::CustomPassGroups);
     }
 
 #if WITH_EDITOR
@@ -320,6 +326,8 @@ namespace RenderCore
         Props.Flag("Cast Inset Shadow", &RenderComponent::bCastInsetShadow);
         Props.Category("Culling");
         Props.Flag("Occluder", &RenderComponent::bOccluder);
+        Props.Category("Custom Render Passes");
+        Props.Field("Custom Pass Groups", &RenderComponent::CustomPassGroups);
 
         /* This entity's overrides: a material slot, a parameter of its
          * material (the Parameter node's Name), and up to four values. */
