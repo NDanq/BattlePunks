@@ -343,14 +343,10 @@ Notes on the code above:
 - **`OnAvatarPossessed`** and **`OnAvatarUnpossessed`** run on every process.
   A client gets them as the change replicates.
 
-**Register the mode** in the module, and **name it** for the world:
+**Register the mode**, at file scope after the class, and **name it** for the world:
 
 ```cpp
-bool OnStartup(const EngineCore::ModuleReloadState*) override
-{
-    NimbleEngine::RegisterGameMode<WalkerMode>("Walker");
-    return true;
-}
+NIMBLE_REGISTER_GAME_MODE(WalkerMode, "Walker")
 ```
 
 ```ini

@@ -12,6 +12,7 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QScreen>
 #include <QSplashScreen>
 
@@ -93,25 +94,30 @@ namespace EditorStartupCook
         Splash.show();
         Show();
 
-        /* "NimbleCook: cooking Engine Runtime (...) into <dir>" starts a phase;
-         * the lines between name what it compiles. */
-        static const QString Cooking = QStringLiteral("NimbleCook: cooking ");
+        /* "NimbleCook: cooking <what> <variant> (...)": something to cook;
+         * then, as each of its runs ends (several at once),
+         * "NimbleCook: [3/15] done: Engine Runtime for Vulkan" and that run's lines. */
+        static const QString           Cooking = QStringLiteral("NimbleCook: cooking ");
+        static const QRegularExpression Ended(QStringLiteral("^NimbleCook: \\[(\\d+)/(\\d+)\\] (\\w+): (.*)$"));
         const auto Take = [&Phase, &Detail, &Show](const QString& InLine)
         {
             const QString Line = InLine.trimmed();
             if(Line.isEmpty()) { return; }
             CORE_LOG("[Shaders] " + Line.toStdString())
-            if(Line.startsWith(Cooking))
+            const QRegularExpressionMatch Match = Ended.match(Line);
+            if(Match.hasMatch())
             {
-                const QString What = Line.mid(Cooking.size()).section(QStringLiteral(" ("), 0, 0);   // "Engine Runtime"
-                Phase  = QStringLiteral("Compiling shaders: %1").arg(What);
-                Detail.clear();
+                Phase  = QStringLiteral("Compiling shaders (%1 of %2)").arg(Match.captured(1), Match.captured(2));
+                Detail = QStringLiteral("%1 %2").arg(Match.captured(3) == QStringLiteral("done") ? QStringLiteral("Done:")
+                                                                                                  : QStringLiteral("Failed:"),
+                                                     Match.captured(4));
+                Show();
             }
-            else if(!Line.startsWith(QStringLiteral("NimbleCook:")))
+            else if(Line.startsWith(Cooking))
             {
-                Detail = Line.size() > 64 ? QStringLiteral("...") + Line.right(61) : Line;
+                Phase = QStringLiteral("Compiling shaders");
+                Show();
             }
-            Show();
         };
 
         QProcess Process;

@@ -24,9 +24,10 @@
  *   WorldsLabGameState   what a save keeps, reset on every level start.
  *   WorldsLabExploreMode the visual-style worlds' mode (WorldsLabExplore.cpp):
  *                             walk and fly through Content/Levels/<Style>/.
- *   WorldsLabGameModule  registers the modes. Config/DefaultEngine.ini's
- *                             [World_WorldsLab] names it (Project
- *                             Settings > Worlds), and [Game] StartLevel that.
+ *   WorldsLabGameModule  the module. Each mode registers itself
+ *                             (NIMBLE_REGISTER_GAME_MODE); Config/DefaultEngine.ini's
+ *                             [World_WorldsLab] names it (Project Settings >
+ *                             Worlds), and [Game] StartLevel that.
  *
  * Games/Sandbox/SandboxGame.cpp shows the rest: input, systems, collision,
  * scripting, saves.
@@ -70,20 +71,10 @@ namespace
 GAMECORE_DEFINE_NATIVE_PREFAB(Camera, "WorldsLab.Camera", &BuildCamera)
 GAMECORE_DEFINE_NATIVE_PREFAB(Player, "WorldsLab.Player", &BuildPlayer)
 
-/* WorldsLabExplore.cpp: the visual-style worlds' walk-and-fly mode. */
-void WorldsLabRegisterExplore();
-void WorldsLabUnregisterExplore();
-
-/* WorldsLabRange.cpp: the Shooting Range's mode and its shooter's movement. */
-void WorldsLabRegisterRange();
-void WorldsLabUnregisterRange();
-void WorldsLabRegisterPvP();
-void WorldsLabUnregisterPvP();
-#if WITH_AICORE
-/* WorldsLabArena.cpp: the Toon Arena, AICore's demo. */
-void WorldsLabRegisterArena();
-void WorldsLabUnregisterArena();
-#endif
+/* The other modes register themselves (NIMBLE_REGISTER_GAME_MODE):
+ * WorldsLabExplore.cpp (the visual-style worlds' walk and fly, and the
+ * Courtyard's), WorldsLabRange.cpp (the Shooting Range), WorldsLabPvP.cpp
+ * (Steampunk PvP) and WorldsLabArena.cpp (the Toon Arena, AICore's demo). */
 
 // === State ==================================================================
 
@@ -119,7 +110,6 @@ class WorldsLabGameMode : public NimbleEngine::IGameMode
 public:
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
-        Session = &InSession;
         GameCore::World& World = InSession.GetWorld();
 
         /* Centred in the default 1280 x 720 view; +Y runs down from the top.
@@ -148,7 +138,6 @@ public:
         char Elapsed[32];
         std::snprintf(Elapsed, sizeof(Elapsed), "%.2f", State.ElapsedSeconds);
         CORE_LOG("[WorldsLab] game stopping after " + std::string(Elapsed) + "s")
-        Session = nullptr;
     }
 
     NimbleEngine::GameState* GetGameState() override { return &State; }
@@ -156,7 +145,7 @@ public:
     /* Empties the World before a save is restored, or the scene is doubled. */
     void OnPrepareForLoadedGame() override
     {
-        GameCore::World& World = Session->GetWorld();
+        GameCore::World& World = GetWorld();
 
         /* Collect, then destroy: ForEachEntity forbids destroying inside it. */
         std::vector<GameCore::EntityID> Doomed;
@@ -172,43 +161,25 @@ public:
     }
 
 private:
-    /* Stashed in OnLoad: GetWorld(), RequestQuit(). */
-    NimbleEngine::GameSession* Session = nullptr;
+    /* GetSession() and GetWorld() are the engine's to set (IGameMode): from
+     * before OnLoad until after OnUnload. Keep this level's state in members. */
     WorldsLabGameState    State;
 };
 
+/* By name, as the module loads; the project's world list names it. */
+NIMBLE_REGISTER_GAME_MODE(WorldsLabGameMode, "WorldsLab")
+
 // === Module =================================================================
 
-/* Registers the mode; the project's world list names it. */
+/* The module: modes, native prefabs and input maps register themselves. */
 class WorldsLabGameModule : public NimbleEngine::IGameModule
 {
 public:
     const char* GetName() const override          { return "WorldsLabGame"; }
     const char* GetVersionString() const override { return "0.1"; }
 
-    bool OnStartup(const EngineCore::ModuleReloadState* /*InPrev*/) override
-    {
-        NimbleEngine::RegisterGameMode<WorldsLabGameMode>("WorldsLab");
-        WorldsLabRegisterExplore();
-        WorldsLabRegisterRange();
-        WorldsLabRegisterPvP();
-#if WITH_AICORE
-        WorldsLabRegisterArena();
-#endif
-        return true;
-    }
-
-    void OnShutdown(EngineCore::ModuleReloadState& /*OutState*/) override
-    {
-        /* The registry holds this image's functions, and it is about to go. */
-        NimbleEngine::UnregisterGameMode("WorldsLab");
-        WorldsLabUnregisterExplore();
-        WorldsLabUnregisterRange();
-        WorldsLabUnregisterPvP();
-#if WITH_AICORE
-        WorldsLabUnregisterArena();
-#endif
-    }
+    bool OnStartup(const EngineCore::ModuleReloadState* /*InPrev*/) override { return true; }
+    void OnShutdown(EngineCore::ModuleReloadState& /*OutState*/) override {}
 };
 
 NIMBLE_IMPLEMENT_GAME_MODULE(WorldsLabGameModule, "WorldsLabGame")

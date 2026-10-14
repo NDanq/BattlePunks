@@ -66,6 +66,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/OutlinerPanel.cpp
         Source/Private/Editor/EditorLights.cpp
         Source/Private/Editor/EditorLights.h
+        Source/Private/Editor/EditorPlayerStarts.cpp
+        Source/Private/Editor/EditorPlayerStarts.h
         Source/Private/Editor/EditorEditActions.cpp
         Source/Private/Editor/EditorEditActions.h
         Source/Private/Editor/EditorPrimitives.cpp

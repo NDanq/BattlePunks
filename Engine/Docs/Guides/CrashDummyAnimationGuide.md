@@ -405,14 +405,13 @@ void CrashDummyDriverStop(GameCore::World& InWorld);
 
 bool MyMode::OnLoad(NimbleEngine::GameSession& InSession)
 {
-    Session = &InSession;
     CrashDummyDriverStart(InSession.GetWorld());
     return true;
 }
 
 void MyMode::OnUnload()
 {
-    CrashDummyDriverStop(Session->GetWorld());
+    CrashDummyDriverStop(GetWorld());   // the World is still there in OnUnload
 }
 ```
 

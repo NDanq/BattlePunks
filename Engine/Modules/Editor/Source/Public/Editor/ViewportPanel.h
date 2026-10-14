@@ -86,6 +86,7 @@ private:
     QAction* FrameAllAction       = nullptr;
     QAction* ShowAllBoundsAction  = nullptr;
     QAction* ShowLightGizmosAction = nullptr;
+    QAction* ShowPlayerStartsAction = nullptr;
 
     QToolButton* ShowButton        = nullptr;
     QAction*     LitModeAction     = nullptr;

@@ -6,7 +6,7 @@
  *
  *   NimbleCook shaders [-engine <Engine dir>] [-project <dir> [-module <name>]]
  *                      [-target <OpenGL|Vulkan|D3D12>]... [-editor] [-shipping]
- *                      [-force] [-python <exe>]
+ *                      [-force] [-jobs <N>] [-python <exe>]
  *
  * The engine always; with -project, that project's Content/Materials too.
  * -module names the project's shader cache (default: its
@@ -30,19 +30,38 @@
  * The targets default to this build's GDI backends. The compiling --
  * preprocessing, permutation keys, glslc, spirv-cross, fxc -- is
  * NodeGraph's cook_material_graphs.py through GDI's cook_shaders.py, run
- * once per variant and platform.
+ * once per variant and platform. -jobs (default 32) is how many shaders
+ * compile at once in all: ceil(jobs / 4) runs go at a time -- the slowest,
+ * D3D12, first -- each compiling jobs / that many on its own threads (the
+ * script's -jobs). Overlapping them keeps the cores busy while one run waits
+ * on its last slow shader. -jobs 1 cooks one shader at a time. Each run's
+ * lines are printed together when it is done, after a
+ * "NimbleCook: [<done>/<runs>] done: <what> <variant> for <platform>" line.
  *
  * Exits 0 when everything cooked or was up to date, 1 if anything failed,
  * 2 on bad arguments.
  */
 
+#include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
+
+#if defined(_WIN32)
+    #define NM_POPEN  _popen
+    #define NM_PCLOSE _pclose
+#else
+    #define NM_POPEN  popen
+    #define NM_PCLOSE pclose
+#endif
 
 namespace
 {
@@ -55,6 +74,7 @@ namespace
         std::string              Module;
         std::vector<std::string> Targets;
         std::string              Python;
+        int                      Jobs      = 32;   // shaders compiling at once, across every run
         bool                     bEditor   = false;
         bool                     bShipping = false;
         bool                     bForce    = false;
@@ -173,28 +193,66 @@ namespace
         return InArg;
     }
 
-    int Run(const std::vector<std::string>& InCommand)
+    /* InCommand run to its end, everything it printed (stdout and stderr)
+     * into OutOutput. Its exit code; -1 if it did not start. */
+    int RunCaptured(const std::vector<std::string>& InCommand, std::string& OutOutput)
     {
         std::string Line;
         for(const std::string& Arg : InCommand) { Line += (Line.empty() ? "" : " ") + Quote(Arg); }
+        Line += " 2>&1";
 #ifdef _WIN32
         Line = "\"" + Line + "\"";   // cmd /c strips the outer pair, keeping the quotes inside
 #endif
-        std::fflush(stdout);
-        return std::system(Line.c_str());
+        FILE* Pipe = NM_POPEN(Line.c_str(), "r");
+        if(!Pipe)
+        {
+            OutOutput = "could not start: " + Line + "\n";
+            return -1;
+        }
+        char Buffer[4096];
+        size_t Read;
+        while((Read = std::fread(Buffer, 1, sizeof(Buffer), Pipe)) > 0)
+        {
+            OutOutput.append(Buffer, Read);
+        }
+        return NM_PCLOSE(Pipe);
+    }
+
+    /* The slowest platform first, so its long runs start while the cores are free. */
+    int PlatformOrder(const std::string& InTarget)
+    {
+        return InTarget == "D3D12" ? 0 : InTarget == "Vulkan" ? 1 : 2;
     }
 
     struct Cooker
     {
-        const Options&           Opts;
-        fs::path                 Script;
-        std::vector<fs::path>    CommonInputs;   // every cook's: the engine's shaders and includes, the scripts
-        std::vector<std::string> Failures;
-        int                      Cooked  = 0;
-        int                      Skipped = 0;
+        /* One variant being cooked: its stamp is written once all its runs are. */
+        struct Variant
+        {
+            fs::path         Stamp;
+            std::atomic<int> Failed{ 0 };
+        };
 
-        /* Variant InName below InRoot: InRuns once per target, after clearing
-         * what an earlier cook left. */
+        /* One cook_material_graphs.py run. */
+        struct Job
+        {
+            std::string              Label;   // "Engine Runtime for Vulkan"
+            std::vector<std::string> Command;
+            size_t                   Variant;
+            int                      Order;
+        };
+
+        const Options&                        Opts;
+        fs::path                              Script;
+        std::vector<fs::path>                 CommonInputs;   // every cook's: the engine's shaders and includes, the scripts
+        std::vector<std::unique_ptr<Variant>> Variants;
+        std::vector<Job>                      Jobs;
+        std::vector<std::string>              Failures;
+        int                                   Cooked  = 0;
+        int                                   Skipped = 0;
+
+        /* Variant InName below InRoot: InRuns once per target, queued for Run
+         * after clearing what an earlier cook left. */
         void CookVariant(const std::string& InWhat, const fs::path& InRoot, const std::string& InName,
                          const std::vector<fs::path>& InInputs, const std::vector<Args>& InRuns)
         {
@@ -216,28 +274,93 @@ namespace
             fs::remove_all(Out, Error);   // a deleted material's permutations go too
             fs::create_directories(Out, Error);
 
-            bool bOk = true;
+            Variants.push_back(std::make_unique<Variant>());
+            Variants.back()->Stamp = Stamp;
             for(const std::string& Target : Opts.Targets)
             {
                 for(const Args& Each : InRuns)
                 {
-                    std::vector<std::string> Command{ Opts.Python, ToUtf8(Script), "-target", Target };
-                    for(const std::string& Arg : Each)
+                    const bool bCache = std::find(Each.begin(), Each.end(), "-cache") != Each.end();
+                    Job Queued{ InWhat + " " + InName + (bCache && InRuns.size() > 1 ? " cache" : "") + " for " + Target,
+                                { Opts.Python, ToUtf8(Script), "-target", Target }, Variants.size() - 1, PlatformOrder(Target) };
+                    for(size_t Index = 0; Index < Each.size(); ++Index)
                     {
-                        Command.push_back(Expand(Arg, ToUtf8(Out), Target));
+                        /* The material descriptions are the same for every
+                         * platform: written by the first one's run alone, as
+                         * the runs go at once. */
+                        if(Each[Index] == "-data-out" && Target != Opts.Targets.front())
+                        {
+                            ++Index;
+                            continue;
+                        }
+                        Queued.Command.push_back(Expand(Each[Index], ToUtf8(Out), Target));
                     }
-                    if(Run(Command) != 0)
-                    {
-                        Failures.push_back(InWhat + " " + InName + " for " + Target);
-                        bOk = false;
-                    }
+                    Jobs.push_back(std::move(Queued));
                 }
             }
-            if(!bOk) { return; }
+        }
 
-            std::ofstream File(Stamp, std::ios::trunc);
-            File << JoinTargets(Opts.Targets) << "\n";
-            ++Cooked;
+        /* Every queued run, ceil(Jobs / JobsPerRun) at a time, each compiling Jobs /
+         * that many shaders at once; then each variant's stamp, if all its
+         * runs cooked. */
+        void Run()
+        {
+            if(Jobs.empty()) { return; }
+            std::stable_sort(Jobs.begin(), Jobs.end(), [](const Job& A, const Job& B) { return A.Order < B.Order; });
+
+            /* Shaders each run compiles at once: few, so many runs overlap -- a run
+             * spends its end waiting on its slowest shader, which the others fill.
+             * Measured on 12 threads: 4 beat 8 (for the same total). */
+            constexpr int JobsPerRun = 4;
+            const int    Budget = std::max(1, Opts.Jobs);
+            const size_t Width  = std::min(Jobs.size(), size_t((Budget + JobsPerRun - 1) / JobsPerRun));
+            const int    Each   = std::max(1, Budget / int(Width));
+            std::printf("NimbleCook: %d run(s), %d at a time, %d shader(s) at once in each\n", int(Jobs.size()), int(Width), Each);
+            std::fflush(stdout);
+
+            std::atomic<size_t> Next{ 0 };
+            std::mutex          PrintLock;
+            int                 Done = 0;
+            const auto Worker = [&]()
+            {
+                for(size_t Index = Next++; Index < Jobs.size(); Index = Next++)
+                {
+                    Job& Current = Jobs[Index];
+                    std::vector<std::string> Command = Current.Command;
+                    Command.insert(Command.begin() + 4, { "-jobs", std::to_string(Each) });   // after "<python> <script> -target <p>"
+                    std::string Output;
+                    const int   Exit = RunCaptured(Command, Output);
+
+                    std::lock_guard<std::mutex> Lock(PrintLock);
+                    ++Done;
+                    std::printf("NimbleCook: [%d/%d] %s: %s\n", Done, int(Jobs.size()), Exit == 0 ? "done" : "FAILED",
+                                Current.Label.c_str());
+                    std::fwrite(Output.data(), 1, Output.size(), stdout);
+                    std::fflush(stdout);
+                    if(Exit != 0)
+                    {
+                        Failures.push_back(Current.Label);
+                        ++Variants[Current.Variant]->Failed;
+                    }
+                }
+            };
+            std::vector<std::thread> Threads;
+            for(size_t Index = 0; Index < Width; ++Index)
+            {
+                Threads.emplace_back(Worker);
+            }
+            for(std::thread& Thread : Threads)
+            {
+                Thread.join();
+            }
+
+            for(const std::unique_ptr<Variant>& Each : Variants)
+            {
+                if(Each->Failed > 0) { continue; }
+                std::ofstream File(Each->Stamp, std::ios::trunc);
+                File << JoinTargets(Opts.Targets) << "\n";
+                ++Cooked;
+            }
         }
 
         void CookEngine()
@@ -315,7 +438,8 @@ int main(int argc, char** argv)
     {
         std::fprintf(stderr,
                      "Usage: NimbleCook shaders [-engine <dir>] [-project <dir> [-module <name>]]\n"
-                     "                          [-target <OpenGL|Vulkan|D3D12>]... [-editor] [-shipping] [-force] [-python <exe>]\n");
+                     "                          [-target <OpenGL|Vulkan|D3D12>]... [-editor] [-shipping] [-force]\n"
+                     "                          [-jobs <N>] [-python <exe>]\n");
         return 2;
     }
 
@@ -333,6 +457,16 @@ int main(int argc, char** argv)
         else if(bHasValue && Name == "-project") { Opts.ProjectDir = fs::u8path(argv[++Index]); }
         else if(bHasValue && Name == "-module")  { Opts.Module = argv[++Index]; }
         else if(bHasValue && Name == "-python")  { Opts.Python = argv[++Index]; }
+        else if(bHasValue && Name == "-jobs")
+        {
+            const std::string Jobs = argv[++Index];
+            Opts.Jobs = std::atoi(Jobs.c_str());
+            if(Jobs.empty() || Jobs.find_first_not_of("0123456789") != std::string::npos || Opts.Jobs < 1)
+            {
+                std::fprintf(stderr, "NimbleCook: -jobs needs a number above 0, not %s\n", Jobs.c_str());
+                return 2;
+            }
+        }
         else if(bHasValue && Name == "-target")
         {
             const std::string Target = argv[++Index];
@@ -392,6 +526,7 @@ int main(int argc, char** argv)
                           Opts.EngineDir / "Modules" / "GDI" / "Scripts" / "cook_shaders.py" };
     Cook.CookEngine();
     if(!Opts.ProjectDir.empty()) { Cook.CookProject(); }
+    Cook.Run();
 
     std::printf("NimbleCook: %d cooked, %d up to date, %d failed\n", Cook.Cooked, Cook.Skipped, int(Cook.Failures.size()));
     for(const std::string& Failure : Cook.Failures)

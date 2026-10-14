@@ -28,8 +28,8 @@ you change one, change the other.
 ```
  Config/DefaultEngine.ini                    the game module (a DLL)
  ┌────────────────────────────┐              ┌───────────────────────────────┐
- │ [World_CoinRush]           │              │ RegisterGameMode<CoinRushMode>│
- │ File=...CoinRush.nmworld   │── names ────►│        ("CoinRush")           │
+ │ [World_CoinRush]           │              │ NIMBLE_REGISTER_GAME_MODE(    │
+ │ File=...CoinRush.nmworld   │── names ────►│   CoinRushMode, "CoinRush")   │
  │ GameMode=CoinRush          │              └───────────────────────────────┘
  │ StartupScript=Scripts/...  │
  └─────────────┬──────────────┘
@@ -42,7 +42,7 @@ you change one, change the other.
  │  GameState     the PROGRESS      (the mode's; the engine keeps the     │
  │                                   phase in it)                         │
  └──────────────────────────────▲─────────────────────────────────────────┘
-                                │ the only handle a mode keeps
+                                │ the mode's context (GetSession)
                           GameSession ◄──── C++ calls   (SetPhase, AddScore, ...)
                                        ◄──── Lua / graphs ("Game" library)
 ```
@@ -133,15 +133,11 @@ The phase is saved by the engine itself.
 class CoinRushMode : public NimbleEngine::IGameMode
 {
 public:
-    bool OnLoad(NimbleEngine::GameSession& InSession) override
-    {
-        Session = &InSession;     // the one handle a mode keeps; it outlives the mode
-        return true;
-    }
-
+    /* GetSession() is set by the engine from before OnLoad until after OnUnload:
+     * the mode keeps no handle of its own. */
     void OnStart() override
     {
-        Session->SetPhase("Playing");
+        GetSession().SetPhase("Playing");
     }
 
     /* Once per frame, while the game is not paused. The FrameContext carries
@@ -151,12 +147,7 @@ public:
         if(!State.IsPhase("Playing")) { return; }
 
         State.SecondsLeft -= InFrame.DeltaSeconds;
-        if(State.SecondsLeft <= 0.0) { Session->SetPhase("GameOver"); }
-    }
-
-    void OnUnload() override
-    {
-        Session = nullptr;
+        if(State.SecondsLeft <= 0.0) { GetSession().SetPhase("GameOver"); }
     }
 
     NimbleEngine::GameState* GetGameState() override { return &State; }
@@ -177,15 +168,14 @@ public:
 
     void OnScoreChanged(GameCore::EntityID /*InPlayer*/, int32_t InScore) override
     {
-        if(InScore >= State.CoinsToWin) { Session->SetPhase("Won"); }
+        if(InScore >= State.CoinsToWin) { GetSession().SetPhase("Won"); }
     }
 
     void OnLivesChanged(GameCore::EntityID /*InPlayer*/, int32_t InLives) override
     {
-        if(InLives <= 0) { Session->SetPhase("GameOver"); }
+        if(InLives <= 0) { GetSession().SetPhase("GameOver"); }
     }
 
-    NimbleEngine::GameSession* Session = nullptr;
     CoinRushState              State;
 };
 ```
@@ -198,6 +188,10 @@ Three things in it deserve a sentence each:
   no phase: `SetPhase` returns false and `Game.IsPhase` is always false.
 - **`OnUnload` runs whenever `OnLoad` was called, even if it returned false.**
   Undo whatever `OnLoad` did, and do it without assuming it all happened.
+  Systems, event handlers and the avatars' input filter bound as members
+  (`AddSystem`, `Subscribe`, `SetAvatarInputFilter`) are taken back for you,
+  and per-level state kept in members goes with the mode: `GAMEFRAMEWORK.md`,
+  "The mode is the level's context".
 
 ### Phases: asked before, told after
 
@@ -245,7 +239,15 @@ up a player; that tells nobody.
 
 ## Step 3: register it, and name it in the project
 
-In the game module's one `NIMBLE_IMPLEMENT_GAME_MODULE` class:
+One line at file scope, after the class, registers the mode by name as the
+game module loads and unregisters it as the module goes:
+
+```cpp
+NIMBLE_REGISTER_GAME_MODE(CoinRushMode, "CoinRush")
+```
+
+The module itself, in its one `NIMBLE_IMPLEMENT_GAME_MODULE` class, then has
+nothing to list:
 
 ```cpp
 class CoinRushModule : public NimbleEngine::IGameModule
@@ -254,25 +256,18 @@ public:
     const char* GetName() const override          { return "CoinRushGame"; }
     const char* GetVersionString() const override { return "0.1"; }
 
-    bool OnStartup(const EngineCore::ModuleReloadState* /*InPrev*/) override
-    {
-        NimbleEngine::RegisterGameMode<CoinRushMode>("CoinRush");
-        return true;
-    }
-
-    void OnShutdown(EngineCore::ModuleReloadState& /*OutState*/) override
-    {
-        /* The registry holds this image's functions, and it is about to go. */
-        NimbleEngine::UnregisterGameMode("CoinRush");
-    }
+    bool OnStartup(const EngineCore::ModuleReloadState* /*InPrev*/) override { return true; }
+    void OnShutdown(EngineCore::ModuleReloadState& /*OutState*/) override {}
 };
 
 NIMBLE_IMPLEMENT_GAME_MODULE(CoinRushModule, "CoinRushGame")   // the name matches the library: CoinRushGame.dll
 ```
 
-Register in `OnStartup`, and nothing more: the editor loads the module
-briefly, without playing, to read what it registers. The registry points into
-this DLL, so `OnShutdown` unregisters. (This is the shape of `WorldsLabGame.cpp`.)
+Registration is all a module should do as it loads: the editor loads it
+briefly, without playing, to read what it registers. (By hand,
+`RegisterGameMode<CoinRushMode>("CoinRush")` in `OnStartup` and
+`UnregisterGameMode` in `OnShutdown` do the same. `WorldsLabGame.cpp` and the
+new-project template use the macro.)
 
 Then name it in `Config/DefaultEngine.ini`, or in the editor's **Project
 Settings > Worlds**:
@@ -283,7 +278,7 @@ StartLevel=CoinRush
 
 [World_CoinRush]
 File=Content/Levels/CoinRush.nmworld   ; the world it loads
-GameMode=CoinRush                      ; the name given to RegisterGameMode; empty: no rules
+GameMode=CoinRush                      ; the name the mode registered with; empty: no rules
 StartupScript=Scripts/CoinRush.lua     ; run once the mode has loaded; absent: none
 Cook=true
 ```
@@ -359,10 +354,10 @@ different question:
 | Question | Answer | Lifetime |
 |---|---|---|
 | *What is this frame?* | `FrameContext`, a parameter | This call only. Copy what you need. |
-| *What can I act on?* | `GameSession`, kept from `OnLoad` | `OnLoad` to `OnUnload`. |
+| *What can I act on?* | `GameSession`, the mode's `GetSession()` | `OnLoad` to `OnUnload`. |
 
-Do not keep a pointer to the World across a level swap; ask the session
-(`Session->GetWorld()`) each time, and use `GetLoadCount()` if you must know
+Do not keep a pointer to the World across a level swap; ask the mode
+(`GetWorld()`) each time, and use `GetLoadCount()` if you must know
 whether it changed.
 
 ### Testing a mode headlessly
@@ -423,7 +418,7 @@ class CoinRushNetMode : public NimbleEngine::NetGameMode
 public:
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
-        return NetGameMode::OnLoad(InSession);          // keeps Session, resets the join order
+        return NetGameMode::OnLoad(InSession);          // resets the join order
     }
 
     void OnStart() override
@@ -464,7 +459,7 @@ What to remember when deriving:
 | **Call the base** | when you override `OnLoad`, `OnStart` or `OnClientConnected`: they do the spawning. |
 | **`OnTick` and `GetGameState`** | are still yours. `NetGameMode` implements neither, so a game that wants phases supplies a state. |
 | **`GetAvatarPrefab`** | returns `nullptr` for "the Player Start's prefab, else `[Avatar] DefaultPrefab`". |
-| **`Session`** | is the protected member `NetGameMode::OnLoad` sets: the same handle as in Step 2. |
+| **`Session`** | is `IGameMode`'s protected member, set by the engine: the same handle as `GetSession()` in Step 2. |
 
 ### Rules run on the server
 

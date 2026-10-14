@@ -29,6 +29,7 @@
 #include "Private/Editor/Prefab/PrefabAssets.h"
 #include "Private/Editor/EditorEditActions.h"
 #include "Private/Editor/EditorLights.h"
+#include "Private/Editor/EditorPlayerStarts.h"
 #include "Private/Editor/EditorPrimitives.h"
 
 using GameCore::EntityID;
@@ -617,6 +618,7 @@ void OutlinerPanel::ShowContextMenu(const QPoint& InPos)
     const auto AtOrigin = []() { return EngineCore::Vector3(0.0, 0.0, 0.0); };
     EditorPrimitives::AddPrimitiveActions(Menu.addMenu(QStringLiteral("Add Primitive")), Document, AtOrigin);
     EditorLights::AddLightActions(Menu.addMenu(QStringLiteral("Add Light")), Document, AtOrigin);
+    QAction* AddStart = Menu.addAction(QStringLiteral("Add Player Start"));
     Menu.addSeparator();
     QAction* Detach = Menu.addAction(QStringLiteral("Detach from Parent"));
     Detach->setEnabled(bHasParent);
@@ -664,6 +666,10 @@ void OutlinerPanel::ShowContextMenu(const QPoint& InPos)
     {
         const EntityID NewEntity = Document.CreateEntity(QStringLiteral("Entity"), EngineCore::Vector3(0.0, 0.0, 0.0));
         Document.SetSelection(NewEntity);
+    }
+    else if(Chosen == AddStart)
+    {
+        EditorPlayerStarts::CreatePlayerStart(Document, AtOrigin());
     }
     else if(Chosen == CreateChild)
     {
