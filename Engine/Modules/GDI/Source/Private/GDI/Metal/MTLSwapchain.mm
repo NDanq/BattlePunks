@@ -1,5 +1,6 @@
 #include "Public/GDI/Metal/MTLSwapchain.h"
 #include "Public/GDI/GDIPlatform.h"
+#include "Public/GDI/GDI.h"
 #include "Public/Core/CoreFileProvider.h"
 #include <vector>
 #include <algorithm>
@@ -275,6 +276,18 @@ void MTLSwapchain::PresentFrame(MTLRenderTarget* InMainRT)
     @autoreleasepool
     {
         UpdateDrawableSize();
+
+        // VSync (GDIGetVSync): on, the layer presents at the display's refresh
+        // and nextDrawable blocks once its pool is queued up, which is what
+        // holds the game loop to the display. Off, a drawable is shown as soon
+        // as it is ready. Read every present, so a change applies at the next.
+#if TARGET_OS_OSX
+        const BOOL bVSync = GDIGetVSync() ? YES : NO;
+        if(Layer.displaySyncEnabled != bVSync)
+        {
+            Layer.displaySyncEnabled = bVSync;
+        }
+#endif
 
         id<CAMetalDrawable> Drawable = [Layer nextDrawable];
         if(Drawable == nil) return;   // pool exhausted this vsync; try again next frame

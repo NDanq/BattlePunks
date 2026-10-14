@@ -98,6 +98,7 @@ private:
     VkFormat            SurfaceFormat   = VK_FORMAT_UNDEFINED;
     VkColorSpaceKHR     ColorSpace      = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
     VkExtent2D          Extent          { 0, 0 };
+    bool                bVSync          = false;   // GDIGetVSync as of the chain's creation: FIFO if set
     std::vector<VkImage>        SwapchainImages;
     std::vector<VkImageView>    SwapchainImageViews;
 

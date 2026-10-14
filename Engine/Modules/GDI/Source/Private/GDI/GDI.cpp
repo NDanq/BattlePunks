@@ -841,6 +841,23 @@ float GDIGetMaxAnisotropy()
     return GMaxAnisotropy;
 }
 
+namespace
+{
+    /* GDISetVSync. Atomic: set from whichever thread changes the config, read
+     * by the UI thread's presents. */
+    std::atomic<bool> GVSync{false};
+}
+
+void GDISetVSync(const bool bInEnabled)
+{
+    GVSync.store(bInEnabled, std::memory_order_relaxed);
+}
+
+bool GDIGetVSync()
+{
+    return GVSync.load(std::memory_order_relaxed);
+}
+
 bool GDISupportsRenderTargetFormat(const EGDIRenderTargetFormat InFormat)
 {
     return GDynamicGDI && GDynamicGDI->SupportsRenderTargetFormat(InFormat);

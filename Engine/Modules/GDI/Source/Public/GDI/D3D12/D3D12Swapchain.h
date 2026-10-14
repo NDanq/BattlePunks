@@ -25,11 +25,13 @@ class D3D12RenderTarget;
  * present, which the GPU runs behind the render thread's frames still queued
  * ahead of it.
  *
- * Presents never block (the MAILBOX behaviour the Vulkan backend prefers): the
- * chain's frame-latency waitable object says whether DXGI will take another
- * frame now, and when it will not, this one is not presented -- the next
- * present shows a newer frame. A blocking Present held a fast game loop to
- * DXGI's pace (GpuTest: 5.0 ms a frame on D3D12, 3.8 on Vulkan).
+ * With VSync off, presents never block (the MAILBOX behaviour the Vulkan
+ * backend prefers): the chain's frame-latency waitable object says whether DXGI
+ * will take another frame now, and when it will not, this one is not presented
+ * -- the next present shows a newer frame. A blocking Present held a fast game
+ * loop to DXGI's pace (GpuTest: 5.0 ms a frame on D3D12, 3.8 on Vulkan). With
+ * VSync on (GDIGetVSync) that pace is the point: the present waits on the same
+ * object and presents with sync interval 1.
  */
 class D3D12Swapchain
 {
@@ -61,6 +63,8 @@ private:
 
     Microsoft::WRL::ComPtr<IDXGISwapChain3>             SwapChain;
     HANDLE                                              FrameLatencyWaitable = nullptr;   // the chain's; closed at Shutdown
+    bool                                                bLatencySignalHeld = false;       // taken from FrameLatencyWaitable, not yet presented
+    static constexpr DWORD                              kVSyncWaitMs = 100;               // a stalled display skips the present, not the app
     static constexpr UINT                               kSwapChainFlags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
     DXGI_FORMAT                                         Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     uint32_t                                            Width  = 0;
