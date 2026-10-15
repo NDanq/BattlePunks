@@ -50,6 +50,17 @@ NIMBLE_CONFIG_BOOL(GStatsStreaming, "Stats", "Streaming", false, nullptr);
  * at the next start. */
 NIMBLE_CONFIG_INT(GRenderingAnisotropy, "Rendering", "Anisotropy", 8, nullptr);
 
+/* Whether presents wait for the display's vblank (GDISetVSync, which says what
+ * each backend does with it). Off by default: the game loop runs as fast as
+ * [Display] FrameRateLimit lets it, 0 unlimited. Applies live, at each window's
+ * next present -- "Display.VSync true" in the console. The game's setting, so
+ * its DefaultGame.ini (Project Settings writes it there). */
+namespace
+{
+    void OnDisplayVSyncChanged(const EngineCore::ConfigVar& InVar) { GDISetVSync(InVar.GetBool()); }
+}
+NIMBLE_GAME_CONFIG_BOOL(GDisplayVSync, "Display", "VSync", false, &OnDisplayVSyncChanged);
+
 namespace RenderCore
 {
     namespace
@@ -119,6 +130,7 @@ namespace RenderCore
         bool bRenderRegistered = false;
         bool bParticlesRegistered = false;
         bool bTerrainRegistered   = false;
+        bool bProceduralRegistered = false;
 
         /* "stat unit", game thread only: this frame's start and the time it
          * spent blocked (the fence, presenting); sums over the current half
@@ -292,8 +304,13 @@ namespace RenderCore
         {
             P->bTerrainRegistered = RegisterProxyType(TerrainComponent::StaticType().ID, GetTerrainComponentFactory());
         }
+        if(!P->bProceduralRegistered)
+        {
+            P->bProceduralRegistered = RegisterProxyType(ProceduralSpawnerComponent::StaticType().ID, GetProceduralSpawnerComponentFactory());
+        }
 
         GDISetMaxAnisotropy(float(std::clamp(GRenderingAnisotropy.GetInt(), 1, 16)));
+        GDISetVSync(GDisplayVSync.GetBool());
         if(!P->Thread.Start(InBackend, InWindow))
         {
             return false;

@@ -67,6 +67,7 @@ private:
         QString                             Key;
         QString                             Baseline;   // what the file says (or the default), as shown
         bool                                bInFile = false;
+        bool                                bGame   = false;   // a game-scope var: DefaultGame.ini, not DefaultEngine.ini
         QLabel*                             Label = nullptr;
         std::function<void(const QString&)> Show;
         std::function<QString()>            Read;

@@ -25,6 +25,7 @@
 #include "Public/RenderCore/Components/ReflectionProbeComponent.h"
 #include "Public/RenderCore/Components/SkyLightComponent.h"
 #include "Public/RenderCore/Components/SpotLightComponent.h"
+#include "Public/RenderCore/Components/ProceduralSpawnerComponent.h"
 #include "Public/RenderCore/Components/TerrainComponent.h"
 
 #endif //RENDERCORE_RENDERCOMPONENTS_H

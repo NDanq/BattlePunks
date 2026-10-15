@@ -17,7 +17,7 @@ namespace RenderCore
     {
         PrePass = 0,        // culling; occluders' depth and the occlusion queries
         BasePass,           // Opaque and Masked, Lit: the G-buffer
-        Shadows,            // Lighting's first part: shadow casters. Draws nothing yet
+        Shadows,            // Lighting's first part: shadow casters, into the shadow atlases
         Lighting,           // the G-buffer resolve, one full-screen pass
         Unlit,              // Opaque and Masked, Unlit; plain quads; tinted meshes
         TranslucentLit,     // forward-lit, back to front

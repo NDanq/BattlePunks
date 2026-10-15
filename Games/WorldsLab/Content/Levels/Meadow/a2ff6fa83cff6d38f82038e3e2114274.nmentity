@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="a2ff6fa83cff6d38f82038e3e2114274" Name="Rocks" Mobility="Static">
+  <Component Type="Procedural Spawner" Version="1">
+    <Visible Value="true" />
+    <Source Value="2" />
+    <Project Value="3" />
+    <TerrainLayer Value="0" />
+    <Seed Value="9" />
+    <BoxExtent X="12600" Y="5000" Z="12600" />
+    <Spacing Value="1150" />
+    <Jitter Value="1" />
+    <ProjectRange Value="5000" />
+    <PathOffset Value="0" />
+    <BothSides Value="false" />
+    <Density Value="0.6" />
+    <NoiseScale Value="0" />
+    <NoiseThreshold Value="0.5" />
+    <MaxSlope Value="65" />
+    <MinHeight Value="-1000000" />
+    <MaxHeight Value="1000000" />
+    <LayerThreshold Value="0.5" />
+    <ScaleMin Value="0.6" />
+    <ScaleMax Value="2.6" />
+    <AlignToNormal Value="1" />
+    <Sink Value="0.18" />
+    <ColorVariation Value="0.2" />
+    <RandomYaw Value="true" />
+    <AlignToPath Value="false" />
+    <CastShadows Value="true" />
+    <CellSize Value="4000" />
+    <LODDistance Value="0" />
+    <LOD1Density Value="0.5" />
+    <LOD2Density Value="0.25" />
+    <CullDistance Value="0" />
+    <MaxInstances Value="200000" />
+    <MeshCount Value="1" />
+    <Mesh0Path Value="Content/Meshes/Foliage/Rock.nmmesh" />
+    <Mesh0Far Value="" />
+    <Mesh0Material Value="" />
+    <Mesh0Weight Value="1" />
+    <Mesh0Scale Value="1" />
+    <ExclusionCount Value="1" />
+    <Exclusion0 Value="Road" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="0" Z="0" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

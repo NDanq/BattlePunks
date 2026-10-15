@@ -71,8 +71,18 @@ NIMBLE_CONFIG_STRING(GUserDataName, "Application", "UserDataName", "", nullptr);
 NIMBLE_CONFIG_STRING(GContentUncooked, "Content", "Uncooked", "", nullptr);
 #endif
 
-/* 0 runs unlimited; SetFrameRateLimit is the runtime half. */
-NIMBLE_CONFIG_INT(GFrameRateLimit, "Display", "FrameRateLimit", 60, nullptr);
+/* A set of [Display] FrameRateLimit -- the console, Project Settings -- from
+ * any thread; the game loop takes it up at its next frame (Application::Run). */
+namespace
+{
+    std::atomic<bool> GFrameRateLimitChanged{false};
+    void OnFrameRateLimitChanged(const EngineCore::ConfigVar&) { GFrameRateLimitChanged.store(true); }
+}
+
+/* 0 runs unlimited; SetFrameRateLimit is the runtime half. Applies live:
+ * "Display.FrameRateLimit 0" uncaps a running game. With [Display] VSync on,
+ * the display's refresh caps it too (GDISetVSync). */
+NIMBLE_CONFIG_INT(GFrameRateLimit, "Display", "FrameRateLimit", 60, &OnFrameRateLimitChanged);
 
 using namespace EngineCore;
 
@@ -794,8 +804,10 @@ namespace NimbleEngine
 
             /* Negative clamps to unlimited rather than wrapping unsigned. A
              * headless server runs at its tick rate instead. */
+            const bool bServerTick = Desc.bHeadless && Desc.NetMode == ENetMode::Server;
+            GFrameRateLimitChanged.store(false);   // the .ini's own set, read just below
             int LimitCfg = GFrameRateLimit.GetInt();
-            if(Desc.bHeadless && Desc.NetMode == ENetMode::Server) { LimitCfg = int(GetConfiguredServerTickRate()); }
+            if(bServerTick) { LimitCfg = int(GetConfiguredServerTickRate()); }
             FrameRateLimit      = LimitCfg > 0 ? uint32_t(LimitCfg) : 0u;
             NextFrameDeadlineNs = 0;
 
@@ -818,6 +830,14 @@ namespace NimbleEngine
 
             while(!bQuitRequested)
             {
+                /* The config changed since the last frame. A headless server
+                 * keeps its tick rate. */
+                if(GFrameRateLimitChanged.exchange(false) && !bServerTick)
+                {
+                    const int Limit = GFrameRateLimit.GetInt();
+                    SetFrameRateLimit(Limit > 0 ? uint32_t(Limit) : 0u);
+                }
+
                 if(!RunFrame(MaxFrames))
                 {
                     bQuitRequested = true;

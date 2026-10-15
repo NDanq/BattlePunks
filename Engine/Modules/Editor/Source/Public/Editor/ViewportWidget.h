@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <QPoint>
+#include <QPointF>
 #include <QSet>
 #include <QWidget>
 
@@ -121,6 +122,17 @@ public:
 
     /* The ray under the cursor, if it is over the viewport. */
     bool GetCursorRay(ViewportTool::Ray& OutRay) const;
+
+    /* Where InRay first meets a visible Render mesh or a terrain, skipping
+     * InIgnore's mesh: what a tool places things on. False: nothing. */
+    bool RaycastScene(const ViewportTool::Ray& InRay, EngineCore::Vector3& OutPoint,
+                      GameCore::EntityID InIgnore = GameCore::EntityID()) const;
+
+    /* InPoint in logical pixels from the top-left; false behind the camera. */
+    bool ProjectToScreen(const EngineCore::Vector3& InPoint, QPointF& OutPosition) const;
+
+    /* World units a logical pixel spans at InPoint's depth: sizes handles. */
+    double GetWorldPerPixelAt(const EngineCore::Vector3& InPoint) const;
 
     // === Overlays ===========================================================
     /* Drawn every frame after the viewport's own and its tool's (debug lines,

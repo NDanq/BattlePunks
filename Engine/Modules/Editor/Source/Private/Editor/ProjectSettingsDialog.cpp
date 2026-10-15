@@ -834,7 +834,8 @@ void ProjectSettingsDialog::AddRow(QFormLayout* InForm, const QString& InSection
     R.Key     = InKey;
 
     EngineCore::ConfigVar* Var = FindVar(InSection, InKey);
-    const QString FileValue = File.Get(InSection, InKey, &R.bInFile);
+    R.bGame = Var && Var->IsGameVar();
+    const QString FileValue = (R.bGame ? GameFile : File).Get(InSection, InKey, &R.bInFile);
     const QString Default   = Var ? QString::fromStdString(Var->DefaultToString()) : QString();
 
     QWidget* Field = nullptr;
@@ -1053,6 +1054,7 @@ bool ProjectSettingsDialog::Apply()
     const bool bModulesConfirmed = ConfirmModuleChanges();
 
     QStringList Changed;
+    QStringList GameChanged;   // game-scope vars: DefaultGame.ini
     QStringList Rejected;
     QStringList ModulesChanged;
     for(Row& R : Rows)
@@ -1072,11 +1074,11 @@ bool ProjectSettingsDialog::Apply()
                 continue;
             }
         }
-        File.Set(R.Section, R.Key, Text);
+        (R.bGame ? GameFile : File).Set(R.Section, R.Key, Text);
         R.Baseline = Text;
         R.bInFile  = true;
         UpdateLabel(R);
-        Changed << QStringLiteral("%1 = %2").arg(Path, Text);
+        (R.bGame ? GameChanged : Changed) << QStringLiteral("%1 = %2").arg(Path, Text);
         if(IsModuleKey(R.Section, R.Key))
         {
             ModulesChanged << QStringLiteral("%1 = %2").arg(Path, Text);
@@ -1105,15 +1107,15 @@ bool ProjectSettingsDialog::Apply()
         Changed << QStringLiteral("Worlds = %1").arg(Names.isEmpty() ? QStringLiteral("(none)") : Names.join(QStringLiteral(", ")));
     }
 
-    /* Input bindings are the game's: DefaultGame.ini. */
-    const QStringList InputChanged = Input ? Input->Apply(GameFile) : QStringList();
+    /* Input bindings are the game's: DefaultGame.ini, with the game-scope vars. */
+    const QStringList GameFileChanged = (Input ? Input->Apply(GameFile) : QStringList()) + GameChanged;
 
     if(!Rejected.isEmpty())
     {
         QMessageBox::warning(this, windowTitle(),
                              QStringLiteral("Not valid values, so not saved:\n%1").arg(Rejected.join(QLatin1Char('\n'))));
     }
-    if(Changed.isEmpty() && InputChanged.isEmpty())
+    if(Changed.isEmpty() && GameFileChanged.isEmpty())
     {
         return bModulesConfirmed;
     }
@@ -1153,8 +1155,8 @@ bool ProjectSettingsDialog::Apply()
     {
         return false;
     }
-    if(!InputChanged.isEmpty()
-       && !SaveConfig(GameFile, GameFilePath, GameConfigPathBeside(StagedConfigPath()), InputChanged))
+    if(!GameFileChanged.isEmpty()
+       && !SaveConfig(GameFile, GameFilePath, GameConfigPathBeside(StagedConfigPath()), GameFileChanged))
     {
         return false;
     }

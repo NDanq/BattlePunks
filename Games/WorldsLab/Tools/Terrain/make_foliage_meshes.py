@@ -119,11 +119,12 @@ def rock():
         for j in range(sides):
             a, c = pts[i][j], pts[i + 1][j]
             bb, d = pts[i][(j + 1) % sides], pts[i + 1][(j + 1) % sides]
-            b.polygon(STONE, [a, c, d, bb]) if i not in (0, rings - 1) else None
+            # Wound to face outward (counter-clockwise seen from outside), so the normals point out.
+            b.polygon(STONE, [a, bb, d, c]) if i not in (0, rings - 1) else None
             if i == 0:
-                b.polygon(STONE, [a, c, d])
+                b.polygon(STONE, [a, d, c])
             if i == rings - 1:
-                b.polygon(STONE, [a, c, bb])
+                b.polygon(STONE, [a, bb, c])
     return b
 
 

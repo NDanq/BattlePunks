@@ -80,7 +80,7 @@ namespace GameCore
     enum : size_t
     {
         COMPONENT_PROPERTY_NAME_MAX       = 40,   // including the NUL
-        COMPONENT_PROPERTIES_PER_TYPE_MAX = 32,
+        COMPONENT_PROPERTIES_PER_TYPE_MAX = 48,
         COMPONENT_PROPERTY_CHOICES_MAX    = 96,   // including the NUL
         COMPONENT_PROPERTY_CATEGORY_MAX   = 32,   // including the NUL
     };

@@ -43,6 +43,7 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/Components/VehicleComponent.cpp
         Source/Private/GameCore/Components/AudioSourceComponent.cpp
         Source/Private/GameCore/Components/AudioListenerComponent.cpp
+        Source/Private/GameCore/Components/SplineComponent.cpp
         Source/Private/GameCore/Delegate.cpp
         Source/Private/GameCore/EventBus.cpp
         Source/Private/GameCore/TickPhase.cpp
@@ -50,6 +51,7 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/Collision.cpp
         Source/Private/GameCore/Terrain.cpp
         Source/Private/GameCore/Foliage.cpp
+        Source/Private/GameCore/Spline.cpp
         Source/Private/GameCore/TerrainBrush.cpp
         Source/Private/GameCore/World.cpp
         Source/Private/GameCore/WorldSettings.cpp
@@ -77,6 +79,7 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/AABB.h
         Source/Public/GameCore/Terrain.h
         Source/Public/GameCore/Foliage.h
+        Source/Public/GameCore/Spline.h
         Source/Public/GameCore/TerrainBrush.h
         Source/Public/GameCore/SpatialIndex.h
         Source/Public/GameCore/TickPhase.h
@@ -98,6 +101,7 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/Components/VehicleComponent.h
         Source/Public/GameCore/Components/AudioSourceComponent.h
         Source/Public/GameCore/Components/AudioListenerComponent.h
+        Source/Public/GameCore/Components/SplineComponent.h
         Source/Public/GameCore/TransformMath.h
         Source/Public/GameCore/ScriptEngine.h
         Source/Public/GameCore/ComponentSerializer.h

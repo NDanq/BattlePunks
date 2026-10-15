@@ -325,6 +325,14 @@ namespace RenderCore
          * list's replays never move. */
         void SetDrawMotion(const EngineCore::Matrix4x4* InMotion);
 
+        /* CUSTOM RENDER PASSES (CustomRenderPass.h): the custom pass mesh
+         * groups (RenderComponent::CustomPassGroups' bits) of what queues
+         * draws next -- RenderScene sets them per proxy, 0 after; and the
+         * World whose passes the next RenderSceneStages runs (null: none),
+         * RenderScene's for its captures and its view. */
+        void SetDrawCustomGroups(uint8_t InGroups);
+        void SetCustomPassWorld(const void* InWorld);
+
         /* TEXTURE STREAMING (TEXTURE_STREAMING.md): how many screen pixels a
          * world unit spans where what queues draws next is -- RenderScene's,
          * per proxy, from its distance to the view; 0 (BeginSceneDraws'):
@@ -531,9 +539,10 @@ namespace RenderCore
         bool DrawMaterialPreview(const MaterialPreviewRequest& InRequest, std::unique_ptr<GDIReadback>& OutReadback,
                                  std::string& OutError);
 
-    public:
 #endif
 
+    /* Public in every build: RenderPassContext::Frame (CustomRenderPass) names it. */
+    public:
         struct Impl;
         Impl* P;
     };

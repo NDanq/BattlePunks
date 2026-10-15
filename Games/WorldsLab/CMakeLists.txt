@@ -71,6 +71,7 @@ endif()
 # Play-in-Editor, never linked. Add new sources here.
 nimble_add_hot_module(${GAME_MODULE}
         SOURCES      WorldsLabGame.cpp WorldsLabExplore.cpp WorldsLabRange.cpp WorldsLabWalker.h WorldsLabPvP.cpp
+                     WorldsLabGrassLab.cpp
         PRIVATE_DEPS NimbleEngine::NimbleEngine)
 set_target_properties(${GAME_MODULE} PROPERTIES FOLDER "Games")
 

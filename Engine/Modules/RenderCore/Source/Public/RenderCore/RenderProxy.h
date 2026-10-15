@@ -166,6 +166,12 @@ namespace RenderCore
         }
         bool IsStatic() const { return bStatic; }
 
+        /* Which custom render pass mesh groups its draws join (CustomRenderPass.h,
+         * DrawMeshGroup): RenderComponent::CustomPassGroups' bits, set by its
+         * ApplyComponent; RenderScene passes them on while it draws. */
+        void    SetCustomPassGroups(const uint8_t InGroups) { CustomPassGroups = InGroups; }
+        uint8_t GetCustomPassGroups() const { return CustomPassGroups; }
+
         /* Bumped by every extraction record applied to it: whatever was
          * cached from its draws is stale once this moves. */
         void     MarkChanged() { ++ChangeSerial; }
@@ -195,6 +201,7 @@ namespace RenderCore
 
         bool     bVisible     = true;
         bool     bStatic      = false;
+        uint8_t  CustomPassGroups = 0;
         uint64_t ChangeSerial = 0;
         RenderBakedDraw Baked;
 

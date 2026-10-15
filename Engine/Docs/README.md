@@ -9,6 +9,8 @@ The editor's Help > Documentation shows only this folder.
 - [Sequencer implementation guide](Guides/SequencerImplementationGuide.md)
 - [AICore implementation guide](Guides/AICoreImplementationGuide.md): navigation, crowds, behavior trees, utility, perception
 - [Crash dummy animation guide](Guides/CrashDummyAnimationGuide.md)
+- [Procedural content: splines and Procedural Spawners](Guides/ProceduralGuide.md)
+- [Custom render passes](Guides/CustomRenderPassGuide.md): your own GPU work at hooks in the frame, built on WorldsLab's GrassLab
 
 ## Component reference
 
@@ -39,6 +41,7 @@ One page per component, with its C++ and Lua API: the **?** in a component's Det
 - [Point Light](Components/PointLight.md)
 - [Possessor](Components/Possessor.md)
 - [Post Process](Components/PostProcess.md)
+- [Procedural Spawner](Components/ProceduralSpawner.md)
 - [Ragdoll](Components/Ragdoll.md)
 - [Reflection Probe](Components/ReflectionProbe.md)
 - [Render](Components/Render.md)
@@ -46,6 +49,7 @@ One page per component, with its C++ and Lua API: the **?** in a component's Det
 - [Scene Capture Probe](Components/SceneCaptureProbe.md)
 - [Sequence Player](Components/SequencePlayer.md)
 - [Sky Light](Components/SkyLight.md)
+- [Spline](Components/Spline.md)
 - [Spot Light](Components/SpotLight.md)
 - [Terrain](Components/Terrain.md)
 - [Transform](Components/Transform.md)
