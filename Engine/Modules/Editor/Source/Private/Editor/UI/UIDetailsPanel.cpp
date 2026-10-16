@@ -185,6 +185,12 @@ QWidget* UIDetailsPanel::MakeEditor(const UI::UIPropertyDesc& InDesc, const QStr
     connect(Edit, &QLineEdit::editingFinished, this, Commit);
     if(Picker) connect(Picker, &QComboBox::activated, this, [Commit](int) { Commit(); });
 
+    /* The eye: the asset in the Content Browser, opened in its editor. */
+    if(InDesc.Type == UI::EUIPropertyType::Asset)
+    {
+        HBox->addWidget(EditorContent::MakeRevealButton([Edit]() { return Edit->text(); }, Row));
+    }
+
     if(InDesc.Type == UI::EUIPropertyType::Color)
     {
         auto* Swatch = new QToolButton();
