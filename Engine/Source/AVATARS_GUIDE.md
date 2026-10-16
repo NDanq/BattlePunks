@@ -209,6 +209,12 @@ GAMECORE_DEFINE_NATIVE_PREFAB(WalkerPawn, "Walker.Pawn", &BuildWalkerPawn)
 
 ## Step 3: movement, as a simulation
 
+> **A walking character?** The engine already has one. Set the harness's
+> Simulation to `CharacterMove` and add a **Character Mover**. It walks, runs,
+> crouches, jumps, takes stairs, slides along walls and aims, all predicted.
+> `Engine/Docs/Guides/CharacterMoverGuide.md` covers it. This step writes a
+> simulation of your own, for anything else: a vehicle, a turret, a hover pad.
+
 A **simulation** moves the avatar by one frame of its player's input. Name it
 in the harness's **Simulation** field and the engine runs it:
 

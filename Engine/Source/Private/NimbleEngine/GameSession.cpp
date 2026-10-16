@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "Public/NimbleEngine/Avatar.h"
+#include "Public/NimbleEngine/CharacterMover.h"
 #include "Public/NimbleEngine/Ragdoll.h"
 #include "Public/NimbleEngine/GameConsole.h"
 #include "Public/NimbleEngine/PlayerStart.h"
@@ -99,6 +100,15 @@ namespace
     }
 }
 #endif
+
+namespace
+{
+    /* "Engine.CharacterMover" (CharacterMover.h). */
+    void CharacterMoverSystem(GameCore::World& InWorld, const float InDeltaSeconds, void*)
+    {
+        NimbleEngine::UpdateCharacterMovers(InWorld, InDeltaSeconds);
+    }
+}
 
 namespace NimbleEngine
 {
@@ -275,6 +285,10 @@ namespace NimbleEngine
         /* Ragdolls: after physics and the animation system, which it runs
          * between (TP_PostPhysics, and TP_PostUpdate after the animation). */
         RagdollWorld::Attach(*LevelWorld);
+
+        /* Character Movers' anim params and camera booms, from where this
+         * frame's steps (TP_PrePhysics) and physics left them. */
+        LevelWorld->RegisterSystem("Engine.CharacterMover", GameCore::TP_PostPhysics, &CharacterMoverSystem, this);
 
         /* Cutscenes: the level's Sequence Players, from TP_PostPhysics.
          * Before OnLoad, so an AutoPlay player starts with the level. */
@@ -512,6 +526,7 @@ namespace NimbleEngine
 
             /* Before the physics and animation it holds ragdolls in. */
             RagdollWorld::Detach(*LevelWorld);
+            LevelWorld->UnregisterSystem(&CharacterMoverSystem, this);
 
             /* While scripts are bound: what sequences spawned is destroyed
              * with its OnDestroy run. The overlay closed with the level's

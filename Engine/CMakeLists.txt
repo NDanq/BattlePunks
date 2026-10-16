@@ -700,6 +700,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/PlayerState.cpp
         Source/Private/NimbleEngine/Avatar.cpp
         Source/Private/NimbleEngine/PlayerStart.cpp
+        Source/Private/NimbleEngine/CharacterMover.cpp
         Source/Private/NimbleEngine/GameModule.cpp
         Source/Private/NimbleEngine/Level.cpp
         Source/Private/NimbleEngine/SaveGame.cpp
@@ -910,6 +911,16 @@ if(NIMBLEENGINE_BUILD_TESTS)
     add_test(NAME NimbleEngine.AvatarTests COMMAND NimbleEngineAvatarTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineAvatarTests>")
     set_tests_properties(NimbleEngine.AvatarTests PROPERTIES TIMEOUT 120 LABELS "smoke")
+
+    # The Character Mover (CharacterMover.h): the CharacterMove step's
+    # determinism (prediction's replay), walking, jumping, walls, teleport,
+    # the presentation system, and the guide's examples. On Bounds: no physics.
+    add_executable(NimbleEngineCharacterMoverTests Tests/CharacterMoverTests.cpp)
+    target_link_libraries(NimbleEngineCharacterMoverTests PRIVATE NimbleEngine::NimbleEngine)
+    set_target_properties(NimbleEngineCharacterMoverTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
+    add_test(NAME NimbleEngine.CharacterMoverTests COMMAND NimbleEngineCharacterMoverTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineCharacterMoverTests>")
+    set_tests_properties(NimbleEngine.CharacterMoverTests PROPERTIES TIMEOUT 120 LABELS "smoke")
 
     # Physics: bodies, shapes from meshes, forces, joints, events, raycasts.
     # Only with the module (NIMBLE_WITH_JOLTPHYSICS).

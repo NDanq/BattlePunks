@@ -8,6 +8,7 @@
 #include "Public/NimbleEngine/Input.h"
 
 namespace GameCore { class World; }
+namespace NimbleEngine { class GameSession; }
 
 /*
  * RangeMove, the third-person walker (WorldsLabRange.cpp), as the modes that
@@ -53,6 +54,19 @@ namespace WorldsLabWalker
 
     /* Puts InAvatar at InPosition facing InYaw, at rest: a respawn. Authority's. */
     void PlaceWalker(GameCore::World& InWorld, GameCore::EntityID InAvatar, double InX, double InY, double InZ, double InYaw);
+
+    /* [WorldsLab] MoverParity=1 (WorldsLabMoverParity.cpp): RangeMove against
+     * the engine's CharacterMove, once the level has settled, then quits.
+     * The Range mode calls it each tick with a counter of its own; true the
+     * tick it ran. */
+    bool TickMoverParity(NimbleEngine::GameSession& InSession, int& InOutFrames);
+
+    /* [WorldsLab] MoverDemo (WorldsLabMoverParity.cpp): the Character Mover
+     * guide's poses. True if it drove this frame (the demo is on). */
+    bool IsMoverDemo();
+    void ResetMoverDemo();   // a level starting: the pose from the beginning
+    bool MoverDemoInput(NimbleEngine::GameSession& InSession, GameCore::World& InWorld, GameCore::EntityID InAvatar,
+                        NimbleEngine::InputSnapshot& InOutInput);
 }
 
 #endif //WORLDSLAB_WALKER_H

@@ -489,6 +489,12 @@ AvatarSimulationHandle RegisterAvatarSimulation(const char* InName, const Avatar
     return Added.Handle;
 }
 
+AvatarStepFn FindAvatarSimulation(const char* InName)
+{
+    const Simulation* Found = FindSimulation(InName);
+    return Found ? Found->Step : nullptr;
+}
+
 void UnregisterAvatarSimulation(const AvatarSimulationHandle InHandle)
 {
     std::vector<Simulation>& Entries = Simulations().Entries;
