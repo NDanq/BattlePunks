@@ -17,6 +17,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSpinBox>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include "Public/RenderCore/PostProcessStack.h"
@@ -156,6 +157,7 @@ void SequencerDetails::AddText(const QString& InLabel, const QString& InValue, c
         Edit->setText(Runtime);
         Commit(Runtime);
     });
+    Layout->addWidget(EditorContent::MakeRevealButton([Edit]() { return Edit->text(); }, Row));
     Form->addRow(InLabel, Row);
 }
 

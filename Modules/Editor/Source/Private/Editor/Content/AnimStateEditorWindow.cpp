@@ -30,6 +30,7 @@
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QTableWidget>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include "Public/RenderCore/AnimClipAsset.h"
@@ -727,6 +728,7 @@ QWidget* AnimStateEditorWindow::BuildPreview()
         if(!File.isEmpty()) { PickMesh(File); }
     });
     MeshRow->addWidget(MeshLabel, 1);
+    MeshRow->addWidget(EditorContent::MakeRevealButton([this]() { return MeshRuntime; }, Side));
     MeshRow->addWidget(ChooseMesh);
     Layout->addLayout(MeshRow);
 
@@ -1266,7 +1268,14 @@ void AnimStateEditorWindow::FillState()
                 Edited();
                 if(MeshRuntime.isEmpty()) { PickMesh(EditorAnimation::FindMeshOn(EditorAnimation::SkeletonOfAnimation(Path))); }
             });
-            SampleTable->setCellWidget(int(Index), 0, Clip);
+            /* The eye beside it: the clip in the Content Browser, opened in its editor. */
+            auto* Cell    = new QWidget(SampleTable);
+            auto* CellRow = new QHBoxLayout(Cell);
+            CellRow->setContentsMargins(0, 0, 0, 0);
+            CellRow->setSpacing(2);
+            CellRow->addWidget(Clip, 1);
+            CellRow->addWidget(EditorContent::MakeRevealButton([Clip]() { return Clip->currentData().toString(); }, Cell));
+            SampleTable->setCellWidget(int(Index), 0, Cell);
             SampleTable->setItem(int(Index), 1, new QTableWidgetItem(QString::number(double(State->Samples[Index].Position))));
             SampleTable->setItem(int(Index), 2, new QTableWidgetItem(QString::number(double(State->Samples[Index].PositionY))));
         }
