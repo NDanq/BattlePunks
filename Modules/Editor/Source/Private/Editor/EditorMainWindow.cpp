@@ -2133,18 +2133,23 @@ void EditorMainWindow::RegisterConsoleCommands()
         if(!EditorUI::OpenUI(Path, this)) { Console.PrintError(QStringLiteral("Could not open %1").arg(Path)); }
     });
 
-    Console.Register(QStringLiteral("prefab"), QStringLiteral("<path | new | simulate | stop | close>"),
+    Console.Register(QStringLiteral("prefab"), QStringLiteral("<path | new | new-native [native] [name] | simulate | stop | close>"),
                      QStringLiteral("Open a .nmprefab in the Prefab Editor, make a new one, or simulate the one in front"),
                      [this](const QStringList& InArgs)
     {
         if(InArgs.isEmpty())
         {
-            Console.PrintError(QStringLiteral("Usage: prefab <path | new | simulate | stop | close>"));
+            Console.PrintError(QStringLiteral("Usage: prefab <path | new | new-native [native] [name] | simulate | stop | close>"));
             return;
         }
         if(InArgs.front() == QStringLiteral("new"))
         {
             EditorPrefabs::CreatePrefab(QString(), this);
+            return;
+        }
+        if(InArgs.front() == QStringLiteral("new-native"))
+        {
+            EditorPrefabs::CreatePrefabFromNative(QString(), this, InArgs.value(1), InArgs.value(2));
             return;
         }
         if(InArgs.front() == QStringLiteral("close"))

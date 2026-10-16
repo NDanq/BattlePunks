@@ -510,7 +510,9 @@ undo. The Prefab Editor needs a second World with its own selection and undo:
   placed (World > Native Prefabs) after the module unloads. Opened in the
   Prefab Editor a native prefab's script and tick mode are code's; Save is
   "Save As Asset...", which forks an editable `.nmprefab` keeping the
-  callbacks.
+  callbacks. The Content Browser's right-click > New Native Prefab... does
+  the same fork without opening the native one: pick a registered native
+  prefab and a name, and it is written into the current folder.
 
 ### As built (phase 8)
 

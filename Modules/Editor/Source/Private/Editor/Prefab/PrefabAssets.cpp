@@ -6,11 +6,16 @@
 #include <utility>
 #include <vector>
 
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QFileDialog>
+#include <QFormLayout>
 #include <QFile>
 #include <QFileInfo>
 #include <QInputDialog>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPointer>
 #include <QRegularExpression>
@@ -68,6 +73,27 @@ namespace
     }
 
     const QString PrefabExtension = QStringLiteral(".nmprefab");
+
+    /* InFolder/InName.nmprefab, made sure of (the folder made, the name legal
+     * and free); empty, with a message box titled InTitle, if not. */
+    QString NewPrefabPath(const QString& InFolder, QString InName, const QString& InTitle, QWidget* InParent)
+    {
+        if(InName.endsWith(PrefabExtension, Qt::CaseInsensitive)) { InName.chop(PrefabExtension.size()); }
+        if(InName.contains(QRegularExpression(QStringLiteral("[\\\\/:*?\"<>|]"))))
+        {
+            QMessageBox::warning(InParent, InTitle, QStringLiteral("A name cannot contain \\ / : * ? \" < > |"));
+            return QString();
+        }
+
+        QDir().mkpath(InFolder);
+        const QString Path = QDir(InFolder).filePath(InName + PrefabExtension);
+        if(QFileInfo::exists(Path))
+        {
+            QMessageBox::warning(InParent, InTitle, QStringLiteral("%1 already exists.").arg(QDir::toNativeSeparators(Path)));
+            return QString();
+        }
+        return Path;
+    }
 }
 
 namespace EditorPrefabs
@@ -162,18 +188,9 @@ namespace EditorPrefabs
         {
             return nullptr;
         }
-        if(Name.endsWith(PrefabExtension, Qt::CaseInsensitive)) { Name.chop(PrefabExtension.size()); }
-        if(Name.contains(QRegularExpression(QStringLiteral("[\\\\/:*?\"<>|]"))))
+        const QString Path = NewPrefabPath(Folder, Name, QStringLiteral("New Prefab"), InParent);
+        if(Path.isEmpty())
         {
-            QMessageBox::warning(InParent, QStringLiteral("New Prefab"), QStringLiteral("A name cannot contain \\ / : * ? \" < > |"));
-            return nullptr;
-        }
-
-        QDir().mkpath(Folder);
-        const QString Path = QDir(Folder).filePath(Name + PrefabExtension);
-        if(QFileInfo::exists(Path))
-        {
-            QMessageBox::warning(InParent, QStringLiteral("New Prefab"), QStringLiteral("%1 already exists.").arg(QDir::toNativeSeparators(Path)));
             return nullptr;
         }
 
@@ -189,6 +206,99 @@ namespace EditorPrefabs
         if(!GameCore::SavePrefabFile(Path.toUtf8().constData(), Asset))
         {
             QMessageBox::warning(InParent, QStringLiteral("New Prefab"), QStringLiteral("Could not write %1").arg(QDir::toNativeSeparators(Path)));
+            return nullptr;
+        }
+        Stage(Path);
+        return OpenPrefab(Path, InParent);
+    }
+
+    PrefabEditorTab* CreatePrefabFromNative(const QString& InFolder, QWidget* InParent, const QString& InNative, const QString& InName)
+    {
+        const QString Title = QStringLiteral("New Native Prefab");
+        const QString Folder = InFolder.isEmpty() ? GetDefaultFolder() : InFolder;
+        if(EditorContent::IsEngineContent(Folder))
+        {
+            QMessageBox::warning(InParent, Title, QStringLiteral("The engine's content is read-only here."));
+            return nullptr;
+        }
+        const QStringList Natives = GetNativePrefabs();
+        if(Natives.isEmpty())
+        {
+            QMessageBox::warning(InParent, Title, QStringLiteral("No native prefabs are registered: the game module declares none, or is not built."));
+            return nullptr;
+        }
+
+        /* "Sandbox.Marker" -> "Marker". */
+        auto DefaultName = [](const QString& InChoice) { return InChoice.section(QLatin1Char('.'), -1); };
+
+        QString Native = InNative;
+        QString Name = InName.trimmed();
+        if(Native.isEmpty())
+        {
+            QDialog Dialog(InParent);
+            Dialog.setWindowTitle(Title);
+            auto* NativeBox = new QComboBox(&Dialog);
+            NativeBox->addItems(Natives);
+            auto* NameEdit = new QLineEdit(&Dialog);
+            auto* Form = new QFormLayout(&Dialog);
+            Form->addRow(QStringLiteral("Native prefab:"), NativeBox);
+            Form->addRow(QStringLiteral("Name:"), NameEdit);
+            auto* Buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &Dialog);
+            Form->addRow(Buttons);
+            QObject::connect(Buttons, &QDialogButtonBox::accepted, &Dialog, &QDialog::accept);
+            QObject::connect(Buttons, &QDialogButtonBox::rejected, &Dialog, &QDialog::reject);
+
+            /* The name follows the choice until it is typed in. */
+            bool bNameTyped = false;
+            QObject::connect(NameEdit, &QLineEdit::textEdited, &Dialog, [&bNameTyped]() { bNameTyped = true; });
+            auto SuggestName = [NameEdit, &bNameTyped, &DefaultName](const QString& InChoice)
+            {
+                if(!bNameTyped) { NameEdit->setText(DefaultName(InChoice)); }
+            };
+            QObject::connect(NativeBox, &QComboBox::currentTextChanged, &Dialog, SuggestName);
+            SuggestName(NativeBox->currentText());
+            Dialog.resize(360, Dialog.sizeHint().height());
+
+            if(Dialog.exec() != QDialog::Accepted)
+            {
+                return nullptr;
+            }
+            Native = NativeBox->currentText();
+            Name = NameEdit->text().trimmed();
+        }
+        else if(!Natives.contains(Native))
+        {
+            QMessageBox::warning(InParent, Title, QStringLiteral("%1 is not a registered native prefab.").arg(Native));
+            return nullptr;
+        }
+        else if(Name.isEmpty())
+        {
+            Name = DefaultName(Native);
+        }
+        if(Name.isEmpty())
+        {
+            return nullptr;
+        }
+        const QString Path = NewPrefabPath(Folder, Name, Title, InParent);
+        if(Path.isEmpty())
+        {
+            return nullptr;
+        }
+
+        /* The cached layout (CacheNativePrefabs), so this works after the game
+         * module unloads. A fork, like the Prefab Editor's Save As Asset: the
+         * callbacks come along by name. */
+        const GameCore::PrefabAsset* Source = GameCore::FindOrLoadPrefab(NativePrefabPath(Native).toUtf8().constData());
+        if(!Source)
+        {
+            QMessageBox::warning(InParent, Title, QStringLiteral("%1 could not be built; the Console says why.").arg(Native));
+            return nullptr;
+        }
+        GameCore::PrefabAsset Fork = *Source;
+        Fork.SetName(QFileInfo(Path).completeBaseName().toUtf8().constData());
+        if(!GameCore::SavePrefabFile(Path.toUtf8().constData(), Fork))
+        {
+            QMessageBox::warning(InParent, Title, QStringLiteral("Could not write %1").arg(QDir::toNativeSeparators(Path)));
             return nullptr;
         }
         Stage(Path);
