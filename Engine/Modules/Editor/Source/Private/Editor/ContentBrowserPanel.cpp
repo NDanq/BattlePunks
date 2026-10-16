@@ -1177,6 +1177,7 @@ void ContentBrowserPanel::ShowContextMenu(const QPoint& InPos)
     {
         Menu.addAction(QStringLiteral("New Folder"), this, &ContentBrowserPanel::NewFolder);
         Menu.addAction(QStringLiteral("New Prefab..."), this, [this]() { EditorPrefabs::CreatePrefab(CurrentFolder, window()); });
+        Menu.addAction(QStringLiteral("New Native Prefab..."), this, [this]() { EditorPrefabs::CreatePrefabFromNative(CurrentFolder, window()); });
         Menu.addAction(QStringLiteral("New UI..."), this, [this]() { EditorUI::CreateUI(CurrentFolder, window()); });
         Menu.addAction(QStringLiteral("New Particle System..."), this, [this]() { EditorParticles::CreateParticleSystem(CurrentFolder, window()); });
         Menu.addAction(QStringLiteral("New Sequence..."), this, [this]() { EditorSequencer::CreateSequence(CurrentFolder, window()); });

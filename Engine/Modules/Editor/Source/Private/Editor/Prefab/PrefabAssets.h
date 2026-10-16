@@ -47,6 +47,13 @@ namespace EditorPrefabs
      * InFolder (GetDefaultFolder() if empty), and opens it. */
     PrefabEditorTab* CreatePrefab(const QString& InFolder, QWidget* InParent);
 
+    /* Asks for a registered native prefab and a name, writes a fork of its
+     * layout in InFolder (GetDefaultFolder() if empty) -- editable, keeping
+     * the native callbacks by name -- and opens it. Given InNative, there is
+     * no dialog: InName, or the part after the last '.', names the file. */
+    PrefabEditorTab* CreatePrefabFromNative(const QString& InFolder, QWidget* InParent,
+                                            const QString& InNative = QString(), const QString& InName = QString());
+
     /* Offers to save each unsaved prefab, stopping any simulation. False if
      * cancelled. */
     bool CloseAllPrefabs();
