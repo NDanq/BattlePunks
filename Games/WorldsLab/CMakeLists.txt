@@ -71,7 +71,7 @@ endif()
 # Play-in-Editor, never linked. Add new sources here.
 nimble_add_hot_module(${GAME_MODULE}
         SOURCES      WorldsLabGame.cpp WorldsLabExplore.cpp WorldsLabRange.cpp WorldsLabWalker.h WorldsLabPvP.cpp
-                     WorldsLabGrassLab.cpp
+                     WorldsLabGrassLab.cpp WorldsLabMoverParity.cpp
         PRIVATE_DEPS NimbleEngine::NimbleEngine)
 set_target_properties(${GAME_MODULE} PROPERTIES FOLDER "Games")
 
@@ -303,3 +303,17 @@ endif()
 
 # === IDE ====================================================================
 set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT ${GAME_NAME})
+
+# === Tests ==================================================================
+# WorldsLab.MoverParity: the engine's Character Mover against RangeMove, the
+# walker it came from, on the same input in the Shooting Range
+# (WorldsLabMoverParity.cpp). Headless, standalone; passes on its log line.
+if(NIMBLE_BUILD_TESTS AND NOT CMAKE_BUILD_TYPE STREQUAL "Shipping")
+    enable_testing()
+    add_test(NAME WorldsLab.MoverParity
+             COMMAND ${GAME_NAME} -headless -WorldsLab.MoverParity=1 -Game.StartLevel=ShootingRange -Application.MaxFrames=1200
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:${GAME_NAME}>")
+    set_tests_properties(WorldsLab.MoverParity PROPERTIES TIMEOUT 180 LABELS "smoke"
+                         PASS_REGULAR_EXPRESSION "\\[MoverParity\\] PASS"
+                         FAIL_REGULAR_EXPRESSION "\\[MoverParity\\] FAIL")
+endif()

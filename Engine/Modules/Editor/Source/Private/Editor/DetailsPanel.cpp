@@ -388,6 +388,24 @@ void DetailsPanel::RefreshEntitySection()
     }
 }
 
+bool DetailsPanel::FocusComponent(const QString& InTypeName)
+{
+    QWidget* Focused = nullptr;
+    for(const ComponentSection& Each : Sections)
+    {
+        const GameCore::ComponentTypeInfo* Info = GameCore::GetComponentType(Each.Type);
+        const bool bMatch = Info && InTypeName.compare(QString::fromLatin1(Info->Name), Qt::CaseInsensitive) == 0;
+        if(Each.Toggle) { Each.Toggle->setChecked(bMatch); }
+        if(bMatch) { Focused = Each.Frame; }
+    }
+    if(!Focused) { return false; }
+    /* Laid out again first, so the collapsed sections have given their room back. */
+    BodyLayout->activate();
+    Body->adjustSize();
+    QTimer::singleShot(0, this, [this, Focused]() { Scroll->verticalScrollBar()->setValue(Focused->y()); });
+    return true;
+}
+
 QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const ComponentTypeID InType)
 {
     const GameCore::ComponentTypeInfo* Info = GameCore::GetComponentType(InType);
@@ -450,6 +468,8 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
     Toggle->setAutoRaise(true);
     Toggle->setStyleSheet(QStringLiteral("QToolButton { font-weight: bold; }"));
     HeaderRow->addWidget(Toggle);
+    State.Toggle = Toggle;
+    State.Frame  = Section;
 
     /* The ?: this component's reference page (Engine/Docs/Components), written first if it has none. */
     auto* Help = new QToolButton(Section);

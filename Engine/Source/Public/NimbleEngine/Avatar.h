@@ -213,6 +213,10 @@ namespace NimbleEngine
     NE_API AvatarSimulationHandle RegisterAvatarSimulation(const char* InName, AvatarStepFn InStep, float InMaxStepSeconds = 0.1f);
     NE_API void                   UnregisterAvatarSimulation(AvatarSimulationHandle InHandle);
 
+    /* The step registered as InName; null if none. To run one directly: a
+     * test, or a tool comparing two. */
+    NE_API AvatarStepFn FindAvatarSimulation(const char* InName);
+
     /* How a predicting client is doing: corrections since the last call, the
      * frames waiting on the server, and the furthest a correction moved it
      * (world units). */

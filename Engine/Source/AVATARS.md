@@ -174,6 +174,76 @@ avatar.
 Predict only what the client can know. Walls it also has are fine. Being hit
 by another player is the server's to say.
 
+## Character Mover
+
+You do not have to write the walker. The engine has one: the **Character
+Mover** component (`"Character Mover"`) and the **`CharacterMove`**
+simulation (`Public/NimbleEngine/CharacterMover.h`). It is a predicted
+third-person walker on the world's physics, made of raycasts:
+
+- **Ground.** Rays down around the feet find the highest walkable surface
+  within **Step Height**: floors, ramps, stairs. **Snap Down** keeps it on a
+  surface going down. Anything steeper than **Max Slope** is a wall.
+- **Walls.** Rays across, at three heights, slide the move along what they
+  hit. Rays around the body push it out of anything it is inside.
+- **Air.** Gravity, **Jump Speed**, **Air Control**, and a head check.
+- **View.** The look axes turn the view (degrees per frame). Holding **Aim**
+  blends the camera in over the shoulder, narrows the field of view, slows
+  the look and the walk, and faces the body to the view.
+- **Body.** The body turns at **Turn Rate** toward where it walks, or toward
+  the view while aiming or with **Face View**. **Crouch** lowers it to
+  **Crouch Height**, and it stands only when there is room.
+
+Setup on the avatar:
+
+1. An AvatarHarness with **Simulation** `CharacterMove`, and a predicted Net
+   component for a networked game.
+2. A Character Mover. Its **Input** names are looked up in the harness's
+   **InputMap**: axes `MoveForward`, `MoveRight`, `LookX`, `LookY`, and actions
+   `Run`, `Jump`, `Crouch`, `Aim`. A name the map lacks, or an empty one, is
+   not used.
+3. Optionally a `CameraBoom` child with a `Camera` child, for the
+   third-person view.
+
+The rest is done for you:
+
+| Where | What |
+|---|---|
+| The step (`StepCharacter`), `TP_PrePhysics` | the Transform and the mover's state, from one frame of input. It touches nothing else. |
+| `Engine.CharacterMover`, `TP_PostPhysics`, every process | the Animation component's params (**Speed**, **Grounded**, **AimPitch**, the **Jump** trigger, an optional **Crouch** param) from the replicated state. Then the `CameraBoom`'s yaw and pitch, and its `Camera` placed back and to the right, pulled in front of walls. The pull-in is skipped for another process's player. |
+
+Everything the step carries between frames is a replicated field of the
+component. That is what lets the replay work: prediction restores only
+components. The view and the velocity are `Smooth()`. So another player's
+spine pitch and stride blend between updates, as its Transform does. The
+Jump trigger fires from a `JumpCount`, never from the step, so a replay does
+not fire it twice. The tunables come from the prefab and are not sent.
+
+Functions (`CharacterMover.h`, all `NE_API`):
+
+| Function | |
+|---|---|
+| `StepCharacter(World, Avatar, Frame)` | one frame of the walk. Call it from your own simulation to add to it. |
+| `TeleportCharacter(World, Avatar, Position, Yaw)` | a respawn: there, facing Yaw, at rest |
+| `GetCharacterAim(World, Avatar, Origin, Dir)` | the camera's place (without the wall pull-in) and the view. Every process computes the same from the replicated state, so a server traces the shot its client saw. |
+| `UpdateCharacterMovers(World, Seconds)` | the presentation system's body, for a host without a GameSession |
+
+**Bots** drive it the same way players do. AICore's `SteerInput` fills the
+same `MoveForward`, `MoveRight` and `LookX` axes (`SteerInputMap` in
+`AIFacade.h`). Take its indices from the mover's names in the harness's map.
+
+**Without physics** the rays hit Bounds. A hit there has no normal, so a ray
+down treats it as walkable and a ray across treats it as a wall. Keep the
+avatar's own Bounds out of the way in such a game (a ray from inside a box
+hits it).
+
+From Lua: `mover:Teleport(position, yaw)`, `mover:GetAim() -> origin, dir`,
+`mover:GetSpeed()`. The common tunables can be read and written. The state
+(`Grounded`, `Crouched`, `Pitch`, ...) can only be read.
+
+`Engine/Docs/Guides/CharacterMoverGuide.md` walks through it with
+screenshots.
+
 ## Spawning
 
 - **Player Start** (`"PlayerStart"`): an entity with a Transform. It can be
@@ -269,6 +339,21 @@ covers:
 - the server's half of the input stream
 - simulations
 - AutoPossess, the view target and NetGameMode through a GameSession
+
+`Engine/Tests/CharacterMoverTests.cpp` (`NimbleEngine.CharacterMoverTests`,
+label `smoke`) covers the Character Mover:
+
+- the step is deterministic, and a replay from the components alone lands
+  where the first run did
+- walking, running, turning, jumping and landing, walls, steps, crouching
+  under a ceiling, aiming
+- teleport, the aim, and the presentation system
+- the guide's examples
+
+`WorldsLab.MoverParity` (Games/WorldsLab, `WorldsLabMoverParity.cpp`) runs
+the Character Mover and WorldsLab's RangeMove on the same input along the
+Shooting Range's autoplay walk, on its physics, and compares them frame by
+frame.
 
 The client half runs in NetArena's unattended runs (`NetCore/GUIDE.md` §9).
 `Engine/Tests/AvatarGuideTests.cpp` builds and runs every example in

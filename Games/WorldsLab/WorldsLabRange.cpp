@@ -82,6 +82,9 @@
 NIMBLE_CONFIG_FLOAT(GRangeLookSensitivity, "WorldsLab", "RangeLookSensitivity", 1.0f, nullptr);
 NIMBLE_CONFIG_BOOL(GRangeAutoPlay,         "WorldsLab", "RangeAutoPlay",        false, nullptr);
 NIMBLE_CONFIG_BOOL(GRangeShowHelp,         "WorldsLab", "RangeShowHelp",        true,  nullptr);   // the HUD's controls hint (Settings)
+/* The prefab the Player Start spawns instead of its own: "" the start's. MoverShooter
+ * (Content/Prefabs/ShootingRange/MoverShooter.nmprefab) walks on the engine's Character Mover. */
+NIMBLE_CONFIG_STRING(GRangeAvatar,         "WorldsLab", "RangeAvatar",          "",    nullptr);
 
 /* The shooter's controls. Each entry is also [Input_Range] <Name> in
  * Config/DefaultEngine.ini. */
@@ -1008,6 +1011,12 @@ public:
     /* The shadow atlas: the sun's, and the two lane spots over the targets. */
     static constexpr int32_t ShadowedLights = 3;
 
+    const char* GetAvatarPrefab(GameCore::EntityID) override
+    {
+        const char* Override = GRangeAvatar.GetString();
+        return Override && Override[0] ? Override : nullptr;
+    }
+
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
         if(EngineCore::ConfigVar* MaxShadowed = EngineCore::ConfigFindVarByPath("Shadows.MaxShadowedLights"))
@@ -1028,7 +1037,8 @@ public:
     {
         NetGameMode::OnStart();
         /* Autoplay leaves the mouse alone: it drives itself, and someone may be using the desktop. */
-        if(!GRangeAutoPlay.GetBool()) { Session->SetMouseCaptured(true); }
+        WorldsLabWalker::ResetMoverDemo();
+        if(!GRangeAutoPlay.GetBool() && !WorldsLabWalker::IsMoverDemo()) { Session->SetMouseCaptured(true); }
         CORE_LOG("[ShootingRange] WASD walks (Shift runs), Space jumps, H draws, right mouse aims, left fires, R reloads; "
                  "Escape pauses")
 
@@ -1045,6 +1055,8 @@ public:
 
     void OnTick(const NimbleEngine::FrameContext& InFrame) override
     {
+        if(WorldsLabWalker::TickMoverParity(*Session, ParityFrames)) { return; }
+
         /* The clock counts game time: OnTick is not called while paused, so the pause menu stops it.
          * The store is written when the shown second changes, not every frame. */
         RunSeconds += InFrame.DeltaSeconds;
@@ -1197,6 +1209,7 @@ private:
      * mouse is free. */
     void FilterInput(GameCore::World& InWorld, const GameCore::EntityID InAvatar, NimbleEngine::InputSnapshot& InOutInput)
     {
+        if(WorldsLabWalker::MoverDemoInput(GetSession(), InWorld, InAvatar, InOutInput)) { return; }
         WorldsLabWalker::ApplyLookSensitivity(InOutInput);
         if(!GRangeAutoPlay.GetBool()) { FreeMouseFilter(GetSession(), InOutInput); return; }
         AutoPlay(InWorld, InAvatar, Auto, InOutInput);
@@ -1227,6 +1240,7 @@ private:
     int32_t PreviousShadowedLights = -1;
     double  RunSeconds   = 0.0;   // the HUD's clock
     int     ShownSeconds = 0;
+    int     ParityFrames = 0;   // [WorldsLab] MoverParity's settling
 };
 
 // === The gun's multicasts: every process with a player ===========================
