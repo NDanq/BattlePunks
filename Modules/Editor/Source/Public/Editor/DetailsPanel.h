@@ -47,6 +47,11 @@ class DetailsPanel : public QWidget
 public:
     explicit DetailsPanel(EditorDocument& InDocument, QWidget* InParent = nullptr);
 
+    /* Every component section collapsed but InTypeName's ("Character Mover"),
+     * which is opened and scrolled to: the console's "details focus", for a
+     * documentation screenshot. False if the shown entity has none. */
+    bool FocusComponent(const QString& InTypeName);
+
 private:
     /* One property's editor and its reset arrow. */
     struct PropertyRow
@@ -75,6 +80,8 @@ private:
         QToolButton*                                ResetAll = nullptr;
         std::shared_ptr<const std::vector<uint8_t>> PrefabValues;   // empty unless the prefab has this component here
         QToolButton*                                RevertAll = nullptr;
+        QToolButton*                                Toggle = nullptr;    // the header's collapse arrow
+        QWidget*                                    Frame  = nullptr;    // the whole section
     };
 
     void Rebuild();

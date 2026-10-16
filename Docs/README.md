@@ -5,6 +5,7 @@ The editor's Help > Documentation shows only this folder.
 ## Guides
 
 - [Game modes: a usage guide](Guides/GameModeGuide.md)
+- [The Character Mover](Guides/CharacterMoverGuide.md): the engine's predicted third-person walker, for players and bots
 - UI, built on the Shooting Range: [a menu](Guides/UI/MenuUIGuide.md), [a HUD](Guides/UI/HudGuide.md), [settings that control the game's .ini](Guides/UI/SettingsUIGuide.md)
 - [Sequencer implementation guide](Guides/SequencerImplementationGuide.md)
 - [AICore implementation guide](Guides/AICoreImplementationGuide.md): navigation, crowds, behavior trees, utility, perception

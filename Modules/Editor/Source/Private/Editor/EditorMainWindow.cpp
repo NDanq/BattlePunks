@@ -1445,6 +1445,19 @@ void EditorMainWindow::RegisterConsoleCommands()
         Console.Print(QStringLiteral("Selected %1 #%2").arg(Level.GetDisplayName(Found)).arg(Found.Index));
     });
 
+    Console.Register(QStringLiteral("details"), QStringLiteral("focus <component type>"),
+                     QStringLiteral("Collapse every Details section but one component's, and scroll to it"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.size() < 2 || InArgs.front() != QStringLiteral("focus"))
+        {
+            Console.PrintError(QStringLiteral("Usage: details focus <component type>"));
+            return;
+        }
+        const QString Type = InArgs.mid(1).join(QLatin1Char(' '));   // "Character Mover": its words rejoined
+        if(!Details->FocusComponent(Type)) { Console.PrintError(QStringLiteral("The selection has no %1").arg(Type)); }
+    });
+
     Console.Register(QStringLiteral("create"), QStringLiteral("[name]"),
                      QStringLiteral("Create an empty entity in front of the camera and select it"),
                      [this](const QStringList& InArgs)

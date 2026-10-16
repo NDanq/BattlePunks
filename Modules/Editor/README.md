@@ -711,6 +711,7 @@ registered:
 | `Section.Name [value]` | Print a config var, or set it |
 | `entities [filter]` | The scene's entities, the selection marked `*` |
 | `select <name \| #index \| none>` | Select an entity (drives Outliner and Details) |
+| `details focus <component type>` | Collapse every Details section but that component's (`details focus Character Mover`) and scroll to it: for a documentation screenshot |
 | `create [name]`, `delete [name \| #index]` | As the Edit menu |
 | `frame [all]` | Frame the selection, or the scene |
 | `scene <new \| sandbox>` | As the File menu |
