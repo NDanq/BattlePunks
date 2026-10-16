@@ -129,6 +129,28 @@ set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 target_link_libraries(EngineCore PUBLIC Threads::Threads)
 
+# === zstd ===
+# Content packs compress their entries (CorePack.cpp). PRIVATE: no Core header
+# includes zstd.h. In the engine's tree Zstd::Zstd is one of the third-party
+# libraries, which Engine/CMakeLists.txt brings in only AFTER this directory
+# (Jolt is built with Core's SIMD flags) -- a "::" name is resolved at generate
+# time, so linking it by name here is fine. Configured on its own, Core builds
+# the same vendored copy itself.
+if(NOT COMMAND nimble_add_module AND NOT TARGET Zstd::Zstd)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/../../ThirdParty/cmake/NimbleThirdPartyUsage.cmake")
+    enable_language(C)
+    file(GLOB CORE_ZSTD_SOURCES
+            "${NIMBLE_THIRDPARTY_ZSTD_DIR}/lib/common/*.c"
+            "${NIMBLE_THIRDPARTY_ZSTD_DIR}/lib/compress/*.c"
+            "${NIMBLE_THIRDPARTY_ZSTD_DIR}/lib/decompress/*.c")
+    add_library(Zstd STATIC ${CORE_ZSTD_SOURCES})
+    add_library(Zstd::Zstd ALIAS Zstd)
+    nimble_thirdparty_usage(Zstd Zstd BUILD)
+    target_compile_definitions(Zstd PRIVATE ZSTD_DISABLE_ASM ZSTD_LEGACY_SUPPORT=0 ZSTD_TRACE=0)
+    set_target_properties(Zstd PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
+target_link_libraries(EngineCore PRIVATE Zstd::Zstd)
+
 # === Build version stamp ===
 # Generates Generated/BuildInfo.h from git (see cmake/GitVersion.cmake). Only
 # when EngineCore is the top-level project -- its own repo, or a standalone

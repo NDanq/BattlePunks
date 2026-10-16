@@ -4,8 +4,8 @@ project(NimbleThirdParty LANGUAGES C CXX)
 
 # ===========================================================================
 # NimbleThirdParty -- every vendored library the engine compiles, in one
-# project: SDL3, Jolt, Lua, pugixml, ENet, miniaudio, bc7enc_rdo, xatlas and
-# Recast Navigation.
+# project: SDL3, Jolt, Lua, pugixml, ENet, miniaudio, bc7enc_rdo, xatlas,
+# Recast Navigation and zstd.
 # Their sources are under Source/, each a faithful copy of its upstream release
 # (SDL carries one local patch; Modules/GameWindow/README.md lists it).
 #
@@ -323,6 +323,29 @@ target_compile_definitions(RecastNav PRIVATE $<$<NOT:$<CONFIG:Debug>>:RC_DISABLE
 nm_tp_library_properties(RecastNav)
 source_group(TREE "${NIMBLE_THIRDPARTY_RECAST_DIR}" PREFIX "RecastNav" FILES ${NM_TP_RECAST_SOURCES})
 
+# === zstd ===================================================================
+# Zstandard 1.5.7 (BSD), for EngineCore: a content pack's entries are
+# compressed with it (CorePack.h). Only lib/common, lib/compress and
+# lib/decompress are vendored -- no CLI, dictionary builder or legacy formats
+# -- and those folders are the source list, so they are globbed.
+#
+# Single-threaded (no ZSTD_MULTITHREAD): the pack writer runs a compressor per
+# thread itself. ZSTD_DISABLE_ASM keeps the build C-only; the assembly is only
+# a faster Huffman decoder for GCC and Clang on x86-64.
+if(NOT EXISTS "${NIMBLE_THIRDPARTY_ZSTD_DIR}/lib/zstd.h")
+    message(FATAL_ERROR "Vendored zstd not found at ${NIMBLE_THIRDPARTY_ZSTD_DIR}.")
+endif()
+file(GLOB NM_TP_ZSTD_SOURCES CONFIGURE_DEPENDS
+        "${NIMBLE_THIRDPARTY_ZSTD_DIR}/lib/common/*.c"
+        "${NIMBLE_THIRDPARTY_ZSTD_DIR}/lib/compress/*.c"
+        "${NIMBLE_THIRDPARTY_ZSTD_DIR}/lib/decompress/*.c")
+add_library(Zstd STATIC ${NM_TP_ZSTD_SOURCES})
+add_library(Zstd::Zstd ALIAS Zstd)
+nimble_thirdparty_usage(Zstd Zstd BUILD)
+target_compile_definitions(Zstd PRIVATE ZSTD_DISABLE_ASM ZSTD_LEGACY_SUPPORT=0 ZSTD_TRACE=0)
+nm_tp_library_properties(Zstd)
+source_group(TREE "${NIMBLE_THIRDPARTY_ZSTD_DIR}/lib" PREFIX "Zstd" FILES ${NM_TP_ZSTD_SOURCES})
+
 # === Manifest (standalone) ==================================================
 # Per configuration, the files the engine's IMPORTED targets point at:
 # <output>/<Config>/NimbleThirdPartyManifest.cmake. Written at generate time
@@ -333,7 +356,7 @@ if(NM_TP_STANDALONE)
     # Keyed by the names in NIMBLE_THIRDPARTY_LIBRARIES; SDL3's real target is SDL3-shared.
     foreach(NM_PAIR SDL3:SDL3-shared Jolt:Jolt Lua:Lua PugiXml:PugiXml ENet:ENet miniaudio:miniaudio
                     Bc7enc:NimbleBc7enc Xatlas:NimbleXatlas
-                    RecastNav:RecastNav)
+                    RecastNav:RecastNav Zstd:Zstd)
         string(REPLACE ":" ";" NM_PAIR "${NM_PAIR}")
         list(GET NM_PAIR 0 NM_NAME)
         list(GET NM_PAIR 1 NM_TARGET)

@@ -8,6 +8,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMimeData>
+#include <QToolButton>
+#include <QToolTip>
 #include <QUrl>
 
 #include "Public/RenderCore/AnimClipAsset.h"
@@ -21,6 +23,7 @@
 #include "Public/Audio/SoundAsset.h"
 #endif
 #include "Public/GameCore/NativePrefab.h"
+#include "Private/Editor/EditorIcons.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 
 namespace EditorContent
@@ -77,6 +80,26 @@ namespace EditorContent
         if(!RevealHandler() || !QFileInfo(InFile).isFile()) { return false; }
         RevealHandler()(InFile);
         return true;
+    }
+
+    QToolButton* MakeRevealButton(std::function<QString()> InRuntimePath, QWidget* InParent)
+    {
+        auto* Eye = new QToolButton(InParent);
+        Eye->setIcon(EditorIcons::Get(EditorIcons::EIcon::Eye));
+        Eye->setToolTip(QStringLiteral("Show this asset in the Content Browser and open it"));
+        Eye->setAutoRaise(true);
+        QObject::connect(Eye, &QToolButton::clicked, Eye, [Eye, Path = std::move(InRuntimePath)]()
+        {
+            const QString Value = Path().trimmed();
+            const QString File  = FileForRuntimePath(Value);
+            if(File.isEmpty() || !RevealAsset(File))
+            {
+                QToolTip::showText(Eye->mapToGlobal(QPoint(0, Eye->height())),
+                                   Value.isEmpty() ? QStringLiteral("The field is empty")
+                                                   : QStringLiteral("No asset file for \"%1\"").arg(Value), Eye);
+            }
+        });
+        return Eye;
     }
 
     QString GetEngineContentRoot()

@@ -8,6 +8,8 @@
 #include <QString>
 
 class QMimeData;
+class QToolButton;
+class QWidget;
 
 /*
  * Project files as the engine names them: assets by project-relative path
@@ -38,6 +40,10 @@ namespace EditorContent
      * when there is none or InFile is not a file. */
     void SetRevealHandler(std::function<void(const QString&)> InHandler);
     bool RevealAsset(const QString& InFile);
+
+    /* The eye beside an asset field: on click, reveals the file InRuntimePath()
+     * names (RevealAsset), or says under the button why it cannot. */
+    QToolButton* MakeRevealButton(std::function<QString()> InRuntimePath, QWidget* InParent = nullptr);
 
     /* Whether InPath is the engine content folder or inside it. */
     bool IsEngineContent(const QString& InPath);

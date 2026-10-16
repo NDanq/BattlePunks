@@ -330,6 +330,7 @@ void GraphDetailsPanel::BuildNode(QFormLayout* InForm, const Node& InNode)
                 const QString Value  = Chosen.isEmpty() ? QString() : TexturePathEdit::ValueFor(Chosen);
                 if(!Value.isEmpty()) { Edit->Set(Value); }
             });
+            Layout->addWidget(EditorContent::MakeRevealButton([Edit]() { return Edit->text(); }, Row));
             Editor = Row;
         }
         else
