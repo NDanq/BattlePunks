@@ -966,6 +966,8 @@ options kept in `[Build]` of `DefaultEngine.ini`.
   name nothing anywhere: scripts and script graphs are stripped Lua
   bytecode, the config has no comments, shader caches index by hash, and
   every entry is scrambled, so no asset path shows even inside content.
+  Every pack's content is zstd-compressed (`NIMBLE_PACK_ZSTD_LEVEL`, 3, and
+  `NIMBLE_PACK_ZSTD_LEVEL_SHIPPING`, 19; 0 stores it as it is).
 - **Run uncooked** (Debug and RelWithDebInfo; `NIMBLE_RUN_UNCOOKED`): the
   built game reads the project's raw files -- config, scripts, Content, text
   worlds and prefabs, XML UI -- straight from the project folder, over its

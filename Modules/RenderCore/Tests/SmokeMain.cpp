@@ -2023,7 +2023,7 @@ static void TestTextureStreamingFiles()
     const std::string PackFile = (Root / "Range.nmpak").string();
     std::string Error;
     Expect(WritePackFile(PackFile, "Range", { PackInput{ "Pad.bin", std::vector<uint8_t>(37, 1) }, PackInput{ "A.bin", Bytes } },
-                         false, true, &Error), "a scrambled pack writes");
+                         false, true, 0, &Error), "a scrambled pack writes");
     std::vector<uint8_t> PackBytes;
     std::shared_ptr<PackFileProvider> Pack = appFileReadAll(PackFile, PackBytes) ? PackFileProvider::Load(std::move(PackBytes), Error) : nullptr;
     std::vector<uint8_t> All;

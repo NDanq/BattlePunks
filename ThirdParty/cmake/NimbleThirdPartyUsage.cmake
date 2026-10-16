@@ -32,6 +32,7 @@ set(NIMBLE_THIRDPARTY_XATLAS_DIR   "${NIMBLE_THIRDPARTY_SOURCE_DIR}/xatlas-f700c
 set(NIMBLE_THIRDPARTY_CGLTF_DIR    "${NIMBLE_THIRDPARTY_SOURCE_DIR}/cgltf-1.15")
 set(NIMBLE_THIRDPARTY_STB_DIR      "${NIMBLE_THIRDPARTY_SOURCE_DIR}/stb")
 set(NIMBLE_THIRDPARTY_RECAST_DIR   "${NIMBLE_THIRDPARTY_SOURCE_DIR}/recastnavigation-1.6.0")
+set(NIMBLE_THIRDPARTY_ZSTD_DIR     "${NIMBLE_THIRDPARTY_SOURCE_DIR}/zstd-1.5.7")
 
 # The compiled libraries: <Name> <target> pairs. <Name> is the key both sides
 # use (manifest variables, nimble_thirdparty_usage); <target> is the name the
@@ -45,7 +46,8 @@ set(NIMBLE_THIRDPARTY_LIBRARIES
         miniaudio miniaudio::miniaudio
         Bc7enc    NimbleBc7enc
         Xatlas    NimbleXatlas
-        RecastNav RecastNav::RecastNav)
+        RecastNav RecastNav::RecastNav
+        Zstd      Zstd::Zstd)
 
 # nimble_thirdparty_usage(<Name> <target> BUILD|IMPORTED)
 #   Applies <Name>'s usage requirements to <target>. BUILD: the real library
@@ -142,6 +144,10 @@ function(nimble_thirdparty_usage NM_NAME NM_TARGET NM_MODE)
         # must agree. DT_POLYREF64 stays off: 32-bit poly refs are plenty
         # for one level's tiles.
         target_compile_definitions(${NM_TARGET} ${NM_PUBLIC} DT_VIRTUAL_QUERYFILTER)
+
+    elseif(NM_NAME STREQUAL "Zstd")
+        # zstd.h and zstd_errors.h only; nothing outside lib/ is vendored.
+        target_include_directories(${NM_TARGET} ${NM_PUBLIC} "${NIMBLE_THIRDPARTY_ZSTD_DIR}/lib")
 
     else()
         message(FATAL_ERROR "nimble_thirdparty_usage: no library named '${NM_NAME}'")
