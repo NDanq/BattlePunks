@@ -509,10 +509,13 @@ while its value differs from the type's default-constructed one; clicking it
 restores that property. A component header's **Reset** restores every writable
 property of that component (per-run state such as a render proxy handle is left
 alone), and its **x** removes the component. **+ Add Component** at the bottom
-lists every type with a property list that the entity lacks; the new component
-starts from its default-constructed bytes. A type opts out of that list with
-`Props.NotAddable()`, for a component that only makes sense attached some other
-way.
+opens a picker (`ComponentPicker`) over every type with a property list: a
+search box (every word must match the name or category; Up/Down and Enter pick,
+Esc closes) above folders by category. Types the entity already has are listed
+greyed out. The new component starts from its default-constructed bytes. A type
+names its folder with `Props.TypeCategory("Rendering/Lights")` (`/` nests;
+unset is **Other**), and opts out of the list with `Props.NotAddable()`, for a
+component that only makes sense attached some other way.
 
 **Particle System** is added this way too: its **System** (an `.nmparticle`,
 dropped, picked or completed; **Edit** opens it in the Particle Editor, or makes

@@ -31,6 +31,7 @@ namespace RenderCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(AnimSocketComponent)
     {
+        Props.TypeCategory("Animation");
         Props.Category("Socket");
         Props.Field("Bone",            &AnimSocketComponent::Bone);
         Props.Field("Position Offset", &AnimSocketComponent::PositionOffset);

@@ -41,6 +41,7 @@ namespace GameCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(PhysicsConstraintComponent)
     {
+        Props.TypeCategory("Physics");
         Props.Flag("Enabled", &PhysicsConstraintComponent::bEnabled);
         Props.Choice("Type", &PhysicsConstraintComponent::Type, "Fixed|Point|Hinge|Slider|Distance");   // EPhysicsConstraintType
         Props.Field("Target Name", &PhysicsConstraintComponent::TargetName);

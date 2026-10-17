@@ -161,10 +161,12 @@ namespace GameCore
     };
 
     /* Called by the macro. InRejected (too many, or over-long names) is logged.
-     * False on a duplicate (first kept) or a full table. */
+     * InTypeCategory (copied; nullptr or "" for none) files the type in
+     * "Add Component". False on a duplicate (first kept) or a full table. */
     GAMECORE_API bool RegisterComponentProperties(ComponentTypeID InType, const ComponentPropertyEntry* InEntries,
                                                   size_t InCount, size_t InRejected,
-                                                  ComponentPropertyDefaultsFn InDefaultsFn, uint8_t InTypeFlags);
+                                                  ComponentPropertyDefaultsFn InDefaultsFn, uint8_t InTypeFlags,
+                                                  const char* InTypeCategory = nullptr);
 
     /* Withdraws InType's properties; the macro's registrar calls it when its
      * image unloads, as the serializer and script registrars do -- so a game
@@ -182,6 +184,10 @@ namespace GameCore
 
     /* True if InType registered a property list without CPF_NotAddable. */
     GAMECORE_API bool IsComponentAddable(ComponentTypeID InType);
+
+    /* The "Add Component" folder InType declared with Props.TypeCategory,
+     * '/'-separated ("Rendering/Lights"); "" if none. Never nullptr. */
+    GAMECORE_API const char* GetComponentTypeCategory(ComponentTypeID InType);
 
     template<typename T> class ComponentPropertyBinder;
 
@@ -358,7 +364,28 @@ namespace GameCore
         /* Keeps the type out of a tool's "Add Component" (CPF_NotAddable). */
         void NotAddable() { TypeFlags |= CPF_NotAddable; }
 
-        bool Commit() { return RegisterComponentProperties(T::StaticType().ID, Entries, Count, Rejected, &Defaults, TypeFlags); }
+        /* The type's folder in "Add Component"; '/' nests ("Rendering/Lights").
+         * Unset types are listed under "Other". An over-long path is rejected
+         * (logged at Commit) and leaves the type uncategorised. */
+        void TypeCategory(const char* InPath)
+        {
+            size_t Length = 0;
+            while(InPath != nullptr && InPath[Length] != '\0') { ++Length; }
+
+            for(char& Each : TypeCategoryName) { Each = '\0'; }
+            if(Length >= COMPONENT_PROPERTY_CATEGORY_MAX)
+            {
+                ++Rejected;
+                return;
+            }
+            for(size_t Index = 0; Index < Length; ++Index) { TypeCategoryName[Index] = InPath[Index]; }
+        }
+
+        bool Commit()
+        {
+            return RegisterComponentProperties(T::StaticType().ID, Entries, Count, Rejected, &Defaults, TypeFlags,
+                                               TypeCategoryName);
+        }
 
     private:
         template<typename, typename> friend class ComponentStructBinder;
@@ -407,6 +434,7 @@ namespace GameCore
 
         ComponentPropertyEntry Entries[COMPONENT_PROPERTIES_PER_TYPE_MAX];
         char                   CurrentCategory[COMPONENT_PROPERTY_CATEGORY_MAX] = {};
+        char                   TypeCategoryName[COMPONENT_PROPERTY_CATEGORY_MAX] = {};
         size_t                 Count     = 0;
         size_t                 Rejected  = 0;
         uint8_t                TypeFlags = CPF_None;

@@ -311,8 +311,10 @@ namespace EditorDocs
         Line(QStringLiteral("| C++ class | `%1` |").arg(Qualified));
         if(!Header.isEmpty()) { Line(QStringLiteral("| Header | `#include \"%1\"` |").arg(Header)); }
         Line(QStringLiteral("| Size | %1 bytes |").arg(Info->SizeBytes));
-        Line(QStringLiteral("| Add Component | %1 |").arg(IsComponentAddable(InType) ? QStringLiteral("yes")
-                                                       : QStringLiteral("no (added and owned by a system)")));
+        const QString Category = QString::fromLatin1(GetComponentTypeCategory(InType));
+        Line(QStringLiteral("| Add Component | %1 |").arg(!IsComponentAddable(InType) ? QStringLiteral("no (added and owned by a system)")
+                                                       : Category.isEmpty()           ? QStringLiteral("yes, under Other")
+                                                       : QStringLiteral("yes, under %1").arg(Category)));
         Line();
 
         // --- Properties --------------------------------------------------------

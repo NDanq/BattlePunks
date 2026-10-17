@@ -49,6 +49,7 @@ namespace RenderCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(PointLightComponent)
     {
+        Props.TypeCategory("Rendering/Lights");
         Props.Category("Light");
         Props.Field("Color",     &PointLightComponent::Color);
         Props.Field("Intensity", &PointLightComponent::Intensity);

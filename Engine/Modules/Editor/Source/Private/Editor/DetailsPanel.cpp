@@ -30,6 +30,7 @@
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Prefab.h"
 #include "Private/Editor/ComponentDocs.h"
+#include "Private/Editor/ComponentPicker.h"
 #include "Private/Editor/DocumentationWindow.h"
 #include "Private/Editor/EditorIcons.h"
 #include "Private/Editor/Prefab/PrefabAssets.h"
@@ -769,51 +770,28 @@ QWidget* DetailsPanel::BuildAddComponentButton()
     auto* Button = new QToolButton(Body);
     Button->setText(QStringLiteral("+ Add Component"));
     Button->setToolButtonStyle(Qt::ToolButtonTextOnly);
-    Button->setPopupMode(QToolButton::InstantPopup);
     Button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     Button->setMinimumHeight(28);
 
-    /* Filled when opened, not now: another panel (or a script) may add or
-     * remove a component between this rebuild and the click. */
-    auto* Menu = new QMenu(Button);
-    connect(Menu, &QMenu::aboutToShow, this, [this, Menu]() { PopulateAddMenu(Menu); });
-    Button->setMenu(Menu);
-    return Button;
-}
-
-void DetailsPanel::PopulateAddMenu(QMenu* InMenu)
-{
-    InMenu->clear();
-
-    GameCore::World& World = Document.GetWorld();
-    if(!World.IsAlive(ShownEntity))
+    /* The picker reads the entity when opened, not now: another panel (or a
+     * script) may add or remove a component between this rebuild and the click. */
+    connect(Button, &QToolButton::clicked, this, [this, Button]()
     {
-        return;
-    }
-    const GameCore::Entity E = World.GetEntity(ShownEntity);
-
-    const size_t TypeCount = GameCore::GetComponentTypeCount();
-    for(size_t Index = 0; Index < TypeCount && Index < GameCore::COMPONENT_TYPE_MAX; ++Index)
-    {
-        const ComponentTypeID Type = ComponentTypeID(Index);
-        const GameCore::ComponentTypeInfo* Info = GameCore::GetComponentType(Type);
-        if(!Info || !GameCore::IsComponentAddable(Type) || E.HasComponentByType(Type))
+        GameCore::World& World = Document.GetWorld();
+        if(!World.IsAlive(ShownEntity))
         {
-            continue;
+            return;
         }
 
-        QAction* Action = InMenu->addAction(QString::fromLatin1(Info->Name));
+        auto* Picker = new ComponentPicker(World, ShownEntity, this);
         const EntityID Target = ShownEntity;
-        connect(Action, &QAction::triggered, this, [this, Target, Type]()
+        connect(Picker, &ComponentPicker::Chosen, this, [this, Target](const ComponentTypeID InType)
         {
-            Document.AddComponent(Target, Type);
+            Document.AddComponent(Target, InType);
         });
-    }
-
-    if(InMenu->isEmpty())
-    {
-        InMenu->addAction(QStringLiteral("(every addable component is present)"))->setEnabled(false);
-    }
+        Picker->PopupBelow(Button);
+    });
+    return Button;
 }
 
 void DetailsPanel::ResetProperty(const PropertyRow& InRow)

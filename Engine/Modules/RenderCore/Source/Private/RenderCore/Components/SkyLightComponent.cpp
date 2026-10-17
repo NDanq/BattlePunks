@@ -44,6 +44,7 @@ namespace RenderCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(SkyLightComponent)
     {
+        Props.TypeCategory("Rendering/Lights");
         Props.Field("SkyColor",    &SkyLightComponent::SkyColor);
         Props.Field("GroundColor", &SkyLightComponent::GroundColor);
         Props.Field("Intensity",   &SkyLightComponent::Intensity);

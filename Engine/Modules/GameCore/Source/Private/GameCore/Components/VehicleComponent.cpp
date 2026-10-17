@@ -69,6 +69,7 @@ namespace GameCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(VehicleComponent)
     {
+        Props.TypeCategory("Physics");
         Props.Flag("Enabled", &VehicleComponent::bEnabled);
         Props.Category("Drivetrain");
         Props.Choice("Drive", &VehicleComponent::Drive, "Rear wheels|Front wheels|All wheels");   // EVehicleDrive

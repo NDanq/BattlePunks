@@ -99,6 +99,7 @@ namespace AICore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(NavMeshVolumeComponent)
     {
+        Props.TypeCategory("AI/Navigation");
         Props.Category("Volume");
         Props.Field("Half Extents",      &NavMeshVolumeComponent::HalfExtents);
         Props.Field("Nav Mesh",          &NavMeshVolumeComponent::NavMesh, GameCore::PF_AssetNavMesh);
@@ -171,6 +172,7 @@ namespace AICore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(NavModifierComponent)
     {
+        Props.TypeCategory("AI/Navigation");
         Props.Category("Nav Modifier");
         Props.Field("Half Extents", &NavModifierComponent::HalfExtents);
         Props.Choice("Area",        &NavModifierComponent::Area, "Blocked|High cost|Custom");
@@ -199,6 +201,7 @@ namespace AICore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(NavObstacleComponent)
     {
+        Props.TypeCategory("AI/Navigation");
         Props.Category("Nav Obstacle");
         Props.Field("Half Extents", &NavObstacleComponent::HalfExtents);
         Props.Choice("Shape",       &NavObstacleComponent::Shape, "Box|Cylinder");
@@ -250,6 +253,7 @@ namespace AICore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(NavAgentComponent)
     {
+        Props.TypeCategory("AI/Navigation");
         Props.Category("Nav Agent");
         Props.Field("Radius",            &NavAgentComponent::Radius);
         Props.Field("Height",            &NavAgentComponent::Height);
@@ -291,6 +295,7 @@ namespace AICore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(PerceptionComponent)
     {
+        Props.TypeCategory("AI");
         Props.Category("Perception");
         Props.Field("Sight Range",    &PerceptionComponent::SightRange);
         Props.Field("FOV Half Angle", &PerceptionComponent::FovHalfAngle);
@@ -323,6 +328,7 @@ namespace AICore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(AIStimulusComponent)
     {
+        Props.TypeCategory("AI");
         Props.Category("AI Stimulus");
         Props.Field("Team",          &AIStimulusComponent::Team);
         Props.Flag("Enabled",        &AIStimulusComponent::bEnabled);
@@ -353,6 +359,7 @@ namespace AICore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(AIBrainComponent)
     {
+        Props.TypeCategory("AI");
         Props.Category("AI Brain");
         Props.Field("Tree",          &AIBrainComponent::Tree, GameCore::PF_AssetBehaviorTree);
         Props.Field("Blackboard",    &AIBrainComponent::Blackboard);
