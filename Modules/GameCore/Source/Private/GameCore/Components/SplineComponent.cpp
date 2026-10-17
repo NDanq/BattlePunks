@@ -190,6 +190,7 @@ namespace GameCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(SplineComponent)
     {
+        Props.TypeCategory("World");
         Props.Choice("Type", &SplineComponent::Type, "Curve|Linear");   // ESplineType
         Props.Flag("Closed", &SplineComponent::bClosed);
         Props.Field("Width", &SplineComponent::Width);

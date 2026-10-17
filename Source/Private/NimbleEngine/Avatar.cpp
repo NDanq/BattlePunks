@@ -1008,6 +1008,7 @@ GAMECORE_DEFINE_COMPONENT_SCRIPT(PossessorComponent)
 #if WITH_EDITOR
 GAMECORE_DEFINE_COMPONENT_PROPERTIES(AvatarHarnessComponent)
 {
+    Props.TypeCategory("Animation");
     Props.Category("Avatar");
     Props.Field("InputMap",     &AvatarHarnessComponent::InputMap);
     Props.Choice("AutoPossess", &AvatarHarnessComponent::AutoPossess, "Disabled|Player 1|Player 2|Player 3|Player 4");
@@ -1019,6 +1020,7 @@ GAMECORE_DEFINE_COMPONENT_PROPERTIES(AvatarHarnessComponent)
 
 GAMECORE_DEFINE_COMPONENT_PROPERTIES(PossessorComponent)
 {
+    Props.TypeCategory("Gameplay");
     Props.Choice("LocalPlayer", &PossessorComponent::LocalPlayer, "Player 1|Player 2|Player 3|Player 4");
 }
 #endif

@@ -82,6 +82,7 @@ namespace GameCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(TransformComponent)
     {
+        Props.TypeCategory("Core");
         Props.Field("Position", &TransformComponent::Position);
         Props.Field("Rotation", &TransformComponent::Rotation);
         Props.Field("Scale",    &TransformComponent::Scale);

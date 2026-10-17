@@ -63,6 +63,7 @@ namespace RenderCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(DirectionalLightComponent)
     {
+        Props.TypeCategory("Rendering/Lights");
         Props.Category("Light");
         Props.Field("Color",     &DirectionalLightComponent::Color);
         Props.Field("Intensity", &DirectionalLightComponent::Intensity);

@@ -26,6 +26,7 @@ namespace GameCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(AudioListenerComponent)
     {
+        Props.TypeCategory("Audio");
         Props.Flag("Active", &AudioListenerComponent::bActive);
     }
 #endif // WITH_EDITOR

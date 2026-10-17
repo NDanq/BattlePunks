@@ -139,6 +139,7 @@ namespace GameCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(AudioSourceComponent)
     {
+        Props.TypeCategory("Audio");
         Props.Field("Sound",     &AudioSourceComponent::Sound, PF_AssetSound);
         Props.Field("Volume",    &AudioSourceComponent::Volume);
         Props.Field("Pitch",     &AudioSourceComponent::Pitch);

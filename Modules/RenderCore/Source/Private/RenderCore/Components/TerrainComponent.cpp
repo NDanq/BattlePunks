@@ -736,6 +736,7 @@ namespace RenderCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(TerrainComponent)
     {
+        Props.TypeCategory("Rendering");
         Props.Field("Terrain",       &TerrainComponent::Terrain, GameCore::PF_AssetTerrain);
         Props.Field("Material",      &TerrainComponent::Material, GameCore::PF_AssetMaterial);
         Props.Flag("Visible",        &TerrainComponent::bVisible);

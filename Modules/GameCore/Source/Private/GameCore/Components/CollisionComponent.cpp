@@ -61,6 +61,7 @@ namespace GameCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(CollisionComponent)
     {
+        Props.TypeCategory("Physics");
         Props.Flag("Enabled", &CollisionComponent::bEnabled);
         Props.Category("Shape");
         Props.Choice("Source", &CollisionComponent::Source, "Bounds component|Render component mesh");   // ECollisionSource

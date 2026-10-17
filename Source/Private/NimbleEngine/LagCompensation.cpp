@@ -37,6 +37,7 @@ namespace NimbleEngine
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(LagCompensatedComponent)
     {
+        Props.TypeCategory("Networking");
         Props.Field("Radius", &LagCompensatedComponent::Radius);
         Props.Field("Bottom", &LagCompensatedComponent::Bottom);
         Props.Field("Top",    &LagCompensatedComponent::Top);

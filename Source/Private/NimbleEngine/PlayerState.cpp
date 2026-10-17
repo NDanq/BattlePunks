@@ -52,6 +52,7 @@ GAMECORE_DEFINE_COMPONENT_SCRIPT(PlayerStateComponent)
 #if WITH_EDITOR
 GAMECORE_DEFINE_COMPONENT_PROPERTIES(PlayerStateComponent)
 {
+    Props.TypeCategory("Gameplay");
     Props.Field("PlayerName",  &PlayerStateComponent::PlayerName);
     Props.Field("PlayerIndex", &PlayerStateComponent::PlayerIndex);
     Props.Field("Score",       &PlayerStateComponent::Score);

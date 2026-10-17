@@ -59,6 +59,7 @@ namespace Sequencer
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(SequencePlayerComponent)
     {
+        Props.TypeCategory("Animation");
         Props.Category("Sequence");
         Props.Field("Sequence",              &SequencePlayerComponent::Sequence, GameCore::PF_AssetSequence);
         Props.Field("Play Rate",             &SequencePlayerComponent::PlayRate);

@@ -45,6 +45,7 @@ namespace RenderCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(ReflectionProbeComponent)
     {
+        Props.TypeCategory("Rendering");
         Props.Category("Influence");
         Props.Field("Radius",          &ReflectionProbeComponent::Radius);
         Props.Field("Box Extent",      &ReflectionProbeComponent::BoxExtent);

@@ -189,6 +189,7 @@ GAMECORE_DEFINE_COMPONENT_SCRIPT(PlayerStartComponent)
 #if WITH_EDITOR
 GAMECORE_DEFINE_COMPONENT_PROPERTIES(PlayerStartComponent)
 {
+    Props.TypeCategory("Gameplay");
     Props.Field("AvatarPrefab", &PlayerStartComponent::AvatarPrefab, GameCore::PF_AssetPrefab);
     Props.Choice("PlayerSlot",  &PlayerStartComponent::PlayerSlot, "Any|Player 1|Player 2|Player 3|Player 4");
     Props.Flag("Enabled",       &PlayerStartComponent::bEnabled);

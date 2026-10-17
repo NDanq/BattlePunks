@@ -43,6 +43,7 @@ namespace RenderCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(PostProcessComponent)
     {
+        Props.TypeCategory("Rendering");
         Props.Field("Stack",          &PostProcessComponent::Stack, GameCore::PF_AssetPostProcess);
         Props.Field("Priority",       &PostProcessComponent::Priority);
         Props.Field("Blend Distance", &PostProcessComponent::BlendDistance);
