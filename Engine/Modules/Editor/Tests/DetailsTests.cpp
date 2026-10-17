@@ -5,9 +5,11 @@
  * NIMBLE_DETAILS_SNAPSHOT=<file.png> also saves the panel as drawn, for a
  * look; NIMBLE_TEXTURE_SNAPSHOT=<file.png> the Texture Viewer;
  * NIMBLE_DOCS_SNAPSHOT=<file.png> Help > Documentation (at NIMBLE_DOCS_PAGE,
- * an .md, if given).
+ * an .md, if given); NIMBLE_PICKER_SNAPSHOT=<file.png> the Add Component
+ * picker, searching NIMBLE_PICKER_FILTER if given.
  */
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -23,6 +25,9 @@
 #include <QPushButton>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QToolButton>
+#include <QTreeWidget>
+#include <QKeyEvent>
 
 #include "Public/Core/CoreArchive.h"
 #include "Public/Core/CoreConfig.h"
@@ -37,6 +42,7 @@
 #include "Private/Editor/Content/ClipTimeline.h"
 #include "Private/Editor/Build/ProjectBuild.h"
 #include "Private/Editor/ComponentDocs.h"
+#include "Private/Editor/ComponentPicker.h"
 #include "Private/Editor/DocumentationWindow.h"
 #include "Private/Editor/Graph/GraphDocument.h"
 #include "Private/Editor/Graph/GraphEditorTab.h"
@@ -725,6 +731,139 @@ static void TestGraphSnapshot()
     std::printf("  scene area %g,%g %gx%g at scale %g\n", Area.x(), Area.y(), Area.width(), Area.height(), Scale);
 }
 
+namespace
+{
+    /* The choosable (enabled) types under InItem, depth first. */
+    void CollectLeaves(QTreeWidgetItem* InItem, QStringList& OutEnabled, QStringList& OutDisabled)
+    {
+        if(InItem->childCount() == 0)
+        {
+            ((InItem->flags() & Qt::ItemIsEnabled) ? OutEnabled : OutDisabled).push_back(InItem->text(0));
+            return;
+        }
+        for(int Index = 0; Index < InItem->childCount(); ++Index) { CollectLeaves(InItem->child(Index), OutEnabled, OutDisabled); }
+    }
+
+    void CollectTree(const QTreeWidget& InTree, QStringList& OutEnabled, QStringList& OutDisabled)
+    {
+        for(int Index = 0; Index < InTree.topLevelItemCount(); ++Index) { CollectLeaves(InTree.topLevelItem(Index), OutEnabled, OutDisabled); }
+    }
+
+    ComponentPicker* OpenPicker(DetailsPanel& InPanel)
+    {
+        for(QToolButton* Each : InPanel.findChildren<QToolButton*>())
+        {
+            if(Each->text() == QStringLiteral("+ Add Component")) { Each->click(); break; }
+        }
+        PumpFor(50);
+        ComponentPicker* Found = nullptr;
+        for(ComponentPicker* Each : InPanel.findChildren<ComponentPicker*>())
+        {
+            if(Each->isVisible()) { Found = Each; }
+        }
+        return Found;
+    }
+}
+
+static void TestAddComponentPicker()
+{
+    std::printf("Add Component picker\n");
+
+    EditorDocument Doc;
+    const EntityID Thing = Doc.CreateEntity(QStringLiteral("Thing"), EngineCore::Vector3(0.0, 0.0, 0.0));
+
+    DetailsPanel Panel(Doc);
+    Panel.resize(360, 700);
+    Panel.show();
+    Doc.SetSelection(Thing);
+    PumpFor(300);
+
+    ComponentPicker* Picker = OpenPicker(Panel);
+    Expect(Picker != nullptr, "+ Add Component opens the picker");
+    if(!Picker) { return; }
+    auto* Tree   = Picker->findChild<QTreeWidget*>();
+    auto* Search = Picker->findChild<QLineEdit*>();
+    Expect(Tree && Search, "the picker has a search box over a tree");
+    if(!Tree || !Search) { return; }
+
+    /* Browsing: folders by category, Rendering/Lights nested, the entity's own types greyed. */
+    QStringList Folders;
+    for(int Index = 0; Index < Tree->topLevelItemCount(); ++Index) { Folders.push_back(Tree->topLevelItem(Index)->text(0)); }
+    Expect(Folders.contains(QStringLiteral("Rendering")) && Folders.contains(QStringLiteral("Physics"))
+           && Folders.contains(QStringLiteral("Core")), "types are filed in category folders");
+    Expect(!Folders.contains(QStringLiteral("Other")) || Folders.last() == QStringLiteral("Other"), "Other is the last folder");
+    QStringList SortedFolders = Folders;
+    SortedFolders.removeAll(QStringLiteral("Other"));
+    QStringList Expected = SortedFolders;
+    std::sort(Expected.begin(), Expected.end(), [](const QString& A, const QString& B) { return A.compare(B, Qt::CaseInsensitive) < 0; });
+    Expect(SortedFolders == Expected, "folders are alphabetical");
+
+    QStringList Enabled, Disabled;
+    CollectTree(*Tree, Enabled, Disabled);
+    Expect(Disabled.contains(QStringLiteral("Transform")), "a type the entity has is listed greyed out");
+    Expect(Enabled.contains(QStringLiteral("Point Light")) || Enabled.contains(QStringLiteral("PointLight")), "an addable type is choosable");
+    std::printf("  %d folders, %d choosable, %d present\n", int(Folders.size()), int(Enabled.size()), int(Disabled.size()));
+
+    /* Searching: every word must match; the first match is current, Enter adds it. */
+    Search->setText(QStringLiteral("light"));
+    PumpFor(20);
+    Enabled.clear(); Disabled.clear();
+    CollectTree(*Tree, Enabled, Disabled);
+    bool bAllLights = !Enabled.isEmpty();
+    for(const QString& Each : Enabled) { bAllLights = bAllLights && Each.contains(QStringLiteral("Light"), Qt::CaseInsensitive); }
+    Expect(bAllLights && Enabled.size() >= 4, "\"light\" lists the lights");
+    Expect(Tree->currentItem() && Tree->currentItem()->text(0) == Enabled.first(), "the first match is current");
+
+    Search->setText(QStringLiteral("nav ag"));
+    PumpFor(20);
+    Enabled.clear(); Disabled.clear();
+    CollectTree(*Tree, Enabled, Disabled);
+    Expect(Enabled.size() == 1, "\"nav ag\" narrows to one type");
+
+    Search->setText(QStringLiteral("zzzz"));
+    PumpFor(20);
+    Expect(Tree->topLevelItemCount() == 1 && !(Tree->topLevelItem(0)->flags() & Qt::ItemIsEnabled), "no match says so");
+
+    Search->setText(QStringLiteral("point light"));
+    PumpFor(20);
+    const QString PickedName = Tree->currentItem() ? Tree->currentItem()->text(0) : QString();
+    QKeyEvent Enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(Search, &Enter);
+    PumpFor(100);
+    bool bAdded = false;
+    const size_t TypeCount = GameCore::GetComponentTypeCount();
+    for(size_t Index = 0; Index < TypeCount; ++Index)
+    {
+        const GameCore::ComponentTypeInfo* Info = GameCore::GetComponentType(GameCore::ComponentTypeID(Index));
+        if(Info && PickedName == QString::fromLatin1(Info->Name))
+        {
+            bAdded = Doc.GetWorld().GetEntity(Thing).HasComponentByType(GameCore::ComponentTypeID(Index));
+        }
+    }
+    Expect(!PickedName.isEmpty() && bAdded, "Enter adds the current type to the entity");
+
+    /* Reopened, the added type is greyed out. */
+    PumpFor(200);
+    Picker = OpenPicker(Panel);
+    Expect(Picker != nullptr, "the picker opens again after an add");
+    if(!Picker) { return; }
+    Tree = Picker->findChild<QTreeWidget*>();
+    Search = Picker->findChild<QLineEdit*>();
+    Enabled.clear(); Disabled.clear();
+    CollectTree(*Tree, Enabled, Disabled);
+    Expect(Disabled.contains(PickedName), "the added type is greyed out next time");
+
+    const QByteArray Snapshot = qgetenv("NIMBLE_PICKER_SNAPSHOT");
+    if(!Snapshot.isEmpty())
+    {
+        Search->setText(qEnvironmentVariable("NIMBLE_PICKER_FILTER"));
+        PumpFor(50);
+        Expect(Picker->grab().save(QString::fromLocal8Bit(Snapshot)), "the picker snapshot is written");
+    }
+    Picker->close();
+    PumpFor(20);
+}
+
 int main(int argc, char** argv)
 {
     /* No display needed. */
@@ -743,6 +882,7 @@ int main(int argc, char** argv)
     TestDocumentation();
     TestProjectBuildOptions();
     TestGraphSnapshot();
+    TestAddComponentPicker();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

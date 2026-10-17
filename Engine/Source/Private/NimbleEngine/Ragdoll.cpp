@@ -818,6 +818,7 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(Ragdoll)
 #if WITH_EDITOR
 GAMECORE_DEFINE_COMPONENT_PROPERTIES(RagdollComponent)
 {
+    Props.TypeCategory("Physics");
     Props.Flag("Enabled",      &RagdollComponent::bEnabled);
     Props.Flag("Hit Boxes",    &RagdollComponent::bHitBoxes);
     Props.Flag("Start Active", &RagdollComponent::bStartActive);

@@ -1,5 +1,6 @@
 #include "Public/GameCore/ComponentProperties.h"
 
+#include <cstring>
 #include <string>
 
 #include "Public/GameCore/GameCoreLog.h"
@@ -24,6 +25,7 @@ namespace
         bool                        bRegistered = false;
         uint8_t                     TypeFlags   = CPF_None;
         ComponentPropertyDefaultsFn DefaultsFn  = nullptr;
+        char                        Category[COMPONENT_PROPERTY_CATEGORY_MAX] = {};
     };
 
     ComponentPropertyEntry GPropertyEntries[PROPERTY_ENTRY_MAX];
@@ -39,7 +41,8 @@ namespace
 
 bool RegisterComponentProperties(const ComponentTypeID InType, const ComponentPropertyEntry* InEntries,
                                  const size_t InCount, const size_t InRejected,
-                                 const ComponentPropertyDefaultsFn InDefaultsFn, const uint8_t InTypeFlags)
+                                 const ComponentPropertyDefaultsFn InDefaultsFn, const uint8_t InTypeFlags,
+                                 const char* InTypeCategory)
 {
     if(InType == COMPONENT_TYPE_INVALID || InType >= COMPONENT_TYPE_MAX)
     {
@@ -87,6 +90,11 @@ bool RegisterComponentProperties(const ComponentTypeID InType, const ComponentPr
     Range.bRegistered = true;
     Range.TypeFlags   = InTypeFlags;
     Range.DefaultsFn  = InDefaultsFn;
+    std::memset(Range.Category, 0, sizeof(Range.Category));
+    if(InTypeCategory != nullptr)
+    {
+        std::strncpy(Range.Category, InTypeCategory, sizeof(Range.Category) - 1);
+    }
     for(size_t Index = 0; Index < InCount; ++Index)
     {
         GPropertyEntries[Range.First + Index] = InEntries[Index];
@@ -101,6 +109,7 @@ void UnregisterComponentProperties(const ComponentTypeID InType)
     GPropertyTypes[InType].bRegistered = false;
     GPropertyTypes[InType].DefaultsFn  = nullptr;
     GPropertyTypes[InType].Count       = 0;
+    GPropertyTypes[InType].Category[0] = '\0';
 }
 
 const ComponentPropertyEntry* FindComponentProperties(const ComponentTypeID InType, size_t& OutCount)
@@ -137,6 +146,15 @@ bool IsComponentAddable(const ComponentTypeID InType)
     }
     const PropertyTypeRange& Range = GPropertyTypes[InType];
     return Range.bRegistered && Range.DefaultsFn != nullptr && (Range.TypeFlags & CPF_NotAddable) == 0;
+}
+
+const char* GetComponentTypeCategory(const ComponentTypeID InType)
+{
+    if(InType == COMPONENT_TYPE_INVALID || InType >= COMPONENT_TYPE_MAX || !GPropertyTypes[InType].bRegistered)
+    {
+        return "";
+    }
+    return GPropertyTypes[InType].Category;
 }
 }
 #endif // WITH_EDITOR

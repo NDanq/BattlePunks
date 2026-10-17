@@ -45,6 +45,7 @@ namespace RenderCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(CameraComponent)
     {
+        Props.TypeCategory("Rendering");
         Props.Field("ZNear", &CameraComponent::ZNear);
         Props.Field("ZFar",  &CameraComponent::ZFar);
         Props.Flag("Active", &CameraComponent::bActive);

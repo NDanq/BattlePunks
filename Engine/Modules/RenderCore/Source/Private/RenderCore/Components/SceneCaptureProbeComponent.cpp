@@ -52,6 +52,7 @@ namespace RenderCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(SceneCaptureProbeComponent)
     {
+        Props.TypeCategory("Rendering");
         Props.Category("Capture");
         Props.Field("Target",      &SceneCaptureProbeComponent::Target, GameCore::PF_AssetRenderTarget);
         Props.Choice("Mode",       &SceneCaptureProbeComponent::Mode, "Planar Mirror|Omnidirectional");

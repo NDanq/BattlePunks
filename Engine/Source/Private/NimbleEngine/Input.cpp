@@ -844,6 +844,7 @@ GAMECORE_DEFINE_COMPONENT_SCRIPT(InputComponent)
 #if WITH_EDITOR
 GAMECORE_DEFINE_COMPONENT_PROPERTIES(InputComponent)
 {
+    Props.TypeCategory("Gameplay");
     Props.Field("Map",         &InputComponent::Map);
     Props.Field("PlayerIndex", &InputComponent::PlayerIndex);
     Props.Flag("Enabled",      &InputComponent::bEnabled);

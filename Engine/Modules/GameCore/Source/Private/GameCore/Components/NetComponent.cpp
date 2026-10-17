@@ -42,6 +42,7 @@ namespace GameCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(NetComponent)
     {
+        Props.TypeCategory("Networking");
         Props.Flag("Replicate", &NetComponent::bReplicate);
         Props.Flag("Predicted", &NetComponent::bPredicted);
         Props.Field("Priority",  &NetComponent::Priority);

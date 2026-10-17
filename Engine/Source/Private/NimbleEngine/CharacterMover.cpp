@@ -723,6 +723,7 @@ GAMECORE_DEFINE_COMPONENT_SCRIPT(CharacterMoverComponent)
 #if WITH_EDITOR
 GAMECORE_DEFINE_COMPONENT_PROPERTIES(CharacterMoverComponent)
 {
+    Props.TypeCategory("Gameplay");
     Props.Category("Movement");
     Props.Field("Walk Speed",   &CharacterMoverComponent::WalkSpeed);
     Props.Field("Run Speed",    &CharacterMoverComponent::RunSpeed);

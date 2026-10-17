@@ -34,6 +34,7 @@ namespace GameCore
     /* World is the refit's output, so read-only. ProxyID stays hidden. */
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(BoundsComponent)
     {
+        Props.TypeCategory("Core");
         Props.Field("Local", &BoundsComponent::Local);
         Props.Field("World", &BoundsComponent::World, PF_ReadOnly);
         Props.Flag("Static", &BoundsComponent::bStatic);

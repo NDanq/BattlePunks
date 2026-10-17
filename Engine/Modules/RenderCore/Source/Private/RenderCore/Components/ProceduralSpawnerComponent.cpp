@@ -443,6 +443,7 @@ namespace RenderCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(ProceduralSpawnerComponent)
     {
+        Props.TypeCategory("World");
         Props.Flag("Visible", &ProceduralSpawnerComponent::bVisible);
         Props.Category("Source");
         Props.Choice("Source",  &ProceduralSpawnerComponent::Source, "Spline Path|Spline Area|Box|Mesh Surface");   // EProceduralSource

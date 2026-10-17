@@ -20,7 +20,6 @@ class PropertyEditor;
 class QCheckBox;
 class QLabel;
 class QLineEdit;
-class QMenu;
 class QScrollArea;
 class QToolButton;
 class QVBoxLayout;
@@ -35,7 +34,8 @@ class QVBoxLayout;
  *   Per array      a list: the entries in use, each removable (later ones
  *                  move up), and "+ Add" for the next.
  *   Per component  Reset and Remove in the header.
- *   At the bottom  Add Component (addable types the entity lacks).
+ *   At the bottom  Add Component: a searchable picker of addable types, by
+ *                  category (ComponentPicker).
  *
  * Rebuilt when the selection or component set changes; values are re-read on
  * a short timer to pick up outside changes.
@@ -96,7 +96,6 @@ private:
     void     RefreshEntitySection();
     QWidget* BuildComponentSection(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType);
     QWidget* BuildAddComponentButton();
-    void     PopulateAddMenu(QMenu* InMenu);
 
     /* The live bytes of InType on the shown entity, or null. */
     uint8_t* ResolveComponent(GameCore::ComponentTypeID InType) const;

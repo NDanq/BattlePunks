@@ -316,6 +316,7 @@ namespace RenderCore
      * (ComponentProperties.h). */
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(RenderComponent)
     {
+        Props.TypeCategory("Rendering");
         Props.Flag("Visible", &RenderComponent::bVisible);
         Props.Category("Appearance");
         Props.Field("Mesh",     &RenderComponent::Mesh, GameCore::PF_AssetMesh);

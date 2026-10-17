@@ -226,6 +226,7 @@ namespace RenderCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(AnimationComponent)
     {
+        Props.TypeCategory("Animation");
         Props.Category("Animation");
         Props.Field("Animation", &AnimationComponent::Animation, GameCore::PF_AssetAnimation);
         Props.Field("Play Rate", &AnimationComponent::PlayRate);

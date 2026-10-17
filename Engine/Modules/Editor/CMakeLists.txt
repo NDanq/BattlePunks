@@ -33,6 +33,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/EditorMain.cpp
         Source/Private/Editor/AboutDialog.cpp
         Source/Private/Editor/AboutDialog.h
+        Source/Private/Editor/ComponentPicker.cpp
+        Source/Private/Editor/ComponentPicker.h
         Source/Private/Editor/ComponentDocs.cpp
         Source/Private/Editor/ComponentDocs.h
         Source/Private/Editor/DocumentationWindow.cpp

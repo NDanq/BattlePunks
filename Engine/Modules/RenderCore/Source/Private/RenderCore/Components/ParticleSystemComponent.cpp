@@ -341,6 +341,7 @@ namespace RenderCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(ParticleSystemComponent)
     {
+        Props.TypeCategory("Rendering");
         Props.Field("System",           &ParticleSystemComponent::System, GameCore::PF_AssetParticleSystem);
         Props.Flag("Emitting",          &ParticleSystemComponent::bEmitting);
         Props.Field("Tint",             &ParticleSystemComponent::Tint);

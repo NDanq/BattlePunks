@@ -105,6 +105,7 @@ namespace GameCore
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(RigidBodyComponent)
     {
+        Props.TypeCategory("Physics");
         Props.Flag("Enabled", &RigidBodyComponent::bEnabled);
         Props.Choice("Motion", &RigidBodyComponent::Motion, "Dynamic|Kinematic|Static");   // ERigidBodyMotion
         Props.Category("Shape");
