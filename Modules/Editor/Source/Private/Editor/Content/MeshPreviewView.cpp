@@ -115,13 +115,14 @@ bool MeshPreviewView::Project(const float* InPoint, const QRectF& InTarget, QPoi
     const double Forward[3] = { std::sin(Yaw) * std::cos(Pitch), -std::sin(Pitch), std::cos(Yaw) * std::cos(Pitch) };
     const double Distance = Radius / std::sin(HalfFov) * 1.1 / Zoom;
 
-    /* +Y up; the image's right is forward x up (the renderer's LookAt). */
-    double Right[3] = { -Forward[2], 0.0, Forward[0] };
+    /* +Y up; the image's right is up x forward and its up forward x right
+     * (Matrix4x4::LookAt, as RenderView::MakePerspective builds the view). */
+    double Right[3] = { Forward[2], 0.0, -Forward[0] };
     const double RightLength = std::max(std::sqrt(Right[0] * Right[0] + Right[2] * Right[2]), 1e-9);
     Right[0] /= RightLength;
     Right[2] /= RightLength;
-    const double Up[3] = { Right[1] * Forward[2] - Right[2] * Forward[1], Right[2] * Forward[0] - Right[0] * Forward[2],
-                           Right[0] * Forward[1] - Right[1] * Forward[0] };
+    const double Up[3] = { Forward[1] * Right[2] - Forward[2] * Right[1], Forward[2] * Right[0] - Forward[0] * Right[2],
+                           Forward[0] * Right[1] - Forward[1] * Right[0] };
 
     double Relative[3];
     for(int Axis = 0; Axis < 3; ++Axis) { Relative[Axis] = double(InPoint[Axis]) - (Centre[Axis] - Forward[Axis] * Distance); }
