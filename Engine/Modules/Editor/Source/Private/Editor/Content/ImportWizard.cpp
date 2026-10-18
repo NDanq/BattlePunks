@@ -41,6 +41,8 @@ NIMBLE_CONFIG_BOOL (GEditorImportLightmapUVs,        "Editor", "ImportLightmapUV
 NIMBLE_CONFIG_BOOL (GEditorImportCombineMeshes,      "Editor", "ImportCombineMeshes",      true,   nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportMeshTextures,       "Editor", "ImportMeshTextures",       true,   nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportMaterialColors,     "Editor", "ImportMaterialColors",     true,   nullptr);
+NIMBLE_CONFIG_BOOL (GEditorImportAnimations,         "Editor", "ImportAnimations",         true,   nullptr);
+NIMBLE_CONFIG_FLOAT(GEditorImportAnimationSampleRate, "Editor", "ImportAnimationSampleRate", 30.0f, nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportTextureSRGB,        "Editor", "ImportTextureSRGB",        true,   nullptr);
 NIMBLE_CONFIG_INT  (GEditorImportTextureMaxSize,     "Editor", "ImportTextureMaxSize",     4096,   nullptr);
 NIMBLE_CONFIG_INT  (GEditorImportTextureMipGen,      "Editor", "ImportTextureMipGen",      1,      nullptr);   // ETextureMipGen: Box
@@ -237,6 +239,34 @@ QWizardPage* ImportWizard::BuildMeshPage()
     connect(MeshTextures, &QCheckBox::toggled, ImageList, &QWidget::setEnabled);
     ImageList->setEnabled(MeshTextures->isChecked());
 
+    /* Animation (ANIMATION.md): skinned files, and clip packs with no mesh at all. */
+    Animations = new QCheckBox(QStringLiteral("Import the skeleton and animations"), Page);
+    Animations->setChecked(GEditorImportAnimations.GetBool());
+    SampleRate = new QDoubleSpinBox(Page);
+    SampleRate->setRange(1.0, 240.0);
+    SampleRate->setDecimals(1);
+    SampleRate->setSuffix(QStringLiteral(" fps"));
+    SampleRate->setValue(double(GEditorImportAnimationSampleRate.GetFloat()));
+    SampleRate->setToolTip(QStringLiteral("The rate the clips are resampled at"));
+    const auto SkeletonChoices = [Page](const QString& InNone, const QString& InTip)
+    {
+        auto* Combo = new QComboBox(Page);
+        Combo->setEditable(true);
+        Combo->addItem(InNone, QString());
+        for(const QString& Path : EditorContent::ListSkeletonPaths()) { Combo->addItem(Path, Path); }
+        Combo->setToolTip(InTip);
+        return Combo;
+    };
+    OntoSkeleton = SkeletonChoices(QStringLiteral("(its own, written beside it)"),
+                                   QStringLiteral("A skeleton the file's bones are already in -- another clip of the same rig: "
+                                                  "no skeleton is written and the clips use this one. The import fails if a bone is missing."));
+    RetargetTo = SkeletonChoices(QStringLiteral("(none)"),
+                                 QStringLiteral("Also write an auto-mapped retarget from the file's skeleton to this one, so its clips "
+                                                "play on that character (Retarget on its Animation component)"));
+    connect(Animations, &QCheckBox::toggled, SampleRate, &QWidget::setEnabled);
+    connect(Animations, &QCheckBox::toggled, OntoSkeleton, &QWidget::setEnabled);
+    connect(Animations, &QCheckBox::toggled, RetargetTo, &QWidget::setEnabled);
+
     auto* Form = new QFormLayout(Page);
     Form->addRow(QStringLiteral("Scale"), MeshScale);
     Form->addRow(QString(), ConvertAxes);
@@ -246,6 +276,12 @@ QWizardPage* ImportWizard::BuildMeshPage()
     Form->addRow(QString(), MaterialColors);
     Form->addRow(QString(), MeshTextures);
     Form->addRow(QStringLiteral("Textures used"), ImageList);
+    auto* AnimationTitle = new QLabel(QStringLiteral("<b>Animation</b>"), Page);
+    Form->addRow(AnimationTitle);
+    Form->addRow(QString(), Animations);
+    Form->addRow(QStringLiteral("Sample Rate"), SampleRate);
+    Form->addRow(QStringLiteral("Existing Skeleton"), OntoSkeleton);
+    Form->addRow(QStringLiteral("Create Retarget To"), RetargetTo);
     return Page;
 }
 
@@ -401,6 +437,8 @@ void ImportWizard::SaveOptions()
     GEditorImportCombineMeshes.SetBool(Combine->isChecked());
     GEditorImportMeshTextures.SetBool(MeshTextures->isChecked());
     GEditorImportMaterialColors.SetBool(MaterialColors->isChecked());
+    GEditorImportAnimations.SetBool(Animations->isChecked());
+    GEditorImportAnimationSampleRate.SetFloat(float(SampleRate->value()));
     GEditorImportTextureSRGB.SetBool(SRGB->isChecked());
     GEditorImportTextureMaxSize.SetInt(MaxSize->currentData().toInt());
     GEditorImportTextureMipGen.SetInt(MipGen->currentData().toInt());
@@ -419,6 +457,16 @@ void ImportWizard::StartImport()
     Mesh.bCombineMeshes      = Combine->isChecked();
     Mesh.bImportTextures     = MeshTextures->isChecked();
     Mesh.bBakeMaterialColors = MaterialColors->isChecked();
+    Mesh.bImportAnimations   = Animations->isChecked();
+    Mesh.AnimationSampleRate = float(SampleRate->value());
+    /* A typed path is its own data; a listed one carries it, "(none)" an empty one. */
+    const auto ChosenPath = [](const QComboBox* InCombo)
+    {
+        const int Index = InCombo->findText(InCombo->currentText());
+        return Index >= 0 ? InCombo->itemData(Index).toString() : InCombo->currentText().trimmed();
+    };
+    Mesh.ExistingSkeleton = ChosenPath(OntoSkeleton);
+    Mesh.CreateRetargetTo = ChosenPath(RetargetTo);
 
     TextureImportOptions Texture;
     Texture.bSRGB           = SRGB->isChecked();

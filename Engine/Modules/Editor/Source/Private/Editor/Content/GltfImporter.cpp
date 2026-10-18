@@ -305,6 +305,19 @@ namespace EditorContent
             }
             if(Wanted.empty())
             {
+                /* No skin: an animation-only file (a Mixamo clip "without skin"). Its
+                 * bones are the nodes the animations move, and their ancestors. */
+                for(cgltf_size AnimationAt = 0; AnimationAt < InData.animations_count; ++AnimationAt)
+                {
+                    const cgltf_animation& Animation = InData.animations[AnimationAt];
+                    for(cgltf_size ChannelAt = 0; ChannelAt < Animation.channels_count; ++ChannelAt)
+                    {
+                        for(const cgltf_node* At = Animation.channels[ChannelAt].target_node; At; At = At->parent) { Wanted.insert(At); }
+                    }
+                }
+            }
+            if(Wanted.empty())
+            {
                 return false;
             }
 
@@ -941,7 +954,8 @@ namespace EditorContent
         {
             if(OutMeshes[At].Data.Indices.empty()) { OutMeshes.removeAt(At); }
         }
-        if(OutMeshes.isEmpty())
+        /* No meshes is fine for a file of a skeleton and its animations: a clip pack. */
+        if(OutMeshes.isEmpty() && !(bSkeleton && Data.animations_count > 0))
         {
             OutError = QStringLiteral("%1: no triangle meshes to import").arg(QFileInfo(InPath).fileName());
             return false;
