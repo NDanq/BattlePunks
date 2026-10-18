@@ -62,8 +62,10 @@ bones (`DEF-upper_arm.L.001`, `DEF-breast.L`) stay unmapped and grey: they
 keep their reference pose under their parent, which is what they should do.
 
 **Align Arms** fixes the reference poses: Mixamo's arms are out level, the
-CrashDummy's hang in an A. Without it every arm pose is 40-odd degrees too
-low. The Pose Offset column shows what it set.
+CrashDummy's hang in an A. Without it every arm pose is about 30 degrees too
+low. The Pose Offset column shows what it set: on the CrashDummy about 33
+degrees on the clavicle, 31 on the upper arm, 34 on the forearm and 40 on
+the hand (each bone is aligned along its own direction, so they differ).
 
 Change anything by hand: a row's Source Bone and Translation combos. A red
 row names a source bone the source skeleton lacks, or one that drives two
