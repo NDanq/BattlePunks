@@ -105,6 +105,13 @@ namespace EditorContent
     QStringList ListAnimationPaths();
     QString     AnimationPathFor(const QString& InPath);
 
+    /* Skeletons (*.nmskel) and retargets (*.nmretarget; PF_AssetRetarget):
+     * every one in the project and the engine, by runtime path; and one file's. */
+    QStringList ListSkeletonPaths();
+    QString     SkeletonPathFor(const QString& InPath);
+    QStringList ListRetargetPaths();
+    QString     RetargetPathFor(const QString& InPath);
+
     /* A sound field (PF_AssetSound): every .nmsound in the project and the
      * engine, by runtime path; and one file's (empty if not a sound). */
     QStringList ListSoundPaths();

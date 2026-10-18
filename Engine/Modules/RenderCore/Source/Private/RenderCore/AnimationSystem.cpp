@@ -22,6 +22,7 @@
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Public/RenderCore/RenderTypes.h"
+#include "Public/RenderCore/RetargetAsset.h"
 #include "Public/RenderCore/SkeletonAsset.h"
 
 /* The animation budget (ANIMATION.md, "Budget"): past FullRateDistance from
@@ -76,11 +77,36 @@ namespace RenderCore
             Pose.Scale    = EngineCore::Vector3(Scale[0], Scale[1], Scale[2]);
             return Pose;
         }
+
+        /* An entity's world pose as the matrix that takes its model space into the world. */
+        AnimMatrix ToAnimMatrix(const GameCore::TransformPose& InPose)
+        {
+            RenderTransform Placed;
+            Placed.Position = InPose.Position;
+            Placed.Rotation = InPose.Rotation;
+            Placed.Scale    = InPose.Scale;
+            const EngineCore::Matrix4x4 Matrix = Placed.ToMatrix();
+            AnimMatrix Out;
+            for(int Row = 0; Row < 3; ++Row)
+            {
+                for(int Col = 0; Col < 4; ++Col) { Out.M[Row][Col] = float(Matrix.Data[Row][Col]); }
+            }
+            return Out;
+        }
+
+        AnimationSystem::GroundQueryFn& GroundQuery()
+        {
+            static AnimationSystem::GroundQueryFn Query = nullptr;
+            return Query;
+        }
     }
 
     AnimationSystem::AnimationSystem(GameCore::World& InWorld) : World(InWorld)
     {
     }
+
+    void AnimationSystem::SetGroundQuery(const GroundQueryFn InQuery) { GroundQuery() = InQuery; }
+    AnimationSystem::GroundQueryFn AnimationSystem::GetGroundQuery() { return GroundQuery(); }
 
     AnimationSystem::~AnimationSystem() = default;
 
@@ -148,11 +174,29 @@ namespace RenderCore
             std::shared_ptr<const AnimClipData>  Clip  = EndsWith(Path, ".nmanim") ? AnimClipAssetCache::Find(Path) : nullptr;
             std::shared_ptr<const AnimStateData> State = EndsWith(Path, ANIM_STATE_EXTENSION) ? AnimStateAssetCache::Find(Path) : nullptr;
 
-            /* An anim state names its clips: one reimported, it binds again. */
-            const uint64_t ClipGeneration = State ? AnimClipAssetCache::GetGeneration() : 0;
-            if(Each.Instance && Each.AnimationPath == Path && Each.Mesh == Mesh && Each.Skeleton == Skeleton && Each.Clip == Clip
-               && Each.State == State && Each.ClipGeneration == ClipGeneration)
+            /* The retarget: the component's, or the anim state's default; only
+             * for the skeleton it targets. */
+            std::string RetargetPath(InComponent.Retarget, strnlen(InComponent.Retarget, ANIMATION_PATH_MAX));
+            if(RetargetPath.empty() && State) { RetargetPath = State->Retarget; }
+            std::shared_ptr<const RetargetData> Retarget = RetargetPath.empty() ? nullptr : RetargetAssetCache::Find(RetargetPath);
+            if(Retarget && (!Mesh || Retarget->Target != Mesh->Skeleton))
             {
+                if(Mesh && Each.RetargetPath != RetargetPath)
+                {
+                    RENDERCORE_LOG_WARN(std::string("Animation on '") + InEntity.GetName() + "': retarget '" + RetargetPath
+                                        + "' targets '" + Retarget->Target + "', not the mesh's skeleton '" + Mesh->Skeleton + "'")
+                }
+                Retarget = nullptr;
+            }
+
+            /* An anim state names its clips, a retarget its skeletons: one reimported, it binds again. */
+            const uint64_t ClipGeneration     = State ? AnimClipAssetCache::GetGeneration() : 0;
+            const uint64_t SkeletonGeneration = Retarget ? SkeletonAssetCache::GetGeneration() : 0;
+            if(Each.Instance && Each.AnimationPath == Path && Each.Mesh == Mesh && Each.Skeleton == Skeleton && Each.Clip == Clip
+               && Each.State == State && Each.ClipGeneration == ClipGeneration && Each.Retarget == Retarget
+               && Each.SkeletonGeneration == SkeletonGeneration)
+            {
+                Each.RetargetPath = RetargetPath;
                 return;
             }
             if(!Each.Instance)
@@ -170,7 +214,11 @@ namespace RenderCore
             Each.Clip          = Clip;
             Each.State         = State;
             Each.ClipGeneration = ClipGeneration;
+            Each.RetargetPath   = RetargetPath;
+            Each.Retarget       = Retarget;
+            Each.SkeletonGeneration = SkeletonGeneration;
             Each.Instance->SetSkeleton(Skeleton);
+            Each.Instance->SetRetarget(Retarget);
             if(State) { Each.Instance->SetState(State); }
             else      { Each.Instance->PlayClip(Clip); }
             ++Generation;
@@ -347,6 +395,7 @@ namespace RenderCore
                 }
             }
             Instance.SetPlayRate(InComponent.PlayRate);
+            if(Instance.HasIK()) { Instance.SetModelToWorld(ToAnimMatrix(InEntity.GetWorldPose())); }
 
             Work Item;
             Item.Instance  = &Instance;
@@ -437,6 +486,21 @@ namespace RenderCore
             UpdateSockets();
             return;
         }
+        /* IK's ground, for the next evaluation: here, on the game thread, as the
+         * physics wants. With no query, no ground: feet as animated. */
+        const GroundQueryFn Query = GroundQuery();
+        for(const Work& Item : Works)
+        {
+            for(const AnimInstance::IKProbe& Probe : Item.Instance->GetIKProbes())
+            {
+                EngineCore::Vector3 Point, Normal;
+                const bool bHit = Query && Query(World, Item.Entity, EngineCore::Vector3(Probe.From.X, Probe.From.Y, Probe.From.Z),
+                                                 EngineCore::Vector3(0.0, -1.0, 0.0), Probe.Length, Point, Normal);
+                Item.Instance->SetIKGround(Probe.Chain, bHit, AnimVec3{ float(Point.GetX()), float(Point.GetY()), float(Point.GetZ()) },
+                                           AnimVec3{ float(Normal.GetX()), float(Normal.GetY()), float(Normal.GetZ()) });
+            }
+        }
+
         GameCore::EventBus& Events = World.GetEvents();
         for(const Work& Item : Works)
         {

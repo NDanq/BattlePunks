@@ -162,7 +162,7 @@ file(GLOB_RECURSE GAME_SCRIPT_FILES CONFIGURE_DEPENDS
 game_stage(Scripts "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_SCRIPT_FILES})
 
 # Content/: imported meshes and textures ("Content/Meshes/Crate.nmmesh"), and
-# post process stacks (a Post Process component's "Content/PostProcess/X.pp.nmgraph", render targets (.nmrt2d / .nmrt3d), particle systems (.nmparticle), animation (.nmskel, .nmanim, .nmanimstate), sounds (.nmsound),
+# post process stacks (a Post Process component's "Content/PostProcess/X.pp.nmgraph", render targets (.nmrt2d / .nmrt3d), particle systems (.nmparticle), animation (.nmskel, .nmanim, .nmanimstate, .nmretarget), sounds (.nmsound),
 # baked lighting (a world's Lighting/ folder: .nmlighting and its lightmaps), baked navmeshes (.nmnav), and terrain heightfields and their foliage
 # (a world's Terrain/ folder: .nmterrain, .nmfoliage), read as they are, text in every build).
 file(GLOB_RECURSE GAME_CONTENT_FILES CONFIGURE_DEPENDS
@@ -175,6 +175,7 @@ file(GLOB_RECURSE GAME_CONTENT_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmskel"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmanim"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmanimstate"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmretarget"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmsound"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmlighting"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmterrain"

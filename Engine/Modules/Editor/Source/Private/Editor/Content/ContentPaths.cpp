@@ -14,6 +14,8 @@
 
 #include "Public/RenderCore/AnimClipAsset.h"
 #include "Public/RenderCore/AnimStateAsset.h"
+#include "Public/RenderCore/AnimRetarget.h"
+#include "Public/RenderCore/RetargetAsset.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/ParticleSystemAsset.h"
 #include "Public/RenderCore/SkeletonAsset.h"
@@ -290,6 +292,26 @@ namespace EditorContent
         return bAnimation ? ToRuntimePath(InPath) : QString();
     }
 
+    QStringList ListSkeletonPaths()
+    {
+        return ListGraphs(&SkeletonPathFor);
+    }
+
+    QString SkeletonPathFor(const QString& InPath)
+    {
+        return InPath.endsWith(QStringLiteral(".nmskel"), Qt::CaseInsensitive) ? ToRuntimePath(InPath) : QString();
+    }
+
+    QStringList ListRetargetPaths()
+    {
+        return ListGraphs(&RetargetPathFor);
+    }
+
+    QString RetargetPathFor(const QString& InPath)
+    {
+        return InPath.endsWith(QStringLiteral(".nmretarget"), Qt::CaseInsensitive) ? ToRuntimePath(InPath) : QString();
+    }
+
     QStringList ListRenderTargetPaths()
     {
         return ListGraphs(&RenderTargetPathFor);
@@ -357,6 +379,8 @@ namespace EditorContent
             RenderCore::SkeletonAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::AnimClipAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::AnimStateAssetCache::Invalidate(Runtime.toStdString());
+            RenderCore::RetargetAssetCache::Invalidate(Runtime.toStdString());
+            RenderCore::RetargetBindingCache::Clear();   // dropped on reload anyway; this frees them now
 #if WITH_AUDIO
             Audio::SoundAssetCache::Invalidate(Runtime.toStdString());
 #endif
@@ -380,6 +404,8 @@ namespace EditorContent
             RenderCore::SkeletonAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::AnimClipAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::AnimStateAssetCache::Invalidate(Runtime.toStdString());
+            RenderCore::RetargetAssetCache::Invalidate(Runtime.toStdString());
+            RenderCore::RetargetBindingCache::Clear();   // dropped on reload anyway; this frees them now
 #if WITH_AUDIO
             Audio::SoundAssetCache::Invalidate(Runtime.toStdString());
 #endif

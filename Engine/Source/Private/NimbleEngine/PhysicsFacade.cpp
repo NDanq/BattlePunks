@@ -8,7 +8,9 @@
 #include "Public/GameCore/ScriptLibrary.h"
 #include "Public/GameCore/SpatialIndex.h"
 #include "Public/GameCore/World.h"
+#include "Public/NimbleEngine/CharacterMover.h"
 #include "Public/NimbleEngine/TerrainFacade.h"
+#include "Public/RenderCore/AnimationSystem.h"
 
 #if WITH_JOLTPHYSICS
 #include "Public/JoltPhysics/PhysicsWorld.h"
@@ -81,7 +83,8 @@ namespace NimbleEngine
     }
 
     bool PhysicsRaycast(GameCore::World& InWorld, const EngineCore::Vector3& InOrigin, const EngineCore::Vector3& InDirection,
-                        const float InMaxDistance, PhysicsRaycastHit& OutHit, const int32_t InMask)
+                        const float InMaxDistance, PhysicsRaycastHit& OutHit, const int32_t InMask,
+                        const GameCore::EntityID InIgnore)
     {
         OutHit = PhysicsRaycastHit();
 
@@ -89,7 +92,7 @@ namespace NimbleEngine
         if(const JoltPhysics::PhysicsWorld* Physics = JoltPhysics::PhysicsWorld::Find(InWorld))
         {
             JoltPhysics::PhysicsHit Hit;
-            if(!Physics->Raycast(InOrigin, InDirection, InMaxDistance, Hit, InMask)) { return false; }
+            if(!Physics->Raycast(InOrigin, InDirection, InMaxDistance, Hit, InMask, InIgnore)) { return false; }
             OutHit.Entity   = Hit.Entity;
             OutHit.Distance = Hit.Distance;
             OutHit.Point    = Hit.Point;
@@ -179,4 +182,41 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(Physics)
     Lib.Event("ContactEnd",   "Self:Entity, Other:Entity").Tooltip("Two Rigid Bodies stopped touching (Other may be gone)");
     Lib.Event("SensorEnter",  "Sensor:Entity, Other:Entity").Tooltip("A body entered a sensor Rigid Body");
     Lib.Event("SensorExit",   "Sensor:Entity, Other:Entity").Tooltip("A body left a sensor Rigid Body");
+}
+
+/*
+ * The animation system's ground for IK (RenderCore's AnimationSystem::
+ * SetGroundQuery): the world's physics, on the layers a Character Mover on
+ * the entity stands on (every layer without one), passing through the
+ * entity's own bodies.
+ */
+namespace
+{
+    bool AnimationGround(GameCore::World& InWorld, const GameCore::EntityID InIgnore, const EngineCore::Vector3& InFrom,
+                         const EngineCore::Vector3& InDirection, const float InLength, EngineCore::Vector3& OutPoint,
+                         EngineCore::Vector3& OutNormal)
+    {
+        const GameCore::Entity Self = InWorld.GetEntity(InIgnore);
+        int32_t Mask = -1;
+        if(const NimbleEngine::CharacterMoverComponent* Mover = Self.GetComponent<NimbleEngine::CharacterMoverComponent>())
+        {
+            Mask = Mover->Mask;
+        }
+        /* Through the character's own body (its ragdoll hit boxes: the trace starts inside a leg). */
+        NimbleEngine::PhysicsRaycastHit Hit;
+        if(!NimbleEngine::PhysicsRaycast(InWorld, InFrom, InDirection, InLength, Hit, Mask, InIgnore) || Hit.Entity == InIgnore)
+        {
+            return false;
+        }
+        OutPoint  = Hit.Point;
+        OutNormal = Hit.Normal.GetLength() > 1e-6 ? Hit.Normal : EngineCore::Vector3(0.0, 1.0, 0.0);
+        return true;
+    }
+
+    struct AnimationGroundRegistrar
+    {
+        AnimationGroundRegistrar()  { RenderCore::AnimationSystem::SetGroundQuery(&AnimationGround); }
+        ~AnimationGroundRegistrar() { RenderCore::AnimationSystem::SetGroundQuery(nullptr); }
+    };
+    AnimationGroundRegistrar GAnimationGroundRegistrar;
 }

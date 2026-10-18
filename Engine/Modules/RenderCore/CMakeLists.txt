@@ -86,8 +86,12 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/MeshAsset.cpp
         Source/Private/RenderCore/AssetCacheCommon.h
         Source/Private/RenderCore/SkeletonAsset.cpp
+        Source/Private/RenderCore/RetargetAsset.cpp
         Source/Private/RenderCore/AnimClipAsset.cpp
         Source/Private/RenderCore/AnimPose.cpp
+        Source/Private/RenderCore/AnimIK.cpp
+        Source/Private/RenderCore/AnimRetarget.cpp
+        Source/Private/RenderCore/HumanoidRig.cpp
         Source/Private/RenderCore/AnimStateAsset.cpp
         Source/Private/RenderCore/AnimInstance.cpp
         Source/Private/RenderCore/AnimationSystem.cpp
@@ -123,8 +127,12 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/MeshAsset.h
         Source/Public/RenderCore/AnimMath.h
         Source/Public/RenderCore/SkeletonAsset.h
+        Source/Public/RenderCore/RetargetAsset.h
         Source/Public/RenderCore/AnimClipAsset.h
         Source/Public/RenderCore/AnimPose.h
+        Source/Public/RenderCore/AnimIK.h
+        Source/Public/RenderCore/AnimRetarget.h
+        Source/Public/RenderCore/HumanoidRig.h
         Source/Public/RenderCore/AnimStateAsset.h
         Source/Public/RenderCore/AnimInstance.h
         Source/Public/RenderCore/AnimationSystem.h
@@ -224,6 +232,21 @@ if(RENDERCORE_BUILD_ANIMATION_TESTS AND NIMBLE_WITH_EDITOR)
     enable_testing()
     add_test(NAME RenderCore.Animation COMMAND RenderCoreAnimationTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:RenderCoreAnimationTests>")
+
+    # Retargeting (AnimRetarget.h): the .nmretarget asset and clips moved
+    # between two rigs built in code.
+    add_executable(RenderCoreRetargetTests Tests/RetargetTests.cpp)
+    target_link_libraries(RenderCoreRetargetTests PRIVATE RenderCore::RenderCore)
+    set_target_properties(RenderCoreRetargetTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "RenderCore")
+    add_test(NAME RenderCore.AnimationRetarget COMMAND RenderCoreRetargetTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:RenderCoreRetargetTests>")
+
+    # IK (AnimIK.h): the solver, feet on the ground, hands on goals.
+    add_executable(RenderCoreIKTests Tests/IKTests.cpp)
+    target_link_libraries(RenderCoreIKTests PRIVATE RenderCore::RenderCore)
+    set_target_properties(RenderCoreIKTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "RenderCore")
+    add_test(NAME RenderCore.AnimationIK COMMAND RenderCoreIKTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:RenderCoreIKTests>")
 endif()
 
 # Splines and the Procedural Spawner's placement, headless (PROCEDURAL.md):

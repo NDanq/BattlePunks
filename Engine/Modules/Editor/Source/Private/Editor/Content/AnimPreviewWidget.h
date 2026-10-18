@@ -52,6 +52,9 @@ public:
     void Repose();
 
     void  SetBonesShown(bool bInShown);
+    /* Bones drawn in red over the mesh, one flag per skeleton bone (the
+     * retarget editor's unmapped ones); empty: none. */
+    void  SetMarkedBones(std::vector<uint8_t> InMarked);
     void  SetPlaying(bool bInPlaying);
     bool  IsPlaying() const { return bPlaying; }
     void  Seek(float InSeconds);
@@ -70,6 +73,7 @@ private:
     const RenderCore::MeshData* Mesh = nullptr;   // the caller's, while it shows it
     RenderCore::MeshData        MeshCopy;
     std::vector<bool>           Weighted;         // per bone: some vertex moves with it (the overlay draws these)
+    std::vector<uint8_t>        MarkedBones;      // per bone: drawn in red
 
     MeshPreviewView* View       = nullptr;
     QToolButton*     PlayButton = nullptr;

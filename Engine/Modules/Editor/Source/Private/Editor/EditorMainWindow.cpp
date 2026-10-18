@@ -67,6 +67,7 @@
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Content/AnimPreviewWidget.h"
 #include "Private/Editor/Content/AnimStateEditorWindow.h"
+#include "Private/Editor/Content/RetargetEditorWindow.h"
 #include "Private/Editor/Content/AnimationAssets.h"
 #include "Private/Editor/Content/MeshViewerWindow.h"
 #include "Private/Editor/Graph/GraphAssets.h"
@@ -2461,17 +2462,27 @@ void EditorMainWindow::RegisterConsoleCommands()
     });
 
     /* The anim state editor, for scripts and tests. */
-    Console.Register(QStringLiteral("animstate"), QStringLiteral("<path> | new | save | windowshot <file.png>"),
+    Console.Register(QStringLiteral("animstate"), QStringLiteral("<path> | new | save | ik <legs | offhand> | windowshot <file.png>"),
                      QStringLiteral("Open an .nmanimstate in the anim state editor, make one, or drive the one in front"),
                      [this](const QStringList& InArgs)
     {
         if(InArgs.isEmpty())
         {
-            Console.PrintError(QStringLiteral("Usage: animstate <path> | new | save | windowshot <file.png>"));
+            Console.PrintError(QStringLiteral("Usage: animstate <path> | new | save | ik <legs | offhand> | windowshot <file.png>"));
             return;
         }
         const QString Verb = InArgs.front();
         if(Verb == QStringLiteral("new")) { EditorAnimation::CreateAnimState(QString(), this); return; }
+        if(Verb == QStringLiteral("ik"))
+        {
+            AnimStateEditorWindow* Editor = AnimStateEditorWindow::FindFront();
+            const QString What = InArgs.size() > 1 ? InArgs[1] : QString();
+            const bool bDone = Editor && (What == QStringLiteral("legs") ? Editor->AddIKLegs()
+                                        : What == QStringLiteral("offhand") ? Editor->AddIKOffHand() : false);
+            if(bDone) { Console.Print(QStringLiteral("IK %1 added").arg(What)); }
+            else      { Console.PrintError(QStringLiteral("Usage: animstate ik <legs | offhand>, with an anim state open on a humanoid")); }
+            return;
+        }
         if(Verb == QStringLiteral("save") || Verb == QStringLiteral("windowshot"))
         {
             AnimStateEditorWindow* Editor = AnimStateEditorWindow::FindFront();
@@ -2489,6 +2500,113 @@ void EditorMainWindow::RegisterConsoleCommands()
         const QString Joined = InArgs.join(QLatin1Char(' '));
         const QString Path = QFileInfo(Joined).isAbsolute() ? Joined : QDir(EditorGraphs::GetProjectRoot()).filePath(Joined);
         if(AnimStateEditorWindow::Open(Path, this)) { Console.Print(QStringLiteral("Opened %1").arg(QDir::toNativeSeparators(Path))); }
+    });
+
+    /* Retargeting (ANIMATION.md): bake clips through a retarget, for scripts and packs of clips. */
+    Console.Register(QStringLiteral("anim"), QStringLiteral("retarget-bake <retarget> <clip | folder> [outdir]"),
+                     QStringLiteral("Bake clips (one, or every one in a folder on a source skeleton) through an .nmretarget onto its target"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.size() < 3 || InArgs.front() != QStringLiteral("retarget-bake"))
+        {
+            Console.PrintError(QStringLiteral("Usage: anim retarget-bake <retarget> <clip | folder> [outdir]"));
+            return;
+        }
+        const QString Root = EditorGraphs::GetProjectRoot();
+        const auto FileOf = [&Root](const QString& InArg)
+        {
+            const QString Runtime = EditorContent::FileForRuntimePath(InArg);
+            return QFileInfo(InArg).isAbsolute() ? InArg : !Runtime.isEmpty() && QFileInfo::exists(Runtime) ? Runtime : QDir(Root).filePath(InArg);
+        };
+        const QString Retarget = FileOf(InArgs[1]);
+        const QString From     = FileOf(InArgs[2]);
+        QStringList Clips;
+        if(QFileInfo(From).isDir())
+        {
+            for(const QFileInfo& Each : QDir(From).entryInfoList({ QStringLiteral("*.nmanim") }, QDir::Files)) { Clips << Each.absoluteFilePath(); }
+        }
+        else
+        {
+            Clips << From;
+        }
+        const QString OutDir = InArgs.size() > 3 ? FileOf(InArgs[3]) : QFileInfo(Retarget).absolutePath();
+        QString TargetName = QFileInfo(Retarget).completeBaseName();
+        int Baked = 0;
+        for(const QString& Clip : Clips)
+        {
+            const QString Out = QDir(OutDir).filePath(QFileInfo(Clip).completeBaseName() + QStringLiteral("_") + TargetName + QStringLiteral(".nmanim"));
+            const EditorContent::ImportResult Result = EditorContent::BakeRetargetClip(Clip, Retarget, Out, Root);
+            if(!Result.bOK)
+            {
+                /* In a folder, clips on other skeletons are simply not this retarget's. */
+                if(Clips.size() == 1) { Console.PrintError(Result.Message); }
+                continue;
+            }
+            EditorContent::StageAsset(Out);
+            Console.Print(Result.Message);
+            ++Baked;
+        }
+        Console.Print(QStringLiteral("%1 of %2 clip(s) baked into %3").arg(Baked).arg(Clips.size()).arg(QDir::toNativeSeparators(OutDir)));
+    });
+
+    /* The retarget editor, for scripts and tests. */
+    Console.Register(QStringLiteral("retarget"),
+                     QStringLiteral("<path> | new <target.nmskel> [file] | source <skeleton.nmskel> | automap | align | clip <clip> | save | windowshot <file.png>"),
+                     QStringLiteral("Open an .nmretarget in the retarget editor, make one, or drive the one in front"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("Usage: retarget <path> | new <target.nmskel> | source <skeleton> | automap | align | clip <clip> | save | windowshot <file.png>"));
+            return;
+        }
+        const QString Verb = InArgs.front();
+        const QString Rest = InArgs.mid(1).join(QLatin1Char(' '));
+        if(Verb == QStringLiteral("new"))
+        {
+            /* With a file after the target, made there without asking (scripts). */
+            if(InArgs.size() >= 3)
+            {
+                const QString File = QFileInfo(InArgs[2]).isAbsolute() ? InArgs[2] : QDir(EditorGraphs::GetProjectRoot()).filePath(InArgs[2]);
+                RenderCore::RetargetData Data;
+                Data.Target = InArgs[1].toStdString();
+                QDir().mkpath(QFileInfo(File).absolutePath());
+                if(!RenderCore::SaveRetargetFile(File.toStdString(), Data))
+                {
+                    Console.PrintError(QStringLiteral("Could not write %1").arg(File));
+                    return;
+                }
+                EditorContent::StageAsset(File);
+                if(RetargetEditorWindow::Open(File, this)) { Console.Print(QStringLiteral("Made %1").arg(QDir::toNativeSeparators(File))); }
+                return;
+            }
+            const QString Made = RetargetEditorWindow::CreateIn(QString(), Rest, this);
+            if(!Made.isEmpty()) { Console.Print(QStringLiteral("Made %1").arg(QDir::toNativeSeparators(Made))); }
+            return;
+        }
+        static const QStringList Verbs = { QStringLiteral("source"), QStringLiteral("automap"), QStringLiteral("align"),
+                                           QStringLiteral("clip"), QStringLiteral("save"), QStringLiteral("windowshot") };
+        if(Verbs.contains(Verb))
+        {
+            RetargetEditorWindow* Editor = RetargetEditorWindow::FindFront();
+            if(!Editor)
+            {
+                Console.PrintError(QStringLiteral("No retarget is open"));
+                return;
+            }
+            if(Verb == QStringLiteral("source"))  { Console.Print(Editor->AddSource(Rest) ? QStringLiteral("Added %1").arg(Rest) : QStringLiteral("Not added")); return; }
+            if(Verb == QStringLiteral("automap")) { Console.Print(QStringLiteral("%1 bones mapped").arg(Editor->AutoMap())); return; }
+            if(Verb == QStringLiteral("align"))   { Console.Print(Editor->AlignArms() ? QStringLiteral("Arms aligned") : QStringLiteral("Not a humanoid")); return; }
+            if(Verb == QStringLiteral("clip"))    { Console.Print(Editor->PreviewClip(Rest) ? QStringLiteral("Playing %1").arg(Rest) : QStringLiteral("No such clip")); return; }
+            if(Verb == QStringLiteral("save"))    { Editor->Save(); return; }
+            const QString File = QFileInfo(Rest).absoluteFilePath();
+            if(!Editor->grab().save(File)) { Console.PrintError(QStringLiteral("Could not write %1").arg(File)); }
+            else                           { Console.Print(QStringLiteral("Saved %1").arg(QDir::toNativeSeparators(File))); }
+            return;
+        }
+        const QString Joined = InArgs.join(QLatin1Char(' '));
+        const QString Path = QFileInfo(Joined).isAbsolute() ? Joined : QDir(EditorGraphs::GetProjectRoot()).filePath(Joined);
+        if(RetargetEditorWindow::Open(Path, this)) { Console.Print(QStringLiteral("Opened %1").arg(QDir::toNativeSeparators(Path))); }
     });
 
     /* A second window on a World of its own: the multi-window rendering path
