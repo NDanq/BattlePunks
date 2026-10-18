@@ -290,6 +290,26 @@ namespace EditorContent
         return bAnimation ? ToRuntimePath(InPath) : QString();
     }
 
+    QStringList ListSkeletonPaths()
+    {
+        return ListGraphs(&SkeletonPathFor);
+    }
+
+    QString SkeletonPathFor(const QString& InPath)
+    {
+        return InPath.endsWith(QStringLiteral(".nmskel"), Qt::CaseInsensitive) ? ToRuntimePath(InPath) : QString();
+    }
+
+    QStringList ListRetargetPaths()
+    {
+        return ListGraphs(&RetargetPathFor);
+    }
+
+    QString RetargetPathFor(const QString& InPath)
+    {
+        return InPath.endsWith(QStringLiteral(".nmretarget"), Qt::CaseInsensitive) ? ToRuntimePath(InPath) : QString();
+    }
+
     QStringList ListRenderTargetPaths()
     {
         return ListGraphs(&RenderTargetPathFor);

@@ -19,7 +19,9 @@
 #include "CoreQtConversions.h"
 #include "Public/Core/CoreArchive.h"
 #include "Public/RenderCore/AnimClipAsset.h"
+#include "Public/RenderCore/HumanoidRig.h"
 #include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/RetargetAsset.h"
 #include "Public/RenderCore/SkeletonAsset.h"
 #include "Public/RenderCore/TextureCompression.h"
 #include "Private/Editor/Content/GltfImporter.h"
@@ -307,6 +309,14 @@ namespace EditorContent
             return QDir::isAbsolutePath(Path) ? Path : QDir(InProjectRoot).absoluteFilePath(Path);
         }
 
+        /* A runtime path ("Engine/Content/...", project-relative, or absolute) back to a file. */
+        QString AbsolutePathOfRuntime(const QString& InRuntime, const QString& InProjectRoot)
+        {
+            RenderCore::AssetImportInfo Info;
+            Info.SourcePath = QDir::fromNativeSeparators(InRuntime).toStdString();
+            return ResolveSource(Info, InProjectRoot);
+        }
+
         /* Serialized whole in memory, then committed: a failure leaves the
          * old file. Creates the folder. */
         bool WriteArchive(const QString& InPath, const EngineCore::Archive& InArchive, QString& OutError)
@@ -401,6 +411,92 @@ namespace EditorContent
         QString SkeletonFileFor(const QString& InFolder, const QString& InBase)
         {
             return QDir(InFolder).absoluteFilePath(InBase + QStringLiteral("_Skeleton") + QString::fromLatin1(SKELETON_EXTENSION));
+        }
+
+        bool ReadSkeleton(const QString& InPath, RenderCore::SkeletonData& OutSkeleton)
+        {
+            EngineCore::Archive Ar = ReadAssetArchive(InPath);
+            OutSkeleton = RenderCore::SkeletonData();
+            return Ar.GetSize() > 0 && RenderCore::SerializeSkeleton(Ar, OutSkeleton);
+        }
+
+        /* A mesh skinned to InFrom (the file's skeleton) skinned to InTo instead,
+         * which has every bone of InFrom by name: joints renumbered, inverse binds
+         * moved to InTo's order (InTo's reference pose for the bones InFrom lacks). */
+        void RemapSkin(RenderCore::MeshData& InOutMesh, const RenderCore::SkeletonData& InFrom, const RenderCore::SkeletonData& InTo)
+        {
+            std::vector<uint16_t> Into(InFrom.Bones.size(), 0);
+            for(size_t Bone = 0; Bone < InFrom.Bones.size(); ++Bone)
+            {
+                Into[Bone] = uint16_t(std::max(InTo.FindBone(InFrom.Bones[Bone].Name), 0));
+            }
+            for(uint16_t& Joint : InOutMesh.Joints)
+            {
+                if(Joint < Into.size()) { Joint = Into[Joint]; }
+            }
+            std::vector<RenderCore::AnimMatrix> Model;
+            InTo.ComputeRefPoseModel(Model);
+            std::vector<RenderCore::AnimMatrix> InverseBind(Model.size());
+            for(size_t Bone = 0; Bone < Model.size(); ++Bone) { InverseBind[Bone] = RenderCore::AnimMath::Inverse(Model[Bone]); }
+            for(size_t Bone = 0; Bone < InFrom.Bones.size() && Bone < InOutMesh.InverseBind.size(); ++Bone)
+            {
+                InverseBind[Into[Bone]] = InOutMesh.InverseBind[Bone];
+            }
+            InOutMesh.InverseBind = std::move(InverseBind);
+            RenderCore::ComputeSkinnedMeshBounds(InOutMesh, InTo);
+        }
+
+        /* Create Retarget To: <Base>_to_<Target>.nmretarget in InFolder, from
+         * InSource (InSourceRuntime) onto InTargetRuntime, auto-mapped and its arms
+         * aligned; an existing file keeps its other sources. Its path, or empty
+         * (warned) if the target cannot be read. OutNote: what the message adds. */
+        QString WriteImportRetarget(const QString& InFolder, const QString& InBase, const QString& InSourceRuntime,
+                                    const RenderCore::SkeletonData& InSource, const QString& InTargetRuntime, const QString& InProjectRoot,
+                                    QStringList& OutWarnings, QString& OutNote)
+        {
+            RenderCore::SkeletonData Target;
+            if(!ReadSkeleton(AbsolutePathOfRuntime(InTargetRuntime, InProjectRoot), Target))
+            {
+                OutWarnings << QStringLiteral("no retarget: the skeleton %1 cannot be read").arg(InTargetRuntime);
+                return QString();
+            }
+            if(InTargetRuntime == InSourceRuntime)
+            {
+                OutWarnings << QStringLiteral("no retarget: the clips are already on %1").arg(InTargetRuntime);
+                return QString();
+            }
+            QString TargetName = QFileInfo(InTargetRuntime).completeBaseName();
+            if(TargetName.endsWith(QStringLiteral("_Skeleton"))) { TargetName.chop(9); }
+            const QString Path = QDir(InFolder).absoluteFilePath(InBase + QStringLiteral("_to_") + SanitizeName(TargetName)
+                                                                 + QString::fromLatin1(RenderCore::RETARGET_EXTENSION));
+
+            RenderCore::RetargetData Retarget;
+            if(QFileInfo::exists(Path))
+            {
+                EngineCore::Archive OldAr = ReadAssetArchive(Path);
+                if(!RenderCore::SerializeRetarget(OldAr, Retarget) || Retarget.Target != InTargetRuntime.toStdString()) { Retarget = RenderCore::RetargetData(); }
+            }
+            Retarget.Target = InTargetRuntime.toStdString();
+            RenderCore::RetargetSource Source;
+            Source.Skeleton = InSourceRuntime.toStdString();
+            const size_t Mapped = RenderCore::AutoMapRetarget(InSource, Target, Source);
+            RenderCore::AlignRetargetArms(InSource, Target, Source);
+            const auto Same = std::find_if(Retarget.Sources.begin(), Retarget.Sources.end(),
+                                           [&](const RenderCore::RetargetSource& InEach) { return InEach.Skeleton == Source.Skeleton; });
+            if(Same != Retarget.Sources.end()) { *Same = Source; }
+            else                                 { Retarget.Sources.push_back(Source); }
+
+            EngineCore::Archive Ar = EngineCore::Archive::ForWriting();
+            RenderCore::SerializeRetarget(Ar, Retarget);
+            QString Error;
+            if(!WriteArchive(Path, Ar, Error))
+            {
+                OutWarnings << QStringLiteral("no retarget: %1").arg(Error);
+                return QString();
+            }
+            OutNote = QStringLiteral("; a retarget to %1, %2 of its %3 bones mapped").arg(InTargetRuntime).arg(Mapped).arg(Target.Bones.size());
+            if(Mapped == 0) { OutWarnings << QStringLiteral("the retarget to %1 maps no bones: map them in the retarget editor").arg(InTargetRuntime); }
+            return Path;
         }
 
         /* InImage, decoded, into a texture as InOptions say, written to InPath. */
@@ -591,7 +687,9 @@ namespace EditorContent
                               "GenerateLightmapUVs=%6\nImportAnimations=%7\nAnimationSampleRate=%8\nBakeMaterialColors=%9\n")
                .arg(double(Scale)).arg(int(bConvertCoordinates)).arg(int(bGenerateNormals))
                .arg(int(bCombineMeshes)).arg(int(bImportTextures)).arg(int(bGenerateLightmapUVs))
-               .arg(int(bImportAnimations)).arg(double(AnimationSampleRate)).arg(int(bBakeMaterialColors));
+               .arg(int(bImportAnimations)).arg(double(AnimationSampleRate)).arg(int(bBakeMaterialColors))
+             + (ExistingSkeleton.isEmpty() ? QString() : QStringLiteral("ExistingSkeleton=%1\n").arg(ExistingSkeleton))
+             + (CreateRetargetTo.isEmpty() ? QString() : QStringLiteral("CreateRetargetTo=%1\n").arg(CreateRetargetTo));
     }
 
     MeshImportOptions MeshImportOptions::FromSettings(const QString& InSettings)
@@ -611,6 +709,8 @@ namespace EditorContent
         bool bRateOK = false;
         const float Rate = Map.value(QStringLiteral("AnimationSampleRate")).toFloat(&bRateOK);
         if(bRateOK && Rate >= 1.0f && Rate <= 240.0f) { Out.AnimationSampleRate = Rate; }
+        Out.ExistingSkeleton = Map.value(QStringLiteral("ExistingSkeleton"));
+        Out.CreateRetargetTo = Map.value(QStringLiteral("CreateRetargetTo"));
         return Out;
     }
 
@@ -672,10 +772,39 @@ namespace EditorContent
 
         const QString Base = SanitizeName(InBaseName);
 
-        /* The skeleton before the meshes and clips, which name it. */
+        /* The skeleton before the meshes and clips, which name it: the file's,
+         * or one its bones are already in. */
         QString SkeletonRuntime;
-        if(Animation.bHasSkeleton)
+        RenderCore::SkeletonData SkeletonUsed;
+        if(Animation.bHasSkeleton && !InOptions.ExistingSkeleton.isEmpty())
         {
+            if(!ReadSkeleton(AbsolutePathOfRuntime(InOptions.ExistingSkeleton, InProjectRoot), SkeletonUsed))
+            {
+                Result.Message = QStringLiteral("%1: the existing skeleton %2 cannot be read").arg(QFileInfo(InSource).fileName(), InOptions.ExistingSkeleton);
+                return Result;
+            }
+            QStringList Missing;
+            for(const RenderCore::SkeletonBone& Bone : Animation.Skeleton.Bones)
+            {
+                if(SkeletonUsed.FindBone(Bone.Name) < 0) { Missing << QString::fromStdString(Bone.Name); }
+            }
+            if(!Missing.isEmpty())
+            {
+                Result.Message = QStringLiteral("%1: %2 of its bones are not in %3 (%4). Import its own skeleton and play its clips "
+                                                "through a retarget instead (Create Retarget To).")
+                                 .arg(QFileInfo(InSource).fileName()).arg(Missing.size()).arg(InOptions.ExistingSkeleton,
+                                      Missing.mid(0, 8).join(QStringLiteral(", ")) + (Missing.size() > 8 ? QStringLiteral(", ...") : QString()));
+                return Result;
+            }
+            for(GltfMesh& Mesh : Meshes)
+            {
+                if(Mesh.Data.IsSkinned()) { RemapSkin(Mesh.Data, Animation.Skeleton, SkeletonUsed); }
+            }
+            SkeletonRuntime = InOptions.ExistingSkeleton;
+        }
+        else if(Animation.bHasSkeleton)
+        {
+            SkeletonUsed = Animation.Skeleton;
             const QString SkeletonPath = SkeletonFileFor(InDestFolder, Base);
             Animation.Skeleton.ImportInfo = MakeImportInfo(InSource, InProjectRoot,
                                                            InOptions.ToSettings() + QString::fromLatin1(SKELETON_PART_SETTING));
@@ -701,6 +830,15 @@ namespace EditorContent
                 return Result;
             }
             Result.Written << ClipPath;
+        }
+
+        /* A retarget from the skeleton the clips are on to the one they should play on. */
+        QString RetargetNote;
+        if(Animation.bHasSkeleton && !InOptions.CreateRetargetTo.isEmpty())
+        {
+            const QString RetargetPath = WriteImportRetarget(InDestFolder, Base, SkeletonRuntime, SkeletonUsed, InOptions.CreateRetargetTo,
+                                                             InProjectRoot, Result.Warnings, RetargetNote);
+            if(!RetargetPath.isEmpty()) { Result.Written << RetargetPath; }
         }
 
         uint64_t Triangles = 0;
@@ -741,9 +879,11 @@ namespace EditorContent
                          .arg(QFileInfo(InSource).fileName()).arg(Meshes.size()).arg(Triangles);
         if(Animation.bHasSkeleton)
         {
-            Result.Message += QStringLiteral("; a %1-bone skeleton and %2 animation clip(s)")
-                              .arg(Animation.Skeleton.Bones.size()).arg(Animation.Clips.size());
+            Result.Message += InOptions.ExistingSkeleton.isEmpty()
+                            ? QStringLiteral("; a %1-bone skeleton and %2 animation clip(s)").arg(Animation.Skeleton.Bones.size()).arg(Animation.Clips.size())
+                            : QStringLiteral("; %1 animation clip(s) on %2").arg(Animation.Clips.size()).arg(InOptions.ExistingSkeleton);
         }
+        Result.Message += RetargetNote;
         return Result;
     }
 
@@ -1046,6 +1186,13 @@ namespace EditorContent
             Chosen->Data.Skeleton = bOld && !Old.Skeleton.empty()
                                   ? Old.Skeleton
                                   : RuntimePathOf(SkeletonFileFor(Folder, Base), InProjectRoot).toStdString();
+            /* Imported onto an existing skeleton: skinned to it again. */
+            RenderCore::SkeletonData Existing;
+            if(!Options.ExistingSkeleton.isEmpty() && Animation.bHasSkeleton
+               && ReadSkeleton(AbsolutePathOfRuntime(Options.ExistingSkeleton, InProjectRoot), Existing))
+            {
+                RemapSkin(Chosen->Data, Animation.Skeleton, Existing);
+            }
         }
         if(!WriteMesh(InAssetPath, Chosen->Data, Result.Message))
         {

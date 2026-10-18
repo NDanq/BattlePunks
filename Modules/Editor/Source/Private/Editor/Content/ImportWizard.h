@@ -72,6 +72,11 @@ private:
     QCheckBox*      MaterialColors = nullptr;
     QListWidget*    ImageList     = nullptr;
 
+    QCheckBox*      Animations     = nullptr;
+    QDoubleSpinBox* SampleRate     = nullptr;
+    QComboBox*      OntoSkeleton   = nullptr;   // MeshImportOptions::ExistingSkeleton; "" first
+    QComboBox*      RetargetTo     = nullptr;   // MeshImportOptions::CreateRetargetTo; "" first
+
     QCheckBox*      SRGB          = nullptr;
     QComboBox*      Filter        = nullptr;
     QComboBox*      Wrap          = nullptr;

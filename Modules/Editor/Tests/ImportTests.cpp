@@ -20,6 +20,7 @@
 #include "Public/Core/CoreArchive.h"
 #include "Public/RenderCore/AnimClipAsset.h"
 #include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/RetargetAsset.h"
 #include "Public/RenderCore/SkeletonAsset.h"
 #include "Public/RenderCore/TextureAsset.h"
 #include "Private/Editor/Content/AssetImport.h"
@@ -223,6 +224,123 @@ static void WriteSkinnedScene(const QDir& InFolder)
     File.open(QIODevice::WriteOnly);
     File.write(Json.toUtf8());
     File.close();
+}
+
+/*
+ * <InName>.gltf: no mesh, no skin -- a clip pack's file. Nodes Root -> Arm
+ * (translation 1,0,0) -> InTip (translation 1,0,0); animation "Wave": Arm
+ * turns 90 degrees about Z over one second.
+ */
+static void WriteAnimationOnly(const QDir& InFolder, const QString& InName, const QString& InTip)
+{
+    const float Times[2] = { 0, 1 };
+    const float S = std::sqrt(0.5f);
+    const float Rot[8] = { 0, 0, 0, 1,   0, 0, S, S };
+    QByteArray Buffer;
+    Buffer.append(reinterpret_cast<const char*>(Times), sizeof(Times));   // 0..8
+    Buffer.append(reinterpret_cast<const char*>(Rot),   sizeof(Rot));     // 8..40
+    const QString Json = QStringLiteral(R"({
+  "asset": { "version": "2.0" },
+  "scene": 0,
+  "scenes": [ { "nodes": [0] } ],
+  "nodes": [
+    { "name": "Root", "children": [1] },
+    { "name": "Arm", "translation": [1, 0, 0], "children": [2] },
+    { "name": "%3", "translation": [1, 0, 0] }
+  ],
+  "animations": [ { "name": "Wave",
+      "samplers": [ { "input": 0, "output": 1, "interpolation": "LINEAR" } ],
+      "channels": [ { "sampler": 0, "target": { "node": 1, "path": "rotation" } } ] } ],
+  "buffers": [ { "byteLength": %1, "uri": "data:application/octet-stream;base64,%2" } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 8 },
+    { "buffer": 0, "byteOffset": 8, "byteLength": 32 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1] },
+    { "bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC4" }
+  ]
+})").arg(Buffer.size()).arg(QString::fromLatin1(Buffer.toBase64())).arg(InTip);
+    QFile File(InFolder.filePath(InName + QStringLiteral(".gltf")));
+    File.open(QIODevice::WriteOnly);
+    File.write(Json.toUtf8());
+}
+
+static void TestAnimationOnlyImport(const QDir& InRoot)
+{
+    std::printf("[animation-only import]\n");
+    const QDir Source(InRoot.filePath(QStringLiteral("Source")));
+    WriteAnimationOnly(Source, QStringLiteral("Clips"), QStringLiteral("Hand"));
+    WriteAnimationOnly(Source, QStringLiteral("Other"), QStringLiteral("Claw"));
+    const QString Content = InRoot.filePath(QStringLiteral("Content/Clips"));
+
+    /* Its own skeleton: the nodes the clip moves and their ancestors. */
+    MeshImportOptions Options;
+    const ImportResult Own = ImportMesh(Source.filePath(QStringLiteral("Clips.gltf")), Content, QStringLiteral("Pack"), Options,
+                                        TextureImportOptions(), InRoot.absolutePath());
+    Expect(Own.bOK, "a glTF of animations and no mesh imports");
+    if(!Own.bOK) { std::printf("        %s\n", qPrintable(Own.Message)); return; }
+    Expect(Own.Written.size() == 2, "as a skeleton and a clip, no mesh");
+    RenderCore::SkeletonData Skeleton;
+    Expect(ReadAsset(QDir(Content).filePath(QStringLiteral("Pack_Skeleton.nmskel")), Skeleton, &RenderCore::SerializeSkeleton)
+           && Skeleton.Bones.size() == 2 && Skeleton.Bones[0].Name == "Root" && Skeleton.Bones[1].Name == "Arm",
+           "its skeleton is the animated bone and its ancestors");
+    RenderCore::AnimClipData Clip;
+    Expect(ReadAsset(QDir(Content).filePath(QStringLiteral("Pack_Wave.nmanim")), Clip, &RenderCore::SerializeAnimClip)
+           && Clip.Skeleton == "Content/Clips/Pack_Skeleton.nmskel" && Clip.Tracks.size() == 1 && Clip.Tracks[0].Bone == "Arm",
+           "the clip names it and moves the arm");
+
+    /* Onto an existing skeleton (the skinned arm's, Root -> Arm): no skeleton written. */
+    MeshImportOptions Onto;
+    Onto.ExistingSkeleton = QStringLiteral("Content/Anim/Arm_Skeleton.nmskel");
+    const ImportResult Existing = ImportMesh(Source.filePath(QStringLiteral("Clips.gltf")), Content, QStringLiteral("OnArm"), Onto,
+                                             TextureImportOptions(), InRoot.absolutePath());
+    Expect(Existing.bOK && Existing.Written.size() == 1 && !QFile::exists(QDir(Content).filePath(QStringLiteral("OnArm_Skeleton.nmskel"))),
+           "onto an existing skeleton, only the clip is written");
+    if(!Existing.bOK) { std::printf("        %s\n", qPrintable(Existing.Message)); }
+    RenderCore::AnimClipData OnArm;
+    Expect(ReadAsset(QDir(Content).filePath(QStringLiteral("OnArm_Wave.nmanim")), OnArm, &RenderCore::SerializeAnimClip)
+           && OnArm.Skeleton == "Content/Anim/Arm_Skeleton.nmskel", "and it names the existing skeleton");
+    const ImportResult Reimported = Reimport(QDir(Content).filePath(QStringLiteral("OnArm_Wave.nmanim")), InRoot.absolutePath());
+    RenderCore::AnimClipData Back;
+    Expect(Reimported.bOK && ReadAsset(QDir(Content).filePath(QStringLiteral("OnArm_Wave.nmanim")), Back, &RenderCore::SerializeAnimClip)
+           && Back.Skeleton == "Content/Anim/Arm_Skeleton.nmskel", "a reimport keeps naming it");
+
+    /* A file with a bone the skeleton lacks: refused, the bone named, a retarget suggested. */
+    Onto.ExistingSkeleton = QStringLiteral("Content/Clips/Pack_Skeleton.nmskel");
+    WriteAnimationOnly(Source, QStringLiteral("Deeper"), QStringLiteral("Claw"));
+    QFile Deeper(Source.filePath(QStringLiteral("Deeper.gltf")));
+    Deeper.open(QIODevice::ReadOnly);
+    QString Text = QString::fromUtf8(Deeper.readAll());
+    Deeper.close();
+    Text.replace(QStringLiteral("\"node\": 1"), QStringLiteral("\"node\": 2"));   // the claw moves: it is a bone
+    Deeper.open(QIODevice::WriteOnly | QIODevice::Truncate);
+    Deeper.write(Text.toUtf8());
+    Deeper.close();
+    const ImportResult Mismatch = ImportMesh(Source.filePath(QStringLiteral("Deeper.gltf")), Content, QStringLiteral("Deeper"), Onto,
+                                             TextureImportOptions(), InRoot.absolutePath());
+    Expect(!Mismatch.bOK && Mismatch.Message.contains(QStringLiteral("Claw")) && Mismatch.Message.contains(QStringLiteral("retarget")),
+           "bones the existing skeleton lacks fail the import, named, with a retarget suggested");
+    Expect(!QFile::exists(QDir(Content).filePath(QStringLiteral("Deeper_Wave.nmanim"))), "and nothing is written");
+
+    /* Create Retarget To: an auto-mapped retarget onto the skinned arm's skeleton. */
+    MeshImportOptions Retargeted;
+    Retargeted.CreateRetargetTo = QStringLiteral("Content/Anim/Arm_Skeleton.nmskel");
+    const ImportResult WithRetarget = ImportMesh(Source.filePath(QStringLiteral("Clips.gltf")), Content, QStringLiteral("Pack"), Retargeted,
+                                                 TextureImportOptions(), InRoot.absolutePath());
+    const QString RetargetPath = QDir(Content).filePath(QStringLiteral("Pack_to_Arm.nmretarget"));
+    Expect(WithRetarget.bOK && WithRetarget.Written.contains(RetargetPath), "Create Retarget To writes a retarget beside the clips");
+    RenderCore::RetargetData Retarget;
+    Expect(ReadAsset(RetargetPath, Retarget, &RenderCore::SerializeRetarget) && Retarget.Target == "Content/Anim/Arm_Skeleton.nmskel"
+           && Retarget.Sources.size() == 1 && Retarget.Sources[0].Skeleton == "Content/Clips/Pack_Skeleton.nmskel",
+           "from the pack's skeleton to the target");
+    Expect(!Retarget.Sources.empty() && Retarget.Sources[0].Bones.size() == 2 && Retarget.Sources[0].FindBone("Arm")
+           && Retarget.Sources[0].FindBone("Arm")->Source == "Arm", "its bones mapped (by name: not a humanoid)");
+    const ImportResult Again = ImportMesh(Source.filePath(QStringLiteral("Clips.gltf")), Content, QStringLiteral("Pack"), Retargeted,
+                                          TextureImportOptions(), InRoot.absolutePath());
+    RenderCore::RetargetData AgainData;
+    Expect(Again.bOK && ReadAsset(RetargetPath, AgainData, &RenderCore::SerializeRetarget) && AgainData.Sources.size() == 1,
+           "importing again replaces its source rather than adding one");
 }
 
 static void TestAnimationImport(const QDir& InRoot)
@@ -690,6 +808,7 @@ int main(int argc, char** argv)
     TestMeshImport(Root);
     TestTextureImport(Root);
     TestAnimationImport(Root);
+    TestAnimationOnlyImport(Root);
 #if WITH_AUDIO
     TestSoundImport(Root);
 #endif
