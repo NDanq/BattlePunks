@@ -13,15 +13,15 @@ namespace RenderCore
 {
     namespace
     {
-        /* Model-space rotations of InPose, scales left out (AnimRetarget.h). */
+        /* Model-space rotations of InPose, scales left out (AnimRetarget.h). Products of
+         * unit quaternions, unnormalised: a skeleton is too shallow for them to drift. */
         void ModelRotations(const std::vector<int32_t>& InParent, const AnimLocalPose& InPose, std::vector<AnimQuat>& OutModel)
         {
             OutModel.resize(InParent.size());
             for(size_t Bone = 0; Bone < InParent.size(); ++Bone)
             {
                 const int32_t Parent = InParent[Bone];
-                OutModel[Bone] = Parent >= 0 ? AnimMath::Normalize(AnimMath::Mul(OutModel[size_t(Parent)], InPose[Bone].Rotation))
-                                             : InPose[Bone].Rotation;
+                OutModel[Bone] = Parent >= 0 ? AnimMath::Mul(OutModel[size_t(Parent)], InPose[Bone].Rotation) : InPose[Bone].Rotation;
             }
         }
 
@@ -143,7 +143,7 @@ namespace RenderCore
         const size_t Targets = InTarget.Bones.size();
         OutBinding.TargetSource.assign(Targets, -1);
         OutBinding.TargetTranslation.assign(Targets, ERetargetTranslation::Skeleton);
-        OutBinding.SourceRefInverse.assign(Targets, AnimQuat());
+        OutBinding.Correction.assign(Targets, AnimQuat());
         for(const RetargetBoneMap& Map : InMap.Bones)
         {
             const int32_t Target = InTarget.FindBone(Map.Target);
@@ -152,7 +152,8 @@ namespace RenderCore
             OutBinding.TargetSource[size_t(Target)]      = Source;
             OutBinding.TargetTranslation[size_t(Target)] = Map.Translation;
             const AnimQuat Offset = AnimMath::Normalize(Map.PoseOffset);
-            OutBinding.SourceRefInverse[size_t(Target)]  = AnimMath::Conjugate(AnimMath::Normalize(AnimMath::Mul(Offset, SourceRefModel[size_t(Source)])));
+            const AnimQuat SourceRefInverse = AnimMath::Conjugate(AnimMath::Normalize(AnimMath::Mul(Offset, SourceRefModel[size_t(Source)])));
+            OutBinding.Correction[size_t(Target)] = AnimMath::Normalize(AnimMath::Mul(SourceRefInverse, OutBinding.TargetRefModel[size_t(Target)]));
         }
         OutBinding.RootScale = InMap.RootScale > 0.0f ? InMap.RootScale : ComputeRetargetRootScale(InSource, InTarget, InMap);
 
@@ -237,13 +238,13 @@ namespace RenderCore
             AnimTransform& Out          = InOutPose[Target];
             if(Source < 0)
             {
-                Qt[Target] = AnimMath::Normalize(AnimMath::Mul(ParentModel, Out.Rotation));
+                Qt[Target] = AnimMath::Mul(ParentModel, Out.Rotation);
                 continue;
             }
 
-            /* How far the source turned from its reference, applied to the target's. */
-            const AnimQuat Delta = AnimMath::Mul(Qs[size_t(Source)], InBinding.SourceRefInverse[Target]);
-            Qt[Target]   = AnimMath::Normalize(AnimMath::Mul(Delta, InBinding.TargetRefModel[Target]));
+            /* How far the source turned from its reference, applied to the target's
+             * (Correction: inverse(PoseOffset * QsRef) * QtRef, made at bind). */
+            Qt[Target]   = AnimMath::Mul(Qs[size_t(Source)], InBinding.Correction[Target]);
             Out.Rotation = AnimMath::Normalize(AnimMath::Mul(AnimMath::Conjugate(ParentModel), Qt[Target]));
             Out.Scale    = InBinding.TargetRef[Target].Scale;
 
