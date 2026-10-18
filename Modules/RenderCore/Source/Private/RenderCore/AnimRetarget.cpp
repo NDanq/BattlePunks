@@ -40,27 +40,6 @@ namespace RenderCore
         }
 
         AnimVec3 Position(const AnimMatrix& InModel) { return { InModel.M[0][3], InModel.M[1][3], InModel.M[2][3] }; }
-
-        /* The shortest turn taking direction InFrom to InTo; identity if either is zero. */
-        AnimQuat FromTo(const AnimVec3& InFrom, const AnimVec3& InTo)
-        {
-            const float LengthFrom = std::sqrt(InFrom.X * InFrom.X + InFrom.Y * InFrom.Y + InFrom.Z * InFrom.Z);
-            const float LengthTo   = std::sqrt(InTo.X * InTo.X + InTo.Y * InTo.Y + InTo.Z * InTo.Z);
-            if(LengthFrom < 1e-6f || LengthTo < 1e-6f) { return AnimQuat(); }
-            const AnimVec3 A = AnimMath::Scale(InFrom, 1.0f / LengthFrom);
-            const AnimVec3 B = AnimMath::Scale(InTo, 1.0f / LengthTo);
-            const float    Dot = A.X * B.X + A.Y * B.Y + A.Z * B.Z;
-            if(Dot < -0.999999f)
-            {
-                /* Opposite: half a turn about any axis square to A. */
-                AnimVec3 Axis = std::fabs(A.X) < 0.9f ? AnimVec3{ 0.0f, -A.Z, A.Y } : AnimVec3{ A.Z, 0.0f, -A.X };
-                const float Length = std::sqrt(Axis.X * Axis.X + Axis.Y * Axis.Y + Axis.Z * Axis.Z);
-                Axis = AnimMath::Scale(Axis, 1.0f / Length);
-                return { Axis.X, Axis.Y, Axis.Z, 0.0f };
-            }
-            const AnimVec3 Cross{ A.Y * B.Z - A.Z * B.Y, A.Z * B.X - A.X * B.Z, A.X * B.Y - A.Y * B.X };
-            return AnimMath::Normalize({ Cross.X, Cross.Y, Cross.Z, 1.0f + Dot });
-        }
     }
 
     AnimQuat ComputeRetargetPoseOffset(const SkeletonData& InSource, const SkeletonData& InTarget, const RetargetSource& InMap,
@@ -86,7 +65,7 @@ namespace RenderCore
             InTarget.ComputeRefPoseModel(TargetModel);
             const AnimVec3 SourceDirection = AnimMath::Sub(Position(SourceModel[size_t(ChildSource)]), Position(SourceModel[size_t(Source)]));
             const AnimVec3 TargetDirection = AnimMath::Sub(Position(TargetModel[Child]), Position(TargetModel[size_t(Target)]));
-            return FromTo(SourceDirection, TargetDirection);
+            return AnimMath::FromTo(SourceDirection, TargetDirection);
         }
         /* An end bone (a hand, a foot, the head) keeps to its nearest mapped ancestor. */
         for(int32_t Up = InTarget.Bones[size_t(Target)].Parent; Up >= 0; Up = InTarget.Bones[size_t(Up)].Parent)

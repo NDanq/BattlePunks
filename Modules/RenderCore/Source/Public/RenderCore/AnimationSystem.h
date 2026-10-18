@@ -52,6 +52,19 @@ namespace RenderCore
         /* Null if InWorld has none. */
         static AnimationSystem* Find(const GameCore::World* InWorld);
 
+        /*
+         * How IK finds the ground (AnimInstance's IK probes): the nearest hit
+         * of a ray from InFrom along InDirection within InLength, not on
+         * InIgnore (the character itself), its point and normal. RenderCore
+         * has no physics: NimbleEngine sets one on the world's physics
+         * (PhysicsFacade.h); none set, feet are as animated. Game thread.
+         */
+        using GroundQueryFn = bool (*)(GameCore::World& InWorld, GameCore::EntityID InIgnore, const EngineCore::Vector3& InFrom,
+                                       const EngineCore::Vector3& InDirection, float InLength, EngineCore::Vector3& OutPoint,
+                                       EngineCore::Vector3& OutNormal);
+        static void          SetGroundQuery(GroundQueryFn InQuery);
+        static GroundQueryFn GetGroundQuery();
+
         /* Every Animation component's instance made, rebound to what its
          * fields and mesh now name, and evaluated if it changed. No time passes. */
         void Sync();

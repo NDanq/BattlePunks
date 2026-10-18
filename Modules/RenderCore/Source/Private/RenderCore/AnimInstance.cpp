@@ -98,6 +98,12 @@ namespace RenderCore
         LookParameter = LookWeightParameter = -1;
         LookAngle   = 0.0f;
         bLookPlaced = false;
+        IKChains.clear();
+        IKProbes.clear();
+        IKPelvis    = -1;
+        bBaseGround = false;
+        bIKPlaced   = false;
+        PelvisDrop  = 0.0f;
         RefPose.clear();
         if(Skeleton) { GetRefPose(*Skeleton, RefPose); }
         OverlayBoundTo  = nullptr;   // the overlay binds again, perhaps through another retarget
@@ -188,6 +194,33 @@ namespace RenderCore
             LookAxis = Length > 1e-6f ? AnimVec3{ Look.Axis[0] / Length, Look.Axis[1] / Length, Look.Axis[2] / Length } : AnimVec3{ 1.0f, 0.0f, 0.0f };
         }
         if(LookBones.empty()) { LookParameter = -1; }
+
+        /* IK: the chains whose bones the skeleton has. */
+        const AnimIK& IK = State->IK;
+        IKPelvis    = Skeleton && !IK.PelvisBone.empty() ? Skeleton->FindBone(IK.PelvisBone) : -1;
+        IKTraceUp   = IK.TraceUp;
+        IKTraceDown = IK.TraceDown;
+        IKMaxStep   = IK.MaxStep;
+        IKResponse  = IK.Response;
+        for(const AnimIKChain& Chain : IK.Chains)
+        {
+            if(!Skeleton) { break; }
+            IKChainRuntime Runtime;
+            Runtime.Name      = Chain.Name;
+            Runtime.Root      = Skeleton->FindBone(Chain.Root);
+            Runtime.Mid       = Skeleton->FindBone(Chain.Mid);
+            Runtime.End       = Skeleton->FindBone(Chain.End);
+            Runtime.Goal      = Chain.Goal;
+            Runtime.GoalBone  = Chain.GoalBone.empty() ? -1 : Skeleton->FindBone(Chain.GoalBone);
+            Runtime.GoalOffset = Chain.GoalOffset;
+            Runtime.Weight    = Chain.Weight;
+            Runtime.WeightParameter = Chain.WeightParameter.empty() ? -1 : State->FindParameter(Chain.WeightParameter);
+            Runtime.Pole      = { Chain.Pole[0], Chain.Pole[1], Chain.Pole[2] };
+            Runtime.bAlignEnd = Chain.bAlignEnd;
+            if(Runtime.Root < 0 || Runtime.Mid < 0 || Runtime.End < 0) { continue; }
+            if(Runtime.Goal == EAnimIKGoal::Bone && Runtime.GoalBone < 0) { continue; }
+            IKChains.push_back(std::move(Runtime));
+        }
     }
 
     void AnimInstance::Restart()
@@ -619,6 +652,7 @@ namespace RenderCore
         Finished.clear();
         Consumed.clear();
         RootMotion = AnimVec3();
+        IKDelta = std::max(InDeltaSeconds, 0.0f);   // IK eases in real time, as the look-at does
         if(Skeleton)
         {
             const float Delta = InDeltaSeconds * PlayRate;
@@ -668,7 +702,8 @@ namespace RenderCore
 
     void AnimInstance::Evaluate()
     {
-        /* A change or a seek: the look-at goes straight to its target too. */
+        /* A change or a seek: the look-at, and the IK, go straight to their goals. */
+        bIKPlaced = false;
         if(LookParameter >= 0)
         {
             LookAngle   = LookTarget();
@@ -736,12 +771,187 @@ namespace RenderCore
             BlendPoses(LocalPose, Scratch[2], std::min(OverlayWeight, 1.0f));
         }
         ApplyLookAt(LocalPose);
+        ApplyIK(LocalPose);
         if(bOverride)
         {
             ApplyPoseOverride();
             return;
         }
         LocalToModel(*Skeleton, LocalPose, ModelPose);
+    }
+
+    // === IK ====================================================================
+
+    void AnimInstance::SetModelToWorld(const AnimMatrix& InModelToWorld)
+    {
+        ModelToWorld = InModelToWorld;
+        WorldToModel = AnimMath::Inverse(InModelToWorld);
+        bHasWorld    = true;
+    }
+
+    void AnimInstance::SetIKGround(const int32_t InChain, const bool bInHit, const AnimVec3& InWorldPoint, const AnimVec3& InWorldNormal)
+    {
+        if(InChain < 0)
+        {
+            bBaseGround = bInHit;
+            BasePoint   = InWorldPoint;
+            BaseNormal  = InWorldNormal;
+            return;
+        }
+        if(size_t(InChain) >= IKChains.size()) { return; }
+        IKChainRuntime& Chain = IKChains[size_t(InChain)];
+        Chain.bGround      = bInHit;
+        Chain.GroundPoint  = InWorldPoint;
+        Chain.GroundNormal = InWorldNormal;
+    }
+
+    bool AnimInstance::SetIKGoal(const std::string& InChain, const AnimVec3& InWorldPosition, const float InWeight)
+    {
+        for(IKChainRuntime& Chain : IKChains)
+        {
+            if(Chain.Name != InChain) { continue; }
+            Chain.bScript      = InWeight > 0.0f;
+            Chain.ScriptGoal   = InWorldPosition;
+            Chain.ScriptWeight = std::clamp(InWeight, 0.0f, 1.0f);
+            return true;
+        }
+        return false;
+    }
+
+    void AnimInstance::ApplyIK(AnimLocalPose& InOutPose)
+    {
+        IKProbes.clear();
+        if(IKChains.empty() || !Skeleton)
+        {
+            PelvisDrop = 0.0f;
+            return;
+        }
+        namespace AM = AnimMath;
+        const auto Direction = [](const AnimMatrix& InMatrix, const AnimVec3& InV)
+        {
+            return AnimVec3{ InMatrix.M[0][0] * InV.X + InMatrix.M[0][1] * InV.Y + InMatrix.M[0][2] * InV.Z,
+                             InMatrix.M[1][0] * InV.X + InMatrix.M[1][1] * InV.Y + InMatrix.M[1][2] * InV.Z,
+                             InMatrix.M[2][0] * InV.X + InMatrix.M[2][1] * InV.Y + InMatrix.M[2][2] * InV.Z };
+        };
+        const auto Position = [](const AnimMatrix& InModel) { return AnimVec3{ InModel.M[0][3], InModel.M[1][3], InModel.M[2][3] }; };
+        /* The height of a world plane at (X, Z); false on a wall. */
+        const auto HeightOn = [](const AnimVec3& InPoint, const AnimVec3& InNormal, const float InX, const float InZ, float& OutY)
+        {
+            if(std::fabs(InNormal.Y) < 0.2f) { return false; }
+            OutY = InPoint.Y - (InNormal.X * (InX - InPoint.X) + InNormal.Z * (InZ - InPoint.Z)) / InNormal.Y;
+            return true;
+        };
+        const float Ease = !bIKPlaced || IKResponse <= 0.0f ? 1.0f : 1.0f - std::exp(-IKResponse * IKDelta);
+        bIKPlaced = true;
+
+        /* The pose as animated, and model up (and how many model units a world one is). */
+        LocalToModel(*Skeleton, InOutPose, IKModel);
+        AnimVec3 Up{ 0.0f, 1.0f, 0.0f };
+        float ModelPerWorld = 1.0f;
+        if(bHasWorld)
+        {
+            const AnimVec3 WorldUp = Direction(WorldToModel, { 0.0f, 1.0f, 0.0f });
+            ModelPerWorld = std::max(AM::Length(WorldUp), 1e-6f);
+            Up = AM::Scale(WorldUp, 1.0f / ModelPerWorld);
+        }
+        const AnimVec3 Origin = bHasWorld ? AM::TransformPoint(ModelToWorld, AnimVec3()) : AnimVec3();
+        float BaseY = Origin.Y;
+        if(bHasWorld && bBaseGround) { HeightOn(BasePoint, BaseNormal, Origin.X, Origin.Z, BaseY); }
+
+        const auto WeightOf = [this](const IKChainRuntime& InChain)
+        {
+            float Weight = InChain.Weight;
+            if(InChain.WeightParameter >= 0 && size_t(InChain.WeightParameter) < Parameters.size())
+            {
+                Weight *= std::clamp(Parameters[size_t(InChain.WeightParameter)], 0.0f, 1.0f);
+            }
+            return std::clamp(Weight, 0.0f, 1.0f);
+        };
+
+        /* Feet: each moved along up by how far its ground is above (or below)
+         * the ground the entity stands on, eased; turned to its slope. */
+        float Lowest = 0.0f;
+        for(IKChainRuntime& Chain : IKChains)
+        {
+            if(Chain.Goal != EAnimIKGoal::Ground || Chain.bScript) { continue; }
+            const AnimVec3 Foot = Position(IKModel[size_t(Chain.End)]);
+            float Wanted = 0.0f;
+            AnimQuat Tilt;
+            if(bHasWorld && Chain.bGround)
+            {
+                const AnimVec3 FootWorld = AM::TransformPoint(ModelToWorld, Foot);
+                float GroundY = 0.0f;
+                if(HeightOn(Chain.GroundPoint, Chain.GroundNormal, FootWorld.X, FootWorld.Z, GroundY))
+                {
+                    Wanted = std::clamp(GroundY - BaseY, -IKMaxStep, IKMaxStep) * ModelPerWorld;
+                    if(Chain.bAlignEnd) { Tilt = AM::FromTo(Up, Direction(WorldToModel, Chain.GroundNormal)); }
+                }
+            }
+            Chain.Offset += (Wanted - Chain.Offset) * Ease;
+            Chain.Tilt    = AM::Nlerp(Chain.Tilt, Tilt, Ease);
+            Lowest = std::min(Lowest, Chain.Offset * WeightOf(Chain));
+        }
+
+        /* Probes for the next evaluation: down from above each animated foot, and where the entity stands. */
+        if(bHasWorld)
+        {
+            const AnimVec3 Above{ 0.0f, IKTraceUp, 0.0f };
+            IKProbes.push_back({ -1, AM::Add(Origin, Above), IKTraceUp + IKTraceDown });
+            for(size_t Index = 0; Index < IKChains.size(); ++Index)
+            {
+                if(IKChains[Index].Goal != EAnimIKGoal::Ground) { continue; }
+                const AnimVec3 FootWorld = AM::TransformPoint(ModelToWorld, Position(IKModel[size_t(IKChains[Index].End)]));
+                IKProbes.push_back({ int32_t(Index), AM::Add(FootWorld, Above), IKTraceUp + IKTraceDown });
+            }
+        }
+
+        /* The pelvis lowered so the lowest foot reaches its ground (never raised: the legs could not follow). */
+        PelvisDrop = std::min(-Lowest, IKMaxStep * ModelPerWorld);
+        if(IKPelvis >= 0 && PelvisDrop > 1e-4f)
+        {
+            const int32_t Parent = Skeleton->Bones[size_t(IKPelvis)].Parent;
+            const AnimVec3 Down = AM::Scale(Up, -PelvisDrop);
+            const AnimVec3 Local = Parent >= 0 ? Direction(AM::Inverse(IKModel[size_t(Parent)]), Down) : Down;
+            InOutPose[size_t(IKPelvis)].Translation = AM::Add(InOutPose[size_t(IKPelvis)].Translation, Local);
+        }
+
+        /* Each chain to its goal, in order (a hand on a bone another chain moved goes after it). */
+        for(const IKChainRuntime& Chain : IKChains)
+        {
+            AnimTwoBoneIK Solve;
+            Solve.Root   = Chain.Root;
+            Solve.Mid    = Chain.Mid;
+            Solve.End    = Chain.End;
+            Solve.Pole   = Chain.Pole;
+            Solve.Weight = WeightOf(Chain);
+            if(Chain.bScript)
+            {
+                if(!bHasWorld) { continue; }
+                Solve.Target  = AM::TransformPoint(WorldToModel, Chain.ScriptGoal);
+                Solve.Weight *= Chain.ScriptWeight;
+            }
+            else if(Chain.Goal == EAnimIKGoal::Ground)
+            {
+                /* On level ground, with the pelvis where it was: nothing to do. */
+                if(std::fabs(Chain.Offset) < 1e-3f && PelvisDrop <= 1e-4f && std::fabs(Chain.Tilt.W) > 0.999999f) { continue; }
+                const AnimMatrix& Foot = IKModel[size_t(Chain.End)];
+                Solve.Target    = AM::Add(Position(Foot), AM::Scale(Up, Chain.Offset));
+                Solve.bRotation = Chain.bAlignEnd;
+                Solve.Rotation  = AM::Normalize(AM::Mul(Chain.Tilt, AM::ToTransform(Foot).Rotation));
+            }
+            else if(Chain.Goal == EAnimIKGoal::Bone)
+            {
+                const AnimMatrix Goal = AM::Mul(ComputeBoneModel(*Skeleton, InOutPose, Chain.GoalBone), AM::ToMatrix(Chain.GoalOffset));
+                Solve.Target    = Position(Goal);
+                Solve.bRotation = Chain.bAlignEnd;
+                Solve.Rotation  = AM::ToTransform(Goal).Rotation;
+            }
+            else
+            {
+                continue;   // a Script chain no goal is set for
+            }
+            SolveTwoBoneIK(*Skeleton, InOutPose, Solve);
+        }
     }
 
     void AnimInstance::ApplyPoseOverride()

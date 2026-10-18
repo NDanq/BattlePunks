@@ -89,6 +89,7 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/RetargetAsset.cpp
         Source/Private/RenderCore/AnimClipAsset.cpp
         Source/Private/RenderCore/AnimPose.cpp
+        Source/Private/RenderCore/AnimIK.cpp
         Source/Private/RenderCore/AnimRetarget.cpp
         Source/Private/RenderCore/HumanoidRig.cpp
         Source/Private/RenderCore/AnimStateAsset.cpp
@@ -129,6 +130,7 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/RetargetAsset.h
         Source/Public/RenderCore/AnimClipAsset.h
         Source/Public/RenderCore/AnimPose.h
+        Source/Public/RenderCore/AnimIK.h
         Source/Public/RenderCore/AnimRetarget.h
         Source/Public/RenderCore/HumanoidRig.h
         Source/Public/RenderCore/AnimStateAsset.h
@@ -238,6 +240,13 @@ if(RENDERCORE_BUILD_ANIMATION_TESTS AND NIMBLE_WITH_EDITOR)
     set_target_properties(RenderCoreRetargetTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "RenderCore")
     add_test(NAME RenderCore.AnimationRetarget COMMAND RenderCoreRetargetTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:RenderCoreRetargetTests>")
+
+    # IK (AnimIK.h): the solver, feet on the ground, hands on goals.
+    add_executable(RenderCoreIKTests Tests/IKTests.cpp)
+    target_link_libraries(RenderCoreIKTests PRIVATE RenderCore::RenderCore)
+    set_target_properties(RenderCoreIKTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "RenderCore")
+    add_test(NAME RenderCore.AnimationIK COMMAND RenderCoreIKTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:RenderCoreIKTests>")
 endif()
 
 # Splines and the Procedural Spawner's placement, headless (PROCEDURAL.md):

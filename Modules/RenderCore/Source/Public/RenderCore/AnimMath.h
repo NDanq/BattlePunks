@@ -102,6 +102,32 @@ namespace RenderCore
             return { A.X * WA + To.X * WB, A.Y * WA + To.Y * WB, A.Z * WA + To.Z * WB, A.W * WA + To.W * WB };
         }
 
+        inline float Dot(const AnimVec3& A, const AnimVec3& B) { return A.X * B.X + A.Y * B.Y + A.Z * B.Z; }
+        inline AnimVec3 Cross(const AnimVec3& A, const AnimVec3& B)
+        {
+            return { A.Y * B.Z - A.Z * B.Y, A.Z * B.X - A.X * B.Z, A.X * B.Y - A.Y * B.X };
+        }
+        inline float Length(const AnimVec3& A) { return std::sqrt(Dot(A, A)); }
+
+        /* The shortest turn taking direction InFrom to InTo (any lengths);
+         * identity if either is zero; half a turn about a perpendicular if opposite. */
+        inline AnimQuat FromTo(const AnimVec3& InFrom, const AnimVec3& InTo)
+        {
+            const float LengthFrom = Length(InFrom), LengthTo = Length(InTo);
+            if(LengthFrom < 1e-6f || LengthTo < 1e-6f) { return AnimQuat(); }
+            const AnimVec3 A = Scale(InFrom, 1.0f / LengthFrom);
+            const AnimVec3 B = Scale(InTo, 1.0f / LengthTo);
+            const float    Cos = Dot(A, B);
+            if(Cos < -0.999999f)
+            {
+                AnimVec3 Axis = std::fabs(A.X) < 0.9f ? AnimVec3{ 0.0f, -A.Z, A.Y } : AnimVec3{ A.Z, 0.0f, -A.X };
+                Axis = Scale(Axis, 1.0f / Length(Axis));
+                return { Axis.X, Axis.Y, Axis.Z, 0.0f };
+            }
+            const AnimVec3 Axis = Cross(A, B);
+            return Normalize({ Axis.X, Axis.Y, Axis.Z, 1.0f + Cos });
+        }
+
         inline AnimTransform Lerp(const AnimTransform& A, const AnimTransform& B, const float T)
         {
             AnimTransform Out;
