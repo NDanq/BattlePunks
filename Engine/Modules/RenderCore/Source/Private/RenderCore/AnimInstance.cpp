@@ -5,6 +5,12 @@
 
 namespace RenderCore
 {
+    namespace
+    {
+        /* How fast an IK chain's weight follows its parameter, per second (1 - e^(-8 t)). */
+        constexpr float IK_WEIGHT_RESPONSE = 8.0f;
+    }
+
     AnimInstance::AnimInstance()  = default;
     AnimInstance::~AnimInstance() = default;
 
@@ -202,6 +208,7 @@ namespace RenderCore
         IKTraceDown = IK.TraceDown;
         IKMaxStep   = IK.MaxStep;
         IKResponse  = IK.Response;
+        IKMaxTilt   = IK.MaxTilt;
         for(const AnimIKChain& Chain : IK.Chains)
         {
             if(!Skeleton) { break; }
@@ -858,15 +865,20 @@ namespace RenderCore
         float BaseY = Origin.Y;
         if(bHasWorld && bBaseGround) { HeightOn(BasePoint, BaseNormal, Origin.X, Origin.Z, BaseY); }
 
-        const auto WeightOf = [this](const IKChainRuntime& InChain)
+        /* Each chain's weight, its parameter's share eased in and out over about
+         * a quarter second: a Bool (Armed) switching does not snap the limb. */
+        const float WeightEase = Ease >= 1.0f ? 1.0f : 1.0f - std::exp(-IK_WEIGHT_RESPONSE * IKDelta);
+        for(IKChainRuntime& Chain : IKChains)
         {
-            float Weight = InChain.Weight;
-            if(InChain.WeightParameter >= 0 && size_t(InChain.WeightParameter) < Parameters.size())
+            float Weight = Chain.Weight;
+            if(Chain.WeightParameter >= 0 && size_t(Chain.WeightParameter) < Parameters.size())
             {
-                Weight *= std::clamp(Parameters[size_t(InChain.WeightParameter)], 0.0f, 1.0f);
+                Weight *= std::clamp(Parameters[size_t(Chain.WeightParameter)], 0.0f, 1.0f);
             }
-            return std::clamp(Weight, 0.0f, 1.0f);
-        };
+            Weight = std::clamp(Weight, 0.0f, 1.0f);
+            Chain.Blend = Chain.Blend < 0.0f ? Weight : Chain.Blend + (Weight - Chain.Blend) * WeightEase;
+        }
+        const auto WeightOf = [](const IKChainRuntime& InChain) { return InChain.Blend; };
 
         /* Feet: each moved along up by how far its ground is above (or below)
          * the ground the entity stands on, eased; turned to its slope. */
@@ -884,7 +896,13 @@ namespace RenderCore
                 if(HeightOn(Chain.GroundPoint, Chain.GroundNormal, FootWorld.X, FootWorld.Z, GroundY))
                 {
                     Wanted = std::clamp(GroundY - BaseY, -IKMaxStep, IKMaxStep) * ModelPerWorld;
-                    if(Chain.bAlignEnd) { Tilt = AM::FromTo(Up, Direction(WorldToModel, Chain.GroundNormal)); }
+                    if(Chain.bAlignEnd)
+                    {
+                        /* Turned with the slope, by MaxTilt at most. */
+                        Tilt = AM::FromTo(Up, Direction(WorldToModel, Chain.GroundNormal));
+                        const float Angle = 2.0f * std::acos(std::min(std::fabs(Tilt.W), 1.0f)) * 180.0f / 3.14159265f;
+                        if(Angle > IKMaxTilt) { Tilt = AM::Nlerp(AnimQuat(), Tilt, Angle > 1e-4f ? IKMaxTilt / Angle : 0.0f); }
+                    }
                 }
             }
             Chain.Offset += (Wanted - Chain.Offset) * Ease;

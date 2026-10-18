@@ -1191,6 +1191,8 @@ QWidget* AnimStateEditorWindow::BuildIK()
     IKTraceDown = MakeLength(1000.0, QString(), QStringLiteral("...to this far below it"));
     IKMaxStep   = MakeLength(1000.0, QString(), QStringLiteral("No foot -- nor the pelvis -- moves farther than this up or down"));
     IKResponse  = MakeLength(100.0, QStringLiteral(" /s"), QStringLiteral("How fast feet follow the ground: higher is snappier. 0: at once"));
+    IKMaxTilt   = MakeLength(90.0, QStringLiteral(" deg"), QStringLiteral("How far a foot turns with a slope at most -- stairs are often a "
+                                                                          "steep ramp to the physics, their treads flat"));
     auto* TraceRow = new QHBoxLayout();
     TraceRow->addWidget(new QLabel(QStringLiteral("Up"), Box));
     TraceRow->addWidget(IKTraceUp);
@@ -1201,6 +1203,7 @@ QWidget* AnimStateEditorWindow::BuildIK()
     Form->addRow(QStringLiteral("Pelvis"), IKPelvis);
     Form->addRow(QStringLiteral("Ground Trace"), TraceRow);
     Form->addRow(QStringLiteral("Response"), IKResponse);
+    Form->addRow(QStringLiteral("Max Tilt"), IKMaxTilt);
     Layout->addLayout(Form);
 
     IKTable = MakeTable(Box, { QStringLiteral("Name"), QStringLiteral("Goal"), QStringLiteral("Root"), QStringLiteral("Mid"),
@@ -1217,7 +1220,8 @@ QWidget* AnimStateEditorWindow::BuildIK()
     auto* OffHand  = new QPushButton(QStringLiteral("Add Off Hand"), Box);
     auto* Capture  = new QPushButton(QStringLiteral("Capture Offset"), Box);
     Legs->setToolTip(QStringLiteral("A Ground chain for each leg of the previewed skeleton, by humanoid role, and its pelvis"));
-    OffHand->setToolTip(QStringLiteral("A Bone chain putting the left hand where it is now on the right hand (a weapon held in the right)"));
+    OffHand->setToolTip(QStringLiteral("A Bone chain gripping the right hand with the left (a weapon held in the right), weighted by Armed if "
+                                       "there is such a parameter; Capture Offset then sets the grip from the preview instead"));
     Capture->setToolTip(QStringLiteral("The selected Bone chain's goal: where its end is now on its goal bone, in the preview's pose"));
     Buttons->insertWidget(2, Legs);
     Buttons->insertWidget(3, OffHand);
@@ -1242,6 +1246,7 @@ QWidget* AnimStateEditorWindow::BuildIK()
     OnSpin(IKTraceDown, Edit.IK.TraceDown);
     OnSpin(IKMaxStep, Edit.IK.MaxStep);
     OnSpin(IKResponse, Edit.IK.Response);
+    OnSpin(IKMaxTilt, Edit.IK.MaxTilt);
 
     connect(IKTable, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* InItem)
     {
@@ -1366,7 +1371,29 @@ bool AnimStateEditorWindow::AddIKOffHand()
     Chain.Goal     = RenderCore::EAnimIKGoal::Bone;
     Chain.GoalBone = Skeleton.Bones[size_t(Found.Hand[1])].Name;
     Chain.Pole[0] = -Found.Up.X; Chain.Pole[1] = -Found.Up.Y; Chain.Pole[2] = -Found.Up.Z;   // elbow down
-    CaptureIKOffset(Chain);
+
+    /* A support grip: the left hand a hand's length to the right hand's left
+     * and a little under it, the two turned toward each other as they hang
+     * in the reference pose -- so the grip turns with the right hand. */
+    std::vector<RenderCore::AnimMatrix> Rest;
+    Skeleton.ComputeRefPoseModel(Rest);
+    namespace AM = RenderCore::AnimMath;
+    const RenderCore::AnimTransform Right = AM::ToTransform(Rest[size_t(Found.Hand[1])]);
+    const RenderCore::AnimTransform Left  = AM::ToTransform(Rest[size_t(Found.Hand[0])]);
+    /* The hand's size: its farthest child (the knuckles, past the palm bones). */
+    float HandLength = 0.0f;
+    for(size_t Bone = 0; Bone < Skeleton.Bones.size(); ++Bone)
+    {
+        if(Skeleton.Bones[Bone].Parent == Found.Hand[1]) { HandLength = std::max(HandLength, AM::Length(Skeleton.Bones[Bone].RefPose.Translation)); }
+    }
+    if(HandLength < 1.0f) { HandLength = 8.0f; }
+    const RenderCore::AnimVec3 Beside = AM::Add(AM::Scale(Found.Lateral, 0.45f * HandLength), AM::Scale(Found.Up, -0.15f * HandLength));
+    const RenderCore::AnimQuat Into   = AM::Conjugate(Right.Rotation);
+    Chain.GoalOffset = RenderCore::AnimTransform();
+    Chain.GoalOffset.Translation = AM::Rotate(Into, Beside);
+    Chain.GoalOffset.Rotation    = AM::Normalize(AM::Mul(Into, Left.Rotation));
+    /* Only while armed, when the anim state says so. */
+    if(Edit.FindParameter("Armed") >= 0) { Chain.WeightParameter = "Armed"; }
     Edit.IK.Chains.erase(std::remove_if(Edit.IK.Chains.begin(), Edit.IK.Chains.end(),
                                         [](const RenderCore::AnimIKChain& InChain) { return InChain.Name == "OffHand"; }),
                          Edit.IK.Chains.end());
@@ -1394,6 +1421,7 @@ void AnimStateEditorWindow::FillIK()
     IKTraceDown->setValue(double(IK.TraceDown));
     IKMaxStep->setValue(double(IK.MaxStep));
     IKResponse->setValue(double(IK.Response));
+    IKMaxTilt->setValue(double(IK.MaxTilt));
 
     QStringList Weights;
     for(const RenderCore::AnimStateParameter& Parameter : Edit.Parameters)
@@ -1446,7 +1474,7 @@ void AnimStateEditorWindow::FillIK()
         });
         IKTable->setCellWidget(int(Row), IK_WeightParameter, Weight);
     }
-    for(QWidget* Each : std::initializer_list<QWidget*>{ IKPelvis, IKTraceUp, IKTraceDown, IKMaxStep, IKResponse }) { Each->setEnabled(!bReadOnly); }
+    for(QWidget* Each : std::initializer_list<QWidget*>{ IKPelvis, IKTraceUp, IKTraceDown, IKMaxStep, IKResponse, IKMaxTilt }) { Each->setEnabled(!bReadOnly); }
     bFilling = bWas;
 }
 

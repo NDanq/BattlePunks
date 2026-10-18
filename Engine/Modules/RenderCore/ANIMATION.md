@@ -346,7 +346,7 @@ and its goal is one of:
 
 | Goal | Reaches for |
 |---|---|
-| Ground | the ground under the foot: moved up or down by how far that ground is above or below where the entity stands, and turned with its slope (Align) |
+| Ground | the ground under the foot: moved up or down by how far that ground is above or below where the entity stands, and turned with its slope (Align), by MaxTilt at most -- stairs are often a steep ramp to the physics, their treads flat |
 | Bone | a place fixed to another bone (GoalOffset in GoalBone's space): the off hand on a weapon held in the other; turned as that place is (Align) |
 | Script | a world point gameplay sets: `animation:SetIKGoal("Reach", position, weight)`, `ClearIKGoal`. Set on any chain, it overrides that chain's own goal |
 
@@ -355,7 +355,8 @@ and its goal is one of:
 where the entity stands. The animation system traces them on the game
 thread (`AnimationSystem::SetGroundQuery`; NimbleEngine's is the world's
 physics, on the layers a Character Mover on the entity stands on, through
-the character's own body) and hands back a plane per probe for the next
+the character's own bodies, its ragdoll hit boxes included: `PhysicsRaycast`'s
+InIgnore) and hands back a plane per probe for the next
 evaluation -- a frame old, but as a plane, so a foot lands on it exactly.
 A foot moves at most MaxStep; the PelvisBone is lowered for the lowest foot
 (never raised: the legs could not follow); both ease in at Response per
@@ -363,7 +364,12 @@ second. No ground found, no query set, or no physics: as animated. Lone
 clips (no anim state) have no IK.
 
 Order: chains are solved in the listed order, so a hand on a bone another
-chain moves goes after that chain.
+chain moves goes after that chain. A chain's weight follows its parameter
+over about a quarter second, so a Bool (Armed) fades the limb in and out.
+
+The CrashDummy's anim state has LeftFoot and RightFoot on the ground
+(lowering DEF-spine) and an OffHand gripping the pistol hand, weighted by
+Armed -- made with the anim state editor's Add Legs and Add Off Hand.
 
 
 ## In the editor

@@ -51,7 +51,7 @@ public:
     bool               Save();
 
     /* The IK section's buttons, for scripts and tests: a Ground chain per leg
-     * and the pelvis; the left hand on the right where it is now (by the
+     * and the pelvis; the left hand gripping the right (by the
      * previewed skeleton's humanoid roles). False if it has none. */
     bool AddIKLegs();
     bool AddIKOffHand();
@@ -151,6 +151,7 @@ private:
     QDoubleSpinBox* IKTraceDown  = nullptr;
     QDoubleSpinBox* IKMaxStep    = nullptr;
     QDoubleSpinBox* IKResponse   = nullptr;
+    QDoubleSpinBox* IKMaxTilt    = nullptr;
     QTableWidget*   IKTable      = nullptr;   // a row per chain
 
     AnimStateGraph* Graph       = nullptr;

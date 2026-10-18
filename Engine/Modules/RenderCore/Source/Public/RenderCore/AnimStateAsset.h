@@ -198,6 +198,7 @@ namespace RenderCore
         float TraceDown = 75.0f;        // ...to this far below it
         float MaxStep   = 50.0f;        // no foot (nor the pelvis) moves farther than this up or down
         float Response  = 15.0f;        // how fast feet follow the ground, per second (1 - e^(-Response t)); 0: at once
+        float MaxTilt   = 25.0f;        // degrees a foot turns with a slope at most: stairs are often a steep ramp to the physics
 
         bool IsSet() const { return !Chains.empty(); }
     };

@@ -55,11 +55,13 @@ namespace NimbleEngine
     NE_API void StopSimulating(GameCore::World& InWorld);
 
     /* The nearest hit along InDirection (any length) within InMaxDistance:
-     * bodies whose Layer is in InMask (sensors skipped) when InWorld is
+     * bodies whose Layer is in InMask (sensors skipped, and InIgnore's own
+     * bodies -- its ragdoll's parts too -- when set) when InWorld is
      * simulated, else Bounds. */
     NE_API bool PhysicsRaycast(GameCore::World& InWorld, const EngineCore::Vector3& InOrigin,
                                const EngineCore::Vector3& InDirection, float InMaxDistance,
-                               PhysicsRaycastHit& OutHit, int32_t InMask = -1);
+                               PhysicsRaycastHit& OutHit, int32_t InMask = -1,
+                               GameCore::EntityID InIgnore = GameCore::EntityID());
 }
 
 #endif //NIMBLEENGINE_PHYSICSFACADE_H
