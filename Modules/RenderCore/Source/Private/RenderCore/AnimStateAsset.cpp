@@ -13,6 +13,7 @@ namespace RenderCore
         constexpr uint32_t TAG_PARAMETERS = EngineCore::MakeArchiveTag('A','P','R','M');
         constexpr uint32_t TAG_LAYERS     = EngineCore::MakeArchiveTag('A','L','Y','R');
         constexpr uint32_t TAG_LOOK_AT    = EngineCore::MakeArchiveTag('A','L','O','K');
+        constexpr uint32_t TAG_RETARGET   = EngineCore::MakeArchiveTag('A','R','T','G');
 
         /* Counts past these are a corrupt file, not a big anim state. */
         constexpr uint32_t MAX_ITEMS = 4096;
@@ -97,6 +98,18 @@ namespace RenderCore
             Ar << InOutLookAt.Parameter << InOutLookAt.WeightParameter << InOutLookAt.MinAngle << InOutLookAt.MaxAngle;
             Ar << InOutLookAt.Axis[0] << InOutLookAt.Axis[1] << InOutLookAt.Axis[2] << InOutLookAt.Response;
             SerializeList(Ar, InOutLookAt.Bones, [](EngineCore::Archive& InAr, AnimLookBone& InOutBone) { InAr << InOutBone.Bone << InOutBone.Share; });
+            Ar.CloseChunk();
+        }
+
+        /* The optional ARTG chunk: written only when it names a retarget. */
+        void SerializeRetargetPath(EngineCore::Archive& Ar, std::string& InOutRetarget)
+        {
+            if(Ar.IsSaving() && InOutRetarget.empty()) { return; }
+            if(Ar.IsLoading() && Ar.PeekChunkTag() != TAG_RETARGET) { return; }
+
+            uint16_t Version = 1;
+            if(!Ar.OpenChunk(TAG_RETARGET, Version)) { return; }
+            Ar << InOutRetarget;
             Ar.CloseChunk();
         }
 
@@ -191,6 +204,7 @@ namespace RenderCore
             Ar.CloseChunk();
         }
         if(!Ar.HasError()) { SerializeLookAt(Ar, InOutState.LookAt); }
+        if(!Ar.HasError()) { SerializeRetargetPath(Ar, InOutState.Retarget); }
         Ar.CloseChunk();
 
         if(Ar.IsLoading() && !Ar.HasError())

@@ -159,6 +159,9 @@ namespace RenderCore
             std::shared_ptr<const AnimClipData>  Clip;
             std::shared_ptr<const AnimStateData> State;
             uint64_t                             ClipGeneration = 0;   // an anim state's clips, as loaded
+            std::string                          RetargetPath;         // the component's, or else the anim state's
+            std::shared_ptr<const RetargetData>  Retarget;             // null: none, or not for the mesh's skeleton
+            uint64_t                             SkeletonGeneration = 0;   // with a retarget: its source skeletons, as loaded
             uint64_t                             Seen = 0;
             float                                Saved   = 0.0f;       // time saved up while skipped
             int32_t                              Skipped = 0;

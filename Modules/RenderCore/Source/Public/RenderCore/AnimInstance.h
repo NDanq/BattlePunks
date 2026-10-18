@@ -7,7 +7,9 @@
 #include <vector>
 
 #include "Public/RenderCore/AnimPose.h"
+#include "Public/RenderCore/AnimRetarget.h"
 #include "Public/RenderCore/AnimStateAsset.h"
+#include "Public/RenderCore/RetargetAsset.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
 
 /*
@@ -35,6 +37,14 @@ namespace RenderCore
         /* The skeleton it poses; null: nothing to pose. Restarts playback. */
         void SetSkeleton(std::shared_ptr<const SkeletonData> InSkeleton);
         const std::shared_ptr<const SkeletonData>& GetSkeleton() const { return Skeleton; }
+
+        /* The retarget clips made for other skeletons play through
+         * (AnimRetarget.h): its Target must be the skeleton's path, which the
+         * caller checks. A clip whose Skeleton is empty, the target, or not
+         * one of its sources plays by bone name; null: every clip does.
+         * Restarts playback. */
+        void SetRetarget(std::shared_ptr<const RetargetData> InRetarget);
+        const std::shared_ptr<const RetargetData>& GetRetarget() const { return Retarget; }
 
         /* Plays InClip alone from the start (null: the reference pose). */
         void PlayClip(std::shared_ptr<const AnimClipData> InClip);
@@ -137,9 +147,10 @@ namespace RenderCore
         {
             std::shared_ptr<const AnimClipData> Clip;
             AnimClipBinding                     Binding;
+            std::shared_ptr<const RetargetBinding> Retargeted;   // set: it plays through the retarget, not Binding
             float                               Position  = 0.0f;
             float                               PositionY = 0.0f;
-            int32_t                             RootBone  = -1;   // the clip's root bone, when its root motion is not Keep
+            int32_t                             RootBone  = -1;   // the clip's root bone (on this skeleton), when its root motion is not Keep
             int32_t                             RootTrack = -1;
         };
         struct StateRuntime
@@ -185,6 +196,10 @@ namespace RenderCore
 
         /* Rebuilds Layers from State, or from Clip alone. */
         void Rebuild();
+        /* InClip bound to the skeleton: by name, or through Retarget. */
+        Sample MakeSample(std::shared_ptr<const AnimClipData> InClip, float InPosition, float InPositionY) const;
+        /* InSample's clip at InTime written into InOutPose (SampleClip, or retargeted). */
+        void SampleInto(const Sample& InSample, float InTime, AnimLocalPose& InOutPose);
         void Restart();
 
         /* The samples' weights for InState now, and its dominant sample. */
@@ -216,6 +231,8 @@ namespace RenderCore
         std::shared_ptr<const SkeletonData>  Skeleton;
         std::shared_ptr<const AnimClipData>  Clip;
         std::shared_ptr<const AnimStateData> State;
+        std::shared_ptr<const RetargetData>  Retarget;
+        RetargetScratch                      RetargetWork;   // SampleClipRetargeted's, reused
 
         std::vector<LayerRuntime>   Layers;
         std::vector<float>          Parameters;     // by State's parameter
@@ -245,8 +262,9 @@ namespace RenderCore
 
         /* SetOverlayClip's. */
         std::shared_ptr<const AnimClipData> Overlay;
-        AnimClipBinding                     OverlayBinding;
+        Sample                              OverlayBinding;
         const SkeletonData*                 OverlayBoundTo = nullptr;
+        const RetargetData*                 OverlayBoundVia = nullptr;
         float                               OverlayTime   = 0.0f;
         float                               OverlayWeight = 0.0f;
 

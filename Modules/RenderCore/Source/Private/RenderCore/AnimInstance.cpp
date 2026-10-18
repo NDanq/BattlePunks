@@ -18,6 +18,14 @@ namespace RenderCore
         EvaluatePose();
     }
 
+    void AnimInstance::SetRetarget(std::shared_ptr<const RetargetData> InRetarget)
+    {
+        Retarget = std::move(InRetarget);
+        Rebuild();
+        Restart();
+        EvaluatePose();
+    }
+
     void AnimInstance::PlayClip(std::shared_ptr<const AnimClipData> InClip)
     {
         Clip  = std::move(InClip);
@@ -45,6 +53,42 @@ namespace RenderCore
         }
     }
 
+    AnimInstance::Sample AnimInstance::MakeSample(std::shared_ptr<const AnimClipData> InClip, const float InPosition, const float InPositionY) const
+    {
+        Sample Out;
+        Out.Clip      = std::move(InClip);
+        Out.Position  = InPosition;
+        Out.PositionY = InPositionY;
+        if(!Out.Clip || !Skeleton)
+        {
+            return Out;
+        }
+        Out.Retargeted = RetargetBindingCache::Find(Out.Clip, Retarget, Skeleton);
+        if(Out.Retargeted)
+        {
+            /* Its root bone is the target bone the clip's root drives. */
+            if(Out.Clip->RootMotion != EAnimRootMotion::Keep)
+            {
+                Out.RootBone  = Out.Retargeted->TargetRootBone;
+                Out.RootTrack = Out.Retargeted->RootTrack;
+            }
+            return Out;
+        }
+        BindClip(*Out.Clip, *Skeleton, Out.Binding);
+        if(Out.Clip->RootMotion != EAnimRootMotion::Keep)
+        {
+            Out.RootBone  = Skeleton->FindBone(Out.Clip->RootBone);
+            Out.RootTrack = Out.Clip->FindTrack(Out.Clip->RootBone);
+        }
+        return Out;
+    }
+
+    void AnimInstance::SampleInto(const Sample& InSample, const float InTime, AnimLocalPose& InOutPose)
+    {
+        if(InSample.Retargeted) { SampleClipRetargeted(*InSample.Clip, *InSample.Retargeted, InTime, RetargetWork, InOutPose); }
+        else                    { SampleClip(*InSample.Clip, InSample.Binding, InTime, InOutPose); }
+    }
+
     void AnimInstance::Rebuild()
     {
         Layers.clear();
@@ -56,24 +100,8 @@ namespace RenderCore
         bLookPlaced = false;
         RefPose.clear();
         if(Skeleton) { GetRefPose(*Skeleton, RefPose); }
-
-        const auto MakeSample = [this](std::shared_ptr<const AnimClipData> InClip, const float InPosition, const float InPositionY)
-        {
-            Sample Out;
-            Out.Clip      = std::move(InClip);
-            Out.Position  = InPosition;
-            Out.PositionY = InPositionY;
-            if(Out.Clip && Skeleton)
-            {
-                BindClip(*Out.Clip, *Skeleton, Out.Binding);
-                if(Out.Clip->RootMotion != EAnimRootMotion::Keep)
-                {
-                    Out.RootBone  = Skeleton->FindBone(Out.Clip->RootBone);
-                    Out.RootTrack = Out.Clip->FindTrack(Out.Clip->RootBone);
-                }
-            }
-            return Out;
-        };
+        OverlayBoundTo  = nullptr;   // the overlay binds again, perhaps through another retarget
+        OverlayBoundVia = nullptr;
 
         if(!State)
         {
@@ -353,10 +381,12 @@ namespace RenderCore
         if(InSample.RootBone < 0 || InSample.RootTrack < 0 || size_t(InSample.RootBone) >= InOutPose.size()) { return; }
         const std::vector<AnimVec3>& Keys = InSample.Clip->Tracks[size_t(InSample.RootTrack)].Translations;
         if(Keys.empty()) { return; }
+        /* Retargeted, the first frame is the target root's, as the binding worked it out. */
+        const AnimVec3& FirstLocal = InSample.Retargeted ? InSample.Retargeted->FirstRootTranslation : Keys.front();
         const AnimMatrix Parent = ParentModel(InOutPose, InSample.RootBone);
         AnimVec3& Local = InOutPose[size_t(InSample.RootBone)].Translation;
         const AnimVec3 Now   = AnimMath::TransformPoint(Parent, Local);
-        const AnimVec3 First = AnimMath::TransformPoint(Parent, Keys.front());
+        const AnimVec3 First = AnimMath::TransformPoint(Parent, FirstLocal);
         Local = AnimMath::TransformPoint(AnimMath::Inverse(Parent), { First.X, Now.Y, First.Z });
     }
 
@@ -419,7 +449,9 @@ namespace RenderCore
             {
                 const AnimClipData& Notifying = *State.Samples[Dominant].Clip;
                 const float Length = Notifying.GetDuration();
+                const size_t Before = Fired.size();
                 CollectNotifies(Notifying, From * Length, To * Length, bWrap, Fired);
+                if(State.Samples[Dominant].Retargeted) { RemapNotifies(*State.Samples[Dominant].Retargeted, Fired, Before); }
             }
         }
 
@@ -431,7 +463,8 @@ namespace RenderCore
             const Sample& Each = State.Samples[Index];
             if(Weights[Index] <= 0.0f || Each.RootBone < 0 || Each.Clip->RootMotion != EAnimRootMotion::Extract) { continue; }
             const float Length = Each.Clip->GetDuration();
-            const AnimVec3 Local = Each.Clip->GetRootTravel(From * Length, To * Length, bWrap);
+            const AnimVec3 Local = Each.Retargeted ? GetRootTravelRetargeted(*Each.Clip, *Each.Retargeted, From * Length, To * Length, bWrap)
+                                                   : Each.Clip->GetRootTravel(From * Length, To * Length, bWrap);
             const AnimMatrix Parent = ParentModel(RefPose, Each.RootBone);
             const AnimVec3 Model{ Parent.M[0][0] * Local.X + Parent.M[0][1] * Local.Y + Parent.M[0][2] * Local.Z,
                                   0.0f,
@@ -453,7 +486,7 @@ namespace RenderCore
         const auto Pose = [this, &InLayer](const Sample& InSample, const float InTime, AnimLocalPose& OutSample)
         {
             GetRefPose(*Skeleton, OutSample);
-            SampleClip(*InSample.Clip, InSample.Binding, InTime, OutSample);
+            SampleInto(InSample, InTime, OutSample);
             if(!InLayer.bAdditive)
             {
                 HoldRoot(InSample, OutSample);
@@ -462,7 +495,7 @@ namespace RenderCore
             GetRefPose(*Skeleton, Scratch[3]);
             if(InLayer.AdditiveBase == EAnimAdditiveBase::FirstFrame)
             {
-                SampleClip(*InSample.Clip, InSample.Binding, 0.0f, Scratch[3]);
+                SampleInto(InSample, 0.0f, Scratch[3]);
             }
             MakeAdditivePose(OutSample, Scratch[3]);
         };
@@ -692,13 +725,14 @@ namespace RenderCore
         }
         if(Overlay && OverlayWeight > 0.0f)
         {
-            if(OverlayBoundTo != Skeleton.get())
+            if(OverlayBoundTo != Skeleton.get() || OverlayBoundVia != Retarget.get())
             {
-                BindClip(*Overlay, *Skeleton, OverlayBinding);
-                OverlayBoundTo = Skeleton.get();
+                OverlayBinding  = MakeSample(Overlay, 0.0f, 0.0f);
+                OverlayBoundTo  = Skeleton.get();
+                OverlayBoundVia = Retarget.get();
             }
             GetRefPose(*Skeleton, Scratch[2]);
-            SampleClip(*Overlay, OverlayBinding, OverlayTime, Scratch[2]);
+            SampleInto(OverlayBinding, OverlayTime, Scratch[2]);
             BlendPoses(LocalPose, Scratch[2], std::min(OverlayWeight, 1.0f));
         }
         ApplyLookAt(LocalPose);
