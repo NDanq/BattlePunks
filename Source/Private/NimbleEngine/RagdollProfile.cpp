@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "Public/RenderCore/HumanoidRig.h"
 #include "Public/RenderCore/SkeletonAsset.h"
 
 /*
@@ -77,119 +78,20 @@ namespace NimbleEngine
             return AM::Normalize(AnimQuat{ Axis.X, Axis.Y, Axis.Z, 1.0f + Cos });
         }
 
-        /* Lower case, without a namespace ("mixamorig:") or a rig layer prefix ("DEF-"). */
-        std::string Simplify(const std::string& InName)
-        {
-            std::string Name = InName;
-            const size_t Colon = Name.find_last_of(':');
-            if(Colon != std::string::npos) { Name = Name.substr(Colon + 1); }
-            for(char& Each : Name) { Each = char(std::tolower(static_cast<unsigned char>(Each))); }
-            for(const char* Prefix : { "def-", "def_", "org-", "org_", "b_", "bip01 ", "bip01_", "bip001 ", "bip001_" })
-            {
-                const size_t Length = std::string(Prefix).size();
-                if(Name.compare(0, Length, Prefix) == 0) { Name = Name.substr(Length); }
-            }
-            return Name;
-        }
-
+        /* A skeleton's bones at rest: where they are, and their children. */
         struct Bones
         {
             const RenderCore::SkeletonData& Skeleton;
-            std::vector<AnimVec3>    Position;   // model space, at rest
-            std::vector<std::string> Names;      // Simplify()d
-            std::vector<int32_t>     Depth;
-            std::vector<int32_t>     Subtree;    // descendants, not counting itself
-            float                    MidX = 0.0f;
+            std::vector<AnimVec3>           Position;   // model space, at rest
 
             Bones(const RenderCore::SkeletonData& InSkeleton, const std::vector<AnimMatrix>& InRest)
                 : Skeleton(InSkeleton)
             {
-                const size_t Count = InSkeleton.Bones.size();
-                Position.resize(Count);
-                Names.resize(Count);
-                Depth.assign(Count, 0);
-                Subtree.assign(Count, 0);
-                for(size_t Bone = 0; Bone < Count; ++Bone)
+                Position.resize(InSkeleton.Bones.size());
+                for(size_t Bone = 0; Bone < Position.size(); ++Bone)
                 {
                     Position[Bone] = { InRest[Bone].M[0][3], InRest[Bone].M[1][3], InRest[Bone].M[2][3] };
-                    Names[Bone]    = Simplify(InSkeleton.Bones[Bone].Name);
-                    const int32_t Parent = InSkeleton.Bones[Bone].Parent;
-                    Depth[Bone] = Parent >= 0 ? Depth[size_t(Parent)] + 1 : 0;
-                    MidX += Position[Bone].X / float(Count);
                 }
-                /* Parents first, so children are counted before their parents are reached. */
-                for(size_t Bone = Count; Bone-- > 0;)
-                {
-                    const int32_t Parent = InSkeleton.Bones[Bone].Parent;
-                    if(Parent >= 0) { Subtree[size_t(Parent)] += Subtree[Bone] + 1; }
-                }
-            }
-
-            int32_t ParentOf(const int32_t InBone) const { return Skeleton.Bones[size_t(InBone)].Parent; }
-
-            /* InAncestor is InBone or above it. */
-            bool IsAncestor(const int32_t InAncestor, int32_t InBone) const
-            {
-                for(; InBone >= 0; InBone = ParentOf(InBone))
-                {
-                    if(InBone == InAncestor) { return true; }
-                }
-                return false;
-            }
-
-            int32_t CommonAncestor(int32_t InA, int32_t InB) const
-            {
-                while(InA >= 0 && !IsAncestor(InA, InB)) { InA = ParentOf(InA); }
-                return InA;
-            }
-
-            /*
-             * The shallowest bone named like one of InWords and none of
-             * InNot, below InUnder (when >= 0), on InSide (+1: the side of
-             * positive X, -1 the other, 0 either); -1 if none.
-             */
-            int32_t Find(const std::vector<const char*>& InWords, const std::vector<const char*>& InNot,
-                         const int32_t InUnder, const int InSide) const
-            {
-                int32_t Best = -1;
-                for(size_t Bone = 0; Bone < Names.size(); ++Bone)
-                {
-                    const std::string& Name = Names[Bone];
-                    const auto Has = [&Name](const char* InWord) { return Name.find(InWord) != std::string::npos; };
-                    if(std::none_of(InWords.begin(), InWords.end(), Has) || std::any_of(InNot.begin(), InNot.end(), Has))
-                    {
-                        continue;
-                    }
-                    if(InUnder >= 0 && (int32_t(Bone) == InUnder || !IsAncestor(InUnder, int32_t(Bone)))) { continue; }
-                    if(InSide > 0 && Position[Bone].X <= MidX) { continue; }
-                    if(InSide < 0 && Position[Bone].X >= MidX) { continue; }
-                    if(Best < 0 || Depth[Bone] < Depth[size_t(Best)]) { Best = int32_t(Bone); }
-                }
-                return Best;
-            }
-
-            /* InBone's child with the most below it (on InAvoid's side: not an
-             * ancestor of InAvoidA or InAvoidB); -1 if none. */
-            int32_t LongestChild(const int32_t InBone, const int32_t InAvoidA = -1, const int32_t InAvoidB = -1,
-                                 const AnimVec3* InPrefer = nullptr) const
-            {
-                int32_t Best = -1;
-                float   BestRise = 0.0f;
-                for(size_t Bone = 0; Bone < Names.size(); ++Bone)
-                {
-                    if(ParentOf(int32_t(Bone)) != InBone) { continue; }
-                    if((InAvoidA >= 0 && IsAncestor(int32_t(Bone), InAvoidA)) || (InAvoidB >= 0 && IsAncestor(int32_t(Bone), InAvoidB)))
-                    {
-                        continue;
-                    }
-                    const float Rise = InPrefer ? Dot(AM::Sub(Position[Bone], Position[size_t(InBone)]), *InPrefer) : 0.0f;
-                    if(Best < 0 || Subtree[Bone] > Subtree[size_t(Best)] || (Subtree[Bone] == Subtree[size_t(Best)] && Rise > BestRise))
-                    {
-                        Best     = int32_t(Bone);
-                        BestRise = Rise;
-                    }
-                }
-                return Best;
             }
 
             /* The average of InBone's children's positions; false if it has none. */
@@ -197,9 +99,9 @@ namespace NimbleEngine
             {
                 AnimVec3 Sum;
                 int      Count = 0;
-                for(size_t Bone = 0; Bone < Names.size(); ++Bone)
+                for(size_t Bone = 0; Bone < Position.size(); ++Bone)
                 {
-                    if(ParentOf(int32_t(Bone)) != InBone) { continue; }
+                    if(Skeleton.Bones[Bone].Parent != InBone) { continue; }
                     Sum = AM::Add(Sum, Position[Bone]);
                     ++Count;
                 }
@@ -208,14 +110,6 @@ namespace NimbleEngine
                 return true;
             }
         };
-
-        const std::vector<const char*> NotTwist = { "twist", "roll", "ik", "pole", "target" };
-
-        std::vector<const char*> Join(std::vector<const char*> InA, const std::vector<const char*>& InB)
-        {
-            InA.insert(InA.end(), InB.begin(), InB.end());
-            return InA;
-        }
 
         /* The parts being made, with the skeleton they come from. */
         struct Builder
@@ -311,77 +205,27 @@ namespace NimbleEngine
         const Bones B(InSkeleton, OutProfile.RestModel);
         const std::vector<AnimVec3>& P = B.Position;
 
-        // --- Find the limbs -------------------------------------------------
-        const std::vector<const char*> ThighWords   = { "thigh", "upleg", "upperleg", "upper_leg", "leg_upper", "upper leg" };
-        const std::vector<const char*> ShinWords    = { "shin", "calf", "lowerleg", "lower_leg", "leg_lower", "lower leg", "knee", "leg" };
-        const std::vector<const char*> FootWords    = { "foot", "ankle" };
-        const std::vector<const char*> UpperArmWords = { "upper_arm", "upperarm", "uparm", "arm_upper", "upper arm", "arm" };
-        const std::vector<const char*> ForearmWords = { "forearm", "lowerarm", "lower_arm", "arm_lower", "lower arm", "elbow" };
-        const std::vector<const char*> HandWords    = { "hand", "wrist" };
-        const std::vector<const char*> NotUpperLeg  = Join(NotTwist, { "upleg", "upperleg", "upper_leg", "leg_upper", "upper leg", "thigh" });
-        const std::vector<const char*> NotUpperArm  = Join(NotTwist, { "forearm", "lowerarm", "lower_arm", "arm_lower", "lower arm", "armature", "hand" });
-
-        int32_t Thigh[2], Shin[2], Foot[2], UpperArm[2], Forearm[2], Hand[2];   // [0]: +X side ("L"), [1]: -X side ("R")
-        std::string Missing;
-        for(int Side = 0; Side < 2; ++Side)
+        // --- Find the limbs, the spine and the head (RenderCore's HumanoidRig.h) ---
+        RenderCore::HumanoidRoles Roles;
+        if(!RenderCore::FindHumanoidRoles(InSkeleton, Roles, OutError))
         {
-            const int Sign   = Side == 0 ? 1 : -1;
-            const char* Name = Side == 0 ? ".L" : ".R";
-            Thigh[Side]    = B.Find(ThighWords, NotTwist, -1, Sign);
-            Shin[Side]     = Thigh[Side] >= 0 ? B.Find(ShinWords, NotUpperLeg, Thigh[Side], Sign) : -1;
-            Foot[Side]     = Shin[Side] >= 0 ? B.Find(FootWords, NotTwist, Shin[Side], Sign) : -1;
-            UpperArm[Side] = B.Find(UpperArmWords, NotUpperArm, -1, Sign);
-            Forearm[Side]  = UpperArm[Side] >= 0 ? B.Find(ForearmWords, NotTwist, UpperArm[Side], Sign) : -1;
-            Hand[Side]     = Forearm[Side] >= 0 ? B.Find(HandWords, NotTwist, Forearm[Side], Sign) : -1;
-            if(Thigh[Side] < 0)    { Missing += std::string(" thigh") + Name; }
-            if(Shin[Side] < 0)     { Missing += std::string(" shin") + Name; }
-            if(UpperArm[Side] < 0) { Missing += std::string(" upper arm") + Name; }
-            if(Forearm[Side] < 0)  { Missing += std::string(" forearm") + Name; }
-        }
-        if(!Missing.empty())
-        {
-            OutError = "not a humanoid skeleton: no" + Missing;
             return false;
         }
-
-        const int32_t Pelvis = B.CommonAncestor(Thigh[0], Thigh[1]);
-        const int32_t Chest  = B.CommonAncestor(UpperArm[0], UpperArm[1]);
-        if(Pelvis < 0 || Chest < 0 || Chest == Pelvis || !B.IsAncestor(Pelvis, Chest))
-        {
-            OutError = "not a humanoid skeleton: the arms do not meet above where the legs do";
-            return false;
-        }
-
-        /* The spine between them: one part at its middle bone, if there is one. */
-        std::vector<int32_t> Between;
-        for(int32_t Bone = B.ParentOf(Chest); Bone >= 0 && Bone != Pelvis; Bone = B.ParentOf(Bone)) { Between.push_back(Bone); }
-        std::reverse(Between.begin(), Between.end());
-        const int32_t Spine = Between.empty() ? -1 : Between[(Between.size() - 1) / 2];
-
-        // --- The body's axes and size ------------------------------------------
-        const AnimVec3 Up      = Normalized(AM::Sub(P[size_t(Chest)], P[size_t(Pelvis)]), AnimVec3{ 0.0f, 1.0f, 0.0f });
-        const AnimVec3 Lateral = Orthogonal(AM::Sub(P[size_t(Thigh[0])], P[size_t(Thigh[1])]), Up);   // toward "L"
-        AnimVec3 Forward = Normalized(Cross(Lateral, Up), AnimVec3{ 0.0f, 0.0f, 1.0f });
-        int32_t Toe[2] = { -1, -1 };
-        for(int Side = 0; Side < 2; ++Side)
-        {
-            Toe[Side] = Foot[Side] >= 0 ? B.LongestChild(Foot[Side]) : -1;
-        }
-        if(Toe[0] >= 0 && Dot(Forward, AM::Sub(P[size_t(Toe[0])], P[size_t(Foot[0])])) < 0.0f)
-        {
-            /* The toes say which way it faces (an import may have mirrored the rig). */
-            Forward = Negate(Forward);
-        }
-
-        /* The neck and head: the chest's longest chain that is not an arm. */
-        const int32_t Neck = B.LongestChild(Chest, UpperArm[0], UpperArm[1], &Up);
-        int32_t HeadEnd = Neck;
-        while(HeadEnd >= 0)
-        {
-            const int32_t Next = B.LongestChild(HeadEnd, -1, -1, &Up);
-            if(Next < 0) { break; }
-            HeadEnd = Next;
-        }
+        const int32_t (&Thigh)[2]    = Roles.Thigh;
+        const int32_t (&Shin)[2]     = Roles.Shin;
+        const int32_t (&Foot)[2]     = Roles.Foot;
+        const int32_t (&Toe)[2]      = Roles.Toe;
+        const int32_t (&UpperArm)[2] = Roles.UpperArm;
+        const int32_t (&Forearm)[2]  = Roles.Forearm;
+        const int32_t (&Hand)[2]     = Roles.Hand;
+        const int32_t Pelvis  = Roles.Pelvis;
+        const int32_t Chest   = Roles.Chest;
+        const int32_t Spine   = Roles.Spine;
+        const int32_t Neck    = Roles.Neck;
+        const int32_t HeadEnd = Roles.HeadEnd;
+        const AnimVec3& Up      = Roles.Up;
+        const AnimVec3& Lateral = Roles.Lateral;
+        const AnimVec3& Forward = Roles.Forward;
 
         const float LegLength = Length(AM::Sub(P[size_t(Shin[0])], P[size_t(Thigh[0])]))
                               + (Foot[0] >= 0 ? Length(AM::Sub(P[size_t(Foot[0])], P[size_t(Shin[0])]))

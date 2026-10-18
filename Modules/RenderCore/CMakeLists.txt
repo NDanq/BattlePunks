@@ -90,6 +90,7 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/AnimClipAsset.cpp
         Source/Private/RenderCore/AnimPose.cpp
         Source/Private/RenderCore/AnimRetarget.cpp
+        Source/Private/RenderCore/HumanoidRig.cpp
         Source/Private/RenderCore/AnimStateAsset.cpp
         Source/Private/RenderCore/AnimInstance.cpp
         Source/Private/RenderCore/AnimationSystem.cpp
@@ -129,6 +130,7 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/AnimClipAsset.h
         Source/Public/RenderCore/AnimPose.h
         Source/Public/RenderCore/AnimRetarget.h
+        Source/Public/RenderCore/HumanoidRig.h
         Source/Public/RenderCore/AnimStateAsset.h
         Source/Public/RenderCore/AnimInstance.h
         Source/Public/RenderCore/AnimationSystem.h
