@@ -83,7 +83,8 @@ namespace NimbleEngine
     }
 
     bool PhysicsRaycast(GameCore::World& InWorld, const EngineCore::Vector3& InOrigin, const EngineCore::Vector3& InDirection,
-                        const float InMaxDistance, PhysicsRaycastHit& OutHit, const int32_t InMask)
+                        const float InMaxDistance, PhysicsRaycastHit& OutHit, const int32_t InMask,
+                        const GameCore::EntityID InIgnore)
     {
         OutHit = PhysicsRaycastHit();
 
@@ -91,7 +92,7 @@ namespace NimbleEngine
         if(const JoltPhysics::PhysicsWorld* Physics = JoltPhysics::PhysicsWorld::Find(InWorld))
         {
             JoltPhysics::PhysicsHit Hit;
-            if(!Physics->Raycast(InOrigin, InDirection, InMaxDistance, Hit, InMask)) { return false; }
+            if(!Physics->Raycast(InOrigin, InDirection, InMaxDistance, Hit, InMask, InIgnore)) { return false; }
             OutHit.Entity   = Hit.Entity;
             OutHit.Distance = Hit.Distance;
             OutHit.Point    = Hit.Point;
@@ -187,7 +188,7 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(Physics)
  * The animation system's ground for IK (RenderCore's AnimationSystem::
  * SetGroundQuery): the world's physics, on the layers a Character Mover on
  * the entity stands on (every layer without one), passing through the
- * entity's own body.
+ * entity's own bodies.
  */
 namespace
 {
@@ -195,32 +196,21 @@ namespace
                          const EngineCore::Vector3& InDirection, const float InLength, EngineCore::Vector3& OutPoint,
                          EngineCore::Vector3& OutNormal)
     {
+        const GameCore::Entity Self = InWorld.GetEntity(InIgnore);
         int32_t Mask = -1;
-        if(const NimbleEngine::CharacterMoverComponent* Mover = InWorld.GetEntity(InIgnore).GetComponent<NimbleEngine::CharacterMoverComponent>())
+        if(const NimbleEngine::CharacterMoverComponent* Mover = Self.GetComponent<NimbleEngine::CharacterMoverComponent>())
         {
             Mask = Mover->Mask;
         }
-        EngineCore::Vector3 From = InFrom;
-        float Left = InLength;
-        for(int Attempt = 0; Attempt < 4 && Left > 0.0f; ++Attempt)
+        /* Through the character's own body (its ragdoll hit boxes: the trace starts inside a leg). */
+        NimbleEngine::PhysicsRaycastHit Hit;
+        if(!NimbleEngine::PhysicsRaycast(InWorld, InFrom, InDirection, InLength, Hit, Mask, InIgnore) || Hit.Entity == InIgnore)
         {
-            NimbleEngine::PhysicsRaycastHit Hit;
-            if(!NimbleEngine::PhysicsRaycast(InWorld, From, InDirection, Left, Hit, Mask))
-            {
-                return false;
-            }
-            if(Hit.Entity != InIgnore)
-            {
-                OutPoint  = Hit.Point;
-                OutNormal = Hit.Normal.GetLength() > 1e-6 ? Hit.Normal : EngineCore::Vector3(0.0, 1.0, 0.0);
-                return true;
-            }
-            /* Its own body: on from just past it. */
-            const float Step = Hit.Distance + 0.5f;
-            From = From + InDirection * double(Step);
-            Left -= Step;
+            return false;
         }
-        return false;
+        OutPoint  = Hit.Point;
+        OutNormal = Hit.Normal.GetLength() > 1e-6 ? Hit.Normal : EngineCore::Vector3(0.0, 1.0, 0.0);
+        return true;
     }
 
     struct AnimationGroundRegistrar

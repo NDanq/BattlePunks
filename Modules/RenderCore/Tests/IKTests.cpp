@@ -271,6 +271,14 @@ static void TestFeet()
     Expect(Near(At(Instance.GetModelPose(), *Body, "Foot.L"), { 10.0f, 10.0f, 0.0f }), "a slope through the foot's spot leaves it where it is");
     Expect(Near(AnimMath::Rotate(AnimMath::ToTransform(LeftFoot).Rotation, UP), Slope, 1e-3f), "and turns it to the slope");
 
+    /* A steep slope -- stairs, to the physics: turned by MaxTilt (25) at most. */
+    const float Steep = 42.0f * 3.14159265f / 180.0f;
+    Instance.SetIKGround(0, true, { 10.0f, 0.0f, 0.0f }, { 0.0f, std::cos(Steep), -std::sin(Steep) });
+    Instance.Evaluate();
+    const AnimVec3 FootUp = AnimMath::Rotate(AnimMath::ToTransform(Instance.GetModelPose()[size_t(Body->FindBone("Foot.L"))]).Rotation, UP);
+    Expect(Near(std::acos(std::min(AnimMath::Dot(FootUp, UP), 1.0f)) * 180.0f / 3.14159265f, 25.0f, 0.1f),
+           "a foot turns with a steep slope by MaxTilt at most");
+
     /* Too far: clamped to MaxStep. */
     Instance.SetIKGround(0, true, { 10.0f, 200.0f, 0.0f }, UP);
     Instance.Evaluate();

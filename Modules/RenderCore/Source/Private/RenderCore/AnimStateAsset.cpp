@@ -122,7 +122,7 @@ namespace RenderCore
 
             uint16_t Version = 1;
             if(!Ar.OpenChunk(TAG_IK, Version)) { return; }
-            Ar << InOutIK.PelvisBone << InOutIK.TraceUp << InOutIK.TraceDown << InOutIK.MaxStep << InOutIK.Response;
+            Ar << InOutIK.PelvisBone << InOutIK.TraceUp << InOutIK.TraceDown << InOutIK.MaxStep << InOutIK.Response << InOutIK.MaxTilt;
             SerializeList(Ar, InOutIK.Chains, [](EngineCore::Archive& InAr, AnimIKChain& InOutChain)
             {
                 InAr << InOutChain.Name << InOutChain.Root << InOutChain.Mid << InOutChain.End;
@@ -195,7 +195,7 @@ namespace RenderCore
         {
             if(Bone.Bone.empty()) { return "anim state: a look-at bone has no name"; }
         }
-        if(!(IK.TraceUp >= 0.0f) || !(IK.TraceDown >= 0.0f) || !(IK.MaxStep >= 0.0f) || !(IK.Response >= 0.0f))
+        if(!(IK.TraceUp >= 0.0f) || !(IK.TraceDown >= 0.0f) || !(IK.MaxStep >= 0.0f) || !(IK.Response >= 0.0f) || !(IK.MaxTilt >= 0.0f))
         {
             return "anim state: an IK trace length, step or response is negative";
         }

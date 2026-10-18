@@ -310,11 +310,12 @@ namespace RenderCore
             bool     bScript = false;          // a script goal (world)
             AnimVec3 ScriptGoal;
             float    ScriptWeight = 0.0f;
+            float    Blend = -1.0f;            // its weight now, eased; < 0: not yet placed
         };
         std::vector<IKChainRuntime> IKChains;
         std::vector<IKProbe>        IKProbes;
         int32_t    IKPelvis = -1;
-        float      IKTraceUp = 0.0f, IKTraceDown = 0.0f, IKMaxStep = 0.0f, IKResponse = 0.0f;
+        float      IKTraceUp = 0.0f, IKTraceDown = 0.0f, IKMaxStep = 0.0f, IKResponse = 0.0f, IKMaxTilt = 0.0f;
         bool       bBaseGround = false;         // the plane where the entity stands (world)
         AnimVec3   BasePoint, BaseNormal;
         AnimMatrix ModelToWorld, WorldToModel;
