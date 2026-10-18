@@ -6,6 +6,7 @@
  * rig in an A pose. Both rigs are built here, from model-space placements.
  */
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -532,7 +533,8 @@ static void TestAutoMap()
     Expect(Map.FindBone("DEF-spine") && Map.FindBone("DEF-spine")->Translation == ERetargetTranslation::AnimationScaled
            && Map.FindBone("DEF-hand.L")->Translation == ERetargetTranslation::Skeleton, "the pelvis's translation is scaled, the rest the target's");
 
-    /* Auto-mapped and arms aligned, the A-posed B plays the raise as the T-posed one does. */
+    /* Auto-mapped and arms aligned, the A-posed B plays the raise as the T-posed one does.
+     * (Engine/Docs/Guides/RetargetGuide.md quotes these four lines: keep them as they are.) */
     RetargetSource Aligned;
     Aligned.Skeleton = "Mixamo.nmskel";
     AutoMapRetarget(A.Skeleton, B2.Skeleton, Aligned);
@@ -913,6 +915,75 @@ static void TestSystem(const Assets& InPaths)
     AnimationSystem::Detach(World);
 }
 
+/* 100 CrashDummies, half playing their run through a retarget (from a copy of
+ * their skeleton, auto-mapped), against all of them playing it natively.
+ * The budget: at most 1.5x the native time, in an optimised build; a Debug
+ * build only reports. */
+static void TestPerf()
+{
+    std::printf("[perf]\n");
+    const std::string Dummy = "Engine/Content/Characters/CrashDummy/CrashDummy_Skeleton.nmskel";
+    const auto Skeleton = SkeletonAssetCache::Find(Dummy);
+    const auto Run      = AnimClipAssetCache::Find("Engine/Content/Characters/CrashDummy/CrashDummy_FB_Run.nmanim");
+    if(!Skeleton || !Run) { Expect(false, "CrashDummy's skeleton and run load"); return; }
+
+    /* The same rig at another path: a source, as a pack's skeleton would be. */
+    const std::string CopyPath = std::string(SCRATCH) + "DummyCopy.nmskel";
+    SkeletonData Copy = *Skeleton;
+    AnimClipData CopyRun = *Run;
+    CopyRun.Skeleton = CopyPath;
+    const std::string CopyRunPath = std::string(SCRATCH) + "DummyCopy_Run.nmanim";
+    RetargetData Retarget;
+    Retarget.Target = Dummy;
+    Retarget.Sources.emplace_back();
+    Retarget.Sources[0].Skeleton = CopyPath;
+    AutoMapRetarget(Copy, *Skeleton, Retarget.Sources[0]);
+    Expect(SaveSkeletonFile(CopyPath, Copy) && SaveAnimClipFile(CopyRunPath, CopyRun), "the copy is written");
+    SkeletonAssetCache::Invalidate(CopyPath);
+    AnimClipAssetCache::Invalidate(CopyRunPath);
+    const auto Shared = std::make_shared<const RetargetData>(Retarget);
+    const auto Retargeted = AnimClipAssetCache::Find(CopyRunPath);
+
+    const auto Time = [&](const bool bInHalfRetargeted)
+    {
+        std::vector<std::unique_ptr<AnimInstance>> Instances;
+        for(int Index = 0; Index < 100; ++Index)
+        {
+            auto Instance = std::make_unique<AnimInstance>();
+            Instance->SetSkeleton(Skeleton);
+            const bool bThrough = bInHalfRetargeted && Index % 2 == 0;
+            if(bThrough) { Instance->SetRetarget(Shared); }
+            Instance->PlayClip(bThrough ? Retargeted : Run);
+            Instance->Update(0.01f * float(Index));   // spread out
+            Instances.push_back(std::move(Instance));
+        }
+        const auto Start = std::chrono::steady_clock::now();
+        for(int Frame = 0; Frame < 60; ++Frame)
+        {
+            for(auto& Instance : Instances) { Instance->Update(1.0f / 60.0f); }
+        }
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - Start).count() / 60.0;
+    };
+    Time(false);   // warm
+    const double Native = Time(false);
+    const double Mixed  = Time(true);
+    std::printf("  100 CrashDummies a frame: %.3f ms native, %.3f ms with half retargeted (%.2fx)\n", Native, Mixed, Mixed / Native);
+#ifdef NDEBUG
+    Expect(Mixed <= 1.5 * Native, "half retargeted costs at most 1.5x the native time");
+#endif
+
+    /* And they pose alike: the copy is the same rig. */
+    AnimInstance Native1, Through1;
+    Native1.SetSkeleton(Skeleton);
+    Native1.PlayClip(Run);
+    Through1.SetSkeleton(Skeleton);
+    Through1.SetRetarget(Shared);
+    Through1.PlayClip(Retargeted);
+    Native1.Update(0.4f);
+    Through1.Update(0.4f);
+    Expect(SamePose(Native1.GetModelPose(), Through1.GetModelPose(), 0.05f), "a rig retargeted onto its own copy poses as it does natively");
+}
+
 int main()
 {
     std::printf("RenderCore retarget tests\n");
@@ -928,6 +999,7 @@ int main()
     TestFallback(Paths);
     TestStateAndBake(Paths);
     TestSystem(Paths);
+    TestPerf();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
 }

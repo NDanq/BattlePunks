@@ -1053,6 +1053,7 @@ file(GLOB_RECURSE NM_ENGINE_CHARACTERS CONFIGURE_DEPENDS
      "${CMAKE_CURRENT_SOURCE_DIR}/Content/Characters/*.nmskel"
      "${CMAKE_CURRENT_SOURCE_DIR}/Content/Characters/*.nmanim"
      "${CMAKE_CURRENT_SOURCE_DIR}/Content/Characters/*.nmanimstate"
+     "${CMAKE_CURRENT_SOURCE_DIR}/Content/Characters/*.nmretarget"
      "${CMAKE_CURRENT_SOURCE_DIR}/Content/Characters/*.nmprefab"
      "${CMAKE_CURRENT_SOURCE_DIR}/Content/Characters/*.lua")
 list(APPEND NM_ENGINE_MESHES ${NM_ENGINE_CHARACTERS})

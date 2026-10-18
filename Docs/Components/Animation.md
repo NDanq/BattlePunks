@@ -7,7 +7,7 @@ Reference for the **Animation** component: its C++ class and its Lua API. Writte
 | Name | `Animation` (what `GetComponent` / `AddComponent` take in Lua, and what a save stores) |
 | C++ class | `RenderCore::AnimationComponent` |
 | Header | `#include "Public/RenderCore/Components/AnimationComponent.h"` |
-| Size | 584 bytes |
+| Size | 712 bytes |
 | Add Component | yes |
 
 ## Properties
@@ -19,6 +19,7 @@ What the Details panel shows. The C++ members are public fields of `AnimationCom
 | Property | Type | Default | Notes |
 |---|---|---|---|
 | `Animation` | string | (empty) | asset: animation (.nmanim, .nmanimstate) |
+| `Retarget` | string | (empty) | asset: retarget (.nmretarget) -- clips made for another skeleton play through it; empty: the anim state's |
 | `Play Rate` | float | 1 |  |
 | `Paused` | uint8_t (flag) | false |  |
 
@@ -60,6 +61,7 @@ entity:RemoveComponent("Animation")
 |---|---|
 | `c:GetEntity()` -> Entity | The owner. |
 | `c:GetAnimation()` -> string<br>`c:SetAnimation(string)` | Property. |
+| `c:GetRetarget()` -> string<br>`c:SetRetarget(string)` | Property. |
 | `c:GetPlayRate()` -> number<br>`c:SetPlayRate(number)` | Property. |
 | `c:GetPaused()` -> boolean<br>`c:SetPaused(boolean)` | Property. |
 | `c:SetFloat(Name:string, Value:number)` -> Set:bool | Method. |

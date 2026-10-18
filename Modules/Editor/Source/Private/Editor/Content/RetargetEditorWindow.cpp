@@ -633,14 +633,14 @@ void RetargetEditorWindow::FillBones()
         SourceCombo->setEnabled(!bReadOnly);
         connect(SourceCombo, QOverload<int>::of(&QComboBox::activated), this, [this, Target, SourceCombo](const int InIndex)
         {
-            RenderCore::RetargetSource* Edited_ = CurrentSource();
-            if(bFilling || !Edited_) { return; }
+            RenderCore::RetargetSource* Editing = CurrentSource();
+            if(bFilling || !Editing) { return; }
             Remember();
             if(InIndex <= 0)
             {
-                Edited_->Bones.erase(std::remove_if(Edited_->Bones.begin(), Edited_->Bones.end(),
+                Editing->Bones.erase(std::remove_if(Editing->Bones.begin(), Editing->Bones.end(),
                                                     [&](const RenderCore::RetargetBoneMap& InBone) { return InBone.Target == Target; }),
-                                     Edited_->Bones.end());
+                                     Editing->Bones.end());
             }
             else
             {
