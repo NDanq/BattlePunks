@@ -311,6 +311,7 @@ namespace RenderCore
             AnimVec3 ScriptGoal;
             float    ScriptWeight = 0.0f;
             float    Blend = -1.0f;            // its weight now, eased; < 0: not yet placed
+            float    RestHeight = 0.0f;        // its end's height in the reference pose (a foot standing), model
         };
         std::vector<IKChainRuntime> IKChains;
         std::vector<IKProbe>        IKProbes;

@@ -73,9 +73,14 @@ namespace RenderCore
         const AnimVec3 Toward  = Normalized(ToGoal, Normalized(AM::Sub(C, A), AnimVec3{ 0.0f, -1.0f, 0.0f }));
         const float    Reach   = std::clamp(AM::Length(ToGoal), std::fabs(Upper - Lower) + 1e-3f, Upper + Lower - 1e-3f);
 
-        /* The bend: the way the middle sits off the line now, with a little of
-         * the pole so a near-straight leg does not flick from side to side. */
-        AnimVec3 Bend = AM::Add(Across(AM::Sub(B, A), Toward), AM::Scale(Across(Normalized(InSolve.Pole, AnimVec3()), Toward), 0.05f * Upper));
+        /* The bend: the way the middle sits off the chain's own line as animated
+         * (root to end, not to the target -- a target well forward of the end
+         * would put the knee "behind" that line and flip it), with a little of
+         * the pole so a near-straight leg does not flick from side to side;
+         * then square to where it now reaches. */
+        const AnimVec3 Animated = Normalized(AM::Sub(C, A), Toward);
+        const AnimVec3 Side = AM::Add(Across(AM::Sub(B, A), Animated), AM::Scale(Across(Normalized(InSolve.Pole, AnimVec3()), Animated), 0.05f * Upper));
+        AnimVec3 Bend = Across(Side, Toward);
         if(AM::Length(Bend) < 1e-6f)
         {
             Bend = Across(std::fabs(Toward.Y) < 0.9f ? AnimVec3{ 0.0f, 1.0f, 0.0f } : AnimVec3{ 1.0f, 0.0f, 0.0f }, Toward);
