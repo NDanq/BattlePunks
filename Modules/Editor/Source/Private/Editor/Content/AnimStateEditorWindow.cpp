@@ -35,6 +35,8 @@
 #include <QVBoxLayout>
 
 #include "Public/RenderCore/AnimClipAsset.h"
+#include "Public/RenderCore/AnimIK.h"
+#include "Public/RenderCore/HumanoidRig.h"
 #include "Public/RenderCore/RetargetAsset.h"
 #include "Public/RenderCore/SkeletonAsset.h"
 #include "Private/Editor/Content/AnimPreviewWidget.h"
@@ -186,6 +188,7 @@ void AnimStateEditorWindow::BuildUi()
     Layout->addWidget(BuildParameters());
     Layout->addWidget(BuildLayers());
     Layout->addWidget(BuildLookAt());
+    Layout->addWidget(BuildIK());
     Layout->addWidget(BuildStates(), 1);
     Layout->addWidget(BuildTransitions(), 1);
     Layout->addStretch(0);
@@ -1045,6 +1048,25 @@ void AnimStateEditorWindow::Edited(const bool bInStructure, const bool bInDirty)
     {
         if(Skeleton && Skeleton->FindBone(Bone.Bone) < 0) { Found << QStringLiteral("The look-at turns a bone the skeleton lacks: %1").arg(ToQ(Bone.Bone)); }
     }
+    if(Skeleton && !Edit.IK.PelvisBone.empty() && Skeleton->FindBone(Edit.IK.PelvisBone) < 0)
+    {
+        Found << QStringLiteral("IK lowers a pelvis the skeleton lacks: %1").arg(ToQ(Edit.IK.PelvisBone));
+    }
+    for(const RenderCore::AnimIKChain& Chain : Edit.IK.Chains)
+    {
+        CheckParameter(Chain.WeightParameter, QStringLiteral("IK chain %1").arg(ToQ(Chain.Name)));
+        for(const std::string* Bone : { &Chain.Root, &Chain.Mid, &Chain.End })
+        {
+            if(Skeleton && Skeleton->FindBone(*Bone) < 0)
+            {
+                Found << QStringLiteral("IK chain %1 names a bone the skeleton lacks (it is skipped): %2").arg(ToQ(Chain.Name), ToQ(*Bone));
+            }
+        }
+        if(Skeleton && Chain.Goal == RenderCore::EAnimIKGoal::Bone && Skeleton->FindBone(Chain.GoalBone) < 0)
+        {
+            Found << QStringLiteral("IK chain %1 reaches for a bone the skeleton lacks: %2").arg(ToQ(Chain.Name), ToQ(Chain.GoalBone));
+        }
+    }
     QStringList Escaped;
     for(const QString& Each : Found) { Escaped << Each.toHtmlEscaped(); }
     Problems->setText(Found.isEmpty() ? QString() : QStringLiteral("<b>Problems</b><br>") + Escaped.join(QStringLiteral("<br>")));
@@ -1121,6 +1143,7 @@ void AnimStateEditorWindow::PickMesh(const QString& InFile)
         Completer->setFilterMode(Qt::MatchContains);
         LayerMask->setCompleter(Completer);
     }
+    FillIK();   // its bones for the pelvis
     RestartPreview();
 }
 
@@ -1136,7 +1159,295 @@ void AnimStateEditorWindow::FillAll()
     FillParameters();
     FillLayers();
     FillLookAt();
+    FillIK();
     FillLive();
+}
+
+namespace
+{
+    enum EIKColumn { IK_Name, IK_Goal, IK_Root, IK_Mid, IK_End, IK_GoalBone, IK_Weight, IK_WeightParameter, IK_Align, IK_Columns };
+    const QStringList IK_GOAL_NAMES = { QStringLiteral("Ground"), QStringLiteral("Bone"), QStringLiteral("Script") };
+}
+
+QWidget* AnimStateEditorWindow::BuildIK()
+{
+    auto* Box = new QGroupBox(QStringLiteral("IK -- feet on the ground, hands on their goals, after the look-at"), this);
+    auto* Layout = new QVBoxLayout(Box);
+    auto* Form = new QFormLayout();
+    IKPelvis = new QComboBox(Box);
+    IKPelvis->setEditable(true);
+    IKPelvis->setToolTip(QStringLiteral("Lowered so the feet reach ground below where the entity stands (a foot over a hole); "
+                                        "empty: not moved"));
+    const auto MakeLength = [Box](const double InMax, const QString& InSuffix, const QString& InTip)
+    {
+        auto* Spin = new QDoubleSpinBox(Box);
+        Spin->setRange(0.0, InMax);
+        Spin->setSingleStep(5.0);
+        Spin->setSuffix(InSuffix);
+        Spin->setToolTip(InTip);
+        return Spin;
+    };
+    IKTraceUp   = MakeLength(1000.0, QString(), QStringLiteral("The ground is looked for from this far above each animated foot (world units)"));
+    IKTraceDown = MakeLength(1000.0, QString(), QStringLiteral("...to this far below it"));
+    IKMaxStep   = MakeLength(1000.0, QString(), QStringLiteral("No foot -- nor the pelvis -- moves farther than this up or down"));
+    IKResponse  = MakeLength(100.0, QStringLiteral(" /s"), QStringLiteral("How fast feet follow the ground: higher is snappier. 0: at once"));
+    auto* TraceRow = new QHBoxLayout();
+    TraceRow->addWidget(new QLabel(QStringLiteral("Up"), Box));
+    TraceRow->addWidget(IKTraceUp);
+    TraceRow->addWidget(new QLabel(QStringLiteral("Down"), Box));
+    TraceRow->addWidget(IKTraceDown);
+    TraceRow->addWidget(new QLabel(QStringLiteral("Max Step"), Box));
+    TraceRow->addWidget(IKMaxStep);
+    Form->addRow(QStringLiteral("Pelvis"), IKPelvis);
+    Form->addRow(QStringLiteral("Ground Trace"), TraceRow);
+    Form->addRow(QStringLiteral("Response"), IKResponse);
+    Layout->addLayout(Form);
+
+    IKTable = MakeTable(Box, { QStringLiteral("Name"), QStringLiteral("Goal"), QStringLiteral("Root"), QStringLiteral("Mid"),
+                               QStringLiteral("End"), QStringLiteral("Goal Bone"), QStringLiteral("Weight"),
+                               QStringLiteral("Weight Parameter"), QStringLiteral("Align") });
+    IKTable->setToolTip(QStringLiteral("Each chain: three bones -- hip, knee, ankle; shoulder, elbow, wrist -- turned so the last reaches "
+                                       "its goal. Ground: the ground under it (feet). Bone: a place on another bone (the off hand on a "
+                                       "weapon; Capture Offset sets it from the preview). Script: a point gameplay sets "
+                                       "(animation:SetIKGoal). Align turns the end with the slope, or as the goal is"));
+    Layout->addWidget(IKTable);
+    QPushButton *Add = nullptr, *Remove = nullptr;
+    QHBoxLayout* Buttons = AddRemoveRow(Box, QStringLiteral("IK chain"), Add, Remove);
+    auto* Legs     = new QPushButton(QStringLiteral("Add Legs"), Box);
+    auto* OffHand  = new QPushButton(QStringLiteral("Add Off Hand"), Box);
+    auto* Capture  = new QPushButton(QStringLiteral("Capture Offset"), Box);
+    Legs->setToolTip(QStringLiteral("A Ground chain for each leg of the previewed skeleton, by humanoid role, and its pelvis"));
+    OffHand->setToolTip(QStringLiteral("A Bone chain putting the left hand where it is now on the right hand (a weapon held in the right)"));
+    Capture->setToolTip(QStringLiteral("The selected Bone chain's goal: where its end is now on its goal bone, in the preview's pose"));
+    Buttons->insertWidget(2, Legs);
+    Buttons->insertWidget(3, OffHand);
+    Buttons->insertWidget(4, Capture);
+    Layout->addLayout(Buttons);
+    for(QPushButton* Each : { Add, Remove, Legs, OffHand, Capture }) { Each->setEnabled(!bReadOnly); }
+
+    connect(IKPelvis, &QComboBox::currentTextChanged, this, [this](const QString& InText)
+    {
+        if(bFilling) { return; }
+        const std::string Bone = InText == QStringLiteral("(none)") ? std::string() : InText.trimmed().toStdString();
+        if(Bone != Edit.IK.PelvisBone) { Edit.IK.PelvisBone = Bone; Edited(); }
+    });
+    const auto OnSpin = [this](QDoubleSpinBox* InSpin, float& OutValue)
+    {
+        connect(InSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this, &OutValue](const double InValue)
+        {
+            if(!bFilling) { OutValue = float(InValue); Edited(); }
+        });
+    };
+    OnSpin(IKTraceUp, Edit.IK.TraceUp);
+    OnSpin(IKTraceDown, Edit.IK.TraceDown);
+    OnSpin(IKMaxStep, Edit.IK.MaxStep);
+    OnSpin(IKResponse, Edit.IK.Response);
+
+    connect(IKTable, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* InItem)
+    {
+        const int Row = InItem->row();
+        if(bFilling || Row < 0 || size_t(Row) >= Edit.IK.Chains.size()) { return; }
+        RenderCore::AnimIKChain& Chain = Edit.IK.Chains[size_t(Row)];
+        const std::string Text = InItem->text().trimmed().toStdString();
+        switch(InItem->column())
+        {
+            case IK_Name:     Chain.Name = Text; break;
+            case IK_Root:     Chain.Root = Text; break;
+            case IK_Mid:      Chain.Mid = Text; break;
+            case IK_End:      Chain.End = Text; break;
+            case IK_GoalBone: Chain.GoalBone = Text; break;
+            case IK_Weight:   Chain.Weight = std::clamp(InItem->text().toFloat(), 0.0f, 1.0f); break;
+            case IK_Align:    Chain.bAlignEnd = InItem->checkState() == Qt::Checked; break;
+            default: return;
+        }
+        Edited();
+    });
+    connect(Add, &QPushButton::clicked, this, [this]()
+    {
+        RenderCore::AnimIKChain Chain;
+        Chain.Name = "Chain" + std::to_string(Edit.IK.Chains.size() + 1);
+        Chain.Root = "root_bone"; Chain.Mid = "middle_bone"; Chain.End = "end_bone";
+        Chain.Goal = RenderCore::EAnimIKGoal::Script;
+        Edit.IK.Chains.push_back(Chain);
+        Edited();
+        FillIK();
+        IKTable->selectRow(int(Edit.IK.Chains.size()) - 1);
+    });
+    connect(Remove, &QPushButton::clicked, this, [this]()
+    {
+        const int Row = IKTable->currentRow();
+        if(Row < 0 || size_t(Row) >= Edit.IK.Chains.size()) { return; }
+        Edit.IK.Chains.erase(Edit.IK.Chains.begin() + Row);
+        Edited();
+        FillIK();
+    });
+
+    connect(Legs, &QPushButton::clicked, this, [this]() { AddIKLegs(); });
+    connect(OffHand, &QPushButton::clicked, this, [this]() { AddIKOffHand(); });
+    connect(Capture, &QPushButton::clicked, this, [this]()
+    {
+        const int Row = IKTable->currentRow();
+        if(Row < 0 || size_t(Row) >= Edit.IK.Chains.size()) { return; }
+        RenderCore::AnimIKChain& Chain = Edit.IK.Chains[size_t(Row)];
+        if(Chain.Goal != RenderCore::EAnimIKGoal::Bone || !CaptureIKOffset(Chain))
+        {
+            QMessageBox::information(this, QStringLiteral("Capture Offset"),
+                                     QStringLiteral("Pick a Bone chain whose end and goal bone the previewed skeleton has."));
+            return;
+        }
+        Edited();
+    });
+    return Box;
+}
+
+bool AnimStateEditorWindow::FindIKRoles(RenderCore::HumanoidRoles& OutRoles)
+{
+    const RenderCore::SkeletonData* Skeleton = Preview ? Preview->GetSkeleton() : nullptr;
+    std::string Error = "no skeleton is previewed";
+    if(!Skeleton || !RenderCore::FindHumanoidRoles(*Skeleton, OutRoles, Error))
+    {
+        QMessageBox::information(this, QStringLiteral("IK"), QStringLiteral("Cannot find the limbs: %1.").arg(ToQ(Error)));
+        return false;
+    }
+    return true;
+}
+
+bool AnimStateEditorWindow::AddIKLegs()
+{
+    RenderCore::HumanoidRoles Found;
+    if(bReadOnly || !FindIKRoles(Found)) { return false; }
+    const RenderCore::SkeletonData& Skeleton = *Preview->GetSkeleton();
+    for(int Side = 0; Side < 2; ++Side)
+    {
+        if(Found.Thigh[Side] < 0 || Found.Shin[Side] < 0 || Found.Foot[Side] < 0) { continue; }
+        RenderCore::AnimIKChain Chain;
+        Chain.Name = Side == 0 ? "LeftFoot" : "RightFoot";
+        Chain.Root = Skeleton.Bones[size_t(Found.Thigh[Side])].Name;
+        Chain.Mid  = Skeleton.Bones[size_t(Found.Shin[Side])].Name;
+        Chain.End  = Skeleton.Bones[size_t(Found.Foot[Side])].Name;
+        Chain.Goal = RenderCore::EAnimIKGoal::Ground;
+        Chain.Pole[0] = Found.Forward.X; Chain.Pole[1] = Found.Forward.Y; Chain.Pole[2] = Found.Forward.Z;   // knees forward
+        Edit.IK.Chains.erase(std::remove_if(Edit.IK.Chains.begin(), Edit.IK.Chains.end(),
+                                            [&](const RenderCore::AnimIKChain& InChain) { return InChain.Name == Chain.Name; }),
+                             Edit.IK.Chains.end());
+        Edit.IK.Chains.push_back(Chain);
+    }
+    Edit.IK.PelvisBone = Skeleton.Bones[size_t(Found.Pelvis)].Name;
+    Edited();
+    FillIK();
+    return true;
+}
+
+bool AnimStateEditorWindow::CaptureIKOffset(RenderCore::AnimIKChain& InOutChain)
+{
+    const RenderCore::SkeletonData* Skeleton = Preview ? Preview->GetSkeleton() : nullptr;
+    if(!Skeleton) { return false; }
+    const std::vector<RenderCore::AnimMatrix>& Model = Preview->GetInstance().GetModelPose();
+    const int32_t End  = Skeleton->FindBone(InOutChain.End);
+    const int32_t Goal = Skeleton->FindBone(InOutChain.GoalBone);
+    if(End < 0 || Goal < 0 || size_t(std::max(End, Goal)) >= Model.size()) { return false; }
+    InOutChain.GoalOffset = RenderCore::AnimMath::ToTransform(
+        RenderCore::AnimMath::Mul(RenderCore::AnimMath::Inverse(Model[size_t(Goal)]), Model[size_t(End)]));
+    InOutChain.GoalOffset.Scale = { 1.0f, 1.0f, 1.0f };
+    return true;
+}
+
+bool AnimStateEditorWindow::AddIKOffHand()
+{
+    RenderCore::HumanoidRoles Found;
+    if(bReadOnly || !FindIKRoles(Found)) { return false; }
+    const RenderCore::SkeletonData& Skeleton = *Preview->GetSkeleton();
+    if(Found.Hand[0] < 0 || Found.Hand[1] < 0) { return false; }
+    RenderCore::AnimIKChain Chain;
+    Chain.Name     = "OffHand";
+    Chain.Root     = Skeleton.Bones[size_t(Found.UpperArm[0])].Name;
+    Chain.Mid      = Skeleton.Bones[size_t(Found.Forearm[0])].Name;
+    Chain.End      = Skeleton.Bones[size_t(Found.Hand[0])].Name;
+    Chain.Goal     = RenderCore::EAnimIKGoal::Bone;
+    Chain.GoalBone = Skeleton.Bones[size_t(Found.Hand[1])].Name;
+    Chain.Pole[0] = -Found.Up.X; Chain.Pole[1] = -Found.Up.Y; Chain.Pole[2] = -Found.Up.Z;   // elbow down
+    CaptureIKOffset(Chain);
+    Edit.IK.Chains.erase(std::remove_if(Edit.IK.Chains.begin(), Edit.IK.Chains.end(),
+                                        [](const RenderCore::AnimIKChain& InChain) { return InChain.Name == "OffHand"; }),
+                         Edit.IK.Chains.end());
+    Edit.IK.Chains.push_back(Chain);
+    Edited();
+    FillIK();
+    return true;
+}
+
+void AnimStateEditorWindow::FillIK()
+{
+    if(!IKTable) { return; }
+    const bool bWas = bFilling;
+    bFilling = true;
+    const RenderCore::AnimIK& IK = Edit.IK;
+
+    IKPelvis->clear();
+    IKPelvis->addItem(QStringLiteral("(none)"));
+    if(const RenderCore::SkeletonData* Skeleton = Preview ? Preview->GetSkeleton() : nullptr)
+    {
+        for(const RenderCore::SkeletonBone& Bone : Skeleton->Bones) { IKPelvis->addItem(ToQ(Bone.Name)); }
+    }
+    IKPelvis->setCurrentText(IK.PelvisBone.empty() ? QStringLiteral("(none)") : ToQ(IK.PelvisBone));
+    IKTraceUp->setValue(double(IK.TraceUp));
+    IKTraceDown->setValue(double(IK.TraceDown));
+    IKMaxStep->setValue(double(IK.MaxStep));
+    IKResponse->setValue(double(IK.Response));
+
+    QStringList Weights;
+    for(const RenderCore::AnimStateParameter& Parameter : Edit.Parameters)
+    {
+        if(Parameter.Type != RenderCore::EAnimParameterType::Trigger) { Weights << ToQ(Parameter.Name); }
+    }
+    IKTable->setRowCount(int(IK.Chains.size()));
+    for(size_t Row = 0; Row < IK.Chains.size(); ++Row)
+    {
+        const RenderCore::AnimIKChain& Chain = IK.Chains[Row];
+        const auto Text = [&](const int InColumn, const std::string& InText)
+        {
+            auto* Item = new QTableWidgetItem(ToQ(InText));
+            if(bReadOnly) { Item->setFlags(Item->flags() & ~Qt::ItemIsEditable); }
+            IKTable->setItem(int(Row), InColumn, Item);
+        };
+        Text(IK_Name, Chain.Name);
+        Text(IK_Root, Chain.Root);
+        Text(IK_Mid, Chain.Mid);
+        Text(IK_End, Chain.End);
+        Text(IK_GoalBone, Chain.GoalBone);
+        Text(IK_Weight, QString::number(double(Chain.Weight)).toStdString());
+        auto* Align = new QTableWidgetItem();
+        Align->setFlags((Align->flags() | Qt::ItemIsUserCheckable) & ~Qt::ItemIsEditable);
+        Align->setCheckState(Chain.bAlignEnd ? Qt::Checked : Qt::Unchecked);
+        IKTable->setItem(int(Row), IK_Align, Align);
+
+        auto* Goal = new QComboBox(IKTable);
+        Goal->addItems(IK_GOAL_NAMES);
+        Goal->setCurrentIndex(int(Chain.Goal));
+        Goal->setEnabled(!bReadOnly);
+        connect(Goal, QOverload<int>::of(&QComboBox::activated), this, [this, Row](const int InIndex)
+        {
+            if(bFilling || Row >= Edit.IK.Chains.size()) { return; }
+            Edit.IK.Chains[Row].Goal = RenderCore::EAnimIKGoal(InIndex);
+            Edited();
+        });
+        IKTable->setCellWidget(int(Row), IK_Goal, Goal);
+
+        auto* Weight = new QComboBox(IKTable);
+        Weight->addItem(QStringLiteral("(none)"));
+        Weight->addItems(Weights);
+        Weight->setCurrentIndex(std::max(Weight->findText(ToQ(Chain.WeightParameter)), 0));
+        Weight->setEnabled(!bReadOnly);
+        connect(Weight, QOverload<int>::of(&QComboBox::activated), this, [this, Row, Weight](const int InIndex)
+        {
+            if(bFilling || Row >= Edit.IK.Chains.size()) { return; }
+            Edit.IK.Chains[Row].WeightParameter = InIndex <= 0 ? std::string() : Weight->itemText(InIndex).toStdString();
+            Edited();
+        });
+        IKTable->setCellWidget(int(Row), IK_WeightParameter, Weight);
+    }
+    for(QWidget* Each : std::initializer_list<QWidget*>{ IKPelvis, IKTraceUp, IKTraceDown, IKMaxStep, IKResponse }) { Each->setEnabled(!bReadOnly); }
+    bFilling = bWas;
 }
 
 void AnimStateEditorWindow::FillLookAt()

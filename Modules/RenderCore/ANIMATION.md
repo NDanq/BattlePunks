@@ -17,13 +17,14 @@ the editor's tools for them.
 | Anim state -- parameters, layers of state machines | `AnimStateAsset.h` | `.nmanimstate` |
 | Retarget -- clips of one skeleton played on another | `RetargetAsset.h`, `AnimRetarget.h` | `.nmretarget` |
 | Humanoid roles -- which bone is which, auto-mapping | `HumanoidRig.h` | |
+| IK -- a two-bone chain turned to reach a point | `AnimIK.h` (chains: `AnimStateAsset.h`) | |
 | Pose math -- sample, blend, mask, compose | `AnimPose.h`, `AnimMath.h` | |
 | One skeleton's playback | `AnimInstance.h` | |
 | A world's animation | `AnimationSystem.h` | |
 | Components | `Components/AnimationComponent.h`, `Components/AnimSocketComponent.h` | |
 | Skinning on the GPU | `Shaders/Skinning.glsl`, `MaterialTemplate_VS.glsl` (SkinnedMesh) | |
 
-Tests: `RenderCoreAnimationTests` and `RenderCoreRetargetTests` (headless)
+Tests: `RenderCoreAnimationTests`, `RenderCoreRetargetTests` and `RenderCoreIKTests` (headless)
 and the editor's `NimbleEditorImportTests`.
 
 ---
@@ -333,6 +334,38 @@ retarget is set. It records where it came from, so reimporting it bakes it
 again. In the retarget editor (Bake Clips...) or the console:
 `anim retarget-bake <retarget> <clip | folder> [outdir]`.
 
+## IK
+
+An anim state's **IK** (`AnimIK`, the AIKS chunk) runs after its look-at:
+chains of three bones -- hip, knee, ankle; shoulder, elbow, wrist -- turned
+so the last reaches a goal (`SolveTwoBoneIK`, `AnimIK.h`: analytic; the
+middle bends where the animation bends it, toward the chain's Pole when the
+limb is straight; bones keep their lengths; twist bones between ride along).
+Each chain has a weight, scaled by an optional parameter (Armed, Grounded),
+and its goal is one of:
+
+| Goal | Reaches for |
+|---|---|
+| Ground | the ground under the foot: moved up or down by how far that ground is above or below where the entity stands, and turned with its slope (Align) |
+| Bone | a place fixed to another bone (GoalOffset in GoalBone's space): the off hand on a weapon held in the other; turned as that place is (Align) |
+| Script | a world point gameplay sets: `animation:SetIKGoal("Reach", position, weight)`, `ClearIKGoal`. Set on any chain, it overrides that chain's own goal |
+
+**Feet.** After each update, an instance with Ground chains reports probes
+(`GetIKProbes`): straight down from TraceUp above each animated foot, and
+where the entity stands. The animation system traces them on the game
+thread (`AnimationSystem::SetGroundQuery`; NimbleEngine's is the world's
+physics, on the layers a Character Mover on the entity stands on, through
+the character's own body) and hands back a plane per probe for the next
+evaluation -- a frame old, but as a plane, so a foot lands on it exactly.
+A foot moves at most MaxStep; the PelvisBone is lowered for the lowest foot
+(never raised: the legs could not follow); both ease in at Response per
+second. No ground found, no query set, or no physics: as animated. Lone
+clips (no anim state) have no IK.
+
+Order: chains are solved in the listed order, so a hand on a bone another
+chain moves goes after that chain.
+
+
 ## In the editor
 
 - **Content Browser**: double-click an `.nmanim` to preview it on a mesh of
@@ -361,8 +394,10 @@ again. In the retarget editor (Bake Clips...) or the console:
   Dashed arrows wait for the clip's end. Where the boxes sit is
   saved in the file (ALYR v4); older files are laid out on opening. A live
   preview you can drive sits alongside. A renamed parameter is renamed where
-  it is used; problems (missing clips, parameters, mask or look-at bones)
-  are listed.
+  it is used; problems (missing clips, parameters, mask, look-at or IK
+  bones) are listed. Its IK box sets the pelvis, the ground trace and the
+  chains; Add Legs and Add Off Hand fill them by humanoid role, and Capture
+  Offset sets a Bone chain's goal from the preview's pose.
 - **Retarget editor**: double-click an `.nmretarget` (New Retarget in the
   Content Browser's menu; a selected `.nmskel` is its target). The target,
   the sources, and the selected source's bone table -- each target bone's
@@ -375,7 +410,7 @@ again. In the retarget editor (Bake Clips...) or the console:
   editor has the state's Retarget, and a `.nmskel` opens on a mesh of it.
 - Console, for scripts: `mesh <path> | play | pause | seek <s> | param <n> <v>
   | bones on | windowshot <png>`, `animstate <path> | new | save |
-  windowshot <png>`, `retarget <path> | new <target> [file] | source <skel> |
+  ik <legs | offhand> | windowshot <png>`, `retarget <path> | new <target> [file] | source <skel> |
   automap | align | clip <clip> | save | windowshot <png>` and
   `anim retarget-bake <retarget> <clip | folder> [outdir]`.
 
@@ -442,13 +477,17 @@ converted to engine space: what a game copies to hold the pistol itself.
 
 ## Not yet
 
-Inverse kinematics (feet, a hand on a weapon), morph targets, clip
-compression, turning root motion, skinned meshes on Metal, and an
-occlusion-aware budget. Also:
+Morph targets, clip compression, turning root motion, skinned meshes on
+Metal, and an occlusion-aware budget. Also:
 
-- **Retargeting** (above) has no IK: feet slide and hands miss what they
-  held when proportions differ (foot planting and hand contacts need IK).
-  Scale tracks are not retargeted. Auto-mapping by role is humanoid only
+- **IK** (above) is two-bone chains only: no spine or tail chains (FABRIK),
+  no foot locking -- a planted foot still slides as the clip slides it --
+  no toe or heel roll, and no ground in the editor's preview (it has no
+  physics). The ground is a plane under each foot: a foot over an edge
+  takes the plane its probe hit.
+- **Retargeting** (above): feet slide and hands miss what they held when
+  proportions differ -- IK plants feet on the ground but does not lock them
+  where the source's were, nor carry hand contacts over. Scale tracks are not retargeted. Auto-mapping by role is humanoid only
   (other rigs map by name). A chain of a different length maps its ends and
   leaves the middle at its reference (a two-bone spine onto a five-bone one
   does not spread the bend). Reference poses far apart need pose offsets:
