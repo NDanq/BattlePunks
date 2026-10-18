@@ -70,6 +70,8 @@ entity:RemoveComponent("Animation")
 | `c:GetFloat(Name:string)` -> Value:number *(no effects)* | Method. |
 | `c:GetBool(Name:string)` -> Value:bool *(no effects)* | Method. |
 | `c:GetBoneLocation(Bone:string)` -> Location:Vector3, Found:bool *(no effects)* | Method. |
+| `c:SetIKGoal(Chain:string, Goal:Vector3, Weight:number)` -> Set:bool | Method. An IK chain of its anim state reaches for a world point (ANIMATION.md, "IK"). |
+| `c:ClearIKGoal(Chain:string)` -> Cleared:bool | Method. |
 | `c:GetState(Layer:integer)` -> State:string *(no effects)* | Method. |
 | `c:IsInTransition(Layer:integer)` -> Blending:bool *(no effects)* | Method. |
 | `c:GetTime()` -> Seconds:number *(no effects)* | Method. |

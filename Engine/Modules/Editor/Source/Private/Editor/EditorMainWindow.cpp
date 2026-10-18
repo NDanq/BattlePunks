@@ -2462,17 +2462,27 @@ void EditorMainWindow::RegisterConsoleCommands()
     });
 
     /* The anim state editor, for scripts and tests. */
-    Console.Register(QStringLiteral("animstate"), QStringLiteral("<path> | new | save | windowshot <file.png>"),
+    Console.Register(QStringLiteral("animstate"), QStringLiteral("<path> | new | save | ik <legs | offhand> | windowshot <file.png>"),
                      QStringLiteral("Open an .nmanimstate in the anim state editor, make one, or drive the one in front"),
                      [this](const QStringList& InArgs)
     {
         if(InArgs.isEmpty())
         {
-            Console.PrintError(QStringLiteral("Usage: animstate <path> | new | save | windowshot <file.png>"));
+            Console.PrintError(QStringLiteral("Usage: animstate <path> | new | save | ik <legs | offhand> | windowshot <file.png>"));
             return;
         }
         const QString Verb = InArgs.front();
         if(Verb == QStringLiteral("new")) { EditorAnimation::CreateAnimState(QString(), this); return; }
+        if(Verb == QStringLiteral("ik"))
+        {
+            AnimStateEditorWindow* Editor = AnimStateEditorWindow::FindFront();
+            const QString What = InArgs.size() > 1 ? InArgs[1] : QString();
+            const bool bDone = Editor && (What == QStringLiteral("legs") ? Editor->AddIKLegs()
+                                        : What == QStringLiteral("offhand") ? Editor->AddIKOffHand() : false);
+            if(bDone) { Console.Print(QStringLiteral("IK %1 added").arg(What)); }
+            else      { Console.PrintError(QStringLiteral("Usage: animstate ik <legs | offhand>, with an anim state open on a humanoid")); }
+            return;
+        }
         if(Verb == QStringLiteral("save") || Verb == QStringLiteral("windowshot"))
         {
             AnimStateEditorWindow* Editor = AnimStateEditorWindow::FindFront();
