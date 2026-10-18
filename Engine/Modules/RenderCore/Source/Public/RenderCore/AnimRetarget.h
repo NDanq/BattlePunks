@@ -45,7 +45,8 @@ namespace RenderCore
         std::vector<int32_t>              TargetSource;       // by target bone: the source bone driving it; -1: none
         std::vector<ERetargetTranslation> TargetTranslation;  // by target bone
         std::vector<AnimQuat>             TargetRefModel;     // by target bone: QtRef, its model-space reference rotation
-        std::vector<AnimQuat>             SourceRefInverse;   // by target bone: inverse(PoseOffset * QsRef) of its source
+        std::vector<AnimQuat>             Correction;         // by mapped target bone: inverse(PoseOffset * QsRef) * QtRef,
+                                                              // so Qt = Qs * Correction
         float                             RootScale = 1.0f;   // what scaled translations are scaled by
 
         /* Root motion: the clip's RootBone, and the target bone it drives (-1: none, so no root motion). */

@@ -6,6 +6,7 @@
  * rig in an A pose. Both rigs are built here, from model-space placements.
  */
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -964,9 +965,14 @@ static void TestPerf()
         }
         return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - Start).count() / 60.0;
     };
+    /* The best of several rounds each, alternated: the least disturbed by the machine. */
     Time(false);   // warm
-    const double Native = Time(false);
-    const double Mixed  = Time(true);
+    double Native = 1e9, Mixed = 1e9;
+    for(int Round = 0; Round < 7; ++Round)
+    {
+        Native = std::min(Native, Time(false));
+        Mixed  = std::min(Mixed, Time(true));
+    }
     std::printf("  100 CrashDummies a frame: %.3f ms native, %.3f ms with half retargeted (%.2fx)\n", Native, Mixed, Mixed / Native);
 #ifdef NDEBUG
     Expect(Mixed <= 1.5 * Native, "half retargeted costs at most 1.5x the native time");
