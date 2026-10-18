@@ -2,6 +2,7 @@
 #define RENDERCORE_ANIMRETARGET_H
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -106,6 +107,34 @@ namespace RenderCore
      * descendant, or either bone has no length. */
     RENDERCORE_API AnimQuat ComputeRetargetPoseOffset(const SkeletonData& InSource, const SkeletonData& InTarget,
                                                       const RetargetSource& InMap, const std::string& InTargetBone);
+
+    /* InClip retargeted once and for all (the editor's Bake): OutClip plays on
+     * InTarget by bone name, as InClip plays through InBinding -- a track per
+     * mapped target bone, sampled at InClip's frames (a constant one kept as
+     * one key), the notifies' bones moved over, the root bone the target's.
+     * Its Skeleton is InTargetPath; its ImportInfo is left for the caller. */
+    RENDERCORE_API void BakeRetargetedClip(const AnimClipData& InClip, const RetargetBinding& InBinding, const SkeletonData& InTarget,
+                                           const std::string& InTargetPath, AnimClipData& OutClip);
+
+    /*
+     * Bindings shared by everything that plays a clip through a retarget: one
+     * per (clip, retarget, target skeleton), the source skeleton loaded
+     * through SkeletonAssetCache by the clip's Skeleton path. Dropped whole
+     * when a clip, skeleton or retarget is reloaded (their caches'
+     * generations). Thread-safe.
+     */
+    class RENDERCORE_API RetargetBindingCache
+    {
+    public:
+        /* InClip's binding onto InTarget through InRetarget -- null when it
+         * plays by bone name instead: its Skeleton is empty or InRetarget's
+         * target, InRetarget (or InTarget) is null, or InRetarget has no source
+         * for it (warned once per pair), or its skeleton cannot load. */
+        static std::shared_ptr<const RetargetBinding> Find(const std::shared_ptr<const AnimClipData>& InClip,
+                                                           const std::shared_ptr<const RetargetData>& InRetarget,
+                                                           const std::shared_ptr<const SkeletonData>& InTarget);
+        static void Clear();
+    };
 }
 
 #endif //RENDERCORE_ANIMRETARGET_H

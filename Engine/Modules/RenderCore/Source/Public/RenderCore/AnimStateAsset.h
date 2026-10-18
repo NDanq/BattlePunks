@@ -51,6 +51,7 @@ namespace EngineCore
  *                (v4: no sync groups; v3: no editor positions; v2: nor Blend or AdditiveBase;
  *                v1: nor 2D blend spaces -- BlendParameterY, PositionY)
  *     ALOK v1    the look-at; optional (none: no look-at)
+ *     ARTG v1    the default retarget, an .nmretarget path; optional (none: none)
  *
  * Clips are named by runtime path; skeletons are not -- a state plays on
  * whatever skeleton its entity's mesh has, its clips binding by bone name.
@@ -169,6 +170,8 @@ namespace RenderCore
         std::vector<AnimStateParameter> Parameters;
         std::vector<AnimLayer>          Layers;
         AnimLookAt                      LookAt;
+        std::string                     Retarget;   // an .nmretarget its clips play through when made for another
+                                                    // skeleton (AnimRetarget.h); the component's Retarget wins
 
         /* -1 if there is none. */
         RENDERCORE_API int32_t FindParameter(const std::string& InName) const;

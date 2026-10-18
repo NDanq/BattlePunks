@@ -2,6 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <mutex>
+#include <set>
+#include <tuple>
 
 #include "Public/RenderCore/RenderCoreLog.h"
 
@@ -286,6 +290,68 @@ namespace RenderCore
         return AnimMath::Scale(AnimMath::Rotate(InBinding.RootTravelRotation, Travel), InBinding.RootTravelScale);
     }
 
+    void BakeRetargetedClip(const AnimClipData& InClip, const RetargetBinding& InBinding, const SkeletonData& InTarget,
+                            const std::string& InTargetPath, AnimClipData& OutClip)
+    {
+        OutClip = AnimClipData();
+        OutClip.SampleRate = InClip.SampleRate;
+        OutClip.FrameCount = std::max<uint32_t>(InClip.FrameCount, 1);
+        OutClip.bLoop      = InClip.bLoop;
+        OutClip.RootMotion = InClip.RootMotion;
+        OutClip.Skeleton   = InTargetPath;
+        OutClip.RootBone   = InBinding.TargetRootBone >= 0 ? InTarget.Bones[size_t(InBinding.TargetRootBone)].Name : std::string();
+        OutClip.Notifies   = InClip.Notifies;
+        RemapNotifies(InBinding, OutClip.Notifies, 0);
+        if(InBinding.TargetSource.size() != InTarget.Bones.size())
+        {
+            return;
+        }
+
+        /* Every frame onto the reference pose; a track per mapped bone. */
+        std::vector<size_t> Mapped;
+        for(size_t Bone = 0; Bone < InBinding.TargetSource.size(); ++Bone)
+        {
+            if(InBinding.TargetSource[Bone] >= 0) { Mapped.push_back(Bone); }
+        }
+        OutClip.Tracks.resize(Mapped.size());
+        for(size_t Track = 0; Track < Mapped.size(); ++Track) { OutClip.Tracks[Track].Bone = InTarget.Bones[Mapped[Track]].Name; }
+        RetargetScratch Scratch;
+        AnimLocalPose   Pose;
+        for(uint32_t Frame = 0; Frame < OutClip.FrameCount; ++Frame)
+        {
+            Pose = InBinding.TargetRef;
+            SampleClipRetargeted(InClip, InBinding, InClip.SampleRate > 0.0f ? float(Frame) / InClip.SampleRate : 0.0f, Scratch, Pose);
+            for(size_t Track = 0; Track < Mapped.size(); ++Track)
+            {
+                const AnimTransform& Each = Pose[Mapped[Track]];
+                OutClip.Tracks[Track].Translations.push_back(Each.Translation);
+                OutClip.Tracks[Track].Rotations.push_back(Each.Rotation);
+                OutClip.Tracks[Track].Scales.push_back(Each.Scale);
+            }
+        }
+
+        /* Constant keys collapse to one; the root's translation never does, so it keeps its travel. */
+        const auto Collapse = [](auto& InOutKeys, const auto& InSame)
+        {
+            for(size_t Key = 1; Key < InOutKeys.size(); ++Key)
+            {
+                if(!InSame(InOutKeys[0], InOutKeys[Key])) { return; }
+            }
+            InOutKeys.resize(std::min<size_t>(InOutKeys.size(), 1));
+        };
+        const auto SameVector = [](const AnimVec3& InA, const AnimVec3& InB)
+        {
+            return std::fabs(InA.X - InB.X) < 1e-5f && std::fabs(InA.Y - InB.Y) < 1e-5f && std::fabs(InA.Z - InB.Z) < 1e-5f;
+        };
+        const auto SameRotation = [](const AnimQuat& InA, const AnimQuat& InB) { return std::fabs(AnimMath::Dot(InA, InB)) > 1.0f - 1e-7f; };
+        for(AnimTrack& Track : OutClip.Tracks)
+        {
+            if(Track.Bone != OutClip.RootBone) { Collapse(Track.Translations, SameVector); }
+            Collapse(Track.Rotations, SameRotation);
+            Collapse(Track.Scales, SameVector);
+        }
+    }
+
     void RemapNotifies(const RetargetBinding& InBinding, std::vector<AnimNotify>& InOutNotifies, const size_t InFirst)
     {
         for(size_t Index = InFirst; Index < InOutNotifies.size(); ++Index)
@@ -296,5 +362,100 @@ namespace RenderCore
                                             [&](const auto& InPair) { return InPair.first == Notify.Bone; });
             Notify.Bone = Found != InBinding.NotifyBones.end() ? Found->second : std::string();
         }
+    }
+}
+
+namespace RenderCore
+{
+    namespace
+    {
+        struct BindingCacheState
+        {
+            using Key = std::tuple<const AnimClipData*, const RetargetData*, const SkeletonData*>;
+            struct Item
+            {
+                /* Held, so the key's pointers are not reused while it is cached. */
+                std::shared_ptr<const AnimClipData>    Clip;
+                std::shared_ptr<const RetargetData>    Retarget;
+                std::shared_ptr<const SkeletonData>    Target;
+                std::shared_ptr<const SkeletonData>    Source;
+                std::shared_ptr<const RetargetBinding> Binding;   // null: plays by name
+            };
+
+            std::mutex                                     Lock;
+            std::map<Key, Item>                            Items;
+            std::set<std::pair<std::string, std::string>>  Warned;   // (retarget target, clip skeleton)
+            uint64_t ClipGeneration = 0, SkeletonGeneration = 0, RetargetGeneration = 0;
+        };
+
+        BindingCacheState& GetBindingCache()
+        {
+            static BindingCacheState State;
+            return State;
+        }
+    }
+
+    std::shared_ptr<const RetargetBinding> RetargetBindingCache::Find(const std::shared_ptr<const AnimClipData>& InClip,
+                                                                      const std::shared_ptr<const RetargetData>& InRetarget,
+                                                                      const std::shared_ptr<const SkeletonData>& InTarget)
+    {
+        if(!InClip || !InRetarget || !InTarget || InClip->Skeleton.empty() || InClip->Skeleton == InRetarget->Target)
+        {
+            return nullptr;
+        }
+        BindingCacheState& Cache = GetBindingCache();
+        const RetargetSource* Map = InRetarget->FindSource(InClip->Skeleton);
+        if(!Map)
+        {
+            std::lock_guard<std::mutex> Guard(Cache.Lock);
+            if(Cache.Warned.emplace(InRetarget->Target, InClip->Skeleton).second)
+            {
+                RENDERCORE_LOG_WARN("retarget to '" + InRetarget->Target + "' has no source for skeleton '" + InClip->Skeleton
+                                    + "'; its clips play by bone name")
+            }
+            return nullptr;
+        }
+
+        const BindingCacheState::Key Key{ InClip.get(), InRetarget.get(), InTarget.get() };
+        {
+            std::lock_guard<std::mutex> Guard(Cache.Lock);
+            const uint64_t Clips     = AnimClipAssetCache::GetGeneration();
+            const uint64_t Skeletons = SkeletonAssetCache::GetGeneration();
+            const uint64_t Retargets = RetargetAssetCache::GetGeneration();
+            if(Clips != Cache.ClipGeneration || Skeletons != Cache.SkeletonGeneration || Retargets != Cache.RetargetGeneration)
+            {
+                Cache.Items.clear();
+                Cache.ClipGeneration     = Clips;
+                Cache.SkeletonGeneration = Skeletons;
+                Cache.RetargetGeneration = Retargets;
+            }
+            const auto Found = Cache.Items.find(Key);
+            if(Found != Cache.Items.end())
+            {
+                return Found->second.Binding;
+            }
+        }
+
+        /* Bound outside the lock; if two threads race, the first stored wins. */
+        BindingCacheState::Item Made;
+        Made.Clip     = InClip;
+        Made.Retarget = InRetarget;
+        Made.Target   = InTarget;
+        Made.Source   = SkeletonAssetCache::Find(InClip->Skeleton);
+        if(Made.Source)
+        {
+            auto Binding = std::make_shared<RetargetBinding>();
+            if(BindClipRetargeted(*InClip, *Made.Source, *InTarget, *Map, *Binding)) { Made.Binding = std::move(Binding); }
+        }
+        std::lock_guard<std::mutex> Guard(Cache.Lock);
+        return Cache.Items.emplace(Key, std::move(Made)).first->second.Binding;
+    }
+
+    void RetargetBindingCache::Clear()
+    {
+        BindingCacheState& Cache = GetBindingCache();
+        std::lock_guard<std::mutex> Guard(Cache.Lock);
+        Cache.Items.clear();
+        Cache.Warned.clear();
     }
 }

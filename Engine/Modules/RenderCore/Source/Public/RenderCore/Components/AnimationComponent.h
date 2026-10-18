@@ -30,6 +30,11 @@ namespace RenderCore
      * layers driven by Parameters. In the editor, outside Play, it shows the
      * first frame.
      *
+     * Retarget, an .nmretarget, lets it play clips made for another skeleton
+     * (a Mixamo pack on a Rigify character): those whose skeleton is one of
+     * its sources are retargeted onto the mesh's. Empty, the anim state's
+     * own Retarget is used, if it names one.
+     *
      * Parameters are what gameplay tells an anim state (Speed, Armed,
      * Jump...); set them from Lua (animation:SetFloat("Speed", 300)) or C++.
      * The pose itself lives with the world's animation system, not here --
@@ -40,6 +45,7 @@ namespace RenderCore
         GAMECORE_COMPONENT_BODY()
 
         char    Animation[ANIMATION_PATH_MAX] = {};   // .nmanim or .nmanimstate
+        char    Retarget[ANIMATION_PATH_MAX]  = {};   // .nmretarget clips made for other skeletons play through; "": the anim state's
         float   PlayRate = 1.0f;
         uint8_t bPaused  = 0;
         AnimationParameter Parameters[ANIMATION_PARAMETERS_MAX] = {};
