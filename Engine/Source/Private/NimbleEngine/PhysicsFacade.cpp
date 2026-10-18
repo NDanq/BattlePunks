@@ -8,7 +8,9 @@
 #include "Public/GameCore/ScriptLibrary.h"
 #include "Public/GameCore/SpatialIndex.h"
 #include "Public/GameCore/World.h"
+#include "Public/NimbleEngine/CharacterMover.h"
 #include "Public/NimbleEngine/TerrainFacade.h"
+#include "Public/RenderCore/AnimationSystem.h"
 
 #if WITH_JOLTPHYSICS
 #include "Public/JoltPhysics/PhysicsWorld.h"
@@ -179,4 +181,52 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(Physics)
     Lib.Event("ContactEnd",   "Self:Entity, Other:Entity").Tooltip("Two Rigid Bodies stopped touching (Other may be gone)");
     Lib.Event("SensorEnter",  "Sensor:Entity, Other:Entity").Tooltip("A body entered a sensor Rigid Body");
     Lib.Event("SensorExit",   "Sensor:Entity, Other:Entity").Tooltip("A body left a sensor Rigid Body");
+}
+
+/*
+ * The animation system's ground for IK (RenderCore's AnimationSystem::
+ * SetGroundQuery): the world's physics, on the layers a Character Mover on
+ * the entity stands on (every layer without one), passing through the
+ * entity's own body.
+ */
+namespace
+{
+    bool AnimationGround(GameCore::World& InWorld, const GameCore::EntityID InIgnore, const EngineCore::Vector3& InFrom,
+                         const EngineCore::Vector3& InDirection, const float InLength, EngineCore::Vector3& OutPoint,
+                         EngineCore::Vector3& OutNormal)
+    {
+        int32_t Mask = -1;
+        if(const NimbleEngine::CharacterMoverComponent* Mover = InWorld.GetEntity(InIgnore).GetComponent<NimbleEngine::CharacterMoverComponent>())
+        {
+            Mask = Mover->Mask;
+        }
+        EngineCore::Vector3 From = InFrom;
+        float Left = InLength;
+        for(int Attempt = 0; Attempt < 4 && Left > 0.0f; ++Attempt)
+        {
+            NimbleEngine::PhysicsRaycastHit Hit;
+            if(!NimbleEngine::PhysicsRaycast(InWorld, From, InDirection, Left, Hit, Mask))
+            {
+                return false;
+            }
+            if(Hit.Entity != InIgnore)
+            {
+                OutPoint  = Hit.Point;
+                OutNormal = Hit.Normal.GetLength() > 1e-6 ? Hit.Normal : EngineCore::Vector3(0.0, 1.0, 0.0);
+                return true;
+            }
+            /* Its own body: on from just past it. */
+            const float Step = Hit.Distance + 0.5f;
+            From = From + InDirection * double(Step);
+            Left -= Step;
+        }
+        return false;
+    }
+
+    struct AnimationGroundRegistrar
+    {
+        AnimationGroundRegistrar()  { RenderCore::AnimationSystem::SetGroundQuery(&AnimationGround); }
+        ~AnimationGroundRegistrar() { RenderCore::AnimationSystem::SetGroundQuery(nullptr); }
+    };
+    AnimationGroundRegistrar GAnimationGroundRegistrar;
 }

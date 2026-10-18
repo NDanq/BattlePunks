@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "Public/RenderCore/AnimIK.h"
 #include "Public/RenderCore/AnimPose.h"
 #include "Public/RenderCore/AnimRetarget.h"
 #include "Public/RenderCore/AnimStateAsset.h"
@@ -142,6 +143,34 @@ namespace RenderCore
          * and eased toward (AnimStateAsset.h). 0 without one. */
         float GetLookAngle() const { return LookAngle; }
 
+        /*
+         * IK (AnimStateAsset.h's AnimIK, AnimIK.h), after the look-at. Its
+         * ground and script goals are in the world: InModelToWorld is where
+         * the skeleton is (its entity's transform), set before each Update.
+         * After an evaluation, GetIKProbes says where the ground should be
+         * looked for -- straight down, in the world -- and SetIKGround
+         * answers, for the next evaluation (the animation system traces on
+         * the game thread). The ground is kept as a plane, so feet land on it
+         * exactly though the answer is a frame old. No answer: as animated.
+         */
+        bool HasIK() const { return !IKChains.empty(); }
+        void SetModelToWorld(const AnimMatrix& InModelToWorld);
+
+        struct IKProbe
+        {
+            int32_t  Chain = -1;   // an IK chain; -1: the ground where the entity stands
+            AnimVec3 From;         // world
+            float    Length = 0.0f;
+        };
+        const std::vector<IKProbe>& GetIKProbes() const { return IKProbes; }
+        void SetIKGround(int32_t InChain, bool bInHit, const AnimVec3& InWorldPoint, const AnimVec3& InWorldNormal);
+
+        /* A Script chain's goal, in the world, by InWeight (0..1; 0 clears
+         * it: as animated). False if it has no chain so named. */
+        bool SetIKGoal(const std::string& InChain, const AnimVec3& InWorldPosition, float InWeight);
+        /* How far the pelvis is lowered now (model units, down positive). */
+        float GetPelvisDrop() const { return PelvisDrop; }
+
     private:
         struct Sample
         {
@@ -225,6 +254,8 @@ namespace RenderCore
         void  ApplyLookAt(AnimLocalPose& InOutPose) const;
         /* ModelPose from LocalPose with the override's bones placed. */
         void  ApplyPoseOverride();
+        /* The IK chains on InOutPose, after the look-at; the probes for next time. */
+        void  ApplyIK(AnimLocalPose& InOutPose);
         bool  ConditionsHold(const TransitionRuntime& InTransition, const LayerRuntime& InLayer) const;
         void  UpdateTransitions(LayerRuntime& InOutLayer);
 
@@ -259,6 +290,39 @@ namespace RenderCore
         AnimVec3 LookAxis;
         float    LookAngle   = 0.0f;
         bool     bLookPlaced = false;   // false: the next update starts it at its target, not easing there
+
+        /* The IK, from State's; no chains: none. */
+        struct IKChainRuntime
+        {
+            std::string   Name;
+            int32_t       Root = -1, Mid = -1, End = -1, GoalBone = -1;
+            EAnimIKGoal   Goal = EAnimIKGoal::Ground;
+            AnimTransform GoalOffset;
+            float         Weight = 1.0f;
+            int32_t       WeightParameter = -1;
+            AnimVec3      Pole;
+            bool          bAlignEnd = true;
+
+            bool     bGround = false;          // a plane under it (world)
+            AnimVec3 GroundPoint, GroundNormal;
+            float    Offset = 0.0f;            // how far it is moved along up, eased (model units)
+            AnimQuat Tilt;                     // the end turned to the slope, eased (model)
+            bool     bScript = false;          // a script goal (world)
+            AnimVec3 ScriptGoal;
+            float    ScriptWeight = 0.0f;
+        };
+        std::vector<IKChainRuntime> IKChains;
+        std::vector<IKProbe>        IKProbes;
+        int32_t    IKPelvis = -1;
+        float      IKTraceUp = 0.0f, IKTraceDown = 0.0f, IKMaxStep = 0.0f, IKResponse = 0.0f;
+        bool       bBaseGround = false;         // the plane where the entity stands (world)
+        AnimVec3   BasePoint, BaseNormal;
+        AnimMatrix ModelToWorld, WorldToModel;
+        bool       bHasWorld = false;
+        float      IKDelta = 0.0f;              // the last Update's real time, for easing
+        bool       bIKPlaced = false;           // false: the next evaluation goes straight to its goals
+        float      PelvisDrop = 0.0f;
+        std::vector<AnimMatrix> IKModel;  // the pose before IK, model space
 
         /* SetOverlayClip's. */
         std::shared_ptr<const AnimClipData> Overlay;

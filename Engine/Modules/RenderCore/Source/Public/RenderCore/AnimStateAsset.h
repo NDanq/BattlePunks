@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "Public/RenderCore/AnimMath.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
 
 namespace EngineCore
@@ -52,6 +53,7 @@ namespace EngineCore
  *                v1: nor 2D blend spaces -- BlendParameterY, PositionY)
  *     ALOK v1    the look-at; optional (none: no look-at)
  *     ARTG v1    the default retarget, an .nmretarget path; optional (none: none)
+ *     AIKS v1    IK: its chains and the pelvis and ground settings; optional (none: no IK)
  *
  * Clips are named by runtime path; skeletons are not -- a state plays on
  * whatever skeleton its entity's mesh has, its clips binding by bone name.
@@ -165,6 +167,41 @@ namespace RenderCore
         bool IsSet() const { return !Parameter.empty() && !Bones.empty(); }
     };
 
+    /* What an IK chain's end reaches for (AnimIK.h). */
+    enum class EAnimIKGoal : uint8_t
+    {
+        Ground = 0,   // a foot: the ground under it, traced each tick (the world's), it and the pelvis lowered or raised to it
+        Bone   = 1,   // a hand: a place fixed to another bone -- the off hand on a weapon held in the other
+        Script = 2    // a point gameplay sets (animation:SetIKGoal); none set: it stays as animated
+    };
+
+    /* Three bones -- hip, knee, ankle; shoulder, elbow, wrist -- turned so the
+     * last reaches its goal, bending the middle the way the animation bends it. */
+    struct AnimIKChain
+    {
+        std::string   Name;                 // what script goals name it by: "LeftFoot", "OffHand"
+        std::string   Root, Mid, End;       // bones, each below the one before (twist bones between are fine)
+        EAnimIKGoal   Goal = EAnimIKGoal::Ground;
+        std::string   GoalBone;             // a Bone goal's bone
+        AnimTransform GoalOffset;           // where End goes, in GoalBone's space
+        float         Weight = 1.0f;        // 0..1
+        std::string   WeightParameter;      // scales Weight (clamped 0..1): Armed, Grounded; empty: none
+        float         Pole[3] = { 0.0f, 0.0f, 1.0f };   // model space: where the middle bends when the chain is straight (knees forward)
+        bool          bAlignEnd = true;     // the end turned with the ground's slope (Ground) or as the goal is (Bone)
+    };
+
+    struct AnimIK
+    {
+        std::vector<AnimIKChain> Chains;
+        std::string PelvisBone;         // lowered so feet reach ground below where the entity stands; empty: not moved
+        float TraceUp   = 50.0f;        // the ground is looked for from this far above each animated foot...
+        float TraceDown = 75.0f;        // ...to this far below it
+        float MaxStep   = 50.0f;        // no foot (nor the pelvis) moves farther than this up or down
+        float Response  = 15.0f;        // how fast feet follow the ground, per second (1 - e^(-Response t)); 0: at once
+
+        bool IsSet() const { return !Chains.empty(); }
+    };
+
     struct AnimStateData
     {
         std::vector<AnimStateParameter> Parameters;
@@ -172,6 +209,7 @@ namespace RenderCore
         AnimLookAt                      LookAt;
         std::string                     Retarget;   // an .nmretarget its clips play through when made for another
                                                     // skeleton (AnimRetarget.h); the component's Retarget wins
+        AnimIK                          IK;         // after the look-at: feet on the ground, hands on their goals
 
         /* -1 if there is none. */
         RENDERCORE_API int32_t FindParameter(const std::string& InName) const;
