@@ -57,8 +57,10 @@ public:
 
     /* Bones drawn over the image: segments, bone to parent, in model space
      * (6 floats each) -- framed as the renderer frames a mesh with these
-     * bounds. Empty: none. */
-    void SetSkeletonOverlay(std::vector<float> InSegments, const float InBoundsMin[3], const float InBoundsMax[3]);
+     * bounds. Empty: none. InMarked, one per segment when given: those drawn
+     * in red (a retarget's unmapped bones, say). */
+    void SetSkeletonOverlay(std::vector<float> InSegments, const float InBoundsMin[3], const float InBoundsMax[3],
+                            std::vector<uint8_t> InMarked = {});
 
     void ResetView();
 
@@ -113,6 +115,8 @@ private:
     std::vector<float> SkinPalette;
     std::vector<float> Segments;           // as set
     std::vector<float> ShownSegments;      // as they were for Image
+    std::vector<uint8_t> Marked;           // per segment: drawn in red
+    std::vector<uint8_t> ShownMarked;
     float       BoundsMin[3] = {0.0f, 0.0f, 0.0f};
     float       BoundsMax[3] = {0.0f, 0.0f, 0.0f};
     float       ShownYaw = 30.0f, ShownPitch = 20.0f, ShownZoom = 1.0f;

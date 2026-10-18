@@ -14,6 +14,8 @@
 
 #include "Public/RenderCore/AnimClipAsset.h"
 #include "Public/RenderCore/AnimStateAsset.h"
+#include "Public/RenderCore/AnimRetarget.h"
+#include "Public/RenderCore/RetargetAsset.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/ParticleSystemAsset.h"
 #include "Public/RenderCore/SkeletonAsset.h"
@@ -377,6 +379,8 @@ namespace EditorContent
             RenderCore::SkeletonAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::AnimClipAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::AnimStateAssetCache::Invalidate(Runtime.toStdString());
+            RenderCore::RetargetAssetCache::Invalidate(Runtime.toStdString());
+            RenderCore::RetargetBindingCache::Clear();   // dropped on reload anyway; this frees them now
 #if WITH_AUDIO
             Audio::SoundAssetCache::Invalidate(Runtime.toStdString());
 #endif
@@ -400,6 +404,8 @@ namespace EditorContent
             RenderCore::SkeletonAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::AnimClipAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::AnimStateAssetCache::Invalidate(Runtime.toStdString());
+            RenderCore::RetargetAssetCache::Invalidate(Runtime.toStdString());
+            RenderCore::RetargetBindingCache::Clear();   // dropped on reload anyway; this frees them now
 #if WITH_AUDIO
             Audio::SoundAssetCache::Invalidate(Runtime.toStdString());
 #endif

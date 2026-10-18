@@ -85,9 +85,11 @@ void MeshPreviewView::SetFrameSource(std::function<void()> InSource)
     Refresh();
 }
 
-void MeshPreviewView::SetSkeletonOverlay(std::vector<float> InSegments, const float InBoundsMin[3], const float InBoundsMax[3])
+void MeshPreviewView::SetSkeletonOverlay(std::vector<float> InSegments, const float InBoundsMin[3], const float InBoundsMax[3],
+                                         std::vector<uint8_t> InMarked)
 {
     Segments = std::move(InSegments);
+    Marked   = std::move(InMarked);
     std::copy_n(InBoundsMin, 3, BoundsMin);
     std::copy_n(InBoundsMax, 3, BoundsMax);
     update();
@@ -191,8 +193,9 @@ void MeshPreviewView::Send()
 
     /* The overlay goes with the image it was sent for. */
     const std::vector<float> SentSegments = Segments;
+    const std::vector<uint8_t> SentMarked = Marked;
     const float SentYaw = Yaw, SentPitch = Pitch, SentZoom = Zoom;
-    const auto Done = [this, Serial, SentSegments, SentYaw, SentPitch, SentZoom](const QImage& InImage, const QString& InError)
+    const auto Done = [this, Serial, SentSegments, SentMarked, SentYaw, SentPitch, SentZoom](const QImage& InImage, const QString& InError)
     {
         --InFlight;
         if(Serial < Shown)
@@ -203,6 +206,7 @@ void MeshPreviewView::Send()
         Image = InImage;
         Error = InError;
         ShownSegments = SentSegments;
+        ShownMarked   = SentMarked;
         ShownYaw   = SentYaw;
         ShownPitch = SentPitch;
         ShownZoom  = SentZoom;
@@ -258,11 +262,12 @@ void MeshPreviewView::paintEvent(QPaintEvent*)
     if(!ShownSegments.empty())
     {
         Painter.setRenderHint(QPainter::Antialiasing);
-        const QColor Bone(255, 196, 64);
-        Painter.setPen(QPen(Bone, 1.6));
-        Painter.setBrush(Bone);
+        const QColor Bone(255, 196, 64), Flagged(240, 64, 64);
         for(size_t At = 0; At + 5 < ShownSegments.size(); At += 6)
         {
+            const bool bMarked = At / 6 < ShownMarked.size() && ShownMarked[At / 6] != 0;
+            Painter.setPen(QPen(bMarked ? Flagged : Bone, 1.6));
+            Painter.setBrush(bMarked ? Flagged : Bone);
             QPointF Child, Parent;
             if(!Project(&ShownSegments[At], Target, Child)) { continue; }
             Painter.drawEllipse(Child, 2.2, 2.2);

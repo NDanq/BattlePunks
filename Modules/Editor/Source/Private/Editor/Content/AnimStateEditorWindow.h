@@ -115,6 +115,7 @@ private:
     QString                   MeshRuntime;
     RenderCore::MeshData      PreviewMesh;
 
+    QLineEdit*      RetargetField  = nullptr;   // Edit.Retarget
     QTableWidget*   ParameterTable = nullptr;
 
     QListWidget*    LayerList   = nullptr;

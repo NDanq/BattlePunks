@@ -19,6 +19,7 @@
 #include "CoreQtConversions.h"
 #include "Public/Core/CoreArchive.h"
 #include "Public/RenderCore/AnimClipAsset.h"
+#include "Public/RenderCore/AnimRetarget.h"
 #include "Public/RenderCore/HumanoidRig.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/RetargetAsset.h"
@@ -41,6 +42,7 @@ namespace EditorContent
         /* What a skeleton's and a clip's recorded settings add to the mesh options'. */
         const char* const SKELETON_PART_SETTING = "Part=Skeleton\n";
         const char* const CLIP_SETTING_KEY      = "Animation";
+        const char* const BAKED_VIA_KEY         = "BakedVia";   // a clip baked through this retarget (BakeRetargetClip)
         const char* const SOUND_EXTENSION   = ".nmsound";
 
         /* Where an embedded image's source points: the glTF, then which image. */
@@ -887,6 +889,63 @@ namespace EditorContent
         return Result;
     }
 
+    ImportResult BakeRetargetClip(const QString& InClipFile, const QString& InRetargetFile, const QString& InOutFile,
+                                  const QString& InProjectRoot)
+    {
+        ImportResult Result;
+        RenderCore::AnimClipData Clip;
+        RenderCore::RetargetData Retarget;
+        EngineCore::Archive ClipAr = ReadAssetArchive(InClipFile);
+        EngineCore::Archive RetargetAr = ReadAssetArchive(InRetargetFile);
+        if(ClipAr.GetSize() == 0 || !RenderCore::SerializeAnimClip(ClipAr, Clip))
+        {
+            Result.Message = QStringLiteral("%1: not a clip that can be read").arg(QFileInfo(InClipFile).fileName());
+            return Result;
+        }
+        if(RetargetAr.GetSize() == 0 || !RenderCore::SerializeRetarget(RetargetAr, Retarget))
+        {
+            Result.Message = QStringLiteral("%1: not a retarget that can be read").arg(QFileInfo(InRetargetFile).fileName());
+            return Result;
+        }
+        const RenderCore::RetargetSource* Map = Retarget.FindSource(Clip.Skeleton);
+        if(!Map)
+        {
+            Result.Message = QStringLiteral("%1: %2 has no source for its skeleton %3").arg(QFileInfo(InClipFile).fileName(),
+                             QFileInfo(InRetargetFile).fileName(), QString::fromStdString(Clip.Skeleton));
+            return Result;
+        }
+        RenderCore::SkeletonData Source, Target;
+        if(!ReadSkeleton(AbsolutePathOfRuntime(QString::fromStdString(Clip.Skeleton), InProjectRoot), Source)
+           || !ReadSkeleton(AbsolutePathOfRuntime(QString::fromStdString(Retarget.Target), InProjectRoot), Target))
+        {
+            Result.Message = QStringLiteral("%1: the skeletons %2 and %3 cannot both be read").arg(QFileInfo(InClipFile).fileName(),
+                             QString::fromStdString(Clip.Skeleton), QString::fromStdString(Retarget.Target));
+            return Result;
+        }
+        RenderCore::RetargetBinding Binding;
+        if(!RenderCore::BindClipRetargeted(Clip, Source, Target, *Map, Binding))
+        {
+            Result.Message = QStringLiteral("%1: it does not bind through the retarget").arg(QFileInfo(InClipFile).fileName());
+            return Result;
+        }
+        RenderCore::AnimClipData Baked;
+        RenderCore::BakeRetargetedClip(Clip, Binding, Target, Retarget.Target, Baked);
+        KeepAuthoredClipFields(InOutFile, Baked);
+        Baked.ImportInfo = MakeImportInfo(InClipFile, InProjectRoot, QStringLiteral("%1=%2\n").arg(QString::fromLatin1(BAKED_VIA_KEY),
+                                          RuntimePathOf(QFileInfo(InRetargetFile).absoluteFilePath(), InProjectRoot)));
+        QString Error;
+        if(!WriteClip(InOutFile, Baked, Error))
+        {
+            Result.Message = Error;
+            return Result;
+        }
+        Result.bOK = true;
+        Result.Written << QFileInfo(InOutFile).absoluteFilePath();
+        Result.Message = QStringLiteral("%1: baked onto %2, %3 tracks over %4 frames").arg(QFileInfo(InOutFile).fileName(),
+                         QString::fromStdString(Retarget.Target)).arg(Baked.Tracks.size()).arg(Baked.FrameCount);
+        return Result;
+    }
+
     bool TextureImportOptions::IsDataMapName(const QString& InName)
     {
         /* Whole words of the name (split at _, -, ., space and case changes), so "Bricks" is not "ks". */
@@ -1066,6 +1125,13 @@ namespace EditorContent
         const QString Settings = QString::fromStdString(Info.Settings);
         const QString Folder   = QFileInfo(InAssetPath).absolutePath();
         const QString Base     = QFileInfo(InAssetPath).completeBaseName();
+
+        /* A baked clip: from its clip and retarget again, not from a glTF. */
+        const QString BakedVia = ParseSettings(Settings).value(QString::fromLatin1(BAKED_VIA_KEY));
+        if(!BakedVia.isEmpty())
+        {
+            return BakeRetargetClip(Source, AbsolutePathOfRuntime(BakedVia, InProjectRoot), InAssetPath, InProjectRoot);
+        }
 
         /* An image that lived inside a glTF: find it there again by index. */
         const qsizetype Mark = Source.lastIndexOf(QString::fromLatin1(EMBEDDED_IMAGE_MARK));

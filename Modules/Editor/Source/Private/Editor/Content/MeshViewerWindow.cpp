@@ -35,6 +35,8 @@
 #include <QVBoxLayout>
 
 #include "Public/Core/CoreArchive.h"
+#include "Public/RenderCore/AnimStateAsset.h"
+#include "Public/RenderCore/RetargetAsset.h"
 #include "Public/RenderCore/SkeletonAsset.h"
 #include "Private/Editor/Content/AnimPreviewWidget.h"
 #include "Private/Editor/Content/AnimationAssets.h"
@@ -134,7 +136,13 @@ MeshViewerWindow* MeshViewerWindow::FindFront()
 MeshViewerWindow* MeshViewerWindow::OpenAnimation(const QString& InPath, QWidget* InParent)
 {
     const std::string Skeleton = EditorAnimation::SkeletonOfAnimation(InPath);
-    const QString     MeshFile = Skeleton.empty() ? QString() : EditorAnimation::FindMeshOn(Skeleton);
+    QString           MeshFile = Skeleton.empty() ? QString() : EditorAnimation::FindMeshOn(Skeleton);
+    QString           Retarget;
+    if(MeshFile.isEmpty() && !Skeleton.empty())
+    {
+        /* A clip pack with no mesh of its own: on a character a retarget plays it on. */
+        MeshFile = EditorAnimation::FindRetargetedMesh(Skeleton, Retarget);
+    }
     if(MeshFile.isEmpty())
     {
         QMessageBox::information(InParent, QStringLiteral("Preview Animation"),
@@ -145,7 +153,7 @@ MeshViewerWindow* MeshViewerWindow::OpenAnimation(const QString& InPath, QWidget
         return nullptr;
     }
     MeshViewerWindow* Viewer = Open(MeshFile, InParent);
-    if(Viewer) { Viewer->SelectAnimation(EditorContent::ToRuntimePath(InPath)); }
+    if(Viewer) { Viewer->SelectAnimation(EditorContent::ToRuntimePath(InPath), Retarget); }
     return Viewer;
 }
 
@@ -328,10 +336,24 @@ QWidget* MeshViewerWindow::BuildAnimationTab()
         }
         AnimationPicker->addItem(Each, Each);
     }
-    AnimationPicker->setToolTip(QStringLiteral("The clips imported with this skeleton, and every anim state (.nmanimstate)"));
+    /* Clips made for other skeletons, through each retarget onto this one. */
+    for(const QString& RetargetPath : EditorContent::ListRetargetPaths())
+    {
+        const std::shared_ptr<const RenderCore::RetargetData> Retarget = RenderCore::RetargetAssetCache::Find(RetargetPath.toStdString());
+        if(!Retarget || Retarget->Target != Mesh.Skeleton) { continue; }
+        for(const QString& Each : EditorContent::ListAnimationPaths())
+        {
+            if(!Each.endsWith(QStringLiteral(".nmanim"), Qt::CaseInsensitive)) { continue; }
+            const std::shared_ptr<const RenderCore::AnimClipData> Clip = RenderCore::AnimClipAssetCache::Find(Each.toStdString());
+            if(!Clip || Clip->Skeleton == Mesh.Skeleton || !Retarget->FindSource(Clip->Skeleton)) { continue; }
+            AnimationPicker->addItem(QStringLiteral("%1   (retargeted via %2)").arg(Each, QFileInfo(RetargetPath).fileName()), Each);
+            AnimationPicker->setItemData(AnimationPicker->count() - 1, RetargetPath, Qt::UserRole + 1);
+        }
+    }
+    AnimationPicker->setToolTip(QStringLiteral("The clips imported with this skeleton, those a retarget onto it plays, and every anim state (.nmanimstate)"));
     connect(AnimationPicker, QOverload<int>::of(&QComboBox::activated), this, [this](const int InIndex)
     {
-        SelectAnimation(AnimationPicker->itemData(InIndex).toString());
+        SelectAnimation(AnimationPicker->itemData(InIndex).toString(), AnimationPicker->itemData(InIndex, Qt::UserRole + 1).toString());
     });
     auto* PickRow = new QFormLayout();
     PickRow->addRow(QStringLiteral("Play"), AnimationPicker);
@@ -540,7 +562,7 @@ QWidget* MeshViewerWindow::BuildSkeletonTab()
     return Tree;
 }
 
-void MeshViewerWindow::SelectAnimation(const QString& InRuntimePath)
+void MeshViewerWindow::SelectAnimation(const QString& InRuntimePath, const QString& InRetarget)
 {
     if(!Anim) { return; }
     if(bClipDirty && !ClipFile.isEmpty())
@@ -556,6 +578,18 @@ void MeshViewerWindow::SelectAnimation(const QString& InRuntimePath)
     ClipEdit   = RenderCore::AnimClipData();
     bClipDirty = false;
     State.reset();
+
+    /* Through a retarget: the one given, or an anim state's own -- if it targets this mesh's skeleton. */
+    QString RetargetPath = InRetarget;
+    if(RetargetPath.isEmpty() && InRuntimePath.endsWith(QString::fromLatin1(RenderCore::ANIM_STATE_EXTENSION), Qt::CaseInsensitive))
+    {
+        const std::shared_ptr<const RenderCore::AnimStateData> Named = RenderCore::AnimStateAssetCache::Find(InRuntimePath.toStdString());
+        RetargetPath = Named ? QString::fromStdString(Named->Retarget) : QString();
+    }
+    std::shared_ptr<const RenderCore::RetargetData> Retarget =
+        RetargetPath.isEmpty() ? nullptr : RenderCore::RetargetAssetCache::Find(RetargetPath.toStdString());
+    if(Retarget && Retarget->Target != Mesh.Skeleton) { Retarget = nullptr; }
+    Anim->GetInstance().SetRetarget(Retarget);
 
     if(InRuntimePath.endsWith(QString::fromLatin1(RenderCore::ANIM_STATE_EXTENSION), Qt::CaseInsensitive))
     {
@@ -582,7 +616,12 @@ void MeshViewerWindow::SelectAnimation(const QString& InRuntimePath)
 
     if(AnimationPicker)
     {
-        int Index = AnimationPicker->findData(InRuntimePath);
+        int Index = -1;
+        for(int Each = 0; Each < AnimationPicker->count() && Index < 0; ++Each)
+        {
+            if(AnimationPicker->itemData(Each).toString() == InRuntimePath
+               && AnimationPicker->itemData(Each, Qt::UserRole + 1).toString() == InRetarget) { Index = Each; }
+        }
         if(Index < 0 && !InRuntimePath.isEmpty())
         {
             AnimationPicker->addItem(InRuntimePath, InRuntimePath);

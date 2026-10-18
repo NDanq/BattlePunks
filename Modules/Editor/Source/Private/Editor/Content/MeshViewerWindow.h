@@ -52,11 +52,14 @@ public:
     const QString& GetPath() const { return Path; }
 
     /* An .nmanim or .nmanimstate shown on a skinned mesh of its skeleton --
-     * found in the project, else asked for. nullptr if there is none. */
+     * found in the project, else asked for; with no mesh on it, on one a
+     * retarget from it targets, played through that. nullptr if there is none. */
     static MeshViewerWindow* OpenAnimation(const QString& InPath, QWidget* InParent);
 
-    /* Plays InRuntimePath (an .nmanim or .nmanimstate); "" holds the reference pose. */
-    void SelectAnimation(const QString& InRuntimePath);
+    /* Plays InRuntimePath (an .nmanim or .nmanimstate); "" holds the reference
+     * pose. Through InRetarget (an .nmretarget onto this mesh's skeleton) when
+     * given -- an anim state's own Retarget otherwise. */
+    void SelectAnimation(const QString& InRuntimePath, const QString& InRetarget = QString());
 
     /* The viewer opened (or raised) last, for scripts and tests; null if none. */
     static MeshViewerWindow* FindFront();

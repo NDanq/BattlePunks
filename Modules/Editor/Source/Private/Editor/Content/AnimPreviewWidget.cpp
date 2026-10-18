@@ -132,6 +132,12 @@ void AnimPreviewWidget::SetBonesShown(const bool bInShown)
     Bones->setChecked(bInShown);
 }
 
+void AnimPreviewWidget::SetMarkedBones(std::vector<uint8_t> InMarked)
+{
+    MarkedBones = std::move(InMarked);
+    PushPose();
+}
+
 void AnimPreviewWidget::SetPlaying(const bool bInPlaying)
 {
     bPlaying = bInPlaying && HasSkeleton();
@@ -192,7 +198,8 @@ void AnimPreviewWidget::PushPose()
     }
     View->SetSkinPalette(std::move(Palette));
 
-    std::vector<float> Segments;
+    std::vector<float>   Segments;
+    std::vector<uint8_t> Marked;
     if(Bones->isChecked())
     {
         /* Weighted bones only: each a joint, joined to its parent if that is weighted too. */
@@ -205,9 +212,10 @@ void AnimPreviewWidget::PushPose()
             const RenderCore::AnimMatrix& To = Model[size_t(IsWeighted(Parent) ? Parent : int32_t(Bone))];
             Segments.insert(Segments.end(), { Model[Bone].M[0][3], Model[Bone].M[1][3], Model[Bone].M[2][3],
                                               To.M[0][3], To.M[1][3], To.M[2][3] });
+            Marked.push_back(Bone < MarkedBones.size() ? MarkedBones[Bone] : 0);
         }
     }
-    View->SetSkeletonOverlay(std::move(Segments), Mesh->BoundsMin, Mesh->BoundsMax);
+    View->SetSkeletonOverlay(std::move(Segments), Mesh->BoundsMin, Mesh->BoundsMax, std::move(Marked));
 }
 
 void AnimPreviewWidget::UpdateTransport()

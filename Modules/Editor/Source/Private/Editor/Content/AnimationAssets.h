@@ -32,6 +32,11 @@ namespace EditorAnimation
     /* The first skinned mesh on InSkeleton in the project, then the engine; "" if none. */
     QString FindMeshOn(const std::string& InSkeleton);
 
+    /* A skinned mesh a clip made on InSkeleton plays on through a retarget:
+     * the first .nmretarget with a source for InSkeleton whose target has a
+     * mesh. Its file, and OutRetarget its runtime path; "" if none. */
+    QString FindRetargetedMesh(const std::string& InSkeleton, QString& OutRetarget);
+
     /* Asks for a name and writes a starter anim state in InFolder (the
      * project's Content/Animation when empty): a Base layer with an Idle state
      * and a Speed parameter. Opened if bInOpen. Its path, or "" if cancelled. */
