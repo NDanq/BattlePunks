@@ -7,6 +7,7 @@
  * out, every bone unrotated.
  */
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -24,6 +25,7 @@
 #include "Public/RenderCore/AnimStateAsset.h"
 #include "Public/RenderCore/Components/AnimationComponent.h"
 #include "Public/RenderCore/Components/RenderComponent.h"
+#include "Public/RenderCore/HumanoidRig.h"
 #include "Public/RenderCore/MeshAsset.h"
 
 using namespace RenderCore;
@@ -432,6 +434,108 @@ static void TestSystem()
     AnimationSystem::SetGroundQuery(Was);
 }
 
+/* CrashDummy's own anim state walking, running and jumping over InGround
+ * (world height at x, z; and its normal), the entity carried along +Z at
+ * InSpeed as a mover would carry it. The largest frame-to-frame jump of a
+ * foot or knee (model space) and whether every knee kept to its front. */
+struct GaitReport { float FootJump = 0.0f, KneeJump = 0.0f, MaxDrop = 0.0f; int BackKnees = 0; int Frames = 0; };
+template<typename FGround>
+static GaitReport WalkOver(const float InSpeed, const bool bInJump, FGround&& InGround)
+{
+    GaitReport Report;
+    const auto Body  = SkeletonAssetCache::Find("Engine/Content/Characters/CrashDummy/CrashDummy_Skeleton.nmskel");
+    const auto State = AnimStateAssetCache::Find("Engine/Content/Characters/CrashDummy/CrashDummy.nmanimstate");
+    if(!Body || !State || !State->IK.IsSet()) { Report.Frames = -1; return Report; }
+    HumanoidRoles Roles;
+    std::string Error;
+    FindHumanoidRoles(*Body, Roles, Error);
+    AnimInstance Instance;
+    Instance.SetSkeleton(Body);
+    Instance.SetState(State);
+    Instance.SetParameter("Grounded", 1.0f);
+    Instance.SetParameter("Speed", InSpeed);
+    std::vector<AnimVec3> Last(4);
+    float Z = 0.0f, Lift = 0.0f;
+    for(int Frame = 0; Frame < 240; ++Frame)
+    {
+        const float Dt = 1.0f / 60.0f;
+        Z -= InSpeed * Dt;   // forward: the dummy faces -Z
+        AnimVec3 Normal;
+        float Ground = InGround(0.0f, Z, Normal);
+        /* A jump: up 120 and down again over a second, in the air (not Grounded) meanwhile. */
+        const bool bAir = bInJump && Frame >= 60 && Frame < 120;
+        if(bInJump && Frame == 58) { Instance.SetParameter("Jump", 1.0f); }
+        Instance.SetParameter("Grounded", bAir ? 0.0f : 1.0f);
+        Lift = bAir ? 480.0f * float(Frame - 60) / 60.0f * (1.0f - float(Frame - 60) / 60.0f) : 0.0f;
+        AnimMatrix Placed;
+        Placed.M[1][3] = Ground + Lift;
+        Placed.M[2][3] = Z;
+        Instance.SetModelToWorld(Placed);
+        Instance.Update(Dt);
+        for(const AnimInstance::IKProbe& Probe : Instance.GetIKProbes())
+        {
+            AnimVec3 N;
+            const float Y = InGround(Probe.From.X, Probe.From.Z, N);
+            const bool bHit = Probe.From.Y >= Y && Probe.From.Y - Probe.Length <= Y;
+            Instance.SetIKGround(Probe.Chain, bHit, { Probe.From.X, Y, Probe.From.Z }, N);
+        }
+        const std::vector<AnimMatrix>& Model = Instance.GetModelPose();
+        const int32_t Bones[4] = { Roles.Foot[0], Roles.Foot[1], Roles.Shin[0], Roles.Shin[1] };
+        for(int Index = 0; Index < 4; ++Index)
+        {
+            const AnimVec3 Now = At(Model, *Body, Body->Bones[size_t(Bones[Index])].Name.c_str());
+            if(Frame > 1)
+            {
+                float& Worst = Index < 2 ? Report.FootJump : Report.KneeJump;
+                Worst = std::max(Worst, Distance(Now, Last[size_t(Index)]));
+            }
+            Last[size_t(Index)] = Now;
+        }
+        for(int Side = 0; Side < 2; ++Side)
+        {
+            const AnimVec3 Hip  = At(Model, *Body, Body->Bones[size_t(Roles.Thigh[Side])].Name.c_str());
+            const AnimVec3 Knee = At(Model, *Body, Body->Bones[size_t(Roles.Shin[Side])].Name.c_str());
+            const AnimVec3 Foot = At(Model, *Body, Body->Bones[size_t(Roles.Foot[Side])].Name.c_str());
+            const AnimVec3 Middle = AnimMath::Scale(AnimMath::Add(Hip, Foot), 0.5f);
+            if(AnimMath::Dot(AnimMath::Sub(Knee, Middle), Roles.Forward) < -3.0f)   // clearly behind: a straight leg is not
+            {
+                ++Report.BackKnees;
+            }
+        }
+        Report.MaxDrop = std::max(Report.MaxDrop, Instance.GetPelvisDrop());
+        ++Report.Frames;
+    }
+    return Report;
+}
+
+static void TestGait()
+{
+    std::printf("[gait]\n");
+    const float Tan = std::tan(42.0f * 3.14159265f / 180.0f);
+    const float Cos = std::cos(42.0f * 3.14159265f / 180.0f), Sin = std::sin(42.0f * 3.14159265f / 180.0f);
+    const auto Flat  = [](float, float, AnimVec3& OutN) { OutN = UP; return 0.0f; };
+    /* Both rise the way it walks (-Z): up the stairs. */
+    const auto Ramp  = [&](float, float InZ, AnimVec3& OutN) { OutN = { 0.0f, Cos, Sin }; return -InZ * Tan; };
+    const auto Steps = [](float, float InZ, AnimVec3& OutN) { OutN = UP; return 18.0f * std::floor(-InZ / 28.0f); };
+    struct Case { const char* Name; float Speed; bool bJump; int Ground; };
+    const Case Cases[] = { { "walk, flat", 150.0f, false, 0 }, { "run, flat", 400.0f, false, 0 }, { "jump, flat", 300.0f, true, 0 },
+                           { "walk, ramp", 150.0f, false, 1 }, { "run, ramp", 400.0f, false, 1 },
+                           { "walk, steps", 150.0f, false, 2 }, { "run, steps", 400.0f, false, 2 } };
+    for(const Case& Each : Cases)
+    {
+        const GaitReport R = Each.Ground == 0 ? WalkOver(Each.Speed, Each.bJump, Flat)
+                           : Each.Ground == 1 ? WalkOver(Each.Speed, Each.bJump, Ramp) : WalkOver(Each.Speed, Each.bJump, Steps);
+        std::printf("  %-12s frames %d, foot jump %.1f, knee jump %.1f, knees backward %d, pelvis drop %.1f\n", Each.Name, R.Frames,
+                    R.FootJump, R.KneeJump, R.BackKnees, R.MaxDrop);
+        /* No pops: a foot or knee moves about as the clip moves it (running: ~19 a frame on the flat), no
+         * knee folds backward, and the pelvis dips a little for a planted foot, not for one in the air. */
+        Expect(R.Frames == 240, "the CrashDummy's anim state has IK");
+        Expect(R.FootJump < 22.0f && R.KneeJump < 18.0f, "feet and knees move no faster than the clip moves them, give or take");
+        Expect(R.BackKnees == 0, "no knee folds backward");
+        Expect(R.MaxDrop < 15.0f, "the pelvis dips a little, not a stride's worth");
+    }
+}
+
 int main()
 {
     std::printf("RenderCore IK tests\n");
@@ -440,6 +544,7 @@ int main()
     TestFeet();
     TestHands();
     TestSystem();
+    TestGait();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
 }

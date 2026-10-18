@@ -9,6 +9,8 @@ namespace RenderCore
     {
         /* How fast an IK chain's weight follows its parameter, per second (1 - e^(-8 t)). */
         constexpr float IK_WEIGHT_RESPONSE = 8.0f;
+        /* How far above its standing height a foot no longer holds the pelvis down (model units). */
+        constexpr float IK_LIFTED = 10.0f;
     }
 
     AnimInstance::AnimInstance()  = default;
@@ -209,6 +211,8 @@ namespace RenderCore
         IKMaxStep   = IK.MaxStep;
         IKResponse  = IK.Response;
         IKMaxTilt   = IK.MaxTilt;
+        std::vector<AnimMatrix> Rest;
+        if(Skeleton && !IK.Chains.empty()) { Skeleton->ComputeRefPoseModel(Rest); }
         for(const AnimIKChain& Chain : IK.Chains)
         {
             if(!Skeleton) { break; }
@@ -226,6 +230,7 @@ namespace RenderCore
             Runtime.bAlignEnd = Chain.bAlignEnd;
             if(Runtime.Root < 0 || Runtime.Mid < 0 || Runtime.End < 0) { continue; }
             if(Runtime.Goal == EAnimIKGoal::Bone && Runtime.GoalBone < 0) { continue; }
+            Runtime.RestHeight = Rest[size_t(Runtime.End)].M[1][3];
             IKChains.push_back(std::move(Runtime));
         }
     }
@@ -889,7 +894,9 @@ namespace RenderCore
             const AnimVec3 Foot = Position(IKModel[size_t(Chain.End)]);
             float Wanted = 0.0f;
             AnimQuat Tilt;
-            if(bHasWorld && Chain.bGround)
+            /* Only with ground where the entity stands too: in the air (a jump, a
+             * fall) the feet are as animated, not stretched down to the floor. */
+            if(bHasWorld && Chain.bGround && bBaseGround)
             {
                 const AnimVec3 FootWorld = AM::TransformPoint(ModelToWorld, Foot);
                 float GroundY = 0.0f;
@@ -905,9 +912,18 @@ namespace RenderCore
                     }
                 }
             }
+            /* How far the foot stands: fully at its standing height, not at all
+             * IK_LIFTED above it. A foot lifted in its stride over lower ground (the
+             * step behind, going up stairs) is not pulled down to it -- that would
+             * snap the trailing leg straight -- nor does it pull the pelvis down --
+             * that would dip the body every step; higher ground it does follow, to
+             * clear the step. */
+            const float Lifted  = AM::Dot(AM::Sub(Foot, AM::Scale(Up, Chain.RestHeight)), Up);
+            const float Planted = std::clamp(1.0f - Lifted / IK_LIFTED, 0.0f, 1.0f);
+            if(Wanted < 0.0f) { Wanted *= Planted; }
             Chain.Offset += (Wanted - Chain.Offset) * Ease;
-            Chain.Tilt    = AM::Nlerp(Chain.Tilt, Tilt, Ease);
-            Lowest = std::min(Lowest, Chain.Offset * WeightOf(Chain));
+            Chain.Tilt    = AM::Nlerp(Chain.Tilt, AM::Nlerp(AnimQuat(), Tilt, Planted), Ease);
+            Lowest = std::min(Lowest, Chain.Offset * WeightOf(Chain) * Planted);
         }
 
         /* Probes for the next evaluation: down from above each animated foot, and where the entity stands. */

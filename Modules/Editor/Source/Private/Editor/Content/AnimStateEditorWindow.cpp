@@ -1332,6 +1332,8 @@ bool AnimStateEditorWindow::AddIKLegs()
         Chain.End  = Skeleton.Bones[size_t(Found.Foot[Side])].Name;
         Chain.Goal = RenderCore::EAnimIKGoal::Ground;
         Chain.Pole[0] = Found.Forward.X; Chain.Pole[1] = Found.Forward.Y; Chain.Pole[2] = Found.Forward.Z;   // knees forward
+        /* Only on the ground, when the anim state says so: not through a jump's take-off and landing. */
+        if(Edit.FindParameter("Grounded") >= 0) { Chain.WeightParameter = "Grounded"; }
         Edit.IK.Chains.erase(std::remove_if(Edit.IK.Chains.begin(), Edit.IK.Chains.end(),
                                             [&](const RenderCore::AnimIKChain& InChain) { return InChain.Name == Chain.Name; }),
                              Edit.IK.Chains.end());

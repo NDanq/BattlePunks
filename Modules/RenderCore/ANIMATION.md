@@ -358,9 +358,15 @@ physics, on the layers a Character Mover on the entity stands on, through
 the character's own bodies, its ragdoll hit boxes included: `PhysicsRaycast`'s
 InIgnore) and hands back a plane per probe for the next
 evaluation -- a frame old, but as a plane, so a foot lands on it exactly.
-A foot moves at most MaxStep; the PelvisBone is lowered for the lowest foot
-(never raised: the legs could not follow); both ease in at Response per
-second. No ground found, no query set, or no physics: as animated. Lone
+A foot moves at most MaxStep. The PelvisBone is lowered for the lowest
+*standing* foot (never raised: the legs could not follow); a foot lifted in
+its stride -- more than 10 above its standing height -- follows higher ground
+(to clear a step) but neither reaches down to lower ground nor pulls the
+pelvis down, so going up stairs the trailing leg keeps its bend and the body
+does not dip each step. Both ease in at Response per second. No ground under
+the foot or where the entity stands (in the air), no query set, or no
+physics: as animated. Weight the legs by Grounded so a jump's take-off and
+landing are animated too (Add Legs does). Lone
 clips (no anim state) have no IK.
 
 Order: chains are solved in the listed order, so a hand on a bone another
