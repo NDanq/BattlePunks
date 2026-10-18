@@ -51,6 +51,7 @@
 #include "Public/Audio/SoundAsset.h"
 #endif
 #include "Public/RenderCore/ParticleSystemAsset.h"
+#include "Public/RenderCore/RetargetAsset.h"
 #include "Public/RenderCore/SkeletonAsset.h"
 #include "Public/RenderCore/TextureAsset.h"
 #include "Private/Editor/Content/RenderTargetAssets.h"
@@ -66,6 +67,7 @@
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Content/ImportWizard.h"
 #include "Private/Editor/Content/AnimationAssets.h"
+#include "Private/Editor/Content/RetargetEditorWindow.h"
 #include "Private/Editor/Content/MeshViewerWindow.h"
 #include "Private/Editor/Content/TextureViewerWindow.h"
 #include "Private/Editor/DocumentationWindow.h"
@@ -156,6 +158,7 @@ namespace
             || InPath.endsWith(QStringLiteral(".nmskel"), Qt::CaseInsensitive)
             || InPath.endsWith(QStringLiteral(".nmanim"), Qt::CaseInsensitive)
             || InPath.endsWith(QStringLiteral(".nmanimstate"), Qt::CaseInsensitive)
+            || InPath.endsWith(QStringLiteral(".nmretarget"), Qt::CaseInsensitive)
             || InPath.endsWith(QStringLiteral(".nmrt2d"), Qt::CaseInsensitive)
             || InPath.endsWith(QStringLiteral(".nmrt3d"), Qt::CaseInsensitive)
             || InPath.endsWith(QStringLiteral(".nmsound"), Qt::CaseInsensitive);
@@ -527,6 +530,29 @@ private:
                             .arg(Skeleton.ImportInfo.IsEmpty() ? QString()
                                  : QStringLiteral("\nFrom %1").arg(QString::fromStdString(Skeleton.ImportInfo.SourcePath)))
                           : QStringLiteral("Not a skeleton this editor can read");
+            if(Entry.Summary.startsWith(QStringLiteral("Skeleton"))) { Entry.Summary += QStringLiteral("\nDouble-click to see it on a mesh"); }
+        }
+        else if(Path.endsWith(QStringLiteral(".nmretarget"), Qt::CaseInsensitive))
+        {
+            RenderCore::RetargetData Retarget;
+            EngineCore::Archive Ar = ArchiveOf(ReadAll(Path));
+            if(RenderCore::SerializeRetarget(Ar, Retarget))
+            {
+                QStringList Sources;
+                size_t Bones = 0;
+                for(const RenderCore::RetargetSource& Source : Retarget.Sources)
+                {
+                    Sources << QString::fromStdString(Source.Skeleton);
+                    Bones += Source.Bones.size();
+                }
+                Entry.Summary = QStringLiteral("Retarget onto %1\nfrom %2 source(s), %3 bones mapped%4\nDouble-click to edit")
+                                .arg(QString::fromStdString(Retarget.Target)).arg(Retarget.Sources.size()).arg(Bones)
+                                .arg(Sources.isEmpty() ? QString() : QStringLiteral(": ") + Sources.join(QStringLiteral(", ")));
+            }
+            else
+            {
+                Entry.Summary = QStringLiteral("Not a retarget this editor can read");
+            }
         }
         else if(Path.endsWith(QStringLiteral(".nmanim"), Qt::CaseInsensitive))
         {
@@ -1083,6 +1109,19 @@ void ContentBrowserPanel::OpenItem(const QString& InPath)
         EditorAnimation::OpenAnimState(InPath, window());
         return;
     }
+    if(InPath.endsWith(QStringLiteral(".nmretarget"), Qt::CaseInsensitive))
+    {
+        RetargetEditorWindow::Open(InPath, window());
+        return;
+    }
+    if(InPath.endsWith(QStringLiteral(".nmskel"), Qt::CaseInsensitive))
+    {
+        /* A skeleton is seen on a mesh skinned to it: the mesh viewer's Skeleton tab. */
+        const QString Mesh = EditorAnimation::FindMeshOn(EditorContent::ToRuntimePath(InPath).toStdString());
+        if(!Mesh.isEmpty()) { MeshViewerWindow::Open(Mesh, window()); }
+        else { emit StatusMessage(QStringLiteral("No skinned mesh on %1 to show it on").arg(Info.fileName())); }
+        return;
+    }
     if(InPath.endsWith(QStringLiteral(".nmtexture"), Qt::CaseInsensitive))
     {
         TextureViewerWindow::Open(InPath, window());
@@ -1185,6 +1224,14 @@ void ContentBrowserPanel::ShowContextMenu(const QPoint& InPos)
         Menu.addAction(QStringLiteral("New Behavior Tree..."), this, [this]() { BehaviorTreeEditorWindow::CreateIn(CurrentFolder, window()); });
 #endif
         Menu.addAction(QStringLiteral("New Anim State..."), this, [this]() { EditorAnimation::CreateAnimState(CurrentFolder, window()); });
+        Menu.addAction(QStringLiteral("New Retarget..."), this, [this]()
+        {
+            /* A selected skeleton is the target; otherwise one is asked for. */
+            const QStringList Selected = SelectedPaths();
+            const QString Target = Selected.size() == 1 && Selected.front().endsWith(QStringLiteral(".nmskel"), Qt::CaseInsensitive)
+                                 ? EditorContent::ToRuntimePath(Selected.front()) : QString();
+            RetargetEditorWindow::CreateIn(CurrentFolder, Target, window());
+        });
         for(const NodeGraph::Schema* Schema : NodeGraph::GetSchemas())
         {
             /* By name: a refresh (RefreshGameDeclarations) replaces the schema. */

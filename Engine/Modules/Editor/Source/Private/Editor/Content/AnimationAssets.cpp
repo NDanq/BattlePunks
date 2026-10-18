@@ -13,6 +13,7 @@
 #include "Public/RenderCore/AnimClipAsset.h"
 #include "Public/RenderCore/AnimStateAsset.h"
 #include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/RetargetAsset.h"
 #include "Private/Editor/Content/AnimStateEditorWindow.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphAssets.h"
@@ -81,6 +82,25 @@ namespace EditorAnimation
                 EngineCore::Archive Ar = ReadAssetArchive(File);
                 RenderCore::MeshData Mesh;
                 if(RenderCore::SerializeMesh(Ar, Mesh) && Mesh.IsSkinned() && Mesh.Skeleton == InSkeleton) { return File; }
+            }
+        }
+        return QString();
+    }
+
+    QString FindRetargetedMesh(const std::string& InSkeleton, QString& OutRetarget)
+    {
+        OutRetarget.clear();
+        if(InSkeleton.empty()) { return QString(); }
+        for(const QString& Each : EditorContent::ListRetargetPaths())
+        {
+            EngineCore::Archive Ar = ReadAssetArchive(FileOfRuntimePath(Each));
+            RenderCore::RetargetData Retarget;
+            if(!RenderCore::SerializeRetarget(Ar, Retarget) || !Retarget.FindSource(InSkeleton)) { continue; }
+            const QString Mesh = FindMeshOn(Retarget.Target);
+            if(!Mesh.isEmpty())
+            {
+                OutRetarget = Each;
+                return Mesh;
             }
         }
         return QString();

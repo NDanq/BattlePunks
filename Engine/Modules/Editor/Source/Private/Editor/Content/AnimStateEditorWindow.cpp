@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <map>
 #include <memory>
+#include <set>
 
 #include <QAction>
 #include <QCheckBox>
@@ -34,6 +35,7 @@
 #include <QVBoxLayout>
 
 #include "Public/RenderCore/AnimClipAsset.h"
+#include "Public/RenderCore/RetargetAsset.h"
 #include "Public/RenderCore/SkeletonAsset.h"
 #include "Private/Editor/Content/AnimPreviewWidget.h"
 #include "Private/Editor/Content/AnimStateGraph.h"
@@ -156,6 +158,31 @@ void AnimStateEditorWindow::BuildUi()
 {
     auto* Forms  = new QWidget(this);
     auto* Layout = new QVBoxLayout(Forms);
+
+    /* The default retarget: clips made for another skeleton play through it. */
+    auto* RetargetRow = new QHBoxLayout();
+    RetargetField = new QLineEdit(Forms);
+    RetargetField->setPlaceholderText(QStringLiteral("(none) -- an .nmretarget, for clips made on another skeleton"));
+    RetargetField->setToolTip(QStringLiteral("Its clips whose skeleton is a source of this retarget play on the mesh's skeleton (its "
+                                             "target) through it. An Animation component's own Retarget wins."));
+    RetargetField->setText(ToQ(Edit.Retarget));
+    RetargetField->setReadOnly(bReadOnly);
+    auto* RetargetCompleter = new QCompleter(EditorContent::ListRetargetPaths(), RetargetField);
+    RetargetCompleter->setCaseSensitivity(Qt::CaseInsensitive);
+    RetargetCompleter->setFilterMode(Qt::MatchContains);
+    RetargetField->setCompleter(RetargetCompleter);
+    connect(RetargetField, &QLineEdit::editingFinished, this, [this]()
+    {
+        const std::string Value = RetargetField->text().trimmed().toStdString();
+        if(bFilling || Value == Edit.Retarget) { return; }
+        Edit.Retarget = Value;
+        Edited();
+    });
+    RetargetRow->addWidget(new QLabel(QStringLiteral("Retarget"), Forms));
+    RetargetRow->addWidget(RetargetField, 1);
+    RetargetRow->addWidget(EditorContent::MakeRevealButton([this]() { return ToQ(Edit.Retarget); }, Forms));
+    Layout->addLayout(RetargetRow);
+
     Layout->addWidget(BuildParameters());
     Layout->addWidget(BuildLayers());
     Layout->addWidget(BuildLookAt());
@@ -235,8 +262,12 @@ void AnimStateEditorWindow::BuildUi()
     connect(SaveKey, &QAction::triggered, this, &AnimStateEditorWindow::Save);
     addAction(SaveKey);
 
-    /* A mesh on the clips' skeleton, if the project has one. */
-    PickMesh(EditorAnimation::FindMeshOn(EditorAnimation::SkeletonOfAnimation(Path)));
+    /* A mesh on its retarget's target, else on the clips' skeleton, if the project has one. */
+    const std::shared_ptr<const RenderCore::RetargetData> Retarget =
+        Edit.Retarget.empty() ? nullptr : RenderCore::RetargetAssetCache::Find(Edit.Retarget);
+    QString Mesh = Retarget ? EditorAnimation::FindMeshOn(Retarget->Target) : QString();
+    if(Mesh.isEmpty()) { Mesh = EditorAnimation::FindMeshOn(EditorAnimation::SkeletonOfAnimation(Path)); }
+    PickMesh(Mesh);
 
     Edited(true, /*bInDirty*/ false);
 }
@@ -943,6 +974,35 @@ void AnimStateEditorWindow::Edited(const bool bInStructure, const bool bInDirty)
         if(!InName.empty() && Edit.FindParameter(InName) < 0) { Found << QStringLiteral("%1 names a parameter it lacks: %2").arg(InWhere, ToQ(InName)); }
     };
     const RenderCore::SkeletonData* Skeleton = Preview ? Preview->GetSkeleton() : nullptr;
+
+    /* The retarget: there, and onto the previewed mesh's skeleton; a clip on another skeleton needs a source in it. */
+    const std::shared_ptr<const RenderCore::RetargetData> Retarget =
+        Edit.Retarget.empty() ? nullptr : RenderCore::RetargetAssetCache::Find(Edit.Retarget);
+    if(!Edit.Retarget.empty() && !Retarget) { Found << QStringLiteral("Its retarget cannot be read: %1").arg(ToQ(Edit.Retarget)); }
+    if(Retarget && !MeshRuntime.isEmpty() && Retarget->Target != PreviewMesh.Skeleton)
+    {
+        Found << QStringLiteral("Its retarget targets %1, not the previewed mesh's skeleton %2")
+                 .arg(ToQ(Retarget->Target), ToQ(PreviewMesh.Skeleton));
+    }
+    std::set<std::string> Foreign;
+    for(const RenderCore::AnimLayer& Layer : Edit.Layers)
+    {
+        for(const RenderCore::AnimStateNode& State : Layer.States)
+        {
+            for(const RenderCore::AnimBlendSample& Sample : State.Samples)
+            {
+                const std::shared_ptr<const RenderCore::AnimClipData> Clip =
+                    Sample.Clip.empty() ? nullptr : RenderCore::AnimClipAssetCache::Find(Sample.Clip);
+                if(!Clip || Clip->Skeleton.empty() || MeshRuntime.isEmpty() || Clip->Skeleton == PreviewMesh.Skeleton) { continue; }
+                if(Retarget && !Retarget->FindSource(Clip->Skeleton)) { Foreign.insert(Clip->Skeleton); }
+            }
+        }
+    }
+    for(const std::string& Each : Foreign)
+    {
+        Found << QStringLiteral("Clips made on %1 play by bone name: its retarget has no source for that skeleton").arg(ToQ(Each));
+    }
+
     for(const RenderCore::AnimLayer& Layer : Edit.Layers)
     {
         const QString LayerName = ToQ(Layer.Name);
@@ -1008,6 +1068,11 @@ void AnimStateEditorWindow::RestartPreview()
     {
         Live[Parameter.Name] = Preview->GetInstance().GetParameter(Parameter.Name, Parameter.Default);
     }
+    /* Through its retarget, when that targets the previewed mesh's skeleton. */
+    std::shared_ptr<const RenderCore::RetargetData> Retarget =
+        Edit.Retarget.empty() ? nullptr : RenderCore::RetargetAssetCache::Find(Edit.Retarget);
+    if(Retarget && Retarget->Target != PreviewMesh.Skeleton) { Retarget = nullptr; }
+    Preview->GetInstance().SetRetarget(Retarget);
     Preview->PlayState(std::make_shared<RenderCore::AnimStateData>(Edit));
     for(const auto& Each : Live)
     {
@@ -1063,6 +1128,11 @@ void AnimStateEditorWindow::PickMesh(const QString& InFile)
 
 void AnimStateEditorWindow::FillAll()
 {
+    if(RetargetField && RetargetField->text() != ToQ(Edit.Retarget))
+    {
+        const QSignalBlocker Block(RetargetField);
+        RetargetField->setText(ToQ(Edit.Retarget));
+    }
     FillParameters();
     FillLayers();
     FillLookAt();

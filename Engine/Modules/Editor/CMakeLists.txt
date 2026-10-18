@@ -228,6 +228,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/Content/AnimPreviewWidget.h
         Source/Private/Editor/Content/AnimStateEditorWindow.cpp
         Source/Private/Editor/Content/AnimStateEditorWindow.h
+        Source/Private/Editor/Content/RetargetEditorWindow.cpp
+        Source/Private/Editor/Content/RetargetEditorWindow.h
         Source/Private/Editor/Content/AnimStateGraph.cpp
         Source/Private/Editor/Content/AnimStateGraph.h
         Source/Private/Editor/Content/ClipTimeline.cpp

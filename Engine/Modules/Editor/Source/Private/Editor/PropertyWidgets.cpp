@@ -36,6 +36,7 @@
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/Particles/ParticleAssets.h"
 #include "Private/Editor/Sequencer/SequencerAssets.h"
+#include "Private/Editor/Content/RetargetEditorWindow.h"
 #if WITH_AICORE
 #include "Private/Editor/AI/BehaviorTreeEditorWindow.h"
 #endif
@@ -492,8 +493,9 @@ namespace
             const bool bFoliage   = (Entry.Flags & GameCore::PF_AssetFoliage) != 0;
             const bool bNavMesh   = (Entry.Flags & GameCore::PF_AssetNavMesh) != 0;
             const bool bTree      = (Entry.Flags & GameCore::PF_AssetBehaviorTree) != 0;
+            const bool bRetarget  = (Entry.Flags & GameCore::PF_AssetRetarget) != 0;
             const bool bAssetField = bMesh || bMaterial || bPost || bTarget || bTexture || bParticles || bAnimation || bSound
-                                  || bPrefab || bSequence || bTerrain || bFoliage || bNavMesh || bTree;
+                                  || bPrefab || bSequence || bTerrain || bFoliage || bNavMesh || bTree || bRetarget;
 
             /* The eye: the Content Browser goes to the asset's folder and opens it in its editor. */
             if(bAssetField)
@@ -549,10 +551,14 @@ namespace
                     { EAsset::BehaviorTree, "Drop an .nmbt here",
                       "A behavior tree, by its path: Content/AI/Guard.nmbt -- made and edited in the behavior tree editor",
                       "Choose a behavior tree", "Choose a Behavior Tree", "Behavior Trees (*.nmbt)" },
+                    { EAsset::Retarget, "Drop an .nmretarget here (empty: the anim state's)",
+                      "A retarget, by its path: Content/Characters/Mixamo_to_Hero.nmretarget -- clips made for its source "
+                      "skeletons play on this mesh's (its target)",
+                      "Choose a retarget", "Choose a Retarget", "Retargets (*.nmretarget)" },
                 };
                 const AssetUi& Ui = Kinds[bMesh ? 0 : bMaterial ? 1 : bPost ? 2 : bTarget ? 3 : bTexture ? 4 : bParticles ? 5
                                           : bAnimation ? 6 : bSound ? 7 : bPrefab ? 8 : bSequence ? 9 : bTerrain ? 10
-                                          : bFoliage ? 11 : bNavMesh ? 12 : 13];
+                                          : bFoliage ? 11 : bNavMesh ? 12 : bTree ? 13 : 14];
                 AssetKind = Ui.Kind;
                 Edit->setPlaceholderText(QString::fromLatin1(Ui.Placeholder));
                 Edit->installEventFilter(this);
@@ -570,6 +576,7 @@ namespace
                                                      : bFoliage   ? EditorContent::ListFoliagePaths()
                                                      : bNavMesh   ? EditorContent::ListNavMeshPaths()
                                                      : bTree      ? EditorContent::ListBehaviorTreePaths()
+                                                     : bRetarget  ? EditorContent::ListRetargetPaths()
                                                                   : EditorContent::ListTexturePaths(), Edit);
                     Completer->setCaseSensitivity(Qt::CaseInsensitive);
                     Completer->setFilterMode(Qt::MatchContains);
@@ -641,6 +648,20 @@ namespace
                     });
                 }
 #endif
+
+                /* A retarget opens in its editor. */
+                if(bRetarget)
+                {
+                    auto* Open = new QToolButton(this);
+                    Open->setText(QStringLiteral("Edit"));
+                    Open->setToolTip(QStringLiteral("Open this retarget in the retarget editor"));
+                    Layout->addWidget(Open);
+                    connect(Open, &QToolButton::clicked, this, [this]()
+                    {
+                        const QString File = EditorContent::FileForRuntimePath(Edit->text().trimmed());
+                        if(!File.isEmpty()) { RetargetEditorWindow::Open(File, window()); }
+                    });
+                }
 
                 /* A particle system opens in the Particle Editor, made first if the field is empty. */
                 if(bParticles)
@@ -714,7 +735,7 @@ namespace
 
     private:
         enum class EAsset { None, Mesh, Material, PostProcess, RenderTarget, Texture, ParticleSystem, Animation, Sound, Prefab, Sequence,
-                            Terrain, Foliage, NavMesh, BehaviorTree };
+                            Terrain, Foliage, NavMesh, BehaviorTree, Retarget };
 
         void Commit()
         {
@@ -823,6 +844,10 @@ namespace
             if(AssetKind == EAsset::BehaviorTree)
             {
                 return EditorContent::BehaviorTreePathFor(InFile);
+            }
+            if(AssetKind == EAsset::Retarget)
+            {
+                return EditorContent::RetargetPathFor(InFile);
             }
             return QString();
         }

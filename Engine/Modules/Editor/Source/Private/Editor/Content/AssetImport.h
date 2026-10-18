@@ -158,8 +158,18 @@ namespace EditorContent
                              const QString& InProjectRoot);
 
     /* From the recorded source and options; fails if none or the source is
-     * gone. Meshes reimport without their textures. */
+     * gone. Meshes reimport without their textures; a baked clip
+     * (BakeRetargetClip) is baked again. */
     ImportResult Reimport(const QString& InAssetPath, const QString& InProjectRoot);
+
+    /* The clip InClipFile played through the retarget InRetargetFile, baked
+     * into an ordinary .nmanim on the retarget's target skeleton at InOutFile
+     * (RenderCore's BakeRetargetedClip): no runtime cost, and it plays where
+     * no retarget is set. What the editor set on an existing InOutFile --
+     * notifies, looping, root motion -- is kept. Its import info records the
+     * clip and the retarget ("BakedVia"), so Reimport bakes it again. */
+    ImportResult BakeRetargetClip(const QString& InClipFile, const QString& InRetargetFile, const QString& InOutFile,
+                                  const QString& InProjectRoot);
 }
 
 #endif // WITH_EDITOR

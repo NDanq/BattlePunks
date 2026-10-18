@@ -19,6 +19,7 @@
 
 #include "Public/Core/CoreArchive.h"
 #include "Public/RenderCore/AnimClipAsset.h"
+#include "Public/RenderCore/AnimRetarget.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/RetargetAsset.h"
 #include "Public/RenderCore/SkeletonAsset.h"
@@ -341,6 +342,54 @@ static void TestAnimationOnlyImport(const QDir& InRoot)
     RenderCore::RetargetData AgainData;
     Expect(Again.bOK && ReadAsset(RetargetPath, AgainData, &RenderCore::SerializeRetarget) && AgainData.Sources.size() == 1,
            "importing again replaces its source rather than adding one");
+
+    /* Bake: the pack's clip through that retarget, an ordinary clip on the arm's skeleton. */
+    const QString ClipFile  = QDir(Content).filePath(QStringLiteral("Pack_Wave.nmanim"));
+    const QString BakedFile = QDir(Content).filePath(QStringLiteral("Pack_Wave_Arm.nmanim"));
+    const ImportResult Baked = BakeRetargetClip(ClipFile, RetargetPath, BakedFile, InRoot.absolutePath());
+    Expect(Baked.bOK && Baked.Written.size() == 1, "a clip bakes through a retarget");
+    if(!Baked.bOK) { std::printf("        %s\n", qPrintable(Baked.Message)); return; }
+    RenderCore::AnimClipData Out, Made;
+    RenderCore::SkeletonData Arm, PackSkeleton;
+    Expect(ReadAsset(BakedFile, Out, &RenderCore::SerializeAnimClip) && Out.Skeleton == "Content/Anim/Arm_Skeleton.nmskel"
+           && Out.FrameCount == 31, "on the target skeleton, frame for frame");
+    ReadAsset(ClipFile, Made, &RenderCore::SerializeAnimClip);
+    ReadAsset(QDir(InRoot.filePath(QStringLiteral("Content/Anim"))).filePath(QStringLiteral("Arm_Skeleton.nmskel")), Arm, &RenderCore::SerializeSkeleton);
+    ReadAsset(QDir(Content).filePath(QStringLiteral("Pack_Skeleton.nmskel")), PackSkeleton, &RenderCore::SerializeSkeleton);
+    RenderCore::RetargetBinding Binding;
+    bool bSame = RenderCore::BindClipRetargeted(Made, PackSkeleton, Arm, AgainData.Sources[0], Binding);
+    RenderCore::AnimClipBinding Plain;
+    RenderCore::BindClip(Out, Arm, Plain);
+    RenderCore::RetargetScratch Scratch;
+    for(uint32_t Frame = 0; bSame && Frame < Out.FrameCount; ++Frame)
+    {
+        RenderCore::AnimLocalPose Runtime, Played;
+        RenderCore::GetRefPose(Arm, Runtime);
+        RenderCore::GetRefPose(Arm, Played);
+        RenderCore::SampleClipRetargeted(Made, Binding, float(Frame) / Out.SampleRate, Scratch, Runtime);
+        RenderCore::SampleClip(Out, Plain, float(Frame) / Out.SampleRate, Played);
+        for(size_t Bone = 0; Bone < Runtime.size(); ++Bone)
+        {
+            bSame = bSame && std::fabs(std::fabs(RenderCore::AnimMath::Dot(Runtime[Bone].Rotation, Played[Bone].Rotation)) - 1.0f) < 1e-5f
+                          && Near(Runtime[Bone].Translation.X, Played[Bone].Translation.X);
+        }
+    }
+    Expect(bSame, "it plays as the clip does through the retarget, at every frame");
+
+    /* Reimport bakes it again -- from the clip and retarget, not a glTF -- keeping what the editor set. */
+    Out.Notifies.push_back({ "Wave", 0.5f });
+    {
+        EngineCore::Archive Ar = EngineCore::Archive::ForWriting();
+        RenderCore::SerializeAnimClip(Ar, Out);
+        QFile File(BakedFile);
+        File.open(QIODevice::WriteOnly);
+        File.write(reinterpret_cast<const char*>(Ar.GetBytes().data()), qint64(Ar.GetBytes().size()));
+    }
+    const ImportResult Rebake = Reimport(BakedFile, InRoot.absolutePath());
+    RenderCore::AnimClipData Rebaked;
+    Expect(Rebake.bOK && Rebake.Message.contains(QStringLiteral("baked")), "a baked clip reimports by baking again");
+    Expect(ReadAsset(BakedFile, Rebaked, &RenderCore::SerializeAnimClip) && Rebaked.Notifies.size() == 1 && Rebaked.Tracks.size() == Out.Tracks.size()
+           && Rebaked.ImportInfo.Settings.find("BakedVia=") != std::string::npos, "keeping its notifies, and where it came from");
 }
 
 static void TestAnimationImport(const QDir& InRoot)
