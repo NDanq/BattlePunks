@@ -15,14 +15,16 @@ the editor's tools for them.
 | Skinned mesh -- a mesh with bones and weights per vertex | `MeshAsset.h` (`MSKN` chunk) | `.nmmesh` |
 | Clip -- bone tracks at a fixed rate, notifies, looping, root motion | `AnimClipAsset.h` | `.nmanim` |
 | Anim state -- parameters, layers of state machines | `AnimStateAsset.h` | `.nmanimstate` |
+| Retarget -- clips of one skeleton played on another | `RetargetAsset.h`, `AnimRetarget.h` | `.nmretarget` |
+| Humanoid roles -- which bone is which, auto-mapping | `HumanoidRig.h` | |
 | Pose math -- sample, blend, mask, compose | `AnimPose.h`, `AnimMath.h` | |
 | One skeleton's playback | `AnimInstance.h` | |
 | A world's animation | `AnimationSystem.h` | |
 | Components | `Components/AnimationComponent.h`, `Components/AnimSocketComponent.h` | |
 | Skinning on the GPU | `Shaders/Skinning.glsl`, `MaterialTemplate_VS.glsl` (SkinnedMesh) | |
 
-Tests: `RenderCoreAnimationTests` (headless) and the editor's
-`NimbleEditorImportTests`.
+Tests: `RenderCoreAnimationTests` and `RenderCoreRetargetTests` (headless)
+and the editor's `NimbleEditorImportTests`.
 
 ---
 
@@ -55,6 +57,19 @@ skeleton, source -- as `Engine/Content/...`.
 Clips find bones by **name**, so a clip plays on any skeleton with those
 names. Reimporting a clip -- or importing its file again over it -- keeps
 what the editor set on it: notifies, looping, root motion and its root bone.
+
+A file of **animations and no mesh** (a clip pack -- Mixamo's "without skin"
+downloads) imports too: its skeleton is the nodes its animations move and
+their ancestors, and only the skeleton and clips are written. The import
+wizard's Animation group adds:
+
+- **Existing Skeleton** -- a skeleton the file's bones are already in (the
+  hundredth clip of one rig): no skeleton is written, and the clips (and a
+  skinned mesh, its joints renumbered) name that one. A bone it lacks fails
+  the import, naming the bones -- import its own skeleton and retarget instead.
+- **Create Retarget To** -- a skeleton the clips should play on: an
+  auto-mapped, arm-aligned `<Name>_to_<Target>.nmretarget` is written beside
+  them (Retargeting, below).
 
 ## Skinning
 
@@ -259,6 +274,65 @@ Layer Arms   mask spine_02, weight scaled by Armed
   Anim Socket holds. Stored as the optional ALOK chunk; files without it
   have none.
 
+## Retargeting
+
+A clip made for one skeleton plays on another -- other bone names, lengths,
+bone axes (roll), and a near reference pose (a T pose onto an A pose) --
+through a **retarget**, `.nmretarget` (`RetargetAsset.h`): one target
+skeleton and, per source skeleton whose clips it plays, a bone map. Each
+mapped target bone names its source bone, what its translation does, and an
+optional pose offset; a target bone left out keeps its reference pose under
+its parent -- right for twist and helper bones. The pairing is many to many
+(a rig plays several packs, a pack drives several rigs), so it is its own file.
+
+| Translation | The target bone's local translation |
+|---|---|
+| Skeleton | its own reference: its bone lengths kept (every bone but the pelvis) |
+| Animation | the source's, turned into the target parent's frame |
+| Animation, scaled | that, times the root scale: the pelvis |
+| Relative, scaled | its reference plus how far the source moved from its own, scaled |
+
+The **root scale** is the target pelvis's reference height over the source's
+(automatic, or set). Scale tracks are not retargeted: a bone keeps the
+target's reference scale.
+
+**Which clips retarget.** An Animation component's `Retarget` names one, or
+else its anim state's (`AnimStateData::Retarget`, the ARTG chunk). It is used
+only if its target is the mesh's skeleton (warned otherwise); then a clip
+whose `Skeleton` is one of its sources plays through it, and every other
+clip binds by name as before -- one whose skeleton has no source is warned
+once. Without a retarget nothing changes.
+
+**The math** (`AnimRetarget.h`). The clip is sampled onto its own skeleton,
+and each mapped target bone turns, in model space, as far from its
+reference as its source bone turned from the source's:
+
+    Qt[j] = Qs[i] * inverse(PoseOffset[j] * QsRef[i]) * QtRef[j]
+
+so the target's own bone axes do not matter. The pose offset turns the
+source's reference bone to lie along the target's; **Align Arms**
+(`AlignRetargetArms`) works it out for the clavicles, arms and hands. Root
+motion is the target root bone the clip's root drives, its travel scaled
+and turned into the target's frame; notifies at a source bone fire at its
+target bone (or its nearest mapped ancestor's). Layers, masks, additive
+layers, the look-at, sockets and the ragdoll work on the retargeted pose by
+target bone names, as on any other. Bindings are shared
+(`RetargetBindingCache`) and dropped when a clip, skeleton or retarget is
+reloaded; sampling allocates nothing.
+
+**Auto-mapping** (`AutoMapRetarget`, `HumanoidRig.h`) maps by humanoid role
+first -- the role finder the ragdoll profile is built from: pelvis (scaled),
+spine chain by position, chest, neck, head, clavicles, arms, legs, toes,
+fingers by order under the hand -- then by exact name, then by name with the
+namespace, rig prefix and side normalised (`DEF-upper_arm.L`, `upper_arm_l`
+and `Left_UpperArm` match). Twist bones are matched by name only.
+
+**Baking** writes a clip through a retarget as an ordinary `.nmanim` on the
+target (`BakeRetargetedClip`): no runtime cost, and it plays where no
+retarget is set. It records where it came from, so reimporting it bakes it
+again. In the retarget editor (Bake Clips...) or the console:
+`anim retarget-bake <retarget> <clip | folder> [outdir]`.
+
 ## In the editor
 
 - **Content Browser**: double-click an `.nmanim` to preview it on a mesh of
@@ -289,9 +363,21 @@ Layer Arms   mask spine_02, weight scaled by Armed
   preview you can drive sits alongside. A renamed parameter is renamed where
   it is used; problems (missing clips, parameters, mask or look-at bones)
   are listed.
+- **Retarget editor**: double-click an `.nmretarget` (New Retarget in the
+  Content Browser's menu; a selected `.nmskel` is its target). The target,
+  the sources, and the selected source's bone table -- each target bone's
+  source bone, translation and pose offset -- with Auto Map, Align Arms,
+  Reset Offsets and Clear; Ctrl+Z undoes. A clip of the source plays on a
+  source mesh and, through the retarget as it is being edited, on a target
+  mesh, in step; bones no source bone drives are drawn red. Bake Clips
+  writes chosen clips onto the target. The mesh viewer lists clips a
+  retarget onto its skeleton plays ("retargeted via ..."), the anim state
+  editor has the state's Retarget, and a `.nmskel` opens on a mesh of it.
 - Console, for scripts: `mesh <path> | play | pause | seek <s> | param <n> <v>
-  | bones on | windowshot <png>` and `animstate <path> | new | save |
-  windowshot <png>`.
+  | bones on | windowshot <png>`, `animstate <path> | new | save |
+  windowshot <png>`, `retarget <path> | new <target> [file] | source <skel> |
+  automap | align | clip <clip> | save | windowshot <png>` and
+  `anim retarget-bake <retarget> <clip | folder> [outdir]`.
 
 ## Engine characters
 
@@ -356,9 +442,17 @@ converted to engine space: what a game copies to hold the pistol itself.
 
 ## Not yet
 
-Inverse kinematics (feet, a hand on a weapon), morph targets,
-retargeting between differently named skeletons, clip compression, turning
-root motion, skinned meshes on Metal, and an occlusion-aware budget. Also:
+Inverse kinematics (feet, a hand on a weapon), morph targets, clip
+compression, turning root motion, skinned meshes on Metal, and an
+occlusion-aware budget. Also:
+
+- **Retargeting** (above) has no IK: feet slide and hands miss what they
+  held when proportions differ (foot planting and hand contacts need IK).
+  Scale tracks are not retargeted. Auto-mapping by role is humanoid only
+  (other rigs map by name). A chain of a different length maps its ends and
+  leaves the middle at its reference (a two-bone spine onto a five-bone one
+  does not spread the bend). Reference poses far apart need pose offsets:
+  Align Arms sets the arms' only.
 
 - **Socket swaps as data**: a notify cannot move a socket by itself; a script
   listens for it and sets the socket's bone and offsets (as
