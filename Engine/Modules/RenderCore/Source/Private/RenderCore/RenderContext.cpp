@@ -147,7 +147,7 @@ namespace RenderCore
             PP_AmbientOcclusion, PP_AmbientBlur, PP_StatsOverlay, PP_ClearGradient, PP_CaptureCopy, PP_Tonemap,
             PP_IBLSky, PP_IBLPrefilter, PP_IBLLighting, PP_Sky, PP_ViewTarget, PP_UI,
             PP_Luminance, PP_LuminanceReduce, PP_AdaptExposure, PP_TemporalAA, PP_ScreenReflections, PP_Copy,
-            PP_VolumetricFog, PP_FogComposite,
+            PP_VolumetricFog, PP_FogComposite, PP_ViewSites,
             PP_PassCount
         };
         const char* const POST_PASS_SHADERS[PP_PassCount] = {
@@ -156,7 +156,7 @@ namespace RenderCore
             "PPAmbientOcclusion.fsh", "PPAmbientBlur.fsh", "StatsOverlay.fsh", "ClearGradient.fsh", "CaptureCopy.fsh", "Tonemap.fsh",
             "IBLSky.fsh", "IBLPrefilter.fsh", "IBLLighting.fsh", "Sky.fsh", "ViewTarget.fsh", "UI.fsh",
             "PPLuminance.fsh", "PPLuminanceReduce.fsh", "PPAdaptExposure.fsh", "PPTemporalAA.fsh", "PPScreenReflections.fsh",
-            "PPCopy.fsh", "PPVolumetricFog.fsh", "PPFogComposite.fsh",
+            "PPCopy.fsh", "PPVolumetricFog.fsh", "PPFogComposite.fsh", "ViewSites.fsh",
         };
         /* Each pass's draw event (DrawPost). */
         const char* const POST_PASS_NAMES[PP_PassCount] = {
@@ -165,7 +165,7 @@ namespace RenderCore
             "AmbientOcclusion", "AmbientBlur", "StatsOverlay", "ClearGradient", "CaptureCopy", "Tonemap",
             "IBLSky", "IBLPrefilter", "IBLLighting", "Sky", "ViewTarget", "UI",
             "Luminance", "LuminanceReduce", "AdaptExposure", "TemporalAA", "ScreenReflections", "Copy",
-            "VolumetricFog", "FogComposite",
+            "VolumetricFog", "FogComposite", "ViewSites",
         };
 
         /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
@@ -4568,6 +4568,90 @@ namespace RenderCore
                                     &Texture->Resource, 1, Block.A, uint(sizeof(Block) - sizeof(Block.Matrix)),
                                     Impl::EFullscreenBlend::Opaque, uint(X), uint(Y));
         }
+    }
+
+    void RenderContext::CompositeViewSites(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewSites& InSites)
+    {
+        const uint32_t Count = std::min<uint32_t>(InSites.Count, RENDER_VIEWS_MAX);
+        if(!InTarget || Count < 2)
+        {
+            return;
+        }
+        /* ViewSites_Block: SitesA, SitesB, Params, Color, Sizes. */
+        struct SitesBlock
+        {
+            float SitesA[4];
+            float SitesB[4];
+            float Params[4];
+            float Color[4];
+            float Sizes[4];
+        } Block = {};
+        static_assert(sizeof(SitesBlock) == 80, "ViewSites.fsh's PP_Block");
+        float* const Sites[2] = { Block.SitesA, Block.SitesB };
+        for(uint32_t Index = 0; Index < RENDER_VIEWS_MAX; ++Index)
+        {
+            Sites[Index / 2][(Index % 2) * 2]     = InSites.X[Index];
+            Sites[Index / 2][(Index % 2) * 2 + 1] = InSites.Y[Index];
+        }
+        Block.Params[0] = float(Count);
+        Block.Params[1] = std::max(InSites.DividerPixels, 0.0f);
+        Block.Params[2] = std::clamp(InSites.DividerAlpha, 0.0f, 1.0f);
+        Block.Color[0]  = float(InSites.DividerColor.R) / 255.0f;
+        Block.Color[1]  = float(InSites.DividerColor.G) / 255.0f;
+        Block.Color[2]  = float(InSites.DividerColor.B) / 255.0f;
+        Block.Color[3]  = 1.0f;
+        Block.Sizes[0]  = float(InTarget->GetWidth());
+        Block.Sizes[1]  = float(InTarget->GetHeight());
+
+        /* A view not drawn this frame shows view 0 (never expected: each site is a drawn view). */
+        GDITextureResource* Textures[RENDER_VIEWS_MAX] = {};
+        for(uint32_t Index = 0; Index < RENDER_VIEWS_MAX; ++Index)
+        {
+            GDIRenderTarget* Source = Index < Count && InSources[Index] ? InSources[Index] : InSources[0];
+            GDITexture2D* Texture   = Source ? Source->ToGDITexture2D() : nullptr;
+            Textures[Index] = Texture ? Texture->Resource : nullptr;
+        }
+        if(!Textures[0])
+        {
+            return;
+        }
+        for(GDITextureResource*& Each : Textures) { if(!Each) { Each = Textures[0]; } }
+        SCOPED_DRAW_EVENT("Composite");
+        P->DrawFullscreenShader(P->GetPostShader(PP_ViewSites), "ViewSites", InTarget, InTarget->GetWidth(), InTarget->GetHeight(),
+                                Textures, RENDER_VIEWS_MAX, &Block, uint(sizeof(Block)), Impl::EFullscreenBlend::Opaque);
+    }
+
+    void RenderContext::SeedViewHistory(SceneTargets& InTo, const SceneTargets& InFrom)
+    {
+        if(InTo.Width != InFrom.Width || InTo.Height != InFrom.Height || InTo.Width == 0 || InTo.Height == 0)
+        {
+            return;
+        }
+        SCOPED_DRAW_EVENT("SeedViewHistory");
+        PostBlock Copy;
+        const auto CopyInto = [this, &Copy](GDIRenderTarget* InSource, GDIRenderTarget* InDest, const uint InWidth, const uint InHeight)
+        {
+            GDITexture2D* Texture = InSource ? InSource->ToGDITexture2D() : nullptr;
+            return Texture && InDest && P->DrawPost(PP_Copy, InDest, InWidth, InHeight, { Texture->Resource }, Copy);
+        };
+
+        /* TAA's history: last frame's resolve, at the same index. */
+        InTo.bHistoryValid = false;
+        if(InFrom.bHistoryValid && InTo.EnsureHistory())
+        {
+            InTo.HistoryCurrent = InFrom.HistoryCurrent;
+            InTo.bHistoryValid  = CopyInto(InFrom.History[InFrom.HistoryCurrent], InTo.History[InTo.HistoryCurrent], InTo.Width, InTo.Height);
+        }
+        /* Auto exposure's adapted value, so it does not ease in from scratch. */
+        InTo.bExposureValid = false;
+        if(InFrom.bExposureValid && InTo.EnsureExposure())
+        {
+            InTo.ExposureCurrent = InFrom.ExposureCurrent;
+            InTo.bExposureValid  = CopyInto(InFrom.Exposure[InFrom.ExposureCurrent], InTo.Exposure[InTo.ExposureCurrent], 1, 1);
+        }
+        /* Screen-space reflections' last colour: TAA's history when that is what it was. */
+        InTo.LastColor = InFrom.LastColor && InFrom.LastColor == InFrom.History[InFrom.HistoryCurrent] && InTo.bHistoryValid
+                       ? InTo.History[InTo.HistoryCurrent] : nullptr;
     }
 
     void RenderContext::RenderSceneStages(SceneTargets& InTargets, const EngineCore::Color InClearColor, const bool bInTimed,

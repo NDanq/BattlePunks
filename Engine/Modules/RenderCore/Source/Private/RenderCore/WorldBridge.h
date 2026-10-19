@@ -78,9 +78,11 @@ namespace RenderCore
          * 0's camera. SPLITSCREEN: InRects, InCount > 1 of them, are the
          * views' rectangles of InFrame's viewport -- each view sized to its
          * own, with its own light and post process; otherwise one view, the
-         * whole of InFrame.ViewportPixels. */
+         * whole of InFrame.ViewportPixels. InSites: the dynamic split's
+         * (RenderTypes.h), every rect then the whole viewport. */
         void ExtractAndRender(const FrameInfo& InFrame, const RenderView* InViewOverride = nullptr,
-                              const RenderViewRect* InRects = nullptr, uint32_t InCount = 1);
+                              const RenderViewRect* InRects = nullptr, uint32_t InCount = 1,
+                              const RenderViewSites* InSites = nullptr);
 
     private:
         static void OnComponentAdded(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType, void* InUserData);

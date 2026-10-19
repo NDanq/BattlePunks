@@ -318,6 +318,16 @@ namespace RenderCore
          * bound, for the UI and overlays over the whole window. */
         void CompositeViews(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewRect* InRects, uint32_t InCount);
 
+        /* SPLITSCREEN's dynamic split: InTarget, window-sized, each pixel from
+         * the view whose site is nearest (InSites.Count views, each as large
+         * as InTarget), the divider along the cells' edges (ViewSites.fsh). */
+        void CompositeViewSites(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewSites& InSites);
+
+        /* A view appearing in the dynamic split: InFrom's TAA history and
+         * exposure copied into InTo (the same size), as if InTo had drawn
+         * InFrom's last frame. Nothing for targets of different sizes. */
+        void SeedViewHistory(SceneTargets& InTo, const SceneTargets& InFrom);
+
         /* RenderScene::Render's: queue the proxies' draws in their stages'
          * policies, then run the stages into InTargets (RENDERPIPELINE.md),
          * clearing to InClearColor. Leaves the final colour target bound --

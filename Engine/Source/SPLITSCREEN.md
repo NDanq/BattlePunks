@@ -39,6 +39,50 @@ Sometimes the window shows one view whatever the player count:
 | `Game.GetViewCount()` | views this frame |
 | `Game.SetViewCount(n)` | 1-4, or 0 to count |
 
+## Dynamic split
+
+For games whose cameras all face one way (top-down, isometric, a fixed side
+or three-quarter view), players can share one camera while they are close
+and split apart as they separate. The window is cut along a line at right
+angles to the way between the players. The line turns as they move, the
+divider fades in, and the views join again with no seam when the players
+come back together. A free-look third-person camera can't share a view like
+this, so use the fixed layouts for those.
+
+Turn it on with `[Splitscreen] Dynamic=true`, or from code with
+`GameSession::SetSplitCamera(SplitCameraSettings)` (SplitCamera.h). The
+session then places cameras of its own, all with the settings' rotation,
+`Distance` back from what each looks at. The avatars' cameras aren't used.
+
+- **Two players.** One camera looks at their midpoint while both stay within
+  `Margin` of the screen's centre (0.6 of half the screen by default).
+  - Past that, the window splits. Each view looks at a point that slides from
+    the midpoint toward its player, so each player stays at the margin on
+    their own side.
+  - At the moment of splitting, both views still look at the midpoint, so
+    nothing jumps.
+  - The divider fades in over the first fifth of the distance past the split.
+  - The line follows the players at `TurnRate` (per second).
+- **Three or four players.** One camera on their centroid while they all fit;
+  otherwise the fixed layout, one camera per player. A many-way split is for
+  later.
+- **The renderer.** In a dynamic split every view is the whole window, and
+  each pixel comes from the view whose site is nearest it
+  (`Renderer::SetViewSites`, `ViewSites.fsh`).
+  - A view that appears starts from view 0's TAA history, exposure and
+    motion, rather than from nothing, so antialiasing and exposure carry on
+    as it splits off.
+  - The cost is a whole frame's pixels per view. While the players fit there
+    is one view, so it costs the same as single-player.
+
+| Key | Default | |
+|---|---|---|
+| `[Splitscreen] Dynamic` | false | the dynamic split |
+| `[Splitscreen] DynamicPitch`, `DynamicYaw` | 55, 0 | the cameras' rotation, degrees |
+| `[Splitscreen] DynamicDistance` | 1500 | how far back the cameras sit |
+| `[Splitscreen] DynamicFov` | 50 | their vertical field of view |
+| `[Splitscreen] DynamicMargin` | 0.6 | how far out a player may get before it splits |
+
 ## Rendering
 
 The renderer draws each view with its own camera, lights, post process

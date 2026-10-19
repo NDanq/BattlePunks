@@ -1135,6 +1135,28 @@ static void TestSplitscreenViews()
     Expect(Rend.GetViewCount() == 4 && View.ViewportPixels.Width == 320 && View.ViewportPixels.Height == 180,
            "four views: quadrants (views 2 and 3 through view 0's camera)");
 
+    /* The dynamic split: every view the whole viewport, cut by its sites. */
+    RenderViewSites Sites;
+    Sites.Count = 2;
+    Sites.X[0] = 200.0f; Sites.Y[0] = 180.0f;
+    Sites.X[1] = 440.0f; Sites.Y[1] = 180.0f;
+    Rend.SetViewSites(RENDER_DEFAULT_SCENE, Sites);
+    for(uint64_t Frame = 10; Frame <= 12; ++Frame)   // the second view appears, seeded from the first, then carries on
+    {
+        Rend.EndFrame(FrameInfo{Frame, 0.016, EngineCore::Size(640, 360)});
+        Rend.WaitForPreviousFrame();
+    }
+    View = LastRenderedView();
+    Expect(Rend.GetViewCount() == 2 && View.ViewportPixels.Width == 640 && View.ViewportPixels.Height == 360
+               && View.ViewportX == 0 && View.ViewportY == 0,
+           "sites: two views, each the whole viewport, over SetViewCount's four");
+    Sites.Count = 1;
+    Rend.SetViewSites(RENDER_DEFAULT_SCENE, Sites);
+    Rend.EndFrame(FrameInfo{13, 0.016, EngineCore::Size(640, 360)});
+    Rend.WaitForPreviousFrame();
+    View = LastRenderedView();
+    Expect(Rend.GetViewCount() == 4 && View.ViewportPixels.Width == 320, "fewer than two sites: the rectangles again");
+
     Rend.SetViewCount(RENDER_DEFAULT_SCENE, 1);
     Rend.EndFrame(FrameInfo{5, 0.016, EngineCore::Size(800, 600)});
     Rend.WaitForPreviousFrame();

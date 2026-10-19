@@ -90,6 +90,17 @@ namespace RenderCore
         void SetViewCount(RenderSceneID InScene, uint32_t InCount, bool bInSideBySide = false);
         uint32_t GetViewCount(RenderSceneID InScene = RENDER_DEFAULT_SCENE) const;
 
+        /*
+         * SPLITSCREEN's dynamic split (RenderTypes.h's RenderViewSites): with
+         * InSites.Count 2 to 4, InScene draws that many views, each the whole
+         * viewport, and shows each pixel from the view whose site is nearest
+         * -- over SetViewCount's rectangles, until a Count below 2 lets go. A
+         * view's TAA history and exposure start from view 0's the frame it
+         * appears, so a view splitting off where view 0 was shows no seam.
+         * GAME THREAD ONLY.
+         */
+        void SetViewSites(RenderSceneID InScene, const RenderViewSites& InSites);
+
         // === Scenes ==========================================================
         // GAME THREAD ONLY. Every frame renders every scene; each has its own
         // World binding, view override, overlay lines and render targets.

@@ -480,6 +480,75 @@ namespace
         delete Session;
     }
 
+    /* SPLITSCREEN's dynamic split, the math alone (SplitCamera.h). */
+    void TestSplitCameraSolve()
+    {
+        std::printf("[split camera]\n");
+        SplitCameraSettings Settings;
+        Settings.bEnabled = true;
+        Settings.Rotation = EngineCore::Vector3(55.0, 0.0, 0.0);   // looking down, along +Z: world +X is screen right
+        Settings.TurnRate = 0.0f;
+        const EngineCore::Size Window(1280, 720);
+        float Angle = 0.0f;
+        bool  bAngle = false;
+        SplitCameraFrame Frame;
+
+        const auto At = [](const double InX, const double InZ) { return EngineCore::Vector3(InX, 0.0, InZ); };
+        EngineCore::Vector3 Near[2] = { At(-50.0, 0.0), At(50.0, 0.0) };
+        SolveSplitCamera(Settings, Near, 2, Window, 0.016f, Angle, bAngle, Frame);
+        Expect(Frame.ViewCount == 1 && !Frame.bSites && (Frame.Focus[0] - At(0.0, 0.0)).GetLength() < 1e-6,
+               "close together: one camera on their midpoint");
+
+        EngineCore::Vector3 Far[2] = { At(-6000.0, 0.0), At(6000.0, 0.0) };
+        SolveSplitCamera(Settings, Far, 2, Window, 0.016f, Angle, bAngle, Frame);
+        Expect(Frame.ViewCount == 2 && Frame.bSites, "far apart: two views, cut by sites");
+        Expect(Frame.SiteX[0] < Frame.SiteX[1] && std::fabs(Frame.SiteY[0] - Frame.SiteY[1]) < 1.0f,
+               "side by side on screen: player 1's site on the left, the line upright");
+        Expect(Frame.Focus[0].GetX() < 0.0 && Frame.Focus[1].GetX() > 0.0 && Frame.Focus[0].GetX() > -6000.0,
+               "each view's focus between the midpoint and its player");
+        Expect(Frame.DividerAlpha == 1.0f, "well apart, the divider is drawn in full");
+
+        /* Just past where they stop fitting: the views open from the midpoint, with no jump. */
+        double Low = 50.0, High = 6000.0;
+        for(int Step = 0; Step < 40; ++Step)
+        {
+            const double Mid = 0.5 * (Low + High);
+            EngineCore::Vector3 Pair[2] = { At(-Mid, 0.0), At(Mid, 0.0) };
+            SolveSplitCamera(Settings, Pair, 2, Window, 0.016f, Angle, bAngle, Frame);
+            (Frame.ViewCount == 1 ? Low : High) = Mid;
+        }
+        EngineCore::Vector3 Edge[2] = { At(-High, 0.0), At(High, 0.0) };
+        SolveSplitCamera(Settings, Edge, 2, Window, 0.016f, Angle, bAngle, Frame);
+        Expect(Frame.ViewCount == 2 && Frame.Focus[0].GetLength() < High * 1e-3 && Frame.Focus[1].GetLength() < High * 1e-3,
+               "at the split, both views still look at the midpoint");
+        Expect(Frame.DividerAlpha < 0.01f, "and the divider has not faded in yet");
+
+        /* Above and below each other on screen: the line lies flat. */
+        EngineCore::Vector3 Deep[2] = { At(0.0, -8000.0), At(0.0, 8000.0) };
+        bAngle = false;
+        SolveSplitCamera(Settings, Deep, 2, Window, 0.016f, Angle, bAngle, Frame);
+        Expect(Frame.ViewCount == 2 && Frame.SiteY[0] > Frame.SiteY[1] && std::fabs(Frame.SiteX[0] - Frame.SiteX[1]) < 1.0f,
+               "one far up the screen: player 1's site below, the line across");
+
+        /* The line turns toward its target, not to it, at TurnRate. */
+        Settings.TurnRate = 4.0f;
+        SolveSplitCamera(Settings, Far, 2, Window, 0.1f, Angle, bAngle, Frame);
+        Expect(Frame.ViewCount == 2 && std::fabs(Frame.SiteX[0] - Frame.SiteX[1]) > 1.0f && std::fabs(Frame.SiteY[0] - Frame.SiteY[1]) > 1.0f,
+               "it turns part of the way in a frame");
+
+        EngineCore::Vector3 Three[3] = { At(-6000.0, 0.0), At(6000.0, 0.0), At(0.0, 6000.0) };
+        SolveSplitCamera(Settings, Three, 3, Window, 0.016f, Angle, bAngle, Frame);
+        Expect(Frame.ViewCount == 3 && !Frame.bSites && (Frame.Focus[2] - Three[2]).GetLength() < 1e-6,
+               "three apart: the fixed layout, a camera on each");
+        EngineCore::Vector3 Huddle[3] = { At(-10.0, 0.0), At(10.0, 0.0), At(0.0, 10.0) };
+        SolveSplitCamera(Settings, Huddle, 3, Window, 0.016f, Angle, bAngle, Frame);
+        Expect(Frame.ViewCount == 1, "three close together: one");
+
+        const EngineCore::Vector3 Eye = SplitCameraPosition(Settings, At(0.0, 0.0));
+        Expect(Eye.GetY() > 0.0 && Eye.GetZ() < 0.0 && std::fabs(Eye.GetLength() - Settings.Distance) < 1e-3,
+               "the camera sits back and above its focus, Distance away");
+    }
+
     class SpawnMode : public NetGameMode
     {
     public:
@@ -582,6 +651,7 @@ int main()
     TestLocalSimulation();
     TestAutoPossess();
     TestSplitscreenViews();
+    TestSplitCameraSolve();
     TestNetGameMode();
     TestFreePlayerIndex();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);

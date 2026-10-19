@@ -94,6 +94,24 @@ namespace RenderCore
     };
 
     /*
+     * SPLITSCREEN's DYNAMIC SPLIT (SPLITSCREEN.md, "Dynamic split"): instead of
+     * rectangles, every view the whole window, each pixel shown from the view
+     * whose site is nearest it -- with two views, the window cut in two along
+     * the line between their sites' bisector, at any angle -- and a divider
+     * of DividerPixels along the cuts, faded by DividerAlpha. Window pixels,
+     * row 0 the top. Count 0 or 1: no sites (the rectangles' layout).
+     */
+    struct RenderViewSites
+    {
+        float             X[RENDER_VIEWS_MAX] = {};
+        float             Y[RENDER_VIEWS_MAX] = {};
+        uint32_t          Count         = 0;
+        float             DividerPixels = 4.0f;
+        float             DividerAlpha  = 1.0f;
+        EngineCore::Color DividerColor{ 0, 0, 0, 255 };
+    };
+
+    /*
      * The usual splitscreen layout of InCount views (1-4) over a window of
      * InWindow pixels, into OutRects; returns how many it wrote. 1: the whole
      * window. 2: top and bottom halves, or left and right with bInSideBySide.

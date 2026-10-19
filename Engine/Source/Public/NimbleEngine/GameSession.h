@@ -8,6 +8,7 @@
 #include "Public/NimbleEngine/NimbleEngineAPI.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/Input.h"
+#include "Public/NimbleEngine/SplitCamera.h"
 #include "Public/GameCore/ComponentType.h"   // ComponentTypeID
 #include "Public/GameCore/Delegate.h"        // DelegateHandle
 #include "Public/GameCore/EntityID.h"
@@ -296,6 +297,17 @@ namespace NimbleEngine
         void     SetViewCount(uint32_t InCount);
         uint32_t GetViewCount() const { return ViewCount; }   // last frame's
 
+        /*
+         * SPLITSCREEN's dynamic split (SplitCamera.h, SPLITSCREEN.md "Dynamic
+         * split"): with bEnabled, two to four local players' avatars are viewed
+         * through cameras of the session's own, all turned one way -- shared
+         * while the players fit, split by a turning line as two part, a camera
+         * each in the fixed layout as three or four do. Their avatars' cameras
+         * are not used. [Splitscreen] Dynamic and its Dynamic* keys until set.
+         */
+        void                SetSplitCamera(const SplitCameraSettings& InSettings);
+        SplitCameraSettings GetSplitCamera() const;
+
         /* Hides and holds the cursor, for mouse-look; Mouse.DeltaX keeps
          * coming past the screen's edge. The host lets go when the run ends. */
         void SetMouseCaptured(bool bInCaptured) { Host.SetMouseCaptured(bInCaptured); }
@@ -381,6 +393,19 @@ namespace NimbleEngine
         uint32_t          ViewCountWanted = 0;               // SetViewCount; 0 counts the players' views
         uint32_t          ViewCount       = 1;
         bool              bSequenceView   = false;           // a sequence set player 1's view target
+
+        /* The dynamic split's state (SetSplitCamera): its cameras, made on first use in the
+         * level's World, and its line's angle, kept between frames so it turns smoothly. */
+        SplitCameraSettings SplitCamera;
+        bool                bSplitCameraSet = false;
+        GameCore::EntityID  SplitCameras[4];
+        float               SplitAngle      = 0.0f;
+        bool                bSplitAngleSet  = false;
+        float               FrameDelta      = 0.0f;   // this Tick's, for the line's turn
+        EngineCore::Size    FramePixels;              // and its window
+
+        /* PublishViewTarget's dynamic split: true if it placed the views. */
+        bool PublishSplitCamera();
 
         /* Set by RequestLevel, consumed by the next ApplyPendingLevel. */
         ILevel*           PendingLevel = nullptr;
