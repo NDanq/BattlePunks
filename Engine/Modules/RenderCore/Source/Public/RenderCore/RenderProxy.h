@@ -87,6 +87,11 @@ namespace RenderCore
          * box is tested against. Neither by default: a proxy type occludes
          * nothing unless it says so (RenderComponent::bOccluder). */
         virtual bool IsOccluder() const { return false; }
+
+        /* OCCLUSION REVEAL: whether this proxy's draws are dithered away where
+         * they hide a view's players (RenderComponent::bRevealPlayers); while
+         * a view reveals any, such an occluder draws no PrePass depth. */
+        virtual bool RevealsPlayers() const { return false; }
         virtual void DrawOccluder(RenderContext& InContext) { (void)InContext; }
 
         /* RENDER THREAD, before culling: how far past WorldBounds this

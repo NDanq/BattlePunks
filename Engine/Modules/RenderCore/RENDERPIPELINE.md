@@ -921,6 +921,36 @@ splitscreen it draws up to `RENDER_VIEWS_MAX` (4) views a frame.
   moves each view i > 0 that borrows another view's camera by i times that
   offset, so the views can be far apart.
 
+### Revealing players
+
+A building between a player and their camera is dithered away around that
+player, so they stay in sight.
+
+- **What reveals.** Only Render components marked **Reveal Players**
+  (`RenderComponent::bRevealPlayers`): buildings, walls, roofs, overhead
+  pipes. Never the ground the players stand on, which would otherwise be
+  "in front of" their feet.
+- **Which points.** `Renderer::SetRevealPoints(Scene, Points, Count, Radius)`
+  sets up to `RENDER_REVEAL_MAX` (4) points, which every view of the scene
+  keeps in sight. The game session sends its local players' avatars each
+  frame, `[Rendering] RevealHeight` (90) above their feet, with a circle of
+  `[Rendering] RevealRadius` (150) world units.
+  `[Rendering] RevealPlayers=false` turns it off.
+- **The test.** `RenderContext` projects each point into the view
+  (`Scene_Reveal`: NDC centre, radius, view depth). The material pixel stage
+  (`MaterialTemplate_PS.glsl`) discards a marked draw's pixel when it is
+  - inside a point's circle, and
+  - nearer the eye than that point by at least the radius,
+  - and not kept by a 4x4 ordered screen door: a quarter of the pixels are
+    kept in the middle, all of them at the rim.
+  The flag rides per draw in the material block's `Material_Reserved0`
+  (`DrawCommand::bReveal`, `RenderContext::SetDrawReveal`), so static draw
+  lists keep it.
+- **The PrePass.** A marked occluder draws no PrePass depth while its view
+  reveals anything; its depth would fill in the hole.
+- **Shadows** are unchanged: a revealed building still casts its shadow.
+- Perspective views only.
+
 ### Scene capture
 
 A **Scene Capture Probe** component (`Components/SceneCaptureProbeComponent.h`)

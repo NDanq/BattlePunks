@@ -861,6 +861,9 @@ namespace RenderCore
             View.ViewportX      = X;
             View.ViewportY      = Y;
             View.ViewIndex      = Index;
+            View.RevealCount    = RevealCount;
+            View.RevealRadius   = RevealRadius;
+            for(uint32_t Point = 0; Point < RevealCount; ++Point) { View.RevealPoints[Point] = RevealPoints[Point]; }
             if(Animation) { Animation->AddView(InFrame.FrameNumber, View.Origin, View.Projection * View.View); }
             Frame.Lightings[Index]     = BuildLighting(View.Origin);
             Frame.PostProcesses[Index] = BuildPostProcess(View);

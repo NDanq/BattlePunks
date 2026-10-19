@@ -33,6 +33,7 @@ namespace RenderCore
 
         /* A mesh only: a quad is a sprite, too thin to hide anything. */
         bool IsOccluder() const override { return bOccluder && MeshSource; }
+        bool RevealsPlayers() const override { return bRevealPlayers; }
         void DrawOccluder(RenderContext& InContext) override;
 
         /* A skinned mesh moves every frame on its own: never a static draw. */
@@ -65,6 +66,7 @@ namespace RenderCore
         bool              bCastShadows      = true;
         bool              bCastInsetShadow  = false;
         bool              bOccluder         = false;
+        bool              bRevealPlayers    = false;
         char              Materials[8][128] = {};  // RENDER_MATERIAL_SLOTS x RENDER_MATERIAL_PATH_MAX; "" = none
 
         /* The component's parameter overrides; ParameterCount: up to the last in use. */

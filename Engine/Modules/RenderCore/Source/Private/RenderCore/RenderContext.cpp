@@ -227,6 +227,8 @@ namespace RenderCore
             float ViewProjection[16]    = {};                           // world to clip: contact shadows' march (Lighting.glsl)
             float ContactShadow[4]      = {};                           // length (0: off), thickness, steps, strength
             float ContactLocal[4]       = {};                           // 1: shadowed point and spot lights' too
+            float RevealParams[4]       = {};                           // the reveal: points, aspect, kept in the middle, depth margin
+            float Reveal[4][4]          = {};                           // each point: NDC xy, radius (NDC y), view depth
         };
         static_assert(offsetof(SceneUniforms, Time) == 16 && offsetof(SceneUniforms, LightDirection) == 32
                       && offsetof(SceneUniforms, GroundColor) == 80 && offsetof(SceneUniforms, InvViewProjection) == 96,
@@ -243,7 +245,9 @@ namespace RenderCore
         static_assert(offsetof(SceneUniforms, ViewProjection) == 3856 && offsetof(SceneUniforms, ContactShadow) == 3920,
                       "Scene_ViewProjection and Scene_ContactShadow come after Scene_View");
         static_assert(offsetof(SceneUniforms, ContactLocal) == 3936, "Scene_ContactLocal comes after Scene_ContactShadow");
-        static_assert(sizeof(SceneUniforms) == 3952 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
+        static_assert(offsetof(SceneUniforms, RevealParams) == 3952 && offsetof(SceneUniforms, Reveal) == 3968,
+                      "Scene_RevealParams and Scene_Reveal come last");
+        static_assert(sizeof(SceneUniforms) == 4032 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
                       "SceneUniforms must match Scene_Block (SceneUniforms.glsl) and fit the scene block");
 
         /* Row-major InMatrix into a GLSL mat4's column-major floats. */
@@ -1408,6 +1412,7 @@ namespace RenderCore
         GDIOcclusionQueries*        OcclusionQueries    = nullptr;
         std::vector<GameCore::AABB> OcclusionBoxes;
         int32_t                     DrawOcclusion       = -1;
+        bool                        bDrawReveal         = false;   // SetDrawReveal
         bool                        bGatheringOccluders = false;
         bool                        bOcclusionResolved  = false;
         GDIMesh*                    OcclusionBox        = nullptr;
@@ -1694,6 +1699,13 @@ namespace RenderCore
             std::vector<uint8_t>& Block = GIssueScratch ? (GIssueScratch->MaterialBlock = InMaterial.Block) : InMaterial.Block;
             const float Tint[4] = { InTint.Rf(), InTint.Gf(), InTint.Bf(), InTint.Af() };
             std::memcpy(Block.data(), Tint, sizeof(Tint));
+            /* Material_Reserved0: whether this draw is dithered where it hides a player
+             * (MaterialTemplate_PS.glsl); written every draw, so none lingers. */
+            if(Block.size() >= MATERIAL_BLOCK_LIGHTMAP_OFFSET)
+            {
+                const float Reveal = InItem && InItem->bReveal ? 1.0f : 0.0f;
+                std::memcpy(Block.data() + MATERIAL_BLOCK_REVEAL_OFFSET, &Reveal, sizeof(Reveal));
+            }
 
             /* The draw's baked lighting, in the engine's bytes (MaterialDescription.h):
              * written every draw, as the tint is, so the last draw's never lingers. */
@@ -1784,6 +1796,32 @@ namespace RenderCore
              * Projection * View, column-major as GDI uploads a mat4. */
             PutMatrix(Scene.InvViewProjection, EngineCore::Matrix4x4::Inverse(View.Projection * View.View));
             PutMatrix(Scene.ViewProjection, View.Projection * View.View);
+
+            /* OCCLUSION REVEAL: each point on screen and how deep it is; a perspective view's alone. */
+            std::memset(Scene.RevealParams, 0, sizeof(Scene.RevealParams));
+            std::memset(Scene.Reveal, 0, sizeof(Scene.Reveal));
+            if(!IsOrthographic(View) && View.RevealRadius > 0.0f && View.ViewportPixels.Height > 0)
+            {
+                uint32_t Count = 0;
+                for(uint32_t Index = 0; Index < std::min<uint32_t>(View.RevealCount, RENDER_REVEAL_MAX); ++Index)
+                {
+                    const EngineCore::Vector3& Point = View.RevealPoints[Index];
+                    const EngineCore::Vector4 Seen = View.View * EngineCore::Vector4(Point.GetX(), Point.GetY(), Point.GetZ(), 1.0);
+                    const double Depth = Seen.GetZ();
+                    if(Depth <= double(std::max(View.ZNear, 1.0f))) { continue; }
+                    const EngineCore::Vector4 Clip = View.Projection * Seen;
+                    if(std::abs(Clip.GetW()) < 1e-9) { continue; }
+                    Scene.Reveal[Count][0] = float(Clip.GetX() / Clip.GetW());
+                    Scene.Reveal[Count][1] = float(Clip.GetY() / Clip.GetW());
+                    Scene.Reveal[Count][2] = float(double(View.RevealRadius) * std::abs(double(View.Projection.Data[1][1])) / Depth);
+                    Scene.Reveal[Count][3] = float(Depth);
+                    ++Count;
+                }
+                Scene.RevealParams[0] = float(Count);
+                Scene.RevealParams[1] = float(View.ViewportPixels.Width) / float(View.ViewportPixels.Height);
+                Scene.RevealParams[2] = 0.25f;                  // of the pixels kept in the middle: a screen door
+                Scene.RevealParams[3] = View.RevealRadius;      // and only what is this much nearer than the player
+            }
 
             /* View depth, for picking a cascade: from the view's own origin. */
             const EngineCore::Vector3 Forward = ViewForward(View);
@@ -2483,6 +2521,7 @@ namespace RenderCore
         void Submit(DrawCommand InItem, const ERenderStage InStage)
         {
             InItem.CustomGroups = DrawCustomGroups;   // a static list's replay: the proxy's groups now
+            InItem.bReveal      = bDrawReveal;        // and its reveal
             if(Capture)
             {
                 Capture->push_back({ InItem, InStage });   // a static list's: it never moves
@@ -3927,6 +3966,11 @@ namespace RenderCore
     void RenderContext::SetDrawStreamingScale(const float InPixelsPerWorldUnit)
     {
         P->DrawPixelsPerWorld = InPixelsPerWorldUnit;
+    }
+
+    void RenderContext::SetDrawReveal(const bool bInReveal)
+    {
+        P->bDrawReveal = bInReveal;
     }
 
     void RenderContext::UpdateTextureStreaming()

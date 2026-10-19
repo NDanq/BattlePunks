@@ -101,6 +101,16 @@ namespace RenderCore
          */
         void SetViewSites(RenderSceneID InScene, const RenderViewSites& InSites);
 
+        /*
+         * OCCLUSION REVEAL (RENDERPIPELINE.md, "Revealing players"): up to
+         * RENDER_REVEAL_MAX world points -- the players -- every view of
+         * InScene keeps in sight: what is marked to reveal them
+         * (RenderComponent::bRevealPlayers) and nearer the eye is dithered away
+         * within InRadius world units of each on screen. InCount 0 clears
+         * them. Kept until the next call. GAME THREAD ONLY.
+         */
+        void SetRevealPoints(RenderSceneID InScene, const EngineCore::Vector3* InPoints, uint32_t InCount, float InRadius);
+
         // === Scenes ==========================================================
         // GAME THREAD ONLY. Every frame renders every scene; each has its own
         // World binding, view override, overlay lines and render targets.

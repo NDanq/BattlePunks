@@ -425,6 +425,9 @@ namespace NimbleEngine
         /* PublishViewTarget's dynamic split: true if it placed the views. */
         bool PublishSplitCamera();
 
+        /* OCCLUSION REVEAL: the local players' avatars, to the renderer ([Rendering] RevealPlayers). */
+        void PublishRevealPoints();
+
         /* Set by RequestLevel, consumed by the next ApplyPendingLevel. */
         ILevel*           PendingLevel = nullptr;
 

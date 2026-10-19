@@ -1,6 +1,7 @@
 #ifndef RENDERCORE_WORLDBRIDGE_H
 #define RENDERCORE_WORLDBRIDGE_H
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -73,6 +74,14 @@ namespace RenderCore
             return InViewIndex < RENDER_VIEWS_MAX ? ViewCameras[InViewIndex] : GameCore::EntityID();
         }
 
+        /* OCCLUSION REVEAL: the points every view keeps in sight (RenderView::RevealPoints). */
+        void SetRevealPoints(const EngineCore::Vector3* InPoints, uint32_t InCount, float InRadius)
+        {
+            RevealCount  = InPoints ? std::min<uint32_t>(InCount, RENDER_REVEAL_MAX) : 0;
+            RevealRadius = InRadius;
+            for(uint32_t Index = 0; Index < RevealCount; ++Index) { RevealPoints[Index] = InPoints[Index]; }
+        }
+
         /* Builds the RenderViews (DESIGN.md's "View"), enqueues one extraction
          * per proxy type, then the scene render. InViewOverride replaces view
          * 0's camera. SPLITSCREEN: InRects, InCount > 1 of them, are the
@@ -136,6 +145,9 @@ namespace RenderCore
         RenderScene*    Scene = nullptr;
         GameCore::World* BoundWorld = nullptr;
         GameCore::EntityID ViewCameras[RENDER_VIEWS_MAX];   // SetViewCamera
+        EngineCore::Vector3 RevealPoints[RENDER_REVEAL_MAX];  // SetRevealPoints
+        uint32_t           RevealCount  = 0;
+        float              RevealRadius = 0.0f;
 
         /* The bound world's animation (attached while bound), and the
          * proxies ExtractPoses posed last frame. */

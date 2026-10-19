@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="64606cf2ae0994f6eb6bb669fb16e31e" Name="NorthEOccluder" Mobility="Static">
-  <Component Type="Render" Version="5">
+  <Component Type="Render" Version="7">
     <Visible Value="true" />
     <Material0 Value="" />
     <Material1 Value="" />
@@ -15,6 +15,8 @@
     <CastShadows Value="false" />
     <CastInsetShadow Value="false" />
     <Occluder Value="true" />
+    <CustomPassGroups Value="0" />
+    <RevealPlayers Value="true" />
   </Component>
   <Component Type="Transform" Version="1">
     <Position X="0" Y="0" Z="0" />

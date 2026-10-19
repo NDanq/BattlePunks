@@ -72,6 +72,11 @@ namespace RenderCore
          * they save. An occluder itself is never occlusion culled. */
         uint8_t           bOccluder = 0;
 
+        /* Whether it is dithered away where it hides a player from their
+         * camera (RENDERPIPELINE.md, "Revealing players"): a building, a
+         * wall, a roof -- not the ground the players stand on. */
+        uint8_t           bRevealPlayers = 0;
+
         /* Which custom render pass mesh groups its mesh draws join, a bit a
          * group (0-7; CustomRenderPass.h, DrawMeshGroup): drawn again by the
          * passes that ask for the group -- an outline, a mask, an x-ray. */
