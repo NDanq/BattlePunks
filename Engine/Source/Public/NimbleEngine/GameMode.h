@@ -163,6 +163,17 @@ namespace NimbleEngine
         virtual void OnPlayerAdded(GameCore::EntityID InPlayer)   { (void)InPlayer; }
         virtual void OnPlayerRemoved(GameCore::EntityID InPlayer) { (void)InPlayer; }
 
+        /*
+         * SPLITSCREEN (SPLITSCREEN.md, "Joining and leaving"): local player
+         * InLocalPlayer (1-3: player 1 is always in) asks to join -- Start on
+         * their pad with [Splitscreen] DropIn, or GameSession::JoinLocalPlayer
+         * -- or to leave: their pad unplugged with DropIn, or LeaveLocalPlayer.
+         * True if the mode took them in, or let them go. The default refuses;
+         * NetGameMode makes their player and avatar, and destroys both.
+         */
+        virtual bool OnLocalPlayerJoin(uint8_t InLocalPlayer)  { (void)InLocalPlayer; return false; }
+        virtual bool OnLocalPlayerLeave(uint8_t InLocalPlayer) { (void)InLocalPlayer; return false; }
+
         /* After GameSession::AddScore / AddLives wrote the new value. */
         virtual void OnScoreChanged(GameCore::EntityID InPlayer, int32_t InScore) { (void)InPlayer; (void)InScore; }
         virtual void OnLivesChanged(GameCore::EntityID InPlayer, int32_t InLives) { (void)InPlayer; (void)InLives; }

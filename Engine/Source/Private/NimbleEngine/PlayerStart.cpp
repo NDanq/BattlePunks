@@ -150,6 +150,28 @@ void NetGameMode::OnClientConnected(const int32_t InClient, const GameCore::Enti
     if(Session && InPlayer.IsSet()) { SpawnFor(InPlayer); }
 }
 
+bool NetGameMode::OnLocalPlayerJoin(const uint8_t InLocalPlayer)
+{
+    if(!Session || !HasAuthority() || IsDedicatedServer() || InLocalPlayer >= INPUT_PLAYERS_MAX) { return false; }
+    GameCore::World& World = Session->GetWorld();
+    const GameCore::EntityID Player = CreateLocalPlayer(World, InLocalPlayer);
+    if(!Player.IsSet()) { return false; }
+    if(!GetAvatar(World, Player).IsSet()) { SpawnFor(Player); }
+    return true;
+}
+
+bool NetGameMode::OnLocalPlayerLeave(const uint8_t InLocalPlayer)
+{
+    if(!Session || !HasAuthority() || InLocalPlayer == 0 || InLocalPlayer >= INPUT_PLAYERS_MAX) { return false; }
+    GameCore::World& World = Session->GetWorld();
+    const GameCore::EntityID Player = FindLocalPlayer(World, InLocalPlayer);
+    if(!Player.IsSet()) { return false; }
+    const GameCore::EntityID Avatar = GetAvatar(World, Player);
+    if(Avatar.IsSet() && World.IsAlive(Avatar)) { World.DestroyEntity(Avatar); }
+    if(World.IsAlive(Player)) { World.DestroyEntity(Player); }
+    return true;
+}
+
 GameCore::EntityID NetGameMode::SpawnFor(const GameCore::EntityID InPlayer)
 {
     GameCore::World& World = Session->GetWorld();

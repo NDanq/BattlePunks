@@ -73,6 +73,10 @@ NIMBLE_GAME_CONFIG_BOOL(GSplitscreenDynamic, "Splitscreen", "Dynamic", false, nu
 /* A whole-window menu (a pause menu) navigated by any local player's pad, not
  * only player 1's; the documents opened for one player always take theirs. */
 NIMBLE_GAME_CONFIG_BOOL(GSplitscreenMenuAnyPad, "Splitscreen", "MenuAnyPad", true, nullptr);
+
+/* Drop-in: Start on a pad no player has joins that player; unplugging a joined
+ * player's pad leaves (GameSession::JoinLocalPlayer, LeaveLocalPlayer). */
+NIMBLE_GAME_CONFIG_BOOL(GSplitscreenDropIn, "Splitscreen", "DropIn", false, nullptr);
 NIMBLE_GAME_CONFIG_FLOAT(GSplitscreenDynamicPitch, "Splitscreen", "DynamicPitch", 55.0f, nullptr);
 NIMBLE_GAME_CONFIG_FLOAT(GSplitscreenDynamicYaw, "Splitscreen", "DynamicYaw", 0.0f, nullptr);
 NIMBLE_GAME_CONFIG_FLOAT(GSplitscreenDynamicDistance, "Splitscreen", "DynamicDistance", 1500.0f, nullptr);
@@ -950,6 +954,7 @@ namespace NimbleEngine
 
         /* The UI sees the input first; the game, what it leaves. */
         RouteInputThroughUI();
+        UpdateDropIn();
 
         /* Re-read: a level swap may have replaced the mode. */
         if(ActiveLevel && !bPaused)
@@ -994,6 +999,49 @@ namespace NimbleEngine
         Interface->Tick(float(InFrame.DeltaSeconds));
         PublishPlayerAreas();
         Interface->Update(UI::UIVec2{ float(InFrame.ViewportPixels.Width), float(InFrame.ViewportPixels.Height) });
+    }
+
+    bool GameSession::JoinLocalPlayer(const uint8_t InLocalPlayer)
+    {
+        CheckGameThread("JoinLocalPlayer");
+        if(InLocalPlayer == 0 || InLocalPlayer >= INPUT_PLAYERS_MAX || !ActiveLevel || !LevelWorld) { return false; }
+        IGameMode* Mode = ActiveLevel->GetGameMode();
+        if(!Mode || !Mode->OnLocalPlayerJoin(InLocalPlayer)) { return false; }
+        CORE_LOG("[Splitscreen] local player " + std::to_string(int(InLocalPlayer) + 1) + " joined")
+        return true;
+    }
+
+    bool GameSession::LeaveLocalPlayer(const uint8_t InLocalPlayer)
+    {
+        CheckGameThread("LeaveLocalPlayer");
+        if(InLocalPlayer == 0 || InLocalPlayer >= INPUT_PLAYERS_MAX || !ActiveLevel || !LevelWorld) { return false; }
+        IGameMode* Mode = ActiveLevel->GetGameMode();
+        if(!Mode || !Mode->OnLocalPlayerLeave(InLocalPlayer)) { return false; }
+        ViewTargets[InLocalPlayer] = GameCore::EntityID();
+        CORE_LOG("[Splitscreen] local player " + std::to_string(int(InLocalPlayer) + 1) + " left")
+        return true;
+    }
+
+    void GameSession::UpdateDropIn()
+    {
+        const bool bDropIn = GSplitscreenDropIn.GetBool() && LevelWorld && !bPaused && !bCinematic;
+        for(uint8_t Local = 1; Local < INPUT_PLAYERS_MAX; ++Local)
+        {
+            const bool bConnected = FilteredInput.IsPadConnected(Local);
+            const bool bWas       = bPadWasConnected[Local];
+            bPadWasConnected[Local] = bConnected;
+            if(!bDropIn) { continue; }
+            const bool bJoined = FindLocalPlayer(*LevelWorld, Local).IsSet();
+            if(bConnected && !bJoined && FilteredInput.WasPressed(FindInputKey("Gamepad.Start"), Local))
+            {
+                JoinLocalPlayer(Local);
+                FilteredInput.Consume(FindInputKey("Gamepad.Start"), Local);   // a joining press is not the game's
+            }
+            else if(bWas && !bConnected && bJoined)
+            {
+                LeaveLocalPlayer(Local);
+            }
+        }
     }
 
     void GameSession::PublishPlayerAreas()

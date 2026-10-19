@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "Public/Core/CoreConfig.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/EventBus.h"
@@ -628,6 +629,57 @@ namespace
         delete Session;
     }
 
+    /* SPLITSCREEN's drop-in: Start joins a player, unplugging leaves. */
+    void TestDropIn()
+    {
+        std::printf("[drop-in]\n");
+        TestHost Host;
+        GameCore::ScriptEngine Scripts;
+        RenderCore::Renderer Rendering;
+        Scripts.Initialize();
+        auto* Session = new GameSession(Host, Scripts, Rendering);
+        SpawnLevel Level;
+        Expect(Session->LoadLevel(Level), "the level loads");
+        GameCore::World& World = Session->GetWorld();
+        FrameContext Frame;
+        Frame.DeltaSeconds = 0.016;
+
+        Expect(Session->JoinLocalPlayer(1) && GetAvatar(World, FindLocalPlayer(World, 1)).IsSet(),
+               "JoinLocalPlayer gives the player a player and an avatar");
+        Expect(!Session->JoinLocalPlayer(0) && !Session->LeaveLocalPlayer(0), "player 1 neither joins nor leaves");
+        const GameCore::EntityID Joined = GetAvatar(World, FindLocalPlayer(World, 1));
+        Expect(Session->LeaveLocalPlayer(1) && !FindLocalPlayer(World, 1).IsSet() && !World.IsAlive(Joined),
+               "LeaveLocalPlayer destroys the player and its avatar");
+
+        /* By the pads, with [Splitscreen] DropIn. */
+        EngineCore::ConfigVar* DropIn = EngineCore::ConfigFindVar("Splitscreen", "DropIn");
+        Expect(DropIn != nullptr, "[Splitscreen] DropIn exists");
+        if(DropIn) { DropIn->SetBool(false); }
+        Host.Input.BeginFrame(1);
+        Host.Input.SetPadConnected(2, true);
+        Host.Input.Press(FindInputKey("Gamepad.Start"), 2);
+        Session->Tick(Frame);
+        Expect(!FindLocalPlayer(World, 2).IsSet(), "without DropIn, Start joins nobody");
+
+        if(DropIn) { DropIn->SetBool(true); }
+        Host.Input.BeginFrame(2);
+        Host.Input.Release(FindInputKey("Gamepad.Start"), 2);
+        Host.Input.Press(FindInputKey("Gamepad.Start"), 2);
+        Session->Tick(Frame);
+        Expect(FindLocalPlayer(World, 2).IsSet() && GetAvatar(World, FindLocalPlayer(World, 2)).IsSet(),
+               "with DropIn, Start on a pad no player has joins its player");
+        Expect(!Session->GetInput().WasPressed(FindInputKey("Gamepad.Start"), 2), "the joining press is not the game's");
+
+        Host.Input.BeginFrame(3);
+        Host.Input.SetPadConnected(2, false);
+        Session->Tick(Frame);
+        Expect(!FindLocalPlayer(World, 2).IsSet(), "unplugging a joined player's pad leaves");
+        if(DropIn) { DropIn->SetBool(false); }
+
+        Session->UnloadLevel();
+        delete Session;
+    }
+
     void TestFreePlayerIndex()
     {
         std::printf("[player index]\n");
@@ -652,6 +704,7 @@ int main()
     TestAutoPossess();
     TestSplitscreenViews();
     TestSplitCameraSolve();
+    TestDropIn();
     TestNetGameMode();
     TestFreePlayerIndex();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);

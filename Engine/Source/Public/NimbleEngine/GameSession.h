@@ -308,6 +308,16 @@ namespace NimbleEngine
         void                SetSplitCamera(const SplitCameraSettings& InSettings);
         SplitCameraSettings GetSplitCamera() const;
 
+        /*
+         * SPLITSCREEN's drop-in (SPLITSCREEN.md, "Joining and leaving"): local
+         * player InLocalPlayer (1-3) joins or leaves the level, as the mode
+         * allows (IGameMode::OnLocalPlayerJoin / Leave). With [Splitscreen]
+         * DropIn, Start on a pad no player has joins its player, and unplugging
+         * a joined player's pad leaves. False if the mode refused, or for player 1.
+         */
+        bool JoinLocalPlayer(uint8_t InLocalPlayer);
+        bool LeaveLocalPlayer(uint8_t InLocalPlayer);
+
         /* Hides and holds the cursor, for mouse-look; Mouse.DeltaX keeps
          * coming past the screen's edge. The host lets go when the run ends. */
         void SetMouseCaptured(bool bInCaptured) { Host.SetMouseCaptured(bInCaptured); }
@@ -407,6 +417,10 @@ namespace NimbleEngine
 
         /* SPLITSCREEN: each local player's documents' area (UISystem::SetPlayerArea): their view. */
         void PublishPlayerAreas();
+
+        /* SPLITSCREEN's drop-in, each Tick after the UI took its input: Start joins, an unplugged pad leaves. */
+        void UpdateDropIn();
+        bool bPadWasConnected[INPUT_PLAYERS_MAX] = {};
 
         /* PublishViewTarget's dynamic split: true if it placed the views. */
         bool PublishSplitCamera();

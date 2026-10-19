@@ -39,6 +39,45 @@ Sometimes the window shows one view whatever the player count:
 | `Game.GetViewCount()` | views this frame |
 | `Game.SetViewCount(n)` | 1-4, or 0 to count |
 
+## Joining and leaving
+
+Players 2-4 can join and leave during play. Player 1 is always in.
+
+- `GameSession::JoinLocalPlayer(n)` and `LeaveLocalPlayer(n)` (Lua
+  `Game.JoinLocalPlayer(n)`, `Game.LeaveLocalPlayer(n)`), where n is 1-3 (0
+  is player 1). They ask the mode: `IGameMode::OnLocalPlayerJoin` and
+  `OnLocalPlayerLeave` refuse by default.
+- `NetGameMode` takes a joining player in: it makes their player and spawns
+  their avatar at the next Player Start. A leaving player's avatar and player
+  are destroyed. This needs authority (standalone or a listen server).
+- **Drop-in**, with `[Splitscreen] DropIn=true`: pressing Start on a pad that
+  no player has yet joins that pad's player. The press doesn't reach the
+  game. Unplugging a joined player's pad makes them leave. Nothing joins
+  while paused or during a cinematic.
+
+Views, listeners and player areas follow by themselves: the next frame has
+one more view, or one fewer.
+
+## Making a game split-screen
+
+1. Give each player an avatar with a camera: an Avatar Harness with View
+   Target set and a Camera (Active off) in its prefab. A Character Mover's
+   camera boom works.
+2. Start with more players (`[Avatar] LocalPlayers=2`), or let them drop in
+   (`[Splitscreen] DropIn=true`). The mode must take them in: `NetGameMode`
+   does.
+3. Make sure the level has a Player Start per player (Player Slot 1-4), or
+   enough enabled ones. Players sharing one start spawn on top of each other.
+4. Bind each player's actions to their pad. The keyboard and mouse are
+   player 1's.
+5. Open a HUD per player: `GetUI().Open("UI/HUD.nmui", false, player)`, with
+   bindings like `{Bind:Score}`.
+6. For a top-down or other fixed-angle camera, consider the dynamic split
+   (`[Splitscreen] Dynamic=true` and its keys).
+7. Check the game's own code for "player 1 only" assumptions. For example,
+   `GetLocalAvatar(World, 0)` reads player 1's avatar alone, and WorldsLab's
+   PvP treats local players past the first as bots.
+
 ## Dynamic split
 
 For games whose cameras all face one way (top-down, isometric, a fixed side
@@ -139,3 +178,20 @@ the details.
 
 Try any world with `Splitscreen.Views 4` in the console. To see players 2-4
 in a level, start it with `-Avatar.LocalPlayers=4`.
+
+| Key | Default | |
+|---|---|---|
+| `[Splitscreen] DropIn` | false | Start on a pad joins its player; unplugging leaves |
+
+## Not here yet
+
+- **Online split-screen.** A networked client has one player (NetHost makes
+  one per connection). Split-screen works standalone and on a listen
+  server's machine.
+- **Per-player settings.** Input rebinds, look sensitivity and other
+  settings are shared by all players.
+- **A many-way dynamic split.** Three or four players apart use the fixed
+  layout.
+- **Mirrors and reflection captures** are drawn from player 1's view.
+- **Cost.** Each view adds a frame's culling and shadow work. There are no
+  lower-cost shadow settings per view yet.

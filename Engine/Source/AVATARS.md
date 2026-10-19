@@ -290,6 +290,9 @@ and two below, four as quadrants. See SPLITSCREEN.md.
 - A sequence's camera cut or a cinematic shows one view.
 - `GameSession::SetViewCount(n)` (Lua `Game.SetViewCount`) fixes the count.
 - `[Splitscreen] Enabled=false` always shows one view.
+- Players 2-4 can join and leave during play: `GameSession::JoinLocalPlayer`
+  and `LeaveLocalPlayer`, or Start and unplugging with `[Splitscreen] DropIn`.
+  `NetGameMode` spawns and removes their avatars.
 
 ## From scripts
 
