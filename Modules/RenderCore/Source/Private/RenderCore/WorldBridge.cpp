@@ -673,7 +673,7 @@ namespace RenderCore
     }
 
     void WorldBridge::ExtractAndRender(const FrameInfo& InFrame, const RenderView* InViewOverride,
-                                       const RenderViewRect* InRects, const uint32_t InCount)
+                                       const RenderViewRect* InRects, const uint32_t InCount, const RenderViewSites* InSites)
     {
         if(!BoundWorld)
         {
@@ -838,8 +838,10 @@ namespace RenderCore
             RenderPostProcess PostProcesses[RENDER_VIEWS_MAX];
             uint32_t          Count = 1;
             EngineCore::Size  Window;
+            RenderViewSites   Sites;
         };
         FrameViews Frame;
+        if(InSites) { Frame.Sites = *InSites; }
         Frame.Count  = InRects && InCount > 1 ? std::min<uint32_t>(InCount, RENDER_VIEWS_MAX) : 1;
         Frame.Window = InFrame.ViewportPixels;
         for(uint32_t Index = 0; Index < Frame.Count; ++Index)
@@ -874,7 +876,7 @@ namespace RenderCore
 
         ENQUEUE_RENDER_COMMAND(SetViewAndRender)([SceneCapture, Frame, Captures, PassWorld](RenderContext& Ctx)
         {
-            SceneCapture->SetViews(Frame.Views, Frame.Lightings, Frame.PostProcesses, Frame.Count, Frame.Window);
+            SceneCapture->SetViews(Frame.Views, Frame.Lightings, Frame.PostProcesses, Frame.Count, Frame.Window, &Frame.Sites);
             SceneCapture->SetCaptures(Captures);
             SceneCapture->SetCustomPassWorld(PassWorld);
             SceneCapture->Render(Ctx);

@@ -22,6 +22,7 @@
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreMemory.h"
 #include "Public/Core/CorePlatform.h"
+#include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/ScriptEngine.h"
@@ -63,6 +64,16 @@ NIMBLE_CONFIG_BOOL(GStatsAudio, "Stats", "Audio", false, nullptr);
  * top and bottom. The game's settings, so its DefaultGame.ini. */
 NIMBLE_GAME_CONFIG_BOOL(GSplitscreenEnabled, "Splitscreen", "Enabled", true, nullptr);
 NIMBLE_GAME_CONFIG_BOOL(GSplitscreenSideBySide, "Splitscreen", "SideBySide", false, nullptr);
+
+/* The dynamic split (SplitCamera.h), until GameSession::SetSplitCamera: on,
+ * and its cameras' pitch and yaw (degrees), distance, field of view and how
+ * far out a player may get (0-1 of half the screen) before it splits. */
+NIMBLE_GAME_CONFIG_BOOL(GSplitscreenDynamic, "Splitscreen", "Dynamic", false, nullptr);
+NIMBLE_GAME_CONFIG_FLOAT(GSplitscreenDynamicPitch, "Splitscreen", "DynamicPitch", 55.0f, nullptr);
+NIMBLE_GAME_CONFIG_FLOAT(GSplitscreenDynamicYaw, "Splitscreen", "DynamicYaw", 0.0f, nullptr);
+NIMBLE_GAME_CONFIG_FLOAT(GSplitscreenDynamicDistance, "Splitscreen", "DynamicDistance", 1500.0f, nullptr);
+NIMBLE_GAME_CONFIG_FLOAT(GSplitscreenDynamicFov, "Splitscreen", "DynamicFov", 50.0f, nullptr);
+NIMBLE_GAME_CONFIG_FLOAT(GSplitscreenDynamicMargin, "Splitscreen", "DynamicMargin", 0.6f, nullptr);
 
 #if WITH_AUDIO
 namespace
@@ -302,7 +313,9 @@ namespace NimbleEngine
         /* Right after: each AvatarHarness from its player's devices, or (a
          * server) its client's (Avatar.h). */
         for(GameCore::EntityID& Each : ViewTargets) { Each = GameCore::EntityID(); }
-        bSequenceView = false;
+        for(GameCore::EntityID& Each : SplitCameras) { Each = GameCore::EntityID(); }
+        bSequenceView  = false;
+        bSplitAngleSet = false;
         Avatars = EngineCore::Memory::Alloc<AvatarWorld>();
         Avatars->Attach(*LevelWorld);
         Avatars->SetInput(&FilteredInput);
@@ -545,7 +558,9 @@ namespace NimbleEngine
                 Avatars = nullptr;
             }
             for(GameCore::EntityID& Each : ViewTargets) { Each = GameCore::EntityID(); }
-            bSequenceView = false;
+            for(GameCore::EntityID& Each : SplitCameras) { Each = GameCore::EntityID(); }
+            bSequenceView  = false;
+            bSplitAngleSet = false;
 
             /* Brains let go of their agents while the components still exist. */
             AIDetail::DetachLevelAI(*LevelWorld);
@@ -899,6 +914,8 @@ namespace NimbleEngine
     {
         /* The mode's OnTick overlaps the render thread: game state only. */
         CheckGameThread("Tick");
+        FrameDelta  = float(InFrame.DeltaSeconds);
+        FramePixels = InFrame.ViewportPixels;
 
         /* The UI sees the input first; the game, what it leaves. */
         RouteInputThroughUI();
@@ -1079,6 +1096,14 @@ namespace NimbleEngine
             return InTarget;
         };
 
+        /* SPLITSCREEN's dynamic split, when it is on and there are players to split. */
+        const bool bMayShare = GSplitscreenEnabled.GetBool() && !bCinematic && !bSequenceView;
+        if(bMayShare && PublishSplitCamera())
+        {
+            return;
+        }
+        Rendering.SetViewSites(RenderCore::RENDER_DEFAULT_SCENE, RenderCore::RenderViewSites());
+
         /* SPLITSCREEN: a view per local player with one, up to the last;
          * one while a sequence holds the camera. */
         constexpr uint32_t ViewsMax = std::min<uint32_t>(RenderCore::RENDER_VIEWS_MAX, INPUT_PLAYERS_MAX);
@@ -1108,6 +1133,102 @@ namespace NimbleEngine
         }
         Rendering.SetViewCount(RenderCore::RENDER_DEFAULT_SCENE, Count, GSplitscreenSideBySide.GetBool());
         ViewCount = Count;
+    }
+
+    void GameSession::SetSplitCamera(const SplitCameraSettings& InSettings)
+    {
+        CheckGameThread("SetSplitCamera");
+        SplitCamera     = InSettings;
+        bSplitCameraSet = true;
+        PublishViewTarget();
+    }
+
+    SplitCameraSettings GameSession::GetSplitCamera() const
+    {
+        if(bSplitCameraSet) { return SplitCamera; }
+        SplitCameraSettings Settings;
+        Settings.bEnabled = GSplitscreenDynamic.GetBool();
+        Settings.Rotation = EngineCore::Vector3(GSplitscreenDynamicPitch.GetFloat(), GSplitscreenDynamicYaw.GetFloat(), 0.0);
+        Settings.Distance = GSplitscreenDynamicDistance.GetFloat();
+        Settings.FovY     = GSplitscreenDynamicFov.GetFloat();
+        Settings.Margin   = GSplitscreenDynamicMargin.GetFloat();
+        return Settings;
+    }
+
+    bool GameSession::PublishSplitCamera()
+    {
+        const SplitCameraSettings Settings = GetSplitCamera();
+        if(!Settings.bEnabled || !LevelWorld) { return false; }
+
+        /* Local players 1, 2, ... while each has an avatar. */
+        EngineCore::Vector3 Players[4];
+        uint32_t Count = 0;
+        while(Count < 4 && Count < INPUT_PLAYERS_MAX)
+        {
+            const GameCore::EntityID Avatar = GetLocalAvatar(*LevelWorld, uint8_t(Count));
+            if(!Avatar.IsSet() || !LevelWorld->IsAlive(Avatar)) { break; }
+            Players[Count++] = LevelWorld->GetEntity(Avatar).GetWorldPose().Position;
+        }
+        if(Count < 2) { return false; }
+
+        SplitCameraFrame Frame;
+        SolveSplitCamera(Settings, Players, Count, FramePixels, FrameDelta, SplitAngle, bSplitAngleSet, Frame);
+
+        /* Its cameras: made on first use, turned the settings' way, each on its focus. */
+        for(uint32_t View = 0; View < Frame.ViewCount; ++View)
+        {
+            GameCore::EntityID& Id = SplitCameras[View];
+            if(!Id.IsSet() || !LevelWorld->IsAlive(Id))
+            {
+                char Name[32];
+                std::snprintf(Name, sizeof(Name), "Split Camera %u", View + 1);
+                GameCore::Entity Made = LevelWorld->CreateEntity(Name);
+                Made.AddComponent<GameCore::TransformComponent>();
+                RenderCore::CameraComponent Lens;
+                Lens.bActive    = 0;   // never the level's first active camera
+                Lens.Projection = RenderCore::CP_Perspective;
+                Made.AddComponent(Lens);
+                Id = Made.GetID();
+            }
+            GameCore::Entity Camera = LevelWorld->GetEntity(Id);
+            if(GameCore::TransformComponent* At = Camera.GetComponent<GameCore::TransformComponent>())
+            {
+                At->Position = SplitCameraPosition(Settings, Frame.Focus[View]);
+                At->Rotation = Settings.Rotation;
+            }
+            if(RenderCore::CameraComponent* Lens = Camera.GetComponent<RenderCore::CameraComponent>())
+            {
+                Lens->FovY  = Settings.FovY;
+                Lens->ZNear = Settings.ZNear;
+                Lens->ZFar  = Settings.ZFar;
+            }
+        }
+
+        for(uint32_t View = 0; View < RenderCore::RENDER_VIEWS_MAX; ++View)
+        {
+            const GameCore::EntityID Camera = View < Frame.ViewCount ? SplitCameras[View] : GameCore::EntityID();
+            if(Camera != Rendering.GetViewCamera(RenderCore::RENDER_DEFAULT_SCENE, View))
+            {
+                Rendering.SetViewCamera(RenderCore::RENDER_DEFAULT_SCENE, View, Camera);
+            }
+        }
+        RenderCore::RenderViewSites Sites;
+        if(Frame.bSites)
+        {
+            Sites.Count = Frame.ViewCount;
+            for(uint32_t View = 0; View < Frame.ViewCount; ++View)
+            {
+                Sites.X[View] = Frame.SiteX[View];
+                Sites.Y[View] = Frame.SiteY[View];
+            }
+            Sites.DividerPixels = Settings.DividerPixels;
+            Sites.DividerAlpha  = Frame.DividerAlpha;
+            Sites.DividerColor  = Settings.DividerColor;
+        }
+        Rendering.SetViewSites(RenderCore::RENDER_DEFAULT_SCENE, Sites);
+        Rendering.SetViewCount(RenderCore::RENDER_DEFAULT_SCENE, Frame.ViewCount, GSplitscreenSideBySide.GetBool());
+        ViewCount = Frame.ViewCount;
+        return true;
     }
 
     void GameSession::ResolveInput(GameCore::World& InWorld, float /*InDeltaSeconds*/, void* InUserData)

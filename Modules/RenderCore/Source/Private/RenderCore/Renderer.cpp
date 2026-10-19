@@ -95,6 +95,7 @@ namespace RenderCore
         EngineCore::Size   ViewportPixels;     // extra scenes only; the default takes FrameInfo's
         uint32_t           ViewCount    = 1;   // SetViewCount
         bool               bSideBySide  = false;
+        RenderViewSites    Sites;              // SetViewSites; Count < 2: none
 
 #if WITH_EDITOR
         /* Set by SetViewOverride; replaces the camera lookup every frame. */
@@ -426,7 +427,16 @@ namespace RenderCore
     uint32_t Renderer::GetViewCount(const RenderSceneID InScene) const
     {
         const RendererScene* Scene = P->Find(InScene);
-        return Scene ? Scene->ViewCount : 1;
+        return Scene ? (Scene->Sites.Count >= 2 ? Scene->Sites.Count : Scene->ViewCount) : 1;
+    }
+
+    void Renderer::SetViewSites(const RenderSceneID InScene, const RenderViewSites& InSites)
+    {
+        if(RendererScene* Scene = P->Find(InScene))
+        {
+            Scene->Sites       = InSites;
+            Scene->Sites.Count = InSites.Count >= 2 ? std::min<uint32_t>(InSites.Count, RENDER_VIEWS_MAX) : 0;
+        }
     }
 
     RenderSceneID Renderer::CreateScene()
@@ -812,9 +822,21 @@ namespace RenderCore
             RenderViewRect Rects[RENDER_VIEWS_MAX];
             ViewCount = MakeSplitscreenLayout(Frame.ViewportPixels, ViewCount, bSideBySide, Rects);
 
+            /* The dynamic split: every view the whole viewport, cut by its sites. */
+            const RenderViewSites* Sites = nullptr;
+            if(Scene->Sites.Count >= 2 && !(Scene->ID == RENDER_DEFAULT_SCENE && GSplitscreenViews.GetInt() > 0))
+            {
+                Sites     = &Scene->Sites;
+                ViewCount = Scene->Sites.Count;
+                for(uint32_t Index = 0; Index < ViewCount; ++Index)
+                {
+                    Rects[Index] = { 0, 0, Frame.ViewportPixels.Width, Frame.ViewportPixels.Height };
+                }
+            }
+
             if(Scene->Bridge && Scene->Bridge->IsBound())
             {
-                Scene->Bridge->ExtractAndRender(Frame, ViewOverride, Rects, ViewCount);
+                Scene->Bridge->ExtractAndRender(Frame, ViewOverride, Rects, ViewCount, Sites);
             }
             else if(Scene->Scene)
             {

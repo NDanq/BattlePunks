@@ -187,6 +187,9 @@ namespace RenderCore
              */
             SceneTargets Targets;
 
+            /* Whether it was drawn last frame: one appearing in the dynamic split starts from view 0's history. */
+            bool bDrawnLastFrame = false;
+
             /* What drawing the view counted, for RenderStats. */
             uint64_t VisibleCount = 0;
             uint64_t CulledCount  = 0;
@@ -254,6 +257,7 @@ namespace RenderCore
          */
         EngineCore::Size WindowPixels;
         GDIRenderTarget* Composite = nullptr;
+        RenderViewSites  Sites;   // SetViews'; Count 2 or more: the dynamic split's composite
 
         void ReleaseViews()
         {
@@ -1039,14 +1043,18 @@ namespace RenderCore
     {
         P->Views[0].View = InView;
         P->Views[0].View.ViewIndex = 0;
-        P->ViewCount = 1;
+        P->ViewCount   = 1;
+        P->Sites.Count = 0;
     }
 
     void RenderScene::SetViews(const RenderView* InViews, const RenderLighting* InLightings, const RenderPostProcess* InPostProcesses,
-                               const uint32_t InCount, const EngineCore::Size InWindowPixels)
+                               const uint32_t InCount, const EngineCore::Size InWindowPixels, const RenderViewSites* InSites)
     {
         P->ViewCount    = std::clamp<uint32_t>(InCount, 1, RENDER_VIEWS_MAX);
         P->WindowPixels = InWindowPixels;
+        P->Sites        = InSites ? *InSites : RenderViewSites();
+        if(P->Sites.Count < 2 || P->ViewCount < 2) { P->Sites.Count = 0; }
+        P->Sites.Count  = std::min(P->Sites.Count, P->ViewCount);
         for(uint32_t Index = 0; Index < P->ViewCount; ++Index)
         {
             SceneViewState& View = P->Views[Index];
@@ -1291,6 +1299,27 @@ namespace RenderCore
         }
         InContext.WriteGpuTimestamp(RGT_SceneCapture, true);
 
+        /* SPLITSCREEN's dynamic split: a view appearing this frame starts where view 0 left off --
+         * the same camera, by the split's own rule -- so its TAA history, exposure and motion carry
+         * over, with no ghost or exposure pop as it splits off. */
+        if(P->Sites.Count >= 2 && Main.bDrawnLastFrame)
+        {
+            for(uint32_t Index = 1; Index < ViewCount; ++Index)
+            {
+                SceneViewState& View = P->Views[Index];
+                if(View.bDrawnLastFrame) { continue; }
+                InContext.SeedViewHistory(View.Targets, Main.Targets);
+                View.PrevViewProjection = Main.PrevViewProjection;
+                View.PrevViewport       = Main.PrevViewport;
+                View.bHasPrevView       = Main.bHasPrevView;
+                View.JitterIndex        = Main.JitterIndex;
+            }
+        }
+        for(uint32_t Index = 0; Index < RENDER_VIEWS_MAX; ++Index)
+        {
+            P->Views[Index].bDrawnLastFrame = Index < ViewCount;
+        }
+
         /* The views (SceneViewState), each into its own targets; the Render
          * Target view mode's pick over each. Each is timed: "stat frame"'s
          * spans and the stage CPU times are the frame's, summed over them. */
@@ -1337,7 +1366,14 @@ namespace RenderCore
                 Sources[Index] = P->Views[Index].Targets.Final;
                 Rects[Index]   = { View.ViewportX, View.ViewportY, View.ViewportPixels.Width, View.ViewportPixels.Height };
             }
-            InContext.CompositeViews(P->Composite, Sources, Rects, ViewCount);
+            if(P->Sites.Count >= 2)
+            {
+                InContext.CompositeViewSites(P->Composite, Sources, P->Sites);
+            }
+            else
+            {
+                InContext.CompositeViews(P->Composite, Sources, Rects, ViewCount);
+            }
             Output       = P->Composite;
             OutputWidth  = P->Composite->GetWidth();
             OutputHeight = P->Composite->GetHeight();

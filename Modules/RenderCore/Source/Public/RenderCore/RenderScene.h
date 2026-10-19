@@ -89,9 +89,11 @@ namespace RenderCore
          * (1-4) the next Render() draws, each with its own light and post
          * process, each into its own targets at InViews[i].ViewportPixels, then
          * placed at its ViewportX, ViewportY in an InWindowPixels picture. With
-         * one view, the same as SetView, SetLighting and SetPostProcess. */
+         * one view, the same as SetView, SetLighting and SetPostProcess.
+         * InSites (Count 2 or more): the dynamic split's -- each pixel from
+         * the view whose site is nearest, not from rectangles. */
         void SetViews(const RenderView* InViews, const RenderLighting* InLightings, const RenderPostProcess* InPostProcesses,
-                      uint32_t InCount, EngineCore::Size InWindowPixels);
+                      uint32_t InCount, EngineCore::Size InWindowPixels, const RenderViewSites* InSites = nullptr);
 
         void SetClearColor(EngineCore::Color InColor);
 

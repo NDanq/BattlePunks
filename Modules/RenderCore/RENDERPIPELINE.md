@@ -900,6 +900,14 @@ splitscreen it draws up to `RENDER_VIEWS_MAX` (4) views a frame.
   presented. Debug lines go through view 0, over its rectangle.
 - **One view.** The view's own final colour is the picture and no composite
   is made, so a game without splitscreen draws exactly as before.
+- **The dynamic split** (`Renderer::SetViewSites`, `RenderViewSites`). Every
+  view is the whole window. `RenderContext::CompositeViewSites` takes each
+  pixel from the view whose site is nearest (`ViewSites.fsh`), and draws a
+  divider of `DividerPixels`, faded by `DividerAlpha`, along the cells' edges.
+  - A view appearing in the split starts from view 0's state, through
+    `RenderContext::SeedViewHistory`: TAA history, exposure (copied with
+    `PPCopy.fsh`), last frame's view-projection and the jitter cycle.
+    The split opens with both views on the same camera, so this has no seam.
 - **Per view, inside a proxy or pass.**
   - Terrain chunks and Procedural Spawner cells choose their LOD from the
     view being drawn, in `DrawShadow` as well as `Draw`, so a view's shadows
