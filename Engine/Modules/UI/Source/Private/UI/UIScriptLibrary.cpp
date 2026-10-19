@@ -43,8 +43,11 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(UI)
         UI::UISystem* System = UI::GetScriptUISystem();
         const std::string Path = Call.GetString(1);
         const bool bPersistent = Call.HasArg(2) && Call.GetBool(2);
-        Call.PushInteger(System ? int64_t(System->Open(Path, bPersistent)) : 0);
-    }, "Path:string, Persistent:bool -> Handle:integer").Tooltip("Opens a .nmui over the others (0 if it does not load)");
+        const int32_t Player = Call.HasArg(3) ? Call.GetInt(3) : -1;
+        Call.PushInteger(System ? int64_t(System->Open(Path, bPersistent, Player)) : 0);
+    }, "Path:string, Persistent:bool, Player:integer? -> Handle:integer")
+      .Tooltip("Opens a .nmui over the others (0 if it does not load); with Player (0 first), a copy for that local player's view, "
+               "reading Player<N>.Key and navigated by their pad");
 
     Lib.Function("Close", [](GameCore::ScriptCall& Call)
     {

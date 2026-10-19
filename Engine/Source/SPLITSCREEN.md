@@ -109,6 +109,23 @@ near them. One-shots are culled by their distance
 from the nearest listener. A level's Audio Listener is ignored while there is
 more than one view. Engine/Modules/Audio/README.md has the details.
 
+## UI
+
+A document opened for one player (`GetUI().Open(path, persistent, player)`,
+Lua `UI.Open(path, persistent, player)`) is that player's copy. Two players
+opening a HUD get one each.
+- It is laid out in the player's view rectangle. In the dynamic split it uses
+  a fixed half of the window (quadrant with more players), so a HUD stays in
+  its player's corner while the line turns.
+- It reads that player's keys: `{Bind:Score}` is `Player<N>.Score`.
+- It is navigated by that player's pad, and as a menu it holds only that
+  player.
+
+A whole-window document (a pause menu) lays out against the window. Player
+1's pad and the keyboard navigate it, and so does any player's pad with
+`[Splitscreen] MenuAnyPad` (on by default). Engine/Modules/UI/README.md has
+the details.
+
 ## Config
 
 | Key | Default | |
@@ -116,6 +133,7 @@ more than one view. Engine/Modules/Audio/README.md has the details.
 | `[Splitscreen] Enabled` | true | a view per local player; off, one view |
 | `[Splitscreen] SideBySide` | false | two players left and right |
 | `[Input] KeyboardMousePlayer` | 0 | the local player the keyboard and mouse belong to; -1 nobody |
+| `[Splitscreen] MenuAnyPad` | true | any player's pad navigates a whole-window menu, not only player 1's |
 | `[Splitscreen] Views` | 0 | debugging: draw this many views of the default scene, whatever the game says |
 | `[Splitscreen] DebugOffset` | "" | debugging: `x,y,z` moves view i's borrowed camera by i times that |
 

@@ -48,6 +48,7 @@ namespace UI
         UIDocumentHandle                    Handle = UI_DOCUMENT_INVALID;
         std::unique_ptr<UIDocumentInstance> Instance;
         std::string                         Path;
+        int32_t                             Player = -1;   // SPLITSCREEN: the local player it is for; -1 the window
         int32_t                             Layer = 0;
         uint64_t                            Order = 0;
         bool                                bPersistent = false;
@@ -186,21 +187,28 @@ namespace UI
 
     // === Documents ================================================================
 
-    UIDocumentHandle UISystem::Open(const std::string& InPath, const bool bInPersistent)
+    UIDocumentHandle UISystem::Open(const std::string& InPath, const bool bInPersistent, const int32_t InPlayer)
     {
-        if(const UIDocumentHandle Existing = FindHandle(InPath)) return Existing;
+        const int32_t Player = InPlayer >= 0 && InPlayer < UI_PLAYERS_MAX ? InPlayer : -1;
+        if(const UIDocumentHandle Existing = FindHandle(InPath, Player)) return Existing;
         std::shared_ptr<const UIDocumentAsset> Asset = UIAssetCache::Find(InPath);
         if(!Asset) return UI_DOCUMENT_INVALID;
-        return OpenAsset(Asset, InPath, bInPersistent);
+        return OpenAsset(Asset, InPath, bInPersistent, true, Player);
     }
 
     UIDocumentHandle UISystem::OpenAsset(std::shared_ptr<const UIDocumentAsset> InAsset, const std::string& InPath, const bool bInPersistent,
-                                         const bool bInFollowCache)
+                                         const bool bInFollowCache, const int32_t InPlayer)
     {
         if(!InAsset) return UI_DOCUMENT_INVALID;
         auto Made = std::make_unique<Document>();
         Made->Instance = std::make_unique<UIDocumentInstance>(InAsset, InPath);
         if(!Made->Instance->IsValid()) return UI_DOCUMENT_INVALID;
+        if(InPlayer >= 0 && InPlayer < UI_PLAYERS_MAX)
+        {
+            /* A player's copy reads its player's keys: {Bind:Score} is Player<N>.Score. */
+            Made->Player = InPlayer;
+            Made->Instance->SetBindingPrefix("Player" + std::to_string(InPlayer) + ".");
+        }
 
         Made->Handle          = NextHandle++;
         Made->Path            = InPath;
@@ -251,8 +259,46 @@ namespace UI
 
     bool UISystem::Close(const std::string& InPath)
     {
-        const UIDocumentHandle Handle = FindHandle(InPath);
+        bool bClosed = false;
+        while(const UIDocumentHandle Handle = FindHandle(InPath))
+        {
+            if(!Close(Handle)) break;
+            bClosed = true;
+        }
+        return bClosed;
+    }
+
+    bool UISystem::Close(const std::string& InPath, const int32_t InPlayer)
+    {
+        const UIDocumentHandle Handle = FindHandle(InPath, InPlayer);
         return Handle != UI_DOCUMENT_INVALID && Close(Handle);
+    }
+
+    UIDocumentHandle UISystem::FindHandle(const std::string& InPath, const int32_t InPlayer) const
+    {
+        const int32_t Player = InPlayer >= 0 && InPlayer < UI_PLAYERS_MAX ? InPlayer : -1;
+        for(const auto& Each : Documents)
+        {
+            if(Each->Path == InPath && Each->Player == Player && !Each->bClosing) return Each->Handle;
+        }
+        return UI_DOCUMENT_INVALID;
+    }
+
+    int32_t UISystem::GetDocumentPlayer(const UIDocumentHandle InHandle) const
+    {
+        const Document* Found = FindDocument(InHandle);
+        return Found ? Found->Player : -1;
+    }
+
+    void UISystem::SetPlayerArea(const int32_t InPlayer, const UIRect& InPixels)
+    {
+        if(InPlayer < 0 || InPlayer >= UI_PLAYERS_MAX) return;
+        PlayerAreas[InPlayer] = InPixels;
+    }
+
+    void UISystem::ClearPlayerAreas()
+    {
+        for(UIRect& Each : PlayerAreas) { Each = UIRect(); }
     }
 
     void UISystem::CloseAll(const bool bInPersistentToo)
@@ -480,6 +526,15 @@ namespace UI
 
             /* A focused text field takes typing and editing keys; Back leaves it. */
             UIInputFrame Nav = InFrame;
+            const bool bPlayers = Entry.Player >= 0 && Entry.Player < UI_PLAYERS_MAX;
+            if(bPlayers)
+            {
+                /* SPLITSCREEN: a player's document navigates by that player's own pad alone. */
+                const UIPlayerNavigation& Own = InFrame.PlayerNav[Entry.Player];
+                Nav.bNavUp = Own.bUp; Nav.bNavDown = Own.bDown; Nav.bNavLeft = Own.bLeft; Nav.bNavRight = Own.bRight;
+                Nav.bAccept = Own.bAccept; Nav.bBack = Own.bBack;
+                Nav.bNext = Nav.bPrevious = false;
+            }
             if(Focused && Focused->WantsTextInput() && Focused->IsEnabledInHierarchy())
             {
                 Result.bWantsTextInput  = true;
@@ -525,14 +580,23 @@ namespace UI
                     if(OnBack.Parse(Doc.GetAsset().Settings.OnBack) && !OnBack.IsEmpty()) { QueueActions(OnBack, &Doc, nullptr); }
                 }
                 const bool bUsed = bDirection || Nav.bNext || Nav.bPrevious || Nav.bAccept || Nav.bBack;
-                if(bUsed || Mode == EUIInputMode::UIOnly)
+                if(bPlayers)
+                {
+                    if(bUsed || Mode == EUIInputMode::UIOnly) { Result.bConsumePlayer[Entry.Player] = true; }
+                }
+                else if(bUsed || Mode == EUIInputMode::UIOnly)
                 {
                     Result.bConsumeKeyboard = true;
                     Result.bConsumeGamepad  = true;
                 }
             }
 
-            if(Mode == EUIInputMode::UIOnly)
+            if(Mode == EUIInputMode::UIOnly && bPlayers)
+            {
+                /* SPLITSCREEN: a player's menu holds that player alone; the others play on. */
+                Result.bConsumePlayer[Entry.Player] = true;
+            }
+            else if(Mode == EUIInputMode::UIOnly)
             {
                 Result.bConsumeMouse    = true;
                 Result.bConsumeKeyboard = true;
@@ -731,7 +795,15 @@ namespace UI
         for(const auto& Each : Documents)
         {
             UIDocumentInstance& Doc = *Each->Instance;
-            Doc.Layout(InViewportPixels);
+            const UIRect* Area = Each->Player >= 0 && Each->Player < UI_PLAYERS_MAX ? &PlayerAreas[Each->Player] : nullptr;
+            if(Area && Area->W > 0.0f && Area->H > 0.0f)
+            {
+                Doc.Layout(UIVec2{ Area->W, Area->H }, UIVec2{ Area->X, Area->Y });   // SPLITSCREEN: its player's view
+            }
+            else
+            {
+                Doc.Layout(InViewportPixels);
+            }
             if(Doc.Paint()) { bMergedDirty = true; }
         }
 

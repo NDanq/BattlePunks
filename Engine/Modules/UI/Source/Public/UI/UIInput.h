@@ -12,6 +12,16 @@
  */
 namespace UI
 {
+    /* One local player's navigation this frame: their pad (and the keyboard,
+     * if theirs). A document opened for that player navigates by it. */
+    struct UIPlayerNavigation
+    {
+        bool bUp = false, bDown = false, bLeft = false, bRight = false;
+        bool bAccept = false, bBack = false;
+    };
+
+    constexpr int32_t UI_PLAYERS_MAX = 4;   // local players a document may be opened for
+
     struct UIInputFrame
     {
         UIVec2 MousePixels;                  // from the viewport's top-left
@@ -27,6 +37,10 @@ namespace UI
         bool bNext = false, bPrevious = false;   // Tab, Shift+Tab
         bool bNavFromGamepad = false;            // which device the navigation came from
 
+        // SPLITSCREEN: each local player's own, for the documents opened for them
+        // (UISystem::Open's InPlayer); the fields above are the window's documents'.
+        UIPlayerNavigation PlayerNav[UI_PLAYERS_MAX];
+
         // Text editing, for a focused text field (UIWidget::WantsTextInput).
         char    Text[64] = {};                   // typed this frame, UTF-8 (the window's text input)
         uint8_t Backspace = 0, Delete = 0;       // presses and repeats this frame
@@ -40,7 +54,8 @@ namespace UI
     {
         bool bConsumeMouse    = false;   // buttons and wheel
         bool bConsumeKeyboard = false;
-        bool bConsumeGamepad  = false;
+        bool bConsumeGamepad  = false;   // what the window's documents navigate by
+        bool bConsumePlayer[UI_PLAYERS_MAX] = {};   // a player's document used that player's navigation
         bool bShowCursor      = false;   // a UIOnly document is open
         bool bWantsTextInput  = false;   // a text field has focus: the host turns the window's text input on
         bool bOverWidget      = false;   // the pointer is over a widget that takes hits

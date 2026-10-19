@@ -1126,6 +1126,71 @@ static void TestInputAndActions()
     Expect(System.GetDocumentCount() == 0, "CloseAll closes everything");
 }
 
+/* SPLITSCREEN: documents opened for a local player -- a copy each, in their area,
+ * reading their keys, navigated by their pad. */
+static void TestPlayerDocuments()
+{
+    std::printf("[player documents]\n");
+    UISystem System;
+    const UIVec2 Viewport{ 1280, 720 };
+    auto Hud = Parse(R"XML(<UI InputMode="GameAndUI" ScaleMode="None">
+  <Canvas Name="Root">
+    <Text Name="Score" Position="10,10" AutoSize="true" Text="Score: {Bind:Score} of {Bind:/Game.Goal}"/>
+  </Canvas>
+</UI>)XML", "the player HUD parses");
+    const UIDocumentHandle First  = System.OpenAsset(Hud, "Test/PlayerHUD.nmui", false, true, 0);
+    const UIDocumentHandle Second = System.OpenAsset(Hud, "Test/PlayerHUD.nmui", false, true, 1);
+    Expect(First != UI_DOCUMENT_INVALID && Second != UI_DOCUMENT_INVALID && First != Second, "one document, a copy for each player");
+    Expect(System.FindHandle("Test/PlayerHUD.nmui", 1) == Second && System.GetDocumentPlayer(Second) == 1
+               && System.GetDocumentPlayer(First) == 0,
+           "each found by its player");
+
+    System.SetValue("Player0.Score", UIValue::Number(3));
+    System.SetValue("Player1.Score", UIValue::Number(5));
+    System.SetValue("Game.Goal", UIValue::Number(10));
+    System.Tick(0.016f);
+    UIDocumentInstance& A = *System.Find(First);
+    UIDocumentInstance& B = *System.Find(Second);
+    Expect(A.GetProperty(*A.FindWidget("Score"), "Text").AsString() == "Score: 3 of 10"
+               && B.GetProperty(*B.FindWidget("Score"), "Text").AsString() == "Score: 5 of 10",
+           "{Bind:Score} reads its player's key, {Bind:/Game.Goal} the key as written");
+
+    System.SetPlayerArea(0, UIRect{ 0.0f, 0.0f, 640.0f, 720.0f });
+    System.SetPlayerArea(1, UIRect{ 640.0f, 0.0f, 640.0f, 720.0f });
+    System.Update(Viewport);
+    const UIRect AtA = A.GetPixelRect(A.FindWidget("Score")->GetIndex());
+    const UIRect AtB = B.GetPixelRect(B.FindWidget("Score")->GetIndex());
+    Expect(Near(AtA.X, 10.0f) && Near(AtB.X, 650.0f) && Near(AtA.Y, AtB.Y), "each laid out in its player's area");
+    System.ClearPlayerAreas();
+    System.Update(Viewport);
+    Expect(Near(B.GetPixelRect(B.FindWidget("Score")->GetIndex()).X, 10.0f), "with no area, the whole window");
+
+    /* A menu opened for player 2 navigates by player 2's pad alone. */
+    const UIDocumentHandle Menu = System.OpenAsset(Parse(MENU_XML, "menu"), "Test/Menu.nmui", false, true, 1);
+    System.Update(Viewport);
+    UIDocumentInstance& Doc = *System.Find(Menu);
+    const int32_t Start = Doc.GetFocused();
+    UIInputFrame Nav;
+    Nav.bHasMouse = false;
+    Nav.bNavDown = true;
+    Nav.PlayerNav[0].bDown = true;
+    UIInputResult Result = System.ProcessInput(Nav);
+    Expect(Doc.GetFocused() == Start, "the window's and player 1's navigation do not move it");
+    Expect(Result.bConsumePlayer[1] && !Result.bConsumeGamepad && !Result.bConsumeKeyboard && !Result.bShowCursor,
+           "a player's UIOnly menu holds that player alone");
+    Nav = UIInputFrame();
+    Nav.bHasMouse = false;
+    Nav.PlayerNav[1].bDown = true;
+    Result = System.ProcessInput(Nav);
+    Expect(Doc.GetFocused() == int32_t(Doc.FindWidget("Quit")->GetIndex()), "player 2's Down moves its focus");
+    Expect(Result.bConsumePlayer[1] && !Result.bConsumePlayer[0] && !Result.bConsumeGamepad,
+           "and consumes player 2's navigation alone");
+
+    Expect(System.Close("Test/PlayerHUD.nmui") && System.FindHandle("Test/PlayerHUD.nmui") == UI_DOCUMENT_INVALID,
+           "Close(path) closes every player's copy");
+    System.CloseAll(true);
+}
+
 /* Lua and Event actions, through a real script engine and World. */
 static void TestScriptedActions()
 {
@@ -2367,6 +2432,7 @@ int main()
     TestTextInput();
     TestStructureEditing();
     TestInputAndActions();
+    TestPlayerDocuments();
     TestScriptedActions();
     TestUIGraphs();
     TestOpenBeforePaint();

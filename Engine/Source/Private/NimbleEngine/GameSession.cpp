@@ -69,6 +69,10 @@ NIMBLE_GAME_CONFIG_BOOL(GSplitscreenSideBySide, "Splitscreen", "SideBySide", fal
  * and its cameras' pitch and yaw (degrees), distance, field of view and how
  * far out a player may get (0-1 of half the screen) before it splits. */
 NIMBLE_GAME_CONFIG_BOOL(GSplitscreenDynamic, "Splitscreen", "Dynamic", false, nullptr);
+
+/* A whole-window menu (a pause menu) navigated by any local player's pad, not
+ * only player 1's; the documents opened for one player always take theirs. */
+NIMBLE_GAME_CONFIG_BOOL(GSplitscreenMenuAnyPad, "Splitscreen", "MenuAnyPad", true, nullptr);
 NIMBLE_GAME_CONFIG_FLOAT(GSplitscreenDynamicPitch, "Splitscreen", "DynamicPitch", 55.0f, nullptr);
 NIMBLE_GAME_CONFIG_FLOAT(GSplitscreenDynamicYaw, "Splitscreen", "DynamicYaw", 0.0f, nullptr);
 NIMBLE_GAME_CONFIG_FLOAT(GSplitscreenDynamicDistance, "Splitscreen", "DynamicDistance", 1500.0f, nullptr);
@@ -684,12 +688,19 @@ namespace NimbleEngine
         Frame.Wheel = FilteredInput.GetWheelDelta();
 
         /* Navigation through the "UI" input map (UIInputMap.cpp): rebindable like any other --
-         * player 1's pad, and the keyboard whoever has it (INPUT.md, "Local players"). */
+         * the window's documents by player 1's pad (any player's, with [Splitscreen] MenuAnyPad)
+         * and the keyboard whoever has it; a player's own documents by their own (INPUT.md,
+         * "Local players"). */
+        const uint8_t MenuPads = GSplitscreenMenuAnyPad.GetBool() ? uint8_t(INPUT_PLAYERS_MAX) : uint8_t(1);
         bool bPad = false, bAnyPad = false;
-        const auto Pressed = [this, &bPad, &bAnyPad, Keys](const char* InAction)
+        const auto Pressed = [this, &bPad, &bAnyPad, Keys, MenuPads](const char* InAction)
         {
             bool bFromPad = false;
-            bool bPressed = WasInputActionPressed("UI", InAction, FilteredInput, 0, &bFromPad);
+            bool bPressed = false;
+            for(uint8_t Pad = 0; Pad < MenuPads && !bPressed; ++Pad)
+            {
+                bPressed = WasInputActionPressed("UI", InAction, FilteredInput, Pad, &bFromPad);
+            }
             if(!bPressed)
             {
                 bPressed = WasInputActionPressed("UI", InAction, FilteredInput, Keys, &bFromPad);
@@ -698,6 +709,16 @@ namespace NimbleEngine
             bAnyPad = bAnyPad || (bPressed && bFromPad);
             return bPressed;
         };
+        for(uint8_t Local = 0; Local < UI::UI_PLAYERS_MAX && Local < INPUT_PLAYERS_MAX; ++Local)
+        {
+            UI::UIPlayerNavigation& Own = Frame.PlayerNav[Local];
+            Own.bUp     = WasInputActionPressed("UI", "Up", FilteredInput, Local);
+            Own.bDown   = WasInputActionPressed("UI", "Down", FilteredInput, Local);
+            Own.bLeft   = WasInputActionPressed("UI", "Left", FilteredInput, Local);
+            Own.bRight  = WasInputActionPressed("UI", "Right", FilteredInput, Local);
+            Own.bAccept = WasInputActionPressed("UI", "Accept", FilteredInput, Local);
+            Own.bBack   = WasInputActionPressed("UI", "Back", FilteredInput, Local);
+        }
         Frame.bNavUp    = Pressed("Up");
         Frame.bNavDown  = Pressed("Down");
         Frame.bNavLeft  = Pressed("Left");
@@ -740,7 +761,17 @@ namespace NimbleEngine
         this->bConsoleOpen = bConsoleOpen;
         if(Taken.bConsumeMouse)    { FilteredInput.ConsumeMouseButtons(); }
         if(Taken.bConsumeKeyboard) { FilteredInput.ConsumeKeyboard(); }
-        if(Taken.bConsumeGamepad)  { FilteredInput.ConsumeGamepad(0); }   // the pad it navigates from; the others play on
+        if(Taken.bConsumeGamepad)   // the pads it navigates from; the others play on
+        {
+            for(uint8_t Pad = 0; Pad < MenuPads; ++Pad) { FilteredInput.ConsumeGamepad(Pad); }
+        }
+        for(uint8_t Local = 0; Local < UI::UI_PLAYERS_MAX && Local < INPUT_PLAYERS_MAX; ++Local)
+        {
+            /* A player's own document used their pad (and the keyboard, if theirs). */
+            if(!Taken.bConsumePlayer[Local]) { continue; }
+            FilteredInput.ConsumeGamepad(Local);
+            if(GetKeyboardMousePlayer() == int32_t(Local)) { FilteredInput.ConsumeKeyboard(); }
+        }
 
         /* A cinematic holds the players' input back; Back the UI left skips it. */
         if(bCinematic && LevelWorld && !bConsoleOpen)
@@ -961,7 +992,28 @@ namespace NimbleEngine
         PublishUIValues();
         Console->Update();
         Interface->Tick(float(InFrame.DeltaSeconds));
+        PublishPlayerAreas();
         Interface->Update(UI::UIVec2{ float(InFrame.ViewportPixels.Width), float(InFrame.ViewportPixels.Height) });
+    }
+
+    void GameSession::PublishPlayerAreas()
+    {
+        /* A fixed layout: each player's view's rectangle. The dynamic split: halves (quadrants)
+         * of the window that stay put while its line turns -- a HUD in each player's corner. */
+        RenderCore::RenderViewRect Rects[RenderCore::RENDER_VIEWS_MAX];
+        const bool     bDynamic = SplitPlayers >= 2;
+        const uint32_t Players  = bDynamic ? SplitPlayers : ViewCount;
+        const uint32_t Count    = Players > 1 ? RenderCore::MakeSplitscreenLayout(FramePixels, Players, bDynamic || GSplitscreenSideBySide.GetBool(), Rects) : 0;
+        for(int32_t Local = 0; Local < UI::UI_PLAYERS_MAX; ++Local)
+        {
+            UI::UIRect Area;   // empty: the whole window
+            if(uint32_t(Local) < Count)
+            {
+                const RenderCore::RenderViewRect& Rect = Rects[Local];
+                Area = UI::UIRect{ float(Rect.X), float(Rect.Y), float(Rect.Width), float(Rect.Height) };
+            }
+            Interface->SetPlayerArea(Local, Area);
+        }
     }
 
     void GameSession::PublishPhysicsStat()
@@ -1102,6 +1154,7 @@ namespace NimbleEngine
         {
             return;
         }
+        SplitPlayers = 0;
         Rendering.SetViewSites(RenderCore::RENDER_DEFAULT_SCENE, RenderCore::RenderViewSites());
 
         /* SPLITSCREEN: a view per local player with one, up to the last;
@@ -1158,7 +1211,7 @@ namespace NimbleEngine
     bool GameSession::PublishSplitCamera()
     {
         const SplitCameraSettings Settings = GetSplitCamera();
-        if(!Settings.bEnabled || !LevelWorld) { return false; }
+        if(!Settings.bEnabled || !LevelWorld) { SplitPlayers = 0; return false; }
 
         /* Local players 1, 2, ... while each has an avatar. */
         EngineCore::Vector3 Players[4];
@@ -1169,7 +1222,8 @@ namespace NimbleEngine
             if(!Avatar.IsSet() || !LevelWorld->IsAlive(Avatar)) { break; }
             Players[Count++] = LevelWorld->GetEntity(Avatar).GetWorldPose().Position;
         }
-        if(Count < 2) { return false; }
+        if(Count < 2) { SplitPlayers = 0; return false; }
+        SplitPlayers = Count;
 
         SplitCameraFrame Frame;
         SolveSplitCamera(Settings, Players, Count, FramePixels, FrameDelta, SplitAngle, bSplitAngleSet, Frame);
