@@ -70,6 +70,13 @@ NIMBLE_GAME_CONFIG_BOOL(GSplitscreenSideBySide, "Splitscreen", "SideBySide", fal
  * far out a player may get (0-1 of half the screen) before it splits. */
 NIMBLE_GAME_CONFIG_BOOL(GSplitscreenDynamic, "Splitscreen", "Dynamic", false, nullptr);
 
+/* OCCLUSION REVEAL (RENDERPIPELINE.md, "Revealing players"): the local players'
+ * avatars kept in sight through what is marked Reveal Players -- the circle's
+ * size round each, world units, and how high above its feet it is centred. */
+NIMBLE_GAME_CONFIG_BOOL(GRevealPlayers, "Rendering", "RevealPlayers", true, nullptr);
+NIMBLE_GAME_CONFIG_FLOAT(GRevealRadius, "Rendering", "RevealRadius", 150.0f, nullptr);
+NIMBLE_GAME_CONFIG_FLOAT(GRevealHeight, "Rendering", "RevealHeight", 90.0f, nullptr);
+
 /* A whole-window menu (a pause menu) navigated by any local player's pad, not
  * only player 1's; the documents opened for one player always take theirs. */
 NIMBLE_GAME_CONFIG_BOOL(GSplitscreenMenuAnyPad, "Splitscreen", "MenuAnyPad", true, nullptr);
@@ -1180,9 +1187,27 @@ namespace NimbleEngine
         PublishViewTarget();
     }
 
+    void GameSession::PublishRevealPoints()
+    {
+        EngineCore::Vector3 Points[RenderCore::RENDER_REVEAL_MAX];
+        uint32_t Count = 0;
+        if(LevelWorld && GRevealPlayers.GetBool())
+        {
+            for(uint8_t Local = 0; Local < INPUT_PLAYERS_MAX && Count < RenderCore::RENDER_REVEAL_MAX; ++Local)
+            {
+                const GameCore::EntityID Avatar = GetLocalAvatar(*LevelWorld, Local);
+                if(!Avatar.IsSet() || !LevelWorld->IsAlive(Avatar)) { continue; }
+                Points[Count++] = LevelWorld->GetEntity(Avatar).GetWorldPose().Position
+                                + EngineCore::Vector3(0.0, double(GRevealHeight.GetFloat()), 0.0);
+            }
+        }
+        Rendering.SetRevealPoints(RenderCore::RENDER_DEFAULT_SCENE, Points, Count, GRevealRadius.GetFloat());
+    }
+
     void GameSession::PublishViewTarget()
     {
         if(!LevelWorld) { return; }
+        PublishRevealPoints();
 
         /* A target's camera: its own, else its first descendant's. */
         const auto CameraOf = [this](GameCore::EntityID InTarget)

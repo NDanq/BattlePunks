@@ -430,6 +430,15 @@ namespace RenderCore
         return Scene ? (Scene->Sites.Count >= 2 ? Scene->Sites.Count : Scene->ViewCount) : 1;
     }
 
+    void Renderer::SetRevealPoints(const RenderSceneID InScene, const EngineCore::Vector3* InPoints, const uint32_t InCount,
+                                   const float InRadius)
+    {
+        if(RendererScene* Scene = P->Find(InScene))
+        {
+            if(Scene->Bridge) { Scene->Bridge->SetRevealPoints(InPoints, InCount, InRadius); }
+        }
+    }
+
     void Renderer::SetViewSites(const RenderSceneID InScene, const RenderViewSites& InSites)
     {
         if(RendererScene* Scene = P->Find(InScene))

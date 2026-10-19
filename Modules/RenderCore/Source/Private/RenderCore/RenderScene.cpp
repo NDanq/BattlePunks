@@ -495,6 +495,7 @@ namespace RenderCore
                                              : (bStreamPerspective ? StreamK / std::max(DistanceToBox(Bounds, InView.Origin), StreamNear) : StreamK);
                     InContext.SetDrawStreamingScale(float(StreamScale));
                     InContext.SetDrawCustomGroups(Proxy->GetCustomPassGroups());   // a custom pass's mesh groups (CustomRenderPass.h)
+                    InContext.SetDrawReveal(Proxy->RevealsPlayers());              // dithered where it hides a player
                     if(Proxy->IsStatic())
                     {
                         StaticDrawList& List = ListFor(Proxy, Generation);
@@ -519,11 +520,14 @@ namespace RenderCore
                         InContext.SetDrawMotion(nullptr);
                     }
                     InContext.SetDrawCustomGroups(0);
+                    InContext.SetDrawReveal(false);
                     InContext.SetDrawOcclusion(-1);
                     InContext.SetDrawStreamingScale(0.0f);
                     ++VisibleCount;
                 }
-                if(bQueries && Proxy->IsOccluder())
+                /* An occluder that reveals players draws no depth while this view reveals any:
+                 * it would fill in the hole its Base Pass dithers. */
+                if(bQueries && Proxy->IsOccluder() && !(InView.RevealCount > 0 && Proxy->RevealsPlayers()))
                 {
                     InContext.SetGatheringOccluders(true);
                     Proxy->DrawOccluder(InContext);

@@ -123,6 +123,15 @@ session then places cameras of its own, all with the settings' rotation,
 | `[Splitscreen] DynamicFov` | 50 | their vertical field of view |
 | `[Splitscreen] DynamicMargin` | 0.6 | three or four players: how far out one may get before it splits |
 
+### Seeing players behind buildings
+
+Mark buildings, walls and roofs **Reveal Players** in their Render component.
+Where one hides a player from their camera, it is dithered away in a circle
+around them. This works for every view, merged or split, and for single-player
+too. Keys: `[Rendering] RevealPlayers`, `RevealRadius`, `RevealHeight`.
+RENDERPIPELINE.md, "Revealing players", has the details. WorldsLab's
+SteampunkPvP has its buildings marked.
+
 ## Rendering
 
 The renderer draws each view with its own camera, lights, post process

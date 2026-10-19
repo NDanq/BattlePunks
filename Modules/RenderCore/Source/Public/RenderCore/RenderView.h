@@ -38,6 +38,15 @@ namespace RenderCore
         int32_t               ViewportX = 0;
         int32_t               ViewportY = 0;
 
+        /* OCCLUSION REVEAL (RENDERPIPELINE.md, "Revealing players"): up to
+         * RENDER_REVEAL_MAX points this view keeps in sight -- its players.
+         * What draws marked to reveal them (RenderComponent::bRevealPlayers)
+         * nearer the eye than a point, inside a circle of RevealRadius world
+         * units round it on screen, is dithered away. */
+        EngineCore::Vector3   RevealPoints[4];   // RENDER_REVEAL_MAX
+        uint32_t              RevealCount  = 0;
+        float                 RevealRadius = 0.0f;
+
         /* World-space box this view can see. IsEmpty() (GameCore::AABB's own
          * default-constructed state) means "cull nothing" -- the state a
          * RenderView has before MakeOrthographic ever runs, and the safest

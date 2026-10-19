@@ -84,6 +84,10 @@ namespace RenderCore
      */
     constexpr uint32_t RENDER_VIEWS_MAX = 4;
 
+    /* OCCLUSION REVEAL (RENDERPIPELINE.md, "Revealing players"): the points a
+     * view keeps in sight through what is marked to reveal them. */
+    constexpr uint32_t RENDER_REVEAL_MAX = 4;
+
     /* A view's rectangle, in the window's physical pixels, row 0 its top. */
     struct RenderViewRect
     {

@@ -357,6 +357,10 @@ namespace RenderCore
          * frame, before the first scene queues (later calls that frame do
          * nothing). */
         void SetDrawStreamingScale(float InPixelsPerWorldUnit);
+
+        /* OCCLUSION REVEAL: whether the draws queued now are dithered away where
+         * they hide the view's players (RenderView::RevealPoints). */
+        void SetDrawReveal(bool bInReveal);
         void UpdateTextureStreaming();
 
         /*

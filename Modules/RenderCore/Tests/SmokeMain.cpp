@@ -100,9 +100,9 @@ static void TestScriptBindings()
     size_t RenderCount = 0;
     const GameCore::ScriptBindingEntry* Render =
         GameCore::FindComponentScript(RenderComponent::StaticType().ID, RenderCount);
-    Expect(Render != nullptr && RenderCount == 13,
-           "Render exposes Visible, Mesh, slots by index, material parameters, CastShadows, CastInsetShadow, Occluder "
-           "and CustomPassGroups");
+    Expect(Render != nullptr && RenderCount == 14,
+           "Render exposes Visible, Mesh, slots by index, material parameters, CastShadows, CastInsetShadow, Occluder, "
+           "CustomPassGroups and RevealPlayers");
     const auto HasBinding = [&](const char* InName)
     {
         for(size_t Index = 0; Render && Index < RenderCount; ++Index)
@@ -119,6 +119,7 @@ static void TestScriptBindings()
     Expect(HasBinding("CastShadows"), "and whether it casts shadows");
     Expect(HasBinding("Occluder"), "and whether it occludes");
     Expect(HasBinding("CustomPassGroups"), "and its custom render pass mesh groups");
+    Expect(HasBinding("RevealPlayers"), "and whether it is dithered where it hides a player");
 
     bool bProxyExposed = false;
     for(size_t Index = 0; Index < RenderCount; ++Index)
@@ -2884,7 +2885,7 @@ static void TestRenderComponentSerializer()
     };
 
     const GameCore::ComponentSerializerInfo* Info = GameCore::FindComponentSerializer(RenderComponent::StaticType().ID);
-    Expect(Info && Info->Version == 6, "RenderComponent saves as version 6 (material parameters, CastShadows, CastInsetShadow, Occluder, CustomPassGroups)");
+    Expect(Info && Info->Version == 7, "RenderComponent saves as version 7 (material parameters, CastShadows, CastInsetShadow, Occluder, CustomPassGroups, RevealPlayers)");
     if(!Info) { return; }
 
     RenderComponent Saved;

@@ -38,6 +38,7 @@ namespace RenderCore
         int32_t           Occlusion  = -1;       // the occlusion query the GPU skips it on (RenderContext::SetDrawOcclusion); -1: none
         uint8_t           PostStage  = 1;        // PostProcess stage: EPostProcessStage, before or after the effects
         uint8_t           CustomGroups = 0;      // its entity's custom pass mesh groups (RenderContext::SetDrawCustomGroups)
+        bool              bReveal    = false;    // dithered where it hides a player (RenderContext::SetDrawReveal)
         bool              bStatic    = false;    // replayed from a static draw list (SubmitCaptured): its own draw event
         float             WorldPerUV = 0.0f;     // MeshSection: world units one UV unit spans, scaled (texture streaming); 0: not known
 

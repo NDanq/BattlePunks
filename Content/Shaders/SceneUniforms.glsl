@@ -56,4 +56,12 @@ UBO_BLOCK_BEGIN(3, Scene_Block)
     mat4 Scene_ViewProjection;
     vec4 Scene_ContactShadow;
     vec4 Scene_ContactLocal;     // x: 1 if shadowed point and spot lights march too
+
+    // Occlusion reveal (MaterialTemplate_PS.glsl; RenderCore/RENDERPIPELINE.md, "Revealing
+    // players"): x how many points, y the view's aspect (width / height), z the share of
+    // pixels kept in a circle's middle, w how much nearer than a point (view depth) a
+    // surface must be to be dithered. Each point: xy NDC (+Y up), z its circle's radius in
+    // NDC y, w its view depth.
+    vec4 Scene_RevealParams;
+    vec4 Scene_Reveal[4];
 UBO_BLOCK_END(Scene_Block)
