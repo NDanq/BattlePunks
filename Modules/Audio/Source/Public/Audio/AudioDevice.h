@@ -115,9 +115,22 @@ namespace Audio
         void SetPaused(bool bInPaused);
         bool IsPaused() const;
 
-        /* The one listener: where the mix is heard from. InForward and InUp
-         * need not be normalized; InVelocity is in world units a second. */
+        /* Listener 0: where the mix is heard from. InForward and InUp need not
+         * be normalized; InVelocity is in world units a second. */
         void SetListener(const EngineCore::Vector3& InPosition, const EngineCore::Vector3& InForward,
+                         const EngineCore::Vector3& InUp, const EngineCore::Vector3& InVelocity);
+
+        /*
+         * SPLITSCREEN (SPLITSCREEN.md): up to AUDIO_LISTENERS_MAX listeners, one
+         * per player's view; each 3D sound is heard from the one nearest it
+         * (miniaudio's closest-listener spatialization), so a player hears
+         * what is near their own camera. 1 by default; those past the count
+         * are switched off. SetListener(InIndex, ...) places listener InIndex.
+         */
+        static constexpr uint32_t AUDIO_LISTENERS_MAX = 4;
+        void     SetListenerCount(uint32_t InCount);
+        uint32_t GetListenerCount() const;
+        void SetListener(uint32_t InIndex, const EngineCore::Vector3& InPosition, const EngineCore::Vector3& InForward,
                          const EngineCore::Vector3& InUp, const EngineCore::Vector3& InVelocity);
 
         /*

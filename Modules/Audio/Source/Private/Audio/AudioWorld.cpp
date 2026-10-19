@@ -135,6 +135,7 @@ namespace Audio
                 if(bBuffer) { ma_audio_buffer_ref_uninit(&Buffer); }
             }
 
+
             bool Init(AudioDevice::Impl& InDevice, const std::string& InPath, std::shared_ptr<const SoundData> InData,
                       const EAudioBus InBus)
             {
@@ -167,6 +168,12 @@ namespace Audio
                 }
                 bSound = true;
                 ma_sound_set_positioning(&Sound, ma_positioning_absolute);
+                /* Heard from the nearest listener (SPLITSCREEN: a listener per view).
+                 * miniaudio 0.11.25 zero-fills a sound's engine node, pinning it to
+                 * listener 0; its config has no field for it and
+                 * ma_sound_set_pinned_listener_index refuses MA_LISTENER_INDEX_CLOSEST,
+                 * so the node's (aligned 32-bit) field is set here, before it plays. */
+                Sound.engineNode.pinnedListenerIndex = MA_LISTENER_INDEX_CLOSEST;
                 return true;
             }
 
@@ -245,13 +252,29 @@ namespace Audio
 
         ListenerFallbackFn Fallback         = nullptr;
         void*              FallbackUserData = nullptr;
+        ListenersFallbackFn ManyFallback         = nullptr;   // SetListenersFallback
+        void*               ManyFallbackUserData = nullptr;
 
         std::unordered_map<uint64_t, SourceState> Sources;   // by EntityID::Pack()
         std::deque<OneShot>                       OneShots;  // oldest first
 
-        AudioListenerPose Listener;
-        Vector3           LastListenerPosition;
+        AudioListenerPose Listener;                                    // listener 0
+        AudioListenerPose Listeners[AudioDevice::AUDIO_LISTENERS_MAX];  // SPLITSCREEN: ListenerCount of them, [0] Listener
+        Vector3           LastListenerPositions[AudioDevice::AUDIO_LISTENERS_MAX];
+        uint32_t          ListenerCount = 1;
+        uint32_t          LastListenerCount = 0;
         bool              bHasListener = false;
+
+        /* How far InAt is from the nearest listener: what it is heard from. */
+        double ListenerDistance(const Vector3& InAt) const
+        {
+            double Nearest = (InAt - Listeners[0].Position).GetLength();
+            for(uint32_t Index = 1; Index < ListenerCount; ++Index)
+            {
+                Nearest = std::min(Nearest, double((InAt - Listeners[Index].Position).GetLength()));
+            }
+            return Nearest;
+        }
 
         bool bPaused = false;
 
@@ -263,6 +286,19 @@ namespace Audio
 
         void UpdateListener(AudioDevice::Impl& InDevice, const float InDeltaSeconds)
         {
+            (void)InDevice;
+
+            /* SPLITSCREEN: a listener per view, when the session has several. */
+            AudioListenerPose Many[AudioDevice::AUDIO_LISTENERS_MAX];
+            const uint32_t ManyCount = ManyFallback
+                ? std::min<uint32_t>(ManyFallback(*World, Many, AudioDevice::AUDIO_LISTENERS_MAX, ManyFallbackUserData), AudioDevice::AUDIO_LISTENERS_MAX)
+                : 0;
+            if(ManyCount > 1)
+            {
+                SetListeners(Many, ManyCount, InDeltaSeconds);
+                return;
+            }
+
             AudioListenerPose Pose;
             bool bFound = false;
             World->Each<GameCore::AudioListenerComponent>([&](GameCore::Entity InEntity, GameCore::AudioListenerComponent& InListener)
@@ -273,22 +309,39 @@ namespace Audio
                 AxesOf(World, Pose.Forward, Pose.Up);
                 bFound = true;
             });
+            if(!bFound && ManyCount == 1)
+            {
+                Pose   = Many[0];
+                bFound = true;
+            }
             if(!bFound && Fallback)
             {
                 bFound = Fallback(*World, Pose, FallbackUserData);
             }
+            SetListeners(&Pose, 1, InDeltaSeconds);
+        }
 
-            Vector3 Velocity;
-            if(bHasListener && InDeltaSeconds > 0.0f)
+        /* InPoses as the device's listeners, each with its velocity since last frame. */
+        void SetListeners(const AudioListenerPose* InPoses, const uint32_t InCount, const float InDeltaSeconds)
+        {
+            AudioDevice& Device = AudioDevice::Get();
+            Device.SetListenerCount(InCount);
+            for(uint32_t Index = 0; Index < InCount; ++Index)
             {
-                Velocity = (Pose.Position - LastListenerPosition) * (1.0 / double(InDeltaSeconds));
+                const AudioListenerPose& Pose = InPoses[Index];
+                Vector3 Velocity;
+                if(bHasListener && Index < LastListenerCount && InDeltaSeconds > 0.0f)
+                {
+                    Velocity = (Pose.Position - LastListenerPositions[Index]) * (1.0 / double(InDeltaSeconds));
+                }
+                LastListenerPositions[Index] = Pose.Position;
+                Listeners[Index]             = Pose;
+                Device.SetListener(Index, Pose.Position, Pose.Forward, Pose.Up, Velocity);
             }
-            LastListenerPosition = Pose.Position;
-            bHasListener         = true;
-            Listener             = Pose;
-
-            (void)InDevice;
-            AudioDevice::Get().SetListener(Pose.Position, Pose.Forward, Pose.Up, Velocity);
+            Listener          = InPoses[0];
+            ListenerCount     = InCount;
+            LastListenerCount = InCount;
+            bHasListener      = true;
         }
 
         void UpdateSources(AudioDevice::Impl& InDevice, const float InDeltaSeconds)
@@ -458,7 +511,7 @@ namespace Audio
              * footsteps would only push out the near ones. */
             Vector3 At = InAt ? InAt->Position : Vector3();
             if(!InAt && InFollow.IsSet() && World->IsAlive(InFollow)) { At = World->GetEntity(InFollow).GetWorldPose().Position; }
-            const double Distance = Settings.bSpatial ? double((At - Listener.Position).GetLength()) : 0.0;
+            const double Distance = Settings.bSpatial ? ListenerDistance(At) : 0.0;
             if(Settings.bSpatial && Distance > double(Settings.MaxDistance))
             {
                 LogPlay("cull", InSound, Settings, At, Distance, InVolume);
@@ -474,7 +527,7 @@ namespace Audio
                 for(auto It = OneShots.begin(); It != OneShots.end(); ++It)
                 {
                     const double Each = It->bSpatial && It->V->bHasLast
-                                      ? double((It->V->LastPosition - Listener.Position).GetLength()) : 0.0;
+                                      ? ListenerDistance(It->V->LastPosition) : 0.0;
                     if(Each > FarthestDistance) { FarthestDistance = Each; Farthest = It; }
                 }
                 if(Farthest == OneShots.end() || Distance >= FarthestDistance)
@@ -551,6 +604,9 @@ namespace Audio
                                      [this](const auto& InEntry) { return InEntry.second == this; }), Entries.end());
         P->World        = nullptr;
         P->bHasListener = false;
+        P->ListenerCount = 1;
+        P->LastListenerCount = 0;
+        AudioDevice::Get().SetListenerCount(1);
         P->bPaused      = false;
     }
 
@@ -568,6 +624,12 @@ namespace Audio
     {
         P->Fallback         = InFn;
         P->FallbackUserData = InUserData;
+    }
+
+    void AudioWorld::SetListenersFallback(const ListenersFallbackFn InFn, void* InUserData)
+    {
+        P->ManyFallback         = InFn;
+        P->ManyFallbackUserData = InUserData;
     }
 
     void AudioWorld::Update(const float InDeltaSeconds)
@@ -667,6 +729,16 @@ namespace Audio
     AudioListenerPose AudioWorld::GetListener() const
     {
         return P->Listener;
+    }
+
+    AudioListenerPose AudioWorld::GetListener(const uint32_t InIndex) const
+    {
+        return InIndex < P->ListenerCount ? P->Listeners[InIndex] : P->Listener;
+    }
+
+    uint32_t AudioWorld::GetListenerCount() const
+    {
+        return P->ListenerCount;
     }
 
     AudioWorld* AudioWorld::Find(const GameCore::World& InWorld)

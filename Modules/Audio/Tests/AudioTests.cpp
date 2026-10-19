@@ -474,6 +474,67 @@ namespace
         std::remove("AudioTests_Once.nmsound");
     }
 
+    /* SPLITSCREEN: a listener per view, each sound heard from the nearest. */
+    AudioListenerPose GListenerPoses[AudioDevice::AUDIO_LISTENERS_MAX];
+    uint32_t          GListenerCount = 0;
+
+    uint32_t TestListeners(GameCore::World&, AudioListenerPose* OutPoses, const uint32_t InMax, void*)
+    {
+        const uint32_t Count = std::min(GListenerCount, InMax);
+        for(uint32_t Index = 0; Index < Count; ++Index) { OutPoses[Index] = GListenerPoses[Index]; }
+        return Count;
+    }
+
+    void TestManyListeners()
+    {
+        std::printf("Listeners\n");
+        AudioDevice& Device = AudioDevice::Get();
+        Device.Initialize(OfflineSettings());
+        SoundSettings Loop;
+        Loop.bLoop       = true;
+        Loop.MinDistance = 100.0f;
+        Loop.MaxDistance = 10000.0f;
+        WriteSound("AudioTests_Loop.nmsound", 0.5, Loop);
+        SoundSettings Once;
+        WriteSound("AudioTests_Once.nmsound", 0.2, Once);   // MaxDistance 5000
+
+        GameCore::World World;
+        AudioWorld Audio;
+        Audio.Attach(World);
+        Audio.SetListenersFallback(&TestListeners, nullptr);
+        GListenerPoses[0].Position = EngineCore::Vector3(0.0, 0.0, 0.0);
+        GListenerPoses[1].Position = EngineCore::Vector3(20000.0, 0.0, 0.0);
+
+        GameCore::Entity Engine = MakeSource(World, "AudioTests_Loop.nmsound", EngineCore::Vector3(20300.0, 0.0, 0.0));
+        GListenerCount = 1;
+        Frame(World);
+        const Levels One = Frame(World, 0.1);
+        Expect(Audio.GetListenerCount() == 1 && Device.GetListenerCount() == 1, "one view: one listener");
+        Expect(!Audio.PlaySoundAt("AudioTests_Once.nmsound", EngineCore::Vector3(20000.0, 0.0, 100.0)),
+               "far from the one listener, a one-shot is not started");
+
+        GListenerCount = 2;
+        Frame(World);
+        const Levels Two = Frame(World, 0.1);
+        Expect(Audio.GetListenerCount() == 2 && Device.GetListenerCount() == 2, "two views: two listeners");
+        Expect(Audio.GetListener(1).Position.GetX() == 20000.0, "each where its view is");
+        Expect(Two.Both() > One.Both() * 4.0 + 1e-6, "a sound near the second listener is heard from it: "
+               + Num(One.Both()) + " then " + Num(Two.Both()));
+        Expect(Two.Right > Two.Left * 1.5, "and placed as that listener hears it (to its right)");
+        Expect(Audio.PlaySoundAt("AudioTests_Once.nmsound", EngineCore::Vector3(20000.0, 0.0, 100.0)),
+               "a one-shot near the second listener starts: weighed by the nearest");
+        Audio.StopAll();
+
+        GListenerCount = 0;   // no view has a camera: the single-listener rule again
+        Frame(World);
+        Expect(Audio.GetListenerCount() == 1 && Device.GetListenerCount() == 1, "back to one listener");
+
+        (void)Engine;
+        Audio.Detach();
+        std::remove("AudioTests_Loop.nmsound");
+        std::remove("AudioTests_Once.nmsound");
+    }
+
     /* Compressed and Stream play the source through the loading threads. */
     void TestLoadModes()
     {
@@ -536,6 +597,7 @@ int main()
     TestCook();
     TestSoundFiles();
     TestWorld();
+    TestManyListeners();
     TestLoadModes();
     TestShutdown();
 
