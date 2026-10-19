@@ -93,13 +93,14 @@ Turn it on with `[Splitscreen] Dynamic=true`, or from code with
 session then places cameras of its own, all with the settings' rotation,
 `Distance` back from what each looks at. The avatars' cameras aren't used.
 
-- **Two players.** One camera looks at their midpoint while both stay within
-  `Margin` of the screen's centre (0.6 of half the screen by default).
-  - Past that, the window splits. Each view looks at a point that slides from
-    the midpoint toward its player, so each player stays at the margin on
-    their own side.
-  - At the moment of splitting, both views still look at the midpoint, so
-    nothing jumps.
+- **Two players.** One camera holds both players symmetrically about the
+  screen's centre until each is farther out than the centre of their half of
+  the window.
+  - Past that, the window splits, and each view's camera holds its player at
+    the centre of their half, measured along the line between the players.
+  - The cameras are solved in perspective and all move in one plane, so this
+    holds under a pitched camera too. At the moment of splitting, both views
+    are still the shared camera, so nothing jumps.
   - The divider fades in over the first fifth of the distance past the split.
   - The line follows the players at `TurnRate` (per second).
 - **Three or four players.** One camera on their centroid while they all fit;
@@ -120,7 +121,7 @@ session then places cameras of its own, all with the settings' rotation,
 | `[Splitscreen] DynamicPitch`, `DynamicYaw` | 55, 0 | the cameras' rotation, degrees |
 | `[Splitscreen] DynamicDistance` | 1500 | how far back the cameras sit |
 | `[Splitscreen] DynamicFov` | 50 | their vertical field of view |
-| `[Splitscreen] DynamicMargin` | 0.6 | how far out a player may get before it splits |
+| `[Splitscreen] DynamicMargin` | 0.6 | three or four players: how far out one may get before it splits |
 
 ## Rendering
 

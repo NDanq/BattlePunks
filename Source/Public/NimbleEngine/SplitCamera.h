@@ -16,25 +16,27 @@
  * side or three-quarter view; free-look third-person cameras use the fixed
  * layouts instead.
  *
- * Two players: the shared camera looks at their midpoint M. Once they no
- * longer fit within Margin of the screen's centre, it splits: with T the
- * separation that just fits and L theirs, view i looks at
- * M + (P_i - M) * (1 - T / L), each player held a fixed way from the centre on
- * their own side. At L = T both are M, so the split opens with no jump.
- * Three or four: one shared camera on their centroid while all fit, else the
- * fixed layout, a camera on each.
+ * Two players, exactly, in perspective: the shared camera holds them
+ * symmetrically about the screen's centre. Once each is farther out than the
+ * centre of their half of the window -- the half the split line would give
+ * them -- it splits, and each view's camera holds its player at the centre of
+ * their half (along the way between them). Every camera moves in one plane,
+ * level with the shared eye, so at the moment of the split all three are the
+ * same camera and nothing jumps. Three or four: one shared camera on their
+ * centroid while all are within Margin of the centre, else the fixed layout,
+ * a camera on each.
  */
 namespace NimbleEngine
 {
     struct SplitCameraSettings
     {
-        bool                bEnabled = false;                         // [Splitscreen] Mode=Dynamic
+        bool                bEnabled = false;                         // [Splitscreen] Dynamic
         EngineCore::Vector3 Rotation{ 55.0, 0.0, 0.0 };               // the cameras' Euler degrees, as a Transform's
         float               Distance = 1500.0f;                       // from what a camera looks at, back along its forward
         float               FovY     = 50.0f;
         float               ZNear    = 10.0f;
         float               ZFar     = 50000.0f;
-        float               Margin   = 0.6f;                          // how far out (0-1 of half the screen) a player may get before it splits
+        float               Margin   = 0.6f;                          // three or four: how far out (0-1 of half the screen) one may get before it splits
         float               DividerPixels = 4.0f;
         EngineCore::Color   DividerColor{ 0, 0, 0, 255 };
         float               TurnRate = 8.0f;                          // how fast the split line follows the players (1/s); 0 at once
@@ -53,6 +55,12 @@ namespace NimbleEngine
 
     /* The camera position for a focus: back along the settings' forward. */
     NE_API EngineCore::Vector3 SplitCameraPosition(const SplitCameraSettings& InSettings, const EngineCore::Vector3& InFocus);
+
+    /* Where InPoint shows on a camera of these settings looking at InFocus, in
+     * window pixels (row 0 the top); false behind it. For an off-screen marker,
+     * say, or a test. */
+    NE_API bool ProjectSplitCamera(const SplitCameraSettings& InSettings, const EngineCore::Vector3& InFocus, const EngineCore::Vector3& InPoint,
+                                   EngineCore::Size InWindow, float& OutX, float& OutY);
 
     /*
      * The split for InCount players at InPlayers (1-4) over a window of
