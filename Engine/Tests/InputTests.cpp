@@ -337,6 +337,43 @@ static void TestConsume()
     Expect(!WasInputActionPressed("TestMap", "Nope", State) && !WasInputActionPressed("NoMap", "Jump", State), "unknown names are not pressed");
 }
 
+/* SPLITSCREEN: the keyboard and mouse are one local player's (INPUT.md, "Local players"). */
+static void TestKeyboardMouseOwner()
+{
+    std::printf("[keyboard and mouse owner]\n");
+    InputState State;
+    State.BeginFrame(1);
+    State.Press(FindInputKey("Space"));
+    State.Press(FindInputKey("Mouse.Left"));
+    State.MoveMouse(10, 10, 5, 0);
+    State.Press(FindInputKey("Gamepad.South"), 1);
+
+    Expect(GetKeyboardMousePlayer() == 0, "player 1 has them by default");
+    Expect(State.IsDown("Space", 0) && State.WasPressed("Mouse.Left", 0) && State.GetValue("Mouse.DeltaX", 0) == 5.0f,
+           "player 1 reads the keyboard and mouse");
+    Expect(!State.IsDown("Space", 1) && !State.WasPressed("Mouse.Left", 1) && State.GetValue("Mouse.DeltaX", 1) == 0.0f,
+           "player 2 reads none of them");
+    Expect(State.IsDown("Gamepad.South", 1), "player 2 still reads its pad");
+    Expect(State.IsDown("Space", INPUT_PLAYER_DEVICES) && !State.IsDown("Gamepad.South", INPUT_PLAYER_DEVICES),
+           "read as the devices: the keyboard, no pad");
+
+    SetKeyboardMousePlayer(1);
+    Expect(GetKeyboardMousePlayer() == 1 && State.IsDown("Space", 1) && !State.IsDown("Space", 0), "given to player 2, theirs alone");
+    SetKeyboardMousePlayer(-1);
+    Expect(GetKeyboardMousePlayer() == -1 && !State.IsDown("Space", 0) && !State.IsDown("Space", 1)
+               && State.IsDown("Space", INPUT_PLAYER_DEVICES),
+           "nobody's: no player reads them, the devices still do");
+    SetKeyboardMousePlayer(9);
+    Expect(GetKeyboardMousePlayer() == -1, "a player past the last is nobody");
+    SetKeyboardMousePlayer(0);
+
+    State.Press(FindInputKey("Gamepad.South"), 0);
+    InputState Pads = State;
+    Pads.ConsumeGamepad(1);
+    Expect(!Pads.IsDown("Gamepad.South", 1) && Pads.IsDown("Gamepad.South", 0) && Pads.IsDown("Space"),
+           "ConsumeGamepad(player) takes that player's pad alone");
+}
+
 static void TestTextAndRepeat()
 {
     std::printf("[text and repeat]\n");
@@ -429,6 +466,7 @@ int main()
 {
     std::printf("NimbleEngineInputTests\n");
     TestConsume();
+    TestKeyboardMouseOwner();
     TestTextAndRepeat();
     TestNames();
     TestEdges();

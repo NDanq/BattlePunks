@@ -137,9 +137,10 @@ return {
 }
 ```
 
-**Local players.** Pad N belongs to local player N. As with an Input
-component's `PlayerIndex`, the keyboard and mouse are read by every local
-player, so split-screen games bind their second player to its pad.
+**Local players.** Pad N belongs to local player N. The keyboard and mouse
+belong to one local player, player 1 by default (`[Input] KeyboardMousePlayer`,
+INPUT.md "Local players"). So in split-screen, player 1 plays on the keyboard
+or pad 1, and the others on their own pads.
 
 ## Prediction
 

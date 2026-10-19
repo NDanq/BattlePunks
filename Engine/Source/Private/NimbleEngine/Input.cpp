@@ -110,7 +110,22 @@ namespace
         return KindOf(InKey) == IK_PadAxis && IndexOf(InKey) < PAD_AXES && InPlayer < INPUT_PLAYERS_MAX
              ? 4 + InPlayer * 8 + int(IndexOf(InKey)) : -1;
     }
+
+    /* A keyboard or mouse key InPlayer may not read: the devices are another player's. */
+    bool NotTheirs(const InputKey InKey, const uint8_t InPlayer)
+    {
+        return IsKeyboardMouseInputKey(InKey) && InPlayer != INPUT_PLAYER_DEVICES && int32_t(InPlayer) != GetKeyboardMousePlayer();
+    }
+
+    /* ButtonSlot for a read: -1 for a keyboard or mouse key that is not InPlayer's. */
+    int ReadSlot(const InputKey InKey, const uint8_t InPlayer)
+    {
+        return NotTheirs(InKey, InPlayer) ? -1 : ButtonSlot(InKey, InPlayer);
+    }
 }
+
+/* SPLITSCREEN: whose the keyboard and mouse are (Input.h). */
+NIMBLE_GAME_CONFIG_INT(GInputKeyboardMousePlayer, "Input", "KeyboardMousePlayer", 0, nullptr);
 
 InputKey FindInputKey(const char* InName)
 {
@@ -157,6 +172,22 @@ bool IsAnalogInputKey(const InputKey InKey)
     return KindOf(InKey) == IK_MouseAxis || KindOf(InKey) == IK_PadAxis;
 }
 
+bool IsKeyboardMouseInputKey(const InputKey InKey)
+{
+    return InKey != INPUT_KEY_INVALID && (KindOf(InKey) == IK_Key || KindOf(InKey) == IK_MouseButton || KindOf(InKey) == IK_MouseAxis);
+}
+
+int32_t GetKeyboardMousePlayer()
+{
+    const int32_t Player = GInputKeyboardMousePlayer.GetInt();
+    return Player >= 0 && Player < int32_t(INPUT_PLAYERS_MAX) ? Player : -1;
+}
+
+void SetKeyboardMousePlayer(const int32_t InPlayer)
+{
+    GInputKeyboardMousePlayer.SetInt(InPlayer >= 0 && InPlayer < int32_t(INPUT_PLAYERS_MAX) ? InPlayer : -1);
+}
+
 InputKey InputKeyFromKeyCode(const uint16_t InKeyCode)        { return MakeKey(IK_Key, InKeyCode); }
 InputKey InputKeyFromMouseButton(const uint8_t InButton)      { return MakeKey(IK_MouseButton, InButton); }
 InputKey InputKeyFromPadButton(const uint8_t InButton)        { return MakeKey(IK_PadButton, InButton); }
@@ -166,31 +197,32 @@ InputKey InputKeyFromPadAxis(const uint8_t InAxis)            { return MakeKey(I
 
 bool InputState::IsDown(const InputKey InKey, const uint8_t InPlayer) const
 {
-    const int Slot = ButtonSlot(InKey, InPlayer);
+    const int Slot = ReadSlot(InKey, InPlayer);
     if(Slot >= 0) { return Buttons[Slot].bDown != 0; }
     return IsAnalogInputKey(InKey) && std::fabs(GetValue(InKey, InPlayer)) >= 0.5f;   // a trigger pulled half way
 }
 
 bool InputState::WasPressed(const InputKey InKey, const uint8_t InPlayer) const
 {
-    const int Slot = ButtonSlot(InKey, InPlayer);
+    const int Slot = ReadSlot(InKey, InPlayer);
     return Slot >= 0 && Buttons[Slot].Presses > 0;
 }
 
 int InputState::GetPressesAndRepeats(const InputKey InKey, const uint8_t InPlayer) const
 {
-    const int Slot = ButtonSlot(InKey, InPlayer);
+    const int Slot = ReadSlot(InKey, InPlayer);
     return Slot >= 0 ? Buttons[Slot].Presses + Buttons[Slot].Repeats : 0;
 }
 
 bool InputState::WasReleased(const InputKey InKey, const uint8_t InPlayer) const
 {
-    const int Slot = ButtonSlot(InKey, InPlayer);
+    const int Slot = ReadSlot(InKey, InPlayer);
     return Slot >= 0 && Buttons[Slot].Releases > 0;
 }
 
 float InputState::GetValue(const InputKey InKey, const uint8_t InPlayer) const
 {
+    if(NotTheirs(InKey, InPlayer)) { return 0.0f; }
     const int Slot = ButtonSlot(InKey, InPlayer);
     if(Slot >= 0) { return Buttons[Slot].bDown ? 1.0f : 0.0f; }
     if(KindOf(InKey) == IK_MouseAxis)
@@ -316,6 +348,13 @@ void InputState::ConsumeGamepad()
 {
     for(size_t Slot = 264; Slot < BUTTON_SLOTS; ++Slot) { Buttons[Slot] = Button(); }
     for(size_t Axis = 4; Axis < ANALOG_SLOTS; ++Axis) { Analog[Axis] = 0.0f; }
+}
+
+void InputState::ConsumeGamepad(const uint8_t InPlayer)
+{
+    if(InPlayer >= INPUT_PLAYERS_MAX) { return; }
+    for(size_t Slot = 264 + size_t(InPlayer) * 32; Slot < 264 + size_t(InPlayer + 1) * 32; ++Slot) { Buttons[Slot] = Button(); }
+    for(size_t Axis = 4 + size_t(InPlayer) * 8; Axis < 4 + size_t(InPlayer + 1) * 8; ++Axis) { Analog[Axis] = 0.0f; }
 }
 
 void InputState::ConsumeAll()
@@ -794,10 +833,18 @@ namespace
         return GScriptInput ? *GScriptInput : Empty;
     }
 
-    bool  ScriptIsKeyDown(const char* InKey)       { return ScriptInput().IsDown(InKey); }
-    bool  ScriptWasKeyPressed(const char* InKey)   { return ScriptInput().WasPressed(InKey); }
-    bool  ScriptWasKeyReleased(const char* InKey)  { return ScriptInput().WasReleased(InKey); }
-    float ScriptGetKeyValue(const char* InKey)     { return ScriptInput().GetValue(InKey); }
+    /* The local player a raw key query reads: the optional second argument,
+     * else whoever has the keyboard and mouse (player 1 if nobody does). */
+    uint8_t ScriptKeyPlayer(GameCore::ScriptCall& InCall)
+    {
+        if(InCall.GetArgCount() >= 2)
+        {
+            const int32_t Player = InCall.GetInt(2);
+            return Player >= 0 && Player < int32_t(INPUT_PLAYERS_MAX) ? uint8_t(Player) : uint8_t(INPUT_PLAYERS_MAX);
+        }
+        const int32_t Owner = GetKeyboardMousePlayer();
+        return Owner >= 0 ? uint8_t(Owner) : 0;
+    }
     bool  ScriptIsPadConnected(const int32_t InPlayer) { return ScriptInput().IsPadConnected(uint8_t(InPlayer)); }
     void  ScriptSetMouseCaptured(const bool bInCaptured) { if(GScriptHost) { GScriptHost->SetMouseCaptured(bInCaptured); } }
     bool  ScriptIsMouseCaptured()                        { return GScriptHost && GScriptHost->IsMouseCaptured(); }
@@ -855,12 +902,45 @@ GAMECORE_DEFINE_COMPONENT_PROPERTIES(InputComponent)
  * Input.GetMousePosition() -> x, y. Gameplay reads an InputComponent. */
 GAMECORE_DEFINE_SCRIPT_LIBRARY(Input)
 {
-    Lib.NativePure<&NimbleEngine::ScriptIsKeyDown>("IsKeyDown", "Key -> Down")
+    /* Each takes an optional local player (0 first): whose pad a Gamepad key
+     * reads; a keyboard or mouse key reads nothing unless that player has
+     * them (INPUT.md, "Local players"). By default, whoever has them. */
+    Lib.Pure("IsKeyDown", [](GameCore::ScriptCall& Call)
+    {
+        const char* Key = Call.GetString(1);
+        if(Call.HasError()) { return; }
+        Call.PushBool(NimbleEngine::ScriptInput().IsDown(Key, NimbleEngine::ScriptKeyPlayer(Call)));
+    }, "Key:string, Player:integer? -> Down:boolean")
        .Tooltip("A key by name (\"Space\", \"Mouse.Left\", \"Gamepad.South\"), held this frame");
-    Lib.NativePure<&NimbleEngine::ScriptWasKeyPressed>("WasKeyPressed", "Key -> Pressed");
-    Lib.NativePure<&NimbleEngine::ScriptWasKeyReleased>("WasKeyReleased", "Key -> Released");
-    Lib.NativePure<&NimbleEngine::ScriptGetKeyValue>("GetKeyValue", "Key -> Value")
+    Lib.Pure("WasKeyPressed", [](GameCore::ScriptCall& Call)
+    {
+        const char* Key = Call.GetString(1);
+        if(Call.HasError()) { return; }
+        Call.PushBool(NimbleEngine::ScriptInput().WasPressed(Key, NimbleEngine::ScriptKeyPlayer(Call)));
+    }, "Key:string, Player:integer? -> Pressed:boolean");
+    Lib.Pure("WasKeyReleased", [](GameCore::ScriptCall& Call)
+    {
+        const char* Key = Call.GetString(1);
+        if(Call.HasError()) { return; }
+        Call.PushBool(NimbleEngine::ScriptInput().WasReleased(Key, NimbleEngine::ScriptKeyPlayer(Call)));
+    }, "Key:string, Player:integer? -> Released:boolean");
+    Lib.Pure("GetKeyValue", [](GameCore::ScriptCall& Call)
+    {
+        const char* Key = Call.GetString(1);
+        if(Call.HasError()) { return; }
+        Call.PushNumber(NimbleEngine::ScriptInput().GetValue(Key, NimbleEngine::ScriptKeyPlayer(Call)));
+    }, "Key:string, Player:integer? -> Value:number")
        .Tooltip("0 or 1 for a button; the position of an axis (\"Gamepad.LeftX\", \"Mouse.DeltaX\")");
+    Lib.Pure("GetKeyboardMousePlayer", [](GameCore::ScriptCall& Call)
+    {
+        Call.PushInteger(NimbleEngine::GetKeyboardMousePlayer());
+    }, "-> Player:integer").Tooltip("The local player (0 first) the keyboard and mouse belong to; -1 nobody");
+    Lib.Function("SetKeyboardMousePlayer", [](GameCore::ScriptCall& Call)
+    {
+        const int32_t Player = Call.GetInt(1);
+        if(Call.HasError()) { return; }
+        NimbleEngine::SetKeyboardMousePlayer(Player);
+    }, "Player:integer").Tooltip("Give the keyboard and mouse to local player Player (0 first); -1 nobody");
     Lib.NativePure<&NimbleEngine::ScriptIsPadConnected>("IsPadConnected", "Player -> Connected");
     Lib.Native<&NimbleEngine::ScriptSetMouseCaptured>("SetMouseCaptured", "Captured")
        .Tooltip("Hide and hold the cursor, for mouse-look; Mouse.DeltaX keeps coming");

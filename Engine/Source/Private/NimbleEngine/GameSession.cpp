@@ -638,22 +638,31 @@ namespace NimbleEngine
         const EngineCore::Point Mouse = FilteredInput.GetMousePosition();
         Frame.MousePixels = UI::UIVec2{ float(Mouse.X), float(Mouse.Y) };
         Frame.bHasMouse   = !Host.IsMouseCaptured() && FilteredInput.HasFocus();   // a captured mouse is the game's
+        /* The cursor, text and shortcuts are the devices', whoever has them (INPUT.md, "Local players"). */
+        const uint8_t Keys = INPUT_PLAYER_DEVICES;
         const char* const MouseButtons[3] = { "Mouse.Left", "Mouse.Right", "Mouse.Middle" };
         for(int Each = 0; Each < 3; ++Each)
         {
             const InputKey Key = FindInputKey(MouseButtons[Each]);
-            Frame.MouseDown[Each]     = FilteredInput.IsDown(Key);
-            Frame.MousePressed[Each]  = FilteredInput.WasPressed(Key);
-            Frame.MouseReleased[Each] = FilteredInput.WasReleased(Key);
+            Frame.MouseDown[Each]     = FilteredInput.IsDown(Key, Keys);
+            Frame.MousePressed[Each]  = FilteredInput.WasPressed(Key, Keys);
+            Frame.MouseReleased[Each] = FilteredInput.WasReleased(Key, Keys);
         }
         Frame.Wheel = FilteredInput.GetWheelDelta();
 
-        /* Navigation through the "UI" input map (UIInputMap.cpp): rebindable like any other. */
+        /* Navigation through the "UI" input map (UIInputMap.cpp): rebindable like any other --
+         * player 1's pad, and the keyboard whoever has it (INPUT.md, "Local players"). */
         bool bPad = false, bAnyPad = false;
-        const auto Pressed = [this, &bPad, &bAnyPad](const char* InAction)
+        const auto Pressed = [this, &bPad, &bAnyPad, Keys](const char* InAction)
         {
-            const bool bPressed = WasInputActionPressed("UI", InAction, FilteredInput, 0, &bPad);
-            bAnyPad = bAnyPad || (bPressed && bPad);
+            bool bFromPad = false;
+            bool bPressed = WasInputActionPressed("UI", InAction, FilteredInput, 0, &bFromPad);
+            if(!bPressed)
+            {
+                bPressed = WasInputActionPressed("UI", InAction, FilteredInput, Keys, &bFromPad);
+            }
+            bPad    = bFromPad;
+            bAnyPad = bAnyPad || (bPressed && bFromPad);
             return bPressed;
         };
         Frame.bNavUp    = Pressed("Up");
@@ -663,27 +672,27 @@ namespace NimbleEngine
         Frame.bAccept   = Pressed("Accept");
         Frame.bBack     = Pressed("Back");
         const bool bTab   = Pressed("Next");
-        const bool bShift = FilteredInput.IsDown("LeftShift") || FilteredInput.IsDown("RightShift");
+        const bool bShift = FilteredInput.IsDown("LeftShift", Keys) || FilteredInput.IsDown("RightShift", Keys);
         Frame.bNext       = bTab && !bShift;
         Frame.bPrevious   = bTab && bShift;
         Frame.bNavFromGamepad = bAnyPad;
 
         /* Text editing, for a focused text field (the console's own handling is the model). */
         std::snprintf(Frame.Text, sizeof(Frame.Text), "%s", FilteredInput.GetText());
-        const auto Count = [this](const char* InKey) { return uint8_t(std::min(FilteredInput.GetPressesAndRepeats(FindInputKey(InKey)), 255)); };
+        const auto Count = [this, Keys](const char* InKey) { return uint8_t(std::min(FilteredInput.GetPressesAndRepeats(FindInputKey(InKey), Keys), 255)); };
         Frame.Backspace = Count("Backspace");
         Frame.Delete    = Count("Delete");
         Frame.Left      = Count("Left");
         Frame.Right     = Count("Right");
         Frame.Home      = Count("Home");
         Frame.End       = Count("End");
-        Frame.bReturn   = FilteredInput.WasPressed(FindInputKey("Return")) || FilteredInput.WasPressed(FindInputKey("KP_Enter"));
+        Frame.bReturn   = FilteredInput.WasPressed(FindInputKey("Return"), Keys) || FilteredInput.WasPressed(FindInputKey("KP_Enter"), Keys);
         Frame.bShift    = bShift;
-        Frame.bCtrl     = FilteredInput.IsDown("LeftCtrl") || FilteredInput.IsDown("RightCtrl");
-        Frame.bSelectAll = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("A"));
-        Frame.bCopy      = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("C"));
-        Frame.bCut       = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("X"));
-        Frame.bPaste     = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("V"));
+        Frame.bCtrl     = FilteredInput.IsDown("LeftCtrl", Keys) || FilteredInput.IsDown("RightCtrl", Keys);
+        Frame.bSelectAll = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("A"), Keys);
+        Frame.bCopy      = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("C"), Keys);
+        Frame.bCut       = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("X"), Keys);
+        Frame.bPaste     = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("V"), Keys);
 
         const UI::UIInputResult Taken = Interface->ProcessInput(Frame);
 
@@ -698,7 +707,7 @@ namespace NimbleEngine
         this->bConsoleOpen = bConsoleOpen;
         if(Taken.bConsumeMouse)    { FilteredInput.ConsumeMouseButtons(); }
         if(Taken.bConsumeKeyboard) { FilteredInput.ConsumeKeyboard(); }
-        if(Taken.bConsumeGamepad)  { FilteredInput.ConsumeGamepad(); }
+        if(Taken.bConsumeGamepad)  { FilteredInput.ConsumeGamepad(0); }   // the pad it navigates from; the others play on
 
         /* A cinematic holds the players' input back; Back the UI left skips it. */
         if(bCinematic && LevelWorld && !bConsoleOpen)

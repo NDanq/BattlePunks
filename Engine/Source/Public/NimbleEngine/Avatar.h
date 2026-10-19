@@ -125,7 +125,7 @@ namespace NimbleEngine
 
         GameCore::EntityID Avatar;             // saved and replicated; unset if none
         int32_t            AvatarNetId = 0;    // the same, by NetId, for a client still to see it
-        uint8_t            LocalPlayer = 0;    // whose pad on its own process (the keyboard and mouse are every local player's, as for an InputComponent)
+        uint8_t            LocalPlayer = 0;    // whose pad on its own process (and the keyboard and mouse, if its; INPUT.md, "Local players")
 
         GameCore::EntityID GetAvatar() const;
 

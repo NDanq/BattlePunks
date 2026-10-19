@@ -51,7 +51,8 @@ Up to four pads, one per player. A pad takes the lowest free player slot when
 it connects and keeps it until it disconnects.
 
 - **Reading by player.** `InputComponent::PlayerIndex` picks whose pad an
-  entity reads. Keyboard and mouse belong to player 0.
+  entity reads. The keyboard and mouse belong to one player, player 0 by
+  default (see "Local players").
 - **Dead zone.** Sticks have a dead zone of 0.15 per axis
   (`InputRouter::SetStickDeadZone`), rescaled so that a full push still reads 1.
 - **Triggers** have no dead zone. As buttons, a trigger or stick is down past
@@ -131,6 +132,27 @@ rebinds the running maps.
 A reset goes back to the baseline: the project's `.ini`, else the game's
 code. Nothing is saved in the editor's Play, which has no user file.
 
+## Local players
+
+Up to four players share one machine (split-screen, SPLITSCREEN.md). Each
+plays on their own pad. The keyboard and mouse belong to one of them:
+`[Input] KeyboardMousePlayer`, 0 by default, or -1 for nobody.
+
+- **Reads.** A read of a keyboard key, mouse button or mouse axis for any
+  other player sees nothing: up, no edges, value 0. This applies to
+  `InputState::IsDown`, `WasPressed`, `WasReleased`, `GetValue` and
+  `GetPressesAndRepeats`, and so to every `InputComponent` and Avatar Harness
+  of that player. With the default and one player, nothing changes.
+- **Changing it.** `SetKeyboardMousePlayer(n)` gives the keyboard and mouse to
+  another player at run time. In Lua: `Input.SetKeyboardMousePlayer(n)` and
+  `Input.GetKeyboardMousePlayer()`.
+- **Not a player's.** `INPUT_PLAYER_DEVICES` reads the keyboard and mouse
+  whoever has them, and no pad. The console and the UI's cursor, text fields
+  and shortcuts read that way, so they work even with `KeyboardMousePlayer=-1`.
+- **Window-wide.** The mouse position, its delta, the wheel and typed text
+  (`GetMousePosition`, `GetMouseDelta`, `GetWheelDelta`, `GetText`) take no
+  player. Mouse capture is the window's.
+
 ## Reading it
 
 **C++.** A system or the mode reads the component:
@@ -152,7 +174,13 @@ local input = self.Entity:GetComponent("Input")
 if input:WasPressed("Jump") then ... end
 local x = input:GetAxis("MoveX")
 if Input.WasKeyPressed("F3") then print(Input.GetMousePosition()) end
+if Input.IsKeyDown("Gamepad.South", 1) then ... end   -- player 2's pad
 ```
+
+The `Input` library's key queries (`IsKeyDown`, `WasKeyPressed`,
+`WasKeyReleased`, `GetKeyValue`) take an optional local player, 0 first. It
+picks whose pad a Gamepad key reads. By default it is whoever has the
+keyboard and mouse.
 
 **An avatar** (AVATARS.md) reads its player's input the same way, through
 its Avatar Harness (`harness:WasPressed("Jump")`), with no Input component on
@@ -173,8 +201,9 @@ each frame's input **before** the game, and what it takes the game does not:
    `UI::UIInputFrame` from it (the mouse, unless it is captured, and the `UI`
    map's navigation) and calls `UISystem::ProcessInput`.
 2. What the result says was taken is consumed from the copy --
-   `InputState::ConsumeMouseButtons`, `ConsumeKeyboard`, `ConsumeGamepad`:
-   up, with no edges.
+   `InputState::ConsumeMouseButtons`, `ConsumeKeyboard`, and
+   `ConsumeGamepad(0)` (player 1's pad, the one it navigates from; the other
+   players keep playing): up, with no edges.
 3. Everything the game reads reads the copy: `GameSession::GetInput()`, the
    `Input` library, and every `InputComponent` (resolved from it in
    `TP_PrePhysics`).
