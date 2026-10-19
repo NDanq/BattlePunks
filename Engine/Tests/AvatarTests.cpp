@@ -508,6 +508,11 @@ namespace
         Expect(Frame.Focus[0].GetX() < 0.0 && Frame.Focus[1].GetX() > 0.0 && Frame.Focus[0].GetX() > -6000.0,
                "each view's focus between the midpoint and its player");
         Expect(Frame.DividerAlpha == 1.0f, "well apart, the divider is drawn in full");
+        float SX = 0.0f, SY = 0.0f;
+        Expect(ProjectSplitCamera(Settings, Frame.Focus[0], Far[0], Window, SX, SY) && std::fabs(SX - 320.0f) < 1.0f && std::fabs(SY - 360.0f) < 1.0f,
+               "player 1 at the centre of the left half: " + std::to_string(SX) + ", " + std::to_string(SY));
+        Expect(ProjectSplitCamera(Settings, Frame.Focus[1], Far[1], Window, SX, SY) && std::fabs(SX - 960.0f) < 1.0f && std::fabs(SY - 360.0f) < 1.0f,
+               "player 2 at the centre of the right half: " + std::to_string(SX) + ", " + std::to_string(SY));
 
         /* Just past where they stop fitting: the views open from the midpoint, with no jump. */
         double Low = 50.0, High = 6000.0;
@@ -530,6 +535,31 @@ namespace
         SolveSplitCamera(Settings, Deep, 2, Window, 0.016f, Angle, bAngle, Frame);
         Expect(Frame.ViewCount == 2 && Frame.SiteY[0] > Frame.SiteY[1] && std::fabs(Frame.SiteX[0] - Frame.SiteX[1]) < 1.0f,
                "one far up the screen: player 1's site below, the line across");
+        /* In perspective, under a pitched camera: still each at the centre of their half. */
+        Expect(ProjectSplitCamera(Settings, Frame.Focus[0], Deep[0], Window, SX, SY) && std::fabs(SX - 640.0f) < 1.0f && std::fabs(SY - 540.0f) < 1.0f,
+               "player 1 at the centre of the lower half: " + std::to_string(SX) + ", " + std::to_string(SY));
+        Expect(ProjectSplitCamera(Settings, Frame.Focus[1], Deep[1], Window, SX, SY) && std::fabs(SX - 640.0f) < 1.0f && std::fabs(SY - 180.0f) < 1.0f,
+               "player 2 at the centre of the upper half: " + std::to_string(SX) + ", " + std::to_string(SY));
+
+        /* Just past the split, one ahead of the other: both views on the shared camera still. */
+        double Lo = 10.0, Hi = 8000.0;
+        for(int Step = 0; Step < 40; ++Step)
+        {
+            const double Mid = 0.5 * (Lo + Hi);
+            EngineCore::Vector3 Pair[2] = { At(0.0, -Mid), At(0.0, Mid) };
+            bAngle = false;
+            SolveSplitCamera(Settings, Pair, 2, Window, 0.016f, Angle, bAngle, Frame);
+            (Frame.ViewCount == 1 ? Lo : Hi) = Mid;
+        }
+        EngineCore::Vector3 Shy[2] = { At(0.0, -Lo), At(0.0, Lo) };
+        bAngle = false;
+        SolveSplitCamera(Settings, Shy, 2, Window, 0.016f, Angle, bAngle, Frame);
+        const EngineCore::Vector3 Shared = Frame.Focus[0];
+        EngineCore::Vector3 Split[2] = { At(0.0, -Hi), At(0.0, Hi) };
+        bAngle = false;
+        SolveSplitCamera(Settings, Split, 2, Window, 0.016f, Angle, bAngle, Frame);
+        Expect(Frame.ViewCount == 2 && (Frame.Focus[0] - Shared).GetLength() < 1.0 && (Frame.Focus[1] - Shared).GetLength() < 1.0,
+               "at a pitched split, both views open from the shared camera");
 
         /* The line turns toward its target, not to it, at TurnRate. */
         Settings.TurnRate = 4.0f;
