@@ -52,6 +52,9 @@ namespace RenderCore
         constexpr uint32_t OCCLUSION_QUERIES_MIN = 256;
         constexpr uint32_t OCCLUSION_QUERIES_MAX = 65536;
 
+        /* RenderProxy::OCCLUSION_SETS_MAX, which only the scene may see (Impl asserts they match). */
+        constexpr uint32_t OCCLUSION_SETS_MAX = 4;
+
         bool IsPerspective(const RenderView& InView)
         {
             return InView.Projection.Data[3][2] != 0.0f && InView.ZNear > 0.0f;
@@ -75,10 +78,129 @@ namespace RenderCore
             const double Dz = std::max({ double(InBox.Min.GetZ()) - double(InPoint.GetZ()), 0.0, double(InPoint.GetZ()) - double(InBox.Max.GetZ()) });
             return std::sqrt(Dx * Dx + Dy * Dy + Dz * Dz);
         }
+
+        /*
+         * OCCLUSION CULLING (RENDERPIPELINE.md): a view's query sets, one per
+         * frame the GPU may run behind (GDIGetFramesInFlight), taken in turn:
+         * a set's answers are read when it comes round again, its round
+         * finished by then without waiting for it. Each is made on first use
+         * and remade larger when a frame wanted more queries than it holds.
+         * Then the answers read, and what the last frame did, for RenderStats.
+         */
+        struct ViewOcclusion
+        {
+            GDIOcclusionQueries* Sets[OCCLUSION_SETS_MAX] = {};
+            uint32_t             SetCount = 1;
+            uint32_t             At       = 0;         // this frame's set
+            GDIOcclusionQueries* Current  = nullptr;   // Sets[At], or null: this frame queries nothing (Prepare)
+            uint32_t             Wanted   = 0;
+            std::vector<uint8_t> Answers;
+            uint64_t             LastOccluded = 0;
+            uint64_t             LastQueries  = 0;
+
+            /* The set the view's queries go in this frame (Current); null if
+             * occlusion culling is off, the backend has no queries, or InView
+             * is not a perspective one (an orthographic view has no near plane
+             * to judge nearness by, and nothing it draws is usually hidden). */
+            GDIOcclusionQueries* Prepare(const RenderView& InView)
+            {
+                if(!GRenderOcclusionCulling.GetBool() || !GDISupportsOcclusionQueries() || !IsPerspective(InView))
+                {
+                    Release();
+                    return Current = nullptr;
+                }
+                const uint32_t Count = std::clamp<uint32_t>(GDIGetFramesInFlight(), 1, OCCLUSION_SETS_MAX);
+                if(Count != SetCount)
+                {
+                    Release();
+                    SetCount = Count;
+                }
+                At = (At + 1) % SetCount;
+                GDIOcclusionQueries*& Set = Sets[At];
+                if(!Set || Wanted > Set->GetCapacity())
+                {
+                    uint32_t Capacity = Set ? Set->GetCapacity() : OCCLUSION_QUERIES_MIN;
+                    while(Capacity < Wanted && Capacity < OCCLUSION_QUERIES_MAX) { Capacity *= 2; }
+                    if(Set) { Set->Release(); }   // its answers with it: a frame without CPU culling
+                    Set = GDICreateOcclusionQueries(Capacity);
+                }
+                return Current = Set;
+            }
+
+            void Release()
+            {
+                for(GDIOcclusionQueries*& Set : Sets)
+                {
+                    if(Set) { Set->Release(); }
+                    Set = nullptr;
+                }
+                At = 0;
+                Current = nullptr;
+                LastOccluded = LastQueries = 0;
+            }
+        };
+
+        /*
+         * ONE VIEW OF THE SCENE (SPLITSCREEN: one per player view): what it
+         * looks through, and everything that carries from one of its frames
+         * to the next -- the targets (TAA history, exposure, SSR's last copy,
+         * velocity), last frame's view-projection for motion blur and the
+         * reprojection, TAA's jitter cycle, and its occlusion queries. What
+         * happens once a frame whatever the views (Simulate, captures, image
+         * based lighting, EndFrameMotion, the stats) stays on the scene.
+         */
+        struct SceneViewState
+        {
+            RenderView View;
+
+            /* Last frame's Projection * View and viewport, for motion blur;
+             * none on the first frame or after a resize (a jump, not motion). */
+            EngineCore::Matrix4x4 PrevViewProjection;
+            EngineCore::Size      PrevViewport;
+            bool                  bHasPrevView = false;
+
+            /* TAA's jitter: where in its 8-frame Halton(2, 3) cycle the view is. */
+            uint32_t JitterIndex = 0;
+
+            ViewOcclusion Occlusion;
+
+            /*
+             * THE VIEW'S RENDER TARGETS, and the whole reason anything reaches
+             * the screen. GDIDynamicDriver::PresentToWindow presents
+             * CurrentStateData->ActiveRenderTarget -- the most recently bound RT --
+             * which RenderContext::RenderSceneStages leaves as the scene's final
+             * colour (after PostProcess, if any). With no RT bound at all,
+             * ActiveRenderTarget stays null and every present silently returns.
+             *
+             * Deliberately NOT GDIRenderTargetManager, whose Main/Buffer1/
+             * PostBuffer1 and Resolve/Restore pair are paint-application concepts
+             * (canvas stroke buffering). See SceneTargets.h.
+             *
+             * Resized every frame the viewport changes, and cheap otherwise:
+             * recreating a GPU image per frame would destroy the target the UI
+             * thread is presenting from while it may still be sampling it. A
+             * zero-sized viewport (a minimised window) keeps what there was.
+             */
+            SceneTargets Targets{"RenderCore.Scene"};
+
+            /* What drawing the view counted, for RenderStats. */
+            uint64_t VisibleCount = 0;
+            uint64_t CulledCount  = 0;
+            uint64_t StaticCount  = 0;
+            float    QueueMs      = 0.0f;
+
+            void Release()
+            {
+                Targets.Release();
+                Occlusion.Release();
+            }
+        };
     }
 
     struct RenderScene::Impl
     {
+        static_assert(OCCLUSION_SETS_MAX == RenderProxy::OCCLUSION_SETS_MAX, "a view's query sets index RenderProxy::OcclusionQueries");
+
         std::vector<RenderProxy*> Proxies;
 
         /* SetUIDrawList's, drawn over the final colour each Render(). */
@@ -111,62 +233,8 @@ namespace RenderCore
         std::unordered_map<const RenderProxy*, StaticDrawList> StaticLists;
         uint64_t                                               StaticBuilds = 0;   // lifetime captures
 
-        /*
-         * OCCLUSION CULLING (RENDERPIPELINE.md): the main view's query sets,
-         * one per frame the GPU may run behind (GDIGetFramesInFlight), taken
-         * in turn: a set's answers are read when it comes round again, its
-         * round finished by then without waiting for it. Each is made on
-         * first use and remade larger when a frame wanted more queries than
-         * it holds. Then the answers read, and what the last frame did, for
-         * RenderStats.
-         */
-        GDIOcclusionQueries* Occlusion[RenderProxy::OCCLUSION_SETS_MAX] = {};
-        uint32_t             OcclusionSets    = 1;
-        uint32_t             OcclusionAt      = 0;   // this frame's set
-        uint32_t             OcclusionWanted  = 0;
-        std::vector<uint8_t> OcclusionAnswers;
-        uint64_t             LastOccluded     = 0;
-        uint64_t             LastQueries      = 0;
-
-        /* The set the main view's queries go in this frame; null if occlusion
-         * culling is off, the backend has no queries, or InView is not a
-         * perspective one (an orthographic view has no near plane to judge
-         * nearness by, and nothing it draws is usually hidden). */
-        GDIOcclusionQueries* PrepareOcclusion(const RenderView& InView)
-        {
-            if(!GRenderOcclusionCulling.GetBool() || !GDISupportsOcclusionQueries() || !IsPerspective(InView))
-            {
-                ReleaseOcclusion();
-                return nullptr;
-            }
-            const uint32_t Sets = std::clamp<uint32_t>(GDIGetFramesInFlight(), 1, RenderProxy::OCCLUSION_SETS_MAX);
-            if(Sets != OcclusionSets)
-            {
-                ReleaseOcclusion();
-                OcclusionSets = Sets;
-            }
-            OcclusionAt = (OcclusionAt + 1) % OcclusionSets;
-            GDIOcclusionQueries*& Set = Occlusion[OcclusionAt];
-            if(!Set || OcclusionWanted > Set->GetCapacity())
-            {
-                uint32_t Capacity = Set ? Set->GetCapacity() : OCCLUSION_QUERIES_MIN;
-                while(Capacity < OcclusionWanted && Capacity < OCCLUSION_QUERIES_MAX) { Capacity *= 2; }
-                if(Set) { Set->Release(); }   // its answers with it: a frame without CPU culling
-                Set = GDICreateOcclusionQueries(Capacity);
-            }
-            return Set;
-        }
-
-        void ReleaseOcclusion()
-        {
-            for(GDIOcclusionQueries*& Set : Occlusion)
-            {
-                if(Set) { Set->Release(); }
-                Set = nullptr;
-            }
-            OcclusionAt  = 0;
-            LastOccluded = LastQueries = 0;
-        }
+        /* The views (SceneViewState): one today, the main view. */
+        SceneViewState MainView;
 
         /* InProxy's bounding sphere, world space, from its local box: the
          * same size however it is turned (its world box grows as it turns). */
@@ -202,7 +270,7 @@ namespace RenderCore
          * casters. The main view, or a scene capture's (InCapture: its owner's
          * subtree left out). Counts what it drew and culled.
          *
-         * With InOcclusion (the main view's; RENDERPIPELINE.md, "Occlusion
+         * With InOcclusion (a player view's, Prepared; RENDERPIPELINE.md, "Occlusion
          * culling"): each visible proxy but an occluder has its box queried
          * against the occluders' depth -- unless it is so near the eye the
          * near plane may cut it -- and its draws predicated on the answer,
@@ -213,18 +281,19 @@ namespace RenderCore
          */
         void QueueDraws(RenderContext& InContext, const RenderView& InView, const SceneCaptureRequest* InCapture,
                         uint64_t& OutVisible, uint64_t& OutCulled, uint64_t& OutStatic,
-                        GDIOcclusionQueries* InOcclusion = nullptr)
+                        ViewOcclusion* InOcclusion = nullptr)
         {
             InContext.BeginSceneDraws();
 
             /* This set's last round's answers -- complete, as its block has
              * finished (FramesInFlight blocks back) -- then this round's queries. Without answers nothing is hidden on
              * the CPU; the GPU still skips what this frame's find hidden. */
-            const bool bOcclusion = InOcclusion != nullptr;
-            const bool bAnswers   = bOcclusion && GDIReadOcclusionResults(InOcclusion, OcclusionAnswers);
+            GDIOcclusionQueries* const Set = InOcclusion ? InOcclusion->Current : nullptr;
+            const bool bOcclusion = Set != nullptr;
+            const bool bAnswers   = bOcclusion && GDIReadOcclusionResults(Set, InOcclusion->Answers);
             const bool bPredicate = bOcclusion && InContext.CanPredicateOcclusion();
             const double NearReach = bOcclusion ? NearPlaneReach(InView) * 1.5 : 0.0;
-            if(bOcclusion) { InContext.SetOcclusionQueries(InOcclusion); }
+            if(bOcclusion) { InContext.SetOcclusionQueries(Set); }
             /* Nothing to test against without an occluder in view: no queries. */
             const bool bQueries = bOcclusion && std::any_of(Proxies.begin(), Proxies.end(), [&InView](const RenderProxy* InProxy)
             {
@@ -316,7 +385,7 @@ namespace RenderCore
                  * skip it: an index is only good for the set and round it was
                  * given in. */
                 int32_t  LastQuery = -1;
-                int32_t* Query     = bOcclusion ? &Proxy->OcclusionQueries[OcclusionAt] : nullptr;
+                int32_t* Query     = bOcclusion ? &Proxy->OcclusionQueries[InOcclusion->At] : nullptr;
                 if(bOcclusion)
                 {
                     LastQuery        = *Query;
@@ -377,7 +446,7 @@ namespace RenderCore
                     ++OcclusionWantedNow;
                     *Query           = InContext.AddOcclusionQuery(GameCore::AABB(Bounds.Min - Grow, Bounds.Max + Grow));
                     Proxy->bOccluded = *Query >= 0 && bAnswers && LastQuery >= 0
-                                         && size_t(LastQuery) < OcclusionAnswers.size() && OcclusionAnswers[size_t(LastQuery)] == 0;
+                                         && size_t(LastQuery) < InOcclusion->Answers.size() && InOcclusion->Answers[size_t(LastQuery)] == 0;
                 }
                 /* Only the main view's answers: a capture sees from elsewhere. */
                 if(bOcclusion && Proxy->bOccluded)
@@ -528,9 +597,9 @@ namespace RenderCore
             OutStatic  = StaticCount;
             if(bOcclusion)
             {
-                OcclusionWanted = OcclusionWantedNow;
-                LastOccluded    = OccludedCount;
-                LastQueries     = std::min<uint64_t>(OcclusionWantedNow, InOcclusion->GetCapacity());
+                InOcclusion->Wanted       = OcclusionWantedNow;
+                InOcclusion->LastOccluded = OccludedCount;
+                InOcclusion->LastQueries  = std::min<uint64_t>(OcclusionWantedNow, Set->GetCapacity());
             }
         }
 
@@ -542,7 +611,6 @@ namespace RenderCore
         struct TargetReadback { uint64_t Request; std::string Path; MaterialPreviewMailbox* Mailbox; };
         std::vector<TargetReadback> TargetReadbacks;                           // likewise
 #endif
-        RenderView                View;
         SceneCaptureList          CaptureList;                         // SetCaptures; consumed by Render
         const void*               PassWorld = nullptr;                 // SetCustomPassWorld; consumed by Render
         EngineCore::Color         ClearColor{24, 26, 32, 255};        // the top, with a gradient
@@ -629,33 +697,73 @@ namespace RenderCore
         RenderLighting            Lighting;
         RenderPostProcess         PostProcess;
 
-        /* Last frame's Projection * View and viewport, for motion blur; none
-         * on the first frame or after a resize (a jump, not motion). */
-        EngineCore::Matrix4x4     PrevViewProjection;
-        EngineCore::Size          PrevViewport;
-        bool                      bHasPrevView = false;
-
-        /* TAA's jitter: where in its 8-frame Halton(2, 3) cycle the main view is. */
-        uint32_t                  JitterIndex = 0;
-
         /*
-         * THE SCENE'S RENDER TARGETS, and the whole reason anything reaches
-         * the screen. GDIDynamicDriver::PresentToWindow presents
-         * CurrentStateData->ActiveRenderTarget -- the most recently bound RT --
-         * which RenderContext::RenderSceneStages leaves as the scene's final
-         * colour (after PostProcess, if any). With no RT bound at all,
-         * ActiveRenderTarget stays null and every present silently returns.
-         *
-         * Deliberately NOT GDIRenderTargetManager, whose Main/Buffer1/
-         * PostBuffer1 and Resolve/Restore pair are paint-application concepts
-         * (canvas stroke buffering). See SceneTargets.h.
-         *
-         * Resized every frame the viewport changes, and cheap otherwise:
-         * recreating a GPU image per frame would destroy the target the UI
-         * thread is presenting from while it may still be sampling it. A
-         * zero-sized viewport (a minimised window) keeps what there was.
+         * One view's pass (SceneViewState), after the frame's captures and
+         * image based lighting: TAA's jitter, its occlusion, its draws
+         * queued, the post process stack, then Base Pass through PostProcess
+         * into its targets -- leaving its final colour bound and the context
+         * on its jittered view.
          */
-        SceneTargets Targets{"RenderCore.Scene"};
+        void RenderSceneView(RenderContext& InContext, SceneViewState& InView)
+        {
+            /* TAA's jitter (RENDERPIPELINE.md, "Temporal antialiasing"): the view drawn a
+             * sub-pixel off, a different way each frame (Halton 2, 3), so the resolve averages
+             * many samples a pixel. InView.View stays unjittered: the captures, the next
+             * frame's PrevViewProjection the resolve reprojects with, what draws after. */
+            RenderView Drawn = InView.View;
+            InContext.SetTemporalJitter(0.0f, 0.0f);
+            const PostProcessSettings& Post = PostProcess.Settings;
+            if(Post.bAntialiasing && Post.AaMethod == 1 && InView.Targets.bHDR && InView.Targets.Width > 0 && InView.Targets.Height > 0)
+            {
+                const auto Halton = [](uint32_t InIndex, const uint32_t InBase)
+                {
+                    double Fraction = 1.0, Result = 0.0;
+                    while(InIndex > 0)
+                    {
+                        Fraction /= double(InBase);
+                        Result   += Fraction * double(InIndex % InBase);
+                        InIndex  /= InBase;
+                    }
+                    return Result;
+                };
+                InView.JitterIndex = (InView.JitterIndex + 1) % 8;
+                const double X = (Halton(InView.JitterIndex + 1, 2) - 0.5) * 2.0 / double(InView.Targets.Width);    // NDC
+                const double Y = (Halton(InView.JitterIndex + 1, 3) - 0.5) * 2.0 / double(InView.Targets.Height);
+                InContext.SetTemporalJitter(float(X), float(Y));
+                using Element = std::remove_reference_t<decltype(Drawn.Projection.Data[0][0])>;
+                for(int Column = 0; Column < 4; ++Column)
+                {
+                    // clip.xy += offset * clip.w: whatever the projection, perspective or not.
+                    Drawn.Projection.Data[0][Column] += Element(X) * Drawn.Projection.Data[3][Column];
+                    Drawn.Projection.Data[1][Column] += Element(Y) * Drawn.Projection.Data[3][Column];
+                }
+            }
+            InContext.SetView(Drawn);
+
+            InView.Occlusion.Prepare(Drawn);
+            const auto QueueStart = std::chrono::steady_clock::now();
+            QueueDraws(InContext, Drawn, nullptr, InView.VisibleCount, InView.CulledCount, InView.StaticCount, &InView.Occlusion);
+            InView.QueueMs = float(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - QueueStart).count());
+
+            /* The post process stack: the volumes' blend (WorldBridge), its
+             * materials by stage and order, then the effects' settings. */
+            for(uint32_t Index = 0; Index < Post.MaterialCount && Index < RENDER_POST_MATERIAL_MAX; ++Index)
+            {
+                InContext.SubmitPostProcess(Post.Materials[Index].Path, Post.Materials[Index].Stage);
+            }
+            const bool bSameViewport = InView.bHasPrevView && InView.PrevViewport.Width == InView.View.ViewportPixels.Width
+                                    && InView.PrevViewport.Height == InView.View.ViewportPixels.Height;
+            InContext.SetPostProcess(Post, bSameViewport ? &InView.PrevViewProjection : nullptr);
+            InView.PrevViewProjection = InView.View.Projection * InView.View.View;
+            InView.PrevViewport       = InView.View.ViewportPixels;
+            InView.bHasPrevView       = true;
+
+            /* Base Pass, Lighting, Unlit, the translucent stages, PostProcess;
+             * leaves the final colour bound, for the present and the overlay. */
+            InContext.SetUnlit(ViewMode == ERenderViewMode::Unlit);
+            InContext.RenderSceneStages(InView.Targets, ClearColor, /*bInTimed*/ true, bClearGradient ? &ClearBottom : nullptr);
+            InContext.SetUnlit(false);
+        }
 
         /*
          * IMAGE-BASED LIGHTING (RENDERPIPELINE.md, "Image-based lighting"): the
@@ -718,7 +826,7 @@ namespace RenderCore
             Cube.FarClip  = InProbe.FarClip;
             Cube.bShadows = InProbe.bShadows;
             RenderView Views[6];
-            const uint32_t ViewCount = BuildCaptureViews(Cube, View, Face, Face, Views);
+            const uint32_t ViewCount = BuildCaptureViews(Cube, MainView.View, Face, Face, Views);
 
             /* Lit by the sky alone (no probe sees another, or itself), the sky behind. */
             InContext.SetImageBasedLighting(&IBL, nullptr, 0, bSkyValid);
@@ -738,7 +846,7 @@ namespace RenderCore
         }
 
         /* The sky block when the sky changed, then the probes in view: a block each, captured when due
-         * or new to it -- two a frame at most, the rest next frame. Leaves the context on View. */
+         * or new to it -- two a frame at most, the rest next frame. Leaves the context on the main view. */
         void UpdateImageBasedLighting(RenderContext& InContext)
         {
             ProbeDataCount = 0;
@@ -800,7 +908,7 @@ namespace RenderCore
             }
             if(Captures > 0)
             {
-                InContext.SetView(View);
+                InContext.SetView(MainView.View);
             }
 
             for(uint32_t Index = 0; Index < Count; ++Index)
@@ -843,9 +951,8 @@ namespace RenderCore
         /* Belt and braces: ReleaseAll() is the ordinary path and already
          * did this, but a scene destroyed without it (a test, an early
          * failure) must still not leak a GPU image. Idempotent. */
-        P->Targets.Release();
+        P->MainView.Release();
         P->ProbeStages.Release();
-        P->ReleaseOcclusion();
         for(GDIRenderTarget** Each : { &P->IBL.Atlas, &P->IBL.Strip })
         {
             if(*Each) { GDIReleaseRenderTarget(*Each); delete *Each; *Each = nullptr; }
@@ -900,7 +1007,7 @@ namespace RenderCore
 
     void RenderScene::SetView(const RenderView& InView)
     {
-        P->View = InView;
+        P->MainView.View = InView;
     }
 
     void RenderScene::SetClearColor(const EngineCore::Color InColor)
@@ -983,7 +1090,8 @@ namespace RenderCore
          * what the NEXT Render() will use; a caller changing its mind
          * between SetView() and Render() (unlikely, but not forbidden) never
          * leaves GetView() reporting a view nothing has drawn against yet. */
-        InContext.SetView(P->View);
+        SceneViewState& Main = P->MainView;
+        InContext.SetView(Main.View);
         InContext.SetLighting(P->Lighting);
         InContext.UpdateTextureStreaming();   // the frame's first scene: last frame's demand to loads and commits
         P->ApplyImageBasedLighting(InContext);   // last frame's, for the captures below; brought up to date before the scene
@@ -991,9 +1099,9 @@ namespace RenderCore
         /* Created on first use and resized with the viewport -- see Impl's
          * own comment on why a scene owns these at all. Early-outs on every
          * frame whose viewport has not changed, which is nearly all of them. */
-        if(P->View.ViewportPixels.Width > 0 && P->View.ViewportPixels.Height > 0)
+        if(Main.View.ViewportPixels.Width > 0 && Main.View.ViewportPixels.Height > 0)
         {
-            P->Targets.Allocate(uint(P->View.ViewportPixels.Width), uint(P->View.ViewportPixels.Height));
+            Main.Targets.Allocate(uint(Main.View.ViewportPixels.Width), uint(Main.View.ViewportPixels.Height));
         }
 
         GDIBeginRendering();
@@ -1052,8 +1160,6 @@ namespace RenderCore
          * out entirely when CurrentCmd is null (outside a BeginRendering/
          * EndRendering pair), so a bind placed above it would be a silent no-op.
          */
-        uint64_t VisibleCount = 0, CulledCount = 0, StaticCount = 0;
-
         /* Its World's custom render passes (CustomRenderPass.h), for the
          * captures and the view below; never the previews above. */
         InContext.SetCustomPassWorld(P->PassWorld);
@@ -1080,7 +1186,7 @@ namespace RenderCore
             }
             SCOPED_DRAW_EVENT("SceneCapture " + std::string(Request.Target));
             RenderView Views[6];
-            const uint32_t ViewCount = BuildCaptureViews(Request, P->View, Stages->Width, Stages->Height, Views);
+            const uint32_t ViewCount = BuildCaptureViews(Request, Main.View, Stages->Width, Stages->Height, Views);
             for(uint32_t Face = 0; Face < ViewCount; ++Face)
             {
                 SCOPED_DRAW_EVENT(bCube ? GetCubeFaceName(Face) : "Mirror");
@@ -1095,7 +1201,7 @@ namespace RenderCore
         P->CaptureList.Count = 0;
         if(bCaptured)
         {
-            InContext.SetView(P->View);
+            InContext.SetView(Main.View);
         }
 #if WITH_EDITOR
         for(const Impl::TargetReadback& Each : P->TargetReadbacks)
@@ -1120,103 +1226,47 @@ namespace RenderCore
         }
         InContext.WriteGpuTimestamp(RGT_SceneCapture, true);
 
-        /* TAA's jitter (RENDERPIPELINE.md, "Temporal antialiasing"): the main view drawn a
-         * sub-pixel off, a different way each frame (Halton 2, 3), so the resolve averages
-         * many samples a pixel. P->View stays unjittered: the captures above, the next
-         * frame's PrevViewProjection the resolve reprojects with, what draws after. */
-        RenderView Drawn = P->View;
-        InContext.SetTemporalJitter(0.0f, 0.0f);
-        const PostProcessSettings& Stack = P->PostProcess.Settings;
-        if(Stack.bAntialiasing && Stack.AaMethod == 1 && P->Targets.bHDR && P->Targets.Width > 0 && P->Targets.Height > 0)
-        {
-            const auto Halton = [](uint32_t InIndex, const uint32_t InBase)
-            {
-                double Fraction = 1.0, Result = 0.0;
-                while(InIndex > 0)
-                {
-                    Fraction /= double(InBase);
-                    Result   += Fraction * double(InIndex % InBase);
-                    InIndex  /= InBase;
-                }
-                return Result;
-            };
-            P->JitterIndex = (P->JitterIndex + 1) % 8;
-            const double X = (Halton(P->JitterIndex + 1, 2) - 0.5) * 2.0 / double(P->Targets.Width);    // NDC
-            const double Y = (Halton(P->JitterIndex + 1, 3) - 0.5) * 2.0 / double(P->Targets.Height);
-            InContext.SetTemporalJitter(float(X), float(Y));
-            using Element = std::remove_reference_t<decltype(Drawn.Projection.Data[0][0])>;
-            for(int Column = 0; Column < 4; ++Column)
-            {
-                // clip.xy += offset * clip.w: whatever the projection, perspective or not.
-                Drawn.Projection.Data[0][Column] += Element(X) * Drawn.Projection.Data[3][Column];
-                Drawn.Projection.Data[1][Column] += Element(Y) * Drawn.Projection.Data[3][Column];
-            }
-        }
-        InContext.SetView(Drawn);
-
-        GDIOcclusionQueries* Occlusion = P->PrepareOcclusion(Drawn);
-        const auto QueueStart = std::chrono::steady_clock::now();
-        P->QueueDraws(InContext, Drawn, nullptr, VisibleCount, CulledCount, StaticCount, Occlusion);
-        const float QueueMs = float(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - QueueStart).count());
-
-        /* The post process stack: the volumes' blend (WorldBridge), its
-         * materials by stage and order, then the effects' settings. */
-        const PostProcessSettings& Post = P->PostProcess.Settings;
-        for(uint32_t Index = 0; Index < Post.MaterialCount && Index < RENDER_POST_MATERIAL_MAX; ++Index)
-        {
-            InContext.SubmitPostProcess(Post.Materials[Index].Path, Post.Materials[Index].Stage);
-        }
-        const bool bSameViewport = P->bHasPrevView && P->PrevViewport.Width == P->View.ViewportPixels.Width
-                                && P->PrevViewport.Height == P->View.ViewportPixels.Height;
-        InContext.SetPostProcess(Post, bSameViewport ? &P->PrevViewProjection : nullptr);
-        P->PrevViewProjection = P->View.Projection * P->View.View;
-        P->PrevViewport       = P->View.ViewportPixels;
-        P->bHasPrevView       = true;
-
-        /* Base Pass, Lighting, Unlit, the translucent stages, PostProcess;
-         * leaves the final colour bound, for the present and the overlay. */
-        InContext.SetUnlit(P->ViewMode == ERenderViewMode::Unlit);
-        InContext.RenderSceneStages(P->Targets, P->ClearColor, /*bInTimed*/ true, P->bClearGradient ? &P->ClearBottom : nullptr);
-        InContext.SetUnlit(false);
+        /* The view (SceneViewState), into its own targets. */
+        P->RenderSceneView(InContext, Main);
         InContext.SetCustomPassWorld(nullptr);
         P->PassWorld = nullptr;   // set again by the next frame's SetCustomPassWorld, if it has a World
         {
             float   CpuMs[RGT_Count];
             int32_t Draws[RGT_Count];
             InContext.GetStageCpuTimes(CpuMs, Draws);
-            P->AddCpuTimes(CpuMs, Draws, QueueMs);
+            P->AddCpuTimes(CpuMs, Draws, Main.QueueMs);
         }
-        InContext.SetView(P->View);   // unjittered again, for what draws over the picture
+        InContext.SetView(Main.View);   // unjittered again, for what draws over the picture
 
         /* The targets this frame drew, for the view mode's list; one of them
          * over the picture in the Render Target view mode. */
         {
             if(P->ViewMode == ERenderViewMode::RenderTarget)
             {
-                InContext.ShowTarget(P->Targets, P->ViewTarget);
+                InContext.ShowTarget(Main.Targets, P->ViewTarget);
             }
             std::vector<std::string> Names;
-            InContext.ListViewableTargets(P->Targets, Names);
+            InContext.ListViewableTargets(Main.Targets, Names);
             std::lock_guard<std::mutex> Guard(P->TargetsLock);
             if(Names != P->TargetNames) { P->TargetNames = std::move(Names); }
         }
 
         /* The UI (RENDERPIPELINE.md, "UI"): over the post-processed picture,
          * before the readback so a capture shows it, and under "stat unit". */
-        InContext.DrawUI(P->UI, P->Targets.Width, P->Targets.Height);
+        InContext.DrawUI(P->UI, Main.Targets.Width, Main.Targets.Height);
 
 #if WITH_EDITOR
         /* Read back before the overlay; the readback flushes and resumes the frame. */
-        const auto DeliverCaptures = [this](std::vector<std::pair<uint64_t, MaterialPreviewMailbox*>>& InCaptures)
+        const auto DeliverCaptures = [&Main](std::vector<std::pair<uint64_t, MaterialPreviewMailbox*>>& InCaptures)
         {
             for(const auto& Each : InCaptures)
             {
                 EngineCore::Image Pixels;
-                if(P->Targets.Final) { Pixels = P->Targets.Final->ToImage(); }
+                if(Main.Targets.Final) { Pixels = Main.Targets.Final->ToImage(); }
                 if(Each.second)
                 {
                     Each.second->Deliver(Each.first, std::move(Pixels),
-                                         P->Targets.Final ? std::string() : std::string("the scene has no render target"));
+                                         Main.Targets.Final ? std::string() : std::string("the scene has no render target"));
                 }
             }
             InCaptures.clear();
@@ -1226,9 +1276,10 @@ namespace RenderCore
 
         if(P->bReportsStats)
         {
-            SetSceneStats(uint64_t(P->Proxies.size()), CulledCount);
-            SetStaticDrawStats(StaticCount, P->StaticBuilds);
-            SetOcclusionStats(Occlusion ? P->LastOccluded : 0, Occlusion ? P->LastQueries : 0);
+            const bool bOcclusion = Main.Occlusion.Current != nullptr;
+            SetSceneStats(uint64_t(P->Proxies.size()), Main.CulledCount);
+            SetStaticDrawStats(Main.StaticCount, P->StaticBuilds);
+            SetOcclusionStats(bOcclusion ? Main.Occlusion.LastOccluded : 0, bOcclusion ? Main.Occlusion.LastQueries : 0);
         }
 
 #if WITH_EDITOR
@@ -1264,7 +1315,7 @@ namespace RenderCore
                 /* Other modules' sections (Renderer::SetStatText), below. */
                 Text += (Text.empty() ? "" : "\n\n") + Stats.Extra;
             }
-            InContext.DrawStatUnit(P->Targets.Width, P->Targets.Height, Text);
+            InContext.DrawStatUnit(Main.Targets.Width, Main.Targets.Height, Text);
         }
 
         InContext.EndDrawEvent();   // "Scene"
@@ -1277,7 +1328,7 @@ namespace RenderCore
         }
 
         /* After EndRendering: the final colour is now in its presentable state. */
-        P->PresentTarget.store(P->Targets.Final, std::memory_order_release);
+        P->PresentTarget.store(Main.Targets.Final, std::memory_order_release);
     }
 
     void RenderScene::SetReportsStats(const bool bInReports)
@@ -1317,9 +1368,8 @@ namespace RenderCore
          * GPU image's destruction on the thread that owns the context. */
         P->PresentTarget.store(nullptr, std::memory_order_release);
         P->UI.Release();
-        P->Targets.Release();
+        P->MainView.Release();
         P->ProbeStages.Release();
-        P->ReleaseOcclusion();
         InContext.ReleaseIBLResources(P->IBL);
         P->bSkyValid = false;
         for(Impl::ProbeSlot& Each : P->Slots) { Each = Impl::ProbeSlot(); }
