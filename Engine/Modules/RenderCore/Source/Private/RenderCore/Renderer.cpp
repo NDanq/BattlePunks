@@ -54,9 +54,9 @@ NIMBLE_CONFIG_INT(GRenderingAnisotropy, "Rendering", "Anisotropy", 8, nullptr);
  * "Splitscreen.Views 4" in the console draws the default scene as that many
  * views (RENDER_VIEWS_MAX at most), each through its own camera if the game
  * set one (Renderer::SetViewCamera), else view 0's. 0 leaves it to the game
- * (Renderer::SetViewCount). SideBySide lays two views out left and right. */
+ * (Renderer::SetViewCount). Two lie left and right with the game's
+ * [Splitscreen] SideBySide (GameSession's), where it has one. */
 NIMBLE_CONFIG_INT(GSplitscreenViews, "Splitscreen", "Views", 0, nullptr);
-NIMBLE_CONFIG_BOOL(GSplitscreenSideBySide, "Splitscreen", "SideBySide", false, nullptr);
 
 /* Whether presents wait for the display's vblank (GDISetVSync, which says what
  * each backend does with it). Off by default: the game loop runs as fast as
@@ -806,7 +806,8 @@ namespace RenderCore
             if(Scene->ID == RENDER_DEFAULT_SCENE && GSplitscreenViews.GetInt() > 0)
             {
                 ViewCount   = uint32_t(std::min<int>(GSplitscreenViews.GetInt(), int(RENDER_VIEWS_MAX)));
-                bSideBySide = GSplitscreenSideBySide.GetBool();
+                const EngineCore::ConfigVar* SideBySide = EngineCore::ConfigFindVar("Splitscreen", "SideBySide");
+                bSideBySide = SideBySide && SideBySide->GetBool();
             }
             RenderViewRect Rects[RENDER_VIEWS_MAX];
             ViewCount = MakeSplitscreenLayout(Frame.ViewportPixels, ViewCount, bSideBySide, Rects);

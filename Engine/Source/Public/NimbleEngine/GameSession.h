@@ -273,14 +273,28 @@ namespace NimbleEngine
         AvatarWorld* GetAvatars() { return Avatars; }
 
         /*
-         * The camera the game is viewed through (and heard from, with no
-         * Audio Listener): InCamera, an entity with a CameraComponent or
-         * whose descendant has one -- a cutscene, a death cam. Unset (the
-         * default) goes back to local player 1's avatar's camera, then the
-         * level's first active one. Cleared by a level change.
+         * The camera local player InLocalPlayer (0 first) views the game
+         * through (and hears it from, with no Audio Listener): InCamera, an
+         * entity with a CameraComponent or whose descendant has one -- a
+         * cutscene, a death cam. Unset (the default) goes back to that
+         * player's avatar's camera; player 1's then the level's first active
+         * one. Cleared by a level change.
          */
-        void               SetViewTarget(GameCore::EntityID InCamera);
-        GameCore::EntityID GetViewTarget() const;
+        void               SetViewTarget(GameCore::EntityID InCamera, uint8_t InLocalPlayer = 0);
+        GameCore::EntityID GetViewTarget(uint8_t InLocalPlayer = 0) const;
+
+        /*
+         * SPLITSCREEN (SPLITSCREEN.md): the window shows one view per local
+         * player, player 1's first -- as many as the highest local player
+         * with a view target (its own, or its avatar's camera), or InCount
+         * (1 to 4) if set; 0 goes back to counting. Laid out by
+         * RenderCore::MakeSplitscreenLayout: two players top and bottom, or
+         * side by side with [Splitscreen] SideBySide; three, one across the
+         * top. One view while a sequence holds the camera or plays a
+         * cinematic, and always with [Splitscreen] Enabled off.
+         */
+        void     SetViewCount(uint32_t InCount);
+        uint32_t GetViewCount() const { return ViewCount; }   // last frame's
 
         /* Hides and holds the cursor, for mouse-look; Mouse.DeltaX keeps
          * coming past the screen's edge. The host lets go when the run ends. */
@@ -363,7 +377,10 @@ namespace NimbleEngine
         ILevel*           ActiveLevel = nullptr;
         GameCore::World*  LevelWorld  = nullptr;
         AvatarWorld*      Avatars     = nullptr;
-        GameCore::EntityID ViewTarget;
+        GameCore::EntityID ViewTargets[INPUT_PLAYERS_MAX];   // SetViewTarget, by local player
+        uint32_t          ViewCountWanted = 0;               // SetViewCount; 0 counts the players' views
+        uint32_t          ViewCount       = 1;
+        bool              bSequenceView   = false;           // a sequence set player 1's view target
 
         /* Set by RequestLevel, consumed by the next ApplyPendingLevel. */
         ILevel*           PendingLevel = nullptr;

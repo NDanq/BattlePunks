@@ -58,6 +58,12 @@ NIMBLE_CONFIG_BOOL(GStatsPhysics, "Stats", "Physics", false, nullptr);
 /* "stat audio": the level's sound -- voices, the listener, the device. */
 NIMBLE_CONFIG_BOOL(GStatsAudio, "Stats", "Audio", false, nullptr);
 
+/* SPLITSCREEN (SPLITSCREEN.md): a view per local player (SetViewCount); off,
+ * one view whatever the players. Two players' views side by side rather than
+ * top and bottom. The game's settings, so its DefaultGame.ini. */
+NIMBLE_GAME_CONFIG_BOOL(GSplitscreenEnabled, "Splitscreen", "Enabled", true, nullptr);
+NIMBLE_GAME_CONFIG_BOOL(GSplitscreenSideBySide, "Splitscreen", "SideBySide", false, nullptr);
+
 #if WITH_AUDIO
 namespace
 {
@@ -277,7 +283,8 @@ namespace NimbleEngine
 
         /* Right after: each AvatarHarness from its player's devices, or (a
          * server) its client's (Avatar.h). */
-        ViewTarget = GameCore::EntityID();
+        for(GameCore::EntityID& Each : ViewTargets) { Each = GameCore::EntityID(); }
+        bSequenceView = false;
         Avatars = EngineCore::Memory::Alloc<AvatarWorld>();
         Avatars->Attach(*LevelWorld);
         Avatars->SetInput(&FilteredInput);
@@ -519,7 +526,8 @@ namespace NimbleEngine
                 EngineCore::Memory::Dealloc(Avatars);
                 Avatars = nullptr;
             }
-            ViewTarget = GameCore::EntityID();
+            for(GameCore::EntityID& Each : ViewTargets) { Each = GameCore::EntityID(); }
+            bSequenceView = false;
 
             /* Brains let go of their agents while the components still exist. */
             AIDetail::DetachLevelAI(*LevelWorld);
@@ -769,7 +777,10 @@ namespace NimbleEngine
 
     void GameSession::SequenceSetViewTarget(const GameCore::EntityID InCamera, void* InUserData)
     {
-        static_cast<GameSession*>(InUserData)->SetViewTarget(InCamera);
+        /* A camera cut: the whole window, one view, until it lets go. */
+        auto* Session = static_cast<GameSession*>(InUserData);
+        Session->bSequenceView = InCamera.IsSet();
+        Session->SetViewTarget(InCamera);
     }
 
     GameCore::EntityID GameSession::SequenceGetViewTarget(void* InUserData)
@@ -1002,32 +1013,74 @@ namespace NimbleEngine
         bAudioStatShown = true;
     }
 
-    void GameSession::SetViewTarget(const GameCore::EntityID InCamera)
+    void GameSession::SetViewTarget(const GameCore::EntityID InCamera, const uint8_t InLocalPlayer)
     {
         CheckGameThread("SetViewTarget");
-        ViewTarget = InCamera;
+        if(InLocalPlayer >= INPUT_PLAYERS_MAX) { return; }
+        ViewTargets[InLocalPlayer] = InCamera;
         PublishViewTarget();
     }
 
-    GameCore::EntityID GameSession::GetViewTarget() const
+    GameCore::EntityID GameSession::GetViewTarget(const uint8_t InLocalPlayer) const
     {
-        if(LevelWorld && ViewTarget.IsSet() && LevelWorld->IsAlive(ViewTarget)) { return ViewTarget; }
-        return Avatars ? Avatars->GetViewCamera() : GameCore::EntityID();
+        if(InLocalPlayer >= INPUT_PLAYERS_MAX) { return GameCore::EntityID(); }
+        const GameCore::EntityID Target = ViewTargets[InLocalPlayer];
+        if(LevelWorld && Target.IsSet() && LevelWorld->IsAlive(Target)) { return Target; }
+        return Avatars ? Avatars->GetViewCamera(InLocalPlayer) : GameCore::EntityID();
+    }
+
+    void GameSession::SetViewCount(const uint32_t InCount)
+    {
+        CheckGameThread("SetViewCount");
+        ViewCountWanted = std::min<uint32_t>(InCount, RenderCore::RENDER_VIEWS_MAX);
+        PublishViewTarget();
     }
 
     void GameSession::PublishViewTarget()
     {
         if(!LevelWorld) { return; }
 
-        /* The target's camera: its own, else its first descendant's. */
-        GameCore::EntityID Camera = GetViewTarget();
-        for(int Depth = 0; Camera.IsSet() && Depth < 16; ++Depth)
+        /* A target's camera: its own, else its first descendant's. */
+        const auto CameraOf = [this](GameCore::EntityID InTarget)
         {
-            const GameCore::Entity Node = LevelWorld->GetEntity(Camera);
-            if(Node.HasComponent<RenderCore::CameraComponent>()) { break; }
-            Camera = Node.GetFirstChild();
+            for(int Depth = 0; InTarget.IsSet() && Depth < 16; ++Depth)
+            {
+                const GameCore::Entity Node = LevelWorld->GetEntity(InTarget);
+                if(Node.HasComponent<RenderCore::CameraComponent>()) { break; }
+                InTarget = Node.GetFirstChild();
+            }
+            return InTarget;
+        };
+
+        /* SPLITSCREEN: a view per local player with one, up to the last;
+         * one while a sequence holds the camera. */
+        constexpr uint32_t ViewsMax = std::min<uint32_t>(RenderCore::RENDER_VIEWS_MAX, INPUT_PLAYERS_MAX);
+        uint32_t Count = 1;
+        if(GSplitscreenEnabled.GetBool() && !bCinematic && !bSequenceView)
+        {
+            if(ViewCountWanted > 0)
+            {
+                Count = std::min(ViewCountWanted, ViewsMax);
+            }
+            else
+            {
+                for(uint32_t Local = 1; Local < ViewsMax; ++Local)
+                {
+                    if(GetViewTarget(uint8_t(Local)).IsSet()) { Count = Local + 1; }
+                }
+            }
         }
-        if(Camera != Rendering.GetViewCamera()) { Rendering.SetViewCamera(Camera); }
+        for(uint32_t View = 0; View < RenderCore::RENDER_VIEWS_MAX; ++View)
+        {
+            /* A view past the count lets go of its camera; a player without one sees player 1's. */
+            const GameCore::EntityID Camera = View < Count ? CameraOf(GetViewTarget(uint8_t(View))) : GameCore::EntityID();
+            if(Camera != Rendering.GetViewCamera(RenderCore::RENDER_DEFAULT_SCENE, View))
+            {
+                Rendering.SetViewCamera(RenderCore::RENDER_DEFAULT_SCENE, View, Camera);
+            }
+        }
+        Rendering.SetViewCount(RenderCore::RENDER_DEFAULT_SCENE, Count, GSplitscreenSideBySide.GetBool());
+        ViewCount = Count;
     }
 
     void GameSession::ResolveInput(GameCore::World& InWorld, float /*InDeltaSeconds*/, void* InUserData)

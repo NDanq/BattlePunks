@@ -269,9 +269,11 @@ namespace NimbleEngine
          */
         void Update(float InSeconds, bool bInSend = true);
 
-        /* Local player 0's avatar's camera, if it is a view target: the
-         * camera the game views through. Unset to view the level's. */
-        GameCore::EntityID GetViewCamera() const;
+        /* Local player InLocalPlayer's avatar's camera, if it is a view
+         * target: the camera that player views through (SPLITSCREEN: each
+         * local player's view; GameSession::SetViewTarget). Unset to view
+         * the level's. */
+        GameCore::EntityID GetViewCamera(uint8_t InLocalPlayer = 0) const;
 
         /* NetHost's: a predicted avatar's server state arrived. True if
          * InEntity is a simulated avatar and its frames were replayed. */

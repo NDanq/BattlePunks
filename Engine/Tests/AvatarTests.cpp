@@ -417,6 +417,69 @@ namespace
         delete Session;
     }
 
+    /* SPLITSCREEN: two local players, each possessing an avatar with its own camera. */
+    class TwoPlayerLevel : public ILevel
+    {
+    public:
+        const char* GetName() const override { return "AvatarTwoPlayers"; }
+        bool OnLoad(GameSession&) override
+        {
+            for(uint8_t Local = 0; Local < 2; ++Local)
+            {
+                Entity Pawn = MakeAvatar(GetWorld(), Local == 0 ? "First" : "Second");
+                Entity Eye = GetWorld().CreateEntity(Local == 0 ? "First Eye" : "Second Eye");
+                Eye.AddComponent<GameCore::TransformComponent>();
+                Eye.AddComponent<RenderCore::CameraComponent>()->bActive = false;
+                Eye.SetParent(Pawn.GetID(), false);
+                Possess(GetWorld(), CreateLocalPlayer(GetWorld(), Local), Pawn.GetID());
+                Eyes[Local] = Eye.GetID();
+            }
+            return true;
+        }
+        EntityID Eyes[2];
+    };
+
+    void TestSplitscreenViews()
+    {
+        std::printf("[split-screen views]\n");
+        TestHost Host;
+        GameCore::ScriptEngine Scripts;
+        RenderCore::Renderer Rendering;
+        Scripts.Initialize();
+        auto* Session = new GameSession(Host, Scripts, Rendering);
+        TwoPlayerLevel Level;
+        Expect(Session->LoadLevel(Level), "the level loads");
+        GameCore::World& World = Session->GetWorld();
+
+        FrameContext Frame;
+        Frame.DeltaSeconds = 0.016;
+        Session->Tick(Frame);
+        Expect(Session->GetViewTarget(0) == Level.Eyes[0] && Session->GetViewTarget(1) == Level.Eyes[1],
+               "each local player views through its own avatar's camera");
+        Expect(Session->GetViewCount() == 2, "two local players with cameras: two views");
+
+        Session->SetViewCount(1);
+        Expect(Session->GetViewCount() == 1, "SetViewCount fixes the count");
+        Session->SetViewCount(0);
+        Expect(Session->GetViewCount() == 2, "0 counts the players' cameras again");
+
+        const EntityID Elsewhere = World.CreateEntity("Death Cam").GetID();
+        World.GetEntity(Elsewhere).AddComponent<RenderCore::CameraComponent>();
+        Session->SetViewTarget(Elsewhere, 1);
+        Expect(Session->GetViewTarget(1) == Elsewhere && Session->GetViewTarget(0) == Level.Eyes[0],
+               "SetViewTarget(camera, player) is that player's alone");
+        Session->SetViewTarget(EntityID(), 1);
+        Expect(Session->GetViewTarget(1) == Level.Eyes[1], "unset, it goes back to the avatar's camera");
+        Expect(!Session->GetViewTarget(3).IsSet() && !Session->GetViewTarget(9).IsSet(), "a player with no avatar, or none at all, has no target");
+
+        Unpossess(World, FindLocalPlayer(World, 1));
+        Session->Tick(Frame);
+        Expect(Session->GetViewCount() == 1, "player 2 let go of its avatar: one view");
+
+        Session->UnloadLevel();
+        delete Session;
+    }
+
     class SpawnMode : public NetGameMode
     {
     public:
@@ -518,6 +581,7 @@ int main()
     TestServerInput();
     TestLocalSimulation();
     TestAutoPossess();
+    TestSplitscreenViews();
     TestNetGameMode();
     TestFreePlayerIndex();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
