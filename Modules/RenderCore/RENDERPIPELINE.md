@@ -900,9 +900,18 @@ splitscreen it draws up to `RENDER_VIEWS_MAX` (4) views a frame.
   presented. Debug lines go through view 0, over its rectangle.
 - **One view.** The view's own final colour is the picture and no composite
   is made, so a game without splitscreen draws exactly as before.
-- **Not per view yet.** Stage timings ("stat frame", stage CPU times) are view
-  0's only. Terrain and foliage LOD, and custom pass target pools, are still
-  shared between views.
+- **Per view, inside a proxy or pass.**
+  - Terrain chunks and Procedural Spawner cells choose their LOD from the
+    view being drawn, in `DrawShadow` as well as `Draw`, so a view's shadows
+    use its own LODs.
+  - Custom pass targets and buffers (`AcquireTarget`, `AcquireBuffer`) are
+    kept per view: `RenderPassContext::GetViewIndex` says which view.
+    Every split view is a main view (`IsMainView`).
+- **Stats.** "stat frame" and the stage CPU times add up all the views
+  (Stat frame, "How a scene is timed").
+- **Testing before a game sets cameras.** `Splitscreen.DebugOffset x,y,z`
+  moves each view i > 0 that borrows another view's camera by i times that
+  offset, so the views can be far apart.
 
 ### Scene capture
 
@@ -1216,6 +1225,15 @@ around the capture and simulate loops, so a frame with none shows 0.00, not `-`.
 **How a scene is timed:**
 - `RenderSceneStages(..., bInTimed)` writes a GPU timestamp before and after
   each span (`GDIWriteGPUTimestamp`, indices `2t` and `2t + 1`).
+- With several views (Views), every view is timed and each span is summed
+  over them:
+  - View 0 writes `2t` and `2t + 1` as usual.
+  - View v > 0 writes its per-view spans (all but Total) from index 20,
+    14 indices apiece.
+  - `RenderContext::EndTimedViews` writes the last view's end at index 63.
+    Total runs from view 0's start to there.
+  - That fits GDI's 64 timestamps for 4 views. The CPU times and draw counts
+    add up the same way.
 - It does this only for the scene's own frame, and only while Stats.Frame is
   on, so a preview in the same block does not overwrite them and timing costs
   nothing when it is off.

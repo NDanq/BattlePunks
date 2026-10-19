@@ -446,8 +446,10 @@ namespace RenderCore
         void                  SetShadowCasterView(int32_t InView);
         /* InClearBottom: the background is a gradient, InClearColor at the
          * top to it at the bottom (ClearGradient.fsh), under everything.
-         * bInTimed: write "stat frame"'s GPU timestamps around each stage --
-         * a scene's own frame only, once per GDI block (BeginTimedBlock). */
+         * bInTimed: one of a scene's own views (custom passes' IsMainView),
+         * its stages timed for "stat frame" -- every view of the block's
+         * scene (BeginTimedBlock), summed span by span (GetView().ViewIndex
+         * says which view); EndTimedViews after the last. */
         void RenderSceneStages(SceneTargets& InTargets, EngineCore::Color InClearColor, bool bInTimed = false,
                                const EngineCore::Color* InClearBottom = nullptr);
 
@@ -457,6 +459,10 @@ namespace RenderCore
          * finished -- and the scene that wrote them, null if none did; and
          * notes InOwner as this block's, if bInTime and the backend can time. */
         const void* BeginTimedBlock(const void* InOwner, bool bInTime, float (&OutGpuMs)[RGT_Count]);
+
+        /* SPLITSCREEN: after the last of a frame's timed views, so "stat
+         * frame"'s Total spans them all (RenderScene::Render). */
+        void EndTimedViews();
 
         /* InTimer's start (or end) timestamp, outside RenderSceneStages (the
          * scene captures' span); nothing unless this block is timed. The

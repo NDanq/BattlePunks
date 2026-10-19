@@ -176,10 +176,13 @@ namespace RenderCore
                 }
             }
 
-            /* Every cell the last view kept, at the LOD it chose (the shadow view culls the proxy, not its cells). */
+            /* Every cell the view being drawn keeps, at the LOD it chooses (the shadow view culls the proxy,
+             * not its cells) -- chosen again here, as TerrainComponent's are, so several views a frame
+             * (splitscreen) never shadow with another view's cells. */
             void DrawShadow(RenderContext& InContext) override
             {
                 if(!bCastShadows) { return; }
+                ChooseLODs(bFocus ? Focus : InContext.GetView().Origin);
                 for(const Cell& Each : Cells)
                 {
                     if(!Each.bCulled) { DrawCell(InContext, Each, true); }
@@ -206,7 +209,7 @@ namespace RenderCore
                 float             Max[3] = { 0.0f, 0.0f, 0.0f };
                 std::vector<CellDraw> Draws;
                 uint32_t          Lod     = 0;
-                bool              bCulled = false;   // past Cull Distance, as of the last view
+                bool              bCulled = false;   // past Cull Distance, from the view being drawn
             };
 
             struct EntryNames

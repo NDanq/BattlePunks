@@ -1226,10 +1226,35 @@ namespace RenderCore
         /* "stat frame": the scene timing this GDI block, and the scene that
          * timed each recent block, by its GDIGetRenderingSerial (slot: serial
          * mod 4) -- a block's times come back GDIGetFramesInFlight blocks on. */
-        struct TimedBlock { uint64_t Serial = 0; const void* Owner = nullptr; };
+        struct TimedBlock { uint64_t Serial = 0; const void* Owner = nullptr; uint32_t Views = 1; };
         bool        bTimeStages = false;
         const void* TimedOwner  = nullptr;
         TimedBlock  TimedBlocks[4];
+
+        /*
+         * SPLITSCREEN: each of the block's views times its stages, summed span
+         * by span. View 0 writes 2t and 2t + 1, as a lone view always has; view
+         * v > 0 its per-view spans (all but Total) from VIEW_TIMESTAMPS_BASE,
+         * VIEW_TIMESTAMPS apiece; and with several views EndTimedViews writes
+         * the last one's end at VIEWS_END_TIMESTAMP, Total running from view
+         * 0's start to there. 64 at most: GDI's written mask is one uint64_t.
+         */
+        static constexpr uint32_t VIEW_TIMESTAMPS_BASE = uint32_t(RGT_Count) * 2;
+        static constexpr uint32_t VIEW_TIMESTAMPS      = uint32_t(RGT_Total) * 2;
+        static constexpr uint32_t VIEWS_END_TIMESTAMP  = GDI_GPU_TIMESTAMP_MAX - 1;
+        static_assert(VIEW_TIMESTAMPS_BASE + (RENDER_VIEWS_MAX - 1) * VIEW_TIMESTAMPS <= VIEWS_END_TIMESTAMP,
+                      "every view's spans and the views' end fit GDI's timestamps");
+        uint32_t    TimedView  = 0;   // the view timed now (RenderView::ViewIndex)
+        uint32_t    TimedViews = 0;   // how many the block has timed
+
+        /* InTimer's start (or end) timestamp index for TimedView; -1: none (a later view's Total). */
+        int32_t StageTimestampIndex(const ERenderGpuTimer InTimer, const bool bInEnd) const
+        {
+            const uint32_t Offset = uint32_t(InTimer) * 2 + (bInEnd ? 1 : 0);
+            if(TimedView == 0) { return int32_t(Offset); }
+            if(InTimer >= RGT_Total) { return -1; }
+            return int32_t(VIEW_TIMESTAMPS_BASE + (TimedView - 1) * VIEW_TIMESTAMPS + Offset);
+        }
 
         /* The render thread's time per ERenderGpuTimer span (RenderStats::CpuMs),
          * measured for the timed view whether or not the GPU is: when each
@@ -1243,35 +1268,47 @@ namespace RenderCore
         {
             const int64_t Now = std::chrono::duration_cast<std::chrono::nanoseconds>(
                                     std::chrono::steady_clock::now().time_since_epoch()).count();
-            if(bInEnd) { StageCpuMs[InTimer] = float(double(Now - StageCpuStartNs[InTimer]) / 1.0e6); }
-            else       { StageCpuStartNs[InTimer] = Now; }
+            if(!bInEnd) { StageCpuStartNs[InTimer] = Now; return; }
+            /* A later view's span adds to the frame's (SPLITSCREEN); the first sets it. */
+            const float Ms = float(double(Now - StageCpuStartNs[InTimer]) / 1.0e6);
+            StageCpuMs[InTimer] = TimedView > 0 && StageCpuMs[InTimer] >= 0.0f ? StageCpuMs[InTimer] + Ms : Ms;
         }
 
         /* InTimer's start (or end) timestamp: indices 2t and 2t + 1. */
         void StageTimestamp(const ERenderGpuTimer InTimer, const bool bInEnd) const
         {
             if(bTimeStagesCpu) { MarkStageCpu(InTimer, bInEnd); }
-            if(bTimeStages) { GDIWriteGPUTimestamp(uint32_t(InTimer) * 2 + (bInEnd ? 1 : 0)); }
+            if(bTimeStages)
+            {
+                const int32_t Index = StageTimestampIndex(InTimer, bInEnd);
+                if(Index >= 0) { GDIWriteGPUTimestamp(uint32_t(Index)); }
+            }
         }
 
-        /* A timed RenderSceneStages' draws per span, from its stage counts. */
+        /* A timed RenderSceneStages' draws per span, from its stage counts;
+         * a later view's (SPLITSCREEN) added to the frame's. */
         void CountSpanDraws()
         {
             const auto Count = [this](const ERenderStage InStage) { return int32_t(StageDrawCounts[size_t(InStage)]); };
-            StageSpanDraws[RGT_PrePass]          = Count(ERenderStage::PrePass);
-            StageSpanDraws[RGT_BasePass]         = Count(ERenderStage::BasePass);
-            StageSpanDraws[RGT_AmbientOcclusion] = -1;
-            StageSpanDraws[RGT_Shadows]          = Count(ERenderStage::Shadows);
-            StageSpanDraws[RGT_Lighting]         = Count(ERenderStage::Lighting);
-            StageSpanDraws[RGT_Forward]          = Count(ERenderStage::Unlit) + Count(ERenderStage::TranslucentLit)
-                                                 + Count(ERenderStage::TranslucentUnlit);
-            StageSpanDraws[RGT_PostProcess]      = Count(ERenderStage::PostProcess);
+            int32_t Spans[RGT_Count];
+            for(int32_t& Each : Spans) { Each = -1; }
+            Spans[RGT_PrePass]     = Count(ERenderStage::PrePass);
+            Spans[RGT_BasePass]    = Count(ERenderStage::BasePass);
+            Spans[RGT_Shadows]     = Count(ERenderStage::Shadows);
+            Spans[RGT_Lighting]    = Count(ERenderStage::Lighting);
+            Spans[RGT_Forward]     = Count(ERenderStage::Unlit) + Count(ERenderStage::TranslucentLit) + Count(ERenderStage::TranslucentUnlit);
+            Spans[RGT_PostProcess] = Count(ERenderStage::PostProcess);
             int32_t Total = 0;
             for(uint32_t Timer = RGT_PrePass; Timer < RGT_Total; ++Timer)
             {
-                Total += std::max(StageSpanDraws[Timer], 0);
+                Total += std::max(Spans[Timer], 0);
             }
-            StageSpanDraws[RGT_Total] = Total;
+            Spans[RGT_Total] = Total;
+            for(uint32_t Timer = RGT_PrePass; Timer <= RGT_Total; ++Timer)
+            {
+                StageSpanDraws[Timer] = TimedView > 0 && StageSpanDraws[Timer] >= 0 && Spans[Timer] >= 0
+                                      ? StageSpanDraws[Timer] + Spans[Timer] : Spans[Timer];
+            }
         }
         bool                bGBufferThisFrame = false;   // RenderSceneStages wrote the G-buffer: Bloom may read its emissive
         bool                bVelocityThisFrame = false;  // and the velocity beside it: Motion Blur may read it
@@ -1308,7 +1345,12 @@ namespace RenderCore
             std::unordered_map<std::string, PassTarget> Targets;
             std::unordered_map<std::string, GDIBuffer*> Buffers;
         };
-        std::unordered_map<RenderPassHandle, PassResources> PassPools;
+        /* By view (SPLITSCREEN): views of different sizes would remake a shared pool's targets every frame. */
+        std::unordered_map<RenderPassHandle, PassResources> PassPools[RENDER_VIEWS_MAX];
+        std::unordered_map<RenderPassHandle, PassResources>& PassPoolsOfView()
+        {
+            return PassPools[std::min<uint32_t>(View.ViewIndex, RENDER_VIEWS_MAX - 1)];
+        }
         std::unordered_map<std::string, GDIShader*>         PassShaders;
 
         GDIShader* GetPassShader(const std::string& InFile, const EShaderType InType, const char* InPass)
@@ -1345,10 +1387,13 @@ namespace RenderCore
             TakeRetiredCustomRenderPasses(Retired);
             for(const RenderPassHandle Each : Retired)
             {
-                const auto Found = PassPools.find(Each);
-                if(Found == PassPools.end()) { continue; }
-                ReleasePassResources(Found->second);
-                PassPools.erase(Found);
+                for(auto& Pools : PassPools)
+                {
+                    const auto Found = Pools.find(Each);
+                    if(Found == Pools.end()) { continue; }
+                    ReleasePassResources(Found->second);
+                    Pools.erase(Found);
+                }
             }
         }
 
@@ -4009,6 +4054,7 @@ namespace RenderCore
     uint32_t          RenderPassContext::GetWidth() const       { return F->Targets->Width; }
     uint32_t          RenderPassContext::GetHeight() const      { return F->Targets->Height; }
     bool              RenderPassContext::IsMainView() const     { return F->bMainView; }
+    uint32_t          RenderPassContext::GetViewIndex() const   { return F->P->View.ViewIndex; }
     bool              RenderPassContext::IsHDR() const          { return F->Targets->bHDR; }
     uint64_t          RenderPassContext::GetFrameNumber() const { return F->P->FrameNumber; }
     float             RenderPassContext::GetDeltaSeconds() const { return F->P->FrameDelta; }
@@ -4061,7 +4107,7 @@ namespace RenderCore
             Format = ERenderPassFormat::RGBA8;
         }
 
-        RenderContext::Impl::PassTarget& Entry = F->P->PassPools[F->Entry->Handle].Targets[InName];
+        RenderContext::Impl::PassTarget& Entry = F->P->PassPoolsOfView()[F->Entry->Handle].Targets[InName];
         if(Entry.Target && Entry.Format != Format)
         {
             GDIReleaseRenderTarget(Entry.Target);
@@ -4239,7 +4285,7 @@ namespace RenderCore
         {
             return Out;
         }
-        GDIBuffer*& Buffer = F->P->PassPools[F->Entry->Handle].Buffers[InName];
+        GDIBuffer*& Buffer = F->P->PassPoolsOfView()[F->Entry->Handle].Buffers[InName];
         if(Buffer && Buffer->GetSize() != InBytes)
         {
             Buffer->Release();
@@ -4336,8 +4382,10 @@ namespace RenderCore
         const uint64_t Behind  = std::min<uint64_t>(GDIGetFramesInFlight(), 3);
         const Impl::TimedBlock& Then = P->TimedBlocks[(Serial - Behind) % 4];
         const void* Previous = Serial > Behind && Then.Serial == Serial - Behind ? Then.Owner : nullptr;
+        const uint32_t ThenViews = Then.Views;   // read before this block's entry is written over it
         P->TimedOwner = bInTime && CanTimeGpu() ? InOwner : nullptr;
-        P->TimedBlocks[Serial % 4] = { Serial, P->TimedOwner };
+        P->TimedBlocks[Serial % 4] = { Serial, P->TimedOwner, 1 };
+        P->TimedViews = 0;
         for(float& Each : OutGpuMs) { Each = -1.0f; }
         if(!Previous)
         {
@@ -4345,15 +4393,50 @@ namespace RenderCore
         }
         double         Stamps[GDI_GPU_TIMESTAMP_MAX] = {};
         const uint64_t Written = GDIGetPreviousGPUTimestamps(Stamps);
+        const auto Span = [&](const uint32_t InStart, const uint32_t InEnd, double& OutMs)
+        {
+            const uint64_t Both = (uint64_t(1) << InStart) | (uint64_t(1) << InEnd);
+            if((Written & Both) != Both) { return false; }
+            OutMs = std::max(Stamps[InEnd] - Stamps[InStart], 0.0);
+            return true;
+        };
         for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer)
         {
-            const uint64_t Both = (uint64_t(1) << (Timer * 2)) | (uint64_t(1) << (Timer * 2 + 1));
-            if((Written & Both) == Both)
+            double Ms = 0.0;
+            if(Span(Timer * 2, Timer * 2 + 1, Ms))
             {
-                OutGpuMs[Timer] = float(std::max(Stamps[Timer * 2 + 1] - Stamps[Timer * 2], 0.0));
+                OutGpuMs[Timer] = float(Ms);
             }
         }
+        /* SPLITSCREEN: the later views' spans added in; Total from view 0's start to the last's end. */
+        for(uint32_t View = 1; View < ThenViews && View < RENDER_VIEWS_MAX; ++View)
+        {
+            for(uint32_t Timer = 0; Timer < RGT_Total; ++Timer)
+            {
+                const uint32_t Start = Impl::VIEW_TIMESTAMPS_BASE + (View - 1) * Impl::VIEW_TIMESTAMPS + Timer * 2;
+                double Ms = 0.0;
+                if(Span(Start, Start + 1, Ms))
+                {
+                    OutGpuMs[Timer] = float(std::max(OutGpuMs[Timer], 0.0f) + Ms);
+                }
+            }
+        }
+        if(ThenViews > 1)
+        {
+            double Ms = 0.0;
+            OutGpuMs[RGT_Total] = Span(uint32_t(RGT_Total) * 2, Impl::VIEWS_END_TIMESTAMP, Ms) ? float(Ms) : -1.0f;
+        }
         return Written ? Previous : nullptr;
+    }
+
+    void RenderContext::EndTimedViews()
+    {
+        if(P->TimedOwner && P->TimedViews > 1)
+        {
+            GDIWriteGPUTimestamp(Impl::VIEWS_END_TIMESTAMP);
+        }
+        Impl::TimedBlock& Block = P->TimedBlocks[GDIGetRenderingSerial() % 4];
+        if(Block.Owner) { Block.Views = std::max<uint32_t>(P->TimedViews, 1); }
     }
 
     void RenderContext::WriteGpuTimestamp(const ERenderGpuTimer InTimer, const bool bInEnd)
@@ -4500,7 +4583,12 @@ namespace RenderCore
             {
                 Owner->bTimeStages    = bInTimed && Owner->TimedOwner;
                 Owner->bTimeStagesCpu = bInTimed;
+                Owner->TimedView      = bInTimed ? std::min<uint32_t>(Owner->View.ViewIndex, RENDER_VIEWS_MAX - 1) : 0;
                 if(bInTimed)
+                {
+                    Owner->TimedViews = std::max(Owner->TimedViews, Owner->TimedView + 1);
+                }
+                if(bInTimed && Owner->TimedView == 0)   // the frame's first view: its spans start the frame's
                 {
                     for(uint32_t Timer = RGT_PrePass; Timer <= RGT_Total; ++Timer) { Owner->StageCpuMs[Timer] = -1.0f; }
                 }
@@ -4510,6 +4598,7 @@ namespace RenderCore
                 if(bTimed) { Owner->CountSpanDraws(); }
                 Owner->bTimeStages    = false;
                 Owner->bTimeStagesCpu = false;
+                Owner->TimedView      = 0;
             }
         } Timed(P, bInTimed);
 
@@ -5688,8 +5777,11 @@ namespace RenderCore
             P->ScreenObject->Mesh = nullptr;
         }
 
-        for(auto& Each : P->PassPools) { P->ReleasePassResources(Each.second); }
-        P->PassPools.clear();
+        for(auto& Pools : P->PassPools)
+        {
+            for(auto& Each : Pools) { P->ReleasePassResources(Each.second); }
+            Pools.clear();
+        }
         for(auto& Each : P->PassShaders) { if(Each.second) { P->RetiredShaders.push_back(Each.second); } }
         P->PassShaders.clear();
 
