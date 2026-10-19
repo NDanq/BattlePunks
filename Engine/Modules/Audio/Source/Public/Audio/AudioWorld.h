@@ -24,6 +24,11 @@ namespace Audio
      * OutPose filled (the engine gives the active camera), false for none. */
     using ListenerFallbackFn = bool (*)(GameCore::World& InWorld, AudioListenerPose& OutPose, void* InUserData);
 
+    /* SPLITSCREEN: the listeners, one per player's view, into OutPoses (up to
+     * InMax); how many it filled, 0 for none. More than one wins over the
+     * level's Audio Listener, a one-view idea. */
+    using ListenersFallbackFn = uint32_t (*)(GameCore::World& InWorld, AudioListenerPose* OutPoses, uint32_t InMax, void* InUserData);
+
     struct AudioWorldStats
     {
         uint32_t Sources  = 0;   // Audio Source components with a voice
@@ -46,7 +51,10 @@ namespace Audio
      * every frame:
      *
      *   1. The listener: the first active Audio Listener's world pose, else
-     *      the fallback's (the camera), else the origin.
+     *      the fallback's (the camera), else the origin. SPLITSCREEN: with a
+     *      listeners fallback giving more than one (a view each), those --
+     *      each sound heard from the nearest; one-shots are weighed by the
+     *      nearest too.
      *   2. Each Audio Source: a voice made for its Sound (remade when Sound
      *      changes or the sound is reimported, SoundAssetCache's generation);
      *      AutoPlay started once; what its methods recorded (Play, Stop,
@@ -92,6 +100,7 @@ namespace Audio
         GameCore::World* GetWorld() const;
 
         void SetListenerFallback(ListenerFallbackFn InFn, void* InUserData);
+        void SetListenersFallback(ListenersFallbackFn InFn, void* InUserData);
 
         /* The frame's work, as the TP_PostUpdate system does it; a test may
          * call it directly instead of ticking the World. */
@@ -116,8 +125,10 @@ namespace Audio
         void GetStats(AudioWorldStats& OutStats) const;
         bool GetVoiceState(GameCore::EntityID InEntity, AudioVoiceState& OutState) const;
 
-        /* The listener used last frame. */
+        /* The listener used last frame (listener 0), and SPLITSCREEN's others. */
         AudioListenerPose GetListener() const;
+        AudioListenerPose GetListener(uint32_t InIndex) const;
+        uint32_t          GetListenerCount() const;
 
         /* The AudioWorld attached to InWorld, or nullptr. */
         static AudioWorld* Find(const GameCore::World& InWorld);

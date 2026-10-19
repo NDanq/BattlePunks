@@ -62,6 +62,9 @@ namespace Audio
 
         bool bPaused = false;
 
+        /* SPLITSCREEN: the listeners switched on (SetListenerCount), from 0. */
+        uint32_t ListenerCount = 1;
+
         std::vector<std::unique_ptr<ToneVoice>> Tones;
 
         SoundVfs Vfs;

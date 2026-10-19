@@ -76,6 +76,23 @@ namespace
         OutPose.Up       = Turn * EngineCore::Vector3(0.0, 1.0, 0.0);
     }
 
+    /* SPLITSCREEN: a listener per view this frame, each at the camera it is
+     * viewed through; 0 when no view has one (CameraListener's rule then). */
+    uint32_t ViewListeners(GameCore::World& InWorld, Audio::AudioListenerPose* OutPoses, const uint32_t InMax, void* InUserData)
+    {
+        auto* Session = static_cast<NimbleEngine::GameSession*>(InUserData);
+        if(!Session) { return 0; }
+        const uint32_t Views = std::min(Session->GetViewCount(), InMax);
+        uint32_t Count = 0;
+        for(uint32_t View = 0; View < Views; ++View)
+        {
+            const GameCore::EntityID Viewed = Session->GetRenderer().GetViewCamera(RenderCore::RENDER_DEFAULT_SCENE, View);
+            if(!Viewed.IsSet() || !InWorld.IsAlive(Viewed)) { continue; }
+            PoseFromCamera(InWorld.GetEntity(Viewed), OutPoses[Count++]);
+        }
+        return Count;
+    }
+
     /* The level heard from its camera when it has no active Audio Listener:
      * the one it is viewed through (the view target), else the first active
      * Camera, as WorldBridge views through it. */
@@ -254,6 +271,7 @@ namespace NimbleEngine
         if(LevelAudio->Attach(*LevelWorld))
         {
             LevelAudio->SetListenerFallback(&CameraListener, this);
+            LevelAudio->SetListenersFallback(&ViewListeners, this);
             /* Rendering.BindWorld above attached the animation system. */
             if(RenderCore::AnimationSystem* Animation = RenderCore::AnimationSystem::Find(LevelWorld))
             {
