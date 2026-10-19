@@ -50,6 +50,14 @@ NIMBLE_CONFIG_BOOL(GStatsStreaming, "Stats", "Streaming", false, nullptr);
  * at the next start. */
 NIMBLE_CONFIG_INT(GRenderingAnisotropy, "Rendering", "Anisotropy", 8, nullptr);
 
+/* SPLITSCREEN, for debugging the renderer before a game lays out its players:
+ * "Splitscreen.Views 4" in the console draws the default scene as that many
+ * views (RENDER_VIEWS_MAX at most), each through its own camera if the game
+ * set one (Renderer::SetViewCamera), else view 0's. 0 leaves it to the game
+ * (Renderer::SetViewCount). SideBySide lays two views out left and right. */
+NIMBLE_CONFIG_INT(GSplitscreenViews, "Splitscreen", "Views", 0, nullptr);
+NIMBLE_CONFIG_BOOL(GSplitscreenSideBySide, "Splitscreen", "SideBySide", false, nullptr);
+
 /* Whether presents wait for the display's vblank (GDISetVSync, which says what
  * each backend does with it). Off by default: the game loop runs as fast as
  * [Display] FrameRateLimit lets it, 0 unlimited. Applies live, at each window's
@@ -85,6 +93,8 @@ namespace RenderCore
         RenderScene*       Scene  = nullptr;   // constructed on the render thread; render-thread-owned from then on
         WorldBridge*       Bridge = nullptr;   // game-thread-owned; wraps Scene
         EngineCore::Size   ViewportPixels;     // extra scenes only; the default takes FrameInfo's
+        uint32_t           ViewCount    = 1;   // SetViewCount
+        bool               bSideBySide  = false;
 
 #if WITH_EDITOR
         /* Set by SetViewOverride; replaces the camera lookup every frame. */
@@ -387,8 +397,36 @@ namespace RenderCore
 
     GameCore::EntityID Renderer::GetViewCamera(const RenderSceneID InScene) const
     {
+        return GetViewCamera(InScene, 0);
+    }
+
+    void Renderer::SetViewCamera(const RenderSceneID InScene, const uint32_t InViewIndex, const GameCore::EntityID InCamera)
+    {
+        if(RendererScene* Scene = P->Find(InScene))
+        {
+            if(Scene->Bridge) { Scene->Bridge->SetViewCamera(InCamera, InViewIndex); }
+        }
+    }
+
+    GameCore::EntityID Renderer::GetViewCamera(const RenderSceneID InScene, const uint32_t InViewIndex) const
+    {
         const RendererScene* Scene = P->Find(InScene);
-        return Scene && Scene->Bridge ? Scene->Bridge->GetViewCamera() : GameCore::EntityID();
+        return Scene && Scene->Bridge ? Scene->Bridge->GetViewCamera(InViewIndex) : GameCore::EntityID();
+    }
+
+    void Renderer::SetViewCount(const RenderSceneID InScene, const uint32_t InCount, const bool bInSideBySide)
+    {
+        if(RendererScene* Scene = P->Find(InScene))
+        {
+            Scene->ViewCount   = std::clamp<uint32_t>(InCount, 1, RENDER_VIEWS_MAX);
+            Scene->bSideBySide = bInSideBySide;
+        }
+    }
+
+    uint32_t Renderer::GetViewCount(const RenderSceneID InScene) const
+    {
+        const RendererScene* Scene = P->Find(InScene);
+        return Scene ? Scene->ViewCount : 1;
     }
 
     RenderSceneID Renderer::CreateScene()
@@ -762,9 +800,20 @@ namespace RenderCore
             ViewOverride = Scene->bHasViewOverride ? &Scene->ViewOverride : nullptr;
 #endif
 
+            /* SPLITSCREEN: the views' rectangles of the viewport, this frame's size. */
+            uint32_t ViewCount   = Scene->ViewCount;
+            bool     bSideBySide = Scene->bSideBySide;
+            if(Scene->ID == RENDER_DEFAULT_SCENE && GSplitscreenViews.GetInt() > 0)
+            {
+                ViewCount   = uint32_t(std::min<int>(GSplitscreenViews.GetInt(), int(RENDER_VIEWS_MAX)));
+                bSideBySide = GSplitscreenSideBySide.GetBool();
+            }
+            RenderViewRect Rects[RENDER_VIEWS_MAX];
+            ViewCount = MakeSplitscreenLayout(Frame.ViewportPixels, ViewCount, bSideBySide, Rects);
+
             if(Scene->Bridge && Scene->Bridge->IsBound())
             {
-                Scene->Bridge->ExtractAndRender(Frame, ViewOverride);
+                Scene->Bridge->ExtractAndRender(Frame, ViewOverride, Rects, ViewCount);
             }
             else if(Scene->Scene)
             {
