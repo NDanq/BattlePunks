@@ -80,7 +80,19 @@ namespace RenderCore
          * same "the header knows, not the caller" trick TUnique::Reset uses. */
         void RemoveProxy(RenderProxy* InProxy, RenderContext& InContext);
 
+        /* The one view the next Render() draws, over the whole of its
+         * ViewportPixels (and SetLighting / SetPostProcess its light and post
+         * process): what a scene without splitscreen is given. */
         void SetView(const RenderView& InView);
+
+        /* SPLITSCREEN (RenderTypes.h's RENDER_VIEWS_MAX): the InCount views
+         * (1-4) the next Render() draws, each with its own light and post
+         * process, each into its own targets at InViews[i].ViewportPixels, then
+         * placed at its ViewportX, ViewportY in an InWindowPixels picture. With
+         * one view, the same as SetView, SetLighting and SetPostProcess. */
+        void SetViews(const RenderView* InViews, const RenderLighting* InLightings, const RenderPostProcess* InPostProcesses,
+                      uint32_t InCount, EngineCore::Size InWindowPixels);
+
         void SetClearColor(EngineCore::Color InColor);
 
         /* A vertical gradient instead (Renderer::SetClearGradient). */

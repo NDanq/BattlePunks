@@ -1054,7 +1054,7 @@ namespace RenderCore
          */
         bool DrawFullscreenShader(GDIShader* InPixel, const char* InEvent, GDIRenderTarget* InTarget, const uint InWidth, const uint InHeight,
                                   GDITextureResource* const* InTextures, const uint32_t InTextureCount, const void* InBlock,
-                                  const uint InBlockBytes, const EFullscreenBlend InBlend, const uint InX = 0)
+                                  const uint InBlockBytes, const EFullscreenBlend InBlend, const uint InX = 0, const uint InY = 0)
         {
             GDIShader* Vertex = GetDefaultVertex(EMaterialVertexInput::Fullscreen);
             if(!InPixel || !Vertex || !InTarget)
@@ -1063,7 +1063,7 @@ namespace RenderCore
             }
             SCOPED_DRAW_EVENT(InEvent);
             GDISetRenderTargets(&InTarget, 1, nullptr);
-            GDISetViewport(InX, 0, InWidth, InHeight);   // InX: a cube face's place in its strip
+            GDISetViewport(InX, InY, InWidth, InHeight);   // InX: a cube face's place in its strip; InX, InY: a view's in the window
             GDISetColorMask(EColM_RGBA);
 
             for(uint32_t Slot = 0; Slot < InTextureCount; ++Slot)
@@ -4451,6 +4451,40 @@ namespace RenderCore
         PostBlock Block;
         Block.A[0] = Found->Mode;
         P->DrawPost(PP_ViewTarget, InTargets.Final, InTargets.Width, InTargets.Height, { Found->Texture->Resource }, Block);
+    }
+
+    void RenderContext::CompositeViews(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewRect* InRects,
+                                       const uint32_t InCount)
+    {
+        if(!InTarget)
+        {
+            return;
+        }
+        SCOPED_DRAW_EVENT("Composite");
+        const uint Width = InTarget->GetWidth(), Height = InTarget->GetHeight();
+        GDISetRenderTargets(&InTarget, 1, nullptr);
+        GDISetViewport(0, 0, Width, Height);
+        GDIClear(CM_Color, EngineCore::Color(0, 0, 0, 255));   // what no view covers: black
+
+        /* ViewTarget.fsh as a colour target as it is (PP_View.x 0), stretched
+         * over the viewport: the view's rectangle, clipped to the window. */
+        PostBlock Block;
+        for(uint32_t Index = 0; Index < InCount; ++Index)
+        {
+            GDIRenderTarget* Source = InSources[Index];
+            const RenderViewRect& Rect = InRects[Index];
+            GDITexture2D* Texture = Source ? Source->ToGDITexture2D() : nullptr;
+            const int32_t X = std::max(Rect.X, 0), Y = std::max(Rect.Y, 0);
+            if(!Texture || Rect.Width <= 0 || Rect.Height <= 0 || uint(X) >= Width || uint(Y) >= Height)
+            {
+                continue;
+            }
+            const uint ClippedWidth  = std::min(uint(Rect.Width), Width - uint(X));
+            const uint ClippedHeight = std::min(uint(Rect.Height), Height - uint(Y));
+            P->DrawFullscreenShader(P->GetPostShader(PP_ViewTarget), "View", InTarget, ClippedWidth, ClippedHeight,
+                                    &Texture->Resource, 1, Block.A, uint(sizeof(Block) - sizeof(Block.Matrix)),
+                                    Impl::EFullscreenBlend::Opaque, uint(X), uint(Y));
+        }
     }
 
     void RenderContext::RenderSceneStages(SceneTargets& InTargets, const EngineCore::Color InClearColor, const bool bInTimed,

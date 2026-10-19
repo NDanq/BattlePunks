@@ -1015,6 +1015,87 @@ static void TestMultipleScenes()
     Rend.Shutdown();
     Expect(Rend.CreateScene() == RENDER_INVALID_SCENE, "CreateScene after Shutdown() is refused");
 }
+
+/* What the last-rendered scene's main view was, as the context last had it. */
+static RenderView LastRenderedView()
+{
+    RenderView Seen;
+    ENQUEUE_RENDER_COMMAND(ReadLastView)([&Seen](RenderContext& Ctx) { Seen = Ctx.GetView(); });
+    FlushRenderCommands();
+    return Seen;
+}
+
+/* SPLITSCREEN: one scene, several views (RenderTypes.h's RENDER_VIEWS_MAX). */
+static void TestSplitscreenViews()
+{
+    std::printf("[splitscreen views]\n");
+
+    RenderViewRect Rects[RENDER_VIEWS_MAX];
+    Expect(MakeSplitscreenLayout(EngineCore::Size(641, 361), 2, false, Rects) == 2
+               && Rects[0].Height == 180 && Rects[1].Y == 180 && Rects[1].Height == 181 && Rects[1].Width == 641,
+           "two views: top and bottom halves, tiling an odd height");
+    Expect(MakeSplitscreenLayout(EngineCore::Size(640, 360), 2, true, Rects) == 2 && Rects[1].X == 320 && Rects[1].Height == 360,
+           "two views side by side: left and right halves");
+    Expect(MakeSplitscreenLayout(EngineCore::Size(640, 360), 3, false, Rects) == 3
+               && Rects[0].Width == 640 && Rects[2].X == 320 && Rects[2].Y == 180,
+           "three views: one across the top, two below");
+    Expect(MakeSplitscreenLayout(EngineCore::Size(640, 360), 9, false, Rects) == RENDER_VIEWS_MAX
+               && Rects[3].X == 320 && Rects[3].Y == 180 && Rects[3].Width == 320,
+           "more than RENDER_VIEWS_MAX: quadrants");
+
+    Renderer Rend;
+    if(!Rend.Initialize(ERenderBackend::Null, WindowHandle()))
+    {
+        Expect(false, "Renderer::Initialize(Null, {}) succeeds for the splitscreen test");
+        return;
+    }
+    GameCore::World Level;
+    AddCameraAt(Level, 100.0);
+    const GameCore::Entity Second = Level.CreateEntity();
+    Second.AddComponent<GameCore::TransformComponent>()->Position = EngineCore::Vector3(300.0, 0.0, 0.0);
+    Second.AddComponent<CameraComponent>()->bActive = false;
+    const GameCore::Entity Mesh = Level.CreateEntity();
+    Mesh.AddComponent<GameCore::TransformComponent>();
+    Mesh.AddComponent<RenderComponent>();
+    Rend.BindWorld(Level);
+
+    Rend.EndFrame(FrameInfo{0, 0.016, EngineCore::Size(640, 360)});
+    Rend.WaitForPreviousFrame();
+    RenderView View = LastRenderedView();
+    Expect(Rend.GetViewCount() == 1 && View.ViewportPixels.Width == 640 && View.ViewportPixels.Height == 360,
+           "one view by default, the whole viewport");
+
+    Rend.SetViewCamera(RENDER_DEFAULT_SCENE, 1, Second.GetID());
+    Expect(Rend.GetViewCamera(RENDER_DEFAULT_SCENE, 1) == Second.GetID() && !Rend.GetViewCamera(RENDER_DEFAULT_SCENE, 2).IsSet(),
+           "SetViewCamera(scene, view, camera) is per view");
+    Rend.SetViewCount(RENDER_DEFAULT_SCENE, 2);
+    for(uint64_t Frame = 1; Frame <= 3; ++Frame)   // targets made, then reused
+    {
+        Rend.EndFrame(FrameInfo{Frame, 0.016, EngineCore::Size(640, 360)});
+        Rend.WaitForPreviousFrame();
+    }
+    View = LastRenderedView();
+    Expect(Rend.GetViewCount() == 2 && View.ViewIndex == 0 && View.ViewportPixels.Width == 640 && View.ViewportPixels.Height == 180
+               && View.Origin.GetX() == 100.0,
+           "two views: the main one the top half, through the first active camera");
+
+    Rend.SetViewCount(RENDER_DEFAULT_SCENE, 4);
+    Rend.EndFrame(FrameInfo{4, 0.016, EngineCore::Size(640, 360)});
+    Rend.WaitForPreviousFrame();
+    View = LastRenderedView();
+    Expect(Rend.GetViewCount() == 4 && View.ViewportPixels.Width == 320 && View.ViewportPixels.Height == 180,
+           "four views: quadrants (views 2 and 3 through view 0's camera)");
+
+    Rend.SetViewCount(RENDER_DEFAULT_SCENE, 1);
+    Rend.EndFrame(FrameInfo{5, 0.016, EngineCore::Size(800, 600)});
+    Rend.WaitForPreviousFrame();
+    View = LastRenderedView();
+    Expect(View.ViewportPixels.Width == 800 && View.ViewportPixels.Height == 600 && View.ViewportX == 0 && View.ViewportY == 0,
+           "back to one view: the whole viewport again, resized");
+
+    Rend.UnbindWorld();
+    Rend.Shutdown();
+}
 #endif // WITH_EDITOR
 
 // ============================================================================
@@ -6799,6 +6880,7 @@ int main()
     TestPostProcessStack();
 #if WITH_EDITOR
     TestMultipleScenes();
+    TestSplitscreenViews();
     TestDebugLines();
     TestUIDrawList();
     TestUISubmit();

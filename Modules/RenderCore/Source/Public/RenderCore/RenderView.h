@@ -30,6 +30,14 @@ namespace RenderCore
         EngineCore::Vector3   Origin;
         EngineCore::Size      ViewportPixels;
 
+        /* SPLITSCREEN (RenderTypes.h's RENDER_VIEWS_MAX): which of its scene's
+         * views this is, and where its ViewportPixels sit in the window
+         * (physical pixels, row 0 the top). ViewportPixels stays the view's
+         * own size, so its aspect and every pass see just this view. */
+        uint32_t              ViewIndex = 0;
+        int32_t               ViewportX = 0;
+        int32_t               ViewportY = 0;
+
         /* World-space box this view can see. IsEmpty() (GameCore::AABB's own
          * default-constructed state) means "cull nothing" -- the state a
          * RenderView has before MakeOrthographic ever runs, and the safest

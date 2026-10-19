@@ -72,6 +72,24 @@ namespace RenderCore
         void SetViewCamera(RenderSceneID InScene, GameCore::EntityID InCamera);
         GameCore::EntityID GetViewCamera(RenderSceneID InScene = RENDER_DEFAULT_SCENE) const;
 
+        /* SPLITSCREEN: the same for view InViewIndex (0 to RENDER_VIEWS_MAX - 1)
+         * of InScene. A view without a camera of its own looks through view
+         * 0's. GAME THREAD ONLY. */
+        void SetViewCamera(RenderSceneID InScene, uint32_t InViewIndex, GameCore::EntityID InCamera);
+        GameCore::EntityID GetViewCamera(RenderSceneID InScene, uint32_t InViewIndex) const;
+
+        /*
+         * SPLITSCREEN (RenderTypes.h): how many views InScene draws a frame,
+         * 1 to RENDER_VIEWS_MAX, laid over its viewport by
+         * MakeSplitscreenLayout (two views top and bottom, or left and right
+         * with bInSideBySide) -- each its own camera (SetViewCamera), light,
+         * post process and targets, sized to its rectangle. 1, the default,
+         * is one view over the whole viewport. [Splitscreen] Views overrides
+         * the default scene's, for debugging. GAME THREAD ONLY.
+         */
+        void SetViewCount(RenderSceneID InScene, uint32_t InCount, bool bInSideBySide = false);
+        uint32_t GetViewCount(RenderSceneID InScene = RENDER_DEFAULT_SCENE) const;
+
         // === Scenes ==========================================================
         // GAME THREAD ONLY. Every frame renders every scene; each has its own
         // World binding, view override, overlay lines and render targets.

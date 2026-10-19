@@ -31,6 +31,7 @@ namespace EngineCore { class Image; }
 
 class GDIReadback;           // Public/GDI/GDIRenderTarget.h
 class GDIOcclusionQueries;   // Public/GDI/GDIQuery.h
+class GDIRenderTarget;       // Public/GDI/GDIRenderTarget.h; opaque here, as the two above
 
 namespace RenderCore
 {
@@ -310,6 +311,12 @@ namespace RenderCore
          * InTargets.Final, which stays bound for the present; nothing if it
          * names none, or Final itself. */
         void ShowTarget(const SceneTargets& InTargets, const std::string& InName);
+
+        /* SPLITSCREEN (RenderScene::Render): InTarget cleared to black, then
+         * each of InCount views' final colours (InSources, null skipped)
+         * stretched over its rectangle InRects in it, opaque. Leaves InTarget
+         * bound, for the UI and overlays over the whole window. */
+        void CompositeViews(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewRect* InRects, uint32_t InCount);
 
         /* RenderScene::Render's: queue the proxies' draws in their stages'
          * policies, then run the stages into InTargets (RENDERPIPELINE.md),

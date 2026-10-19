@@ -862,6 +862,48 @@ editor's Show > View Mode):
 
 The screenshot (`Renderer::RequestSceneCapture`) reads what the mode shows.
 
+### Views
+
+A scene draws one view by default: one camera, the whole viewport. For
+splitscreen it draws up to `RENDER_VIEWS_MAX` (4) views a frame.
+
+- **Layout.** `Renderer::SetViewCount(Scene, N, bSideBySide)` lays N views
+  over the viewport with `MakeSplitscreenLayout` (RenderTypes.h):
+  - 2: top and bottom halves, or left and right.
+  - 3: one across the top, two below.
+  - 4: quadrants.
+  `[Splitscreen] Views` overrides the default scene's count, for debugging:
+  `Splitscreen.Views 4` in the console.
+- **Cameras.** `Renderer::SetViewCamera(Scene, ViewIndex, Camera)` sets each
+  view's camera. A view without one looks through view 0's.
+- **Per view.** `WorldBridge` builds each view with its own `RenderView`:
+  - `ViewportPixels` is the size of its rectangle, so its aspect and every
+    pass see only that view.
+  - `ViewIndex`, `ViewportX` and `ViewportY` say which view it is and where
+    it goes in the window.
+  - It also gets its own light (the local lights nearest its eye) and its
+    own post process volumes.
+- **What a view keeps.** `RenderScene` keeps a `SceneViewState` for each view,
+  holding everything that carries from frame to frame:
+  - its stage targets (TAA history, exposure, SSR's last colour, velocity);
+  - last frame's view-projection;
+  - its TAA jitter cycle;
+  - its occlusion query sets. A proxy's `OcclusionQueries` are kept per view.
+- **Once a frame, whatever the view count.** Simulate, scene captures,
+  image-based lighting and `EndFrameMotion` run once. Captures and reflection
+  probes are taken for view 0.
+- **Compositing.** Each view is drawn into its own targets in turn. With more
+  than one view, `RenderContext::CompositeViews` clears a window-sized target
+  (`RenderCore.Scene.Composite`) to black, then stretches each view's final
+  colour over its rectangle (`ViewTarget.fsh`, with one viewport per view).
+  The UI, debug lines and "stat unit" draw on that target, and it is what gets
+  presented. Debug lines go through view 0, over its rectangle.
+- **One view.** The view's own final colour is the picture and no composite
+  is made, so a game without splitscreen draws exactly as before.
+- **Not per view yet.** Stage timings ("stat frame", stage CPU times) are view
+  0's only. Terrain and foliage LOD, and custom pass target pools, are still
+  shared between views.
+
 ### Scene capture
 
 A **Scene Capture Probe** component (`Components/SceneCaptureProbeComponent.h`)
