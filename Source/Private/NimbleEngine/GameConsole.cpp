@@ -301,7 +301,7 @@ void GameConsole::ProcessInput(InputState& InOutInput)
     }
 
     const InputKey ToggleKey = FindInputKey(GConsoleToggleKey.GetString());
-    if(InOutInput.WasPressed(ToggleKey))
+    if(InOutInput.WasPressed(ToggleKey, INPUT_PLAYER_DEVICES))
     {
         Toggle();
         InOutInput.Consume(ToggleKey);
@@ -328,9 +328,9 @@ void GameConsole::ProcessInput(InputState& InOutInput)
     static const InputKey PageDown  = FindInputKey("PageDown");
     static const InputKey Tab       = FindInputKey("Tab");
 
-    const auto Hits = [&InOutInput](const InputKey InKey) { return InOutInput.GetPressesAndRepeats(InKey); };
+    const auto Hits = [&InOutInput](const InputKey InKey) { return InOutInput.GetPressesAndRepeats(InKey, INPUT_PLAYER_DEVICES); };
 
-    if(InOutInput.WasPressed(Escape))
+    if(InOutInput.WasPressed(Escape, INPUT_PLAYER_DEVICES))
     {
         Close();
         InOutInput.ConsumeAll();
@@ -400,9 +400,9 @@ void GameConsole::ProcessInput(InputState& InOutInput)
         Scroll = std::max(Scroll - Pages * VISIBLE_LINES / 2, 0);
         bDirty = true;
     }
-    if(InOutInput.WasPressed(Tab)) { Complete(); }
+    if(InOutInput.WasPressed(Tab, INPUT_PLAYER_DEVICES)) { Complete(); }
 
-    if(InOutInput.WasPressed(Return) || InOutInput.WasPressed(Enter))
+    if(InOutInput.WasPressed(Return, INPUT_PLAYER_DEVICES) || InOutInput.WasPressed(Enter, INPUT_PLAYER_DEVICES))
     {
         const std::string Line = Input;
         Input.clear();

@@ -43,7 +43,7 @@ namespace NimbleEngine
 
     enum : size_t
     {
-        INPUT_PLAYERS_MAX  = 4,    // local players; keyboard and mouse are player 0's
+        INPUT_PLAYERS_MAX  = 4,    // local players; keyboard and mouse are one player's (GetKeyboardMousePlayer)
         INPUT_NAME_MAX     = 32,   // including the NUL: maps, actions, axes
         INPUT_ACTIONS_MAX  = 32,   // per map; one bit each on an InputComponent
         INPUT_AXES_MAX     = 16,   // per map
@@ -59,10 +59,30 @@ namespace NimbleEngine
      * (Mouse.DeltaX, Gamepad.LeftX). */
     NE_API bool IsAnalogInputKey(InputKey InKey);
 
+    /* True for a keyboard key, a mouse button or a mouse axis. */
+    NE_API bool IsKeyboardMouseInputKey(InputKey InKey);
+
+    /*
+     * SPLITSCREEN (INPUT.md, "Local players"): the local player the keyboard
+     * and mouse belong to -- [Input] KeyboardMousePlayer, 0 (player 1) by
+     * default, -1 nobody's. An InputState read of a keyboard or mouse key for
+     * any other player sees nothing, so only that player's avatar follows
+     * them; the others play on their pads.
+     */
+    NE_API int32_t GetKeyboardMousePlayer();
+    NE_API void    SetKeyboardMousePlayer(int32_t InPlayer);
+
+    /* An InputState read "as" the devices: the keyboard and mouse whoever has
+     * them, and no pad. For what is not a player's -- the console, the UI's
+     * text fields and cursor. */
+    constexpr uint8_t INPUT_PLAYER_DEVICES = 0xFE;
+
     /*
      * One frame's devices. Edges are counts, so a key pressed and released
      * within one frame still reports WasPressed and WasReleased. A gamepad key
-     * reads player InPlayer's pad; keyboard and mouse ignore the player.
+     * reads player InPlayer's pad; a keyboard or mouse key reads the devices
+     * when InPlayer owns them (GetKeyboardMousePlayer), nothing otherwise.
+     * The host side writes them whatever the player.
      */
     class InputRouter;
 
@@ -130,6 +150,7 @@ namespace NimbleEngine
         void ConsumeKeyboard();       // and the typed text
         void ConsumeMouseButtons();   // and the wheel
         void ConsumeGamepad();        // every player's buttons and sticks
+        void ConsumeGamepad(uint8_t InPlayer);   // one player's
         void ConsumeAll();
 
         /* Starts the next frame: edges and per-frame motion back to zero, held
