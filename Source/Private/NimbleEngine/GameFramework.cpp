@@ -1,3 +1,5 @@
+#include <algorithm>
+
 #include "Public/NimbleEngine/Avatar.h"
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/NetFacade.h"
@@ -210,9 +212,25 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(Game)
     Lib.Function("SetViewTarget", [](GameCore::ScriptCall& Call)
     {
         const GameCore::EntityID Camera = Call.GetEntity(1);
+        const int32_t Local = Call.GetArgCount() >= 2 ? Call.GetInt(2) : 0;
         if(Call.HasError()) { return; }
-        if(NimbleEngine::GameSession* Session = SessionFor(Call)) { Session->SetViewTarget(Camera); }
-    }, "Camera:Entity").Tooltip("View through Camera (or its child camera); nil goes back to your avatar's");
+        if(Local < 0 || Local >= int32_t(NimbleEngine::INPUT_PLAYERS_MAX)) { return; }
+        if(NimbleEngine::GameSession* Session = SessionFor(Call)) { Session->SetViewTarget(Camera, uint8_t(Local)); }
+    }, "Camera:Entity, LocalPlayer:integer?").Tooltip("View through Camera (or its child camera) -- local player LocalPlayer's view (0 first, the default) "
+                                                       "in splitscreen; nil goes back to that player's avatar's");
+
+    Lib.Pure("GetViewCount", [](GameCore::ScriptCall& Call)
+    {
+        const NimbleEngine::GameSession* Session = SessionFor(Call);
+        Call.PushInteger(Session ? int32_t(Session->GetViewCount()) : 1);
+    }, "-> Views:integer").Tooltip("How many views the window shows: one per local player in splitscreen, else 1");
+
+    Lib.Function("SetViewCount", [](GameCore::ScriptCall& Call)
+    {
+        const int32_t Count = Call.GetInt(1);
+        if(Call.HasError()) { return; }
+        if(NimbleEngine::GameSession* Session = SessionFor(Call)) { Session->SetViewCount(uint32_t(std::clamp(Count, 0, 4))); }
+    }, "Views:integer").Tooltip("Show this many views (1-4); 0 goes back to one per local player with a camera");
 
     // === Events (GameSession emits them on the World's EventBus) ===============
 
