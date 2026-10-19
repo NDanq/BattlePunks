@@ -26,6 +26,11 @@
 #include "Public/RenderCore/Components/AnimationComponent.h"
 #include "Private/RenderCore/RenderComponentProxy.h"
 
+/* SPLITSCREEN, for testing views far apart before a game gives each its own
+ * camera: "x,y,z" moves each view i > 0 that has no camera of its own by i
+ * times that, from the camera it shares. Empty: none. Development only. */
+NIMBLE_CONFIG_STRING(GSplitscreenDebugOffset, "Splitscreen", "DebugOffset", "", nullptr);
+
 // GameCore is this file's whole subject -- it reads World's pools and
 // components on every line.
 using namespace GameCore;
@@ -294,6 +299,12 @@ namespace RenderCore
          * else the first active CameraComponent -- see DESIGN.md's "View".
          * (0, 1, -1) matches GDICamera's own default constructor when no
          * camera is active. */
+        EngineCore::Vector3 Shared(0.0, 0.0, 0.0);   // [Splitscreen] DebugOffset, for a view on another's camera
+        double X = 0.0, Y = 0.0, Z = 0.0;
+        if(InViewIndex > 0 && std::sscanf(GSplitscreenDebugOffset.GetString(), "%lf,%lf,%lf", &X, &Y, &Z) == 3)
+        {
+            Shared = EngineCore::Vector3(X, Y, Z) * double(InViewIndex);
+        }
         for(const uint32_t Index : { InViewIndex, 0u })
         {
             const EntityID Wanted = Index < RENDER_VIEWS_MAX ? ViewCameras[Index] : EntityID();
@@ -301,7 +312,7 @@ namespace RenderCore
             {
                 if(const CameraComponent* Camera = BoundWorld->GetEntity(Wanted).GetComponent<CameraComponent>())
                 {
-                    return ViewThrough(*Camera, InFrame);
+                    return ViewThrough(*Camera, InFrame, Index == InViewIndex ? EngineCore::Vector3(0.0, 0.0, 0.0) : Shared);
                 }
             }
         }
@@ -317,7 +328,7 @@ namespace RenderCore
                 {
                     if(Cameras[Index].bActive)
                     {
-                        return ViewThrough(Cameras[Index], InFrame);
+                        return ViewThrough(Cameras[Index], InFrame, Shared);
                     }
                 }
             }
@@ -326,7 +337,7 @@ namespace RenderCore
         return RenderView::MakeOrthographic(InFrame.ViewportPixels, EngineCore::Vector3(0.0, 1.0, -1.0), -1.0f, 1000.0f);
     }
 
-    RenderView WorldBridge::ViewThrough(const CameraComponent& Camera, const FrameInfo& InFrame) const
+    RenderView WorldBridge::ViewThrough(const CameraComponent& Camera, const FrameInfo& InFrame, const EngineCore::Vector3& InOffset) const
     {
         EngineCore::Vector3 Origin(0.0, 1.0, -1.0);
         const GameCore::TransformPose Pose = PoseOf(Camera.Owner);
@@ -334,6 +345,7 @@ namespace RenderCore
         {
             Origin = Pose.Position;
         }
+        Origin = Origin + InOffset;   // [Splitscreen] DebugOffset; zero otherwise
 
         if(Camera.Projection == CP_Perspective)
         {

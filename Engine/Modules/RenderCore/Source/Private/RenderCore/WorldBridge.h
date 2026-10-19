@@ -87,7 +87,8 @@ namespace RenderCore
         static void OnComponentRemoved(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType, void* InUserData);
 
         RenderView BuildView(const FrameInfo& InFrame, uint32_t InViewIndex = 0) const;
-        RenderView ViewThrough(const CameraComponent& InCamera, const FrameInfo& InFrame) const;
+        RenderView ViewThrough(const CameraComponent& InCamera, const FrameInfo& InFrame,
+                               const EngineCore::Vector3& InOffset = EngineCore::Vector3(0.0, 0.0, 0.0)) const;
 
         /* Each animated Render component's pose, to its proxy, as one batch
          * after the frame's extraction (ANIMATION.md); a proxy posed before

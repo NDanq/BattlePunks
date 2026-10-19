@@ -821,6 +821,30 @@ namespace
         CustomPassLog& Log;
         std::string    Name;
     };
+
+    /* SPLITSCREEN: what each run saw -- its view, whether it is a main view,
+     * its targets' size, and the target its pool handed it. */
+    struct ViewPassRun { uint32_t View; bool bMain; uint32_t Width, Height; const void* Target; };
+
+    class ViewPass final : public CustomRenderPass
+    {
+    public:
+        explicit ViewPass(std::vector<ViewPassRun>& InRuns) : Runs(InRuns) {}
+
+        const char* GetName() const override { return "Views"; }
+        void Execute(RenderPassContext& InContext) override
+        {
+            RenderPassTargetDesc Desc;
+            Desc.Width  = InContext.GetWidth();
+            Desc.Height = InContext.GetHeight();
+            const RenderPassTarget Target = InContext.AcquireTarget("PerView", Desc);
+            Runs.push_back({ InContext.GetViewIndex(), InContext.IsMainView(), InContext.GetWidth(), InContext.GetHeight(),
+                             Target.Handle });
+        }
+
+    private:
+        std::vector<ViewPassRun>& Runs;   // render thread; read after a flush
+    };
 }
 
 static void TestCustomRenderPasses()
@@ -892,6 +916,31 @@ static void TestCustomRenderPasses()
     Rend.WaitForPreviousFrame();
     FlushRenderCommands();
     Expect(Log.Take().empty(), "with none registered, nothing runs");
+
+    /* SPLITSCREEN: a pass runs once per view, each a main view, each with its own pool. */
+    {
+        std::vector<ViewPassRun> Runs;
+        const RenderPassHandle PerView = RegisterCustomRenderPass(&World, std::make_shared<ViewPass>(Runs), ERenderHook::AfterForward);
+        Rend.SetViewCount(RENDER_DEFAULT_SCENE, 2);
+        for(uint64_t Frame = 4; Frame <= 5; ++Frame)
+        {
+            Rend.EndFrame(FrameInfo{Frame, 0.016, EngineCore::Size(320, 200)});
+            Rend.WaitForPreviousFrame();
+        }
+        FlushRenderCommands();
+        const bool bTwoAFrame = Runs.size() == 4 && Runs[0].View == 0 && Runs[1].View == 1 && Runs[2].View == 0 && Runs[3].View == 1;
+        Expect(bTwoAFrame, "a custom pass runs for each view, in order");
+        if(bTwoAFrame)
+        {
+            Expect(Runs[0].bMain && Runs[1].bMain, "every split view is a main view (IsMainView)");
+            Expect(Runs[0].Width == 320 && Runs[0].Height == 100 && Runs[1].Height == 100, "each view's targets are its own rectangle's size");
+            Expect(Runs[0].Target && Runs[1].Target && Runs[0].Target != Runs[1].Target
+                       && Runs[2].Target == Runs[0].Target && Runs[3].Target == Runs[1].Target,
+                   "each view has its own pass targets, kept from frame to frame");
+        }
+        Rend.SetViewCount(RENDER_DEFAULT_SCENE, 1);
+        UnregisterCustomRenderPass(PerView);
+    }
 
     Rend.UnbindWorld();
     Rend.Shutdown();

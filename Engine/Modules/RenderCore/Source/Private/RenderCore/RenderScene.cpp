@@ -731,7 +731,7 @@ namespace RenderCore
          * into its targets -- leaving its final colour bound and the context
          * on its jittered view.
          */
-        void RenderSceneView(RenderContext& InContext, SceneViewState& InView, const bool bInTimed)
+        void RenderSceneView(RenderContext& InContext, SceneViewState& InView)
         {
             InContext.SetLighting(InView.Lighting);
 
@@ -790,7 +790,7 @@ namespace RenderCore
             /* Base Pass, Lighting, Unlit, the translucent stages, PostProcess;
              * leaves the final colour bound, for the present and the overlay. */
             InContext.SetUnlit(ViewMode == ERenderViewMode::Unlit);
-            InContext.RenderSceneStages(InView.Targets, ClearColor, bInTimed, bClearGradient ? &ClearBottom : nullptr);
+            InContext.RenderSceneStages(InView.Targets, ClearColor, /*bInTimed*/ true, bClearGradient ? &ClearBottom : nullptr);
             InContext.SetUnlit(false);
         }
 
@@ -1292,17 +1292,18 @@ namespace RenderCore
         InContext.WriteGpuTimestamp(RGT_SceneCapture, true);
 
         /* The views (SceneViewState), each into its own targets; the Render
-         * Target view mode's pick over each. The stats' stage times are the
-         * main view's: it alone is timed (the timers have one slot a stage). */
+         * Target view mode's pick over each. Each is timed: "stat frame"'s
+         * spans and the stage CPU times are the frame's, summed over them. */
         float    CpuMs[RGT_Count];
         int32_t  Draws[RGT_Count];
         uint64_t CulledCount = 0, StaticCount = 0, Occluded = 0, Queries = 0;
+        float    QueueMs = 0.0f;
         for(uint32_t Index = 0; Index < ViewCount; ++Index)
         {
             SceneViewState& View = P->Views[Index];
             SCOPED_DRAW_EVENT(bSplit ? "View " + std::to_string(Index) : std::string("View"));
-            P->RenderSceneView(InContext, View, /*bInTimed*/ Index == 0);
-            if(Index == 0) { InContext.GetStageCpuTimes(CpuMs, Draws); }
+            P->RenderSceneView(InContext, View);
+            QueueMs += View.QueueMs;
             if(P->ViewMode == ERenderViewMode::RenderTarget)
             {
                 InContext.SetView(View.View);
@@ -1312,9 +1313,11 @@ namespace RenderCore
             StaticCount += View.StaticCount;
             if(View.Occlusion.Current) { Occluded += View.Occlusion.LastOccluded; Queries += View.Occlusion.LastQueries; }
         }
+        InContext.EndTimedViews();
+        InContext.GetStageCpuTimes(CpuMs, Draws);
         InContext.SetCustomPassWorld(nullptr);
         P->PassWorld = nullptr;   // set again by the next frame's SetCustomPassWorld, if it has a World
-        P->AddCpuTimes(CpuMs, Draws, Main.QueueMs);
+        P->AddCpuTimes(CpuMs, Draws, QueueMs);
         InContext.SetView(Main.View);   // unjittered again, for what draws over the picture
 
         /*

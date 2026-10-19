@@ -267,9 +267,13 @@ namespace RenderCore
                 }
             }
 
-            /* Every chunk (the shadow view culls the proxy, not its chunks), at the LOD the view last chose. */
+            /* Every chunk (the shadow view culls the proxy, not its chunks), at the LOD the view being
+             * drawn chooses -- chosen again here, not kept from Draw: with several views a frame
+             * (splitscreen), the last one drawn may be another view's, or Draw may not have run for
+             * this one at all (the proxy culled from the camera, its shadow still in view). */
             void DrawShadow(RenderContext& InContext) override
             {
+                ChooseLODs(InContext.GetView().Origin);
                 const char* Slots[1] = { Material.c_str() };
                 for(const Chunk& Each : Chunks)
                 {
@@ -325,7 +329,7 @@ namespace RenderCore
             struct Chunk
             {
                 std::string Paths[TERRAIN_LODS];
-                uint32_t    Lod      = 0;      // what the last view chose
+                uint32_t    Lod      = 0;      // what the view being drawn chose (ChooseLODs)
                 float       Distance = 0.0f;   // and how far it was, terrain units
                 uint64_t    Revision = 0;      // the data's chunk revision it was built from
                 bool        bBuilt   = false;

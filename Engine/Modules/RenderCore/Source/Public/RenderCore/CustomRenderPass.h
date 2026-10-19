@@ -146,6 +146,7 @@ namespace RenderCore
         uint32_t          GetWidth() const;     // the scene's targets
         uint32_t          GetHeight() const;
         bool              IsMainView() const;   // a World's own view, not a scene capture's
+        uint32_t          GetViewIndex() const; // which of its scene's views (splitscreen: 0 to RENDER_VIEWS_MAX - 1)
         bool              IsHDR() const;        // the scene colour is linear half float
         uint64_t          GetFrameNumber() const;
         float             GetDeltaSeconds() const;
