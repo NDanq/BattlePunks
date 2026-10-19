@@ -70,6 +70,12 @@ namespace NimbleEngine
         void OnStart() override;
         void OnClientConnected(int32_t InClient, GameCore::EntityID InPlayer) override;
 
+        /* SPLITSCREEN: a joining local player gets a player and an avatar, at the
+         * next start; a leaving one's avatar and player are destroyed. Authority
+         * only (a listen server or standalone). */
+        bool OnLocalPlayerJoin(uint8_t InLocalPlayer) override;
+        bool OnLocalPlayerLeave(uint8_t InLocalPlayer) override;
+
         /* GetAvatarPrefab asked for no particular player: what this mode spawns
          * unless a Player Start or [Avatar] DefaultPrefab decides. For tools
          * (Collaboration's content report), not play. */

@@ -219,6 +219,22 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(Game)
     }, "Camera:Entity, LocalPlayer:integer?").Tooltip("View through Camera (or its child camera) -- local player LocalPlayer's view (0 first, the default) "
                                                        "in splitscreen; nil goes back to that player's avatar's");
 
+    Lib.Function("JoinLocalPlayer", [](GameCore::ScriptCall& Call)
+    {
+        const int32_t Local = Call.GetInt(1);
+        if(Call.HasError()) { return; }
+        NimbleEngine::GameSession* Session = SessionFor(Call);
+        Call.PushBool(Session && Local > 0 && Local < int32_t(NimbleEngine::INPUT_PLAYERS_MAX) && Session->JoinLocalPlayer(uint8_t(Local)));
+    }, "LocalPlayer:integer -> Joined:boolean").Tooltip("Split-screen: local player LocalPlayer (1-3) joins, as the mode allows");
+
+    Lib.Function("LeaveLocalPlayer", [](GameCore::ScriptCall& Call)
+    {
+        const int32_t Local = Call.GetInt(1);
+        if(Call.HasError()) { return; }
+        NimbleEngine::GameSession* Session = SessionFor(Call);
+        Call.PushBool(Session && Local > 0 && Local < int32_t(NimbleEngine::INPUT_PLAYERS_MAX) && Session->LeaveLocalPlayer(uint8_t(Local)));
+    }, "LocalPlayer:integer -> Left:boolean").Tooltip("Split-screen: local player LocalPlayer (1-3) leaves, their avatar and player gone");
+
     Lib.Pure("GetViewCount", [](GameCore::ScriptCall& Call)
     {
         const NimbleEngine::GameSession* Session = SessionFor(Call);
