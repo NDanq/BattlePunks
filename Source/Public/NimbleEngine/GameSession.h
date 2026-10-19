@@ -403,6 +403,10 @@ namespace NimbleEngine
         bool                bSplitAngleSet  = false;
         float               FrameDelta      = 0.0f;   // this Tick's, for the line's turn
         EngineCore::Size    FramePixels;              // and its window
+        uint32_t            SplitPlayers    = 0;      // the dynamic split's players last frame; 0 when it is off
+
+        /* SPLITSCREEN: each local player's documents' area (UISystem::SetPlayerArea): their view. */
+        void PublishPlayerAreas();
 
         /* PublishViewTarget's dynamic split: true if it placed the views. */
         bool PublishSplitCamera();
