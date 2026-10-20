@@ -27,12 +27,20 @@ namespace GameCore
             && BakedData == InOther.BakedData;
     }
 
-    void SerializeWorldSettings(EngineCore::Archive& Ar, WorldSettings& InOutSettings)
+    void SerializeWorldSettings(EngineCore::Archive& Ar, WorldSettings& InOutSettings, const uint16_t InVersion)
     {
         WorldLightingSettings& Lighting = InOutSettings.Lighting;
         uint8_t Baked = Lighting.bBakedLighting ? 1 : 0;
         Ar << Baked << Lighting.TexelsPerUnit << Lighting.Bounces << Lighting.SamplesPerTexel
            << Lighting.ProbeSpacing << Lighting.MaxAtlasSize << Lighting.BakedData;
+        if(InVersion >= 2)
+        {
+            Ar << InOutSettings.GameMode;
+        }
+        else if(Ar.IsLoading())
+        {
+            InOutSettings.GameMode.clear();
+        }
         if(Ar.IsLoading())
         {
             Lighting.bBakedLighting = Baked != 0;

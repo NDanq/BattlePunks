@@ -349,7 +349,8 @@ Notes on the code above:
 - **`OnAvatarPossessed`** and **`OnAvatarUnpossessed`** run on every process.
   A client gets them as the change replicates.
 
-**Register the mode**, at file scope after the class, and **name it** for the world:
+**Register the mode**, at file scope after the class, and **name it** in the
+world's **World > World Settings > Game mode** (saved in the `.nmworld`):
 
 ```cpp
 NIMBLE_REGISTER_GAME_MODE(WalkerMode, "Walker")
@@ -358,8 +359,7 @@ NIMBLE_REGISTER_GAME_MODE(WalkerMode, "Walker")
 ```ini
 ; Config/DefaultEngine.ini
 [World_Walker]
-File=Content/Levels/Walker.nmworld
-GameMode=Walker
+File=Content/Levels/Walker.nmworld    ; its <Settings GameMode="Walker" />
 ```
 
 **Place the Player Starts.** In the level, add entities with a Transform and a

@@ -52,18 +52,28 @@ namespace GameCore
     {
         WorldLightingSettings Lighting;
 
+        /* The rules a level of this world runs: a game mode the game module
+         * registers (NimbleEngine's RegisterGameMode), by name; "" for none.
+         * The editor's World Settings sets it. */
+        std::string GameMode;
+
         /* The editor Outliner's folders ("A/B": B inside A), sorted, so one
          * with nothing in it is kept too; an entity names its own
          * (Entity::GetFolder). Text worlds only: a cooked world has none. */
         std::vector<std::string> Folders;
 
-        bool operator==(const WorldSettings& InOther) const { return Lighting == InOther.Lighting && Folders == InOther.Folders; }
+        bool operator==(const WorldSettings& InOther) const
+        {
+            return Lighting == InOther.Lighting && GameMode == InOther.GameMode && Folders == InOther.Folders;
+        }
         bool operator!=(const WorldSettings& InOther) const { return !(*this == InOther); }
     };
 
     /* WSET's payload, both directions; Clamp()ed on load. Append new fields
-     * at the end, behind a version check. */
-    GAMECORE_API void SerializeWorldSettings(EngineCore::Archive& Ar, WorldSettings& InOutSettings);
+     * at the end, behind a version check: InVersion is the chunk's (saving
+     * writes WORLD_SETTINGS_VERSION). 2: GameMode. */
+    constexpr uint16_t WORLD_SETTINGS_VERSION = 2;
+    GAMECORE_API void SerializeWorldSettings(EngineCore::Archive& Ar, WorldSettings& InOutSettings, uint16_t InVersion);
 }
 
 #endif //GAMECORE_WORLDSETTINGS_H

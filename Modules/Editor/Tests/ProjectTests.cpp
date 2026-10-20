@@ -103,9 +103,11 @@ static void TestCreate(const QDir& InRoot)
 
     /* The world list, not C++, makes the start world a level. */
     const QString Ini = ReadText(Project.filePath(QStringLiteral("Config/DefaultEngine.ini")));
-    Expect(Ini.contains(QStringLiteral("[World_Asteroids]\nFile=Content/Levels/Asteroids.nmworld\nGameMode=Asteroids\n"
+    Expect(Ini.contains(QStringLiteral("[World_Asteroids]\nFile=Content/Levels/Asteroids.nmworld\n"
                                        "StartupScript=Scripts/Main.lua")),
-           "the config lists the start world, naming the mode and its startup script");
+           "the config lists the start world and its startup script");
+    const QString World = ReadText(Project.filePath(QStringLiteral("Content/Levels/Asteroids.nmworld")));
+    Expect(World.contains(QStringLiteral("<Settings GameMode=\"Asteroids\" />")), "the start world names the mode");
     Expect(!Ini.contains(QStringLiteral("[Scripting]")), "there is no project-wide startup script");
 
     const QString Config = ReadText(Project.filePath(QStringLiteral("Config/DefaultEngine.ini")));

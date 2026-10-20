@@ -415,10 +415,10 @@ static void TestWorldList()
     RegisterGameMode<ListMode>("ListMode");
     Expect(HasGameMode("listmode"), "a registered mode is found by name, any case");
 
-    EngineCore::LoadConfigText("[World_ListYard]\nFile = Content/Levels/ListYard.nmworld\nGameMode = ListMode\n"
+    EngineCore::LoadConfigText("[World_ListYard]\nFile = Content/Levels/ListYard.nmworld\n"
                                "StartupScript = Scripts/Yard.lua\nCook = false\n"
                                "[World_ListBare]\nFile = Content/Levels/ListBare.nmworld\n"
-                               "[World_ListNoFile]\nGameMode = ListMode\n");
+                               "[World_ListNoFile]\nCook = true\n");
     const std::vector<WorldEntry> Worlds = ReadWorldList();
     const WorldEntry* Yard = nullptr;
     const WorldEntry* Bare = nullptr;
@@ -429,8 +429,8 @@ static void TestWorldList()
         if(Each.Name == "ListBare") { Bare = &Each; }
         bNoFile |= Each.Name == "ListNoFile";
     }
-    Expect(Yard && Yard->File == "Content/Levels/ListYard.nmworld" && Yard->GameMode == "ListMode",
-           "a world's section gives its name, file and mode");
+    Expect(Yard && Yard->File == "Content/Levels/ListYard.nmworld",
+           "a world's section gives its name and file (the world file names its mode)");
     Expect(Yard && Yard->StartupScript == "Scripts/Yard.lua" && !Yard->bCook, "a world's own startup script, and Cook=false read");
     Expect(Bare && Bare->StartupScript.empty() && Bare->bCook, "absent keys default: no script, cooked");
     Expect(!bNoFile, "a world with no File is left out");

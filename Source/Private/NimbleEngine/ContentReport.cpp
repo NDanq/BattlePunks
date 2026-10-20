@@ -18,6 +18,7 @@
 #include "Public/GameCore/Components/NetComponent.h"
 #include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldPackage.h"
+#include "Public/GameCore/WorldSettings.h"
 #include "Public/NimbleEngine/GameModule.h"
 #include "Public/NimbleEngine/PlayerStart.h"
 #include "Public/NimbleEngine/WorldList.h"
@@ -180,17 +181,18 @@ namespace
      * Start's, else [Avatar] DefaultPrefab -- has a Net component (else it
      * isn't replicated, and its client can't drive it). OutWhy says why not.
      */
-    bool CheckWorldNetworked(const WorldEntry& InWorld, const fs::path& InProject, std::string& OutWhy)
+    bool CheckWorldNetworked(GameCore::World& InWorld, std::string& OutWhy)
     {
-        if(!IsNetworkedGameMode(InWorld.GameMode.c_str()))
+        const std::string& GameMode = InWorld.GetSettings().GameMode;
+        if(!IsNetworkedGameMode(GameMode.c_str()))
         {
-            OutWhy = InWorld.GameMode.empty() ? std::string("it has no game mode")
-                                              : "its mode, " + InWorld.GameMode + ", isn't a NetGameMode";
+            OutWhy = GameMode.empty() ? std::string("it has no game mode")
+                                      : "its mode, " + GameMode + ", isn't a NetGameMode";
             return false;
         }
 
         std::vector<std::string> Prefabs;
-        const std::string ModePrefab = GetGameModeAvatarPrefab(InWorld.GameMode.c_str());
+        const std::string ModePrefab = GetGameModeAvatarPrefab(GameMode.c_str());
         if(!ModePrefab.empty())
         {
             Prefabs.push_back(ModePrefab);
@@ -199,26 +201,22 @@ namespace
         {
             /* The level's Player Starts; one that names none takes the default. */
             bool bNeedsDefault = true;
-            GameCore::World Scratch;
-            if(GameCore::LoadWorldFile(Generic(InProject / fs::u8path(InWorld.File)).c_str(), Scratch))
+            InWorld.Each<PlayerStartComponent>([&](const GameCore::Entity&, PlayerStartComponent& InStart)
             {
-                Scratch.Each<PlayerStartComponent>([&](const GameCore::Entity&, PlayerStartComponent& InStart)
+                if(!InStart.bEnabled)
                 {
-                    if(!InStart.bEnabled)
-                    {
-                        return;
-                    }
-                    if(InStart.AvatarPrefab[0] != '\0')
-                    {
-                        Prefabs.push_back(InStart.AvatarPrefab);
-                        bNeedsDefault = false;
-                    }
-                    else
-                    {
-                        bNeedsDefault = true;
-                    }
-                });
-            }
+                    return;
+                }
+                if(InStart.AvatarPrefab[0] != '\0')
+                {
+                    Prefabs.push_back(InStart.AvatarPrefab);
+                    bNeedsDefault = false;
+                }
+                else
+                {
+                    bNeedsDefault = true;
+                }
+            });
             if(bNeedsDefault)
             {
                 const EngineCore::ConfigVar* Default = EngineCore::ConfigFindVar("Avatar", "DefaultPrefab");
@@ -257,15 +255,10 @@ namespace
     /* A NetGameMode world with no enabled Player Start spawns every avatar at
      * the origin -- unless every one it needs is placed (AutoPossess), which
      * isn't known here; the report says so, and the reader decides. */
-    bool HasPlayerStart(const WorldEntry& InWorld, const fs::path& InProject)
+    bool HasPlayerStart(GameCore::World& InWorld)
     {
-        GameCore::World Scratch;
-        if(!GameCore::LoadWorldFile(Generic(InProject / fs::u8path(InWorld.File)).c_str(), Scratch))
-        {
-            return true;   // "doesn't load" is its own problem
-        }
         bool bFound = false;
-        Scratch.Each<PlayerStartComponent>([&](const GameCore::Entity&, PlayerStartComponent& InStart)
+        InWorld.Each<PlayerStartComponent>([&](const GameCore::Entity&, PlayerStartComponent& InStart)
         {
             bFound = bFound || InStart.bEnabled;
         });
@@ -308,13 +301,25 @@ int Application::ExecReport(const char* InDefaultModule, const ContentReportOpti
         /* Each listed world: whether players in it see each other (Play Together warns). */
         for(const WorldEntry& Each : ReadWorldList())
         {
+            /* The world file names its mode (WorldSettings::GameMode). */
+            GameCore::World Scratch;
             std::string Why;
-            const bool bNetworked = CheckWorldNetworked(Each, Project, Why);
-            WorldLines += "world\t" + OneLine(Each.Name) + "\t" + OneLine(Each.File) + "\t" + OneLine(Each.GameMode) + "\t"
-                        + (bNetworked ? "1" : "0") + "\t" + OneLine(Why) + "\n";
-            if(IsNetworkedGameMode(Each.GameMode.c_str()) && !HasPlayerStart(Each, Project))
+            const bool bLoaded = GameCore::LoadWorldFile(Generic(Project / fs::u8path(Each.File)).c_str(), Scratch);
+            bool bNetworked = false;
+            if(bLoaded)
             {
-                Problems.push_back({ Each.File, "has no enabled Player Start, so " + Each.GameMode
+                bNetworked = CheckWorldNetworked(Scratch, Why);
+            }
+            else
+            {
+                Why = "its world doesn't load";   // its own problem, below
+            }
+            const std::string GameMode = bLoaded ? Scratch.GetSettings().GameMode : std::string();
+            WorldLines += "world\t" + OneLine(Each.Name) + "\t" + OneLine(Each.File) + "\t" + OneLine(GameMode) + "\t"
+                        + (bNetworked ? "1" : "0") + "\t" + OneLine(Why) + "\n";
+            if(bLoaded && IsNetworkedGameMode(GameMode.c_str()) && !HasPlayerStart(Scratch))
+            {
+                Problems.push_back({ Each.File, "has no enabled Player Start, so " + GameMode
                                                 + " spawns avatars at the origin" });
             }
         }
