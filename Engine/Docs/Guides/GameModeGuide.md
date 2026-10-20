@@ -26,13 +26,12 @@ you change one, change the other.
 ## The model in one picture
 
 ```
- Config/DefaultEngine.ini                    the game module (a DLL)
- ┌────────────────────────────┐              ┌───────────────────────────────┐
- │ [World_CoinRush]           │              │ NIMBLE_REGISTER_GAME_MODE(    │
- │ File=...CoinRush.nmworld   │── names ────►│   CoinRushMode, "CoinRush")   │
- │ GameMode=CoinRush          │              └───────────────────────────────┘
- │ StartupScript=Scripts/...  │
- └─────────────┬──────────────┘
+ Config/DefaultEngine.ini      the world file                 the game module (a DLL)
+ ┌────────────────────────────┐ ┌───────────────────────────┐ ┌───────────────────────────────┐
+ │ [World_CoinRush]           │ │ CoinRush.nmworld          │ │ NIMBLE_REGISTER_GAME_MODE(    │
+ │ File=...CoinRush.nmworld ──┼►│ <Settings                 │ │   CoinRushMode, "CoinRush")   │
+ │ StartupScript=Scripts/...  │ │  GameMode="CoinRush" /> ──┼►│                               │
+ └─────────────┬──────────────┘ └───────────────────────────┘ └───────────────────────────────┘
                │ the host makes one LEVEL per listed world
                ▼
  ┌─────────────────────────── Level "CoinRush" ───────────────────────────┐
@@ -269,7 +268,18 @@ briefly, without playing, to read what it registers. (By hand,
 `UnregisterGameMode` in `OnShutdown` do the same. `WorldsLabGame.cpp` and the
 new-project template use the macro.)
 
-Then name it in `Config/DefaultEngine.ini`, or in the editor's **Project
+Then name it in the world: open the world in the editor, **World > World
+Settings**, and pick it under **Game mode** (the list is what the loaded module
+registers; "(none)" runs no rules). It is saved in the `.nmworld`:
+
+```xml
+<World Format="1">
+  <Settings GameMode="CoinRush" />   <!-- the name the mode registered with -->
+  ...
+</World>
+```
+
+List the world in `Config/DefaultEngine.ini`, or in the editor's **Project
 Settings > Worlds**:
 
 ```ini
@@ -277,14 +287,14 @@ Settings > Worlds**:
 StartLevel=CoinRush
 
 [World_CoinRush]
-File=Content/Levels/CoinRush.nmworld   ; the world it loads
-GameMode=CoinRush                      ; the name the mode registered with; empty: no rules
+File=Content/Levels/CoinRush.nmworld   ; the world it loads (and the mode it names)
 StartupScript=Scripts/CoinRush.lua     ; run once the mode has loaded; absent: none
 Cook=true
 ```
 
 The host makes one level per `[World_*]` section, named by the section, and
-creates a fresh mode each time the level loads. `[Game] StartLevel`, the
+creates a fresh mode -- the one its world names -- each time the level loads.
+A `GameMode=` key in a `[World_*]` section is no longer read; the log says so. `[Game] StartLevel`, the
 console's `open CoinRush` and saved games use the same name.
 
 ---
@@ -709,7 +719,7 @@ layers can be mixed without surprises: the three of them above played one game.
 |---|---|
 | `SetPhase` returns false, or `Game.IsPhase` is always false | `GetGameState()` returns `nullptr`. Return your state. (`NetGameMode` has none: add one.) |
 | `RequestPhase` returns false | `CanEnterPhase` refused. Check the from/to names; they are case-sensitive. |
-| The level loads with no rules | `GameMode=` in the `[World_*]` section is empty, or names a mode the module did not register (the log says which). |
+| The level loads with no rules | The world's **World Settings > Game mode** is "(none)", or the level fails to load because it names a mode the module did not register (the log says which). A `GameMode=` left in the `[World_*]` section is no longer read. |
 | Your mode never runs `OnStart` | `OnLoad` returned false (`OnUnload` still ran), or the level load was refused. |
 | A script errors with "needs a running game" | `Game` was called outside a session: a preview, a bare World. |
 | A graph or Lua listener misses the first phase | It started after the change. Read the phase on start as well as listening. |

@@ -6,7 +6,9 @@
 
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
+#include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldPackage.h"
+#include "Public/GameCore/WorldSettings.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/Level.h"
 #include "Public/NimbleEngine/PlayerStart.h"
@@ -87,13 +89,16 @@ namespace
                 return false;
             }
 
-            /* After the world: the mode's OnLoad (GameSession) sees it loaded. */
-            if(!Entry.GameMode.empty())
+            /* The world names it (WorldSettings::GameMode, the editor's World
+             * Settings); made after it, so the mode's OnLoad (GameSession) sees
+             * it loaded. */
+            const std::string& ModeName = GetWorld().GetSettings().GameMode;
+            if(!ModeName.empty())
             {
-                Type = FindGameMode(Entry.GameMode.c_str());
+                Type = FindGameMode(ModeName.c_str());
                 if(!Type)
                 {
-                    CORE_LOG_ERROR("[Level] '" + Entry.Name + "' names game mode '" + Entry.GameMode
+                    CORE_LOG_ERROR("[Level] '" + Entry.Name + "' (" + Entry.File + ") names game mode '" + ModeName
                                    + "', which the game module does not register")
                     return false;
                 }
@@ -157,13 +162,21 @@ std::vector<WorldEntry> ReadWorldList()
 
             const std::string Key = InKey;
             if(SameText(Key, "File"))               { Entry->File = InValue; }
-            else if(SameText(Key, "GameMode"))      { Entry->GameMode = InValue; }
             else if(SameText(Key, "StartupScript")) { Entry->StartupScript = InValue; }
             else if(SameText(Key, "Cook"))          { Entry->bCook = ParseBool(InValue, true); }
+            else if(SameText(Key, "GameMode"))
+            {
+                /* The world names its own mode now. */
+                if(InValue[0] != '\0')
+                {
+                    CORE_LOG_WARN(std::string("[Worlds] ") + InSection + ".GameMode=" + InValue + " is no longer read: "
+                                  "set the game mode in the world's World Settings (it is saved in the .nmworld)")
+                }
+            }
             else
             {
                 CORE_LOG_WARN(std::string("[Worlds] ") + InSection + "." + InKey + " is not a world setting "
-                              "(File, GameMode, StartupScript, Cook); ignored")
+                              "(File, StartupScript, Cook); ignored")
             }
         }, &List);
 
@@ -272,12 +285,6 @@ void RegisterWorldLevels()
 
     for(WorldEntry& Entry : ReadWorldList())
     {
-        if(!Entry.GameMode.empty() && !HasGameMode(Entry.GameMode.c_str()))
-        {
-            /* Still listed: its load fails with the same message. */
-            CORE_LOG_ERROR("[Worlds] '" + Entry.Name + "' names game mode '" + Entry.GameMode
-                           + "', which the game module does not register")
-        }
         WorldLevels().push_back(std::make_unique<WorldLevel>(std::move(Entry)));
         RegisterLevel(*WorldLevels().back());
     }

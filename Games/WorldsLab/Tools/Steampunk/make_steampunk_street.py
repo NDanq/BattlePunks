@@ -165,7 +165,8 @@ class Level:
         FOLDER.mkdir(parents=True, exist_ok=True)
         for stale in list(FOLDER.glob("*.nmentity")) + list(FOLDER.glob("*.nmprefabinst")):
             stale.unlink()
-        manifest = ["<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n", "<World Format=\"1\">\n"]
+        manifest = ["<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n", "<World Format=\"1\">\n",
+                    "  <Settings GameMode=\"WorldsLabExplore\" />\n"]
         for name, text in self.entities:
             (FOLDER / f"{guid(name)}.nmentity").write_text(text, newline="\n")
             manifest.append(f"  <Entity Guid=\"{guid(name)}\" />\n")

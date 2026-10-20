@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <World Format="1">
+  <Settings GameMode="WorldsLabArena" />
   <Entity Guid="cc10695ba0e53954fbcef03bde9739cd" />
   <Entity Guid="0310f5d534d00ac3ca9d8744a7ae105e" />
   <Entity Guid="d8abb9eb90a8deca2f591b4b805e281b" />

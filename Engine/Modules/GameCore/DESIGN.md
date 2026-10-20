@@ -1172,8 +1172,8 @@ World serializer writes them with the entity (below).
       CMPT  per type with a pool and a serializer
             string type NAME, uint32 instance count,
             then per instance: uint32 owner index + DATA chunk (the serializer's bytes)
-      WSET  (optional, last) the world's settings (WorldSettings.h); a world
-            without it loads the defaults, and a build from before it stops at
+      WSET  (optional, last) the world's settings (WorldSettings.h; version
+            2 adds the game mode); a world without it loads the defaults, and a build from before it stops at
             it as at any tag that is not CMPT
 
 Chunks are keyed by type **name** because a `ComponentTypeID` is assigned in
@@ -1239,9 +1239,9 @@ name whether a designer or the game opens it; the cooked copy lives under
 the project's `Saved/Cooked/`, not under a different suffix.
 
 **Text layout.** `<Name>.nmworld` is a manifest -- `<World Format="1">`; its
-`<Settings>` (`WorldSettings.h`: today `<Lighting>`, baked lighting's, only
-the attributes that differ from the defaults, and no element at all for a
-world with none); and, in slot order, one `<Entity Guid>` per loose entity and
+`<Settings>` (`WorldSettings.h`: a `GameMode` attribute naming the level's
+rules, and `<Lighting>`, baked lighting's, only the attributes that differ
+from the defaults; no element at all for a world with neither); and, in slot order, one `<Entity Guid>` per loose entity and
 one `<Instance Guid>` per prefab instance, listed where its root is (so load order, and with it
 `FindEntityByName`'s first match and instance start order, survive a round
 trip). A reader accepts format 1 only. Entities live in the sibling folder

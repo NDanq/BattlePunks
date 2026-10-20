@@ -743,7 +743,7 @@ void EditorMainWindow::BuildMenus()
 
     World->addSeparator();
     QAction* WorldSettings = World->addAction(QStringLiteral("World &Settings..."));
-    WorldSettings->setToolTip(QStringLiteral("What this world saves besides its entities: baked lighting"));
+    WorldSettings->setToolTip(QStringLiteral("What this world saves besides its entities: its game mode, baked lighting"));
     connect(WorldSettings, &QAction::triggered, this, [this]()
     {
         WorldSettingsDialog Dialog(Level, this);

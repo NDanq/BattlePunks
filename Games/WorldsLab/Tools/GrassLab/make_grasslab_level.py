@@ -182,7 +182,8 @@ def main():
     FOLDER.mkdir(parents=True, exist_ok=True)
     for stale in FOLDER.glob("*.nmentity"):
         stale.unlink()
-    manifest = ["<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n", "<World Format=\"1\">\n"]
+    manifest = ["<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n", "<World Format=\"1\">\n",
+                "  <Settings GameMode=\"WorldsLabGrassLab\" />\n"]
     for name, text in entities:
         (FOLDER / f"{guid(name)}.nmentity").write_text(text, newline="\n")
         manifest.append(f"  <Entity Guid=\"{guid(name)}\" />\n")
@@ -195,7 +196,7 @@ def main():
         anchor = "[World_ToonArena]"
         block = ("; GrassLab: a ball rolls through procedural grass, bending it through a custom render\n"
                  "; pass's trail (WorldsLabGrassLab.cpp); [WorldsLab] GrassLabAutoPlay=0 to steer it.\n"
-                 "[World_GrassLab]\nFile=Content/Levels/GrassLab.nmworld\nGameMode=WorldsLabGrassLab\nCook=true\n\n")
+                 "[World_GrassLab]\nFile=Content/Levels/GrassLab.nmworld\nCook=true\n\n")
         text = text.replace(anchor, block + anchor) if anchor in text else text + "\n" + block
         ini.write_text(text)
     print(f"  {WORLD.relative_to(GAME_DIR)}: {len(entities)} entities")

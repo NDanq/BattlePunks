@@ -581,10 +581,17 @@ namespace
 
         const WorldLightingSettings Defaults;
         const WorldLightingSettings& Lighting = InSettings.Lighting;
+        if(Lighting == Defaults && InSettings.GameMode.empty()) { return; }
+
+        pugi::xml_node Settings = InRoot.append_child("Settings");
+        if(!InSettings.GameMode.empty())
+        {
+            Settings.append_attribute("GameMode") = InSettings.GameMode.c_str();
+        }
         if(Lighting == Defaults) { return; }
 
         /* Numbers as entity files write them: shortest round-trip, any locale. */
-        pugi::xml_node Element = InRoot.append_child("Settings").append_child("Lighting");
+        pugi::xml_node Element = Settings.append_child("Lighting");
         const auto Put = [&Element](const char* InName, const std::string& InText) { Element.append_attribute(InName) = InText.c_str(); };
         if(Lighting.bBakedLighting != Defaults.bBakedLighting)   { Put("BakedLighting",   Lighting.bBakedLighting ? "true" : "false"); }
         if(Lighting.TexelsPerUnit != Defaults.TexelsPerUnit)     { Put("TexelsPerUnit",   FormatNumber(Lighting.TexelsPerUnit)); }
@@ -605,6 +612,8 @@ namespace
         }
         std::sort(OutSettings.Folders.begin(), OutSettings.Folders.end());
         OutSettings.Folders.erase(std::unique(OutSettings.Folders.begin(), OutSettings.Folders.end()), OutSettings.Folders.end());
+
+        OutSettings.GameMode = InRoot.child("Settings").attribute("GameMode").as_string("");
 
         const pugi::xml_node Element = InRoot.child("Settings").child("Lighting");
         WorldLightingSettings& Lighting = OutSettings.Lighting;

@@ -38,10 +38,14 @@ Worlds** (`WorldList.h`):
 ```ini
 [World_BrickBreaker]
 File=Content/Levels/BrickBreaker.nmworld   ; the world it loads
-GameMode=BrickBreaker                      ; a registered mode; empty: no rules
 StartupScript=Scripts/X.lua                ; run once the world and its mode load; absent: none
 Cook=true                                  ; cooked and packaged by Build > Build Project
 ```
+
+The world names its own mode -- a registered name, empty for no rules -- in
+its settings (`WorldSettings::GameMode`, the editor's **World > World
+Settings**), saved in the `.nmworld` as `<Settings GameMode="BrickBreaker" />`
+and cooked into its `WSET` chunk.
 
 The game module registers its modes by name. The usual way is one line at
 file scope after the class, `NIMBLE_REGISTER_GAME_MODE(BrickBreakerMode,
