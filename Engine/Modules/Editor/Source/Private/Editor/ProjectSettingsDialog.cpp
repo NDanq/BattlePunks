@@ -49,11 +49,10 @@ namespace
     const char* const WorldsPageName  = "Worlds";
 
     /* The Worlds table's columns. */
-    enum EWorldColumn { WC_Name = 0, WC_File, WC_Mode, WC_Script, WC_Cook, WC_Count };
+    enum EWorldColumn { WC_Name = 0, WC_File, WC_Script, WC_Cook, WC_Count };
 
     /* The startup script choice that is not a path. */
     const char* const NoScriptText      = "(none)";
-    const char* const NoModeText        = "(none)";
 
     /* A level name a save holds (63 characters), and a section name. */
     constexpr int MaxWorldName = 63;
@@ -461,18 +460,18 @@ void ProjectSettingsDialog::BuildWorldsPage()
 
     auto* Note = new QLabel(QStringLiteral(
         "<p>The project's worlds. Each is a level, named here: what <b>Start world</b>, saves, the console's "
-        "<tt>open</tt> and <tt>Game.OpenLevel</tt> name. It loads its world file, then runs its <b>game mode</b> "
-        "(rules the game module registers) and its own <b>startup script</b>, if it names one. Play plays the open world if it is listed.</p>"
+        "<tt>open</tt> and <tt>Game.OpenLevel</tt> name. It loads its world file, then runs the <b>game mode</b> "
+        "the world names (World &gt; World Settings, saved in the .nmworld) and its own <b>startup script</b>, if it names one. "
+        "Play plays the open world if it is listed.</p>"
         "<p><b>Cook</b>: Build &gt; Build Project cooks and packages it; unticked, it stays out of the game.</p>"), Page);
     Note->setWordWrap(true);
     Column->insertWidget(1, Note);
 
     Worlds = new QTableWidget(0, WC_Count, Page);
-    Worlds->setHorizontalHeaderLabels({ QStringLiteral("Name"), QStringLiteral("World file"), QStringLiteral("Game mode"),
+    Worlds->setHorizontalHeaderLabels({ QStringLiteral("Name"), QStringLiteral("World file"),
                                         QStringLiteral("Startup script"), QStringLiteral("Cook") });
     Worlds->horizontalHeader()->setSectionResizeMode(WC_Name, QHeaderView::ResizeToContents);
     Worlds->horizontalHeader()->setSectionResizeMode(WC_File, QHeaderView::Stretch);
-    Worlds->horizontalHeader()->setSectionResizeMode(WC_Mode, QHeaderView::ResizeToContents);
     Worlds->horizontalHeader()->setSectionResizeMode(WC_Script, QHeaderView::ResizeToContents);
     Worlds->horizontalHeader()->setSectionResizeMode(WC_Cook, QHeaderView::ResizeToContents);
     Worlds->verticalHeader()->setVisible(false);
@@ -580,12 +579,13 @@ void ProjectSettingsDialog::BuildWorldsPage()
 
 void ProjectSettingsDialog::AddWorldRow(const ConfigIniFile::Section& InSection)
 {
-    QString File, Mode, Script;
+    /* A GameMode key is no longer read (the world names its mode) and is
+     * dropped on save. */
+    QString File, Script;
     bool    bCook = true;
     for(const QPair<QString, QString>& Key : InSection.Keys)
     {
         if(Same(Key.first, "File"))               { File = Key.second; }
-        else if(Same(Key.first, "GameMode"))      { Mode = Key.second; }
         else if(Same(Key.first, "StartupScript")) { Script = Key.second; }
         else if(Same(Key.first, "Cook"))
         {
@@ -601,19 +601,6 @@ void ProjectSettingsDialog::AddWorldRow(const ConfigIniFile::Section& InSection)
     const QString Name = InSection.Name.mid(int(std::strlen(NimbleEngine::WORLD_SECTION_PREFIX)));
     Worlds->setItem(Row, WC_Name, new QTableWidgetItem(Name));
     Worlds->setItem(Row, WC_File, new QTableWidgetItem(File));
-
-    /* Modes the game module registers -- loaded for authoring, so known here. */
-    auto* ModeChoice = new QComboBox(Worlds);
-    ModeChoice->setEditable(true);
-    ModeChoice->addItem(QString::fromLatin1(NoModeText));
-    for(size_t Index = 0; Index < NimbleEngine::GetGameModeCount(); ++Index)
-    {
-        ModeChoice->addItem(QString::fromUtf8(NimbleEngine::GetGameModeName(Index)));
-    }
-    ModeChoice->setCurrentText(Mode.isEmpty() ? QString::fromLatin1(NoModeText) : Mode);
-    ModeChoice->setToolTip(QStringLiteral("The rules: a game mode the game module registers (NIMBLE_REGISTER_GAME_MODE). "
-                                          "Listed: those the loaded module has"));
-    Worlds->setCellWidget(Row, WC_Mode, ModeChoice);
 
     auto* ScriptChoice = new QComboBox(Worlds);
     ScriptChoice->setEditable(true);
@@ -684,12 +671,6 @@ QList<ConfigIniFile::Section> ProjectSettingsDialog::ReadWorlds() const
         ConfigIniFile::Section Section;
         Section.Name = QLatin1String(NimbleEngine::WORLD_SECTION_PREFIX) + Worlds->item(Row, WC_Name)->text().trimmed();
         Section.Keys.append({ QStringLiteral("File"), Worlds->item(Row, WC_File)->text().trimmed() });
-
-        const QString Mode = static_cast<QComboBox*>(Worlds->cellWidget(Row, WC_Mode))->currentText().trimmed();
-        if(!Mode.isEmpty() && Mode != QLatin1String(NoModeText))
-        {
-            Section.Keys.append({ QStringLiteral("GameMode"), Mode });
-        }
 
         const QString Script = static_cast<QComboBox*>(Worlds->cellWidget(Row, WC_Script))->currentText().trimmed();
         if(!Script.isEmpty() && Script != QLatin1String(NoScriptText))

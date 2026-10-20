@@ -26,6 +26,11 @@
 #include "Public/RenderCore/Components/AnimationComponent.h"
 #include "Private/RenderCore/RenderComponentProxy.h"
 
+/* SPLITSCREEN, for testing views far apart before a game gives each its own
+ * camera: "x,y,z" moves each view i > 0 that has no camera of its own by i
+ * times that, from the camera it shares. Empty: none. Development only. */
+NIMBLE_CONFIG_STRING(GSplitscreenDebugOffset, "Splitscreen", "DebugOffset", "", nullptr);
+
 // GameCore is this file's whole subject -- it reads World's pools and
 // components on every line.
 using namespace GameCore;
@@ -125,7 +130,7 @@ namespace RenderCore
 
     void WorldBridge::UnbindWorld()
     {
-        ViewCamera = EntityID();
+        for(EntityID& Each : ViewCameras) { Each = EntityID(); }
         if(!BoundWorld)
         {
             return;
@@ -288,17 +293,27 @@ namespace RenderCore
         }
     }
 
-    RenderView WorldBridge::BuildView(const FrameInfo& InFrame) const
+    RenderView WorldBridge::BuildView(const FrameInfo& InFrame, const uint32_t InViewIndex) const
     {
-        /* The view camera if one is set and still there, else the first
-         * active CameraComponent -- see DESIGN.md's "View". (0, 1, -1)
-         * matches GDICamera's own default constructor when no camera is
-         * active. */
-        if(BoundWorld && ViewCamera.IsSet() && BoundWorld->IsAlive(ViewCamera))
+        /* The view's camera if one is set and still there, else view 0's,
+         * else the first active CameraComponent -- see DESIGN.md's "View".
+         * (0, 1, -1) matches GDICamera's own default constructor when no
+         * camera is active. */
+        EngineCore::Vector3 Shared(0.0, 0.0, 0.0);   // [Splitscreen] DebugOffset, for a view on another's camera
+        double X = 0.0, Y = 0.0, Z = 0.0;
+        if(InViewIndex > 0 && std::sscanf(GSplitscreenDebugOffset.GetString(), "%lf,%lf,%lf", &X, &Y, &Z) == 3)
         {
-            if(const CameraComponent* Camera = BoundWorld->GetEntity(ViewCamera).GetComponent<CameraComponent>())
+            Shared = EngineCore::Vector3(X, Y, Z) * double(InViewIndex);
+        }
+        for(const uint32_t Index : { InViewIndex, 0u })
+        {
+            const EntityID Wanted = Index < RENDER_VIEWS_MAX ? ViewCameras[Index] : EntityID();
+            if(BoundWorld && Wanted.IsSet() && BoundWorld->IsAlive(Wanted))
             {
-                return ViewThrough(*Camera, InFrame);
+                if(const CameraComponent* Camera = BoundWorld->GetEntity(Wanted).GetComponent<CameraComponent>())
+                {
+                    return ViewThrough(*Camera, InFrame, Index == InViewIndex ? EngineCore::Vector3(0.0, 0.0, 0.0) : Shared);
+                }
             }
         }
 
@@ -313,7 +328,7 @@ namespace RenderCore
                 {
                     if(Cameras[Index].bActive)
                     {
-                        return ViewThrough(Cameras[Index], InFrame);
+                        return ViewThrough(Cameras[Index], InFrame, Shared);
                     }
                 }
             }
@@ -322,7 +337,7 @@ namespace RenderCore
         return RenderView::MakeOrthographic(InFrame.ViewportPixels, EngineCore::Vector3(0.0, 1.0, -1.0), -1.0f, 1000.0f);
     }
 
-    RenderView WorldBridge::ViewThrough(const CameraComponent& Camera, const FrameInfo& InFrame) const
+    RenderView WorldBridge::ViewThrough(const CameraComponent& Camera, const FrameInfo& InFrame, const EngineCore::Vector3& InOffset) const
     {
         EngineCore::Vector3 Origin(0.0, 1.0, -1.0);
         const GameCore::TransformPose Pose = PoseOf(Camera.Owner);
@@ -330,6 +345,7 @@ namespace RenderCore
         {
             Origin = Pose.Position;
         }
+        Origin = Origin + InOffset;   // [Splitscreen] DebugOffset; zero otherwise
 
         if(Camera.Projection == CP_Perspective)
         {
@@ -656,7 +672,8 @@ namespace RenderCore
         return Result;
     }
 
-    void WorldBridge::ExtractAndRender(const FrameInfo& InFrame, const RenderView* InViewOverride)
+    void WorldBridge::ExtractAndRender(const FrameInfo& InFrame, const RenderView* InViewOverride,
+                                       const RenderViewRect* InRects, const uint32_t InCount, const RenderViewSites* InSites)
     {
         if(!BoundWorld)
         {
@@ -811,12 +828,48 @@ namespace RenderCore
 
         ExtractPoses(InFrame);
 
-        RenderView View = InViewOverride ? *InViewOverride : BuildView(InFrame);
-        View.ViewportPixels = InFrame.ViewportPixels;   // the render targets are sized from this
-        if(Animation) { Animation->AddView(InFrame.FrameNumber, View.Origin, View.Projection * View.View); }
-        const RenderLighting    Lighting    = BuildLighting(View.Origin);
-        const RenderPostProcess PostProcess = BuildPostProcess(View);
-        const SceneCaptureList  Captures    = BuildCaptures(View, InFrame.DeltaSeconds);
+        /* The views (SPLITSCREEN: one per rectangle), each with the light
+         * nearest its eye and the post process volumes it is in. Trivially
+         * copyable, so the command carries them as a value. */
+        struct FrameViews
+        {
+            RenderView        Views[RENDER_VIEWS_MAX];
+            RenderLighting    Lightings[RENDER_VIEWS_MAX];
+            RenderPostProcess PostProcesses[RENDER_VIEWS_MAX];
+            uint32_t          Count = 1;
+            EngineCore::Size  Window;
+            RenderViewSites   Sites;
+        };
+        FrameViews Frame;
+        if(InSites) { Frame.Sites = *InSites; }
+        Frame.Count  = InRects && InCount > 1 ? std::min<uint32_t>(InCount, RENDER_VIEWS_MAX) : 1;
+        Frame.Window = InFrame.ViewportPixels;
+        for(uint32_t Index = 0; Index < Frame.Count; ++Index)
+        {
+            FrameInfo ViewFrame = InFrame;
+            int32_t   X = 0, Y = 0;
+            if(Frame.Count > 1)
+            {
+                const RenderViewRect& Rect = InRects[Index];
+                ViewFrame.ViewportPixels = EngineCore::Size(std::max(Rect.Width, 0), std::max(Rect.Height, 0));
+                X = Rect.X;
+                Y = Rect.Y;
+            }
+            RenderView& View = Frame.Views[Index];
+            View = Index == 0 && InViewOverride ? *InViewOverride : BuildView(ViewFrame, Index);
+            View.ViewportPixels = ViewFrame.ViewportPixels;   // the render targets are sized from this
+            View.ViewportX      = X;
+            View.ViewportY      = Y;
+            View.ViewIndex      = Index;
+            View.RevealCount    = RevealCount;
+            View.RevealRadius   = RevealRadius;
+            for(uint32_t Point = 0; Point < RevealCount; ++Point) { View.RevealPoints[Point] = RevealPoints[Point]; }
+            if(Animation) { Animation->AddView(InFrame.FrameNumber, View.Origin, View.Projection * View.View); }
+            Frame.Lightings[Index]     = BuildLighting(View.Origin);
+            Frame.PostProcesses[Index] = BuildPostProcess(View);
+        }
+        /* Captures and reflection probes once a frame, for the main view. */
+        const SceneCaptureList Captures = BuildCaptures(Frame.Views[0], InFrame.DeltaSeconds);
         RenderScene* SceneCapture = Scene;
 
         /* Its custom render passes' values for this frame (CustomRenderPass.h);
@@ -824,11 +877,9 @@ namespace RenderCore
         ExtractCustomRenderPasses(BoundWorld);
         const void* PassWorld = BoundWorld;
 
-        ENQUEUE_RENDER_COMMAND(SetViewAndRender)([SceneCapture, View, Lighting, PostProcess, Captures, PassWorld](RenderContext& Ctx)
+        ENQUEUE_RENDER_COMMAND(SetViewAndRender)([SceneCapture, Frame, Captures, PassWorld](RenderContext& Ctx)
         {
-            SceneCapture->SetView(View);
-            SceneCapture->SetLighting(Lighting);
-            SceneCapture->SetPostProcess(PostProcess);
+            SceneCapture->SetViews(Frame.Views, Frame.Lightings, Frame.PostProcesses, Frame.Count, Frame.Window, &Frame.Sites);
             SceneCapture->SetCaptures(Captures);
             SceneCapture->SetCustomPassWorld(PassWorld);
             SceneCapture->Render(Ctx);

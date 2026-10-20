@@ -281,9 +281,9 @@ namespace
         }
 
         /* Last, so a build from before it stops at it as at any non-CMPT tag. */
-        uint16_t SettingsVersion = 1;
+        uint16_t SettingsVersion = WORLD_SETTINGS_VERSION;
         Ar.OpenChunk(TAG_SETTINGS, SettingsVersion);
-        SerializeWorldSettings(Ar, InWorld.GetSettings());
+        SerializeWorldSettings(Ar, InWorld.GetSettings(), SettingsVersion);
         Ar.CloseChunk();
 
         Ar.CloseChunk();
@@ -442,7 +442,7 @@ namespace
         uint16_t SettingsVersion = 0;
         if(!Ar.HasError() && Ar.PeekChunkTag() == TAG_SETTINGS && Ar.OpenChunk(TAG_SETTINGS, SettingsVersion))
         {
-            SerializeWorldSettings(Ar, InWorld.GetSettings());
+            SerializeWorldSettings(Ar, InWorld.GetSettings(), SettingsVersion);
             Ar.CloseChunk();
         }
 

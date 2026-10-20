@@ -8,6 +8,7 @@
 #include "Public/NimbleEngine/NimbleEngineAPI.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/Input.h"
+#include "Public/NimbleEngine/SplitCamera.h"
 #include "Public/GameCore/ComponentType.h"   // ComponentTypeID
 #include "Public/GameCore/Delegate.h"        // DelegateHandle
 #include "Public/GameCore/EntityID.h"
@@ -273,14 +274,49 @@ namespace NimbleEngine
         AvatarWorld* GetAvatars() { return Avatars; }
 
         /*
-         * The camera the game is viewed through (and heard from, with no
-         * Audio Listener): InCamera, an entity with a CameraComponent or
-         * whose descendant has one -- a cutscene, a death cam. Unset (the
-         * default) goes back to local player 1's avatar's camera, then the
-         * level's first active one. Cleared by a level change.
+         * The camera local player InLocalPlayer (0 first) views the game
+         * through (and hears it from, with no Audio Listener): InCamera, an
+         * entity with a CameraComponent or whose descendant has one -- a
+         * cutscene, a death cam. Unset (the default) goes back to that
+         * player's avatar's camera; player 1's then the level's first active
+         * one. Cleared by a level change.
          */
-        void               SetViewTarget(GameCore::EntityID InCamera);
-        GameCore::EntityID GetViewTarget() const;
+        void               SetViewTarget(GameCore::EntityID InCamera, uint8_t InLocalPlayer = 0);
+        GameCore::EntityID GetViewTarget(uint8_t InLocalPlayer = 0) const;
+
+        /*
+         * SPLITSCREEN (SPLITSCREEN.md): the window shows one view per local
+         * player, player 1's first -- as many as the highest local player
+         * with a view target (its own, or its avatar's camera), or InCount
+         * (1 to 4) if set; 0 goes back to counting. Laid out by
+         * RenderCore::MakeSplitscreenLayout: two players top and bottom, or
+         * side by side with [Splitscreen] SideBySide; three, one across the
+         * top. One view while a sequence holds the camera or plays a
+         * cinematic, and always with [Splitscreen] Enabled off.
+         */
+        void     SetViewCount(uint32_t InCount);
+        uint32_t GetViewCount() const { return ViewCount; }   // last frame's
+
+        /*
+         * SPLITSCREEN's dynamic split (SplitCamera.h, SPLITSCREEN.md "Dynamic
+         * split"): with bEnabled, two to four local players' avatars are viewed
+         * through cameras of the session's own, all turned one way -- shared
+         * while the players fit, split by a turning line as two part, a camera
+         * each in the fixed layout as three or four do. Their avatars' cameras
+         * are not used. [Splitscreen] Dynamic and its Dynamic* keys until set.
+         */
+        void                SetSplitCamera(const SplitCameraSettings& InSettings);
+        SplitCameraSettings GetSplitCamera() const;
+
+        /*
+         * SPLITSCREEN's drop-in (SPLITSCREEN.md, "Joining and leaving"): local
+         * player InLocalPlayer (1-3) joins or leaves the level, as the mode
+         * allows (IGameMode::OnLocalPlayerJoin / Leave). With [Splitscreen]
+         * DropIn, Start on a pad no player has joins its player, and unplugging
+         * a joined player's pad leaves. False if the mode refused, or for player 1.
+         */
+        bool JoinLocalPlayer(uint8_t InLocalPlayer);
+        bool LeaveLocalPlayer(uint8_t InLocalPlayer);
 
         /* Hides and holds the cursor, for mouse-look; Mouse.DeltaX keeps
          * coming past the screen's edge. The host lets go when the run ends. */
@@ -363,7 +399,34 @@ namespace NimbleEngine
         ILevel*           ActiveLevel = nullptr;
         GameCore::World*  LevelWorld  = nullptr;
         AvatarWorld*      Avatars     = nullptr;
-        GameCore::EntityID ViewTarget;
+        GameCore::EntityID ViewTargets[INPUT_PLAYERS_MAX];   // SetViewTarget, by local player
+        uint32_t          ViewCountWanted = 0;               // SetViewCount; 0 counts the players' views
+        uint32_t          ViewCount       = 1;
+        bool              bSequenceView   = false;           // a sequence set player 1's view target
+
+        /* The dynamic split's state (SetSplitCamera): its cameras, made on first use in the
+         * level's World, and its line's angle, kept between frames so it turns smoothly. */
+        SplitCameraSettings SplitCamera;
+        bool                bSplitCameraSet = false;
+        GameCore::EntityID  SplitCameras[4];
+        float               SplitAngle      = 0.0f;
+        bool                bSplitAngleSet  = false;
+        float               FrameDelta      = 0.0f;   // this Tick's, for the line's turn
+        EngineCore::Size    FramePixels;              // and its window
+        uint32_t            SplitPlayers    = 0;      // the dynamic split's players last frame; 0 when it is off
+
+        /* SPLITSCREEN: each local player's documents' area (UISystem::SetPlayerArea): their view. */
+        void PublishPlayerAreas();
+
+        /* SPLITSCREEN's drop-in, each Tick after the UI took its input: Start joins, an unplugged pad leaves. */
+        void UpdateDropIn();
+        bool bPadWasConnected[INPUT_PLAYERS_MAX] = {};
+
+        /* PublishViewTarget's dynamic split: true if it placed the views. */
+        bool PublishSplitCamera();
+
+        /* OCCLUSION REVEAL: the local players' avatars, to the renderer ([Rendering] RevealPlayers). */
+        void PublishRevealPoints();
 
         /* Set by RequestLevel, consumed by the next ApplyPendingLevel. */
         ILevel*           PendingLevel = nullptr;

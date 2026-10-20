@@ -13,6 +13,8 @@ namespace RenderCore
         constexpr uint32_t TAG_PARAMETERS = EngineCore::MakeArchiveTag('A','P','R','M');
         constexpr uint32_t TAG_LAYERS     = EngineCore::MakeArchiveTag('A','L','Y','R');
         constexpr uint32_t TAG_LOOK_AT    = EngineCore::MakeArchiveTag('A','L','O','K');
+        constexpr uint32_t TAG_RETARGET   = EngineCore::MakeArchiveTag('A','R','T','G');
+        constexpr uint32_t TAG_IK         = EngineCore::MakeArchiveTag('A','I','K','S');
 
         /* Counts past these are a corrupt file, not a big anim state. */
         constexpr uint32_t MAX_ITEMS = 4096;
@@ -100,6 +102,42 @@ namespace RenderCore
             Ar.CloseChunk();
         }
 
+        /* The optional ARTG chunk: written only when it names a retarget. */
+        void SerializeRetargetPath(EngineCore::Archive& Ar, std::string& InOutRetarget)
+        {
+            if(Ar.IsSaving() && InOutRetarget.empty()) { return; }
+            if(Ar.IsLoading() && Ar.PeekChunkTag() != TAG_RETARGET) { return; }
+
+            uint16_t Version = 1;
+            if(!Ar.OpenChunk(TAG_RETARGET, Version)) { return; }
+            Ar << InOutRetarget;
+            Ar.CloseChunk();
+        }
+
+        /* The optional AIKS chunk: written only when there are chains. */
+        void SerializeIK(EngineCore::Archive& Ar, AnimIK& InOutIK)
+        {
+            if(Ar.IsSaving() && !InOutIK.IsSet()) { return; }
+            if(Ar.IsLoading() && Ar.PeekChunkTag() != TAG_IK) { return; }
+
+            uint16_t Version = 1;
+            if(!Ar.OpenChunk(TAG_IK, Version)) { return; }
+            Ar << InOutIK.PelvisBone << InOutIK.TraceUp << InOutIK.TraceDown << InOutIK.MaxStep << InOutIK.Response << InOutIK.MaxTilt;
+            SerializeList(Ar, InOutIK.Chains, [](EngineCore::Archive& InAr, AnimIKChain& InOutChain)
+            {
+                InAr << InOutChain.Name << InOutChain.Root << InOutChain.Mid << InOutChain.End;
+                SerializeEnum(InAr, InOutChain.Goal);
+                InAr << InOutChain.GoalBone;
+                SerializeAnimTransform(InAr, InOutChain.GoalOffset);
+                InAr << InOutChain.Weight << InOutChain.WeightParameter;
+                InAr << InOutChain.Pole[0] << InOutChain.Pole[1] << InOutChain.Pole[2];
+                uint8_t bAlign = InOutChain.bAlignEnd ? 1 : 0;
+                InAr << bAlign;
+                InOutChain.bAlignEnd = bAlign != 0;
+            });
+            Ar.CloseChunk();
+        }
+
         bool IsLookAtValid(const AnimLookAt& InLookAt)
         {
             const float Length2 = InLookAt.Axis[0] * InLookAt.Axis[0] + InLookAt.Axis[1] * InLookAt.Axis[1] + InLookAt.Axis[2] * InLookAt.Axis[2];
@@ -157,6 +195,21 @@ namespace RenderCore
         {
             if(Bone.Bone.empty()) { return "anim state: a look-at bone has no name"; }
         }
+        if(!(IK.TraceUp >= 0.0f) || !(IK.TraceDown >= 0.0f) || !(IK.MaxStep >= 0.0f) || !(IK.Response >= 0.0f) || !(IK.MaxTilt >= 0.0f))
+        {
+            return "anim state: an IK trace length, step or response is negative";
+        }
+        for(size_t Index = 0; Index < IK.Chains.size(); ++Index)
+        {
+            const AnimIKChain& Chain = IK.Chains[Index];
+            if(Chain.Root.empty() || Chain.Mid.empty() || Chain.End.empty()) { return "anim state: an IK chain lacks a bone"; }
+            if(uint8_t(Chain.Goal) > uint8_t(EAnimIKGoal::Script)) { return "anim state: an IK chain's goal is of no known kind"; }
+            if(Chain.Goal == EAnimIKGoal::Bone && Chain.GoalBone.empty()) { return "anim state: an IK chain reaches for a bone it does not name"; }
+            for(size_t Other = 0; Other < Index; ++Other)
+            {
+                if(!Chain.Name.empty() && IK.Chains[Other].Name == Chain.Name) { return "anim state: two IK chains share a name"; }
+            }
+        }
         return nullptr;
     }
 
@@ -191,6 +244,8 @@ namespace RenderCore
             Ar.CloseChunk();
         }
         if(!Ar.HasError()) { SerializeLookAt(Ar, InOutState.LookAt); }
+        if(!Ar.HasError()) { SerializeRetargetPath(Ar, InOutState.Retarget); }
+        if(!Ar.HasError()) { SerializeIK(Ar, InOutState.IK); }
         Ar.CloseChunk();
 
         if(Ar.IsLoading() && !Ar.HasError())

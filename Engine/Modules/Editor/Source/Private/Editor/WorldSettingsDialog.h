@@ -13,7 +13,7 @@ class QSpinBox;
 
 /*
  * World > World Settings: the edited world's WorldSettings (GameCore's
- * WorldSettings.h) -- today its baked lighting. OK applies them through
+ * WorldSettings.h) -- its game mode and baked lighting. OK applies them through
  * EditorDocument::SetWorldSettings, one undo step, saved with the world.
  */
 class WorldSettingsDialog : public QDialog
@@ -28,6 +28,7 @@ private:
 
     EditorDocument& Document;
 
+    QComboBox*      GameMode        = nullptr;   // editable: a mode the loaded module lacks can still be named
     QCheckBox*      BakedLighting   = nullptr;
     QDoubleSpinBox* TexelsPerMetre  = nullptr;   // shown per metre; stored per unit
     QSpinBox*       Bounces         = nullptr;

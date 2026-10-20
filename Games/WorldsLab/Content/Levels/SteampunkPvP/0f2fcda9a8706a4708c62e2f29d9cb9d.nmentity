@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="0f2fcda9a8706a4708c62e2f29d9cb9d" Name="WestNorth3" Mobility="Static">
-  <Component Type="Render" Version="5">
+  <Component Type="Render" Version="7">
     <Visible Value="true" />
     <Material0 Value="" />
     <Material1 Value="" />
@@ -15,6 +15,8 @@
     <CastShadows Value="true" />
     <CastInsetShadow Value="false" />
     <Occluder Value="false" />
+    <CustomPassGroups Value="0" />
+    <RevealPlayers Value="true" />
   </Component>
   <Component Type="Transform" Version="1">
     <Position X="-2295" Y="0" Z="1000" />

@@ -70,6 +70,18 @@ namespace EditorContent
         /* Frames per second the clips are resampled at. */
         float AnimationSampleRate = 30.0f;
 
+        /* A .nmskel (runtime path) the file's bones are already in -- the
+         * hundredth clip of one rig: no skeleton is written, the clips (and a
+         * skinned mesh) name this one. Every bone of the file must be in it;
+         * an import whose bones are not fails, naming them. Empty: none. */
+        QString ExistingSkeleton;
+
+        /* A .nmskel (runtime path) to play the file's clips on: an
+         * auto-mapped, arm-aligned .nmretarget from the file's skeleton to
+         * it is written beside the clips (<Base>_to_<Target>.nmretarget;
+         * an existing one gains or replaces the source). Empty: none. */
+        QString CreateRetargetTo;
+
         QString ToSettings() const;
         static MeshImportOptions FromSettings(const QString& InSettings);
     };
@@ -146,8 +158,18 @@ namespace EditorContent
                              const QString& InProjectRoot);
 
     /* From the recorded source and options; fails if none or the source is
-     * gone. Meshes reimport without their textures. */
+     * gone. Meshes reimport without their textures; a baked clip
+     * (BakeRetargetClip) is baked again. */
     ImportResult Reimport(const QString& InAssetPath, const QString& InProjectRoot);
+
+    /* The clip InClipFile played through the retarget InRetargetFile, baked
+     * into an ordinary .nmanim on the retarget's target skeleton at InOutFile
+     * (RenderCore's BakeRetargetedClip): no runtime cost, and it plays where
+     * no retarget is set. What the editor set on an existing InOutFile --
+     * notifies, looping, root motion -- is kept. Its import info records the
+     * clip and the retarget ("BakedVia"), so Reimport bakes it again. */
+    ImportResult BakeRetargetClip(const QString& InClipFile, const QString& InRetargetFile, const QString& InOutFile,
+                                  const QString& InProjectRoot);
 }
 
 #endif // WITH_EDITOR

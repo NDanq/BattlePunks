@@ -71,13 +71,16 @@ namespace RenderCore
     constexpr const char* MATERIAL_DEFAULT_VERTEX = "MaterialDefault";
 
     /* Bytes 0-159 of every material block: Material_Tint (vec4), then
-     * Material_ClipValue, Material_TwoSided and two reserved floats; then the
+     * Material_ClipValue, Material_TwoSided, Material_Reserved0 -- per draw,
+     * 1 if it is dithered where it hides a player (RENDERPIPELINE.md,
+     * "Revealing players") -- and a reserved float; then the
      * draw's baked lighting (RENDERPIPELINE.md, "Baked lighting"):
      * Material_LightmapScaleOffset (vec4: UV1 * xy + zw), Material_BakedLighting
      * (vec4: x the EMaterialBakedLighting mode) and Material_AmbientCube[6]
      * (vec4s: +X -X +Y -Y +Z -Z, rgb). Per draw, so the material's own block
      * values are only the first 32 bytes' defaults. */
     constexpr uint32_t MATERIAL_ENGINE_BLOCK_BYTES        = 160;
+    constexpr uint32_t MATERIAL_BLOCK_REVEAL_OFFSET       = 24;
     constexpr uint32_t MATERIAL_BLOCK_LIGHTMAP_OFFSET     = 32;
     constexpr uint32_t MATERIAL_BLOCK_BAKED_OFFSET        = 48;
     constexpr uint32_t MATERIAL_BLOCK_AMBIENT_CUBE_OFFSET = 64;

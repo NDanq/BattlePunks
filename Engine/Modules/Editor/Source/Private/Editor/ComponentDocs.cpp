@@ -201,6 +201,7 @@ namespace
             { PF_AssetPrefab, "prefab (.nmprefab)" },         { PF_AssetSequence, "sequence (.nmseq)" },
             { PF_AssetTerrain, "terrain (.nmterrain)" },      { PF_AssetFoliage, "foliage (.nmfoliage)" },
             { PF_AssetNavMesh, "navmesh (.nmnav)" },          { PF_AssetBehaviorTree, "behavior tree (.nmbt)" },
+            { PF_AssetRetarget, "retarget (.nmretarget)" },
         };
         for(const Kind& Each : Kinds)
         {

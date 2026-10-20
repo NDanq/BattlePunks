@@ -193,7 +193,7 @@ namespace RenderCore
      * (an older save keeps the default, off). 4: CastInsetShadow
      * (an older save keeps the default, off). 3: CastShadows (an
      * older save keeps the default, on). */
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 6)
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 7)
     {
         Ar.Flag("Visible",   C.bVisible);
         for(size_t Slot = 0; Slot < RENDER_MATERIAL_SLOTS; ++Slot)
@@ -243,6 +243,10 @@ namespace RenderCore
         if(Ar.GetVersion() >= 6)
         {
             Ar.Field("CustomPassGroups", C.CustomPassGroups);
+        }
+        if(Ar.GetVersion() >= 7)
+        {
+            Ar.Flag("RevealPlayers", C.bRevealPlayers);
         }
     }
 
@@ -308,6 +312,7 @@ namespace RenderCore
         Bind.Flag("CastShadows", &RenderComponent::bCastShadows);
         Bind.Flag("CastInsetShadow", &RenderComponent::bCastInsetShadow);
         Bind.Flag("Occluder", &RenderComponent::bOccluder);
+        Bind.Flag("RevealPlayers", &RenderComponent::bRevealPlayers);
         Bind.Field("CustomPassGroups", &RenderComponent::CustomPassGroups);
     }
 
@@ -327,6 +332,7 @@ namespace RenderCore
         Props.Flag("Cast Inset Shadow", &RenderComponent::bCastInsetShadow);
         Props.Category("Culling");
         Props.Flag("Occluder", &RenderComponent::bOccluder);
+        Props.Flag("Reveal Players", &RenderComponent::bRevealPlayers);
         Props.Category("Custom Render Passes");
         Props.Field("Custom Pass Groups", &RenderComponent::CustomPassGroups);
 

@@ -658,11 +658,12 @@ namespace UI
         W.ArrangeChildren(InContext, InRect);
     }
 
-    bool UIDocumentInstance::Layout(const UIVec2& InViewportPixels)
+    bool UIDocumentInstance::Layout(const UIVec2& InViewportPixels, const UIVec2& InOrigin)
     {
         if(Widgets.empty()) return false;
-        if(!bLayoutDirty && InViewportPixels == Viewport) return false;
+        if(!bLayoutDirty && InViewportPixels == Viewport && InOrigin == Origin) return false;
         Viewport = InViewportPixels;
+        Origin   = InOrigin;
 
         const UIDocumentSettings& S = Asset->Settings;
         const float ByWidth  = InViewportPixels.X / std::max(S.ReferenceSize.X, 1.0f);
@@ -689,7 +690,7 @@ namespace UI
             bLayoutDirty = false;
             std::fill(Measured.begin(), Measured.end(), uint8_t(0));
             Measure(Context, 0);
-            Arrange(Context, 0, UIRect{ 0.0f, 0.0f, LayoutSize.X, LayoutSize.Y });
+            Arrange(Context, 0, UIRect{ InOrigin.X / Scale, InOrigin.Y / Scale, LayoutSize.X, LayoutSize.Y });
             if(!bLayoutDirty) break;
         }
         bLayoutDirty = false;

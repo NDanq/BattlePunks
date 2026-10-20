@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="68eb1b0722622ecd61795faa72fae0f1" Name="SouthW5" Mobility="Static">
-  <Component Type="Render" Version="5">
+  <Component Type="Render" Version="7">
     <Visible Value="true" />
     <Material0 Value="" />
     <Material1 Value="" />
@@ -15,6 +15,8 @@
     <CastShadows Value="true" />
     <CastInsetShadow Value="false" />
     <Occluder Value="false" />
+    <CustomPassGroups Value="0" />
+    <RevealPlayers Value="true" />
   </Component>
   <Component Type="Transform" Version="1">
     <Position X="-3515" Y="0" Z="-2090" />

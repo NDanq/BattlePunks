@@ -862,6 +862,95 @@ editor's Show > View Mode):
 
 The screenshot (`Renderer::RequestSceneCapture`) reads what the mode shows.
 
+### Views
+
+A scene draws one view by default: one camera, the whole viewport. For
+splitscreen it draws up to `RENDER_VIEWS_MAX` (4) views a frame.
+
+- **Layout.** `Renderer::SetViewCount(Scene, N, bSideBySide)` lays N views
+  over the viewport with `MakeSplitscreenLayout` (RenderTypes.h):
+  - 2: top and bottom halves, or left and right.
+  - 3: one across the top, two below.
+  - 4: quadrants.
+  `[Splitscreen] Views` overrides the default scene's count, for debugging:
+  `Splitscreen.Views 4` in the console.
+- **Cameras.** `Renderer::SetViewCamera(Scene, ViewIndex, Camera)` sets each
+  view's camera. A view without one looks through view 0's.
+- **Per view.** `WorldBridge` builds each view with its own `RenderView`:
+  - `ViewportPixels` is the size of its rectangle, so its aspect and every
+    pass see only that view.
+  - `ViewIndex`, `ViewportX` and `ViewportY` say which view it is and where
+    it goes in the window.
+  - It also gets its own light (the local lights nearest its eye) and its
+    own post process volumes.
+- **What a view keeps.** `RenderScene` keeps a `SceneViewState` for each view,
+  holding everything that carries from frame to frame:
+  - its stage targets (TAA history, exposure, SSR's last colour, velocity);
+  - last frame's view-projection;
+  - its TAA jitter cycle;
+  - its occlusion query sets. A proxy's `OcclusionQueries` are kept per view.
+- **Once a frame, whatever the view count.** Simulate, scene captures,
+  image-based lighting and `EndFrameMotion` run once. Captures and reflection
+  probes are taken for view 0.
+- **Compositing.** Each view is drawn into its own targets in turn. With more
+  than one view, `RenderContext::CompositeViews` clears a window-sized target
+  (`RenderCore.Scene.Composite`) to black, then stretches each view's final
+  colour over its rectangle (`ViewTarget.fsh`, with one viewport per view).
+  The UI, debug lines and "stat unit" draw on that target, and it is what gets
+  presented. Debug lines go through view 0, over its rectangle.
+- **One view.** The view's own final colour is the picture and no composite
+  is made, so a game without splitscreen draws exactly as before.
+- **The dynamic split** (`Renderer::SetViewSites`, `RenderViewSites`). Every
+  view is the whole window. `RenderContext::CompositeViewSites` takes each
+  pixel from the view whose site is nearest (`ViewSites.fsh`), and draws a
+  divider of `DividerPixels`, faded by `DividerAlpha`, along the cells' edges.
+  - A view appearing in the split starts from view 0's state, through
+    `RenderContext::SeedViewHistory`: TAA history, exposure (copied with
+    `PPCopy.fsh`), last frame's view-projection and the jitter cycle.
+    The split opens with both views on the same camera, so this has no seam.
+- **Per view, inside a proxy or pass.**
+  - Terrain chunks and Procedural Spawner cells choose their LOD from the
+    view being drawn, in `DrawShadow` as well as `Draw`, so a view's shadows
+    use its own LODs.
+  - Custom pass targets and buffers (`AcquireTarget`, `AcquireBuffer`) are
+    kept per view: `RenderPassContext::GetViewIndex` says which view.
+    Every split view is a main view (`IsMainView`).
+- **Stats.** "stat frame" and the stage CPU times add up all the views
+  (Stat frame, "How a scene is timed").
+- **Testing before a game sets cameras.** `Splitscreen.DebugOffset x,y,z`
+  moves each view i > 0 that borrows another view's camera by i times that
+  offset, so the views can be far apart.
+
+### Revealing players
+
+A building between a player and their camera is dithered away around that
+player, so they stay in sight.
+
+- **What reveals.** Only Render components marked **Reveal Players**
+  (`RenderComponent::bRevealPlayers`): buildings, walls, roofs, overhead
+  pipes. Never the ground the players stand on, which would otherwise be
+  "in front of" their feet.
+- **Which points.** `Renderer::SetRevealPoints(Scene, Points, Count, Radius)`
+  sets up to `RENDER_REVEAL_MAX` (4) points, which every view of the scene
+  keeps in sight. The game session sends its local players' avatars each
+  frame, `[Rendering] RevealHeight` (90) above their feet, with a circle of
+  `[Rendering] RevealRadius` (150) world units.
+  `[Rendering] RevealPlayers=false` turns it off.
+- **The test.** `RenderContext` projects each point into the view
+  (`Scene_Reveal`: NDC centre, radius, view depth). The material pixel stage
+  (`MaterialTemplate_PS.glsl`) discards a marked draw's pixel when it is
+  - inside a point's circle, and
+  - nearer the eye than that point by at least the radius,
+  - and not kept by a 4x4 ordered screen door: a quarter of the pixels are
+    kept in the middle, all of them at the rim.
+  The flag rides per draw in the material block's `Material_Reserved0`
+  (`DrawCommand::bReveal`, `RenderContext::SetDrawReveal`), so static draw
+  lists keep it.
+- **The PrePass.** A marked occluder draws no PrePass depth while its view
+  reveals anything; its depth would fill in the hole.
+- **Shadows** are unchanged: a revealed building still casts its shadow.
+- Perspective views only.
+
 ### Scene capture
 
 A **Scene Capture Probe** component (`Components/SceneCaptureProbeComponent.h`)
@@ -1174,6 +1263,15 @@ around the capture and simulate loops, so a frame with none shows 0.00, not `-`.
 **How a scene is timed:**
 - `RenderSceneStages(..., bInTimed)` writes a GPU timestamp before and after
   each span (`GDIWriteGPUTimestamp`, indices `2t` and `2t + 1`).
+- With several views (Views), every view is timed and each span is summed
+  over them:
+  - View 0 writes `2t` and `2t + 1` as usual.
+  - View v > 0 writes its per-view spans (all but Total) from index 20,
+    14 indices apiece.
+  - `RenderContext::EndTimedViews` writes the last view's end at index 63.
+    Total runs from view 0's start to there.
+  - That fits GDI's 64 timestamps for 4 views. The CPU times and draw counts
+    add up the same way.
 - It does this only for the scene's own frame, and only while Stats.Frame is
   on, so a preview in the same block does not overwrite them and timing costs
   nothing when it is off.

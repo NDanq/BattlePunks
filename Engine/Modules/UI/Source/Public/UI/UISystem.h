@@ -65,26 +65,44 @@ namespace UI
         // === Documents ==========================================================
 
         /* Opens the document at InPath (UIAssetCache) over the others of its
-         * Layer, or returns it if it is open. A persistent one stays through
-         * CloseAll(false) -- a level change. UI_DOCUMENT_INVALID if it does not load. */
-        UIDocumentHandle Open(const std::string& InPath, bool bInPersistent = false);
+         * Layer, or returns it if it is open (for InPlayer). A persistent one
+         * stays through CloseAll(false) -- a level change. UI_DOCUMENT_INVALID
+         * if it does not load.
+         *
+         * SPLITSCREEN: InPlayer 0-3 opens it for that local player -- one copy
+         * each, a HUD per player: laid out in the player's area
+         * (SetPlayerArea), navigated by that player's own pad
+         * (UIInputFrame::PlayerNav), its {Bind:Key} reading "Player<N>.Key"
+         * ({Bind:/Key} as written). -1, the default: the whole window. */
+        UIDocumentHandle Open(const std::string& InPath, bool bInPersistent = false, int32_t InPlayer = -1);
 
         /* Opens InAsset, not from a file (the editor; tests). InPath names it
          * (its graph's self.Document). bInFollowCache: rebuilt when the cache's
          * copy of InPath moves -- false for the designer, whose asset is the
          * one being edited, not the file. */
         UIDocumentHandle OpenAsset(std::shared_ptr<const UIDocumentAsset> InAsset, const std::string& InPath, bool bInPersistent = false,
-                                   bool bInFollowCache = true);
+                                   bool bInFollowCache = true, int32_t InPlayer = -1);
 
         bool Close(UIDocumentHandle InHandle);
-        bool Close(const std::string& InPath);
+        bool Close(const std::string& InPath);   // every player's copy
+        bool Close(const std::string& InPath, int32_t InPlayer);
         void CloseAll(bool bInPersistentToo);
 
         bool IsOpen(const std::string& InPath) const;
         UIDocumentInstance* Find(UIDocumentHandle InHandle) const;
         UIDocumentInstance* Find(const std::string& InPath) const;
         UIDocumentHandle    FindHandle(const std::string& InPath) const;
+        UIDocumentHandle    FindHandle(const std::string& InPath, int32_t InPlayer) const;
         size_t              GetDocumentCount() const;
+
+        /* The local player a document was opened for; -1 the whole window's. */
+        int32_t GetDocumentPlayer(UIDocumentHandle InHandle) const;
+
+        /* SPLITSCREEN: where local player InPlayer's documents lay out, window
+         * pixels (their view's rectangle, say); none set -- or an empty one --
+         * the whole window. */
+        void SetPlayerArea(int32_t InPlayer, const UIRect& InPixels);
+        void ClearPlayerAreas();
 
         // === Data store =========================================================
 
@@ -185,6 +203,7 @@ namespace UI
         uint64_t               MergedSerial = 0;
         uint64_t               SubmitCount  = 0;
         UIVec2                 Viewport;
+        UIRect                 PlayerAreas[UI_PLAYERS_MAX];   // SetPlayerArea; empty: the whole window
     };
 
     /* The session Lua's UI library acts on (UIScriptLibrary.cpp); null none. */

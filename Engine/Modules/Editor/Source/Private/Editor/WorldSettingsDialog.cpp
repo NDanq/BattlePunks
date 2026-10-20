@@ -16,11 +16,15 @@
 
 #include "Public/Editor/EditorDocument.h"
 #include "Public/GameCore/WorldSettings.h"
+#include "Public/NimbleEngine/WorldList.h"
 
 namespace
 {
     /* World units are centimetres; density reads better per metre. */
     constexpr double UnitsPerMetre = 100.0;
+
+    /* The game mode choice that is not a mode. */
+    const char* const NoModeText = "(none)";
 }
 
 WorldSettingsDialog::WorldSettingsDialog(EditorDocument& InDocument, QWidget* InParent)
@@ -28,6 +32,23 @@ WorldSettingsDialog::WorldSettingsDialog(EditorDocument& InDocument, QWidget* In
     , Document(InDocument)
 {
     setWindowTitle(QStringLiteral("World Settings"));
+
+    /* Modes the game module registers -- loaded for authoring, so known here. */
+    const QString Mode = QString::fromStdString(Document.GetWorldSettings().GameMode);
+    GameMode = new QComboBox(this);
+    GameMode->setEditable(true);
+    GameMode->addItem(QString::fromLatin1(NoModeText));
+    for(size_t Index = 0; Index < NimbleEngine::GetGameModeCount(); ++Index)
+    {
+        GameMode->addItem(QString::fromUtf8(NimbleEngine::GetGameModeName(Index)));
+    }
+    GameMode->setCurrentText(Mode.isEmpty() ? QString::fromLatin1(NoModeText) : Mode);
+    GameMode->setToolTip(QStringLiteral("The rules a level of this world runs: a game mode the game module registers "
+                                        "(NIMBLE_REGISTER_GAME_MODE). Listed: those the loaded module has"));
+
+    auto* GameGroup = new QGroupBox(QStringLiteral("Game"), this);
+    auto* GameForm  = new QFormLayout(GameGroup);
+    GameForm->addRow(QStringLiteral("Game mode"), GameMode);
 
     const GameCore::WorldLightingSettings& Lighting = Document.GetWorldSettings().Lighting;
 
@@ -98,6 +119,7 @@ WorldSettingsDialog::WorldSettingsDialog(EditorDocument& InDocument, QWidget* In
     connect(Buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
     auto* Layout = new QVBoxLayout(this);
+    Layout->addWidget(GameGroup);
     Layout->addWidget(Group);
     Layout->addWidget(Note);
     Layout->addWidget(Buttons);
@@ -106,6 +128,9 @@ WorldSettingsDialog::WorldSettingsDialog(EditorDocument& InDocument, QWidget* In
 void WorldSettingsDialog::Apply()
 {
     GameCore::WorldSettings Settings = Document.GetWorldSettings();
+    const QString Mode = GameMode->currentText().trimmed();
+    Settings.GameMode = Mode == QLatin1String(NoModeText) ? std::string() : Mode.toStdString();
+
     GameCore::WorldLightingSettings& Lighting = Settings.Lighting;
     Lighting.bBakedLighting  = BakedLighting->isChecked();
     Lighting.TexelsPerUnit   = float(TexelsPerMetre->value() / UnitsPerMetre);

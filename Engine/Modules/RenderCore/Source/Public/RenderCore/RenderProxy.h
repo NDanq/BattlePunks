@@ -87,6 +87,11 @@ namespace RenderCore
          * box is tested against. Neither by default: a proxy type occludes
          * nothing unless it says so (RenderComponent::bOccluder). */
         virtual bool IsOccluder() const { return false; }
+
+        /* OCCLUSION REVEAL: whether this proxy's draws are dithered away where
+         * they hide a view's players (RenderComponent::bRevealPlayers); while
+         * a view reveals any, such an occluder draws no PrePass depth. */
+        virtual bool RevealsPlayers() const { return false; }
         virtual void DrawOccluder(RenderContext& InContext) { (void)InContext; }
 
         /* RENDER THREAD, before culling: how far past WorldBounds this
@@ -205,11 +210,13 @@ namespace RenderCore
         uint64_t ChangeSerial = 0;
         RenderBakedDraw Baked;
 
-        /* RenderScene's occlusion bookkeeping: its query in the last round of
-         * each of the scene's query sets (one per frame in flight; -1: none),
-         * and whether the last answer read found it hidden. */
+        /* RenderScene's occlusion bookkeeping: per view (RENDER_VIEWS_MAX), its
+         * query in the last round of each of that view's query sets (one per
+         * frame in flight; -1: none), and whether the answer read for the view
+         * being drawn found it hidden. */
         static constexpr uint32_t OCCLUSION_SETS_MAX = 4;
-        int32_t  OcclusionQueries[OCCLUSION_SETS_MAX] = { -1, -1, -1, -1 };
+        int32_t  OcclusionQueries[RENDER_VIEWS_MAX][OCCLUSION_SETS_MAX] = { { -1, -1, -1, -1 }, { -1, -1, -1, -1 },
+                                                                            { -1, -1, -1, -1 }, { -1, -1, -1, -1 } };
         bool     bOccluded      = false;
     };
 

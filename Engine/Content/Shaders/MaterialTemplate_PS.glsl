@@ -47,6 +47,37 @@ OUTPUT(4, vec4, Velocity)   // xyz: world motion since the frame before; a: 1, w
 OUTPUT(0, vec4, Output)
 #endif
 
+#if !MATERIAL_DOMAIN_POSTPROCESS
+// OCCLUSION REVEAL (RenderCore/RENDERPIPELINE.md, "Revealing players"): a draw marked
+// Reveal Players (Material_Reserved0, written per draw) has its pixels nearer the eye
+// than a player, inside the circle round them, dithered away -- a 4x4 ordered screen
+// door, all of it but Scene_RevealParams.z in the middle, none at the rim.
+float RevealDither(vec2 InPixel)
+{
+    const float Bayer[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+    ivec2 Cell = ivec2(mod(floor(InPixel), 4.0));
+    return (Bayer[Cell.y * 4 + Cell.x] + 0.5) / 16.0;
+}
+
+bool RevealHides(vec3 InClip, float InViewDepth, vec2 InPixel)
+{
+    if(Material_Reserved0 < 0.5 || Scene_RevealParams.x < 0.5 || InViewDepth <= 1.0e-3) { return false; }
+    vec2 Ndc = InClip.xy / InViewDepth;   // a perspective view's clip w is its view depth
+    for(int Index = 0; Index < 4; ++Index)
+    {
+        if(float(Index) >= Scene_RevealParams.x) { break; }
+        vec4 Point = Scene_Reveal[Index];
+        if(InViewDepth >= Point.w - Scene_RevealParams.w) { continue; }   // not in front of them
+        vec2  Away = vec2((Ndc.x - Point.x) * Scene_RevealParams.y, Ndc.y - Point.y);
+        float Out  = length(Away) / max(Point.z, 1.0e-4);
+        if(Out >= 1.0) { continue; }
+        float Keep = mix(Scene_RevealParams.z, 1.0, smoothstep(0.55, 1.0, Out));
+        if(RevealDither(InPixel) >= Keep) { return true; }
+    }
+    return false;
+}
+#endif
+
 void main(void)
 {
     MaterialInputs Inputs;
@@ -64,6 +95,9 @@ void main(void)
 
 #if MATERIAL_DOMAIN_MASKED
     if(Surface.OpacityMask < Material_ClipValue) { discard; }
+#endif
+#if !MATERIAL_DOMAIN_POSTPROCESS
+    if(RevealHides(Inputs.ClipPosition.xyz, Inputs.ViewDepth, gl_FragCoord.xy)) { discard; }
 #endif
 
 #if MATERIAL_SHADING_LIT

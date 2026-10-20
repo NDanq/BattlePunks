@@ -496,6 +496,26 @@ over `Config/DefaultEngine.ini`; `Config.Save()` (Lua and graphs) writes what
 differs from the game's own values there. LightLab's pause menu and Sandbox's
 Settings save on close, from their UI graphs' On Document Close.
 
+**Split-screen** (Engine/Source/SPLITSCREEN.md): a document can be opened for
+one local player, with `UISystem::Open(Path, Persistent, Player)` or Lua
+`UI.Open(path, persistent, player)`, where `Player` 0-3 counts from player 1.
+Each player gets their own copy, a HUD each:
+- **Area.** It is laid out in that player's area (`SetPlayerArea`): the
+  session sets it to the player's view, or in the dynamic split to a fixed
+  half of the window. With no area, it fills the whole window.
+- **Data.** Its `{Bind:Key}` reads `Player<N>.Key`, where the session keeps
+  `Player<N>.Score` and `Player<N>.Lives`. `{Bind:/Key}` reads the key as
+  written.
+- **Input.** It is navigated by that player's own pad
+  (`UIInputFrame::PlayerNav`). As `UIOnly`, it holds only that player's input
+  (`UIInputResult::bConsumePlayer`); the others play on.
+- **Closing.** `Close(Path)` closes every player's copy; `Close(Path, Player)`
+  closes one.
+
+A document opened for the whole window (a pause menu) is navigated by player
+1's pad and the keyboard. With `[Splitscreen] MenuAnyPad` (on by default),
+any player's pad navigates it too.
+
 `GameSession::SetPaused(true)` stops the World and the mode's `OnTick`, but the UI
 keeps running, so a pause menu can resume the game. Documents close when their
 level unloads, unless they were opened as persistent.

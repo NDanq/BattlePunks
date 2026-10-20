@@ -222,7 +222,7 @@ namespace UI
         UIFontCache* GetFonts() const { return Fonts; }
 
         /* Lays out for a viewport of InPixels if anything moved; true if it did. */
-        bool Layout(const UIVec2& InViewportPixels);
+        bool Layout(const UIVec2& InViewportPixels, const UIVec2& InOrigin = UIVec2());   // InOrigin: where its area's top-left is, in pixels
 
         /* Repaints the draw list if anything changed; true if it did. */
         bool Paint();
@@ -399,6 +399,7 @@ namespace UI
         float                  Scale        = 1.0f;
         UIVec2                 LayoutSize;
         UIVec2                 Viewport;
+        UIVec2                 Origin;   // Layout's: a player's area's top-left (UISystem::SetPlayerArea)
 
         int32_t Hovered = -1, Pressed = -1, Focused = -1;
 

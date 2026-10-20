@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <World Format="1">
+  <Settings GameMode="WorldsLabExplore" />
   <Entity Guid="224d1583794378df1dea789b45fbfcda" />
   <Entity Guid="e1109910c5cafca96729dd458bc1d3d5" />
   <Entity Guid="622c7c77e4bed830c7d6c3a288bfeab7" />

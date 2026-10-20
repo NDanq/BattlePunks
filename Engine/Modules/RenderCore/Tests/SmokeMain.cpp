@@ -100,9 +100,9 @@ static void TestScriptBindings()
     size_t RenderCount = 0;
     const GameCore::ScriptBindingEntry* Render =
         GameCore::FindComponentScript(RenderComponent::StaticType().ID, RenderCount);
-    Expect(Render != nullptr && RenderCount == 13,
-           "Render exposes Visible, Mesh, slots by index, material parameters, CastShadows, CastInsetShadow, Occluder "
-           "and CustomPassGroups");
+    Expect(Render != nullptr && RenderCount == 14,
+           "Render exposes Visible, Mesh, slots by index, material parameters, CastShadows, CastInsetShadow, Occluder, "
+           "CustomPassGroups and RevealPlayers");
     const auto HasBinding = [&](const char* InName)
     {
         for(size_t Index = 0; Render && Index < RenderCount; ++Index)
@@ -119,6 +119,7 @@ static void TestScriptBindings()
     Expect(HasBinding("CastShadows"), "and whether it casts shadows");
     Expect(HasBinding("Occluder"), "and whether it occludes");
     Expect(HasBinding("CustomPassGroups"), "and its custom render pass mesh groups");
+    Expect(HasBinding("RevealPlayers"), "and whether it is dithered where it hides a player");
 
     bool bProxyExposed = false;
     for(size_t Index = 0; Index < RenderCount; ++Index)
@@ -821,6 +822,30 @@ namespace
         CustomPassLog& Log;
         std::string    Name;
     };
+
+    /* SPLITSCREEN: what each run saw -- its view, whether it is a main view,
+     * its targets' size, and the target its pool handed it. */
+    struct ViewPassRun { uint32_t View; bool bMain; uint32_t Width, Height; const void* Target; };
+
+    class ViewPass final : public CustomRenderPass
+    {
+    public:
+        explicit ViewPass(std::vector<ViewPassRun>& InRuns) : Runs(InRuns) {}
+
+        const char* GetName() const override { return "Views"; }
+        void Execute(RenderPassContext& InContext) override
+        {
+            RenderPassTargetDesc Desc;
+            Desc.Width  = InContext.GetWidth();
+            Desc.Height = InContext.GetHeight();
+            const RenderPassTarget Target = InContext.AcquireTarget("PerView", Desc);
+            Runs.push_back({ InContext.GetViewIndex(), InContext.IsMainView(), InContext.GetWidth(), InContext.GetHeight(),
+                             Target.Handle });
+        }
+
+    private:
+        std::vector<ViewPassRun>& Runs;   // render thread; read after a flush
+    };
 }
 
 static void TestCustomRenderPasses()
@@ -892,6 +917,31 @@ static void TestCustomRenderPasses()
     Rend.WaitForPreviousFrame();
     FlushRenderCommands();
     Expect(Log.Take().empty(), "with none registered, nothing runs");
+
+    /* SPLITSCREEN: a pass runs once per view, each a main view, each with its own pool. */
+    {
+        std::vector<ViewPassRun> Runs;
+        const RenderPassHandle PerView = RegisterCustomRenderPass(&World, std::make_shared<ViewPass>(Runs), ERenderHook::AfterForward);
+        Rend.SetViewCount(RENDER_DEFAULT_SCENE, 2);
+        for(uint64_t Frame = 4; Frame <= 5; ++Frame)
+        {
+            Rend.EndFrame(FrameInfo{Frame, 0.016, EngineCore::Size(320, 200)});
+            Rend.WaitForPreviousFrame();
+        }
+        FlushRenderCommands();
+        const bool bTwoAFrame = Runs.size() == 4 && Runs[0].View == 0 && Runs[1].View == 1 && Runs[2].View == 0 && Runs[3].View == 1;
+        Expect(bTwoAFrame, "a custom pass runs for each view, in order");
+        if(bTwoAFrame)
+        {
+            Expect(Runs[0].bMain && Runs[1].bMain, "every split view is a main view (IsMainView)");
+            Expect(Runs[0].Width == 320 && Runs[0].Height == 100 && Runs[1].Height == 100, "each view's targets are its own rectangle's size");
+            Expect(Runs[0].Target && Runs[1].Target && Runs[0].Target != Runs[1].Target
+                       && Runs[2].Target == Runs[0].Target && Runs[3].Target == Runs[1].Target,
+                   "each view has its own pass targets, kept from frame to frame");
+        }
+        Rend.SetViewCount(RENDER_DEFAULT_SCENE, 1);
+        UnregisterCustomRenderPass(PerView);
+    }
 
     Rend.UnbindWorld();
     Rend.Shutdown();
@@ -1014,6 +1064,109 @@ static void TestMultipleScenes()
 
     Rend.Shutdown();
     Expect(Rend.CreateScene() == RENDER_INVALID_SCENE, "CreateScene after Shutdown() is refused");
+}
+
+/* What the last-rendered scene's main view was, as the context last had it. */
+static RenderView LastRenderedView()
+{
+    RenderView Seen;
+    ENQUEUE_RENDER_COMMAND(ReadLastView)([&Seen](RenderContext& Ctx) { Seen = Ctx.GetView(); });
+    FlushRenderCommands();
+    return Seen;
+}
+
+/* SPLITSCREEN: one scene, several views (RenderTypes.h's RENDER_VIEWS_MAX). */
+static void TestSplitscreenViews()
+{
+    std::printf("[splitscreen views]\n");
+
+    RenderViewRect Rects[RENDER_VIEWS_MAX];
+    Expect(MakeSplitscreenLayout(EngineCore::Size(641, 361), 2, false, Rects) == 2
+               && Rects[0].Height == 180 && Rects[1].Y == 180 && Rects[1].Height == 181 && Rects[1].Width == 641,
+           "two views: top and bottom halves, tiling an odd height");
+    Expect(MakeSplitscreenLayout(EngineCore::Size(640, 360), 2, true, Rects) == 2 && Rects[1].X == 320 && Rects[1].Height == 360,
+           "two views side by side: left and right halves");
+    Expect(MakeSplitscreenLayout(EngineCore::Size(640, 360), 3, false, Rects) == 3
+               && Rects[0].Width == 640 && Rects[2].X == 320 && Rects[2].Y == 180,
+           "three views: one across the top, two below");
+    Expect(MakeSplitscreenLayout(EngineCore::Size(640, 360), 9, false, Rects) == RENDER_VIEWS_MAX
+               && Rects[3].X == 320 && Rects[3].Y == 180 && Rects[3].Width == 320,
+           "more than RENDER_VIEWS_MAX: quadrants");
+
+    Renderer Rend;
+    if(!Rend.Initialize(ERenderBackend::Null, WindowHandle()))
+    {
+        Expect(false, "Renderer::Initialize(Null, {}) succeeds for the splitscreen test");
+        return;
+    }
+    GameCore::World Level;
+    AddCameraAt(Level, 100.0);
+    const GameCore::Entity Second = Level.CreateEntity();
+    Second.AddComponent<GameCore::TransformComponent>()->Position = EngineCore::Vector3(300.0, 0.0, 0.0);
+    Second.AddComponent<CameraComponent>()->bActive = false;
+    const GameCore::Entity Mesh = Level.CreateEntity();
+    Mesh.AddComponent<GameCore::TransformComponent>();
+    Mesh.AddComponent<RenderComponent>();
+    Rend.BindWorld(Level);
+
+    Rend.EndFrame(FrameInfo{0, 0.016, EngineCore::Size(640, 360)});
+    Rend.WaitForPreviousFrame();
+    RenderView View = LastRenderedView();
+    Expect(Rend.GetViewCount() == 1 && View.ViewportPixels.Width == 640 && View.ViewportPixels.Height == 360,
+           "one view by default, the whole viewport");
+
+    Rend.SetViewCamera(RENDER_DEFAULT_SCENE, 1, Second.GetID());
+    Expect(Rend.GetViewCamera(RENDER_DEFAULT_SCENE, 1) == Second.GetID() && !Rend.GetViewCamera(RENDER_DEFAULT_SCENE, 2).IsSet(),
+           "SetViewCamera(scene, view, camera) is per view");
+    Rend.SetViewCount(RENDER_DEFAULT_SCENE, 2);
+    for(uint64_t Frame = 1; Frame <= 3; ++Frame)   // targets made, then reused
+    {
+        Rend.EndFrame(FrameInfo{Frame, 0.016, EngineCore::Size(640, 360)});
+        Rend.WaitForPreviousFrame();
+    }
+    View = LastRenderedView();
+    Expect(Rend.GetViewCount() == 2 && View.ViewIndex == 0 && View.ViewportPixels.Width == 640 && View.ViewportPixels.Height == 180
+               && View.Origin.GetX() == 100.0,
+           "two views: the main one the top half, through the first active camera");
+
+    Rend.SetViewCount(RENDER_DEFAULT_SCENE, 4);
+    Rend.EndFrame(FrameInfo{4, 0.016, EngineCore::Size(640, 360)});
+    Rend.WaitForPreviousFrame();
+    View = LastRenderedView();
+    Expect(Rend.GetViewCount() == 4 && View.ViewportPixels.Width == 320 && View.ViewportPixels.Height == 180,
+           "four views: quadrants (views 2 and 3 through view 0's camera)");
+
+    /* The dynamic split: every view the whole viewport, cut by its sites. */
+    RenderViewSites Sites;
+    Sites.Count = 2;
+    Sites.X[0] = 200.0f; Sites.Y[0] = 180.0f;
+    Sites.X[1] = 440.0f; Sites.Y[1] = 180.0f;
+    Rend.SetViewSites(RENDER_DEFAULT_SCENE, Sites);
+    for(uint64_t Frame = 10; Frame <= 12; ++Frame)   // the second view appears, seeded from the first, then carries on
+    {
+        Rend.EndFrame(FrameInfo{Frame, 0.016, EngineCore::Size(640, 360)});
+        Rend.WaitForPreviousFrame();
+    }
+    View = LastRenderedView();
+    Expect(Rend.GetViewCount() == 2 && View.ViewportPixels.Width == 640 && View.ViewportPixels.Height == 360
+               && View.ViewportX == 0 && View.ViewportY == 0,
+           "sites: two views, each the whole viewport, over SetViewCount's four");
+    Sites.Count = 1;
+    Rend.SetViewSites(RENDER_DEFAULT_SCENE, Sites);
+    Rend.EndFrame(FrameInfo{13, 0.016, EngineCore::Size(640, 360)});
+    Rend.WaitForPreviousFrame();
+    View = LastRenderedView();
+    Expect(Rend.GetViewCount() == 4 && View.ViewportPixels.Width == 320, "fewer than two sites: the rectangles again");
+
+    Rend.SetViewCount(RENDER_DEFAULT_SCENE, 1);
+    Rend.EndFrame(FrameInfo{5, 0.016, EngineCore::Size(800, 600)});
+    Rend.WaitForPreviousFrame();
+    View = LastRenderedView();
+    Expect(View.ViewportPixels.Width == 800 && View.ViewportPixels.Height == 600 && View.ViewportX == 0 && View.ViewportY == 0,
+           "back to one view: the whole viewport again, resized");
+
+    Rend.UnbindWorld();
+    Rend.Shutdown();
 }
 #endif // WITH_EDITOR
 
@@ -2732,7 +2885,7 @@ static void TestRenderComponentSerializer()
     };
 
     const GameCore::ComponentSerializerInfo* Info = GameCore::FindComponentSerializer(RenderComponent::StaticType().ID);
-    Expect(Info && Info->Version == 6, "RenderComponent saves as version 6 (material parameters, CastShadows, CastInsetShadow, Occluder, CustomPassGroups)");
+    Expect(Info && Info->Version == 7, "RenderComponent saves as version 7 (material parameters, CastShadows, CastInsetShadow, Occluder, CustomPassGroups, RevealPlayers)");
     if(!Info) { return; }
 
     RenderComponent Saved;
@@ -6799,6 +6952,7 @@ int main()
     TestPostProcessStack();
 #if WITH_EDITOR
     TestMultipleScenes();
+    TestSplitscreenViews();
     TestDebugLines();
     TestUIDrawList();
     TestUISubmit();

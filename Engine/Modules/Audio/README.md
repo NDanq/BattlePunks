@@ -176,6 +176,16 @@ it does three things:
 1. **The listener.** It uses the first active **Audio Listener**'s world
    pose. With none, it uses the active camera. The World's axes are
    left-handed: +X right, +Y up, +Z forward.
+   - **Split-screen** (SPLITSCREEN.md): with more than one view, the game
+     session places a listener at each view's camera instead, up to
+     `AudioDevice::AUDIO_LISTENERS_MAX` (4), and they win over an Audio
+     Listener (`AudioWorld::SetListenersFallback`). Each 3D sound is heard
+     from the listener nearest it, so a player hears what is near their own
+     camera.
+   - The extra listeners are switched off when unused, so nothing changes
+     with one view.
+   - miniaudio 0.11.25 pins every new sound to listener 0, so each voice is
+     un-pinned when it is made.
 2. **Each Audio Source.**
    - It makes a voice for the source's `Sound`, and remakes it when `Sound`
      changes or the sound is reimported.
@@ -192,10 +202,10 @@ it does three things:
 3. **One-shots.** `PlaySound2D`, `PlaySoundAt` and `PlaySoundAttached` play a
    sound once, following its entity if one was given, and free the voice
    when it ends.
-   - A 3D one-shot beyond its sound's MaxDistance from the listener is not
-     started.
-   - At most 64 play at once. A new one replaces the farthest playing only if
-     it is nearer; otherwise it is dropped. A crowd's far footsteps never push
+   - A 3D one-shot beyond its sound's MaxDistance from the nearest listener
+     is not started.
+   - At most 64 play at once. A new one replaces the farthest playing (from
+     the nearest listener) only if it is nearer; otherwise it is dropped. A crowd's far footsteps never push
      out the near ones.
    - `[Audio] LogPlays=true` logs each one-shot played, culled or dropped.
 

@@ -279,7 +279,7 @@ namespace Audio
 
         ma_engine_config EngineConfig = ma_engine_config_init();
         EngineConfig.pResourceManager = &P->ResourceManager;
-        EngineConfig.listenerCount    = 1;
+        EngineConfig.listenerCount    = AUDIO_LISTENERS_MAX;   // SetListenerCount switches on as many as there are views
         EngineConfig.sampleRate       = InSettings.SampleRate;
         EngineConfig.channels         = InSettings.Channels;
         if(InSettings.bOffline)
@@ -304,12 +304,18 @@ namespace Audio
          * Doppler at the speed of sound in world units. miniaudio has no
          * setter for handedness; the mix reads the field each time, and the
          * direction it flipped at init is set below anyway. */
-        ma_spatializer_listener* Listener = &P->Engine.listeners[0];
-        Listener->config.handedness = ma_handedness_left;
-        ma_spatializer_listener_set_speed_of_sound(Listener, 343.3f * InSettings.UnitsPerMeter);
-        ma_engine_listener_set_world_up(&P->Engine, 0, 0.0f, 1.0f, 0.0f);
-        ma_engine_listener_set_position(&P->Engine, 0, 0.0f, 0.0f, 0.0f);
-        ma_engine_listener_set_direction(&P->Engine, 0, 0.0f, 0.0f, 1.0f);
+        for(ma_uint32 Index = 0; Index < ma_engine_get_listener_count(&P->Engine); ++Index)
+        {
+            ma_spatializer_listener* Listener = &P->Engine.listeners[Index];
+            Listener->config.handedness = ma_handedness_left;
+            ma_spatializer_listener_set_speed_of_sound(Listener, 343.3f * InSettings.UnitsPerMeter);
+            ma_engine_listener_set_world_up(&P->Engine, Index, 0.0f, 1.0f, 0.0f);
+            ma_engine_listener_set_position(&P->Engine, Index, 0.0f, 0.0f, 0.0f);
+            ma_engine_listener_set_direction(&P->Engine, Index, 0.0f, 0.0f, 1.0f);
+            /* miniaudio starts every listener on; at the origin, the extra ones would be "closest" to much. */
+            ma_engine_listener_set_enabled(&P->Engine, Index, Index == 0 ? MA_TRUE : MA_FALSE);
+        }
+        P->ListenerCount = 1;
 
         for(size_t Index = size_t(EAudioBus::Master) + 1; Index < size_t(EAudioBus::Count); ++Index)
         {
@@ -456,11 +462,35 @@ namespace Audio
     void AudioDevice::SetListener(const EngineCore::Vector3& InPosition, const EngineCore::Vector3& InForward,
                                   const EngineCore::Vector3& InUp, const EngineCore::Vector3& InVelocity)
     {
+        SetListener(0, InPosition, InForward, InUp, InVelocity);
+    }
+
+    void AudioDevice::SetListener(const uint32_t InIndex, const EngineCore::Vector3& InPosition, const EngineCore::Vector3& InForward,
+                                  const EngineCore::Vector3& InUp, const EngineCore::Vector3& InVelocity)
+    {
+        if(!P || InIndex >= ma_engine_get_listener_count(&P->Engine)) { return; }
+        ma_engine_listener_set_position(&P->Engine, InIndex, float(InPosition.GetX()), float(InPosition.GetY()), float(InPosition.GetZ()));
+        ma_engine_listener_set_direction(&P->Engine, InIndex, float(InForward.GetX()), float(InForward.GetY()), float(InForward.GetZ()));
+        ma_engine_listener_set_world_up(&P->Engine, InIndex, float(InUp.GetX()), float(InUp.GetY()), float(InUp.GetZ()));
+        ma_engine_listener_set_velocity(&P->Engine, InIndex, float(InVelocity.GetX()), float(InVelocity.GetY()), float(InVelocity.GetZ()));
+    }
+
+    void AudioDevice::SetListenerCount(const uint32_t InCount)
+    {
         if(!P) { return; }
-        ma_engine_listener_set_position(&P->Engine, 0, float(InPosition.GetX()), float(InPosition.GetY()), float(InPosition.GetZ()));
-        ma_engine_listener_set_direction(&P->Engine, 0, float(InForward.GetX()), float(InForward.GetY()), float(InForward.GetZ()));
-        ma_engine_listener_set_world_up(&P->Engine, 0, float(InUp.GetX()), float(InUp.GetY()), float(InUp.GetZ()));
-        ma_engine_listener_set_velocity(&P->Engine, 0, float(InVelocity.GetX()), float(InVelocity.GetY()), float(InVelocity.GetZ()));
+        const uint32_t Available = ma_engine_get_listener_count(&P->Engine);
+        const uint32_t Count     = std::min(std::max<uint32_t>(InCount, 1), Available);
+        if(Count == P->ListenerCount) { return; }
+        for(uint32_t Index = 0; Index < Available; ++Index)
+        {
+            ma_engine_listener_set_enabled(&P->Engine, Index, Index < Count ? MA_TRUE : MA_FALSE);
+        }
+        P->ListenerCount = Count;
+    }
+
+    uint32_t AudioDevice::GetListenerCount() const
+    {
+        return P ? P->ListenerCount : 0;
     }
 
     bool AudioDevice::PlayTone(const float InHz, const float InSeconds, const float InVolume, const EAudioBus InBus)

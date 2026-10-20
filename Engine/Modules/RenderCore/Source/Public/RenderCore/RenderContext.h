@@ -31,6 +31,7 @@ namespace EngineCore { class Image; }
 
 class GDIReadback;           // Public/GDI/GDIRenderTarget.h
 class GDIOcclusionQueries;   // Public/GDI/GDIQuery.h
+class GDIRenderTarget;       // Public/GDI/GDIRenderTarget.h; opaque here, as the two above
 
 namespace RenderCore
 {
@@ -311,6 +312,22 @@ namespace RenderCore
          * names none, or Final itself. */
         void ShowTarget(const SceneTargets& InTargets, const std::string& InName);
 
+        /* SPLITSCREEN (RenderScene::Render): InTarget cleared to black, then
+         * each of InCount views' final colours (InSources, null skipped)
+         * stretched over its rectangle InRects in it, opaque. Leaves InTarget
+         * bound, for the UI and overlays over the whole window. */
+        void CompositeViews(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewRect* InRects, uint32_t InCount);
+
+        /* SPLITSCREEN's dynamic split: InTarget, window-sized, each pixel from
+         * the view whose site is nearest (InSites.Count views, each as large
+         * as InTarget), the divider along the cells' edges (ViewSites.fsh). */
+        void CompositeViewSites(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewSites& InSites);
+
+        /* A view appearing in the dynamic split: InFrom's TAA history and
+         * exposure copied into InTo (the same size), as if InTo had drawn
+         * InFrom's last frame. Nothing for targets of different sizes. */
+        void SeedViewHistory(SceneTargets& InTo, const SceneTargets& InFrom);
+
         /* RenderScene::Render's: queue the proxies' draws in their stages'
          * policies, then run the stages into InTargets (RENDERPIPELINE.md),
          * clearing to InClearColor. Leaves the final colour target bound --
@@ -340,6 +357,10 @@ namespace RenderCore
          * frame, before the first scene queues (later calls that frame do
          * nothing). */
         void SetDrawStreamingScale(float InPixelsPerWorldUnit);
+
+        /* OCCLUSION REVEAL: whether the draws queued now are dithered away where
+         * they hide the view's players (RenderView::RevealPoints). */
+        void SetDrawReveal(bool bInReveal);
         void UpdateTextureStreaming();
 
         /*
@@ -439,8 +460,10 @@ namespace RenderCore
         void                  SetShadowCasterView(int32_t InView);
         /* InClearBottom: the background is a gradient, InClearColor at the
          * top to it at the bottom (ClearGradient.fsh), under everything.
-         * bInTimed: write "stat frame"'s GPU timestamps around each stage --
-         * a scene's own frame only, once per GDI block (BeginTimedBlock). */
+         * bInTimed: one of a scene's own views (custom passes' IsMainView),
+         * its stages timed for "stat frame" -- every view of the block's
+         * scene (BeginTimedBlock), summed span by span (GetView().ViewIndex
+         * says which view); EndTimedViews after the last. */
         void RenderSceneStages(SceneTargets& InTargets, EngineCore::Color InClearColor, bool bInTimed = false,
                                const EngineCore::Color* InClearBottom = nullptr);
 
@@ -450,6 +473,10 @@ namespace RenderCore
          * finished -- and the scene that wrote them, null if none did; and
          * notes InOwner as this block's, if bInTime and the backend can time. */
         const void* BeginTimedBlock(const void* InOwner, bool bInTime, float (&OutGpuMs)[RGT_Count]);
+
+        /* SPLITSCREEN: after the last of a frame's timed views, so "stat
+         * frame"'s Total spans them all (RenderScene::Render). */
+        void EndTimedViews();
 
         /* InTimer's start (or end) timestamp, outside RenderSceneStages (the
          * scene captures' span); nothing unless this block is timed. The

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <World Format="1">
+  <Settings GameMode="WorldsLabPvP" />
   <Entity Guid="8b1bc28097e2af04e4180b0174ee2cc7" />
   <Entity Guid="e4f8b34b556a3961e79993defd8ead0f" />
   <Entity Guid="59ad94939db690141ee218a79434c338" />

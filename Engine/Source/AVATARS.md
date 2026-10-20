@@ -137,9 +137,10 @@ return {
 }
 ```
 
-**Local players.** Pad N belongs to local player N. As with an Input
-component's `PlayerIndex`, the keyboard and mouse are read by every local
-player, so split-screen games bind their second player to its pad.
+**Local players.** Pad N belongs to local player N. The keyboard and mouse
+belong to one local player, player 1 by default (`[Input] KeyboardMousePlayer`,
+INPUT.md "Local players"). So in split-screen, player 1 plays on the keyboard
+or pad 1, and the others on their own pads.
 
 ## Prediction
 
@@ -270,18 +271,28 @@ screenshots.
 
 ## The view
 
-The possessed avatar of local player 1 is viewed through when its harness has
+Each local player's possessed avatar is viewed through when its harness has
 **View Target** set. The camera used is the avatar's own Camera component, or
 the first one among its children. The camera is used whether or not it is
 Active, so give avatar cameras Active off: other players' avatars then never
 win the level's first-active rule.
 
-`GameSession::SetViewTarget(Entity)` (Lua `Game.SetViewTarget`) overrides this
-for a cutscene or a death cam. An unset target goes back to the avatar's
-camera. Without either, the level's first active camera is used, as before.
-The listener follows the same choice when the level has no Audio Listener.
+`GameSession::SetViewTarget(Entity, LocalPlayer)` (Lua
+`Game.SetViewTarget(camera, player)`) overrides this for a cutscene or a death
+cam. An unset target goes back to the avatar's camera. Without either, local
+player 1 sees the level's first active camera, as before. The listener follows
+the same choice when the level has no Audio Listener.
 
-There is one view, so split-screen shows local player 1's.
+**Split-screen:** the window shows one view per local player, up to the last
+local player that has a camera. Two players are laid out top and bottom (or
+side by side with `[Splitscreen] SideBySide`), three as one across the top
+and two below, four as quadrants. See SPLITSCREEN.md.
+- A sequence's camera cut or a cinematic shows one view.
+- `GameSession::SetViewCount(n)` (Lua `Game.SetViewCount`) fixes the count.
+- `[Splitscreen] Enabled=false` always shows one view.
+- Players 2-4 can join and leave during play: `GameSession::JoinLocalPlayer`
+  and `LeaveLocalPlayer`, or Start and unplugging with `[Splitscreen] DropIn`.
+  `NetGameMode` spawns and removes their avatars.
 
 ## From scripts
 
@@ -293,7 +304,8 @@ There is one view, so split-screen shows local player 1's.
 | `Game.Possess(player, avatar)`, `Game.Unpossess(player)` | the same, by player |
 | `Game.GetAvatar(player)`, `Game.GetPossessor(avatar)` | |
 | `Game.GetLocalPlayer(n)`, `Game.GetLocalAvatar(n)` | this machine's local player n (0 first) |
-| `Game.SetViewTarget(camera)` | nil goes back to the avatar's |
+| `Game.SetViewTarget(camera [, player])` | nil goes back to the avatar's; player 0 by default |
+| `Game.GetViewCount()`, `Game.SetViewCount(n)` | split-screen views; 0 counts the players' cameras |
 | `Events.On(Game.Possessed, function(player, avatar) ... end)`, `Game.Unpossessed` | every process |
 | `OnPossessed = function(self, player)`, `OnUnpossessed` | in the avatar's prefab script |
 
@@ -304,10 +316,11 @@ There is one view, so split-screen shows local player 1's.
 | `[Avatar] InputTimeoutMs` | 500 | a remote client's avatar reads nothing after this long without input |
 | `[Avatar] DefaultPrefab` | "" | what `SpawnAvatarFor` spawns when nothing else names a prefab |
 | `[Avatar] LocalPlayers` | 1 | local players `NetGameMode` gives avatars |
+| `[Splitscreen] Enabled` | true | a view per local player; off, one view |
+| `[Splitscreen] SideBySide` | false | two players left and right, not top and bottom |
 
 ## Not here yet
 
-- One renderer view, so no split-screen rendering.
 - One player per networked client: NetHost makes one per connection.
 - A prefab **spawned** on the server reaches clients as its components, not
   as a prefab instance. Its descendants without a Net component (a camera

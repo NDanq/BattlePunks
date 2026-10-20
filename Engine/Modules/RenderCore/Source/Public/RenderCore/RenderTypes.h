@@ -77,6 +77,83 @@ namespace RenderCore
     };
 
     /*
+     * SPLITSCREEN (RENDERPIPELINE.md, "Views"): a scene draws up to
+     * RENDER_VIEWS_MAX views a frame, each into its own targets sized to its
+     * rectangle of the window, then places them there. One view (the
+     * default) is the whole window, drawn straight to it.
+     */
+    constexpr uint32_t RENDER_VIEWS_MAX = 4;
+
+    /* OCCLUSION REVEAL (RENDERPIPELINE.md, "Revealing players"): the points a
+     * view keeps in sight through what is marked to reveal them. */
+    constexpr uint32_t RENDER_REVEAL_MAX = 4;
+
+    /* A view's rectangle, in the window's physical pixels, row 0 its top. */
+    struct RenderViewRect
+    {
+        int32_t X      = 0;
+        int32_t Y      = 0;
+        int32_t Width  = 0;
+        int32_t Height = 0;
+    };
+
+    /*
+     * SPLITSCREEN's DYNAMIC SPLIT (SPLITSCREEN.md, "Dynamic split"): instead of
+     * rectangles, every view the whole window, each pixel shown from the view
+     * whose site is nearest it -- with two views, the window cut in two along
+     * the line between their sites' bisector, at any angle -- and a divider
+     * of DividerPixels along the cuts, faded by DividerAlpha. Window pixels,
+     * row 0 the top. Count 0 or 1: no sites (the rectangles' layout).
+     */
+    struct RenderViewSites
+    {
+        float             X[RENDER_VIEWS_MAX] = {};
+        float             Y[RENDER_VIEWS_MAX] = {};
+        uint32_t          Count         = 0;
+        float             DividerPixels = 4.0f;
+        float             DividerAlpha  = 1.0f;
+        EngineCore::Color DividerColor{ 0, 0, 0, 255 };
+    };
+
+    /*
+     * The usual splitscreen layout of InCount views (1-4) over a window of
+     * InWindow pixels, into OutRects; returns how many it wrote. 1: the whole
+     * window. 2: top and bottom halves, or left and right with bInSideBySide.
+     * 3: the first view across the top half, the other two side by side
+     * below. 4: quadrants, left to right, top to bottom. Each rect is whole
+     * pixels and they tile the window exactly.
+     */
+    inline uint32_t MakeSplitscreenLayout(const EngineCore::Size InWindow, uint32_t InCount, const bool bInSideBySide,
+                                          RenderViewRect (&OutRects)[RENDER_VIEWS_MAX])
+    {
+        InCount = InCount < 1 ? 1 : (InCount > RENDER_VIEWS_MAX ? RENDER_VIEWS_MAX : InCount);
+        const int32_t W = InWindow.Width, H = InWindow.Height;
+        const int32_t HalfW = W / 2, HalfH = H / 2;
+        switch(InCount)
+        {
+            case 1:
+                OutRects[0] = { 0, 0, W, H };
+                break;
+            case 2:
+                OutRects[0] = bInSideBySide ? RenderViewRect{ 0, 0, HalfW, H } : RenderViewRect{ 0, 0, W, HalfH };
+                OutRects[1] = bInSideBySide ? RenderViewRect{ HalfW, 0, W - HalfW, H } : RenderViewRect{ 0, HalfH, W, H - HalfH };
+                break;
+            case 3:
+                OutRects[0] = { 0, 0, W, HalfH };
+                OutRects[1] = { 0, HalfH, HalfW, H - HalfH };
+                OutRects[2] = { HalfW, HalfH, W - HalfW, H - HalfH };
+                break;
+            default:
+                OutRects[0] = { 0, 0, HalfW, HalfH };
+                OutRects[1] = { HalfW, 0, W - HalfW, HalfH };
+                OutRects[2] = { 0, HalfH, HalfW, H - HalfH };
+                OutRects[3] = { HalfW, HalfH, W - HalfW, H - HalfH };
+                break;
+        }
+        return InCount;
+    }
+
+    /*
      * The same Position/Rotation/Scale triple GameCore::TransformComponent
      * holds, restated here rather than depending on GameCore::Components.h --
      * a proxy needs the numbers, not the component's storage or its

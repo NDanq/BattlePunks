@@ -7,6 +7,7 @@
 #include <QStringList>
 
 #include "Public/RenderCore/AnimStateAsset.h"
+#include "Public/RenderCore/HumanoidRig.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Private/Editor/Content/AnimPreviewWidget.h"
 
@@ -49,6 +50,12 @@ public:
     AnimPreviewWidget* GetPreview() const { return Preview; }
     bool               Save();
 
+    /* The IK section's buttons, for scripts and tests: a Ground chain per leg
+     * and the pelvis; the left hand gripping the right (by the
+     * previewed skeleton's humanoid roles). False if it has none. */
+    bool AddIKLegs();
+    bool AddIKOffHand();
+
 protected:
     void closeEvent(QCloseEvent* InEvent) override;
 
@@ -60,6 +67,7 @@ private:
     QWidget* BuildParameters();
     QWidget* BuildLayers();
     QWidget* BuildLookAt();
+    QWidget* BuildIK();
     QWidget* BuildStates();
     QWidget* BuildTransitions();
     QWidget* BuildPreview();
@@ -73,6 +81,9 @@ private:
     void FillLayers();
     void FillLayer();
     void FillLookAt();
+    void FillIK();
+    bool FindIKRoles(RenderCore::HumanoidRoles& OutRoles);
+    bool CaptureIKOffset(RenderCore::AnimIKChain& InOutChain);
     void FillStates();
     void FillState();
     void FillTransitions();
@@ -115,6 +126,7 @@ private:
     QString                   MeshRuntime;
     RenderCore::MeshData      PreviewMesh;
 
+    QLineEdit*      RetargetField  = nullptr;   // Edit.Retarget
     QTableWidget*   ParameterTable = nullptr;
 
     QListWidget*    LayerList   = nullptr;
@@ -133,6 +145,14 @@ private:
     QDoubleSpinBox* LookAxis[3]  = { nullptr, nullptr, nullptr };
     QDoubleSpinBox* LookResponse = nullptr;
     QLineEdit*      LookBones    = nullptr;   // "bone:share, bone:share"
+
+    QComboBox*      IKPelvis     = nullptr;   // Edit.IK.PelvisBone; editable
+    QDoubleSpinBox* IKTraceUp    = nullptr;
+    QDoubleSpinBox* IKTraceDown  = nullptr;
+    QDoubleSpinBox* IKMaxStep    = nullptr;
+    QDoubleSpinBox* IKResponse   = nullptr;
+    QDoubleSpinBox* IKMaxTilt    = nullptr;
+    QTableWidget*   IKTable      = nullptr;   // a row per chain
 
     AnimStateGraph* Graph       = nullptr;
     QGroupBox*      StateBox    = nullptr;

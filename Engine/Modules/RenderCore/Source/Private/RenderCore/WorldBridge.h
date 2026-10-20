@@ -1,6 +1,7 @@
 #ifndef RENDERCORE_WORLDBRIDGE_H
 #define RENDERCORE_WORLDBRIDGE_H
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -59,23 +60,46 @@ namespace RenderCore
 
         bool IsBound() const;
 
-        /* The camera to view through, whatever its Active flag says, while
-         * InCamera is alive with a CameraComponent; unset (the default)
-         * restores the first-active rule. Cleared by UnbindWorld. */
-        void SetViewCamera(GameCore::EntityID InCamera) { ViewCamera = InCamera; }
-        GameCore::EntityID GetViewCamera() const        { return ViewCamera; }
+        /* The camera view InViewIndex (RENDER_VIEWS_MAX) looks through,
+         * whatever its Active flag says, while InCamera is alive with a
+         * CameraComponent; unset (the default) restores the rule: view 0's
+         * camera for any other view, else the first active camera. Cleared
+         * by UnbindWorld. */
+        void SetViewCamera(GameCore::EntityID InCamera, uint32_t InViewIndex = 0)
+        {
+            if(InViewIndex < RENDER_VIEWS_MAX) { ViewCameras[InViewIndex] = InCamera; }
+        }
+        GameCore::EntityID GetViewCamera(const uint32_t InViewIndex = 0) const
+        {
+            return InViewIndex < RENDER_VIEWS_MAX ? ViewCameras[InViewIndex] : GameCore::EntityID();
+        }
 
-        /* Builds the RenderView (DESIGN.md's "View"), enqueues one extraction
-         * per proxy type, then the scene render. InViewOverride replaces the
-         * camera; ViewportPixels always comes from InFrame. */
-        void ExtractAndRender(const FrameInfo& InFrame, const RenderView* InViewOverride = nullptr);
+        /* OCCLUSION REVEAL: the points every view keeps in sight (RenderView::RevealPoints). */
+        void SetRevealPoints(const EngineCore::Vector3* InPoints, uint32_t InCount, float InRadius)
+        {
+            RevealCount  = InPoints ? std::min<uint32_t>(InCount, RENDER_REVEAL_MAX) : 0;
+            RevealRadius = InRadius;
+            for(uint32_t Index = 0; Index < RevealCount; ++Index) { RevealPoints[Index] = InPoints[Index]; }
+        }
+
+        /* Builds the RenderViews (DESIGN.md's "View"), enqueues one extraction
+         * per proxy type, then the scene render. InViewOverride replaces view
+         * 0's camera. SPLITSCREEN: InRects, InCount > 1 of them, are the
+         * views' rectangles of InFrame's viewport -- each view sized to its
+         * own, with its own light and post process; otherwise one view, the
+         * whole of InFrame.ViewportPixels. InSites: the dynamic split's
+         * (RenderTypes.h), every rect then the whole viewport. */
+        void ExtractAndRender(const FrameInfo& InFrame, const RenderView* InViewOverride = nullptr,
+                              const RenderViewRect* InRects = nullptr, uint32_t InCount = 1,
+                              const RenderViewSites* InSites = nullptr);
 
     private:
         static void OnComponentAdded(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType, void* InUserData);
         static void OnComponentRemoved(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType, void* InUserData);
 
-        RenderView BuildView(const FrameInfo& InFrame) const;
-        RenderView ViewThrough(const CameraComponent& InCamera, const FrameInfo& InFrame) const;
+        RenderView BuildView(const FrameInfo& InFrame, uint32_t InViewIndex = 0) const;
+        RenderView ViewThrough(const CameraComponent& InCamera, const FrameInfo& InFrame,
+                               const EngineCore::Vector3& InOffset = EngineCore::Vector3(0.0, 0.0, 0.0)) const;
 
         /* Each animated Render component's pose, to its proxy, as one batch
          * after the frame's extraction (ANIMATION.md); a proxy posed before
@@ -120,7 +144,10 @@ namespace RenderCore
 
         RenderScene*    Scene = nullptr;
         GameCore::World* BoundWorld = nullptr;
-        GameCore::EntityID ViewCamera;   // SetViewCamera
+        GameCore::EntityID ViewCameras[RENDER_VIEWS_MAX];   // SetViewCamera
+        EngineCore::Vector3 RevealPoints[RENDER_REVEAL_MAX];  // SetRevealPoints
+        uint32_t           RevealCount  = 0;
+        float              RevealRadius = 0.0f;
 
         /* The bound world's animation (attached while bound), and the
          * proxies ExtractPoses posed last frame. */

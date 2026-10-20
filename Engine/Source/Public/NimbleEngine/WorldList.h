@@ -17,22 +17,22 @@ namespace NimbleEngine
      *
      *     [World_BrickBreaker]
      *     File=Content/Levels/BrickBreaker.nmworld
-     *     GameMode=BrickBreaker     ; a RegisterGameMode name; empty: no rules
      *     StartupScript=Scripts/X.lua ; run once its mode has loaded; absent: none
      *     Cook=true                 ; cooked and packaged by Build Project
      *
      * Every one becomes a level named by its section ("BrickBreaker": what
      * [Game] StartLevel, a save, `open` and Game.OpenLevel name), loading its
-     * world file and then its mode. It is the only way a world becomes a
-     * level: a game registers modes, not levels.
+     * world file and then the mode the world names (GameCore's
+     * WorldSettings::GameMode, the editor's World Settings; empty: no rules).
+     * It is the only way a world becomes a level: a game registers modes, not
+     * levels. A [World_*] GameMode key is no longer read (warned).
      */
     constexpr const char* WORLD_SECTION_PREFIX = "World_";
 
     struct WorldEntry
     {
         std::string Name;            // the section, less WORLD_SECTION_PREFIX
-        std::string File;            // runtime-relative .nmworld
-        std::string GameMode;
+        std::string File;            // runtime-relative .nmworld; it names its game mode
         std::string StartupScript;   // empty: none
         bool        bCook             = true;
     };
@@ -43,7 +43,7 @@ namespace NimbleEngine
 
     // === Game modes =========================================================
     /*
-     * A game's rules, by name: a [World_*] GameMode names one. A mode is
+     * A game's rules, by name: a world's GameMode names one. A mode is
      * created per level load and destroyed when the level unloads.
      *
      * NIMBLE_REGISTER_GAME_MODE (below) is the usual way: it registers as the
@@ -114,7 +114,7 @@ namespace NimbleEngine
  *     NIMBLE_REGISTER_GAME_MODE(BrickBreakerMode, "BrickBreaker")
  *
  * ModeClass is unqualified (it names the registrar); NameLiteral is what a
- * [World_*] GameMode names. The module's OnStartup and OnShutdown need not
+ * world's GameMode (World Settings) names. The module's OnStartup and OnShutdown need not
  * mention it.
  */
 #define NIMBLE_REGISTER_GAME_MODE(ModeClass, NameLiteral)                                                \

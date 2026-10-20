@@ -147,7 +147,7 @@ namespace RenderCore
             PP_AmbientOcclusion, PP_AmbientBlur, PP_StatsOverlay, PP_ClearGradient, PP_CaptureCopy, PP_Tonemap,
             PP_IBLSky, PP_IBLPrefilter, PP_IBLLighting, PP_Sky, PP_ViewTarget, PP_UI,
             PP_Luminance, PP_LuminanceReduce, PP_AdaptExposure, PP_TemporalAA, PP_ScreenReflections, PP_Copy,
-            PP_VolumetricFog, PP_FogComposite,
+            PP_VolumetricFog, PP_FogComposite, PP_ViewSites,
             PP_PassCount
         };
         const char* const POST_PASS_SHADERS[PP_PassCount] = {
@@ -156,7 +156,7 @@ namespace RenderCore
             "PPAmbientOcclusion.fsh", "PPAmbientBlur.fsh", "StatsOverlay.fsh", "ClearGradient.fsh", "CaptureCopy.fsh", "Tonemap.fsh",
             "IBLSky.fsh", "IBLPrefilter.fsh", "IBLLighting.fsh", "Sky.fsh", "ViewTarget.fsh", "UI.fsh",
             "PPLuminance.fsh", "PPLuminanceReduce.fsh", "PPAdaptExposure.fsh", "PPTemporalAA.fsh", "PPScreenReflections.fsh",
-            "PPCopy.fsh", "PPVolumetricFog.fsh", "PPFogComposite.fsh",
+            "PPCopy.fsh", "PPVolumetricFog.fsh", "PPFogComposite.fsh", "ViewSites.fsh",
         };
         /* Each pass's draw event (DrawPost). */
         const char* const POST_PASS_NAMES[PP_PassCount] = {
@@ -165,7 +165,7 @@ namespace RenderCore
             "AmbientOcclusion", "AmbientBlur", "StatsOverlay", "ClearGradient", "CaptureCopy", "Tonemap",
             "IBLSky", "IBLPrefilter", "IBLLighting", "Sky", "ViewTarget", "UI",
             "Luminance", "LuminanceReduce", "AdaptExposure", "TemporalAA", "ScreenReflections", "Copy",
-            "VolumetricFog", "FogComposite",
+            "VolumetricFog", "FogComposite", "ViewSites",
         };
 
         /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
@@ -227,6 +227,8 @@ namespace RenderCore
             float ViewProjection[16]    = {};                           // world to clip: contact shadows' march (Lighting.glsl)
             float ContactShadow[4]      = {};                           // length (0: off), thickness, steps, strength
             float ContactLocal[4]       = {};                           // 1: shadowed point and spot lights' too
+            float RevealParams[4]       = {};                           // the reveal: points, aspect, kept in the middle, depth margin
+            float Reveal[4][4]          = {};                           // each point: NDC xy, radius (NDC y), view depth
         };
         static_assert(offsetof(SceneUniforms, Time) == 16 && offsetof(SceneUniforms, LightDirection) == 32
                       && offsetof(SceneUniforms, GroundColor) == 80 && offsetof(SceneUniforms, InvViewProjection) == 96,
@@ -243,7 +245,9 @@ namespace RenderCore
         static_assert(offsetof(SceneUniforms, ViewProjection) == 3856 && offsetof(SceneUniforms, ContactShadow) == 3920,
                       "Scene_ViewProjection and Scene_ContactShadow come after Scene_View");
         static_assert(offsetof(SceneUniforms, ContactLocal) == 3936, "Scene_ContactLocal comes after Scene_ContactShadow");
-        static_assert(sizeof(SceneUniforms) == 3952 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
+        static_assert(offsetof(SceneUniforms, RevealParams) == 3952 && offsetof(SceneUniforms, Reveal) == 3968,
+                      "Scene_RevealParams and Scene_Reveal come last");
+        static_assert(sizeof(SceneUniforms) == 4032 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
                       "SceneUniforms must match Scene_Block (SceneUniforms.glsl) and fit the scene block");
 
         /* Row-major InMatrix into a GLSL mat4's column-major floats. */
@@ -1054,7 +1058,7 @@ namespace RenderCore
          */
         bool DrawFullscreenShader(GDIShader* InPixel, const char* InEvent, GDIRenderTarget* InTarget, const uint InWidth, const uint InHeight,
                                   GDITextureResource* const* InTextures, const uint32_t InTextureCount, const void* InBlock,
-                                  const uint InBlockBytes, const EFullscreenBlend InBlend, const uint InX = 0)
+                                  const uint InBlockBytes, const EFullscreenBlend InBlend, const uint InX = 0, const uint InY = 0)
         {
             GDIShader* Vertex = GetDefaultVertex(EMaterialVertexInput::Fullscreen);
             if(!InPixel || !Vertex || !InTarget)
@@ -1063,7 +1067,7 @@ namespace RenderCore
             }
             SCOPED_DRAW_EVENT(InEvent);
             GDISetRenderTargets(&InTarget, 1, nullptr);
-            GDISetViewport(InX, 0, InWidth, InHeight);   // InX: a cube face's place in its strip
+            GDISetViewport(InX, InY, InWidth, InHeight);   // InX: a cube face's place in its strip; InX, InY: a view's in the window
             GDISetColorMask(EColM_RGBA);
 
             for(uint32_t Slot = 0; Slot < InTextureCount; ++Slot)
@@ -1226,10 +1230,35 @@ namespace RenderCore
         /* "stat frame": the scene timing this GDI block, and the scene that
          * timed each recent block, by its GDIGetRenderingSerial (slot: serial
          * mod 4) -- a block's times come back GDIGetFramesInFlight blocks on. */
-        struct TimedBlock { uint64_t Serial = 0; const void* Owner = nullptr; };
+        struct TimedBlock { uint64_t Serial = 0; const void* Owner = nullptr; uint32_t Views = 1; };
         bool        bTimeStages = false;
         const void* TimedOwner  = nullptr;
         TimedBlock  TimedBlocks[4];
+
+        /*
+         * SPLITSCREEN: each of the block's views times its stages, summed span
+         * by span. View 0 writes 2t and 2t + 1, as a lone view always has; view
+         * v > 0 its per-view spans (all but Total) from VIEW_TIMESTAMPS_BASE,
+         * VIEW_TIMESTAMPS apiece; and with several views EndTimedViews writes
+         * the last one's end at VIEWS_END_TIMESTAMP, Total running from view
+         * 0's start to there. 64 at most: GDI's written mask is one uint64_t.
+         */
+        static constexpr uint32_t VIEW_TIMESTAMPS_BASE = uint32_t(RGT_Count) * 2;
+        static constexpr uint32_t VIEW_TIMESTAMPS      = uint32_t(RGT_Total) * 2;
+        static constexpr uint32_t VIEWS_END_TIMESTAMP  = GDI_GPU_TIMESTAMP_MAX - 1;
+        static_assert(VIEW_TIMESTAMPS_BASE + (RENDER_VIEWS_MAX - 1) * VIEW_TIMESTAMPS <= VIEWS_END_TIMESTAMP,
+                      "every view's spans and the views' end fit GDI's timestamps");
+        uint32_t    TimedView  = 0;   // the view timed now (RenderView::ViewIndex)
+        uint32_t    TimedViews = 0;   // how many the block has timed
+
+        /* InTimer's start (or end) timestamp index for TimedView; -1: none (a later view's Total). */
+        int32_t StageTimestampIndex(const ERenderGpuTimer InTimer, const bool bInEnd) const
+        {
+            const uint32_t Offset = uint32_t(InTimer) * 2 + (bInEnd ? 1 : 0);
+            if(TimedView == 0) { return int32_t(Offset); }
+            if(InTimer >= RGT_Total) { return -1; }
+            return int32_t(VIEW_TIMESTAMPS_BASE + (TimedView - 1) * VIEW_TIMESTAMPS + Offset);
+        }
 
         /* The render thread's time per ERenderGpuTimer span (RenderStats::CpuMs),
          * measured for the timed view whether or not the GPU is: when each
@@ -1243,35 +1272,47 @@ namespace RenderCore
         {
             const int64_t Now = std::chrono::duration_cast<std::chrono::nanoseconds>(
                                     std::chrono::steady_clock::now().time_since_epoch()).count();
-            if(bInEnd) { StageCpuMs[InTimer] = float(double(Now - StageCpuStartNs[InTimer]) / 1.0e6); }
-            else       { StageCpuStartNs[InTimer] = Now; }
+            if(!bInEnd) { StageCpuStartNs[InTimer] = Now; return; }
+            /* A later view's span adds to the frame's (SPLITSCREEN); the first sets it. */
+            const float Ms = float(double(Now - StageCpuStartNs[InTimer]) / 1.0e6);
+            StageCpuMs[InTimer] = TimedView > 0 && StageCpuMs[InTimer] >= 0.0f ? StageCpuMs[InTimer] + Ms : Ms;
         }
 
         /* InTimer's start (or end) timestamp: indices 2t and 2t + 1. */
         void StageTimestamp(const ERenderGpuTimer InTimer, const bool bInEnd) const
         {
             if(bTimeStagesCpu) { MarkStageCpu(InTimer, bInEnd); }
-            if(bTimeStages) { GDIWriteGPUTimestamp(uint32_t(InTimer) * 2 + (bInEnd ? 1 : 0)); }
+            if(bTimeStages)
+            {
+                const int32_t Index = StageTimestampIndex(InTimer, bInEnd);
+                if(Index >= 0) { GDIWriteGPUTimestamp(uint32_t(Index)); }
+            }
         }
 
-        /* A timed RenderSceneStages' draws per span, from its stage counts. */
+        /* A timed RenderSceneStages' draws per span, from its stage counts;
+         * a later view's (SPLITSCREEN) added to the frame's. */
         void CountSpanDraws()
         {
             const auto Count = [this](const ERenderStage InStage) { return int32_t(StageDrawCounts[size_t(InStage)]); };
-            StageSpanDraws[RGT_PrePass]          = Count(ERenderStage::PrePass);
-            StageSpanDraws[RGT_BasePass]         = Count(ERenderStage::BasePass);
-            StageSpanDraws[RGT_AmbientOcclusion] = -1;
-            StageSpanDraws[RGT_Shadows]          = Count(ERenderStage::Shadows);
-            StageSpanDraws[RGT_Lighting]         = Count(ERenderStage::Lighting);
-            StageSpanDraws[RGT_Forward]          = Count(ERenderStage::Unlit) + Count(ERenderStage::TranslucentLit)
-                                                 + Count(ERenderStage::TranslucentUnlit);
-            StageSpanDraws[RGT_PostProcess]      = Count(ERenderStage::PostProcess);
+            int32_t Spans[RGT_Count];
+            for(int32_t& Each : Spans) { Each = -1; }
+            Spans[RGT_PrePass]     = Count(ERenderStage::PrePass);
+            Spans[RGT_BasePass]    = Count(ERenderStage::BasePass);
+            Spans[RGT_Shadows]     = Count(ERenderStage::Shadows);
+            Spans[RGT_Lighting]    = Count(ERenderStage::Lighting);
+            Spans[RGT_Forward]     = Count(ERenderStage::Unlit) + Count(ERenderStage::TranslucentLit) + Count(ERenderStage::TranslucentUnlit);
+            Spans[RGT_PostProcess] = Count(ERenderStage::PostProcess);
             int32_t Total = 0;
             for(uint32_t Timer = RGT_PrePass; Timer < RGT_Total; ++Timer)
             {
-                Total += std::max(StageSpanDraws[Timer], 0);
+                Total += std::max(Spans[Timer], 0);
             }
-            StageSpanDraws[RGT_Total] = Total;
+            Spans[RGT_Total] = Total;
+            for(uint32_t Timer = RGT_PrePass; Timer <= RGT_Total; ++Timer)
+            {
+                StageSpanDraws[Timer] = TimedView > 0 && StageSpanDraws[Timer] >= 0 && Spans[Timer] >= 0
+                                      ? StageSpanDraws[Timer] + Spans[Timer] : Spans[Timer];
+            }
         }
         bool                bGBufferThisFrame = false;   // RenderSceneStages wrote the G-buffer: Bloom may read its emissive
         bool                bVelocityThisFrame = false;  // and the velocity beside it: Motion Blur may read it
@@ -1308,7 +1349,12 @@ namespace RenderCore
             std::unordered_map<std::string, PassTarget> Targets;
             std::unordered_map<std::string, GDIBuffer*> Buffers;
         };
-        std::unordered_map<RenderPassHandle, PassResources> PassPools;
+        /* By view (SPLITSCREEN): views of different sizes would remake a shared pool's targets every frame. */
+        std::unordered_map<RenderPassHandle, PassResources> PassPools[RENDER_VIEWS_MAX];
+        std::unordered_map<RenderPassHandle, PassResources>& PassPoolsOfView()
+        {
+            return PassPools[std::min<uint32_t>(View.ViewIndex, RENDER_VIEWS_MAX - 1)];
+        }
         std::unordered_map<std::string, GDIShader*>         PassShaders;
 
         GDIShader* GetPassShader(const std::string& InFile, const EShaderType InType, const char* InPass)
@@ -1345,10 +1391,13 @@ namespace RenderCore
             TakeRetiredCustomRenderPasses(Retired);
             for(const RenderPassHandle Each : Retired)
             {
-                const auto Found = PassPools.find(Each);
-                if(Found == PassPools.end()) { continue; }
-                ReleasePassResources(Found->second);
-                PassPools.erase(Found);
+                for(auto& Pools : PassPools)
+                {
+                    const auto Found = Pools.find(Each);
+                    if(Found == Pools.end()) { continue; }
+                    ReleasePassResources(Found->second);
+                    Pools.erase(Found);
+                }
             }
         }
 
@@ -1363,6 +1412,7 @@ namespace RenderCore
         GDIOcclusionQueries*        OcclusionQueries    = nullptr;
         std::vector<GameCore::AABB> OcclusionBoxes;
         int32_t                     DrawOcclusion       = -1;
+        bool                        bDrawReveal         = false;   // SetDrawReveal
         bool                        bGatheringOccluders = false;
         bool                        bOcclusionResolved  = false;
         GDIMesh*                    OcclusionBox        = nullptr;
@@ -1649,6 +1699,13 @@ namespace RenderCore
             std::vector<uint8_t>& Block = GIssueScratch ? (GIssueScratch->MaterialBlock = InMaterial.Block) : InMaterial.Block;
             const float Tint[4] = { InTint.Rf(), InTint.Gf(), InTint.Bf(), InTint.Af() };
             std::memcpy(Block.data(), Tint, sizeof(Tint));
+            /* Material_Reserved0: whether this draw is dithered where it hides a player
+             * (MaterialTemplate_PS.glsl); written every draw, so none lingers. */
+            if(Block.size() >= MATERIAL_BLOCK_LIGHTMAP_OFFSET)
+            {
+                const float Reveal = InItem && InItem->bReveal ? 1.0f : 0.0f;
+                std::memcpy(Block.data() + MATERIAL_BLOCK_REVEAL_OFFSET, &Reveal, sizeof(Reveal));
+            }
 
             /* The draw's baked lighting, in the engine's bytes (MaterialDescription.h):
              * written every draw, as the tint is, so the last draw's never lingers. */
@@ -1739,6 +1796,32 @@ namespace RenderCore
              * Projection * View, column-major as GDI uploads a mat4. */
             PutMatrix(Scene.InvViewProjection, EngineCore::Matrix4x4::Inverse(View.Projection * View.View));
             PutMatrix(Scene.ViewProjection, View.Projection * View.View);
+
+            /* OCCLUSION REVEAL: each point on screen and how deep it is; a perspective view's alone. */
+            std::memset(Scene.RevealParams, 0, sizeof(Scene.RevealParams));
+            std::memset(Scene.Reveal, 0, sizeof(Scene.Reveal));
+            if(!IsOrthographic(View) && View.RevealRadius > 0.0f && View.ViewportPixels.Height > 0)
+            {
+                uint32_t Count = 0;
+                for(uint32_t Index = 0; Index < std::min<uint32_t>(View.RevealCount, RENDER_REVEAL_MAX); ++Index)
+                {
+                    const EngineCore::Vector3& Point = View.RevealPoints[Index];
+                    const EngineCore::Vector4 Seen = View.View * EngineCore::Vector4(Point.GetX(), Point.GetY(), Point.GetZ(), 1.0);
+                    const double Depth = Seen.GetZ();
+                    if(Depth <= double(std::max(View.ZNear, 1.0f))) { continue; }
+                    const EngineCore::Vector4 Clip = View.Projection * Seen;
+                    if(std::abs(Clip.GetW()) < 1e-9) { continue; }
+                    Scene.Reveal[Count][0] = float(Clip.GetX() / Clip.GetW());
+                    Scene.Reveal[Count][1] = float(Clip.GetY() / Clip.GetW());
+                    Scene.Reveal[Count][2] = float(double(View.RevealRadius) * std::abs(double(View.Projection.Data[1][1])) / Depth);
+                    Scene.Reveal[Count][3] = float(Depth);
+                    ++Count;
+                }
+                Scene.RevealParams[0] = float(Count);
+                Scene.RevealParams[1] = float(View.ViewportPixels.Width) / float(View.ViewportPixels.Height);
+                Scene.RevealParams[2] = 0.25f;                  // of the pixels kept in the middle: a screen door
+                Scene.RevealParams[3] = View.RevealRadius;      // and only what is this much nearer than the player
+            }
 
             /* View depth, for picking a cascade: from the view's own origin. */
             const EngineCore::Vector3 Forward = ViewForward(View);
@@ -2438,6 +2521,7 @@ namespace RenderCore
         void Submit(DrawCommand InItem, const ERenderStage InStage)
         {
             InItem.CustomGroups = DrawCustomGroups;   // a static list's replay: the proxy's groups now
+            InItem.bReveal      = bDrawReveal;        // and its reveal
             if(Capture)
             {
                 Capture->push_back({ InItem, InStage });   // a static list's: it never moves
@@ -3884,6 +3968,11 @@ namespace RenderCore
         P->DrawPixelsPerWorld = InPixelsPerWorldUnit;
     }
 
+    void RenderContext::SetDrawReveal(const bool bInReveal)
+    {
+        P->bDrawReveal = bInReveal;
+    }
+
     void RenderContext::UpdateTextureStreaming()
     {
         if(P->StreamUpdatedFrame == P->FrameNumber) { return; }
@@ -4009,6 +4098,7 @@ namespace RenderCore
     uint32_t          RenderPassContext::GetWidth() const       { return F->Targets->Width; }
     uint32_t          RenderPassContext::GetHeight() const      { return F->Targets->Height; }
     bool              RenderPassContext::IsMainView() const     { return F->bMainView; }
+    uint32_t          RenderPassContext::GetViewIndex() const   { return F->P->View.ViewIndex; }
     bool              RenderPassContext::IsHDR() const          { return F->Targets->bHDR; }
     uint64_t          RenderPassContext::GetFrameNumber() const { return F->P->FrameNumber; }
     float             RenderPassContext::GetDeltaSeconds() const { return F->P->FrameDelta; }
@@ -4061,7 +4151,7 @@ namespace RenderCore
             Format = ERenderPassFormat::RGBA8;
         }
 
-        RenderContext::Impl::PassTarget& Entry = F->P->PassPools[F->Entry->Handle].Targets[InName];
+        RenderContext::Impl::PassTarget& Entry = F->P->PassPoolsOfView()[F->Entry->Handle].Targets[InName];
         if(Entry.Target && Entry.Format != Format)
         {
             GDIReleaseRenderTarget(Entry.Target);
@@ -4239,7 +4329,7 @@ namespace RenderCore
         {
             return Out;
         }
-        GDIBuffer*& Buffer = F->P->PassPools[F->Entry->Handle].Buffers[InName];
+        GDIBuffer*& Buffer = F->P->PassPoolsOfView()[F->Entry->Handle].Buffers[InName];
         if(Buffer && Buffer->GetSize() != InBytes)
         {
             Buffer->Release();
@@ -4336,8 +4426,10 @@ namespace RenderCore
         const uint64_t Behind  = std::min<uint64_t>(GDIGetFramesInFlight(), 3);
         const Impl::TimedBlock& Then = P->TimedBlocks[(Serial - Behind) % 4];
         const void* Previous = Serial > Behind && Then.Serial == Serial - Behind ? Then.Owner : nullptr;
+        const uint32_t ThenViews = Then.Views;   // read before this block's entry is written over it
         P->TimedOwner = bInTime && CanTimeGpu() ? InOwner : nullptr;
-        P->TimedBlocks[Serial % 4] = { Serial, P->TimedOwner };
+        P->TimedBlocks[Serial % 4] = { Serial, P->TimedOwner, 1 };
+        P->TimedViews = 0;
         for(float& Each : OutGpuMs) { Each = -1.0f; }
         if(!Previous)
         {
@@ -4345,15 +4437,50 @@ namespace RenderCore
         }
         double         Stamps[GDI_GPU_TIMESTAMP_MAX] = {};
         const uint64_t Written = GDIGetPreviousGPUTimestamps(Stamps);
+        const auto Span = [&](const uint32_t InStart, const uint32_t InEnd, double& OutMs)
+        {
+            const uint64_t Both = (uint64_t(1) << InStart) | (uint64_t(1) << InEnd);
+            if((Written & Both) != Both) { return false; }
+            OutMs = std::max(Stamps[InEnd] - Stamps[InStart], 0.0);
+            return true;
+        };
         for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer)
         {
-            const uint64_t Both = (uint64_t(1) << (Timer * 2)) | (uint64_t(1) << (Timer * 2 + 1));
-            if((Written & Both) == Both)
+            double Ms = 0.0;
+            if(Span(Timer * 2, Timer * 2 + 1, Ms))
             {
-                OutGpuMs[Timer] = float(std::max(Stamps[Timer * 2 + 1] - Stamps[Timer * 2], 0.0));
+                OutGpuMs[Timer] = float(Ms);
             }
         }
+        /* SPLITSCREEN: the later views' spans added in; Total from view 0's start to the last's end. */
+        for(uint32_t View = 1; View < ThenViews && View < RENDER_VIEWS_MAX; ++View)
+        {
+            for(uint32_t Timer = 0; Timer < RGT_Total; ++Timer)
+            {
+                const uint32_t Start = Impl::VIEW_TIMESTAMPS_BASE + (View - 1) * Impl::VIEW_TIMESTAMPS + Timer * 2;
+                double Ms = 0.0;
+                if(Span(Start, Start + 1, Ms))
+                {
+                    OutGpuMs[Timer] = float(std::max(OutGpuMs[Timer], 0.0f) + Ms);
+                }
+            }
+        }
+        if(ThenViews > 1)
+        {
+            double Ms = 0.0;
+            OutGpuMs[RGT_Total] = Span(uint32_t(RGT_Total) * 2, Impl::VIEWS_END_TIMESTAMP, Ms) ? float(Ms) : -1.0f;
+        }
         return Written ? Previous : nullptr;
+    }
+
+    void RenderContext::EndTimedViews()
+    {
+        if(P->TimedOwner && P->TimedViews > 1)
+        {
+            GDIWriteGPUTimestamp(Impl::VIEWS_END_TIMESTAMP);
+        }
+        Impl::TimedBlock& Block = P->TimedBlocks[GDIGetRenderingSerial() % 4];
+        if(Block.Owner) { Block.Views = std::max<uint32_t>(P->TimedViews, 1); }
     }
 
     void RenderContext::WriteGpuTimestamp(const ERenderGpuTimer InTimer, const bool bInEnd)
@@ -4453,6 +4580,124 @@ namespace RenderCore
         P->DrawPost(PP_ViewTarget, InTargets.Final, InTargets.Width, InTargets.Height, { Found->Texture->Resource }, Block);
     }
 
+    void RenderContext::CompositeViews(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewRect* InRects,
+                                       const uint32_t InCount)
+    {
+        if(!InTarget)
+        {
+            return;
+        }
+        SCOPED_DRAW_EVENT("Composite");
+        const uint Width = InTarget->GetWidth(), Height = InTarget->GetHeight();
+        GDISetRenderTargets(&InTarget, 1, nullptr);
+        GDISetViewport(0, 0, Width, Height);
+        GDIClear(CM_Color, EngineCore::Color(0, 0, 0, 255));   // what no view covers: black
+
+        /* ViewTarget.fsh as a colour target as it is (PP_View.x 0), stretched
+         * over the viewport: the view's rectangle, clipped to the window. */
+        PostBlock Block;
+        for(uint32_t Index = 0; Index < InCount; ++Index)
+        {
+            GDIRenderTarget* Source = InSources[Index];
+            const RenderViewRect& Rect = InRects[Index];
+            GDITexture2D* Texture = Source ? Source->ToGDITexture2D() : nullptr;
+            const int32_t X = std::max(Rect.X, 0), Y = std::max(Rect.Y, 0);
+            if(!Texture || Rect.Width <= 0 || Rect.Height <= 0 || uint(X) >= Width || uint(Y) >= Height)
+            {
+                continue;
+            }
+            const uint ClippedWidth  = std::min(uint(Rect.Width), Width - uint(X));
+            const uint ClippedHeight = std::min(uint(Rect.Height), Height - uint(Y));
+            P->DrawFullscreenShader(P->GetPostShader(PP_ViewTarget), "View", InTarget, ClippedWidth, ClippedHeight,
+                                    &Texture->Resource, 1, Block.A, uint(sizeof(Block) - sizeof(Block.Matrix)),
+                                    Impl::EFullscreenBlend::Opaque, uint(X), uint(Y));
+        }
+    }
+
+    void RenderContext::CompositeViewSites(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewSites& InSites)
+    {
+        const uint32_t Count = std::min<uint32_t>(InSites.Count, RENDER_VIEWS_MAX);
+        if(!InTarget || Count < 2)
+        {
+            return;
+        }
+        /* ViewSites_Block: SitesA, SitesB, Params, Color, Sizes. */
+        struct SitesBlock
+        {
+            float SitesA[4];
+            float SitesB[4];
+            float Params[4];
+            float Color[4];
+            float Sizes[4];
+        } Block = {};
+        static_assert(sizeof(SitesBlock) == 80, "ViewSites.fsh's PP_Block");
+        float* const Sites[2] = { Block.SitesA, Block.SitesB };
+        for(uint32_t Index = 0; Index < RENDER_VIEWS_MAX; ++Index)
+        {
+            Sites[Index / 2][(Index % 2) * 2]     = InSites.X[Index];
+            Sites[Index / 2][(Index % 2) * 2 + 1] = InSites.Y[Index];
+        }
+        Block.Params[0] = float(Count);
+        Block.Params[1] = std::max(InSites.DividerPixels, 0.0f);
+        Block.Params[2] = std::clamp(InSites.DividerAlpha, 0.0f, 1.0f);
+        Block.Color[0]  = float(InSites.DividerColor.R) / 255.0f;
+        Block.Color[1]  = float(InSites.DividerColor.G) / 255.0f;
+        Block.Color[2]  = float(InSites.DividerColor.B) / 255.0f;
+        Block.Color[3]  = 1.0f;
+        Block.Sizes[0]  = float(InTarget->GetWidth());
+        Block.Sizes[1]  = float(InTarget->GetHeight());
+
+        /* A view not drawn this frame shows view 0 (never expected: each site is a drawn view). */
+        GDITextureResource* Textures[RENDER_VIEWS_MAX] = {};
+        for(uint32_t Index = 0; Index < RENDER_VIEWS_MAX; ++Index)
+        {
+            GDIRenderTarget* Source = Index < Count && InSources[Index] ? InSources[Index] : InSources[0];
+            GDITexture2D* Texture   = Source ? Source->ToGDITexture2D() : nullptr;
+            Textures[Index] = Texture ? Texture->Resource : nullptr;
+        }
+        if(!Textures[0])
+        {
+            return;
+        }
+        for(GDITextureResource*& Each : Textures) { if(!Each) { Each = Textures[0]; } }
+        SCOPED_DRAW_EVENT("Composite");
+        P->DrawFullscreenShader(P->GetPostShader(PP_ViewSites), "ViewSites", InTarget, InTarget->GetWidth(), InTarget->GetHeight(),
+                                Textures, RENDER_VIEWS_MAX, &Block, uint(sizeof(Block)), Impl::EFullscreenBlend::Opaque);
+    }
+
+    void RenderContext::SeedViewHistory(SceneTargets& InTo, const SceneTargets& InFrom)
+    {
+        if(InTo.Width != InFrom.Width || InTo.Height != InFrom.Height || InTo.Width == 0 || InTo.Height == 0)
+        {
+            return;
+        }
+        SCOPED_DRAW_EVENT("SeedViewHistory");
+        PostBlock Copy;
+        const auto CopyInto = [this, &Copy](GDIRenderTarget* InSource, GDIRenderTarget* InDest, const uint InWidth, const uint InHeight)
+        {
+            GDITexture2D* Texture = InSource ? InSource->ToGDITexture2D() : nullptr;
+            return Texture && InDest && P->DrawPost(PP_Copy, InDest, InWidth, InHeight, { Texture->Resource }, Copy);
+        };
+
+        /* TAA's history: last frame's resolve, at the same index. */
+        InTo.bHistoryValid = false;
+        if(InFrom.bHistoryValid && InTo.EnsureHistory())
+        {
+            InTo.HistoryCurrent = InFrom.HistoryCurrent;
+            InTo.bHistoryValid  = CopyInto(InFrom.History[InFrom.HistoryCurrent], InTo.History[InTo.HistoryCurrent], InTo.Width, InTo.Height);
+        }
+        /* Auto exposure's adapted value, so it does not ease in from scratch. */
+        InTo.bExposureValid = false;
+        if(InFrom.bExposureValid && InTo.EnsureExposure())
+        {
+            InTo.ExposureCurrent = InFrom.ExposureCurrent;
+            InTo.bExposureValid  = CopyInto(InFrom.Exposure[InFrom.ExposureCurrent], InTo.Exposure[InTo.ExposureCurrent], 1, 1);
+        }
+        /* Screen-space reflections' last colour: TAA's history when that is what it was. */
+        InTo.LastColor = InFrom.LastColor && InFrom.LastColor == InFrom.History[InFrom.HistoryCurrent] && InTo.bHistoryValid
+                       ? InTo.History[InTo.HistoryCurrent] : nullptr;
+    }
+
     void RenderContext::RenderSceneStages(SceneTargets& InTargets, const EngineCore::Color InClearColor, const bool bInTimed,
                                           const EngineCore::Color* InClearBottom)
     {
@@ -4466,7 +4711,12 @@ namespace RenderCore
             {
                 Owner->bTimeStages    = bInTimed && Owner->TimedOwner;
                 Owner->bTimeStagesCpu = bInTimed;
+                Owner->TimedView      = bInTimed ? std::min<uint32_t>(Owner->View.ViewIndex, RENDER_VIEWS_MAX - 1) : 0;
                 if(bInTimed)
+                {
+                    Owner->TimedViews = std::max(Owner->TimedViews, Owner->TimedView + 1);
+                }
+                if(bInTimed && Owner->TimedView == 0)   // the frame's first view: its spans start the frame's
                 {
                     for(uint32_t Timer = RGT_PrePass; Timer <= RGT_Total; ++Timer) { Owner->StageCpuMs[Timer] = -1.0f; }
                 }
@@ -4476,6 +4726,7 @@ namespace RenderCore
                 if(bTimed) { Owner->CountSpanDraws(); }
                 Owner->bTimeStages    = false;
                 Owner->bTimeStagesCpu = false;
+                Owner->TimedView      = 0;
             }
         } Timed(P, bInTimed);
 
@@ -5654,8 +5905,11 @@ namespace RenderCore
             P->ScreenObject->Mesh = nullptr;
         }
 
-        for(auto& Each : P->PassPools) { P->ReleasePassResources(Each.second); }
-        P->PassPools.clear();
+        for(auto& Pools : P->PassPools)
+        {
+            for(auto& Each : Pools) { P->ReleasePassResources(Each.second); }
+            Pools.clear();
+        }
         for(auto& Each : P->PassShaders) { if(Each.second) { P->RetiredShaders.push_back(Each.second); } }
         P->PassShaders.clear();
 

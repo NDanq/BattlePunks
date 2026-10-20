@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "Public/Core/CoreConfig.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/EventBus.h"
@@ -417,6 +418,168 @@ namespace
         delete Session;
     }
 
+    /* SPLITSCREEN: two local players, each possessing an avatar with its own camera. */
+    class TwoPlayerLevel : public ILevel
+    {
+    public:
+        const char* GetName() const override { return "AvatarTwoPlayers"; }
+        bool OnLoad(GameSession&) override
+        {
+            for(uint8_t Local = 0; Local < 2; ++Local)
+            {
+                Entity Pawn = MakeAvatar(GetWorld(), Local == 0 ? "First" : "Second");
+                Entity Eye = GetWorld().CreateEntity(Local == 0 ? "First Eye" : "Second Eye");
+                Eye.AddComponent<GameCore::TransformComponent>();
+                Eye.AddComponent<RenderCore::CameraComponent>()->bActive = false;
+                Eye.SetParent(Pawn.GetID(), false);
+                Possess(GetWorld(), CreateLocalPlayer(GetWorld(), Local), Pawn.GetID());
+                Eyes[Local] = Eye.GetID();
+            }
+            return true;
+        }
+        EntityID Eyes[2];
+    };
+
+    void TestSplitscreenViews()
+    {
+        std::printf("[split-screen views]\n");
+        TestHost Host;
+        GameCore::ScriptEngine Scripts;
+        RenderCore::Renderer Rendering;
+        Scripts.Initialize();
+        auto* Session = new GameSession(Host, Scripts, Rendering);
+        TwoPlayerLevel Level;
+        Expect(Session->LoadLevel(Level), "the level loads");
+        GameCore::World& World = Session->GetWorld();
+
+        FrameContext Frame;
+        Frame.DeltaSeconds = 0.016;
+        Session->Tick(Frame);
+        Expect(Session->GetViewTarget(0) == Level.Eyes[0] && Session->GetViewTarget(1) == Level.Eyes[1],
+               "each local player views through its own avatar's camera");
+        Expect(Session->GetViewCount() == 2, "two local players with cameras: two views");
+
+        Session->SetViewCount(1);
+        Expect(Session->GetViewCount() == 1, "SetViewCount fixes the count");
+        Session->SetViewCount(0);
+        Expect(Session->GetViewCount() == 2, "0 counts the players' cameras again");
+
+        const EntityID Elsewhere = World.CreateEntity("Death Cam").GetID();
+        World.GetEntity(Elsewhere).AddComponent<RenderCore::CameraComponent>();
+        Session->SetViewTarget(Elsewhere, 1);
+        Expect(Session->GetViewTarget(1) == Elsewhere && Session->GetViewTarget(0) == Level.Eyes[0],
+               "SetViewTarget(camera, player) is that player's alone");
+        Session->SetViewTarget(EntityID(), 1);
+        Expect(Session->GetViewTarget(1) == Level.Eyes[1], "unset, it goes back to the avatar's camera");
+        Expect(!Session->GetViewTarget(3).IsSet() && !Session->GetViewTarget(9).IsSet(), "a player with no avatar, or none at all, has no target");
+
+        Unpossess(World, FindLocalPlayer(World, 1));
+        Session->Tick(Frame);
+        Expect(Session->GetViewCount() == 1, "player 2 let go of its avatar: one view");
+
+        Session->UnloadLevel();
+        delete Session;
+    }
+
+    /* SPLITSCREEN's dynamic split, the math alone (SplitCamera.h). */
+    void TestSplitCameraSolve()
+    {
+        std::printf("[split camera]\n");
+        SplitCameraSettings Settings;
+        Settings.bEnabled = true;
+        Settings.Rotation = EngineCore::Vector3(55.0, 0.0, 0.0);   // looking down, along +Z: world +X is screen right
+        Settings.TurnRate = 0.0f;
+        const EngineCore::Size Window(1280, 720);
+        float Angle = 0.0f;
+        bool  bAngle = false;
+        SplitCameraFrame Frame;
+
+        const auto At = [](const double InX, const double InZ) { return EngineCore::Vector3(InX, 0.0, InZ); };
+        EngineCore::Vector3 Near[2] = { At(-50.0, 0.0), At(50.0, 0.0) };
+        SolveSplitCamera(Settings, Near, 2, Window, 0.016f, Angle, bAngle, Frame);
+        Expect(Frame.ViewCount == 1 && !Frame.bSites && (Frame.Focus[0] - At(0.0, 0.0)).GetLength() < 1e-6,
+               "close together: one camera on their midpoint");
+
+        EngineCore::Vector3 Far[2] = { At(-6000.0, 0.0), At(6000.0, 0.0) };
+        SolveSplitCamera(Settings, Far, 2, Window, 0.016f, Angle, bAngle, Frame);
+        Expect(Frame.ViewCount == 2 && Frame.bSites, "far apart: two views, cut by sites");
+        Expect(Frame.SiteX[0] < Frame.SiteX[1] && std::fabs(Frame.SiteY[0] - Frame.SiteY[1]) < 1.0f,
+               "side by side on screen: player 1's site on the left, the line upright");
+        Expect(Frame.Focus[0].GetX() < 0.0 && Frame.Focus[1].GetX() > 0.0 && Frame.Focus[0].GetX() > -6000.0,
+               "each view's focus between the midpoint and its player");
+        Expect(Frame.DividerAlpha == 1.0f, "well apart, the divider is drawn in full");
+        float SX = 0.0f, SY = 0.0f;
+        Expect(ProjectSplitCamera(Settings, Frame.Focus[0], Far[0], Window, SX, SY) && std::fabs(SX - 320.0f) < 1.0f && std::fabs(SY - 360.0f) < 1.0f,
+               "player 1 at the centre of the left half: " + std::to_string(SX) + ", " + std::to_string(SY));
+        Expect(ProjectSplitCamera(Settings, Frame.Focus[1], Far[1], Window, SX, SY) && std::fabs(SX - 960.0f) < 1.0f && std::fabs(SY - 360.0f) < 1.0f,
+               "player 2 at the centre of the right half: " + std::to_string(SX) + ", " + std::to_string(SY));
+
+        /* Just past where they stop fitting: the views open from the midpoint, with no jump. */
+        double Low = 50.0, High = 6000.0;
+        for(int Step = 0; Step < 40; ++Step)
+        {
+            const double Mid = 0.5 * (Low + High);
+            EngineCore::Vector3 Pair[2] = { At(-Mid, 0.0), At(Mid, 0.0) };
+            SolveSplitCamera(Settings, Pair, 2, Window, 0.016f, Angle, bAngle, Frame);
+            (Frame.ViewCount == 1 ? Low : High) = Mid;
+        }
+        EngineCore::Vector3 Edge[2] = { At(-High, 0.0), At(High, 0.0) };
+        SolveSplitCamera(Settings, Edge, 2, Window, 0.016f, Angle, bAngle, Frame);
+        Expect(Frame.ViewCount == 2 && Frame.Focus[0].GetLength() < High * 1e-3 && Frame.Focus[1].GetLength() < High * 1e-3,
+               "at the split, both views still look at the midpoint");
+        Expect(Frame.DividerAlpha < 0.01f, "and the divider has not faded in yet");
+
+        /* Above and below each other on screen: the line lies flat. */
+        EngineCore::Vector3 Deep[2] = { At(0.0, -8000.0), At(0.0, 8000.0) };
+        bAngle = false;
+        SolveSplitCamera(Settings, Deep, 2, Window, 0.016f, Angle, bAngle, Frame);
+        Expect(Frame.ViewCount == 2 && Frame.SiteY[0] > Frame.SiteY[1] && std::fabs(Frame.SiteX[0] - Frame.SiteX[1]) < 1.0f,
+               "one far up the screen: player 1's site below, the line across");
+        /* In perspective, under a pitched camera: still each at the centre of their half. */
+        Expect(ProjectSplitCamera(Settings, Frame.Focus[0], Deep[0], Window, SX, SY) && std::fabs(SX - 640.0f) < 1.0f && std::fabs(SY - 540.0f) < 1.0f,
+               "player 1 at the centre of the lower half: " + std::to_string(SX) + ", " + std::to_string(SY));
+        Expect(ProjectSplitCamera(Settings, Frame.Focus[1], Deep[1], Window, SX, SY) && std::fabs(SX - 640.0f) < 1.0f && std::fabs(SY - 180.0f) < 1.0f,
+               "player 2 at the centre of the upper half: " + std::to_string(SX) + ", " + std::to_string(SY));
+
+        /* Just past the split, one ahead of the other: both views on the shared camera still. */
+        double Lo = 10.0, Hi = 8000.0;
+        for(int Step = 0; Step < 40; ++Step)
+        {
+            const double Mid = 0.5 * (Lo + Hi);
+            EngineCore::Vector3 Pair[2] = { At(0.0, -Mid), At(0.0, Mid) };
+            bAngle = false;
+            SolveSplitCamera(Settings, Pair, 2, Window, 0.016f, Angle, bAngle, Frame);
+            (Frame.ViewCount == 1 ? Lo : Hi) = Mid;
+        }
+        EngineCore::Vector3 Shy[2] = { At(0.0, -Lo), At(0.0, Lo) };
+        bAngle = false;
+        SolveSplitCamera(Settings, Shy, 2, Window, 0.016f, Angle, bAngle, Frame);
+        const EngineCore::Vector3 Shared = Frame.Focus[0];
+        EngineCore::Vector3 Split[2] = { At(0.0, -Hi), At(0.0, Hi) };
+        bAngle = false;
+        SolveSplitCamera(Settings, Split, 2, Window, 0.016f, Angle, bAngle, Frame);
+        Expect(Frame.ViewCount == 2 && (Frame.Focus[0] - Shared).GetLength() < 1.0 && (Frame.Focus[1] - Shared).GetLength() < 1.0,
+               "at a pitched split, both views open from the shared camera");
+
+        /* The line turns toward its target, not to it, at TurnRate. */
+        Settings.TurnRate = 4.0f;
+        SolveSplitCamera(Settings, Far, 2, Window, 0.1f, Angle, bAngle, Frame);
+        Expect(Frame.ViewCount == 2 && std::fabs(Frame.SiteX[0] - Frame.SiteX[1]) > 1.0f && std::fabs(Frame.SiteY[0] - Frame.SiteY[1]) > 1.0f,
+               "it turns part of the way in a frame");
+
+        EngineCore::Vector3 Three[3] = { At(-6000.0, 0.0), At(6000.0, 0.0), At(0.0, 6000.0) };
+        SolveSplitCamera(Settings, Three, 3, Window, 0.016f, Angle, bAngle, Frame);
+        Expect(Frame.ViewCount == 3 && !Frame.bSites && (Frame.Focus[2] - Three[2]).GetLength() < 1e-6,
+               "three apart: the fixed layout, a camera on each");
+        EngineCore::Vector3 Huddle[3] = { At(-10.0, 0.0), At(10.0, 0.0), At(0.0, 10.0) };
+        SolveSplitCamera(Settings, Huddle, 3, Window, 0.016f, Angle, bAngle, Frame);
+        Expect(Frame.ViewCount == 1, "three close together: one");
+
+        const EngineCore::Vector3 Eye = SplitCameraPosition(Settings, At(0.0, 0.0));
+        Expect(Eye.GetY() > 0.0 && Eye.GetZ() < 0.0 && std::fabs(Eye.GetLength() - Settings.Distance) < 1e-3,
+               "the camera sits back and above its focus, Distance away");
+    }
+
     class SpawnMode : public NetGameMode
     {
     public:
@@ -496,6 +659,57 @@ namespace
         delete Session;
     }
 
+    /* SPLITSCREEN's drop-in: Start joins a player, unplugging leaves. */
+    void TestDropIn()
+    {
+        std::printf("[drop-in]\n");
+        TestHost Host;
+        GameCore::ScriptEngine Scripts;
+        RenderCore::Renderer Rendering;
+        Scripts.Initialize();
+        auto* Session = new GameSession(Host, Scripts, Rendering);
+        SpawnLevel Level;
+        Expect(Session->LoadLevel(Level), "the level loads");
+        GameCore::World& World = Session->GetWorld();
+        FrameContext Frame;
+        Frame.DeltaSeconds = 0.016;
+
+        Expect(Session->JoinLocalPlayer(1) && GetAvatar(World, FindLocalPlayer(World, 1)).IsSet(),
+               "JoinLocalPlayer gives the player a player and an avatar");
+        Expect(!Session->JoinLocalPlayer(0) && !Session->LeaveLocalPlayer(0), "player 1 neither joins nor leaves");
+        const GameCore::EntityID Joined = GetAvatar(World, FindLocalPlayer(World, 1));
+        Expect(Session->LeaveLocalPlayer(1) && !FindLocalPlayer(World, 1).IsSet() && !World.IsAlive(Joined),
+               "LeaveLocalPlayer destroys the player and its avatar");
+
+        /* By the pads, with [Splitscreen] DropIn. */
+        EngineCore::ConfigVar* DropIn = EngineCore::ConfigFindVar("Splitscreen", "DropIn");
+        Expect(DropIn != nullptr, "[Splitscreen] DropIn exists");
+        if(DropIn) { DropIn->SetBool(false); }
+        Host.Input.BeginFrame(1);
+        Host.Input.SetPadConnected(2, true);
+        Host.Input.Press(FindInputKey("Gamepad.Start"), 2);
+        Session->Tick(Frame);
+        Expect(!FindLocalPlayer(World, 2).IsSet(), "without DropIn, Start joins nobody");
+
+        if(DropIn) { DropIn->SetBool(true); }
+        Host.Input.BeginFrame(2);
+        Host.Input.Release(FindInputKey("Gamepad.Start"), 2);
+        Host.Input.Press(FindInputKey("Gamepad.Start"), 2);
+        Session->Tick(Frame);
+        Expect(FindLocalPlayer(World, 2).IsSet() && GetAvatar(World, FindLocalPlayer(World, 2)).IsSet(),
+               "with DropIn, Start on a pad no player has joins its player");
+        Expect(!Session->GetInput().WasPressed(FindInputKey("Gamepad.Start"), 2), "the joining press is not the game's");
+
+        Host.Input.BeginFrame(3);
+        Host.Input.SetPadConnected(2, false);
+        Session->Tick(Frame);
+        Expect(!FindLocalPlayer(World, 2).IsSet(), "unplugging a joined player's pad leaves");
+        if(DropIn) { DropIn->SetBool(false); }
+
+        Session->UnloadLevel();
+        delete Session;
+    }
+
     void TestFreePlayerIndex()
     {
         std::printf("[player index]\n");
@@ -518,6 +732,9 @@ int main()
     TestServerInput();
     TestLocalSimulation();
     TestAutoPossess();
+    TestSplitscreenViews();
+    TestSplitCameraSolve();
+    TestDropIn();
     TestNetGameMode();
     TestFreePlayerIndex();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);

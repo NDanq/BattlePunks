@@ -1445,7 +1445,7 @@ def main():
     for stale in list(FOLDER.glob("*.nmentity")) + list(FOLDER.glob("*.nmprefabinst")):
         stale.unlink()
     manifest = ["<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n", "<World Format=\"1\">\n",
-                "  <Settings>\n",
+                "  <Settings GameMode=\"WorldsLabCourtyard\">\n",
                 "    <Lighting BakedLighting=\"true\" TexelsPerUnit=\"0.12\" Bounces=\"3\" ProbeSpacing=\"150\" />\n",
                 "  </Settings>\n"]
     for name, text in entities:

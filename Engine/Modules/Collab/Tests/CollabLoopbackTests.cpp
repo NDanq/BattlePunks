@@ -493,9 +493,9 @@ namespace
         RunGit(Bob, { "config", "commit.gpgsign", "false" });
         RunGit(Bob, { "switch", "-q", "-c", "main" });
         WriteText(Bob / "Games/WorldsLab/Config/DefaultEngine.ini",
-                  "[Game]\nModule=WorldsLabGame\n\n[World_A]\nFile=Content/Levels/A.nmworld\nGameMode=Arena\n\n"
-                  "[World_B]\nFile=Content/Levels/B.nmworld\nGameMode=Explore\n");
-        WriteText(Bob / "Games/WorldsLab/Content/Levels/A.nmworld", "<World Format=\"1\" />\n");
+                  "[Game]\nModule=WorldsLabGame\n\n[World_A]\nFile=Content/Levels/A.nmworld\n\n"
+                  "[World_B]\nFile=Content/Levels/B.nmworld\n");
+        WriteText(Bob / "Games/WorldsLab/Content/Levels/A.nmworld", "<World Format=\"1\">\n  <Settings GameMode=\"Arena\" />\n</World>\n");
         WriteText(Bob / "Games/WorldsLab/Content/Levels/A/good.nmentity", "<Entity />\n");
         WriteText(Bob / "Engine/Core.txt", "engine\n");
         RunGit(Bob, { "add", "-A" });

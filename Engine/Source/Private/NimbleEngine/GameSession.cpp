@@ -22,6 +22,7 @@
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreMemory.h"
 #include "Public/Core/CorePlatform.h"
+#include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/ScriptEngine.h"
@@ -58,6 +59,37 @@ NIMBLE_CONFIG_BOOL(GStatsPhysics, "Stats", "Physics", false, nullptr);
 /* "stat audio": the level's sound -- voices, the listener, the device. */
 NIMBLE_CONFIG_BOOL(GStatsAudio, "Stats", "Audio", false, nullptr);
 
+/* SPLITSCREEN (SPLITSCREEN.md): a view per local player (SetViewCount); off,
+ * one view whatever the players. Two players' views side by side rather than
+ * top and bottom. The game's settings, so its DefaultGame.ini. */
+NIMBLE_GAME_CONFIG_BOOL(GSplitscreenEnabled, "Splitscreen", "Enabled", true, nullptr);
+NIMBLE_GAME_CONFIG_BOOL(GSplitscreenSideBySide, "Splitscreen", "SideBySide", false, nullptr);
+
+/* The dynamic split (SplitCamera.h), until GameSession::SetSplitCamera: on,
+ * and its cameras' pitch and yaw (degrees), distance, field of view and how
+ * far out a player may get (0-1 of half the screen) before it splits. */
+NIMBLE_GAME_CONFIG_BOOL(GSplitscreenDynamic, "Splitscreen", "Dynamic", false, nullptr);
+
+/* OCCLUSION REVEAL (RENDERPIPELINE.md, "Revealing players"): the local players'
+ * avatars kept in sight through what is marked Reveal Players -- the circle's
+ * size round each, world units, and how high above its feet it is centred. */
+NIMBLE_GAME_CONFIG_BOOL(GRevealPlayers, "Rendering", "RevealPlayers", true, nullptr);
+NIMBLE_GAME_CONFIG_FLOAT(GRevealRadius, "Rendering", "RevealRadius", 150.0f, nullptr);
+NIMBLE_GAME_CONFIG_FLOAT(GRevealHeight, "Rendering", "RevealHeight", 90.0f, nullptr);
+
+/* A whole-window menu (a pause menu) navigated by any local player's pad, not
+ * only player 1's; the documents opened for one player always take theirs. */
+NIMBLE_GAME_CONFIG_BOOL(GSplitscreenMenuAnyPad, "Splitscreen", "MenuAnyPad", true, nullptr);
+
+/* Drop-in: Start on a pad no player has joins that player; unplugging a joined
+ * player's pad leaves (GameSession::JoinLocalPlayer, LeaveLocalPlayer). */
+NIMBLE_GAME_CONFIG_BOOL(GSplitscreenDropIn, "Splitscreen", "DropIn", false, nullptr);
+NIMBLE_GAME_CONFIG_FLOAT(GSplitscreenDynamicPitch, "Splitscreen", "DynamicPitch", 55.0f, nullptr);
+NIMBLE_GAME_CONFIG_FLOAT(GSplitscreenDynamicYaw, "Splitscreen", "DynamicYaw", 0.0f, nullptr);
+NIMBLE_GAME_CONFIG_FLOAT(GSplitscreenDynamicDistance, "Splitscreen", "DynamicDistance", 1500.0f, nullptr);
+NIMBLE_GAME_CONFIG_FLOAT(GSplitscreenDynamicFov, "Splitscreen", "DynamicFov", 50.0f, nullptr);
+NIMBLE_GAME_CONFIG_FLOAT(GSplitscreenDynamicMargin, "Splitscreen", "DynamicMargin", 0.6f, nullptr);
+
 #if WITH_AUDIO
 namespace
 {
@@ -68,6 +100,23 @@ namespace
         OutPose.Position = Pose.Position;
         OutPose.Forward  = Turn * EngineCore::Vector3(0.0, 0.0, 1.0);
         OutPose.Up       = Turn * EngineCore::Vector3(0.0, 1.0, 0.0);
+    }
+
+    /* SPLITSCREEN: a listener per view this frame, each at the camera it is
+     * viewed through; 0 when no view has one (CameraListener's rule then). */
+    uint32_t ViewListeners(GameCore::World& InWorld, Audio::AudioListenerPose* OutPoses, const uint32_t InMax, void* InUserData)
+    {
+        auto* Session = static_cast<NimbleEngine::GameSession*>(InUserData);
+        if(!Session) { return 0; }
+        const uint32_t Views = std::min(Session->GetViewCount(), InMax);
+        uint32_t Count = 0;
+        for(uint32_t View = 0; View < Views; ++View)
+        {
+            const GameCore::EntityID Viewed = Session->GetRenderer().GetViewCamera(RenderCore::RENDER_DEFAULT_SCENE, View);
+            if(!Viewed.IsSet() || !InWorld.IsAlive(Viewed)) { continue; }
+            PoseFromCamera(InWorld.GetEntity(Viewed), OutPoses[Count++]);
+        }
+        return Count;
     }
 
     /* The level heard from its camera when it has no active Audio Listener:
@@ -248,6 +297,7 @@ namespace NimbleEngine
         if(LevelAudio->Attach(*LevelWorld))
         {
             LevelAudio->SetListenerFallback(&CameraListener, this);
+            LevelAudio->SetListenersFallback(&ViewListeners, this);
             /* Rendering.BindWorld above attached the animation system. */
             if(RenderCore::AnimationSystem* Animation = RenderCore::AnimationSystem::Find(LevelWorld))
             {
@@ -277,7 +327,10 @@ namespace NimbleEngine
 
         /* Right after: each AvatarHarness from its player's devices, or (a
          * server) its client's (Avatar.h). */
-        ViewTarget = GameCore::EntityID();
+        for(GameCore::EntityID& Each : ViewTargets) { Each = GameCore::EntityID(); }
+        for(GameCore::EntityID& Each : SplitCameras) { Each = GameCore::EntityID(); }
+        bSequenceView  = false;
+        bSplitAngleSet = false;
         Avatars = EngineCore::Memory::Alloc<AvatarWorld>();
         Avatars->Attach(*LevelWorld);
         Avatars->SetInput(&FilteredInput);
@@ -519,7 +572,10 @@ namespace NimbleEngine
                 EngineCore::Memory::Dealloc(Avatars);
                 Avatars = nullptr;
             }
-            ViewTarget = GameCore::EntityID();
+            for(GameCore::EntityID& Each : ViewTargets) { Each = GameCore::EntityID(); }
+            for(GameCore::EntityID& Each : SplitCameras) { Each = GameCore::EntityID(); }
+            bSequenceView  = false;
+            bSplitAngleSet = false;
 
             /* Brains let go of their agents while the components still exist. */
             AIDetail::DetachLevelAI(*LevelWorld);
@@ -630,24 +686,50 @@ namespace NimbleEngine
         const EngineCore::Point Mouse = FilteredInput.GetMousePosition();
         Frame.MousePixels = UI::UIVec2{ float(Mouse.X), float(Mouse.Y) };
         Frame.bHasMouse   = !Host.IsMouseCaptured() && FilteredInput.HasFocus();   // a captured mouse is the game's
+        /* The cursor, text and shortcuts are the devices', whoever has them (INPUT.md, "Local players"). */
+        const uint8_t Keys = INPUT_PLAYER_DEVICES;
         const char* const MouseButtons[3] = { "Mouse.Left", "Mouse.Right", "Mouse.Middle" };
         for(int Each = 0; Each < 3; ++Each)
         {
             const InputKey Key = FindInputKey(MouseButtons[Each]);
-            Frame.MouseDown[Each]     = FilteredInput.IsDown(Key);
-            Frame.MousePressed[Each]  = FilteredInput.WasPressed(Key);
-            Frame.MouseReleased[Each] = FilteredInput.WasReleased(Key);
+            Frame.MouseDown[Each]     = FilteredInput.IsDown(Key, Keys);
+            Frame.MousePressed[Each]  = FilteredInput.WasPressed(Key, Keys);
+            Frame.MouseReleased[Each] = FilteredInput.WasReleased(Key, Keys);
         }
         Frame.Wheel = FilteredInput.GetWheelDelta();
 
-        /* Navigation through the "UI" input map (UIInputMap.cpp): rebindable like any other. */
+        /* Navigation through the "UI" input map (UIInputMap.cpp): rebindable like any other --
+         * the window's documents by player 1's pad (any player's, with [Splitscreen] MenuAnyPad)
+         * and the keyboard whoever has it; a player's own documents by their own (INPUT.md,
+         * "Local players"). */
+        const uint8_t MenuPads = GSplitscreenMenuAnyPad.GetBool() ? uint8_t(INPUT_PLAYERS_MAX) : uint8_t(1);
         bool bPad = false, bAnyPad = false;
-        const auto Pressed = [this, &bPad, &bAnyPad](const char* InAction)
+        const auto Pressed = [this, &bPad, &bAnyPad, Keys, MenuPads](const char* InAction)
         {
-            const bool bPressed = WasInputActionPressed("UI", InAction, FilteredInput, 0, &bPad);
-            bAnyPad = bAnyPad || (bPressed && bPad);
+            bool bFromPad = false;
+            bool bPressed = false;
+            for(uint8_t Pad = 0; Pad < MenuPads && !bPressed; ++Pad)
+            {
+                bPressed = WasInputActionPressed("UI", InAction, FilteredInput, Pad, &bFromPad);
+            }
+            if(!bPressed)
+            {
+                bPressed = WasInputActionPressed("UI", InAction, FilteredInput, Keys, &bFromPad);
+            }
+            bPad    = bFromPad;
+            bAnyPad = bAnyPad || (bPressed && bFromPad);
             return bPressed;
         };
+        for(uint8_t Local = 0; Local < UI::UI_PLAYERS_MAX && Local < INPUT_PLAYERS_MAX; ++Local)
+        {
+            UI::UIPlayerNavigation& Own = Frame.PlayerNav[Local];
+            Own.bUp     = WasInputActionPressed("UI", "Up", FilteredInput, Local);
+            Own.bDown   = WasInputActionPressed("UI", "Down", FilteredInput, Local);
+            Own.bLeft   = WasInputActionPressed("UI", "Left", FilteredInput, Local);
+            Own.bRight  = WasInputActionPressed("UI", "Right", FilteredInput, Local);
+            Own.bAccept = WasInputActionPressed("UI", "Accept", FilteredInput, Local);
+            Own.bBack   = WasInputActionPressed("UI", "Back", FilteredInput, Local);
+        }
         Frame.bNavUp    = Pressed("Up");
         Frame.bNavDown  = Pressed("Down");
         Frame.bNavLeft  = Pressed("Left");
@@ -655,27 +737,27 @@ namespace NimbleEngine
         Frame.bAccept   = Pressed("Accept");
         Frame.bBack     = Pressed("Back");
         const bool bTab   = Pressed("Next");
-        const bool bShift = FilteredInput.IsDown("LeftShift") || FilteredInput.IsDown("RightShift");
+        const bool bShift = FilteredInput.IsDown("LeftShift", Keys) || FilteredInput.IsDown("RightShift", Keys);
         Frame.bNext       = bTab && !bShift;
         Frame.bPrevious   = bTab && bShift;
         Frame.bNavFromGamepad = bAnyPad;
 
         /* Text editing, for a focused text field (the console's own handling is the model). */
         std::snprintf(Frame.Text, sizeof(Frame.Text), "%s", FilteredInput.GetText());
-        const auto Count = [this](const char* InKey) { return uint8_t(std::min(FilteredInput.GetPressesAndRepeats(FindInputKey(InKey)), 255)); };
+        const auto Count = [this, Keys](const char* InKey) { return uint8_t(std::min(FilteredInput.GetPressesAndRepeats(FindInputKey(InKey), Keys), 255)); };
         Frame.Backspace = Count("Backspace");
         Frame.Delete    = Count("Delete");
         Frame.Left      = Count("Left");
         Frame.Right     = Count("Right");
         Frame.Home      = Count("Home");
         Frame.End       = Count("End");
-        Frame.bReturn   = FilteredInput.WasPressed(FindInputKey("Return")) || FilteredInput.WasPressed(FindInputKey("KP_Enter"));
+        Frame.bReturn   = FilteredInput.WasPressed(FindInputKey("Return"), Keys) || FilteredInput.WasPressed(FindInputKey("KP_Enter"), Keys);
         Frame.bShift    = bShift;
-        Frame.bCtrl     = FilteredInput.IsDown("LeftCtrl") || FilteredInput.IsDown("RightCtrl");
-        Frame.bSelectAll = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("A"));
-        Frame.bCopy      = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("C"));
-        Frame.bCut       = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("X"));
-        Frame.bPaste     = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("V"));
+        Frame.bCtrl     = FilteredInput.IsDown("LeftCtrl", Keys) || FilteredInput.IsDown("RightCtrl", Keys);
+        Frame.bSelectAll = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("A"), Keys);
+        Frame.bCopy      = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("C"), Keys);
+        Frame.bCut       = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("X"), Keys);
+        Frame.bPaste     = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("V"), Keys);
 
         const UI::UIInputResult Taken = Interface->ProcessInput(Frame);
 
@@ -690,7 +772,17 @@ namespace NimbleEngine
         this->bConsoleOpen = bConsoleOpen;
         if(Taken.bConsumeMouse)    { FilteredInput.ConsumeMouseButtons(); }
         if(Taken.bConsumeKeyboard) { FilteredInput.ConsumeKeyboard(); }
-        if(Taken.bConsumeGamepad)  { FilteredInput.ConsumeGamepad(); }
+        if(Taken.bConsumeGamepad)   // the pads it navigates from; the others play on
+        {
+            for(uint8_t Pad = 0; Pad < MenuPads; ++Pad) { FilteredInput.ConsumeGamepad(Pad); }
+        }
+        for(uint8_t Local = 0; Local < UI::UI_PLAYERS_MAX && Local < INPUT_PLAYERS_MAX; ++Local)
+        {
+            /* A player's own document used their pad (and the keyboard, if theirs). */
+            if(!Taken.bConsumePlayer[Local]) { continue; }
+            FilteredInput.ConsumeGamepad(Local);
+            if(GetKeyboardMousePlayer() == int32_t(Local)) { FilteredInput.ConsumeKeyboard(); }
+        }
 
         /* A cinematic holds the players' input back; Back the UI left skips it. */
         if(bCinematic && LevelWorld && !bConsoleOpen)
@@ -769,7 +861,10 @@ namespace NimbleEngine
 
     void GameSession::SequenceSetViewTarget(const GameCore::EntityID InCamera, void* InUserData)
     {
-        static_cast<GameSession*>(InUserData)->SetViewTarget(InCamera);
+        /* A camera cut: the whole window, one view, until it lets go. */
+        auto* Session = static_cast<GameSession*>(InUserData);
+        Session->bSequenceView = InCamera.IsSet();
+        Session->SetViewTarget(InCamera);
     }
 
     GameCore::EntityID GameSession::SequenceGetViewTarget(void* InUserData)
@@ -861,9 +956,12 @@ namespace NimbleEngine
     {
         /* The mode's OnTick overlaps the render thread: game state only. */
         CheckGameThread("Tick");
+        FrameDelta  = float(InFrame.DeltaSeconds);
+        FramePixels = InFrame.ViewportPixels;
 
         /* The UI sees the input first; the game, what it leaves. */
         RouteInputThroughUI();
+        UpdateDropIn();
 
         /* Re-read: a level swap may have replaced the mode. */
         if(ActiveLevel && !bPaused)
@@ -906,7 +1004,71 @@ namespace NimbleEngine
         PublishUIValues();
         Console->Update();
         Interface->Tick(float(InFrame.DeltaSeconds));
+        PublishPlayerAreas();
         Interface->Update(UI::UIVec2{ float(InFrame.ViewportPixels.Width), float(InFrame.ViewportPixels.Height) });
+    }
+
+    bool GameSession::JoinLocalPlayer(const uint8_t InLocalPlayer)
+    {
+        CheckGameThread("JoinLocalPlayer");
+        if(InLocalPlayer == 0 || InLocalPlayer >= INPUT_PLAYERS_MAX || !ActiveLevel || !LevelWorld) { return false; }
+        IGameMode* Mode = ActiveLevel->GetGameMode();
+        if(!Mode || !Mode->OnLocalPlayerJoin(InLocalPlayer)) { return false; }
+        CORE_LOG("[Splitscreen] local player " + std::to_string(int(InLocalPlayer) + 1) + " joined")
+        return true;
+    }
+
+    bool GameSession::LeaveLocalPlayer(const uint8_t InLocalPlayer)
+    {
+        CheckGameThread("LeaveLocalPlayer");
+        if(InLocalPlayer == 0 || InLocalPlayer >= INPUT_PLAYERS_MAX || !ActiveLevel || !LevelWorld) { return false; }
+        IGameMode* Mode = ActiveLevel->GetGameMode();
+        if(!Mode || !Mode->OnLocalPlayerLeave(InLocalPlayer)) { return false; }
+        ViewTargets[InLocalPlayer] = GameCore::EntityID();
+        CORE_LOG("[Splitscreen] local player " + std::to_string(int(InLocalPlayer) + 1) + " left")
+        return true;
+    }
+
+    void GameSession::UpdateDropIn()
+    {
+        const bool bDropIn = GSplitscreenDropIn.GetBool() && LevelWorld && !bPaused && !bCinematic;
+        for(uint8_t Local = 1; Local < INPUT_PLAYERS_MAX; ++Local)
+        {
+            const bool bConnected = FilteredInput.IsPadConnected(Local);
+            const bool bWas       = bPadWasConnected[Local];
+            bPadWasConnected[Local] = bConnected;
+            if(!bDropIn) { continue; }
+            const bool bJoined = FindLocalPlayer(*LevelWorld, Local).IsSet();
+            if(bConnected && !bJoined && FilteredInput.WasPressed(FindInputKey("Gamepad.Start"), Local))
+            {
+                JoinLocalPlayer(Local);
+                FilteredInput.Consume(FindInputKey("Gamepad.Start"), Local);   // a joining press is not the game's
+            }
+            else if(bWas && !bConnected && bJoined)
+            {
+                LeaveLocalPlayer(Local);
+            }
+        }
+    }
+
+    void GameSession::PublishPlayerAreas()
+    {
+        /* A fixed layout: each player's view's rectangle. The dynamic split: halves (quadrants)
+         * of the window that stay put while its line turns -- a HUD in each player's corner. */
+        RenderCore::RenderViewRect Rects[RenderCore::RENDER_VIEWS_MAX];
+        const bool     bDynamic = SplitPlayers >= 2;
+        const uint32_t Players  = bDynamic ? SplitPlayers : ViewCount;
+        const uint32_t Count    = Players > 1 ? RenderCore::MakeSplitscreenLayout(FramePixels, Players, bDynamic || GSplitscreenSideBySide.GetBool(), Rects) : 0;
+        for(int32_t Local = 0; Local < UI::UI_PLAYERS_MAX; ++Local)
+        {
+            UI::UIRect Area;   // empty: the whole window
+            if(uint32_t(Local) < Count)
+            {
+                const RenderCore::RenderViewRect& Rect = Rects[Local];
+                Area = UI::UIRect{ float(Rect.X), float(Rect.Y), float(Rect.Width), float(Rect.Height) };
+            }
+            Interface->SetPlayerArea(Local, Area);
+        }
     }
 
     void GameSession::PublishPhysicsStat()
@@ -1002,32 +1164,198 @@ namespace NimbleEngine
         bAudioStatShown = true;
     }
 
-    void GameSession::SetViewTarget(const GameCore::EntityID InCamera)
+    void GameSession::SetViewTarget(const GameCore::EntityID InCamera, const uint8_t InLocalPlayer)
     {
         CheckGameThread("SetViewTarget");
-        ViewTarget = InCamera;
+        if(InLocalPlayer >= INPUT_PLAYERS_MAX) { return; }
+        ViewTargets[InLocalPlayer] = InCamera;
         PublishViewTarget();
     }
 
-    GameCore::EntityID GameSession::GetViewTarget() const
+    GameCore::EntityID GameSession::GetViewTarget(const uint8_t InLocalPlayer) const
     {
-        if(LevelWorld && ViewTarget.IsSet() && LevelWorld->IsAlive(ViewTarget)) { return ViewTarget; }
-        return Avatars ? Avatars->GetViewCamera() : GameCore::EntityID();
+        if(InLocalPlayer >= INPUT_PLAYERS_MAX) { return GameCore::EntityID(); }
+        const GameCore::EntityID Target = ViewTargets[InLocalPlayer];
+        if(LevelWorld && Target.IsSet() && LevelWorld->IsAlive(Target)) { return Target; }
+        return Avatars ? Avatars->GetViewCamera(InLocalPlayer) : GameCore::EntityID();
+    }
+
+    void GameSession::SetViewCount(const uint32_t InCount)
+    {
+        CheckGameThread("SetViewCount");
+        ViewCountWanted = std::min<uint32_t>(InCount, RenderCore::RENDER_VIEWS_MAX);
+        PublishViewTarget();
+    }
+
+    void GameSession::PublishRevealPoints()
+    {
+        EngineCore::Vector3 Points[RenderCore::RENDER_REVEAL_MAX];
+        uint32_t Count = 0;
+        if(LevelWorld && GRevealPlayers.GetBool())
+        {
+            for(uint8_t Local = 0; Local < INPUT_PLAYERS_MAX && Count < RenderCore::RENDER_REVEAL_MAX; ++Local)
+            {
+                const GameCore::EntityID Avatar = GetLocalAvatar(*LevelWorld, Local);
+                if(!Avatar.IsSet() || !LevelWorld->IsAlive(Avatar)) { continue; }
+                Points[Count++] = LevelWorld->GetEntity(Avatar).GetWorldPose().Position
+                                + EngineCore::Vector3(0.0, double(GRevealHeight.GetFloat()), 0.0);
+            }
+        }
+        Rendering.SetRevealPoints(RenderCore::RENDER_DEFAULT_SCENE, Points, Count, GRevealRadius.GetFloat());
     }
 
     void GameSession::PublishViewTarget()
     {
         if(!LevelWorld) { return; }
+        PublishRevealPoints();
 
-        /* The target's camera: its own, else its first descendant's. */
-        GameCore::EntityID Camera = GetViewTarget();
-        for(int Depth = 0; Camera.IsSet() && Depth < 16; ++Depth)
+        /* A target's camera: its own, else its first descendant's. */
+        const auto CameraOf = [this](GameCore::EntityID InTarget)
         {
-            const GameCore::Entity Node = LevelWorld->GetEntity(Camera);
-            if(Node.HasComponent<RenderCore::CameraComponent>()) { break; }
-            Camera = Node.GetFirstChild();
+            for(int Depth = 0; InTarget.IsSet() && Depth < 16; ++Depth)
+            {
+                const GameCore::Entity Node = LevelWorld->GetEntity(InTarget);
+                if(Node.HasComponent<RenderCore::CameraComponent>()) { break; }
+                InTarget = Node.GetFirstChild();
+            }
+            return InTarget;
+        };
+
+        /* SPLITSCREEN's dynamic split, when it is on and there are players to split. */
+        const bool bMayShare = GSplitscreenEnabled.GetBool() && !bCinematic && !bSequenceView;
+        if(bMayShare && PublishSplitCamera())
+        {
+            return;
         }
-        if(Camera != Rendering.GetViewCamera()) { Rendering.SetViewCamera(Camera); }
+        SplitPlayers = 0;
+        Rendering.SetViewSites(RenderCore::RENDER_DEFAULT_SCENE, RenderCore::RenderViewSites());
+
+        /* SPLITSCREEN: a view per local player with one, up to the last;
+         * one while a sequence holds the camera. */
+        constexpr uint32_t ViewsMax = std::min<uint32_t>(RenderCore::RENDER_VIEWS_MAX, INPUT_PLAYERS_MAX);
+        uint32_t Count = 1;
+        if(GSplitscreenEnabled.GetBool() && !bCinematic && !bSequenceView)
+        {
+            if(ViewCountWanted > 0)
+            {
+                Count = std::min(ViewCountWanted, ViewsMax);
+            }
+            else
+            {
+                for(uint32_t Local = 1; Local < ViewsMax; ++Local)
+                {
+                    if(GetViewTarget(uint8_t(Local)).IsSet()) { Count = Local + 1; }
+                }
+            }
+        }
+        for(uint32_t View = 0; View < RenderCore::RENDER_VIEWS_MAX; ++View)
+        {
+            /* A view past the count lets go of its camera; a player without one sees player 1's. */
+            const GameCore::EntityID Camera = View < Count ? CameraOf(GetViewTarget(uint8_t(View))) : GameCore::EntityID();
+            if(Camera != Rendering.GetViewCamera(RenderCore::RENDER_DEFAULT_SCENE, View))
+            {
+                Rendering.SetViewCamera(RenderCore::RENDER_DEFAULT_SCENE, View, Camera);
+            }
+        }
+        Rendering.SetViewCount(RenderCore::RENDER_DEFAULT_SCENE, Count, GSplitscreenSideBySide.GetBool());
+        ViewCount = Count;
+    }
+
+    void GameSession::SetSplitCamera(const SplitCameraSettings& InSettings)
+    {
+        CheckGameThread("SetSplitCamera");
+        SplitCamera     = InSettings;
+        bSplitCameraSet = true;
+        PublishViewTarget();
+    }
+
+    SplitCameraSettings GameSession::GetSplitCamera() const
+    {
+        if(bSplitCameraSet) { return SplitCamera; }
+        SplitCameraSettings Settings;
+        Settings.bEnabled = GSplitscreenDynamic.GetBool();
+        Settings.Rotation = EngineCore::Vector3(GSplitscreenDynamicPitch.GetFloat(), GSplitscreenDynamicYaw.GetFloat(), 0.0);
+        Settings.Distance = GSplitscreenDynamicDistance.GetFloat();
+        Settings.FovY     = GSplitscreenDynamicFov.GetFloat();
+        Settings.Margin   = GSplitscreenDynamicMargin.GetFloat();
+        return Settings;
+    }
+
+    bool GameSession::PublishSplitCamera()
+    {
+        const SplitCameraSettings Settings = GetSplitCamera();
+        if(!Settings.bEnabled || !LevelWorld) { SplitPlayers = 0; return false; }
+
+        /* Local players 1, 2, ... while each has an avatar. */
+        EngineCore::Vector3 Players[4];
+        uint32_t Count = 0;
+        while(Count < 4 && Count < INPUT_PLAYERS_MAX)
+        {
+            const GameCore::EntityID Avatar = GetLocalAvatar(*LevelWorld, uint8_t(Count));
+            if(!Avatar.IsSet() || !LevelWorld->IsAlive(Avatar)) { break; }
+            Players[Count++] = LevelWorld->GetEntity(Avatar).GetWorldPose().Position;
+        }
+        if(Count < 2) { SplitPlayers = 0; return false; }
+        SplitPlayers = Count;
+
+        SplitCameraFrame Frame;
+        SolveSplitCamera(Settings, Players, Count, FramePixels, FrameDelta, SplitAngle, bSplitAngleSet, Frame);
+
+        /* Its cameras: made on first use, turned the settings' way, each on its focus. */
+        for(uint32_t View = 0; View < Frame.ViewCount; ++View)
+        {
+            GameCore::EntityID& Id = SplitCameras[View];
+            if(!Id.IsSet() || !LevelWorld->IsAlive(Id))
+            {
+                char Name[32];
+                std::snprintf(Name, sizeof(Name), "Split Camera %u", View + 1);
+                GameCore::Entity Made = LevelWorld->CreateEntity(Name);
+                Made.AddComponent<GameCore::TransformComponent>();
+                RenderCore::CameraComponent Lens;
+                Lens.bActive    = 0;   // never the level's first active camera
+                Lens.Projection = RenderCore::CP_Perspective;
+                Made.AddComponent(Lens);
+                Id = Made.GetID();
+            }
+            GameCore::Entity Camera = LevelWorld->GetEntity(Id);
+            if(GameCore::TransformComponent* At = Camera.GetComponent<GameCore::TransformComponent>())
+            {
+                At->Position = SplitCameraPosition(Settings, Frame.Focus[View]);
+                At->Rotation = Settings.Rotation;
+            }
+            if(RenderCore::CameraComponent* Lens = Camera.GetComponent<RenderCore::CameraComponent>())
+            {
+                Lens->FovY  = Settings.FovY;
+                Lens->ZNear = Settings.ZNear;
+                Lens->ZFar  = Settings.ZFar;
+            }
+        }
+
+        for(uint32_t View = 0; View < RenderCore::RENDER_VIEWS_MAX; ++View)
+        {
+            const GameCore::EntityID Camera = View < Frame.ViewCount ? SplitCameras[View] : GameCore::EntityID();
+            if(Camera != Rendering.GetViewCamera(RenderCore::RENDER_DEFAULT_SCENE, View))
+            {
+                Rendering.SetViewCamera(RenderCore::RENDER_DEFAULT_SCENE, View, Camera);
+            }
+        }
+        RenderCore::RenderViewSites Sites;
+        if(Frame.bSites)
+        {
+            Sites.Count = Frame.ViewCount;
+            for(uint32_t View = 0; View < Frame.ViewCount; ++View)
+            {
+                Sites.X[View] = Frame.SiteX[View];
+                Sites.Y[View] = Frame.SiteY[View];
+            }
+            Sites.DividerPixels = Settings.DividerPixels;
+            Sites.DividerAlpha  = Frame.DividerAlpha;
+            Sites.DividerColor  = Settings.DividerColor;
+        }
+        Rendering.SetViewSites(RenderCore::RENDER_DEFAULT_SCENE, Sites);
+        Rendering.SetViewCount(RenderCore::RENDER_DEFAULT_SCENE, Frame.ViewCount, GSplitscreenSideBySide.GetBool());
+        ViewCount = Frame.ViewCount;
+        return true;
     }
 
     void GameSession::ResolveInput(GameCore::World& InWorld, float /*InDeltaSeconds*/, void* InUserData)

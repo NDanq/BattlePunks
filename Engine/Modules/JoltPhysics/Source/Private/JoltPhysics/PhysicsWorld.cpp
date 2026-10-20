@@ -1762,7 +1762,8 @@ namespace JoltPhysics
     }
 
     bool PhysicsWorld::Raycast(const EngineCore::Vector3& InOrigin, const EngineCore::Vector3& InDirection,
-                               const float InMaxDistance, PhysicsHit& OutHit, const int32_t InMask) const
+                               const float InMaxDistance, PhysicsHit& OutHit, const int32_t InMask,
+                               const GameCore::EntityID InIgnore) const
     {
         OutHit = PhysicsHit();
         if(!P) { return false; }
@@ -1775,8 +1776,27 @@ namespace JoltPhysics
         const JPH::RRayCast Ray(Convert::ToRVec3(InOrigin, M), Direction * float(InMaxDistance * M));
         JPH::RayCastResult Hit;
         const Layers::QueryMask Mask(InMask);
-        const SkipSensors       NoSensors;
-        if(!P->System->GetNarrowPhaseQuery().CastRay(Ray, Hit, JPH::BroadPhaseLayerFilter(), Mask, NoSensors))
+        /* Sensors skipped; and InIgnore's bodies -- its own, its ragdoll's parts. */
+        class SkipSensorsAndIgnored final : public JPH::BodyFilter
+        {
+        public:
+            SkipSensorsAndIgnored(const Impl& InImpl, const GameCore::EntityID InIgnore) : Owner(InImpl), Ignore(InIgnore) {}
+            bool ShouldCollideLocked(const JPH::Body& InBody) const override
+            {
+                if(InBody.IsSensor()) { return false; }
+                if(!Ignore.IsSet()) { return true; }
+                if(Owner.EntityOf(InBody.GetID()) == Ignore) { return false; }
+                const auto Part = Owner.RagdollParts.find(InBody.GetID().GetIndexAndSequenceNumber());
+                if(Part == Owner.RagdollParts.end()) { return true; }
+                const Impl::RagdollRecord* Ragdoll = Owner.FindRagdoll(Part->second.Ragdoll);
+                return !Ragdoll || Ragdoll->Owner != Ignore;
+            }
+        private:
+            const Impl&        Owner;
+            GameCore::EntityID Ignore;
+        };
+        const SkipSensorsAndIgnored Filter(*P, InIgnore);
+        if(!P->System->GetNarrowPhaseQuery().CastRay(Ray, Hit, JPH::BroadPhaseLayerFilter(), Mask, Filter))
         {
             return false;
         }

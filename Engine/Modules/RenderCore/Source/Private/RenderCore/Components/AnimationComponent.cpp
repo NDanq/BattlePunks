@@ -10,6 +10,7 @@
 
 #include "Public/RenderCore/AnimationSystem.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -92,11 +93,12 @@ namespace RenderCore
 
     /* C.Parameters by slot, up to the last in use, so an empty one between
      * keeps its place, as the Render component's overrides do. */
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(AnimationComponent, 1)
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(AnimationComponent, 2)
     {
         Ar.Field("Animation", C.Animation);
         Ar.Field("PlayRate",  C.PlayRate);
         Ar.Flag("Paused",     C.bPaused);
+        if(Ar.GetVersion() >= 2) { Ar.Field("Retarget", C.Retarget); }
 
         int32_t Count = 0;
         for(size_t Index = 0; Index < ANIMATION_PARAMETERS_MAX; ++Index)
@@ -128,6 +130,7 @@ namespace RenderCore
     GAMECORE_DEFINE_COMPONENT_SCRIPT(AnimationComponent)
     {
         Bind.Field("Animation", &AnimationComponent::Animation);
+        Bind.Field("Retarget",  &AnimationComponent::Retarget);
         Bind.Field("PlayRate",  &AnimationComponent::PlayRate);
         Bind.Flag("Paused",     &AnimationComponent::bPaused);
 
@@ -176,6 +179,29 @@ namespace RenderCore
             Call.PushVector3(bFound ? Pose.Position : EngineCore::Vector3());
             Call.PushBool(bFound);
         }, "Bone:string -> Location:Vector3, Found:bool");
+
+        /* An IK chain's goal, in the world (its anim state's chains: the hand on
+         * a door, the foot on a pedal), by Weight (0..1, default 1); false if
+         * it has no chain so named. It holds until cleared. */
+        Bind.Method("SetIKGoal", [](AnimationComponent& C, GameCore::ScriptCall& Call)
+        {
+            const char* Chain = Call.GetString(1);
+            const EngineCore::Vector3 Goal = Call.GetVector3(2);
+            const float Weight = Call.HasArg(5) ? Call.GetFloat(5) : 1.0f;
+            if(Call.HasError()) { return; }
+            AnimationSystem* System = AnimationSystem::Find(C.Owner.OwningWorld);
+            AnimInstance* Instance = System ? System->FindInstance(C.Owner.Entity) : nullptr;
+            Call.PushBool(Instance && Instance->SetIKGoal(Chain, AnimVec3{ float(Goal.GetX()), float(Goal.GetY()), float(Goal.GetZ()) },
+                                                          std::max(Weight, 0.0f)));
+        }, "Chain:string, Goal:Vector3, Weight:number -> Set:bool");
+        Bind.Method("ClearIKGoal", [](AnimationComponent& C, GameCore::ScriptCall& Call)
+        {
+            const char* Chain = Call.GetString(1);
+            if(Call.HasError()) { return; }
+            AnimationSystem* System = AnimationSystem::Find(C.Owner.OwningWorld);
+            AnimInstance* Instance = System ? System->FindInstance(C.Owner.Entity) : nullptr;
+            Call.PushBool(Instance && Instance->SetIKGoal(Chain, AnimVec3(), 0.0f));
+        }, "Chain:string -> Cleared:bool");
 
         /* The state a layer is in (0: the base layer); "" for a lone clip. */
         Bind.Pure("GetState", [](AnimationComponent& C, GameCore::ScriptCall& Call)
@@ -229,6 +255,7 @@ namespace RenderCore
         Props.TypeCategory("Animation");
         Props.Category("Animation");
         Props.Field("Animation", &AnimationComponent::Animation, GameCore::PF_AssetAnimation);
+        Props.Field("Retarget",  &AnimationComponent::Retarget,  GameCore::PF_AssetRetarget);
         Props.Field("Play Rate", &AnimationComponent::PlayRate);
         Props.Flag("Paused",     &AnimationComponent::bPaused);
 
@@ -254,7 +281,7 @@ namespace RenderCore
         {
             AnimationReplicationRegistrar()
             {
-                GameCore::ReplicatedFieldEntry Entries[3 + 2 * ANIMATION_PARAMETERS_MAX];
+                GameCore::ReplicatedFieldEntry Entries[4 + 2 * ANIMATION_PARAMETERS_MAX];
                 size_t Count = 0;
                 const auto Add = [&](const char* InName, const GameCore::EScriptFieldType InType, const size_t InOffset, const size_t InSize)
                 {
@@ -268,6 +295,7 @@ namespace RenderCore
                 Add("Animation", GameCore::EScriptFieldType::FixedString, offsetof(AnimationComponent, Animation), ANIMATION_PATH_MAX);
                 Add("PlayRate",  GameCore::EScriptFieldType::Float,       offsetof(AnimationComponent, PlayRate), sizeof(float));
                 Add("Paused",    GameCore::EScriptFieldType::Flag,        offsetof(AnimationComponent, bPaused), sizeof(uint8_t));
+                Add("Retarget",  GameCore::EScriptFieldType::FixedString, offsetof(AnimationComponent, Retarget), ANIMATION_PATH_MAX);
                 for(size_t Index = 0; Index < ANIMATION_PARAMETERS_MAX; ++Index)
                 {
                     const size_t Base = offsetof(AnimationComponent, Parameters) + Index * sizeof(AnimationParameter);
@@ -275,7 +303,7 @@ namespace RenderCore
                         ANIMATION_PARAMETER_NAME_MAX);
                     Add(ParameterFields(Index).Value, GameCore::EScriptFieldType::Float, Base + offsetof(AnimationParameter, Value), sizeof(float));
                 }
-                static_assert(3 + 2 * ANIMATION_PARAMETERS_MAX <= GameCore::REPLICATED_FIELDS_PER_TYPE_MAX, "one change bit each");
+                static_assert(4 + 2 * ANIMATION_PARAMETERS_MAX <= GameCore::REPLICATED_FIELDS_PER_TYPE_MAX, "one change bit each");
                 bRegistered = GameCore::RegisterComponentReplication(AnimationComponent::StaticType().ID, Entries, Count, 0);
             }
             ~AnimationReplicationRegistrar()

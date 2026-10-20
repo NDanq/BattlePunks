@@ -146,7 +146,8 @@ def main():
     FOLDER.mkdir(parents=True, exist_ok=True)
     for stale in FOLDER.glob("*.nmentity"):
         stale.unlink()
-    manifest = ["<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n", "<World Format=\"1\">\n"]
+    manifest = ["<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n", "<World Format=\"1\">\n",
+                "  <Settings GameMode=\"WorldsLabExplore\" />\n"]
     for name, text in entities:
         (FOLDER / f"{guid(name)}.nmentity").write_text(text, newline="\n")
         manifest.append(f"  <Entity Guid=\"{guid(name)}\" />\n")
@@ -157,7 +158,7 @@ def main():
     text = ini.read_text()
     if "[World_Hills]" not in text:
         anchor = "[World_SteampunkStreet]"
-        block = "[World_Hills]\nFile=Content/Levels/Hills.nmworld\nGameMode=WorldsLabExplore\nCook=true\n\n"
+        block = "[World_Hills]\nFile=Content/Levels/Hills.nmworld\nCook=true\n\n"
         text = text.replace(anchor, block + anchor) if anchor in text else text + "\n" + block
         ini.write_text(text)
     print(f"  {WORLD.relative_to(GAME_DIR)}: {len(entities)} entities")

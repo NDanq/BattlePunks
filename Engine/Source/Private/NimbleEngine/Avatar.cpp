@@ -527,7 +527,7 @@ struct AvatarWorld::Impl
     };
     std::unordered_map<uint64_t, Predicted> Avatars;   // by packed EntityID
 
-    EntityID ViewCamera;
+    EntityID ViewCameras[INPUT_PLAYERS_MAX];   // by local player
 
     static void System(World& InWorld, const float InSeconds, void* InUserData)
     {
@@ -567,7 +567,7 @@ struct AvatarWorld::Impl
         if(InType == AvatarHarnessComponent::StaticType().ID)
         {
             Self.P->Avatars.erase(InEntity.Pack());
-            if(Self.P->ViewCamera.IsSet()) { Self.P->ViewCamera = EntityID(); }
+            for(EntityID& Each : Self.P->ViewCameras) { Each = EntityID(); }
             const AvatarHarnessComponent* Harness = InWorld.GetEntity(InEntity).GetComponent<AvatarHarnessComponent>();
             if(Harness && Harness->Possessor.IsSet() && HasAuthority()) { Unlink(InWorld, Harness->Possessor, InEntity); }
         }
@@ -643,7 +643,7 @@ void AvatarWorld::Detach()
                   Entries.end());
     P->Bound = nullptr;
     P->Avatars.clear();
-    P->ViewCamera = EntityID();
+    for(EntityID& Each : P->ViewCameras) { Each = EntityID(); }
 }
 
 AvatarWorld* AvatarWorld::Find(const GameCore::World& InWorld)
@@ -668,7 +668,10 @@ void AvatarWorld::ClearInputFilter(void* InUserData)
     if(P->Filter && P->FilterData == InUserData) { SetInputFilter(nullptr, nullptr); }
 }
 
-GameCore::EntityID AvatarWorld::GetViewCamera() const { return P->ViewCamera; }
+GameCore::EntityID AvatarWorld::GetViewCamera(const uint8_t InLocalPlayer) const
+{
+    return InLocalPlayer < INPUT_PLAYERS_MAX ? P->ViewCameras[InLocalPlayer] : EntityID();
+}
 
 void AvatarWorld::ResetPrediction(const GameCore::EntityID InAvatar)
 {
@@ -752,7 +755,7 @@ void AvatarWorld::Update(const float InSeconds, const bool bInSend)
     std::vector<EntityID> Harnesses;
     InWorld.Each<AvatarHarnessComponent>([&](Entity InEntity, AvatarHarnessComponent&) { Harnesses.push_back(InEntity.GetID()); });
 
-    EntityID ViewAvatar;
+    EntityID ViewAvatars[INPUT_PLAYERS_MAX];   // by local player: the first view target each drives
     for(const EntityID Avatar : Harnesses)
     {
         AvatarHarnessComponent* Harness = HarnessOf(InWorld, Avatar);
@@ -797,7 +800,10 @@ void AvatarWorld::Update(const float InSeconds, const bool bInSend)
         if(Harness->IsLocallyControlled())
         {
             const uint8_t LocalPlayer = Possessor ? Possessor->LocalPlayer : 0;
-            if(LocalPlayer == 0 && Harness->bViewTarget && !ViewAvatar.IsSet()) { ViewAvatar = Avatar; }
+            if(LocalPlayer < INPUT_PLAYERS_MAX && Harness->bViewTarget && !ViewAvatars[LocalPlayer].IsSet())
+            {
+                ViewAvatars[LocalPlayer] = Avatar;
+            }
 
             InputSnapshot Read;
             ResolveInputSnapshot(Harness->InputMap, LocalPlayer, Devices, Harness->Down, Read);
@@ -899,7 +905,10 @@ void AvatarWorld::Update(const float InSeconds, const bool bInSend)
         ClearInput(*Harness);
     }
 
-    P->ViewCamera = ViewAvatar.IsSet() ? P->FindCamera(ViewAvatar) : EntityID();
+    for(uint8_t Local = 0; Local < INPUT_PLAYERS_MAX; ++Local)
+    {
+        P->ViewCameras[Local] = ViewAvatars[Local].IsSet() ? P->FindCamera(ViewAvatars[Local]) : EntityID();
+    }
 }
 }
 

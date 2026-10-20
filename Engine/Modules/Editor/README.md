@@ -82,7 +82,7 @@ uses it.
 | `EditorLights` (private) | World > Add Light and the Outliner's Add Light: a light entity in one undo step, aimed down when it has a direction; also a Reflection Probe, and a Scene Capture (Omni) or (Mirror) probe |
 | `EditorPlayerStarts` (private) | World > Add Player Start and the Outliner's Add Player Start: a Player Start entity in one undo step (from the World menu, facing the way the camera looks) |
 | `Content/RenderTargetAssets` (private) | Render target assets: New Render Target 2D / 3D (Cube), the settings dialog, World > Bake Scene Captures |
-| `WorldSettingsDialog` (private) | World > World Settings: the edited world's `GameCore::WorldSettings` -- baked lighting on or off, lightmap density, bounces, samples, probe spacing, lightmap size -- one undo step, saved with the world |
+| `WorldSettingsDialog` (private) | World > World Settings: the edited world's `GameCore::WorldSettings` -- its game mode (the modes the loaded game module registers), baked lighting on or off, lightmap density, bounces, samples, probe spacing, lightmap size -- one undo step, saved with the world |
 | `Lighting/LightBaker`, `LightBakeBVH`, `LightBakeScene` (private) | The light baker: a multithreaded CPU path tracer over a bake scene -- lightmap layout, texels, direct and bounced light, filtering, light probes (RenderCore's RENDERPIPELINE.md, "Baked lighting"). No World, no Qt; built with optimisation even in Debug; tested by `NimbleEditorLightingTests` |
 | `Lighting/LightBakeWorld`, `BakeLightmaps` (private) | A World's static meshes and lights to a bake scene, and the bake to files beside the world (`Levels/<World>/Lighting/`, staged too); Build > Bake Lightmaps' worker thread and progress dialog |
 | `Content/LightmapUVs` (private) | Lightmap UVs (UV1) for a mesh without: xatlas (`Engine/ThirdParty/Source/xatlas-f700c77`) charts and packs it, every vertex keeping its index |
@@ -851,8 +851,8 @@ shared by everyone on the project, where Editor Settings are one person's.
   page's names), and where the file is.
 - **Worlds** page: the project's worlds, in order -- the only place a world
   becomes a level (`NimbleEngine/WorldList.h`). Each row is a `[World_<Name>]`
-  section: its name (what Start world, saves and `open` name), its world file,
-  its game mode (the modes the loaded game module registers), its startup
+  section: its name (what Start world, saves and `open` name), its world file
+  (which names its own game mode: World > World Settings), its startup
   script (one of the project's Lua files, or none -- there is no project-wide
   one) and **Cook** -- whether Build
   Project cooks and packages it. Add World, Add Open World, Change File,

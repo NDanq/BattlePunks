@@ -6,8 +6,11 @@
 #include <string>
 #include <vector>
 
+#include "Public/RenderCore/AnimIK.h"
 #include "Public/RenderCore/AnimPose.h"
+#include "Public/RenderCore/AnimRetarget.h"
 #include "Public/RenderCore/AnimStateAsset.h"
+#include "Public/RenderCore/RetargetAsset.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
 
 /*
@@ -35,6 +38,14 @@ namespace RenderCore
         /* The skeleton it poses; null: nothing to pose. Restarts playback. */
         void SetSkeleton(std::shared_ptr<const SkeletonData> InSkeleton);
         const std::shared_ptr<const SkeletonData>& GetSkeleton() const { return Skeleton; }
+
+        /* The retarget clips made for other skeletons play through
+         * (AnimRetarget.h): its Target must be the skeleton's path, which the
+         * caller checks. A clip whose Skeleton is empty, the target, or not
+         * one of its sources plays by bone name; null: every clip does.
+         * Restarts playback. */
+        void SetRetarget(std::shared_ptr<const RetargetData> InRetarget);
+        const std::shared_ptr<const RetargetData>& GetRetarget() const { return Retarget; }
 
         /* Plays InClip alone from the start (null: the reference pose). */
         void PlayClip(std::shared_ptr<const AnimClipData> InClip);
@@ -132,14 +143,43 @@ namespace RenderCore
          * and eased toward (AnimStateAsset.h). 0 without one. */
         float GetLookAngle() const { return LookAngle; }
 
+        /*
+         * IK (AnimStateAsset.h's AnimIK, AnimIK.h), after the look-at. Its
+         * ground and script goals are in the world: InModelToWorld is where
+         * the skeleton is (its entity's transform), set before each Update.
+         * After an evaluation, GetIKProbes says where the ground should be
+         * looked for -- straight down, in the world -- and SetIKGround
+         * answers, for the next evaluation (the animation system traces on
+         * the game thread). The ground is kept as a plane, so feet land on it
+         * exactly though the answer is a frame old. No answer: as animated.
+         */
+        bool HasIK() const { return !IKChains.empty(); }
+        void SetModelToWorld(const AnimMatrix& InModelToWorld);
+
+        struct IKProbe
+        {
+            int32_t  Chain = -1;   // an IK chain; -1: the ground where the entity stands
+            AnimVec3 From;         // world
+            float    Length = 0.0f;
+        };
+        const std::vector<IKProbe>& GetIKProbes() const { return IKProbes; }
+        void SetIKGround(int32_t InChain, bool bInHit, const AnimVec3& InWorldPoint, const AnimVec3& InWorldNormal);
+
+        /* A Script chain's goal, in the world, by InWeight (0..1; 0 clears
+         * it: as animated). False if it has no chain so named. */
+        bool SetIKGoal(const std::string& InChain, const AnimVec3& InWorldPosition, float InWeight);
+        /* How far the pelvis is lowered now (model units, down positive). */
+        float GetPelvisDrop() const { return PelvisDrop; }
+
     private:
         struct Sample
         {
             std::shared_ptr<const AnimClipData> Clip;
             AnimClipBinding                     Binding;
+            std::shared_ptr<const RetargetBinding> Retargeted;   // set: it plays through the retarget, not Binding
             float                               Position  = 0.0f;
             float                               PositionY = 0.0f;
-            int32_t                             RootBone  = -1;   // the clip's root bone, when its root motion is not Keep
+            int32_t                             RootBone  = -1;   // the clip's root bone (on this skeleton), when its root motion is not Keep
             int32_t                             RootTrack = -1;
         };
         struct StateRuntime
@@ -185,6 +225,10 @@ namespace RenderCore
 
         /* Rebuilds Layers from State, or from Clip alone. */
         void Rebuild();
+        /* InClip bound to the skeleton: by name, or through Retarget. */
+        Sample MakeSample(std::shared_ptr<const AnimClipData> InClip, float InPosition, float InPositionY) const;
+        /* InSample's clip at InTime written into InOutPose (SampleClip, or retargeted). */
+        void SampleInto(const Sample& InSample, float InTime, AnimLocalPose& InOutPose);
         void Restart();
 
         /* The samples' weights for InState now, and its dominant sample. */
@@ -210,12 +254,16 @@ namespace RenderCore
         void  ApplyLookAt(AnimLocalPose& InOutPose) const;
         /* ModelPose from LocalPose with the override's bones placed. */
         void  ApplyPoseOverride();
+        /* The IK chains on InOutPose, after the look-at; the probes for next time. */
+        void  ApplyIK(AnimLocalPose& InOutPose);
         bool  ConditionsHold(const TransitionRuntime& InTransition, const LayerRuntime& InLayer) const;
         void  UpdateTransitions(LayerRuntime& InOutLayer);
 
         std::shared_ptr<const SkeletonData>  Skeleton;
         std::shared_ptr<const AnimClipData>  Clip;
         std::shared_ptr<const AnimStateData> State;
+        std::shared_ptr<const RetargetData>  Retarget;
+        RetargetScratch                      RetargetWork;   // SampleClipRetargeted's, reused
 
         std::vector<LayerRuntime>   Layers;
         std::vector<float>          Parameters;     // by State's parameter
@@ -243,10 +291,46 @@ namespace RenderCore
         float    LookAngle   = 0.0f;
         bool     bLookPlaced = false;   // false: the next update starts it at its target, not easing there
 
+        /* The IK, from State's; no chains: none. */
+        struct IKChainRuntime
+        {
+            std::string   Name;
+            int32_t       Root = -1, Mid = -1, End = -1, GoalBone = -1;
+            EAnimIKGoal   Goal = EAnimIKGoal::Ground;
+            AnimTransform GoalOffset;
+            float         Weight = 1.0f;
+            int32_t       WeightParameter = -1;
+            AnimVec3      Pole;
+            bool          bAlignEnd = true;
+
+            bool     bGround = false;          // a plane under it (world)
+            AnimVec3 GroundPoint, GroundNormal;
+            float    Offset = 0.0f;            // how far it is moved along up, eased (model units)
+            AnimQuat Tilt;                     // the end turned to the slope, eased (model)
+            bool     bScript = false;          // a script goal (world)
+            AnimVec3 ScriptGoal;
+            float    ScriptWeight = 0.0f;
+            float    Blend = -1.0f;            // its weight now, eased; < 0: not yet placed
+            float    RestHeight = 0.0f;        // its end's height in the reference pose (a foot standing), model
+        };
+        std::vector<IKChainRuntime> IKChains;
+        std::vector<IKProbe>        IKProbes;
+        int32_t    IKPelvis = -1;
+        float      IKTraceUp = 0.0f, IKTraceDown = 0.0f, IKMaxStep = 0.0f, IKResponse = 0.0f, IKMaxTilt = 0.0f;
+        bool       bBaseGround = false;         // the plane where the entity stands (world)
+        AnimVec3   BasePoint, BaseNormal;
+        AnimMatrix ModelToWorld, WorldToModel;
+        bool       bHasWorld = false;
+        float      IKDelta = 0.0f;              // the last Update's real time, for easing
+        bool       bIKPlaced = false;           // false: the next evaluation goes straight to its goals
+        float      PelvisDrop = 0.0f;
+        std::vector<AnimMatrix> IKModel;  // the pose before IK, model space
+
         /* SetOverlayClip's. */
         std::shared_ptr<const AnimClipData> Overlay;
-        AnimClipBinding                     OverlayBinding;
+        Sample                              OverlayBinding;
         const SkeletonData*                 OverlayBoundTo = nullptr;
+        const RetargetData*                 OverlayBoundVia = nullptr;
         float                               OverlayTime   = 0.0f;
         float                               OverlayWeight = 0.0f;
 

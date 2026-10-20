@@ -693,6 +693,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/NimbleEngine.cpp
         Source/Private/NimbleEngine/ContentReport.cpp
         Source/Private/NimbleEngine/GameSession.cpp
+        Source/Private/NimbleEngine/SplitCamera.cpp
         Source/Private/NimbleEngine/GameFramework.cpp
         Source/Private/NimbleEngine/GameMode.cpp
         Source/Private/NimbleEngine/GameUI.cpp
@@ -732,6 +733,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/PlayerStart.h
         Source/Public/NimbleEngine/LagCompensation.h
         Source/Public/NimbleEngine/GameSession.h
+        Source/Public/NimbleEngine/SplitCamera.h
         Source/Public/NimbleEngine/GameConsole.h
         Source/Public/NimbleEngine/GameModule.h
         Source/Public/NimbleEngine/NimbleEngineAPI.h
@@ -1053,6 +1055,7 @@ file(GLOB_RECURSE NM_ENGINE_CHARACTERS CONFIGURE_DEPENDS
      "${CMAKE_CURRENT_SOURCE_DIR}/Content/Characters/*.nmskel"
      "${CMAKE_CURRENT_SOURCE_DIR}/Content/Characters/*.nmanim"
      "${CMAKE_CURRENT_SOURCE_DIR}/Content/Characters/*.nmanimstate"
+     "${CMAKE_CURRENT_SOURCE_DIR}/Content/Characters/*.nmretarget"
      "${CMAKE_CURRENT_SOURCE_DIR}/Content/Characters/*.nmprefab"
      "${CMAKE_CURRENT_SOURCE_DIR}/Content/Characters/*.lua")
 list(APPEND NM_ENGINE_MESHES ${NM_ENGINE_CHARACTERS})

@@ -1887,6 +1887,24 @@ static void TestWorldSettings()
                "a world without settings loads the defaults");
     }
 
+    /* The game mode alone: a <Settings> with no <Lighting>. */
+    World Ruled;
+    Ruled.CreateEntity("Only");
+    Ruled.GetSettings().GameMode = "Arena";
+    const std::string RuledPath = (Dir / "Ruled.nmworld").generic_string();
+    Expect(SaveWorldPackage(RuledPath.c_str(), Ruled), "a world naming a game mode saves");
+    {
+        const std::string Text = ReadFileText(Dir / "Ruled.nmworld");
+        Expect(Text.find("<Settings GameMode=\"Arena\"") != std::string::npos && Text.find("<Lighting") == std::string::npos,
+               "the mode is a <Settings> attribute; default lighting writes none");
+        World Loaded;
+        Expect(LoadWorldFile(RuledPath.c_str(), Loaded) && Loaded.GetSettings().GameMode == "Arena", "text worlds keep their game mode");
+        const std::string CookedPath = (Dir / "Cooked" / "Ruled.nmworld").generic_string();
+        World Cooked;
+        Expect(CookWorldFile(RuledPath.c_str(), CookedPath.c_str()) && LoadWorldFile(CookedPath.c_str(), Cooked)
+               && Cooked.GetSettings().GameMode == "Arena", "and cooked ones (WSET version 2)");
+    }
+
     WorldLightingSettings Wild;
     Wild.Bounces      = 99;
     Wild.MaxAtlasSize = 700;

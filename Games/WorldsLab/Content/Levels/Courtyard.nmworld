@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <World Format="1">
-  <Settings>
+  <Settings GameMode="WorldsLabCourtyard">
     <Lighting BakedLighting="true" TexelsPerUnit="0.12" ProbeSpacing="150" BakedData="Content/Levels/Courtyard/Lighting/Lighting.nmlighting" />
   </Settings>
   <Entity Guid="aeac12d3cb4ba66c2202b4c3d57100fc" />
