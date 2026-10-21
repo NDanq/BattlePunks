@@ -52,6 +52,10 @@ namespace NimbleEngine
      * every GameSession; idempotent. A host without a session calls it. */
     NE_API void InstallCollisionMeshProvider();
 
+    /* The provider keeps every mesh it read; this drops InPath's, for a mesh
+     * made in memory that is gone (MeshAssetCache::Remove). */
+    NE_API void ForgetCollisionMesh(const char* InPath);
+
     /* Components whose module this build compiled out -- Rigid Body,
      * Physics Constraint and Vehicle without JoltPhysics, Net without NetCore -- load,
      * edit and save, but nothing acts on them. Warns (InContext names the

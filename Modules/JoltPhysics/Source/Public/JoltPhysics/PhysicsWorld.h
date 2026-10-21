@@ -2,6 +2,7 @@
 #define JOLTPHYSICS_PHYSICSWORLD_H
 
 #include <cstdint>
+#include <vector>
 
 #include "Public/JoltPhysics/JoltPhysicsAPI.h"
 #include "Public/JoltPhysics/PhysicsRagdoll.h"
@@ -59,6 +60,23 @@ namespace JoltPhysics
          * the part; 0 and -1 for anything else. */
         uint32_t Ragdoll     = 0;
         int32_t  RagdollPart = -1;
+    };
+
+    /*
+     * Two bodies that began touching in the last frame's steps, and how hard
+     * they met: the impulse that stops them closing at the contact (closing
+     * speed times their reduced mass, with the bounce), estimated as they
+     * met. Resting contacts and slides report nothing. A or B is unset for a
+     * body no entity owns. Ragdoll parts are left out.
+     */
+    struct PhysicsImpact
+    {
+        GameCore::EntityID  A;
+        GameCore::EntityID  B;
+        EngineCore::Vector3 Point;            // world units
+        EngineCore::Vector3 Normal;           // from A toward B
+        float               Speed   = 0.0f;   // closing, units/s
+        float               Impulse = 0.0f;   // kg * units / s
     };
 
     struct PhysicsStats
@@ -149,6 +167,15 @@ namespace JoltPhysics
                      GameCore::EntityID InIgnore = GameCore::EntityID()) const;
 
         void GetStats(PhysicsStats& OutStats) const;
+
+        /* The last Step's impacts, in the order they happened; cleared as
+         * the next Step begins. */
+        const std::vector<PhysicsImpact>& GetImpacts() const;
+
+        /* Hulls and triangle meshes are built once per mesh path and kept;
+         * this drops InMeshPath's, for a mesh made in memory that is gone
+         * (MeshAssetCache::Remove). Bodies using it keep theirs. */
+        void ForgetMeshShapes(const char* InMeshPath);
 
         // --- Ragdolls (PhysicsRagdoll.h) ----------------------------------
         /*
