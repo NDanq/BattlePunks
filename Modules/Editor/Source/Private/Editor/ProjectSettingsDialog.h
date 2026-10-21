@@ -108,6 +108,7 @@ private:
     QTableWidget*     Worlds = nullptr;
     InputMapsPage*    Input = nullptr;
     QList<ConfigIniFile::Section> WorldsBaseline;
+    QStringList       ProjectScripts;   // runtime paths: each row's startup script choices
     QComboBox*        StartLevelChoice = nullptr;
     QString           OpenWorld;
     QListWidget*      Pages = nullptr;
