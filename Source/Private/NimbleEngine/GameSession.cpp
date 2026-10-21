@@ -11,6 +11,7 @@
 #include "Public/NimbleEngine/Avatar.h"
 #include "Public/NimbleEngine/CharacterMover.h"
 #include "Public/NimbleEngine/Ragdoll.h"
+#include "Public/NimbleEngine/Destruction.h"
 #include "Public/NimbleEngine/GameConsole.h"
 #include "Public/NimbleEngine/PlayerStart.h"
 #include "Public/NimbleEngine/NetFacade.h"
@@ -339,6 +340,9 @@ namespace NimbleEngine
          * between (TP_PostPhysics, and TP_PostUpdate after the animation). */
         RagdollWorld::Attach(*LevelWorld);
 
+        /* Destructibles: after physics, whose impacts break them (TP_PostPhysics). */
+        DestructionWorld::Attach(*LevelWorld);
+
         /* Character Movers' anim params and camera booms, from where this
          * frame's steps (TP_PrePhysics) and physics left them. */
         LevelWorld->RegisterSystem("Engine.CharacterMover", GameCore::TP_PostPhysics, &CharacterMoverSystem, this);
@@ -582,6 +586,7 @@ namespace NimbleEngine
 
             /* Before the physics and animation it holds ragdolls in. */
             RagdollWorld::Detach(*LevelWorld);
+            DestructionWorld::Detach(*LevelWorld);
             LevelWorld->UnregisterSystem(&CharacterMoverSystem, this);
 
             /* While scripts are bound: what sequences spawned is destroyed
