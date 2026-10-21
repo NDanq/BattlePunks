@@ -14,7 +14,6 @@
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDir>
-#include <QDirIterator>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -57,27 +56,33 @@ namespace
     /* A level name a save holds (63 characters), and a section name. */
     constexpr int MaxWorldName = 63;
 
-    /* The project's Lua files (runtime path, disk path): a world's startup
-     * script choices. */
-    QList<QPair<QString, QString>> EditorProjectScripts()
+    void FindScripts(const QDir& InDir, QStringList& OutRuntimePaths)
     {
-        QList<QPair<QString, QString>> Out;
-        const QString Root = EditorGraphs::GetProjectRoot();
-        QDirIterator It(Root, { QStringLiteral("*.lua") }, QDir::Files, QDirIterator::Subdirectories);
-        while(It.hasNext())
+        /* Ignored folders are not entered: a game's build trees hold
+         * thousands of files, and walking them stalled the dialog. */
+        const QFileInfoList Entries = InDir.entryInfoList({ QStringLiteral("*.lua") },
+                                                          QDir::AllDirs | QDir::Files | QDir::NoDotAndDotDot, QDir::Name);
+        for(const QFileInfo& Entry : Entries)
         {
-            const QString File    = It.next();
-            const QString Runtime = EditorContent::ToRuntimePath(File);
-            bool bIgnored = Runtime.isEmpty() || Runtime.startsWith(QStringLiteral("Engine/")) || Runtime.startsWith(QStringLiteral("Saved/"));
-            for(const QString& Part : QDir(Root).relativeFilePath(File).split(QLatin1Char('/')))
+            if(Entry.isDir())
             {
-                bIgnored |= EditorGraphs::IsIgnoredFolder(Part);
+                if(!EditorGraphs::IsIgnoredFolder(Entry.fileName())) { FindScripts(QDir(Entry.absoluteFilePath()), OutRuntimePaths); }
+                continue;
             }
-            if(!bIgnored)
+            const QString Runtime = EditorContent::ToRuntimePath(Entry.absoluteFilePath());
+            if(!Runtime.isEmpty() && !Runtime.startsWith(QStringLiteral("Engine/")) && !Runtime.startsWith(QStringLiteral("Saved/")))
             {
-                Out.append({ Runtime, File });
+                OutRuntimePaths.append(Runtime);
             }
         }
+    }
+
+    /* The project's Lua files (runtime paths): a world's startup script
+     * choices. */
+    QStringList EditorProjectScripts()
+    {
+        QStringList Out;
+        FindScripts(QDir(EditorGraphs::GetProjectRoot()), Out);
         std::sort(Out.begin(), Out.end());
         return Out;
     }
@@ -565,6 +570,8 @@ void ProjectSettingsDialog::BuildWorldsPage()
     connect(Up,   &QPushButton::clicked, this, [Move]() { Move(-1); });
     connect(Down, &QPushButton::clicked, this, [Move]() { Move(+1); });
 
+    /* Once for the dialog, not per row. */
+    ProjectScripts = EditorProjectScripts();
     for(const ConfigIniFile::Section& Each : File.GetSections(QLatin1String(NimbleEngine::WORLD_SECTION_PREFIX)))
     {
         AddWorldRow(Each);
@@ -605,10 +612,7 @@ void ProjectSettingsDialog::AddWorldRow(const ConfigIniFile::Section& InSection)
     auto* ScriptChoice = new QComboBox(Worlds);
     ScriptChoice->setEditable(true);
     ScriptChoice->addItem(QString::fromLatin1(NoScriptText));
-    for(const QPair<QString, QString>& Lua : EditorProjectScripts())
-    {
-        ScriptChoice->addItem(Lua.first);
-    }
+    ScriptChoice->addItems(ProjectScripts);
     ScriptChoice->setCurrentText(Script.isEmpty() ? QString::fromLatin1(NoScriptText) : Script);
     ScriptChoice->setToolTip(QStringLiteral("The Lua file run once the world and its mode are loaded (bundle-relative, "
                                             "\"Scripts/Main.lua\"), or none"));
