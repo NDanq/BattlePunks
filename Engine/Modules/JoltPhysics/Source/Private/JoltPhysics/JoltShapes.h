@@ -63,6 +63,14 @@ namespace JoltPhysics
         /* The hulls and triangle meshes made so far. */
         void Clear() { Unscaled.clear(); }
 
+        /* Drops InPath's hull and triangles: a mesh made in memory that is
+         * gone (a fracture piece), or one about to be stored again. */
+        void Forget(const std::string& InPath)
+        {
+            Unscaled.erase("H:" + InPath);
+            Unscaled.erase("T:" + InPath);
+        }
+
     private:
         /* InPath's hull (bInTriangles false) or triangles, in the mesh's own
          * units (Build scales them to metres); null if unreadable. */

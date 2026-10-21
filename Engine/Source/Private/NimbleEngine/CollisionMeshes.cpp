@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <string>
@@ -52,7 +53,21 @@ namespace
         if(Found == Cache().end())
         {
             RenderCore::MeshHeader Header;
-            const bool bRead = RenderCore::LoadMeshHeader(Path, Header);
+            bool bRead = false;
+            if(Path[0] == '@')
+            {
+                /* Made in memory (a terrain chunk, a fracture piece): no file to read. */
+                if(const std::shared_ptr<const RenderCore::MeshData> Mesh = RenderCore::MeshAssetCache::Find(Path))
+                {
+                    std::copy(Mesh->BoundsMin, Mesh->BoundsMin + 3, Header.BoundsMin);
+                    std::copy(Mesh->BoundsMax, Mesh->BoundsMax + 3, Header.BoundsMax);
+                    bRead = true;
+                }
+            }
+            else
+            {
+                bRead = RenderCore::LoadMeshHeader(Path, Header);
+            }
             if(!bRead)
             {
                 CORE_LOG_WARN("[Collision] no mesh header in '" + Path + "'; colliders using it keep their Bounds")
@@ -119,5 +134,12 @@ namespace NimbleEngine
         Provider.GetMeshBounds = &GetMeshBounds;
         Provider.GetMeshGeometry = &GetMeshGeometry;
         GameCore::SetCollisionMeshProvider(&Provider);
+    }
+
+    void ForgetCollisionMesh(const char* InPath)
+    {
+        if(!InPath) { return; }
+        Cache().erase(InPath);
+        Geometry().erase(InPath);
     }
 }
