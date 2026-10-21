@@ -721,6 +721,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/PhysicsFacade.cpp
         Source/Private/NimbleEngine/Ragdoll.cpp
         Source/Private/NimbleEngine/RagdollProfile.cpp
+        Source/Private/NimbleEngine/Destruction.cpp
         Source/Private/NimbleEngine/TerrainFacade.cpp
         Source/Private/NimbleEngine/AIFacade.cpp
         Source/Private/NimbleEngine/AIInternal.h
@@ -750,6 +751,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/NetHost.h
         Source/Public/NimbleEngine/PhysicsFacade.h
         Source/Public/NimbleEngine/Ragdoll.h
+        Source/Public/NimbleEngine/Destruction.h
         Source/Public/NimbleEngine/TerrainFacade.h
         Source/Public/NimbleEngine/AIFacade.h
         Source/Public/NimbleEngine/SequenceFacade.h
@@ -941,6 +943,14 @@ if(NIMBLEENGINE_BUILD_TESTS)
         add_test(NAME NimbleEngine.RagdollTests COMMAND NimbleEngineRagdollTests
                  WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineRagdollTests>")
         set_tests_properties(NimbleEngine.RagdollTests PROPERTIES TIMEOUT 120 LABELS "smoke")
+
+        # Destruction (Destruction.h): breaks, impacts, structures, debris.
+        add_executable(NimbleEngineDestructionTests Tests/DestructionTests.cpp)
+        target_link_libraries(NimbleEngineDestructionTests PRIVATE NimbleEngine::NimbleEngine JoltPhysics::JoltPhysics)
+        set_target_properties(NimbleEngineDestructionTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
+        add_test(NAME NimbleEngine.DestructionTests COMMAND NimbleEngineDestructionTests
+                 WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineDestructionTests>")
+        set_tests_properties(NimbleEngine.DestructionTests PROPERTIES TIMEOUT 180 LABELS "smoke")
     endif()
 
     # Sound from scripts: the Audio library, Audio Source from Lua, and the
