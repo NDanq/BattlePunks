@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="2c909efb6298d58a701467514f3dcd56" Name="Sky" Mobility="Static">
+  <Component Type="Sky Light" Version="2">
+    <SkyColor R="150" G="165" B="190" A="255" />
+    <GroundColor R="60" G="56" B="50" A="255" />
+    <Intensity Value="0.35" />
+    <Active Value="true" />
+    <Environment Value="Content/Textures/ShootingRange/Sky_HDR.nmtexture" />
+    <EnvironmentIntensity Value="0.5" />
+    <EnvironmentRotation Value="0" />
+    <DrawBackground Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="0" Z="0" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>
