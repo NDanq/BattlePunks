@@ -4147,7 +4147,9 @@ static void TestClearGradientOnGpu()
             int Top[3], Bottom[3];
             At_(Solid, 4, 0, Top);
             At_(Solid, 4, 255, Bottom);
-            Expect(Near(Top, 10, 120, 30, 0) && Near(Bottom, 10, 120, 30, 0), "SetClearColor goes back to one colour");
+            std::printf("    clear colour: top %d %d %d, bottom %d %d %d\n", Top[0], Top[1], Top[2], Bottom[0], Bottom[1], Bottom[2]);
+            /* Within a step: display to linear (sRGB) in the half-float scene colour and back. */
+            Expect(Near(Top, 10, 120, 30, 1) && Near(Bottom, 10, 120, 30, 1), "SetClearColor goes back to one colour");
         }
 
         Rend.UnbindWorld();

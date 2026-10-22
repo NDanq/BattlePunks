@@ -18,6 +18,7 @@
 #include "Public/RenderCore/MaterialDescription.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/RenderComponents.h"
+#include "Public/RenderCore/RenderTypes.h"
 #include "Public/RenderCore/TextureAsset.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphAssets.h"
@@ -31,7 +32,7 @@ namespace LightBake
         constexpr float       MAX_ALBEDO      = 0.9f;                           // so bounces lose energy
         constexpr int         MAX_SKY_WIDTH   = 256;
 
-        float ToLinear(const float InDisplay) { return std::pow(std::max(InDisplay, 0.0f), 2.2f); }
+        float ToLinear(const float InDisplay) { return RenderCore::SrgbToLinear(InDisplay); }
 
         /* A copy beside the executable, where the editor's renderer reads
          * runtime paths from, as every other asset the editor writes. */

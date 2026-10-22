@@ -22,7 +22,7 @@ namespace RenderCore
 {
     /* MaterialCommon.glsl's MATERIAL_TEMPLATE_VERSION: a shader cache cooked
      * against another is refused (ShaderCache.h). */
-    constexpr uint32_t MATERIAL_TEMPLATE_VERSION = 16;   // 3: Y up (Two Sided facing); 4: point/spot lights and shadows; 5: Scene Depth;
+    constexpr uint32_t MATERIAL_TEMPLATE_VERSION = 17;   // 3: Y up (Two Sided facing); 4: point/spot lights and shadows; 5: Scene Depth;
                                                         // 6: emissive past 1 in GBuffer3; 7: HDR scene colour (Scene_Output);
                                                         // 8: baked lighting (the 160-byte engine block, UV1, Scene_Baked);
                                                         // 9: the Unlit view mode (Scene_View); 10: preview channels,
@@ -32,6 +32,7 @@ namespace RenderCore
                                                         // 14: velocity (Transform.PrevModel, the previous skin block, GBuffer output 4)
                                                         // 15: shading models (SHADING_MODELS.md): octahedral normals, GBuffer4, velocity at 5
                                                         // 16: mesh tangents (location 13, the WorldTangent interpolant)
+                                                        // 17: sRGB's curve for display to linear, skin blocks at 20 and 21 (GLOBAL_ILLUMINATION.md)
 
     enum class EMaterialDomain : uint8_t { Opaque = 0, Masked = 1, Translucent = 2, PostProcess = 3 };
     enum class EMaterialShading : uint8_t { Lit = 0, Unlit = 1 };

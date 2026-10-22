@@ -2815,6 +2815,33 @@ void EditorMainWindow::RegisterConsoleCommands()
         Console.PrintError(QStringLiteral("Usage: stat unit | frame | physics | audio | none"));
     });
 
+    /* A config variable by section and name: printed, or set as an .ini line would set it
+     * (for a scripted session to compare a renderer setting on and off). */
+    Console.Register(QStringLiteral("config"), QStringLiteral("<Section> <Name> [value]"),
+                     QStringLiteral("Print a config variable, or set it ([Rendering] SubsurfaceScattering false)"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.size() < 2)
+        {
+            Console.PrintError(QStringLiteral("Usage: config <Section> <Name> [value]"));
+            return;
+        }
+        EngineCore::ConfigVar* Var = EngineCore::ConfigFindVar(InArgs[0].toStdString().c_str(), InArgs[1].toStdString().c_str());
+        if(!Var)
+        {
+            Console.PrintError(QStringLiteral("No config variable [%1] %2").arg(InArgs[0], InArgs[1]));
+            return;
+        }
+        if(InArgs.size() > 2 && !Var->SetFromString(InArgs.mid(2).join(QLatin1Char(' ')).toStdString()))
+        {
+            Console.PrintError(QStringLiteral("Not a value for %1: %2").arg(QString::fromStdString(Var->GetQualifiedName()), InArgs[2]));
+            return;
+        }
+        const QString Line = QStringLiteral("%1 = %2").arg(QString::fromStdString(Var->GetQualifiedName()), QString::fromStdString(Var->ToString()));
+        Console.Print(Line);
+        CORE_LOG("[Editor] config " + Line.toStdString())
+    });
+
     Console.Register(QStringLiteral("undo"), QStringLiteral("[count]"), QStringLiteral("Undo the last change (Ctrl+Z)"),
                      [this](const QStringList& InArgs)
     {
