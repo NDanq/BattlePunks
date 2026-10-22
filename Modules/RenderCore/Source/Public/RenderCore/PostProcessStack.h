@@ -53,7 +53,7 @@ namespace RenderCore
         /* Screen-space reflections (RENDERPIPELINE.md): over the probes' specular, in the IBL pass. */
         uint8_t bScreenReflections = 0;
         float   SsrIntensity    = 1.0f;
-        float   SsrMaxRoughness = 0.45f;
+        float   SsrMaxRoughness = 0.8f;
         float   SsrMaxDistance  = 1500.0f;     // world units
         float   SsrThickness    = 25.0f;       // world units
         float   SsrSteps        = 32.0f;

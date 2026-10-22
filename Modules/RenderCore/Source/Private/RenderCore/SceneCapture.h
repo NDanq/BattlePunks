@@ -21,7 +21,7 @@ namespace RenderCore
     {
         RENDER_CAPTURES_MAX         = 8,    // probes captured in one frame; the rest wait
         RENDER_CAPTURE_EXCLUDED_MAX = 32,   // entities a probe leaves out (its owner's subtree)
-        RENDER_REFLECTION_PROBES_MAX = 4,   // reflection probes lighting a view at once (IBLCommon.glsl's IBL_PROBES_MAX)
+        RENDER_REFLECTION_PROBES_MAX = 16,  // reflection probes lighting a view at once (IBLCommon.glsl's IBL_PROBES_MAX)
     };
 
     /* A Reflection Probe lighting this view: where, its influence, and whether

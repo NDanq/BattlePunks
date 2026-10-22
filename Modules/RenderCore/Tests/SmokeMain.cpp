@@ -4475,7 +4475,8 @@ static void TestImageBasedLightingOnGpu()
         uint64_t Frame = 1;
         const auto Capture = [&](EngineCore::Image& OutPixels)
         {
-            for(int Each = 0; Each < 3; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            // Eight frames: a probe's capture is a face a frame ([Rendering] ProbeFacesPerFrame).
+            for(int Each = 0; Each < 8; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
             const uint64_t Request = Rend.RequestSceneCapture();
             for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
             std::string Error;

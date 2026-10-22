@@ -1,6 +1,6 @@
 # Lighting and global illumination: plan
 
-Status: **Phases 0-3 landed.** Phases land in order on `dev-rendering`, one
+Status: **Phases 0-4 landed.** Phases land in order on `dev-rendering`, one
 commit each; each updates this note (and [RENDERPIPELINE.md](RENDERPIPELINE.md))
 with what was built, how it was checked and what it costs.
 
@@ -164,19 +164,42 @@ softbox as a rectangle and the warm wall panel as a tall streak (round dots
 with AreaLights off); its rough spheres brighten with EnergyCompensation (5 %
 of the view's pixels, up to 73 of 255).
 
-## Phase 4: reflections
+## Phase 4: reflections (landed)
 
-- **More probes:** the IBL atlas grows to 1536 x 1280, 20 blocks: 16 probes,
-  the sky, the sheen table (and spare). The 16 probes nearest whose influence
-  the view reaches; a pixel blends them nearest first, as now.
-- **Captures over frames:** a probe captures one face a frame (six frames a
-  probe) and prefilters after its sixth, so a capture costs a sixth of what it
-  did per frame; Every Frame probes keep capturing whole.
-- **Rough screen-space reflections** [Stachowiak 2015]: the reflected ray drawn
-  from GGX's distribution of visible normals [Heitz 2018] per pixel and frame,
-  the hit's colour accumulated over frames (reprojected, clipped to its
-  neighbourhood as TAA's is [Karis 2014]), so rough surfaces reflect blurred
-  rather than fade to the probes. Max Roughness rises to 0.8.
+- **Sixteen probes:** the IBL atlas grows to 1536 x 1280, twenty blocks of
+  384 x 256 four to a row (`IBLCommon.glsl`): 0-15 the probes, 16 the sky, 17
+  Cloth's sheen table, two spare. The sixteen probes nearest the camera whose
+  influence the view reaches each hold a block; a pixel blends them nearest
+  first, as before. The probes' data (three vec4s each, 768 bytes) moved from
+  the scene block, which had room for four, to the light block
+  (`LightList_Probes`); `Scene_Probes` stays as padding so the scene block's
+  layout does not move. Material template 18.
+- **Captures over frames:** one probe captures at a time, `[Rendering]
+  ProbeFacesPerFrame` faces a frame (1 by default; 6 is the old whole probe a
+  frame), prefiltered into its block after the sixth, so a capture costs a
+  sixth of what it did in any one frame. Its old capture lights until then. A
+  probe that wants capturing waits its turn round the list, so an Every Frame
+  probe -- **which the plan had capturing whole; it is sliced too**, refreshing
+  every six frames -- cannot starve the rest. The sky taking the strip
+  restarts a capture in progress.
+- **Rough screen-space reflections** [Stachowiak 2015] (`[Rendering]
+  StochasticReflections`, on): each pixel's ray is reflected off a microfacet
+  normal drawn from GGX's distribution of visible normals [Heitz 2018], a new
+  draw each frame, and `PPReflectionResolve.fsh` accumulates the hits into a
+  history (about ten frames), reprojected through the surface's depth and
+  motion and clipped to this frame's 3 x 3 neighbourhood as TAA's history is
+  [Karis 2014]. A rough surface's reflection is then its lobe's, blurred,
+  rather than a sharp one faded out; the trust fade starts at 0.85 of Max
+  Roughness instead of 0.6, and Max Roughness's default rises from 0.45 to
+  0.8. Off, reflections are one mirror ray a pixel, as before.
+- **Changes pixels on purpose** in views with Screen Space Reflections: rough
+  surfaces between the old and new Max Roughness reflect the screen, and all
+  stochastic reflections are blurred by their roughness. Views with more than
+  four probes in range light from the extra ones. Without SSR and with four
+  probes or fewer, Default pixels are unchanged.
+- Not yet: the hit's own roughness-dependent cone (the plan's pre-filtered
+  colour pyramid), so a stochastic reflection is noisy for the first frames
+  after the view cuts; ray reuse across neighbours (Stachowiak's resolve).
 
 ## Phase 5: screen-space diffuse GI
 
@@ -247,12 +270,22 @@ once a second, so commands are kept 1.5 s apart).
 | 3 | LightingLab, the room (2 rects, a 40-unit bulb) | D3D12 | AreaLights | 1.057 | 1.671 | 1.614 | 2.280 |
 | 3 | LightingLab, the gold spheres | Vulkan | EnergyCompensation | 1.700 | 1.847 | 2.473 | 2.718 |
 | 3 | LightingLab, the gold spheres | D3D12 | EnergyCompensation | 1.562 | 1.806 | 2.197 | 2.441 |
+| 4 | LightingLab, the smooth gold spheres (SSR at 0.8) | Vulkan | StochasticReflections | 1.176 | 1.370 | 1.853 | 2.143 |
+| 4 | LightingLab, the smooth gold spheres (SSR at 0.8) | D3D12 | StochasticReflections | 1.567 | 1.810 | 2.298 | 2.657 |
 
 Energy compensation is a handful of ALU operations per lobe; its rows move
 Base Pass, which it does not touch, by about as much, so read them as within
 the noise. Area lights cost two LTC integrals (eight edges each, after
 clipping) per area light per pixel it reaches: 0.25-0.6 ms here, for a view
 filled by three.
+
+Stochastic reflections cost the resolve pass and rougher surfaces now
+marching (0.2-0.25 ms in Lighting, where SSR runs; PostProcess's rise is the
+noise). Probe captures are outside Total, in their own timer: with the room
+in view and its field probe capturing every frame, `ProbeFacesPerFrame` 6
+against 1 is **Captures 1.500 against 0.268 ms** a frame on Vulkan and
+**1.908 against 0.333 ms** on D3D12 -- a capture's cost spread over six
+frames, as planned, with the rest of the frame within the noise.
 
 | Phase | Level | Backend | BasePass | AO | Shadows | Lighting | Forward | Post | Total |
 |---|---|---|---|---|---|---|---|---|---|

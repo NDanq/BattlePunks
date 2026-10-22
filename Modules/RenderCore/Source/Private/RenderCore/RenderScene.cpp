@@ -38,6 +38,9 @@
  * occluders (RenderComponent::bOccluder) are skipped (RENDERPIPELINE.md,
  * "Occlusion culling"), where the backend has occlusion queries. */
 NIMBLE_CONFIG_BOOL(GRenderOcclusionCulling, "Rendering", "OcclusionCulling", true, nullptr);
+/* A reflection probe's capture spread over frames (GLOBAL_ILLUMINATION.md, Phase 4): cube faces
+ * rendered a frame, 1-6; 6 captures a probe whole in one frame, as before. */
+NIMBLE_CONFIG_INT(GRenderProbeFacesPerFrame, "Rendering", "ProbeFacesPerFrame", 1, nullptr);
 
 namespace RenderCore
 {
@@ -805,8 +808,10 @@ namespace RenderCore
         /*
          * IMAGE-BASED LIGHTING (RENDERPIPELINE.md, "Image-based lighting"): the
          * probe atlas and cube strip; the stage targets a reflection probe's
-         * faces render through; which probe each of the atlas's four probe
-         * blocks holds (by entity key) and whether its capture is in it; and
+         * faces render through; which probe each of the atlas's sixteen probe
+         * blocks holds (by entity key) and whether its capture is in it; the
+         * one capture in progress, its faces in the strip so far (a probe is
+         * captured a few faces a frame, ProbeFacesPerFrame); and
          * whether the sky block is, for which sky. UpdateImageBasedLighting
          * keeps them; ApplyImageBasedLighting hands the context what the next
          * stages light with.
@@ -815,6 +820,9 @@ namespace RenderCore
         SceneTargets ProbeStages{"RenderCore.ProbeStages"};
         struct ProbeSlot { uint64_t Key = 0; bool bValid = false; bool bPending = false; };
         ProbeSlot    Slots[RENDER_REFLECTION_PROBES_MAX];
+        int32_t      Capturing = -1;      // the block whose probe is mid-capture, or -1
+        uint32_t     CapturedFaces = 0;   // its faces in the strip
+        uint32_t     SearchFrom = 0;      // where the next search for a probe to capture starts: round the list, so none starves
         bool         bSkyValid = false;
         uint64_t     SkyHash   = 0;
         float        ProbeData[RENDER_REFLECTION_PROBES_MAX * 3][4] = {};
@@ -849,8 +857,10 @@ namespace RenderCore
             return Hash;
         }
 
-        /* A reflection probe's six faces, HDR, into the strip, prefiltered into atlas block InBlock. */
-        bool CaptureReflectionProbe(RenderContext& InContext, const ReflectionProbeRequest& InProbe, const uint32_t InBlock)
+        /* A reflection probe's faces InFirst to InFirst + InCount - 1, HDR, into the strip; after its
+         * sixth, the strip prefiltered into atlas block InBlock. False if one failed. */
+        bool CaptureReflectionProbe(RenderContext& InContext, const ReflectionProbeRequest& InProbe, const uint32_t InBlock,
+                                    const uint32_t InFirst, const uint32_t InCount)
         {
             const uint32_t Face = InProbe.Resolution;
             if(!InContext.EnsureIBLResources(IBL, Face) || !ProbeStages.Allocate(Face, Face))
@@ -870,7 +880,7 @@ namespace RenderCore
             InContext.SetImageBasedLighting(&IBL, nullptr, 0, bSkyValid);
             InContext.SetSkyBackground(true);
             bool bCopied = ViewCount == 6;
-            for(uint32_t Index = 0; Index < ViewCount; ++Index)
+            for(uint32_t Index = InFirst; Index < std::min(InFirst + InCount, ViewCount); ++Index)
             {
                 SCOPED_DRAW_EVENT(GetCubeFaceName(Index));
                 InContext.SetView(Views[Index]);
@@ -880,11 +890,12 @@ namespace RenderCore
                 bCopied = InContext.CopyCaptureToStrip(ProbeStages, IBL, Index) && bCopied;
             }
             InContext.SetSkyBackground(false);
-            return bCopied && InContext.PrefilterIBLBlock(IBL, InBlock);
+            return bCopied && (InFirst + InCount < 6 || InContext.PrefilterIBLBlock(IBL, InBlock));
         }
 
         /* The sky block when the sky changed, then the probes in view: a block each, captured when due
-         * or new to it -- two a frame at most, the rest next frame. Leaves the context on the main view. */
+         * or new to it -- one at a time, ProbeFacesPerFrame faces a frame, the probe's old capture (if any)
+         * lighting until its last face is in. Leaves the context on the main view. */
         void UpdateImageBasedLighting(RenderContext& InContext)
         {
             ProbeDataCount = 0;
@@ -899,8 +910,9 @@ namespace RenderCore
             {
                 SCOPED_DRAW_EVENT("SkyLight");
                 bSkyValid = InContext.EnsureIBLResources(IBL, 128) && InContext.RenderSkyToStrip(IBL)
-                         && InContext.PrefilterIBLBlock(IBL, 4);
+                         && InContext.PrefilterIBLBlock(IBL, IBL_SKY_BLOCK);
                 SkyHash = Hash;
+                CapturedFaces = 0;   // the sky took the strip: a capture in progress starts over
             }
 
             const uint32_t Count = std::min<uint32_t>(CaptureList.ProbeCount, RENDER_REFLECTION_PROBES_MAX);
@@ -924,6 +936,7 @@ namespace RenderCore
                     {
                         if(Slots[Block].Key == 0 || !Listed(Slots[Block].Key))
                         {
+                            if(Capturing == int32_t(Block)) { Capturing = -1; }
                             Slots[Block] = ProbeSlot{ Probe.Key, false, true };
                             BlockOf[Index] = int32_t(Block);
                             break;
@@ -933,19 +946,47 @@ namespace RenderCore
                 if(BlockOf[Index] >= 0 && Probe.bDue) { Slots[BlockOf[Index]].bPending = true; }
             }
 
-            uint32_t Captures = 0;
-            for(uint32_t Index = 0; Index < Count && Captures < 2; ++Index)
+            /* The capture in progress, else the nearest probe wanting one. */
+            int32_t Current = -1;
+            for(uint32_t Index = 0; Index < Count; ++Index)
             {
-                if(BlockOf[Index] < 0) { continue; }
-                ProbeSlot& Slot = Slots[BlockOf[Index]];
-                if(!Slot.bPending && Slot.bValid) { continue; }
-                SCOPED_DRAW_EVENT("ReflectionProbe " + std::to_string(BlockOf[Index]));
-                Slot.bValid   = CaptureReflectionProbe(InContext, CaptureList.Probes[Index], uint32_t(BlockOf[Index]));
-                Slot.bPending = false;
-                ++Captures;
+                if(BlockOf[Index] >= 0 && BlockOf[Index] == Capturing) { Current = int32_t(Index); break; }
             }
-            if(Captures > 0)
+            if(Current < 0)
             {
+                Capturing = -1;
+                for(uint32_t Step = 0; Step < Count; ++Step)
+                {
+                    const uint32_t Index = (SearchFrom + Step) % Count;
+                    if(BlockOf[Index] < 0) { continue; }
+                    const ProbeSlot& Slot = Slots[BlockOf[Index]];
+                    if(Slot.bPending || !Slot.bValid)
+                    {
+                        Current       = int32_t(Index);
+                        Capturing     = BlockOf[Index];
+                        CapturedFaces = 0;
+                        SearchFrom    = Index + 1;
+                        break;
+                    }
+                }
+            }
+            if(Current >= 0)
+            {
+                SCOPED_DRAW_EVENT("ReflectionProbe " + std::to_string(Capturing));
+                ProbeSlot& Slot = Slots[Capturing];
+                Slot.bPending = false;   // a request while it captures starts the next
+                const uint32_t Faces = uint32_t(std::clamp<int>(GRenderProbeFacesPerFrame.GetInt(), 1, 6));
+                const uint32_t Now   = std::min(Faces, 6u - CapturedFaces);
+                if(!CaptureReflectionProbe(InContext, CaptureList.Probes[Current], uint32_t(Capturing), CapturedFaces, Now))
+                {
+                    Slot.bValid = false;
+                    Capturing   = -1;
+                }
+                else if((CapturedFaces += Now) >= 6)
+                {
+                    Slot.bValid = true;
+                    Capturing   = -1;
+                }
                 InContext.SetView(Views[0].View);
             }
 

@@ -635,9 +635,15 @@ reflect what is on screen, over the probes' specular.
   where it was), with roughness, and toward the ray's end, times
   Intensity. `IBL_LightReflected` blends the probes' specular toward it by
   that, under the same split-sum BRDF and specular occlusion.
+- **Rough surfaces** (`[Rendering] StochasticReflections`, on;
+  GLOBAL_ILLUMINATION.md, Phase 4): the ray is reflected off a microfacet
+  normal drawn from GGX's visible normals, new each frame, and
+  `PPReflectionResolve` accumulates the hits over about ten frames
+  (reprojected, clipped to the 3 x 3 neighbourhood), so a rough surface
+  reflects its lobe, blurred. Trust fades only near Max Roughness (default
+  0.8). Off: one mirror ray, faded out from 0.6 of Max Roughness.
 - **Limits:** only G-buffer surfaces: Translucent Lit (glass, water) keep
-  the probes; what is off screen or hidden reflects the probes; a rough
-  surface's reflection is sharp, so it is faded out by Max Roughness.
+  the probes; what is off screen or hidden reflects the probes.
 
 ### Volumetric fog
 
@@ -671,11 +677,12 @@ more GPU a frame (4.0 to 6.4), fog the most (about 1.2).
 
 In an HDR scene, Lit surfaces take their ambient light and reflections from
 images instead of the Sky Light's hemisphere. The images are the sky and up to
-four **Reflection Probes**.
+sixteen **Reflection Probes**.
 
-**The atlas** (`IBLCommon.glsl`) is one RGBA16F 768 x 768 target per scene
-(`IBLResources`, owned by `RenderScene`). It holds five blocks of 384 x 256:
-four probes and the sky. Each block is an octahedral map:
+**The atlas** (`IBLCommon.glsl`) is one RGBA16F 1536 x 1280 target per scene
+(`IBLResources`, owned by `RenderScene`). It holds twenty blocks of 384 x 256,
+four to a row: sixteen probes, the sky, Cloth's sheen table. Each block is an
+octahedral map:
 - six roughness levels, from 256 texels (roughness 0, a copy) down to 8
   (roughness 1), each a GGX-weighted average, importance sampled;
 - a 32-texel diffuse irradiance, cosine weighted.
@@ -694,15 +701,19 @@ With Draw Background on, an HDRI is also drawn behind the scene along each view
 ray (`Sky.fsh`).
 
 **Reflection Probes:**
-- **Selection:** `WorldBridge::BuildReflectionProbes` sends the four enabled
+- **Selection:** `WorldBridge::BuildReflectionProbes` sends the sixteen enabled
   probes nearest the camera whose influence the view reaches, each marked due
   by its Frequency (Once by default, Interval, Every Frame, Manual).
 - **Capture:** `RenderScene` keeps which block holds which probe. It captures a
-  probe that is due, or new to a block, at most two a frame. A capture is six
-  90-degree HDR views, shadows included unless Capture Shadows is off, lit by
-  the sky alone so no probe sees another. The sky is drawn behind. The linear
-  scene colour of each view is copied into the strip, then prefiltered into the
-  probe's block.
+  probe that is due, or new to a block, one at a time, taking turns round the
+  list. A capture is six 90-degree HDR views, shadows included unless Capture
+  Shadows is off, lit by the sky alone so no probe sees another. The sky is
+  drawn behind. `[Rendering] ProbeFacesPerFrame` of them render a frame (1 by
+  default), each one's linear scene colour copied into the strip; after the
+  sixth the strip is prefiltered into the probe's block, its old capture
+  lighting until then.
+- **Their data** (centre, radius, box, intensity, block) is in the light block
+  (`LightList_Probes`), the scene block having room for only four.
 
 **Lighting** (`IBL_Light`):
 - **`IBLLighting.fsh` pass:** added (one, one) over the Lighting stage, from
@@ -1874,8 +1885,7 @@ finished on the GPU, never waiting. A query never ended answers "visible".
 Post process: bloom from the HDR scene colour (it still thresholds display
 colours after the tone map); auto exposure; a velocity target for per-object
 motion blur; temporal AA; colour grading. Running HDR and image-based lighting
-on D3D12, Metal and OpenGL (written, not yet built there). Reflection probe blending
-across more than four; cube-face capture time-slicing; SH irradiance.
+on D3D12, Metal and OpenGL (written, not yet built there). SH irradiance.
 
 Hardware shadow comparison, depth bias and front-face culling in GDI (then
 drop most of the receiver bias); Masked casters clipped in the Shadows
