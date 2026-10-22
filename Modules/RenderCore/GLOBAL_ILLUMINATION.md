@@ -1,6 +1,6 @@
 # Lighting and global illumination: plan
 
-Status: **Phases 0-1 landed.** Phases land in order on `dev-rendering`, one
+Status: **Phases 0-2 landed.** Phases land in order on `dev-rendering`, one
 commit each; each updates this note (and [RENDERPIPELINE.md](RENDERPIPELINE.md))
 with what was built, how it was checked and what it costs.
 
@@ -84,23 +84,37 @@ D3D12 -- the clear-colour check now allows one step (display to linear in the
 half-float scene colour and back read 119 for 120 on one row); Courtyard and
 ShadingModelLab look as before, a shade richer in the darks.
 
-## Phase 2: many lights
+## Phase 2: many lights (landed)
 
 Clustered shading [Olsson 2012; Persson 2013] with Drobot's z-binning
-[Drobot 2017], built on the CPU each frame:
+[Drobot 2017], built on the CPU for each view (`BuildLightList`,
+RenderContext.cpp) and read from the light block (`LightList.glsl`):
 
-- **The list:** every active point and spot light (and Phase 3's area lights),
-  up to `RENDER_LIGHT_LIST_MAX` (1024), sorted by view depth, packed into a
-  light texture (one row per light). Shadow casters keep their shadow views (at
-  most four). The first 16 also stay in `Scene_Locals`, for volumetric fog.
-- **Tiles:** the screen in 32 x 18 tiles, each a bit mask of the lights whose
-  bounds reach it (32 words: 1024 bits), in a tile texture.
-- **Z-bins:** 64 slices of view depth, each the lowest and highest index of the
-  depth-sorted lights reaching it. A pixel walks its tile's mask only between
-  its bin's two indices.
-- **Shading:** `ShadeSurfaceSplit`'s loop walks that list instead of
-  `Scene_Locals`, in the Lighting stage and forward Lit materials (engine slots
-  8-9). With 16 lights or fewer a frame lights exactly as before.
+- **The list:** every active point and spot light, up to
+  `RENDER_LOCAL_LIGHT_MAX` (256; it was 16), shadow casters first then nearest
+  as WorldBridge gathers them, re-sorted by the view depth of their centres;
+  six vec4s each (two spare, for Phase 3). Shadow casters keep their shadow
+  views (at most four): an entry names its `Scene_Locals` slot, which holds its
+  shadow matrix, tint and biases -- the scene block keeps the first
+  `RENDER_SCENE_LOCAL_LIGHT_MAX` (16), for those and for volumetric fog.
+- **Tiles:** the target in 32 x 18 tiles, each a 256-bit mask of the lights
+  whose bounding cube's projection reaches it (all tiles for a sphere through
+  the near plane).
+- **Z-bins:** 64 slices of view depth, logarithmic from the near plane to the
+  furthest light's reach, each the lowest and highest index of the lights whose
+  depth reaches it. A pixel walks its tile's mask only between its slice's two
+  indices (`LightingLocal` per light, in `ShadeSurfaceSplit`, for the Lighting
+  stage and forward Lit materials alike).
+- **The block:** 43 KB of the light block's 64; set once per view in
+  `RenderSceneStages`, so captures and previews get their own.
+- `[Rendering] ClusteredLights` (on): off, every light is in every tile and
+  slice -- each pixel weighs them all, as before this phase.
+
+Checked: RenderCore.Smoke on the GPU, 743 checks, none failing on Vulkan or
+D3D12, the point and spot shadow checks among them; LightingLab's field of 144
+lights all draw (16 did before), and the frame is bit-identical with
+ClusteredLights off. No pixel changes with 16 lights or fewer: the same lights,
+in another order.
 
 ## Phase 3: area lights and energy
 
@@ -168,8 +182,11 @@ updated by rasterising rather than ray tracing:
 
 Every phase: NodeGraph.Tests and RenderCore.Smoke (Null; GPU on Vulkan and
 D3D12, the Sandbox materials recooked from git history as SHADING_MODELS.md
-says), and editor screenshots of **LightingLab** (WorldsLab) on both
-backends. Each phase records its GPU cost here, measured with `stat frame`.
+says), and editor screenshots of **LightingLab** (WorldsLab; written by
+`Tools/LightingLab/make_lightinglab.py`) on both backends: a Cornell box open
+to a low sun, gold spheres from roughness 0.1 to 1, and a field of 144
+coloured point lights. Each phase records its GPU cost here, measured with
+`stat frame`.
 
 ## Cost
 
@@ -188,6 +205,15 @@ and only show the order of things.
 
 Phase 1 adds a few ALU operations per colour conversion and has no switch; its
 cost is below this noise.
+
+A/B rows: one session, the switch alternated four times each way, means of
+`stats` taken 4.5 s after each switch (the editor's console timers tick about
+once a second, so commands are kept 1.5 s apart).
+
+| Phase | Level, view | Backend | Switch | Lighting off | Lighting on | Total off | Total on |
+|---|---|---|---|---|---|---|---|
+| 2 | LightingLab, the field (144 lights) | Vulkan | ClusteredLights | 1.642 | 1.135 | 2.226 | 1.794 |
+| 2 | LightingLab, the field (144 lights) | D3D12 | ClusteredLights | 1.712 | 1.264 | 2.219 | 1.845 |
 
 | Phase | Level | Backend | BasePass | AO | Shadows | Lighting | Forward | Post | Total |
 |---|---|---|---|---|---|---|---|---|---|

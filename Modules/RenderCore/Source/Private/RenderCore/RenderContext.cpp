@@ -72,6 +72,9 @@ NIMBLE_CONFIG_BOOL(GRenderDrawLabels, "Rendering", "DrawLabels", true, nullptr);
  * Subsurface does: its diffuse in place, with its transmission. */
 NIMBLE_CONFIG_BOOL(GRenderSubsurfaceScattering, "Rendering", "SubsurfaceScattering", true, nullptr);
 NIMBLE_CONFIG_FLOAT(GRenderSubsurfaceWidth, "Rendering", "SubsurfaceWidth", 1.2f, nullptr);
+/* The light list's culling (GLOBAL_ILLUMINATION.md, Phase 2): off, every light is in every tile
+ * and depth slice, so each pixel weighs them all -- what lighting cost before, to compare with. */
+NIMBLE_CONFIG_BOOL(GRenderClusteredLights, "Rendering", "ClusteredLights", true, nullptr);
 
 namespace RenderCore
 {
@@ -196,6 +199,32 @@ namespace RenderCore
         /* Scene_Locals' vec4s per light. */
         constexpr uint32_t SCENE_LOCAL_VEC4S = 6;
 
+        /*
+         * The light block (LightList.glsl's Light_Block, GDI binding 22): the
+         * view's point and spot lights, sorted by view depth, and where each
+         * reaches -- clustered shading's lists [Olsson 2012] as Drobot's
+         * z-binning keeps them [Drobot 2017]. The screen in LIGHT_TILES_X x
+         * LIGHT_TILES_Y tiles, each a bit mask over the list; the view's depth
+         * in LIGHT_ZBINS slices, logarithmic, each the first and last index of
+         * the lights whose depth reaches it. A pixel walks its tile's bits
+         * between its slice's two. GLOBAL_ILLUMINATION.md, Phase 2.
+         */
+        constexpr uint32_t LIGHT_LIST_VEC4S = 6;
+        constexpr uint32_t LIGHT_TILES_X    = 32;
+        constexpr uint32_t LIGHT_TILES_Y    = 18;
+        constexpr uint32_t LIGHT_TILE_WORDS = RENDER_LOCAL_LIGHT_MAX / 32;
+        constexpr uint32_t LIGHT_ZBINS      = 64;
+        struct LightListBlock
+        {
+            float    Header[4] = {};   // x: lights; yz: a tile's size, pixels; w: unused
+            float    Depth[4]  = {};   // x: the first slice's near view depth; y: slices per natural log of depth over it
+            float    Lights[RENDER_LOCAL_LIGHT_MAX * LIGHT_LIST_VEC4S][4] = {};
+            uint32_t Tiles[LIGHT_TILES_X * LIGHT_TILES_Y * LIGHT_TILE_WORDS] = {};
+            uint32_t ZBins[LIGHT_ZBINS] = {};
+        };
+        static_assert(sizeof(LightListBlock) <= GDI_LIGHT_BLOCK_MAX_BYTES, "the light list fits the light block");
+        static_assert(RENDER_LOCAL_LIGHT_MAX % 32 == 0 && RENDER_LOCAL_LIGHT_MAX <= 0xFFFF, "a tile's words hold the list; a slice's indices are 16 bits");
+
         /* DeferredLighting.fsh's Lighting_Block: Params, the inset light and
          * tint, then RENDER_INSET_SHADOW_MAX insets and as many screen rects. */
         constexpr uint32_t LIGHTING_BLOCK_FLOATS = (3 + 2 * RENDER_INSET_SHADOW_MAX) * 4;
@@ -221,7 +250,7 @@ namespace RenderCore
             float CascadeMatrices[RENDER_CASCADE_MAX][16] = {};
 
             float LocalCounts[4]        = {};
-            float Locals[RENDER_LOCAL_LIGHT_MAX * SCENE_LOCAL_VEC4S][4] = {};
+            float Locals[RENDER_SCENE_LOCAL_LIGHT_MAX * SCENE_LOCAL_VEC4S][4] = {};
             float LocalShadowMatrices[SHADOW_LOCAL_ATLAS_COLUMNS * SHADOW_LOCAL_ATLAS_ROWS][16] = {};
             float CascadeTexels[4]      = {};
             float Output[4]             = { 0.0f, 1.0f, 0.0f, 0.0f };   // HDR, exposure multiplier, tone map operator
@@ -1862,7 +1891,7 @@ namespace RenderCore
             Scene.CameraForward[3] = float(View.Origin.Dot(Forward));
 
             /* Point and spot lights. */
-            const uint32_t LocalCount = std::min<uint32_t>(Lighting.LocalCount, RENDER_LOCAL_LIGHT_MAX);
+            const uint32_t LocalCount = std::min<uint32_t>(Lighting.LocalCount, RENDER_SCENE_LOCAL_LIGHT_MAX);
             Scene.LocalCounts[0] = float(LocalCount);
             for(uint32_t Index = 0; Index < LocalCount; ++Index)
             {
@@ -1994,12 +2023,130 @@ namespace RenderCore
             {
                 PutMatrix(Scene.LocalShadowMatrices[View - DirectionalViews], Shadows.Views[View].WorldToAtlas);
             }
-            for(uint32_t Index = 0; Index < std::min<uint32_t>(Lighting.LocalCount, RENDER_LOCAL_LIGHT_MAX); ++Index)
+            for(uint32_t Index = 0; Index < std::min<uint32_t>(Lighting.LocalCount, RENDER_SCENE_LOCAL_LIGHT_MAX); ++Index)
             {
                 const int32_t First = Shadows.LocalFirstView[Index];
                 Scene.Locals[Index * SCENE_LOCAL_VEC4S + 3][2] = First >= 0 ? float(uint32_t(First) - DirectionalViews) : -1.0f;
             }
         }
+
+        /* The light block for the current view and lighting, its tiles over a
+         * InWidth x InHeight target (LightListBlock). */
+        void BuildLightList(const uint InWidth, const uint InHeight)
+        {
+            LightListBlock& Out = LightList;
+            const uint32_t Count = std::min<uint32_t>(Lighting.LocalCount, RENDER_LOCAL_LIGHT_MAX);
+            const EngineCore::Vector3 Forward = ViewForward(View);
+            const double ForwardW = View.Origin.Dot(Forward);
+            const bool   bOrtho   = IsOrthographic(View);
+
+            /* Sorted by the view depth of their centres. */
+            uint32_t Order[RENDER_LOCAL_LIGHT_MAX];
+            double   Depths[RENDER_LOCAL_LIGHT_MAX];
+            for(uint32_t Index = 0; Index < Count; ++Index)
+            {
+                Order[Index]  = Index;
+                Depths[Index] = Lighting.Locals[Index].Position.Dot(Forward) - ForwardW;
+            }
+            std::sort(Order, Order + Count, [&Depths](const uint32_t InA, const uint32_t InB) { return Depths[InA] < Depths[InB]; });
+
+            /* Slices from the near plane (at least a unit) to the furthest light's reach. */
+            const double Near = std::max(double(View.ZNear), 1.0);
+            double Far = Near * 2.0;
+            for(uint32_t Index = 0; Index < Count; ++Index) { Far = std::max(Far, Depths[Index] + double(Lighting.Locals[Index].Range)); }
+            const double PerLog = double(LIGHT_ZBINS) / std::log(Far / Near);
+            const auto Slice = [&](const double InDepth)
+            {
+                if(InDepth <= Near) { return 0; }
+                return std::clamp(int(std::log(InDepth / Near) * PerLog), 0, int(LIGHT_ZBINS) - 1);
+            };
+
+            const double TileW = std::ceil(double(std::max<uint>(InWidth, 1)) / double(LIGHT_TILES_X));
+            const double TileH = std::ceil(double(std::max<uint>(InHeight, 1)) / double(LIGHT_TILES_Y));
+            Out.Header[0] = float(Count);
+            Out.Header[1] = float(TileW);
+            Out.Header[2] = float(TileH);
+            Out.Header[3] = 0.0f;
+            Out.Depth[0]  = float(Near);
+            Out.Depth[1]  = float(PerLog);
+            std::memset(Out.Tiles, 0, sizeof(Out.Tiles));
+            for(uint32_t& Bin : Out.ZBins) { Bin = 0x0000FFFFu; }   // first 0xFFFF, last 0: none
+
+            float ViewProjection[16];
+            PutMatrix(ViewProjection, View.Projection * View.View);
+            const auto Project = [&ViewProjection](const double InX, const double InY, const double InZ, double& OutX, double& OutY)
+            {
+                const float* M = ViewProjection;   // column-major: element (row, col) at M[col * 4 + row]
+                const double X = M[0] * InX + M[4] * InY + M[8]  * InZ + M[12];
+                const double Y = M[1] * InX + M[5] * InY + M[9]  * InZ + M[13];
+                const double W = M[3] * InX + M[7] * InY + M[11] * InZ + M[15];
+                OutX = X / W;
+                OutY = Y / W;
+            };
+
+            const double Degrees = 3.14159265358979 / 180.0;
+            for(uint32_t Sorted = 0; Sorted < Count; ++Sorted)
+            {
+                const uint32_t          Index = Order[Sorted];
+                const RenderLocalLight& Light = Lighting.Locals[Index];
+                float (*Entry)[4] = &Out.Lights[Sorted * LIGHT_LIST_VEC4S];
+                const double Length = Light.Direction.GetLength();
+                const EngineCore::Vector3 Direction = Length > 1e-9 ? Light.Direction * (1.0 / Length) : EngineCore::Vector3(0.0, 0.0, 1.0);
+                Entry[0][0] = float(Light.Position.GetX()); Entry[0][1] = float(Light.Position.GetY());
+                Entry[0][2] = float(Light.Position.GetZ()); Entry[0][3] = Light.Range;
+                PutColor(Entry[1], Light.Color, Light.Intensity);
+                Entry[2][0] = float(Direction.GetX()); Entry[2][1] = float(Direction.GetY());
+                Entry[2][2] = float(Direction.GetZ()); Entry[2][3] = Light.Type == RLL_Spot ? 1.0f : 0.0f;
+                Entry[3][0] = float(std::cos(double(Light.OuterConeAngle) * Degrees));
+                Entry[3][1] = float(std::cos(double(std::min(Light.InnerConeAngle, Light.OuterConeAngle - 0.01f)) * Degrees));
+                /* Its place in Scene_Locals, which holds its shadow (the first RENDER_SCENE_LOCAL_LIGHT_MAX; casters come first). */
+                Entry[3][2] = Index < RENDER_SCENE_LOCAL_LIGHT_MAX ? float(Index) : -1.0f;
+                Entry[3][3] = 0.0f;
+                for(int Row = 4; Row < int(LIGHT_LIST_VEC4S); ++Row) { Entry[Row][0] = Entry[Row][1] = Entry[Row][2] = Entry[Row][3] = 0.0f; }
+
+                /* Depth: the slices its sphere reaches (all of them, unculled). */
+                const bool   bCull  = GRenderClusteredLights.GetBool();
+                const double Radius = double(Light.Range);
+                const int First = bCull ? Slice(Depths[Index] - Radius) : 0;
+                const int Last  = bCull ? Slice(Depths[Index] + Radius) : int(LIGHT_ZBINS) - 1;
+                for(int Bin = First; Bin <= Last; ++Bin)
+                {
+                    const uint32_t Low  = std::min<uint32_t>(Out.ZBins[Bin] & 0xFFFFu, Sorted);
+                    const uint32_t High = std::max<uint32_t>(Out.ZBins[Bin] >> 16, Sorted);
+                    Out.ZBins[Bin] = Low | (High << 16);
+                }
+
+                /* Screen: the tiles its bounding cube's corners span; all of them if the sphere reaches the near plane. */
+                int TileX0 = 0, TileY0 = 0, TileX1 = int(LIGHT_TILES_X) - 1, TileY1 = int(LIGHT_TILES_Y) - 1;
+                if(bCull && (bOrtho || Depths[Index] - Radius > Near))
+                {
+                    double MinX = 1e30, MinY = 1e30, MaxX = -1e30, MaxY = -1e30;
+                    for(int Corner = 0; Corner < 8; ++Corner)
+                    {
+                        double X, Y;
+                        Project(Light.Position.GetX() + ((Corner & 1) ? Radius : -Radius), Light.Position.GetY() + ((Corner & 2) ? Radius : -Radius),
+                                Light.Position.GetZ() + ((Corner & 4) ? Radius : -Radius), X, Y);
+                        MinX = std::min(MinX, X); MaxX = std::max(MaxX, X);
+                        MinY = std::min(MinY, Y); MaxY = std::max(MaxY, Y);
+                    }
+                    if(MaxX < -1.0 || MinX > 1.0 || MaxY < -1.0 || MinY > 1.0) { continue; }   // off screen: in no tile
+                    /* NDC to pixels: y runs down the target (NdcToTargetUv). */
+                    const auto Column = [&](const double InNdc) { return std::clamp(int((InNdc * 0.5 + 0.5) * InWidth / TileW), 0, int(LIGHT_TILES_X) - 1); };
+                    const auto Row    = [&](const double InNdc) { return std::clamp(int((0.5 - InNdc * 0.5) * InHeight / TileH), 0, int(LIGHT_TILES_Y) - 1); };
+                    TileX0 = Column(MinX); TileX1 = Column(MaxX);
+                    TileY0 = Row(MaxY);    TileY1 = Row(MinY);
+                }
+                const uint32_t Word = Sorted / 32, Bit = 1u << (Sorted % 32);
+                for(int TileY = TileY0; TileY <= TileY1; ++TileY)
+                {
+                    for(int TileX = TileX0; TileX <= TileX1; ++TileX)
+                    {
+                        Out.Tiles[(uint32_t(TileY) * LIGHT_TILES_X + uint32_t(TileX)) * LIGHT_TILE_WORDS + Word] |= Bit;
+                    }
+                }
+            }
+        }
+        LightListBlock LightList;
 
         /* A loaded material's own, else the section's, else DefaultLit: the
          * one a mesh section draws with (null: the plain fallback). */
@@ -4935,6 +5082,11 @@ namespace RenderCore
 
         const uint Width  = InTargets.Width;
         const uint Height = InTargets.Height;
+
+        /* This view's light list (LightList.glsl), for the Lighting stage and forward Lit draws. */
+        P->BuildLightList(Width, Height);
+        GDISetUniformBlock(GDI_LIGHT_BLOCK_BINDING, &P->LightList, uint(sizeof(P->LightList)));
+
         const auto BindTargets = [Width, Height](GDIRenderTarget* const* InColors, const uint InCount, GDIRenderTarget* InDepthFrom)
         {
             GDISetRenderTargets(InColors, InCount, InDepthFrom);

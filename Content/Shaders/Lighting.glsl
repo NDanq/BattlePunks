@@ -35,6 +35,7 @@ vec3 ViewChannelColor(vec3 InBaseColor, vec3 InEmissive)
 // and EvaluateLightModel. Default's lobes are GGX, Smith-Schlick and Schlick
 // Fresnel over Lambert, exactly as before shading models.
 #include <ShadingModels.glsl>
+#include <LightList.glsl>
 #ifdef LIGHTING_IBL_ATLAS
 #include <IBLShading.glsl>
 #endif
@@ -124,6 +125,63 @@ LightingSurface LightingSurfaceOf(in MaterialSurface Surface, int InModel, vec3 
     return S;
 }
 
+// One point or spot light of the light list (LightList.glsl), entry InIndex,
+// added to ShadeSurfaceSplit's parts: its shadow, when it has one, from its
+// Scene_Locals slot. Modulated shadows multiply InOutModulate.
+void LightingLocal(in LightingSurface S, int InIndex, vec3 InWorldPosition, bool bInTransmits,
+                   inout vec3 InOutDiffuse, inout vec3 InOutSpecular, inout vec3 InOutModulate)
+{
+    vec4  PositionRange  = LightList_Lights[InIndex * LIGHT_LIST_VEC4S + 0];
+    vec4  ColorIntensity = LightList_Lights[InIndex * LIGHT_LIST_VEC4S + 1];
+    vec4  DirectionType  = LightList_Lights[InIndex * LIGHT_LIST_VEC4S + 2];
+    vec4  Cone           = LightList_Lights[InIndex * LIGHT_LIST_VEC4S + 3];
+
+    vec3  ToLight  = PositionRange.xyz - InWorldPosition;
+    float Distance = length(ToLight);
+    if(Distance >= PositionRange.w) { return; }
+    vec3  L        = ToLight / max(Distance, 1e-4);
+
+    float Attenuation = LocalFalloff(Distance, PositionRange.w);
+    if(DirectionType.w > 0.5)
+    {
+        // Spot: full inside the inner cone, nothing past the outer.
+        Attenuation *= smoothstep(Cone.x, Cone.y, dot(-L, DirectionType.xyz));
+    }
+    if(Attenuation <= 0.0) { return; }
+    // Facing away and not transmitting: nothing from this light (nor a shadow lookup to find so).
+    if(!bInTransmits && S.Model != SHADING_MODEL_CLOTH && dot(S.N, L) <= 0.0
+       && (S.Model != SHADING_MODEL_CLEARCOAT || dot(S.CoatN, L) <= 0.0)) { return; }
+
+    float Shadow = 1.0;
+#ifdef LIGHTING_SHADOWS
+    int Slot = int(Cone.z);
+    vec4 ConeShadow = Slot >= 0 ? Scene_Locals[Slot * 6 + 3] : vec4(-1.0);
+    if(ConeShadow.z >= 0.0)
+    {
+        vec4  Biases = Scene_Locals[Slot * 6 + 5];
+        float Lit    = LocalShadow(int(ConeShadow.z), DirectionType.w > 0.5, ConeShadow.x, PositionRange.xyz,
+                                   InWorldPosition, S.N, L, Biases.x, Biases.y);
+#ifdef LIGHTING_CONTACT_SHADOWS
+        // A shadowed point or spot light's contact shadows too ([Shadows] ContactLocalLights):
+        // no further than the light itself.
+        if(Scene_ContactLocal.x > 0.5) { Lit = min(Lit, ContactShadowWithin(InWorldPosition, S.N, L, Distance * 0.9)); }
+#endif
+        if(ConeShadow.w == 1.0)
+        {
+            // Fades out with the light: full where it is at least a quarter strength.
+            float Reach = clamp(Attenuation * 4.0, 0.0, 1.0);
+            InOutModulate *= ModulatedShadow(Lit, Reach, dot(S.N, L), Scene_Locals[Slot * 6 + 4].rgb);
+        }
+        else { Shadow = Lit; }
+    }
+#endif
+    vec3 Diffuse, Specular, Transmitted;
+    EvaluateLightModel(S, L, ToLinear(ColorIntensity.rgb) * ColorIntensity.a * Attenuation, Diffuse, Specular, Transmitted);
+    // A point or spot light's transmission is unshadowed: Thickness alone limits it.
+    InOutDiffuse  += Diffuse * Shadow;
+    InOutSpecular += Specular * Shadow + Transmitted;
+}
+
 // Linear radiance leaving S toward the eye, from every light and the ambient,
 // in two parts: OutDiffuse, the diffuse light before S's albedo multiplies it --
 // its ambient part times InAmbientDiffuse, 0 where baked lighting already holds
@@ -160,56 +218,23 @@ void ShadeSurfaceSplit(in LightingSurface S, vec3 InWorldPosition, float InOcclu
     OutDiffuse  = Diffuse * SunShadow;
     OutSpecular = Specular * SunShadow + Transmitted * SunThrough;
 
-    // Point and spot lights.
-    int Count = int(Scene_LocalCounts.x);
-    for(int Index = 0; Index < Count; ++Index)
+    // Point and spot lights: those the view's light list (LightList.glsl) says reach
+    // this pixel's tile and depth slice, walked bit by bit between the slice's indices.
     {
-        vec4  PositionRange  = Scene_Locals[Index * 6 + 0];
-        vec4  ColorIntensity = Scene_Locals[Index * 6 + 1];
-        vec4  DirectionType  = Scene_Locals[Index * 6 + 2];
-        vec4  ConeShadow     = Scene_Locals[Index * 6 + 3];
-
-        vec3  ToLight  = PositionRange.xyz - InWorldPosition;
-        float Distance = length(ToLight);
-        if(Distance >= PositionRange.w) { continue; }
-        vec3  L        = ToLight / max(Distance, 1e-4);
-
-        float Attenuation = LocalFalloff(Distance, PositionRange.w);
-        if(DirectionType.w > 0.5)
+        uint Range = LightList_ZBin(LightList_SliceOf(dot(InWorldPosition, Scene_CameraForward.xyz) - Scene_CameraForward.w));
+        int  First = int(Range & 0xFFFFu);
+        int  Last  = min(int(Range >> 16), int(LightList_Header.x) - 1);
+        int  Tile  = LightList_TileOf(gl_FragCoord.xy);
+        for(int Word = First >> 5; Word <= (Last >> 5) && First <= Last; ++Word)
         {
-            // Spot: full inside the inner cone, nothing past the outer.
-            Attenuation *= smoothstep(ConeShadow.x, ConeShadow.y, dot(-L, DirectionType.xyz));
-        }
-        if(Attenuation <= 0.0) { continue; }
-        // Facing away and not transmitting: nothing from this light (nor a shadow lookup to find so).
-        if(!bTransmits && S.Model != SHADING_MODEL_CLOTH && dot(S.N, L) <= 0.0
-           && (S.Model != SHADING_MODEL_CLEARCOAT || dot(S.CoatN, L) <= 0.0)) { continue; }
-
-        float Shadow = 1.0;
-#ifdef LIGHTING_SHADOWS
-        if(ConeShadow.z >= 0.0)
-        {
-            vec4  Biases = Scene_Locals[Index * 6 + 5];
-            float Lit    = LocalShadow(int(ConeShadow.z), DirectionType.w > 0.5, ConeShadow.x, PositionRange.xyz,
-                                       InWorldPosition, S.N, L, Biases.x, Biases.y);
-#ifdef LIGHTING_CONTACT_SHADOWS
-            // A shadowed point or spot light's contact shadows too ([Shadows] ContactLocalLights):
-            // no further than the light itself.
-            if(Scene_ContactLocal.x > 0.5) { Lit = min(Lit, ContactShadowWithin(InWorldPosition, S.N, L, Distance * 0.9)); }
-#endif
-            if(ConeShadow.w == 1.0)
+            uint Mask = LightList_Within(LightList_TileWord(Tile + Word), Word, First, Last);
+            while(Mask != 0u)
             {
-                // Fades out with the light: full where it is at least a quarter strength.
-                float Reach = clamp(Attenuation * 4.0, 0.0, 1.0);
-                Modulate *= ModulatedShadow(Lit, Reach, dot(S.N, L), Scene_Locals[Index * 6 + 4].rgb);
+                int Bit = findLSB(Mask);
+                Mask &= Mask - 1u;
+                LightingLocal(S, Word * 32 + Bit, InWorldPosition, bTransmits, OutDiffuse, OutSpecular, Modulate);
             }
-            else { Shadow = Lit; }
         }
-#endif
-        EvaluateLightModel(S, L, ToLinear(ColorIntensity.rgb) * ColorIntensity.a * Attenuation, Diffuse, Specular, Transmitted);
-        // A point or spot light's transmission is unshadowed: Thickness alone limits it.
-        OutDiffuse  += Diffuse * Shadow;
-        OutSpecular += Specular * Shadow + Transmitted;
     }
 
     // +Y is up, so the sky is toward +Y.
