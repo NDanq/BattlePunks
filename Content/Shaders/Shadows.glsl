@@ -83,8 +83,18 @@ float DirectionalShadow(vec3 InWorld, vec3 InNormal, vec3 InToLight)
     float NdotL  = clamp(dot(InNormal, InToLight), 0.0, 1.0);
     vec3  Offset = NormalOffset(InNormal, NdotL, Scene_LightShadow.w, Scene_CascadeTexels[Cascade]);
     int   Tile   = Count == 1 ? int(Scene_ShadowParams.w) : int(Scene_ShadowParams.w) / 2;
-    float Lit    = SampleShadowAtlas(ShadowDirectional, Scene_CascadeMatrices[Cascade], InWorld + Offset,
-                                     SlopeBias(Scene_LightShadow.z, NdotL), Tile);
+    // The depth bias in texels of this cascade: Shadow Bias x 256 of them (0.0015,
+    // under half a texel), more the more the light grazes. It was a fraction of the
+    // cascade's depth range, which also runs the caster reach (thousands of units)
+    // toward the sun, so it grew to tens of world units -- and the 5 x 5 filter's
+    // far taps, a texel's slope deeper each on a roof's sloped top, let light
+    // through thin roofs and walls where they meet. The normal offset (at least
+    // a texel and a half) is what keeps a face from shadowing itself. Window
+    // depth per world unit is the matrix's z row (the views are orthographic).
+    mat4  Matrix  = Scene_CascadeMatrices[Cascade];
+    float PerUnit = length(vec3(Matrix[0][2], Matrix[1][2], Matrix[2][2]));
+    float Lit     = SampleShadowAtlas(ShadowDirectional, Matrix, InWorld + Offset,
+                                      SlopeBias(Scene_LightShadow.z * 256.0, NdotL) * Scene_CascadeTexels[Cascade] * PerUnit, Tile);
     return mix(Lit, 1.0, smoothstep(Last * 0.9, Last, ViewDepth));
 }
 

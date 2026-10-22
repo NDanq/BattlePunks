@@ -28,7 +28,7 @@ namespace RenderCore
         uint8_t             bCastShadows       = 1;
         uint8_t             ShadowTechnique    = LST_Cascaded;
         EngineCore::Color   ShadowTint{ 40, 50, 80 };
-        float               ShadowBias         = 0.0015f;   // depth, 0..1 of the shadow's range
+        float               ShadowBias         = 0.0015f;   // depth, x 256 texels of its cascade (Shadows.glsl), more where the light grazes
         float               ShadowNormalBias   = 2.0f;      // world units, along the receiver's normal
 
         /* How far from the eye the shadow reaches, and Cascaded's split:
