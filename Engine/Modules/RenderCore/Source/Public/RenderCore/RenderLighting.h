@@ -17,7 +17,8 @@ namespace RenderCore
 {
     enum : uint32_t
     {
-        RENDER_LOCAL_LIGHT_MAX          = 16,  // point + spot lights a frame, nearest first
+        RENDER_LOCAL_LIGHT_MAX          = 256, // point + spot lights a frame, shadow casters then nearest first: the light list (GLOBAL_ILLUMINATION.md)
+        RENDER_SCENE_LOCAL_LIGHT_MAX    = 16,  // of those, the first in the scene block too (Scene_Locals): volumetric fog's, and the shadowed ones'
         RENDER_SHADOWED_LOCAL_LIGHT_MAX = 4,   // of those, how many may draw shadows (the local atlas's 6x4 tiles)
         RENDER_CASCADE_MAX              = 4,
         RENDER_INSET_SHADOW_MAX         = 4,   // per-object sun shadows a view (in the local atlas's spare tiles)

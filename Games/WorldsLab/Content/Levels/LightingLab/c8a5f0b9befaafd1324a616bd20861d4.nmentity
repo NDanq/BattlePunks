@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="c8a5f0b9befaafd1324a616bd20861d4" Name="FieldLight118">
+  <Component Type="Point Light" Version="2">
+    <Color R="239" G="63" B="255" A="255" />
+    <Intensity Value="4" />
+    <Radius Value="180" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <ShadowTint R="40" G="50" B="80" A="255" />
+    <ShadowBias Value="0.004" />
+    <ShadowNormalBias Value="2" />
+    <SourceRadius Value="6" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="3100" Y="40" Z="540" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

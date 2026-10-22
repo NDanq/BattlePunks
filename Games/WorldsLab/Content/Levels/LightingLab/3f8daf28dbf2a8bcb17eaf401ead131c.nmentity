@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="3f8daf28dbf2a8bcb17eaf401ead131c" Name="RightWall">
+  <Component Type="Render" Version="5">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/LightingLab/Green.material.nmgraph" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
+    <Occluder Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="610" Y="300" Z="0" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="20" Y="600" Z="1240" />
+  </Component>
+</Entity>

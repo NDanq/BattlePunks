@@ -214,9 +214,13 @@ DefaultLit, Glow and Wave pixels are unchanged.
 - **the sun**: the first active Directional Light, shining along its entity's
   forward (+Z turned by the Transform's Rotation, `LightForward` in
   `Components/LightShadow.h`). With none, the old fixed light.
-- **point and spot lights**: up to `RENDER_LOCAL_LIGHT_MAX` (16) a frame,
+- **point and spot lights**: up to `RENDER_LOCAL_LIGHT_MAX` (256) a frame,
   gathered by `WorldBridge::BuildLighting` -- shadow casters first, then nearest
-  the camera; more are warned once and dropped. Falloff is inverse-square-like,
+  the camera; more are warned once and dropped. Each pixel lights only those its
+  screen tile and depth slice reach: the light list in the light block,
+  clustered on the CPU per view ([GLOBAL_ILLUMINATION.md](GLOBAL_ILLUMINATION.md),
+  Phase 2). The first 16 are also the scene block's (`Scene_Locals`), which
+  volumetric fog lights with and which holds the shadowed ones' shadows. Falloff is inverse-square-like,
   windowed to reach zero at Radius (point) or Range (spot); a spot fades from
   its inner to its outer cone half-angle.
 - **the sky**: the first active Sky Light's hemisphere ambient -- or, in an
