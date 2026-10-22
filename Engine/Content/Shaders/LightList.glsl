@@ -31,6 +31,8 @@ UBO_BLOCK_BEGIN(22, Light_Block)
     vec4  LightList_Lights[1536];   // LIGHT_LIST_MAX * LIGHT_LIST_VEC4S
     uvec4 LightList_Tiles[1152];    // LIGHT_TILES_X * LIGHT_TILES_Y * LIGHT_TILE_WORDS / 4
     uvec4 LightList_ZBins[16];      // LIGHT_ZBINS / 4
+    vec4  LightList_Probes[48];     // the reflection probes (IBLCommon.glsl), three vec4s each: [3i] xyz centre,
+                                    // w radius; [3i+1] xyz box half sizes (0: a sphere), w intensity; [3i+2] x atlas block
 UBO_BLOCK_END(Light_Block)
 
 // Header.w's flags: area lights by LTC (else every light a point); energy compensation.

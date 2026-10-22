@@ -67,7 +67,7 @@ namespace
               "depth, its colour the last frame's. Where it finds nothing -- off screen, behind something, too rough -- the "
               "reflection probes and the sky still do. An HDR scene with image-based lighting only.",
               { { "Intensity",     "1",    0.0, 1.0,   1, "How far a found reflection replaces the probes'" },
-                { "Max Roughness", "0.45", 0.05, 1.0,  1, "Rougher surfaces than this keep the probes' reflection alone" },
+                { "Max Roughness", "0.8",  0.05, 1.0,  1, "Rougher surfaces than this keep the probes' reflection alone" },
                 { "Max Distance",  "1500", 10.0, 1.0e5, 1, "How far a ray goes, world units" },
                 { "Thickness",     "25",   0.1, 1.0e4, 1, "How deep a surface in the depth is taken to be, world units: too thin and rays slip past" },
                 { "Steps",         "32",   8.0, 64.0,  1, "Samples along each ray: more finds thinner things and costs more" } },

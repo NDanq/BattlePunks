@@ -25,7 +25,7 @@ namespace RenderCore
      *   Frequency  Once (the default: when it first lights anything), Interval,
      *              Every Frame or Manual (Capture Now).
      *
-     * Up to four light the view at once, the nearest the camera first.
+     * Up to sixteen light the view at once, the nearest the camera first.
      */
     struct RENDERCORE_API ReflectionProbeComponent
     {

@@ -40,6 +40,7 @@
 #include "Private/RenderCore/OverlayFont.h"
 #include "Private/RenderCore/UIRenderer.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
+#include "Private/RenderCore/SceneCapture.h"
 #include "Private/RenderCore/SceneTargets.h"
 #include "Private/RenderCore/ShadowSetup.h"
 #include "Private/RenderCore/TextureStreaming.h"
@@ -84,6 +85,9 @@ NIMBLE_CONFIG_BOOL(GRenderClusteredLights, "Rendering", "ClusteredLights", true,
  * and multiple-scattering energy compensation of specular (off: single scattering, as before). */
 NIMBLE_CONFIG_BOOL(GRenderAreaLights, "Rendering", "AreaLights", true, nullptr);
 NIMBLE_CONFIG_BOOL(GRenderEnergyCompensation, "Rendering", "EnergyCompensation", true, nullptr);
+/* Screen-space reflections' rays drawn from GGX's visible normals and accumulated over frames
+ * (GLOBAL_ILLUMINATION.md, Phase 4); off, one mirror ray a pixel, faded out on rough surfaces. */
+NIMBLE_CONFIG_BOOL(GRenderStochasticReflections, "Rendering", "StochasticReflections", true, nullptr);
 
 namespace RenderCore
 {
@@ -165,7 +169,7 @@ namespace RenderCore
             PP_IBLSky, PP_IBLPrefilter, PP_IBLLighting, PP_Sky, PP_ViewTarget, PP_UI,
             PP_Luminance, PP_LuminanceReduce, PP_AdaptExposure, PP_TemporalAA, PP_ScreenReflections, PP_Copy,
             PP_VolumetricFog, PP_FogComposite, PP_ViewSites, PP_AmbientApply, PP_Subsurface, PP_LTCDecode,
-            PP_PassCount
+            PP_ReflectionResolve, PP_PassCount
         };
         const char* const POST_PASS_SHADERS[PP_PassCount] = {
             "PPDofPrepare.fsh", "PPDofBlur.fsh", "PPDofComposite.fsh", "PPMotionBlur.fsh",
@@ -174,6 +178,7 @@ namespace RenderCore
             "IBLSky.fsh", "IBLPrefilter.fsh", "IBLLighting.fsh", "Sky.fsh", "ViewTarget.fsh", "UI.fsh",
             "PPLuminance.fsh", "PPLuminanceReduce.fsh", "PPAdaptExposure.fsh", "PPTemporalAA.fsh", "PPScreenReflections.fsh",
             "PPCopy.fsh", "PPVolumetricFog.fsh", "PPFogComposite.fsh", "ViewSites.fsh", "PPAmbientApply.fsh", "PPSubsurface.fsh", "LTCDecode.fsh",
+            "PPReflectionResolve.fsh",
         };
         /* Each pass's draw event (DrawPost). */
         const char* const POST_PASS_NAMES[PP_PassCount] = {
@@ -183,6 +188,7 @@ namespace RenderCore
             "IBLSky", "IBLPrefilter", "IBLLighting", "Sky", "ViewTarget", "UI",
             "Luminance", "LuminanceReduce", "AdaptExposure", "TemporalAA", "ScreenReflections", "Copy",
             "VolumetricFog", "FogComposite", "ViewSites", "AmbientApply", "Subsurface", "LTCDecode",
+            "ReflectionResolve",
         };
 
         /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
@@ -231,6 +237,7 @@ namespace RenderCore
             float    Lights[RENDER_LOCAL_LIGHT_MAX * LIGHT_LIST_VEC4S][4] = {};
             uint32_t Tiles[LIGHT_TILES_X * LIGHT_TILES_Y * LIGHT_TILE_WORDS] = {};
             uint32_t ZBins[LIGHT_ZBINS] = {};
+            float    Probes[RENDER_REFLECTION_PROBES_MAX * 3][4] = {};   // the reflection probes (IBLCommon.glsl)
         };
         static_assert(sizeof(LightListBlock) <= GDI_LIGHT_BLOCK_MAX_BYTES, "the light list fits the light block");
         constexpr uint32_t LIGHT_LIST_FLAG_AREA   = 1;   // area lights by LTC ([Rendering] AreaLights)
@@ -1160,7 +1167,8 @@ namespace RenderCore
         {
             /* These blocks carry their matrix first; the others start at A. */
             const bool bMatrix = InPass == PP_MotionBlur || InPass == PP_AmbientOcclusion || InPass == PP_IBLSky || InPass == PP_Sky
-                              || InPass == PP_TemporalAA || InPass == PP_ScreenReflections || InPass == PP_VolumetricFog;
+                              || InPass == PP_TemporalAA || InPass == PP_ScreenReflections || InPass == PP_VolumetricFog
+                              || InPass == PP_ReflectionResolve;
             const void* Block      = bMatrix ? static_cast<const void*>(&InBlock) : static_cast<const void*>(InBlock.A);
             const uint  BlockBytes = uint(bMatrix ? sizeof(InBlock) : sizeof(InBlock) - sizeof(InBlock.Matrix));
             return DrawFullscreenShader(GetPostShader(InPass), POST_PASS_NAMES[InPass], InTarget, InWidth, InHeight,
@@ -1499,7 +1507,7 @@ namespace RenderCore
         /* Image-based lighting (SetImageBasedLighting): the scene's atlas and its probes, for the next
          * RenderSceneStages; and whether every view draws the sky behind it (a reflection probe's captures). */
         const IBLResources* IBL = nullptr;
-        float               IBLProbes[12][4] = {};
+        float               IBLProbes[RENDER_REFLECTION_PROBES_MAX * 3][4] = {};
         uint32_t            IBLProbeCount = 0;
         bool                bIBLSky = false;
         bool                bForceSkyBackground = false;
@@ -5151,6 +5159,7 @@ namespace RenderCore
         /* This view's light list (LightList.glsl), for the Lighting stage and forward Lit draws. */
         P->EnsureLTC();
         P->BuildLightList(Width, Height);
+        std::memcpy(P->LightList.Probes, P->IBLProbes, sizeof(P->LightList.Probes));
         GDISetUniformBlock(GDI_LIGHT_BLOCK_BINDING, &P->LightList, uint(sizeof(P->LightList)));
 
         const auto BindTargets = [Width, Height](GDIRenderTarget* const* InColors, const uint InCount, GDIRenderTarget* InDepthFrom)
@@ -5175,7 +5184,6 @@ namespace RenderCore
         P->Scene.IBL[0] = bIBL ? 1.0f : 0.0f;
         P->Scene.IBL[1] = bIBL ? float(P->IBLProbeCount) : 0.0f;
         P->Scene.IBL[2] = bIBL && P->bIBLSky ? 1.0f : 0.0f;
-        std::memcpy(P->Scene.Probes, P->IBLProbes, sizeof(P->Scene.Probes));
 
         P->StageTimestamp(RGT_Total, false);
         {
@@ -5334,7 +5342,10 @@ namespace RenderCore
                         Ssr.A[2]     = std::clamp(Stack.SsrSteps, 8.0f, 64.0f);
                         Ssr.A[3]     = std::max(Stack.SsrThickness, 0.1f);
                         Ssr.Sizes[0] = std::max(Stack.SsrMaxDistance, 10.0f);
-                        Ssr.Sizes[1] = 1.0f;
+                        const bool bStochastic = GRenderStochasticReflections.GetBool()
+                                              && InTargets.EnsureFullHalfFloat(InTargets.ReflectionHistory[0], "ReflectionHistory0")
+                                              && InTargets.EnsureFullHalfFloat(InTargets.ReflectionHistory[1], "ReflectionHistory1");
+                        Ssr.Sizes[1] = bStochastic ? 2.0f : 1.0f;
                         Ssr.Sizes[2] = float(Width);
                         Ssr.Sizes[3] = float(Height);
                         if(P->DrawPost(PP_ScreenReflections, Reflections, Width, Height,
@@ -5344,7 +5355,37 @@ namespace RenderCore
                             Screen = Texture(Reflections);
                         }
                         for(uint32_t Slot = 0; Slot < 6; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
+
+                        /* Stochastic: this frame's rays into the history (PPReflectionResolve.fsh). */
+                        if(Screen && bStochastic)
+                        {
+                            const uint32_t Write = InTargets.ReflectionCurrent ^ 1u;
+                            PostBlock Resolve;
+                            PutMatrix(Resolve.Matrix, P->PrevViewProjection);
+                            Resolve.A[0]     = InTargets.bReflectionValid ? 1.0f : 0.0f;
+                            Resolve.A[1]     = 0.9f;   // about ten frames' rays
+                            Resolve.Sizes[2] = float(Width);
+                            Resolve.Sizes[3] = float(Height);
+                            const bool bResolved = P->DrawPost(PP_ReflectionResolve, InTargets.ReflectionHistory[Write], Width, Height,
+                                                               { Screen, Texture(InTargets.ReflectionHistory[InTargets.ReflectionCurrent]),
+                                                                 Depth->Resource, Motion->Resource }, Resolve);
+                            for(uint32_t Slot = 0; Slot < 4; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
+                            InTargets.bReflectionValid = bResolved;
+                            if(bResolved)
+                            {
+                                InTargets.ReflectionCurrent = Write;
+                                Screen = Texture(InTargets.ReflectionHistory[Write]);
+                            }
+                        }
+                        else
+                        {
+                            InTargets.bReflectionValid = false;
+                        }
                     }
+                }
+                else
+                {
+                    InTargets.bReflectionValid = false;
                 }
 
                 PostBlock Block;
@@ -5528,7 +5569,7 @@ namespace RenderCore
         }
         if(!InOut.Atlas)
         {
-            InOut.Atlas = GDICreateRenderTargetFormat("RenderCore.IBLAtlas", 768, 768, GDI_RTF_RGBA16F);
+            InOut.Atlas = GDICreateRenderTargetFormat("RenderCore.IBLAtlas", IBL_ATLAS_WIDTH, IBL_ATLAS_HEIGHT, GDI_RTF_RGBA16F);
         }
         if(!InOut.Strip)
         {
@@ -5589,19 +5630,19 @@ namespace RenderCore
     bool RenderContext::PrefilterIBLBlock(IBLResources& InResources, const uint32_t InBlock)
     {
         GDITexture2D* Strip = InResources.Strip ? InResources.Strip->ToGDITexture2D() : nullptr;
-        if(!Strip || !InResources.Atlas || InBlock > 4)
+        if(!Strip || !InResources.Atlas || InBlock > IBL_SKY_BLOCK)
         {
             return false;
         }
         PostBlock Block;
         Block.A[0] = float(InBlock);
         Block.A[1] = 0.0f;   // the strip holds linear light
-        const bool bDrawn = P->DrawPost(PP_IBLPrefilter, InResources.Atlas, 768, 768, { Strip->Resource }, Block);
-        /* Once per atlas, Cloth's sheen table into its spare sixth block (IBLCommon.glsl, IBL_SheenDG). */
+        const bool bDrawn = P->DrawPost(PP_IBLPrefilter, InResources.Atlas, IBL_ATLAS_WIDTH, IBL_ATLAS_HEIGHT, { Strip->Resource }, Block);
+        /* Once per atlas, Cloth's sheen table into its spare block (IBLCommon.glsl, IBL_SheenDG). */
         if(bDrawn && !InResources.bSheenTable)
         {
-            Block.A[0] = 5.0f;
-            InResources.bSheenTable = P->DrawPost(PP_IBLPrefilter, InResources.Atlas, 768, 768, { Strip->Resource }, Block);
+            Block.A[0] = float(IBL_SHEEN_BLOCK);
+            InResources.bSheenTable = P->DrawPost(PP_IBLPrefilter, InResources.Atlas, IBL_ATLAS_WIDTH, IBL_ATLAS_HEIGHT, { Strip->Resource }, Block);
         }
         GDISetMaterialTexture(0, nullptr);
         return bDrawn;
@@ -5611,7 +5652,7 @@ namespace RenderCore
                                               const bool bInSky)
     {
         P->IBL           = InResources;
-        P->IBLProbeCount = InResources ? std::min<uint32_t>(InCount, 4) : 0;
+        P->IBLProbeCount = InResources ? std::min<uint32_t>(InCount, RENDER_REFLECTION_PROBES_MAX) : 0;
         P->bIBLSky       = InResources && bInSky;
         std::memset(P->IBLProbes, 0, sizeof(P->IBLProbes));
         if(InProbes)

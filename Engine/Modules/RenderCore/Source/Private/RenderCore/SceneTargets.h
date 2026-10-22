@@ -22,12 +22,19 @@ namespace RenderCore
      * lighting"), made by RenderContext::EnsureIBLResources: the probe atlas
      * (RGBA16F, IBLCommon.glsl's layout) and the cube strip a capture or the
      * sky is prefiltered from. The scene owns them; ReleaseIBLResources frees them. */
+    /* The atlas: 20 blocks of 384 x 256, four to a row -- 0-15 the probes,
+     * 16 the sky, 17 the sheen table (IBLCommon.glsl). */
+    constexpr uint32_t IBL_ATLAS_WIDTH  = 1536;
+    constexpr uint32_t IBL_ATLAS_HEIGHT = 1280;
+    constexpr uint32_t IBL_SKY_BLOCK    = 16;
+    constexpr uint32_t IBL_SHEEN_BLOCK  = 17;
+
     struct IBLResources
     {
         GDIRenderTarget* Atlas     = nullptr;
         GDIRenderTarget* Strip     = nullptr;
         uint32_t         StripFace = 0;
-        bool             bSheenTable = false;   // the atlas's block 5 holds Cloth's sheen table (SHADING_MODELS.md)
+        bool             bSheenTable = false;   // the atlas's block 17 holds Cloth's sheen table (SHADING_MODELS.md)
     };
 
     struct SceneTargets
@@ -66,6 +73,11 @@ namespace RenderCore
          * then points at it), else a copy kept in LastCopy. Forgotten with a resize. */
         GDIRenderTarget* Fog         = nullptr;                 // volumetric fog's march, half size, half float
         GDIRenderTarget* Reflections = nullptr;
+        /* Stochastic reflections' history (PPReflectionResolve.fsh; GLOBAL_ILLUMINATION.md, Phase 4):
+         * the resolve ping-pongs these, ReflectionCurrent the last frame's when bReflectionValid. */
+        GDIRenderTarget* ReflectionHistory[2] = {};
+        uint32_t         ReflectionCurrent = 0;
+        bool             bReflectionValid  = false;
         /* Skin (SHADING_MODELS.md): its pixels' diffuse light before albedo, as the Lighting and
          * IBL passes write it, and PPSubsurface's first blur. Full size, half float, on first use. */
         GDIRenderTarget* Subsurface     = nullptr;
@@ -133,6 +145,11 @@ namespace RenderCore
                 }
                 bHistoryValid = false;
                 if(Reflections) { Reflections->Resize(InWidth, InHeight); }
+                for(GDIRenderTarget* Each : ReflectionHistory)
+                {
+                    if(Each) { Each->Resize(InWidth, InHeight); }
+                }
+                bReflectionValid = false;
                 if(Subsurface)     { Subsurface->Resize(InWidth, InHeight); }
                 if(SubsurfaceBlur) { SubsurfaceBlur->Resize(InWidth, InHeight); }
                 if(Fog)         { Fog->Resize(HalfSize(InWidth, 1), HalfSize(InHeight, 1)); }
@@ -258,7 +275,7 @@ namespace RenderCore
             return true;
         }
 
-        /* A full-size half-float target, made on first use: Reflections, LastCopy. */
+        /* A full-size half-float target, made on first use: Reflections, ReflectionHistory, LastCopy. */
         GDIRenderTarget* EnsureFullHalfFloat(GDIRenderTarget*& InOutTarget, const char* InName)
         {
             if(!InOutTarget && Width > 0 && Height > 0 && GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
@@ -318,7 +335,7 @@ namespace RenderCore
                                            &Half[0], &Half[1], &Bloom[0], &Bloom[1], &Bloom[2], &Bloom[3], &Bloom[4], &Bloom[5],
                                            &BloomUp[0], &BloomUp[1], &BloomUp[2], &BloomUp[3], &BloomUp[4],
                                            &Luminance[0], &Luminance[1], &Luminance[2], &Exposure[0], &Exposure[1],
-                                           &History[0], &History[1], &Reflections, &LastCopy, &Fog, &Subsurface, &SubsurfaceBlur })
+                                           &History[0], &History[1], &Reflections, &ReflectionHistory[0], &ReflectionHistory[1], &LastCopy, &Fog, &Subsurface, &SubsurfaceBlur })
             {
                 if(*Each)
                 {

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="e6a6dc2c88b78850be5eaeb1c9175e3e" Name="PostProcess">
+  <Component Type="Post Process" Version="2">
+    <Stack Value="Content/PostProcess/LightingLab/LightingLab.pp.nmgraph" />
+    <Priority Value="0" />
+    <Enabled Value="true" />
+    <BlendDistance Value="0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="0" Z="0" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

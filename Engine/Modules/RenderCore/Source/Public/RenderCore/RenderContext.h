@@ -419,9 +419,9 @@ namespace RenderCore
          *   EnsureIBLResources   the atlas, and the strip at InFace a side
          *   RenderSkyToStrip     the current lighting's sky (its HDRI, else its colours)
          *   CopyCaptureToStrip   a cube face InStages rendered (its linear scene colour)
-         *   PrefilterIBLBlock    the strip into atlas block InBlock (0-3 probes, 4 the sky)
+         *   PrefilterIBLBlock    the strip into atlas block InBlock (0-15 probes, 16 the sky)
          *   SetImageBasedLighting  what lights the next RenderSceneStages: InResources'
-         *                        atlas (null: none), InCount probes as Scene_Probes' vec4s
+         *                        atlas (null: none), InCount probes as LightList_Probes' vec4s
          *                        (3 each), and whether the sky block is valid
          *   SetSkyBackground     draw the sky (HDRI or colours) behind every view
          *                        while set: a reflection probe's captures

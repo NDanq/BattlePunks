@@ -125,6 +125,55 @@ def rect_light(color, intensity, width, height, light_range):
 """
 
 
+def reflection_probe(radius, frequency=2, resolution=128):
+    """Frequency: 0 every frame, 2 once (ESceneCaptureFrequency)."""
+    return f"""  <Component Type="Reflection Probe" Version="1">
+    <Radius Value="{radius}" />
+    <BoxExtent X="0" Y="0" Z="0" />
+    <Intensity Value="1" />
+    <Resolution Value="{resolution}" />
+    <Frequency Value="{frequency}" />
+    <Interval Value="1" />
+    <NearClip Value="5" />
+    <FarClip Value="20000" />
+    <CaptureShadows Value="true" />
+    <Enabled Value="true" />
+  </Component>
+"""
+
+
+# Phase 4: screen-space reflections up to roughness 0.8, TAA and tone mapping.
+PP_STACK = """<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="PostProcess">
+  <Nodes>
+    <Node Id="4c1b0e6f9a3d4e8bb0d1a2c3e4f50601" Type="Effect.ToneMapping" Version="1" X="-380" Y="-400">
+      <Prop Name="Exposure" Value="0" />
+      <Prop Name="Tone Mapper" Value="ACES" />
+    </Node>
+    <Node Id="4c1b0e6f9a3d4e8bb0d1a2c3e4f50602" Type="Effect.Antialiasing" Version="1" X="-380" Y="-240">
+      <Prop Name="Method" Value="TAA" />
+      <Prop Name="Quality" Value="Low" />
+    </Node>
+    <Node Id="4c1b0e6f9a3d4e8bb0d1a2c3e4f50603" Type="Effect.ScreenSpaceReflections" Version="1" X="-160" Y="-400">
+      <Prop Name="Intensity" Value="1" />
+      <Prop Name="Max Distance" Value="2000" />
+      <Prop Name="Max Roughness" Value="0.8" />
+      <Prop Name="Steps" Value="32" />
+      <Prop Name="Thickness" Value="25" />
+    </Node>
+  </Nodes>
+  <gen_code>
+    <Output Extension=".ppstack"><![CDATA[# Post process stack LightingLab
+Effect ScreenSpaceReflections Intensity=1 MaxRoughness=0.8 MaxDistance=2000 Thickness=25 Steps=32
+Effect ToneMapping Exposure=0 ToneMapper=ACES
+Effect Antialiasing EdgeThreshold=0.125 Sharpness=0.35 Method=TAA Quality=Low
+]]></Output>
+  </gen_code>
+</NodeGraph>
+"""
+PP_PATH = "Content/PostProcess/LightingLab/LightingLab.pp.nmgraph"
+
+
 def entity(name, body, mobility=None):
     g = guid(name)
     guids.append(g)
@@ -202,6 +251,23 @@ def level():
     entity("WarmPanel", rect_light((255, 170, 90), 4, 160, 300, 1200) + transform((590, 250, 300), (0, -90, 0)))
     entity("Bulb", point_light((200, 220, 255), 6, 600, source_radius=40) + transform((300, 220, 350)))
 
+    # Reflection probes (Phase 4): more than the old four -- a 3 x 3 grid over the room,
+    # overlapping so every corner is inside one,
+    # captured once, and one over the field captured every frame (its capture spread
+    # over frames, [Rendering] ProbeFacesPerFrame).
+    for row in range(3):
+        for col in range(3):
+            entity(f"RoomProbe{row * 3 + col}", reflection_probe(800)
+                   + transform((-400 + col * 400, 300, -400 + row * 400)))
+    entity("FieldProbe", reflection_probe(1400, frequency=0) + transform((2380, 200, -20)))
+    entity("PostProcess", f"""  <Component Type="Post Process" Version="2">
+    <Stack Value="{PP_PATH}" />
+    <Priority Value="0" />
+    <Enabled Value="true" />
+    <BlendDistance Value="0" />
+  </Component>
+""" + transform((0, 0, 0)))
+
     # The field: 144 small coloured point lights over the ground beside the room.
     for row in range(12):
         for col in range(12):
@@ -221,6 +287,9 @@ def main():
     for graph in MATERIALS:
         path = MAT_DIR / f"{graph.name}.material.nmgraph"
         graph.write(path)
+    pp = GAME_DIR / PP_PATH
+    pp.parent.mkdir(parents=True, exist_ok=True)
+    pp.write_text(PP_STACK, newline="\n")
     level()
     print(f"  {len(MATERIALS)} materials; Content/Levels/LightingLab.nmworld: {len(guids)} entities")
 
