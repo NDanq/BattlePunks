@@ -10,8 +10,8 @@
 
 const float LIGHTING_PI = 3.14159265;
 
-vec3 ToLinear(vec3 InColor)  { return pow(max(InColor, vec3(0.0)), vec3(2.2)); }
-vec3 ToDisplay(vec3 InColor) { return pow(max(InColor, vec3(0.0)), vec3(1.0 / 2.2)); }
+vec3 ToLinear(vec3 InColor)  { return SrgbToLinear(InColor); }
+vec3 ToDisplay(vec3 InColor) { return LinearToSrgb(InColor); }
 
 // Lit light into the scene colour: linear in an HDR scene (the tone map pass
 // makes it display space), display space in an 8-bit one.

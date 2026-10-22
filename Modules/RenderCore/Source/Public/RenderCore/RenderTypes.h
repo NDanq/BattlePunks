@@ -1,6 +1,7 @@
 #ifndef RENDERCORE_RENDERTYPES_H
 #define RENDERCORE_RENDERTYPES_H
 
+#include <cmath>
 #include <cstdint>
 
 #include "Public/Core/CoreTypes.h"
@@ -215,6 +216,19 @@ namespace RenderCore
         RGT_Particles,           // every particle emitter's compute passes, before the captures (not in Total)
         RGT_Count
     };
+
+    /* sRGB's transfer functions (IEC 61966-2-1), as Common.glsl's SrgbToLinear and
+     * LinearToSrgb: a display value, as authored, to linear light and back. */
+    inline float SrgbToLinear(const float InDisplay)
+    {
+        const float C = InDisplay > 0.0f ? InDisplay : 0.0f;
+        return C < 0.04045f ? C / 12.92f : std::pow((C + 0.055f) / 1.055f, 2.4f);
+    }
+    inline float LinearToSrgb(const float InLinear)
+    {
+        const float C = InLinear > 0.0f ? InLinear : 0.0f;
+        return C < 0.0031308f ? C * 12.92f : 1.055f * std::pow(C, 1.0f / 2.4f) - 0.055f;
+    }
 
     /* "BasePass", "Total", ... */
     inline const char* GetRenderGpuTimerName(const ERenderGpuTimer InTimer)

@@ -17,7 +17,7 @@ MATERIAL_SAMPLER2D(4, Strip)   // slot 0
 vec3 Radiance(vec3 InDirection)
 {
     vec3 Value = IBL_SampleStrip(Strip, InDirection);
-    return PP_Settings.y > 0.5 ? pow(max(Value, vec3(0.0)), vec3(2.2)) : Value;
+    return PP_Settings.y > 0.5 ? SrgbToLinear(Value) : Value;
 }
 
 vec2 Hammersley(int InIndex, int InCount)

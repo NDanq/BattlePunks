@@ -290,8 +290,8 @@ void SetLightingSurfaceModel(inout LightingSurface S, float InClearCoat, float I
     }
     S.T          = normalize(T);
     S.B          = cross(S.N, S.T);
-    S.Sheen      = pow(max(InSheen, vec3(0.0)), vec3(2.2));
-    S.Subsurface = pow(max(InSubsurface, vec3(0.0)), vec3(2.2));
+    S.Sheen      = SrgbToLinear(InSheen);
+    S.Subsurface = SrgbToLinear(InSubsurface);
     S.Thickness  = clamp(InThickness, 0.0, 1.0);
 }
 

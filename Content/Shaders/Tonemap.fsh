@@ -1,6 +1,6 @@
 #version 450 core
 // Tonemap.fsh -- the HDR scene colour (linear) to display space: exposure
-// (auto, then the stack's), the tone map operator, then 2.2 gamma
+// (auto, then the stack's), the tone map operator, then sRGB's curve
 // (RenderCore/RENDERPIPELINE.md, "HDR and tone mapping"). Runs first in the
 // post chain, so every effect after it (and every PostProcess material) sees
 // display space as before.
@@ -50,5 +50,5 @@ void main(void)
     }
     vec3 Linear = SceneAt(Interpolants.TexCoord) * Scene_Output.y * Auto;
     vec3 Mapped = ToneMap(Linear, Scene_Output.z);
-    Output = vec4(pow(Mapped, vec3(1.0 / 2.2)), 1.0);
+    Output = vec4(LinearToSrgb(Mapped), 1.0);
 }

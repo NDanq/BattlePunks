@@ -128,6 +128,19 @@ layout(std140, set=0, binding=1) uniform TR_Block { vec3 PositionWorldSpace; mat
 GDITransform Transform = GDITransform(PositionWorldSpace, Model, PrevModel);
 #endif
 
+// sRGB's transfer functions (IEC 61966-2-1): a display colour, as authored, to
+// linear light and back. Past 1 (emissive, HDR) the curve's power part goes on.
+vec3 SrgbToLinear(vec3 InDisplay)
+{
+    vec3 C = max(InDisplay, vec3(0.0));
+    return mix(C * (1.0 / 12.92), pow((C + 0.055) * (1.0 / 1.055), vec3(2.4)), step(vec3(0.04045), C));
+}
+vec3 LinearToSrgb(vec3 InLinear)
+{
+    vec3 C = max(InLinear, vec3(0.0));
+    return mix(C * 12.92, 1.055 * pow(C, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), C));
+}
+
 // Emissive past 1 in an 8-bit G-buffer target (GBuffer3): rgb the colour
 // divided by its brightest channel (when that is over 1), a that divisor as
 // log2 over GBUFFER_EMISSIVE_LOG_RANGE octaves -- up to 4096. The Lighting

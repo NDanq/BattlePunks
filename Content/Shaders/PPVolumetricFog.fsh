@@ -28,7 +28,7 @@ UBO_BLOCK_END(PP_Block)
 
 const float FOG_PI = 3.14159265;
 
-vec3 Linear(vec3 InDisplay) { return pow(max(InDisplay, vec3(0.0)), vec3(2.2)); }
+vec3 Linear(vec3 InDisplay) { return SrgbToLinear(InDisplay); }
 
 float Density(vec3 InWorld)
 {

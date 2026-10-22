@@ -1,6 +1,6 @@
 # Lighting and global illumination: plan
 
-Status: **Phase 0 landed.** Phases land in order on `dev-rendering`, one
+Status: **Phases 0-1 landed.** Phases land in order on `dev-rendering`, one
 commit each; each updates this note (and [RENDERPIPELINE.md](RENDERPIPELINE.md))
 with what was built, how it was checked and what it costs.
 
@@ -63,13 +63,26 @@ D3D12 (DXIL verified in the staged `.cso`); NodeGraph.Tests; DummyTest's
 skinned crash dummy draws posed on both (the skin blocks moved). No pixel
 changes.
 
-## Phase 1: true sRGB
+## Phase 1: true sRGB (landed)
 
-`ToLinear` / `ToDisplay` and every `pow(x, 2.2)` / `pow(x, 1 / 2.2)` that turns
-display colours into light become sRGB's piecewise curve [IEC 61966-2-1].
+Every `pow(x, 2.2)` / `pow(x, 1 / 2.2)` that turned display colours into light
+and back is sRGB's piecewise curve [IEC 61966-2-1]: `SrgbToLinear` /
+`LinearToSrgb` in `Common.glsl` (Lighting.glsl's `ToLinear` / `ToDisplay`,
+the tone map's output, the background's encoding, the IBL and fog passes,
+Skin's albedo, the shading models' colours), and `RenderCore::SrgbToLinear` /
+`LinearToSrgb` (RenderTypes.h) on the CPU: the sky's colours, the light bake's
+material colours, the texture viewer's HDR preview. `MATERIAL_TEMPLATE_VERSION`
+17 (it also covers Phase 0's skin bindings).
+
 **Changes pixels on purpose:** a display 0.5 is linear 0.214 instead of 0.218,
-darks differ most (display 0.04: 0.0031 instead of 0.0008). The bake measures
-materials through the same shaders, so it follows.
+and darks differ most (display 0.04: 0.0031 instead of 0.0008). DefaultLit's
+preview reads 187 188 192 (it read 186 187 191). A bake made before this was
+measured with the old curve; rebake to match exactly.
+
+Checked: RenderCore.Smoke on the GPU, 743 checks, none failing on Vulkan or
+D3D12 -- the clear-colour check now allows one step (display to linear in the
+half-float scene colour and back read 119 for 120 on one row); Courtyard and
+ShadingModelLab look as before, a shade richer in the darks.
 
 ## Phase 2: many lights
 
@@ -163,6 +176,18 @@ backends. Each phase records its GPU cost here, measured with `stat frame`.
 GPU milliseconds per stage, from the editor viewport (about 1234 x 857) with
 `stat frame`, on an NVIDIA GeForce RTX 2080 Ti; each the half-second average
 `stats` logs. A report at the end compares them.
+
+**Clocks.** The editor's viewport is a light load, so the GPU sits in low power
+states and its clock moves between runs (435 MHz idle of 2100; clocks cannot
+be locked without administrator rights). The same build measured three times
+on ShadingModelLab gave a Lighting stage of 0.36, 1.03 and 1.84 ms. So runs
+are compared only within one session from here on: the editor's new `config`
+command switches a phase's feature off and on, alternately, and the stage
+times on each side are averaged. The baseline rows below are one such run each
+and only show the order of things.
+
+Phase 1 adds a few ALU operations per colour conversion and has no switch; its
+cost is below this noise.
 
 | Phase | Level | Backend | BasePass | AO | Shadows | Lighting | Forward | Post | Total |
 |---|---|---|---|---|---|---|---|---|---|

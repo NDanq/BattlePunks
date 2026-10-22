@@ -65,7 +65,7 @@ void main(void)
 
     if(bComposite)
     {
-        vec3 Albedo = pow(max(texelFetch(GBuffer0, ivec2(gl_FragCoord.xy), 0).rgb, vec3(0.0)), vec3(2.2));
+        vec3 Albedo = SrgbToLinear(texelFetch(GBuffer0, ivec2(gl_FragCoord.xy), 0).rgb);
         Output = vec4(Sum * Albedo, 0.0);   // added to the scene colour
         return;
     }

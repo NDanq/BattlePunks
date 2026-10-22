@@ -37,7 +37,7 @@ void main(void)
     vec3 Position = World.xyz / World.w;
 
     int Model = DecodeShadingModel(Gb2.a);
-    LightingSurface S = MakeLightingSurface(Model, pow(max(Gb0.rgb, vec3(0.0)), vec3(2.2)), Gb2.r, Gb2.g, Gb2.b,
+    LightingSurface S = MakeLightingSurface(Model, SrgbToLinear(Gb0.rgb), Gb2.r, Gb2.g, Gb2.b,
                                             DecodeGBufferNormal(Gb1), normalize(Scene_CameraPosition.xyz - Position));
     if(Model != SHADING_MODEL_DEFAULT)
     {

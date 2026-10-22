@@ -1489,9 +1489,9 @@ namespace RenderCore
         {
             const auto Linear = [](float (&OutColor)[4], const EngineCore::Color InColor, const float InScale)
             {
-                OutColor[0] = std::pow(InColor.Rf(), 2.2f) * InScale;
-                OutColor[1] = std::pow(InColor.Gf(), 2.2f) * InScale;
-                OutColor[2] = std::pow(InColor.Bf(), 2.2f) * InScale;
+                OutColor[0] = SrgbToLinear(InColor.Rf()) * InScale;
+                OutColor[1] = SrgbToLinear(InColor.Gf()) * InScale;
+                OutColor[2] = SrgbToLinear(InColor.Bf()) * InScale;
                 OutColor[3] = 1.0f;
             };
             float Sky[4], Ground[4];
