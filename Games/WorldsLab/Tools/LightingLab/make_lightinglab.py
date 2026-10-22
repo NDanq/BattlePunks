@@ -240,7 +240,10 @@ def level():
     # The ground under everything, and the room.
     entity("Ground", render(BOX, M + "Floor.material.nmgraph") + transform((1200, -10, 0), scale=(8000, 20, 8000)))
     entity("BackWall", render(BOX, M + "White.material.nmgraph") + transform((0, 300, 610), scale=(1240, 600, 20)))
-    entity("Ceiling", render(BOX, M + "White.material.nmgraph") + transform((0, 610, 0), scale=(1240, 20, 1240)))
+    # The ceiling overhangs the back and side walls by more than the sun's shadow filter
+    # reaches at this distance (5 x 5 taps of about 20 units along the roof), or its far
+    # taps step off the roof's edge and the top of the walls is lit through it.
+    entity("Ceiling", render(BOX, M + "White.material.nmgraph") + transform((0, 615, 40), scale=(1400, 30, 1320)))
     entity("LeftWall", render(BOX, M + "Red.material.nmgraph") + transform((-610, 300, 0), scale=(20, 600, 1240)))
     entity("RightWall", render(BOX, M + "Green.material.nmgraph") + transform((610, 300, 0), scale=(20, 600, 1240)))
 

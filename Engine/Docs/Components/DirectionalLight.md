@@ -29,7 +29,7 @@ What the Details panel shows. The C++ members are public fields of `DirectionalL
 | `Cast Shadows` | uint8_t (flag) | true |  |
 | `Technique` | uint8_t | 2 | choice: Standard, Modulated, Cascaded |
 | `Modulated Tint` | Color | (40, 50, 80, 255) |  |
-| `Depth Bias` | float | 0.0015 |  |
+| `Depth Bias` | float | 0.0015 | Depth bias in shadow-map texels x 256 (0.0015: under half a texel), more where the light grazes. Larger keeps faces from shadowing themselves, but lets light through thin roofs and walls where they meet |
 | `Normal Bias` | float | 2 |  |
 | `Shadow Distance` | float | 4000 |  |
 | `Cascade Count` | int32_t | 4 |  |
