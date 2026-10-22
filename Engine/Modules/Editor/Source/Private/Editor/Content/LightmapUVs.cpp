@@ -137,7 +137,8 @@ namespace EditorContent
         Gather(InOutMesh.Normals,   Split.Normals,   3);
         Gather(InOutMesh.UV0,       Split.UV0,       2);
         Gather(InOutMesh.Colors,    Split.Colors,    4);
-        Gather(InOutMesh.Joints,    Split.Joints,    4);   // a skinned mesh's copies keep their bones
+        Gather(InOutMesh.Tangents,  Split.Tangents,  4);
+        Gather(InOutMesh.Joints,   Split.Joints,    4);   // a skinned mesh's copies keep their bones
         Gather(InOutMesh.Weights,   Split.Weights,   4);
 
         Split.UV1.assign(Sources.size() * 2, 0.0f);

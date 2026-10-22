@@ -19,7 +19,8 @@
 #endif
 
 // Quads and the full-screen pass: position and UV. Meshes (GDICreateMesh)
-// add the normal at 8, the colour at 9 and the lightmap UVs (UV1) at 10.
+// add the normal at 8, the colour at 9, the lightmap UVs (UV1) at 10 and the
+// tangent at 13 (zero for a mesh without tangents: MeshAsset.h).
 // An instanced mesh (GDISetInstanceBuffer) adds each instance's transform at
 // 2-5 and its colour at 7 (GDIBuffer.h); a skinned mesh, its bone indices at
 // 11 and weights at 12 (Skinning.glsl).
@@ -29,6 +30,7 @@ ATTRIB(1, in, vec2, InTexCoord)
 ATTRIB(8, in, vec3, InNormal)
 ATTRIB(9, in, vec4, InColor)
 ATTRIB(10, in, vec2, InUV1)
+ATTRIB(13, in, vec4, InTangent)
 #endif
 #if MATERIAL_VERTEX_SKINNEDMESH
 ATTRIB(11, in, vec4, InJoints)
@@ -74,6 +76,7 @@ void main(void)
     SkinRows(InJoints, InWeights, SkinRow0, SkinRow1, SkinRow2);
     vec3 LocalPosition = SkinPoint(SkinRow0, SkinRow1, SkinRow2, InPosition);
     vec3 LocalNormal   = SkinDirection(SkinRow0, SkinRow1, SkinRow2, InNormal);
+    vec3 LocalTangent  = SkinDirection(SkinRow0, SkinRow1, SkinRow2, InTangent.xyz);
     vec4 PrevRow0, PrevRow1, PrevRow2;
     PrevSkinRows(InJoints, InWeights, PrevRow0, PrevRow1, PrevRow2);
     vec3 PrevLocalPosition = SkinPoint(PrevRow0, PrevRow1, PrevRow2, InPosition);
@@ -82,12 +85,19 @@ void main(void)
     vec3 PrevLocalPosition = InPosition;
 #if MATERIAL_VERTEX_MESH || MATERIAL_VERTEX_INSTANCEDMESH
     vec3 LocalNormal   = InNormal;
+    vec3 LocalTangent  = InTangent.xyz;
 #endif
 #endif
     Inputs.WorldPosition = (Model * vec4(LocalPosition, 1.0)).xyz;
 #if MATERIAL_VERTEX_MESH || MATERIAL_VERTEX_INSTANCEDMESH || MATERIAL_VERTEX_SKINNEDMESH
     // The inverse transpose, so a non-uniform Scale keeps normals perpendicular.
     Inputs.WorldNormal = normalize(transpose(inverse(mat3(Model))) * LocalNormal);
+    // A tangent lies along the surface, so the transform itself carries it. A
+    // mirroring one (a negative Scale) turns the normal and tangent's cross
+    // product round, and the bitangent's sign with it. Zero stays zero.
+    vec3  WorldTangent = mat3(Model) * LocalTangent;
+    float TangentSign  = InTangent.w * (determinant(mat3(Model)) < 0.0 ? -1.0 : 1.0);
+    WorldTangent      *= dot(WorldTangent, WorldTangent) > 1e-12 ? inversesqrt(dot(WorldTangent, WorldTangent)) : 0.0;
 #if MATERIAL_VERTEX_INSTANCEDMESH
     Inputs.Color       = InColor * InInstanceColor;
 #else
@@ -119,6 +129,9 @@ void main(void)
     // and a skinned mesh's pose the frame before. A World Position Offset is
     // taken to be the same both frames.
     Interpolants.WorldMotion = Inputs.WorldPosition - (PrevModel * vec4(PrevLocalPosition, 1.0)).xyz;
+#if MATERIAL_VERTEX_MESH || MATERIAL_VERTEX_INSTANCEDMESH || MATERIAL_VERTEX_SKINNEDMESH
+    Interpolants.WorldTangent = vec4(WorldTangent, TangentSign);
+#endif
     gl_Position = Clip;
 #endif
 }

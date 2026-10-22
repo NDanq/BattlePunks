@@ -327,6 +327,10 @@ bool GDIMakeIndexedRenderData(const GDIMeshDesc& InDesc, GDIMesh::ORenderData& O
     /* Zero without lightmap UVs, so the stream is always there too. */
     Data.UV1 = InDesc.UV1 ? static_cast<float*>(Copy(InDesc.UV1, sizeof(float) * 2 * InDesc.NumVertices))
                           : static_cast<float*>(calloc(size_t(InDesc.NumVertices) * 2, sizeof(float)));
+    /* Zero without tangents: the material templates then take one from the
+     * UV's screen derivatives (MaterialCommon.glsl). */
+    Data.Tangent = InDesc.Tangents ? static_cast<float*>(Copy(InDesc.Tangents, sizeof(float) * 4 * InDesc.NumVertices))
+                                   : static_cast<float*>(calloc(size_t(InDesc.NumVertices) * 4, sizeof(float)));
     /* Skinning streams only when both are given: a static mesh has neither. */
     const bool bSkinned = InDesc.Joints && InDesc.Weights;
     if(bSkinned)
@@ -340,13 +344,14 @@ bool GDIMakeIndexedRenderData(const GDIMeshDesc& InDesc, GDIMesh::ORenderData& O
     /* As CreateQuadMesh: the POSITION FLOAT count, not the vertex count. */
     Data.NumVertices = InDesc.NumVertices * 3;
 
-    if(!Data.Position || !Data.Normal || !Data.TexCoord || !Data.Color || !Data.UV1 || !Data.Indices
+    if(!Data.Position || !Data.Normal || !Data.TexCoord || !Data.Color || !Data.UV1 || !Data.Tangent || !Data.Indices
        || (bSkinned && (!Data.Joints || !Data.Weights)))
     {
         free(Data.Position);
         free(Data.Normal);
         free(Data.Color);
         free(Data.UV1);
+        free(Data.Tangent);
         free(Data.Joints);
         free(Data.Weights);
         free(Data.TexCoord);

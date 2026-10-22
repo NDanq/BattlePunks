@@ -55,25 +55,14 @@ def material(name, model, consts, two_sided=False):
     return g
 
 
-def brushed_steel():
-    """Brushed round the sphere: its Tangent the vertex normal across +Y, smooth
-    everywhere but the poles. (Unlinked, Tangent follows the UV's U from screen
-    derivatives, which is faceted on a low-poly curve: meshes carry no tangents yet.)"""
-    g = material("BrushedSteel", "Anisotropic", {"BaseColor": cy.vec(0.9, 0.9, 0.92), "Metallic": "1",
-                                                 "Roughness": "0.35", "Anisotropy": "0.85"})
-    out = g.nodes[0][0]
-    normal = g.node("Input.VertexNormal")
-    across = g.node("Vector.Cross", consts={"B": cy.vec(0, 1, 0)})
-    g.link(normal, "Normal", across, "A")
-    g.link(across, "Out", out, "Tangent")
-    return g
-
-
 MATERIALS = [
     material("Plastic", "Default", {"BaseColor": cy.vec(0.6, 0.06, 0.05), "Roughness": "0.35"}),
     material("CarPaint", "ClearCoat", {"BaseColor": cy.vec(0.45, 0.02, 0.03), "Metallic": "0.6", "Roughness": "0.45",
                                        "ClearCoat": "1", "ClearCoatRoughness": "0.03"}),
-    brushed_steel(),
+    # Brushed round the sphere: its Tangent unlinked, so the mesh's own, along the
+    # UV's U -- the Sphere's lines of latitude, smooth across its triangles (MTAN).
+    material("BrushedSteel", "Anisotropic", {"BaseColor": cy.vec(0.9, 0.9, 0.92), "Metallic": "1",
+                                             "Roughness": "0.35", "Anisotropy": "0.85"}),
     material("Velvet", "Cloth", {"BaseColor": cy.vec(0.22, 0.03, 0.1), "Roughness": "0.75",
                                  "SheenColor": cy.vec(0.95, 0.55, 0.75)}),
     material("Wax", "Subsurface", {"BaseColor": cy.vec(0.93, 0.85, 0.62), "Roughness": "0.4",

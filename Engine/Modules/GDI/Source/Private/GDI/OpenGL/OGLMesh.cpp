@@ -131,17 +131,19 @@ void OpenGLMesh::InitDynamicResource()
     glGenBuffers(1, &NormalVBO);
     glGenBuffers(1, &ColorVBO);
     glGenBuffers(1, &UV1VBO);
+    glGenBuffers(1, &TangentVBO);
     glGenBuffers(1, &IndexEBO);
 
-    /* The streams of GDIMeshDesc's layout, at capacity. Normals and UV1 are
-     * zero once here: UpdateDynamic writes them only when given. */
-    const std::vector<float> Zero(size_t(NumVerts) * 3, 0.0f);
+    /* The streams of GDIMeshDesc's layout, at capacity. Normals, UV1 and
+     * tangents are zero once here: UpdateDynamic writes them only when given. */
+    const std::vector<float> Zero(size_t(NumVerts) * 4, 0.0f);
     const struct { uint Buffer; GLuint Location; GLint Floats; const float* Initial; } Streams[] = {
         { VBO[ORenderData::Buffers::VERTEX_BUFFER],   0,  3, nullptr     },
         { VBO[ORenderData::Buffers::TEXCOORD_BUFFER], 1,  2, nullptr     },
         { NormalVBO,                                  8,  3, Zero.data() },
         { ColorVBO,                                   9,  4, nullptr     },
         { UV1VBO,                                     10, 2, Zero.data() },
+        { TangentVBO,                                 13, 4, Zero.data() },
     };
     for(const auto& Each : Streams)
     {
@@ -175,6 +177,7 @@ bool OpenGLMesh::WriteDynamic(const GDIMeshDesc& InDesc, const uint32_t InBaseVe
     Write(VBO[ORenderData::Buffers::TEXCOORD_BUFFER], GL_ARRAY_BUFFER, sizeof(float) * 2, InBaseVertex, N, InDesc.UV0);
     if(InDesc.Normals) Write(NormalVBO, GL_ARRAY_BUFFER, sizeof(float) * 3, InBaseVertex, N, InDesc.Normals);
     if(InDesc.UV1)     Write(UV1VBO,    GL_ARRAY_BUFFER, sizeof(float) * 2, InBaseVertex, N, InDesc.UV1);
+    if(InDesc.Tangents) Write(TangentVBO, GL_ARRAY_BUFFER, sizeof(float) * 4, InBaseVertex, N, InDesc.Tangents);
     if(InDesc.Colors)
     {
         Write(ColorVBO, GL_ARRAY_BUFFER, sizeof(float) * 4, InBaseVertex, N, InDesc.Colors);
@@ -248,6 +251,15 @@ void OpenGLMesh::InitResource()
         glBufferData(GL_ARRAY_BUFFER, (NumVertices / 3) * 2 * sizeof(float), RenderData.UV1, GL_STATIC_DRAW);
         glEnableVertexAttribArray(10);
         glVertexAttribPointer(10, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    }
+
+    if( RenderData.Tangent && IsIndexed() )
+    {
+        glGenBuffers(1, &TangentVBO);
+        glBindBuffer(GL_ARRAY_BUFFER, TangentVBO);
+        glBufferData(GL_ARRAY_BUFFER, (NumVertices / 3) * 4 * sizeof(float), RenderData.Tangent, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(13);
+        glVertexAttribPointer(13, 4, GL_FLOAT, GL_FALSE, 0, nullptr);
     }
 
     if( IsSkinned() )
@@ -327,7 +339,8 @@ void OpenGLMesh::Release()
         if(NormalVBO) { glDeleteBuffers(1, &NormalVBO); NormalVBO = 0; }
         if(ColorVBO)  { glDeleteBuffers(1, &ColorVBO);  ColorVBO  = 0; }
         if(UV1VBO)    { glDeleteBuffers(1, &UV1VBO);    UV1VBO    = 0; }
-        if(JointVBO)  { glDeleteBuffers(1, &JointVBO);  JointVBO  = 0; }
+        if(TangentVBO) { glDeleteBuffers(1, &TangentVBO); TangentVBO = 0; }
+        if(JointVBO) { glDeleteBuffers(1, &JointVBO);  JointVBO  = 0; }
         if(WeightVBO) { glDeleteBuffers(1, &WeightVBO); WeightVBO = 0; }
         if(IndexEBO)  { glDeleteBuffers(1, &IndexEBO);  IndexEBO  = 0; }
         glDeleteVertexArrays(1, &VAO);

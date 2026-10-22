@@ -269,6 +269,9 @@ set(NIMBLE_EDITOR_IMPORT_SOURCES
         Source/Private/Editor/Content/GltfImporter.h
         Source/Private/Editor/Content/LightmapUVs.cpp
         Source/Private/Editor/Content/LightmapUVs.h
+        Source/Private/Editor/Content/MeshTangents.cpp
+        Source/Private/Editor/Content/MeshTangents.h
+        Source/Private/Editor/Content/MikkTSpaceImpl.cpp
 )
 list(APPEND NIMBLE_EDITOR_SOURCES ${NIMBLE_EDITOR_IMPORT_SOURCES})
 
@@ -302,6 +305,12 @@ endif()
 # NimbleXatlas: lightmap UV charts, LightmapUVs.cpp) are vendored at
 # Engine/ThirdParty/Source; xatlas is built by Engine/ThirdParty/CMakeLists.txt.
 set(NIMBLE_EDITOR_CGLTF_DIR "${NIMBLE_THIRDPARTY_CGLTF_DIR}")
+# MikkTSpace (zlib; mesh tangents, MeshTangents.cpp) is vendored there too and
+# compiled as C++ by MikkTSpaceImpl.cpp, the engine project having no C.
+set_source_files_properties(
+        Source/Private/Editor/Content/MeshTangents.cpp
+        Source/Private/Editor/Content/MikkTSpaceImpl.cpp
+        PROPERTIES INCLUDE_DIRECTORIES "${NIMBLE_THIRDPARTY_MIKKTSPACE_DIR}")
 
 add_executable(NimbleEditor WIN32 ${NIMBLE_EDITOR_SOURCES})
 # The application icon: the .exe's own icon on Windows (Explorer, the taskbar

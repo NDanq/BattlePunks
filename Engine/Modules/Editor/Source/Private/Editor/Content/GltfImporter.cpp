@@ -2,6 +2,7 @@
 
 #include "Private/Editor/Content/GltfImporter.h"
 #include "Private/Editor/Content/LightmapUVs.h"
+#include "Private/Editor/Content/MeshTangents.h"
 
 #include <algorithm>
 #include <cmath>
@@ -139,6 +140,15 @@ namespace EditorContent
                 for(int Row = 0; Row < 3; ++Row)
                 {
                     OutP[Row] = M[Row] * InP[0] + M[4 + Row] * InP[1] + M[8 + Row] * InP[2] + M[12 + Row];
+                }
+            }
+
+            /* A direction along the surface (a tangent): the matrix itself, no translation. */
+            void Along(const float* InV, float* OutV) const
+            {
+                for(int Row = 0; Row < 3; ++Row)
+                {
+                    OutV[Row] = M[Row] * InV[0] + M[4 + Row] * InV[1] + M[8 + Row] * InV[2];
                 }
             }
 
@@ -648,6 +658,8 @@ namespace EditorContent
             const cgltf_accessor* UVs       = FindAttribute(InPrimitive, cgltf_attribute_type_texcoord, 0);
             const cgltf_accessor* Colors    = FindAttribute(InPrimitive, cgltf_attribute_type_color, 0);
             const cgltf_accessor* UV1s      = FindAttribute(InPrimitive, cgltf_attribute_type_texcoord, 1);
+            /* TANGENT means nothing without the normals it was made against. */
+            const cgltf_accessor* Tangents  = Normals ? FindAttribute(InPrimitive, cgltf_attribute_type_tangent, 0) : nullptr;
             if(!Positions || Positions->count == 0)
             {
                 OutWarnings << QStringLiteral("%1: skipped -- it has no positions").arg(InSectionName);
@@ -714,6 +726,16 @@ namespace EditorContent
             /* Not Colors.empty(): the first primitive's backfill is empty. */
             const bool bWriteColors = Colors || bTint || !InOutMesh.Colors.empty();
 
+            /* A mirror flips winding -- the node's transform, the axis
+             * conversion, or both (which cancel); swap two corners to undo it. */
+            const bool bSwap = InTransform.bMirrors != InOptions.bConvertCoordinates;
+
+            /* glTF's bitangent, w * cross(normal, tangent), runs up the image:
+             * along -V (its UVs start at the top). MeshData's runs along +V,
+             * which flips w -- and a mirror flips it back, since it reverses
+             * the cross product of the normal and tangent it carries. */
+            const float TangentSign = bSwap ? 1.0f : -1.0f;
+
             for(cgltf_size Vertex = 0; Vertex < VertexCount; ++Vertex)
             {
                 float Source[3] = {0.0f, 0.0f, 0.0f};
@@ -752,6 +774,21 @@ namespace EditorContent
                     InOutMesh.UV1.push_back(UV1[1]);
                 }
 
+                /* Tangents (TANGENT) the same way: LoadGltf generates the
+                 * mesh's if any primitive lacks them. */
+                if(Tangents)
+                {
+                    float Read[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+                    float Tangent[3];
+                    cgltf_accessor_read_float(Tangents, Vertex, Read, 4);
+                    InTransform.Along(Read, Tangent);
+                    Normalize(Tangent);
+                    InOutMesh.Tangents.push_back(Tangent[0]);
+                    InOutMesh.Tangents.push_back(Tangent[1]);
+                    InOutMesh.Tangents.push_back(Tangent[2] * Flip);
+                    InOutMesh.Tangents.push_back(Read[3] < 0.0f ? -TangentSign : TangentSign);
+                }
+
                 if(bWriteColors)
                 {
                     /* Float or normalised integers alike; a vec3 colour keeps alpha 1. */
@@ -771,9 +808,6 @@ namespace EditorContent
                 }
             }
 
-            /* A mirror flips winding -- the node's transform, the axis
-             * conversion, or both (which cancel); swap two corners to undo it. */
-            const bool bSwap = InTransform.bMirrors != InOptions.bConvertCoordinates;
             const size_t FirstIndex = InOutMesh.Indices.size();
             for(cgltf_size At = 0; At < IndexCount; At += 3)
             {
@@ -963,6 +997,13 @@ namespace EditorContent
         for(GltfMesh& Each : OutMeshes)
         {
             RenderCore::MeshData& Mesh = Each.Data;
+            /* Some primitives without TANGENT: the whole mesh's are generated
+             * (below), so none are copied through the lightmap seams. */
+            const bool bFileTangents = Mesh.Tangents.size() == size_t(Mesh.GetVertexCount()) * 4;
+            if(!bFileTangents)
+            {
+                Mesh.Tangents.clear();
+            }
             if(Mesh.UV1.size() != size_t(Mesh.GetVertexCount()) * 2)
             {
                 /* A skinned mesh moves: never lightmapped, so no seams cut for it. */
@@ -971,6 +1012,16 @@ namespace EditorContent
                 if(InOptions.bGenerateLightmapUVs && !Mesh.IsSkinned() && !GenerateLightmapUVs(Mesh, Error))
                 {
                     OutWarnings << QStringLiteral("%1: no lightmap UVs -- %2").arg(Each.Name, QString::fromStdString(Error));
+                }
+            }
+            /* After the lightmap UVs, whose seams copy the file's tangents
+             * with their vertices; MikkTSpace's own splits copy UV1. */
+            if(!bFileTangents)
+            {
+                if(!GenerateMeshTangents(Mesh))
+                {
+                    OutWarnings << QStringLiteral("%1: no tangents -- anisotropic and normal-mapped materials take "
+                                                  "theirs from the UVs per pixel").arg(Each.Name);
                 }
             }
             RenderCore::ComputeMeshBounds(Mesh);

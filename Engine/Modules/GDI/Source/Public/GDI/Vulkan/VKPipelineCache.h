@@ -73,8 +73,9 @@ enum EDescriptorLayoutGroup : uint32_t
  *   0 — standard:  binding 0 = vec3 position, binding 1 = vec2 texcoord
  *   1 — instanced: bindings 0+1 as above, binding 2 = mat4 per-instance transform
  *   2 — mesh:      bindings 0+1 as above, binding 2 = vec3 normal (location 8),
- *                  binding 3 = vec4 colour (location 9); an indexed mesh from
- *                  GDICreateMesh
+ *                  binding 3 = vec4 colour (location 9), binding 4 = vec2 UV1
+ *                  (location 10), binding 8 = vec4 tangent (location 13; in 3
+ *                  and 4 too); an indexed mesh from GDICreateMesh
  *   3 — mesh, instanced: 2 plus the instance buffer at binding 5
  *   4 — mesh, skinned: 2 plus bone indices and weights at bindings 6 and 7
  *                  (locations 11 and 12)

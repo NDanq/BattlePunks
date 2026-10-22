@@ -237,6 +237,15 @@ the mesh has none), stored as an optional `MUV1` chunk. The vertex stage
 passes them through as `Interpolants.LightmapUV`; only the Base Pass reads
 them, for baked lighting (RENDERPIPELINE.md, "Baked lighting").
 
+Tangents are another, at location 13 (`GDIMeshDesc::Tangents`, vec4: xyz along
+UV0's U, w the bitangent's sign; zero when the mesh has none), stored as an
+optional `MTAN` chunk. The vertex stage carries xyz by the model transform
+(rotated by the bones too, for a skinned mesh), flips w under a mirroring one,
+and passes them as `Interpolants.WorldTangent`; the pixel stage's
+`Inputs.WorldTangent`. The Normal Map node and an Anisotropic material's
+default Tangent read it, and take their frame from the UV's screen
+derivatives where it is zero (SHADING_MODELS.md, "Tangents").
+
 `WorldMotion` (vec3) is how far the surface moved in the world since the
 frame before: the material vertex stage takes its position less where
 `Transform.PrevModel` (and, skinned, the previous skin block at binding 13)

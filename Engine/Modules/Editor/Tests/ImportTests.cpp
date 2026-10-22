@@ -25,6 +25,7 @@
 #include "Public/RenderCore/SkeletonAsset.h"
 #include "Public/RenderCore/TextureAsset.h"
 #include "Private/Editor/Content/AssetImport.h"
+#include "Private/Editor/Content/GltfImporter.h"
 #include "Private/Editor/Content/LightmapUVs.h"
 #if WITH_AUDIO
 #include "Public/Audio/SoundAsset.h"
@@ -658,6 +659,141 @@ static void TestMeshImport(const QDir& InRoot)
     Expect(TextureAgain.bOK, "a texture reimports");
 }
 
+/*
+ * Tangents.gltf, three meshes facing +Z (the viewer), UV's U along +X and V
+ * down the image (-Y), glTF's way:
+ *   "Made"     a unit quad without TANGENT: MikkTSpace's
+ *   "Given"    the same quad with TANGENT (1,0,0,1): +X, its bitangent
+ *              cross(+Z, +X) = +Y up the image, as glTF's runs
+ *   "Mirrored" a 2 x 1 strip whose right half's U runs back (a mirrored UV
+ *              island), sharing the seam's two vertices with the left
+ */
+static void WriteTangentScene(const QDir& InFolder)
+{
+    const float QuadPos[12] = { 0, 0, 0,   1, 0, 0,   1, 1, 0,   0, 1, 0 };
+    const float QuadNrm[12] = { 0, 0, 1,   0, 0, 1,   0, 0, 1,   0, 0, 1 };
+    const float QuadUV[8]   = { 0, 1,      1, 1,      1, 0,      0, 0 };
+    const float QuadTan[16] = { 1, 0, 0, 1,   1, 0, 0, 1,   1, 0, 0, 1,   1, 0, 0, 1 };
+    const uint16_t QuadIdx[6] = { 0, 1, 2,   0, 2, 3 };
+    const float StripPos[18] = { 0, 0, 0,   1, 0, 0,   2, 0, 0,   0, 1, 0,   1, 1, 0,   2, 1, 0 };
+    const float StripNrm[18] = { 0, 0, 1,   0, 0, 1,   0, 0, 1,   0, 0, 1,   0, 0, 1,   0, 0, 1 };
+    const float StripUV[12]  = { 0, 1,      1, 1,      0, 1,      0, 0,      1, 0,      0, 0 };
+    const uint16_t StripIdx[12] = { 0, 1, 4,   0, 4, 3,   1, 2, 5,   1, 5, 4 };
+
+    QByteArray Buffer;
+    const auto Add = [&Buffer](const void* InData, const int InBytes) { Buffer.append(static_cast<const char*>(InData), InBytes); };
+    Add(QuadPos, sizeof(QuadPos));     //   0..48
+    Add(QuadNrm, sizeof(QuadNrm));     //  48..96
+    Add(QuadUV, sizeof(QuadUV));       //  96..128
+    Add(QuadTan, sizeof(QuadTan));     // 128..192
+    Add(QuadIdx, sizeof(QuadIdx));     // 192..204
+    Add(StripPos, sizeof(StripPos));   // 204..276
+    Add(StripNrm, sizeof(StripNrm));   // 276..348
+    Add(StripUV, sizeof(StripUV));     // 348..396
+    Add(StripIdx, sizeof(StripIdx));   // 396..420
+
+    const QString Json = QStringLiteral(R"({
+  "asset": { "version": "2.0" },
+  "scene": 0,
+  "scenes": [ { "nodes": [0, 1, 2] } ],
+  "nodes": [ { "name": "Made", "mesh": 0 }, { "name": "Given", "mesh": 1 }, { "name": "Mirrored", "mesh": 2 } ],
+  "meshes": [
+    { "name": "Made",     "primitives": [ { "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 }, "indices": 4 } ] },
+    { "name": "Given",    "primitives": [ { "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2, "TANGENT": 3 }, "indices": 4 } ] },
+    { "name": "Mirrored", "primitives": [ { "attributes": { "POSITION": 5, "NORMAL": 6, "TEXCOORD_0": 7 }, "indices": 8 } ] }
+  ],
+  "buffers": [ { "byteLength": %1, "uri": "data:application/octet-stream;base64,%2" } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0,   "byteLength": 48 },
+    { "buffer": 0, "byteOffset": 48,  "byteLength": 48 },
+    { "buffer": 0, "byteOffset": 96,  "byteLength": 32 },
+    { "buffer": 0, "byteOffset": 128, "byteLength": 64 },
+    { "buffer": 0, "byteOffset": 192, "byteLength": 12 },
+    { "buffer": 0, "byteOffset": 204, "byteLength": 72 },
+    { "buffer": 0, "byteOffset": 276, "byteLength": 72 },
+    { "buffer": 0, "byteOffset": 348, "byteLength": 48 },
+    { "buffer": 0, "byteOffset": 396, "byteLength": 24 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 4, "type": "VEC3", "min": [0,0,0], "max": [1,1,0] },
+    { "bufferView": 1, "componentType": 5126, "count": 4, "type": "VEC3" },
+    { "bufferView": 2, "componentType": 5126, "count": 4, "type": "VEC2" },
+    { "bufferView": 3, "componentType": 5126, "count": 4, "type": "VEC4" },
+    { "bufferView": 4, "componentType": 5123, "count": 6, "type": "SCALAR" },
+    { "bufferView": 5, "componentType": 5126, "count": 6, "type": "VEC3", "min": [0,0,0], "max": [2,1,0] },
+    { "bufferView": 6, "componentType": 5126, "count": 6, "type": "VEC3" },
+    { "bufferView": 7, "componentType": 5126, "count": 6, "type": "VEC2" },
+    { "bufferView": 8, "componentType": 5123, "count": 12, "type": "SCALAR" }
+  ]
+})").arg(Buffer.size()).arg(QString::fromLatin1(Buffer.toBase64()));
+
+    QFile File(InFolder.filePath(QStringLiteral("Tangents.gltf")));
+    File.open(QIODevice::WriteOnly);
+    File.write(Json.toUtf8());
+}
+
+static void TestTangentImport(const QDir& InRoot)
+{
+    std::printf("[tangents]\n");
+    WriteTangentScene(QDir(InRoot.filePath(QStringLiteral("Source"))));
+
+    MeshImportOptions Options;
+    Options.Scale                = 1.0f;
+    Options.bCombineMeshes       = false;
+    Options.bGenerateLightmapUVs = false;   // its seams would split vertices too
+    QList<GltfMesh> Meshes;
+    QList<ReferencedImage> Images;
+    QStringList Warnings;
+    QString Error;
+    const bool bLoaded = LoadGltf(InRoot.filePath(QStringLiteral("Source/Tangents.gltf")), Options, Meshes, Images, Warnings, Error);
+    Expect(bLoaded && Meshes.size() == 3, "the tangent scene loads, a mesh per node");
+    if(!bLoaded || Meshes.size() != 3) { return; }
+    const RenderCore::MeshData& Made     = Meshes[0].Data;
+    const RenderCore::MeshData& Given    = Meshes[1].Data;
+    const RenderCore::MeshData& Mirrored = Meshes[2].Data;
+
+    const auto IsFrame = [](const RenderCore::MeshData& InMesh, const uint32_t InVertex, const float InX, const float InW)
+    {
+        const float* T = &InMesh.Tangents[size_t(InVertex) * 4];
+        return Near(T[0], InX) && Near(T[1], 0.0f) && Near(T[2], 0.0f) && T[3] == InW;
+    };
+
+    /* Engine space: the normal is -Z, +X stays, and +V (down the image) is -Y:
+     * cross(-Z, +X) = -Y, so w is +1. */
+    Expect(Made.Tangents.size() == 4 * 4 && Made.GetVertexCount() == 4, "a mesh without TANGENT gets one per vertex, no splits");
+    if(Made.Tangents.size() == 4 * 4)
+    {
+        bool bAll = true;
+        for(uint32_t Vertex = 0; Vertex < 4; ++Vertex) { bAll &= IsFrame(Made, Vertex, 1.0f, 1.0f); }
+        Expect(bAll, "MikkTSpace's runs along +U, its bitangent w * cross(N, T) along +V");
+    }
+    Expect(Given.Tangents == Made.Tangents, "glTF's TANGENT converts to the same frame MikkTSpace makes (its w turned to +V's)");
+
+    /* The seam's two vertices are in both halves, whose frames differ: each
+     * gets a copy, and the right half's corners use them. */
+    Expect(Mirrored.GetVertexCount() == 8 && Mirrored.Tangents.size() == 8 * 4, "a mirrored UV seam splits its vertices");
+    if(Mirrored.GetVertexCount() == 8 && Mirrored.Tangents.size() == 8 * 4)
+    {
+        bool bLeft = true, bRight = true;
+        for(size_t Corner = 0; Corner < 6; ++Corner)  { bLeft  &= IsFrame(Mirrored, Mirrored.Indices[Corner], 1.0f, 1.0f); }
+        for(size_t Corner = 6; Corner < 12; ++Corner) { bRight &= IsFrame(Mirrored, Mirrored.Indices[Corner], -1.0f, -1.0f); }
+        Expect(bLeft && bRight, "the left half's tangent is +X, the mirrored half's -X with the other handedness");
+        /* The copies (6, 7) are the seam's (1 and 4, at x = 1), in either order. */
+        const auto SameVertex = [&Mirrored](const uint32_t InA, const uint32_t InB)
+        {
+            for(int Axis = 0; Axis < 3; ++Axis)
+            {
+                if(!Near(Mirrored.Positions[InA * 3 + Axis], Mirrored.Positions[InB * 3 + Axis])) { return false; }
+            }
+            return Near(Mirrored.UV0[InA * 2], Mirrored.UV0[InB * 2]) && Near(Mirrored.UV0[InA * 2 + 1], Mirrored.UV0[InB * 2 + 1]);
+        };
+        Expect(Mirrored.Positions.size() == 8 * 3 && Mirrored.UV0.size() == 8 * 2 && Mirrored.Normals.size() == 8 * 3
+               && ((SameVertex(6, 1) && SameVertex(7, 4)) || (SameVertex(6, 4) && SameVertex(7, 1))),
+               "the copies carry their vertex's other streams");
+        Expect(Mirrored.Sections.size() == 1 && Mirrored.Sections[0].IndexCount == 12, "and the section keeps its range");
+    }
+}
+
 static void TestTextureImport(const QDir& InRoot)
 {
     std::printf("[texture import]\n");
@@ -855,6 +991,7 @@ int main(int argc, char** argv)
 
     TestClassify();
     TestMeshImport(Root);
+    TestTangentImport(Root);
     TestTextureImport(Root);
     TestAnimationImport(Root);
     TestAnimationOnlyImport(Root);

@@ -25,7 +25,7 @@ static constexpr uint32_t kLayoutMeshSkinned   = 4;   // kLayoutMesh + bone indi
 
 /** Maximum vertex bindings / attributes across all known layouts */
 static constexpr uint32_t kMaxBindings = 8;
-static constexpr uint32_t kMaxAttribs  = 10;
+static constexpr uint32_t kMaxAttribs  = 11;
 
 /** Push-constant range (bytes). Included in all layouts for future use. */
 static constexpr uint32_t kPushConstantBytes = 128;
@@ -220,6 +220,19 @@ void VKPipelineCache::GetVertexInputState(
             OutAttribs[9].offset   = sizeof(float) * 16;
             OutAttribCount = 10;
         }
+
+        // Binding 8 / location 13: vec4 tangent, per vertex -- after whichever
+        // of the above the layout has.
+        OutBindings[OutBindingCount].binding   = 8;
+        OutBindings[OutBindingCount].stride    = sizeof(float) * 4;
+        OutBindings[OutBindingCount].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        ++OutBindingCount;
+
+        OutAttribs[OutAttribCount].location = 13;
+        OutAttribs[OutAttribCount].binding  = 8;
+        OutAttribs[OutAttribCount].format   = VK_FORMAT_R32G32B32A32_SFLOAT;
+        OutAttribs[OutAttribCount].offset   = 0;
+        ++OutAttribCount;
         return;
     }
 

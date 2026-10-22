@@ -4,7 +4,7 @@
 
 // Bumped when a change here or in the templates breaks shader caches cooked
 // before it; RenderCore refuses a cache that disagrees (MaterialPermutation.h).
-#define MATERIAL_TEMPLATE_VERSION 15
+#define MATERIAL_TEMPLATE_VERSION 16
 
 // What input nodes read. Each stage's template fills it; the pixel-only
 // fields exist only in the pixel stage, so a pixel-only node in the vertex
@@ -20,6 +20,7 @@ struct MaterialInputs
     vec4  FragCoord;
     float ViewDepth;        // linear, world units in front of the camera
     float DeviceDepth;      // gl_FragCoord.z
+    vec4  WorldTangent;     // the mesh's tangent along UV0's U, w the bitangent's sign; zero without (MeshAsset.h)
 #endif
 };
 
@@ -92,14 +93,41 @@ float Material_SceneDistanceAt(vec2 InClip, vec2 InFragCoord)
 }
 #endif
 
-// The Normal Map node: a tangent-space normal map's colour (0-1 per channel)
-// as a world-space normal. No mesh carries tangents, so the frame comes from
-// how the world position and InUV change across the pixel (Schueler's
-// cotangent frame): T along +U, B along +V, N the interpolated normal.
-// Verified on Vulkan by the RenderCore GPU smoke test (NormalProbe). Row 0
-// of an image is V = 0, so the image's "up" is -V: an OpenGL map's green (Y+,
-// up the image) takes InGreen -1, a DirectX map's (Y-, down it) +1.
 #if PIXEL_SHADER
+// The mesh's tangent at this pixel (MikkTSpace's, from MeshData::Tangents),
+// at right angles to InNormal, with the bitangent's sign in w; all zero where
+// the mesh has none, for the callers to fall back to the UV's derivatives.
+vec4 Material_MeshTangent(in MaterialInputs Inputs, vec3 InNormal)
+{
+    vec3  T      = Inputs.WorldTangent.xyz - InNormal * dot(InNormal, Inputs.WorldTangent.xyz);
+    float Length = length(T);
+    return Length > 1e-3 ? vec4(T / Length, Inputs.WorldTangent.w < 0.0 ? -1.0 : 1.0) : vec4(0.0);
+}
+
+// Whether InUV runs across the pixel as UV0 does, give or take a scale and an
+// offset -- UV0 itself, or tiled -- so that UV0's tangent frame is InUV's too.
+// Not where it is turned or mirrored.
+bool Material_FollowsUV0(in MaterialInputs Inputs, vec2 InUV)
+{
+    for(int Axis = 0; Axis < 2; ++Axis)
+    {
+        vec2 Along   = vec2(dFdx(InUV[Axis]), dFdy(InUV[Axis]));
+        vec2 AlongUV = vec2(dFdx(Inputs.TexCoord[Axis]), dFdy(Inputs.TexCoord[Axis]));
+        float Scale  = length(Along) * length(AlongUV);
+        if(dot(Along, AlongUV) <= 0.0 || abs(Along.x * AlongUV.y - Along.y * AlongUV.x) > 1e-2 * Scale) { return false; }
+    }
+    return true;
+}
+
+// The Normal Map node: a tangent-space normal map's colour (0-1 per channel)
+// as a world-space normal, about T along +U, B along +V, N the interpolated
+// normal. The mesh's own tangent where it has one and InUV follows UV0
+// (MikkTSpace's frame, as the map was baked); otherwise the frame comes from
+// how the world position and InUV change across the pixel (Schueler's
+// cotangent frame), constant across a triangle. Verified on Vulkan by the
+// RenderCore GPU smoke test (NormalProbe). Row 0 of an image is V = 0, so the
+// image's "up" is -V: an OpenGL map's green (Y+, up the image) takes InGreen
+// -1, a DirectX map's (Y-, down it) +1.
 vec3 Material_NormalMap(in MaterialInputs Inputs, vec3 InColor, float InStrength, vec2 InUV, float InGreen)
 {
     vec3 N = normalize(Inputs.WorldNormal);
@@ -107,10 +135,19 @@ vec3 Material_NormalMap(in MaterialInputs Inputs, vec3 InColor, float InStrength
     Tangent.y *= InGreen;
     Tangent.xy *= InStrength;
 
+    // Every derivative before the first branch: they need the whole quad.
     vec3 Dp1  = dFdx(Inputs.WorldPosition);
     vec3 Dp2  = dFdy(Inputs.WorldPosition);
     vec2 Duv1 = dFdx(InUV);
     vec2 Duv2 = dFdy(InUV);
+    bool bFollowsUV0 = Material_FollowsUV0(Inputs, InUV);
+
+    vec4 MeshTangent = Material_MeshTangent(Inputs, N);
+    if(MeshTangent.w != 0.0 && bFollowsUV0)
+    {
+        return normalize(mat3(MeshTangent.xyz, MeshTangent.w * cross(N, MeshTangent.xyz), N) * Tangent);
+    }
+
     vec3 Dp2Perp = cross(Dp2, N);
     vec3 Dp1Perp = cross(N, Dp1);
     vec3 T = Dp2Perp * Duv1.x + Dp1Perp * Duv2.x;
@@ -129,7 +166,8 @@ vec3 Material_NormalMap(in MaterialInputs Inputs, vec3 InColor, float InStrength
 
 // The world direction along InUV's U at this pixel, at right angles to
 // InNormal: the same cotangent frame's T. An Anisotropic material's default
-// Tangent; zero where the UV does not change across the pixel.
+// Tangent on a mesh without tangents; zero where the UV does not change
+// across the pixel.
 vec3 Material_TangentAlongU(in MaterialInputs Inputs, vec3 InNormal, vec2 InUV)
 {
     vec3 Dp1  = dFdx(Inputs.WorldPosition);

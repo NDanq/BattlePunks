@@ -59,7 +59,8 @@ enum ED3D12ComputeRootParam : UINT
  * Vertex layout IDs:
  *   0 -- standard:  slot 0 float3 position, slot 1 float2 texcoord
  *   1 -- instanced: plus slot 2 float4x4 transform, slot 3 float opacity, slot 4 float3 color
- *   2 -- indexed mesh: plus slot 2 float3 normal, slot 3 float4 colour, slot 4 float2 UV1
+ *   2 -- indexed mesh: plus slot 2 float3 normal, slot 3 float4 colour, slot 4 float2 UV1,
+ *        slot 8 float4 tangent (location 13; in 3 and 4 too)
  *   3 -- indexed mesh instanced from a GDIBuffer (GDISetInstanceBuffer): plus
  *        slot 5, one GDI_INSTANCE_STRIDE record per instance
  *   4 -- skinned mesh: 2 plus slot 6 float4 bone indices, slot 7 float4 weights

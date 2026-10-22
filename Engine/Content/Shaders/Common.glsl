@@ -46,12 +46,14 @@ layout(location=0) out Interp_Block
     float ViewDepth;
     vec2  LightmapUV;     // a mesh's UV1, its lightmap UVs (BakedLighting.glsl); 0 elsewhere
     vec3  WorldMotion;    // how far the surface moved in the world since the frame before (the Base Pass's velocity)
+    vec4  WorldTangent;   // a mesh's tangent in world space, w the bitangent's sign (MeshAsset.h); 0 without one
 } Interpolants;
 
 void CalculateInterpolants( vec3 InPosition, vec2 InTexCoord, vec3 InNormal, vec4 InColor, vec3 InWorldPosition, float InViewDepth,
                             vec2 InLightmapUV )
 {
     Interpolants.WorldMotion   = vec3(0.0);   // the material template's vertex stage sets its own after
+    Interpolants.WorldTangent  = vec4(0.0);   // and its tangent
     Interpolants.Position      = InPosition;
     Interpolants.TexCoord      = InTexCoord;
     Interpolants.Normal        = InNormal;
@@ -88,6 +90,7 @@ layout(location=0) in Interp_Block
     float ViewDepth;
     vec2  LightmapUV;     // a mesh's UV1, its lightmap UVs (BakedLighting.glsl); 0 elsewhere
     vec3  WorldMotion;    // how far the surface moved in the world since the frame before (the Base Pass's velocity)
+    vec4  WorldTangent;   // a mesh's tangent in world space, w the bitangent's sign (MeshAsset.h); 0 without one
 } Interpolants;
 
 GDIVSToPSInterpolants GetInterpolants()

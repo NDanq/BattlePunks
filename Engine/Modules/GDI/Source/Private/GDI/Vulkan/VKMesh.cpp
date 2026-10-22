@@ -227,6 +227,19 @@ void VKMesh::InitResource()
             return;
         }
     }
+    if(RenderData.Tangent && IsIndexed())
+    {
+        const VkDeviceSize TangentSize = static_cast<VkDeviceSize>(NumActualVerts * 4) * sizeof(float);
+        if(!CreateBuffer(TangentSize,
+                         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                         TangentBuffer, TangentMemory)
+           || !UploadBufferData(TangentBuffer, RenderData.Tangent, TangentSize))
+        {
+            Release();
+            return;
+        }
+    }
     if(IsSkinned())
     {
         const VkDeviceSize SkinSize = static_cast<VkDeviceSize>(NumActualVerts * 4) * sizeof(float);
@@ -331,7 +344,8 @@ bool VKMesh::InitDynamic(const uint32_t InMaxVertices, const uint32_t InMaxIndic
         { NormalBuffer,      NormalMemory,      NormalMapped,      V * 3 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT },
         { VertexColorBuffer, VertexColorMemory, VertexColorMapped, V * 4 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT },
         { UV1Buffer,         UV1Memory,         UV1Mapped,         V * 2 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT },
-        { IndexBuffer,       IndexMemory,       IndexMapped,       VkDeviceSize(InMaxIndices) * Frames * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT },
+        { TangentBuffer,     TangentMemory,     TangentMapped,     V * 4 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT },
+        { IndexBuffer,      IndexMemory,       IndexMapped,       VkDeviceSize(InMaxIndices) * Frames * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT },
     };
     for(Stream& Each : Streams)
     {
@@ -345,9 +359,10 @@ bool VKMesh::InitDynamic(const uint32_t InMaxVertices, const uint32_t InMaxIndic
         }
     }
 
-    /* Normals and UV1 are written only when an update has them: zero until then. */
-    std::memset(NormalMapped, 0, size_t(V * 3 * sizeof(float)));
-    std::memset(UV1Mapped,    0, size_t(V * 2 * sizeof(float)));
+    /* Normals, UV1 and tangents are written only when an update has them: zero until then. */
+    std::memset(NormalMapped,  0, size_t(V * 3 * sizeof(float)));
+    std::memset(UV1Mapped,     0, size_t(V * 2 * sizeof(float)));
+    std::memset(TangentMapped, 0, size_t(V * 4 * sizeof(float)));
 
     bResourcesValid = true;
     ApplyDebugName();
@@ -364,6 +379,7 @@ bool VKMesh::WriteDynamic(const GDIMeshDesc& InDesc, const uint32_t InBaseVertex
     std::memcpy(static_cast<float*>(TexCoordMapped) + Base * 2, InDesc.UV0,       N * 2 * sizeof(float));
     if(InDesc.Normals) std::memcpy(static_cast<float*>(NormalMapped) + Base * 3, InDesc.Normals, N * 3 * sizeof(float));
     if(InDesc.UV1)     std::memcpy(static_cast<float*>(UV1Mapped)    + Base * 2, InDesc.UV1,     N * 2 * sizeof(float));
+    if(InDesc.Tangents) std::memcpy(static_cast<float*>(TangentMapped) + Base * 4, InDesc.Tangents, N * 4 * sizeof(float));
 
     float* Colors = static_cast<float*>(VertexColorMapped) + Base * 4;
     if(InDesc.Colors)
@@ -387,6 +403,7 @@ void VKMesh::Release()
                                   std::pair<void**, VkDeviceMemory>{ &NormalMapped,      NormalMemory },
                                   std::pair<void**, VkDeviceMemory>{ &VertexColorMapped, VertexColorMemory },
                                   std::pair<void**, VkDeviceMemory>{ &UV1Mapped,         UV1Memory },
+                                  std::pair<void**, VkDeviceMemory>{ &TangentMapped,     TangentMemory },
                                   std::pair<void**, VkDeviceMemory>{ &IndexMapped,       IndexMemory } })
     {
         if(*Mapped)
@@ -440,6 +457,7 @@ void VKMesh::Release()
     DestroyOrDefer(NormalBuffer,   NormalMemory);
     DestroyOrDefer(VertexColorBuffer, VertexColorMemory);
     DestroyOrDefer(UV1Buffer,      UV1Memory);
+    DestroyOrDefer(TangentBuffer,  TangentMemory);
     DestroyOrDefer(JointBuffer,    JointMemory);
     DestroyOrDefer(WeightBuffer,   WeightMemory);
     DestroyOrDefer(TexCoordBuffer, TexCoordMemory);
@@ -494,7 +512,7 @@ void VKMesh::Record(const VKDrawInputs& In)
 
     if(IndexBuffer != VK_NULL_HANDLE)
     {
-        // Vertex layout 2 (VKPipelineCache): normals at binding 2, colours at 3, UV1 at 4.
+        // Vertex layout 2 (VKPipelineCache): normals at binding 2, colours at 3, UV1 at 4, tangents at 8.
         uint32_t First = 0, Count = 0;
         if(In.DrawCount > 0)
         {
@@ -507,11 +525,14 @@ void VKMesh::Record(const VKDrawInputs& In)
         {
             GetClampedDrawRange(First, Count);
         }
-        if(Count == 0 || NormalBuffer == VK_NULL_HANDLE || VertexColorBuffer == VK_NULL_HANDLE || UV1Buffer == VK_NULL_HANDLE) return;
+        if(Count == 0 || NormalBuffer == VK_NULL_HANDLE || VertexColorBuffer == VK_NULL_HANDLE || UV1Buffer == VK_NULL_HANDLE
+           || TangentBuffer == VK_NULL_HANDLE) return;
 
         const VkBuffer     MeshBuffers[3] = { NormalBuffer, VertexColorBuffer, UV1Buffer };
         const VkDeviceSize MeshOffsets[3] = { 0, 0, 0 };
         vkCmdBindVertexBuffers(Cmd, 2, 3, MeshBuffers, MeshOffsets);
+        const VkDeviceSize TangentOffset = 0;
+        vkCmdBindVertexBuffers(Cmd, 8, 1, &TangentBuffer, &TangentOffset);
         if(JointBuffer != VK_NULL_HANDLE && WeightBuffer != VK_NULL_HANDLE)
         {
             // Vertex layout 4: bone indices and weights at bindings 6 and 7.
@@ -667,6 +688,7 @@ void VKMesh::ApplyDebugName() const
     Name(NormalBuffer,      "Normals");
     Name(VertexColorBuffer, "Colors");
     Name(UV1Buffer,         "UV1");
-    Name(IndexBuffer,       "Indices");
+    Name(TangentBuffer,     "Tangents");
+    Name(IndexBuffer,      "Indices");
     Name(InstanceBuffer,    "Instances");
 }
