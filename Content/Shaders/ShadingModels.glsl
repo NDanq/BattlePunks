@@ -95,6 +95,35 @@ float SM_VisibilityNeubelt(float InNdotV, float InNdotL)
     return 1.0 / max(4.0 * (InNdotL + InNdotV - InNdotL * InNdotV), 1e-4);
 }
 
+// Karis's fit of the split-sum's environment BRDF (as IBLCommon.glsl's IBL_EnvBRDF):
+// F0 * A + B, the directional albedo of single-scattering GGX.
+vec3 SM_EnvBRDF(vec3 InF0, float InRoughness, float InNdotV)
+{
+    const vec4 C0 = vec4(-1.0, -0.0275, -0.572, 0.022);
+    const vec4 C1 = vec4(1.0, 0.0425, 1.04, -0.04);
+    vec4  R    = InRoughness * C0 + C1;
+    float A004 = min(R.x * R.x, exp2(-9.28 * InNdotV)) * R.x + R.y;
+    vec2  AB   = vec2(-1.04, 1.04) * A004 + R.zw;
+    return InF0 * AB.x + AB.y;
+}
+
+// Multiple scattering's energy, which single-scattering GGX loses between
+// microfacets: the specular times 1 + F0 (1 / E - 1), E its directional albedo
+// at F0 = 1 (Turquin 2019; Kulla & Conty 2017; Fdez-Aguera 2019). Rough
+// metals brighten most. 1 where the light list turns it off
+// ([Rendering] EnergyCompensation), or there is no light list.
+vec3 SM_EnergyCompensation(vec3 InF0, float InRoughness, float InNdotV)
+{
+#ifdef LIGHT_LIST_GLSL
+    if(LightList_Flag(LIGHT_LIST_FLAG_ENERGY))
+    {
+        float E = max(SM_EnvBRDF(vec3(1.0), InRoughness, InNdotV).x, 0.05);
+        return vec3(1.0) + InF0 * (1.0 / E - 1.0);
+    }
+#endif
+    return vec3(1.0);
+}
+
 // The anisotropic roughnesses along T and B (Kulla & Conty 2017).
 void SM_AnisotropicAlphas(in LightingSurface S, out float OutAlphaT, out float OutAlphaB)
 {
@@ -206,6 +235,8 @@ void EvaluateLightModel(in LightingSurface S, vec3 InL, vec3 InRadiance,
         Specular = D * G * F / max(4.0 * S.NdotV * NdotL, 1e-4);
     }
     vec3 DiffuseShare = (vec3(1.0) - F) * (1.0 - S.Metallic) / SHADING_PI;
+
+    Specular *= SM_EnergyCompensation(F0, Roughness, S.NdotV);
 
     // Under a clear coat the base gets what the coat lets through.
     float Through = 1.0 - CoatFresnel;

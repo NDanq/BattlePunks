@@ -21,6 +21,7 @@ MATERIAL_SAMPLER2D(8, GBuffer4)           // the shading model's custom data (Sh
 MATERIAL_SAMPLER2D(9, SceneDepth)         // r: window depth, 0 near to 1 far
 MATERIAL_SAMPLER2D(10, ShadowDirectional) // the sun's shadow atlas (Shadows.glsl)
 MATERIAL_SAMPLER2D(11, ShadowLocal)       // point and spot lights' shadow atlas
+// Slot 8 (binding 12), the engine's: the area lights' LTC tables -- LightList.glsl's LightList_LTC.
 
 // The pass's own settings, at the material block's binding.
 UBO_BLOCK_BEGIN(2, Lighting_Block)

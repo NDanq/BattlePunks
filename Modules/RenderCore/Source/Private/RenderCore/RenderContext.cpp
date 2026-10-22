@@ -44,6 +44,11 @@
 #include "Private/RenderCore/ShadowSetup.h"
 #include "Private/RenderCore/TextureStreaming.h"
 
+namespace
+{
+#include "Private/RenderCore/LTCTables.inl"
+}
+
 /*
  * DrawQuad: a 1x1 quad mesh, Basic_VS/Basic_PS, and a GDIView whose camera
  * matrices are copied from the RenderView.
@@ -75,6 +80,10 @@ NIMBLE_CONFIG_FLOAT(GRenderSubsurfaceWidth, "Rendering", "SubsurfaceWidth", 1.2f
 /* The light list's culling (GLOBAL_ILLUMINATION.md, Phase 2): off, every light is in every tile
  * and depth slice, so each pixel weighs them all -- what lighting cost before, to compare with. */
 NIMBLE_CONFIG_BOOL(GRenderClusteredLights, "Rendering", "ClusteredLights", true, nullptr);
+/* Phase 3: area lights by linearly transformed cosines (off: every light a point, as before),
+ * and multiple-scattering energy compensation of specular (off: single scattering, as before). */
+NIMBLE_CONFIG_BOOL(GRenderAreaLights, "Rendering", "AreaLights", true, nullptr);
+NIMBLE_CONFIG_BOOL(GRenderEnergyCompensation, "Rendering", "EnergyCompensation", true, nullptr);
 
 namespace RenderCore
 {
@@ -155,7 +164,7 @@ namespace RenderCore
             PP_AmbientOcclusion, PP_AmbientBlur, PP_StatsOverlay, PP_ClearGradient, PP_CaptureCopy, PP_Tonemap,
             PP_IBLSky, PP_IBLPrefilter, PP_IBLLighting, PP_Sky, PP_ViewTarget, PP_UI,
             PP_Luminance, PP_LuminanceReduce, PP_AdaptExposure, PP_TemporalAA, PP_ScreenReflections, PP_Copy,
-            PP_VolumetricFog, PP_FogComposite, PP_ViewSites, PP_AmbientApply, PP_Subsurface,
+            PP_VolumetricFog, PP_FogComposite, PP_ViewSites, PP_AmbientApply, PP_Subsurface, PP_LTCDecode,
             PP_PassCount
         };
         const char* const POST_PASS_SHADERS[PP_PassCount] = {
@@ -164,7 +173,7 @@ namespace RenderCore
             "PPAmbientOcclusion.fsh", "PPAmbientBlur.fsh", "StatsOverlay.fsh", "ClearGradient.fsh", "CaptureCopy.fsh", "Tonemap.fsh",
             "IBLSky.fsh", "IBLPrefilter.fsh", "IBLLighting.fsh", "Sky.fsh", "ViewTarget.fsh", "UI.fsh",
             "PPLuminance.fsh", "PPLuminanceReduce.fsh", "PPAdaptExposure.fsh", "PPTemporalAA.fsh", "PPScreenReflections.fsh",
-            "PPCopy.fsh", "PPVolumetricFog.fsh", "PPFogComposite.fsh", "ViewSites.fsh", "PPAmbientApply.fsh", "PPSubsurface.fsh",
+            "PPCopy.fsh", "PPVolumetricFog.fsh", "PPFogComposite.fsh", "ViewSites.fsh", "PPAmbientApply.fsh", "PPSubsurface.fsh", "LTCDecode.fsh",
         };
         /* Each pass's draw event (DrawPost). */
         const char* const POST_PASS_NAMES[PP_PassCount] = {
@@ -173,7 +182,7 @@ namespace RenderCore
             "AmbientOcclusion", "AmbientBlur", "StatsOverlay", "ClearGradient", "CaptureCopy", "Tonemap",
             "IBLSky", "IBLPrefilter", "IBLLighting", "Sky", "ViewTarget", "UI",
             "Luminance", "LuminanceReduce", "AdaptExposure", "TemporalAA", "ScreenReflections", "Copy",
-            "VolumetricFog", "FogComposite", "ViewSites", "AmbientApply", "Subsurface",
+            "VolumetricFog", "FogComposite", "ViewSites", "AmbientApply", "Subsurface", "LTCDecode",
         };
 
         /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
@@ -210,19 +219,22 @@ namespace RenderCore
          * between its slice's two. GLOBAL_ILLUMINATION.md, Phase 2.
          */
         constexpr uint32_t LIGHT_LIST_VEC4S = 6;
+        constexpr uint32_t LIGHTING_LTC_SLOT = 8;   // the engine's texture slot for the LTC tables (LightList.glsl)
         constexpr uint32_t LIGHT_TILES_X    = 32;
         constexpr uint32_t LIGHT_TILES_Y    = 18;
         constexpr uint32_t LIGHT_TILE_WORDS = RENDER_LOCAL_LIGHT_MAX / 32;
         constexpr uint32_t LIGHT_ZBINS      = 64;
         struct LightListBlock
         {
-            float    Header[4] = {};   // x: lights; yz: a tile's size, pixels; w: unused
+            float    Header[4] = {};   // x: lights; yz: a tile's size, pixels; w: flags, LIGHT_LIST_FLAG_*
             float    Depth[4]  = {};   // x: the first slice's near view depth; y: slices per natural log of depth over it
             float    Lights[RENDER_LOCAL_LIGHT_MAX * LIGHT_LIST_VEC4S][4] = {};
             uint32_t Tiles[LIGHT_TILES_X * LIGHT_TILES_Y * LIGHT_TILE_WORDS] = {};
             uint32_t ZBins[LIGHT_ZBINS] = {};
         };
         static_assert(sizeof(LightListBlock) <= GDI_LIGHT_BLOCK_MAX_BYTES, "the light list fits the light block");
+        constexpr uint32_t LIGHT_LIST_FLAG_AREA   = 1;   // area lights by LTC ([Rendering] AreaLights)
+        constexpr uint32_t LIGHT_LIST_FLAG_ENERGY = 2;   // energy compensation ([Rendering] EnergyCompensation)
         static_assert(RENDER_LOCAL_LIGHT_MAX % 32 == 0 && RENDER_LOCAL_LIGHT_MAX <= 0xFFFF, "a tile's words hold the list; a slice's indices are 16 bits");
 
         /* DeferredLighting.fsh's Lighting_Block: Params, the inset light and
@@ -1740,6 +1752,8 @@ namespace RenderCore
                 GDISetMaterialTexture(Each.Slot, !GIssueScratch ? FindTexture(Each)
                                                  : (Index < InMaterial.Resolved.size() ? InMaterial.Resolved[Index] : nullptr));
             }
+            /* The engine's: the area lights' LTC tables (LightList.glsl). */
+            GDISetMaterialTexture(LIGHTING_LTC_SLOT, LTCTable);
         }
 
         bool BindMaterial(Material& InMaterial, const EMaterialVertexInput InInput, const EngineCore::Color InTint,
@@ -2066,7 +2080,8 @@ namespace RenderCore
             Out.Header[0] = float(Count);
             Out.Header[1] = float(TileW);
             Out.Header[2] = float(TileH);
-            Out.Header[3] = 0.0f;
+            Out.Header[3] = float((GRenderAreaLights.GetBool() && LTCTable ? LIGHT_LIST_FLAG_AREA : 0u)
+                                | (GRenderEnergyCompensation.GetBool() ? LIGHT_LIST_FLAG_ENERGY : 0u));
             Out.Depth[0]  = float(Near);
             Out.Depth[1]  = float(PerLog);
             std::memset(Out.Tiles, 0, sizeof(Out.Tiles));
@@ -2096,13 +2111,20 @@ namespace RenderCore
                 Entry[0][2] = float(Light.Position.GetZ()); Entry[0][3] = Light.Range;
                 PutColor(Entry[1], Light.Color, Light.Intensity);
                 Entry[2][0] = float(Direction.GetX()); Entry[2][1] = float(Direction.GetY());
-                Entry[2][2] = float(Direction.GetZ()); Entry[2][3] = Light.Type == RLL_Spot ? 1.0f : 0.0f;
+                Entry[2][2] = float(Direction.GetZ()); Entry[2][3] = float(Light.Type);
                 Entry[3][0] = float(std::cos(double(Light.OuterConeAngle) * Degrees));
                 Entry[3][1] = float(std::cos(double(std::min(Light.InnerConeAngle, Light.OuterConeAngle - 0.01f)) * Degrees));
                 /* Its place in Scene_Locals, which holds its shadow (the first RENDER_SCENE_LOCAL_LIGHT_MAX; casters come first). */
                 Entry[3][2] = Index < RENDER_SCENE_LOCAL_LIGHT_MAX ? float(Index) : -1.0f;
                 Entry[3][3] = 0.0f;
-                for(int Row = 4; Row < int(LIGHT_LIST_VEC4S); ++Row) { Entry[Row][0] = Entry[Row][1] = Entry[Row][2] = Entry[Row][3] = 0.0f; }
+                /* Area: a rect's half axes, or a sphere's radius (LightingLocal). */
+                const bool bRect = Light.Type == RLL_Rect;
+                const EngineCore::Vector3 HalfRight = Light.Right * (bRect ? 0.5 * double(Light.Width) : 0.0);
+                const EngineCore::Vector3 HalfUp    = Light.Up * (bRect ? 0.5 * double(Light.Height) : 0.0);
+                Entry[4][0] = float(HalfRight.GetX()); Entry[4][1] = float(HalfRight.GetY()); Entry[4][2] = float(HalfRight.GetZ());
+                Entry[4][3] = bRect ? 0.0f : Light.SourceRadius;
+                Entry[5][0] = float(HalfUp.GetX()); Entry[5][1] = float(HalfUp.GetY()); Entry[5][2] = float(HalfUp.GetZ());
+                Entry[5][3] = 0.0f;
 
                 /* Depth: the slices its sphere reaches (all of them, unculled). */
                 const bool   bCull  = GRenderClusteredLights.GetBool();
@@ -2147,6 +2169,15 @@ namespace RenderCore
             }
         }
         LightListBlock LightList;
+
+        /* The LTC tables (fit_ltc.py, LTCTables.inl) on the GPU: 64 x 128,
+         * half float, the matrices in rows 0-63 and the amplitudes in 64-127,
+         * made once (EnsureLTC) and bound at engine texture slot 8 for the
+         * Lighting stage and forward Lit draws. */
+        GDIRenderTarget*    LTCTarget = nullptr;
+        GDITextureResource* LTCTable  = nullptr;
+        bool                bLTCTried = false;
+        void EnsureLTC();
 
         /* A loaded material's own, else the section's, else DefaultLit: the
          * one a mesh section draws with (null: the plain fallback). */
@@ -2989,7 +3020,8 @@ namespace RenderCore
                 GDISetMaterialTexture(RENDER_GBUFFER_TARGETS + 1 + Atlas, Map ? Map->Resource : nullptr);
             }
             const uint32_t LastSlot = RENDER_GBUFFER_TARGETS + SA_Count;
-            static_assert(RENDER_GBUFFER_TARGETS + SA_Count < GDI_MATERIAL_TEXTURE_SLOTS, "the Lighting stage's textures fit the material slots");
+            static_assert(RENDER_GBUFFER_TARGETS + SA_Count < LIGHTING_LTC_SLOT, "the Lighting stage's textures come before the engine's");
+            GDISetMaterialTexture(LIGHTING_LTC_SLOT, LTCTable);   // the area lights' (LightList.glsl)
 
             /* Lighting_Block (DeferredLighting.fsh): whether Skin's diffuse has
              * its own target, then the inset shadows. */
@@ -3194,6 +3226,37 @@ namespace RenderCore
                 }
             }
         }
+    }
+
+    void RenderContext::Impl::EnsureLTC()
+    {
+        if(LTCTable || bLTCTried)
+        {
+            return;
+        }
+        bLTCTried = true;
+        if(Backend == ERenderBackend::Null || !GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
+        {
+            return;   // area lights light as points (LightList.glsl: no LIGHT_LIST_FLAG_AREA)
+        }
+        /* The fitted floats, a texel each in an RGBA8 image -- every backend uploads
+         * those, bit for bit -- decoded once into the half-float target (LTCDecode.fsh). */
+        constexpr uint32_t MatrixFloats = 64 * 64 * 4;
+        constexpr uint32_t Floats       = MatrixFloats + 64 * 64 * 2;
+        static_assert(sizeof(LTC_MATRIX) == MatrixFloats * sizeof(float) && Floats % 128 == 0, "LTCTables.inl's layout");
+        EngineCore::Image Packed(128, int(Floats / 128), EngineCore::EImageFormat::RGBA8);
+        std::memcpy(Packed.GetData(), LTC_MATRIX, sizeof(LTC_MATRIX));
+        std::memcpy(Packed.GetData() + sizeof(LTC_MATRIX), LTC_AMPLITUDE, sizeof(LTC_AMPLITUDE));
+        GDITextureResource* Source = GDICreateTextureResource(Packed, GDI_TB_Clamp_To_Edge, GDI_TF_Nearest);
+        LTCTarget = GDICreateRenderTargetFormat("RenderCore.LTC", 64, 128, GDI_RTF_RGBA16F);
+        const float Block[4] = {};
+        GDITexture2D* Table = LTCTarget ? LTCTarget->ToGDITexture2D() : nullptr;
+        if(Source && Table && DrawFullscreenShader(GetPostShader(PP_LTCDecode), POST_PASS_NAMES[PP_LTCDecode], LTCTarget, 64, 128,
+                                                   &Source, 1, Block, uint(sizeof(Block)), EFullscreenBlend::Opaque))
+        {
+            LTCTable = Table->Resource;
+        }
+        if(Source) { RetiredTextures.push_back(Source); }
     }
 
     void RenderContext::Impl::IssueSubsurface(SceneTargets& InTargets, GDIRenderTarget* InDiffuse, GDIRenderTarget* InSceneColor)
@@ -4831,7 +4894,8 @@ namespace RenderCore
         };
 
         void CollectViewableTargets(const SceneTargets& InTargets, GDIRenderTarget* const (&InShadows)[SA_Count], const IBLResources* InIBL,
-                                    const std::vector<std::pair<std::string, GDIRenderTarget*>>& InAssets, std::vector<ViewableTarget>& Out)
+                                    GDIRenderTarget* InLTC, const std::vector<std::pair<std::string, GDIRenderTarget*>>& InAssets,
+                                    std::vector<ViewableTarget>& Out)
         {
             const auto Add = [&Out](GDIRenderTarget* InTarget, std::string InName)
             {
@@ -4857,6 +4921,7 @@ namespace RenderCore
             for(size_t Index = 0; Index < std::size(InTargets.BloomUp); ++Index) { Add(InTargets.BloomUp[Index], "Bloom up " + std::to_string(Index)); }
             AddDepth(InShadows[SA_Directional], "Shadow atlas (directional)", 1.0f);
             AddDepth(InShadows[SA_Local],       "Shadow atlas (point and spot)", 1.0f);
+            Add(InLTC, "Area lights' LTC tables");
             if(InIBL)
             {
                 Add(InIBL->Atlas, "Image-based lighting atlas");
@@ -4872,7 +4937,7 @@ namespace RenderCore
         for(const auto& Each : P->RenderTargets) { if(Each.second.Target) { Assets.emplace_back(Each.first, Each.second.Target); } }
         std::sort(Assets.begin(), Assets.end());
         std::vector<ViewableTarget> All;
-        CollectViewableTargets(InTargets, P->ShadowAtlas, P->IBL, Assets, All);
+        CollectViewableTargets(InTargets, P->ShadowAtlas, P->IBL, P->LTCTarget, Assets, All);
         OutNames.clear();
         for(ViewableTarget& Each : All) { OutNames.push_back(std::move(Each.Name)); }
     }
@@ -4882,7 +4947,7 @@ namespace RenderCore
         std::vector<std::pair<std::string, GDIRenderTarget*>> Assets;
         for(const auto& Each : P->RenderTargets) { if(Each.second.Target) { Assets.emplace_back(Each.first, Each.second.Target); } }
         std::vector<ViewableTarget> All;
-        CollectViewableTargets(InTargets, P->ShadowAtlas, P->IBL, Assets, All);
+        CollectViewableTargets(InTargets, P->ShadowAtlas, P->IBL, P->LTCTarget, Assets, All);
         const auto Found = std::find_if(All.begin(), All.end(), [&InName](const ViewableTarget& Each) { return Each.Name == InName; });
         if(Found == All.end() || !InTargets.Final || Found->Target == InTargets.Final)
         {
@@ -5084,6 +5149,7 @@ namespace RenderCore
         const uint Height = InTargets.Height;
 
         /* This view's light list (LightList.glsl), for the Lighting stage and forward Lit draws. */
+        P->EnsureLTC();
         P->BuildLightList(Width, Height);
         GDISetUniformBlock(GDI_LIGHT_BLOCK_BINDING, &P->LightList, uint(sizeof(P->LightList)));
 
@@ -6211,6 +6277,14 @@ namespace RenderCore
         P->ReleaseRenderTargets();
         P->ReleaseShadowAtlases();
         P->Shadows.ViewCount = 0;
+        if(P->LTCTarget)
+        {
+            GDIReleaseRenderTarget(P->LTCTarget);
+            delete P->LTCTarget;
+        }
+        P->LTCTarget = nullptr;
+        P->LTCTable  = nullptr;
+        P->bLTCTried = false;
         P->FinalTarget = nullptr;
 
         for(auto& Each : P->Meshes) { delete Each.second.Gpu; }

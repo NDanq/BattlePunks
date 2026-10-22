@@ -5,8 +5,10 @@
 //
 //   LightList_Lights   six vec4s a light, sorted by view depth:
 //                      [0] xyz position, w range; [1] rgb colour (display), a intensity;
-//                      [2] xyz direction (spot), w 1 a spot; [3] x cos outer, y cos inner,
-//                      z its Scene_Locals slot (its shadow there), or -1; [4], [5] reserved
+//                      [2] xyz direction (spot; a rect's facing), w type: 0 point, 1 spot, 2 rect;
+//                      [3] x cos outer, y cos inner, z its Scene_Locals slot (its shadow there), or -1;
+//                      [4] xyz a rect's half width along its right, w a point or spot's sphere radius;
+//                      [5] xyz a rect's half height along its up
 //   LightList_Tiles    LIGHT_TILES_X x LIGHT_TILES_Y tiles of the target, row by row,
 //                      each LIGHT_TILE_WORDS words of bits over the list
 //   LightList_ZBins    LIGHT_ZBINS slices of view depth, logarithmic from
@@ -24,12 +26,20 @@
 #define LIGHT_ZBINS      64
 
 UBO_BLOCK_BEGIN(22, Light_Block)
-    vec4  LightList_Header;   // x: lights; yz: a tile's size, pixels
+    vec4  LightList_Header;   // x: lights; yz: a tile's size, pixels; w: LIGHT_LIST_FLAG_* added
     vec4  LightList_Depth;    // x: the first slice's near view depth; y: slices per natural log of depth over it
     vec4  LightList_Lights[1536];   // LIGHT_LIST_MAX * LIGHT_LIST_VEC4S
     uvec4 LightList_Tiles[1152];    // LIGHT_TILES_X * LIGHT_TILES_Y * LIGHT_TILE_WORDS / 4
     uvec4 LightList_ZBins[16];      // LIGHT_ZBINS / 4
 UBO_BLOCK_END(Light_Block)
+
+// Header.w's flags: area lights by LTC (else every light a point); energy compensation.
+#define LIGHT_LIST_FLAG_AREA   1
+#define LIGHT_LIST_FLAG_ENERGY 2
+bool LightList_Flag(int InFlag) { return (int(LightList_Header.w + 0.5) & InFlag) != 0; }
+
+// The area lights' LTC tables (AreaLights.glsl), the engine's texture slot 8.
+MATERIAL_SAMPLER2D(12, LightList_LTC)
 
 // Word InIndex of the tiles' masks, and slice InBin's range.
 uint LightList_TileWord(int InIndex) { return LightList_Tiles[InIndex >> 2][InIndex & 3]; }
