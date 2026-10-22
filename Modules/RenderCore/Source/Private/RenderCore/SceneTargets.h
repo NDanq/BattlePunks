@@ -78,6 +78,12 @@ namespace RenderCore
         GDIRenderTarget* ReflectionHistory[2] = {};
         uint32_t         ReflectionCurrent = 0;
         bool             bReflectionValid  = false;
+        /* Screen-space GI (PPScreenGI.fsh; GLOBAL_ILLUMINATION.md, Phase 5): this frame's bounce
+         * and its history, half size, half float; the resolve ping-pongs GIHistory likewise. */
+        GDIRenderTarget* GI = nullptr;
+        GDIRenderTarget* GIHistory[2] = {};
+        uint32_t         GICurrent = 0;
+        bool             bGIValid  = false;
         /* Skin (SHADING_MODELS.md): its pixels' diffuse light before albedo, as the Lighting and
          * IBL passes write it, and PPSubsurface's first blur. Full size, half float, on first use. */
         GDIRenderTarget* Subsurface     = nullptr;
@@ -150,6 +156,11 @@ namespace RenderCore
                     if(Each) { Each->Resize(InWidth, InHeight); }
                 }
                 bReflectionValid = false;
+                for(GDIRenderTarget* Each : { GI, GIHistory[0], GIHistory[1] })
+                {
+                    if(Each) { Each->Resize(HalfSize(InWidth, 1), HalfSize(InHeight, 1)); }
+                }
+                bGIValid = false;
                 if(Subsurface)     { Subsurface->Resize(InWidth, InHeight); }
                 if(SubsurfaceBlur) { SubsurfaceBlur->Resize(InWidth, InHeight); }
                 if(Fog)         { Fog->Resize(HalfSize(InWidth, 1), HalfSize(InHeight, 1)); }
@@ -285,6 +296,16 @@ namespace RenderCore
             return InOutTarget && InOutTarget->IsValid() ? InOutTarget : nullptr;
         }
 
+        /* A half-size half-float target, made on first use: GI, GIHistory. */
+        GDIRenderTarget* EnsureHalfHalfFloat(GDIRenderTarget*& InOutTarget, const char* InName)
+        {
+            if(!InOutTarget && Width > 0 && Height > 0 && GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
+            {
+                InOutTarget = GDICreateRenderTargetFormat(Name + "." + InName, HalfSize(Width, 1), HalfSize(Height, 1), GDI_RTF_RGBA16F);
+            }
+            return InOutTarget && InOutTarget->IsValid() ? InOutTarget : nullptr;
+        }
+
         /* Volumetric fog's half-size half-float target, made on first use. */
         GDIRenderTarget* EnsureFog()
         {
@@ -335,7 +356,7 @@ namespace RenderCore
                                            &Half[0], &Half[1], &Bloom[0], &Bloom[1], &Bloom[2], &Bloom[3], &Bloom[4], &Bloom[5],
                                            &BloomUp[0], &BloomUp[1], &BloomUp[2], &BloomUp[3], &BloomUp[4],
                                            &Luminance[0], &Luminance[1], &Luminance[2], &Exposure[0], &Exposure[1],
-                                           &History[0], &History[1], &Reflections, &ReflectionHistory[0], &ReflectionHistory[1], &LastCopy, &Fog, &Subsurface, &SubsurfaceBlur })
+                                           &History[0], &History[1], &Reflections, &ReflectionHistory[0], &ReflectionHistory[1], &GI, &GIHistory[0], &GIHistory[1], &LastCopy, &Fog, &Subsurface, &SubsurfaceBlur })
             {
                 if(*Each)
                 {

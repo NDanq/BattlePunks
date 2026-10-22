@@ -180,6 +180,12 @@ namespace RenderCore
                     else if(Key == "Thickness")    { Target = &S.SsrThickness; }
                     else if(Key == "Steps")        { Target = &S.SsrSteps; }
                 }
+                else if(Effect == "ScreenSpaceGI")
+                {
+                    if(Key == "Intensity")   { Target = &S.GiIntensity; }
+                    else if(Key == "Rays")   { Target = &S.GiRays; }
+                    else if(Key == "Radius") { Target = &S.GiRadius; }
+                }
                 else if(Effect == "DepthOfField")
                 {
                     if(Key == "FocusDistance")  { Target = &S.DofFocusDistance; }
@@ -235,6 +241,7 @@ namespace RenderCore
             else if(Effect == "ToneMapping")  { S.bToneMapping  = 1; }
             else if(Effect == "AutoExposure") { S.bAutoExposure = 1; }
             else if(Effect == "ScreenSpaceReflections") { S.bScreenReflections = 1; }
+            else if(Effect == "ScreenSpaceGI") { S.bScreenGI = 1; }
             else if(Effect == "VolumetricFog") { S.bVolumetricFog = 1; }
         }
         return true;
@@ -339,6 +346,20 @@ namespace RenderCore
             B.SsrMaxDistance  = Lerp(B.SsrMaxDistance, InStack.SsrMaxDistance, W);
             B.SsrThickness    = Lerp(B.SsrThickness, InStack.SsrThickness, W);
             B.SsrSteps        = Lerp(B.SsrSteps, InStack.SsrSteps, W);
+        }
+        if(InStack.bScreenGI)
+        {
+            if(!B.bScreenGI)
+            {
+                /* From off: the stack's reach and quality, no strength yet. */
+                B.GiIntensity = 0.0f;
+                B.GiRays      = InStack.GiRays;
+                B.GiRadius    = InStack.GiRadius;
+            }
+            B.bScreenGI   = 1;
+            B.GiIntensity = Lerp(B.GiIntensity, InStack.GiIntensity, W);
+            B.GiRays      = Lerp(B.GiRays, InStack.GiRays, W);
+            B.GiRadius    = Lerp(B.GiRadius, InStack.GiRadius, W);
         }
         if(InStack.bAutoExposure)
         {

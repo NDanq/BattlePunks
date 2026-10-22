@@ -4242,6 +4242,7 @@ static void TestFidelitySettings()
     const bool bParsed = ParsePostProcessStack(
         "Effect AutoExposure Key=0.12 MinEV=-3 MaxEV=2 SpeedUp=4 SpeedDown=0.5 CentreWeight=0.8\n"
         "Effect ScreenSpaceReflections Intensity=0.7 MaxRoughness=0.3 MaxDistance=900 Thickness=12 Steps=40\n"
+        "Effect ScreenSpaceGI Intensity=0.6 Rays=8 Radius=450\n"
         "Effect VolumetricFog Density=0.0002 HeightFalloff=0.001 BaseHeight=50 MaxDistance=5000 Anisotropy=0.7 "
         "SunScattering=2 SkyScattering=0.5 LightScattering=3 Albedo=1,0.9,0.8 Steps=16 Shadows=false\n"
         "Effect Antialiasing Method=TAA Sharpness=0.5 Quality=High\n", S, Error);
@@ -4249,6 +4250,7 @@ static void TestFidelitySettings()
            && S.AeSpeedDown == 0.5f && S.AeCentreWeight == 0.8f, "AutoExposure reads its key, range, speeds and weighting");
     Expect(S.bScreenReflections && S.SsrIntensity == 0.7f && S.SsrMaxRoughness == 0.3f && S.SsrMaxDistance == 900.0f
            && S.SsrThickness == 12.0f && S.SsrSteps == 40.0f, "ScreenSpaceReflections reads its settings");
+    Expect(S.bScreenGI && S.GiIntensity == 0.6f && S.GiRays == 8.0f && S.GiRadius == 450.0f, "ScreenSpaceGI reads its settings");
     Expect(S.bVolumetricFog && S.FogDensity == 0.0002f && S.FogBaseHeight == 50.0f && S.FogAnisotropy == 0.7f
            && S.FogAlbedo[1] == 0.9f && S.FogSteps == 16.0f && !S.bFogShadows, "VolumetricFog reads its settings and Albedo");
     Expect(S.bAntialiasing && S.AaMethod == 1 && S.AaSharpness == 0.5f, "Antialiasing reads Method TAA and its Sharpness");

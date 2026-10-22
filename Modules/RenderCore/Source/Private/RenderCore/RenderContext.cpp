@@ -88,6 +88,8 @@ NIMBLE_CONFIG_BOOL(GRenderEnergyCompensation, "Rendering", "EnergyCompensation",
 /* Screen-space reflections' rays drawn from GGX's visible normals and accumulated over frames
  * (GLOBAL_ILLUMINATION.md, Phase 4); off, one mirror ray a pixel, faded out on rough surfaces. */
 NIMBLE_CONFIG_BOOL(GRenderStochasticReflections, "Rendering", "StochasticReflections", true, nullptr);
+/* Screen-space GI where a stack has it (GLOBAL_ILLUMINATION.md, Phase 5); off, the stack's node is ignored. */
+NIMBLE_CONFIG_BOOL(GRenderScreenGI, "Rendering", "ScreenSpaceGI", true, nullptr);
 
 namespace RenderCore
 {
@@ -169,7 +171,7 @@ namespace RenderCore
             PP_IBLSky, PP_IBLPrefilter, PP_IBLLighting, PP_Sky, PP_ViewTarget, PP_UI,
             PP_Luminance, PP_LuminanceReduce, PP_AdaptExposure, PP_TemporalAA, PP_ScreenReflections, PP_Copy,
             PP_VolumetricFog, PP_FogComposite, PP_ViewSites, PP_AmbientApply, PP_Subsurface, PP_LTCDecode,
-            PP_ReflectionResolve, PP_PassCount
+            PP_ReflectionResolve, PP_ScreenGI, PP_PassCount
         };
         const char* const POST_PASS_SHADERS[PP_PassCount] = {
             "PPDofPrepare.fsh", "PPDofBlur.fsh", "PPDofComposite.fsh", "PPMotionBlur.fsh",
@@ -178,7 +180,7 @@ namespace RenderCore
             "IBLSky.fsh", "IBLPrefilter.fsh", "IBLLighting.fsh", "Sky.fsh", "ViewTarget.fsh", "UI.fsh",
             "PPLuminance.fsh", "PPLuminanceReduce.fsh", "PPAdaptExposure.fsh", "PPTemporalAA.fsh", "PPScreenReflections.fsh",
             "PPCopy.fsh", "PPVolumetricFog.fsh", "PPFogComposite.fsh", "ViewSites.fsh", "PPAmbientApply.fsh", "PPSubsurface.fsh", "LTCDecode.fsh",
-            "PPReflectionResolve.fsh",
+            "PPReflectionResolve.fsh", "PPScreenGI.fsh",
         };
         /* Each pass's draw event (DrawPost). */
         const char* const POST_PASS_NAMES[PP_PassCount] = {
@@ -188,7 +190,7 @@ namespace RenderCore
             "IBLSky", "IBLPrefilter", "IBLLighting", "Sky", "ViewTarget", "UI",
             "Luminance", "LuminanceReduce", "AdaptExposure", "TemporalAA", "ScreenReflections", "Copy",
             "VolumetricFog", "FogComposite", "ViewSites", "AmbientApply", "Subsurface", "LTCDecode",
-            "ReflectionResolve",
+            "ReflectionResolve", "ScreenGI",
         };
 
         /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
@@ -1168,7 +1170,7 @@ namespace RenderCore
             /* These blocks carry their matrix first; the others start at A. */
             const bool bMatrix = InPass == PP_MotionBlur || InPass == PP_AmbientOcclusion || InPass == PP_IBLSky || InPass == PP_Sky
                               || InPass == PP_TemporalAA || InPass == PP_ScreenReflections || InPass == PP_VolumetricFog
-                              || InPass == PP_ReflectionResolve;
+                              || InPass == PP_ReflectionResolve || InPass == PP_ScreenGI;
             const void* Block      = bMatrix ? static_cast<const void*>(&InBlock) : static_cast<const void*>(InBlock.A);
             const uint  BlockBytes = uint(bMatrix ? sizeof(InBlock) : sizeof(InBlock) - sizeof(InBlock.Matrix));
             return DrawFullscreenShader(GetPostShader(InPass), POST_PASS_NAMES[InPass], InTarget, InWidth, InHeight,
@@ -5388,12 +5390,65 @@ namespace RenderCore
                     InTargets.bReflectionValid = false;
                 }
 
+                /* Screen-space GI (PPScreenGI.fsh): half size, from the last frame's colour, accumulated
+                 * over frames by the reflections' resolve; the IBL pass takes it over the probes' irradiance. */
+                GDITextureResource* Bounce = nullptr;
+                if(GRenderScreenGI.GetBool() && Stack.bScreenGI && Stack.GiIntensity > 0.0f && InTargets.LastColor
+                   && P->bHasPrevViewProjection && Depth && Motion
+                   && InTargets.EnsureHalfHalfFloat(InTargets.GI, "GI")
+                   && InTargets.EnsureHalfHalfFloat(InTargets.GIHistory[0], "GIHistory0")
+                   && InTargets.EnsureHalfHalfFloat(InTargets.GIHistory[1], "GIHistory1"))
+                {
+                    const uint HalfW = InTargets.GI->GetWidth(), HalfH = InTargets.GI->GetHeight();
+                    PostBlock Gi;
+                    PutMatrix(Gi.Matrix, P->PrevViewProjection);
+                    Gi.A[0]     = std::clamp(Stack.GiIntensity, 0.0f, 1.0f);
+                    Gi.A[1]     = std::clamp(Stack.GiRays, 1.0f, 16.0f);
+                    Gi.A[2]     = std::max(Stack.GiRadius, 10.0f);
+                    Gi.A[3]     = 12.0f;   // steps a ray
+                    Gi.Sizes[0] = float(HalfW);
+                    Gi.Sizes[1] = float(HalfH);
+                    Gi.Sizes[2] = float(Width);
+                    Gi.Sizes[3] = float(Height);
+                    const bool bMarched = P->DrawPost(PP_ScreenGI, InTargets.GI, HalfW, HalfH,
+                                                      { Texture(InTargets.GBuffer[1]), Depth->Resource, Texture(InTargets.LastColor), Motion->Resource }, Gi);
+                    for(uint32_t Slot = 0; Slot < 4; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
+                    if(bMarched)
+                    {
+                        const uint32_t Write = InTargets.GICurrent ^ 1u;
+                        PostBlock Resolve;
+                        PutMatrix(Resolve.Matrix, P->PrevViewProjection);
+                        Resolve.A[0]     = InTargets.bGIValid ? 1.0f : 0.0f;
+                        Resolve.A[1]     = 0.9f;
+                        Resolve.Sizes[2] = float(HalfW);
+                        Resolve.Sizes[3] = float(HalfH);
+                        InTargets.bGIValid = P->DrawPost(PP_ReflectionResolve, InTargets.GIHistory[Write], HalfW, HalfH,
+                                                         { Texture(InTargets.GI), Texture(InTargets.GIHistory[InTargets.GICurrent]),
+                                                           Depth->Resource, Motion->Resource }, Resolve);
+                        for(uint32_t Slot = 0; Slot < 4; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
+                        if(InTargets.bGIValid)
+                        {
+                            InTargets.GICurrent = Write;
+                            Bounce = Texture(InTargets.GIHistory[Write]);
+                        }
+                    }
+                    else
+                    {
+                        InTargets.bGIValid = false;
+                    }
+                }
+                else
+                {
+                    InTargets.bGIValid = false;
+                }
+
                 PostBlock Block;
                 Block.A[0] = Subsurface ? 1.0f : 0.0f;
                 Block.A[1] = Screen ? 1.0f : 0.0f;
+                Block.A[2] = Bounce ? 1.0f : 0.0f;
                 GDITextureResource* IBLTextures[] = { Texture(InTargets.GBuffer[0]), Texture(InTargets.GBuffer[1]), Texture(InTargets.GBuffer[2]),
                                                       Texture(InTargets.GBuffer[4]), Depth ? Depth->Resource : nullptr,
-                                                      P->IBLAtlasTexture(), Screen };
+                                                      P->IBLAtlasTexture(), Screen, Bounce };
                 P->DrawFullscreenShader(P->GetPostShader(PP_IBLLighting), POST_PASS_NAMES[PP_IBLLighting], SceneColor, Width, Height,
                                         IBLTextures, uint32_t(std::size(IBLTextures)), Block.A,
                                         uint(sizeof(Block) - sizeof(Block.Matrix)), Impl::EFullscreenBlend::Additive, 0, 0, Subsurface);
@@ -5495,7 +5550,7 @@ namespace RenderCore
                 {
                     InTargets.LastColor = InTargets.History[InTargets.HistoryCurrent];
                 }
-                else if(Post.bScreenReflections && Linear && InTargets.EnsureFullHalfFloat(InTargets.LastCopy, "LastColor"))
+                else if((Post.bScreenReflections || Post.bScreenGI) && Linear && InTargets.EnsureFullHalfFloat(InTargets.LastCopy, "LastColor"))
                 {
                     PostBlock Copy;
                     InTargets.LastColor = P->DrawPost(PP_Copy, InTargets.LastCopy, Width, Height, { Linear }, Copy)
