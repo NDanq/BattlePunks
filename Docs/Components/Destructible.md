@@ -2,7 +2,7 @@
 
 Reference for the **Destructible** component: its C++ class and its Lua API. Written by the editor from the component's registration; edit it freely, it is not overwritten.
 
-A Destructible breaks into Voronoi pieces cut the way its material breaks -- chunks, splinters, shards -- when physics impacts or scripts hit it hard enough. `Engine/Source/Public/NimbleEngine/Destruction.h` has the whole design; WorldsLab's DestructionLab level shows each material.
+A Destructible breaks into Voronoi pieces cut the way its material breaks -- chunks, splinters, shards -- when physics impacts or scripts hit it hard enough. `Engine/Source/DESTRUCTION.md` is the usage guide and `Destruction.h` the contract; WorldsLab's DestructionLab level shows each material.
 
 | | |
 |---|---|
