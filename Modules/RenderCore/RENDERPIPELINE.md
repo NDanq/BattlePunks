@@ -779,8 +779,13 @@ progress dialog that can cancel:
    sqrt(area) x density texels, shelf-packed into atlases with a texel of
    border; its UV1 maps into it.
 4. **Lighting.** A texel whose short rays along its surface find the back of
-   one is inside or under something (the floor under a wall): it is left out
-   and filled from its neighbours, so walls leak no dark line. Then per texel:
+   one has its centre inside or under something (the floor under a wall
+   standing through it). Its sample moves to just past the nearest such back
+   face -- where its surface comes out from under -- if that is still within
+   the texel and in the open, so a texel a thin wall straddles takes the light
+   of the side it mostly lies on rather than its neighbours' from both sides.
+   Wholly buried, it is left out and filled from its neighbours, so walls leak
+   no dark line. Then per texel:
    every Static light, through shadow rays jittered over
    its size for soft shadows -- a Directional Light's **Source Angle** (degrees,
    0.75 by default), a point or spot light's **Source Radius** (units, 4), each
@@ -791,8 +796,12 @@ progress dialog that can cancel:
    also keeps the light's dominant direction (luminance weighted) and how
    one-sided it is, for directional lightmaps.
 5. **Filtering.** The bounced light (and its direction) is smoothed across texels of the same
-   mesh with similar positions and normals; lit texels grow into the empty
-   ones round them.
+   mesh with similar positions and normals that see each other -- nothing
+   between their points (`Tracer::Sees`), so no light is smoothed through a
+   wall standing on or through the surface; lit texels grow into the empty
+   ones round them. (A wall thinner than half a texel can still show its two
+   sides' light blended within half a texel of it, by the lightmap's own
+   filtering: raise the density there.)
 6. **Probes.** A grid over the static geometry at Probe Spacing, each an
    ambient cube (+X -X +Y -Y +Z -Z) from rays over the whole sphere plus each
    Static light's direct part. A probe that sees mostly backfaces is inside something
