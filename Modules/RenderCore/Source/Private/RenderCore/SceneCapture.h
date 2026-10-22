@@ -41,6 +41,17 @@ namespace RenderCore
         uint8_t             bShadows  = 1;
     };
 
+    /* The GI Volume lighting this view (GLOBAL_ILLUMINATION.md, Phase 6): its
+     * box and probe spacing. RenderScene keeps its probes (UpdateGlobalIllumination). */
+    struct GIVolumeRequest
+    {
+        uint64_t            Key = 0;                 // its entity, packed
+        EngineCore::Vector3 Position;
+        float               Extent[3] = { 1000.0f, 400.0f, 1000.0f };   // half sizes
+        float               Spacing   = 200.0f;
+        float               Intensity = 1.0f;
+    };
+
     struct SceneCaptureRequest
     {
         char                Target[RENDER_MATERIAL_PATH_MAX] = {};
@@ -63,6 +74,10 @@ namespace RenderCore
         /* The Reflection Probes lighting the view, nearest the camera first. */
         uint32_t               ProbeCount = 0;
         ReflectionProbeRequest Probes[RENDER_REFLECTION_PROBES_MAX];
+
+        /* The GI Volume nearest the camera, if any. */
+        uint8_t                bGIVolume = 0;
+        GIVolumeRequest        GIVolume;
     };
 
     /* A cube face's forward and up, +X -X +Y -Y +Z -Z -- the order of a

@@ -171,7 +171,7 @@ namespace RenderCore
             PP_IBLSky, PP_IBLPrefilter, PP_IBLLighting, PP_Sky, PP_ViewTarget, PP_UI,
             PP_Luminance, PP_LuminanceReduce, PP_AdaptExposure, PP_TemporalAA, PP_ScreenReflections, PP_Copy,
             PP_VolumetricFog, PP_FogComposite, PP_ViewSites, PP_AmbientApply, PP_Subsurface, PP_LTCDecode,
-            PP_ReflectionResolve, PP_ScreenGI, PP_PassCount
+            PP_ReflectionResolve, PP_ScreenGI, PP_DDGICopy, PP_DDGIUpdate, PP_PassCount
         };
         const char* const POST_PASS_SHADERS[PP_PassCount] = {
             "PPDofPrepare.fsh", "PPDofBlur.fsh", "PPDofComposite.fsh", "PPMotionBlur.fsh",
@@ -180,7 +180,7 @@ namespace RenderCore
             "IBLSky.fsh", "IBLPrefilter.fsh", "IBLLighting.fsh", "Sky.fsh", "ViewTarget.fsh", "UI.fsh",
             "PPLuminance.fsh", "PPLuminanceReduce.fsh", "PPAdaptExposure.fsh", "PPTemporalAA.fsh", "PPScreenReflections.fsh",
             "PPCopy.fsh", "PPVolumetricFog.fsh", "PPFogComposite.fsh", "ViewSites.fsh", "PPAmbientApply.fsh", "PPSubsurface.fsh", "LTCDecode.fsh",
-            "PPReflectionResolve.fsh", "PPScreenGI.fsh",
+            "PPReflectionResolve.fsh", "PPScreenGI.fsh", "DDGICopy.fsh", "DDGIUpdate.fsh",
         };
         /* Each pass's draw event (DrawPost). */
         const char* const POST_PASS_NAMES[PP_PassCount] = {
@@ -190,7 +190,7 @@ namespace RenderCore
             "IBLSky", "IBLPrefilter", "IBLLighting", "Sky", "ViewTarget", "UI",
             "Luminance", "LuminanceReduce", "AdaptExposure", "TemporalAA", "ScreenReflections", "Copy",
             "VolumetricFog", "FogComposite", "ViewSites", "AmbientApply", "Subsurface", "LTCDecode",
-            "ReflectionResolve", "ScreenGI",
+            "ReflectionResolve", "ScreenGI", "DDGICopy", "DDGIUpdate",
         };
 
         /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
@@ -240,6 +240,7 @@ namespace RenderCore
             uint32_t Tiles[LIGHT_TILES_X * LIGHT_TILES_Y * LIGHT_TILE_WORDS] = {};
             uint32_t ZBins[LIGHT_ZBINS] = {};
             float    Probes[RENDER_REFLECTION_PROBES_MAX * 3][4] = {};   // the reflection probes (IBLCommon.glsl)
+            float    DDGI[4][4] = {};                                     // the GI Volume (DDGI.glsl)
         };
         static_assert(sizeof(LightListBlock) <= GDI_LIGHT_BLOCK_MAX_BYTES, "the light list fits the light block");
         constexpr uint32_t LIGHT_LIST_FLAG_AREA   = 1;   // area lights by LTC ([Rendering] AreaLights)
@@ -1511,6 +1512,9 @@ namespace RenderCore
         const IBLResources* IBL = nullptr;
         float               IBLProbes[RENDER_REFLECTION_PROBES_MAX * 3][4] = {};
         uint32_t            IBLProbeCount = 0;
+        /* Dynamic GI (SetDDGI): the volume's atlases and LightList_DDGI, for the next RenderSceneStages. */
+        const DDGIResources* DDGI = nullptr;
+        float                DDGIHeader[4][4] = {};
         bool                bIBLSky = false;
         bool                bForceSkyBackground = false;
 
@@ -5162,6 +5166,8 @@ namespace RenderCore
         P->EnsureLTC();
         P->BuildLightList(Width, Height);
         std::memcpy(P->LightList.Probes, P->IBLProbes, sizeof(P->LightList.Probes));
+        if(P->DDGI && InTargets.bHDR) { std::memcpy(P->LightList.DDGI, P->DDGIHeader, sizeof(P->LightList.DDGI)); }
+        else                          { std::memset(P->LightList.DDGI, 0, sizeof(P->LightList.DDGI)); }
         GDISetUniformBlock(GDI_LIGHT_BLOCK_BINDING, &P->LightList, uint(sizeof(P->LightList)));
 
         const auto BindTargets = [Width, Height](GDIRenderTarget* const* InColors, const uint InCount, GDIRenderTarget* InDepthFrom)
@@ -5449,9 +5455,15 @@ namespace RenderCore
                 GDITextureResource* IBLTextures[] = { Texture(InTargets.GBuffer[0]), Texture(InTargets.GBuffer[1]), Texture(InTargets.GBuffer[2]),
                                                       Texture(InTargets.GBuffer[4]), Depth ? Depth->Resource : nullptr,
                                                       P->IBLAtlasTexture(), Screen, Bounce };
+                /* A GI Volume's atlases at engine slots 9 and 10 (DDGI.glsl). */
+                const bool bVolume = P->DDGI && P->LightList.DDGI[0][3] > 0.0f;
+                GDISetMaterialTexture(9, bVolume ? Texture(P->DDGI->Irradiance) : nullptr);
+                GDISetMaterialTexture(10, bVolume ? Texture(P->DDGI->Distance) : nullptr);
                 P->DrawFullscreenShader(P->GetPostShader(PP_IBLLighting), POST_PASS_NAMES[PP_IBLLighting], SceneColor, Width, Height,
                                         IBLTextures, uint32_t(std::size(IBLTextures)), Block.A,
                                         uint(sizeof(Block) - sizeof(Block.Matrix)), Impl::EFullscreenBlend::Additive, 0, 0, Subsurface);
+                GDISetMaterialTexture(9, nullptr);
+                GDISetMaterialTexture(10, nullptr);
             }
 
             /* Skin's diffuse blurred across, then down and into the scene colour (PPSubsurface.fsh). */
@@ -5713,6 +5725,97 @@ namespace RenderCore
         if(InProbes)
         {
             std::memcpy(P->IBLProbes, InProbes, sizeof(float) * 4 * 3 * P->IBLProbeCount);
+        }
+    }
+
+    bool RenderContext::EnsureDDGIResources(DDGIResources& InOut, const uint32_t InProbes)
+    {
+        if(!CanImageBasedLight() || InProbes == 0)
+        {
+            return false;
+        }
+        const uint32_t Rows = (InProbes + DDGI_TILES_PER_ROW - 1) / DDGI_TILES_PER_ROW;
+        const auto Make = [](GDIRenderTarget*& InOutTarget, const char* InName, const uint32_t InWidth, const uint32_t InHeight)
+        {
+            if(!InOutTarget)
+            {
+                InOutTarget = GDICreateRenderTargetFormat(InName, InWidth, InHeight, GDI_RTF_RGBA16F);
+            }
+            else if(InOutTarget->GetWidth() != InWidth || InOutTarget->GetHeight() != InHeight)
+            {
+                InOutTarget->Resize(InWidth, InHeight);
+            }
+            return InOutTarget && InOutTarget->IsValid();
+        };
+        const bool bMade = Make(InOut.Irradiance, "RenderCore.DDGIIrradiance", DDGI_TILES_PER_ROW * DDGI_IRRADIANCE_TILE, Rows * DDGI_IRRADIANCE_TILE)
+                        && Make(InOut.Distance, "RenderCore.DDGIDistance", DDGI_TILES_PER_ROW * DDGI_DISTANCE_TILE, Rows * DDGI_DISTANCE_TILE)
+                        && Make(InOut.Strip, "RenderCore.DDGIStrip", DDGI_FACE * 6, DDGI_FACE);
+        InOut.Rows = bMade ? Rows : 0;
+        return bMade;
+    }
+
+    void RenderContext::ReleaseDDGIResources(DDGIResources& InOut)
+    {
+        if(P->DDGI == &InOut) { P->DDGI = nullptr; }
+        for(GDIRenderTarget** Each : { &InOut.Irradiance, &InOut.Distance, &InOut.Strip })
+        {
+            if(*Each)
+            {
+                GDIReleaseRenderTarget(*Each);
+                delete *Each;
+                *Each = nullptr;
+            }
+        }
+        InOut.Rows = 0;
+    }
+
+    bool RenderContext::CopyDDGIFace(SceneTargets& InStages, DDGIResources& InResources, const uint32_t InFace, const float InLongest)
+    {
+        GDITexture2D* Source = InStages.SceneColor ? InStages.SceneColor->ToGDITexture2D() : nullptr;
+        GDITexture2D* Depth  = InStages.SceneColor ? InStages.SceneColor->ToDepthTexture2D() : nullptr;
+        if(!Source || !Depth || !InResources.Strip || InFace >= 6)
+        {
+            return false;
+        }
+        PostBlock Block;
+        Block.A[0] = InLongest;
+        const bool bDrawn = P->DrawPost(PP_DDGICopy, InResources.Strip, DDGI_FACE, DDGI_FACE, { Source->Resource, Depth->Resource }, Block,
+                                        false, InFace * DDGI_FACE);
+        GDISetMaterialTexture(0, nullptr);
+        GDISetMaterialTexture(1, nullptr);
+        return bDrawn;
+    }
+
+    bool RenderContext::UpdateDDGIProbe(DDGIResources& InResources, const uint32_t InProbe, const float InLongest)
+    {
+        GDITexture2D* Strip = InResources.Strip ? InResources.Strip->ToGDITexture2D() : nullptr;
+        if(!Strip || !InResources.Irradiance || !InResources.Distance || InProbe >= InResources.Rows * DDGI_TILES_PER_ROW)
+        {
+            return false;
+        }
+        PostBlock Block;
+        Block.A[0]     = float(InProbe);
+        Block.A[3]     = float(DDGI_TILES_PER_ROW);
+        Block.Sizes[0] = InLongest;
+        Block.A[1] = float(DDGI_IRRADIANCE_TILE);
+        Block.A[2] = 0.0f;
+        bool bDrawn = P->DrawPost(PP_DDGIUpdate, InResources.Irradiance, InResources.Irradiance->GetWidth(), InResources.Irradiance->GetHeight(),
+                                  { Strip->Resource }, Block);
+        Block.A[1] = float(DDGI_DISTANCE_TILE);
+        Block.A[2] = 1.0f;
+        bDrawn = P->DrawPost(PP_DDGIUpdate, InResources.Distance, InResources.Distance->GetWidth(), InResources.Distance->GetHeight(),
+                             { Strip->Resource }, Block) && bDrawn;
+        GDISetMaterialTexture(0, nullptr);
+        return bDrawn;
+    }
+
+    void RenderContext::SetDDGI(const DDGIResources* InResources, const float (*InHeader)[4])
+    {
+        P->DDGI = InResources && InResources->Irradiance && InResources->Distance ? InResources : nullptr;
+        std::memset(P->DDGIHeader, 0, sizeof(P->DDGIHeader));
+        if(P->DDGI && InHeader)
+        {
+            std::memcpy(P->DDGIHeader, InHeader, sizeof(P->DDGIHeader));
         }
     }
 

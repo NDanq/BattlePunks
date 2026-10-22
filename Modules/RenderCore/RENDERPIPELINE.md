@@ -725,6 +725,13 @@ ray (`Sky.fsh`).
 - **Their data** (centre, radius, box, intensity, block) is in the light block
   (`LightList_Probes`), the scene block having room for only four.
 
+**GI Volumes** (GLOBAL_ILLUMINATION.md, Phase 6; `DDGI.glsl`): inside one, the
+IBL pass takes non-baked pixels' diffuse ambient from a grid of irradiance
+probes in place of the reflection probes'. `RenderScene` renders a few probes
+a frame (`[Rendering] GIProbesPerFrame`) in six 16 x 16 views, lit by the
+volume too, into an octahedral irradiance tile and a distance-moments tile
+each; the lookup weights the eight probes round a point by visibility.
+
 **Lighting** (`IBL_Light`):
 - **`IBLLighting.fsh` pass:** added (one, one) over the Lighting stage, from
   the G-buffer, depth, AO and the atlas. The Lighting stage then drops its

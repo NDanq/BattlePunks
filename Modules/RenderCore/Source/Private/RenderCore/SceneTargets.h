@@ -37,6 +37,23 @@ namespace RenderCore
         bool             bSheenTable = false;   // the atlas's block 17 holds Cloth's sheen table (SHADING_MODELS.md)
     };
 
+    /* A GI Volume's probes on the GPU (DDGI.glsl; GLOBAL_ILLUMINATION.md, Phase 6),
+     * made by RenderContext::EnsureDDGIResources: the irradiance atlas (8 x 8 a
+     * probe), the distance atlas (16 x 16), RGBA16F, tiles 64 to a row; and the
+     * cube strip a probe's faces are rendered into (6 x 16 x 16, rgb radiance,
+     * a distance). The scene owns them; ReleaseDDGIResources frees them. */
+    constexpr uint32_t DDGI_TILES_PER_ROW   = 64;
+    constexpr uint32_t DDGI_IRRADIANCE_TILE = 8;
+    constexpr uint32_t DDGI_DISTANCE_TILE   = 16;
+    constexpr uint32_t DDGI_FACE            = 16;
+    struct DDGIResources
+    {
+        GDIRenderTarget* Irradiance = nullptr;
+        GDIRenderTarget* Distance   = nullptr;
+        GDIRenderTarget* Strip      = nullptr;
+        uint32_t         Rows       = 0;
+    };
+
     struct SceneTargets
     {
         std::string      Name;                                  // a prefix for the targets' debug names

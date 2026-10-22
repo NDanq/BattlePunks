@@ -7,6 +7,7 @@
 #include <PostProcessCommon.glsl>
 #include <IBLCommon.glsl>
 #include <LightList.glsl>
+#include <DDGI.glsl>
 #include <ShadingModels.glsl>
 #include <IBLShading.glsl>
 

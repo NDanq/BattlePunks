@@ -4194,6 +4194,9 @@ static void TestImageBasedLightingData()
     const ReflectionProbeComponent Defaults;
     Expect(Defaults.Frequency == SCF_Once && Defaults.bCaptureShadows && Defaults.Radius > 0.0f,
            "a probe captures once by default, with shadows, a sphere of influence");
+    const GameCore::ComponentSerializerInfo* VolumeInfo = GameCore::FindComponentSerializer(GIVolumeComponent::StaticType().ID);
+    Expect(VolumeInfo && VolumeInfo->Version == 1 && std::string(GIVolumeComponent::StaticType().Name) == "GI Volume",
+           "GI Volume is a registered component (GLOBAL_ILLUMINATION.md, Phase 6)");
 
     Renderer Rend;
     if(Rend.Initialize(ERenderBackend::Null, WindowHandle()))
