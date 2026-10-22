@@ -116,11 +116,13 @@ enum EGDITextureBorder : char
 };
 
 /* A render target's colour format. RGBA8 is every backend's; RGBA16F (half
- * float, HDR) only where GDISupportsRenderTargetFormat says so. */
+ * float, HDR) and RGB10A2 (10-bit unorm colour, 2-bit alpha: a G-buffer's
+ * normals) only where GDISupportsRenderTargetFormat says so. */
 enum EGDIRenderTargetFormat : char
 {
     GDI_RTF_RGBA8   = 0,
     GDI_RTF_RGBA16F = 1,
+    GDI_RTF_RGB10A2 = 2,
 };
 
 /* A texture's 4x4 block-compressed format (GDICreateCompressedTextureResource),
@@ -329,9 +331,9 @@ constexpr unsigned GDI_SCENE_BLOCK_MAX_BYTES    = 4096;
 constexpr int      GDI_OPENGL_MIN_MAJOR         = 4;
 constexpr int      GDI_OPENGL_MIN_MINOR         = 5;
 
-/* Colour targets one pass can write (GDISetRenderTargets): a G-buffer's and
- * its velocity. Each may have its own format. */
-constexpr unsigned GDI_MAX_COLOR_TARGETS        = 5;
+/* Colour targets one pass can write (GDISetRenderTargets): a G-buffer's five
+ * and its velocity. Each may have its own format. */
+constexpr unsigned GDI_MAX_COLOR_TARGETS        = 6;
 
 /* Chunks one parallel pass records at most (GDIBeginParallelPass). */
 constexpr unsigned GDI_PARALLEL_CHUNKS_MAX      = 32;

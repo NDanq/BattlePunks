@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="ee21c3a760788d71e08d59bc1b856b07" Name="Sun">
+  <Component Type="Directional Light" Version="3">
+    <Color R="255" G="240" B="215" A="255" />
+    <Intensity Value="6" />
+    <Active Value="true" />
+    <CastShadows Value="true" />
+    <ShadowTechnique Value="2" />
+    <ShadowTint R="25" G="28" B="36" A="255" />
+    <ShadowBias Value="0.0012" />
+    <ShadowNormalBias Value="2" />
+    <ShadowDistance Value="3000" />
+    <CascadeCount Value="4" />
+    <CascadeSplitLambda Value="0.75" />
+    <SourceAngle Value="0.5" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="4000" Z="0" />
+    <Rotation X="22" Y="150" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

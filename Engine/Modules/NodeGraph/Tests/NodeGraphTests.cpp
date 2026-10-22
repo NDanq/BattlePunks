@@ -1659,6 +1659,47 @@ namespace
             Expect(!Unlit.HasErrors() && bWarned, "a pin the shading ignores is a warning");
         }
         {
+            /* Shading models (RenderCore/SHADING_MODELS.md): the .material names a Lit one's,
+             * Default's not at all; a model's own pin is a warning on another model. */
+            Graph G = MakeWaveGraph();
+            AddNode(G, 40, "Constant").WildcardType = "float";
+            Connect(G, 40, "Out", 1, "ClearCoat");
+            CompileResult Plain;
+            CompileGraph(G, Plain);
+            bool bWarned = false;
+            for(const Diagnostic& Each : Plain.Diagnostics)
+            {
+                bWarned |= Each.Severity == ESeverity::Warning && Each.Pin == "ClearCoat";
+            }
+            Expect(!Plain.HasErrors() && bWarned && !Plain.Companions.empty()
+                   && Plain.Companions[0].second.find("ShadingModel") == std::string::npos,
+                   "a Default material writes no ShadingModel, and Clear Coat's pin on it is a warning");
+
+            G.FindNode(Id(1))->Properties["ShadingModel"] = "ClearCoat";
+            CompileResult Coat;
+            CompileGraph(G, Coat);
+            bWarned = false;
+            for(const Diagnostic& Each : Coat.Diagnostics)
+            {
+                bWarned |= Each.Severity == ESeverity::Warning && Each.Pin == "ClearCoat";
+            }
+            Expect(!Coat.HasErrors() && !bWarned && !Coat.Companions.empty()
+                   && Coat.Companions[0].second.find("ShadingModel ClearCoat\n") != std::string::npos
+                   && Coat.Code.find("Surface.ClearCoat = ") != std::string::npos,
+                   "a Clear Coat material names its model and sets its coat");
+
+            G.FindNode(Id(1))->Properties["Shading"] = "Unlit";
+            CompileResult Unlit;
+            CompileGraph(G, Unlit);
+            Expect(!Unlit.Companions.empty() && Unlit.Companions[0].second.find("ShadingModel") == std::string::npos,
+                   "an Unlit material has no shading model");
+
+            G.FindNode(Id(1))->Properties["ShadingModel"] = "Velour";
+            CompileResult Bad;
+            CompileGraph(G, Bad);
+            Expect(HasErrorOn(Bad, Id(1)), "an unknown shading model is an error");
+        }
+        {
             Graph G = MakeWaveGraph();
             G.FindNode(Id(1))->Properties["Domain"] = "PostProcess";
             CompileResult Post;

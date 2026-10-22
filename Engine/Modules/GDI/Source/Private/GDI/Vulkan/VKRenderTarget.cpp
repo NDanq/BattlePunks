@@ -19,6 +19,32 @@
 extern GDIDynamicDriver* GDynamicGDI;
 using namespace VKOps;
 
+namespace
+{
+    /* Bytes a texel of InFormat reads back as. */
+    VkDeviceSize ReadbackTexelBytes(const VkFormat InFormat)
+    {
+        return InFormat == VK_FORMAT_R16G16B16A16_SFLOAT ? 8u : 4u;
+    }
+
+    /* InTexels of InFormat, as read back, into OutImage's RGBA8. */
+    void ReadbackToBytes(const VkFormat InFormat, const void* InMapped, EngineCore::Image& OutImage, const size_t InTexels)
+    {
+        if(InFormat == VK_FORMAT_R16G16B16A16_SFLOAT)
+        {
+            GDIHalvesToBytes(static_cast<const uint16_t*>(InMapped), OutImage.GetData(), InTexels * 4u);
+        }
+        else if(InFormat == VK_FORMAT_A2B10G10R10_UNORM_PACK32)
+        {
+            GDIRgb10A2ToBytes(static_cast<const uint32_t*>(InMapped), OutImage.GetData(), InTexels);
+        }
+        else
+        {
+            std::memcpy(OutImage.GetData(), InMapped, InTexels * 4u);
+        }
+    }
+}
+
 VKRenderTarget::VKRenderTarget(VKDevice* InDevice, const std::string& InName, uint InWidth, uint InHeight, VkFormat InFormat)
     : GDIRenderTarget(InWidth, InHeight),
       Device(InDevice),
@@ -294,8 +320,7 @@ EngineCore::Image VKRenderTarget::ToImage()
         GDI->FlushForReadback();
 
     VkDevice Dev = Device->GetDevice();
-    const bool bHalf = Format == VK_FORMAT_R16G16B16A16_SFLOAT;
-    const VkDeviceSize DataSize = VkDeviceSize(Width) * VkDeviceSize(Height) * (bHalf ? 8u : 4u);
+    const VkDeviceSize DataSize = VkDeviceSize(Width) * VkDeviceSize(Height) * ReadbackTexelBytes(Format);
 
     VkBuffer       Buf = VK_NULL_HANDLE;
     VkDeviceMemory Mem = VK_NULL_HANDLE;
@@ -335,14 +360,7 @@ EngineCore::Image VKRenderTarget::ToImage()
     // RT memory is top-down (row 0 = visual top, VulkanDynamicGDI::SetViewport),
     // which is EngineCore::Image's own order: the rows copy as they are.
     EngineCore::Image Result(int(Width), int(Height), EngineCore::EImageFormat::RGBA8);
-    if(bHalf)
-    {
-        GDIHalvesToBytes(static_cast<const uint16_t*>(Mapped), Result.GetData(), size_t(Width) * size_t(Height) * 4u);
-    }
-    else
-    {
-        std::memcpy(Result.GetData(), Mapped, size_t(DataSize));
-    }
+    ReadbackToBytes(Format, Mapped, Result, size_t(Width) * size_t(Height));
     vkUnmapMemory(Dev, Mem);
 
     vkDestroyBuffer(Dev, Buf, nullptr);
@@ -356,8 +374,8 @@ namespace
     class VKReadback final : public GDIReadback
     {
     public:
-        VKReadback(VKDevice* InDevice, VkBuffer InBuffer, VkDeviceMemory InMemory, uint InWidth, uint InHeight, bool bInHalf, uint64_t InDoneAt)
-            : Device(InDevice), Buffer(InBuffer), Memory(InMemory), Width(InWidth), Height(InHeight), bHalf(bInHalf), DoneAt(InDoneAt) {}
+        VKReadback(VKDevice* InDevice, VkBuffer InBuffer, VkDeviceMemory InMemory, uint InWidth, uint InHeight, VkFormat InFormat, uint64_t InDoneAt)
+            : Device(InDevice), Buffer(InBuffer), Memory(InMemory), Width(InWidth), Height(InHeight), Format(InFormat), DoneAt(InDoneAt) {}
 
         ~VKReadback() override
         {
@@ -386,13 +404,12 @@ namespace
             if(bTaken || !IsReady() || !Device || !Device->IsValid()) return EngineCore::Image();
             bTaken = true;
 
-            const VkDeviceSize DataSize = VkDeviceSize(Width) * VkDeviceSize(Height) * (bHalf ? 8u : 4u);
+            const VkDeviceSize DataSize = VkDeviceSize(Width) * VkDeviceSize(Height) * ReadbackTexelBytes(Format);
             void* Mapped = nullptr;
             if(vkMapMemory(Device->GetDevice(), Memory, 0, DataSize, 0, &Mapped) != VK_SUCCESS) return EngineCore::Image();
             // RT memory is top-down, EngineCore::Image's own order (ToImage).
             EngineCore::Image Result(int(Width), int(Height), EngineCore::EImageFormat::RGBA8);
-            if(bHalf) { GDIHalvesToBytes(static_cast<const uint16_t*>(Mapped), Result.GetData(), size_t(Width) * size_t(Height) * 4u); }
-            else      { std::memcpy(Result.GetData(), Mapped, size_t(DataSize)); }
+            ReadbackToBytes(Format, Mapped, Result, size_t(Width) * size_t(Height));
             vkUnmapMemory(Device->GetDevice(), Memory);
             return Result;
         }
@@ -402,7 +419,7 @@ namespace
         VkBuffer       Buffer;
         VkDeviceMemory Memory;
         uint           Width, Height;
-        bool           bHalf;
+        VkFormat       Format;
         uint64_t       DoneAt;
         bool           bTaken = false;
     };
@@ -414,8 +431,7 @@ GDIReadback* VKRenderTarget::BeginReadback()
     if(!GDI || !Device || !Device->IsValid() || Image == VK_NULL_HANDLE || Width == 0 || Height == 0)
         return GDIRenderTarget::BeginReadback();
 
-    const bool bHalf = Format == VK_FORMAT_R16G16B16A16_SFLOAT;
-    const VkDeviceSize DataSize = VkDeviceSize(Width) * VkDeviceSize(Height) * (bHalf ? 8u : 4u);
+    const VkDeviceSize DataSize = VkDeviceSize(Width) * VkDeviceSize(Height) * ReadbackTexelBytes(Format);
     VkBuffer       Buf = VK_NULL_HANDLE;
     VkDeviceMemory Mem = VK_NULL_HANDLE;
     if(!AllocStagingBuffer(Device, DataSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT, Buf, Mem, true))
@@ -429,7 +445,7 @@ GDIReadback* VKRenderTarget::BeginReadback()
         vkFreeMemory(Device->GetDevice(), Mem, nullptr);
         return GDIRenderTarget::BeginReadback();
     }
-    return new VKReadback(Device, Buf, Mem, Width, Height, bHalf, DoneAt);
+    return new VKReadback(Device, Buf, Mem, Width, Height, Format, DoneAt);
 }
 
 GDITexture2D* VKRenderTarget::ToGDITexture2D()

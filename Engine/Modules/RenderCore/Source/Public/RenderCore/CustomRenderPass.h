@@ -70,10 +70,11 @@ namespace RenderCore
     {
         SceneColor = 0,      // linear HDR where the backend can
         SceneDepth,          // window depth, 0 near
-        GBuffer0,            // base colour, AO
-        GBuffer1,            // normal
-        GBuffer2,            // metallic, roughness, specular
+        GBuffer0,            // base colour, AO (the screen's folded in once the Lighting stage runs)
+        GBuffer1,            // normal, octahedral (Common.glsl's DecodeGBufferNormal)
+        GBuffer2,            // metallic, roughness, specular, shading model
         GBuffer3,            // emissive
+        GBuffer4,            // the shading model's custom data (ShadingModels.glsl)
         Velocity,
         Current,             // the post hooks: the picture so far (else the scene colour)
         Count

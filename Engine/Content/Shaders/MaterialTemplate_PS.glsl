@@ -6,6 +6,8 @@
 // Permutation defines, each 0 or 1:
 //   MATERIAL_DOMAIN_OPAQUE / _MASKED / _TRANSLUCENT / _POSTPROCESS
 //   MATERIAL_SHADING_LIT / _UNLIT
+//   MATERIAL_SHADING_MODEL_DEFAULT / _CLEARCOAT / _ANISOTROPIC / _CLOTH / _SUBSURFACE / _SKIN
+//     (a Lit material's BRDF: RenderCore/SHADING_MODELS.md; an Unlit one's is Default)
 //
 // Opaque and Masked Lit materials draw in the Base Pass and write the
 // G-buffer, which DeferredLighting.fsh lights; every other permutation writes
@@ -20,6 +22,26 @@
 #define MATERIAL_GBUFFER 1
 #else
 #define MATERIAL_GBUFFER 0
+#endif
+
+// The shading model as Common.glsl's SHADING_MODEL_* number (no #elif in the cook).
+#if MATERIAL_SHADING_MODEL_CLEARCOAT
+#define MATERIAL_SHADING_MODEL_ID 1
+#endif
+#if MATERIAL_SHADING_MODEL_ANISOTROPIC
+#define MATERIAL_SHADING_MODEL_ID 2
+#endif
+#if MATERIAL_SHADING_MODEL_CLOTH
+#define MATERIAL_SHADING_MODEL_ID 3
+#endif
+#if MATERIAL_SHADING_MODEL_SUBSURFACE
+#define MATERIAL_SHADING_MODEL_ID 4
+#endif
+#if MATERIAL_SHADING_MODEL_SKIN
+#define MATERIAL_SHADING_MODEL_ID 5
+#endif
+#ifndef MATERIAL_SHADING_MODEL_ID
+#define MATERIAL_SHADING_MODEL_ID 0
 #endif
 
 #if MATERIAL_SHADING_LIT
@@ -39,10 +61,11 @@ MATERIAL_SAMPLER2D(4, Material_Lightmap)
 
 // RENDERPIPELINE.md, "The G-buffer". Display-space colours, as authored.
 OUTPUT(0, vec4, GBuffer0)   // rgb: Base Color; a: Ambient Occlusion
-OUTPUT(1, vec4, GBuffer1)   // rgb: world normal * 0.5 + 0.5; a: 1 a lit pixel, 0.75 one whose ambient is baked
-OUTPUT(2, vec4, GBuffer2)   // Metallic, Roughness, Specular
+OUTPUT(1, vec4, GBuffer1)   // rg: world normal, octahedral; a: 1 a lit pixel, 2/3 one whose ambient is baked (EncodeGBufferNormal)
+OUTPUT(2, vec4, GBuffer2)   // Metallic, Roughness, Specular, shading model (EncodeShadingModel)
 OUTPUT(3, vec4, GBuffer3)   // Emissive, past 1 too (EncodeGBufferEmissive)
-OUTPUT(4, vec4, Velocity)   // xyz: world motion since the frame before; a: 1, written (the Velocity target; none bound: dropped)
+OUTPUT(4, vec4, GBuffer4)   // the shading model's custom data (ShadingModels.glsl's EncodeGBufferCustom)
+OUTPUT(5, vec4, Velocity)   // xyz: world motion since the frame before; a: 1, written (the Velocity target; none bound: dropped)
 #else
 OUTPUT(0, vec4, Output)
 #endif
@@ -105,7 +128,18 @@ void main(void)
     // engine is left-handed (RenderView.h), so a face toward the camera
     // winds clockwise on screen: GL's back face.
     vec3 Normal = normalize(Surface.Normal);
-    if(Material_TwoSided > 0.5 && gl_FrontFacing) { Normal = -Normal; }
+    if(Material_TwoSided > 0.5 && gl_FrontFacing)
+    {
+        Normal = -Normal;
+        Surface.ClearCoatNormal = -Surface.ClearCoatNormal;
+    }
+    // The shading models' unset inputs (MaterialCommon.glsl's defaults): Cloth's
+    // sheen the square root of its base colour (Filament 4.12), an anisotropic
+    // grain along the UV's U.
+    if(Surface.SheenColor.r < 0.0) { Surface.SheenColor = sqrt(clamp(Surface.BaseColor, 0.0, 1.0)); }
+#if MATERIAL_SHADING_MODEL_ANISOTROPIC
+    if(dot(Surface.Tangent, Surface.Tangent) < 1e-8) { Surface.Tangent = Material_TangentAlongU(Inputs, Normal, Inputs.TexCoord); }
+#endif
 #endif
 
 #if MATERIAL_SHADING_LIT
@@ -128,9 +162,12 @@ void main(void)
 
 #if MATERIAL_GBUFFER
     GBuffer0 = vec4(clamp(Surface.BaseColor, 0.0, 1.0), clamp(Surface.AmbientOcclusion, 0.0, 1.0));
-    GBuffer1 = vec4(Normal * 0.5 + 0.5, AmbientDiffuse > 0.5 ? 1.0 : 0.75);
+    GBuffer1 = EncodeGBufferNormal(Normal, AmbientDiffuse < 0.5);
     GBuffer2 = vec4(clamp(Surface.Metallic, 0.0, 1.0), clamp(Surface.Roughness, 0.0, 1.0),
-                    clamp(Surface.Specular, 0.0, 1.0), 0.0);
+                    clamp(Surface.Specular, 0.0, 1.0), EncodeShadingModel(MATERIAL_SHADING_MODEL_ID));
+    GBuffer4 = EncodeGBufferCustom(MATERIAL_SHADING_MODEL_ID, Surface.ClearCoat, Surface.ClearCoatRoughness,
+                                   normalize(Surface.ClearCoatNormal), Surface.Anisotropy, Surface.Tangent,
+                                   Surface.SheenColor, Surface.SubsurfaceColor, Surface.Thickness);
     // Emissive is display space as authored: the baked light joins it in linear.
     GBuffer3 = EncodeGBufferEmissive(Material_BakedLighting.x > 0.5 ? ToDisplay(ToLinear(Surface.Emissive) + Baked) : Surface.Emissive);
     Velocity = vec4(Interpolants.WorldMotion, 1.0);
@@ -139,7 +176,9 @@ void main(void)
 #if MATERIAL_SHADING_LIT
     vec3 Color = Scene_View.x > 0.5
                ? ToSceneColor(ViewChannelColor(Surface.BaseColor, Surface.Emissive))
-               : ToSceneColor(ToLinear(Surface.Emissive) + Baked + ShadeSurface(Surface, Inputs.WorldPosition, Normal, AmbientDiffuse));
+               : ToSceneColor(ToLinear(Surface.Emissive) + Baked
+                              + ShadeLightingSurface(LightingSurfaceOf(Surface, MATERIAL_SHADING_MODEL_ID, Inputs.WorldPosition, Normal),
+                                                     Inputs.WorldPosition, Surface.AmbientOcclusion, AmbientDiffuse));
 #else
 #if MATERIAL_DOMAIN_POSTPROCESS
     // After the tone map: display space in, display space out.

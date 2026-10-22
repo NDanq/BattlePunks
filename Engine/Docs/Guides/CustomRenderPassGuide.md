@@ -499,8 +499,10 @@ anything and leaves nothing to undo.
 ### Scene textures (`GetSceneTexture`)
 
 `SceneColor`, `SceneDepth` (window depth, 0 near), `GBuffer0` (base colour,
-AO), `GBuffer1` (normal), `GBuffer2` (metallic, roughness, specular),
-`GBuffer3` (emissive), `Velocity`, and `Current` (the picture so far at the
+AO), `GBuffer1` (normal, octahedral: decode it with `Common.glsl`'s
+`DecodeGBufferNormal`), `GBuffer2` (metallic, roughness, specular, shading
+model), `GBuffer3` (emissive), `GBuffer4` (the shading model's custom data,
+`ShadingModels.glsl`), `Velocity`, and `Current` (the picture so far at the
 post hooks; the scene colour before them). A texture this frame doesn't
 have comes back invalid. The G-buffer and velocity exist only from
 `AfterBasePass` on, and only on a frame with Lit opaque surfaces.

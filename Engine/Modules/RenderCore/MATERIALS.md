@@ -68,7 +68,11 @@ writes its colour directly. Plain tinted quads and meshes drawn with Mesh_PS go
 to the Unlit stage, in their old blended, depth-written state.
 
 Shading is **Lit** (Emissive plus `ShadeSurface`) or **Unlit** (Emissive is the
-colour). The legacy Pixel Output node compiles as Unlit + Translucent, which is
+colour). A Lit material also has a **Shading Model** -- Default, Clear Coat,
+Anisotropic, Cloth, Subsurface or Skin -- and the pins only some models read
+(Clear Coat, Clear Coat Roughness, Clear Coat Normal, Anisotropy, Tangent,
+Sheen Color, Subsurface Color, Thickness): [SHADING_MODELS.md](SHADING_MODELS.md).
+A pin the model does not read is warned about, as an Unlit material's are. The legacy Pixel Output node compiles as Unlit + Translucent, which is
 how every material drew before (the scene blended everything).
 
 Two Sided does not change culling -- GDI culls nothing on any backend -- it
@@ -83,11 +87,12 @@ A permutation key is a `uint32_t` (`MaterialDescription.h`):
 |---|---|---|
 | 0-2 | Domain | Opaque 0, Masked 1, Translucent 2, PostProcess 3 |
 | 3-4 | Shading | Lit 0, Unlit 1 |
+| 5-7 | Shading model | Default 0, ClearCoat 1, Anisotropic 2, Cloth 3, Subsurface 4, Skin 5 (Lit only; a Default key is what it was before) |
 | 8-10 | Vertex input | Quad 0, Mesh 1, Fullscreen 2, InstancedMesh 3 (vertex stage only) |
 | rest | reserved | quality levels, static switches |
 
 Each field becomes 0/1 defines (`MATERIAL_DOMAIN_MASKED`, `MATERIAL_SHADING_LIT`,
-`MATERIAL_VERTEX_MESH`), because the cook's preprocessor has no `#elif`. Files
+`MATERIAL_SHADING_MODEL_CLOTH`, `MATERIAL_VERTEX_MESH`), because the cook's preprocessor has no `#elif`. Files
 are named `<Name>@<key as 8 hex digits>.vsh/.fsh`.
 
 **Which keys a material builds:** its own Domain and Shading for the pixel

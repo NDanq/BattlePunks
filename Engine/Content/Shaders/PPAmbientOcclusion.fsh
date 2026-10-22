@@ -14,7 +14,7 @@
 #include <PostProcessCommon.glsl>
 
 MATERIAL_SAMPLER2D(4, SceneDepth)   // full resolution, window depth
-MATERIAL_SAMPLER2D(5, GBuffer1)     // rgb: world normal * 0.5 + 0.5; a: lit
+MATERIAL_SAMPLER2D(5, GBuffer1)     // rg: world normal, octahedral; a: lit
 
 UBO_BLOCK_BEGIN(2, PP_Block)
     mat4 PP_ViewProjection;   // this frame's, GL clip space
@@ -43,7 +43,7 @@ void main(void)
         Output = vec4(1.0);   // the sky, or not a lit surface: nothing to occlude
         return;
     }
-    vec3 N = normalize(Gb1.rgb * 2.0 - 1.0);
+    vec3 N = DecodeGBufferNormal(Gb1);
 
     // A basis round N, turned by this pixel's noise.
     float Noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));

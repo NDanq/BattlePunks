@@ -141,6 +141,49 @@ vec3 DecodeGBufferEmissive(vec4 InEncoded)
     return InEncoded.rgb * exp2(InEncoded.a * GBUFFER_EMISSIVE_LOG_RANGE);
 }
 
+// A unit vector as two 0-1 numbers: its octahedral map (Cigolle et al. 2014,
+// "A Survey of Efficient Representations for Independent Unit Vectors").
+// GBuffer1's normal (10 bits each), and the custom data's coat normal and
+// tangent (8 bits each).
+vec2 EncodeUnitVector(vec3 InVector)
+{
+    vec3 N  = InVector / max(abs(InVector.x) + abs(InVector.y) + abs(InVector.z), 1e-6);
+    vec2 Xy = N.z >= 0.0 ? N.xy : (1.0 - abs(N.yx)) * vec2(N.x >= 0.0 ? 1.0 : -1.0, N.y >= 0.0 ? 1.0 : -1.0);
+    return Xy * 0.5 + 0.5;
+}
+vec3 DecodeUnitVector(vec2 InEncoded)
+{
+    vec2  F = InEncoded * 2.0 - 1.0;
+    vec3  N = vec3(F, 1.0 - abs(F.x) - abs(F.y));
+    float T = clamp(-N.z, 0.0, 1.0);
+    N.xy += vec2(N.x >= 0.0 ? -T : T, N.y >= 0.0 ? -T : T);
+    return normalize(N);
+}
+
+// GBuffer1 (RENDERPIPELINE.md, "The G-buffer"): the normal, octahedral, and in
+// alpha whether the pixel is lit -- 1, or 2/3 where its diffuse ambient is
+// baked (exact in RGB10A2's two alpha bits). Readers test a < 0.5 (unlit) and
+// a < 0.875 (baked).
+vec4 EncodeGBufferNormal(vec3 InNormal, bool bInBaked)
+{
+    return vec4(EncodeUnitVector(InNormal), 0.0, bInBaked ? 2.0 / 3.0 : 1.0);
+}
+vec3 DecodeGBufferNormal(vec4 InEncoded)
+{
+    return DecodeUnitVector(InEncoded.xy);
+}
+
+// GBuffer2's alpha: the pixel's shading model (SHADING_MODELS.md;
+// RenderCore's EMaterialShadingModel).
+#define SHADING_MODEL_DEFAULT     0
+#define SHADING_MODEL_CLEARCOAT   1
+#define SHADING_MODEL_ANISOTROPIC 2
+#define SHADING_MODEL_CLOTH       3
+#define SHADING_MODEL_SUBSURFACE  4
+#define SHADING_MODEL_SKIN        5
+float EncodeShadingModel(int InModel) { return float(InModel) / 255.0; }
+int   DecodeShadingModel(float InEncoded) { return int(InEncoded * 255.0 + 0.5); }
+
 // Bloom's chain in 8-bit targets: brightness 0-BLOOM_CHAIN_RANGE stored as
 // sqrt(v / range), so the faint tail of a glow keeps its precision.
 #define BLOOM_CHAIN_RANGE 64.0

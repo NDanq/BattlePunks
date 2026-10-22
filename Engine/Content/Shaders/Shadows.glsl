@@ -88,6 +88,41 @@ float DirectionalShadow(vec3 InWorld, vec3 InNormal, vec3 InToLight)
     return mix(Lit, 1.0, smoothstep(Last * 0.9, Last, ViewDepth));
 }
 
+// How far, in world units, the sun's light travels through whatever is between
+// it and InWorld: InWorld's depth in the sun's shadow map less the nearest
+// caster's there, turned to world units by the cascade's depth scale (its
+// matrix's z row; the views are orthographic). Taken a little inside the
+// surface (Jimenez et al. 2010), so a face toward the sun measures 0. Light
+// passing through a Subsurface or Skin surface is attenuated by it; 0 outside
+// the shadow's reach.
+// World units over which transmitted light falls to 1/e.
+#define SUBSURFACE_MEAN_FREE_PATH 1.0
+float DirectionalShadowDepth(vec3 InWorld, vec3 InNormal)
+{
+    int Count = int(Scene_LightShadow.y);
+    if(Count <= 0) { return 0.0; }
+    float ViewDepth = dot(InWorld, Scene_CameraForward.xyz) - Scene_CameraForward.w;
+    if(ViewDepth >= Scene_CascadeSplits[Count - 1]) { return 0.0; }
+
+    int Cascade = 0;
+    for(int Index = 0; Index < Count - 1; ++Index)
+    {
+        if(ViewDepth >= Scene_CascadeSplits[Index]) { Cascade = Index + 1; }
+    }
+    mat4 Matrix = Scene_CascadeMatrices[Cascade];
+    vec4 Clip   = Matrix * vec4(InWorld - InNormal * (1.5 * Scene_CascadeTexels[Cascade]), 1.0);
+    vec3 Atlas  = Clip.xyz / Clip.w;
+    if(Atlas.z >= 1.0 || Atlas.z <= 0.0) { return 0.0; }
+
+    float Size    = Scene_ShadowParams.w;
+    int   Tile    = Count == 1 ? int(Size) : int(Size) / 2;
+    ivec2 Texel   = ivec2(floor(Atlas.xy * Size));
+    ivec2 TileMin = (Texel / Tile) * Tile;
+    float Caster  = texelFetch(ShadowDirectional, clamp(Texel, TileMin, TileMin + ivec2(Tile - 1)), 0).r;
+    float PerUnit = length(vec3(Matrix[0][2], Matrix[1][2], Matrix[2][2]));
+    return max(Atlas.z - Caster, 0.0) / max(PerUnit, 1e-8);
+}
+
 // A point or spot light's shadow at InWorld. InFirst is its first matrix in
 // Scene_LocalShadowMatrices; a point light's face is the major axis away from it.
 float LocalShadow(int InFirst, bool bInSpot, float InCosOuter, vec3 InLightPosition, vec3 InWorld, vec3 InNormal,

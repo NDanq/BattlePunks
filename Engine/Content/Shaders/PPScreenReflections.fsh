@@ -15,11 +15,12 @@
 
 #include <PostProcessCommon.glsl>
 
-MATERIAL_SAMPLER2D(4, GBuffer1)     // rgb: normal * 0.5 + 0.5; a: lit
-MATERIAL_SAMPLER2D(5, GBuffer2)     // Metallic, Roughness, Specular
+MATERIAL_SAMPLER2D(4, GBuffer1)     // rg: normal, octahedral; a: lit
+MATERIAL_SAMPLER2D(5, GBuffer2)     // Metallic, Roughness, Specular, shading model
 MATERIAL_SAMPLER2D(6, SceneDepth)
 MATERIAL_SAMPLER2D(7, LastColor)    // the last frame's scene colour, linear, before the tone map
 MATERIAL_SAMPLER2D(8, Velocity)     // xyz: world motion since the last frame
+MATERIAL_SAMPLER2D(9, GBuffer4)     // the shading model's custom data: a Clear Coat's coat (ShadingModels.glsl)
 
 UBO_BLOCK_BEGIN(2, PP_Block)
     mat4 PP_PrevViewProjection;   // the last frame's view, unjittered, GL clip space
@@ -43,7 +44,19 @@ void main(void)
     vec2  Size  = PP_Sizes.zw;
     ivec2 Texel = ivec2(gl_FragCoord.xy);
     vec4  Gb1   = texelFetch(GBuffer1, Texel, 0);
-    float Roughness = texelFetch(GBuffer2, Texel, 0).g;
+    vec4  Gb2   = texelFetch(GBuffer2, Texel, 0);
+    float Roughness = Gb2.g;
+    vec3  N = DecodeGBufferNormal(Gb1);
+    // A Clear Coat reflects off its coat (SHADING_MODELS.md): its normal and roughness.
+    if(DecodeShadingModel(Gb2.a) == SHADING_MODEL_CLEARCOAT)
+    {
+        vec4 Coat = texelFetch(GBuffer4, Texel, 0);
+        if(Coat.r > 0.0)
+        {
+            N         = DecodeUnitVector(Coat.ba);
+            Roughness = Coat.g;
+        }
+    }
     float MaxRoughness = max(PP_Ssr.y, 0.01);
     if(Gb1.a < 0.5 || Roughness >= MaxRoughness || PP_Sizes.y < 0.5 || PP_Ssr.x <= 0.0)
     {
@@ -52,7 +65,6 @@ void main(void)
     }
     float Depth = texelFetch(SceneDepth, Texel, 0).r;
     vec3  P = PP_WorldAt(TargetUvToNdc(Interpolants.TexCoord), Depth);
-    vec3  N = normalize(Gb1.rgb * 2.0 - 1.0);
     vec3  V = normalize(Scene_CameraPosition.xyz - P);
     vec3  R = reflect(-V, N);
 
@@ -117,7 +129,7 @@ void main(void)
         return;
     }
     // A surface the ray meets from behind is not what it would see.
-    vec3 HitNormal = normalize(texelFetch(GBuffer1, HitTexel, 0).rgb * 2.0 - 1.0);
+    vec3 HitNormal = DecodeGBufferNormal(texelFetch(GBuffer1, HitTexel, 0));
     if(dot(HitNormal, R) > 0.1)
     {
         Output = vec4(0.0);
