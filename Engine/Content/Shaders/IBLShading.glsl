@@ -10,11 +10,13 @@
 // baked lighting holds it). OutSpecular: everything else -- the specular lobes,
 // Cloth's sheen, and Subsurface's and Skin's light through from behind.
 // InScreen: a screen-space reflection (PPScreenReflections.fsh), rgb blended
-// over the top layer's probes by a; zero where there is none.
-void IBL_LightModel(sampler2D InAtlas, vec3 InPosition, in LightingSurface S, float InOcclusion, float InDiffuse,
-                    vec4 InScreen, out vec3 OutDiffuse, out vec3 OutSpecular)
+// over the top layer's probes by a; zero where there is none. InBounce:
+// screen-space GI (PPScreenGI.fsh) -- rgb the light its rays found, a the share
+// of them that found any; the probes light the rest.
+void IBL_LightModelBounce(sampler2D InAtlas, vec3 InPosition, in LightingSurface S, float InOcclusion, float InDiffuse,
+                          vec4 InScreen, vec4 InBounce, out vec3 OutDiffuse, out vec3 OutSpecular)
 {
-    vec3 Irradiance = IBL_GatherIrradiance(InAtlas, InPosition, S.N);
+    vec3 Irradiance = InBounce.rgb + IBL_GatherIrradiance(InAtlas, InPosition, S.N) * (1.0 - clamp(InBounce.a, 0.0, 1.0));
     float Screen    = clamp(InScreen.a, 0.0, 1.0);
 
     if(S.Model == SHADING_MODEL_CLOTH)
@@ -69,6 +71,12 @@ void IBL_LightModel(sampler2D InAtlas, vec3 InPosition, in LightingSurface S, fl
         // The sky and probes behind it, through it: the back scatter of SM_Transmission, averaged.
         OutSpecular += IBL_GatherIrradiance(InAtlas, InPosition, -S.N) * S.Subsurface * (0.5 * (1.0 - S.Thickness));
     }
+}
+
+void IBL_LightModel(sampler2D InAtlas, vec3 InPosition, in LightingSurface S, float InOcclusion, float InDiffuse,
+                    vec4 InScreen, out vec3 OutDiffuse, out vec3 OutSpecular)
+{
+    IBL_LightModelBounce(InAtlas, InPosition, S, InOcclusion, InDiffuse, InScreen, vec4(0.0), OutDiffuse, OutSpecular);
 }
 
 #endif

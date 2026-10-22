@@ -142,7 +142,7 @@ def reflection_probe(radius, frequency=2, resolution=128):
 """
 
 
-# Phase 4: screen-space reflections up to roughness 0.8, TAA and tone mapping.
+# Phase 4: screen-space reflections up to roughness 0.8, TAA and tone mapping; Phase 5: screen-space GI.
 PP_STACK = """<?xml version="1.0" encoding="UTF-8"?>
 <NodeGraph Version="1" Schema="PostProcess">
   <Nodes>
@@ -161,10 +161,16 @@ PP_STACK = """<?xml version="1.0" encoding="UTF-8"?>
       <Prop Name="Steps" Value="32" />
       <Prop Name="Thickness" Value="25" />
     </Node>
+    <Node Id="4c1b0e6f9a3d4e8bb0d1a2c3e4f50604" Type="Effect.ScreenSpaceGI" Version="1" X="60" Y="-400">
+      <Prop Name="Intensity" Value="1" />
+      <Prop Name="Radius" Value="300" />
+      <Prop Name="Rays" Value="4" />
+    </Node>
   </Nodes>
   <gen_code>
     <Output Extension=".ppstack"><![CDATA[# Post process stack LightingLab
 Effect ScreenSpaceReflections Intensity=1 MaxRoughness=0.8 MaxDistance=2000 Thickness=25 Steps=32
+Effect ScreenSpaceGI Intensity=1 Rays=4 Radius=300
 Effect ToneMapping Exposure=0 ToneMapper=ACES
 Effect Antialiasing EdgeThreshold=0.125 Sharpness=0.35 Method=TAA Quality=Low
 ]]></Output>

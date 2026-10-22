@@ -58,6 +58,12 @@ namespace RenderCore
         float   SsrThickness    = 25.0f;       // world units
         float   SsrSteps        = 32.0f;
 
+        /* Screen-space diffuse GI (GLOBAL_ILLUMINATION.md, Phase 5): over the probes' irradiance, in the IBL pass. */
+        uint8_t bScreenGI   = 0;
+        float   GiIntensity = 1.0f;
+        float   GiRays      = 4.0f;
+        float   GiRadius    = 300.0f;      // world units
+
         /* Volumetric fog (RENDERPIPELINE.md): after the translucent stages, before TAA. */
         uint8_t bVolumetricFog   = 0;
         float   FogDensity       = 0.00003f;   // per world unit, at and below FogBaseHeight
@@ -116,7 +122,7 @@ namespace RenderCore
 
         bool IsEmpty() const
         {
-            return !bAmbientOcclusion && !bScreenReflections && !bVolumetricFog && !bDepthOfField && !bMotionBlur && !bBloom && !bAntialiasing && !bToneMapping && !bAutoExposure
+            return !bAmbientOcclusion && !bScreenReflections && !bScreenGI && !bVolumetricFog && !bDepthOfField && !bMotionBlur && !bBloom && !bAntialiasing && !bToneMapping && !bAutoExposure
                 && MaterialCount == 0;
         }
     };

@@ -1,6 +1,6 @@
 # Lighting and global illumination: plan
 
-Status: **Phases 0-4 landed.** Phases land in order on `dev-rendering`, one
+Status: **Phases 0-5 landed.** Phases land in order on `dev-rendering`, one
 commit each; each updates this note (and [RENDERPIPELINE.md](RENDERPIPELINE.md))
 with what was built, how it was checked and what it costs.
 
@@ -201,15 +201,38 @@ of the view's pixels, up to 73 of 255).
   colour pyramid), so a stochastic reflection is noisy for the first frames
   after the view cuts; ray reuse across neighbours (Stachowiak's resolve).
 
-## Phase 5: screen-space diffuse GI
+## Phase 5: screen-space diffuse GI (landed)
 
-A cheap near-field bounce [Ritschel 2009; Mara 2016]: at half size, a few
-cosine-weighted rays a pixel marched through the depth buffer (SSR's march),
-each hit's colour read from the last frame's lit scene -- so light bounces
-again each frame -- accumulated over frames and filtered up depth-aware. The
-IBL pass blends its irradiance over the probes' and DDGI's by how many rays
-hit. A stack node, **Screen-Space GI** (Intensity, Rays, Radius). Baked pixels
-keep their lightmap.
+A near-field bounce [Ritschel 2009; Mara 2016], a post process stack node,
+**Screen-Space GI** (Intensity, Rays, Radius; `[Rendering] ScreenSpaceGI` turns
+every stack's off):
+
+- **The march** (`PPScreenGI.fsh`, half size, between the Lighting stage and
+  the IBL pass): Rays cosine-weighted rays a pixel about its normal (4 by
+  default, new each frame), twelve steps each out to Radius (t^2-spaced, as
+  SSR's), against the full-size depth. A hit on a surface facing the ray is
+  reprojected into the last frame and its colour read from the last frame's
+  finished linear scene colour -- which held this pass's bounce, so light
+  bounces again each frame. Hits fade toward Radius.
+- **Its output:** rgb the hits' light summed over all the rays (with cosine
+  sampling, a Lambertian surface's irradiance over pi), a the share that hit.
+- **Over frames:** Phase 4's resolve (`PPReflectionResolve.fsh`, now reading
+  depth and motion from the full-size targets under each pixel, so it serves a
+  half-size history too), about ten frames, clipped to the neighbourhood.
+- **Into the lighting** (`IBL_LightModelBounce`): the IBL pass upsamples it
+  depth-aware (the four half-size texels round a pixel, bilinear, weighted by
+  view-depth similarity) and takes `bounce.rgb + probes x (1 - bounce.a)` as
+  the irradiance -- the probes and sky light the directions the rays missed.
+  Baked pixels keep their lightmap (the IBL pass gives them no diffuse).
+  Forward Lit materials keep the probes.
+- **Changes pixels on purpose** only where a stack has the node: corners and
+  creases darken where the probes over-lit them, and coloured surfaces bleed
+  onto their neighbours. LightingLab's room: 8.7 % of the view's pixels
+  change by more than 2 of 255 (up to 77), the green wall's colour on the
+  ceiling and floor beside it, the red's on the floor.
+- Not yet: a spatial filter (four rays and ten frames leave a faint grain on
+  flat floors); thickness from a back-face depth; the plan's coexistence with
+  DDGI (Phase 6) is the same blend, with DDGI under the bounce.
 
 ## Phase 6: probe GI (DDGI)
 
@@ -272,6 +295,8 @@ once a second, so commands are kept 1.5 s apart).
 | 3 | LightingLab, the gold spheres | D3D12 | EnergyCompensation | 1.562 | 1.806 | 2.197 | 2.441 |
 | 4 | LightingLab, the smooth gold spheres (SSR at 0.8) | Vulkan | StochasticReflections | 1.176 | 1.370 | 1.853 | 2.143 |
 | 4 | LightingLab, the smooth gold spheres (SSR at 0.8) | D3D12 | StochasticReflections | 1.567 | 1.810 | 2.298 | 2.657 |
+| 5 | LightingLab, the room (4 rays, radius 300) | Vulkan | ScreenSpaceGI | 1.519 | 2.208 | 2.171 | 2.955 |
+| 5 | LightingLab, the room (4 rays, radius 300) | D3D12 | ScreenSpaceGI | 1.959 | 2.113 | 2.815 | 2.773 |
 
 Energy compensation is a handful of ALU operations per lobe; its rows move
 Base Pass, which it does not touch, by about as much, so read them as within
@@ -286,6 +311,12 @@ in view and its field probe capturing every frame, `ProbeFacesPerFrame` 6
 against 1 is **Captures 1.500 against 0.268 ms** a frame on Vulkan and
 **1.908 against 0.333 ms** on D3D12 -- a capture's cost spread over six
 frames, as planned, with the rest of the frame within the noise.
+
+Screen-space GI is the march (four rays of twelve steps, at half size), its
+resolve and the upsample in the IBL pass, all inside Lighting: 0.69 ms on
+Vulkan, while the D3D12 session read only 0.15 ms -- its "off" half ran
+slower than usual (Lighting 1.96 against Vulkan's 1.52), so take the Vulkan
+figure, about 0.5-0.7 ms at this size, as the cost.
 
 | Phase | Level | Backend | BasePass | AO | Shadows | Lighting | Forward | Post | Total |
 |---|---|---|---|---|---|---|---|---|---|

@@ -645,6 +645,16 @@ reflect what is on screen, over the probes' specular.
 - **Limits:** only G-buffer surfaces: Translucent Lit (glass, water) keep
   the probes; what is off screen or hidden reflects the probes.
 
+### Screen-space GI
+
+A stack's **Screen-Space GI** node (an HDR scene with image-based lighting;
+GLOBAL_ILLUMINATION.md, Phase 5): `PPScreenGI` marches a few cosine-weighted
+rays a pixel at half size through the depth, reading each hit's colour from
+the last frame (so light bounces again each frame); `PPReflectionResolve`
+accumulates it; the IBL pass upsamples it depth-aware and lights Opaque and
+Masked Lit surfaces with it, the probes filling in for the rays that missed.
+Baked surfaces keep their lightmap.
+
 ### Volumetric fog
 
 A stack's **Volumetric Fog** node (an HDR scene): exponential height fog
