@@ -12,11 +12,22 @@
 // InScreen: a screen-space reflection (PPScreenReflections.fsh), rgb blended
 // over the top layer's probes by a; zero where there is none. InBounce:
 // screen-space GI (PPScreenGI.fsh) -- rgb the light its rays found, a the share
-// of them that found any; the probes light the rest.
+// of them that found any; the probes light the rest. With DDGI.glsl included
+// first, a GI Volume's probes stand in for the reflection probes' irradiance
+// where it is.
 void IBL_LightModelBounce(sampler2D InAtlas, vec3 InPosition, in LightingSurface S, float InOcclusion, float InDiffuse,
                           vec4 InScreen, vec4 InBounce, out vec3 OutDiffuse, out vec3 OutSpecular)
 {
-    vec3 Irradiance = InBounce.rgb + IBL_GatherIrradiance(InAtlas, InPosition, S.N) * (1.0 - clamp(InBounce.a, 0.0, 1.0));
+    vec3 Ambient = IBL_GatherIrradiance(InAtlas, InPosition, S.N);
+#ifdef DDGI_GLSL
+    if(InDiffuse > 0.0)
+    {
+        float Held;
+        vec3  Volume = DDGI_Irradiance(InPosition, S.N, S.V, Held);
+        Ambient = mix(Ambient, Volume, Held);
+    }
+#endif
+    vec3 Irradiance = InBounce.rgb + Ambient * (1.0 - clamp(InBounce.a, 0.0, 1.0));
     float Screen    = clamp(InScreen.a, 0.0, 1.0);
 
     if(S.Model == SHADING_MODEL_CLOTH)

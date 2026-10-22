@@ -33,6 +33,9 @@ UBO_BLOCK_BEGIN(22, Light_Block)
     uvec4 LightList_ZBins[16];      // LIGHT_ZBINS / 4
     vec4  LightList_Probes[48];     // the reflection probes (IBLCommon.glsl), three vec4s each: [3i] xyz centre,
                                     // w radius; [3i+1] xyz box half sizes (0: a sphere), w intensity; [3i+2] x atlas block
+    vec4  LightList_DDGI[4];        // the GI Volume (DDGI.glsl): [0] xyz its first probe, w intensity (0: none);
+                                    // [1] xyz spacing, w longest distance; [2] xyz probes along each axis, w tiles a row;
+                                    // [3] xy the irradiance atlas's size, zw the distance atlas's
 UBO_BLOCK_END(Light_Block)
 
 // Header.w's flags: area lights by LTC (else every light a point); energy compensation.

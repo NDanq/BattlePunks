@@ -37,6 +37,7 @@ namespace RenderCore
 {
     struct SceneTargets;             // Private/RenderCore/SceneTargets.h
     struct IBLResources;             // likewise: a scene's probe atlas and cube strip
+    struct DDGIResources;            // likewise: a scene's GI Volume probes
     struct StagedDraw;               // Private/RenderCore/DrawPolicy.h
     struct MaterialPreviewRequest;   // RenderScene.h
     struct RenderMaterialParameter;  // Components/RenderComponent.h
@@ -434,6 +435,22 @@ namespace RenderCore
         bool PrefilterIBLBlock(IBLResources& InResources, uint32_t InBlock);
         void SetImageBasedLighting(const IBLResources* InResources, const float (*InProbes)[4], uint32_t InCount, bool bInSky);
         void SetSkyBackground(bool bInForce);
+
+        /*
+         * DYNAMIC GI (GLOBAL_ILLUMINATION.md, Phase 6; DDGI.glsl): a GI Volume's
+         * probes, kept by RenderScene::UpdateGlobalIllumination.
+         *
+         *   EnsureDDGIResources  the atlases for InProbes probes, and the strip
+         *   CopyDDGIFace         a cube face InStages rendered into the strip, with its distances
+         *   UpdateDDGIProbe      the strip into probe InProbe's tiles
+         *   SetDDGI              what lights the next RenderSceneStages: InResources' atlases
+         *                        (null: none) and InHeader, LightList_DDGI's four vec4s
+         */
+        bool EnsureDDGIResources(DDGIResources& InOut, uint32_t InProbes);
+        void ReleaseDDGIResources(DDGIResources& InOut);
+        bool CopyDDGIFace(SceneTargets& InStages, DDGIResources& InResources, uint32_t InFace, float InLongest);
+        bool UpdateDDGIProbe(DDGIResources& InResources, uint32_t InProbe, float InLongest);
+        void SetDDGI(const DDGIResources* InResources, const float (*InHeader)[4]);
         void          FinishTargetFace(const char* InPath, uint32_t InFace);
         bool          ReadRenderTarget(const char* InPath, EngineCore::Image& OutPixels);
 

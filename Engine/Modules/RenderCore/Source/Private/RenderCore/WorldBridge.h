@@ -136,6 +136,7 @@ namespace RenderCore
          * RENDER_REFLECTION_PROBES_MAX, nearest the camera first, each marked
          * due by its Frequency. Called by BuildCaptures. */
         void BuildReflectionProbes(const RenderView& InView, SceneCaptureList& OutList);
+        void BuildGIVolume(const RenderView& InView, SceneCaptureList& OutList);
 
         /* BuildCaptures' clock and each probe's last capture, by entity. */
         struct ProbeState { double LastCapture = -1.0e30; bool bCaptured = false; };

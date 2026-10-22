@@ -266,6 +266,14 @@ def level():
             entity(f"RoomProbe{row * 3 + col}", reflection_probe(800)
                    + transform((-400 + col * 400, 300, -400 + row * 400)))
     entity("FieldProbe", reflection_probe(1400, frequency=0) + transform((2380, 200, -20)))
+    # Dynamic GI (Phase 6): a GI Volume filling the room, 9 x 4 x 9 probes.
+    entity("GIVolume", """  <Component Type="GI Volume" Version="1">
+    <Extent X="600" Y="290" Z="600" />
+    <ProbeSpacing Value="150" />
+    <Intensity Value="1" />
+    <Enabled Value="true" />
+  </Component>
+""" + transform((0, 300, 0)))
     entity("PostProcess", f"""  <Component Type="Post Process" Version="2">
     <Stack Value="{PP_PATH}" />
     <Priority Value="0" />

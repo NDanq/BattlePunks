@@ -1,6 +1,6 @@
 # Lighting and global illumination: plan
 
-Status: **Phases 0-5 landed.** Phases land in order on `dev-rendering`, one
+Status: **Phases 0-6 landed.** Phases land in order on `dev-rendering`, one
 commit each; each updates this note (and [RENDERPIPELINE.md](RENDERPIPELINE.md))
 with what was built, how it was checked and what it costs.
 
@@ -234,24 +234,52 @@ every stack's off):
   flat floors); thickness from a back-face depth; the plan's coexistence with
   DDGI (Phase 6) is the same blend, with DDGI under the bounce.
 
-## Phase 6: probe GI (DDGI)
+## Phase 6: probe GI (DDGI) (landed)
 
 Irradiance probes with visibility [Majercik 2019; McGuire 2017; Majercik 2021],
 updated by rasterising rather than ray tracing:
 
-- **A GI Volume** component (with a Bounds box and Probe Spacing): a grid of
-  probes, at most 32 x 8 x 32.
-- **Updates:** a few probes a frame render six small views (the scene capture
-  path, lit by the live lights, the sky and the volume's own last irradiance,
-  so light bounces again each update), turned into an 8 x 8 octahedral
-  irradiance and a 16 x 16 mean and mean-square distance per probe, blended
-  over the old by hysteresis.
-- **Lookup:** the IBL pass's diffuse from the eight probes round a pixel,
-  weighted trilinearly, by facing, and by Chebyshev visibility from the
-  distance moments [Donnelly 2006], biased off the surface.
-- **With baking:** baked pixels keep their lightmap. Inside a volume, dynamic
-  draws take DDGI instead of the probes' ambient cube, so moving objects and
-  dynamic lights bounce; outside, nothing changes.
+- **A GI Volume** component (`GIVolumeComponent`; Docs/Components/GIVolume.md):
+  Extent (half sizes round its entity), Probe Spacing, Intensity. A grid of
+  probes, at least 2 and at most 32 x 8 x 32, spaced to fill the box exactly.
+  One lights the scene: the enabled volume nearest the camera
+  (`WorldBridge::BuildGIVolume`).
+- **Updates** (`RenderScene::UpdateGlobalIllumination`, in the Captures
+  timer): `[Rendering] GIProbesPerFrame` probes a frame (1 by default), round
+  the grid, each six 16 x 16 views through the scene-capture path -- shadows
+  on, lit by the live lights, the sky behind and, once every probe has been
+  seen, the volume itself, so light bounces again with each round.
+  `DDGICopy.fsh` writes each face into a strip with each texel's distance from
+  the probe in alpha; `DDGIUpdate.fsh` turns the strip into the probe's 8 x 8
+  octahedral irradiance (256 cosine-weighted samples) and 16 x 16 mean and
+  mean-square distance (256 samples of a cos^50 lobe, over the volume's
+  longest distance so half floats hold the square). The volume lights only
+  once every probe has been rendered, a probe never seen being black.
+- **Deviation:** no hysteresis. DDGI blends each update into the old because
+  a few rays are noisy; a rasterised update sees the whole sphere, so it
+  replaces the tiles outright. Light changes reach a probe when its turn
+  comes (324 probes at one a frame: about five seconds at 60 Hz).
+- **Lookup** (`DDGI.glsl`, in the IBL pass): the eight probes round the point
+  (offset 0.3 of the least spacing along the normal and the view, after
+  Majercik 2021), weighted trilinearly, by a wrapped cosine toward the probe,
+  and by Chebyshev visibility from the distance moments [Donnelly 2006],
+  cubed. It fades to the reflection probes over half a spacing outside the
+  grid. The atlases are bound at engine slots 9 and 10; the header is in the
+  light block (`LightList_DDGI`).
+- **With baking and SSGI:** baked pixels keep their lightmap. The volume
+  stands in for the reflection probes' irradiance; Phase 5's bounce sits over
+  it as over them (`bounce.rgb + ambient x (1 - bounce.a)`).
+- **Changes pixels on purpose** only inside a GI Volume, so no existing level
+  changes. LightingLab's room (9 x 4 x 9 probes): 49 % of the view's pixels
+  change, up to 63 of 255 -- the walls' colours on the ceiling and the floor,
+  the floor lit by the ceiling the softbox lights, the ceiling's middle and
+  the back wall darker, the reflection probes' irradiance having seen more
+  of the open sky.
+- `[Rendering] DynamicGI` (on) turns every volume off.
+- Not yet: forward Lit materials (glass, water) keep the reflection probes;
+  an editor gizmo for the box; probe relocation and classification (Majercik
+  2021) -- a probe inside a wall sees black and is only down-weighted by its
+  distances; a rotated volume.
 
 ## Checking
 
@@ -297,6 +325,8 @@ once a second, so commands are kept 1.5 s apart).
 | 4 | LightingLab, the smooth gold spheres (SSR at 0.8) | D3D12 | StochasticReflections | 1.567 | 1.810 | 2.298 | 2.657 |
 | 5 | LightingLab, the room (4 rays, radius 300) | Vulkan | ScreenSpaceGI | 1.519 | 2.208 | 2.171 | 2.955 |
 | 5 | LightingLab, the room (4 rays, radius 300) | D3D12 | ScreenSpaceGI | 1.959 | 2.113 | 2.815 | 2.773 |
+| 6 | LightingLab, the room (324 probes, 1 a frame) | Vulkan | DynamicGI | 3.197 | 1.867 | 4.241 | 2.412 |
+| 6 | LightingLab, the room (324 probes, 1 a frame) | D3D12 | DynamicGI | 3.433 | 4.235 | 4.446 | 5.445 |
 
 Energy compensation is a handful of ALU operations per lobe; its rows move
 Base Pass, which it does not touch, by about as much, so read them as within
@@ -317,6 +347,16 @@ resolve and the upsample in the IBL pass, all inside Lighting: 0.69 ms on
 Vulkan, while the D3D12 session read only 0.15 ms -- its "off" half ran
 slower than usual (Lighting 1.96 against Vulkan's 1.52), so take the Vulkan
 figure, about 0.5-0.7 ms at this size, as the cost.
+
+A GI Volume's cost is its probe updates, in the Captures timer (outside
+Total): **0.509 to 1.950 ms** on Vulkan and **0.470 to 2.852 ms** on D3D12 for
+one probe a frame -- six 16 x 16 views with shadows, the copies and the two
+256-sample update passes, the views' fixed costs (shadow maps, the light
+list, the passes' setup) dominating at that size. The lookup (sixteen
+fetches a pixel in the IBL pass) is lost in these sessions' noise: Lighting
+fell 1.3 ms on Vulkan and rose 0.8 ms on D3D12 with it on. Fewer probes a
+frame (or 0, holding them) trade how fast light changes reach the volume for
+that time.
 
 | Phase | Level | Backend | BasePass | AO | Shadows | Lighting | Forward | Post | Total |
 |---|---|---|---|---|---|---|---|---|---|
