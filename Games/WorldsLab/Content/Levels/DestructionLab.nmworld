@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <World Format="1">
-    <Entity Guid="6029d76e8904fb2010ab31c513f16b23" />
+  <Settings GameMode="WorldsLabDestruction" />
+    <Entity Guid="97f139e711da98c29d0ce19f7b5bda80" />
     <Entity Guid="5e2841a1bab53216b1b80ff42262b0bc" />
     <Entity Guid="2c909efb6298d58a701467514f3dcd56" />
     <Entity Guid="7e6ffa16f8044f813d4cd34ce22ab883" />
