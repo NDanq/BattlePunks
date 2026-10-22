@@ -295,7 +295,8 @@ coloured point lights. Each phase records its GPU cost here, measured with
 
 GPU milliseconds per stage, from the editor viewport (about 1234 x 857) with
 `stat frame`, on an NVIDIA GeForce RTX 2080 Ti; each the half-second average
-`stats` logs. A report at the end compares them.
+`stats` logs. GLOBAL_ILLUMINATION_PERF.md sums them up: what each feature
+costs, a frame with everything on, and where to cut.
 
 **Clocks.** The editor's viewport is a light load, so the GPU sits in low power
 states and its clock moves between runs (435 MHz idle of 2100; clocks cannot
@@ -327,6 +328,8 @@ once a second, so commands are kept 1.5 s apart).
 | 5 | LightingLab, the room (4 rays, radius 300) | D3D12 | ScreenSpaceGI | 1.959 | 2.113 | 2.815 | 2.773 |
 | 6 | LightingLab, the room (324 probes, 1 a frame) | Vulkan | DynamicGI | 3.197 | 1.867 | 4.241 | 2.412 |
 | 6 | LightingLab, the room (324 probes, 1 a frame) | D3D12 | DynamicGI | 3.433 | 4.235 | 4.446 | 5.445 |
+| 5 | LightingLab, the room, again (6 rounds) | D3D12 | ScreenSpaceGI | 2.778 | 3.456 | 3.971 | 4.510 |
+| 6 | LightingLab, the room, probes held (lookup only, 6 rounds) | Vulkan | DynamicGI | 3.200 | 3.342 | 4.240 | 4.340 |
 
 Energy compensation is a handful of ALU operations per lobe; its rows move
 Base Pass, which it does not touch, by about as much, so read them as within
@@ -344,17 +347,21 @@ frames, as planned, with the rest of the frame within the noise.
 
 Screen-space GI is the march (four rays of twelve steps, at half size), its
 resolve and the upsample in the IBL pass, all inside Lighting: 0.69 ms on
-Vulkan, while the D3D12 session read only 0.15 ms -- its "off" half ran
-slower than usual (Lighting 1.96 against Vulkan's 1.52), so take the Vulkan
-figure, about 0.5-0.7 ms at this size, as the cost.
+Vulkan. The first D3D12 session read only 0.15 ms, its "off" half running
+slow; measured again over six rounds it is 0.68 ms, so about 0.7 ms at this
+size on both.
 
 A GI Volume's cost is its probe updates, in the Captures timer (outside
 Total): **0.509 to 1.950 ms** on Vulkan and **0.470 to 2.852 ms** on D3D12 for
 one probe a frame -- six 16 x 16 views with shadows, the copies and the two
 256-sample update passes, the views' fixed costs (shadow maps, the light
 list, the passes' setup) dominating at that size. The lookup (sixteen
-fetches a pixel in the IBL pass) is lost in these sessions' noise: Lighting
-fell 1.3 ms on Vulkan and rose 0.8 ms on D3D12 with it on. Fewer probes a
+fetches a pixel in the IBL pass) is lost in those sessions' noise (Lighting
+fell 1.3 ms on Vulkan and rose 0.8 ms on D3D12 with it on), so it was measured
+apart with the probes held (`GIProbesPerFrame 0` once the volume was
+complete): **0.14 ms** on Vulkan. The D3D12 run of that held its probes
+before the volume was complete -- 1.5 % of pixels changed, not 49 % -- so it
+measured nothing and is left out. Fewer probes a
 frame (or 0, holding them) trade how fast light changes reach the volume for
 that time.
 
