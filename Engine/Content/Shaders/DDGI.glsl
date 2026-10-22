@@ -10,7 +10,10 @@
 // direction, g: the mean square, both over a cos^50 lobe and divided by the
 // volume's longest distance). Tiles run 64 to a row, probe i at column i % 64.
 // A probe is grid cell x + Count.x * (y + Count.y * z). Both sampled as IBL's
-// blocks are: bilinear, half a texel inside the tile.
+// blocks are: bilinear, half a texel inside the tile -- at LOD 0 explicitly:
+// neighbouring pixels either side of a cell boundary read different probes'
+// tiles, and implicit derivatives that large let an anisotropic sampler smear
+// taps across other tiles (thin lines along the cells on D3D12).
 
 #ifndef DDGI_GLSL
 #define DDGI_GLSL
@@ -72,7 +75,7 @@ vec3 DDGI_Irradiance(vec3 InPosition, vec3 InNormal, vec3 InView, out float OutW
         // that sees a wall nearer than this point, along the way to it, is behind one.
         vec3  FromProbe = Biased - Where;
         float Distance  = length(FromProbe);
-        vec2  Moments   = texture(DDGI_DistanceAtlas, DDGI_TileUv(Probe, 16.0, LightList_DDGI[3].zw, FromProbe / max(Distance, 1e-4))).rg;
+        vec2  Moments   = textureLod(DDGI_DistanceAtlas, DDGI_TileUv(Probe, 16.0, LightList_DDGI[3].zw, FromProbe / max(Distance, 1e-4)), 0.0).rg;
         float Mean      = Moments.x * Longest;
         float MeanSq    = Moments.y * Longest * Longest;
         if(Distance > Mean)
@@ -84,7 +87,7 @@ vec3 DDGI_Irradiance(vec3 InPosition, vec3 InNormal, vec3 InView, out float OutW
         }
         Weight = max(Weight, 1e-6 * Tri.x * Tri.y * Tri.z);
 
-        Sum   += texture(DDGI_IrradianceAtlas, DDGI_TileUv(Probe, 8.0, LightList_DDGI[3].xy, InNormal)).rgb * Weight;
+        Sum   += textureLod(DDGI_IrradianceAtlas, DDGI_TileUv(Probe, 8.0, LightList_DDGI[3].xy, InNormal), 0.0).rgb * Weight;
         Total += Weight;
     }
     OutWeight = Fade;

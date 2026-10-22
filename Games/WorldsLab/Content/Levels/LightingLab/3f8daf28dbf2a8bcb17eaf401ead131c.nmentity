@@ -17,8 +17,8 @@
     <Occluder Value="false" />
   </Component>
   <Component Type="Transform" Version="1">
-    <Position X="610" Y="300" Z="0" />
+    <Position X="620" Y="300" Z="10" />
     <Rotation X="0" Y="0" Z="0" />
-    <Scale X="20" Y="600" Z="1240" />
+    <Scale X="40" Y="600" Z="1260" />
   </Component>
 </Entity>

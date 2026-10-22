@@ -237,15 +237,19 @@ def level():
   </Component>
 """ + transform((0, 0, 0)), "Static")
 
-    # The ground under everything, and the room.
+    # The ground under everything, and the room. The walls are 40 thick, built outward from
+    # the room's inner faces: from the camera's usual distance the sun's shadow texels are
+    # about 11 units, and a 20-unit wall the sun sees nearly edge-on was under two of them --
+    # the 5 x 5 filter's far taps read it as deeper than the wall behind, lighting a line
+    # down the back-left corner.
     entity("Ground", render(BOX, M + "Floor.material.nmgraph") + transform((1200, -10, 0), scale=(8000, 20, 8000)))
-    entity("BackWall", render(BOX, M + "White.material.nmgraph") + transform((0, 300, 610), scale=(1240, 600, 20)))
+    entity("BackWall", render(BOX, M + "White.material.nmgraph") + transform((0, 300, 620), scale=(1280, 600, 40)))
     # The ceiling overhangs the back and side walls by more than the sun's shadow filter
     # reaches at this distance (5 x 5 taps of about 20 units along the roof), or its far
     # taps step off the roof's edge and the top of the walls is lit through it.
-    entity("Ceiling", render(BOX, M + "White.material.nmgraph") + transform((0, 615, 40), scale=(1400, 30, 1320)))
-    entity("LeftWall", render(BOX, M + "Red.material.nmgraph") + transform((-610, 300, 0), scale=(20, 600, 1240)))
-    entity("RightWall", render(BOX, M + "Green.material.nmgraph") + transform((610, 300, 0), scale=(20, 600, 1240)))
+    entity("Ceiling", render(BOX, M + "White.material.nmgraph") + transform((0, 615, 50), scale=(1440, 30, 1340)))
+    entity("LeftWall", render(BOX, M + "Red.material.nmgraph") + transform((-620, 300, 10), scale=(40, 600, 1260)))
+    entity("RightWall", render(BOX, M + "Green.material.nmgraph") + transform((620, 300, 10), scale=(40, 600, 1260)))
 
     # Gold spheres along the back, smooth to rough.
     for index in range(10):

@@ -273,7 +273,12 @@ caster reach toward the sun: in its terms the bias grew to tens of world units
 and the 5 x 5 filter let light through thin roofs and walls where they met.
 Even so, a roof only as wide as the walls under it can leak a texel-stepped
 fringe where the filter's far taps step off its edge: a roof that overhangs
-its walls by a few texels (at the sun's distance from the camera) does not.
+its walls by a few texels (at the sun's distance from the camera) does not. Likewise
+a wall the sun sees nearly edge-on needs to be a few texels thick where it is
+seen from: the filter's far taps read such a face many texels' slope deeper,
+and a wall under two texels thick lets a line of light down the corner behind
+it. (The far cascade's texels are about 11 units at a 6000-unit Shadow
+Distance and 2048 atlas.)
 
 Limits: Masked casters cast their whole shape (their clip is not run in the
 Shadows sub-stage); a quad casts nothing; Translucent Lit surfaces are
