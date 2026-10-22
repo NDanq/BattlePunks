@@ -1682,6 +1682,20 @@ static void TestMaterialRuntime()
     Coloured.Colors.pop_back();
     Archive Bad = Archive::ForWriting();
     Expect(!SerializeMesh(Bad, Coloured), "colours for only some vertices are refused");
+
+    // --- Tangents (MTAN) in .nmmesh ---------------------------------------------------------
+    MeshData Tangented = Plain;
+    Tangented.Tangents = { 1, 0, 0, 1,  1, 0, 0, 1,  1, 0, 0, -1 };
+    Archive SaveTangents = Archive::ForWriting();
+    Expect(SerializeMesh(SaveTangents, Tangented), "a mesh with tangents saves");
+    Archive LoadTangents = Archive::ForReading(SaveTangents.GetBytes());
+    MeshData TangentsBack;
+    Expect(SerializeMesh(LoadTangents, TangentsBack) && TangentsBack.Tangents == Tangented.Tangents
+           && TangentsBack.Indices == Tangented.Indices, "and loads them back, handedness and all");
+    Expect(PlainBack.Tangents.empty(), "a mesh saved without tangents (every file before MTAN) loads with none");
+    Tangented.Tangents.resize(8);
+    Archive BadTangents = Archive::ForWriting();
+    Expect(!SerializeMesh(BadTangents, Tangented), "tangents for only some vertices are refused");
 }
 
 #if WITH_EDITOR
@@ -6656,6 +6670,46 @@ static void TestEngineMeshes()
         for(size_t At = 0; bUV1InRange && At < Mesh.UV1.size(); ++At) { bUV1InRange &= Mesh.UV1[At] >= 0.0f && Mesh.UV1[At] <= 1.0f; }
         Expect(bUV1InRange, (std::string(Each.Path) + " has lightmap UVs (UV1) in 0-1").c_str());
         Expect(bFacing, (std::string(Each.Path) + " winds every triangle to face its normals").c_str());
+
+        /* MeshAsset.h's frame: a unit tangent at right angles to the normal, and
+         * on every triangle with UV area, along its +U with w * cross(N, T) along +V. */
+        bool bTangentFrames = Mesh.Tangents.size() == size_t(Mesh.GetVertexCount()) * 4;
+        for(size_t Vertex = 0; bTangentFrames && Vertex < Mesh.GetVertexCount(); ++Vertex)
+        {
+            const float* T = &Mesh.Tangents[Vertex * 4];
+            const float* N = &Mesh.Normals[Vertex * 3];
+            bTangentFrames &= std::fabs(T[0] * T[0] + T[1] * T[1] + T[2] * T[2] - 1.0f) < 1e-3f
+                              && std::fabs(T[0] * N[0] + T[1] * N[1] + T[2] * N[2]) < 1e-3f && std::fabs(T[3]) == 1.0f;
+        }
+        for(size_t At = 0; bTangentFrames && At + 2 < Mesh.Indices.size(); At += 3)
+        {
+            const uint32_t I[3] = { Mesh.Indices[At], Mesh.Indices[At + 1], Mesh.Indices[At + 2] };
+            float E1[3], E2[3];
+            for(int Axis = 0; Axis < 3; ++Axis)
+            {
+                E1[Axis] = Mesh.Positions[I[1] * 3 + Axis] - Mesh.Positions[I[0] * 3 + Axis];
+                E2[Axis] = Mesh.Positions[I[2] * 3 + Axis] - Mesh.Positions[I[0] * 3 + Axis];
+            }
+            const float Du1 = Mesh.UV0[I[1] * 2] - Mesh.UV0[I[0] * 2], Dv1 = Mesh.UV0[I[1] * 2 + 1] - Mesh.UV0[I[0] * 2 + 1];
+            const float Du2 = Mesh.UV0[I[2] * 2] - Mesh.UV0[I[0] * 2], Dv2 = Mesh.UV0[I[2] * 2 + 1] - Mesh.UV0[I[0] * 2 + 1];
+            const float Det = Du1 * Dv2 - Du2 * Dv1;
+            if(std::fabs(Det) < 1e-9f) { continue; }
+            float AlongU[3], AlongV[3];
+            for(int Axis = 0; Axis < 3; ++Axis)
+            {
+                AlongU[Axis] = (E1[Axis] * Dv2 - E2[Axis] * Dv1) / Det;
+                AlongV[Axis] = (E2[Axis] * Du1 - E1[Axis] * Du2) / Det;
+            }
+            for(const uint32_t Corner : I)
+            {
+                const float* T = &Mesh.Tangents[Corner * 4];
+                const float* N = &Mesh.Normals[Corner * 3];
+                const float B[3] = { T[3] * (N[1] * T[2] - N[2] * T[1]), T[3] * (N[2] * T[0] - N[0] * T[2]), T[3] * (N[0] * T[1] - N[1] * T[0]) };
+                bTangentFrames &= T[0] * AlongU[0] + T[1] * AlongU[1] + T[2] * AlongU[2] > 0.0f
+                                  && B[0] * AlongV[0] + B[1] * AlongV[1] + B[2] * AlongV[2] > 0.0f;
+            }
+        }
+        Expect(bTangentFrames, (std::string(Each.Path) + " has tangents along +U, their bitangents along +V (MTAN)").c_str());
     }
 
     MeshData Plane;

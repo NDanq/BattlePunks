@@ -820,6 +820,8 @@ namespace RenderCore
             Desc.UV0         = OutSource->UV0.data();
             Desc.Colors      = OutSource->Colors.empty() ? nullptr : OutSource->Colors.data();
             Desc.UV1         = OutSource->UV1.empty() ? nullptr : OutSource->UV1.data();
+            /* A mesh made in memory may fill its arrays itself: tangents only if every vertex has one. */
+            Desc.Tangents    = OutSource->Tangents.size() == size_t(OutSource->GetVertexCount()) * 4 ? OutSource->Tangents.data() : nullptr;
             Desc.NumVertices = OutSource->GetVertexCount();
             Desc.Indices     = OutSource->Indices.data();
             Desc.NumIndices  = uint32_t(OutSource->Indices.size());

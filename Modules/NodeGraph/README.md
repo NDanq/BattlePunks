@@ -330,10 +330,13 @@ normal map's colour into a world-space normal, for Material Output's Normal.
   sampled at; unlinked it is the texture coordinate.
 - **Format:** OpenGL means green points up the image (Blender, Substance's
   OpenGL export); DirectX means it points down (Unreal, 3ds Max).
-- **The tangent frame:** no mesh carries tangents, so it is built per pixel
-  from how the world position and UV change across it (`Material_NormalMap`,
-  MaterialCommon.glsl, a cotangent frame). It is signed by the screen's
-  handedness, so every backend and back faces agree.
+- **The tangent frame:** the mesh's own MikkTSpace tangent (`MeshData::Tangents`,
+  the frame normal maps are baked against) where it has one and UV follows
+  the texture coordinate -- itself, or scaled and offset (tiled), not turned
+  or mirrored. Otherwise it is built per pixel from how the world position
+  and UV change across it (`Material_NormalMap`, MaterialCommon.glsl, a
+  cotangent frame), constant across a triangle. That one is signed by the
+  screen's handedness, so every backend and back faces agree.
 - **Import the map linear:** the importer does so for a name that says normal
   (see the Editor's README).
 - **Verified on Vulkan:** a map tilted right and up the image tilts the normal

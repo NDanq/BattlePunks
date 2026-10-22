@@ -120,6 +120,7 @@ void MTLMesh::Release()
     if(RenderData.TexCoord) { free(RenderData.TexCoord); RenderData.TexCoord = nullptr; }
     if(RenderData.Color)    { free(RenderData.Color);    RenderData.Color    = nullptr; }
     if(RenderData.UV1)      { free(RenderData.UV1);      RenderData.UV1      = nullptr; }
+    if(RenderData.Tangent)  { free(RenderData.Tangent);  RenderData.Tangent  = nullptr; }
     if(RenderData.Joints)   { free(RenderData.Joints);   RenderData.Joints   = nullptr; }
     if(RenderData.Weights)  { free(RenderData.Weights);  RenderData.Weights  = nullptr; }
 

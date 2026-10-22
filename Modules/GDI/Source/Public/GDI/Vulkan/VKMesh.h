@@ -123,19 +123,22 @@ private:
     VkDeviceMemory       VertexColorMemory = VK_NULL_HANDLE;
     VkBuffer             UV1Buffer       = VK_NULL_HANDLE;     // indexed only; binding 4, location 10
     VkDeviceMemory       UV1Memory       = VK_NULL_HANDLE;
-    VkBuffer             JointBuffer     = VK_NULL_HANDLE;     // skinned only; binding 6, location 11
+    VkBuffer             TangentBuffer   = VK_NULL_HANDLE;     // indexed only; binding 8, location 13
+    VkDeviceMemory       TangentMemory   = VK_NULL_HANDLE;
+    VkBuffer             JointBuffer    = VK_NULL_HANDLE;     // skinned only; binding 6, location 11
     VkDeviceMemory       JointMemory     = VK_NULL_HANDLE;
     VkBuffer             WeightBuffer    = VK_NULL_HANDLE;     // skinned only; binding 7, location 12
     VkDeviceMemory       WeightMemory    = VK_NULL_HANDLE;
     VkBuffer             IndexBuffer     = VK_NULL_HANDLE;
     VkDeviceMemory       IndexMemory     = VK_NULL_HANDLE;
 
-    /** A dynamic mesh's persistent mappings of the six buffers above. */
+    /** A dynamic mesh's persistent mappings of the seven buffers above (not the bones'). */
     void*                PositionMapped    = nullptr;
     void*                TexCoordMapped    = nullptr;
     void*                NormalMapped      = nullptr;
     void*                VertexColorMapped = nullptr;
     void*                UV1Mapped         = nullptr;
+    void*                TangentMapped     = nullptr;
     void*                IndexMapped       = nullptr;
 
     /** Only valid when bSupportsInstanced == true. */

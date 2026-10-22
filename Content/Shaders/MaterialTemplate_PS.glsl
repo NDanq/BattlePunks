@@ -112,6 +112,7 @@ void main(void)
     Inputs.FragCoord     = gl_FragCoord;
     Inputs.ViewDepth     = Interpolants.ViewDepth;
     Inputs.DeviceDepth   = gl_FragCoord.z;
+    Inputs.WorldTangent  = Interpolants.WorldTangent;
 
     MaterialSurface Surface = DefaultMaterialSurface(Inputs);
     CalcMaterial(Inputs, Surface);
@@ -135,10 +136,15 @@ void main(void)
     }
     // The shading models' unset inputs (MaterialCommon.glsl's defaults): Cloth's
     // sheen the square root of its base colour (Filament 4.12), an anisotropic
-    // grain along the UV's U.
+    // grain along the UV's U: the mesh's tangent, smooth across its triangles,
+    // or without one the UV's derivatives, constant across each.
     if(Surface.SheenColor.r < 0.0) { Surface.SheenColor = sqrt(clamp(Surface.BaseColor, 0.0, 1.0)); }
 #if MATERIAL_SHADING_MODEL_ANISOTROPIC
-    if(dot(Surface.Tangent, Surface.Tangent) < 1e-8) { Surface.Tangent = Material_TangentAlongU(Inputs, Normal, Inputs.TexCoord); }
+    if(dot(Surface.Tangent, Surface.Tangent) < 1e-8)
+    {
+        vec4 MeshTangent = Material_MeshTangent(Inputs, Normal);
+        Surface.Tangent  = MeshTangent.w != 0.0 ? MeshTangent.xyz : Material_TangentAlongU(Inputs, Normal, Inputs.TexCoord);
+    }
 #endif
 #endif
 

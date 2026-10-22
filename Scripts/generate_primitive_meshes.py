@@ -46,12 +46,17 @@ with it):
     plane, sphere and capsule their UV0 inset, the quad its UV0; the cylinder's wall across the
     top half and its caps side by side below;
   - one section, named for the mesh, with no material: drawn with DefaultLit
-    unless a RenderComponent slot names one; no vertex colours (white).
+    unless a RenderComponent slot names one; no vertex colours (white);
+  - tangents (MTAN): along UV0's +U at right angles to the normal, w the sign
+    that puts w * cross(normal, tangent) along +V -- MeshAsset.h's frame, the
+    one MikkTSpace gives the importer's meshes. Each vertex's is its
+    triangles' UV gradients summed [Lengyel 2001], which on these shapes is
+    the same direction: exactly the sphere's and capsule's lines of latitude.
 
 The .nmmesh layout is RenderCore's MeshAsset.cpp: EngineCore::Archive chunks
 (tag, version, size, payload; little-endian), no file header:
 
-    NMSH v1 { MHDR v1, MVTX v1, MIDX v1, MSEC v1, MUV1 v1 }
+    NMSH v1 { MHDR v1, MVTX v1, MIDX v1, MSEC v1, MUV1 v1, MTAN v1 }
 
 Usage:
     python Engine/Scripts/generate_primitive_meshes.py [-out <dir>]
@@ -76,6 +81,9 @@ def sub(a, b):     return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
 def scale(a, s):   return (a[0] * s, a[1] * s, a[2] * s)
 def dot(a, b):     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 def cross(a, b):   return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+def normalize(a):
+    length = math.sqrt(dot(a, a))
+    return scale(a, 1.0 / length) if length > 1e-12 else (0.0, 0.0, 0.0)
 
 
 class Mesh:
@@ -144,6 +152,43 @@ class Mesh:
                     if all(k > 1e-9 for k in e) or all(k < -1e-9 for k in e):
                         assert (x, y) not in covered, f"{self.name}: UV1 triangles {covered[(x, y)]} and {at // 3} overlap"
                         covered[(x, y)] = at // 3
+
+    def tangents(self):
+        """Per vertex: (x, y, z, w), the tangent along +U at right angles to the
+        normal and the sign putting w * cross(normal, tangent) along +V. In the
+        frame the mesh is in (call after to_engine)."""
+        along_u = [(0.0, 0.0, 0.0)] * len(self.positions)
+        along_v = [(0.0, 0.0, 0.0)] * len(self.positions)
+        for at in range(0, len(self.indices), 3):
+            a, b, c = self.indices[at:at + 3]
+            e1, e2 = sub(self.positions[b], self.positions[a]), sub(self.positions[c], self.positions[a])
+            du1, dv1 = self.uvs[b][0] - self.uvs[a][0], self.uvs[b][1] - self.uvs[a][1]
+            du2, dv2 = self.uvs[c][0] - self.uvs[a][0], self.uvs[c][1] - self.uvs[a][1]
+            det = du1 * dv2 - du2 * dv1
+            if abs(det) < 1e-12:
+                continue   # no UV area (a pole's sliver): no direction
+            u = scale(sub(scale(e1, dv2), scale(e2, dv1)), 1.0 / det)
+            v = scale(sub(scale(e2, du1), scale(e1, du2)), 1.0 / det)
+            for i in (a, b, c):
+                along_u[i] = add(along_u[i], u)
+                along_v[i] = add(along_v[i], v)
+        used = set(self.indices)
+        out = []
+        for i, (n, u, v) in enumerate(zip(self.normals, along_u, along_v)):
+            if i not in used:
+                # No triangle (a seam's last column at a pole): any tangent will do.
+                out.append((*normalize(cross(n, (0.0, 0.0, 1.0) if abs(n[2]) < 0.9 else (1.0, 0.0, 0.0))), 1.0))
+                continue
+            t = normalize(sub(u, scale(n, dot(n, u))))
+            assert dot(t, t) > 0.5, f"{self.name}: vertex {i} has no tangent"
+            out.append((*t, -1.0 if dot(cross(n, t), v) < 0.0 else 1.0))
+        return out
+
+    def check_tangents(self):
+        """Every triangle's tangents agree in handedness with its UVs."""
+        frames = self.tangents()
+        for at in range(0, len(self.indices), 3):
+            assert len({frames[i][3] for i in self.indices[at:at + 3]}) == 1, f"{self.name}: triangle {at // 3} mixes handedness"
 
     def bounds(self):
         lo = tuple(min(p[axis] for p in self.positions) for axis in range(3))
@@ -388,8 +433,10 @@ def serialize(mesh):
     sections = string(mesh.name) + string("") + struct.pack("<II", 0, len(mesh.indices))
     uv1 = [c for t in mesh.uv1s for c in t]
     lightmap = struct.pack(f"<{len(uv1)}f", *uv1)
+    frames = [c for t in mesh.tangents() for c in t]
+    tangents = struct.pack(f"<{len(frames)}f", *frames)
     return chunk("NMSH", chunk("MHDR", header) + chunk("MVTX", vertices) + chunk("MIDX", indices) + chunk("MSEC", sections)
-                 + chunk("MUV1", lightmap))
+                 + chunk("MUV1", lightmap) + chunk("MTAN", tangents))
 
 
 def main():
@@ -406,6 +453,7 @@ def main():
         mesh.check_uv1()
         to_engine(mesh)
         mesh.check()
+        mesh.check_tangents()
         path = args.out / f"{mesh.name}.nmmesh"
         path.write_bytes(serialize(mesh))
         lo, hi = mesh.bounds()
