@@ -279,9 +279,9 @@ public:
 
     GDIShader*            BoundVertexShader = nullptr;
     GDIShader*            BoundPixelShader  = nullptr;
-    /* [0] material, [1] scene, [2] skin, [3] previous skin, as the driver's. */
-    std::vector<uint8_t>  MaterialBlocks[4];
-    uint64_t              MaterialBlockSerials[4] = {};
+    /* [0] material, [1] scene, [2] skin, [3] previous skin, [4] light, as the driver's. */
+    std::vector<uint8_t>  MaterialBlocks[GDI_UNIFORM_BLOCK_COUNT];
+    uint64_t              MaterialBlockSerials[GDI_UNIFORM_BLOCK_COUNT] = {};
     GDITextureResource*   MaterialTextures[GDI_MATERIAL_TEXTURE_SLOTS] = {};
     GDIBuffer*            InstanceBuffer     = nullptr;
     uint32_t              InstanceCount      = 0;
@@ -303,7 +303,7 @@ public:
 /* GDISetUniformBlock's storage, shared by the driver and recording contexts:
  * InData into the block InBinding names, its serial bumped if the bytes
  * changed. False for a binding that is not a block. */
-bool GDIStoreUniformBlock(std::vector<uint8_t> (&InOutBlocks)[4], uint64_t (&InOutSerials)[4], uint InBinding,
+bool GDIStoreUniformBlock(std::vector<uint8_t> (&InOutBlocks)[GDI_UNIFORM_BLOCK_COUNT], uint64_t (&InOutSerials)[GDI_UNIFORM_BLOCK_COUNT], uint InBinding,
                           const void* InData, uint InSize);
 
 struct GDITextureMemoryStats;   // below, with GDIGetTextureMemoryStats
@@ -728,7 +728,7 @@ protected:
     GDIShader* BoundPixelShader;
     bool bInitialized = false;
 
-    /* SetUniformBlock's bytes for bindings 2, 3, 12 and 13 (the skin blocks), and SetMaterialTexture's. */
+    /* SetUniformBlock's bytes for bindings 2, 3, 20 and 21 (the skin blocks) and 22 (the light block), and SetMaterialTexture's. */
     /* GDISetViewport's rectangle, which GDISetScissorRect clips to. */
     uint                  ViewportX = 0, ViewportY = 0, ViewportWidth = 0, ViewportHeight = 0;
 
@@ -762,11 +762,11 @@ protected:
     uint32_t              IndirectArgsOffset = 0;
 
     /* [0] material, [1] scene, [2] skin, [3] previous skin (empty: no skinned
-     * draw since the last clear). */
-    std::vector<uint8_t>  MaterialBlocks[4];
+     * draw since the last clear), [4] light (empty: no light list set). */
+    std::vector<uint8_t>  MaterialBlocks[GDI_UNIFORM_BLOCK_COUNT];
     /* Bumped by each SetUniformBlock, so a backend can reuse an upload of a
      * block that has not changed since (the scene block: once per frame). */
-    uint64_t              MaterialBlockSerials[4] = {};
+    uint64_t              MaterialBlockSerials[GDI_UNIFORM_BLOCK_COUNT] = {};
     GDITextureResource*   MaterialTextures[GDI_MATERIAL_TEXTURE_SLOTS] = {};
 };
 

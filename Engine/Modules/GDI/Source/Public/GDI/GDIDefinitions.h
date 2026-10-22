@@ -300,11 +300,16 @@ struct ITextureState
  *   0, 1   View, Transform        as every shader
  *   2      material block         GDISetUniformBlock, raw std140 bytes
  *   3      scene block            GDISetUniformBlock, raw std140 bytes
- *   4-11   material textures 0-7  GDISetMaterialTexture
- *   12     skin block             GDISetUniformBlock: a skinned mesh's bone
+ *   4-19   material textures 0-15 GDISetMaterialTexture: a material authors
+ *                                 0-7; 8-15 are the engine's (its passes, and
+ *                                 the light list forward Lit materials read)
+ *   20     skin block             GDISetUniformBlock: a skinned mesh's bone
  *                                 palette, three vec4 rows per bone (Skinning.glsl)
- *   13     previous skin block    GDISetUniformBlock: the palette it had the
- *                                 frame before, for its velocity (as 12)
+ *   21     previous skin block    GDISetUniformBlock: the palette it had the
+ *                                 frame before, for its velocity (as 20)
+ *   22     light block            GDISetUniformBlock: the frame's light list
+ *                                 (RenderCore's GLOBAL_ILLUMINATION.md), set once
+ *                                 a frame and read by the passes that light
  *
  * The blocks are visible to both stages. Shaders declare them with
  * UBO_BLOCK_BEGIN/END and the textures with MATERIAL_SAMPLER2D. Only a
@@ -315,9 +320,12 @@ struct ITextureState
 constexpr unsigned GDI_MATERIAL_BLOCK_BINDING   = 2;
 constexpr unsigned GDI_SCENE_BLOCK_BINDING      = 3;
 constexpr unsigned GDI_MATERIAL_TEXTURE_BINDING = 4;
-constexpr unsigned GDI_MATERIAL_TEXTURE_SLOTS   = 8;
-constexpr unsigned GDI_SKIN_BLOCK_BINDING       = 12;
-constexpr unsigned GDI_PREV_SKIN_BLOCK_BINDING  = 13;
+constexpr unsigned GDI_MATERIAL_TEXTURE_SLOTS   = 16;
+constexpr unsigned GDI_SKIN_BLOCK_BINDING       = 20;
+constexpr unsigned GDI_PREV_SKIN_BLOCK_BINDING  = 21;
+constexpr unsigned GDI_LIGHT_BLOCK_BINDING      = 22;
+/* The blocks GDISetUniformBlock keeps: material, scene, skin, previous skin, light. */
+constexpr unsigned GDI_UNIFORM_BLOCK_COUNT      = 5;
 /* 256 bones of three vec4 rows: within every backend's guaranteed 16 KB. */
 constexpr unsigned GDI_SKIN_MAX_BONES           = 256;
 constexpr unsigned GDI_SKIN_BLOCK_MAX_BYTES     = GDI_SKIN_MAX_BONES * 48;
@@ -325,6 +333,8 @@ constexpr unsigned GDI_GPU_TIMESTAMP_MAX        = 64;   // GPU timestamps one Be
 constexpr unsigned GDI_MATERIAL_BLOCK_MAX_BYTES = 1024;
 /* The scene block carries the frame's lights and shadow matrices: larger. */
 constexpr unsigned GDI_SCENE_BLOCK_MAX_BYTES    = 4096;
+/* The light block, always bound whole: every desktop backend's 64 KB uniform range. */
+constexpr unsigned GDI_LIGHT_BLOCK_MAX_BYTES    = 65536;
 
 /* The OpenGL backend's minimum: a 4.5 core context. Every shader declares
  * "#version 450" (Vulkan's SPIR-V is compiled from the same source). */

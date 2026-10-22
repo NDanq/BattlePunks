@@ -95,6 +95,9 @@ struct D3D12DrawCaches
     uint64_t SkinAddress[2] = {};   // the palette, the frame before's
     uint64_t SkinSerial[2]  = { ~0ull, ~0ull };
     uint64_t SkinEpoch[2]   = { ~0ull, ~0ull };
+    uint64_t LightAddress = 0;   // the light block, b22
+    uint64_t LightSerial  = ~0ull;
+    uint64_t LightEpoch   = ~0ull;
     uint64_t MaterialAddress = 0;   // a material draw's b2
     uint64_t MaterialSerial  = ~0ull;
     uint64_t MaterialEpoch   = ~0ull;
@@ -135,7 +138,7 @@ struct D3D12DrawInputs
     D3D12ShaderResource*        VS        = nullptr;
     D3D12ShaderResource*        PS        = nullptr;
     bool                        bMaterial = false;
-    const std::vector<uint8_t>* Blocks    = nullptr;   // [4], as GDIRecordingContext::MaterialBlocks
+    const std::vector<uint8_t>* Blocks    = nullptr;   // [GDI_UNIFORM_BLOCK_COUNT], as GDIRecordingContext::MaterialBlocks
     const uint64_t*             Serials   = nullptr;   // [4]
     GDITextureResource* const*  Textures  = nullptr;   // [GDI_MATERIAL_TEXTURE_SLOTS]
     D3D12DrawCaches*            Caches    = nullptr;

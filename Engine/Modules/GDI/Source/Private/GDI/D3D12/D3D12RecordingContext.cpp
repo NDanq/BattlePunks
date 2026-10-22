@@ -143,7 +143,7 @@ bool D3D12DynamicGDI::BeginParallelPass(const uint32_t InChunks, GDIRecordingCon
          * uploads its blocks and its serials then only rise. */
         Context.BoundVertexShader = BoundVertexShader;
         Context.BoundPixelShader  = BoundPixelShader;
-        for(uint32_t Block = 0; Block < 4; ++Block)
+        for(uint32_t Block = 0; Block < GDI_UNIFORM_BLOCK_COUNT; ++Block)
         {
             Context.MaterialBlocks[Block]       = MaterialBlocks[Block];
             Context.MaterialBlockSerials[Block] = MaterialBlockSerials[Block];

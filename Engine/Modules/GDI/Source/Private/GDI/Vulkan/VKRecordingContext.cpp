@@ -171,7 +171,7 @@ bool VulkanDynamicGDI::BeginParallelPass(const uint32_t InChunks, GDIRecordingCo
         Context.BoundVertexShader = BoundVertexShader;
         Context.BoundPixelShader  = BoundPixelShader;
         ++Context.PassGeneration;
-        for(uint32_t Block = 0; Block < 4; ++Block)
+        for(uint32_t Block = 0; Block < GDI_UNIFORM_BLOCK_COUNT; ++Block)
         {
             Context.MaterialBlocks[Block]       = MaterialBlocks[Block];
             Context.MaterialBlockSerials[Block] = Context.PassGeneration << 32;

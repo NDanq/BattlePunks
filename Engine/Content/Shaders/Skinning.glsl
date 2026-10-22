@@ -1,6 +1,6 @@
 // Skinning.glsl -- a skinned mesh's bones (RenderCore/ANIMATION.md).
 //
-// The palette is GDI's skin block (binding 12): per bone, the three rows of
+// The palette is GDI's skin block (binding 20): per bone, the three rows of
 // the 3 x 4 affine matrix that takes a bind-space vertex to its posed place
 // in model space -- the bone's pose times its inverse bind (AnimMath.h's
 // AnimMatrix, row-major). RenderCore sets it before every skinned draw; the
@@ -8,13 +8,13 @@
 
 #define SKIN_MAX_BONES 256
 
-UBO_BLOCK_BEGIN(12, Skin_Block)
+UBO_BLOCK_BEGIN(20, Skin_Block)
     vec4 Skin_Bones[SKIN_MAX_BONES * 3];
 UBO_BLOCK_END(Skin_Block)
 
 // The palette the frame before (binding 13): where the vertex was, for its
 // velocity. RenderCore sets it with the palette; the same one if it is new.
-UBO_BLOCK_BEGIN(13, PrevSkin_Block)
+UBO_BLOCK_BEGIN(21, PrevSkin_Block)
     vec4 PrevSkin_Bones[SKIN_MAX_BONES * 3];
 UBO_BLOCK_END(PrevSkin_Block)
 

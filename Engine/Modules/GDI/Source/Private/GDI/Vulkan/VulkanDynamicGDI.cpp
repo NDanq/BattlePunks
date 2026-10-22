@@ -1299,7 +1299,7 @@ bool VulkanDynamicGDI::BindDrawState(const VKDrawInputs& In, GDIMesh* InMesh, bo
     // ----------------------------------------------------------------
     VKDrawCaches::DescSetKey SetKey;
     SetKey.Layout = F.DescLayout;
-    uint32_t Offsets[6] = {};
+    uint32_t Offsets[7] = {};
     uint32_t BlockCount = 0;
     const auto AddBlock = [&](const VkBuffer InBuffer, const VkDeviceSize InOffset, const uint32_t InRange)
     {
@@ -1361,7 +1361,7 @@ bool VulkanDynamicGDI::BindDrawState(const VKDrawInputs& In, GDIMesh* InMesh, bo
         AddBlock(CustAlloc.Buffer, CustAlloc.Offset, CustomRange);
     }
 
-    // --- Material layout: raw blocks at 2 and 3, skin blocks at 12 and 13 ---
+    // --- Material layout: raw blocks at 2 and 3, skin blocks at 20 and 21, the light block at 22 ---
     if(Group == DLG_Material)
     {
         for(uint32_t b = 0; b < 2; ++b)
@@ -1386,7 +1386,7 @@ bool VulkanDynamicGDI::BindDrawState(const VKDrawInputs& In, GDIMesh* InMesh, bo
             AddBlock(C.BlockUploadBuffer[b], C.BlockUploadOffset[b], Size);
         }
 
-        // The skin blocks (bindings 12 and 13): the last palette set, and the
+        // The skin blocks (bindings 20 and 21): the last palette set, and the
         // frame before's, each uploaded once per change -- a run of draws after
         // a skinned one rebinds them, no more.
         for(uint32_t Skin = 0; Skin < 2; ++Skin)
@@ -1411,10 +1411,25 @@ bool VulkanDynamicGDI::BindDrawState(const VKDrawInputs& In, GDIMesh* InMesh, bo
             }
             AddBlock(C.SkinBlockUploadBuffer[Skin], C.SkinBlockUploadOffset[Skin], C.SkinBlockUploadSize[Skin]);
         }
+
+        // The light block (binding 22): the frame's light list, bound whole, uploaded once per change.
+        if(C.LightBlockUploadSerial != In.Serials[4] || C.LightBlockUploadEpoch != Epoch || C.LightBlockUploadBuffer == VK_NULL_HANDLE)
+        {
+            const std::vector<uint8_t>& Bytes = In.Blocks[4];
+            const VKUBOAllocation Block = Alloc->AllocateUBO(GDI_LIGHT_BLOCK_MAX_BYTES);
+            if(Block.Buffer == VK_NULL_HANDLE) return false;
+            memset(Block.MappedPtr, 0, GDI_LIGHT_BLOCK_MAX_BYTES);
+            if(!Bytes.empty()) memcpy(Block.MappedPtr, Bytes.data(), Bytes.size());
+            C.LightBlockUploadBuffer = Block.Buffer;
+            C.LightBlockUploadOffset = Block.Offset;
+            C.LightBlockUploadSerial = In.Serials[4];
+            C.LightBlockUploadEpoch  = Epoch;
+        }
+        AddBlock(C.LightBlockUploadBuffer, C.LightBlockUploadOffset, GDI_LIGHT_BLOCK_MAX_BYTES);
     }
 
     // ----------------------------------------------------------------
-    // 6. The images: the material's 8 slots, or the legacy sampler binding.
+    // 6. The images: the material's 16 slots, or the legacy sampler binding.
     // ----------------------------------------------------------------
     uint32_t ImageCount = 0;
     if(Group == DLG_Material)
@@ -1486,19 +1501,20 @@ bool VulkanDynamicGDI::BindDrawState(const VKDrawInputs& In, GDIMesh* InMesh, bo
         DescSet = Alloc->Allocate(F.DescLayout);
         if(DescSet == VK_NULL_HANDLE) return false;
 
-        VkWriteDescriptorSet  Writes[GDI_PREV_SKIN_BLOCK_BINDING + 1]{};
-        VkDescriptorBufferInfo Buffers[6]{};
+        VkWriteDescriptorSet  Writes[GDI_LIGHT_BLOCK_BINDING + 1]{};
+        VkDescriptorBufferInfo Buffers[7]{};
         VkDescriptorImageInfo  Images[GDI_MATERIAL_TEXTURE_SLOTS]{};
         uint32_t WriteCount = 0;
 
         /* The blocks' bindings, in the order AddBlock took them. */
-        uint32_t BlockBindings[6] = { 0, 1, 2, 3, 0, 0 };
+        uint32_t BlockBindings[7] = { 0, 1, 2, 3, 0, 0, 0 };
         if(Group == DLG_Material)
         {
             BlockBindings[2] = GDI_MATERIAL_BLOCK_BINDING;
             BlockBindings[3] = GDI_MATERIAL_BLOCK_BINDING + 1;
             BlockBindings[4] = GDI_SKIN_BLOCK_BINDING;
             BlockBindings[5] = GDI_PREV_SKIN_BLOCK_BINDING;
+            BlockBindings[6] = GDI_LIGHT_BLOCK_BINDING;
         }
         for(uint32_t Block = 0; Block < BlockCount; ++Block)
         {

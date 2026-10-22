@@ -2755,6 +2755,21 @@ void EditorMainWindow::RegisterConsoleCommands()
                       .arg(double(Stats.FrameMs), 0, 'f', 2)
                       .arg(double(Stats.GameThreadMs), 0, 'f', 2)
                       .arg(double(Stats.RenderThreadMs), 0, 'f', 2));
+        /* With "stat frame" on: each span's GPU time, also written to the run log so a
+         * scripted session (--command) can measure a change. */
+        QStringList Spans;
+        for(uint32_t Timer = 0; Timer < RenderCore::RGT_Count; ++Timer)
+        {
+            if(Stats.GpuMs[Timer] < 0.0f) { continue; }
+            Spans << QStringLiteral("%1 %2").arg(QString::fromLatin1(RenderCore::GetRenderGpuTimerName(RenderCore::ERenderGpuTimer(Timer))))
+                                            .arg(double(Stats.GpuMs[Timer]), 0, 'f', 3);
+        }
+        if(!Spans.isEmpty())
+        {
+            const QString Line = QStringLiteral("GPU ms: ") + Spans.join(QStringLiteral(", "));
+            Console.Print(Line);
+            CORE_LOG("[Editor] stats " + Line.toStdString())
+        }
     });
 
     /* Unreal's spelling: "stat unit" toggles the frame, game and render

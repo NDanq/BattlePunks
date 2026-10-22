@@ -128,6 +128,9 @@ bool D3D12PipelineCache::BuildRootSignature()
     Params[RP_PrevSkin].ParameterType              = D3D12_ROOT_PARAMETER_TYPE_CBV;
     Params[RP_PrevSkin].Descriptor.ShaderRegister  = GDI_PREV_SKIN_BLOCK_BINDING;
     Params[RP_PrevSkin].ShaderVisibility           = D3D12_SHADER_VISIBILITY_VERTEX;
+    Params[RP_Light].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    Params[RP_Light].Descriptor.ShaderRegister = GDI_LIGHT_BLOCK_BINDING;
+    Params[RP_Light].ShaderVisibility          = D3D12_SHADER_VISIBILITY_PIXEL;
 
     for(UINT Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot)
     {

@@ -27,7 +27,7 @@ Usage:
         names its shaders:
             OpenGL  <name>          preprocessed GLSL
             Vulkan  <name>.spv      SPIR-V
-            D3D12   <name>.cso      DXBC (via spirv-cross and fxc)
+            D3D12   <name>.cso      DXIL, shader model 6.0 (via spirv-cross and dxc)
         A material's permutations are named <Name>@<key>.vsh/.fsh, the key
         8 hex digits (MaterialPermutation.h). -defaults adds the shared
         vertex shaders, MaterialDefault@<key>.vsh.
@@ -50,13 +50,13 @@ Usage:
         DIR Engine/Shaders/PDBs; GDIGetShaderPDBPath finds them):
             Vulkan  <name>.spv      SPIR-V with its source and names (glslc -g),
                                     <name>.glsl the preprocessed source it holds
-            D3D12   <name>.pdb      fxc's PDB (/Zi /Fd); the .cso is stripped
+            D3D12   <name>.pdb      dxc's PDB (-Zi -Fd); the .cso is stripped
                                     and names it. <name>.hlsl beside it
             OpenGL  nothing         the cooked file is already source
         Without -out or -cache, only these are kept.
 
     -jobs N (either command) compiles up to N shaders at once, default 32:
-    each is a glslc (and spirv-cross and fxc) process, so threads overlap
+    each is a glslc (and spirv-cross and dxc) process, so threads overlap
     them. -jobs 1 cooks one at a time. Output and caches do not depend on N:
     each shader's lines are printed in the same order, and a cache is
     written sorted.
@@ -205,7 +205,7 @@ class Job:
 
 STAGE_TYPES   = {"vertex": "VERTEX_SHADER", "pixel": "PIXEL_SHADER", "compute": "COMPUTE_SHADER"}
 STAGE_SUFFIX  = {"vertex": ".vert", "pixel": ".frag", "compute": ".comp"}   # what glslc reads a stage from
-STAGE_PROFILE = {"vertex": "vs_5_0", "pixel": "ps_5_0", "compute": "cs_5_0"}
+STAGE_PROFILE = {"vertex": "vs_6_0", "pixel": "ps_6_0", "compute": "cs_6_0"}   # cook_shaders.py's DXIL_PROFILE
 
 
 def _preprocess(cs, job, platform_define):
@@ -228,14 +228,14 @@ def _spirv(cs, glslc, job, spv_path, debug_source=None):
         debug_source.parent.mkdir(parents=True, exist_ok=True)
         debug_source.write_text(processed, encoding="utf-8")
         stage = STAGE_SUFFIX[job.stage][1:]
-        result = subprocess.run([glslc, "-g", f"-fshader-stage={stage}", str(debug_source), "-o", str(spv_path)],
+        result = subprocess.run([glslc, *cs.GLSLC_TARGET, "-g", f"-fshader-stage={stage}", str(debug_source), "-o", str(spv_path)],
                                 capture_output=True, text=True)
     else:
         fd, tmp_path = tempfile.mkstemp(suffix=STAGE_SUFFIX[job.stage])
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as tmp:
                 tmp.write(processed)
-            result = subprocess.run([glslc, tmp_path, "-o", str(spv_path)], capture_output=True, text=True)
+            result = subprocess.run([glslc, *cs.GLSLC_TARGET, tmp_path, "-o", str(spv_path)], capture_output=True, text=True)
         finally:
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
@@ -269,7 +269,7 @@ class _JobOutput:
 def run_jobs(work, jobs, workers):
     """work(job) -> bool for every job, on up to `workers` threads; yields
     (job, ok) in job order, after replaying what that job printed. Each job
-    runs glslc (and spirv-cross and fxc) as processes, which threads overlap."""
+    runs glslc (and spirv-cross and dxc) as processes, which threads overlap."""
     if workers <= 1 or len(jobs) <= 1:
         for job in jobs:
             yield job, work(job)
@@ -332,17 +332,14 @@ def cook_job(cs, tools, target, job, out_dir, pdb_dir=None):
             return False
 
         is_vertex  = job.stage == "vertex"
-        cross_args = [tools["spirv-cross"], "--hlsl", "--shader-model", "50"]
+        cross_args = [tools["spirv-cross"], "--hlsl", "--shader-model", cs.HLSL_SHADER_MODEL]
         if is_vertex:
             cross_args += ["--hlsl-flatten-matrix-vertex-input-semantics"]   # no Y flip: GDI.h
         cross_args += [str(spv_path), "--output", str(hlsl_path)]
-        fxc_args = [tools["fxc"], "/nologo", "/T", STAGE_PROFILE[job.stage],
-                    "/E", "main", "/O3", "/Fo", str(out_dir / (job.out_name + ".cso"))]
-        if pdb_dir:
-            fxc_args += ["/Zi", "/Qstrip_debug", "/Fd", str(pdb_dir / (job.out_name + ".pdb"))]
-        fxc_args += [str(hlsl_path)]
+        dxc_cmd = cs.dxc_args(tools["dxc"], STAGE_PROFILE[job.stage], out_dir / (job.out_name + ".cso"), hlsl_path,
+                              pdb_dir / (job.out_name + ".pdb") if pdb_dir else None)
 
-        for args, tool in ((cross_args, "spirv-cross"), (fxc_args, "fxc")):
+        for args, tool in ((cross_args, "spirv-cross"), (dxc_cmd, "dxc")):
             result = subprocess.run(args, capture_output=True, text=True)
             if result.returncode != 0:
                 print(f"ERROR: {tool} failed for {job.label()}:\n{result.stdout}{result.stderr}", file=sys.stderr)
@@ -356,7 +353,7 @@ def find_tools(cs, target):
         tools["glslc"] = cs._find_glslc()
     if target == "D3D12":
         tools["spirv-cross"] = cs._find_spirv_cross()
-        tools["fxc"] = cs._find_fxc()
+        tools["dxc"] = cs._find_dxc()
     return tools
 
 

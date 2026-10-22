@@ -463,7 +463,7 @@ bool VKPipelineCache::BuildLayouts()
                   "the skin blocks follow the material textures");
     struct GroupDef
     {
-        VkDescriptorSetLayoutBinding Bindings[GDI_PREV_SKIN_BLOCK_BINDING + 1];
+        VkDescriptorSetLayoutBinding Bindings[GDI_LIGHT_BLOCK_BINDING + 1];
         uint32_t                     Count;
     } Groups[DLG_Count];
 
@@ -503,10 +503,13 @@ bool VKPipelineCache::BuildLayouts()
         Sampler.stageFlags = kAllStages;
         Groups[DLG_Material].Bindings[GDI_MATERIAL_TEXTURE_BINDING + s] = Sampler;
     }
-    // The skin blocks at 12 and 13: a skinned vertex shader's bone palette, and the frame before's.
+    // The skin blocks at 20 and 21: a skinned vertex shader's bone palette, and the frame before's.
     Groups[DLG_Material].Bindings[GDI_SKIN_BLOCK_BINDING]      = MakeUBO(GDI_SKIN_BLOCK_BINDING);
     Groups[DLG_Material].Bindings[GDI_PREV_SKIN_BLOCK_BINDING] = MakeUBO(GDI_PREV_SKIN_BLOCK_BINDING);
-    Groups[DLG_Material].Count = GDI_PREV_SKIN_BLOCK_BINDING + 1;
+    // The light block at 22: the frame's light list.
+    static_assert(GDI_LIGHT_BLOCK_BINDING == GDI_PREV_SKIN_BLOCK_BINDING + 1, "the light block follows the skin blocks");
+    Groups[DLG_Material].Bindings[GDI_LIGHT_BLOCK_BINDING] = MakeUBO(GDI_LIGHT_BLOCK_BINDING);
+    Groups[DLG_Material].Count = GDI_LIGHT_BLOCK_BINDING + 1;
 
     for(uint32_t g = 0; g < DLG_Count; ++g)
     {

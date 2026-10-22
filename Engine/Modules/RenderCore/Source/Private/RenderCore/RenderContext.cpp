@@ -2467,7 +2467,7 @@ namespace RenderCore
                 return false;
             }
             /* After BindMaterial, which clears every slot but 0: Scene Depth's. */
-            GDISetMaterialTexture(GDI_MATERIAL_TEXTURE_SLOTS - 1, PostSceneDepth);
+            GDISetMaterialTexture(MATERIAL_TEXTURE_SLOTS - 1, PostSceneDepth);
             GDIDrawObject(ScreenObject);
             DrawCallCount.fetch_add(1, std::memory_order_relaxed);
             return true;
@@ -3171,7 +3171,7 @@ namespace RenderCore
                 }
             }
             GDISetMaterialTexture(0, nullptr);
-            GDISetMaterialTexture(GDI_MATERIAL_TEXTURE_SLOTS - 1, nullptr);
+            GDISetMaterialTexture(MATERIAL_TEXTURE_SLOTS - 1, nullptr);
             PostSceneDepth = nullptr;
         };
         RunMaterials(PPS_BeforeEffects);
@@ -4415,7 +4415,7 @@ namespace RenderCore
             if(Slot >= RENDER_PASS_INPUTS_MAX) { break; }
             Textures[Slot++] = PassTexture(Each);
         }
-        Textures[GDI_MATERIAL_TEXTURE_SLOTS - 1] = PassTexture(DepthOf(F->Targets->SceneColor));   // slot 7: the scene depth
+        Textures[MATERIAL_TEXTURE_SLOTS - 1] = PassTexture(DepthOf(F->Targets->SceneColor));   // slot 7: the scene depth
         static_assert(sizeof(RenderPassParams) == 96 && sizeof(RenderPassParams) <= GDI_MATERIAL_BLOCK_MAX_BYTES,
                       "RenderPassParams is PP_Block: mat4, vec4, vec4");
         using Blends = RenderContext::Impl::EFullscreenBlend;

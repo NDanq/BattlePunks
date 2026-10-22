@@ -77,7 +77,7 @@ wizard's Animation group adds:
 A skinned mesh draws through the `SkinnedMesh` material vertex input (every
 material has it; key `0x400`). The vertex brings bone indices (location 11)
 and weights (12); the palette -- each bone's model-space pose times its
-inverse bind, three `vec4` rows a bone -- is GDI's skin block at binding 12
+inverse bind, three `vec4` rows a bone -- is GDI's skin block at binding 20
 (`GDI_SKIN_BLOCK_BINDING`). Vulkan, OpenGL and D3D12 bind it; Metal draws no
 indexed meshes.
 
