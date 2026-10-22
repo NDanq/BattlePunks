@@ -28,6 +28,7 @@ namespace RenderCore
     {
         RLL_Point = 0,
         RLL_Spot  = 1,
+        RLL_Rect  = 2,   // a Rect Light: Width x Height across Right and Up, facing Direction
     };
 
     /* A point or spot light, as WorldBridge found it this frame. */
@@ -41,6 +42,13 @@ namespace RenderCore
         float               InnerConeAngle = 0.0f;        // spot: half-angles, degrees
         float               OuterConeAngle = 0.0f;
         uint8_t             Type           = RLL_Point;
+        /* Area (GLOBAL_ILLUMINATION.md, Phase 3): a point or spot light's sphere,
+         * and a rect light's rectangle -- its axes unit, its sizes world units. */
+        float               SourceRadius   = 0.0f;
+        EngineCore::Vector3 Right{ 1.0, 0.0, 0.0 };
+        EngineCore::Vector3 Up{ 0.0, 1.0, 0.0 };
+        float               Width          = 0.0f;
+        float               Height         = 0.0f;
 
         uint8_t             bCastShadows     = 0;
         uint8_t             ShadowTechnique  = 0;         // ELightShadowTechnique

@@ -34,8 +34,9 @@ vec3 ViewChannelColor(vec3 InBaseColor, vec3 InEmissive)
 // The surface and its BRDF, by shading model (SHADING_MODELS.md): LightingSurface
 // and EvaluateLightModel. Default's lobes are GGX, Smith-Schlick and Schlick
 // Fresnel over Lambert, exactly as before shading models.
-#include <ShadingModels.glsl>
 #include <LightList.glsl>
+#include <ShadingModels.glsl>
+#include <AreaLights.glsl>
 #ifdef LIGHTING_IBL_ATLAS
 #include <IBLShading.glsl>
 #endif
@@ -142,7 +143,8 @@ void LightingLocal(in LightingSurface S, int InIndex, vec3 InWorldPosition, bool
     vec3  L        = ToLight / max(Distance, 1e-4);
 
     float Attenuation = LocalFalloff(Distance, PositionRange.w);
-    if(DirectionType.w > 0.5)
+    bool  bSpot       = DirectionType.w > 0.5 && DirectionType.w < 1.5;
+    if(bSpot)
     {
         // Spot: full inside the inner cone, nothing past the outer.
         Attenuation *= smoothstep(Cone.x, Cone.y, dot(-L, DirectionType.xyz));
@@ -152,6 +154,12 @@ void LightingLocal(in LightingSurface S, int InIndex, vec3 InWorldPosition, bool
     if(!bInTransmits && S.Model != SHADING_MODEL_CLOTH && dot(S.N, L) <= 0.0
        && (S.Model != SHADING_MODEL_CLEARCOAT || dot(S.CoatN, L) <= 0.0)) { return; }
 
+    // A rect light lights only what is in front of it.
+    vec4 AreaRight = LightList_Lights[InIndex * LIGHT_LIST_VEC4S + 4];
+    vec4 AreaUp    = LightList_Lights[InIndex * LIGHT_LIST_VEC4S + 5];
+    bool bRect     = DirectionType.w > 1.5;
+    if(bRect && dot(InWorldPosition - PositionRange.xyz, DirectionType.xyz) <= 0.0) { return; }
+
     float Shadow = 1.0;
 #ifdef LIGHTING_SHADOWS
     int Slot = int(Cone.z);
@@ -159,7 +167,7 @@ void LightingLocal(in LightingSurface S, int InIndex, vec3 InWorldPosition, bool
     if(ConeShadow.z >= 0.0)
     {
         vec4  Biases = Scene_Locals[Slot * 6 + 5];
-        float Lit    = LocalShadow(int(ConeShadow.z), DirectionType.w > 0.5, ConeShadow.x, PositionRange.xyz,
+        float Lit    = LocalShadow(int(ConeShadow.z), bSpot, ConeShadow.x, PositionRange.xyz,
                                    InWorldPosition, S.N, L, Biases.x, Biases.y);
 #ifdef LIGHTING_CONTACT_SHADOWS
         // A shadowed point or spot light's contact shadows too ([Shadows] ContactLocalLights):
@@ -176,7 +184,51 @@ void LightingLocal(in LightingSurface S, int InIndex, vec3 InWorldPosition, bool
     }
 #endif
     vec3 Diffuse, Specular, Transmitted;
-    EvaluateLightModel(S, L, ToLinear(ColorIntensity.rgb) * ColorIntensity.a * Attenuation, Diffuse, Specular, Transmitted);
+    vec3 Radiance = ToLinear(ColorIntensity.rgb) * ColorIntensity.a * Attenuation;
+    // A sphere narrower than 0.05 radians from here lights as the point it nearly is.
+    if(LightList_Flag(LIGHT_LIST_FLAG_AREA) && (bRect || AreaRight.w > 0.05 * Distance) && S.Model != SHADING_MODEL_CLOTH)
+    {
+        // An area light (AreaLights.glsl): a rect's own corners, or a sphere as the
+        // square of its area facing this point. The lobe's and the cosine's
+        // integrals over it; a sphere's brightness matches the point light it
+        // was at the same distance, a rect's is its surface's.
+        vec3 Corners[4];
+        if(bRect)
+        {
+            Corners[0] = PositionRange.xyz - AreaRight.xyz - AreaUp.xyz;
+            Corners[1] = PositionRange.xyz + AreaRight.xyz - AreaUp.xyz;
+            Corners[2] = PositionRange.xyz + AreaRight.xyz + AreaUp.xyz;
+            Corners[3] = PositionRange.xyz - AreaRight.xyz + AreaUp.xyz;
+            float X      = Distance / max(PositionRange.w, 1e-4);
+            float Window = clamp(1.0 - X * X * X * X, 0.0, 1.0);
+            Radiance = ToLinear(ColorIntensity.rgb) * ColorIntensity.a * Window * Window;
+        }
+        else
+        {
+            float Radius = min(AreaRight.w, Distance * 0.95);
+            vec3  U      = normalize(cross(L, abs(L.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+            vec3  W      = cross(L, U);
+            float Half   = Radius * 0.886227;   // sqrt(pi) / 2: the square of the disc's area
+            Corners[0] = PositionRange.xyz - U * Half - W * Half;
+            Corners[1] = PositionRange.xyz + U * Half - W * Half;
+            Corners[2] = PositionRange.xyz + U * Half + W * Half;
+            Corners[3] = PositionRange.xyz - U * Half + W * Half;
+            Radiance *= Distance * Distance / (AREA_PI * Radius * Radius);
+        }
+        mat3 Minv;
+        vec2 Amplitude;
+        Area_LTCLookup(S.Roughness, S.NdotV, Minv, Amplitude);
+        float SpecularShare = Area_LTCIntegrate(S.N, S.V, InWorldPosition, Minv, Corners);
+        float DiffuseShare  = Area_LTCIntegrate(S.N, S.V, InWorldPosition, mat3(1.0), Corners);
+        vec3  Fresnel = S.F0 * Amplitude.x + vec3(Amplitude.y);
+        Specular    = Radiance * SpecularShare * Fresnel * SM_EnergyCompensation(S.F0, S.Roughness, S.NdotV);
+        Diffuse     = Radiance * DiffuseShare * (vec3(1.0) - SM_FresnelSchlick(S.F0, S.NdotV)) * (1.0 - S.Metallic);
+        Transmitted = vec3(0.0);
+    }
+    else
+    {
+        EvaluateLightModel(S, L, Radiance, Diffuse, Specular, Transmitted);
+    }
     // A point or spot light's transmission is unshadowed: Thickness alone limits it.
     InOutDiffuse  += Diffuse * Shadow;
     InOutSpecular += Specular * Shadow + Transmitted;

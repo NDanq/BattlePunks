@@ -32,8 +32,9 @@ namespace RenderCore
         float               ShadowBias       = 0.002f;
         float               ShadowNormalBias = 1.5f;
 
-        /* Baked lighting only (Build > Bake Lightmaps): the bulb's radius,
-         * world units -- how soft its baked shadows are; 0 is a point. */
+        /* The bulb's radius, world units: how soft its baked shadows are
+         * (Build > Bake Lightmaps), and live, the sphere its highlights and
+         * light come from (GLOBAL_ILLUMINATION.md, Phase 3); 0 is a point. */
         float               SourceRadius     = 4.0f;
     };
 }

@@ -1,6 +1,6 @@
 # Lighting and global illumination: plan
 
-Status: **Phases 0-2 landed.** Phases land in order on `dev-rendering`, one
+Status: **Phases 0-3 landed.** Phases land in order on `dev-rendering`, one
 commit each; each updates this note (and [RENDERPIPELINE.md](RENDERPIPELINE.md))
 with what was built, how it was checked and what it costs.
 
@@ -116,24 +116,53 @@ lights all draw (16 did before), and the frame is bit-identical with
 ClusteredLights off. No pixel changes with 16 lights or fewer: the same lights,
 in another order.
 
-## Phase 3: area lights and energy
+## Phase 3: area lights and energy (landed)
 
-- **Area lights** by linearly transformed cosines [Heitz 2016; Hill 2016]:
-  the GGX lobe's LTC fit (`fit_ltc.py`, Heitz's isotropic parameterisation,
-  64 x 64 over roughness and view angle) and its magnitude and Fresnel terms,
-  integrated over the light's polygon clipped to the horizon.
-  - **Rect Light:** a new component, Width x Height, emitting from one face,
-    with Barn Door later.
-  - **Sphere:** a Point or Spot Light's Source Radius (the bake's already) makes
-    it a sphere, integrated as the disc facing the shading point, approximated
-    by a square of the same area.
-  - Diffuse: the polygon's form factor (the clamped-cosine LTC, identity).
-  - Shadows: a Rect Light's shadow is its centre's spot shadow.
+- **Area lights** by linearly transformed cosines [Heitz 2016; Hill 2016]
+  (`AreaLights.glsl`): the specular lobe is a clamped cosine under a 3 x 3
+  transform, so its integral over the light's polygon is the cosine's over the
+  polygon transformed back -- an edge sum after clipping to the horizon (Heitz
+  et al.'s case table).
+  - **The fit:** `Scripts/fit_ltc.py` fits the transforms to this renderer's own
+    direct-light GGX (Smith with Schlick-GGX, k = (r + 1)^2 / 8), not Heitz's
+    published tables, so area and point highlights agree: 64 x 64 cells over
+    roughness and sqrt(1 - NdotV), Heitz's isotropic three-parameter matrix by
+    Nelder-Mead against his MIS error, plus each cell's albedo split by Schlick's
+    Fresnel (so specular scales by F0 x + y). About eight minutes in numpy; the
+    result is `LTCTables.inl`, uploaded once as packed floats and decoded into a
+    64 x 128 half-float target (`LTCDecode.fsh`, `EnsureLTC`) bound at engine
+    slot 8 for the Lighting stage and forward Lit draws.
+  - **Rect Light:** a new component (`RectLightComponent`; Docs/Components/
+    RectLight.md): Width x Height across its entity's +X and +Y, facing +Z, its
+    Intensity its surface's brightness, windowed to nothing at Range. Only its
+    front lights. The editor draws its outline and facing.
+  - **Spheres:** a Point or Spot Light's Source Radius (until now the bake's
+    alone) makes it a sphere, integrated as the square of the disc's area facing
+    the shading point, as bright as the point it was at that distance. A sphere
+    narrower than 0.05 radians from the pixel lights as a point, which it nearly
+    is, so a small bulb costs what it did.
+  - Diffuse: the cosine's own integral over the polygon (identity transform).
+  - **Changes pixels on purpose** where a light has an area: a Rect Light lights
+    as a rectangle, and a bulb with a Source Radius wide enough from a surface
+    widens its highlight to the sphere's.
+  - Not yet: a Rect Light's shadow (the plan's centre spot shadow), Barn Door;
+    area lights light the shading models with Default's lobes (Cloth keeps its
+    point sheen); volumetric fog lights a rect as a point.
 - **Energy compensation** for rough metals [Kulla 2017; Fdez-Aguera 2019;
-  Turquin 2019]: the specular lobes times `1 + F0 (1 / E - 1)`, E the
-  split-sum's directional albedo (Karis's fit at F0 = 1). **Changes pixels on
-  purpose:** rough metals brighten, up to about 50 % at roughness 1; smooth
-  surfaces and dielectrics hardly move.
+  Turquin 2019] (`SM_EnergyCompensation`): the specular lobes -- point, area and
+  image-based -- times `1 + F0 (1 / E - 1)`, E the split-sum's directional
+  albedo (Karis's fit at F0 = 1). **Changes pixels on purpose:** rough metals
+  brighten, most at roughness 1; smooth surfaces and dielectrics hardly move.
+- `[Rendering] AreaLights` and `[Rendering] EnergyCompensation` (on): off,
+  every light lights as a point and specular is single scattering, as before
+  this phase -- flags in the light block's header.
+
+Checked: RenderCore.Smoke on the GPU, 743 checks, none failing on Vulkan or
+D3D12; the LTC target in the editor's Render Target view (the fitted matrices
+and amplitudes); LightingLab's smooth gold spheres reflect the ceiling
+softbox as a rectangle and the warm wall panel as a tall streak (round dots
+with AreaLights off); its rough spheres brighten with EnergyCompensation (5 %
+of the view's pixels, up to 73 of 255).
 
 ## Phase 4: reflections
 
@@ -214,6 +243,16 @@ once a second, so commands are kept 1.5 s apart).
 |---|---|---|---|---|---|---|---|
 | 2 | LightingLab, the field (144 lights) | Vulkan | ClusteredLights | 1.642 | 1.135 | 2.226 | 1.794 |
 | 2 | LightingLab, the field (144 lights) | D3D12 | ClusteredLights | 1.712 | 1.264 | 2.219 | 1.845 |
+| 3 | LightingLab, the room (2 rects, a 40-unit bulb) | Vulkan | AreaLights | 1.155 | 1.410 | 1.918 | 2.133 |
+| 3 | LightingLab, the room (2 rects, a 40-unit bulb) | D3D12 | AreaLights | 1.057 | 1.671 | 1.614 | 2.280 |
+| 3 | LightingLab, the gold spheres | Vulkan | EnergyCompensation | 1.700 | 1.847 | 2.473 | 2.718 |
+| 3 | LightingLab, the gold spheres | D3D12 | EnergyCompensation | 1.562 | 1.806 | 2.197 | 2.441 |
+
+Energy compensation is a handful of ALU operations per lobe; its rows move
+Base Pass, which it does not touch, by about as much, so read them as within
+the noise. Area lights cost two LTC integrals (eight edges each, after
+clipping) per area light per pixel it reaches: 0.25-0.6 ms here, for a view
+filled by three.
 
 | Phase | Level | Backend | BasePass | AO | Shadows | Lighting | Forward | Post | Total |
 |---|---|---|---|---|---|---|---|---|---|

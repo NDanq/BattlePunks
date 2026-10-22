@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="02f1beb43cbc219e34ae3b36621ad5ac" Name="Softbox">
+  <Component Type="Rect Light" Version="1">
+    <Color R="255" G="250" B="240" A="255" />
+    <Intensity Value="3" />
+    <Width Value="400" />
+    <Height Value="200" />
+    <Range Value="1400" />
+    <Active Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="590" Z="200" />
+    <Rotation X="90" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

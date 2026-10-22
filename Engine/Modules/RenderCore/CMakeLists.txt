@@ -76,6 +76,7 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/Components/SkyLightComponent.cpp
         Source/Private/RenderCore/Components/PointLightComponent.cpp
         Source/Private/RenderCore/Components/SpotLightComponent.cpp
+        Source/Private/RenderCore/Components/RectLightComponent.cpp
         Source/Private/RenderCore/ShadowSetup.h
         Source/Private/RenderCore/ShadowSetup.cpp
         Source/Private/RenderCore/ShadowSettings.cpp
@@ -158,6 +159,7 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/Components/SkyLightComponent.h
         Source/Public/RenderCore/Components/PointLightComponent.h
         Source/Public/RenderCore/Components/SpotLightComponent.h
+        Source/Public/RenderCore/Components/RectLightComponent.h
         Source/Public/RenderCore/Components/LightShadow.h
         Source/Public/RenderCore/PostProcessStack.h
         Source/Public/RenderCore/Components/PostProcessComponent.h

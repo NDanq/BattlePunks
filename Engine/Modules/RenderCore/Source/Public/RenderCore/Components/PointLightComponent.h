@@ -32,7 +32,7 @@ namespace RenderCore
 
         /* Baked lighting only (Build > Bake Lightmaps): the bulb's radius,
          * world units -- how soft its baked shadows are; 0 is a point. */
-        float               SourceRadius     = 4.0f;
+        float               SourceRadius     = 4.0f;   // live too: a sphere light this big (GLOBAL_ILLUMINATION.md)
     };
 }
 

@@ -62,7 +62,7 @@ void IBL_LightModel(sampler2D InAtlas, vec3 InPosition, in LightingSurface S, fl
     vec3 EnvBrdf  = IBL_EnvBRDF(F0, Roughness, S.NdotV);
     float SpecOcc = IBL_SpecularOcclusion(S.NdotV, InOcclusion, Roughness);
     OutDiffuse  = Irradiance * (1.0 - S.Metallic) * InOcclusion * InDiffuse * Through;
-    OutSpecular = Specular * EnvBrdf * SpecOcc * Through + Coat;
+    OutSpecular = Specular * EnvBrdf * SM_EnergyCompensation(F0, Roughness, S.NdotV) * SpecOcc * Through + Coat;
 
     if(S.Model == SHADING_MODEL_SUBSURFACE || S.Model == SHADING_MODEL_SKIN)
     {

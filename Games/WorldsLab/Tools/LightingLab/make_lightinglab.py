@@ -16,6 +16,8 @@ Then fill <gen_code>:
                  back: rough metals' energy.
     The field    beside the room (+X), a floor under a 12 x 12 grid of small
                  coloured point lights: many lights.
+    Area lights  a softbox in the ceiling (a Rect Light shining down), a warm
+                 panel on the green wall, and a bulb with a 40-unit sphere.
 
 Cameras (the editor's "camera x y z yaw pitch"):
     room   0 300 -1500 0 -6
@@ -111,6 +113,18 @@ def point_light(color, intensity, radius, shadows=False, source_radius=6):
 """
 
 
+def rect_light(color, intensity, width, height, light_range):
+    return f"""  <Component Type="Rect Light" Version="1">
+    <Color R="{color[0]}" G="{color[1]}" B="{color[2]}" A="255" />
+    <Intensity Value="{intensity}" />
+    <Width Value="{width}" />
+    <Height Value="{height}" />
+    <Range Value="{light_range}" />
+    <Active Value="true" />
+  </Component>
+"""
+
+
 def entity(name, body, mobility=None):
     g = guid(name)
     guids.append(g)
@@ -181,6 +195,12 @@ def level():
         entity(f"Gold{index + 1:02d}", render(SPHERE, M + f"Gold{index + 1:02d}.material.nmgraph")
                + transform((x, 50, 450), scale=(90, 90, 90)))
     entity("WhiteBlock", render(BOX, M + "White.material.nmgraph") + transform((-200, 150, 150), (0, 25, 0), (220, 300, 220)))
+
+    # Area lights (Phase 3): a softbox in the ceiling shining down, a warm panel on the
+    # right wall facing in, and a bulb with a big sphere over the gold spheres.
+    entity("Softbox", rect_light((255, 250, 240), 3, 400, 200, 1400) + transform((0, 590, 200), (90, 0, 0)))
+    entity("WarmPanel", rect_light((255, 170, 90), 4, 160, 300, 1200) + transform((590, 250, 300), (0, -90, 0)))
+    entity("Bulb", point_light((200, 220, 255), 6, 600, source_radius=40) + transform((300, 220, 350)))
 
     # The field: 144 small coloured point lights over the ground beside the room.
     for row in range(12):
