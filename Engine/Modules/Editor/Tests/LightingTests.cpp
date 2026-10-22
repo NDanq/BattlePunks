@@ -414,6 +414,47 @@ static void TestEmissive()
     Expect(Far.X < Under.X * 0.2f, "and less of it farther away");
 }
 
+/* A thin wall standing through the floor (overlapping it, down to y -50),
+ * thinner than a texel and placed off the texel grid so one column of floor
+ * texels has its centre under it. The sun slants in from +X: the wall's +X side
+ * is lit, its -X side in shadow. The floor is black (it bounces nothing) and the
+ * wall white, so the -X side gets no light at all, direct or bounced: whatever
+ * it shows leaked across the wall. */
+static void TestOverlapLeaks()
+{
+    std::printf("[overlap leaks]\n");
+    Scene S;
+    AddFloor(S, 1000.0f, 0.0f, 0, Vec3(0.0f, 0.0f, 0.0f));
+    AddBox(S, Vec3(5.0f, -50.0f, -400.0f), Vec3(12.0f, 300.0f, 400.0f), 1, Vec3(1.0f, 1.0f, 1.0f));
+    FinishInstances(S, { true, false });
+
+    Light Sun;
+    Sun.Type      = ELightType::Directional;
+    Sun.Direction = Normalize(Vec3(-1.0f, -1.0f, 0.0f));
+    Sun.Radiance  = Vec3(3.0f, 3.0f, 3.0f);
+    S.Lights.push_back(Sun);
+    S.Finish();
+
+    Settings Config;
+    Config.TexelsPerUnit   = 0.064f;   // 15.625 units a texel: texel centres at +-7.8, +-23.4, ...
+    Config.SamplesPerTexel = 128;
+    Config.Bounces         = 1;
+    Config.ProbeSpacing    = 10000.0f;
+    Config.MaxAtlasSize    = 128;
+    Result R;
+    std::string Error;
+    Expect(Bake(S, Config, R, Error) == EBakeStatus::Done, "the bake finishes");
+
+    const float Lit = 3.0f * 0.7071f / PI;   // radiance x cos(45) / pi
+    const Vec3 Straddled = FloorTexel(R, 0, 1000.0f, 7.8f, 0.0f);    // centre under the wall; most of it on the shadow side
+    const Vec3 Shadow    = FloorTexel(R, 0, 1000.0f, -23.4f, 0.0f);  // two texels into the shadow
+    const Vec3 Sunlit    = FloorTexel(R, 0, 1000.0f, 39.0f, 0.0f);   // in the sun, beside the wall's lit face
+    std::printf("        straddled texel %.3f, shadow side %.4f, sunlit side %.3f (direct %.3f)\n", Straddled.X, Shadow.X, Sunlit.X, Lit);
+    Expect(Straddled.X < Lit * 0.1f, "a texel the wall straddles takes the shadow side it mostly lies on, not the sunlit side's light");
+    Expect(Shadow.X < Lit * 0.02f, "beside the wall's shadowed face the floor gets no light from the sunlit side, bounced or smoothed");
+    Expect(Sunlit.X > Lit * 1.02f, "while the sunlit side has the sun and the lit wall's bounce");
+}
+
 static void TestCancel()
 {
     std::printf("[cancel]\n");
@@ -437,6 +478,7 @@ int main()
     TestSkyAndBounce();
     TestStationaryAndDirection();
     TestEmissive();
+    TestOverlapLeaks();
     TestCancel();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
