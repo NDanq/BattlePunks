@@ -1506,6 +1506,23 @@ static void TestMaterialRuntime()
            "a parameter over the engine's bytes is refused");
     Expect(!ParseMaterialDescription("NimbleMaterial 3\nDomain Sideways\n", Desc, Error), "an unknown domain is refused");
 
+    // --- Shading models (SHADING_MODELS.md) ---------------------------------------------
+    Expect(ParseMaterialDescription("NimbleMaterial 3\nShading Lit\nShadingModel Skin\n", Desc, Error)
+           && Desc.ShadingModel == EMaterialShadingModel::Skin, "a ShadingModel line names the model");
+    Expect(ParseMaterialDescription("NimbleMaterial 3\nShading Lit\n", Desc, Error) && Desc.ShadingModel == EMaterialShadingModel::Default,
+           "without one it is Default");
+    Expect(!ParseMaterialDescription("NimbleMaterial 3\nShadingModel Velour\n", Desc, Error), "an unknown shading model is refused");
+    Expect(GetPixelPermutationKey(EMaterialDomain::Opaque, EMaterialShading::Lit) == 0u
+           && GetPixelPermutationKey(EMaterialDomain::Opaque, EMaterialShading::Lit, EMaterialShadingModel::ClearCoat) == 0x20u
+           && GetPixelPermutationKey(EMaterialDomain::Masked, EMaterialShading::Lit, EMaterialShadingModel::Skin) == 0xa1u,
+           "a shading model takes the pixel key's bits 5-7; Default's keys are unchanged");
+    for(uint32_t Each = 0; Each < MATERIAL_SHADING_MODEL_COUNT; ++Each)
+    {
+        EMaterialShadingModel Found = EMaterialShadingModel::Default;
+        Expect(FindShadingModel(GetShadingModelName(EMaterialShadingModel(Each)), Found) && uint32_t(Found) == Each,
+               "a shading model's name finds it again");
+    }
+
     // --- Texture lines: what a Texture Sample writes -----------------------------------
     const char* Textured = "NimbleMaterial 3\nBlockSize 160\n"
                            "Texture 1 Default Default Content/Textures/Brick.nmtexture\n"

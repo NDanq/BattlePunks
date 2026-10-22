@@ -200,6 +200,65 @@ vec3 IBL_ProbeDirection(int InIndex, vec3 InPosition, vec3 InDirection)
     return T > 0.0 ? normalize(InPosition + InDirection * T - CentreRadius.xyz) : InDirection;
 }
 
+// The probes' and the sky's light toward InPosition along InDirection at
+// InRoughness, blended as IBL_LightReflected blends them: the shading models'
+// (IBLShading.glsl) lobes each gather their own.
+vec3 IBL_GatherSpecular(sampler2D InAtlas, vec3 InPosition, vec3 InDirection, float InRoughness)
+{
+    vec3  Specular  = vec3(0.0);
+    float Remaining = 1.0;
+    int   Count = int(Scene_IBL.y);
+    for(int Index = 0; Index < IBL_PROBES_MAX; ++Index)
+    {
+        if(Index >= Count || Remaining <= 0.0) { break; }
+        float Weight = min(IBL_ProbeWeight(Index, InPosition), Remaining);
+        if(Weight <= 0.0) { continue; }
+        int   Block     = int(Scene_Probes[Index * 3 + 2].x);
+        float Intensity = Scene_Probes[Index * 3 + 1].w;
+        Specular += IBL_SampleSpecular(InAtlas, Block, IBL_ProbeDirection(Index, InPosition, InDirection), InRoughness) * Weight * Intensity;
+        Remaining -= Weight;
+    }
+    if(Remaining > 0.0 && Scene_IBL.z > 0.0)
+    {
+        Specular += IBL_SampleSpecular(InAtlas, IBL_SKY_BLOCK, InDirection, InRoughness) * Remaining * Scene_IBL.z;
+    }
+    return Specular;
+}
+
+// The irradiance toward InNormal at InPosition, blended the same way.
+vec3 IBL_GatherIrradiance(sampler2D InAtlas, vec3 InPosition, vec3 InNormal)
+{
+    vec3  Diffuse   = vec3(0.0);
+    float Remaining = 1.0;
+    int   Count = int(Scene_IBL.y);
+    for(int Index = 0; Index < IBL_PROBES_MAX; ++Index)
+    {
+        if(Index >= Count || Remaining <= 0.0) { break; }
+        float Weight = min(IBL_ProbeWeight(Index, InPosition), Remaining);
+        if(Weight <= 0.0) { continue; }
+        int   Block     = int(Scene_Probes[Index * 3 + 2].x);
+        float Intensity = Scene_Probes[Index * 3 + 1].w;
+        Diffuse += IBL_SampleIrradiance(InAtlas, Block, InNormal) * Weight * Intensity;
+        Remaining -= Weight;
+    }
+    if(Remaining > 0.0 && Scene_IBL.z > 0.0)
+    {
+        Diffuse += IBL_SampleIrradiance(InAtlas, IBL_SKY_BLOCK, InNormal) * Remaining * Scene_IBL.z;
+    }
+    return Diffuse;
+}
+
+// THE SHEEN TABLE (SHADING_MODELS.md, Cloth): the Charlie sheen's DG averaged
+// over the hemisphere, 32 x 32 in the atlas's spare sixth block -- x NdotV,
+// y perceptual roughness, in r. IBLPrefilter.fsh writes it once (block 5).
+#define IBL_SHEEN_BLOCK 5
+#define IBL_SHEEN_SIZE  32.0
+float IBL_SheenDG(sampler2D InAtlas, float InNdotV, float InRoughness)
+{
+    vec2 Texel = IBL_BlockOrigin(IBL_SHEEN_BLOCK) + 0.5 + clamp(vec2(InNdotV, InRoughness), 0.0, 1.0) * (IBL_SHEEN_SIZE - 1.0);
+    return texture(InAtlas, Texel / IBL_ATLAS_SIZE).r;
+}
+
 // The image-based light a surface receives: diffuse (InAlbedo linear, times
 // InDiffuse: 0 where baked lighting holds it) and specular, the probes'
 // blended nearest first and the sky filling the rest.

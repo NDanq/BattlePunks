@@ -35,4 +35,19 @@ inline void GDIHalvesToBytes(const uint16_t* InHalves, uint8_t* OutBytes, const 
     }
 }
 
+/* InCount RGB10A2 texels (R in the low ten bits: Vulkan's A2B10G10R10, D3D12's
+ * R10G10B10A2) to RGBA8, each channel rounded to its nearest byte. */
+inline void GDIRgb10A2ToBytes(const uint32_t* InTexels, uint8_t* OutBytes, const size_t InCount)
+{
+    for(size_t Each = 0; Each < InCount; ++Each)
+    {
+        const uint32_t Texel = InTexels[Each];
+        for(uint32_t Channel = 0; Channel < 3; ++Channel)
+        {
+            OutBytes[Each * 4 + Channel] = uint8_t((((Texel >> (Channel * 10)) & 0x3FFu) * 255u + 511u) / 1023u);
+        }
+        OutBytes[Each * 4 + 3] = uint8_t((Texel >> 30) * 85u);
+    }
+}
+
 #endif //CORECLIENT_GDIHALF_H

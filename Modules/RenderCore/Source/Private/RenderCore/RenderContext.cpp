@@ -67,6 +67,11 @@
  * for capture tools; off saves building the names. Only where the backend records
  * regions (GDIHasDrawEvents: Vulkan with VK_EXT_debug_utils, as under RenderDoc). */
 NIMBLE_CONFIG_BOOL(GRenderDrawLabels, "Rendering", "DrawLabels", true, nullptr);
+/* Skin's screen-space subsurface scattering (SHADING_MODELS.md, PPSubsurface.fsh): on, and the
+ * diffusion profile's width in world units (1.2: skin, in centimetres). Off, Skin lights as
+ * Subsurface does: its diffuse in place, with its transmission. */
+NIMBLE_CONFIG_BOOL(GRenderSubsurfaceScattering, "Rendering", "SubsurfaceScattering", true, nullptr);
+NIMBLE_CONFIG_FLOAT(GRenderSubsurfaceWidth, "Rendering", "SubsurfaceWidth", 1.2f, nullptr);
 
 namespace RenderCore
 {
@@ -147,7 +152,7 @@ namespace RenderCore
             PP_AmbientOcclusion, PP_AmbientBlur, PP_StatsOverlay, PP_ClearGradient, PP_CaptureCopy, PP_Tonemap,
             PP_IBLSky, PP_IBLPrefilter, PP_IBLLighting, PP_Sky, PP_ViewTarget, PP_UI,
             PP_Luminance, PP_LuminanceReduce, PP_AdaptExposure, PP_TemporalAA, PP_ScreenReflections, PP_Copy,
-            PP_VolumetricFog, PP_FogComposite, PP_ViewSites,
+            PP_VolumetricFog, PP_FogComposite, PP_ViewSites, PP_AmbientApply, PP_Subsurface,
             PP_PassCount
         };
         const char* const POST_PASS_SHADERS[PP_PassCount] = {
@@ -156,7 +161,7 @@ namespace RenderCore
             "PPAmbientOcclusion.fsh", "PPAmbientBlur.fsh", "StatsOverlay.fsh", "ClearGradient.fsh", "CaptureCopy.fsh", "Tonemap.fsh",
             "IBLSky.fsh", "IBLPrefilter.fsh", "IBLLighting.fsh", "Sky.fsh", "ViewTarget.fsh", "UI.fsh",
             "PPLuminance.fsh", "PPLuminanceReduce.fsh", "PPAdaptExposure.fsh", "PPTemporalAA.fsh", "PPScreenReflections.fsh",
-            "PPCopy.fsh", "PPVolumetricFog.fsh", "PPFogComposite.fsh", "ViewSites.fsh",
+            "PPCopy.fsh", "PPVolumetricFog.fsh", "PPFogComposite.fsh", "ViewSites.fsh", "PPAmbientApply.fsh", "PPSubsurface.fsh",
         };
         /* Each pass's draw event (DrawPost). */
         const char* const POST_PASS_NAMES[PP_PassCount] = {
@@ -165,7 +170,7 @@ namespace RenderCore
             "AmbientOcclusion", "AmbientBlur", "StatsOverlay", "ClearGradient", "CaptureCopy", "Tonemap",
             "IBLSky", "IBLPrefilter", "IBLLighting", "Sky", "ViewTarget", "UI",
             "Luminance", "LuminanceReduce", "AdaptExposure", "TemporalAA", "ScreenReflections", "Copy",
-            "VolumetricFog", "FogComposite", "ViewSites",
+            "VolumetricFog", "FogComposite", "ViewSites", "AmbientApply", "Subsurface",
         };
 
         /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
@@ -1048,17 +1053,20 @@ namespace RenderCore
             Additive,
             Transmit,     // the target times the source's alpha, plus its colour (a medium laid over it: fog)
             AlphaBlend,   // the source over the target by its alpha
+            Multiply,     // the target times the source's colour, its alpha times the source's (PPAmbientApply.fsh)
         };
 
         /*
          * One full-screen pass: InPixel into InTarget (InWidth x InHeight at
          * InX, no depth), InTextures as material slots 0.., InBlock's
-         * InBlockBytes as the material block. False if a shader or the target
-         * is missing.
+         * InBlockBytes as the material block. InSecond: a second target written
+         * beside InTarget (output 1), blended the same way. False if a shader
+         * or the target is missing.
          */
         bool DrawFullscreenShader(GDIShader* InPixel, const char* InEvent, GDIRenderTarget* InTarget, const uint InWidth, const uint InHeight,
                                   GDITextureResource* const* InTextures, const uint32_t InTextureCount, const void* InBlock,
-                                  const uint InBlockBytes, const EFullscreenBlend InBlend, const uint InX = 0, const uint InY = 0)
+                                  const uint InBlockBytes, const EFullscreenBlend InBlend, const uint InX = 0, const uint InY = 0,
+                                  GDIRenderTarget* InSecond = nullptr)
         {
             GDIShader* Vertex = GetDefaultVertex(EMaterialVertexInput::Fullscreen);
             if(!InPixel || !Vertex || !InTarget)
@@ -1066,7 +1074,8 @@ namespace RenderCore
                 return false;
             }
             SCOPED_DRAW_EVENT(InEvent);
-            GDISetRenderTargets(&InTarget, 1, nullptr);
+            GDIRenderTarget* Targets[2] = { InTarget, InSecond };
+            GDISetRenderTargets(Targets, InSecond ? 2 : 1, nullptr);
             GDISetViewport(InX, InY, InWidth, InHeight);   // InX: a cube face's place in its strip; InX, InY: a view's in the window
             GDISetColorMask(EColM_RGBA);
 
@@ -1085,6 +1094,7 @@ namespace RenderCore
                 case EFullscreenBlend::Additive:   GDISetBlendState(IBlendStateDesc(true, BM_One, BM_One)); break;
                 case EFullscreenBlend::Transmit:   GDISetBlendState(IBlendStateDesc(true, BM_One, BM_Src_Alpha)); break;
                 case EFullscreenBlend::AlphaBlend: GDISetBlendState(IBlendStateDesc(true, BM_Src_Alpha, BM_One_Minus_Src_Alpha)); break;
+                case EFullscreenBlend::Multiply:   GDISetBlendState(IBlendStateDesc(true, BM_Zero, BM_Src_Color)); break;
             }
             GDIDrawObject(ScreenObject);
             DrawCallCount.fetch_add(1, std::memory_order_relaxed);
@@ -1216,6 +1226,23 @@ namespace RenderCore
          * which stays null if InPost has none or this backend cannot. */
         void IssueAmbientOcclusion(SceneTargets& InTargets, const PostProcessSettings& InPost);
         GDITextureResource* AmbientOcclusion = nullptr;
+
+        /* Whether any of this frame's Base Pass draws has InModel (SHADING_MODELS.md). */
+        bool BasePassHasModel(const EMaterialShadingModel InModel) const
+        {
+            const DrawPolicy& Base = Policies[size_t(ERenderStage::BasePass)];
+            for(size_t Index = 0; Index < Base.Num(); ++Index)
+            {
+                const RenderMaterial* Mat = Base[Index].Mat;
+                if(Mat && Mat->Description.ShadingModel == InModel) { return true; }
+            }
+            return false;
+        }
+
+        /* Skin's screen-space subsurface scattering (SHADING_MODELS.md, PPSubsurface.fsh):
+         * InDiffuse, its pixels' diffuse light before albedo, blurred across into
+         * InTargets.SubsurfaceBlur, then down, times the albedo, added to InSceneColor. */
+        void IssueSubsurface(SceneTargets& InTargets, GDIRenderTarget* InDiffuse, GDIRenderTarget* InSceneColor);
         GDITextureResource* OverlayFont      = nullptr;   // OverlayFont.h's glyphs side by side, made on first use
 
         /* DrawUI's: its vertex shader (UI.fsh is PP_UI), the white texture a
@@ -1541,7 +1568,9 @@ namespace RenderCore
             }
 
             const MaterialDescription& Desc = Loaded.Description;
-            const uint32_t PixelKey = GetPixelPermutationKey(Desc.Domain, Desc.Shading);
+            const uint32_t PixelKey = GetPixelPermutationKey(Desc.Domain, Desc.Shading,
+                                                             Desc.Shading == EMaterialShading::Lit ? Desc.ShadingModel
+                                                                                                   : EMaterialShadingModel::Default);
             GDIShader* Pixel = LoadShader(GetPermutationFileName(Stem, PixelKey, false), ST_Pixel, Who, false);
             if(!Pixel)
             {
@@ -2772,10 +2801,11 @@ namespace RenderCore
         /*
          * The Lighting stage: DeferredLighting.fsh over InTargets' G-buffer
          * into the bound scene colour, whose depth is a texture here -- bound
-         * as material texture 4, after GBuffer0-3. False (warned) if this
-         * backend cannot.
+         * as material texture 5, after GBuffer0-4. bInSubsurface: a second
+         * target, Subsurface, is bound beside it for Skin pixels' diffuse
+         * (SHADING_MODELS.md). False (warned) if this backend cannot.
          */
-        bool IssueLighting(SceneTargets& InTargets)
+        bool IssueLighting(SceneTargets& InTargets, const bool bInSubsurface)
         {
             GDIShader* Pixel  = GetLightingShader();
             GDIShader* Vertex = GetDefaultVertex(EMaterialVertexInput::Fullscreen);
@@ -2802,20 +2832,20 @@ namespace RenderCore
             }
             GDISetMaterialTexture(RENDER_GBUFFER_TARGETS, Depth->Resource);
 
-            /* The shadow atlases this frame drew, after the scene depth; then
-             * this frame's ambient occlusion, if it has any. */
+            /* The shadow atlases this frame drew, after the scene depth. This
+             * frame's ambient occlusion is in GBuffer0's alpha already (PPAmbientApply.fsh). */
             for(uint32_t Atlas = 0; Atlas < SA_Count; ++Atlas)
             {
                 GDITexture2D* Map = Shadows.ViewCount > 0 && ShadowAtlas[Atlas] ? ShadowAtlas[Atlas]->ToDepthTexture2D() : nullptr;
                 GDISetMaterialTexture(RENDER_GBUFFER_TARGETS + 1 + Atlas, Map ? Map->Resource : nullptr);
             }
-            const uint32_t OcclusionSlot = RENDER_GBUFFER_TARGETS + 1 + SA_Count;
-            GDISetMaterialTexture(OcclusionSlot, AmbientOcclusion);
+            const uint32_t LastSlot = RENDER_GBUFFER_TARGETS + SA_Count;
+            static_assert(RENDER_GBUFFER_TARGETS + SA_Count < GDI_MATERIAL_TEXTURE_SLOTS, "the Lighting stage's textures fit the material slots");
 
-            /* Lighting_Block (DeferredLighting.fsh): whether the occlusion
-             * texture is this frame's, then the inset shadows. */
+            /* Lighting_Block (DeferredLighting.fsh): whether Skin's diffuse has
+             * its own target, then the inset shadows. */
             float LightingBlock[LIGHTING_BLOCK_FLOATS] = {};
-            LightingBlock[0] = AmbientOcclusion ? 1.0f : 0.0f;
+            LightingBlock[0] = bInSubsurface ? 1.0f : 0.0f;
             PutInsetShadows(LightingBlock, InTargets.Width, InTargets.Height);
             EnsureInitialised();
             Bind(Vertex, Pixel);
@@ -2827,7 +2857,7 @@ namespace RenderCore
             DrawCallCount.fetch_add(1, std::memory_order_relaxed);
 
             /* Unbound again: the depth is about to be an attachment. */
-            for(uint32_t Index = 0; Index <= OcclusionSlot; ++Index)
+            for(uint32_t Index = 0; Index <= LastSlot; ++Index)
             {
                 GDISetMaterialTexture(Index, nullptr);
             }
@@ -2929,7 +2959,137 @@ namespace RenderCore
             {
                 AmbientOcclusion = Texture(InTargets.Half[1]);
             }
+            /* Folded into GBuffer0's alpha, the material's own occlusion: the Lighting
+             * and IBL passes read one, and spend no texture slot on it. */
+            GDITextureResource* Occlusion[1] = { AmbientOcclusion };
+            DrawFullscreenShader(GetPostShader(PP_AmbientApply), POST_PASS_NAMES[PP_AmbientApply], InTargets.GBuffer[0], Width, Height,
+                                 Occlusion, 1, Block.A, uint(sizeof(Block) - sizeof(Block.Matrix)), EFullscreenBlend::Multiply);
+            GDISetMaterialTexture(0, nullptr);
         }
+    }
+
+    namespace
+    {
+        /* PPSubsurface.fsh's PP_Block. */
+        constexpr int SUBSURFACE_TAPS = 25;
+        struct SubsurfaceBlock
+        {
+            float Params[4] = {};
+            float Scale[4]  = {};
+            float Sizes[4]  = {};
+            float Kernel[SUBSURFACE_TAPS][4] = {};
+        };
+
+        /*
+         * Skin's separable kernel (Jimenez et al. 2015, "Separable Subsurface
+         * Scattering", and its reference code): SUBSURFACE_TAPS offsets from -3
+         * to 3, packed toward the centre, each weighted by the area it stands
+         * for times d'Eon and Luebke's skin profile (GPU Gems 3, chapter 14:
+         * a sum of Gaussians, the narrowest left out as the surface's own
+         * reflection), stretched per channel by its falloff; normalised per
+         * channel, the centre moved first, and mixed toward no blur by each
+         * channel's strength.
+         */
+        void BuildSkinKernel(float (&OutKernel)[SUBSURFACE_TAPS][4])
+        {
+            constexpr float Range    = 3.0f;
+            constexpr float Falloff[3]  = { 1.0f, 0.37f, 0.3f };
+            constexpr float Strength[3] = { 0.48f, 0.41f, 0.28f };
+            constexpr float Variances[5] = { 0.0484f, 0.187f, 0.567f, 1.99f, 7.41f };
+            constexpr float Weights[5]   = { 0.100f, 0.118f, 0.113f, 0.358f, 0.078f };
+            const auto Profile = [&](const float InR, const int InChannel)
+            {
+                float Sum = 0.0f;
+                for(int Each = 0; Each < 5; ++Each)
+                {
+                    const float R = InR / (0.001f + Falloff[InChannel]);
+                    Sum += Weights[Each] * std::exp(-(R * R) / (2.0f * Variances[Each])) / (2.0f * 3.14159265f * Variances[Each]);
+                }
+                return Sum;
+            };
+
+            float Offsets[SUBSURFACE_TAPS];
+            const float Step = 2.0f * Range / float(SUBSURFACE_TAPS - 1);
+            for(int Index = 0; Index < SUBSURFACE_TAPS; ++Index)
+            {
+                const float O = -Range + float(Index) * Step;
+                Offsets[Index] = (O < 0.0f ? -1.0f : 1.0f) * O * O / Range;   // Range * sign(o) * o^2 / Range^2
+            }
+            float Kernel[SUBSURFACE_TAPS][4] = {};
+            float Sums[3] = {};
+            for(int Index = 0; Index < SUBSURFACE_TAPS; ++Index)
+            {
+                const float Before = Index > 0 ? std::fabs(Offsets[Index] - Offsets[Index - 1]) : 0.0f;
+                const float After  = Index < SUBSURFACE_TAPS - 1 ? std::fabs(Offsets[Index] - Offsets[Index + 1]) : 0.0f;
+                const float Area   = 0.5f * (Before + After);
+                for(int Channel = 0; Channel < 3; ++Channel)
+                {
+                    Kernel[Index][Channel] = Area * Profile(Offsets[Index], Channel);
+                    Sums[Channel] += Kernel[Index][Channel];
+                }
+                Kernel[Index][3] = Offsets[Index];
+            }
+            constexpr int Centre = SUBSURFACE_TAPS / 2;
+            int Out = 0;
+            std::memcpy(OutKernel[Out++], Kernel[Centre], sizeof(Kernel[Centre]));
+            for(int Index = 0; Index < SUBSURFACE_TAPS; ++Index)
+            {
+                if(Index != Centre) { std::memcpy(OutKernel[Out++], Kernel[Index], sizeof(Kernel[Index])); }
+            }
+            for(int Index = 0; Index < SUBSURFACE_TAPS; ++Index)
+            {
+                for(int Channel = 0; Channel < 3; ++Channel)
+                {
+                    const float Normalised = OutKernel[Index][Channel] / Sums[Channel];
+                    OutKernel[Index][Channel] = Index == 0 ? 1.0f + (Normalised - 1.0f) * Strength[Channel] : Normalised * Strength[Channel];
+                }
+            }
+        }
+    }
+
+    void RenderContext::Impl::IssueSubsurface(SceneTargets& InTargets, GDIRenderTarget* InDiffuse, GDIRenderTarget* InSceneColor)
+    {
+        GDITexture2D* Depth   = InSceneColor ? InSceneColor->ToDepthTexture2D() : nullptr;
+        GDITexture2D* Diffuse = InDiffuse ? InDiffuse->ToGDITexture2D() : nullptr;
+        GDIRenderTarget* Blur = InTargets.EnsureFullHalfFloat(InTargets.SubsurfaceBlur, "SubsurfaceBlur");
+        GDITexture2D* Blurred = Blur ? Blur->ToGDITexture2D() : nullptr;
+        GDITexture2D* Albedo  = InTargets.GBuffer[0] ? InTargets.GBuffer[0]->ToGDITexture2D() : nullptr;
+        if(!Depth || !Diffuse || !Blurred || !Albedo)
+        {
+            return;
+        }
+        static const SubsurfaceBlock Skin = []
+        {
+            SubsurfaceBlock Made;
+            BuildSkinKernel(Made.Kernel);
+            return Made;
+        }();
+        SubsurfaceBlock Block = Skin;
+        const uint Width  = InTargets.Width;
+        const uint Height = InTargets.Height;
+        Block.Params[3] = float(SUBSURFACE_TAPS);
+        Block.Scale[0]  = std::max(GRenderSubsurfaceWidth.GetFloat(), 0.0f);
+        Block.Scale[1]  = View.Projection.Data[1][1];   // 1 / tan(half the vertical field of view)
+        Block.Scale[2]  = float(Width) / float(std::max<uint>(Height, 1));
+        Block.Sizes[0]  = 1.0f / float(Width);
+        Block.Sizes[1]  = 1.0f / float(Height);
+        Block.Sizes[2]  = float(Width);
+        Block.Sizes[3]  = float(Height);
+
+        SCOPED_DRAW_EVENT("Subsurface");
+        GDIShader* Shader = GetPostShader(PP_Subsurface);
+        Block.Params[0] = 1.0f;
+        Block.Params[1] = 0.0f;
+        Block.Params[2] = 0.0f;
+        GDITextureResource* Across[3] = { Diffuse->Resource, Depth->Resource, Albedo->Resource };
+        DrawFullscreenShader(Shader, "SubsurfaceAcross", Blur, Width, Height, Across, 3, &Block, uint(sizeof(Block)),
+                             EFullscreenBlend::Opaque);
+        Block.Params[0] = 0.0f;
+        Block.Params[1] = 1.0f;
+        Block.Params[2] = 1.0f;
+        GDITextureResource* Down[3] = { Blurred->Resource, Depth->Resource, Albedo->Resource };
+        DrawFullscreenShader(Shader, "SubsurfaceDown", InSceneColor, Width, Height, Down, 3, &Block, uint(sizeof(Block)),
+                             EFullscreenBlend::Additive);
     }
 
     GDIRenderTarget* RenderContext::Impl::RunPostProcessStack(SceneTargets& InTargets, const PostProcessSettings& InPost, const bool bInHasPrevious,
@@ -4116,6 +4276,7 @@ namespace RenderCore
             case ESceneTexture::GBuffer1:
             case ESceneTexture::GBuffer2:
             case ESceneTexture::GBuffer3:
+            case ESceneTexture::GBuffer4:
                 return bWritten && F->P->bGBufferThisFrame
                      ? ColorOf(Targets.GBuffer[size_t(InTexture) - size_t(ESceneTexture::GBuffer0)]) : RenderPassTexture();
             case ESceneTexture::Velocity:
@@ -4533,10 +4694,13 @@ namespace RenderCore
             };
             Add(InTargets.SceneColor, "Scene colour");
             AddDepth(InTargets.SceneColor, "Scene depth", 2.0f);
-            const char* const GBufferNames[RENDER_GBUFFER_TARGETS] = { "GBuffer0 (base colour, AO)", "GBuffer1 (normal)",
-                                                                       "GBuffer2 (metallic, roughness, specular)", "GBuffer3 (emissive)" };
+            const char* const GBufferNames[RENDER_GBUFFER_TARGETS] = { "GBuffer0 (base colour, AO)", "GBuffer1 (normal, octahedral)",
+                                                                       "GBuffer2 (metallic, roughness, specular, shading model)",
+                                                                       "GBuffer3 (emissive)", "GBuffer4 (shading model data)" };
             for(uint32_t Index = 0; Index < RENDER_GBUFFER_TARGETS; ++Index) { Add(InTargets.GBuffer[Index], GBufferNames[Index]); }
             Add(InTargets.Velocity,     "Velocity (world motion, units a frame)");
+            Add(InTargets.Subsurface,     "Subsurface (Skin's diffuse before albedo)");
+            Add(InTargets.SubsurfaceBlur, "Subsurface blur (across)");
             Add(InTargets.PostProcess,  "Post process");
             Add(InTargets.PostProcessB, "Post process B");
             for(size_t Index = 0; Index < std::size(InTargets.Half); ++Index)    { Add(InTargets.Half[Index], "Half size " + std::to_string(Index) + " (ambient occlusion)"); }
@@ -4865,7 +5029,7 @@ namespace RenderCore
              * nothing here writes stays 0, not moving (the camera's motion
              * alone, to Motion Blur). */
             GDIRenderTarget* Targets[RENDER_GBUFFER_TARGETS + 1] = { InTargets.GBuffer[0], InTargets.GBuffer[1], InTargets.GBuffer[2],
-                                                                     InTargets.GBuffer[3], InTargets.EnsureVelocity() };
+                                                                     InTargets.GBuffer[3], InTargets.GBuffer[4], InTargets.EnsureVelocity() };
             P->bVelocityThisFrame = Targets[RENDER_GBUFFER_TARGETS] != nullptr;
             BindTargets(Targets, P->bVelocityThisFrame ? RENDER_GBUFFER_TARGETS + 1 : RENDER_GBUFFER_TARGETS, SceneColor);
             GDIClear(CM_Color, EngineCore::Color(0, 0, 0, 0));   // alpha 0 in GBuffer1: no lit surface
@@ -4901,11 +5065,25 @@ namespace RenderCore
         if(bDeferred)
         {
             P->StageTimestamp(RGT_Lighting, false);
-            BindTargets(&SceneColor, 1, nullptr);
             SCOPED_DRAW_EVENT(GetRenderStageName(ERenderStage::Lighting));
+
+            /* Skin (SHADING_MODELS.md): where a Skin material drew and the scene is HDR, its
+             * diffuse goes to its own target, cleared first, for PPSubsurface to blur. */
+            GDIRenderTarget* Subsurface = nullptr;
+            if(GRenderSubsurfaceScattering.GetBool() && InTargets.bHDR && P->BasePassHasModel(EMaterialShadingModel::Skin))
+            {
+                Subsurface = InTargets.EnsureFullHalfFloat(InTargets.Subsurface, "Subsurface");
+                if(Subsurface)
+                {
+                    BindTargets(&Subsurface, 1, nullptr);
+                    GDIClear(CM_Color, EngineCore::Color(0, 0, 0, 0));
+                }
+            }
+            GDIRenderTarget* LightingTargets[2] = { SceneColor, Subsurface };
+            BindTargets(LightingTargets, Subsurface ? 2 : 1, nullptr);
             {
                 SCOPED_DRAW_EVENT("DeferredLighting");
-                if(P->IssueLighting(InTargets))
+                if(P->IssueLighting(InTargets, Subsurface != nullptr))
                 {
                     P->StageDrawCounts[size_t(ERenderStage::Lighting)] = 1;
                 }
@@ -4941,22 +5119,29 @@ namespace RenderCore
                         Ssr.Sizes[3] = float(Height);
                         if(P->DrawPost(PP_ScreenReflections, Reflections, Width, Height,
                                        { Texture(InTargets.GBuffer[1]), Texture(InTargets.GBuffer[2]), Depth->Resource,
-                                         Texture(InTargets.LastColor), Motion->Resource }, Ssr))
+                                         Texture(InTargets.LastColor), Motion->Resource, Texture(InTargets.GBuffer[4]) }, Ssr))
                         {
                             Screen = Texture(Reflections);
                         }
-                        for(uint32_t Slot = 0; Slot < 5; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
+                        for(uint32_t Slot = 0; Slot < 6; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
                     }
                 }
 
                 PostBlock Block;
-                Block.A[0] = P->AmbientOcclusion ? 1.0f : 0.0f;
+                Block.A[0] = Subsurface ? 1.0f : 0.0f;
                 Block.A[1] = Screen ? 1.0f : 0.0f;
-                P->DrawPost(PP_IBLLighting, SceneColor, Width, Height,
-                            { Texture(InTargets.GBuffer[0]), Texture(InTargets.GBuffer[1]), Texture(InTargets.GBuffer[2]),
-                              Depth ? Depth->Resource : nullptr, P->AmbientOcclusion, P->IBLAtlasTexture(), Screen },
-                            Block, /*bInAdditive*/ true);
-                for(uint32_t Slot = 0; Slot < 7; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
+                GDITextureResource* IBLTextures[] = { Texture(InTargets.GBuffer[0]), Texture(InTargets.GBuffer[1]), Texture(InTargets.GBuffer[2]),
+                                                      Texture(InTargets.GBuffer[4]), Depth ? Depth->Resource : nullptr,
+                                                      P->IBLAtlasTexture(), Screen };
+                P->DrawFullscreenShader(P->GetPostShader(PP_IBLLighting), POST_PASS_NAMES[PP_IBLLighting], SceneColor, Width, Height,
+                                        IBLTextures, uint32_t(std::size(IBLTextures)), Block.A,
+                                        uint(sizeof(Block) - sizeof(Block.Matrix)), Impl::EFullscreenBlend::Additive, 0, 0, Subsurface);
+            }
+
+            /* Skin's diffuse blurred across, then down and into the scene colour (PPSubsurface.fsh). */
+            if(Subsurface)
+            {
+                P->IssueSubsurface(InTargets, Subsurface, SceneColor);
             }
             P->AmbientOcclusion = nullptr;
             P->StageTimestamp(RGT_Lighting, true);
@@ -5150,6 +5335,7 @@ namespace RenderCore
             }
         }
         InOut.StripFace = 0;
+        InOut.bSheenTable = false;
     }
 
     bool RenderContext::RenderSkyToStrip(IBLResources& InResources)
@@ -5191,6 +5377,12 @@ namespace RenderCore
         Block.A[0] = float(InBlock);
         Block.A[1] = 0.0f;   // the strip holds linear light
         const bool bDrawn = P->DrawPost(PP_IBLPrefilter, InResources.Atlas, 768, 768, { Strip->Resource }, Block);
+        /* Once per atlas, Cloth's sheen table into its spare sixth block (IBLCommon.glsl, IBL_SheenDG). */
+        if(bDrawn && !InResources.bSheenTable)
+        {
+            Block.A[0] = 5.0f;
+            InResources.bSheenTable = P->DrawPost(PP_IBLPrefilter, InResources.Atlas, 768, 768, { Strip->Resource }, Block);
+        }
         GDISetMaterialTexture(0, nullptr);
         return bDrawn;
     }

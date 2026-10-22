@@ -95,6 +95,7 @@ MATERIAL_INCLUDE = "Material.glsl"   # what the templates include; mapped per ma
 # --- Permutation keys (RenderCore's MaterialPermutation.h says the same) ------
 DOMAINS    = ["Opaque", "Masked", "Translucent", "PostProcess"]   # bits 0-2
 SHADINGS   = ["Lit", "Unlit"]                                     # bits 3-4
+SHADING_MODELS = ["Default", "ClearCoat", "Anisotropic", "Cloth", "Subsurface", "Skin"]   # bits 5-7 (SHADING_MODELS.md)
 VERTEX_INS = ["Quad", "Mesh", "Fullscreen", "InstancedMesh", "SkinnedMesh"]   # bits 8-10
 
 CACHE_VERSION = 1
@@ -102,8 +103,8 @@ CACHE_VERSION = 1
 DEFAULT_JOBS = 32   # shaders compiled at once (-jobs)
 
 
-def pixel_key(domain, shading):
-    return DOMAINS.index(domain) | (SHADINGS.index(shading) << 3)
+def pixel_key(domain, shading, model="Default"):
+    return DOMAINS.index(domain) | (SHADINGS.index(shading) << 3) | (SHADING_MODELS.index(model) << 5)
 
 
 def vertex_key(vertex_in):
@@ -114,9 +115,10 @@ def permutation_name(name, key, stage):
     return f"{name}@{key:08x}.{'vsh' if stage == 'vertex' else 'fsh'}"
 
 
-def pixel_defines(domain, shading):
+def pixel_defines(domain, shading, model="Default"):
     defines = {f"MATERIAL_DOMAIN_{d.upper()}": "1" if d == domain else "0" for d in DOMAINS}
     defines.update({f"MATERIAL_SHADING_{s.upper()}": "1" if s == shading else "0" for s in SHADINGS})
+    defines.update({f"MATERIAL_SHADING_MODEL_{m.upper()}": "1" if m == model else "0" for m in SHADING_MODELS})
     return defines
 
 
@@ -361,21 +363,24 @@ def find_tools(cs, target):
 # --- Materials ------------------------------------------------------------------
 
 def read_material(mtl_path):
-    """<Name>.material beside <Name>.mtl.glsl: its Domain, Shading and HasOffset."""
+    """<Name>.material beside <Name>.mtl.glsl: its Domain, Shading, ShadingModel and HasOffset."""
     name = mtl_path.name[:-len(".mtl.glsl")]
     data_path = mtl_path.with_name(name + ".material")
-    meta = {"Name": name, "Domain": "Opaque", "Shading": "Lit", "HasOffset": "0", "Path": data_path}
+    meta = {"Name": name, "Domain": "Opaque", "Shading": "Lit", "ShadingModel": "Default", "HasOffset": "0", "Path": data_path}
     if not data_path.is_file():
         print(f"ERROR: {mtl_path.name} has no {data_path.name} beside it", file=sys.stderr)
         return None
 
     for line in data_path.read_text(encoding="utf-8").splitlines():
         words = line.split("#", 1)[0].split()
-        if len(words) >= 2 and words[0] in ("Domain", "Shading", "HasOffset"):
+        if len(words) >= 2 and words[0] in ("Domain", "Shading", "ShadingModel", "HasOffset"):
             meta[words[0]] = words[1]
-    if meta["Domain"] not in DOMAINS or meta["Shading"] not in SHADINGS:
-        print(f"ERROR: {data_path.name}: unknown Domain '{meta['Domain']}' or Shading '{meta['Shading']}'", file=sys.stderr)
+    if meta["Domain"] not in DOMAINS or meta["Shading"] not in SHADINGS or meta["ShadingModel"] not in SHADING_MODELS:
+        print(f"ERROR: {data_path.name}: unknown Domain '{meta['Domain']}', Shading '{meta['Shading']}' "
+              f"or ShadingModel '{meta['ShadingModel']}'", file=sys.stderr)
         return None
+    if meta["Shading"] != "Lit":
+        meta["ShadingModel"] = "Default"   # an Unlit material has no BRDF to choose
     return meta
 
 
@@ -390,8 +395,9 @@ def material_jobs(mtl_path, prefix=""):
 
     name, domain, shading = prefix + meta["Name"], meta["Domain"], meta["Shading"]
     meta["Runtime"] = name + ".material"
-    key = pixel_key(domain, shading)
-    jobs = [Job(TEMPLATE_PS, "pixel", permutation_name(name, key, "pixel"), pixel_defines(domain, shading), mtl_path)]
+    model = meta["ShadingModel"]
+    key = pixel_key(domain, shading, model)
+    jobs = [Job(TEMPLATE_PS, "pixel", permutation_name(name, key, "pixel"), pixel_defines(domain, shading, model), mtl_path)]
     if meta["HasOffset"] == "1" and domain != "PostProcess":
         for vertex_in in ("Quad", "Mesh", "InstancedMesh", "SkinnedMesh"):
             jobs.append(Job(TEMPLATE_VS, "vertex", permutation_name(name, vertex_key(vertex_in), "vertex"),

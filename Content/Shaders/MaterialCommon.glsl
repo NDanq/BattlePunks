@@ -4,7 +4,7 @@
 
 // Bumped when a change here or in the templates breaks shader caches cooked
 // before it; RenderCore refuses a cache that disagrees (MaterialPermutation.h).
-#define MATERIAL_TEMPLATE_VERSION 14
+#define MATERIAL_TEMPLATE_VERSION 15
 
 // What input nodes read. Each stage's template fills it; the pixel-only
 // fields exist only in the pixel stage, so a pixel-only node in the vertex
@@ -36,20 +36,38 @@ struct MaterialSurface
     float OpacityMask;
     vec3  Normal;           // world space
     float AmbientOcclusion;
+
+    // Read only by the shading models that name them (SHADING_MODELS.md).
+    float ClearCoat;            // Clear Coat: 0-1, how much clear layer
+    float ClearCoatRoughness;
+    vec3  ClearCoatNormal;      // world space; the vertex normal by default
+    float Anisotropy;           // Anisotropic: -1 to 1
+    vec3  Tangent;              // world space; zero: along the UV's U (MaterialTemplate_PS.glsl)
+    vec3  SheenColor;           // Cloth; below zero: the square root of Base Color
+    vec3  SubsurfaceColor;      // Cloth's wrap tint; Subsurface's and Skin's transmitted colour
+    float Thickness;            // Subsurface, Skin: 0 thin, 1 thick
 };
 
 MaterialSurface DefaultMaterialSurface(in MaterialInputs Inputs)
 {
     MaterialSurface Surface;
-    Surface.BaseColor        = vec3(1.0);
-    Surface.Metallic         = 0.0;
-    Surface.Roughness        = 0.5;
-    Surface.Specular         = 0.5;
-    Surface.Emissive         = vec3(0.0);
-    Surface.Opacity          = 1.0;
-    Surface.OpacityMask      = 1.0;
-    Surface.Normal           = Inputs.WorldNormal;
-    Surface.AmbientOcclusion = 1.0;
+    Surface.BaseColor          = vec3(1.0);
+    Surface.Metallic           = 0.0;
+    Surface.Roughness          = 0.5;
+    Surface.Specular           = 0.5;
+    Surface.Emissive           = vec3(0.0);
+    Surface.Opacity            = 1.0;
+    Surface.OpacityMask        = 1.0;
+    Surface.Normal             = Inputs.WorldNormal;
+    Surface.AmbientOcclusion   = 1.0;
+    Surface.ClearCoat          = 1.0;
+    Surface.ClearCoatRoughness = 0.05;
+    Surface.ClearCoatNormal    = Inputs.WorldNormal;
+    Surface.Anisotropy         = 0.0;
+    Surface.Tangent            = vec3(0.0);
+    Surface.SheenColor         = vec3(-1.0);
+    Surface.SubsurfaceColor    = vec3(1.0);
+    Surface.Thickness          = 0.5;
     return Surface;
 }
 
@@ -107,6 +125,21 @@ vec3 Material_NormalMap(in MaterialInputs Inputs, vec3 InColor, float InStrength
      * the backends' dFdy direction and a back face. Its sign puts T along +U. */
     Scale = inversesqrt(Scale) * (dot(cross(Dp1, Dp2), N) < 0.0 ? -1.0 : 1.0);
     return normalize(mat3(T * Scale, B * Scale, N) * Tangent);
+}
+
+// The world direction along InUV's U at this pixel, at right angles to
+// InNormal: the same cotangent frame's T. An Anisotropic material's default
+// Tangent; zero where the UV does not change across the pixel.
+vec3 Material_TangentAlongU(in MaterialInputs Inputs, vec3 InNormal, vec2 InUV)
+{
+    vec3 Dp1  = dFdx(Inputs.WorldPosition);
+    vec3 Dp2  = dFdy(Inputs.WorldPosition);
+    vec2 Duv1 = dFdx(InUV);
+    vec2 Duv2 = dFdy(InUV);
+    vec3 T = cross(Dp2, InNormal) * Duv1.x + cross(InNormal, Dp1) * Duv2.x;
+    T -= InNormal * dot(InNormal, T);
+    float Length = length(T);
+    return Length > 1e-10 ? T / Length : vec3(0.0);
 }
 #endif
 

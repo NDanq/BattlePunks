@@ -70,6 +70,31 @@ namespace RenderCore
         return "Opaque";
     }
 
+    namespace
+    {
+        const char* const SHADING_MODEL_NAMES[MATERIAL_SHADING_MODEL_COUNT] = {
+            "Default", "ClearCoat", "Anisotropic", "Cloth", "Subsurface", "Skin",
+        };
+    }
+
+    const char* GetShadingModelName(const EMaterialShadingModel InModel)
+    {
+        return uint32_t(InModel) < MATERIAL_SHADING_MODEL_COUNT ? SHADING_MODEL_NAMES[uint32_t(InModel)] : "Default";
+    }
+
+    bool FindShadingModel(const std::string& InName, EMaterialShadingModel& OutModel)
+    {
+        for(uint32_t Index = 0; Index < MATERIAL_SHADING_MODEL_COUNT; ++Index)
+        {
+            if(InName == SHADING_MODEL_NAMES[Index])
+            {
+                OutModel = EMaterialShadingModel(Index);
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool ParseMaterialDescription(const std::string& InText, MaterialDescription& OutDescription, std::string& OutError)
     {
         MaterialDescription Result;
@@ -121,6 +146,11 @@ namespace RenderCore
                 if(Value == "Lit")        { Result.Shading = EMaterialShading::Lit; }
                 else if(Value == "Unlit") { Result.Shading = EMaterialShading::Unlit; }
                 else { OutError = "unknown Shading '" + Value + "'"; return false; }
+            }
+            else if(Keyword == "ShadingModel")
+            {
+                Words >> Value;
+                if(!FindShadingModel(Value, Result.ShadingModel)) { OutError = "unknown ShadingModel '" + Value + "'"; return false; }
             }
             else if(Keyword == "TwoSided")  { int Flag = 0; Words >> Flag; Result.bTwoSided  = Flag != 0; }
             else if(Keyword == "HasOffset") { int Flag = 0; Words >> Flag; Result.bHasOffset = Flag != 0; }

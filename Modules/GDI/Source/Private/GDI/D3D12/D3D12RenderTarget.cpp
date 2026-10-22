@@ -259,11 +259,16 @@ EngineCore::Image D3D12RenderTarget::ToImage()
     }
 
     // RT rows are top-down (GDI.h), EngineCore::Image's order: they copy as
-    // they are. An HDR target's half floats come back clamped into RGBA8 (GDIHalf.h).
+    // they are. An HDR target's half floats come back clamped into RGBA8, an
+    // RGB10A2 target's texels rounded into it (GDIHalf.h).
     EngineCore::Image Result(int(Width), int(Height), EngineCore::EImageFormat::RGBA8);
     if(bHalf)
     {
         GDIHalvesToBytes(reinterpret_cast<const uint16_t*>(Pixels.data()), Result.GetData(), size_t(Width) * size_t(Height) * 4u);
+    }
+    else if(Format == DXGI_FORMAT_R10G10B10A2_UNORM)
+    {
+        GDIRgb10A2ToBytes(reinterpret_cast<const uint32_t*>(Pixels.data()), Result.GetData(), size_t(Width) * size_t(Height));
     }
     else
     {

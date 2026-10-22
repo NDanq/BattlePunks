@@ -16,7 +16,7 @@
  */
 namespace RenderCore
 {
-    enum : uint32_t { RENDER_GBUFFER_TARGETS = 4 };
+    enum : uint32_t { RENDER_GBUFFER_TARGETS = 5 };
 
     /* A scene's image-based lighting targets (RENDERPIPELINE.md, "Image-based
      * lighting"), made by RenderContext::EnsureIBLResources: the probe atlas
@@ -27,6 +27,7 @@ namespace RenderCore
         GDIRenderTarget* Atlas     = nullptr;
         GDIRenderTarget* Strip     = nullptr;
         uint32_t         StripFace = 0;
+        bool             bSheenTable = false;   // the atlas's block 5 holds Cloth's sheen table (SHADING_MODELS.md)
     };
 
     struct SceneTargets
@@ -65,6 +66,10 @@ namespace RenderCore
          * then points at it), else a copy kept in LastCopy. Forgotten with a resize. */
         GDIRenderTarget* Fog         = nullptr;                 // volumetric fog's march, half size, half float
         GDIRenderTarget* Reflections = nullptr;
+        /* Skin (SHADING_MODELS.md): its pixels' diffuse light before albedo, as the Lighting and
+         * IBL passes write it, and PPSubsurface's first blur. Full size, half float, on first use. */
+        GDIRenderTarget* Subsurface     = nullptr;
+        GDIRenderTarget* SubsurfaceBlur = nullptr;
         GDIRenderTarget* LastCopy    = nullptr;
         GDIRenderTarget* LastColor   = nullptr;                 // not owned: LastCopy or a History
         GDIRenderTarget* Luminance[3] = {};
@@ -128,6 +133,8 @@ namespace RenderCore
                 }
                 bHistoryValid = false;
                 if(Reflections) { Reflections->Resize(InWidth, InHeight); }
+                if(Subsurface)     { Subsurface->Resize(InWidth, InHeight); }
+                if(SubsurfaceBlur) { SubsurfaceBlur->Resize(InWidth, InHeight); }
                 if(Fog)         { Fog->Resize(HalfSize(InWidth, 1), HalfSize(InHeight, 1)); }
                 if(LastCopy)    { LastCopy->Resize(InWidth, InHeight); }
                 LastColor = nullptr;
@@ -145,14 +152,19 @@ namespace RenderCore
             return SceneColor != nullptr;
         }
 
-        /* The four G-buffer targets, created on first use. False if any failed. */
+        /* The five G-buffer targets, created on first use. False if any failed.
+         * GBuffer1, the normal, is RGB10A2 where the backend has it (RENDERPIPELINE.md,
+         * "The G-buffer"); the rest RGBA8. */
         bool EnsureGBuffer()
         {
             for(uint32_t Index = 0; Index < RENDER_GBUFFER_TARGETS; ++Index)
             {
                 if(!GBuffer[Index] && Width > 0 && Height > 0)
                 {
-                    GBuffer[Index] = GDICreateRenderTarget(Name + ".GBuffer" + std::to_string(Index), Width, Height);
+                    const std::string TargetName = Name + ".GBuffer" + std::to_string(Index);
+                    GBuffer[Index] = Index == 1 && GDISupportsRenderTargetFormat(GDI_RTF_RGB10A2)
+                                         ? GDICreateRenderTargetFormat(TargetName, Width, Height, GDI_RTF_RGB10A2)
+                                         : GDICreateRenderTarget(TargetName, Width, Height);
                 }
                 if(!GBuffer[Index] || !GBuffer[Index]->IsValid())
                 {
@@ -302,11 +314,11 @@ namespace RenderCore
 
         void Release()
         {
-            for(GDIRenderTarget** Each : { &SceneColor, &GBuffer[0], &GBuffer[1], &GBuffer[2], &GBuffer[3], &Velocity, &PostProcess, &PostProcessB,
+            for(GDIRenderTarget** Each : { &SceneColor, &GBuffer[0], &GBuffer[1], &GBuffer[2], &GBuffer[3], &GBuffer[4], &Velocity, &PostProcess, &PostProcessB,
                                            &Half[0], &Half[1], &Bloom[0], &Bloom[1], &Bloom[2], &Bloom[3], &Bloom[4], &Bloom[5],
                                            &BloomUp[0], &BloomUp[1], &BloomUp[2], &BloomUp[3], &BloomUp[4],
                                            &Luminance[0], &Luminance[1], &Luminance[2], &Exposure[0], &Exposure[1],
-                                           &History[0], &History[1], &Reflections, &LastCopy, &Fog })
+                                           &History[0], &History[1], &Reflections, &LastCopy, &Fog, &Subsurface, &SubsurfaceBlur })
             {
                 if(*Each)
                 {

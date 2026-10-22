@@ -104,27 +104,35 @@ The editor's "Apply to Selected Entity" (material graph window) sets slot 0.
 
 ### The G-buffer
 
-Four RGBA8 colour targets beside the scene colour, all the viewport's size, and
-the scene colour target's depth:
+Five colour targets beside the scene colour, all the viewport's size, and
+the scene colour target's depth. Each pixel is lit by its material's shading
+model ([SHADING_MODELS.md](SHADING_MODELS.md)):
 
-| Target | R | G | B | A |
-|---|---|---|---|---|
-| GBuffer0 | Base Color | | | Ambient Occlusion |
-| GBuffer1 | Normal (world, ×0.5+0.5) | | | 1 = lit pixel; 0.75 = lit, its diffuse ambient baked |
-| GBuffer2 | Metallic | Roughness | Specular | -- |
-| GBuffer3 | Emissive ÷ scale | | | log2(scale) / 12 |
+| Target | Format | R | G | B | A |
+|---|---|---|---|---|---|
+| GBuffer0 | RGBA8 | Base Color | | | Ambient Occlusion (the screen's folded in: [Ambient occlusion](#ambient-occlusion)) |
+| GBuffer1 | RGB10A2 | Normal (world, octahedral) | | -- | 1 = lit pixel; 2/3 = lit, its diffuse ambient baked |
+| GBuffer2 | RGBA8 | Metallic | Roughness | Specular | shading model (`EncodeShadingModel`) |
+| GBuffer3 | RGBA8 | Emissive ÷ scale | | | log2(scale) / 12 |
+| GBuffer4 | RGBA8 | the shading model's custom data (`ShadingModels.glsl`) | | | |
+
+GBuffer1 is RGB10A2 where the backend has it (`GDI_RTF_RGB10A2`: Vulkan,
+D3D12, OpenGL); elsewhere RGBA8, the same encoding at eight bits. Its normal
+is octahedral (`EncodeGBufferNormal` / `DecodeGBufferNormal`, `Common.glsl`;
+Cigolle et al. 2014), ten bits an axis, which no longer bands on glossy
+surfaces as eight-bit xyz did. Its alpha's two bits hold 0, 2/3 or 1, so
+every reader's `a < 0.5` (unlit) and `a < 0.875` (baked) still hold.
 
 Colours are stored display space, as authored, exactly what `ShadeSurface`
 already takes. Emissive may be far past 1, so GBuffer3 stores it divided by its
 brightest channel, when that is over 1, with that scale in alpha as log2 over
 12 octaves, up to 4096 (`EncodeGBufferEmissive` / `DecodeGBufferEmissive` in
-`Common.glsl`). The Lighting stage reads it back whole, and Bloom uses it too. Eight-bit normals band a little on smooth, glossy surfaces;
-RGBA16F targets need a render-target format in GDI (MATERIALS.md, "Later").
+`Common.glsl`). The Lighting stage reads it back whole, and Bloom uses it too.
 
 ### Velocity
 
 Beside the G-buffer, where the backend has RGBA16F targets, the Base Pass
-writes a fifth target, **Velocity** (`SceneTargets::Velocity`): each pixel's
+writes a sixth target, **Velocity** (`SceneTargets::Velocity`): each pixel's
 **world motion** since the frame before -- xyz in world units, a 1 where
 written. What nothing writes stays 0: not moving. Motion Blur takes the
 pixel's world position from depth, less that motion, to last frame's camera
@@ -163,7 +171,7 @@ four G-buffer outputs instead of a lit colour (`MATERIAL_GBUFFER`). The
 permutation key does not change: those two domain/shading pairs only ever draw
 in the Base Pass. Masked still discards below Clip Value; Two Sided still flips
 a back face's normal, before it is stored. A draw with baked lighting adds it
-to the emissive it stores and marks the pixel 0.75 (see [Baked
+to the emissive it stores and marks the pixel 2/3 (see [Baked
 lighting](#baked-lighting)).
 
 ### Lighting
@@ -172,12 +180,12 @@ lighting](#baked-lighting)).
 vertex shader (`MaterialDefault`, Fullscreen input) and the material binding
 layout:
 
-- textures 4-8: GBuffer0-3 and the scene depth, read with `texelFetch`;
-- textures 9-10: the directional and local shadow atlases (see [Shadows](#shadows));
-- texture 11: this frame's screen-space ambient occlusion, half size (see
-  [Ambient occlusion](#ambient-occlusion));
-- binding 2, `Lighting_Block`: x is 1 when texture 11 holds this frame's
-  occlusion, 0 otherwise;
+- textures 4-9: GBuffer0-4 and the scene depth, read with `texelFetch`;
+- textures 10-11: the directional and local shadow atlases (see [Shadows](#shadows));
+- this frame's screen-space ambient occlusion is in GBuffer0's alpha already (see
+  [Ambient occlusion](#ambient-occlusion)): every slot is taken;
+- binding 2, `Lighting_Block`: x is 1 when a second target, Subsurface, is
+  bound for Skin pixels' diffuse ([SHADING_MODELS.md](SHADING_MODELS.md));
 - binding 3, the scene block, which gains `Scene_InvViewProjection`, the
   point and spot lights and the shadow matrices.
 
@@ -484,9 +492,11 @@ passes run mid-frame, between the Base Pass and Shadows, so that only the
 - **`PPAmbientBlur`** (when Blur is on) averages 4 x 4 half-size texels into
   `Half[1]`, weighting each tap by how close its distance is to the centre's,
   so occlusion does not bleed across edges.
-- **The Lighting stage** samples the result bilinearly and multiplies it into
-  `Surface.AmbientOcclusion`, the material's own AO. `ShadeSurface` applies
-  that to the indirect term only.
+- **`PPAmbientApply`** folds the result into GBuffer0's alpha, the material's
+  own AO: a multiplying blend (zero, source colour) over GBuffer0, the result
+  sampled bilinearly. The Lighting stage and the IBL pass read one occlusion
+  and spend no texture slot on it; `ShadeSurfaceSplit` applies it to the
+  indirect term only.
 - **Scope:** Opaque and Masked Lit surfaces, the G-buffer's. Forward
   (Translucent, Unlit) surfaces get none. With no G-buffer, or on a backend
   that cannot sample depth, it is skipped. `Half[0..1]` are free again by the
@@ -820,7 +830,7 @@ and `[Rendering] BakedLighting` is on:
   half-Lambert of the normal against the stored direction, over the same at
   the texel's own normal, so a flat surface shows the bake as it is.
 - **The Base Pass** adds baked light x diffuse albedo x AO to the emissive it
-  stores, and writes GBuffer1.a = 0.75. The Lighting stage and the IBL pass
+  stores, and writes GBuffer1.a = 2/3. The Lighting stage and the IBL pass
   then leave out their diffuse ambient there (specular reflections stay) --
   unless the bake did not have the sky (a dynamic Sky Light), whose live
   ambient then still applies (`Scene_Baked.y`).
