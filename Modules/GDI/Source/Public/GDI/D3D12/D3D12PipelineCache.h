@@ -34,9 +34,10 @@ enum ED3D12RootParam : UINT
     RP_Sampler3,
     RP_Scene,
     RP_MaterialTexture0,
-    RP_MaterialSampler0 = RP_MaterialTexture0 + 8,   // GDI_MATERIAL_TEXTURE_SLOTS
-    RP_Skin             = RP_MaterialSampler0 + 8,   // b12, GDI_SKIN_BLOCK_BINDING
-    RP_PrevSkin,                                     // b13, GDI_PREV_SKIN_BLOCK_BINDING
+    RP_MaterialSampler0 = RP_MaterialTexture0 + 16,  // GDI_MATERIAL_TEXTURE_SLOTS
+    RP_Skin             = RP_MaterialSampler0 + 16,  // b20, GDI_SKIN_BLOCK_BINDING
+    RP_PrevSkin,                                     // b21, GDI_PREV_SKIN_BLOCK_BINDING
+    RP_Light,                                        // b22, GDI_LIGHT_BLOCK_BINDING
     RP_Count
 };
 

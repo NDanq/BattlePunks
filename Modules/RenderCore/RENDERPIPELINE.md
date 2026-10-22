@@ -530,7 +530,7 @@ Where the backend can make a half-float render target
 
 Null has none. Only Vulkan is built and tested on Linux. The D3D12, Metal and
 OpenGL code is written to match and awaits its platforms. So does the
-shaders' cross-compilation: HLSL through `fxc` at shader model 5.0, and MSL.
+shaders' cross-compilation: HLSL through `dxc` at shader model 6.0 (DXIL), and MSL 2.3.
 
 - **Writing it:** `Scene_Output.x` tells the shaders. Lit output skips its
   `ToDisplay` (`ToSceneColor` in `Lighting.glsl`). An Unlit material's emissive,
@@ -1779,7 +1779,7 @@ the backend has them -- Vulkan, D3D12 and Null so far:
   (`GDI_BU_Storage`), per-instance vertex data (`GDI_BU_Instance`), or both;
   filled once at creation (or zeroed), then only shaders write it.
   `GDIReadBuffer` reads one back, waiting for the GPU, for tests and tools.
-- **Compute shaders.** A `.csh` is cooked like the other stages (`cs_5_0` for
+- **Compute shaders.** A `.csh` is cooked like the other stages (`cs_6_0` for
   D3D12) and loaded as `ST_Compute`. `GDIDispatchCompute(Shader, Params,
   Bytes, Buffers, Count, X, Y, Z)`: the parameters at binding 0 (up to 1 KB),
   the storage buffers at 1.. (up to 4), declared with `ComputeCommon.glsl`'s

@@ -147,10 +147,21 @@ bool D3D12Device::TryAdapter(IDXGIAdapter1* InAdapter)
 
     if(FAILED(D3D12CreateDevice(InAdapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&Device)))) return false;
 
-    Adapter = InAdapter;
-
     char Name[256]{};
     WideCharToMultiByte(CP_UTF8, 0, Desc.Description, -1, Name, int(sizeof(Name)) - 1, nullptr, nullptr);
+
+    /* The shaders are DXIL, shader model 6.0 (cook_shaders.py): an adapter without it is passed over. */
+    D3D12_FEATURE_DATA_SHADER_MODEL Model{ D3D_SHADER_MODEL_6_0 };
+    if(FAILED(Device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &Model, sizeof(Model)))
+       || Model.HighestShaderModel < D3D_SHADER_MODEL_6_0)
+    {
+        GDI_LOG(std::string("[D3D12Device] ") + Name + " has no shader model 6.0; passed over")
+        Device.Reset();
+        return false;
+    }
+
+    Adapter = InAdapter;
+
     GDI_LOG(std::string("[D3D12Device] Picked GPU: ") + Name)
     return true;
 }

@@ -367,7 +367,7 @@ void GDIDynamicDriver::SetUniformBlock(const uint InBinding, const void* InData,
     GDIStoreUniformBlock(MaterialBlocks, MaterialBlockSerials, InBinding, InData, InSize);
 }
 
-bool GDIStoreUniformBlock(std::vector<uint8_t> (&MaterialBlocks)[4], uint64_t (&MaterialBlockSerials)[4], const uint InBinding,
+bool GDIStoreUniformBlock(std::vector<uint8_t> (&MaterialBlocks)[GDI_UNIFORM_BLOCK_COUNT], uint64_t (&MaterialBlockSerials)[GDI_UNIFORM_BLOCK_COUNT], const uint InBinding,
                           const void* InData, const uint InSize)
 {
     uint Index = 0, MaxBytes = 0;
@@ -377,6 +377,7 @@ bool GDIStoreUniformBlock(std::vector<uint8_t> (&MaterialBlocks)[4], uint64_t (&
         case GDI_SCENE_BLOCK_BINDING:    Index = 1; MaxBytes = GDI_SCENE_BLOCK_MAX_BYTES;    break;
         case GDI_SKIN_BLOCK_BINDING:     Index = 2; MaxBytes = GDI_SKIN_BLOCK_MAX_BYTES;     break;
         case GDI_PREV_SKIN_BLOCK_BINDING: Index = 3; MaxBytes = GDI_SKIN_BLOCK_MAX_BYTES;    break;
+        case GDI_LIGHT_BLOCK_BINDING:    Index = 4; MaxBytes = GDI_LIGHT_BLOCK_MAX_BYTES;    break;
         default: return false;
     }
     std::vector<uint8_t>& Block = MaterialBlocks[Index];

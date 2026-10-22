@@ -182,8 +182,8 @@ struct VKDrawCaches
     struct DescSetKey
     {
         VkDescriptorSetLayout Layout = VK_NULL_HANDLE;
-        VkBuffer              Buffers[6]  = {};
-        uint32_t              Ranges[6]   = {};
+        VkBuffer              Buffers[7]  = {};
+        uint32_t              Ranges[7]   = {};
         VkSampler             Samplers[GDI_MATERIAL_TEXTURE_SLOTS] = {};
         VkImageView           Views[GDI_MATERIAL_TEXTURE_SLOTS]    = {};
         bool operator==(const DescSetKey& InOther) const { return std::memcmp(this, &InOther, sizeof(DescSetKey)) == 0; }
@@ -222,7 +222,7 @@ struct VKDrawCaches
     VkPipeline              BoundPipeline    = VK_NULL_HANDLE;
     VkPipelineLayout        BoundLayout      = VK_NULL_HANDLE;
     VkDescriptorSet         BoundSet         = VK_NULL_HANDLE;
-    uint32_t                BoundOffsets[6]  = {};
+    uint32_t                BoundOffsets[7]  = {};
     uint32_t                BoundOffsetCount = 0;
 
     alignas(16) float       ViewUploadBytes[40] = {};
@@ -242,6 +242,11 @@ struct VKDrawCaches
     uint32_t                SkinBlockUploadSize[2]   = {};
     uint64_t                SkinBlockUploadSerial[2] = { ~0ull, ~0ull };
     uint64_t                SkinBlockUploadEpoch[2]  = { ~0ull, ~0ull };
+    /* The light block: the frame's light list, bound whole. */
+    VkBuffer                LightBlockUploadBuffer = VK_NULL_HANDLE;
+    VkDeviceSize            LightBlockUploadOffset = 0;
+    uint64_t                LightBlockUploadSerial = ~0ull;
+    uint64_t                LightBlockUploadEpoch  = ~0ull;
 
     std::unordered_map<DescSetKey, VkDescriptorSet, DescSetKeyHash> DescSets;
     uint64_t                DescSetsEpoch = ~0ull;
@@ -266,7 +271,7 @@ struct VKDrawInputs
     GDIShader*                  PS = nullptr;
     VkShaderModule              VSModule = VK_NULL_HANDLE;
     VkShaderModule              FSModule = VK_NULL_HANDLE;
-    const std::vector<uint8_t>* Blocks  = nullptr;        // [4], as GDIDynamicDriver::MaterialBlocks
+    const std::vector<uint8_t>* Blocks  = nullptr;        // [GDI_UNIFORM_BLOCK_COUNT], as GDIDynamicDriver::MaterialBlocks
     const uint64_t*             Serials = nullptr;        // [4]
     GDITextureResource* const*  Textures = nullptr;       // [GDI_MATERIAL_TEXTURE_SLOTS]
     GDIBuffer*                  InstanceBuffer = nullptr;

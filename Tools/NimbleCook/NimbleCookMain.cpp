@@ -29,7 +29,7 @@
  * targets, is skipped (-force cooks it anyway).
  *
  * The targets default to this build's GDI backends. The compiling --
- * preprocessing, permutation keys, glslc, spirv-cross, fxc -- is
+ * preprocessing, permutation keys, glslc, spirv-cross, dxc -- is
  * NodeGraph's cook_material_graphs.py through GDI's cook_shaders.py, run
  * once per variant and platform. -jobs (default 32) is how many shaders
  * compile at once in all: ceil(jobs / 4) runs go at a time -- the slowest,

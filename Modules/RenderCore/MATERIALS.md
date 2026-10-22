@@ -127,6 +127,9 @@ uploads verbatim.
 | 2 | `<Name>_Block`: `Material_Tint`, `Material_ClipValue`, `Material_TwoSided`, two reserved floats, then `Param_<Name>` for each parameter | RenderContext, per draw | MaterialSchema (offsets in `.material`) |
 | 3 | `Scene_Block`: camera, time, light, ambient, and the inverse view-projection (the Lighting stage's) | RenderContext, per frame | SceneUniforms.glsl, mirrored by `SceneUniforms` in RenderContext.cpp with static_asserts |
 | 4-11 | Material textures (slot 0-7); for PostProcess, slot 0 is Scene Color and slot 7 the scene depth | RenderContext | fixed |
+| 12-19 | The engine's texture slots 8-15: its passes', and forward Lit materials' light list (GLOBAL_ILLUMINATION.md) | RenderContext | fixed |
+| 20, 21 | Skin blocks (ANIMATION.md) | RenderContext, per skinned draw | Skinning.glsl |
+| 22 | Light block: the frame's light list (GLOBAL_ILLUMINATION.md) | RenderContext, per frame | LightList.glsl |
 
 Both blocks are visible to both stages, so World Position Offset can read
 parameters and time. Parameters are float, vec2, vec3 or vec4, in name order;
@@ -409,9 +412,9 @@ colour.
 - `UBO_BLOCK_BEGIN/END` and `MATERIAL_SAMPLER2D` macros (engine copies of
   OpenGLCommon/VulkanCommon.glsl): real std140 blocks and bound samplers on
   OpenGL too.
-- Vulkan: descriptor layout group `DLG_Material` (UBO 0-3, samplers 4-11).
+- Vulkan: descriptor layout group `DLG_Material` (UBO 0-3, samplers 4-19, UBO 20-22).
 - D3D12: root parameters for b3 and t4-t11/s4-s11.
-- OpenGL: a UBO per binding, `glBindBufferBase`; texture units 4-11.
+- OpenGL: a UBO per binding, `glBindBufferBase`; texture units 4-19.
 - Vertex colour at location 9, and lightmap UVs at 10, on Vulkan, D3D12 and OpenGL.
 - Metal: not done. The engine does not cook Metal, and Metal has no indexed
   meshes yet.
@@ -425,7 +428,7 @@ colour.
 | Backend | Compiles | Verified drawing |
 |---|---|---|
 | Vulkan | yes | yes -- RenderCore smoke `NIMBLE_SMOKE_GPU=Vulkan` renders DefaultLit and Wave (WPO) through the G-buffer, Glow and Negative (PostProcess) through the caches and checks their pixels (clean under the validation layer); Sandbox (Editor and Client targets) loads every material and its cache |
-| D3D12 | yes (every permutation through spirv-cross and fxc; registers match the root signature) | yes -- the same smoke check with `NIMBLE_SMOKE_GPU=D3D12` gives Vulkan's pixels; Sandbox and the editor viewport (`--rhi 4`) run on it |
+| D3D12 | yes (every permutation through spirv-cross and dxc, shader model 6.0; registers match the root signature) | yes -- the same smoke check with `NIMBLE_SMOKE_GPU=D3D12` gives Vulkan's pixels; Sandbox and the editor viewport (`--rhi 4`) run on it |
 | OpenGL | yes (preprocessed; the backend's multiple targets and depth textures compile) | no -- the host does not create a WGL context yet |
 | Metal | -- | -- |
 

@@ -332,9 +332,11 @@ private:
     OpenGLGDIContext*   Context;
     uint                BoundShaderProgram;
     uint                MaterialUBOs[2] = {};
-    /* The skin block's buffer (binding 12), refilled only when its serial moves. */
+    /* The skin block's buffer (binding 20), refilled only when its serial moves. */
     uint                SkinUBO[2] = {};                 // the palette, and the frame before's
     uint64_t            SkinUBOSerial[2] = { ~0ull, ~0ull };
+    uint                LightUBO = 0;                    // the light block (binding 22), refilled when its serial moves
+    uint64_t            LightUBOSerial = ~0ull;
     uint                ScratchFramebuffer = 0;   // SetRenderTargets' attachments
     class OpenGLMesh*   ScreenMesh = nullptr;
     GLsync              ThreadSync;

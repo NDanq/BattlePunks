@@ -103,6 +103,23 @@ void OpenGLDynamicGDI::ApplyMaterialBindings()
         }
         glBindBufferBase(GL_UNIFORM_BUFFER, Skin == 0 ? GDI_SKIN_BLOCK_BINDING : GDI_PREV_SKIN_BLOCK_BINDING, SkinUBO[Skin]);
     }
+    /* The light block: the frame's light list, bound whole. */
+    if(!LightUBO)
+    {
+        glGenBuffers(1, &LightUBO);
+    }
+    if(LightUBOSerial != MaterialBlockSerials[4])
+    {
+        const std::vector<uint8_t>& Bytes = MaterialBlocks[4];
+        glBindBuffer(GL_UNIFORM_BUFFER, LightUBO);
+        glBufferData(GL_UNIFORM_BUFFER, GLsizeiptr(GDI_LIGHT_BLOCK_MAX_BYTES), nullptr, GL_STREAM_DRAW);
+        if(!Bytes.empty())
+        {
+            glBufferSubData(GL_UNIFORM_BUFFER, 0, GLsizeiptr(Bytes.size()), Bytes.data());
+        }
+        LightUBOSerial = MaterialBlockSerials[4];
+    }
+    glBindBufferBase(GL_UNIFORM_BUFFER, GDI_LIGHT_BLOCK_BINDING, LightUBO);
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
     for(uint Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot)

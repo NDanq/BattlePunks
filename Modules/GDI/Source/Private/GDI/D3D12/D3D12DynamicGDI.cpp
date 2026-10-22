@@ -970,6 +970,14 @@ bool D3D12DynamicGDI::BindDrawState(const D3D12DrawInputs& InIn, GDIMesh* InMesh
             Caches.SkinSerial[SkinIndex] = InIn.Serials[2 + SkinIndex];
             Caches.SkinEpoch[SkinIndex]  = Epoch;
         }
+
+        /* The light block (b22): the frame's light list, bound whole, uploaded once per change. */
+        if(Caches.LightSerial != InIn.Serials[4] || Caches.LightEpoch != Epoch || Caches.LightAddress == 0)
+        {
+            if(!Upload(Blocks[4], GDI_LIGHT_BLOCK_MAX_BYTES, Caches.LightAddress)) return false;
+            Caches.LightSerial = InIn.Serials[4];
+            Caches.LightEpoch  = Epoch;
+        }
     }
     else
     {
@@ -1007,6 +1015,7 @@ bool D3D12DynamicGDI::BindDrawState(const D3D12DrawInputs& InIn, GDIMesh* InMesh
         SetCBV(RP_Scene,    Caches.SceneAddress);
         SetCBV(RP_Skin,     Caches.SkinAddress[0]);
         SetCBV(RP_PrevSkin, Caches.SkinAddress[1]);
+        SetCBV(RP_Light,    Caches.LightAddress);
         for(uint32_t Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot)
         {
             /* The same resource as the list has bound: its tables are already
