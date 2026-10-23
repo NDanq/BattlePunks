@@ -197,6 +197,8 @@ vec3 DecodeGBufferNormal(vec4 InEncoded)
 #define SHADING_MODEL_CLOTH       3
 #define SHADING_MODEL_SUBSURFACE  4
 #define SHADING_MODEL_SKIN        5
+// Volume: forward only, a thin medium (lit smoke); never in the G-buffer.
+#define SHADING_MODEL_VOLUME      6
 float EncodeShadingModel(int InModel) { return float(InModel) / 255.0; }
 int   DecodeShadingModel(float InEncoded) { return int(InEncoded * 255.0 + 0.5); }
 

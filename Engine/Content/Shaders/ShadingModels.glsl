@@ -14,6 +14,9 @@
 //                (Green 2004; Barre-Brisebois & Bouchard 2011; Filament 4.11)
 //   Skin         Default with transmission; its diffuse blurred in screen space
 //                where the scene runs PPSubsurface (Jimenez et al. 2015)
+//   Volume       forward only: light scattered by a thin medium (lit smoke) --
+//                a Henyey-Greenstein phase (1941) about the view, no N.L, no
+//                specular, wrapped toward the normal by Normal Influence
 
 #ifndef SHADING_MODELS_GLSL
 #define SHADING_MODELS_GLSL
@@ -41,6 +44,8 @@ struct LightingSurface
     vec3  Sheen;              // Cloth, linear
     vec3  Subsurface;         // Cloth's wrap tint; Subsurface's and Skin's transmitted colour, linear
     float Thickness;          // Subsurface, Skin
+    float Phase;              // Volume: Henyey-Greenstein g, -0.9 to 0.9
+    float NormalInfluence;    // Volume: 0 to 1
 };
 
 // --- Lobes ------------------------------------------------------------------
@@ -166,6 +171,19 @@ void EvaluateLightModel(in LightingSurface S, vec3 InL, vec3 InRadiance,
     OutSpecular    = vec3(0.0);
     OutTransmitted = vec3(0.0);
     float NdotLRaw = dot(S.N, InL);
+
+    if(S.Model == SHADING_MODEL_VOLUME)
+    {
+        // Henyey-Greenstein times 4 pi (1 for an even medium: as bright as Lambert facing
+        // the light), about the light's travel (-L) and the view; Normal Influence wraps it
+        // toward the normal (half Lambert, times 2 so it averages 1).
+        float G     = clamp(S.Phase, -0.9, 0.9);
+        float Denom = max(1.0 + G * G + 2.0 * G * dot(InL, S.V), 1e-4);
+        float Phase = (1.0 - G * G) / (Denom * sqrt(Denom));
+        float Shape = mix(1.0, clamp(NdotLRaw * 0.5 + 0.5, 0.0, 1.0) * 2.0, clamp(S.NormalInfluence, 0.0, 1.0));
+        OutDiffuse = (Phase * Shape / SHADING_PI) * InRadiance;
+        return;
+    }
 
     if(S.Model == SHADING_MODEL_SUBSURFACE || S.Model == SHADING_MODEL_SKIN)
     {
@@ -298,9 +316,11 @@ LightingSurface MakeLightingSurface(int InModel, vec3 InAlbedo, float InMetallic
     S.Sheen         = vec3(0.0);
     S.Subsurface    = vec3(0.0);
     S.Thickness     = 1.0;
-    if(InModel == SHADING_MODEL_CLOTH)
+    S.Phase           = 0.0;
+    S.NormalInfluence = 0.0;
+    if(InModel == SHADING_MODEL_CLOTH || InModel == SHADING_MODEL_VOLUME)
     {
-        S.Metallic = 0.0;   // cloth is never metal; its specular is the sheen
+        S.Metallic = 0.0;   // cloth is never metal, its specular the sheen; a medium has no surface to be metal
     }
     return S;
 }

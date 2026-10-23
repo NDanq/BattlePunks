@@ -73,7 +73,7 @@ namespace RenderCore
     namespace
     {
         const char* const SHADING_MODEL_NAMES[MATERIAL_SHADING_MODEL_COUNT] = {
-            "Default", "ClearCoat", "Anisotropic", "Cloth", "Subsurface", "Skin",
+            "Default", "ClearCoat", "Anisotropic", "Cloth", "Subsurface", "Skin", "Volume",
         };
     }
 

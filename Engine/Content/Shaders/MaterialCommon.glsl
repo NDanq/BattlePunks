@@ -47,6 +47,8 @@ struct MaterialSurface
     vec3  SheenColor;           // Cloth; below zero: the square root of Base Color
     vec3  SubsurfaceColor;      // Cloth's wrap tint; Subsurface's and Skin's transmitted colour
     float Thickness;            // Subsurface, Skin: 0 thin, 1 thick
+    float PhaseAnisotropy;      // Volume: -0.9 back scattering, 0 even, 0.9 forward (Henyey-Greenstein g)
+    float NormalInfluence;      // Volume: 0 lit from every side alike, 1 wrapped toward its Normal
 };
 
 MaterialSurface DefaultMaterialSurface(in MaterialInputs Inputs)
@@ -69,6 +71,8 @@ MaterialSurface DefaultMaterialSurface(in MaterialInputs Inputs)
     Surface.SheenColor         = vec3(-1.0);
     Surface.SubsurfaceColor    = vec3(1.0);
     Surface.Thickness          = 0.5;
+    Surface.PhaseAnisotropy    = 0.0;
+    Surface.NormalInfluence    = 0.0;
     return Surface;
 }
 
@@ -162,6 +166,28 @@ vec3 Material_NormalMap(in MaterialInputs Inputs, vec3 InColor, float InStrength
      * the backends' dFdy direction and a back face. Its sign puts T along +U. */
     Scale = inversesqrt(Scale) * (dot(cross(Dp1, Dp2), N) < 0.0 ? -1.0 : 1.0);
     return normalize(mat3(T * Scale, B * Scale, N) * Tangent);
+}
+
+// The Particle Sphere Normal node (LIT_TRANSLUCENCY.md, Phase 5): the world normal of
+// a sphere bulging out of a quad toward the eye, by UV -- round puffs from flat
+// sprites. U and V run along the cotangent frame's T and B; outside the circle, the
+// rim's. Zero UV change across the pixel (a degenerate quad) keeps the quad's normal.
+vec3 Material_SphereNormal(in MaterialInputs Inputs)
+{
+    vec3 N    = normalize(Inputs.WorldNormal);
+    vec3 Dp1  = dFdx(Inputs.WorldPosition);
+    vec3 Dp2  = dFdy(Inputs.WorldPosition);
+    vec2 Duv1 = dFdx(Inputs.TexCoord);
+    vec2 Duv2 = dFdy(Inputs.TexCoord);
+    vec3 T = cross(Dp2, N) * Duv1.x + cross(N, Dp1) * Duv2.x;
+    vec3 B = cross(Dp2, N) * Duv1.y + cross(N, Dp1) * Duv2.y;
+    if(dot(T, T) < 1e-20 || dot(B, B) < 1e-20) { return N; }
+    T = normalize(T - N * dot(N, T));
+    B = normalize(B - N * dot(N, B));
+    vec2  P  = Inputs.TexCoord * 2.0 - 1.0;
+    float R2 = dot(P, P);
+    P = R2 > 1.0 ? P * inversesqrt(R2) : P;
+    return normalize(T * P.x + B * P.y + N * sqrt(max(1.0 - min(R2, 1.0), 0.0)));
 }
 
 // The world direction along InUV's U at this pixel, at right angles to

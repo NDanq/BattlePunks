@@ -3625,6 +3625,52 @@ static void TestTranslucencyOnGpu()
             Sun.GetComponent<GameCore::TransformComponent>()->Rotation = Vector3(35.0, 10.0, 0.0);
         }
 
+        /* Phase 5: a Volume quad over black with the sun behind it, shining toward the camera.
+         * Scattering forward (g 0.6) it is brighter than scattering back (g -0.6); with Normal
+         * Influence 0 it is lit evenly across, not by its facing. */
+        {
+            Sun.GetComponent<GameCore::TransformComponent>()->Rotation = Vector3(20.0, 180.0, 0.0);
+            Sun.GetComponent<DirectionalLightComponent>()->Intensity = 0.15f;   // forward scattering is ten times the light: below the tone map's top
+            const GameCore::Entity Back = Placed("Back", Vector3(0.0, 100.0, 120.0), Vector3(), Vector3(800.0, 800.0, 2.0));
+            GameCore::Entity Puff = Placed("Puff", Vector3(0.0, 100.0, 0.0), Vector3(), Vector3(200.0, 200.0, 2.0));
+            Back.AddComponent(Drawn(BOX, "OpaqueBlack"));
+            Back.GetComponent<RenderComponent>()->bCastShadows = 0;   // it stands between the sun and the quad
+            Puff.AddComponent(Drawn(BOX, "VolumeForward"));
+            EngineCore::Image Forward, Backward;
+            const bool bForward = Capture(Forward);
+            World.DestroyEntity(Puff);
+            Puff = Placed("PuffBack", Vector3(0.0, 100.0, 0.0), Vector3(), Vector3(200.0, 200.0, 2.0));
+            Puff.AddComponent(Drawn(BOX, "VolumeBack"));
+            const bool bBackward = Capture(Backward);
+            Expect(bForward && bBackward, "the Volume quad is captured scattering forward and back");
+            if(bForward && bBackward)
+            {
+                Dump(Forward, "volume-forward");
+                Dump(Backward, "volume-back");
+                const auto Grey = [&](const EngineCore::Image& InPixels, const int InX)
+                {
+                    int Sum = 0;
+                    for(int Y = 118; Y <= 138; ++Y)
+                    {
+                        int Value[3];
+                        Rgb(InPixels, InX, Y, Value);
+                        Sum += Value[0] + Value[1] + Value[2];
+                    }
+                    return Sum / (21 * 3);
+                };
+                const int ForwardMid = Grey(Forward, 128), BackMid = Grey(Backward, 128);
+                const int ForwardLeft = Grey(Forward, 90), ForwardRight = Grey(Forward, 166);
+                std::printf("    volume: forward %d, back %d; forward across %d | %d | %d\n", ForwardMid, BackMid, ForwardLeft, ForwardMid,
+                            ForwardRight);
+                Expect(ForwardMid - BackMid > 15, "a Volume medium scattering forward is brighter against the light than one scattering back");
+                Expect(std::abs(ForwardLeft - ForwardRight) < 8, "and with Normal Influence 0 it is lit evenly across");
+            }
+            World.DestroyEntity(Back);
+            World.DestroyEntity(Puff);
+            Sun.GetComponent<GameCore::TransformComponent>()->Rotation = Vector3(35.0, 10.0, 0.0);
+            Sun.GetComponent<DirectionalLightComponent>()->Intensity   = SunInit.Intensity;
+        }
+
         Rend.UnbindWorld();
         Rend.Shutdown();
     }

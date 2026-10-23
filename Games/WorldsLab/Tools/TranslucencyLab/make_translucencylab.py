@@ -75,9 +75,12 @@ def translucent(name, consts, two_sided=False, surface=True):
 
 def smoke():
     """A soft round puff, its colour and opacity the particle's: Steampunk's
-    Steam, Lit (the Volume model from Phase 5 on)."""
+    Steam, with the Volume shading model (Phase 5): forward scattering 0.3,
+    half shaded by a sphere's normal across the sprite."""
     g = Graph("Smoke")
-    out = cy.output(g, domain="Translucent", consts={"Roughness": "1"})
+    out = cy.output(g, domain="Translucent", consts={"Roughness": "1", "PhaseAnisotropy": "0.3", "NormalInfluence": "0.5"})
+    next(n for n in g.nodes if n[0] == out)[3]["ShadingModel"] = "Volume"
+    g.link(g.node("Input.ParticleSphereNormal"), "Normal", out, "Normal")
     tc = g.node("Input.TexCoord")
     dist = g.node("Vector.Distance", consts={"B": cy.vec(0.5, 0.5)})
     g.link(tc, "UV", dist, "A")
