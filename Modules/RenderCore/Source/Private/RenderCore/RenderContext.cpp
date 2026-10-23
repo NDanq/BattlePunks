@@ -90,6 +90,10 @@ NIMBLE_CONFIG_BOOL(GRenderEnergyCompensation, "Rendering", "EnergyCompensation",
 NIMBLE_CONFIG_BOOL(GRenderStochasticReflections, "Rendering", "StochasticReflections", true, nullptr);
 /* Screen-space GI where a stack has it (GLOBAL_ILLUMINATION.md, Phase 5); off, the stack's node is ignored. */
 NIMBLE_CONFIG_BOOL(GRenderScreenGI, "Rendering", "ScreenSpaceGI", true, nullptr);
+/* Seconds the render clock advances a frame -- particles, material Time, exposure --
+ * whatever the wall clock did; 0 follows the wall clock. For captures that must be
+ * the same frame every run (LIT_TRANSLUCENCY.md, "Validation"). */
+NIMBLE_CONFIG_FLOAT(GRenderFixedStep, "Rendering", "FixedStep", 0.0f, nullptr);
 
 namespace RenderCore
 {
@@ -659,6 +663,7 @@ namespace RenderCore
         std::chrono::steady_clock::time_point Start     = std::chrono::steady_clock::now();
         std::chrono::steady_clock::time_point LastFrame = Start;
         float                                 FrameDelta = 0.0f;
+        double                                FixedClock = 0.0;   // the frames' time under [Rendering] FixedStep
 
         /* Inside a scene (BeginSceneDraws to RenderSceneStages) draws queue in
          * their stage's policy; outside one they are issued at once. */
@@ -1861,7 +1866,8 @@ namespace RenderCore
             Scene.CameraPosition[1] = float(Camera.GetY());
             Scene.CameraPosition[2] = float(Camera.GetZ());
 
-            Scene.Time[0] = std::chrono::duration<float>(LastFrame - Start).count();
+            Scene.Time[0] = GRenderFixedStep.GetFloat() > 0.0f ? float(FixedClock)
+                                                                : std::chrono::duration<float>(LastFrame - Start).count();
             Scene.Time[1] = FrameDelta;
 
             /* Toward the light: the way it travels, reversed. */
@@ -3549,6 +3555,7 @@ namespace RenderCore
 
     double RenderContext::GetTimeSeconds() const
     {
+        if(GRenderFixedStep.GetFloat() > 0.0f) { return P->FixedClock; }
         return std::chrono::duration<double>(P->LastFrame - P->Start).count();
     }
 
@@ -4065,6 +4072,11 @@ namespace RenderCore
         const auto Now = std::chrono::steady_clock::now();
         P->FrameDelta = std::chrono::duration<float>(Now - P->LastFrame).count();
         P->LastFrame  = Now;
+        if(const float Step = GRenderFixedStep.GetFloat(); Step > 0.0f)
+        {
+            P->FrameDelta  = Step;
+            P->FixedClock += Step;
+        }
     }
 
     void RenderContext::SetView(const RenderView& InView)

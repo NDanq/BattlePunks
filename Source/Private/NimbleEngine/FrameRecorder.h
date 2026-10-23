@@ -23,6 +23,11 @@ namespace RenderCore { class Renderer; }
  * the picture back stalls the GPU briefly, so a recording runs a little
  * slower than the game would.
  *
+ * By frame instead: [Record] StartFrame N (0: off) starts at the game's Nth
+ * frame and takes every frame after it, each one 1/Fps of the video -- with
+ * [Rendering] FixedStep, the same pictures every run, for before/after
+ * comparisons (RenderCore/LIT_TRANSLUCENCY.md, "Validation").
+ *
  * Editor-target builds (WITH_EDITOR), where the renderer can read a scene
  * back; elsewhere -record warns and does nothing. Not with -headless: there
  * is no picture.
@@ -63,6 +68,8 @@ namespace NimbleEngine
         double                                Seconds      = 0.0;
         double                                StartSeconds = 0.0;
         std::chrono::steady_clock::time_point Began;
+        uint64_t                              StartFrame   = 0;   // [Record] StartFrame; 0 the wall clock
+        uint64_t                              Ticks        = 0;   // frames seen
         std::deque<Pending>                   Requests;
         uint64_t                              NextSlot    = 0;   // the next video frame to ask for
         uint64_t                              Written     = 0;   // video frames written, repeats included
