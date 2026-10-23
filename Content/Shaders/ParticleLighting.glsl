@@ -18,6 +18,8 @@ MATERIAL_SAMPLER2D(15, ShadowDirectional)      // engine slots 11 and 12, as for
 MATERIAL_SAMPLER2D(16, ShadowLocal)
 MATERIAL_SAMPLER2D(19, TranslucentOpacity)     // engine slot 15: translucent casters' opacity (Phase 7)
 #define LIGHTING_TRANSLUCENT_SHADOWS 1
+// Past its own optical depth (Phase 8).
+#define LIGHTING_TRANSLUCENT_SELF 0.75
 #define LIGHTING_SHADOW_RADIUS 0
 #include <Shadows.glsl>
 
