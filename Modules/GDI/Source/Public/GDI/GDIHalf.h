@@ -7,7 +7,7 @@
 /*
  * IEEE half floats, for reading an RGBA16F render target back (ToImage) on
  * every backend: each channel to a float, then clamped into RGBA8 -- what the
- * texels hold, not tone mapped.
+ * texels hold, not tone mapped. RGB10A2, RGBA32F and R32F targets likewise.
  */
 inline float GDIHalfToFloat(const uint16_t InHalf)
 {
@@ -47,6 +47,29 @@ inline void GDIRgb10A2ToBytes(const uint32_t* InTexels, uint8_t* OutBytes, const
             OutBytes[Each * 4 + Channel] = uint8_t((((Texel >> (Channel * 10)) & 0x3FFu) * 255u + 511u) / 1023u);
         }
         OutBytes[Each * 4 + 3] = uint8_t((Texel >> 30) * 85u);
+    }
+}
+
+/* InCount floats to bytes, each clamped to 0-1 and scaled to 0-255: an
+ * RGBA32F target's texels, four a texel. */
+inline void GDIFloatsToBytes(const float* InFloats, uint8_t* OutBytes, const size_t InCount)
+{
+    for(size_t Each = 0; Each < InCount; ++Each)
+    {
+        const float Value = InFloats[Each];
+        OutBytes[Each] = uint8_t(Value <= 0.0f ? 0 : Value >= 1.0f ? 255 : int(Value * 255.0f + 0.5f));
+    }
+}
+
+/* InCount R32F texels to RGBA8 as they sample: (r, 0, 0, 1). */
+inline void GDIR32FToBytes(const float* InTexels, uint8_t* OutBytes, const size_t InCount)
+{
+    for(size_t Each = 0; Each < InCount; ++Each)
+    {
+        GDIFloatsToBytes(&InTexels[Each], &OutBytes[Each * 4], 1);
+        OutBytes[Each * 4 + 1] = 0;
+        OutBytes[Each * 4 + 2] = 0;
+        OutBytes[Each * 4 + 3] = 255;
     }
 }
 

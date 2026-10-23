@@ -248,6 +248,17 @@ bool VKDevice::SupportsSampledFormat(const VkFormat InFormat) const
     return (Properties.optimalTilingFeatures & Needed) == Needed;
 }
 
+bool VKDevice::SupportsRenderTargetFormat(const VkFormat InFormat) const
+{
+    if(PhysicalDevice == VK_NULL_HANDLE) { return false; }
+    VkFormatProperties Properties{};
+    vkGetPhysicalDeviceFormatProperties(PhysicalDevice, InFormat, &Properties);
+    const VkFormatFeatureFlags Needed = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT
+                                      | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT
+                                      | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    return (Properties.optimalTilingFeatures & Needed) == Needed;
+}
+
 VkResult VKDevice::QueueSubmit(uint32_t SubmitCount, const VkSubmitInfo* Submits, VkFence Fence)
 {
     std::lock_guard<std::mutex> Lock(QueueMutex);

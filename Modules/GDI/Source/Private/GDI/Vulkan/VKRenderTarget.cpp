@@ -24,7 +24,7 @@ namespace
     /* Bytes a texel of InFormat reads back as. */
     VkDeviceSize ReadbackTexelBytes(const VkFormat InFormat)
     {
-        return InFormat == VK_FORMAT_R16G16B16A16_SFLOAT ? 8u : 4u;
+        return InFormat == VK_FORMAT_R32G32B32A32_SFLOAT ? 16u : InFormat == VK_FORMAT_R16G16B16A16_SFLOAT ? 8u : 4u;
     }
 
     /* InTexels of InFormat, as read back, into OutImage's RGBA8. */
@@ -37,6 +37,14 @@ namespace
         else if(InFormat == VK_FORMAT_A2B10G10R10_UNORM_PACK32)
         {
             GDIRgb10A2ToBytes(static_cast<const uint32_t*>(InMapped), OutImage.GetData(), InTexels);
+        }
+        else if(InFormat == VK_FORMAT_R32G32B32A32_SFLOAT)
+        {
+            GDIFloatsToBytes(static_cast<const float*>(InMapped), OutImage.GetData(), InTexels * 4u);
+        }
+        else if(InFormat == VK_FORMAT_R32_SFLOAT)
+        {
+            GDIR32FToBytes(static_cast<const float*>(InMapped), OutImage.GetData(), InTexels);
         }
         else
         {

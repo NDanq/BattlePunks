@@ -261,6 +261,8 @@ GDIRenderTarget* D3D12DynamicGDI::CreateRenderTargetFormat(std::string Name, uin
     if(!DeviceObj) return nullptr;
     const DXGI_FORMAT Format = InFormat == GDI_RTF_RGBA16F ? DXGI_FORMAT_R16G16B16A16_FLOAT
                              : InFormat == GDI_RTF_RGB10A2 ? DXGI_FORMAT_R10G10B10A2_UNORM
+                             : InFormat == GDI_RTF_RGBA32F ? DXGI_FORMAT_R32G32B32A32_FLOAT
+                             : InFormat == GDI_RTF_R32F    ? DXGI_FORMAT_R32_FLOAT
                              : DXGI_FORMAT_R8G8B8A8_UNORM;
     auto* RT = new D3D12RenderTarget(DeviceObj, Name, InWidth, InHeight, Format);
     RegisterRenderTarget(RT);
@@ -269,9 +271,10 @@ GDIRenderTarget* D3D12DynamicGDI::CreateRenderTargetFormat(std::string Name, uin
 
 bool D3D12DynamicGDI::SupportsRenderTargetFormat(const EGDIRenderTargetFormat InFormat) const
 {
-    /* R16G16B16A16_FLOAT and R10G10B10A2_UNORM render targets, blending and sampling
-     * are required at feature level 11_0. */
-    return InFormat == GDI_RTF_RGBA8 || InFormat == GDI_RTF_RGBA16F || InFormat == GDI_RTF_RGB10A2;
+    /* R16G16B16A16_FLOAT, R10G10B10A2_UNORM, R32G32B32A32_FLOAT and R32_FLOAT render
+     * targets, blending and filtered sampling are required at feature level 11_0. */
+    return InFormat == GDI_RTF_RGBA8 || InFormat == GDI_RTF_RGBA16F || InFormat == GDI_RTF_RGB10A2
+        || InFormat == GDI_RTF_RGBA32F || InFormat == GDI_RTF_R32F;
 }
 
 void D3D12DynamicGDI::SetRenderTarget(GDIRenderTarget* InRenderTarget)

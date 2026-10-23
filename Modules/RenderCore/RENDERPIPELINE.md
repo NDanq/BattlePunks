@@ -588,7 +588,10 @@ eye adaptation, all on the GPU -- nothing is read back:
   that, at Speed Up toward a brighter view and Speed Down toward a darker
   (per second, `1 - exp(-dt * speed)`), into the other of two 1 x 1s the
   scene's targets ping-pong. A first frame -- or the node newly on --
-  starts at what it meters.
+  starts at what it meters. The pair is R32F where the backend has
+  `GDI_RTF_R32F` (else RGBA16F): a half float's step near log2 8 is 1/128
+  of a stop, more than a frame's easing moves it, so half floats stall
+  short of the target.
 - **Exposure:** the tone map multiplies the scene by `Key / 2^adapted`,
   clamped to Min EV - Max EV stops, then by Tone Mapping's own Exposure,
   which compensates on top. Previews and captures run no stack, so none.

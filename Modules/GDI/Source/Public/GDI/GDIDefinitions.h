@@ -117,12 +117,17 @@ enum EGDITextureBorder : char
 
 /* A render target's colour format. RGBA8 is every backend's; RGBA16F (half
  * float, HDR) and RGB10A2 (10-bit unorm colour, 2-bit alpha: a G-buffer's
- * normals) only where GDISupportsRenderTargetFormat says so. */
+ * normals) only where GDISupportsRenderTargetFormat says so. RGBA32F and R32F
+ * (full float, R32F sampling as (r, 0, 0, 1)) are for values half floats round
+ * away -- moments, a slowly eased scalar -- not colour: twice RGBA16F's
+ * bandwidth. Where supported, each renders, blends, samples and filters. */
 enum EGDIRenderTargetFormat : char
 {
     GDI_RTF_RGBA8   = 0,
     GDI_RTF_RGBA16F = 1,
     GDI_RTF_RGB10A2 = 2,
+    GDI_RTF_RGBA32F = 3,
+    GDI_RTF_R32F    = 4,
 };
 
 /* A texture's 4x4 block-compressed format (GDICreateCompressedTextureResource),
