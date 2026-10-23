@@ -3504,7 +3504,8 @@ static void TestTranslucencyOnGpu()
         /* A sun from behind the camera, and the sky. */
         DirectionalLightComponent SunInit;
         SunInit.ShadowDistance = 3000.0f;
-        Placed("Sun", Vector3(), Vector3(35.0, 10.0, 0.0), Vector3(1.0, 1.0, 1.0)).AddComponent(SunInit);
+        const GameCore::Entity Sun = Placed("Sun", Vector3(), Vector3(35.0, 10.0, 0.0), Vector3(1.0, 1.0, 1.0));
+        Sun.AddComponent(SunInit);
         Placed("Sky", Vector3(), Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(SkyLightComponent());
 
         /* Phase 1: a red Lit quad and a green Unlit one overlapping in the middle of
@@ -3574,6 +3575,54 @@ static void TestTranslucencyOnGpu()
             }
             World.DestroyEntity(Pane);
             World.DestroyEntity(Blocker);
+        }
+
+        /* Phase 3: a pane at opacity 0.02, roughness 0.3, over black, the sun straight
+         * down the view so its highlight is at the centre. Translucency Lighting Surface
+         * keeps the highlight; Legacy fades it with the opacity to nearly nothing. */
+        {
+            Sun.GetComponent<GameCore::TransformComponent>()->Rotation = Vector3(0.0, 0.0, 0.0);
+            const GameCore::Entity Back = Placed("Back", Vector3(0.0, 100.0, 120.0), Vector3(), Vector3(800.0, 800.0, 2.0));
+            GameCore::Entity Pane = Placed("Pane", Vector3(0.0, 100.0, 0.0), Vector3(), Vector3(200.0, 200.0, 2.0));
+            Back.AddComponent(Drawn(BOX, "OpaqueBlack"));
+            Pane.AddComponent(Drawn(BOX, "TransLitShiny"));
+            EngineCore::Image Surface, Legacy;
+            const bool bSurface = Capture(Surface);
+            World.DestroyEntity(Pane);
+            Pane = Placed("PaneLegacy", Vector3(0.0, 100.0, 0.0), Vector3(), Vector3(200.0, 200.0, 2.0));
+            Pane.AddComponent(Drawn(BOX, "TransLitShinyLegacy"));
+            const bool bLegacy = Capture(Legacy);
+            Expect(bSurface && bLegacy, "the shiny pane is captured as Surface and as Legacy");
+            if(bSurface && bLegacy)
+            {
+                Dump(Surface, "shiny-surface");
+                Dump(Legacy, "shiny-legacy");
+                const auto Centre = [&](const EngineCore::Image& InPixels)
+                {
+                    int Sum = 0;
+                    for(int Y = 126; Y <= 130; ++Y)
+                    {
+                        for(int X = 126; X <= 130; ++X)
+                        {
+                            int Value[3];
+                            Rgb(InPixels, X, Y, Value);
+                            Sum += Value[0] + Value[1] + Value[2];
+                        }
+                    }
+                    return Sum / 75;
+                };
+                int Outside[3];
+                Rgb(Legacy, 20, 128, Outside);
+                const int SurfaceGrey = Centre(Surface), LegacyGrey = Centre(Legacy);
+                std::printf("    shiny pane: Surface %d, Legacy %d, the backdrop %d\n", SurfaceGrey, LegacyGrey, (Outside[0] + Outside[1] + Outside[2]) / 3);
+                Expect(SurfaceGrey - LegacyGrey > 20, "Translucency Lighting Surface keeps a clear pane's highlight");
+                /* Legacy keeps 2% of an HDR highlight, which the tone map still shows a little. */
+                const int Backdrop = (Outside[0] + Outside[1] + Outside[2]) / 3;
+                Expect(LegacyGrey - Backdrop < (SurfaceGrey - Backdrop) / 2, "and Legacy fades it with the opacity, as before");
+            }
+            World.DestroyEntity(Back);
+            World.DestroyEntity(Pane);
+            Sun.GetComponent<GameCore::TransformComponent>()->Rotation = Vector3(35.0, 10.0, 0.0);
         }
 
         Rend.UnbindWorld();

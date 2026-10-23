@@ -57,8 +57,17 @@ templates, beside the engine's other shaders.
 |---|---|---|---|---|
 | Opaque | Base Pass / Unlit | off | on | |
 | Masked | Base Pass / Unlit | off | on | `discard` when OpacityMask < Clip Value |
-| Translucent | Translucent (Lit forward-shaded, Unlit as authored) | alpha | off | sorted back to front, Lit and Unlit together |
+| Translucent | Translucent (Lit forward-shaded, Unlit as authored) | alpha; premultiplied for Lit with Translucency Lighting Surface | off | sorted back to front, Lit and Unlit together |
 | PostProcess | PostProcess | off | off | full-screen, Unlit only, samples Scene Color and Scene Depth; no WPO; run by a post process stack (RENDERPIPELINE.md) |
+
+**Translucency Lighting** (the Material Output's, Translucent Lit only;
+LIT_TRANSLUCENCY.md, Phase 3): **Surface** fades only the body -- diffuse and
+emissive -- by Opacity and keeps the specular whole, so clear glass still
+reflects; the shader writes it premultiplied (`MATERIAL_TRANSLUCENCY_SURFACE`
+in the generated code) and it blends (one, one minus source alpha). **Legacy**
+fades everything by Opacity, as before. A new Material Output node is Surface;
+a graph saved before the property existed has none and is Legacy, so old
+content looks as it did.
 
 The domain and shading are the key to where a material draws:
 [RENDERPIPELINE.md](RENDERPIPELINE.md) has the stages, their draw policies and

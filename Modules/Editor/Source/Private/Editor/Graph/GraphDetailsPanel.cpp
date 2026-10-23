@@ -254,7 +254,7 @@ void GraphDetailsPanel::BuildNode(QFormLayout* InForm, const Node& InNode)
     // --- Properties ------------------------------------------------------------
     for(const PropertyDefinition& Property : Def->Properties)
     {
-        const std::string Value = InNode.GetProperty(Property.Name, Property.Default);
+        const std::string Value = InNode.GetProperty(Property.Name, Property.ValueWhenAbsent());
         const std::string Name  = Property.Name;
         QWidget* Editor = nullptr;
 

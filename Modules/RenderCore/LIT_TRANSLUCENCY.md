@@ -119,21 +119,37 @@ LTC table, 9 and 10 DDGI's atlases (bound only during the IBL pass today).
 - **Regression:** LightingLab unchanged (no translucent surfaces);
   Courtyard 50 dB whole, its glass and water now shadowed.
 
-## Phase 3: GI and premultiplied specular
+## Phase 3: GI and premultiplied specular (landed)
 
-- **DDGI for forward Lit**: include DDGI.glsl in the forward template, and
-  keep its atlases bound at engine slots 9 and 10 through the translucent
-  stage (today the IBL pass binds them and clears them after);
-  `IBL_LightModel` then takes the volume's irradiance where it is, as the IBL
-  pass does. Screen-space GI stays G-buffer only.
-- **Specular over opacity**: a Translucent Lit draw writes
-  `diffuse x opacity + specular + emissive x opacity` and blends
-  `ONE, ONE_MINUS_SRC_ALPHA` (premultiplied), so a pane at opacity 0.05 still
-  reflects the sky and the sun's highlight. Fresnel already raises its
-  specular at grazing angles; `opacity` becomes the body's coverage only.
-  A material switch, **Translucency Lighting** (Surface, the new default for
-  Lit; Legacy, today's), keeps old content looking as it did.
-- Fog's composite already covers translucent surfaces; nothing changes there.
+- **DDGI for forward Lit**: the forward template includes DDGI.glsl, and
+  RenderContext binds the volume's atlases (as the IBL pass bound them,
+  `ForwardDDGIAtlas`) at engine slots 9 and 10 for each forward Lit draw;
+  `IBL_LightModel` takes the volume's irradiance where it is. Screen-space
+  GI stays G-buffer only.
+- **Translucency Lighting** (a Material Output property, Translucent Lit
+  only): **Surface** writes `(emissive + baked + albedo x diffuse) x
+  coverage + specular`, premultiplied, blended (one, one minus source
+  alpha); **Legacy** fades everything by Opacity, as before. The generated
+  code defines `MATERIAL_TRANSLUCENCY_SURFACE` and the `.material` says
+  `TranslucencyLighting Surface`, so no new permutation key.
+- **Old content unchanged, no files touched:** a new Material Output node
+  gets Surface (the property's Default); a graph without the property is
+  Legacy (`PropertyDefinition::Absent`, which the graph editor's Details
+  panel shows for a node that lacks it). The plan's "set Legacy on old
+  content in the same commit" was not needed.
+- **Checked:** RenderCore.Smoke on the GPU, 754 checks, none failing on
+  Vulkan or D3D12; NodeGraph.Tests. New: a pane at opacity 0.02, roughness
+  0.3, over black, the sun down the view -- centre 255 as Surface, 70 as
+  Legacy (backdrop 36: 2 % of the HDR highlight survives the tone map).
+  The plan's DDGI check (a quad by a red wall in a volume) was not built:
+  a volume lights only after every probe has rendered, over many frames.
+- **TranslucencyLab** (glass and water now Surface; the smoke stays Legacy):
+  glass brighter by 2.5-5 (its reflection kept), water by 6.6 in its view;
+  the plume unchanged (74-81 dB). Identical on Vulkan and D3D12. Forward GPU
+  ms: Vulkan 0.29-0.48 by view, D3D12 0.63-1.13 -- within Phase 2's noise.
+- **Regression:** Courtyard 84 dB against Phase 2 (its floor is 81),
+  LightingLab bit-identical.
+- Fog's composite already covered translucent surfaces; nothing changed there.
 
 ## Phase 4: reflections on glass and water
 
