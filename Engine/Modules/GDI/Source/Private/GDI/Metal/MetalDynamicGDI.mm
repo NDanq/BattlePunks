@@ -268,7 +268,9 @@ GDIRenderTarget* MetalDynamicGDI::CreateRenderTargetFormat(std::string Name, uin
 
 bool MetalDynamicGDI::SupportsRenderTargetFormat(const EGDIRenderTargetFormat InFormat) const
 {
-    /* RGBA16Float is renderable, blendable and filterable on every Metal GPU family. */
+    /* RGBA16Float is renderable, blendable and filterable on every Metal GPU family. RGBA32Float
+     * and R32Float do not filter on Apple GPUs, so the full floats are not offered: callers fall
+     * back to RGBA16F. */
     return InFormat == GDI_RTF_RGBA8 || InFormat == GDI_RTF_RGBA16F;
 }
 

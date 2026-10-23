@@ -253,7 +253,10 @@ updated by rasterising rather than ray tracing:
   the probe in alpha; `DDGIUpdate.fsh` turns the strip into the probe's 8 x 8
   octahedral irradiance (256 cosine-weighted samples) and 16 x 16 mean and
   mean-square distance (256 samples of a cos^50 lobe, over the volume's
-  longest distance so half floats hold the square). The volume lights only
+  longest distance so half floats hold the square; the distance atlas is
+  RGBA32F where the backend has `GDI_RTF_RGBA32F`, since the variance
+  `E[d^2] - E[d]^2` loses most of a half float's ten bits to cancellation,
+  and RGBA16F elsewhere). The volume lights only
   once every probe has been rendered, a probe never seen being black.
 - **Deviation:** no hysteresis. DDGI blends each update into the old because
   a few rays are noisy; a rasterised update sees the whole sphere, so it

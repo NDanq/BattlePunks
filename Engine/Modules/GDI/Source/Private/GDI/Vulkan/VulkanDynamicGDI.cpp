@@ -407,6 +407,8 @@ GDIRenderTarget* VulkanDynamicGDI::CreateRenderTargetFormat(std::string Name, ui
     if(!DeviceObj) return nullptr;
     const VkFormat Format = InFormat == GDI_RTF_RGBA16F ? VK_FORMAT_R16G16B16A16_SFLOAT
                           : InFormat == GDI_RTF_RGB10A2 ? VK_FORMAT_A2B10G10R10_UNORM_PACK32
+                          : InFormat == GDI_RTF_RGBA32F ? VK_FORMAT_R32G32B32A32_SFLOAT
+                          : InFormat == GDI_RTF_R32F    ? VK_FORMAT_R32_SFLOAT
                           : VK_FORMAT_R8G8B8A8_UNORM;
     auto* RT = new VKRenderTarget(DeviceObj, Name, InWidth, InHeight, Format);
     RegisterRenderTarget(RT);
@@ -416,8 +418,12 @@ GDIRenderTarget* VulkanDynamicGDI::CreateRenderTargetFormat(std::string Name, ui
 bool VulkanDynamicGDI::SupportsRenderTargetFormat(const EGDIRenderTargetFormat InFormat) const
 {
     /* Half float and A2B10G10R10 colour attachments with blending and sampling are
-     * required of every Vulkan device. */
-    return InFormat == GDI_RTF_RGBA8 || InFormat == GDI_RTF_RGBA16F || InFormat == GDI_RTF_RGB10A2;
+     * required of every Vulkan device; full float attachments are too, but not blending
+     * into or filtering them, so those are asked of the device. */
+    if(InFormat == GDI_RTF_RGBA8 || InFormat == GDI_RTF_RGBA16F || InFormat == GDI_RTF_RGB10A2) { return true; }
+    if(InFormat == GDI_RTF_RGBA32F) { return DeviceObj && DeviceObj->SupportsRenderTargetFormat(VK_FORMAT_R32G32B32A32_SFLOAT); }
+    if(InFormat == GDI_RTF_R32F)    { return DeviceObj && DeviceObj->SupportsRenderTargetFormat(VK_FORMAT_R32_SFLOAT); }
+    return false;
 }
 
 void VulkanDynamicGDI::SetRenderTarget(GDIRenderTarget* InRenderTarget)

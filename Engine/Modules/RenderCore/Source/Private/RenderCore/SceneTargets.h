@@ -39,7 +39,9 @@ namespace RenderCore
 
     /* A GI Volume's probes on the GPU (DDGI.glsl; GLOBAL_ILLUMINATION.md, Phase 6),
      * made by RenderContext::EnsureDDGIResources: the irradiance atlas (8 x 8 a
-     * probe), the distance atlas (16 x 16), RGBA16F, tiles 64 to a row; and the
+     * probe, RGBA16F), the distance atlas (16 x 16, RGBA32F where the backend has
+     * it: its moments' variance, E[d^2] - E[d]^2, loses most of a half
+     * float's bits to cancellation and the probes leak), tiles 64 to a row; and the
      * cube strip a probe's faces are rendered into (6 x 16 x 16, rgb radiance,
      * a distance). The scene owns them; ReleaseDDGIResources frees them. */
     constexpr uint32_t DDGI_TILES_PER_ROW   = 64;
@@ -333,10 +335,14 @@ namespace RenderCore
             return Fog && Fog->IsValid() ? Fog : nullptr;
         }
 
-        /* Auto exposure's targets, half float; false if the backend cannot make them. */
+        /* Auto exposure's targets, half float; false if the backend cannot make them.
+         * The adapted pair is R32F where the backend has it: a half float's step near
+         * log2 8 is 1/128 of a stop, more than a frame's easing at 60 Hz moves it, so
+         * the adaptation would stall short of its target. */
         bool EnsureExposure()
         {
             if(!GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F)) { return false; }
+            const EGDIRenderTargetFormat Adapted = GDISupportsRenderTargetFormat(GDI_RTF_R32F) ? GDI_RTF_R32F : GDI_RTF_RGBA16F;
             const uint Sizes[3] = { 64, 8, 1 };
             for(uint32_t Index = 0; Index < 3; ++Index)
             {
@@ -351,7 +357,7 @@ namespace RenderCore
             {
                 if(!Exposure[Index])
                 {
-                    Exposure[Index] = GDICreateRenderTargetFormat(Name + ".Exposure" + std::to_string(Index), 1, 1, GDI_RTF_RGBA16F);
+                    Exposure[Index] = GDICreateRenderTargetFormat(Name + ".Exposure" + std::to_string(Index), 1, 1, Adapted);
                 }
                 if(!Exposure[Index] || !Exposure[Index]->IsValid()) { return false; }
             }

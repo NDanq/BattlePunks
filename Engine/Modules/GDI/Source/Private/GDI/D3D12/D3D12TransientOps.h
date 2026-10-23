@@ -225,7 +225,7 @@ inline bool UploadTexture(D3D12Device* Device, ID3D12Resource* Texture, D3D12_RE
     return UploadSubresources(Device, Texture, InOutState, &Level, 1, InAsync);
 }
 
-/** Reads a Width x Height region at (X, Y) into OutPixels, InBytesPerTexel each (4: RGBA8; 8: RGBA16F),
+/** Reads a Width x Height region at (X, Y) into OutPixels, InBytesPerTexel each (4: RGBA8, RGB10A2, R32F; 8: RGBA16F; 16: RGBA32F),
  *  tightly packed. The texture is returned to InState. */
 inline bool ReadbackTexture(D3D12Device* Device, ID3D12Resource* Texture, D3D12_RESOURCE_STATES InState,
                             uint32_t X, uint32_t Y, uint32_t Width, uint32_t Height,

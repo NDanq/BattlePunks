@@ -13,7 +13,7 @@
 class OpenGLRenderTarget : public GDIRenderTarget, protected GDIGLFunctions
 {
 public:
-    /* InFormat: GDI_RTF_RGBA16F gives a GL_RGBA16F colour texture (HDR); otherwise RGBA8. */
+    /* InFormat: the colour texture's -- GL_RGBA16F, GL_RGB10_A2, GL_RGBA32F or GL_R32F; otherwise RGBA8. */
     OpenGLRenderTarget(const uint InWidth, const uint InHeight, EGDIRenderTargetFormat InFormat = GDI_RTF_RGBA8);
     ~OpenGLRenderTarget();
 

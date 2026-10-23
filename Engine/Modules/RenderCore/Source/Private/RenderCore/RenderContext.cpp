@@ -5735,11 +5735,12 @@ namespace RenderCore
             return false;
         }
         const uint32_t Rows = (InProbes + DDGI_TILES_PER_ROW - 1) / DDGI_TILES_PER_ROW;
-        const auto Make = [](GDIRenderTarget*& InOutTarget, const char* InName, const uint32_t InWidth, const uint32_t InHeight)
+        const auto Make = [](GDIRenderTarget*& InOutTarget, const char* InName, const uint32_t InWidth, const uint32_t InHeight,
+                             const EGDIRenderTargetFormat InFormat = GDI_RTF_RGBA16F)
         {
             if(!InOutTarget)
             {
-                InOutTarget = GDICreateRenderTargetFormat(InName, InWidth, InHeight, GDI_RTF_RGBA16F);
+                InOutTarget = GDICreateRenderTargetFormat(InName, InWidth, InHeight, InFormat);
             }
             else if(InOutTarget->GetWidth() != InWidth || InOutTarget->GetHeight() != InHeight)
             {
@@ -5748,7 +5749,8 @@ namespace RenderCore
             return InOutTarget && InOutTarget->IsValid();
         };
         const bool bMade = Make(InOut.Irradiance, "RenderCore.DDGIIrradiance", DDGI_TILES_PER_ROW * DDGI_IRRADIANCE_TILE, Rows * DDGI_IRRADIANCE_TILE)
-                        && Make(InOut.Distance, "RenderCore.DDGIDistance", DDGI_TILES_PER_ROW * DDGI_DISTANCE_TILE, Rows * DDGI_DISTANCE_TILE)
+                        && Make(InOut.Distance, "RenderCore.DDGIDistance", DDGI_TILES_PER_ROW * DDGI_DISTANCE_TILE, Rows * DDGI_DISTANCE_TILE,
+                                GDISupportsRenderTargetFormat(GDI_RTF_RGBA32F) ? GDI_RTF_RGBA32F : GDI_RTF_RGBA16F)
                         && Make(InOut.Strip, "RenderCore.DDGIStrip", DDGI_FACE * 6, DDGI_FACE);
         InOut.Rows = bMade ? Rows : 0;
         return bMade;
