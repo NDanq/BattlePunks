@@ -275,7 +275,21 @@ void AssignContextGDI( GDIContext* InContext )
 
 void AllocateResourcesGDI()
 {
-    if( GDynamicGDI ) GDynamicGDI->Allocate();
+    if( !GDynamicGDI ) return;
+    GDynamicGDI->Allocate();
+
+    // Which render target formats this device offers: a target asking for one
+    // it lacks falls back (RENDERPIPELINE.md says to what).
+    const std::pair<EGDIRenderTargetFormat, const char*> Formats[] = {
+        { GDI_RTF_RGBA8, "RGBA8" }, { GDI_RTF_RGBA16F, "RGBA16F" }, { GDI_RTF_RGB10A2, "RGB10A2" },
+        { GDI_RTF_RGBA32F, "RGBA32F" }, { GDI_RTF_R32F, "R32F" } };
+    std::string Has, Lacks;
+    for(const auto& Each : Formats)
+    {
+        std::string& Into = GDynamicGDI->SupportsRenderTargetFormat(Each.first) ? Has : Lacks;
+        Into += (Into.empty() ? "" : " ") + std::string(Each.second);
+    }
+    GDI_LOG("[GDI] render target formats: " + Has + (Lacks.empty() ? std::string() : "; not " + Lacks))
 }
 
 void ReleaseGDI()

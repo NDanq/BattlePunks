@@ -4530,12 +4530,28 @@ namespace RenderCore
             return Out;
         }
 
-        ERenderPassFormat Format = InDesc.Format;
-        if(Format == ERenderPassFormat::RGBA16F && !GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
+        const auto ToGDI = [](const ERenderPassFormat InFormat)
         {
+            return InFormat == ERenderPassFormat::RGBA16F ? GDI_RTF_RGBA16F
+                 : InFormat == ERenderPassFormat::RGBA32F ? GDI_RTF_RGBA32F
+                 : InFormat == ERenderPassFormat::R32F    ? GDI_RTF_R32F
+                 : GDI_RTF_RGBA8;
+        };
+        const auto FormatName = [](const ERenderPassFormat InFormat)
+        {
+            return InFormat == ERenderPassFormat::RGBA16F ? "RGBA16F"
+                 : InFormat == ERenderPassFormat::RGBA32F ? "RGBA32F"
+                 : InFormat == ERenderPassFormat::R32F    ? "R32F"
+                 : "RGBA8";
+        };
+        ERenderPassFormat Format = InDesc.Format;
+        if(Format != ERenderPassFormat::RGBA8 && !GDISupportsRenderTargetFormat(ToGDI(Format)))
+        {
+            // A full float falls back to half float, a half float to RGBA8.
+            Format = Format != ERenderPassFormat::RGBA16F && GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F)
+                   ? ERenderPassFormat::RGBA16F : ERenderPassFormat::RGBA8;
             F->P->WarnOnce(std::string("|pass-format|") + F->PassName(), std::string("custom render pass '") + F->PassName()
-                           + "': this backend has no half float targets; they are RGBA8");
-            Format = ERenderPassFormat::RGBA8;
+                           + "': this backend has no " + FormatName(InDesc.Format) + " targets; they are " + FormatName(Format));
         }
 
         RenderContext::Impl::PassTarget& Entry = F->P->PassPoolsOfView()[F->Entry->Handle].Targets[InName];
@@ -4548,8 +4564,8 @@ namespace RenderCore
         if(!Entry.Target)
         {
             const std::string Name = std::string("RenderCore.Pass.") + F->PassName() + "." + InName;
-            Entry.Target = Format == ERenderPassFormat::RGBA16F ? GDICreateRenderTargetFormat(Name, Width, Height, GDI_RTF_RGBA16F)
-                                                                : GDICreateRenderTarget(Name, Width, Height);
+            Entry.Target = Format != ERenderPassFormat::RGBA8 ? GDICreateRenderTargetFormat(Name, Width, Height, ToGDI(Format))
+                                                              : GDICreateRenderTarget(Name, Width, Height);
             Entry.Format = Format;
         }
         else if(Entry.Target->GetWidth() != Width || Entry.Target->GetHeight() != Height)
