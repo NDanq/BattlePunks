@@ -3535,6 +3535,47 @@ static void TestTranslucencyOnGpu()
             World.DestroyEntity(Green);
         }
 
+        /* Phase 2: a white quad at half opacity, its left half behind an opaque blocker
+         * from the sun (up the light from x -50 on the quad, above the view of it). Its
+         * shadowed half is darker; with shadows off the halves match. */
+        ConfigVar* ShadowsOn = ConfigFindVarByPath("Shadows.Enabled");
+        if(ShadowsOn)
+        {
+            const GameCore::Entity Pane    = Placed("Pane", Vector3(0.0, 100.0, 0.0), Vector3(), Vector3(200.0, 200.0, 2.0));
+            const GameCore::Entity Blocker = Placed("Blocker", Vector3(-85.0, 243.0, -202.0), Vector3(), Vector3(100.0, 40.0, 100.0));
+            Pane.AddComponent(Drawn(BOX, "TransLitWhite"));
+            Blocker.AddComponent(Drawn(BOX, "OpaqueBlack"));
+            EngineCore::Image On, Off;
+            ShadowsOn->SetFromString("1");
+            const bool bOn = Capture(On);
+            ShadowsOn->SetFromString("0");
+            const bool bOff = Capture(Off);
+            ShadowsOn->SetFromString("1");
+            Expect(bOn && bOff, "the half-shadowed pane is captured with shadows on and off");
+            if(bOn && bOff)
+            {
+                Dump(On, "pane-shadowed");
+                Dump(Off, "pane-unshadowed");
+                const auto Grey = [&](const EngineCore::Image& InPixels, const int InX)
+                {
+                    int Sum = 0;
+                    for(int Y = 118; Y <= 138; ++Y)
+                    {
+                        int Value[3];
+                        Rgb(InPixels, InX, Y, Value);
+                        Sum += Value[0] + Value[1] + Value[2];
+                    }
+                    return Sum / (21 * 3);
+                };
+                const int ShadowedOn = Grey(On, 101), LitOn = Grey(On, 155), ShadowedOff = Grey(Off, 101), LitOff = Grey(Off, 155);
+                std::printf("    pane: shadows on %d | %d, off %d | %d (left, the blocker's side | right)\n", ShadowedOn, LitOn, ShadowedOff, LitOff);
+                Expect(LitOn - ShadowedOn > 15, "a Translucent Lit surface is shadowed by an opaque caster (forward shadows)");
+                Expect(std::abs(LitOff - ShadowedOff) < 6, "and with shadows off its halves match");
+            }
+            World.DestroyEntity(Pane);
+            World.DestroyEntity(Blocker);
+        }
+
         Rend.UnbindWorld();
         Rend.Shutdown();
     }

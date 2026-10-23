@@ -85,17 +85,39 @@ LTC table, 9 and 10 DDGI's atlases (bound only during the IBL pass today).
   LightingLab (bit-identical), frame 480, FixedStep. ShootingRange's
   gameplay moves on the wall clock (two runs 29 dB) and is left out.
 
-## Phase 2: shadows on forward Lit
+## Phase 2: shadows on forward Lit (landed)
 
-- Bind the sun's and the local lights' shadow atlases to engine slots 11
-  and 12 for every forward Lit draw; `LIGHTING_SHADOWS` for the forward
-  template too.
-- The insets' table (`Lighting_Insets`, now the deferred pass's own block)
-  moves into the scene block, beside the cascades.
-- Forward draws filter with a smaller kernel (`[Shadows] ForwardFilter`,
-  default 1 tap radius): translucent overdraw multiplies the cost.
-- Contact shadows stay deferred-only (no depth of the translucent surface to
-  march from). Metal still draws none.
+- The forward template declares the shadow atlases at the engine's slots 11
+  and 12 (bindings 15, 16) and defines `LIGHTING_SHADOWS`; RenderContext
+  binds the atlases the scene's Lighting stage read to every forward Lit
+  draw (`ForwardShadowAtlas`, cleared at `BeginSceneDraws`, so a scene with
+  no Lighting stage draws them unshadowed). Sun cascades and shadowed point
+  and spot lights, Standard and Modulated.
+- **Filter:** `[Shadows] ForwardFilter` (0-2, default **0**, one tap; in
+  Project Settings > Shadows), carried in `Scene_ShadowParams.z` (it held
+  1 / atlas size, which no shader read); `Shadows.glsl` takes the radius
+  from `LIGHTING_SHADOW_RADIUS`. A 3 x 3 filter cost 0.35-0.45 ms in the
+  plume view on D3D12 against 0.21 for one tap, the glass looking nearly
+  the same (40 dB apart); one tap shows stair steps where a shadow edge
+  crosses a pane diagonally.
+- **Deviation:** no inset shadows on forward draws. Their table is the
+  deferred pass's own block; `InsetShadow` is compiled only where
+  `LIGHTING_INSET_SHADOWS` is defined (DeferredLighting.fsh). Contact
+  shadows stay deferred-only too. Metal draws no shadows at all, as before.
+- **Checked:** RenderCore.Smoke on the GPU, 751 checks, none failing on
+  Vulkan or D3D12. New: a white Translucent Lit pane at opacity 0.5, its
+  left half behind an opaque blocker from the sun -- left 64, right 124
+  with shadows on; 124 and 124 off. (The plan's shadow-edge-against-the-
+  floor check was not built.)
+- **TranslucencyLab** (against Phase 1): the glass view's shadowed panes
+  darker by 11.6 (luminance, 0-255), the lit ones unchanged (79 dB, the
+  backdrop's reflection); the plume and water views within 91-98 dB.
+  Identical on Vulkan and D3D12. Forward GPU ms (frame 480): Vulkan 0.23-0.52
+  by view (Phase 1: 0.21-0.39), D3D12 0.59-1.06 (0.47-0.77); the plume
+  view, all its smoke now shadowed, pays the most. Run-to-run GPU timing
+  varies by about 15 % on this machine.
+- **Regression:** LightingLab unchanged (no translucent surfaces);
+  Courtyard 50 dB whole, its glass and water now shadowed.
 
 ## Phase 3: GI and premultiplied specular
 

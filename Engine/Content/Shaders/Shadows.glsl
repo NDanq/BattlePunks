@@ -12,7 +12,14 @@
 // tile included; a filter tap never leaves the tile it started in.
 //
 // Inset shadows (InsetShadow) read the includer's Lighting_Block too: per-object
-// views of the sun in the local atlas's spare tiles.
+// views of the sun in the local atlas's spare tiles -- only where it defines
+// LIGHTING_INSET_SHADOWS (DeferredLighting.fsh; a forward draw has no such block).
+// LIGHTING_SHADOW_RADIUS, if the includer defines it, is the filter's radius
+// instead of Scene_ShadowParams.y (forward draws: Scene_ShadowParams.z).
+
+#ifndef LIGHTING_SHADOW_RADIUS
+#define LIGHTING_SHADOW_RADIUS int(Scene_ShadowParams.y)
+#endif
 
 // Receiver bias. Depth: InBias, more the more the light grazes (slope-scaled).
 // Normal: along the surface normal, at least a texel and a half of the shadow
@@ -61,7 +68,7 @@ float SampleShadowAtlas(sampler2D InAtlas, mat4 InMatrix, vec3 InWorld, float In
     if(Clip.w <= 0.0) { return 1.0; }
     vec3 Atlas = Clip.xyz / Clip.w;
     if(Atlas.z >= 1.0 || Atlas.z <= 0.0) { return 1.0; }
-    return FilterShadowAtlas(InAtlas, Atlas, InBias, InTileTexels, int(Scene_ShadowParams.y));
+    return FilterShadowAtlas(InAtlas, Atlas, InBias, InTileTexels, LIGHTING_SHADOW_RADIUS);
 }
 
 // The sun's shadow at InWorld: its cascade by view depth, faded out over the
@@ -157,6 +164,7 @@ float LocalShadow(int InFirst, bool bInSpot, float InCosOuter, vec3 InLightPosit
     return SampleShadowAtlas(ShadowLocal, Scene_LocalShadowMatrices[Matrix], InWorld + Offset, SlopeBias(InBias, NdotL), Tile);
 }
 
+#ifdef LIGHTING_INSET_SHADOWS
 // The inset shadows at InWorld (Lighting_Block): the darkest of them. Each is an
 // orthographic view of the sun holding one caster's sphere and no more, so it
 // sees only the prism behind that caster: outside its tile, lit. Its depth
@@ -190,3 +198,4 @@ float InsetShadow(vec3 InWorld, vec3 InNormal, vec3 InToLight)
     }
     return Lit;
 }
+#endif

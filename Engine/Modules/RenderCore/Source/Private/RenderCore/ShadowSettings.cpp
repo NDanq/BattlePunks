@@ -18,6 +18,7 @@ NIMBLE_CONFIG_INT(GShadowsMaxShadowedLights, "Shadows", "MaxShadowedLights", 4, 
 NIMBLE_CONFIG_FLOAT(GShadowsDistanceScale,   "Shadows", "DistanceScale",     1.0f, nullptr);   // times every sun's Shadow Distance
 NIMBLE_CONFIG_INT(GShadowsMaxInsetShadows,   "Shadows", "MaxInsetShadows",   4,    nullptr);   // Render components' inset shadows, 0-4
 NIMBLE_CONFIG_INT(GShadowsInsetFilter,       "Shadows", "InsetFilter",       1,    nullptr);   // theirs: 0 hard, 1 PCF 3x3, 2 PCF 5x5
+NIMBLE_CONFIG_INT(GShadowsForwardFilter,     "Shadows", "ForwardFilter",     0,    nullptr);   // forward Lit (translucent) draws': one tap; overdraw multiplies it
 NIMBLE_CONFIG_BOOL(GShadowsContact,           "Shadows", "ContactShadows",    false, nullptr);   // the sun's contact shadows
 NIMBLE_CONFIG_FLOAT(GShadowsContactLength,    "Shadows", "ContactLength",     25.0f, nullptr);   // their reach toward the sun, world units
 NIMBLE_CONFIG_FLOAT(GShadowsContactThickness, "Shadows", "ContactThickness",  6.0f,  nullptr);   // a depth-buffer surface's assumed depth
@@ -37,6 +38,7 @@ namespace RenderCore
         Settings.DistanceScale     = std::max(GShadowsDistanceScale.GetFloat(), 0.0f);
         Settings.MaxInsetShadows   = std::clamp(GShadowsMaxInsetShadows.GetInt(), 0, int32_t(RENDER_INSET_SHADOW_MAX));
         Settings.InsetFilter       = std::clamp(GShadowsInsetFilter.GetInt(), 0, 2);
+        Settings.ForwardFilter     = std::clamp(GShadowsForwardFilter.GetInt(), 0, 2);
         Settings.bContactShadows   = GShadowsContact.GetBool() ? 1 : 0;
         Settings.ContactLength     = std::max(GShadowsContactLength.GetFloat(), 0.0f);
         Settings.ContactThickness  = std::max(GShadowsContactThickness.GetFloat(), 0.01f);
