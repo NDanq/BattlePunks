@@ -37,6 +37,8 @@ UBO_BLOCK_END(Lighting_Block)
 
 // Only here are lights shadowed: the atlases above are this pass's -- and only here
 // is there a scene depth for the sun's contact shadows to march through.
+MATERIAL_SAMPLER2D(19, TranslucentOpacity)  // engine slot 15: translucent casters' opacity (LIT_TRANSLUCENCY.md, Phase 7)
+#define LIGHTING_TRANSLUCENT_SHADOWS 1
 #define LIGHTING_SHADOWS 1
 #define LIGHTING_INSET_SHADOWS 1
 #define LIGHTING_CONTACT_SHADOWS 1

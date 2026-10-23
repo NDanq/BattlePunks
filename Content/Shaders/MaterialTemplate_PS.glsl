@@ -62,6 +62,8 @@ MATERIAL_SAMPLER2D(4, Material_IBLAtlas)
 // slots 11 and 12, filtered [Shadows] ForwardFilter texels each way; no inset or contact shadows.
 MATERIAL_SAMPLER2D(15, ShadowDirectional)
 MATERIAL_SAMPLER2D(16, ShadowLocal)
+MATERIAL_SAMPLER2D(19, TranslucentOpacity)   // engine slot 15: translucent casters' opacity (Phase 7)
+#define LIGHTING_TRANSLUCENT_SHADOWS 1
 #define LIGHTING_SHADOWS 1
 #define LIGHTING_SHADOW_RADIUS int(Scene_ShadowParams.z)
 #endif

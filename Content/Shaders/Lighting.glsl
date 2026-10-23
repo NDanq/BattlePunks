@@ -171,7 +171,7 @@ void LightingLocal(in LightingSurface S, int InIndex, vec3 InWorldPosition, bool
     {
         vec4  Biases = Scene_Locals[Slot * 6 + 5];
         float Lit    = LocalShadow(int(ConeShadow.z), bSpot, ConeShadow.x, PositionRange.xyz,
-                                   InWorldPosition, S.N, L, Biases.x, Biases.y);
+                                   InWorldPosition, S.N, L, Biases.x, Biases.y, Biases.zw);
 #ifdef LIGHTING_CONTACT_SHADOWS
         // A shadowed point or spot light's contact shadows too ([Shadows] ContactLocalLights):
         // no further than the light itself.

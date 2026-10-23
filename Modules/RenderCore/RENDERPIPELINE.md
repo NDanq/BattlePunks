@@ -283,7 +283,9 @@ Distance and 2048 atlas.)
 
 Limits: Masked casters cast their whole shape (their clip is not run in the
 Shadows sub-stage); a quad casts nothing; Translucent Lit surfaces receive
-shadows but cast none, and get no inset shadows; Metal, which cannot sample a
+shadows but cast none, and get no inset shadows; particle emitters with Cast
+Shadows cast into opacity shadow maps that everything receives
+(LIT_TRANSLUCENCY.md, Phase 7); Metal, which cannot sample a
 depth target, draws no shadows (warned once). A material preview never draws
 shadows.
 

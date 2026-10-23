@@ -272,35 +272,55 @@ LTC table, 9 and 10 DDGI's atlases (bound only during the IBL pass today).
 - Light varies across a large particle only by its neighbours'; Per Pixel
   (the Volume model) is there for hero effects.
 
-## Phase 7: translucent shadow casting
+## Phase 7: translucent shadow casting (landed)
 
-Opaque casters write depth into the shadow atlases; a plume has no single
-depth, so it gets a second map per shadowed light: a **Fourier opacity map**
-[Jansen and Bavoil 2010] -- along each texel's ray from the light, the optical
-depth as a short Fourier series between the translucent casters' near and far
-depth in that tile.
-
+- **Deviation: opacity shadow maps [Kim and Neumann 2001], not Fourier
+  opacity maps.** Four slices of optical depth between a view's casters'
+  nearest and farthest depth, one a channel of one RGBA16F target: the same
+  depth-resolved transmittance (what Phase 8 needs), no ringing to clamp,
+  one render target where a 1 + 3-term series needs two.
 - **Casters:** particle emitters with **Cast Shadows** (a new emitter
-  setting, off by default) and Translucent materials with **Cast Translucent
-  Shadow**. Each draws into its lights' tiles with a depth-only-style
-  permutation that writes `extinction = -ln(1 - opacity)` x the series'
-  basis at its light depth, additively; no depth write. Opaque Mesh
-  particles cast into the ordinary atlases (checked; added if the instanced
-  path skips the Shadows sub-stage today).
-- **The maps:** a 1 + 3-term series, seven floats in two targets per tile,
-  at a quarter of the opaque tile's resolution (smoke is soft). RGBA32F
-  where `GDI_RTF_RGBA32F` is offered -- the higher terms ring and lose
-  precision in half floats -- else RGBA16F with the series windowed harder.
-  Sun cascades and spot lights first; point lights (six faces) behind a
-  `[Shadows] TranslucentPointLights` switch.
-- **Receivers:** a receiver's light is its opaque shadow x
-  `exp(-reconstructed optical depth at its depth)`, clamped to 0-1 against
-  ringing: the Lighting stage (opaque surfaces under smoke), forward Lit
-  (Phase 2), the Volume model (Phase 5), the per-particle pass (Phase 6), and
-  volumetric fog's march (shafts cut by a plume).
-- **Cost control:** a tile with no translucent caster in its frustum keeps
-  its map cleared and is not sampled (a flag per tile in the scene block);
-  `[Shadows] TranslucentShadows` 0 turns it all off.
+  setting, Sprite only) and **Shadow Density** (their alpha times it).
+  `RenderContext::CastParticleShadows`, after `DrawParticles`, keeps the
+  emitter's draw once a frame. Translucent surfaces (glass) do not cast yet.
+- **The atlas** (`OpacityAtlas`, `RenderCore.OpacityShadows`): the shadow
+  atlases' size wide, half high -- the directional atlas's tiles in the left
+  half, the local's in the right, each at half resolution. At the Shadows
+  stage's end (`IssueTranslucentShadows`), per light view (cascades, spot
+  and point faces; not insets) the casters whose bounds reach it draw into
+  its tile, additively, with `OpacityShadowCaster.vsh/.fsh`: each instance's
+  quad turned square to the light (not the camera), a soft disc times its
+  alpha times Shadow Density as its opacity, `-ln(1 - a)` into the two
+  slices either side of its depth between the view's casters' bounds' depth
+  span. No depth test: an opaque caster in front already shadows.
+- **The spans** ride in the scene block: per cascade in `Scene_Spare[0..1]`,
+  per shadowed local light in `Scene_Locals[6i+5].zw` (both free);
+  `Scene_Spare[2].x` says the atlas is bound (engine slot 15).
+- **Receivers:** `Shadows.glsl`'s `TranslucentLight` -- the slices in front
+  of the receiver's depth summed (the one it is in, partly), `exp(-that)` --
+  times the opaque shadow in `DirectionalShadow` and `LocalShadow`, so the
+  Lighting stage, forward Lit (Phase 2), the Volume model and per-particle
+  lighting (`LocalShadow` takes the span) all receive it.
+- `[Shadows] TranslucentShadows` 0 turns it off: the lab is then
+  bit-identical to Phase 6.
+- **Checked:** RenderCore.Smoke on the GPU, 763 checks, none failing on
+  Vulkan or D3D12. New: 48 half-opaque particles that draw nothing (an
+  opacity-0 material) but cast, under a sun straight down -- the floor under
+  them 128 with translucent shadows on, 210 off and 210 at Shadow Density
+  0; aside, 210 either way. (The plan's `(1 - a)^N` stack and the opaque
+  blocker above the plume were not built: a burst's particles land at
+  random.)
+- **TranslucencyLab** (the plume's smoke casts): a soft shadow on the floor
+  under and beside the plume (the floor region 1.1 darker), and the smoke
+  shading itself -- too dark at its core until Phase 8 (the plume region 9
+  darker in its view). Per particle receives the same. Vulkan and D3D12 agree
+  to 60 dB (as since Phase 6).
+- **Cost:** the Shadows span in the plume view 0.08 -> 0.13 ms on Vulkan,
+  0.13 -> 0.18 on D3D12; nothing without casters.
+- **Not done:** glass casting (a Translucent material's Cast Translucent
+  Shadow); point lights' faces share one span; fog's march does not read the
+  atlas yet.
+- **Regression:** LightingLab bit-identical, Courtyard 80 dB (no casters).
 
 ## Phase 8: self-shadowing
 

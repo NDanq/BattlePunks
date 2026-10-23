@@ -26,7 +26,7 @@ UBO_BLOCK_BEGIN(3, Scene_Block)
     vec4 Scene_Locals[96];       // [6i] xyz position, w range; [6i+1] rgb colour (display), a intensity;
                                  // [6i+2] xyz direction (spot), w type (0 point, 1 spot);
                                  // [6i+3] x cos outer, y cos inner, z first shadow matrix (-1 none), w technique;
-                                 // [6i+4] rgb Modulated tint; [6i+5] x depth bias, y normal bias
+                                 // [6i+4] rgb Modulated tint; [6i+5] x depth bias, y normal bias, zw its translucent casters' depth span
     mat4 Scene_LocalShadowMatrices[24]; // world to (u, v, depth) * w in the local atlas; a point light's six faces +X -X +Y -Y +Z -Z
     vec4 Scene_CascadeTexels;    // each cascade's texel, world units: the normal offset is at least a texel and a half
 
@@ -44,7 +44,8 @@ UBO_BLOCK_BEGIN(3, Scene_Block)
     // view's size. (Where the probes once were, before the light block held them.)
     mat4 Scene_PrevViewProjection;
     vec4 Scene_ForwardReflections[2];
-    vec4 Scene_Spare[6];
+    vec4 Scene_Spare[6];         // translucent shadows (Shadows.glsl, Phase 7): [0] cascades 0 and 1's casters' depth span
+                                 // (near, far), [1] cascades 2 and 3's, [2].x 1 while the opacity atlas is bound
 
     // Baked lighting (BakedLighting.glsl): x 1 if the view draws with a bake; y 1 if that bake
     // has the sky in it, so a baked surface takes no live sky ambient; z 1 if its lightmaps

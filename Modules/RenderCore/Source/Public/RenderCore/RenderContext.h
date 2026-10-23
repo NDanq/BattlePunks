@@ -138,6 +138,11 @@ namespace RenderCore
         bool                DrawParticles(ParticleEmitterGpu& InEmitter, const EngineCore::Vector3& InSortOrigin,
                                           const char* InMeshPath, const char* InMaterial,
                                           const char* InLabel = nullptr);
+        /* After DrawParticles, this frame: its living particles into the shadowed lights'
+         * opacity shadow maps, InDensity times their alpha, InBounds where they can be
+         * (LIT_TRANSLUCENCY.md, Phase 7). A sprite emitter; once a frame however many views draw it. */
+        void                CastParticleShadows(ParticleEmitterGpu& InEmitter, const char* InMeshPath, float InDensity,
+                                                const GameCore::AABB& InBounds);
         /* Its particles as the GPU left them, one per slot (MaxParticles),
          * waiting for the GPU: for tests and tools. False where unsupported. */
         bool                ReadParticles(const ParticleEmitterGpu& InEmitter, std::vector<ParticleSample>& OutParticles);
