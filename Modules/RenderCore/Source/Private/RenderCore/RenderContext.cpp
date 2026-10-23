@@ -88,6 +88,8 @@ NIMBLE_CONFIG_BOOL(GRenderEnergyCompensation, "Rendering", "EnergyCompensation",
 /* Screen-space reflections' rays drawn from GGX's visible normals and accumulated over frames
  * (GLOBAL_ILLUMINATION.md, Phase 4); off, one mirror ray a pixel, faded out on rough surfaces. */
 NIMBLE_CONFIG_BOOL(GRenderStochasticReflections, "Rendering", "StochasticReflections", true, nullptr);
+/* Forward Lit surfaces reflect the screen where a stack has Screen-Space Reflections (LIT_TRANSLUCENCY.md, Phase 4). */
+NIMBLE_CONFIG_BOOL(GRenderForwardReflections, "Rendering", "ForwardReflections", true, nullptr);
 /* Screen-space GI where a stack has it (GLOBAL_ILLUMINATION.md, Phase 5); off, the stack's node is ignored. */
 NIMBLE_CONFIG_BOOL(GRenderScreenGI, "Rendering", "ScreenSpaceGI", true, nullptr);
 /* Seconds the render clock advances a frame -- particles, material Time, exposure --
@@ -234,6 +236,7 @@ namespace RenderCore
         constexpr uint32_t LIGHTING_LTC_SLOT = 8;   // the engine's texture slot for the LTC tables (LightList.glsl)
         constexpr uint32_t FORWARD_SHADOW_SLOT = 11; // the engine's slots 11, 12: forward Lit draws' shadow atlases (MaterialTemplate_PS.glsl)
         constexpr uint32_t FORWARD_DDGI_SLOT   = 9;  // the engine's slots 9, 10: a GI Volume's atlases (DDGI.glsl), for forward Lit draws too
+        constexpr uint32_t FORWARD_REFLECTION_SLOT = 13; // the engine's slots 13, 14: forward reflections' last colour and depth copy (ForwardReflections.glsl)
         constexpr uint32_t LIGHT_TILES_X    = 32;
         constexpr uint32_t LIGHT_TILES_Y    = 18;
         constexpr uint32_t LIGHT_TILE_WORDS = RENDER_LOCAL_LIGHT_MAX / 32;
@@ -283,7 +286,9 @@ namespace RenderCore
             float CascadeTexels[4]      = {};
             float Output[4]             = { 0.0f, 1.0f, 0.0f, 0.0f };   // HDR, exposure multiplier, tone map operator
             float IBL[4]                = {};                           // on, probes, sky block weight (IBLCommon.glsl)
-            float Probes[12][4]         = {};                           // 3 vec4s a probe
+            float PrevViewProjection[16] = {};                          // forward reflections' (Phase 4): the last frame's view
+            float ForwardReflections[2][4] = {};                        // their settings; [1][1] 1 while on
+            float Spare[6][4]           = {};
             float Baked[4]              = {};                           // drawing with a bake, it has the sky (BakedLighting.glsl)
             float View[4]               = {};                           // 1: Unlit (ERenderViewMode)
             float ViewProjection[16]    = {};                           // world to clip: contact shadows' march (Lighting.glsl)
@@ -300,9 +305,11 @@ namespace RenderCore
                       && offsetof(SceneUniforms, Locals) == 512 && offsetof(SceneUniforms, LocalShadowMatrices) == 2048,
                       "Scene_Block's shadow and local-light members are in this order");
         static_assert(offsetof(SceneUniforms, CascadeTexels) == 3584 && offsetof(SceneUniforms, Output) == 3600
-                      && offsetof(SceneUniforms, IBL) == 3616 && offsetof(SceneUniforms, Probes) == 3632,
-                      "Scene_CascadeTexels, Scene_Output, Scene_IBL and Scene_Probes come last");
-        static_assert(offsetof(SceneUniforms, Baked) == 3824, "Scene_Baked comes after Scene_Probes");
+                      && offsetof(SceneUniforms, IBL) == 3616 && offsetof(SceneUniforms, PrevViewProjection) == 3632,
+                      "Scene_CascadeTexels, Scene_Output, Scene_IBL and Scene_PrevViewProjection come last");
+        static_assert(offsetof(SceneUniforms, ForwardReflections) == 3696 && offsetof(SceneUniforms, Spare) == 3728,
+                      "Scene_ForwardReflections and Scene_Spare come after Scene_PrevViewProjection");
+        static_assert(offsetof(SceneUniforms, Baked) == 3824, "Scene_Baked comes after Scene_Spare");
         static_assert(offsetof(SceneUniforms, View) == 3840, "Scene_View comes after Scene_Baked");
         static_assert(offsetof(SceneUniforms, ViewProjection) == 3856 && offsetof(SceneUniforms, ContactShadow) == 3920,
                       "Scene_ViewProjection and Scene_ContactShadow come after Scene_View");
@@ -1849,6 +1856,8 @@ namespace RenderCore
                     }
                     GDISetMaterialTexture(FORWARD_DDGI_SLOT, ForwardDDGIAtlas[0]);
                     GDISetMaterialTexture(FORWARD_DDGI_SLOT + 1, ForwardDDGIAtlas[1]);
+                    GDISetMaterialTexture(FORWARD_REFLECTION_SLOT, ForwardReflectionTextures[0]);
+                    GDISetMaterialTexture(FORWARD_REFLECTION_SLOT + 1, ForwardReflectionTextures[1]);
                 }
             }
 
@@ -2215,6 +2224,8 @@ namespace RenderCore
         /* A GI Volume's irradiance and distance atlases, as the IBL pass bound them, for the
          * forward Lit draws after it (LIT_TRANSLUCENCY.md, Phase 3); cleared at BeginSceneDraws. */
         GDITextureResource* ForwardDDGIAtlas[2] = {};
+        /* Forward reflections' last colour and copied depth (Phase 4), set for the forward stage. */
+        GDITextureResource* ForwardReflectionTextures[2] = {};
         bool                bLTCTried = false;
         void EnsureLTC();
 
@@ -4120,6 +4131,8 @@ namespace RenderCore
         P->Shadows.ViewCount = 0;   // a preview has none; a scene's PrepareShadows adds them
         for(GDITextureResource*& Each : P->ForwardShadowAtlas) { Each = nullptr; }
         for(GDITextureResource*& Each : P->ForwardDDGIAtlas) { Each = nullptr; }
+        for(GDITextureResource*& Each : P->ForwardReflectionTextures) { Each = nullptr; }
+        P->Scene.ForwardReflections[1][1] = 0.0f;
         P->CasterView        = -1;
     }
 
@@ -5532,9 +5545,36 @@ namespace RenderCore
 
         /* Forward, over the lit scene and against its depth. */
         P->StageTimestamp(RGT_Forward, false);
+
+        /* Forward Lit surfaces' screen-space reflections (ForwardReflections.glsl; LIT_TRANSLUCENCY.md,
+         * Phase 4): the opaque depth copied first, since it is bound for the depth test, and the last
+         * frame's colour; their settings in the scene block for this stage. */
+        {
+            const PostProcessSettings& Stack = P->PostSettings;
+            GDITexture2D* Depth = SceneColor->ToDepthTexture2D();
+            GDITexture2D* Last  = InTargets.LastColor ? InTargets.LastColor->ToGDITexture2D() : nullptr;
+            GDIRenderTarget* Copy = GRenderForwardReflections.GetBool() && Stack.bScreenReflections && InTargets.bHDR
+                                 && P->bHasPrevViewProjection && Depth && Last ? InTargets.EnsureDepthCopy() : nullptr;
+            PostBlock CopyBlock;
+            if(Copy && P->DrawPost(PP_Copy, Copy, Width, Height, { Depth->Resource }, CopyBlock))
+            {
+                GDISetMaterialTexture(0, nullptr);
+                GDITexture2D* Copied = Copy->ToGDITexture2D();
+                P->ForwardReflectionTextures[0] = Last->Resource;
+                P->ForwardReflectionTextures[1] = Copied ? Copied->Resource : nullptr;
+                PutMatrix(P->Scene.PrevViewProjection, P->PrevViewProjection);
+                const float Settings[8] = { std::clamp(Stack.SsrIntensity, 0.0f, 1.0f), std::clamp(Stack.SsrMaxRoughness, 0.05f, 1.0f),
+                                            std::clamp(Stack.SsrSteps, 8.0f, 64.0f), std::max(Stack.SsrThickness, 0.1f),
+                                            std::max(Stack.SsrMaxDistance, 10.0f), Copied ? 1.0f : 0.0f, float(Width), float(Height) };
+                std::memcpy(P->Scene.ForwardReflections, Settings, sizeof(Settings));
+            }
+        }
+
         BindTargets(&SceneColor, 1, SceneColor);
         P->IssueStage(ERenderStage::Unlit);
         P->IssueStage(ERenderStage::Translucent);
+        for(GDITextureResource*& Each : P->ForwardReflectionTextures) { Each = nullptr; }
+        P->Scene.ForwardReflections[1][1] = 0.0f;
         P->RunHook(ERenderHook::AfterForward, InTargets, bInTimed, &Current);   // fog and the stack bind their own
 
         /* Volumetric fog (PPVolumetricFog.fsh): marched at half size through the depth and the

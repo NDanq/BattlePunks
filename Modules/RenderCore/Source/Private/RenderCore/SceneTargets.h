@@ -91,6 +91,7 @@ namespace RenderCore
          * frame's finished linear colour they read -- TAA's history when it ran (LastColor
          * then points at it), else a copy kept in LastCopy. Forgotten with a resize. */
         GDIRenderTarget* Fog         = nullptr;                 // volumetric fog's march, half size, half float
+        GDIRenderTarget* DepthCopy   = nullptr;                 // the opaque depth, for forward reflections (R32F; LIT_TRANSLUCENCY.md, Phase 4)
         GDIRenderTarget* Reflections = nullptr;
         /* Stochastic reflections' history (PPReflectionResolve.fsh; GLOBAL_ILLUMINATION.md, Phase 4):
          * the resolve ping-pongs these, ReflectionCurrent the last frame's when bReflectionValid. */
@@ -325,6 +326,23 @@ namespace RenderCore
             return InOutTarget && InOutTarget->IsValid() ? InOutTarget : nullptr;
         }
 
+        /* Forward reflections' copy of the opaque depth, full size, R32F (RGBA32F where that is
+         * all there is), made on first use; null where neither is: a half float cannot hold depth. */
+        GDIRenderTarget* EnsureDepthCopy()
+        {
+            if(!DepthCopy && Width > 0 && Height > 0)
+            {
+                const EGDIRenderTargetFormat Format = GDISupportsRenderTargetFormat(GDI_RTF_R32F) ? GDI_RTF_R32F
+                                                    : GDISupportsRenderTargetFormat(GDI_RTF_RGBA32F) ? GDI_RTF_RGBA32F
+                                                    : GDI_RTF_RGBA8;
+                if(Format != GDI_RTF_RGBA8)
+                {
+                    DepthCopy = GDICreateRenderTargetFormat(Name + ".DepthCopy", Width, Height, Format);
+                }
+            }
+            return DepthCopy && DepthCopy->IsValid() ? DepthCopy : nullptr;
+        }
+
         /* Volumetric fog's half-size half-float target, made on first use. */
         GDIRenderTarget* EnsureFog()
         {
@@ -379,7 +397,7 @@ namespace RenderCore
                                            &Half[0], &Half[1], &Bloom[0], &Bloom[1], &Bloom[2], &Bloom[3], &Bloom[4], &Bloom[5],
                                            &BloomUp[0], &BloomUp[1], &BloomUp[2], &BloomUp[3], &BloomUp[4],
                                            &Luminance[0], &Luminance[1], &Luminance[2], &Exposure[0], &Exposure[1],
-                                           &History[0], &History[1], &Reflections, &ReflectionHistory[0], &ReflectionHistory[1], &GI, &GIHistory[0], &GIHistory[1], &LastCopy, &Fog, &Subsurface, &SubsurfaceBlur })
+                                           &History[0], &History[1], &Reflections, &ReflectionHistory[0], &ReflectionHistory[1], &GI, &GIHistory[0], &GIHistory[1], &LastCopy, &Fog, &DepthCopy, &Subsurface, &SubsurfaceBlur })
             {
                 if(*Each)
                 {

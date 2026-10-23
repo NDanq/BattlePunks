@@ -302,7 +302,12 @@ void ShadeSurfaceSplit(in LightingSurface S, vec3 InWorldPosition, float InOcclu
     if(Scene_IBL.x > 0.5)
     {
 #ifdef LIGHTING_IBL_ATLAS
-        IBL_LightModel(LIGHTING_IBL_ATLAS, InWorldPosition, S, InOcclusion, InAmbientDiffuse, vec4(0.0),
+#ifdef LIGHTING_FORWARD_REFLECTIONS
+        vec4 Screen = Forward_ScreenReflection(InWorldPosition, S.N, S.V, S.Roughness);
+#else
+        vec4 Screen = vec4(0.0);
+#endif
+        IBL_LightModel(LIGHTING_IBL_ATLAS, InWorldPosition, S, InOcclusion, InAmbientDiffuse, Screen,
                        IndirectDiffuse, IndirectSpecular);
 #else
         IndirectDiffuse  = vec3(0.0);
