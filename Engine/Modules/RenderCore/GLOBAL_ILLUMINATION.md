@@ -279,8 +279,10 @@ updated by rasterising rather than ray tracing:
   the back wall darker, the reflection probes' irradiance having seen more
   of the open sky.
 - `[Rendering] DynamicGI` (on) turns every volume off.
-- Not yet: forward Lit materials (glass, water) keep the reflection probes;
-  an editor gizmo for the box; probe relocation and classification (Majercik
+- Forward Lit materials (glass, water, lit smoke) take the volume's
+  irradiance too (LIT_TRANSLUCENCY.md, Phase 3); screen-space GI stays
+  G-buffer only.
+- Not yet: an editor gizmo for the box; probe relocation and classification (Majercik
   2021) -- a probe inside a wall sees black and is only down-weighted by its
   distances; a rotated volume.
 

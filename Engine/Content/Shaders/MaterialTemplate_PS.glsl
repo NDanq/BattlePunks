@@ -50,6 +50,8 @@
 #include <IBLCommon.glsl>
 MATERIAL_SAMPLER2D(4, Material_IBLAtlas)
 #define LIGHTING_IBL_ATLAS Material_IBLAtlas
+// And from a GI Volume's probes where one is (DDGI.glsl, engine slots 9 and 10; LIT_TRANSLUCENCY.md, Phase 3).
+#include <DDGI.glsl>
 // And is shadowed (LIT_TRANSLUCENCY.md, Phase 2): the shadow atlases at the engine's
 // slots 11 and 12, filtered [Shadows] ForwardFilter texels each way; no inset or contact shadows.
 MATERIAL_SAMPLER2D(15, ShadowDirectional)
@@ -186,11 +188,30 @@ void main(void)
 #else
 
 #if MATERIAL_SHADING_LIT
+#ifdef MATERIAL_TRANSLUCENCY_SURFACE
+    // Translucency Lighting Surface (the generated code defines it only for Translucent Lit) (LIT_TRANSLUCENCY.md, Phase 3): the body -- diffuse,
+    // emissive -- covers Opacity of what is behind; the reflection off the surface does
+    // not fade with it. Written premultiplied, blended (one, one minus source alpha).
+    float Coverage = clamp(Surface.Opacity, 0.0, 1.0);
+    vec3  Color;
+    if(Scene_View.x > 0.5)
+    {
+        Color = ToSceneColor(ViewChannelColor(Surface.BaseColor, Surface.Emissive)) * Coverage;
+    }
+    else
+    {
+        LightingSurface Lit = LightingSurfaceOf(Surface, MATERIAL_SHADING_MODEL_ID, Inputs.WorldPosition, Normal);
+        vec3 Diffuse, Specular;
+        ShadeSurfaceSplit(Lit, Inputs.WorldPosition, Surface.AmbientOcclusion, AmbientDiffuse, Diffuse, Specular);
+        Color = ToSceneColor((ToLinear(Surface.Emissive) + Baked + Lit.Albedo * Diffuse) * Coverage + Specular);
+    }
+#else
     vec3 Color = Scene_View.x > 0.5
                ? ToSceneColor(ViewChannelColor(Surface.BaseColor, Surface.Emissive))
                : ToSceneColor(ToLinear(Surface.Emissive) + Baked
                               + ShadeLightingSurface(LightingSurfaceOf(Surface, MATERIAL_SHADING_MODEL_ID, Inputs.WorldPosition, Normal),
                                                      Inputs.WorldPosition, Surface.AmbientOcclusion, AmbientDiffuse));
+#endif
 #else
 #if MATERIAL_DOMAIN_POSTPROCESS
     // After the tone map: display space in, display space out.
@@ -212,7 +233,11 @@ void main(void)
     Alpha = clamp(Surface.Opacity, 0.0, 1.0);
     // A pixel that would change the scene by under half a step of 8 bits
     // (soft particles' corners and fringes) skips its blend: no colour write.
+#ifdef MATERIAL_TRANSLUCENCY_SURFACE
+    if(max(Alpha, max(Color.r, max(Color.g, Color.b))) < 0.5 / 255.0) { discard; }   // premultiplied: nothing to add or cover
+#else
     if(Alpha * max(1.0, max(Color.r, max(Color.g, Color.b))) < 0.5 / 255.0) { discard; }
+#endif
 #endif
     Output = vec4(Color, Alpha);
 #endif

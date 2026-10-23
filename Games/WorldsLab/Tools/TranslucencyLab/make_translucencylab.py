@@ -64,9 +64,12 @@ def opaque(name, consts):
     return g
 
 
-def translucent(name, consts, two_sided=False):
+def translucent(name, consts, two_sided=False, surface=True):
+    """surface: Translucency Lighting Surface, the specular over the opacity (Phase 3)."""
     g = Graph(name)
-    cy.output(g, domain="Translucent", two_sided=two_sided, consts=consts)
+    out = cy.output(g, domain="Translucent", two_sided=two_sided, consts=consts)
+    if surface:
+        next(n for n in g.nodes if n[0] == out)[3]["TranslucencyLighting"] = "Surface"
     return g
 
 

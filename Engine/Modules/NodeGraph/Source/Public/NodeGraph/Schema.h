@@ -88,6 +88,11 @@ namespace NodeGraph
         std::string              Default;
         std::vector<std::string> Choices;
         std::string              Tooltip;
+        /* What a node that does not have the property means by it, where that is not
+         * Default (a new node is given Default; an older file without it keeps this). */
+        std::string              Absent;
+
+        const std::string& ValueWhenAbsent() const { return Absent.empty() ? Default : Absent; }
     };
 
     enum class ENodeRole : uint8_t

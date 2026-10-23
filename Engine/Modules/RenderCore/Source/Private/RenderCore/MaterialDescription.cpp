@@ -153,6 +153,13 @@ namespace RenderCore
                 if(!FindShadingModel(Value, Result.ShadingModel)) { OutError = "unknown ShadingModel '" + Value + "'"; return false; }
             }
             else if(Keyword == "TwoSided")  { int Flag = 0; Words >> Flag; Result.bTwoSided  = Flag != 0; }
+            else if(Keyword == "TranslucencyLighting")
+            {
+                Words >> Value;
+                if(Value == "Surface")     { Result.bTranslucencySurface = true; }
+                else if(Value == "Legacy") { Result.bTranslucencySurface = false; }
+                else { OutError = "unknown TranslucencyLighting '" + Value + "'"; return false; }
+            }
             else if(Keyword == "HasOffset") { int Flag = 0; Words >> Flag; Result.bHasOffset = Flag != 0; }
             else if(Keyword == "ClipValue") { Words >> Result.ClipValue; }
             else if(Keyword == "MaxOffset") { Words >> Result.MaxOffset; }

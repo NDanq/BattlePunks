@@ -108,6 +108,9 @@ namespace
     const std::vector<std::string> GShadingChoices = { "Lit", "Unlit" };
     /* A Lit material's BRDF: RenderCore's EMaterialShadingModel, in its order (SHADING_MODELS.md). */
     const std::vector<std::string> GShadingModelChoices = { "Default", "ClearCoat", "Anisotropic", "Cloth", "Subsurface", "Skin" };
+    /* A Translucent Lit material's blend (LIT_TRANSLUCENCY.md, Phase 3): Surface, its
+     * specular over its opacity; Legacy, everything faded by it, as before. */
+    const std::vector<std::string> GTranslucencyLightingChoices = { "Surface", "Legacy" };
 
     /* The Material Output pins only some shading models read, and which. */
     struct ShadingModelPin
@@ -611,6 +614,14 @@ namespace
             }
         }
         const bool bTwoSided = !bLegacy && Root->GetProperty("TwoSided", "false") == "true";
+        /* Surface only where it applies; a graph saved before the property is Legacy. */
+        const std::string TranslucencyLighting = bLegacy ? "Legacy" : Root->GetProperty("TranslucencyLighting", "Legacy");
+        if(std::find(GTranslucencyLightingChoices.begin(), GTranslucencyLightingChoices.end(), TranslucencyLighting)
+           == GTranslucencyLightingChoices.end())
+        {
+            Result.Error(Root->Id, std::string(), "unknown Translucency Lighting '" + TranslucencyLighting + "'");
+        }
+        const bool bTranslucencySurface = Domain == "Translucent" && Shading == "Lit" && TranslucencyLighting == "Surface";
 
         const PinDefinition* OffsetPin = RootDef->FindPin(OFFSET_PIN, EPinDirection::Input);
         const bool bHasOffset = OffsetPin && IsPinSet(*Root, *OffsetPin);
@@ -729,6 +740,12 @@ namespace
         Out.Line("// " + Domain + ", " + Shading + (ShadingModel != "Default" ? ", " + ShadingModel : std::string())
                  + ". Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.");
         Out.Blank();
+        if(bTranslucencySurface)
+        {
+            Out.Line("// Translucency Lighting Surface: specular over the opacity, premultiplied (MaterialTemplate_PS.glsl).");
+            Out.Line("#define MATERIAL_TRANSLUCENCY_SURFACE 1");
+            Out.Blank();
+        }
 
         /* Declared in both stages that include it, so both see the same block. */
         Out.Line("// Bytes 0-159 are the engine's; the parameters' offsets are in " + Name + ".material.");
@@ -795,6 +812,7 @@ namespace
          *     Shading <Lit|Unlit>
          *     ShadingModel <ClearCoat|Anisotropic|Cloth|Subsurface|Skin>   (a Lit one's; none for Default)
          *     TwoSided <0|1>
+         *     TranslucencyLighting Surface   (a Translucent Lit one's, when not Legacy)
          *     ClipValue <x>
          *     MaxOffset <x>
          *     HasOffset <0|1>
@@ -819,6 +837,10 @@ namespace
             Material += "ShadingModel " + ShadingModel + "\n";
         }
         Material += std::string("TwoSided ") + (bTwoSided ? "1" : "0") + "\n";
+        if(bTranslucencySurface)
+        {
+            Material += "TranslucencyLighting Surface\n";
+        }
         Material += "ClipValue " + FormatNumber(ClipValue) + "\n";
         Material += "MaxOffset " + FormatNumber(MaxOffset) + "\n";
         Material += std::string("HasOffset ") + (bHasOffset ? "1" : "0") + "\n";
@@ -1858,6 +1880,10 @@ namespace
                   "Lit: the surface's BRDF. Default (plastic, metal, stone), Clear Coat (car paint, varnish), Anisotropic "
                   "(brushed metal), Cloth (velvet, cotton), Subsurface (leaves, wax, marble) or Skin" },
                 { "TwoSided", EPropertyKind::Bool, "false", {}, "Light back faces with a flipped normal" },
+                { "TranslucencyLighting", EPropertyKind::Choice, "Surface", GTranslucencyLightingChoices,
+                  "Translucent Lit: Surface keeps the reflections and highlights whatever the Opacity (clear glass still "
+                  "shines); Legacy fades everything by it, as materials made before it did",
+                  "Legacy" },
                 { "ClipValue", EPropertyKind::String, "0.5", {}, "Masked: Opacity Mask below this discards the pixel" },
                 { "MaxOffset", EPropertyKind::String, "0", {},
                   "The farthest World Position Offset moves a vertex, in world units: pads the culling bounds" },

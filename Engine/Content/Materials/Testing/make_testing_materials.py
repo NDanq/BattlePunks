@@ -21,9 +21,10 @@ def vec(*values):
     return " ".join(f"{v:g}" for v in values)
 
 
-def material(name, domain, shading, consts, two_sided=False):
+def material(name, domain, shading, consts, two_sided=False, props=None):
     nid = hashlib.md5(f"Testing/{name}".encode()).hexdigest()
     pins = "".join(f'      <Const Pin="{pin}" Value="{value}" />\n' for pin, value in sorted(consts.items()))
+    extra = "".join(f'      <Prop Name="{key}" Value="{value}" />\n' for key, value in sorted((props or {}).items()))
     text = f"""<?xml version="1.0" encoding="UTF-8"?>
 <NodeGraph Version="1" Schema="Material">
   <Nodes>
@@ -33,7 +34,7 @@ def material(name, domain, shading, consts, two_sided=False):
       <Prop Name="MaxOffset" Value="0" />
       <Prop Name="Shading" Value="{shading}" />
       <Prop Name="TwoSided" Value="{'true' if two_sided else 'false'}" />
-    </Node>
+{extra}    </Node>
   </Nodes>
 </NodeGraph>
 """
@@ -48,22 +49,23 @@ def material(name, domain, shading, consts, two_sided=False):
 
 MATERIALS = [
     # Phase 1: which of two overlapping quads is in front.
-    ("TransLitRed", "Translucent", "Lit", {"BaseColor": vec(0.8, 0.05, 0.05), "Roughness": "0.8", "Opacity": "1"}),
-    ("TransUnlitGreen", "Translucent", "Unlit", {"Emissive": vec(0.05, 0.8, 0.05), "Opacity": "1"}),
+    ("TransLitRed", "Translucent", "Lit", {"BaseColor": vec(0.8, 0.05, 0.05), "Roughness": "0.8", "Opacity": "1"}, {}),
+    ("TransUnlitGreen", "Translucent", "Unlit", {"Emissive": vec(0.05, 0.8, 0.05), "Opacity": "1"}, {}),
     # Phase 2: a white translucent quad, half in an opaque blocker's shadow.
-    ("TransLitWhite", "Translucent", "Lit", {"BaseColor": vec(0.9, 0.9, 0.9), "Roughness": "0.9", "Opacity": "0.5"}),
-    # Phase 3: a nearly clear, smooth pane.
-    ("TransLitClear", "Translucent", "Lit", {"BaseColor": vec(1, 1, 1), "Roughness": "0", "Opacity": "0.02"}),
+    ("TransLitWhite", "Translucent", "Lit", {"BaseColor": vec(0.9, 0.9, 0.9), "Roughness": "0.9", "Opacity": "0.5"}, {}),
+    # Phase 3: a nearly clear, shiny pane, its specular over its opacity (Surface) or faded by it (Legacy).
+    ("TransLitShiny", "Translucent", "Lit", {"Roughness": "0.3", "Opacity": "0.02"}, {"TranslucencyLighting": "Surface"}),
+    ("TransLitShinyLegacy", "Translucent", "Lit", {"Roughness": "0.3", "Opacity": "0.02"}, {"TranslucencyLighting": "Legacy"}),
     # Opaque surroundings.
-    ("OpaqueWhite", "Opaque", "Lit", {"BaseColor": vec(0.8, 0.8, 0.8), "Roughness": "0.9"}),
-    ("OpaqueRed", "Opaque", "Lit", {"BaseColor": vec(0.8, 0.05, 0.05), "Roughness": "0.9"}),
-    ("OpaqueBlack", "Opaque", "Lit", {"BaseColor": vec(0.02, 0.02, 0.02), "Roughness": "0.9"}),
+    ("OpaqueWhite", "Opaque", "Lit", {"BaseColor": vec(0.8, 0.8, 0.8), "Roughness": "0.9"}, {}),
+    ("OpaqueRed", "Opaque", "Lit", {"BaseColor": vec(0.8, 0.05, 0.05), "Roughness": "0.9"}, {}),
+    ("OpaqueBlack", "Opaque", "Lit", {"BaseColor": vec(0.02, 0.02, 0.02), "Roughness": "0.9"}, {}),
 ]
 
 
 def main():
-    for name, domain, shading, consts in MATERIALS:
-        material(name, domain, shading, consts)
+    for name, domain, shading, consts, props in MATERIALS:
+        material(name, domain, shading, consts, props=props)
     print(f"  {len(MATERIALS)} testing materials")
 
 

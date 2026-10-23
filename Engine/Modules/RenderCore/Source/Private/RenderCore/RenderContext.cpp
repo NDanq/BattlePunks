@@ -233,6 +233,7 @@ namespace RenderCore
         constexpr uint32_t LIGHT_LIST_VEC4S = 6;
         constexpr uint32_t LIGHTING_LTC_SLOT = 8;   // the engine's texture slot for the LTC tables (LightList.glsl)
         constexpr uint32_t FORWARD_SHADOW_SLOT = 11; // the engine's slots 11, 12: forward Lit draws' shadow atlases (MaterialTemplate_PS.glsl)
+        constexpr uint32_t FORWARD_DDGI_SLOT   = 9;  // the engine's slots 9, 10: a GI Volume's atlases (DDGI.glsl), for forward Lit draws too
         constexpr uint32_t LIGHT_TILES_X    = 32;
         constexpr uint32_t LIGHT_TILES_Y    = 18;
         constexpr uint32_t LIGHT_TILE_WORDS = RENDER_LOCAL_LIGHT_MAX / 32;
@@ -1676,7 +1677,9 @@ namespace RenderCore
 
         /* Draw state per domain. Plain quads keep the scene's old state:
          * blended, depth written. */
-        static void ApplyDomainState(const EMaterialDomain InDomain)
+        /* InPremultiplied: a Translucent Lit material whose Translucency Lighting is Surface
+         * writes its colour already times its coverage, its specular not (LIT_TRANSLUCENCY.md, Phase 3). */
+        static void ApplyDomainState(const EMaterialDomain InDomain, const bool bInPremultiplied = false)
         {
             IDepthStateDesc Depth;
             Depth.bDepthTest = InDomain != EMaterialDomain::PostProcess;
@@ -1686,7 +1689,8 @@ namespace RenderCore
 
             if(InDomain == EMaterialDomain::Translucent)
             {
-                GDISetBlendState(IBlendStateDesc(true, BM_Src_Alpha, BM_One_Minus_Src_Alpha));
+                GDISetBlendState(bInPremultiplied ? IBlendStateDesc(true, BM_One, BM_One_Minus_Src_Alpha)
+                                                  : IBlendStateDesc(true, BM_Src_Alpha, BM_One_Minus_Src_Alpha));
             }
             else
             {
@@ -1843,10 +1847,13 @@ namespace RenderCore
                     {
                         GDISetMaterialTexture(FORWARD_SHADOW_SLOT + Atlas, ForwardShadowAtlas[Atlas]);
                     }
+                    GDISetMaterialTexture(FORWARD_DDGI_SLOT, ForwardDDGIAtlas[0]);
+                    GDISetMaterialTexture(FORWARD_DDGI_SLOT + 1, ForwardDDGIAtlas[1]);
                 }
             }
 
-            ApplyDomainState(InMaterial.Description.Domain);
+            ApplyDomainState(InMaterial.Description.Domain,
+                             InMaterial.Description.bTranslucencySurface && InMaterial.Description.Shading == EMaterialShading::Lit);
             return true;
         }
 
@@ -2205,6 +2212,9 @@ namespace RenderCore
          * draws at the engine's slots 11 and 12 (LIT_TRANSLUCENCY.md, Phase 2); cleared
          * at BeginSceneDraws, so a scene without the stage draws them unshadowed. */
         GDITextureResource* ForwardShadowAtlas[SA_Count] = {};
+        /* A GI Volume's irradiance and distance atlases, as the IBL pass bound them, for the
+         * forward Lit draws after it (LIT_TRANSLUCENCY.md, Phase 3); cleared at BeginSceneDraws. */
+        GDITextureResource* ForwardDDGIAtlas[2] = {};
         bool                bLTCTried = false;
         void EnsureLTC();
 
@@ -4109,6 +4119,7 @@ namespace RenderCore
         P->DrawPixelsPerWorld = 0.0f;   // a scene's RenderScene sets it per proxy
         P->Shadows.ViewCount = 0;   // a preview has none; a scene's PrepareShadows adds them
         for(GDITextureResource*& Each : P->ForwardShadowAtlas) { Each = nullptr; }
+        for(GDITextureResource*& Each : P->ForwardDDGIAtlas) { Each = nullptr; }
         P->CasterView        = -1;
     }
 
@@ -5498,6 +5509,8 @@ namespace RenderCore
                 const bool bVolume = P->DDGI && P->LightList.DDGI[0][3] > 0.0f;
                 GDISetMaterialTexture(9, bVolume ? Texture(P->DDGI->Irradiance) : nullptr);
                 GDISetMaterialTexture(10, bVolume ? Texture(P->DDGI->Distance) : nullptr);
+                P->ForwardDDGIAtlas[0] = bVolume ? Texture(P->DDGI->Irradiance) : nullptr;   // the forward Lit draws after
+                P->ForwardDDGIAtlas[1] = bVolume ? Texture(P->DDGI->Distance) : nullptr;
                 P->DrawFullscreenShader(P->GetPostShader(PP_IBLLighting), POST_PASS_NAMES[PP_IBLLighting], SceneColor, Width, Height,
                                         IBLTextures, uint32_t(std::size(IBLTextures)), Block.A,
                                         uint(sizeof(Block) - sizeof(Block.Matrix)), Impl::EFullscreenBlend::Additive, 0, 0, Subsurface);
