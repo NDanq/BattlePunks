@@ -63,14 +63,27 @@ LTC table, 9 and 10 DDGI's atlases (bound only during the IBL pass today).
   | 2 plume | 0.367 | 1.155 | 0.977 | 3.135 |
   | 3 water | 0.318 | 1.247 | 0.550 | 2.958 |
 
-## Phase 1: one translucent stage
+## Phase 1: one translucent stage (landed)
 
-- Translucent Lit and Translucent Unlit become one stage, **Translucent**,
-  sorted back to front together; each draw keeps its own shader (forward Lit
-  or Unlit). `GetMaterialRenderStage` and the stage table change; the
-  GPU-timing column and the `stat` names keep "Forward".
-- Costs pipeline switches where lit and unlit interleave; measured.
-- Removes the ordering note under RENDERPIPELINE.md's stage table.
+- Translucent Lit and Translucent Unlit are one stage, **Translucent**
+  (`ERenderStage::Translucent`), sorted back to front together; each draw
+  keeps its own shader (forward Lit or Unlit). `GetMaterialRenderStage`,
+  the stage table and the draw names (`stat` tree) change; the GPU-timing
+  span keeps "Forward".
+- **Checked:** RenderCore.Smoke on the GPU, 748 checks, none failing on
+  Vulkan or D3D12. New: `TestTranslucencyOnGpu` with a red Lit quad and a
+  green Unlit one overlapping, each in front in turn -- the nearer wins
+  both ways (centre pixel 59 9 11 with red in front, 13 204 13 with green;
+  before, green always covered red). Its materials are engine content,
+  `Engine/Content/Materials/Testing` (`make_testing_materials.py`), so the
+  Engine cache holds them.
+- **TranslucencyLab:** bit-identical to Phase 0 on both backends. The
+  plume's smoke and sparks share an entity, so their submission order
+  already matched depth. Forward GPU time within run-to-run noise (Vulkan
+  0.25-0.39 ms, D3D12 0.47-0.77 ms by view).
+- **Regression levels** from here on: Courtyard (two runs 81 dB) and
+  LightingLab (bit-identical), frame 480, FixedStep. ShootingRange's
+  gameplay moves on the wall clock (two runs 29 dB) and is left out.
 
 ## Phase 2: shadows on forward Lit
 

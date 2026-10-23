@@ -20,8 +20,7 @@ namespace RenderCore
         Shadows,            // Lighting's first part: shadow casters, into the shadow atlases
         Lighting,           // the G-buffer resolve, one full-screen pass
         Unlit,              // Opaque and Masked, Unlit; plain quads; tinted meshes
-        TranslucentLit,     // forward-lit, back to front
-        TranslucentUnlit,   // back to front
+        Translucent,        // Lit (forward-lit) and Unlit together, back to front
         PostProcess,        // full-screen, in Post Process Priority order
         Count
     };

@@ -63,8 +63,8 @@ namespace
  *
  * STAGES (RENDERPIPELINE.md). Inside a scene (BeginSceneDraws to
  * RenderSceneStages) each draw is queued in the draw policy of the stage its
- * material names -- Base Pass (the G-buffer), Unlit, Translucent Lit,
- * Translucent Unlit, PostProcess -- and the stages then run in order, with
+ * material names -- Base Pass (the G-buffer), Unlit, Translucent (Lit and
+ * Unlit, back to front together), PostProcess -- and the stages then run in order, with
  * the Lighting stage resolving the G-buffer between the Base Pass and Unlit.
  * Outside a scene (a test) draws are issued at once.
  */
@@ -735,7 +735,7 @@ namespace RenderCore
             for(size_t Index = 0; Index < size_t(ERenderStage::Count); ++Index)
             {
                 const ERenderStage Stage        = ERenderStage(Index);
-                const bool         bBackToFront = Stage == ERenderStage::TranslucentLit || Stage == ERenderStage::TranslucentUnlit;
+                const bool         bBackToFront = Stage == ERenderStage::Translucent;
                 Policies[Index].Init(Stage, bBackToFront ? EDrawSort::BackToFront : EDrawSort::Submission);
             }
         }
@@ -1386,7 +1386,7 @@ namespace RenderCore
             Spans[RGT_BasePass]    = Count(ERenderStage::BasePass);
             Spans[RGT_Shadows]     = Count(ERenderStage::Shadows);
             Spans[RGT_Lighting]    = Count(ERenderStage::Lighting);
-            Spans[RGT_Forward]     = Count(ERenderStage::Unlit) + Count(ERenderStage::TranslucentLit) + Count(ERenderStage::TranslucentUnlit);
+            Spans[RGT_Forward]     = Count(ERenderStage::Unlit) + Count(ERenderStage::Translucent);
             Spans[RGT_PostProcess] = Count(ERenderStage::PostProcess);
             int32_t Total = 0;
             for(uint32_t Timer = RGT_PrePass; Timer < RGT_Total; ++Timer)
@@ -5510,8 +5510,7 @@ namespace RenderCore
         P->StageTimestamp(RGT_Forward, false);
         BindTargets(&SceneColor, 1, SceneColor);
         P->IssueStage(ERenderStage::Unlit);
-        P->IssueStage(ERenderStage::TranslucentLit);
-        P->IssueStage(ERenderStage::TranslucentUnlit);
+        P->IssueStage(ERenderStage::Translucent);
         P->RunHook(ERenderHook::AfterForward, InTargets, bInTimed, &Current);   // fog and the stack bind their own
 
         /* Volumetric fog (PPVolumetricFog.fsh): marched at half size through the depth and the

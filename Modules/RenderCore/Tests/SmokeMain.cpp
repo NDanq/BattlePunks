@@ -3407,6 +3407,143 @@ static void TestShadowsOnGpu()
 
 #if WITH_EDITOR
 /*
+ * Lit translucency on the GPU (NIMBLE_SMOKE_GPU=Vulkan or D3D12;
+ * LIT_TRANSLUCENCY.md, "Validation"): small scenes drawn with the Engine
+ * cache's Testing materials (Engine/Content/Materials/Testing), their pixels
+ * checked against what each phase predicts. NIMBLE_SMOKE_DUMP=<dir> keeps
+ * each capture as a PPM.
+ */
+static void TestTranslucencyOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[translucency on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[translucency on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = RenderView::MakePerspective(Viewport, Vector3(0.0, 100.0, -600.0), Vector3(0.0, 0.0, 1.0),
+                                                            50.0f, 10.0f, 5000.0f);
+        Rend.SetViewOverride(&View);
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](EngineCore::Image& OutPixels)
+        {
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            const uint64_t Request = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 4; ++Each)
+            {
+                Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+                Rend.WaitForPreviousFrame();
+            }
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto Rgb = [](const EngineCore::Image& InPixels, const int InX, const int InY, int (&OutRgb)[3])
+        {
+            const uint8_t* Px = InPixels.GetData() + InPixels.GetStride() * InY + InX * BytesPerPixel(InPixels.GetFormat());
+            const bool bBgra = InPixels.GetFormat() == EImageFormat::BGRA8;
+            OutRgb[0] = bBgra ? Px[2] : Px[0];
+            OutRgb[1] = Px[1];
+            OutRgb[2] = bBgra ? Px[0] : Px[2];
+        };
+        const char* DumpDir = std::getenv("NIMBLE_SMOKE_DUMP");
+        const auto Dump = [&](const EngineCore::Image& InPixels, const char* InName)
+        {
+            if(!DumpDir || !DumpDir[0] || InPixels.GetWidth() == 0) { return; }
+            std::ofstream File(std::string(DumpDir) + "/" + InName + ".ppm", std::ios::binary);
+            File << "P6\n" << InPixels.GetWidth() << " " << InPixels.GetHeight() << "\n255\n";
+            for(int Y = 0; Y < int(InPixels.GetHeight()); ++Y)
+            {
+                for(int X = 0; X < int(InPixels.GetWidth()); ++X)
+                {
+                    int Value[3];
+                    Rgb(InPixels, X, Y, Value);
+                    const char Bytes[3] = { char(Value[0]), char(Value[1]), char(Value[2]) };
+                    File.write(Bytes, 3);
+                }
+            }
+        };
+
+        GameCore::World World;
+        Rend.BindWorld(World);
+        const auto Placed = [&World](const char* InName, const Vector3& InPosition, const Vector3& InRotation, const Vector3& InScale)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InPosition;
+            Transform.Rotation = InRotation;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            return Each;
+        };
+        const auto Drawn = [](const char* InMesh, const char* InMaterial)
+        {
+            RenderComponent Render;
+            std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", InMesh);
+            std::snprintf(Render.Materials[0], sizeof(Render.Materials[0]), "Engine/Content/Materials/Testing/%s.material.nmgraph", InMaterial);
+            return Render;
+        };
+        const char* BOX = "Engine/Content/Meshes/Box.nmmesh";
+
+        /* A sun from behind the camera, and the sky. */
+        DirectionalLightComponent SunInit;
+        SunInit.ShadowDistance = 3000.0f;
+        Placed("Sun", Vector3(), Vector3(35.0, 10.0, 0.0), Vector3(1.0, 1.0, 1.0)).AddComponent(SunInit);
+        Placed("Sky", Vector3(), Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(SkyLightComponent());
+
+        /* Phase 1: a red Lit quad and a green Unlit one overlapping in the middle of
+         * the view; whichever is nearer wins there, both ways round. */
+        {
+            const GameCore::Entity Red   = Placed("Red", Vector3(-40.0, 100.0, 0.0), Vector3(), Vector3(200.0, 200.0, 2.0));
+            const GameCore::Entity Green = Placed("Green", Vector3(40.0, 100.0, 150.0), Vector3(), Vector3(200.0, 200.0, 2.0));
+            Red.AddComponent(Drawn(BOX, "TransLitRed"));
+            Green.AddComponent(Drawn(BOX, "TransUnlitGreen"));
+            EngineCore::Image RedFront, GreenFront;
+            const bool bRedFront = Capture(RedFront);
+            Red.GetComponent<GameCore::TransformComponent>()->Position   = Vector3(-40.0, 100.0, 150.0);
+            Green.GetComponent<GameCore::TransformComponent>()->Position = Vector3(40.0, 100.0, 0.0);
+            const bool bGreenFront = Capture(GreenFront);
+            Expect(bRedFront && bGreenFront, "the overlapping quads are captured both ways round");
+            if(bRedFront && bGreenFront)
+            {
+                Dump(RedFront, "order-red-front");
+                Dump(GreenFront, "order-green-front");
+                int A[3], B[3];
+                Rgb(RedFront, 128, 128, A);
+                Rgb(GreenFront, 128, 128, B);
+                std::printf("    overlap: red in front %d %d %d, green in front %d %d %d\n", A[0], A[1], A[2], B[0], B[1], B[2]);
+                Expect(A[0] > A[1] + 40, "a Lit quad in front of an Unlit one covers it");
+                Expect(B[1] > B[0] + 40, "and an Unlit quad in front of a Lit one covers that (one translucent stage)");
+            }
+            World.DestroyEntity(Red);
+            World.DestroyEntity(Green);
+        }
+
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+}
+#endif // WITH_EDITOR
+
+#if WITH_EDITOR
+/*
  * Parallel draw recording on the GPU (NIMBLE_SMOKE_GPU=Vulkan;
  * MULTITHREADED_RENDERING.md, phase 3): a floor and a grid of boxes under a
  * cascaded sun, captured with [Rendering] ParallelRecording Off and On. The
@@ -6505,8 +6642,8 @@ static void TestRenderStages()
 
     Expect(GetMaterialRenderStage(EMaterialDomain::Opaque, EMaterialShading::Lit) == ERenderStage::BasePass
            && GetMaterialRenderStage(EMaterialDomain::Masked, EMaterialShading::Unlit) == ERenderStage::Unlit
-           && GetMaterialRenderStage(EMaterialDomain::Translucent, EMaterialShading::Lit) == ERenderStage::TranslucentLit
-           && GetMaterialRenderStage(EMaterialDomain::Translucent, EMaterialShading::Unlit) == ERenderStage::TranslucentUnlit
+           && GetMaterialRenderStage(EMaterialDomain::Translucent, EMaterialShading::Lit) == ERenderStage::Translucent
+           && GetMaterialRenderStage(EMaterialDomain::Translucent, EMaterialShading::Unlit) == ERenderStage::Translucent
            && GetMaterialRenderStage(EMaterialDomain::PostProcess, EMaterialShading::Lit) == ERenderStage::PostProcess,
            "a material's Domain and Shading name its stage");
 
@@ -6574,9 +6711,9 @@ static void TestRenderStages()
         const auto At = [&Counts](const ERenderStage InStage) { return Counts[size_t(InStage)]; };
         Expect(At(ERenderStage::BasePass) == 2, "an Opaque Lit material draws in the Base Pass, by its graph's path from any folder");
         Expect(At(ERenderStage::Unlit) == 5, "Masked Unlit, a plain quad and three meshes' material-less sections draw in Unlit");
-        Expect(At(ERenderStage::TranslucentLit) == 2, "Translucent Lit takes a quad and the section whose slot names one");
-        Expect(At(ERenderStage::TranslucentUnlit) == 3,
-               "Translucent Unlit takes a quad and the sections falling back to their own material (an empty slot, a missing one)");
+        Expect(At(ERenderStage::Translucent) == 5,
+               "Translucent takes Lit and Unlit together: two quads, the section whose slot names one, and the sections "
+               "falling back to their own material (an empty slot, a missing one)");
         Expect(At(ERenderStage::PostProcess) == 1, "a Post Process component's material is a PostProcess draw");
         Expect(At(ERenderStage::PrePass) == 0 && At(ERenderStage::Shadows) == 0, "PrePass and Shadows draw nothing yet");
 
@@ -7038,6 +7175,7 @@ int main()
     TestMaterials();
     TestMaterialsOnGpu();
     TestShadowsOnGpu();
+    TestTranslucencyOnGpu();
     TestParallelRecordingOnGpu();
     TestPostProcessOnGpu();
     TestBloomHdrOnGpu();
