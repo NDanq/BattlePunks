@@ -179,7 +179,7 @@ namespace RenderCore
             PP_IBLSky, PP_IBLPrefilter, PP_IBLLighting, PP_Sky, PP_ViewTarget, PP_UI,
             PP_Luminance, PP_LuminanceReduce, PP_AdaptExposure, PP_TemporalAA, PP_ScreenReflections, PP_Copy,
             PP_VolumetricFog, PP_FogComposite, PP_ViewSites, PP_AmbientApply, PP_Subsurface, PP_LTCDecode,
-            PP_ReflectionResolve, PP_ScreenGI, PP_DDGICopy, PP_DDGIUpdate, PP_PassCount
+            PP_ReflectionResolve, PP_ScreenGI, PP_DDGICopy, PP_DDGIUpdate, PP_DepthHalf, PP_PassCount
         };
         const char* const POST_PASS_SHADERS[PP_PassCount] = {
             "PPDofPrepare.fsh", "PPDofBlur.fsh", "PPDofComposite.fsh", "PPMotionBlur.fsh",
@@ -188,7 +188,7 @@ namespace RenderCore
             "IBLSky.fsh", "IBLPrefilter.fsh", "IBLLighting.fsh", "Sky.fsh", "ViewTarget.fsh", "UI.fsh",
             "PPLuminance.fsh", "PPLuminanceReduce.fsh", "PPAdaptExposure.fsh", "PPTemporalAA.fsh", "PPScreenReflections.fsh",
             "PPCopy.fsh", "PPVolumetricFog.fsh", "PPFogComposite.fsh", "ViewSites.fsh", "PPAmbientApply.fsh", "PPSubsurface.fsh", "LTCDecode.fsh",
-            "PPReflectionResolve.fsh", "PPScreenGI.fsh", "DDGICopy.fsh", "DDGIUpdate.fsh",
+            "PPReflectionResolve.fsh", "PPScreenGI.fsh", "DDGICopy.fsh", "DDGIUpdate.fsh", "PPDepthHalf.fsh",
         };
         /* Each pass's draw event (DrawPost). */
         const char* const POST_PASS_NAMES[PP_PassCount] = {
@@ -198,7 +198,7 @@ namespace RenderCore
             "IBLSky", "IBLPrefilter", "IBLLighting", "Sky", "ViewTarget", "UI",
             "Luminance", "LuminanceReduce", "AdaptExposure", "TemporalAA", "ScreenReflections", "Copy",
             "VolumetricFog", "FogComposite", "ViewSites", "AmbientApply", "Subsurface", "LTCDecode",
-            "ReflectionResolve", "ScreenGI", "DDGICopy", "DDGIUpdate",
+            "ReflectionResolve", "ScreenGI", "DDGICopy", "DDGIUpdate", "DepthHalf",
         };
 
         /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
@@ -5860,8 +5860,11 @@ namespace RenderCore
             GDITexture2D* Last  = InTargets.LastColor ? InTargets.LastColor->ToGDITexture2D() : nullptr;
             GDIRenderTarget* Copy = GRenderForwardReflections.GetBool() && Stack.bScreenReflections && InTargets.bHDR
                                  && P->bHasPrevViewProjection && Depth && Last ? InTargets.EnsureDepthCopy() : nullptr;
+            /* At half size, each texel the nearest of four (PPDepthHalf.fsh): the march reads it
+             * a quarter as often and the copy writes a quarter (LIT_TRANSLUCENCY_PERF.md). */
+            const uint HalfW = SceneTargets::HalfSize(Width, 1), HalfH = SceneTargets::HalfSize(Height, 1);
             PostBlock CopyBlock;
-            if(Copy && P->DrawPost(PP_Copy, Copy, Width, Height, { Depth->Resource }, CopyBlock))
+            if(Copy && P->DrawPost(PP_DepthHalf, Copy, HalfW, HalfH, { Depth->Resource }, CopyBlock))
             {
                 GDISetMaterialTexture(0, nullptr);
                 GDITexture2D* Copied = Copy->ToGDITexture2D();
@@ -5870,7 +5873,7 @@ namespace RenderCore
                 PutMatrix(P->Scene.PrevViewProjection, P->PrevViewProjection);
                 const float Settings[8] = { std::clamp(Stack.SsrIntensity, 0.0f, 1.0f), std::clamp(Stack.SsrMaxRoughness, 0.05f, 1.0f),
                                             std::clamp(Stack.SsrSteps, 8.0f, 64.0f), std::max(Stack.SsrThickness, 0.1f),
-                                            std::max(Stack.SsrMaxDistance, 10.0f), Copied ? 1.0f : 0.0f, float(Width), float(Height) };
+                                            std::max(Stack.SsrMaxDistance, 10.0f), Copied ? 1.0f : 0.0f, float(HalfW), float(HalfH) };
                 std::memcpy(P->Scene.ForwardReflections, Settings, sizeof(Settings));
             }
         }
