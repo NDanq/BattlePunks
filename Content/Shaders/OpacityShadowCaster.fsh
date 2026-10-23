@@ -13,6 +13,7 @@
 
 UBO_BLOCK_BEGIN(2, Opacity_Block)
     vec4 Opacity_Params;   // x, y: the casters' nearest and farthest window depth in this view; z: Shadow Density
+                           // (a mesh: its material's Translucent Shadow Opacity); w: 1 a mesh, the same everywhere
 UBO_BLOCK_END(Opacity_Block)
 
 OUTPUT(0, vec4, Output)
@@ -21,7 +22,7 @@ void main(void)
 {
     vec2  Across  = Interpolants.TexCoord * 2.0 - 1.0;
     float Disc    = clamp(1.0 - length(Across), 0.0, 1.0);
-    float Opacity = clamp(Disc * Disc * Interpolants.Color.r * Opacity_Params.z, 0.0, 0.999);
+    float Opacity = clamp(Opacity_Params.w > 0.5 ? Opacity_Params.z : Disc * Disc * Interpolants.Color.r * Opacity_Params.z, 0.0, 0.999);
     float Depth   = -log(1.0 - Opacity);
     if(Depth <= 1e-5) { discard; }
 

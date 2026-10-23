@@ -26,6 +26,9 @@ MATERIAL_SAMPLER2D(19, TranslucentOpacity)     // engine slot 15: translucent ca
 #ifndef MATERIAL_PARTICLE_PHASE
 #define MATERIAL_PARTICLE_PHASE 0.0
 #endif
+#ifndef MATERIAL_PARTICLE_SELF_OCCLUSION
+#define MATERIAL_PARTICLE_SELF_OCCLUSION 0.0
+#endif
 
 // Henyey-Greenstein times 4 pi over pi: an even medium as bright as Lambert facing the light.
 float Particle_Phase(vec3 InL, vec3 InV)
@@ -93,6 +96,11 @@ vec3 Particle_Light(vec3 InPosition)
         vec3  Volume = 0.5 * (DDGI_Irradiance(InPosition, vec3(0.0, 1.0, 0.0), V, Held)
                             + DDGI_Irradiance(InPosition, vec3(0.0, -1.0, 0.0), V, HeldDown));
         Ambient = mix(Ambient, Volume, Held);
+    }
+    // Darkened by the medium toward the sun (Particle Self Occlusion; Phase 8).
+    if(float(MATERIAL_PARTICLE_SELF_OCCLUSION) > 0.0)
+    {
+        Ambient *= exp(-float(MATERIAL_PARTICLE_SELF_OCCLUSION) * Translucent_SunDepth(TranslucentOpacity, InPosition, float(LIGHTING_TRANSLUCENT_SELF)));
     }
     return Light + Ambient;
 }

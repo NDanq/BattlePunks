@@ -689,7 +689,8 @@ that the lights shine through.
   for the sky), Steps jittered samples. Density is Density at Base Height
   and below, falling by `exp(-Height Falloff * height above)`. Each sample
   is lit by the sun -- its cascaded shadow map, one tap, when Shadows is on
-  (shafts) -- through a Henyey-Greenstein phase of Anisotropy (forward
+  (shafts), and through casting particles and glass (their opacity shadow
+  maps; LIT_TRANSLUCENCY.md) -- through a Henyey-Greenstein phase of Anisotropy (forward
   scattering: a glow round a low sun); by every point and spot light in
   reach (Lighting.glsl's falloff and cones, unshadowed); and by the sky
   ambient. Scattering integrates per step (energy conserving), times

@@ -49,6 +49,7 @@ struct MaterialSurface
     float Thickness;            // Subsurface, Skin: 0 thin, 1 thick
     float PhaseAnisotropy;      // Volume: -0.9 back scattering, 0 even, 0.9 forward (Henyey-Greenstein g)
     float NormalInfluence;      // Volume: 0 lit from every side alike, 1 wrapped toward its Normal
+    float SelfOcclusion;        // Volume: how much the medium toward the sun darkens its ambient (0 none)
 };
 
 MaterialSurface DefaultMaterialSurface(in MaterialInputs Inputs)
@@ -73,6 +74,7 @@ MaterialSurface DefaultMaterialSurface(in MaterialInputs Inputs)
     Surface.Thickness          = 0.5;
     Surface.PhaseAnisotropy    = 0.0;
     Surface.NormalInfluence    = 0.0;
+    Surface.SelfOcclusion      = 0.0;
     return Surface;
 }
 

@@ -126,6 +126,7 @@ LightingSurface LightingSurfaceOf(in MaterialSurface Surface, int InModel, vec3 
                             Surface.Tangent, Surface.SheenColor, Surface.SubsurfaceColor, Surface.Thickness);
     S.Phase           = Surface.PhaseAnisotropy;
     S.NormalInfluence = Surface.NormalInfluence;
+    S.SelfOcclusion   = Surface.SelfOcclusion;
     return S;
 }
 
@@ -317,6 +318,14 @@ void ShadeSurfaceSplit(in LightingSurface S, vec3 InWorldPosition, float InOcclu
 #endif
     }
 
+#ifdef LIGHTING_TRANSLUCENT_SHADOWS
+    // A medium's sky light, darkened by the medium between it and the sun -- a plume shading
+    // its own ambient (LIT_TRANSLUCENCY.md, Phase 8; Self Occlusion, 0 by default).
+    if(S.Model == SHADING_MODEL_VOLUME && S.SelfOcclusion > 0.0)
+    {
+        IndirectDiffuse *= exp(-S.SelfOcclusion * Translucent_SunDepth(TranslucentOpacity, InWorldPosition, float(LIGHTING_TRANSLUCENT_SELF)));
+    }
+#endif
     OutDiffuse  = (OutDiffuse + IndirectDiffuse) * Modulate;
     OutSpecular = (OutSpecular + IndirectSpecular) * Modulate;
 }

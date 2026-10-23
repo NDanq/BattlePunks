@@ -132,6 +132,7 @@ namespace
         { "Thickness",          { "Subsurface", "Skin" } },
         { "PhaseAnisotropy",    { "Volume" } },
         { "NormalInfluence",    { "Volume" } },
+        { "SelfOcclusion",      { "Volume" } },
     };
 
     /* std140 base alignment and size of a float type. */
@@ -642,10 +643,22 @@ namespace
                                                   "their colour (use Vertex Color as Emissive)");
         }
         const bool bParticleLighting = ParticleLighting == "PerParticle" && Domain == "Translucent" && Shading == "Unlit";
-        double ParticlePhase = 0.3;
+        /* Its mesh into the lights' opacity shadow maps (LIT_TRANSLUCENCY.md: glass casting). */
+        const bool bCastTranslucent = !bLegacy && Domain == "Translucent" && Root->GetProperty("CastTranslucentShadow", "false") == "true";
+        double TranslucentShadowOpacity = 0.3;
+        if(bCastTranslucent && (!ParseNumber(Root->GetProperty("TranslucentShadowOpacity", "0.3"), TranslucentShadowOpacity)
+                                || TranslucentShadowOpacity < 0.0 || TranslucentShadowOpacity > 1.0))
+        {
+            Result.Error(Root->Id, std::string(), "Translucent Shadow Opacity must be a number from 0 to 1");
+        }
+        double ParticlePhase = 0.3, ParticleSelfOcclusion = 0.0;
         if(bParticleLighting && !ParseNumber(Root->GetProperty("ParticlePhase", "0.3"), ParticlePhase))
         {
             Result.Error(Root->Id, std::string(), "Particle Phase must be a number");
+        }
+        if(bParticleLighting && (!ParseNumber(Root->GetProperty("ParticleSelfOcclusion", "0"), ParticleSelfOcclusion) || ParticleSelfOcclusion < 0.0))
+        {
+            Result.Error(Root->Id, std::string(), "Particle Self Occlusion must be a number, 0 or more");
         }
 
         const PinDefinition* OffsetPin = RootDef->FindPin(OFFSET_PIN, EPinDirection::Input);
@@ -776,6 +789,10 @@ namespace
             Out.Line("// Particle Lighting Per Particle: each instance lit at its centre (ParticleLighting.glsl).");
             Out.Line("#define MATERIAL_PARTICLE_LIGHTING 1");
             Out.Line("#define MATERIAL_PARTICLE_PHASE " + FormatNumber(std::clamp(ParticlePhase, -0.9, 0.9)));
+            if(ParticleSelfOcclusion > 0.0)
+            {
+                Out.Line("#define MATERIAL_PARTICLE_SELF_OCCLUSION " + FormatNumber(ParticleSelfOcclusion));
+            }
             Out.Blank();
         }
 
@@ -854,6 +871,7 @@ namespace
          *     TwoSided <0|1>
          *     TranslucencyLighting Surface   (a Translucent Lit one's, when not Legacy)
          *     ParticleLighting 1             (a Translucent Unlit one's, lit per particle; HasOffset then 1)
+         *     TranslucentShadow <opacity>    (a Translucent one's that casts into the opacity shadow maps)
          *     ClipValue <x>
          *     MaxOffset <x>
          *     HasOffset <0|1>
@@ -888,6 +906,10 @@ namespace
         if(bParticleLighting)
         {
             Material += "ParticleLighting 1\n";
+        }
+        if(bCastTranslucent && TranslucentShadowOpacity > 0.0)
+        {
+            Material += "TranslucentShadow " + FormatNumber(std::clamp(TranslucentShadowOpacity, 0.0, 1.0)) + "\n";
         }
         Material += "BlockSize " + std::to_string(BlockBytes) + "\n";
         for(const auto& Each : Parameters)
@@ -1917,6 +1939,9 @@ namespace
                 Staged(In("PhaseAnisotropy", "float", "0"), STAGE_PIXEL,
                        "Volume: which way the medium scatters light -- below 0 back toward the light, 0 every way alike, "
                        "above 0 on along its path (smoke about 0.3: bright looking toward the sun)"),
+                Staged(In("SelfOcclusion", "float", "0"), STAGE_PIXEL,
+                       "Volume: how much the medium between it and the sun (casting particles and glass) darkens its sky "
+                       "light -- a plume shading its own ambient; 0 none, 1 by its optical depth"),
                 Staged(In("NormalInfluence", "float", "0"), STAGE_PIXEL,
                        "Volume: 0 lit from every side alike, 1 shaded by its Normal like a surface (a flipbook's normal map, "
                        "Particle Sphere Normal)"),
@@ -1932,9 +1957,17 @@ namespace
                   "(brushed metal), Cloth (velvet, cotton), Subsurface (leaves, wax, marble), Skin, or Volume (lit smoke, "
                   "dust, steam: Translucent only)" },
                 { "TwoSided", EPropertyKind::Bool, "false", {}, "Light back faces with a flipped normal" },
+                { "CastTranslucentShadow", EPropertyKind::Bool, "false", {},
+                  "Translucent: its mesh casts a see-through shadow -- the light through it times 1 - Translucent Shadow Opacity "
+                  "(its Render component must Cast Shadows)" },
+                { "TranslucentShadowOpacity", EPropertyKind::String, "0.3", {},
+                  "Cast Translucent Shadow: how much light it stops, 0 to 1 (clear glass 0.1, tinted 0.4)" },
                 { "ParticleLighting", EPropertyKind::Choice, "Off", GParticleLightingChoices,
                   "Translucent Unlit, drawn by particles: Per Particle lights each particle once at its centre -- sun, shadows, "
                   "lights, probes -- into its Vertex Color, for an unlit plume's cost (feed Vertex Color to Emissive)" },
+                { "ParticleSelfOcclusion", EPropertyKind::String, "0", {},
+                  "Particle Lighting Per Particle: how much the medium between a particle and the sun darkens its sky light "
+                  "(0 none)" },
                 { "ParticlePhase", EPropertyKind::String, "0.3", {},
                   "Particle Lighting Per Particle: which way it scatters light, -0.9 back to 0.9 forward (as Volume's Phase Anisotropy)" },
                 { "TranslucencyLighting", EPropertyKind::Choice, "Surface", GTranslucencyLightingChoices,
