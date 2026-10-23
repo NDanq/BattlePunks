@@ -23,6 +23,7 @@ model** is a choice on the Material Output, beside Domain and Shading.
 | **Cloth** | velvet, cotton, wool | Charlie sheen [Estevez 2017], Neubelt visibility [Neubelt 2013], diffuse wrapped round the terminator tinted by Subsurface Color [Filament 4.12] | prefiltered radiance times the sheen's DG average |
 | **Subsurface** | leaves, wax, marble, ice | Default plus transmission through Thickness: forward scattering as a spherical Gaussian, back scattering wrapped [Green 2004; Barre-Brisebois 2011; Filament 4.11] | adds the irradiance from behind, times the back scatter |
 | **Skin** | faces, hands | Subsurface's, its diffuse kept apart and blurred in screen space by a skin profile [Jimenez 2015; d'Eon 2007] | the same split |
+| **Volume** | lit smoke, dust, steam (Translucent only; LIT_TRANSLUCENCY.md, Phase 5) | a Henyey-Greenstein phase of Phase Anisotropy about the view, times 4 pi so an even medium is as bright as Lambert facing the light; no N.L, no specular, no area-light lobes; Normal Influence wraps it toward the normal (half Lambert) [Henyey 1941] | the irradiance up and down, averaged (probes or a GI Volume); no specular |
 
 All of it is in `Engine/Content/Shaders/ShadingModels.glsl` (the lobes,
 `EvaluateLightModel`, the custom data) and `IBLShading.glsl`

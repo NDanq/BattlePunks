@@ -56,6 +56,11 @@ MATERIALS = [
     # Phase 3: a nearly clear, shiny pane, its specular over its opacity (Surface) or faded by it (Legacy).
     ("TransLitShiny", "Translucent", "Lit", {"Roughness": "0.3", "Opacity": "0.02"}, {"TranslucencyLighting": "Surface"}),
     ("TransLitShinyLegacy", "Translucent", "Lit", {"Roughness": "0.3", "Opacity": "0.02"}, {"TranslucencyLighting": "Legacy"}),
+    # Phase 5: a Volume quad, scattering forward and back.
+    ("VolumeForward", "Translucent", "Lit", {"BaseColor": vec(0.8, 0.8, 0.8), "Opacity": "0.6", "PhaseAnisotropy": "0.6"},
+     {"ShadingModel": "Volume"}),
+    ("VolumeBack", "Translucent", "Lit", {"BaseColor": vec(0.8, 0.8, 0.8), "Opacity": "0.6", "PhaseAnisotropy": "-0.6"},
+     {"ShadingModel": "Volume"}),
     # Opaque surroundings.
     ("OpaqueWhite", "Opaque", "Lit", {"BaseColor": vec(0.8, 0.8, 0.8), "Roughness": "0.9"}, {}),
     ("OpaqueRed", "Opaque", "Lit", {"BaseColor": vec(0.8, 0.05, 0.05), "Roughness": "0.9"}, {}),

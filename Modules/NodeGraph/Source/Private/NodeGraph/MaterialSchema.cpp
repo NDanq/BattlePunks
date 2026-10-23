@@ -107,7 +107,7 @@ namespace
     const std::vector<std::string> GDomainChoices  = { "Opaque", "Masked", "Translucent", "PostProcess" };
     const std::vector<std::string> GShadingChoices = { "Lit", "Unlit" };
     /* A Lit material's BRDF: RenderCore's EMaterialShadingModel, in its order (SHADING_MODELS.md). */
-    const std::vector<std::string> GShadingModelChoices = { "Default", "ClearCoat", "Anisotropic", "Cloth", "Subsurface", "Skin" };
+    const std::vector<std::string> GShadingModelChoices = { "Default", "ClearCoat", "Anisotropic", "Cloth", "Subsurface", "Skin", "Volume" };
     /* A Translucent Lit material's blend (LIT_TRANSLUCENCY.md, Phase 3): Surface, its
      * specular over its opacity; Legacy, everything faded by it, as before. */
     const std::vector<std::string> GTranslucencyLightingChoices = { "Surface", "Legacy" };
@@ -127,6 +127,8 @@ namespace
         { "SheenColor",         { "Cloth" } },
         { "SubsurfaceColor",    { "Cloth", "Subsurface", "Skin" } },
         { "Thickness",          { "Subsurface", "Skin" } },
+        { "PhaseAnisotropy",    { "Volume" } },
+        { "NormalInfluence",    { "Volume" } },
     };
 
     /* std140 base alignment and size of a float type. */
@@ -600,6 +602,10 @@ namespace
         {
             ShadingModel = "Default";   // an Unlit material has no BRDF to choose
         }
+        if(ShadingModel == "Volume" && Domain != "Translucent")
+        {
+            Result.Error(Root->Id, std::string(), "the Volume shading model is forward only: set Domain to Translucent");
+        }
 
         double ClipValue = 0.5, MaxOffset = 0.0;
         if(!bLegacy)
@@ -810,7 +816,7 @@ namespace
          *     NimbleMaterial 3
          *     Domain <Opaque|Masked|Translucent|PostProcess>
          *     Shading <Lit|Unlit>
-         *     ShadingModel <ClearCoat|Anisotropic|Cloth|Subsurface|Skin>   (a Lit one's; none for Default)
+         *     ShadingModel <ClearCoat|Anisotropic|Cloth|Subsurface|Skin|Volume>   (a Lit one's; none for Default)
          *     TwoSided <0|1>
          *     TranslucencyLighting Surface   (a Translucent Lit one's, when not Legacy)
          *     ClipValue <x>
@@ -1869,6 +1875,12 @@ namespace
                        "Cloth: the tint light wraps round with. Subsurface and Skin: the colour of light that has passed through"),
                 Staged(In("Thickness", "float", "0.5"), STAGE_PIXEL,
                        "Subsurface and Skin: 0 thin (light shines through), 1 thick (none does)"),
+                Staged(In("PhaseAnisotropy", "float", "0"), STAGE_PIXEL,
+                       "Volume: which way the medium scatters light -- below 0 back toward the light, 0 every way alike, "
+                       "above 0 on along its path (smoke about 0.3: bright looking toward the sun)"),
+                Staged(In("NormalInfluence", "float", "0"), STAGE_PIXEL,
+                       "Volume: 0 lit from every side alike, 1 shaded by its Normal like a surface (a flipbook's normal map, "
+                       "Particle Sphere Normal)"),
                 Staged(In(OFFSET_PIN, "vec3", "0 0 0"), STAGE_VERTEX,
                        "World-space offset added to each vertex. Vertex stage: pixel-only nodes cannot feed it"),
             };
@@ -1878,7 +1890,8 @@ namespace
                 { "Shading", EPropertyKind::Choice, "Lit", GShadingChoices, "Lit: physically based, by the scene's light. Unlit: Emissive only" },
                 { "ShadingModel", EPropertyKind::Choice, "Default", GShadingModelChoices,
                   "Lit: the surface's BRDF. Default (plastic, metal, stone), Clear Coat (car paint, varnish), Anisotropic "
-                  "(brushed metal), Cloth (velvet, cotton), Subsurface (leaves, wax, marble) or Skin" },
+                  "(brushed metal), Cloth (velvet, cotton), Subsurface (leaves, wax, marble), Skin, or Volume (lit smoke, "
+                  "dust, steam: Translucent only)" },
                 { "TwoSided", EPropertyKind::Bool, "false", {}, "Light back faces with a flipped normal" },
                 { "TranslucencyLighting", EPropertyKind::Choice, "Surface", GTranslucencyLightingChoices,
                   "Translucent Lit: Surface keeps the reflections and highlights whatever the Opacity (clear glass still "
@@ -1940,6 +1953,10 @@ namespace
                        "mesh: times each particle's colour, which fades over its life.";
         Pure("Input.WorldPosition", "World Position", "Inputs", { Out("Position", "vec3", "Inputs.WorldPosition") }, {}, "absolute")
             .Tooltip = "Where this point is in the world. In the vertex stage, before World Position Offset moves it.";
+        PixelOnly(Pure("Input.ParticleSphereNormal", "Particle Sphere Normal", "Inputs",
+                       { Out("Normal", "vec3", "Material_SphereNormal(Inputs)") }, {}, "sprite puff round smoke billboard"),
+                  "A world normal bulging out of a quad like a sphere, by its UV: feed Normal so a flat sprite shades round "
+                  "(with the Volume model, raise Normal Influence).");
         Pure("Input.CameraPosition", "Camera Position", "Inputs", { Out("Position", "vec3", "Scene_CameraPosition.xyz") }, {},
              "eye view camera fresnel")
             .Tooltip = "Where the view's eye is in the world: with World Position, the direction to the camera (Fresnel).";

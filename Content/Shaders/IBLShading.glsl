@@ -18,15 +18,26 @@
 void IBL_LightModelBounce(sampler2D InAtlas, vec3 InPosition, in LightingSurface S, float InOcclusion, float InDiffuse,
                           vec4 InScreen, vec4 InBounce, out vec3 OutDiffuse, out vec3 OutSpecular)
 {
-    vec3 Ambient = IBL_GatherIrradiance(InAtlas, InPosition, S.N);
+    // A thin medium (Volume) is lit from every side alike: the irradiance up and down, averaged.
+    bool bMedium = S.Model == SHADING_MODEL_VOLUME;
+    vec3 Ambient = bMedium ? 0.5 * (IBL_GatherIrradiance(InAtlas, InPosition, vec3(0.0, 1.0, 0.0))
+                                  + IBL_GatherIrradiance(InAtlas, InPosition, vec3(0.0, -1.0, 0.0)))
+                           : IBL_GatherIrradiance(InAtlas, InPosition, S.N);
 #ifdef DDGI_GLSL
     if(InDiffuse > 0.0)
     {
-        float Held;
-        vec3  Volume = DDGI_Irradiance(InPosition, S.N, S.V, Held);
+        float Held, HeldDown;
+        vec3  Volume = DDGI_Irradiance(InPosition, bMedium ? vec3(0.0, 1.0, 0.0) : S.N, S.V, Held);
+        if(bMedium) { Volume = 0.5 * (Volume + DDGI_Irradiance(InPosition, vec3(0.0, -1.0, 0.0), S.V, HeldDown)); }
         Ambient = mix(Ambient, Volume, Held);
     }
 #endif
+    if(bMedium)
+    {
+        OutDiffuse  = (InBounce.rgb + Ambient * (1.0 - clamp(InBounce.a, 0.0, 1.0))) * InOcclusion * InDiffuse;
+        OutSpecular = vec3(0.0);   // a medium reflects nothing
+        return;
+    }
     vec3 Irradiance = InBounce.rgb + Ambient * (1.0 - clamp(InBounce.a, 0.0, 1.0));
     float Screen    = clamp(InScreen.a, 0.0, 1.0);
 

@@ -124,6 +124,8 @@ LightingSurface LightingSurfaceOf(in MaterialSurface Surface, int InModel, vec3 
                                             Surface.Specular, InNormal, normalize(Scene_CameraPosition.xyz - InWorldPosition));
     SetLightingSurfaceModel(S, Surface.ClearCoat, Surface.ClearCoatRoughness, Surface.ClearCoatNormal, Surface.Anisotropy,
                             Surface.Tangent, Surface.SheenColor, Surface.SubsurfaceColor, Surface.Thickness);
+    S.Phase           = Surface.PhaseAnisotropy;
+    S.NormalInfluence = Surface.NormalInfluence;
     return S;
 }
 
@@ -187,7 +189,7 @@ void LightingLocal(in LightingSurface S, int InIndex, vec3 InWorldPosition, bool
     vec3 Diffuse, Specular, Transmitted;
     vec3 Radiance = ToLinear(ColorIntensity.rgb) * ColorIntensity.a * Attenuation;
     // A sphere narrower than 0.05 radians from here lights as the point it nearly is.
-    if(LightList_Flag(LIGHT_LIST_FLAG_AREA) && (bRect || AreaRight.w > 0.05 * Distance) && S.Model != SHADING_MODEL_CLOTH)
+    if(LightList_Flag(LIGHT_LIST_FLAG_AREA) && (bRect || AreaRight.w > 0.05 * Distance) && S.Model != SHADING_MODEL_CLOTH && S.Model != SHADING_MODEL_VOLUME)
     {
         // An area light (AreaLights.glsl): a rect's own corners, or a sphere as the
         // square of its area facing this point. The lobe's and the cosine's
@@ -293,7 +295,7 @@ void ShadeSurfaceSplit(in LightingSurface S, vec3 InWorldPosition, float InOcclu
     }
 
     // +Y is up, so the sky is toward +Y.
-    float Up      = clamp(S.N.y * 0.5 + 0.5, 0.0, 1.0);
+    float Up      = S.Model == SHADING_MODEL_VOLUME ? 0.5 : clamp(S.N.y * 0.5 + 0.5, 0.0, 1.0);   // a medium sees sky and ground alike
     vec3  Ambient = mix(ToLinear(Scene_GroundColor.rgb), ToLinear(Scene_SkyColor.rgb), Up) * Scene_SkyColor.a;
     vec3  IndirectDiffuse  = Ambient * (1.0 - S.Metallic) * InAmbientDiffuse * InOcclusion;
     vec3  IndirectSpecular = Ambient * S.F0 * (1.0 - S.Roughness) * 0.5 * InOcclusion;

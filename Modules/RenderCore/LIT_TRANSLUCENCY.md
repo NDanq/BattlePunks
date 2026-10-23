@@ -189,23 +189,42 @@ LTC table, 9 and 10 DDGI's atlases (bound only during the IBL pass today).
   Phase 3 -- its stack has the SSR node, so its glass and water reflect now
   (the node is the opt-in, not the material).
 
-## Phase 5: the Volume shading model (lit particles, per pixel)
+## Phase 5: the Volume shading model (lit particles, per pixel) (landed)
 
-- **SHADING_MODEL_VOLUME** (6), forward only (a Base Pass material with it is
-  a compile error, as is Opaque or Masked): light scattered by a thin
-  medium, not reflected by a surface.
-  - Each light: its irradiance x a Henyey-Greenstein phase of **Phase
-    Anisotropy** (a new pin, -0.9 to 0.9; 0.3 for smoke) about the view, no
-    N.L, no specular. **Normal Influence** (0-1) wraps by N.L toward a
-    shaped sprite's normal, so a flipbook's normal map still reads.
-  - Ambient: the probes' and DDGI's irradiance averaged over up and down
-    (non-directional), x Base Color.
-  - Shadows from Phase 2, per pixel.
-- **Sphere normals** for sprites: a material node, *Particle Sphere Normal*,
-  bends the quad's normal across its UV like a sphere, for round puffs under
-  a Default-model material.
-- LightLab's `FlareSmoke` and LightingLab get a lit variant; Explosion's
-  smoke goes Volume with its flipbook.
+- **Volume** (`SHADING_MODEL_VOLUME`, 6; `EMaterialShadingModel::Volume`),
+  forward only -- the schema refuses it outside the Translucent domain:
+  light scattered by a thin medium, not reflected by a surface.
+  - Each light: its radiance x a Henyey-Greenstein phase of **Phase
+    Anisotropy** (a new Material Output pin, -0.9 to 0.9) about the light's
+    travel and the view, times 4 pi so an even medium is as bright as
+    Lambert facing the light; no N.L, no specular, no area-light lobes.
+    **Normal Influence** (a new pin, 0-1) wraps it toward the normal
+    (half Lambert, times 2 to average 1), so a flipbook's normal map or a
+    sphere normal still reads.
+  - Ambient: the probes' (or a GI Volume's) irradiance up and down,
+    averaged; the hemisphere ambient's middle without IBL.
+  - Shadows from Phase 2, per pixel; never metal.
+- **Particle Sphere Normal** (`Input.ParticleSphereNormal`, pixel only):
+  a world normal bulging out of a quad like a sphere, by UV, along the
+  cotangent frame (`Material_SphereNormal`).
+- The cook's model list, the pixel key's bits 5-7 and the `.material`'s
+  `ShadingModel Volume` take it with no other change.
+- **Checked:** RenderCore.Smoke on the GPU, 758 checks, none failing on
+  Vulkan or D3D12; NodeGraph.Tests. New: a Volume quad over black, the sun
+  behind it (the backdrop casting no shadow) -- 117 scattering forward
+  (g 0.6), 60 back (g -0.6), and even across (114 | 117 | 114). (The
+  plan's "no pixel above the diffuse bound" check was dropped: a medium
+  has no specular lobe to glint.)
+- **TranslucencyLab:** the plume's smoke is Volume (g 0.3, Normal
+  Influence 0.5, Particle Sphere Normal): softer and slightly darker
+  (-0.5 in its region, 43 dB); glass and water unchanged. Identical on
+  Vulkan and D3D12. The plume view's Forward 0.55 ms on Vulkan, 1.02 on
+  D3D12 -- the same as Phase 4 within noise (the medium drops the specular
+  lobes the surface model paid for). The plan's "at most 2x unlit" was not
+  measured against an unlit plume.
+- **Not done:** LightLab's FlareSmoke and Explosion are in Games/Sandbox,
+  which is not tracked; their lit variants were left out.
+- **Regression:** LightingLab bit-identical; Courtyard 83 dB (its floor 81).
 
 ## Phase 6: per-particle lighting (lit particles, cheap)
 

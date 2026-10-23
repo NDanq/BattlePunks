@@ -39,8 +39,9 @@ namespace RenderCore
     enum class EMaterialShading : uint8_t { Lit = 0, Unlit = 1 };
     /* A Lit material's BRDF (SHADING_MODELS.md): GBuffer2's alpha in the Base
      * Pass, a compile-time choice in a forward one. Unlit materials are Default. */
-    enum class EMaterialShadingModel : uint8_t { Default = 0, ClearCoat = 1, Anisotropic = 2, Cloth = 3, Subsurface = 4, Skin = 5 };
-    constexpr uint32_t MATERIAL_SHADING_MODEL_COUNT = 6;
+    /* Volume: forward only, a thin medium (LIT_TRANSLUCENCY.md, Phase 5). */
+    enum class EMaterialShadingModel : uint8_t { Default = 0, ClearCoat = 1, Anisotropic = 2, Cloth = 3, Subsurface = 4, Skin = 5, Volume = 6 };
+    constexpr uint32_t MATERIAL_SHADING_MODEL_COUNT = 7;
     /* InstancedMesh: a mesh drawn many times in one draw (GDISetInstanceBuffer),
      * each instance's transform after the model's and its colour times the
      * vertex colour -- what a particle system draws with. SkinnedMesh: a mesh

@@ -95,7 +95,7 @@ MATERIAL_INCLUDE = "Material.glsl"   # what the templates include; mapped per ma
 # --- Permutation keys (RenderCore's MaterialPermutation.h says the same) ------
 DOMAINS    = ["Opaque", "Masked", "Translucent", "PostProcess"]   # bits 0-2
 SHADINGS   = ["Lit", "Unlit"]                                     # bits 3-4
-SHADING_MODELS = ["Default", "ClearCoat", "Anisotropic", "Cloth", "Subsurface", "Skin"]   # bits 5-7 (SHADING_MODELS.md)
+SHADING_MODELS = ["Default", "ClearCoat", "Anisotropic", "Cloth", "Subsurface", "Skin", "Volume"]   # bits 5-7 (SHADING_MODELS.md)
 VERTEX_INS = ["Quad", "Mesh", "Fullscreen", "InstancedMesh", "SkinnedMesh"]   # bits 8-10
 
 CACHE_VERSION = 1
