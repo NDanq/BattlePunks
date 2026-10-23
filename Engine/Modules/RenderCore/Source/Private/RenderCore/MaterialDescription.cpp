@@ -154,6 +154,7 @@ namespace RenderCore
             }
             else if(Keyword == "TwoSided")  { int Flag = 0; Words >> Flag; Result.bTwoSided  = Flag != 0; }
             else if(Keyword == "ParticleLighting") { int Flag = 0; Words >> Flag; Result.bParticleLighting = Flag != 0; }
+            else if(Keyword == "TranslucentShadow") { Words >> Result.TranslucentShadow; Result.TranslucentShadow = std::clamp(Result.TranslucentShadow, 0.0f, 1.0f); }
             else if(Keyword == "TranslucencyLighting")
             {
                 Words >> Value;

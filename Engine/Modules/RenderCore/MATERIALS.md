@@ -69,6 +69,12 @@ fades everything by Opacity, as before. A new Material Output node is Surface;
 a graph saved before the property existed has none and is Legacy, so old
 content looks as it did.
 
+**Cast Translucent Shadow** (the Material Output's, Translucent only;
+LIT_TRANSLUCENCY.md): its mesh casts a see-through shadow into the lights'
+opacity shadow maps, stopping **Translucent Shadow Opacity** of the light at
+each face it crosses (`.material`: `TranslucentShadow <opacity>`); its Render
+component must Cast Shadows.
+
 **Particle Lighting** (the Material Output's, Translucent Unlit only;
 LIT_TRANSLUCENCY.md, Phase 6): **Per Particle** lights each particle once, at
 its centre, in the material's own vertex shaders -- the sun through its shadow

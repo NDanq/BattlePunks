@@ -7,6 +7,7 @@
       <Prop Name="MaxOffset" Value="0" />
       <Prop Name="ParticleLighting" Value="PerParticle" />
       <Prop Name="ParticlePhase" Value="0.3" />
+      <Prop Name="ParticleSelfOcclusion" Value="0.5" />
       <Prop Name="Shading" Value="Unlit" />
       <Prop Name="TwoSided" Value="false" />
     </Node>
@@ -42,6 +43,7 @@
 // Particle Lighting Per Particle: each instance lit at its centre (ParticleLighting.glsl).
 #define MATERIAL_PARTICLE_LIGHTING 1
 #define MATERIAL_PARTICLE_PHASE 0.3
+#define MATERIAL_PARTICLE_SELF_OCCLUSION 0.5
 
 // Bytes 0-159 are the engine's; the parameters' offsets are in SmokePerParticle.material.
 UBO_BLOCK_BEGIN(2, SmokePerParticle_Block)

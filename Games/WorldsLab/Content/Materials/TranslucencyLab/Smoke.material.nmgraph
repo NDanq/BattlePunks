@@ -10,6 +10,7 @@
       <Const Pin="NormalInfluence" Value="0.5" />
       <Const Pin="PhaseAnisotropy" Value="0.3" />
       <Const Pin="Roughness" Value="1" />
+      <Const Pin="SelfOcclusion" Value="0.5" />
       <Prop Name="ClipValue" Value="0.5" />
       <Prop Name="Domain" Value="Translucent" />
       <Prop Name="MaxOffset" Value="0" />
@@ -69,6 +70,7 @@ void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
     Surface.Opacity = t5;
     Surface.Normal = Material_SphereNormal(Inputs);
     Surface.PhaseAnisotropy = 0.3;
+    Surface.SelfOcclusion = 0.5;
     Surface.NormalInfluence = 0.5;
 }
 #endif

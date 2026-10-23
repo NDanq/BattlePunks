@@ -12,7 +12,7 @@
     <Material7 Value="" />
     <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
     <ParameterCount Value="0" />
-    <CastShadows Value="false" />
+    <CastShadows Value="true" />
     <CastInsetShadow Value="false" />
     <Occluder Value="false" />
   </Component>

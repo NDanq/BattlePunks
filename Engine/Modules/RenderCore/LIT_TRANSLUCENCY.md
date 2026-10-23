@@ -326,9 +326,8 @@ LTC table, 9 and 10 DDGI's atlases (bound only during the IBL pass today).
   to 60 dB (as since Phase 6).
 - **Cost:** the Shadows span in the plume view 0.08 -> 0.13 ms on Vulkan,
   0.13 -> 0.18 on D3D12; nothing without casters.
-- **Not done:** glass casting (a Translucent material's Cast Translucent
-  Shadow); point lights' faces share one span; fog's march does not read the
-  atlas yet.
+- **Not done here** (landed after Phase 8, below): glass casting; fog's
+  march reading the atlas. Point lights' faces share one span.
 - **Regression:** LightingLab bit-identical, Courtyard 80 dB (no casters).
 
 ## Phase 8: self-shadowing (landed)
@@ -344,8 +343,7 @@ LTC table, 9 and 10 DDGI's atlases (bound only during the IBL pass today).
   size along the light (the pixel shader does not know it); the effect is
   the same while particles are smaller than a quarter of the casters' depth
   span.
-- **Not done:** the ambient self-occlusion (a plume darkening its own sky
-  light by its depth toward the sun) -- it was to be off by default.
+- **Not done here** (landed after, below): the ambient self-occlusion.
 - **Checked:** RenderCore.Smoke on the GPU, 766 checks, none failing on
   Vulkan or D3D12. New: one casting Volume particle under a sun straight
   down -- 122 with translucent shadows off, 118 on (97 %: not shadowed by
@@ -357,6 +355,43 @@ LTC table, 9 and 10 DDGI's atlases (bound only during the IBL pass today).
   shading only on its far side from the sun, its shadow on the floor kept.
   Forward GPU time unchanged; the Shadows span as Phase 7's.
 - **Regression:** LightingLab bit-identical; Courtyard 81 dB.
+
+## After Phase 8: glass casting, fog through plumes, self-occlusion (landed)
+
+- **Glass casting:** a Material Output's **Cast Translucent Shadow** and
+  **Translucent Shadow Opacity** (Translucent domain; the `.material` says
+  `TranslucentShadow <opacity>`). Its Render component must Cast Shadows:
+  `QueueDepthSections` then lets the Translucent section into the Shadows
+  stage (not skinned, not instanced) with its world bounds
+  (`DrawCommand::CasterBounds`), so static draw lists keep it too. The depth
+  pass leaves such draws out (`IsTranslucentCaster`); the opacity pass draws
+  them into their view's tile with `OpacityShadowMesh.vsh` at the material's
+  opacity everywhere (`OpacityShadowCaster.fsh`, `Opacity_Params.w` 1), their
+  bounds widening the view's depth span. Each face the light crosses counts
+  (a box pane: two).
+- **Fog through plumes:** `PPVolumetricFog.fsh`'s sun visibility is its depth
+  test times the light through the opacity atlas (engine slot 15, bound for
+  the march), so a plume or a skylight cuts the shafts.
+- **Ambient self-occlusion:** the Volume model's **Self Occlusion** pin and a
+  per-particle material's **Particle Self Occlusion** (both 0 by default):
+  the medium's ambient times `exp(-that x the optical depth toward the sun)`
+  (`Translucent_SunDepth`), the depth from itself past its own (Phase 8's
+  three quarters of a slice).
+- **Shared lookup:** `TranslucentShadows.glsl` -- the slices' read
+  (`Translucent_Depth`), the sun's cascade and span, the depth toward the
+  sun -- used by `Shadows.glsl`, the fog and the self-occlusion.
+- **Checked:** RenderCore.Smoke on the GPU, 771 checks, none failing on
+  Vulkan or D3D12. New: a flat pane at Translucent Shadow Opacity 0.5 over a
+  floor under a sun straight down -- the floor under it 138 with translucent
+  shadows on, 210 off (two faces: about a quarter of the sun through, the sky
+  on top); and under a casting particle with the sun nearly off, a medium
+  with Self Occlusion 1 takes 36 of the sky's light against 52 with 0. (No
+  new check for the fog: it needs a post stack; the lab stands in.)
+- **TranslucencyLab** (the panes cast at 0.3; both smokes self-occlude at
+  0.5): the glass view's lit side 3.8 darker -- the panes' shadow on the floor
+  and backdrop behind them; the plume 0.1 darker, its fog shafts with it.
+  Vulkan and D3D12 agree to 60-69 dB, as since Phase 6.
+- **Regression:** LightingLab bit-identical; Courtyard 83 dB (no casters).
 
 ## Not in this plan
 

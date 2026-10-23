@@ -32,19 +32,13 @@
 #ifndef LIGHTING_TRANSLUCENT_SELF
 #define LIGHTING_TRANSLUCENT_SELF 0.0
 #endif
+#ifdef LIGHTING_TRANSLUCENT_SHADOWS
+#include <TranslucentShadows.glsl>
+#endif
 float TranslucentLight(mat4 InMatrix, vec3 InWorld, bool bInLocal, vec2 InRange)
 {
 #ifdef LIGHTING_TRANSLUCENT_SHADOWS
-    if(Scene_Spare[2].x < 0.5 || InRange.y <= InRange.x) { return 1.0; }
-    vec4 Clip = InMatrix * vec4(InWorld, 1.0);
-    if(Clip.w <= 0.0) { return 1.0; }
-    vec3 Atlas = Clip.xyz / Clip.w;
-    if(any(lessThan(Atlas.xy, vec2(0.0))) || any(greaterThan(Atlas.xy, vec2(1.0)))) { return 1.0; }
-    vec4  Slices = textureLod(TranslucentOpacity, vec2(Atlas.x * 0.5 + (bInLocal ? 0.5 : 0.0), Atlas.y), 0.0);
-    float At     = clamp((Atlas.z - InRange.x) / (InRange.y - InRange.x), 0.0, 1.0) * 4.0 - float(LIGHTING_TRANSLUCENT_SELF);
-    float Depth  = 0.0;
-    for(int Index = 0; Index < 4; ++Index) { Depth += Slices[Index] * clamp(At - float(Index), 0.0, 1.0); }
-    return exp(-Depth);
+    return exp(-Translucent_Depth(TranslucentOpacity, InMatrix, InWorld, bInLocal, InRange, float(LIGHTING_TRANSLUCENT_SELF)));
 #else
     return 1.0;
 #endif
@@ -132,7 +126,7 @@ float DirectionalShadow(vec3 InWorld, vec3 InNormal, vec3 InToLight)
     float Lit     = SampleShadowAtlas(ShadowDirectional, Matrix, InWorld + Offset,
                                       SlopeBias(Scene_LightShadow.z * 256.0, NdotL) * Scene_CascadeTexels[Cascade] * PerUnit, Tile);
     vec4  Ranges  = Cascade < 2 ? Scene_Spare[0] : Scene_Spare[1];   // the cascades' translucent casters' depth spans
-    Lit *= TranslucentLight(Matrix, InWorld + Offset, false, (Cascade == 0 || Cascade == 2) ? Ranges.xy : Ranges.zw);
+    Lit *= TranslucentLight(Matrix, InWorld + Offset, false, (Cascade == 0 || Cascade == 2) ? Ranges.xy : Ranges.zw);   // Translucent_CascadeRange's
     return mix(Lit, 1.0, smoothstep(Last * 0.9, Last, ViewDepth));
 }
 

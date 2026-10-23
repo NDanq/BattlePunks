@@ -64,12 +64,17 @@ def opaque(name, consts):
     return g
 
 
-def translucent(name, consts, two_sided=False, surface=True):
-    """surface: Translucency Lighting Surface, the specular over the opacity (Phase 3)."""
+def translucent(name, consts, two_sided=False, surface=True, shadow=0.0):
+    """surface: Translucency Lighting Surface, the specular over the opacity (Phase 3).
+    shadow: Cast Translucent Shadow at that opacity (0: none)."""
     g = Graph(name)
     out = cy.output(g, domain="Translucent", two_sided=two_sided, consts=consts)
+    props = next(n for n in g.nodes if n[0] == out)[3]
     if surface:
-        next(n for n in g.nodes if n[0] == out)[3]["TranslucencyLighting"] = "Surface"
+        props["TranslucencyLighting"] = "Surface"
+    if shadow > 0.0:
+        props["CastTranslucentShadow"] = "true"
+        props["TranslucentShadowOpacity"] = cy.vec(shadow)
     return g
 
 
@@ -78,7 +83,8 @@ def smoke():
     Steam, with the Volume shading model (Phase 5): forward scattering 0.3,
     half shaded by a sphere's normal across the sprite."""
     g = Graph("Smoke")
-    out = cy.output(g, domain="Translucent", consts={"Roughness": "1", "PhaseAnisotropy": "0.3", "NormalInfluence": "0.5"})
+    out = cy.output(g, domain="Translucent", consts={"Roughness": "1", "PhaseAnisotropy": "0.3", "NormalInfluence": "0.5",
+                                                               "SelfOcclusion": "0.5"})
     next(n for n in g.nodes if n[0] == out)[3]["ShadingModel"] = "Volume"
     g.link(g.node("Input.ParticleSphereNormal"), "Normal", out, "Normal")
     tc = g.node("Input.TexCoord")
@@ -103,6 +109,7 @@ def smoke_per_particle():
     props = next(n for n in g.nodes if n[0] == out)[3]
     props["ParticleLighting"] = "PerParticle"
     props["ParticlePhase"] = "0.3"
+    props["ParticleSelfOcclusion"] = "0.5"
     tc = g.node("Input.TexCoord")
     dist = g.node("Vector.Distance", consts={"B": cy.vec(0.5, 0.5)})
     g.link(tc, "UV", dist, "A")
@@ -122,7 +129,8 @@ MATERIALS = [
     opaque("Wall", {"BaseColor": cy.vec(0.7, 0.7, 0.7), "Roughness": "0.9"}),
     opaque("Backdrop", {"BaseColor": cy.vec(0.06, 0.06, 0.07), "Roughness": "0.9"}),
     opaque("Red", {"BaseColor": cy.vec(0.75, 0.08, 0.06), "Roughness": "0.6"}),
-    translucent("Glass", {"BaseColor": cy.vec(0.9, 0.95, 0.95), "Roughness": "0.05", "Opacity": "0.12"}, two_sided=True),
+    translucent("Glass", {"BaseColor": cy.vec(0.9, 0.95, 0.95), "Roughness": "0.05", "Opacity": "0.12"}, two_sided=True,
+                shadow=0.3),
     translucent("Water", {"BaseColor": cy.vec(0.05, 0.12, 0.11), "Roughness": "0.03", "Opacity": "0.45"}),
     smoke(),
     smoke_per_particle(),
@@ -347,7 +355,7 @@ def level():
     # The glass: three panes at z 0, x -800 to -200, a dark backdrop behind; an overhead
     # slab on the sun's side shadows the left of them.
     for index in range(3):
-        entity(f"Pane{index}", render(BOX, M + "Glass.material.nmgraph", shadows=False)
+        entity(f"Pane{index}", render(BOX, M + "Glass.material.nmgraph")
                + transform((-700 + index * 220, 160, 0), scale=(200, 300, 4)))
     entity("Backdrop", render(BOX, M + "Backdrop.material.nmgraph") + transform((-480, 220, 260), scale=(900, 440, 20)))
     # Out of the glass view: the light travels (0.2, -0.64, 0.74), so its shadow lands 1.15 x the height above a

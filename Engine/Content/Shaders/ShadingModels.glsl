@@ -46,6 +46,7 @@ struct LightingSurface
     float Thickness;          // Subsurface, Skin
     float Phase;              // Volume: Henyey-Greenstein g, -0.9 to 0.9
     float NormalInfluence;    // Volume: 0 to 1
+    float SelfOcclusion;      // Volume: its ambient times exp(-this x the optical depth toward the sun)
 };
 
 // --- Lobes ------------------------------------------------------------------
@@ -318,6 +319,7 @@ LightingSurface MakeLightingSurface(int InModel, vec3 InAlbedo, float InMetallic
     S.Thickness     = 1.0;
     S.Phase           = 0.0;
     S.NormalInfluence = 0.0;
+    S.SelfOcclusion   = 0.0;
     if(InModel == SHADING_MODEL_CLOTH || InModel == SHADING_MODEL_VOLUME)
     {
         S.Metallic = 0.0;   // cloth is never metal, its specular the sheen; a medium has no surface to be metal

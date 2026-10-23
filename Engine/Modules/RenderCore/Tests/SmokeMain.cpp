@@ -3801,7 +3801,71 @@ static void TestTranslucencyOnGpu()
                 Expect(Below * 10 < On * 9, "and one under another is shadowed by it");
             }
             World.DestroyEntity(Lower);
+
+            /* Ambient self-occlusion: the sun nearly off, so the sky lights the lower particle
+             * alone; under the casting one, a medium with Self Occlusion 1 is darker than one
+             * with 0. */
+            const auto WriteMaterial = [](const char* InPath, const char* InMaterial)
+            {
+                std::ofstream File(InPath, std::ios::binary);
+                File << "NimbleParticleSystem 1\n\nEmitter One\n    Enabled true\n    Type Sprite\n"
+                        "    Material Engine/Content/Materials/Testing/" << InMaterial << ".material.nmgraph\n"
+                        "    SpawnMode Burst\n    MaxParticles 1\n    BurstCount 1\n    BurstInterval 0\n    BurstCycles 1\n"
+                        "    Lifetime 60\n    LifetimeVariance 0\n    EmitterRadius 0\n    Velocity 0,0,0\n    VelocitySpread 0\n"
+                        "    StartSize 120\n    EndSize 120\n    StartColor 255,255,255,180\n    EndColor 255,255,255,180\n"
+                        "    FadeIn 0\n    FadeOut 0\n    PauseOffscreen false\n";
+            };
+            WriteMaterial("Saved/TranslucencySmoke/Occluded.nmparticle", "VolumeOccluded");
+            WriteMaterial("Saved/TranslucencySmoke/Open.nmparticle", "VolumeOpen");
+            const auto Receiver = [&](const char* InSystem)
+            {
+                const GameCore::Entity Each = Placed("Receiver", Vector3(0.0, 200.0, 300.0), Vector3(), Vector3(1.0, 1.0, 1.0));
+                ParticleSystemComponent System;
+                std::snprintf(System.System, sizeof(System.System), "%s", InSystem);
+                Each.AddComponent(System);
+                return Each;
+            };
+            Sun.GetComponent<DirectionalLightComponent>()->Intensity = 0.02f;
+            EngineCore::Image Occluded, Open;
+            GameCore::Entity Under = Receiver("Saved/TranslucencySmoke/Occluded.nmparticle");
+            const bool bOccluded = Capture(Occluded);
+            World.DestroyEntity(Under);
+            Under = Receiver("Saved/TranslucencySmoke/Open.nmparticle");
+            const bool bOpen = Capture(Open);
+            World.DestroyEntity(Under);
             World.DestroyEntity(Upper);
+            Sun.GetComponent<DirectionalLightComponent>()->Intensity = SunInit.Intensity;
+            Expect(bOccluded && bOpen, "the receiver under a casting particle is captured with Self Occlusion 1 and 0");
+            if(bOccluded && bOpen)
+            {
+                const int Dark = Centre(Occluded, 97), Lit = Centre(Open, 97);
+                std::printf("    self-occlusion: under a caster, the sky's light %d with it, %d without\n", Dark, Lit);
+                Expect(Dark * 10 < Lit * 9, "Self Occlusion darkens a medium's sky light by the medium toward the sun");
+            }
+
+            /* Glass casting: a flat pane (a skylight) over the floor with Cast Translucent Shadow at
+             * opacity 0.5. The floor under it is darker with translucent shadows on, never black. */
+            const GameCore::Entity GlassFloor = Placed("GlassFloor", Vector3(0.0, -1.0, 300.0), Vector3(), Vector3(2000.0, 2.0, 2000.0));
+            GlassFloor.AddComponent(Drawn(BOX, "OpaqueWhite"));
+            const GameCore::Entity Skylight = Placed("Skylight", Vector3(0.0, 160.0, 300.0), Vector3(), Vector3(240.0, 2.0, 240.0));
+            Skylight.AddComponent(Drawn(BOX, "GlassCaster"));
+            EngineCore::Image GlassOn, GlassOff;
+            Translucent->SetFromString("1");
+            const bool bGlassOn = Capture(GlassOn);
+            Translucent->SetFromString("0");
+            const bool bGlassOff = Capture(GlassOff);
+            Translucent->SetFromString("1");
+            Expect(bGlassOn && bGlassOff, "the skylight is captured with translucent shadows on and off");
+            if(bGlassOn && bGlassOff)
+            {
+                Dump(GlassOn, "glass-shadow-on");
+                const int UnderOn = FloorGrey(GlassOn, 128), UnderOff = FloorGrey(GlassOff, 128);
+                std::printf("    glass: floor under the skylight %d on, %d off\n", UnderOn, UnderOff);
+                Expect(UnderOn < UnderOff * 85 / 100, "a Translucent material with Cast Translucent Shadow casts a see-through shadow");
+                Expect(UnderOn > UnderOff * 20 / 100, "which lets light through");
+            }
+            World.DestroyEntity(Skylight);
+            World.DestroyEntity(GlassFloor);
             Sun.GetComponent<GameCore::TransformComponent>()->Rotation = Vector3(35.0, 10.0, 0.0);
         }
 

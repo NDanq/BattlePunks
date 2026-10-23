@@ -2261,6 +2261,7 @@ namespace RenderCore
         GDITextureResource* ForwardOpacityAtlas = nullptr;
         GDIShader*          OpacityCasterVertex = nullptr;
         GDIShader*          OpacityCasterPixel  = nullptr;
+        GDIShader*          OpacityMeshVertex   = nullptr;
         bool                bOpacityCasterTried = false;
         bool                bLTCTried = false;
         void EnsureLTC();
@@ -2520,7 +2521,7 @@ namespace RenderCore
                     {
                         for(const uint32_t Index : MobilityOrder(Policy, Order.data() + Start, Order.data() + End))
                         {
-                            if(Policy[Index].Mesh) { Flat.push_back(Index); }
+                            if(Policy[Index].Mesh && !IsTranslucentCaster(Policy[Index])) { Flat.push_back(Index); }
                         }
                     }
                     Start = End;
@@ -2553,7 +2554,7 @@ namespace RenderCore
                         SCOPED_DRAW_EVENT(GetShadowViewName(ViewIndex));
                         IssueByMobility(Policy, Order.data() + Start, Order.data() + End, [this](const DrawCommand& InItem)
                         {
-                            if(InItem.Mesh) { IssueShadowCaster(InItem); }
+                            if(InItem.Mesh && !IsTranslucentCaster(InItem)) { IssueShadowCaster(InItem); }
                         });
                     }
                     Start = End;
@@ -2573,6 +2574,12 @@ namespace RenderCore
             IssueTranslucentShadows();
         }
 
+        /* A Shadows-stage draw that is a Translucent material's see-through shadow (Cast Translucent Shadow). */
+        static bool IsTranslucentCaster(const DrawCommand& InItem)
+        {
+            return InItem.Mat && InItem.Mat->Description.Domain == EMaterialDomain::Translucent;
+        }
+
         /* Translucent shadows (LIT_TRANSLUCENCY.md, Phase 7; Kim and Neumann 2001): each light
          * view's casting particles into its tile of the opacity atlas (OpacityShadowCaster.vsh/
          * .fsh), turned to the light, their optical depth added into four slices between the
@@ -2588,8 +2595,11 @@ namespace RenderCore
             }
             std::memset(Scene.Spare, 0, sizeof(float) * 12);
             ForwardOpacityAtlas = nullptr;
-            if(!GShadowsTranslucent.GetBool() || TranslucentCasters.empty() || Shadows.ViewCount == 0 || Shadows.AtlasSize < 2
-               || !GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
+            const DrawPolicy& Policy = PolicyFor(ERenderStage::Shadows);
+            bool bMeshCasters = false;
+            for(size_t Index = 0; Index < Policy.Num() && !bMeshCasters; ++Index) { bMeshCasters = IsTranslucentCaster(Policy[Index]); }
+            if(!GShadowsTranslucent.GetBool() || (TranslucentCasters.empty() && !bMeshCasters) || Shadows.ViewCount == 0
+               || Shadows.AtlasSize < 2 || !GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
             {
                 return;
             }
@@ -2598,6 +2608,7 @@ namespace RenderCore
                 bOpacityCasterTried = true;
                 OpacityCasterVertex = LoadShader("OpacityShadowCaster.vsh", ST_Vertex, "translucent shadows", false);
                 OpacityCasterPixel  = LoadShader("OpacityShadowCaster.fsh", ST_Pixel, "translucent shadows", false);
+                OpacityMeshVertex   = LoadShader("OpacityShadowMesh.vsh", ST_Vertex, "translucent shadows", false);
             }
             const uint Size = uint(Shadows.AtlasSize);
             if(OpacityAtlas && (OpacityAtlas->GetWidth() != Size || OpacityAtlas->GetHeight() != Size / 2))
@@ -2656,7 +2667,18 @@ namespace RenderCore
                     DepthSpan(View, Each.Bounds, Near, Far);
                     InView.push_back(&Each);
                 }
-                if(InView.empty() || Far <= Near) { continue; }
+                std::vector<const DrawCommand*> Meshes;   // this view's translucent mesh casters
+                for(size_t Index = 0; Index < Policy.Num(); ++Index)
+                {
+                    const DrawCommand& Item = Policy[Index];
+                    if(Item.ShadowView != int32_t(ViewIndex) || !Item.Mesh || !IsTranslucentCaster(Item)) { continue; }
+                    const GameCore::AABB Box(EngineCore::Vector3(Item.CasterBounds[0], Item.CasterBounds[1], Item.CasterBounds[2]),
+                                             EngineCore::Vector3(Item.CasterBounds[3], Item.CasterBounds[4], Item.CasterBounds[5]));
+                    DepthSpan(View, Box, Near, Far);
+                    Meshes.push_back(&Item);
+                }
+                if((InView.empty() && Meshes.empty()) || Far <= Near) { continue; }
+                Far = std::max(Far, Near + 1e-5f);
                 Span[ViewIndex][0] = Near;
                 Span[ViewIndex][1] = Far;
                 bAny = true;
@@ -2682,6 +2704,24 @@ namespace RenderCore
                     GDIDrawObject(MeshObject);
                     GDISetIndirectArgs(nullptr);
                     GDISetInstanceBuffer(nullptr, 0);
+                    GDISetDrawRange(Each->Mesh, 0, 0);
+                    MeshObject->Mesh = nullptr;
+                    DrawCallCount.fetch_add(1, std::memory_order_relaxed);
+                }
+                for(const DrawCommand* Each : Meshes)
+                {
+                    if(!OpacityMeshVertex) { break; }
+                    GDIViewObject* const MeshObject = RefMeshObject();
+                    Place(MeshObject, Each->Transform, 1.0f, 1.0f);
+                    MeshObject->Mesh = Each->Mesh;
+                    Bind(OpacityMeshVertex, OpacityCasterPixel);
+                    const float Block[MATERIAL_ENGINE_BLOCK_BYTES / sizeof(float)] = { Near, Far, Each->Mat->Description.TranslucentShadow, 1.0f };
+                    GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, Block, uint(sizeof(Block)));
+                    GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &Scene, uint(sizeof(Scene)));
+                    GDISetDepthState(NoDepth);
+                    GDISetBlendState(IBlendStateDesc(true, BM_One, BM_One));
+                    GDISetDrawRange(Each->Mesh, Each->First, Each->Count);
+                    GDIDrawObject(MeshObject);
                     GDISetDrawRange(Each->Mesh, 0, 0);
                     MeshObject->Mesh = nullptr;
                     DrawCallCount.fetch_add(1, std::memory_order_relaxed);
@@ -4435,9 +4475,14 @@ namespace RenderCore
             const char* Slot = InSlots && Index < InSlotCount && InSlots[Index] && InSlots[Index][0] != '\0' ? InSlots[Index] : nullptr;
             RenderMaterial* Chosen = P.SectionMaterial(Slot, Section.Material);
 
-            /* Only what writes depth: Opaque, and Masked if asked. The plain fallback is opaque. */
+            /* Only what writes depth: Opaque, and Masked if asked. The plain fallback is opaque. A
+             * Translucent section that casts a see-through shadow goes to the Shadows stage too,
+             * for its opacity pass (IssueTranslucentShadows), not its depth. */
             const EMaterialDomain Domain = Chosen ? Chosen->Description.Domain : EMaterialDomain::Opaque;
-            if(Domain != EMaterialDomain::Opaque && (InWhich == EDepthSections::Opaque || Domain != EMaterialDomain::Masked))
+            const bool bTranslucentCaster = Domain == EMaterialDomain::Translucent && InStage == ERenderStage::Shadows
+                                         && InWhich == EDepthSections::OpaqueAndMasked && Chosen->Description.TranslucentShadow > 0.0f
+                                         && !InOverrides.Instances && !Source->IsSkinned();
+            if(!bTranslucentCaster && Domain != EMaterialDomain::Opaque && (InWhich == EDepthSections::Opaque || Domain != EMaterialDomain::Masked))
             {
                 continue;
             }
@@ -4456,6 +4501,27 @@ namespace RenderCore
             Item.SkinPalette   = SkinPalette;
             Item.SkinBones     = SkinBones;
             Item.MaterialSlot  = uint8_t(Index);
+            if(bTranslucentCaster)
+            {
+                /* Its world bounds: the mesh's corners through its transform. */
+                const EngineCore::Matrix4x4 World = InTransform.ToMatrix();
+                float* Box = Item.CasterBounds;
+                Box[0] = Box[1] = Box[2] = FLT_MAX;
+                Box[3] = Box[4] = Box[5] = -FLT_MAX;
+                for(int Corner = 0; Corner < 8; ++Corner)
+                {
+                    const double Local[3] = { (Corner & 1) ? Source->BoundsMax[0] : Source->BoundsMin[0],
+                                              (Corner & 2) ? Source->BoundsMax[1] : Source->BoundsMin[1],
+                                              (Corner & 4) ? Source->BoundsMax[2] : Source->BoundsMin[2] };
+                    for(int Axis = 0; Axis < 3; ++Axis)
+                    {
+                        const double V = World.Data[Axis][0] * Local[0] + World.Data[Axis][1] * Local[1]
+                                       + World.Data[Axis][2] * Local[2] + World.Data[Axis][3];
+                        Box[Axis]     = std::min(Box[Axis], float(V));
+                        Box[Axis + 3] = std::max(Box[Axis + 3], float(V));
+                    }
+                }
+            }
             if(InOverrides.Instances)
             {
                 Item.Instances     = InOverrides.Instances->Buffer;
@@ -5838,6 +5904,7 @@ namespace RenderCore
                 March.Sizes[2] = float(Width);
                 March.Sizes[3] = float(Height);
                 const uint HalfW = Fog->GetWidth(), HalfH = Fog->GetHeight();
+                GDISetMaterialTexture(OPACITY_SHADOW_SLOT, P->ForwardOpacityAtlas);   // shafts through the casting plumes (TranslucentShadows.glsl)
                 const bool bMarched = P->DrawPost(PP_VolumetricFog, Fog, HalfW, HalfH, { Depth->Resource, Sun ? Sun->Resource : nullptr }, March);
                 GDISetMaterialTexture(0, nullptr);
                 GDISetMaterialTexture(1, nullptr);

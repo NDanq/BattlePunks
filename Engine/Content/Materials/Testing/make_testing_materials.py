@@ -61,6 +61,13 @@ MATERIALS = [
      {"ShadingModel": "Volume"}),
     # Phase 7: particles that draw nothing themselves, only their shadow.
     ("Invisible", "Translucent", "Unlit", {"Opacity": "0"}, {}),
+    # Glass casting: a pane whose see-through shadow stops half the light.
+    ("GlassCaster", "Translucent", "Lit", {"Roughness": "0.1", "Opacity": "0.2"},
+     {"CastTranslucentShadow": "true", "TranslucentShadowOpacity": "0.5"}),
+    # Ambient self-occlusion: an even medium, its sky light darkened by the medium toward the sun or not.
+    ("VolumeOccluded", "Translucent", "Lit", {"BaseColor": vec(0.8, 0.8, 0.8), "Opacity": "0.6", "SelfOcclusion": "1"},
+     {"ShadingModel": "Volume"}),
+    ("VolumeOpen", "Translucent", "Lit", {"BaseColor": vec(0.8, 0.8, 0.8), "Opacity": "0.6"}, {"ShadingModel": "Volume"}),
     # Opaque surroundings.
     ("OpaqueWhite", "Opaque", "Lit", {"BaseColor": vec(0.8, 0.8, 0.8), "Roughness": "0.9"}, {}),
     ("OpaqueRed", "Opaque", "Lit", {"BaseColor": vec(0.8, 0.05, 0.05), "Roughness": "0.9"}, {}),

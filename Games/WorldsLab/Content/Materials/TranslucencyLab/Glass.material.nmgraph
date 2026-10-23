@@ -5,11 +5,13 @@
       <Const Pin="BaseColor" Value="0.9 0.95 0.95" />
       <Const Pin="Opacity" Value="0.12" />
       <Const Pin="Roughness" Value="0.05" />
+      <Prop Name="CastTranslucentShadow" Value="true" />
       <Prop Name="ClipValue" Value="0.5" />
       <Prop Name="Domain" Value="Translucent" />
       <Prop Name="MaxOffset" Value="0" />
       <Prop Name="Shading" Value="Lit" />
       <Prop Name="TranslucencyLighting" Value="Surface" />
+      <Prop Name="TranslucentShadowOpacity" Value="0.3" />
       <Prop Name="TwoSided" Value="true" />
     </Node>
   </Nodes>
@@ -50,6 +52,7 @@ TranslucencyLighting Surface
 ClipValue 0.5
 MaxOffset 0
 HasOffset 0
+TranslucentShadow 0.3
 BlockSize 160
 ]]></Output>
   </gen_code>
