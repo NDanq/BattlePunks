@@ -226,7 +226,9 @@ DefaultLit, Glow and Wave pixels are unchanged.
   HDR scene, its image-based lighting (see [Image-based lighting](#image-based-lighting)).
 
 Every light shares one BRDF (`EvaluateLight`). Translucent Lit surfaces get the
-same lights forward, but unshadowed: their texture slots are their material's.
+same lights forward, shadowed by the same maps at the engine's texture slots 11
+and 12, one tap by default (`[Shadows] ForwardFilter`; LIT_TRANSLUCENCY.md,
+Phase 2), without inset or contact shadows.
 
 ### Shadows
 
@@ -280,9 +282,10 @@ it. (The far cascade's texels are about 11 units at a 6000-unit Shadow
 Distance and 2048 atlas.)
 
 Limits: Masked casters cast their whole shape (their clip is not run in the
-Shadows sub-stage); a quad casts nothing; Translucent Lit surfaces are
-unshadowed; Metal, which cannot sample a depth target, draws no shadows (warned
-once). A material preview never draws shadows.
+Shadows sub-stage); a quad casts nothing; Translucent Lit surfaces receive
+shadows but cast none, and get no inset shadows; Metal, which cannot sample a
+depth target, draws no shadows (warned once). A material preview never draws
+shadows.
 
 ### Contact shadows
 

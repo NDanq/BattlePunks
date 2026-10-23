@@ -4,9 +4,10 @@
 // Fresnel. Colours arrive display space and are lit linear; the caller
 // encodes the result back.
 //
-// Shadows: only where LIGHTING_SHADOWS is defined -- DeferredLighting.fsh,
-// which binds the shadow atlases (Shadows.glsl). A forward Translucent Lit
-// material is lit unshadowed: its texture slots are its own.
+// Shadows: only where LIGHTING_SHADOWS is defined, the includer declaring the
+// shadow atlases (Shadows.glsl): DeferredLighting.fsh, in its own slots, with
+// the inset shadows and contact shadows too; a forward Lit material, in engine
+// slots 11 and 12, with neither (LIT_TRANSLUCENCY.md, Phase 2).
 
 const float LIGHTING_PI = 3.14159265;
 
@@ -258,7 +259,9 @@ void ShadeSurfaceSplit(in LightingSurface S, vec3 InWorldPosition, float InOcclu
         if(bTransmits) { SunThrough = exp(-DirectionalShadowDepth(InWorldPosition, S.N) / SUBSURFACE_MEAN_FREE_PATH); }
         float Lit = DirectionalShadow(InWorldPosition, S.N, SunL);
         // A live sun's inset shadows (a baked sun's DeferredLighting.fsh lays over the pixel).
+#ifdef LIGHTING_INSET_SHADOWS
         if(Lighting_InsetLight.w < 0.5) { Lit = min(Lit, InsetShadow(InWorldPosition, S.N, SunL)); }
+#endif
 #ifdef LIGHTING_CONTACT_SHADOWS
         Lit = min(Lit, ContactShadow(InWorldPosition, S.N, SunL));
 #endif

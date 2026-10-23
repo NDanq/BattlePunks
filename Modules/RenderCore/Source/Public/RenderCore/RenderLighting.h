@@ -69,6 +69,7 @@ namespace RenderCore
         float    DistanceScale     = 1.0f;    // multiplies the sun's ShadowDistance
         int32_t  MaxInsetShadows   = int32_t(RENDER_INSET_SHADOW_MAX);   // Render components' inset shadows a view
         int32_t  InsetFilter       = 1;       // theirs, as Filter: their maps are sharp, so smaller
+        int32_t  ForwardFilter     = 0;       // forward Lit (translucent) draws', as Filter: each overdrawn layer filters again, so one tap
         /* Sun contact shadows (RENDERPIPELINE.md, "Contact shadows"): a short screen-space march
          * toward the sun from each lit pixel, for the small shadows the shadow maps are too coarse for. */
         uint8_t  bContactShadows   = 0;

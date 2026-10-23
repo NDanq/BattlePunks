@@ -232,6 +232,7 @@ namespace RenderCore
          */
         constexpr uint32_t LIGHT_LIST_VEC4S = 6;
         constexpr uint32_t LIGHTING_LTC_SLOT = 8;   // the engine's texture slot for the LTC tables (LightList.glsl)
+        constexpr uint32_t FORWARD_SHADOW_SLOT = 11; // the engine's slots 11, 12: forward Lit draws' shadow atlases (MaterialTemplate_PS.glsl)
         constexpr uint32_t LIGHT_TILES_X    = 32;
         constexpr uint32_t LIGHT_TILES_Y    = 18;
         constexpr uint32_t LIGHT_TILE_WORDS = RENDER_LOCAL_LIGHT_MAX / 32;
@@ -1838,6 +1839,10 @@ namespace RenderCore
                 else
                 {
                     GDISetMaterialTexture(0, Scene.IBL[0] > 0.5f ? IBLAtlasTexture() : nullptr);
+                    for(uint32_t Atlas = 0; Atlas < SA_Count; ++Atlas)
+                    {
+                        GDISetMaterialTexture(FORWARD_SHADOW_SLOT + Atlas, ForwardShadowAtlas[Atlas]);
+                    }
                 }
             }
 
@@ -2017,7 +2022,7 @@ namespace RenderCore
             const float Size = float(Shadows.AtlasSize);
             Scene.ShadowParams[0] = 1.0f;
             Scene.ShadowParams[1] = float(std::clamp(Lighting.Shadows.Filter, 0, 2));
-            Scene.ShadowParams[2] = 1.0f / Size;
+            Scene.ShadowParams[2] = float(std::clamp(Lighting.Shadows.ForwardFilter, 0, 2));
             Scene.ShadowParams[3] = Size;
 
             /* The sun's contact shadows ([Shadows] ContactShadows): with shadows drawn at all, so
@@ -2196,6 +2201,10 @@ namespace RenderCore
          * Lighting stage and forward Lit draws. */
         GDIRenderTarget*    LTCTarget = nullptr;
         GDITextureResource* LTCTable  = nullptr;
+        /* The shadow atlases this scene's Lighting stage read, bound for its forward Lit
+         * draws at the engine's slots 11 and 12 (LIT_TRANSLUCENCY.md, Phase 2); cleared
+         * at BeginSceneDraws, so a scene without the stage draws them unshadowed. */
+        GDITextureResource* ForwardShadowAtlas[SA_Count] = {};
         bool                bLTCTried = false;
         void EnsureLTC();
 
@@ -3038,6 +3047,7 @@ namespace RenderCore
             {
                 GDITexture2D* Map = Shadows.ViewCount > 0 && ShadowAtlas[Atlas] ? ShadowAtlas[Atlas]->ToDepthTexture2D() : nullptr;
                 GDISetMaterialTexture(RENDER_GBUFFER_TARGETS + 1 + Atlas, Map ? Map->Resource : nullptr);
+                ForwardShadowAtlas[Atlas] = Map ? Map->Resource : nullptr;   // the forward Lit draws after it
             }
             const uint32_t LastSlot = RENDER_GBUFFER_TARGETS + SA_Count;
             static_assert(RENDER_GBUFFER_TARGETS + SA_Count < LIGHTING_LTC_SLOT, "the Lighting stage's textures come before the engine's");
@@ -4098,6 +4108,7 @@ namespace RenderCore
         P->bDeferring        = true;
         P->DrawPixelsPerWorld = 0.0f;   // a scene's RenderScene sets it per proxy
         P->Shadows.ViewCount = 0;   // a preview has none; a scene's PrepareShadows adds them
+        for(GDITextureResource*& Each : P->ForwardShadowAtlas) { Each = nullptr; }
         P->CasterView        = -1;
     }
 

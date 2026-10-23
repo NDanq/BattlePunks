@@ -14,7 +14,7 @@ UBO_BLOCK_BEGIN(3, Scene_Block)
     mat4 Scene_InvViewProjection; // clip space (GL's: z_ndc = 2 * depth - 1) back to world space
 
     // Shadows (Shadows.glsl, RENDERPIPELINE.md's "Shadows").
-    vec4 Scene_ShadowParams;     // x: 1 if any shadow is drawn; y: PCF radius in texels (0-2); z: 1 / atlas size; w: atlas size
+    vec4 Scene_ShadowParams;     // x: 1 if any shadow is drawn; y: PCF radius in texels (0-2); z: forward draws' (0-2); w: atlas size
     vec4 Scene_LightShadow;      // the sun's: x technique (-1 none, 0 Standard, 1 Modulated, 2 Cascaded); y cascades; z depth bias; w normal bias
     vec4 Scene_LightShadowTint;  // rgb: the sun's Modulated tint, display space
     vec4 Scene_CascadeSplits;    // each cascade's far edge, as view depth

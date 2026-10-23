@@ -50,6 +50,12 @@
 #include <IBLCommon.glsl>
 MATERIAL_SAMPLER2D(4, Material_IBLAtlas)
 #define LIGHTING_IBL_ATLAS Material_IBLAtlas
+// And is shadowed (LIT_TRANSLUCENCY.md, Phase 2): the shadow atlases at the engine's
+// slots 11 and 12, filtered [Shadows] ForwardFilter texels each way; no inset or contact shadows.
+MATERIAL_SAMPLER2D(15, ShadowDirectional)
+MATERIAL_SAMPLER2D(16, ShadowLocal)
+#define LIGHTING_SHADOWS 1
+#define LIGHTING_SHADOW_RADIUS int(Scene_ShadowParams.z)
 #endif
 #include <Lighting.glsl>
 #include <BakedLighting.glsl>
