@@ -27,6 +27,8 @@
 NIMBLE_CONFIG_INT(GTranslucencyLabView, "WorldsLab", "TranslucencyLabView", 0, nullptr);
 /* > 0, with -Stats.Frame=1: at that frame, log the scene's GPU time per span once. */
 NIMBLE_CONFIG_INT(GTranslucencyLabStats, "WorldsLab", "TranslucencyLabStats", 0, nullptr);
+/* How many times to log them, 120 frames apart (the perf report's samples: Tools/TranslucencyLab/perf.ps1). */
+NIMBLE_CONFIG_INT(GTranslucencyLabStatsCount, "WorldsLab", "TranslucencyLabStatsCount", 1, nullptr);
 /* 1: the plume's smoke lit per particle (SmokePerParticle) rather than per pixel (Smoke, Volume). */
 NIMBLE_CONFIG_BOOL(GTranslucencyLabPerParticle, "WorldsLab", "TranslucencyLabPerParticle", false, nullptr);
 
@@ -86,11 +88,13 @@ public:
     void OnTick(const NimbleEngine::FrameContext& InFrame) override
     {
         (void)InFrame;
-        const int At = GTranslucencyLabStats.GetInt();
-        if(At <= 0 || ++Frames != At || !Owner) { return; }
+        const int At    = GTranslucencyLabStats.GetInt();
+        const int Count = std::max(GTranslucencyLabStatsCount.GetInt(), 1);
+        ++Frames;
+        if(At <= 0 || !Owner || Frames < At || (Frames - At) % 120 != 0 || (Frames - At) / 120 >= Count) { return; }
         RenderCore::RenderStats Render;
         Owner->GetRenderer().GetStats(Render);
-        std::string Line = "[TranslucencyLab] GPU ms at frame " + std::to_string(At) + ":";
+        std::string Line = "[TranslucencyLab] GPU ms at frame " + std::to_string(Frames) + ":";
         for(int Span = 0; Span < int(std::size(SPAN_NAMES)) && Span < int(RenderCore::RGT_Count); ++Span)
         {
             char Each[48];
