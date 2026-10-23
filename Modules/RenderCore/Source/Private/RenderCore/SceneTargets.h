@@ -184,6 +184,7 @@ namespace RenderCore
                 if(Subsurface)     { Subsurface->Resize(InWidth, InHeight); }
                 if(SubsurfaceBlur) { SubsurfaceBlur->Resize(InWidth, InHeight); }
                 if(Fog)         { Fog->Resize(HalfSize(InWidth, 1), HalfSize(InHeight, 1)); }
+                if(DepthCopy)   { DepthCopy->Resize(HalfSize(InWidth, 1), HalfSize(InHeight, 1)); }
                 if(LastCopy)    { LastCopy->Resize(InWidth, InHeight); }
                 LastColor = nullptr;
                 for(uint32_t Level = 0; Level < 6; ++Level)
@@ -326,8 +327,9 @@ namespace RenderCore
             return InOutTarget && InOutTarget->IsValid() ? InOutTarget : nullptr;
         }
 
-        /* Forward reflections' copy of the opaque depth, full size, R32F (RGBA32F where that is
-         * all there is), made on first use; null where neither is: a half float cannot hold depth. */
+        /* Forward reflections' copy of the opaque depth, half size (the nearest of each four), R32F
+         * (RGBA32F where that is all there is), made on first use; null where neither is: a half
+         * float cannot hold depth. */
         GDIRenderTarget* EnsureDepthCopy()
         {
             if(!DepthCopy && Width > 0 && Height > 0)
@@ -337,7 +339,7 @@ namespace RenderCore
                                                     : GDI_RTF_RGBA8;
                 if(Format != GDI_RTF_RGBA8)
                 {
-                    DepthCopy = GDICreateRenderTargetFormat(Name + ".DepthCopy", Width, Height, Format);
+                    DepthCopy = GDICreateRenderTargetFormat(Name + ".DepthCopy", HalfSize(Width, 1), HalfSize(Height, 1), Format);
                 }
             }
             return DepthCopy && DepthCopy->IsValid() ? DepthCopy : nullptr;

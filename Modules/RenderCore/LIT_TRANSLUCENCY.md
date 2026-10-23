@@ -164,9 +164,11 @@ LTC table, 9 and 10 DDGI's atlases (bound only during the IBL pass today).
 
 - A forward Lit draw smoother than the SSR node's Max Roughness marches the
   screen in its own pixel shader (`ForwardReflections.glsl`): a mirror ray,
-  8-24 steps (the node's, capped), four halvings, against a **copy of the
-  opaque depth** (`SceneTargets::DepthCopy`, R32F -- RGBA32F where that is
-  all there is -- copied by `PPCopy` before the forward stage: the depth
+  8-12 steps (the node's, capped), four halvings, against a **half-size copy
+  of the opaque depth** (`SceneTargets::DepthCopy`, R32F -- RGBA32F where that
+  is all there is -- each texel the nearest of four, by `PPDepthHalf.fsh`
+  before the forward stage; full size, 24 steps and a fade from 0.6 x Max
+  Roughness until LIT_TRANSLUCENCY_PERF.md's fixes: the depth
   itself is bound for the depth test, and sampling it there would be a
   feedback hazard), reading the last frame's colour (`LastColor`) at the hit
   reprojected by the last frame's view. Engine slots 13 and 14. The trust
@@ -191,7 +193,9 @@ LTC table, 9 and 10 DDGI's atlases (bound only during the IBL pass today).
   roughness 1 never marches). Identical on Vulkan and D3D12. Faint
   horizontal bands remain in the water where the steps cross the wall's
   base.
-- **Cost:** the water view's Forward 0.29 -> 0.48 ms on Vulkan (+0.20),
+- **Cost** (as landed; after the perf report's fixes it is at most +0.07 ms
+  on Vulkan and +0.09 on D3D12, RelWithDebInfo -- LIT_TRANSLUCENCY_PERF.md):
+  the water view's Forward 0.29 -> 0.48 ms on Vulkan (+0.20),
   0.63 -> 0.87 on D3D12 (+0.24, a little over the +0.2 budget, the depth
   copy included); the plume view unchanged.
 - **Regression:** LightingLab bit-identical; Courtyard 52 dB against
