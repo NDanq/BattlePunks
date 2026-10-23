@@ -80,7 +80,10 @@ namespace RenderCore
         Count
     };
 
-    enum class ERenderPassFormat : uint8_t { RGBA8 = 0, RGBA16F };
+    /* A pass target's format. RGBA32F and R32F (sampled as (r, 0, 0, 1)) are for values
+     * half floats round away -- twice RGBA16F's bandwidth, so not for colour. Where the
+     * backend lacks one, a target is RGBA16F, else RGBA8, with a warning once. */
+    enum class ERenderPassFormat : uint8_t { RGBA8 = 0, RGBA16F, RGBA32F, R32F };
     enum class ERenderPassBlend  : uint8_t { Opaque = 0, Additive, AlphaBlend };
 
     /* DrawMeshGroup's depth: none, the target's own, or the scene's (same size). */
