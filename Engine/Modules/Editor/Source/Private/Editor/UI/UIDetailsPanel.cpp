@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Private/Editor/UI/UIDetailsPanel.h"
+#include "Private/Editor/EditorIcons.h"
 
 #include <memory>
 
@@ -211,7 +212,8 @@ QWidget* UIDetailsPanel::MakeEditor(const UI::UIPropertyDesc& InDesc, const QStr
     else if(InDesc.Type == UI::EUIPropertyType::Asset && InDesc.AssetKind != UI::EUIAssetKind::Texture)
     {
         auto* Browse = new QToolButton();
-        Browse->setText(QStringLiteral("..."));
+        Browse->setIcon(EditorIcons::Get(EditorIcons::EIcon::Browse));
+        Browse->setToolTip(QStringLiteral("Choose a file"));
         const QString Filter = InDesc.AssetKind == UI::EUIAssetKind::Font     ? QStringLiteral("Fonts (*.ttf)")
                              : InDesc.AssetKind == UI::EUIAssetKind::Script   ? QStringLiteral("Lua (*.lua)")
                              : InDesc.AssetKind == UI::EUIAssetKind::Document ? QStringLiteral("UI documents (*.nmui)") : QStringLiteral("All files (*)");
@@ -251,7 +253,7 @@ QWidget* UIDetailsPanel::MakeEditor(const UI::UIPropertyDesc& InDesc, const QStr
     {
         /* The native actions there are now, and Lua's and Event's forms. */
         auto* Pick = new QToolButton();
-        Pick->setText(QStringLiteral("+"));
+        Pick->setIcon(EditorIcons::Get(EditorIcons::EIcon::Add));
         Pick->setToolTip(QStringLiteral("Add an action"));
         Pick->setPopupMode(QToolButton::InstantPopup);
         auto* Menu = new QMenu(Pick);
@@ -295,7 +297,7 @@ QWidget* UIDetailsPanel::MakeEditor(const UI::UIPropertyDesc& InDesc, const QStr
         if(!Named.isEmpty())
         {
             auto* Go = new QToolButton();
-            Go->setText(QStringLiteral("\u2192"));
+            Go->setIcon(EditorIcons::Get(EditorIcons::EIcon::Forward));
             Go->setToolTip(QStringLiteral("Open %1 in the UI graph").arg(Named.front()));
             const QString First = Named.front();
             connect(Go, &QToolButton::clicked, this, [this, First]()
@@ -430,7 +432,7 @@ void UIDetailsPanel::BuildWidget(const int InWidget)
             HBox->setContentsMargins(0, 0, 0, 0);
             HBox->addWidget(Field, 1);
             auto* Reset = new QToolButton();
-            Reset->setText(QStringLiteral("x"));
+            Reset->setIcon(EditorIcons::Get(EditorIcons::EIcon::Reset));
             Reset->setToolTip(QStringLiteral("Back to its style's or its type's value"));
             connect(Reset, &QToolButton::clicked, this, [DesignPtr, InWidget, Name]() { DesignPtr->ResetProperty(InWidget, Name); });
             HBox->addWidget(Reset);

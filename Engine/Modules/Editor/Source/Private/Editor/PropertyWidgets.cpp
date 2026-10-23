@@ -585,7 +585,7 @@ namespace
                 }
 
                 auto* Pick = new QToolButton(this);
-                Pick->setText(QStringLiteral("..."));
+                Pick->setIcon(EditorIcons::Get(EditorIcons::EIcon::Browse));
                 Pick->setToolTip(QString::fromLatin1(Ui.PickTip));
                 Layout->addWidget(Pick);
                 const QString Title  = QString::fromLatin1(Ui.Title);

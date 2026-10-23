@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Private/Editor/Sequencer/SequencerDetails.h"
+#include "Private/Editor/EditorIcons.h"
 
 #include <algorithm>
 #include <cmath>
@@ -145,7 +146,8 @@ void SequencerDetails::AddText(const QString& InLabel, const QString& InValue, c
     auto* Layout = new QHBoxLayout(Row);
     Layout->setContentsMargins(0, 0, 0, 0);
     Layout->addWidget(Edit, 1);
-    auto* Browse = new QPushButton(QStringLiteral("..."), Row);
+    auto* Browse = new QPushButton(EditorIcons::Get(EditorIcons::EIcon::Browse), QString(), Row);
+    Browse->setToolTip(QStringLiteral("Choose a file for %1").arg(InLabel));
     Browse->setFixedWidth(28);
     Layout->addWidget(Browse);
     connect(Browse, &QPushButton::clicked, this, [this, Edit, Commit, InLabel, InBrowseFilter]()

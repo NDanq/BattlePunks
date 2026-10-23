@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Private/Editor/Particles/ParticleEmitterPanels.h"
+#include "Private/Editor/EditorIcons.h"
 
 #include <cmath>
 #include <algorithm>
@@ -341,11 +342,10 @@ namespace
     QToolButton* MakeResetButton(QWidget* InParent, const QString& InTip)
     {
         auto* Button = new QToolButton(InParent);
-        Button->setText(QString(QChar(0x21BA)));
+        Button->setIcon(EditorIcons::Get(EditorIcons::EIcon::Reset, QColor(0xff, 0xa5, 0x1e)));
         Button->setToolTip(InTip);
         Button->setAutoRaise(true);
         Button->setFixedSize(22, 22);
-        Button->setStyleSheet(QStringLiteral("QToolButton { color: #ffa51e; font-weight: bold; }"));
         QSizePolicy Policy = Button->sizePolicy();
         Policy.setRetainSizeWhenHidden(true);
         Button->setSizePolicy(Policy);
@@ -377,6 +377,8 @@ ParticleEmitterListPanel::ParticleEmitterListPanel(ParticleDocument& InDocument,
     DelButton  = MakeButton(this, QStringLiteral("Remove"), QStringLiteral("Remove the selected emitter"));
     UpButton   = MakeButton(this, QString(QChar(0x2191)), QStringLiteral("Move up: drawn earlier"));
     DownButton = MakeButton(this, QString(QChar(0x2193)), QStringLiteral("Move down: drawn later"));
+    UpButton->setIcon(EditorIcons::Get(EditorIcons::EIcon::MoveUp));
+    DownButton->setIcon(EditorIcons::Get(EditorIcons::EIcon::MoveDown));
     for(QToolButton* Each : { AddButton, DupButton, DelButton, UpButton, DownButton }) { Buttons->addWidget(Each); }
     Buttons->addStretch(1);
     Layout->addLayout(Buttons);
@@ -654,7 +656,7 @@ QFormLayout* ParticleEmitterDetailsPanel::AddSection(const char* InName, const u
     if(InModule != 0)
     {
         auto* Remove = new QToolButton(Section);
-        Remove->setText(QString(QChar(0x2715)));   // multiplication x, as the Details panel's
+        Remove->setIcon(EditorIcons::Get(EditorIcons::EIcon::Close));
         Remove->setToolTip(QStringLiteral("Remove %1 from this emitter: its settings go back to their defaults and have no effect").arg(Name));
         Remove->setAutoRaise(true);
         connect(Remove, &QToolButton::clicked, this, [this, Name, InModule]()

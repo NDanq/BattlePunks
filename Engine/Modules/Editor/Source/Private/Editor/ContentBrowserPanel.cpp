@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Public/Editor/ContentBrowserPanel.h"
+#include "Private/Editor/EditorIcons.h"
 
 #include <QAction>
 #include <QApplication>
@@ -840,17 +841,17 @@ void ContentBrowserPanel::BuildToolBar(QHBoxLayout* InLayout)
         return B;
     };
 
-    BackButton = Button(style()->standardIcon(QStyle::SP_ArrowBack), QStringLiteral("Back"), QStringLiteral("Back"));
+    BackButton = Button(EditorIcons::Get(EditorIcons::EIcon::Back), QStringLiteral("Back"), QStringLiteral("Back"));
     connect(BackButton, &QToolButton::clicked, this, &ContentBrowserPanel::NavigateBack);
-    UpButton = Button(style()->standardIcon(QStyle::SP_FileDialogToParent), QStringLiteral("Up"),
+    UpButton = Button(EditorIcons::Get(EditorIcons::EIcon::FolderUp), QStringLiteral("Up"),
                       QStringLiteral("Up a folder (Backspace)"));
     connect(UpButton, &QToolButton::clicked, this, &ContentBrowserPanel::NavigateUp);
 
-    auto* NewFolderButton = Button(style()->standardIcon(QStyle::SP_FileDialogNewFolder), QStringLiteral("New Folder"),
+    auto* NewFolderButton = Button(EditorIcons::Get(EditorIcons::EIcon::NewFolder), QStringLiteral("New Folder"),
                                    QStringLiteral("New Folder (Ctrl+Shift+N)"));
     connect(NewFolderButton, &QToolButton::clicked, this, &ContentBrowserPanel::NewFolder);
 
-    auto* Import = Button(QIcon(), QStringLiteral("Import..."),
+    auto* Import = Button(EditorIcons::Get(EditorIcons::EIcon::Import), QStringLiteral("Import..."),
                           QStringLiteral("Import glTF meshes and images as engine assets into this folder"));
     connect(Import, &QToolButton::clicked, this, &ContentBrowserPanel::ImportWithDialog);
 
@@ -861,7 +862,7 @@ void ContentBrowserPanel::BuildToolBar(QHBoxLayout* InLayout)
     connect(Filter, &QLineEdit::textChanged, this, [this](const QString& InText) { ListProxy->SetNameFilter(InText); });
     InLayout->addWidget(Filter, 1);
 
-    auto* ListMode = Button(style()->standardIcon(QStyle::SP_FileDialogDetailedView), QStringLiteral("List"),
+    auto* ListMode = Button(EditorIcons::Get(EditorIcons::EIcon::ListView), QStringLiteral("List"),
                             QStringLiteral("Show as a list, or as icons"));
     ListMode->setCheckable(true);
     connect(ListMode, &QToolButton::toggled, this, [this](const bool bInList)

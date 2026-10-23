@@ -83,6 +83,21 @@ namespace EditorIcons
         Commit,       // lucide "git-commit-horizontal"
         Lock,         // lucide "lock": an LFS lock
         Merge,        // lucide "git-merge": a conflict
+        Back,         // lucide "arrow-left"
+        Forward,      // lucide "arrow-right": also "go to" a linked thing
+        FolderUp,     // lucide "folder-up"
+        NewFolder,    // lucide "folder-plus"
+        Browse,       // lucide "folder-open": pick a file or asset
+        Folder,       // lucide "folder"
+        Document,     // lucide "file-text"
+        ListView,     // lucide "list"
+        Import,       // lucide "import"
+        External,     // lucide "external-link": open outside the editor
+        Reset,        // lucide "rotate-ccw": back to the default, or start again
+        Remove,       // lucide "minus"
+        MoveUp,       // lucide "chevron-up": earlier in a list
+        MoveDown,     // lucide "chevron-down": later in a list
+        Clear,        // lucide "brush-cleaning": empty a log
         Count
     };
 

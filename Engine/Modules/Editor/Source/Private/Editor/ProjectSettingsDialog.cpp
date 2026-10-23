@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Private/Editor/ProjectSettingsDialog.h"
+#include "Private/Editor/EditorIcons.h"
 #include "Private/Editor/InputMapsPage.h"
 
 #include <algorithm>
@@ -911,7 +912,7 @@ void ProjectSettingsDialog::AddRow(QFormLayout* InForm, const QString& InSection
     if(Var)
     {
         auto* Reset = new QToolButton(Holder);
-        Reset->setText(QStringLiteral("↺"));
+        Reset->setIcon(EditorIcons::Get(EditorIcons::EIcon::Reset));
         Reset->setAutoRaise(true);
         Reset->setToolTip(QStringLiteral("Put the compiled default (%1) in the field; Apply writes it").arg(Default));
         const std::function<void(const QString&)> Show = R.Show;

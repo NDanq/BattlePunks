@@ -50,11 +50,10 @@ namespace
     QToolButton* MakeResetButton(QWidget* InParent, const QString& InTip)
     {
         auto* Button = new QToolButton(InParent);
-        Button->setText(QString(QChar(0x21BA)));   // anticlockwise open circle arrow
+        Button->setIcon(EditorIcons::Get(EditorIcons::EIcon::Reset, QColor(0xff, 0xa5, 0x1e)));
         Button->setToolTip(InTip);
         Button->setAutoRaise(true);
         Button->setFixedSize(22, 22);
-        Button->setStyleSheet(QStringLiteral("QToolButton { color: #ffa51e; font-weight: bold; }"));
         QSizePolicy Policy = Button->sizePolicy();
         Policy.setRetainSizeWhenHidden(true);
         Button->setSizePolicy(Policy);
@@ -514,7 +513,7 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
     }
 
     auto* Remove = new QToolButton(Section);
-    Remove->setText(QString(QChar(0x2715)));   // multiplication x; code points keep the source ASCII
+    Remove->setIcon(EditorIcons::Get(EditorIcons::EIcon::Close));
     Remove->setToolTip(QStringLiteral("Remove %1 from this entity").arg(TypeName));
     Remove->setAutoRaise(true);
     connect(Remove, &QToolButton::clicked, this, [this, InEntity, InType]()
@@ -725,7 +724,7 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
             if(!Entry.IsReadOnly())
             {
                 Remove = new QToolButton();
-                Remove->setText(QString(QChar(0x2715)));   // multiplication x
+                Remove->setIcon(EditorIcons::Get(EditorIcons::EIcon::Close));
                 Remove->setAutoRaise(true);
                 Remove->setFixedSize(22, 22);
                 Remove->setToolTip(QStringLiteral("Remove entry %1 (the ones after it move up)").arg(Element));
