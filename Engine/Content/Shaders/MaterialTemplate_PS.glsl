@@ -66,6 +66,11 @@ MATERIAL_SAMPLER2D(19, TranslucentOpacity)   // engine slot 15: translucent cast
 #define LIGHTING_TRANSLUCENT_SHADOWS 1
 #define LIGHTING_SHADOWS 1
 #define LIGHTING_SHADOW_RADIUS int(Scene_ShadowParams.z)
+// A medium shadows itself only by what lies in front of it (LIT_TRANSLUCENCY.md, Phase 8):
+// three quarters of a slice toward the light, past its own optical depth.
+#if MATERIAL_SHADING_MODEL_VOLUME
+#define LIGHTING_TRANSLUCENT_SELF 0.75
+#endif
 #endif
 #include <Lighting.glsl>
 #include <BakedLighting.glsl>

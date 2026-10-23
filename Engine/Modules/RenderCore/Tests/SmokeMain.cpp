@@ -3744,6 +3744,64 @@ static void TestTranslucencyOnGpu()
             }
             World.DestroyEntity(Casting);
             World.DestroyEntity(Floor);
+
+            /* Phase 8: single casting Volume particles under the same sun. A lone one keeps at
+             * least nine tenths of its light with translucent shadows on (it is not shadowed by
+             * itself); one with another straight above it is darker than it was alone. */
+            const auto WriteOne = [](const char* InPath)
+            {
+                std::ofstream File(InPath, std::ios::binary);
+                File << "NimbleParticleSystem 1\n\nEmitter One\n    Enabled true\n    Type Sprite\n"
+                        "    Material Engine/Content/Materials/Testing/VolumeForward.material.nmgraph\n"
+                        "    SpawnMode Burst\n    MaxParticles 1\n    BurstCount 1\n    BurstInterval 0\n    BurstCycles 1\n"
+                        "    Lifetime 60\n    LifetimeVariance 0\n    EmitterRadius 0\n    Velocity 0,0,0\n    VelocitySpread 0\n"
+                        "    StartSize 120\n    EndSize 120\n    StartColor 255,255,255,180\n    EndColor 255,255,255,180\n"
+                        "    FadeIn 0\n    FadeOut 0\n    PauseOffscreen false\n    CastShadows true\n    ShadowDensity 1\n";
+            };
+            WriteOne("Saved/TranslucencySmoke/One.nmparticle");
+            const auto Single = [&](const double InHeight)
+            {
+                const GameCore::Entity Each = Placed("One", Vector3(0.0, InHeight, 300.0), Vector3(), Vector3(1.0, 1.0, 1.0));
+                ParticleSystemComponent System;
+                std::snprintf(System.System, sizeof(System.System), "%s", "Saved/TranslucencySmoke/One.nmparticle");
+                Each.AddComponent(System);
+                return Each;
+            };
+            const auto Centre = [&](const EngineCore::Image& InPixels, const int InY)
+            {
+                int Sum = 0;
+                for(int Y = InY - 3; Y <= InY + 3; ++Y)
+                {
+                    for(int X = 125; X <= 131; ++X)
+                    {
+                        int Value[3];
+                        Rgb(InPixels, X, Y, Value);
+                        Sum += Value[0] + Value[1] + Value[2];
+                    }
+                }
+                return Sum / (49 * 3);
+            };
+            const GameCore::Entity Lower = Single(200.0);
+            EngineCore::Image AloneOn, AloneOff, Paired;
+            Translucent->SetFromString("0");
+            const bool bAloneOff = Capture(AloneOff);
+            Translucent->SetFromString("1");
+            const bool bAloneOn = Capture(AloneOn);
+            const GameCore::Entity Upper = Single(420.0);
+            const bool bPaired = Capture(Paired);
+            Expect(bAloneOff && bAloneOn && bPaired, "the single particles are captured alone and paired");
+            if(bAloneOff && bAloneOn && bPaired)
+            {
+                Dump(AloneOn, "particle-alone");
+                Dump(Paired, "particle-paired");
+                /* The lower particle at y 200, 900 in front of the eye at y 100: 30 pixels above the middle. */
+                const int Off = Centre(AloneOff, 97), On = Centre(AloneOn, 97), Below = Centre(Paired, 97);
+                std::printf("    self-shadow: alone %d off, %d on; under another %d\n", Off, On, Below);
+                Expect(On * 10 >= Off * 9, "a lone casting particle is not shadowed by itself (at least nine tenths of its light)");
+                Expect(Below * 10 < On * 9, "and one under another is shadowed by it");
+            }
+            World.DestroyEntity(Lower);
+            World.DestroyEntity(Upper);
             Sun.GetComponent<GameCore::TransformComponent>()->Rotation = Vector3(35.0, 10.0, 0.0);
         }
 

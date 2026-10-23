@@ -1,6 +1,8 @@
 # Lit translucency and lit particles
 
-A plan, phase by phase, like GLOBAL_ILLUMINATION.md. Nothing here has landed.
+A plan, phase by phase, like GLOBAL_ILLUMINATION.md. Phases 0-8 have landed;
+each records what was built, where it departed from the plan, and its
+validation.
 
 ## Where it starts
 
@@ -118,6 +120,13 @@ LTC table, 9 and 10 DDGI's atlases (bound only during the IBL pass today).
   varies by about 15 % on this machine.
 - **Regression:** LightingLab unchanged (no translucent surfaces);
   Courtyard 50 dB whole, its glass and water now shadowed.
+- **Fixed later (with Phase 8):** the Shadows stage ran only for a scene
+  with G-buffer draws, while the scene block still said the sun cast; a
+  scene of translucent surfaces alone had its forward Lit draws read no
+  atlas -- wholly shadowed. It now runs when the Translucent stage has draws
+  too, and hands its atlases to the forward draws itself
+  (`ForwardShadowAtlas`, at the Shadows stage's end), not through the
+  Lighting stage.
 
 ## Phase 3: GI and premultiplied specular (landed)
 
@@ -322,17 +331,32 @@ LTC table, 9 and 10 DDGI's atlases (bound only during the IBL pass today).
   atlas yet.
 - **Regression:** LightingLab bit-identical, Courtyard 80 dB (no casters).
 
-## Phase 8: self-shadowing
+## Phase 8: self-shadowing (landed)
 
-- A particle that is also a caster reads its own light's opacity map at its
-  own depth, biased toward the light by half its own thickness (the
-  emitter's Size along the light), so it is shadowed by what lies in front
-  of it and not by itself. Per pixel (Phase 5) and per particle (Phase 6).
-- **Ambient self-occlusion:** the same map read at the particle's depth also
-  darkens its ambient by `Ambient Occlusion Strength` x the optical depth
-  in front of it toward the sun -- a cheap stand-in for the plume shading its
-  own sky light; off by default.
-- Translucent surfaces (glass that casts) do not shadow themselves.
+- A receiver in the medium looks back toward the light past its own optical
+  depth: `LIGHTING_TRANSLUCENT_SELF` (Shadows.glsl), three quarters of a
+  slice, for the Volume model's pixels (MaterialTemplate_PS.glsl, when the
+  model is Volume) and for per-particle lighting (ParticleLighting.glsl).
+  Every other receiver -- an opaque floor, glass -- takes the slices in
+  front of it whole, as in Phase 7. A particle is then shaded by what lies
+  between it and the light, not by itself.
+- **Deviation:** a fixed fraction of a slice, not half the particle's own
+  size along the light (the pixel shader does not know it); the effect is
+  the same while particles are smaller than a quarter of the casters' depth
+  span.
+- **Not done:** the ambient self-occlusion (a plume darkening its own sky
+  light by its depth toward the sun) -- it was to be off by default.
+- **Checked:** RenderCore.Smoke on the GPU, 766 checks, none failing on
+  Vulkan or D3D12. New: one casting Volume particle under a sun straight
+  down -- 122 with translucent shadows off, 118 on (97 %: not shadowed by
+  itself); with a second one straight above it, 90. The check found the
+  Phase 2 fault above (the particle read 51, wholly shadowed, until the
+  Shadows stage ran for a scene with no G-buffer draws).
+- **TranslucencyLab:** the plume's smoke no longer has Phase 7's dark core
+  -- its region 6.5 brighter than Phase 7 in its view (4.3 per particle) --
+  shading only on its far side from the sun, its shadow on the floor kept.
+  Forward GPU time unchanged; the Shadows span as Phase 7's.
+- **Regression:** LightingLab bit-identical; Courtyard 81 dB.
 
 ## Not in this plan
 
