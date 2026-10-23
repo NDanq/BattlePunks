@@ -2562,6 +2562,14 @@ namespace RenderCore
             }
             PlaceProjection = nullptr;
             PlaceView       = nullptr;
+
+            /* The atlases for this scene's forward Lit draws, whether or not a Lighting stage runs
+             * (a scene of translucent surfaces alone has none, and they would read no atlas). */
+            for(uint32_t Atlas = 0; Atlas < SA_Count; ++Atlas)
+            {
+                GDITexture2D* Map = Shadows.UsesAtlas(EShadowAtlas(Atlas)) && ShadowAtlas[Atlas] ? ShadowAtlas[Atlas]->ToDepthTexture2D() : nullptr;
+                ForwardShadowAtlas[Atlas] = Map ? Map->Resource : nullptr;
+            }
             IssueTranslucentShadows();
         }
 
@@ -5573,11 +5581,17 @@ namespace RenderCore
 
         /* Lighting: Shadows (only when something will sample them), then
          * the resolve into the scene colour. */
+        /* Shadows for the G-buffer -- or for forward Lit draws alone (LIT_TRANSLUCENCY.md, Phase 2):
+         * a scene of glass and lit smoke and nothing opaque still has a sun that casts. */
+        const bool bShadowed = bDeferred || !P->PolicyFor(ERenderStage::Translucent).IsEmpty();
         if(bDeferred)
         {
             P->StageTimestamp(RGT_AmbientOcclusion, false);
             P->IssueAmbientOcclusion(InTargets, P->PostSettings);
             P->StageTimestamp(RGT_AmbientOcclusion, true);
+        }
+        if(bShadowed)
+        {
             P->StageTimestamp(RGT_Shadows, false);
             P->IssueShadows();
             P->StageTimestamp(RGT_Shadows, true);
