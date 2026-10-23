@@ -16,20 +16,19 @@ A frame runs these stages, in this order (`ERenderStage`, RenderPipeline.h):
 | **Lighting** | one full-screen pass | scene colour | reads the G-buffer and depth; lit pixels only |
 | &nbsp;&nbsp;Shadows | shadow casters: Opaque and Masked mesh sections whose component casts | the two shadow atlases' depth | a sub-stage of Lighting, run first; depth test and write, no colour. See [Shadows](#shadows) |
 | **Unlit** | Opaque and Masked, **Unlit**; plain quads; tinted meshes | scene colour, with the Base Pass depth | depth test and write; plain quads keep their alpha blend |
-| **Translucent Lit** | Translucent, **Lit** | scene colour | depth test, no write, alpha blend; back to front; forward-shaded |
-| **Translucent Unlit** | Translucent, **Unlit** | scene colour | as above |
+| **Translucent** | Translucent, **Lit** and **Unlit** | scene colour | depth test, no write, alpha blend; back to front, Lit and Unlit together; Lit forward-shaded |
 | **PostProcess** | the post process stack: its PostProcess materials and effects (Post Process volumes) | two full-size targets in turn, and smaller ones | full screen; a fixed order. See [Post process](#post-process) |
 
 A module's own passes run between these at named hooks: see [Custom render passes](#custom-render-passes).
 
-Translucent Lit runs after Lighting, not before it: a deferred resolve writes
+Translucent runs after Lighting, not before it: a deferred resolve writes
 every lit pixel, so anything drawn earlier would be overwritten, and a
-translucent surface cannot be in the G-buffer (one surface per pixel). It is
-shaded forward, by the same `ShadeSurface` the resolve uses.
+translucent surface cannot be in the G-buffer (one surface per pixel). A Lit
+one is shaded forward, by the same `ShadeSurface` the resolve uses.
 
-The two translucent stages are sorted separately, each back to front. A
-Translucent Unlit surface behind a Translucent Lit one therefore draws over it;
-use one shading model for surfaces that overlap, or move them apart.
+Lit and Unlit translucent draws are one stage, sorted back to front together
+(LIT_TRANSLUCENCY.md, Phase 1): lit smoke and unlit sparks in one system
+overlap in the right order. Each draw keeps its own shader.
 
 ## The material is the key
 
@@ -39,7 +38,7 @@ A draw's stage comes from its material's Domain and Shading only
 | Domain | Lit | Unlit |
 |---|---|---|
 | Opaque, Masked | Base Pass | Unlit |
-| Translucent | Translucent Lit | Translucent Unlit |
+| Translucent | Translucent | Translucent |
 | PostProcess | PostProcess | PostProcess |
 
 Draws with no usable material -- a plain tinted quad, or a mesh drawn with
@@ -1418,7 +1417,7 @@ Scene
   Lighting
     DeferredLighting
     IBLLighting
-  Unlit, TranslucentLit, TranslucentUnlit
+  Unlit, Translucent
   PostProcess
     Tonemap
     Materials (Before Effects)
@@ -1441,7 +1440,7 @@ BasePass
     Cylinder [Cylinder] | FlareBody
   Dynamic
     Particles Debris/Chunks (up to 128) | DefaultLit  a particle emitter: its system and emitter, its capacity
-TranslucentUnlit
+Translucent
   Particles Sparks/Sparks (up to 512) | ParticleStreak
   Quad | Glow                                  a material quad
 PostProcess

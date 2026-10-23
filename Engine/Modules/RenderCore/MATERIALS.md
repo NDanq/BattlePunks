@@ -57,7 +57,7 @@ templates, beside the engine's other shaders.
 |---|---|---|---|---|
 | Opaque | Base Pass / Unlit | off | on | |
 | Masked | Base Pass / Unlit | off | on | `discard` when OpacityMask < Clip Value |
-| Translucent | Translucent Lit / Translucent Unlit | alpha | off | sorted back to front |
+| Translucent | Translucent (Lit forward-shaded, Unlit as authored) | alpha | off | sorted back to front, Lit and Unlit together |
 | PostProcess | PostProcess | off | off | full-screen, Unlit only, samples Scene Color and Scene Depth; no WPO; run by a post process stack (RENDERPIPELINE.md) |
 
 The domain and shading are the key to where a material draws:

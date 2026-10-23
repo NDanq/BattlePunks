@@ -2,6 +2,7 @@ param(
     [string]$OutDir,                       # where <Tag>_v<view>.bmp land
     [string]$Tag,
     [int[]]$Views = @(0, 1, 2, 3),
+    [string]$Level = "TranslucencyLab",    # another level for regression captures (its own camera; views ignored)
     [int]$Rhi = 2,                         # 1 OpenGL, 2 Vulkan, 4 D3D12
     [int]$Frame = 300,                     # the game frame captured ([Record] StartFrame)
     [string[]]$Extra = @(),                # more -Section.Key=Value arguments
@@ -19,7 +20,7 @@ $env:PATH = "$PSScriptRoot\fakeffmpeg;" + $env:PATH
 foreach ($view in $Views) {
     $stem = Join-Path (Resolve-Path $OutDir) "${Tag}_v$view"
     Remove-Item "$stem.bmp" -ErrorAction SilentlyContinue
-    $gameArgs = @("-Game.StartLevel=TranslucencyLab", "-WorldsLab.TranslucencyLabView=$view", "-Display.RHI=$Rhi",
+    $gameArgs = @("-Game.StartLevel=$Level", "-WorldsLab.TranslucencyLabView=$view", "-Display.RHI=$Rhi",
               "-Rendering.FixedStep=0.0166667", "-Record.File=$stem.mp4", "-Record.Fps=30",
               "-Record.StartFrame=$Frame", "-Record.Seconds=0.03") + $Extra
     if ($Stats) { $gameArgs += @("-Stats.Frame=1", "-WorldsLab.TranslucencyLabStats=$Frame") }

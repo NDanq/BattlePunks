@@ -11,8 +11,7 @@ namespace RenderCore
             case ERenderStage::Shadows:          return "Shadows";
             case ERenderStage::Lighting:         return "Lighting";
             case ERenderStage::Unlit:            return "Unlit";
-            case ERenderStage::TranslucentLit:   return "TranslucentLit";
-            case ERenderStage::TranslucentUnlit: return "TranslucentUnlit";
+            case ERenderStage::Translucent:      return "Translucent";
             case ERenderStage::PostProcess:      return "PostProcess";
             case ERenderStage::Count:            break;
         }
@@ -26,7 +25,7 @@ namespace RenderCore
         {
             case EMaterialDomain::Opaque:
             case EMaterialDomain::Masked:      return bLit ? ERenderStage::BasePass : ERenderStage::Unlit;
-            case EMaterialDomain::Translucent: return bLit ? ERenderStage::TranslucentLit : ERenderStage::TranslucentUnlit;
+            case EMaterialDomain::Translucent: return ERenderStage::Translucent;   // each draw keeps its own shader
             case EMaterialDomain::PostProcess: return ERenderStage::PostProcess;
         }
         return ERenderStage::Unlit;
