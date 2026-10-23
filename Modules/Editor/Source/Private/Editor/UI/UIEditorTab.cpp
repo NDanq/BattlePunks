@@ -13,6 +13,7 @@
 #include <QStatusBar>
 #include <QTimer>
 #include <QToolBar>
+#include <QToolButton>
 #include <QUndoStack>
 
 #include "Public/Editor/EditorContext.h"
@@ -133,7 +134,7 @@ void UIEditorTab::BuildToolBar()
     Bar->setObjectName(QStringLiteral("UIToolBar"));
     Bar->setMovable(false);
 
-    QAction* SaveAction = Bar->addAction(QStringLiteral("Save"), this, &UIEditorTab::Save);
+    QAction* SaveAction = Bar->addAction(EditorIcons::Get(EditorIcons::EIcon::Save), QStringLiteral("Save"), this, &UIEditorTab::Save);
     SaveAction->setShortcut(QKeySequence::Save);
     SaveAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     SaveAction->setToolTip(QStringLiteral("Save and stage the document (Ctrl+S); Play-in-Editor shows it at once"));
@@ -161,7 +162,8 @@ void UIEditorTab::BuildToolBar()
     connect(Resolution, &QComboBox::activated, this, &UIEditorTab::ApplyResolution);
     Bar->addWidget(Resolution);
 
-    Bar->addAction(QStringLiteral("Fit"), Canvas, &UIDesignerViewport::FitToView)->setToolTip(QStringLiteral("Fit the frame in the view (F)"));
+    QAction* FitAction = Bar->addAction(EditorIcons::Get(EditorIcons::EIcon::Fit), QStringLiteral("Fit"), Canvas, &UIDesignerViewport::FitToView);
+    FitAction->setToolTip(QStringLiteral("Fit the frame in the view (F)"));
     Bar->addAction(QStringLiteral("100%"), this, [this]() { Canvas->SetZoom(float(devicePixelRatioF())); })
         ->setToolTip(QStringLiteral("One design pixel to one screen pixel"));
     ZoomLabel = new QLabel(Bar);
@@ -172,7 +174,14 @@ void UIEditorTab::BuildToolBar()
     });
     Bar->addSeparator();
 
-    QAction* SnapAction = Bar->addAction(QStringLiteral("Snap"));
+    QAction* SnapAction = Bar->addAction(EditorIcons::Get(EditorIcons::EIcon::Snap), QStringLiteral("Snap"));
+    for(QAction* Each : { SaveAction, FitAction, SnapAction })
+    {
+        if(auto* Button = qobject_cast<QToolButton*>(Bar->widgetForAction(Each)))
+        {
+            Button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);   // the rest of the bar is text
+        }
+    }
     SnapAction->setCheckable(true);
     SnapAction->setChecked(Canvas->IsSnap());
     SnapAction->setToolTip(QStringLiteral("Moves and resizes snap to a 4-unit grid"));

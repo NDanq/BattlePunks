@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Private/Editor/Content/RetargetEditorWindow.h"
+#include "Private/Editor/EditorIcons.h"
 
 #include <algorithm>
 #include <cmath>
@@ -896,7 +897,8 @@ void RetargetEditorWindow::ShowBakeDialog()
     if(TargetName.endsWith(QStringLiteral("_Skeleton"))) { TargetName.chop(9); }
     auto* Folder = new QLineEdit(QFileInfo(Path).absolutePath(), &Dialog);
     auto* Browse = new QToolButton(&Dialog);
-    Browse->setText(QStringLiteral("..."));
+    Browse->setIcon(EditorIcons::Get(EditorIcons::EIcon::Browse));
+    Browse->setToolTip(QStringLiteral("Choose the folder to bake into"));
     connect(Browse, &QToolButton::clicked, &Dialog, [&Dialog, Folder]()
     {
         const QString Chosen = QFileDialog::getExistingDirectory(&Dialog, QStringLiteral("Bake Into"), Folder->text());

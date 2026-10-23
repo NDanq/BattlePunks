@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Private/Editor/Particles/ParticleCurveWidgets.h"
+#include "Private/Editor/EditorIcons.h"
 
 #include <algorithm>
 #include <cmath>
@@ -52,10 +53,10 @@ ParticleKeyEditBase::ParticleKeyEditBase(QWidget* InParent)
     TimeBox->setDecimals(3);
     TimeBox->setToolTip(QStringLiteral("The selected key's time: 0 at birth, 1 at death"));
     AddButton = new QToolButton(this);
-    AddButton->setText(QStringLiteral("+"));
+    AddButton->setIcon(EditorIcons::Get(EditorIcons::EIcon::Add));
     AddButton->setToolTip(QStringLiteral("Add a key after the selected one (or double-click the strip)"));
     RemoveButton = new QToolButton(this);
-    RemoveButton->setText(QString(QChar(0x2212)));
+    RemoveButton->setIcon(EditorIcons::Get(EditorIcons::EIcon::Remove));
     RemoveButton->setToolTip(QStringLiteral("Remove the selected key (or right-click it)"));
 
     connect(TimeBox, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](const double InValue)

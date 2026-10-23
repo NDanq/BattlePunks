@@ -165,7 +165,7 @@ namespace
             QList<QToolButton*> Out;
             for(QToolButton* Button : Details.findChildren<QToolButton*>())
             {
-                if(Button->text() == QString(QChar(0x21BA)) && Button->isVisibleTo(&Details)) { Out << Button; }
+                if(Button->toolTip().startsWith(QStringLiteral("Changed from the default")) && Button->isVisibleTo(&Details)) { Out << Button; }
             }
             return Out;
         };
@@ -256,7 +256,7 @@ namespace
         QToolButton* RemoveShape = nullptr;
         for(QToolButton* Button : Details.findChildren<QToolButton*>())
         {
-            if(Button->text() == QString(QChar(0x2715)) && Button->toolTip().contains(QStringLiteral("Remove Shape"))) { RemoveShape = Button; }
+            if(Button->toolTip().contains(QStringLiteral("Remove Shape"))) { RemoveShape = Button; }
         }
         Expect(RemoveShape != nullptr, "an optional module has a remove button");
         bool bRequiredRemovable = false;

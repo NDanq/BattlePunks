@@ -129,9 +129,10 @@ void PrefabEditorTab::BuildToolBar()
     SimulateAction = Bar->addAction(QStringLiteral("Simulate"), this, &PrefabEditorTab::StartSimulation);
     SimulateAction->setToolTip(QStringLiteral("Run the prefab and its script in a World of its own; Stop drops it"));
     StopAction = Bar->addAction(QStringLiteral("Stop"), this, &PrefabEditorTab::StopSimulation);
+    SaveAction->setIcon(EditorIcons::Get(EditorIcons::EIcon::Save));
     SimulateAction->setIcon(EditorIcons::Get(EditorIcons::EIcon::Play));
     StopAction->setIcon(EditorIcons::Get(EditorIcons::EIcon::Stop));
-    for(QAction* Each : { SimulateAction, StopAction })
+    for(QAction* Each : { SaveAction, SimulateAction, StopAction })
     {
         if(auto* Button = qobject_cast<QToolButton*>(Bar->widgetForAction(Each)))
         {

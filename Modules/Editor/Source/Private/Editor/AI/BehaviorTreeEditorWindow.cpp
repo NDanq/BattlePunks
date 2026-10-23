@@ -1,4 +1,5 @@
 #include "Private/Editor/AI/BehaviorTreeEditorWindow.h"
+#include "Private/Editor/EditorIcons.h"
 
 #if WITH_EDITOR && WITH_AICORE
 
@@ -626,8 +627,10 @@ QWidget* BehaviorTreeEditorWindow::BuildDetails()
         auto* Row = new QHBoxLayout();
         Row->addWidget(new QLabel(QStringLiteral("<b>%1</b>").arg(InTitle), DetailsBody));
         Row->addStretch(1);
-        auto* Add = new QPushButton(QStringLiteral("+"), DetailsBody);
-        auto* Remove = new QPushButton(QStringLiteral("-"), DetailsBody);
+        auto* Add = new QPushButton(EditorIcons::Get(EditorIcons::EIcon::Add), QString(), DetailsBody);
+        auto* Remove = new QPushButton(EditorIcons::Get(EditorIcons::EIcon::Remove), QString(), DetailsBody);
+        Add->setToolTip(QStringLiteral("Add a row to %1").arg(InTitle));
+        Remove->setToolTip(QStringLiteral("Remove the selected row from %1").arg(InTitle));
         Add->setFixedWidth(28);
         Remove->setFixedWidth(28);
         Row->addWidget(Add);

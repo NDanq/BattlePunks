@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Public/Editor/ViewportPanel.h"
+#include "Private/Editor/EditorIcons.h"
 
 #include <algorithm>
 #include <cmath>
@@ -191,7 +192,11 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocumen
         SpaceCombo->setCurrentIndex(int(InSpace));
     });
 
-    GizmoSnapAction = Toolbar->addAction(QStringLiteral("Snap"));
+    GizmoSnapAction = Toolbar->addAction(EditorIcons::Get(EditorIcons::EIcon::Snap), QStringLiteral("Snap"));
+    if(auto* Button = qobject_cast<QToolButton*>(Toolbar->widgetForAction(GizmoSnapAction)))
+    {
+        Button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);   // the rest of the bar is text
+    }
     GizmoSnapAction->setCheckable(true);
     GizmoSnapAction->setToolTip(QStringLiteral("Snap handle drags to [Editor] SnapTranslate / SnapRotate / SnapScale "
                                                "(Ctrl during a drag inverts this)"));
@@ -234,6 +239,8 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocumen
 
     auto* FrameButton = new QToolButton(Toolbar);
     FrameButton->setText(QStringLiteral("Frame"));
+    FrameButton->setIcon(EditorIcons::Get(EditorIcons::EIcon::Fit));
+    FrameButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     FrameButton->setToolTip(QStringLiteral("Fit the selection in view (F); the arrow has Frame All (Home)"));
     FrameButton->setFocusPolicy(Qt::NoFocus);
     FrameButton->setPopupMode(QToolButton::MenuButtonPopup);
