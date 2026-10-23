@@ -140,6 +140,7 @@ namespace RenderCore
         EMaterialShadingModel ShadingModel = EMaterialShadingModel::Default;   // the ShadingModel line; Default without one
         bool             bTwoSided  = false;
         bool             bTranslucencySurface = false;   // TranslucencyLighting Surface: premultiplied, specular over the opacity
+        bool             bParticleLighting    = false;   // ParticleLighting 1: lit per instance in its vertex shaders (bound as forward Lit)
         float            ClipValue  = 0.5f;
         float            MaxOffset  = 0.0f;   // World Position Offset's reach: pads culling bounds
         bool             bHasOffset = false;

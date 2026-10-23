@@ -134,7 +134,7 @@ D3D12TextureResource::D3D12TextureResource(D3D12Device*      InDevice,
     , ExternalResource(InExternalResource)
     , SRVSlot(InExternalSRVSlot)
     , bOwnsImage(false)
-    , CurrentState(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
+    , CurrentState(D3D12_STATE_SAMPLED)
     , StoredBorder(InBorder)
     , StoredFilter(InFilter)
 {

@@ -17,6 +17,12 @@
 #if MATERIAL_VERTEX_SKINNEDMESH
 #include <Skinning.glsl>
 #endif
+// Particle Lighting Per Particle (the generated code defines it): each instance lit at its centre.
+#if MATERIAL_VERTEX_INSTANCEDMESH
+#ifdef MATERIAL_PARTICLE_LIGHTING
+#include <ParticleLighting.glsl>
+#endif
+#endif
 
 // Quads and the full-screen pass: position and UV. Meshes (GDICreateMesh)
 // add the normal at 8, the colour at 9, the lightmap UVs (UV1) at 10 and the
@@ -100,6 +106,11 @@ void main(void)
     WorldTangent      *= dot(WorldTangent, WorldTangent) > 1e-12 ? inversesqrt(dot(WorldTangent, WorldTangent)) : 0.0;
 #if MATERIAL_VERTEX_INSTANCEDMESH
     Inputs.Color       = InColor * InInstanceColor;
+#ifdef MATERIAL_PARTICLE_LIGHTING
+    // Lit once, at the instance's centre (ParticleLighting.glsl); the colour is display
+    // space, so the light multiplies its linear value. Past 1 it stays: the scene is HDR.
+    Inputs.Color.rgb   = LinearToSrgb(SrgbToLinear(Inputs.Color.rgb) * Particle_Light((Model * vec4(0.0, 0.0, 0.0, 1.0)).xyz));
+#endif
 #else
     Inputs.Color       = InColor;
 #endif

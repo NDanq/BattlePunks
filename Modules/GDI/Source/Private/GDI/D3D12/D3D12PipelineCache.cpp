@@ -130,7 +130,7 @@ bool D3D12PipelineCache::BuildRootSignature()
     Params[RP_PrevSkin].ShaderVisibility           = D3D12_SHADER_VISIBILITY_VERTEX;
     Params[RP_Light].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_CBV;
     Params[RP_Light].Descriptor.ShaderRegister = GDI_LIGHT_BLOCK_BINDING;
-    Params[RP_Light].ShaderVisibility          = D3D12_SHADER_VISIBILITY_PIXEL;
+    Params[RP_Light].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;   // a particle's vertex lighting reads it too
 
     for(UINT Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot)
     {
@@ -165,7 +165,7 @@ bool D3D12PipelineCache::BuildRootSignature()
         P.ParameterType                         = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
         P.DescriptorTable.NumDescriptorRanges   = 1;
         P.DescriptorTable.pDescriptorRanges     = &Ranges[i];
-        P.ShaderVisibility                      = D3D12_SHADER_VISIBILITY_PIXEL;
+        P.ShaderVisibility                      = D3D12_SHADER_VISIBILITY_ALL;   // the vertex stage samples too
     }
 
     D3D12_ROOT_SIGNATURE_DESC Desc{};

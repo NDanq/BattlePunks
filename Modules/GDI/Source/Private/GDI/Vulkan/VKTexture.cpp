@@ -300,7 +300,7 @@ EngineCore::Image VKTextureResource::ToImage() const
     // Transition: SHADER_READ_ONLY → TRANSFER_SRC
     const VkImageMemoryBarrier2 ToSrc = MakeImageBarrier(
         Image, CurrentLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT,
+        (VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT), VK_ACCESS_2_SHADER_READ_BIT,
         VK_PIPELINE_STAGE_2_COPY_BIT,            VK_ACCESS_2_TRANSFER_READ_BIT);
     RecordBarrier(ReadCmd, ToSrc);
 
@@ -324,7 +324,7 @@ EngineCore::Image VKTextureResource::ToImage() const
     const VkImageMemoryBarrier2 BackToShader = MakeImageBarrier(
         Image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, CurrentLayout,
         VK_PIPELINE_STAGE_2_COPY_BIT,            VK_ACCESS_2_TRANSFER_READ_BIT,
-        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+        (VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT), VK_ACCESS_2_SHADER_READ_BIT);
     RecordBarrier(ReadCmd, BackToShader);
 
     EndAndSubmitTransientCmd(Device, ReadPool, ReadCmd);
@@ -598,7 +598,7 @@ void VKTextureResource::UploadRegions(const uint8_t* const* InSources, const VkD
     VkImageMemoryBarrier2 ToShader = MakeImageBarrier(
         Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
         VK_PIPELINE_STAGE_2_COPY_BIT,            VK_ACCESS_2_TRANSFER_WRITE_BIT,
-        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+        (VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT), VK_ACCESS_2_SHADER_READ_BIT);
     ToShader.subresourceRange.levelCount = Count;
     RecordBarrier(UploadCmd, ToShader);
 
