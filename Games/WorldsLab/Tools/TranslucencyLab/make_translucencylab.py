@@ -160,6 +160,7 @@ def particles():
                        ("StartColor", "205,203,198,190"), ("EndColor", "185,183,180,0"), ("SpawnRate", "16"),
                        ("Acceleration", "6,20,3"), ("Drag", "0.1"), ("StartSize", "60")):
         plume = setting(plume, key, value)
+    plume += "    CastShadows true\n    ShadowDensity 1\n"   # into the sun's and the spot's opacity shadow maps (Phase 7)
     sparks = emitter_block(hearth, "Embers")
     sparks = re.sub(r"(?m)^Emitter \S+", "Emitter Sparks", sparks, count=1)
     for key, value in (("Seed", "23"), ("PauseOffscreen", "false"), ("SpawnRate", "14"), ("Velocity", "0,160,0"),

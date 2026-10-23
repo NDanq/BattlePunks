@@ -24,17 +24,15 @@ def vec(*values):
 def material(name, domain, shading, consts, two_sided=False, props=None):
     nid = hashlib.md5(f"Testing/{name}".encode()).hexdigest()
     pins = "".join(f'      <Const Pin="{pin}" Value="{value}" />\n' for pin, value in sorted(consts.items()))
-    extra = "".join(f'      <Prop Name="{key}" Value="{value}" />\n' for key, value in sorted((props or {}).items()))
+    # Sorted by name, as the editor and NodeGraphGenerate save them, so an unchanged graph keeps its code.
+    every = {"ClipValue": "0.5", "Domain": domain, "MaxOffset": "0", "Shading": shading,
+             "TwoSided": "true" if two_sided else "false", **(props or {})}
+    named = "".join(f'      <Prop Name="{key}" Value="{value}" />\n' for key, value in sorted(every.items()))
     text = f"""<?xml version="1.0" encoding="UTF-8"?>
 <NodeGraph Version="1" Schema="Material">
   <Nodes>
     <Node Id="{nid}" Type="Output.Material" Version="1" X="300" Y="0">
-{pins}      <Prop Name="ClipValue" Value="0.5" />
-      <Prop Name="Domain" Value="{domain}" />
-      <Prop Name="MaxOffset" Value="0" />
-      <Prop Name="Shading" Value="{shading}" />
-      <Prop Name="TwoSided" Value="{'true' if two_sided else 'false'}" />
-{extra}    </Node>
+{pins}{named}    </Node>
   </Nodes>
 </NodeGraph>
 """
@@ -61,6 +59,8 @@ MATERIALS = [
      {"ShadingModel": "Volume"}),
     ("VolumeBack", "Translucent", "Lit", {"BaseColor": vec(0.8, 0.8, 0.8), "Opacity": "0.6", "PhaseAnisotropy": "-0.6"},
      {"ShadingModel": "Volume"}),
+    # Phase 7: particles that draw nothing themselves, only their shadow.
+    ("Invisible", "Translucent", "Unlit", {"Opacity": "0"}, {}),
     # Opaque surroundings.
     ("OpaqueWhite", "Opaque", "Lit", {"BaseColor": vec(0.8, 0.8, 0.8), "Roughness": "0.9"}, {}),
     ("OpaqueRed", "Opaque", "Lit", {"BaseColor": vec(0.8, 0.05, 0.05), "Roughness": "0.9"}, {}),

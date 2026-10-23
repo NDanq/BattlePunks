@@ -88,6 +88,8 @@ NIMBLE_CONFIG_BOOL(GRenderEnergyCompensation, "Rendering", "EnergyCompensation",
 /* Screen-space reflections' rays drawn from GGX's visible normals and accumulated over frames
  * (GLOBAL_ILLUMINATION.md, Phase 4); off, one mirror ray a pixel, faded out on rough surfaces. */
 NIMBLE_CONFIG_BOOL(GRenderStochasticReflections, "Rendering", "StochasticReflections", true, nullptr);
+/* Particle emitters with Cast Shadows darken the light through them (LIT_TRANSLUCENCY.md, Phase 7); off, none do. */
+NIMBLE_CONFIG_BOOL(GShadowsTranslucent, "Shadows", "TranslucentShadows", true, nullptr);
 /* Forward Lit surfaces reflect the screen where a stack has Screen-Space Reflections (LIT_TRANSLUCENCY.md, Phase 4). */
 NIMBLE_CONFIG_BOOL(GRenderForwardReflections, "Rendering", "ForwardReflections", true, nullptr);
 /* Screen-space GI where a stack has it (GLOBAL_ILLUMINATION.md, Phase 5); off, the stack's node is ignored. */
@@ -237,6 +239,7 @@ namespace RenderCore
         constexpr uint32_t FORWARD_SHADOW_SLOT = 11; // the engine's slots 11, 12: forward Lit draws' shadow atlases (MaterialTemplate_PS.glsl)
         constexpr uint32_t FORWARD_DDGI_SLOT   = 9;  // the engine's slots 9, 10: a GI Volume's atlases (DDGI.glsl), for forward Lit draws too
         constexpr uint32_t FORWARD_REFLECTION_SLOT = 13; // the engine's slots 13, 14: forward reflections' last colour and depth copy (ForwardReflections.glsl)
+        constexpr uint32_t OPACITY_SHADOW_SLOT     = 15; // the engine's slot 15: translucent casters' opacity atlas (Shadows.glsl)
         constexpr uint32_t LIGHT_TILES_X    = 32;
         constexpr uint32_t LIGHT_TILES_Y    = 18;
         constexpr uint32_t LIGHT_TILE_WORDS = RENDER_LOCAL_LIGHT_MAX / 32;
@@ -1860,6 +1863,7 @@ namespace RenderCore
                     GDISetMaterialTexture(FORWARD_DDGI_SLOT + 1, ForwardDDGIAtlas[1]);
                     GDISetMaterialTexture(FORWARD_REFLECTION_SLOT, ForwardReflectionTextures[0]);
                     GDISetMaterialTexture(FORWARD_REFLECTION_SLOT + 1, ForwardReflectionTextures[1]);
+                    GDISetMaterialTexture(OPACITY_SHADOW_SLOT, ForwardOpacityAtlas);
                 }
             }
 
@@ -2016,6 +2020,13 @@ namespace RenderCore
                     Atlas = nullptr;
                 }
             }
+            if(OpacityAtlas)
+            {
+                GDIReleaseRenderTarget(OpacityAtlas);
+                delete OpacityAtlas;
+                OpacityAtlas = nullptr;
+            }
+            ForwardOpacityAtlas = nullptr;
             ShadowAtlasSize = 0;
         }
 
@@ -2228,6 +2239,29 @@ namespace RenderCore
         GDITextureResource* ForwardDDGIAtlas[2] = {};
         /* Forward reflections' last colour and copied depth (Phase 4), set for the forward stage. */
         GDITextureResource* ForwardReflectionTextures[2] = {};
+
+        /* Translucent shadows (LIT_TRANSLUCENCY.md, Phase 7): this frame's casting emitters'
+         * draws, made by CastParticleShadows; the opacity atlas they go into -- the
+         * directional atlas's tiles in its left half, the local's in its right, at half
+         * resolution, four slices of optical depth a texel (RGBA16F) -- and its texture
+         * once drawn this frame (engine slot 15), null otherwise. */
+        struct TranslucentCaster
+        {
+            const void*    Key      = nullptr;   // the emitter: once a frame however many views draw it
+            GDIMesh*       Mesh     = nullptr;
+            uint32_t       First    = 0, Count = 0;
+            GDIBuffer*     Instances = nullptr;
+            uint32_t       InstanceCount = 0;
+            GDIBuffer*     Args     = nullptr;
+            float          Density  = 1.0f;
+            GameCore::AABB Bounds;
+        };
+        std::vector<TranslucentCaster> TranslucentCasters;
+        GDIRenderTarget*    OpacityAtlas = nullptr;
+        GDITextureResource* ForwardOpacityAtlas = nullptr;
+        GDIShader*          OpacityCasterVertex = nullptr;
+        GDIShader*          OpacityCasterPixel  = nullptr;
+        bool                bOpacityCasterTried = false;
         bool                bLTCTried = false;
         void EnsureLTC();
 
@@ -2528,6 +2562,161 @@ namespace RenderCore
             }
             PlaceProjection = nullptr;
             PlaceView       = nullptr;
+            IssueTranslucentShadows();
+        }
+
+        /* Translucent shadows (LIT_TRANSLUCENCY.md, Phase 7; Kim and Neumann 2001): each light
+         * view's casting particles into its tile of the opacity atlas (OpacityShadowCaster.vsh/
+         * .fsh), turned to the light, their optical depth added into four slices between the
+         * casters' nearest and farthest depth in that view -- which the scene block carries
+         * per cascade (Scene_Spare) and per shadowed local light (Scene_Locals[6i+5].zw) for
+         * Shadows.glsl to read back. Nothing (and every span empty) without casters. */
+        void IssueTranslucentShadows()
+        {
+            for(uint32_t Index = 0; Index < RENDER_SCENE_LOCAL_LIGHT_MAX; ++Index)
+            {
+                Scene.Locals[Index * SCENE_LOCAL_VEC4S + 5][2] = 0.0f;
+                Scene.Locals[Index * SCENE_LOCAL_VEC4S + 5][3] = 0.0f;
+            }
+            std::memset(Scene.Spare, 0, sizeof(float) * 12);
+            ForwardOpacityAtlas = nullptr;
+            if(!GShadowsTranslucent.GetBool() || TranslucentCasters.empty() || Shadows.ViewCount == 0 || Shadows.AtlasSize < 2
+               || !GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
+            {
+                return;
+            }
+            if(!bOpacityCasterTried)
+            {
+                bOpacityCasterTried = true;
+                OpacityCasterVertex = LoadShader("OpacityShadowCaster.vsh", ST_Vertex, "translucent shadows", false);
+                OpacityCasterPixel  = LoadShader("OpacityShadowCaster.fsh", ST_Pixel, "translucent shadows", false);
+            }
+            const uint Size = uint(Shadows.AtlasSize);
+            if(OpacityAtlas && (OpacityAtlas->GetWidth() != Size || OpacityAtlas->GetHeight() != Size / 2))
+            {
+                OpacityAtlas->Resize(Size, Size / 2);
+            }
+            if(!OpacityAtlas)
+            {
+                OpacityAtlas = GDICreateRenderTargetFormat("RenderCore.OpacityShadows", Size, Size / 2, GDI_RTF_RGBA16F);
+            }
+            if(!OpacityCasterVertex || !OpacityCasterPixel || !OpacityAtlas || !OpacityAtlas->IsValid())
+            {
+                return;
+            }
+
+            SCOPED_DRAW_EVENT("TranslucentShadows");
+            GDIRenderTarget* Target = OpacityAtlas;
+            GDISetRenderTargets(&Target, 1, Target);
+            GDISetViewport(0, 0, Size, Size / 2);
+            GDISetColorMask(EColM_RGBA);
+            GDIClear(CM_Color | CM_Depth, EngineCore::Color(0, 0, 0, 0), 1.0f);
+            IDepthStateDesc NoDepth;
+            NoDepth.bDepthTest = false;
+            NoDepth.bDepthMask = false;
+
+            /* A view's casters' window-depth span: their bounds' corners through its matrix. */
+            float Span[SHADOW_VIEW_MAX][2] = {};
+            const auto DepthSpan = [&](const ShadowView& InView, const GameCore::AABB& InBox, float& InOutNear, float& InOutFar)
+            {
+                const EngineCore::Vector3& Min = InBox.Min; const EngineCore::Vector3& Max = InBox.Max;
+                const EngineCore::Matrix4x4& M = InView.WorldToAtlas;
+                for(int Corner = 0; Corner < 8; ++Corner)
+                {
+                    const double P[3] = { (Corner & 1) ? Max.GetX() : Min.GetX(), (Corner & 2) ? Max.GetY() : Min.GetY(),
+                                          (Corner & 4) ? Max.GetZ() : Min.GetZ() };
+                    const double Z = M.Data[2][0] * P[0] + M.Data[2][1] * P[1] + M.Data[2][2] * P[2] + M.Data[2][3];
+                    const double W = M.Data[3][0] * P[0] + M.Data[3][1] * P[1] + M.Data[3][2] * P[2] + M.Data[3][3];
+                    if(W <= 1e-9) { InOutNear = 0.0f; continue; }   // behind a spot's eye: from its near plane
+                    const float D = float(std::clamp(Z / W, 0.0, 1.0));
+                    InOutNear = std::min(InOutNear, D);
+                    InOutFar  = std::max(InOutFar, D);
+                }
+            };
+            static const RenderTransform Identity;
+            const uint Half = Size / 2;
+            bool bAny = false;
+            for(uint32_t ViewIndex = 0; ViewIndex < Shadows.ViewCount; ++ViewIndex)
+            {
+                const ShadowView& View = Shadows.Views[ViewIndex];
+                if(View.Inset >= 0) { continue; }
+                float Near = 1.0f, Far = 0.0f;
+                std::vector<const TranslucentCaster*> InView;
+                for(const TranslucentCaster& Each : TranslucentCasters)
+                {
+                    if(!Each.Bounds.Overlaps(View.WorldBounds)) { continue; }
+                    DepthSpan(View, Each.Bounds, Near, Far);
+                    InView.push_back(&Each);
+                }
+                if(InView.empty() || Far <= Near) { continue; }
+                Span[ViewIndex][0] = Near;
+                Span[ViewIndex][1] = Far;
+                bAny = true;
+
+                GDISetViewport((View.Atlas == SA_Local ? Half : 0u) + View.TileX / 2, View.TileY / 2,
+                               std::max(View.TileSize / 2, 1u), std::max(View.TileSize / 2, 1u));
+                PlaceProjection = &View.Projection;
+                PlaceView       = &View.View;
+                for(const TranslucentCaster* Each : InView)
+                {
+                    GDIViewObject* const MeshObject = RefMeshObject();
+                    Place(MeshObject, Identity, 1.0f, 1.0f);
+                    MeshObject->Mesh = Each->Mesh;
+                    Bind(OpacityCasterVertex, OpacityCasterPixel);
+                    const float Block[MATERIAL_ENGINE_BLOCK_BYTES / sizeof(float)] = { Near, Far, Each->Density, 0.0f };
+                    GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, Block, uint(sizeof(Block)));
+                    GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &Scene, uint(sizeof(Scene)));
+                    GDISetDepthState(NoDepth);
+                    GDISetBlendState(IBlendStateDesc(true, BM_One, BM_One));
+                    GDISetDrawRange(Each->Mesh, Each->First, Each->Count);
+                    GDISetInstanceBuffer(Each->Instances, Each->InstanceCount);
+                    GDISetIndirectArgs(Each->Args, 0);
+                    GDIDrawObject(MeshObject);
+                    GDISetIndirectArgs(nullptr);
+                    GDISetInstanceBuffer(nullptr, 0);
+                    GDISetDrawRange(Each->Mesh, 0, 0);
+                    MeshObject->Mesh = nullptr;
+                    DrawCallCount.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            PlaceProjection = nullptr;
+            PlaceView       = nullptr;
+            GDISetBlendState(IBlendStateDesc());
+            if(!bAny)
+            {
+                return;
+            }
+
+            /* The spans where Shadows.glsl reads them: the sun's per cascade, a local light's over its views. */
+            for(uint32_t Cascade = 0; Cascade < std::min<uint32_t>(Shadows.CascadeCount, 4u) && Shadows.DirectionalFirstView >= 0; ++Cascade)
+            {
+                const uint32_t ViewIndex = uint32_t(Shadows.DirectionalFirstView) + Cascade;
+                Scene.Spare[Cascade / 2][(Cascade % 2) * 2]     = Span[ViewIndex][0];
+                Scene.Spare[Cascade / 2][(Cascade % 2) * 2 + 1] = Span[ViewIndex][1];
+            }
+            for(uint32_t Index = 0; Index < std::min<uint32_t>(Lighting.LocalCount, RENDER_SCENE_LOCAL_LIGHT_MAX); ++Index)
+            {
+                const int32_t First = Shadows.LocalFirstView[Index];
+                if(First < 0) { continue; }
+                const uint32_t Views = Lighting.Locals[Index].Type == RLL_Spot ? 1u : 6u;
+                float Near = 1.0f, Far = 0.0f;
+                for(uint32_t ViewIndex = uint32_t(First); ViewIndex < std::min<uint32_t>(uint32_t(First) + Views, Shadows.ViewCount); ++ViewIndex)
+                {
+                    if(Span[ViewIndex][1] > Span[ViewIndex][0])
+                    {
+                        Near = std::min(Near, Span[ViewIndex][0]);
+                        Far  = std::max(Far, Span[ViewIndex][1]);
+                    }
+                }
+                if(Far > Near)
+                {
+                    Scene.Locals[Index * SCENE_LOCAL_VEC4S + 5][2] = Near;
+                    Scene.Locals[Index * SCENE_LOCAL_VEC4S + 5][3] = Far;
+                }
+            }
+            Scene.Spare[2][0] = 1.0f;
+            GDITexture2D* Texture = OpacityAtlas->ToGDITexture2D();
+            ForwardOpacityAtlas = Texture ? Texture->Resource : nullptr;
         }
 
         /* Lighting_Block's inset shadows, after its first vec4's x: y how
@@ -3075,6 +3264,7 @@ namespace RenderCore
             const uint32_t LastSlot = RENDER_GBUFFER_TARGETS + SA_Count;
             static_assert(RENDER_GBUFFER_TARGETS + SA_Count < LIGHTING_LTC_SLOT, "the Lighting stage's textures come before the engine's");
             GDISetMaterialTexture(LIGHTING_LTC_SLOT, LTCTable);   // the area lights' (LightList.glsl)
+            GDISetMaterialTexture(OPACITY_SHADOW_SLOT, ForwardOpacityAtlas);   // translucent casters' (Shadows.glsl)
 
             /* Lighting_Block (DeferredLighting.fsh): whether Skin's diffuse has
              * its own target, then the inset shadows. */
@@ -3793,6 +3983,36 @@ namespace RenderCore
         return Draw(InMeshPath, InEmitter.Instances, 0);
     }
 
+    void RenderContext::CastParticleShadows(ParticleEmitterGpu& InEmitter, const char* InMeshPath, const float InDensity,
+                                            const GameCore::AABB& InBounds)
+    {
+        if(!InEmitter.bSimulated || InEmitter.bIdle || !InEmitter.Instances || InEmitter.Type != PT_Sprite || InDensity <= 0.0f)
+        {
+            return;
+        }
+        for(const Impl::TranslucentCaster& Each : P->TranslucentCasters)
+        {
+            if(Each.Key == &InEmitter) { return; }
+        }
+        std::shared_ptr<const MeshData> Source;
+        GDIMesh* Mesh = InMeshPath && InMeshPath[0] != '\0' ? P->FindMesh(InMeshPath, Source) : nullptr;
+        if(!Mesh || !Source)
+        {
+            return;
+        }
+        Impl::TranslucentCaster Caster;
+        Caster.Key           = &InEmitter;
+        Caster.Mesh          = Mesh;
+        Caster.Count         = Source->Sections.empty() ? 0u : Source->Sections[0].IndexCount;
+        Caster.First         = Source->Sections.empty() ? 0u : Source->Sections[0].FirstIndex;
+        Caster.Instances     = InEmitter.Instances;
+        Caster.InstanceCount = InEmitter.MaxParticles;
+        Caster.Args          = GDISupportsIndirectDraw() && InEmitter.ArgsMesh == Source.get() ? InEmitter.Args : nullptr;   // the living, laid out by DrawParticles
+        Caster.Density       = InDensity;
+        Caster.Bounds        = InBounds;
+        P->TranslucentCasters.push_back(Caster);
+    }
+
     void RenderContext::DrawQuad(const RenderTransform& InTransform, const float InWidth, const float InHeight,
                                   const EngineCore::Color InTint)
     {
@@ -4133,6 +4353,9 @@ namespace RenderCore
         P->Shadows.ViewCount = 0;   // a preview has none; a scene's PrepareShadows adds them
         for(GDITextureResource*& Each : P->ForwardShadowAtlas) { Each = nullptr; }
         for(GDITextureResource*& Each : P->ForwardDDGIAtlas) { Each = nullptr; }
+        P->TranslucentCasters.clear();
+        P->ForwardOpacityAtlas = nullptr;
+        P->Scene.Spare[2][0]   = 0.0f;
         for(GDITextureResource*& Each : P->ForwardReflectionTextures) { Each = nullptr; }
         P->Scene.ForwardReflections[1][1] = 0.0f;
         P->CasterView        = -1;

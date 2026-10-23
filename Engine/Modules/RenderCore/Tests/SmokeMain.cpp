@@ -3671,6 +3671,82 @@ static void TestTranslucencyOnGpu()
             Sun.GetComponent<DirectionalLightComponent>()->Intensity   = SunInit.Intensity;
         }
 
+        /* Phase 7: a cloud of half-opaque particles that draw nothing (an opacity-0
+         * material) but cast, under a sun straight down, over a white floor. The floor under
+         * it is darker with translucent shadows on than off; an emitter of Shadow Density 0
+         * leaves it as off; the floor away from it is the same either way. */
+        ConfigVar* Translucent = ConfigFindVarByPath("Shadows.TranslucentShadows");
+        Expect(Translucent != nullptr, "[Shadows] TranslucentShadows is a config var");
+        if(Translucent)
+        {
+            std::filesystem::create_directories("Saved/TranslucencySmoke");
+            const auto WriteSystem = [](const char* InPath, const char* InDensity)
+            {
+                std::ofstream File(InPath, std::ios::binary);
+                File << "NimbleParticleSystem 1\n\nEmitter Puffs\n    Enabled true\n    Type Sprite\n"
+                        "    Material Engine/Content/Materials/Testing/Invisible.material.nmgraph\n"
+                        "    SpawnMode Burst\n    MaxParticles 64\n    BurstCount 48\n    BurstInterval 0\n    BurstCycles 1\n"
+                        "    Lifetime 60\n    LifetimeVariance 0\n    EmitterRadius 25\n    Velocity 0,0,0\n    VelocitySpread 0\n"
+                        "    StartSize 200\n    EndSize 200\n    StartColor 255,255,255,128\n    EndColor 255,255,255,128\n"
+                        "    FadeIn 0\n    FadeOut 0\n    PauseOffscreen false\n    CastShadows true\n    ShadowDensity "
+                     << InDensity << "\n";
+            };
+            WriteSystem("Saved/TranslucencySmoke/Casting.nmparticle", "1");
+            WriteSystem("Saved/TranslucencySmoke/Faint.nmparticle", "0");
+
+            Sun.GetComponent<GameCore::TransformComponent>()->Rotation = Vector3(90.0, 0.0, 0.0);
+            const GameCore::Entity Floor = Placed("Floor", Vector3(0.0, -1.0, 300.0), Vector3(), Vector3(2000.0, 2.0, 2000.0));
+            Floor.AddComponent(Drawn(BOX, "OpaqueWhite"));
+            const auto Cloud = [&](const char* InSystem)
+            {
+                const GameCore::Entity Each = Placed("Cloud", Vector3(0.0, 220.0, 300.0), Vector3(), Vector3(1.0, 1.0, 1.0));
+                ParticleSystemComponent System;
+                std::snprintf(System.System, sizeof(System.System), "%s", InSystem);
+                Each.AddComponent(System);
+                return Each;
+            };
+            const auto FloorGrey = [&](const EngineCore::Image& InPixels, const int InX)
+            {
+                int Sum = 0;
+                for(int Y = 154; Y <= 162; ++Y)
+                {
+                    for(int X = InX - 4; X <= InX + 4; ++X)
+                    {
+                        int Value[3];
+                        Rgb(InPixels, X, Y, Value);
+                        Sum += Value[0] + Value[1] + Value[2];
+                    }
+                }
+                return Sum / (81 * 3);
+            };
+            EngineCore::Image On, Off, Faint;
+            GameCore::Entity Casting = Cloud("Saved/TranslucencySmoke/Casting.nmparticle");
+            Translucent->SetFromString("1");
+            const bool bOn = Capture(On);
+            Translucent->SetFromString("0");
+            const bool bOff = Capture(Off);
+            Translucent->SetFromString("1");
+            World.DestroyEntity(Casting);
+            Casting = Cloud("Saved/TranslucencySmoke/Faint.nmparticle");
+            const bool bFaint = Capture(Faint);
+            Expect(bOn && bOff && bFaint, "the casting cloud is captured with translucent shadows on, off and at density 0");
+            if(bOn && bOff && bFaint)
+            {
+                Dump(On, "cloud-shadow-on");
+                Dump(Off, "cloud-shadow-off");
+                const int UnderOn = FloorGrey(On, 128), UnderOff = FloorGrey(Off, 128), UnderFaint = FloorGrey(Faint, 128);
+                const int AsideOn = FloorGrey(On, 24), AsideOff = FloorGrey(Off, 24);
+                std::printf("    cloud: floor under it %d on, %d off, %d at density 0; aside %d on, %d off\n", UnderOn, UnderOff,
+                            UnderFaint, AsideOn, AsideOff);
+                Expect(UnderOn < UnderOff * 85 / 100, "particles with Cast Shadows darken the floor under them (translucent shadows)");
+                Expect(std::abs(UnderFaint - UnderOff) < 4, "an emitter of Shadow Density 0 casts none");
+                Expect(std::abs(AsideOn - AsideOff) < 4, "and the floor away from them is unchanged");
+            }
+            World.DestroyEntity(Casting);
+            World.DestroyEntity(Floor);
+            Sun.GetComponent<GameCore::TransformComponent>()->Rotation = Vector3(35.0, 10.0, 0.0);
+        }
+
         Rend.UnbindWorld();
         Rend.Shutdown();
     }

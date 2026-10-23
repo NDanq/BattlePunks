@@ -21,6 +21,35 @@
 #define LIGHTING_SHADOW_RADIUS int(Scene_ShadowParams.y)
 #endif
 
+// Translucent shadows (LIT_TRANSLUCENCY.md, Phase 7): where the includer defines
+// LIGHTING_TRANSLUCENT_SHADOWS and declares TranslucentOpacity (engine slot 15),
+// the light through the particles that cast is the opaque shadow's times
+// exp(-the optical depth in front): four slices between the view's casters'
+// nearest and farthest window depth (OpacityShadowCaster.fsh), the directional
+// atlas's in the left half, the local's in the right, at half resolution.
+// LIGHTING_TRANSLUCENT_SELF (Phase 8): how far toward the light, in slices, a
+// receiver that is itself in the medium looks, so it is not shadowed by itself.
+#ifndef LIGHTING_TRANSLUCENT_SELF
+#define LIGHTING_TRANSLUCENT_SELF 0.0
+#endif
+float TranslucentLight(mat4 InMatrix, vec3 InWorld, bool bInLocal, vec2 InRange)
+{
+#ifdef LIGHTING_TRANSLUCENT_SHADOWS
+    if(Scene_Spare[2].x < 0.5 || InRange.y <= InRange.x) { return 1.0; }
+    vec4 Clip = InMatrix * vec4(InWorld, 1.0);
+    if(Clip.w <= 0.0) { return 1.0; }
+    vec3 Atlas = Clip.xyz / Clip.w;
+    if(any(lessThan(Atlas.xy, vec2(0.0))) || any(greaterThan(Atlas.xy, vec2(1.0)))) { return 1.0; }
+    vec4  Slices = textureLod(TranslucentOpacity, vec2(Atlas.x * 0.5 + (bInLocal ? 0.5 : 0.0), Atlas.y), 0.0);
+    float At     = clamp((Atlas.z - InRange.x) / (InRange.y - InRange.x), 0.0, 1.0) * 4.0 - float(LIGHTING_TRANSLUCENT_SELF);
+    float Depth  = 0.0;
+    for(int Index = 0; Index < 4; ++Index) { Depth += Slices[Index] * clamp(At - float(Index), 0.0, 1.0); }
+    return exp(-Depth);
+#else
+    return 1.0;
+#endif
+}
+
 // Receiver bias. Depth: InBias, more the more the light grazes (slope-scaled).
 // Normal: along the surface normal, at least a texel and a half of the shadow
 // map where InWorld is (InTexelWorld), so a grazing face does not shadow itself.
@@ -102,6 +131,8 @@ float DirectionalShadow(vec3 InWorld, vec3 InNormal, vec3 InToLight)
     float PerUnit = length(vec3(Matrix[0][2], Matrix[1][2], Matrix[2][2]));
     float Lit     = SampleShadowAtlas(ShadowDirectional, Matrix, InWorld + Offset,
                                       SlopeBias(Scene_LightShadow.z * 256.0, NdotL) * Scene_CascadeTexels[Cascade] * PerUnit, Tile);
+    vec4  Ranges  = Cascade < 2 ? Scene_Spare[0] : Scene_Spare[1];   // the cascades' translucent casters' depth spans
+    Lit *= TranslucentLight(Matrix, InWorld + Offset, false, (Cascade == 0 || Cascade == 2) ? Ranges.xy : Ranges.zw);
     return mix(Lit, 1.0, smoothstep(Last * 0.9, Last, ViewDepth));
 }
 
@@ -142,8 +173,9 @@ float DirectionalShadowDepth(vec3 InWorld, vec3 InNormal)
 
 // A point or spot light's shadow at InWorld. InFirst is its first matrix in
 // Scene_LocalShadowMatrices; a point light's face is the major axis away from it.
+// InTranslucentRange: the light's translucent casters' depth span (Scene_Locals[6i+5].zw; Phase 7).
 float LocalShadow(int InFirst, bool bInSpot, float InCosOuter, vec3 InLightPosition, vec3 InWorld, vec3 InNormal,
-                  vec3 InToLight, float InBias, float InNormalBias)
+                  vec3 InToLight, float InBias, float InNormalBias, vec2 InTranslucentRange)
 {
     int Matrix = InFirst;
     if(!bInSpot)
@@ -161,7 +193,8 @@ float LocalShadow(int InFirst, bool bInSpot, float InCosOuter, vec3 InLightPosit
     float Texel     = 2.0 * length(InWorld - InLightPosition) * TanHalf / float(Tile);
     float NdotL     = clamp(dot(InNormal, InToLight), 0.0, 1.0);
     vec3  Offset    = NormalOffset(InNormal, NdotL, InNormalBias, Texel);
-    return SampleShadowAtlas(ShadowLocal, Scene_LocalShadowMatrices[Matrix], InWorld + Offset, SlopeBias(InBias, NdotL), Tile);
+    return SampleShadowAtlas(ShadowLocal, Scene_LocalShadowMatrices[Matrix], InWorld + Offset, SlopeBias(InBias, NdotL), Tile)
+         * TranslucentLight(Scene_LocalShadowMatrices[Matrix], InWorld + Offset, true, InTranslucentRange);
 }
 
 #ifdef LIGHTING_INSET_SHADOWS

@@ -136,6 +136,8 @@ namespace RenderCore
         float    BeamNoise        = 0.0f;    // how far its middle strays, world units
         float    BeamNoiseSpeed   = 4.0f;    // how fast the jitter changes, a second
         uint32_t Seed             = 0;
+        bool     bCastShadows     = false;   // Sprite: casts into the lights' opacity shadow maps (LIT_TRANSLUCENCY.md, Phase 7)
+        float    ShadowDensity    = 1.0f;    // its shadow's opacity times this
 
         /* Its shape (EmitterRadius is its radius). */
         uint8_t  Shape            = PS_Sphere;

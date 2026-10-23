@@ -60,6 +60,8 @@ Emitter Plume
     FadeIn 0.12
     FadeOut 0.6
     ColorKeys
+    CastShadows true
+    ShadowDensity 1
 
 Emitter Sparks
     Enabled true
