@@ -659,8 +659,13 @@ reflect what is on screen, over the probes' specular.
   (reprojected, clipped to the 3 x 3 neighbourhood), so a rough surface
   reflects its lobe, blurred. Trust fades only near Max Roughness (default
   0.8). Off: one mirror ray, faded out from 0.6 of Max Roughness.
-- **Limits:** only G-buffer surfaces: Translucent Lit (glass, water) keep
-  the probes; what is off screen or hidden reflects the probes.
+- **Forward Lit surfaces** (glass, water) march their own mirror ray in
+  their pixel shader against a copy of the opaque depth
+  (`ForwardReflections.glsl`; LIT_TRANSLUCENCY.md, Phase 4), with the
+  node's settings; `[Rendering] ForwardReflections` turns that off alone.
+- **Limits:** what is off screen or hidden reflects the probes; a forward
+  surface's reflection is one ray, not accumulated, so it bands a little
+  where the G-buffer's would be smoothed.
 
 ### Screen-space GI
 

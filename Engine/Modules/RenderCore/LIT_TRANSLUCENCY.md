@@ -151,16 +151,43 @@ LTC table, 9 and 10 DDGI's atlases (bound only during the IBL pass today).
   LightingLab bit-identical.
 - Fog's composite already covered translucent surfaces; nothing changed there.
 
-## Phase 4: reflections on glass and water
+## Phase 4: reflections on glass and water (landed)
 
 - A forward Lit draw smoother than the SSR node's Max Roughness marches the
-  screen in its own pixel shader: `PPScreenReflections`' march as a function
-  (ScreenTrace.glsl), against the opaque depth (material slot 7,
-  `Material_SceneDepth`), reading last frame's colour (TAA history or the
-  `PPCopy`, engine slot 13). Mirror ray only, a fixed step count; trust fades
-  the same way, the probes behind it.
-- Only while the stack's SSR node is on; `[Rendering] ForwardReflections`
-  turns it off alone.
+  screen in its own pixel shader (`ForwardReflections.glsl`): a mirror ray,
+  8-24 steps (the node's, capped), four halvings, against a **copy of the
+  opaque depth** (`SceneTargets::DepthCopy`, R32F -- RGBA32F where that is
+  all there is -- copied by `PPCopy` before the forward stage: the depth
+  itself is bound for the depth test, and sampling it there would be a
+  feedback hazard), reading the last frame's colour (`LastColor`) at the hit
+  reprojected by the last frame's view. Engine slots 13 and 14. The trust
+  fades as PPScreenReflections' does; `IBL_LightModel` blends it over the
+  probes' specular.
+- **Deviations:** not the planned material slot 7 for the depth (only a
+  PostProcess material binds it) but the copy; the hit's own motion is not
+  known (no velocity read), so a moving hit reflects where it was; the
+  march's jitter shifts each frame (golden ratio) so TAA averages it.
+- Its settings and the last view live in the scene block where the unused
+  `Scene_Probes[12]` were (`Scene_PrevViewProjection`,
+  `Scene_ForwardReflections[2]`, `Scene_Spare[6]`; same size), set for the
+  forward stage only.
+- Only while the stack's SSR node is on, in an HDR scene with a last frame;
+  `[Rendering] ForwardReflections` 0 turns it off alone -- and then the lab
+  is bit-identical to Phase 3.
+- **Checked:** RenderCore.Smoke on the GPU, 754 checks, none failing, Vulkan
+  and D3D12 (no new check: it needs a post stack with SSR and a frame of
+  history; the lab's on/off pair stands in). TranslucencyLab: the water
+  view's water brighter by 5.6 (the red wall in it), the lab view's by 6.8;
+  the glass's lit panes by 1.5; the plume unchanged (99 dB: the smoke's
+  roughness 1 never marches). Identical on Vulkan and D3D12. Faint
+  horizontal bands remain in the water where the steps cross the wall's
+  base.
+- **Cost:** the water view's Forward 0.29 -> 0.48 ms on Vulkan (+0.20),
+  0.63 -> 0.87 on D3D12 (+0.24, a little over the +0.2 budget, the depth
+  copy included); the plume view unchanged.
+- **Regression:** LightingLab bit-identical; Courtyard 52 dB against
+  Phase 3 -- its stack has the SSR node, so its glass and water reflect now
+  (the node is the opt-in, not the material).
 
 ## Phase 5: the Volume shading model (lit particles, per pixel)
 

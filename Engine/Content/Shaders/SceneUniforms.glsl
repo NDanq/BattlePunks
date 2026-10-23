@@ -38,8 +38,13 @@ UBO_BLOCK_BEGIN(3, Scene_Block)
     // Image-based lighting (IBLCommon.glsl): x 1 if the probe atlas lights this view -- the
     // Lighting stage's hemisphere ambient then gives way to it; y the probes; z the sky block's weight.
     vec4 Scene_IBL;
-    vec4 Scene_Probes[12];       // unused: the light block holds the probes now (LightList_Probes); [3i] xyz centre, w radius; [3i+1] xyz box half sizes (0: a sphere), w intensity;
-                                 // [3i+2] x its block in the atlas
+    // Forward Lit surfaces' screen-space reflections (ForwardReflections.glsl; LIT_TRANSLUCENCY.md,
+    // Phase 4), set for the translucent stage: the last frame's view, unjittered, GL clip space;
+    // [0] x intensity, y most roughness, z steps, w thickness; [1] x longest ray, y 1 if on, zw the
+    // view's size. (Where the probes once were, before the light block held them.)
+    mat4 Scene_PrevViewProjection;
+    vec4 Scene_ForwardReflections[2];
+    vec4 Scene_Spare[6];
 
     // Baked lighting (BakedLighting.glsl): x 1 if the view draws with a bake; y 1 if that bake
     // has the sky in it, so a baked surface takes no live sky ambient; z 1 if its lightmaps

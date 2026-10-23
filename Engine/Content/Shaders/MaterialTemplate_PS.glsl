@@ -52,6 +52,9 @@ MATERIAL_SAMPLER2D(4, Material_IBLAtlas)
 #define LIGHTING_IBL_ATLAS Material_IBLAtlas
 // And from a GI Volume's probes where one is (DDGI.glsl, engine slots 9 and 10; LIT_TRANSLUCENCY.md, Phase 3).
 #include <DDGI.glsl>
+// And reflects what is on screen, over the probes (ForwardReflections.glsl, engine slots 13 and 14; Phase 4).
+#include <ForwardReflections.glsl>
+#define LIGHTING_FORWARD_REFLECTIONS 1
 // And is shadowed (LIT_TRANSLUCENCY.md, Phase 2): the shadow atlases at the engine's
 // slots 11 and 12, filtered [Shadows] ForwardFilter texels each way; no inset or contact shadows.
 MATERIAL_SAMPLER2D(15, ShadowDirectional)
