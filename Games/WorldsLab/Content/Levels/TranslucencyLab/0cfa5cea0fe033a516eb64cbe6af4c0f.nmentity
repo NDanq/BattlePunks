@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="0cfa5cea0fe033a516eb64cbe6af4c0f" Name="Ground">
+  <Component Type="Render" Version="5">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/TranslucencyLab/Floor.material.nmgraph" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
+    <Occluder Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="400" Y="-10" Z="400" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="6000" Y="20" Z="6000" />
+  </Component>
+</Entity>

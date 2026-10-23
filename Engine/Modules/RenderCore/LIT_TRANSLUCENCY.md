@@ -30,17 +30,38 @@ A plan, phase by phase, like GLOBAL_ILLUMINATION.md. Nothing here has landed.
 Engine texture slots free for forward draws: 11-15 (bindings 15-19); 8 is the
 LTC table, 9 and 10 DDGI's atlases (bound only during the IBL pass today).
 
-## Phase 0: a lab and a baseline
+## Phase 0: a lab and a baseline (landed)
 
 - **TranslucencyLab** in WorldsLab (`Tools/TranslucencyLab/make_translucencylab.py`,
-  as LightingLab's): glass panes half in a wall's sun shadow, a water strip
-  under a smooth wall, a smoke plume crossing a spot light's cone and its
-  shadow and casting onto the floor, sparks through the smoke, all inside a
-  GI Volume, under volumetric fog.
-- Repeatable particles: a fixed step and seed (see "Validation").
-- Baseline captures (each twice, for the noise floor) and the Forward column
-  of `stat frame`, on Vulkan and D3D12. Every later phase is measured against
-  it.
+  as LightingLab's): three clear panes (opacity 0.12) before a dark backdrop,
+  an overhead slab's sun shadow across the left of them and the ground in
+  front; a water strip under a red wall; a lit smoke plume (Steampunk's
+  Steam puff) rising through a shadowed spot light's cone, a post in it,
+  sparks (Translucent Unlit) through the smoke; a GI Volume, three
+  reflection probes, thin volumetric fog, TAA, no auto exposure.
+  `WorldsLabTranslucencyLab.cpp` holds the camera at one of four views
+  (`WorldsLab.TranslucencyLabView`: 0 lab, 1 glass, 2 plume, 3 water).
+- **Repeatable frames:** `[Rendering] FixedStep` (seconds a frame; 0 the
+  wall clock) drives the render clock -- `GetDeltaSeconds`,
+  `GetTimeSeconds` (particle turbulence's phase read the wall clock) and
+  material Time -- and `[Record] StartFrame` has FrameRecorder take frame N
+  rather than a wall-clock second. Particle spawns were already seeded per
+  emitter and frame.
+- **Tools** (`Tools/TranslucencyLab/`): `capture.ps1` (each view's frame N,
+  FixedStep 1/60, through a stand-in `ffmpeg` that keeps the frame as a
+  .bmp; `-Stats` logs the GPU spans at that frame), `compare.py` (PSNR whole
+  and per region, the mean luminance change, `--diff`), `montage.ps1`.
+- **Noise floor:** two runs, frame 480, are bit-identical on Vulkan and on
+  D3D12 (99 dB in every view and region) -- any difference later is the
+  change's.
+- **Baseline cost** (GPU ms at frame 480, RTX 2080 Ti, Debug, 1280 x 720):
+
+  | View | Vulkan Forward | Vulkan Total | D3D12 Forward | D3D12 Total |
+  |---|---|---|---|---|
+  | 0 lab | 0.270 | 1.054 | 0.585 | 2.454 |
+  | 1 glass | 0.252 | 1.210 | 0.553 | 2.757 |
+  | 2 plume | 0.367 | 1.155 | 0.977 | 3.135 |
+  | 3 water | 0.318 | 1.247 | 0.550 | 2.958 |
 
 ## Phase 1: one translucent stage
 
@@ -184,16 +205,13 @@ records its results here, as GLOBAL_ILLUMINATION.md's phases do.
 
 ### 1. Repeatable particles (Phase 0, before anything else)
 
-Particle captures are not repeatable today: the simulation runs on the
-render thread's wall clock (`GetDeltaSeconds`), so two runs differ.
+Particle captures were not repeatable: the simulation ran on the render
+thread's wall clock, so two runs differed.
 
-- `[Particles] FixedStep` (seconds; 0 off) steps every emitter by a fixed
-  dt per frame, and `[Particles] Seed` fixes the spawn random stream, so a
-  capture N frames in is the same frame every run.
-- FrameRecorder and the smoke test use both. The noise floor for every
-  later comparison is two baseline captures with them on; expected to be
-  near-identical, and a floor worse than the opaque levels' (ShootingRange
-  ~36 dB) means the determinism is not done.
+- `[Rendering] FixedStep` steps the render clock by a fixed dt a frame, and
+  `[Record] StartFrame` captures frame N, so a capture is the same frame
+  every run (Phase 0: bit-identical on Vulkan and D3D12).
+- Every later comparison uses both (`capture.ps1`).
 
 ### 2. Analytic GPU checks (RenderCore.Smoke)
 

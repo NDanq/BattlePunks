@@ -14,6 +14,7 @@ NIMBLE_CONFIG_STRING(GRecordFile,         "Record", "File",         "", nullptr)
 NIMBLE_CONFIG_FLOAT(GRecordFps,           "Record", "Fps",          30.0f, nullptr);
 NIMBLE_CONFIG_FLOAT(GRecordSeconds,       "Record", "Seconds",      0.0f, nullptr);  // 0: until the game ends
 NIMBLE_CONFIG_FLOAT(GRecordStartSeconds,  "Record", "StartSeconds", 0.0f, nullptr);  // the level loading, say, left out
+NIMBLE_CONFIG_INT(GRecordStartFrame,      "Record", "StartFrame",   0, nullptr);     // > 0: by frame, from this one (FrameRecorder.h)
 
 #if defined(_WIN32)
     #define NM_POPEN  _popen
@@ -44,6 +45,7 @@ namespace NimbleEngine
         Seconds      = std::max(0.0, double(GRecordSeconds.GetFloat()));
         StartSeconds = std::max(0.0, double(GRecordStartSeconds.GetFloat()));
         Began        = std::chrono::steady_clock::now() + std::chrono::milliseconds(int64_t(StartSeconds * 1000.0));
+        StartFrame   = uint64_t(std::max(0, GRecordStartFrame.GetInt()));
         bActive      = true;
         CORE_LOG("Recording " + File + " at " + std::to_string(int(Fps)) + " fps"
                  + (Seconds > 0.0 ? ", " + std::to_string(Seconds) + " s" : std::string(", until the game ends")))
@@ -104,8 +106,10 @@ namespace NimbleEngine
             ++Captured;
         }
 
-        /* The next picture, once its slot's time has come. */
-        const double Elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - Began).count();
+        /* The next picture, once its slot's time has come: by the wall clock, or a frame a slot. */
+        ++Ticks;
+        const double Elapsed = StartFrame > 0 ? (double(Ticks) - double(StartFrame)) / Fps
+                                              : std::chrono::duration<double>(std::chrono::steady_clock::now() - Began).count();
         if(Elapsed < 0.0) { return; }
         if(Seconds > 0.0 && Elapsed >= Seconds)
         {
