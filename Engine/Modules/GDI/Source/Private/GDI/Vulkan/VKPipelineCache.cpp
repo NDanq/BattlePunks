@@ -447,7 +447,7 @@ bool VKPipelineCache::BuildLayouts()
         B.binding         = Binding;
         B.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         B.descriptorCount = 1;
-        B.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+        B.stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;   // a particle's vertex lighting samples too
         return B;
     };
 

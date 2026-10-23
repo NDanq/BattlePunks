@@ -111,6 +111,9 @@ namespace
     /* A Translucent Lit material's blend (LIT_TRANSLUCENCY.md, Phase 3): Surface, its
      * specular over its opacity; Legacy, everything faded by it, as before. */
     const std::vector<std::string> GTranslucencyLightingChoices = { "Surface", "Legacy" };
+    /* A Translucent Unlit material drawn by particles (LIT_TRANSLUCENCY.md, Phase 6): Per
+     * Particle lights each instance once, in its own vertex shader, into its colour. */
+    const std::vector<std::string> GParticleLightingChoices = { "Off", "PerParticle" };
 
     /* The Material Output pins only some shading models read, and which. */
     struct ShadingModelPin
@@ -628,6 +631,22 @@ namespace
             Result.Error(Root->Id, std::string(), "unknown Translucency Lighting '" + TranslucencyLighting + "'");
         }
         const bool bTranslucencySurface = Domain == "Translucent" && Shading == "Lit" && TranslucencyLighting == "Surface";
+        const std::string ParticleLighting = bLegacy ? "Off" : Root->GetProperty("ParticleLighting", "Off");
+        if(std::find(GParticleLightingChoices.begin(), GParticleLightingChoices.end(), ParticleLighting) == GParticleLightingChoices.end())
+        {
+            Result.Error(Root->Id, std::string(), "unknown Particle Lighting '" + ParticleLighting + "'");
+        }
+        if(ParticleLighting == "PerParticle" && !(Domain == "Translucent" && Shading == "Unlit"))
+        {
+            Result.Error(Root->Id, std::string(), "Particle Lighting Per Particle is for Translucent Unlit materials: they take the light in "
+                                                  "their colour (use Vertex Color as Emissive)");
+        }
+        const bool bParticleLighting = ParticleLighting == "PerParticle" && Domain == "Translucent" && Shading == "Unlit";
+        double ParticlePhase = 0.3;
+        if(bParticleLighting && !ParseNumber(Root->GetProperty("ParticlePhase", "0.3"), ParticlePhase))
+        {
+            Result.Error(Root->Id, std::string(), "Particle Phase must be a number");
+        }
 
         const PinDefinition* OffsetPin = RootDef->FindPin(OFFSET_PIN, EPinDirection::Input);
         const bool bHasOffset = OffsetPin && IsPinSet(*Root, *OffsetPin);
@@ -752,6 +771,13 @@ namespace
             Out.Line("#define MATERIAL_TRANSLUCENCY_SURFACE 1");
             Out.Blank();
         }
+        if(bParticleLighting)
+        {
+            Out.Line("// Particle Lighting Per Particle: each instance lit at its centre (ParticleLighting.glsl).");
+            Out.Line("#define MATERIAL_PARTICLE_LIGHTING 1");
+            Out.Line("#define MATERIAL_PARTICLE_PHASE " + FormatNumber(std::clamp(ParticlePhase, -0.9, 0.9)));
+            Out.Blank();
+        }
 
         /* Declared in both stages that include it, so both see the same block. */
         Out.Line("// Bytes 0-159 are the engine's; the parameters' offsets are in " + Name + ".material.");
@@ -796,6 +822,14 @@ namespace
             Out.Line("}");
             Out.Line("#endif");
         }
+        else if(bParticleLighting)
+        {
+            /* Its own vertex shaders, so none: the shared ones cannot light it. */
+            Out.Blank();
+            Out.Line("#if VERTEX_SHADER");
+            Out.Line("vec3 CalcMaterialOffset(in MaterialInputs Inputs) { return vec3(0.0); }");
+            Out.Line("#endif");
+        }
 
         Out.Blank();
         Out.Line("#if PIXEL_SHADER");
@@ -819,6 +853,7 @@ namespace
          *     ShadingModel <ClearCoat|Anisotropic|Cloth|Subsurface|Skin|Volume>   (a Lit one's; none for Default)
          *     TwoSided <0|1>
          *     TranslucencyLighting Surface   (a Translucent Lit one's, when not Legacy)
+         *     ParticleLighting 1             (a Translucent Unlit one's, lit per particle; HasOffset then 1)
          *     ClipValue <x>
          *     MaxOffset <x>
          *     HasOffset <0|1>
@@ -849,7 +884,11 @@ namespace
         }
         Material += "ClipValue " + FormatNumber(ClipValue) + "\n";
         Material += "MaxOffset " + FormatNumber(MaxOffset) + "\n";
-        Material += std::string("HasOffset ") + (bHasOffset ? "1" : "0") + "\n";
+        Material += std::string("HasOffset ") + (bHasOffset || bParticleLighting ? "1" : "0") + "\n";   // its own vertex shaders
+        if(bParticleLighting)
+        {
+            Material += "ParticleLighting 1\n";
+        }
         Material += "BlockSize " + std::to_string(BlockBytes) + "\n";
         for(const auto& Each : Parameters)
         {
@@ -1893,6 +1932,11 @@ namespace
                   "(brushed metal), Cloth (velvet, cotton), Subsurface (leaves, wax, marble), Skin, or Volume (lit smoke, "
                   "dust, steam: Translucent only)" },
                 { "TwoSided", EPropertyKind::Bool, "false", {}, "Light back faces with a flipped normal" },
+                { "ParticleLighting", EPropertyKind::Choice, "Off", GParticleLightingChoices,
+                  "Translucent Unlit, drawn by particles: Per Particle lights each particle once at its centre -- sun, shadows, "
+                  "lights, probes -- into its Vertex Color, for an unlit plume's cost (feed Vertex Color to Emissive)" },
+                { "ParticlePhase", EPropertyKind::String, "0.3", {},
+                  "Particle Lighting Per Particle: which way it scatters light, -0.9 back to 0.9 forward (as Volume's Phase Anisotropy)" },
                 { "TranslucencyLighting", EPropertyKind::Choice, "Surface", GTranslucencyLightingChoices,
                   "Translucent Lit: Surface keeps the reflections and highlights whatever the Opacity (clear glass still "
                   "shines); Legacy fades everything by it, as materials made before it did",

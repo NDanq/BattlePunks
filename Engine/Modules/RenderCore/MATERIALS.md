@@ -69,6 +69,15 @@ fades everything by Opacity, as before. A new Material Output node is Surface;
 a graph saved before the property existed has none and is Legacy, so old
 content looks as it did.
 
+**Particle Lighting** (the Material Output's, Translucent Unlit only;
+LIT_TRANSLUCENCY.md, Phase 6): **Per Particle** lights each particle once, at
+its centre, in the material's own vertex shaders -- the sun through its shadow
+maps, every point and spot light, the probes or a GI Volume, through a
+Henyey-Greenstein phase of **Particle Phase** -- and multiplies its Vertex
+Color by that light, so feeding Vertex Color to Emissive draws a lit plume for
+an unlit one's cost. The `.material` says `ParticleLighting 1` and
+`HasOffset 1` (it needs its own vertex shaders, the offset zero).
+
 The domain and shading are the key to where a material draws:
 [RENDERPIPELINE.md](RENDERPIPELINE.md) has the stages, their draw policies and
 deferred lighting. Opaque and Masked **Lit** materials write the G-buffer in the

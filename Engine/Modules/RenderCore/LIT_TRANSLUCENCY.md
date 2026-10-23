@@ -226,21 +226,51 @@ LTC table, 9 and 10 DDGI's atlases (bound only during the IBL pass today).
   which is not tracked; their lit variants were left out.
 - **Regression:** LightingLab bit-identical; Courtyard 83 dB (its floor 81).
 
-## Phase 6: per-particle lighting (lit particles, cheap)
+## Phase 6: per-particle lighting (lit particles, cheap) (landed)
 
-- An emitter setting, **Lighting**: Per Pixel (the material's stage, Phase 5)
-  or **Per Particle**. Per Particle lights each living particle once, at its
-  centre, in a third compute dispatch after the sort (`ParticleLight.csh`):
-  the Volume model's lights, its sun and local shadows (one tap each), DDGI
-  or the probes. It multiplies the light into the instance colour
-  (`InInstanceColor`, a vec4 attribute; that it holds values past 1 is
-  checked first), so the material draws **Unlit** -- `Base Color x Vertex Color` as
-  emissive -- and an overdrawn plume costs what an unlit one does.
-- Needs the compute dispatch to read the light block, the shadow atlases and
-  DDGI's atlases: the dispatch's bindings grow (checked first on all three
-  desktop backends; OpenGL's compute images are the risk).
-- Light varies across a large particle only by its neighbours'; documented,
-  and Per Pixel is there for hero effects.
+- **Deviation: the vertex stage, not a compute pass, and a material setting,
+  not an emitter's.** The check came out against compute: GDI's dispatch
+  binds a parameter block and storage buffers only -- no textures, scene or
+  light block -- and the particle passes run before the frame's shadow maps
+  are drawn, so they would read last frame's. The instanced draw runs after
+  the shadows, and its vertex shader can light each instance at its centre.
+  The shared vertex shaders have no material block to say whether to, so the
+  material says: a Translucent Unlit material's **Particle Lighting** (Off,
+  **Per Particle**) and **Particle Phase**.
+- **The material:** Per Particle defines `MATERIAL_PARTICLE_LIGHTING` and
+  `MATERIAL_PARTICLE_PHASE` in its generated code and writes `HasOffset 1`
+  (a zero `CalcMaterialOffset`), so it is cooked with its own vertex shaders;
+  the InstancedMesh one includes `ParticleLighting.glsl` and multiplies the
+  instance's colour (display space: through linear) by `Particle_Light` at
+  the instance's origin -- the sun through its shadow maps (one tap), every
+  point and spot light in the list with theirs (no tiles here; area lights
+  as points), the probes' or a GI Volume's irradiance up and down averaged,
+  each through the Henyey-Greenstein phase (Volume's). Past 1 survives: the
+  interpolant is float, the scene HDR. RenderContext binds such a material
+  as a forward Lit one (IBL atlas, shadow and DDGI atlases).
+- **GDI:** sampled textures and the light block are visible to the vertex
+  stage. Vulkan: material samplers' `stageFlags` include the vertex stage,
+  and every barrier into or out of a sampled layout names the vertex shader
+  stage beside the fragment's. D3D12: the texture tables and the light CBV
+  are visible to all stages, and every sampled resource rests in
+  `D3D12_STATE_SAMPLED` (pixel and non-pixel shader resource) in place of
+  `PIXEL_SHADER_RESOURCE`. OpenGL has no such limit; Metal draws no shadows.
+- **Checked:** RenderCore.Smoke on the GPU, 758 checks, none failing on
+  Vulkan or D3D12, after the GDI change. TranslucencyLab per pixel is
+  bit-identical to Phase 5 (the GDI change shows nowhere). With
+  `WorldsLab.TranslucencyLabPerParticle 1` (the plume's smoke is
+  `SmokePerParticle`, Unlit, Per Particle): the plume region 1.7 darker
+  than per pixel and flatter (no sphere normal), 37 dB. Vulkan and D3D12
+  agree to 60 dB here, not bit for bit as elsewhere (vertex-stage math).
+  (The plan's GPU smoke check with a particle system was not built; the
+  lab's pair stands in.)
+- **Cost** (the plume view's Forward, ms): per pixel 0.57 Vulkan, 1.01
+  D3D12; per particle **0.27** and **0.64** -- below Phase 0's
+  unshadowed, Legacy-lit plume (0.37, 0.77), compute-free.
+- **Regression:** LightingLab bit-identical on both backends; Courtyard
+  78 dB (its floor about 81).
+- Light varies across a large particle only by its neighbours'; Per Pixel
+  (the Volume model) is there for hero effects.
 
 ## Phase 7: translucent shadow casting
 

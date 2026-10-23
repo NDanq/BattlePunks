@@ -95,6 +95,28 @@ def smoke():
     return g
 
 
+def smoke_per_particle():
+    """The same puff, Translucent Unlit with Particle Lighting Per Particle (Phase 6):
+    each particle lit once at its centre into its colour, which is the emissive."""
+    g = Graph("SmokePerParticle")
+    out = cy.output(g, domain="Translucent", shading="Unlit")
+    props = next(n for n in g.nodes if n[0] == out)[3]
+    props["ParticleLighting"] = "PerParticle"
+    props["ParticlePhase"] = "0.3"
+    tc = g.node("Input.TexCoord")
+    dist = g.node("Vector.Distance", consts={"B": cy.vec(0.5, 0.5)})
+    g.link(tc, "UV", dist, "A")
+    edge = g.math("Multiply", (dist, "Out"), consts={"B": "2"})
+    soft = g.math("OneMinus", (edge, "Out"))
+    sat = g.math("Saturate", (soft, "Out"))
+    square = g.math("Multiply", (sat, "Out"), (sat, "Out"))
+    vc = g.node("Input.VertexColor")
+    alpha = g.math("Multiply", (square, "Out"), (vc, "A"))
+    g.link(alpha, "Out", out, "Opacity")
+    g.link(vc, "RGB", out, "Emissive")
+    return g
+
+
 MATERIALS = [
     opaque("Floor", {"BaseColor": cy.vec(0.62, 0.62, 0.6), "Roughness": "0.8"}),
     opaque("Wall", {"BaseColor": cy.vec(0.7, 0.7, 0.7), "Roughness": "0.9"}),
@@ -103,6 +125,7 @@ MATERIALS = [
     translucent("Glass", {"BaseColor": cy.vec(0.9, 0.95, 0.95), "Roughness": "0.05", "Opacity": "0.12"}, two_sided=True),
     translucent("Water", {"BaseColor": cy.vec(0.05, 0.12, 0.11), "Roughness": "0.03", "Opacity": "0.45"}),
     smoke(),
+    smoke_per_particle(),
 ]
 
 
@@ -143,6 +166,9 @@ def particles():
                        ("BoxSize", "60,2,60")):
         sparks = setting(sparks, key, value)
     (PARTICLE_DIR / "Plume.nmparticle").write_text("NimbleParticleSystem 1\n\n" + plume + "\n" + sparks, newline="\n")
+    # The same plume lit per particle (Phase 6): WorldsLab.TranslucencyLabPerParticle 1 draws it.
+    lit = setting(plume, "Material", M + "SmokePerParticle.material.nmgraph")
+    (PARTICLE_DIR / "PlumePerParticle.nmparticle").write_text("NimbleParticleSystem 1\n\n" + lit + "\n" + sparks, newline="\n")
 
 
 # --- The level ---------------------------------------------------------------

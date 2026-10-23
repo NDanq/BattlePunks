@@ -264,7 +264,7 @@ void D3D12Swapchain::PresentFrame(D3D12RenderTarget* InMainRT)
     if(!IsValid() || !BlitPipeline || !InMainRT || !InMainRT->IsValid()) return;
 
     // Cheap early-out; the authoritative check is repeated under the queue mutex below.
-    if(InMainRT->GetSubmittedState() != D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) return;
+    if(InMainRT->GetSubmittedState() != D3D12_STATE_SAMPLED) return;
 
     if(!ResizeIfNeeded()) return;
 
@@ -321,7 +321,7 @@ void D3D12Swapchain::PresentFrame(D3D12RenderTarget* InMainRT)
     // A render-thread submit may have landed since the early-out, leaving the RT
     // mid-frame at execution time. If so the recorded list is simply dropped.
     std::lock_guard<std::mutex> QueueLock(Device->GetQueueMutex());
-    if(InMainRT->GetSubmittedState() != D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) return;
+    if(InMainRT->GetSubmittedState() != D3D12_STATE_SAMPLED) return;
 
     /* DXGI not ready for another frame: this one is not presented (the list is
      * dropped, as above), the next present shows a newer one. Polled, never

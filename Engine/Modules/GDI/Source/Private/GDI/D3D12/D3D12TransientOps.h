@@ -210,10 +210,10 @@ inline bool UploadSubresources(D3D12Device* Device, ID3D12Resource* Texture, D3D
         Cmd.List->CopyTextureRegion(&Dst, 0, 0, 0, &Src, nullptr);
     }
 
-    RecordTransition(Cmd.List.Get(), Texture, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    RecordTransition(Cmd.List.Get(), Texture, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_STATE_SAMPLED);
     EndAndSubmitTransientCmd(Device, Cmd, InAsync, std::move(OwnStaging));
 
-    InOutState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    InOutState = D3D12_STATE_SAMPLED;
     return true;
 }
 

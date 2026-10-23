@@ -6,6 +6,7 @@
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
+#include "Public/RenderCore/Components/ParticleSystemComponent.h"
 #include "Public/RenderCore/Renderer.h"
 #include "Public/RenderCore/RenderTypes.h"
 
@@ -26,6 +27,8 @@
 NIMBLE_CONFIG_INT(GTranslucencyLabView, "WorldsLab", "TranslucencyLabView", 0, nullptr);
 /* > 0, with -Stats.Frame=1: at that frame, log the scene's GPU time per span once. */
 NIMBLE_CONFIG_INT(GTranslucencyLabStats, "WorldsLab", "TranslucencyLabStats", 0, nullptr);
+/* 1: the plume's smoke lit per particle (SmokePerParticle) rather than per pixel (Smoke, Volume). */
+NIMBLE_CONFIG_BOOL(GTranslucencyLabPerParticle, "WorldsLab", "TranslucencyLabPerParticle", false, nullptr);
 
 using EngineCore::Vector3;
 
@@ -65,6 +68,18 @@ public:
                                  std::atan2(double(Dir.GetX()), double(Dir.GetZ())) * 180.0 / 3.14159265358979, 0.0);
         CORE_LOG(std::string("[TranslucencyLab] view ") + std::to_string(Index) + " (" + Pick.Name
                  + "); WorldsLab.TranslucencyLabView 0-3 picks another")
+
+        /* The plume lit per particle instead of per pixel (LIT_TRANSLUCENCY.md, Phase 6). */
+        if(GTranslucencyLabPerParticle.GetBool())
+        {
+            const GameCore::EntityID Plume = World.FindEntityByName("Plume");
+            if(RenderCore::ParticleSystemComponent* System = Plume.IsSet()
+                   ? World.GetEntity(Plume).GetComponent<RenderCore::ParticleSystemComponent>() : nullptr)
+            {
+                std::snprintf(System->System, sizeof(System->System), "%s", "Content/Particles/TranslucencyLab/PlumePerParticle.nmparticle");
+                CORE_LOG("[TranslucencyLab] the plume is lit per particle")
+            }
+        }
         return true;
     }
 

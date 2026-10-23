@@ -1838,7 +1838,9 @@ namespace RenderCore
             BindMaterialTextures(InMaterial);
             /* Slot 0, its own outside PostProcess (MaterialTemplate_PS.glsl): a Base
              * Pass material's lightmap, a forward Lit material's probe atlas. */
-            if(InMaterial.Description.Domain != EMaterialDomain::PostProcess && InMaterial.Description.Shading == EMaterialShading::Lit)
+            /* A per-particle lit material's vertex shaders read the forward Lit draws' textures (ParticleLighting.glsl). */
+            if(InMaterial.Description.Domain != EMaterialDomain::PostProcess
+               && (InMaterial.Description.Shading == EMaterialShading::Lit || InMaterial.Description.bParticleLighting))
             {
                 const bool bBasePass = InMaterial.Description.Domain == EMaterialDomain::Opaque
                                     || InMaterial.Description.Domain == EMaterialDomain::Masked;

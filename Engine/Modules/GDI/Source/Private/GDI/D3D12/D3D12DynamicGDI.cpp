@@ -321,14 +321,14 @@ void D3D12DynamicGDI::SetRenderTargets(GDIRenderTarget* const* InColors, uint In
         if(!IsBoundColor(RT) && RT->GetCurrentState() == D3D12_RESOURCE_STATE_RENDER_TARGET)
         {
             RecordTransition(List, RT->GetResource(), D3D12_RESOURCE_STATE_RENDER_TARGET,
-                                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-            RT->SetCurrentState(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                                       D3D12_STATE_SAMPLED);
+            RT->SetCurrentState(D3D12_STATE_SAMPLED);
         }
         if(RT != DepthRT && RT->HasDepth() && RT->GetDepthState() == D3D12_RESOURCE_STATE_DEPTH_WRITE)
         {
             RecordTransition(List, RT->GetDepthResource(), D3D12_RESOURCE_STATE_DEPTH_WRITE,
-                                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-            RT->SetDepthState(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                                       D3D12_STATE_SAMPLED);
+            RT->SetDepthState(D3D12_STATE_SAMPLED);
         }
     }
 
@@ -506,10 +506,10 @@ void D3D12DynamicGDI::RecordResolve(D3D12RenderTarget* Src, D3D12RenderTarget* D
     const D3D12_BOX Box{ 0, 0, 0, (std::min)(Src->GetWidth(), Dst->GetWidth()), (std::min)(Src->GetHeight(), Dst->GetHeight()), 1 };
     List->CopyTextureRegion(&DstLoc, 0, 0, 0, &SrcLoc, &Box);
 
-    RecordTransition(List, Src->GetResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    RecordTransition(List, Dst->GetResource(), D3D12_RESOURCE_STATE_COPY_DEST,   D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    Src->SetCurrentState(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    Dst->SetCurrentState(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    RecordTransition(List, Src->GetResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_STATE_SAMPLED);
+    RecordTransition(List, Dst->GetResource(), D3D12_RESOURCE_STATE_COPY_DEST,   D3D12_STATE_SAMPLED);
+    Src->SetCurrentState(D3D12_STATE_SAMPLED);
+    Dst->SetCurrentState(D3D12_STATE_SAMPLED);
 }
 
 #pragma endregion
