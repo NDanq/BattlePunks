@@ -77,6 +77,45 @@ number; the budget is met either way.) The water's reflections look the
 same, with slightly less banding; its region reads 1.5 darker where rays no
 longer reach a hit.
 
+## Refraction (Phases 9-12)
+
+Measured after Phase 12 (dev-rendering, 6ed00a47 plus the `[Rendering]
+Refraction` switch), as above: RelWithDebInfo, 1280 x 720, two launches and
+three samples per configuration, view and backend, the four configurations
+interleaved. The lab's water refracts at 1.33, its panes at 1.03, and the
+Lens block (1.5) stands in the water view and at the plume view's edge. Raw
+CSV: `Games/WorldsLab/Saved/TLab/refr-perf.csv` (not tracked).
+
+Forward span, ms (all on, and each cost: the span with it, less without):
+
+| View | Vulkan: all on | refraction | reflections + copy | refraction + copy | both + copy | D3D12: all on | refraction | reflections + copy | refraction + copy | both + copy |
+|---|---|---|---|---|---|---|---|---|---|---|
+| lab | 0.44 | +0.02 | +0.03 | +0.05 | +0.06 | 0.51 | -0.03 | **+0.08** | **+0.08** | +0.05 |
+| glass | 0.39 | +0.01 | +0.06 | +0.04 | +0.07 | 0.46 | +0.04 | **+0.10** | **+0.10** | **+0.13** |
+| plume | 0.71 | -0.02 | +0.04 | +0.01 | +0.02 | 0.82 | 0.00 | +0.05 | +0.01 | +0.05 |
+| water | 0.45 | -0.01 | **+0.08** | +0.05 | **+0.08** | 0.52 | +0.04 | +0.04 | +0.05 | **+0.08** |
+
+- *refraction*: all on less `Refraction` 0 (the copy still made for the
+  reflections): the bend's own work, a few texture reads per refracting
+  pixel. **Within noise everywhere** (under 0.05 ms).
+- *reflections + copy*: `Refraction` 0 less both off; *refraction + copy*:
+  `ForwardReflections` 0 less both off; *both + copy*: all on less both off.
+  The colour copy (Phase 10) is a full-screen RGBA16F write, paid once a
+  frame when either asks for it; the half-size depth copy was already paid
+  by the reflections.
+- Noise: Forward's samples of one configuration spread by up to 0.1-0.2 ms
+  on D3D12 (the lab view 0.46-0.69) and 0.05-0.2 on Vulkan; Total, more.
+  Only the bold figures are clearly above it, and none is above 0.13 ms.
+- **What to do:** nothing at this size. Refraction scales with refracting
+  pixels (a few texture reads each) and the copy with resolution, so a
+  screen of water at 1080p or 4K is the case to re-measure. If the copy
+  shows there, it could be made at half size for refraction alone (the bend
+  is blurred by its own offset anyway) -- the reflections read it at the
+  hit, so they would keep full size.
+- **Not covered:** other resolutions and GPUs, OpenGL (the game cannot start
+  on it here) and Metal; Courtyard (none of its materials refract; it pays
+  the copy with its reflections).
+
 ## The plume, frame by frame
 
 The heaviest view, everything on, per pixel and per particle, against both

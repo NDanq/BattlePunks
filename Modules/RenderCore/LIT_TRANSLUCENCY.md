@@ -512,7 +512,7 @@ colour before the translucent stage: Phase 4 reprojects the last frame's.
   the scene colour under a translucent draw (183, 174, 164 either side) and
   that an unbent read reproduces it.
 
-### Phase 12: checks and cost
+### Phase 12: checks and cost (landed)
 
 - **RenderCore.Smoke on the GPU:** a pane at Refraction 1.33, turned about
   its vertical axis before a red and white backdrop, moves the colour edge
@@ -522,6 +522,30 @@ colour before the translucent stage: Phase 4 reprojects the last frame's.
   Courtyard and LightingLab for regressions.
 - **Cost** (the perf-testing skill, RelWithDebInfo, interleaved, both
   backends): refraction and the copy each against off.
+- **As landed:**
+  - **RenderCore.Smoke** (`RefractLit`, `RefractUnlit` in
+    Engine/Content/Materials/Testing): the edge behind the pane moves from
+    x 128 to 119 (the 9 px a 35-degree pane at 1.33 and a 150-unit gap
+    predict), rows above the pane do not move, and the block in front leaks
+    no pixel into the pane (with the in-front test disabled, 108 do: the
+    check catches it). 781 checks, none failing, Vulkan and D3D12 alike.
+  - **A fix found by the check:** Refraction.glsl turned the gap from view
+    depth into ray length by `dot(V, forward)`, which is negative; clamped to
+    0.1, every gap was ten times too long (the edge moved 34 px). Phase 11's
+    lab numbers were taken before it; the ones below after.
+  - **TranslucencyLab** against Phase 10 (Vulkan): the glass view's panes
+    8.4 and 9.0 darker, the lab view's glass 5.2 and water 7.2, the water
+    view's water 8.4 darker (Phase 11's far faces); the plume and its floor
+    unchanged (73-88 dB). Vulkan against D3D12: 54-73 dB, as before.
+  - **Regression:** LightingLab bit-identical to Phase 9 (99 dB). Courtyard
+    67 dB against Phase 9, its own run-to-run noise 78 dB: its glass and
+    water reflect this frame's opaque scene now (Phase 10); none of its
+    materials refract.
+  - **Switch:** `[Rendering] Refraction` (on); off, refracting materials
+    blend as before (their far faces still discarded).
+  - **Cost:** LIT_TRANSLUCENCY_PERF.md, "Refraction": the bend itself is
+    within noise; the copy and the bend together at most +0.05 ms on Vulkan
+    and +0.10 on D3D12 in the Forward span.
 
 ## Not in this plan
 
