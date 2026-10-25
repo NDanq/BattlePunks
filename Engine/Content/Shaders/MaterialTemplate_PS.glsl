@@ -76,6 +76,13 @@ MATERIAL_SAMPLER2D(19, TranslucentOpacity)   // engine slot 15: translucent cast
 #include <BakedLighting.glsl>
 #endif
 
+// A Translucent material with Refraction sees what is behind it bent (LIT_TRANSLUCENCY.md, Phase 11).
+#if MATERIAL_DOMAIN_TRANSLUCENT
+#ifdef MATERIAL_REFRACTION
+#include <Refraction.glsl>
+#endif
+#endif
+
 #if MATERIAL_GBUFFER
 // The draw's lightmap (BakedLighting.glsl): slot 0, which only a forward Lit material uses otherwise.
 MATERIAL_SAMPLER2D(4, Material_Lightmap)
@@ -143,6 +150,14 @@ void main(void)
 #endif
 #if !MATERIAL_DOMAIN_POSTPROCESS
     if(RevealHides(Inputs.ClipPosition.xyz, Inputs.ViewDepth, gl_FragCoord.xy)) { discard; }
+#endif
+#if MATERIAL_DOMAIN_TRANSLUCENT
+#ifdef MATERIAL_REFRACTION
+    // A refracting surface is one interface (Refraction.glsl): only its faces toward the eye
+    // draw -- gl_FrontFacing is a face away from it here (see Two Sided below). Its far faces
+    // would otherwise replace or double its near ones, by triangle order: nothing culls them.
+    if(gl_FrontFacing) { discard; }
+#endif
 #endif
 
 #if MATERIAL_SHADING_LIT
@@ -244,6 +259,27 @@ void main(void)
     float Alpha = 1.0;
 #if MATERIAL_DOMAIN_TRANSLUCENT
     Alpha = clamp(Surface.Opacity, 0.0, 1.0);
+#ifdef MATERIAL_REFRACTION
+    // Refraction (Refraction.glsl): what is behind, bent, through what the body lets past
+    // (1 - Opacity), tinted; the draw then replaces the scene's pixel (alpha 1), so either
+    // blend -- premultiplied (Surface) or by alpha -- comes out as this colour.
+#if MATERIAL_SHADING_LIT
+    vec3 RefractNormal = Normal;
+#else
+    vec3 RefractNormal = normalize(Surface.Normal);
+#endif
+    vec3 Through;
+    if(Scene_View.x < 0.5 && Refraction_Behind(Inputs.WorldPosition, RefractNormal, Surface.Refraction, Through))
+    {
+        vec3 Seen = Through * max(Surface.TransmissionTint, vec3(0.0)) * (1.0 - Alpha);
+#ifdef MATERIAL_TRANSLUCENCY_SURFACE
+        Color += Seen;
+#else
+        Color = Color * Alpha + Seen;
+#endif
+        Alpha = 1.0;
+    }
+#endif
     // A pixel that would change the scene by under half a step of 8 bits
     // (soft particles' corners and fringes) skips its blend: no colour write.
 #ifdef MATERIAL_TRANSLUCENCY_SURFACE

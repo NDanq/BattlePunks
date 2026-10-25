@@ -462,7 +462,7 @@ colour before the translucent stage: Phase 4 reprojects the last frame's.
   channel already near the tone map's top, the extra shows as paler pink.
   The march's horizontal bands (Phase 4) are unchanged.
 
-### Phase 11: refracting
+### Phase 11: refracting (landed)
 
 - `Refraction.glsl`, for Translucent materials with `MATERIAL_REFRACTION`:
   the view ray bent at the surface (`refract`, 1 / Refraction) travels the
@@ -484,6 +484,33 @@ colour before the translucent stage: Phase 4 reprojects the last frame's.
   surfaces behind it (the copy is taken before them); nothing off screen;
   no blur for rough glass; particles (drawn outside the draw lists) do not
   refract.
+- **As landed:** `Refraction_Behind` (Refraction.glsl) includes
+  ForwardReflections.glsl for the copy's samplers and lookups, so an Unlit
+  material gets them too; `BindMaterial` binds slots 13 and 14 for a
+  refracting Unlit draw. The refraction runs before the translucent
+  discard, so a fully clear surface (Opacity 0) still draws what it bends.
+  The normal is turned to face the eye; behind the sky, the gap is the
+  reflections' longest ray. The preview channel modes (`Scene_View`) skip it.
+- **One interface, faces toward the eye only:** nothing culls a mesh's far
+  faces (no GDI face culling), so a refracting draw discards them
+  (`gl_FrontFacing`, before any shading); otherwise whichever face came last
+  in triangle order replaced the pixel. A closed mesh refracts once, and an
+  open one only from its front.
+- **TranslucencyLab:** the water at 1.33, the panes at 1.03, and a new
+  **Lens** -- a glass block (1.5, opacity 0.04, a faint green tint) on the
+  floor before the red wall's right edge, turned 30 degrees, in the water
+  view: the wall's edge and foot bend through it. Against Phase 10 (Vulkan,
+  Debug, frame 300): the glass view's panes 8.5 and 9.1 darker, the lab
+  view's glass 5.3 darker and water 7.3, the water view's water 8.1 darker;
+  the plume and its floor unchanged (72-88 dB; the Lens at the plume view's
+  edge). Darker because the boxes' far faces no longer draw: unrefracted,
+  each box laid a second body over the first, and the water's bottom face --
+  lit with a normal facing away from the eye -- added a strong grazing
+  highlight, which was most of its salmon look. Every unrefracted
+  translucent box still draws its far faces so.
+- **Debugged on the way:** a split-screen check confirmed the copy matches
+  the scene colour under a translucent draw (183, 174, 164 either side) and
+  that an unbent read reproduces it.
 
 ### Phase 12: checks and cost
 

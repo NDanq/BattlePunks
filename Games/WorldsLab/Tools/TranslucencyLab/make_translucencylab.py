@@ -129,9 +129,13 @@ MATERIALS = [
     opaque("Wall", {"BaseColor": cy.vec(0.7, 0.7, 0.7), "Roughness": "0.9"}),
     opaque("Backdrop", {"BaseColor": cy.vec(0.06, 0.06, 0.07), "Roughness": "0.9"}),
     opaque("Red", {"BaseColor": cy.vec(0.75, 0.08, 0.06), "Roughness": "0.6"}),
-    translucent("Glass", {"BaseColor": cy.vec(0.9, 0.95, 0.95), "Roughness": "0.05", "Opacity": "0.12"}, two_sided=True,
-                shadow=0.3),
-    translucent("Water", {"BaseColor": cy.vec(0.05, 0.12, 0.11), "Roughness": "0.03", "Opacity": "0.45"}),
+    # Refraction (Phases 9-12): the panes thin (one surface here, so an index near 1), the water its own.
+    translucent("Glass", {"BaseColor": cy.vec(0.9, 0.95, 0.95), "Roughness": "0.05", "Opacity": "0.12", "Refraction": "1.03"},
+                two_sided=True, shadow=0.3),
+    translucent("Water", {"BaseColor": cy.vec(0.05, 0.12, 0.11), "Roughness": "0.03", "Opacity": "0.45", "Refraction": "1.33"}),
+    # A solid glass block, nearly clear, faintly green through.
+    translucent("Lens", {"BaseColor": cy.vec(0.95, 0.97, 0.96), "Roughness": "0.05", "Opacity": "0.04", "Refraction": "1.5",
+                         "TransmissionTint": cy.vec(0.9, 0.97, 0.94)}),
     smoke(),
     smoke_per_particle(),
 ]
@@ -365,6 +369,10 @@ def level():
     # The water: a strip on the floor below a red wall.
     entity("Water", render(BOX, M + "Water.material.nmgraph", shadows=False) + transform((500, 3, 0), scale=(700, 4, 600)))
     entity("RedWall", render(BOX, M + "Red.material.nmgraph") + transform((500, 250, 330), scale=(700, 500, 30)))
+    # A glass block on the floor before the wall's right edge, turned so its faces lean: the
+    # wall's edge and foot bend through it (refraction, Phase 11).
+    entity("Lens", render(BOX, M + "Lens.material.nmgraph", shadows=False)
+           + transform((780, 90, 120), (0, 30, 0), scale=(160, 180, 160)))
 
     # The plume: smoke and sparks rising through a shadowed spot light's cone, a post in
     # the cone for its shadow.
