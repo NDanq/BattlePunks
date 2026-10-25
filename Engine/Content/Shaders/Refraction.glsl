@@ -34,7 +34,7 @@ bool Refraction_Behind(vec3 InPosition, vec3 InNormal, float InIndex, out vec3 O
     vec3  Behind;
     float Gap = Forward_SurfaceAt(Straight, Behind) ? max(Forward_ViewDepthOf(Behind) - Depth, 0.0)
                                                     : max(Scene_ForwardReflections[1].x, 10.0);
-    Gap /= max(dot(V, Scene_CameraForward.xyz), 0.1);
+    Gap /= max(dot(-V, Scene_CameraForward.xyz), 0.1);   // view depth to distance along the ray
 
     vec3 T = refract(-V, N, 1.0 / max(InIndex, 1e-3));
     if(dot(T, T) < 1e-6) { T = -V; }   // past the critical angle (an index below 1): straight on
