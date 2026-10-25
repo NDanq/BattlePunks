@@ -1,6 +1,7 @@
 # Lit translucency and lit particles
 
 A plan, phase by phase, like GLOBAL_ILLUMINATION.md. Phases 0-8 have landed;
+refraction (Phases 9-12) is planned below them;
 each records what was built, where it departed from the plan, and its
 validation.
 
@@ -397,13 +398,87 @@ LTC table, 9 and 10 DDGI's atlases (bound only during the IBL pass today).
   Vulkan and D3D12 agree to 60-69 dB, as since Phase 6.
 - **Regression:** LightingLab bit-identical; Courtyard 83 dB (no casters).
 
+## Refraction: the plan (Phases 9-12)
+
+Glass and water bend what is seen through them. Screen space, as most
+engines do it: this frame's opaque scene, copied before the translucent
+stage, read at a position the surface's normal and index of refraction move.
+
+**Where it starts.** A forward draw has all sixteen texture slots taken
+(0-7 the material's, 8 the LTC table, 9-10 DDGI, 11-12 the shadow atlases,
+13 the last frame's colour and 14 the half-size depth for Phase 4's
+reflections, 15 the opacity atlas), and nothing copies this frame's scene
+colour before the translucent stage: Phase 4 reprojects the last frame's.
+
+### Phase 9: the Refraction pin
+
+- Material Output gains **Refraction** (float, 1: an index of refraction;
+  1.0 none, about 1.33 water, 1.5 a glass block) and **Transmission Tint**
+  (vec3, 1 1 1: the colour what is seen through takes; thick glass, deep
+  water). Translucent only, Lit or Unlit; elsewhere a warning, as Opacity.
+- A material that sets Refraction away from 1 generates
+  `#define MATERIAL_REFRACTION 1` and its `.material` says `Refraction 1`
+  (`MaterialDescription::bRefraction`), so the renderer knows to copy the
+  scene only when such a draw is queued. `MaterialSurface` gains
+  `Refraction` and `TransmissionTint` (defaults 1).
+- Nothing draws differently yet. **Check:** NodeGraph tests -- the define and
+  the line where the pin is set, neither where it is not, the warning on an
+  Opaque material.
+
+### Phase 10: this frame's opaque colour in slot 13
+
+- Before the translucent stage, where Phase 4 copies the depth, the lit
+  opaque scene is copied into an RGBA16F target (`SceneTargets::OpaqueCopy`,
+  `PP_Copy`) when a forward Lit draw would reflect or a refracting draw is
+  queued. Engine slot 13 holds it in place of the last frame's colour, the
+  half-size depth stays at 14, and `Scene_Spare[2].y` is 1 while the copy is
+  bound.
+- **Forward reflections read it** at the hit, unreprojected: a moving hit is
+  where it is now (Phase 4's deviation gone), and the reflections no longer
+  need a last frame. They no longer see the last frame's translucent
+  surfaces or fog in what they reflect.
+- **Check:** TranslucencyLab's water and glass against Phase 8 -- a small
+  change in their reflections only; the plume view unchanged. Cost: one
+  full-screen copy while either is on.
+
+### Phase 11: refracting
+
+- `Refraction.glsl`, for Translucent materials with `MATERIAL_REFRACTION`:
+  the view ray bent at the surface (`refract`, 1 / Refraction) travels the
+  gap to the opaque surface behind the pixel (the half-size depth), and the
+  point it reaches, projected, is where the copy is read -- so what sits
+  right behind the glass barely moves and what is far behind moves more. A
+  flat pane is one interface here: a thin pane wants a Refraction near 1
+  (1.02-1.05), a solid block or water its real index.
+- **What is in front stays put:** if the opaque surface at the moved
+  position is nearer than the glass, the pixel reads straight behind
+  instead; toward the screen's edge the move fades out.
+- **Blended by replacing:** the draw's alpha becomes 1 and its colour is what
+  is seen through, times the tint and what the body lets through (1 -
+  Opacity), plus the surface's own light -- with Translucency Lighting
+  Surface's specular on top, unfaded. So the blend state does not change.
+- Unlit Translucent materials refract too (their engine slots bound for
+  them).
+- **Known limits:** a refracting surface does not see the translucent
+  surfaces behind it (the copy is taken before them); nothing off screen;
+  no blur for rough glass; particles (drawn outside the draw lists) do not
+  refract.
+
+### Phase 12: checks and cost
+
+- **RenderCore.Smoke on the GPU:** a pane at Refraction 1.33, turned about
+  its vertical axis before a red and white backdrop, moves the colour edge
+  behind it; at 1.0 it does not; an opaque block in front of the pane does
+  not bleed into the pixels beside it.
+- **TranslucencyLab:** water at 1.33 and the panes at 1.03, before and after;
+  Courtyard and LightingLab for regressions.
+- **Cost** (the perf-testing skill, RelWithDebInfo, interleaved, both
+  backends): refraction and the copy each against off.
+
 ## Not in this plan
 
 - Particles as lights (a module adding point lights to the clustered list:
   the list is built on the CPU, the particles live on the GPU).
-- Refraction (a scene-colour copy before the translucent stage, offset by a
-  Refraction pin) -- small once Phase 4's copy is bound; its own phase if
-  wanted.
 - Order-independent transparency; velocity or a responsive mask for TAA.
 - Translucent shadows from the baked lights (the bake sees opaque geometry
   only).
