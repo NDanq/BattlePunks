@@ -2,8 +2,8 @@
 // (RenderCore/LIT_TRANSLUCENCY.md, Phase 4): glass and water reflect what is on
 // screen, as PPScreenReflections.fsh does for the G-buffer's. One mirror ray of up
 // to 12 steps, marched through a half-size copy of the opaque depth (the depth
-// itself is bound for the depth test; PPDepthHalf.fsh) and read from the last frame's finished linear colour at the hit,
-// reprojected by the last frame's view -- the hit's own motion is not known here.
+// itself is bound for the depth test; PPDepthHalf.fsh) and read at the hit from
+// this frame's lit opaque scene, copied before the translucent stage (Phase 10).
 // Included by MaterialTemplate_PS.glsl for forward Lit materials; Lighting.glsl
 // hands IBL_LightModel what it returns. rgb the reflection, a how much to trust
 // it; 0 where the probes must do (off, too rough, a miss, off screen).
@@ -11,7 +11,7 @@
 #ifndef FORWARD_REFLECTIONS_GLSL
 #define FORWARD_REFLECTIONS_GLSL
 
-MATERIAL_SAMPLER2D(17, Forward_LastColor)    // engine texture slot 13: the last frame's linear colour
+MATERIAL_SAMPLER2D(17, Forward_SceneColor)   // engine texture slot 13: this frame's lit opaque scene, linear
 MATERIAL_SAMPLER2D(18, Forward_SceneDepth)   // engine texture slot 14: this frame's opaque depth at half size, the nearest of four (r)
 
 float Forward_ViewDepthOf(vec3 InWorld) { return dot(InWorld, Scene_CameraForward.xyz) - Scene_CameraForward.w; }
@@ -75,16 +75,11 @@ vec4 Forward_ScreenReflection(vec3 InPosition, vec3 InNormal, vec3 InView, float
     vec2 HitUv = NdcToTargetUv(Clip.xy / max(Clip.w, 1e-4));
     vec3 Hit;
     if(!Forward_SurfaceAt(HitUv, Hit)) { return vec4(0.0); }
-
-    vec4 PrevClip = Scene_PrevViewProjection * vec4(Hit, 1.0);
-    if(PrevClip.w <= 1e-4) { return vec4(0.0); }
-    vec2 PrevUv = NdcToTargetUv(PrevClip.xy / PrevClip.w);
-    if(any(lessThan(PrevUv, vec2(0.0))) || any(greaterThan(PrevUv, vec2(1.0)))) { return vec4(0.0); }
-    vec3 Color = max(textureLod(Forward_LastColor, PrevUv, 0.0).rgb, vec3(0.0));
+    if(any(lessThan(HitUv, vec2(0.0))) || any(greaterThan(HitUv, vec2(1.0)))) { return vec4(0.0); }
+    vec3 Color = max(textureLod(Forward_SceneColor, HitUv, 0.0).rgb, vec3(0.0));
 
     vec2  Edge   = min(HitUv, 1.0 - HitUv);
-    vec2  Edge2  = min(PrevUv, 1.0 - PrevUv);
-    float Border = smoothstep(0.0, 0.08, min(min(Edge.x, Edge.y), min(Edge2.x, Edge2.y)));
+    float Border = smoothstep(0.0, 0.08, min(Edge.x, Edge.y));
     float Smooth = 1.0 - smoothstep(MaxRoughness * 0.5, MaxRoughness, InRoughness);
     float Reach  = 1.0 - smoothstep(0.7, 1.0, High / Longest);
     return vec4(Color, clamp(Border * Smooth * Reach * Settings.x, 0.0, 1.0));

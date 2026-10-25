@@ -429,7 +429,7 @@ colour before the translucent stage: Phase 4 reprojects the last frame's.
   constant one is not (as Opacity's). NodeGraph.Tests and
   NodeGraph.MaterialGLSL pass.
 
-### Phase 10: this frame's opaque colour in slot 13
+### Phase 10: this frame's opaque colour in slot 13 (landed)
 
 - Before the translucent stage, where Phase 4 copies the depth, the lit
   opaque scene is copied into an RGBA16F target (`SceneTargets::OpaqueCopy`,
@@ -444,6 +444,23 @@ colour before the translucent stage: Phase 4 reprojects the last frame's.
 - **Check:** TranslucencyLab's water and glass against Phase 8 -- a small
   change in their reflections only; the plume view unchanged. Cost: one
   full-screen copy while either is on.
+- **As landed:** the copy is `PP_Copy` of the scene colour after the
+  `AfterLighting` hook, beside `PPDepthHalf`; a refracting draw is found by
+  walking the Unlit and Translucent stages' draws for
+  `MaterialDescription::bRefraction`. `Scene_ForwardReflections[1].y` stays
+  "reflections on", so a frame that only refracts gets the copy without the
+  march. `Scene_PrevViewProjection` is unused now (kept for the block's
+  layout).
+- **Checked** (Vulkan, Debug, frame 300; the Phase 8 baseline repeats at
+  99 dB): the plume view and the wall bit-identical (99 dB); the glass 63 dB,
+  the glass view's lit side 44 dB; the water view's water 30 dB and +3.6
+  brighter, the lab view's water 34 dB. A debug split confirmed the copy
+  (the water's own pixels read back the floor beneath it exactly) and the
+  hits (the wall's red where the march lands). The water is brighter because
+  it reflects the wall as lit this frame -- before fog, and brighter than the
+  last frame's finished colour was at the reprojected point; with the red
+  channel already near the tone map's top, the extra shows as paler pink.
+  The march's horizontal bands (Phase 4) are unchanged.
 
 ### Phase 11: refracting
 

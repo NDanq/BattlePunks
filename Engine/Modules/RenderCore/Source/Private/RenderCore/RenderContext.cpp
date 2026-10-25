@@ -238,7 +238,7 @@ namespace RenderCore
         constexpr uint32_t LIGHTING_LTC_SLOT = 8;   // the engine's texture slot for the LTC tables (LightList.glsl)
         constexpr uint32_t FORWARD_SHADOW_SLOT = 11; // the engine's slots 11, 12: forward Lit draws' shadow atlases (MaterialTemplate_PS.glsl)
         constexpr uint32_t FORWARD_DDGI_SLOT   = 9;  // the engine's slots 9, 10: a GI Volume's atlases (DDGI.glsl), for forward Lit draws too
-        constexpr uint32_t FORWARD_REFLECTION_SLOT = 13; // the engine's slots 13, 14: forward reflections' last colour and depth copy (ForwardReflections.glsl)
+        constexpr uint32_t FORWARD_REFLECTION_SLOT = 13; // the engine's slots 13, 14: this frame's opaque colour and half-size depth (ForwardReflections.glsl, Refraction.glsl)
         constexpr uint32_t OPACITY_SHADOW_SLOT     = 15; // the engine's slot 15: translucent casters' opacity atlas (Shadows.glsl)
         constexpr uint32_t LIGHT_TILES_X    = 32;
         constexpr uint32_t LIGHT_TILES_Y    = 18;
@@ -4406,6 +4406,7 @@ namespace RenderCore
         P->Scene.Spare[2][0]   = 0.0f;
         for(GDITextureResource*& Each : P->ForwardReflectionTextures) { Each = nullptr; }
         P->Scene.ForwardReflections[1][1] = 0.0f;
+        P->Scene.Spare[2][1] = 0.0f;
         P->CasterView        = -1;
     }
 
@@ -5851,30 +5852,47 @@ namespace RenderCore
         /* Forward, over the lit scene and against its depth. */
         P->StageTimestamp(RGT_Forward, false);
 
-        /* Forward Lit surfaces' screen-space reflections (ForwardReflections.glsl; LIT_TRANSLUCENCY.md,
-         * Phase 4): the opaque depth copied first, since it is bound for the depth test, and the last
-         * frame's colour; their settings in the scene block for this stage. */
+        /* This frame's opaque scene for the forward draws (LIT_TRANSLUCENCY.md, Phase 10): the lit
+         * colour, and the depth at half size since the depth itself is bound for the depth test --
+         * engine slots 13 and 14, while forward Lit surfaces reflect (ForwardReflections.glsl, Phase 4)
+         * or a queued draw refracts (Refraction.glsl). Their settings in the scene block for this stage. */
         {
             const PostProcessSettings& Stack = P->PostSettings;
+            const bool bReflect = GRenderForwardReflections.GetBool() && Stack.bScreenReflections;
+            bool bRefract = false;
+            for(const ERenderStage Stage : { ERenderStage::Unlit, ERenderStage::Translucent })
+            {
+                const DrawPolicy& Policy = P->PolicyFor(Stage);
+                for(size_t Index = 0; Index < Policy.Num() && !bRefract; ++Index)
+                {
+                    bRefract = Policy[Index].Mat && Policy[Index].Mat->Description.bRefraction;
+                }
+            }
             GDITexture2D* Depth = SceneColor->ToDepthTexture2D();
-            GDITexture2D* Last  = InTargets.LastColor ? InTargets.LastColor->ToGDITexture2D() : nullptr;
-            GDIRenderTarget* Copy = GRenderForwardReflections.GetBool() && Stack.bScreenReflections && InTargets.bHDR
-                                 && P->bHasPrevViewProjection && Depth && Last ? InTargets.EnsureDepthCopy() : nullptr;
+            GDITexture2D* Lit   = SceneColor->ToGDITexture2D();
+            const bool bCopy = (bReflect || bRefract) && InTargets.bHDR && Depth && Lit;
+            GDIRenderTarget* DepthCopy = bCopy ? InTargets.EnsureDepthCopy() : nullptr;
+            GDIRenderTarget* ColorCopy = bCopy ? InTargets.EnsureFullHalfFloat(InTargets.OpaqueCopy, "OpaqueColor") : nullptr;
             /* At half size, each texel the nearest of four (PPDepthHalf.fsh): the march reads it
              * a quarter as often and the copy writes a quarter (LIT_TRANSLUCENCY_PERF.md). */
             const uint HalfW = SceneTargets::HalfSize(Width, 1), HalfH = SceneTargets::HalfSize(Height, 1);
-            PostBlock CopyBlock;
-            if(Copy && P->DrawPost(PP_DepthHalf, Copy, HalfW, HalfH, { Depth->Resource }, CopyBlock))
+            PostBlock DepthBlock, ColorBlock;
+            if(DepthCopy && ColorCopy && P->DrawPost(PP_DepthHalf, DepthCopy, HalfW, HalfH, { Depth->Resource }, DepthBlock)
+               && P->DrawPost(PP_Copy, ColorCopy, Width, Height, { Lit->Resource }, ColorBlock))
             {
                 GDISetMaterialTexture(0, nullptr);
-                GDITexture2D* Copied = Copy->ToGDITexture2D();
-                P->ForwardReflectionTextures[0] = Last->Resource;
-                P->ForwardReflectionTextures[1] = Copied ? Copied->Resource : nullptr;
-                PutMatrix(P->Scene.PrevViewProjection, P->PrevViewProjection);
-                const float Settings[8] = { std::clamp(Stack.SsrIntensity, 0.0f, 1.0f), std::clamp(Stack.SsrMaxRoughness, 0.05f, 1.0f),
-                                            std::clamp(Stack.SsrSteps, 8.0f, 64.0f), std::max(Stack.SsrThickness, 0.1f),
-                                            std::max(Stack.SsrMaxDistance, 10.0f), Copied ? 1.0f : 0.0f, float(HalfW), float(HalfH) };
-                std::memcpy(P->Scene.ForwardReflections, Settings, sizeof(Settings));
+                GDITexture2D* DepthCopied = DepthCopy->ToGDITexture2D();
+                GDITexture2D* ColorCopied = ColorCopy->ToGDITexture2D();
+                if(DepthCopied && ColorCopied)
+                {
+                    P->ForwardReflectionTextures[0] = ColorCopied->Resource;
+                    P->ForwardReflectionTextures[1] = DepthCopied->Resource;
+                    P->Scene.Spare[2][1] = 1.0f;
+                    const float Settings[8] = { std::clamp(Stack.SsrIntensity, 0.0f, 1.0f), std::clamp(Stack.SsrMaxRoughness, 0.05f, 1.0f),
+                                                std::clamp(Stack.SsrSteps, 8.0f, 64.0f), std::max(Stack.SsrThickness, 0.1f),
+                                                std::max(Stack.SsrMaxDistance, 10.0f), bReflect ? 1.0f : 0.0f, float(HalfW), float(HalfH) };
+                    std::memcpy(P->Scene.ForwardReflections, Settings, sizeof(Settings));
+                }
             }
         }
 
@@ -5883,6 +5901,7 @@ namespace RenderCore
         P->IssueStage(ERenderStage::Translucent);
         for(GDITextureResource*& Each : P->ForwardReflectionTextures) { Each = nullptr; }
         P->Scene.ForwardReflections[1][1] = 0.0f;
+        P->Scene.Spare[2][1] = 0.0f;
         P->RunHook(ERenderHook::AfterForward, InTargets, bInTimed, &Current);   // fog and the stack bind their own
 
         /* Volumetric fog (PPVolumetricFog.fsh): marched at half size through the depth and the
