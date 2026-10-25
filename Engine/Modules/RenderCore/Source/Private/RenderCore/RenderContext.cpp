@@ -92,6 +92,8 @@ NIMBLE_CONFIG_BOOL(GRenderStochasticReflections, "Rendering", "StochasticReflect
 NIMBLE_CONFIG_BOOL(GShadowsTranslucent, "Shadows", "TranslucentShadows", true, nullptr);
 /* Forward Lit surfaces reflect the screen where a stack has Screen-Space Reflections (LIT_TRANSLUCENCY.md, Phase 4). */
 NIMBLE_CONFIG_BOOL(GRenderForwardReflections, "Rendering", "ForwardReflections", true, nullptr);
+/* Translucent materials with Refraction bend what is behind them (LIT_TRANSLUCENCY.md, Phase 11); off, they blend as before. */
+NIMBLE_CONFIG_BOOL(GRenderRefraction, "Rendering", "Refraction", true, nullptr);
 /* Screen-space GI where a stack has it (GLOBAL_ILLUMINATION.md, Phase 5); off, the stack's node is ignored. */
 NIMBLE_CONFIG_BOOL(GRenderScreenGI, "Rendering", "ScreenSpaceGI", true, nullptr);
 /* Seconds the render clock advances a frame -- particles, material Time, exposure --
@@ -5868,6 +5870,7 @@ namespace RenderCore
             bool bRefract = false;
             for(const ERenderStage Stage : { ERenderStage::Unlit, ERenderStage::Translucent })
             {
+                if(!GRenderRefraction.GetBool()) { break; }
                 const DrawPolicy& Policy = P->PolicyFor(Stage);
                 for(size_t Index = 0; Index < Policy.Num() && !bRefract; ++Index)
                 {
@@ -5893,7 +5896,7 @@ namespace RenderCore
                 {
                     P->ForwardReflectionTextures[0] = ColorCopied->Resource;
                     P->ForwardReflectionTextures[1] = DepthCopied->Resource;
-                    P->Scene.Spare[2][1] = 1.0f;
+                    P->Scene.Spare[2][1] = bRefract ? 1.0f : 0.0f;   // the copy is there for refraction too
                     const float Settings[8] = { std::clamp(Stack.SsrIntensity, 0.0f, 1.0f), std::clamp(Stack.SsrMaxRoughness, 0.05f, 1.0f),
                                                 std::clamp(Stack.SsrSteps, 8.0f, 64.0f), std::max(Stack.SsrThickness, 0.1f),
                                                 std::max(Stack.SsrMaxDistance, 10.0f), bReflect ? 1.0f : 0.0f, float(HalfW), float(HalfH) };
