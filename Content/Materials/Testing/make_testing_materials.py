@@ -68,6 +68,10 @@ MATERIALS = [
     ("VolumeOccluded", "Translucent", "Lit", {"BaseColor": vec(0.8, 0.8, 0.8), "Opacity": "0.6", "SelfOcclusion": "1"},
      {"ShadingModel": "Volume"}),
     ("VolumeOpen", "Translucent", "Lit", {"BaseColor": vec(0.8, 0.8, 0.8), "Opacity": "0.6"}, {"ShadingModel": "Volume"}),
+    # Refraction (Phases 11-12): clear panes that only bend what is behind them, Lit and Unlit.
+    ("RefractLit", "Translucent", "Lit", {"Opacity": "0", "Specular": "0", "Roughness": "1", "Refraction": "1.33"},
+     {"TranslucencyLighting": "Surface"}),
+    ("RefractUnlit", "Translucent", "Unlit", {"Opacity": "0", "Refraction": "1.33"}, {}),
     # Opaque surroundings.
     ("OpaqueWhite", "Opaque", "Lit", {"BaseColor": vec(0.8, 0.8, 0.8), "Roughness": "0.9"}, {}),
     ("OpaqueRed", "Opaque", "Lit", {"BaseColor": vec(0.8, 0.05, 0.05), "Roughness": "0.9"}, {}),

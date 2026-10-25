@@ -3869,6 +3869,86 @@ static void TestTranslucencyOnGpu()
             Sun.GetComponent<GameCore::TransformComponent>()->Rotation = Vector3(35.0, 10.0, 0.0);
         }
 
+        /* Refraction (LIT_TRANSLUCENCY.md, Phases 11-12): a backdrop red on the left and white on
+         * the right, and a clear pane (Opacity 0, no specular) turned 35 degrees about its vertical
+         * axis between it and the eye. Refracting at 1.33, Lit or Unlit, it moves the colour edge
+         * behind it and nothing outside it; an opaque block in front of it does not bleed into the
+         * pane's pixels beside it. */
+        {
+            const GameCore::Entity Left  = Placed("BackRed", Vector3(-250.0, 100.0, 150.0), Vector3(), Vector3(500.0, 800.0, 2.0));
+            const GameCore::Entity Right = Placed("BackWhite", Vector3(250.0, 100.0, 150.0), Vector3(), Vector3(500.0, 800.0, 2.0));
+            Left.AddComponent(Drawn(BOX, "OpaqueRed"));
+            Right.AddComponent(Drawn(BOX, "OpaqueWhite"));
+            /* Where row InY turns from red to white; -1 if it does not. */
+            const auto EdgeAt = [&](const EngineCore::Image& InPixels, const int InY)
+            {
+                for(int X = 40; X < 216; ++X)
+                {
+                    int Value[3];
+                    Rgb(InPixels, X, InY, Value);
+                    if(Value[1] > 100 && Value[2] > 100) { return X; }   // white: green and blue up with red
+                }
+                return -1;
+            };
+            /* Near-black pixels round the pane's centre: the block, and anything bled from it. */
+            const auto BlackAround = [&](const EngineCore::Image& InPixels)
+            {
+                int Count = 0;
+                for(int Y = 100; Y < 156; ++Y)
+                {
+                    for(int X = 80; X < 176; ++X)
+                    {
+                        int Value[3];
+                        Rgb(InPixels, X, Y, Value);
+                        Count += Value[0] + Value[1] + Value[2] < 120 ? 1 : 0;
+                    }
+                }
+                return Count;
+            };
+
+            EngineCore::Image Plain;
+            const bool bPlain = Capture(Plain);
+            for(const char* Each : { "RefractLit", "RefractUnlit" })
+            {
+                const GameCore::Entity Pane = Placed("Pane", Vector3(0.0, 100.0, 0.0), Vector3(0.0, 35.0, 0.0), Vector3(200.0, 200.0, 2.0));
+                Pane.AddComponent(Drawn(BOX, Each));
+                EngineCore::Image Bent;
+                const bool bBent = Capture(Bent);
+                Expect(bPlain && bBent, "the backdrop is captured without and with a refracting pane");
+                if(bPlain && bBent)
+                {
+                    Dump(Bent, Each);
+                    const int Before = EdgeAt(Plain, 128), After = EdgeAt(Bent, 128);
+                    const int Above = EdgeAt(Plain, 30), AboveBent = EdgeAt(Bent, 30);
+                    std::printf("    %s: the edge at x %d through the pane, %d without; above it %d and %d\n",
+                                Each, After, Before, AboveBent, Above);
+                    Expect(Before > 0 && After > 0 && std::abs(After - Before) >= 3, "a refracting pane moves the edge behind it");
+                    Expect(Above > 0 && std::abs(AboveBent - Above) <= 1, "and nothing outside it");
+                }
+
+                /* A black block in front of the pane, beside the edge: through the pane the backdrop
+                 * shows round it, never the block (it is nearer than the pane). */
+                const GameCore::Entity Block = Placed("Block", Vector3(-25.0, 100.0, -150.0), Vector3(), Vector3(30.0, 30.0, 10.0));
+                Block.AddComponent(Drawn(BOX, "OpaqueBlack"));
+                EngineCore::Image Blocked;
+                const bool bBlocked = Capture(Blocked);
+                World.DestroyEntity(Pane);
+                EngineCore::Image BlockOnly;
+                const bool bBlockOnly = Capture(BlockOnly);
+                World.DestroyEntity(Block);
+                Expect(bBlocked && bBlockOnly, "the block is captured with and without the pane behind it");
+                if(bBlocked && bBlockOnly)
+                {
+                    Dump(Blocked, (std::string(Each) + "-block").c_str());
+                    const int With = BlackAround(Blocked), Without = BlackAround(BlockOnly);
+                    std::printf("    %s: %d black pixels round the block with the pane, %d without\n", Each, With, Without);
+                    Expect(Without > 50 && With <= Without + 24, "what is in front of a refracting pane does not bleed into it");
+                }
+            }
+            World.DestroyEntity(Left);
+            World.DestroyEntity(Right);
+        }
+
         Rend.UnbindWorld();
         Rend.Shutdown();
     }
