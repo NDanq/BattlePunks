@@ -1734,6 +1734,42 @@ namespace
             CompileGraph(G, Two);
             Expect(Two.HasErrors(), "a material has one output node");
         }
+        {
+            /* Refraction (LIT_TRANSLUCENCY.md, Phase 9): a define and a .material line where it is set. */
+            Graph G;
+            G.SchemaName = "Material";
+            G.Name       = "Lens";
+            Node& Out = AddNode(G, 1, "Output.Material");
+            Out.Properties["Domain"] = "Translucent";
+            Out.Constants["Refraction"] = "1.33";
+            CompileResult Bent;
+            CompileGraph(G, Bent);
+            Expect(!Bent.HasErrors() && Bent.Code.find("#define MATERIAL_REFRACTION 1") != std::string::npos
+                   && Bent.Code.find("Surface.Refraction = 1.33") != std::string::npos,
+                   "a Translucent material with Refraction set defines MATERIAL_REFRACTION and sets it");
+            Expect(!Bent.Companions.empty() && Bent.Companions[0].second.find("Refraction 1\n") != std::string::npos,
+                   "and its .material says Refraction 1");
+
+            G.FindNode(Id(1))->Constants["Refraction"] = "1";
+            CompileResult Straight;
+            CompileGraph(G, Straight);
+            Expect(!Straight.HasErrors() && Straight.Code.find("MATERIAL_REFRACTION") == std::string::npos
+                   && !Straight.Companions.empty() && Straight.Companions[0].second.find("Refraction") == std::string::npos,
+                   "at 1 it refracts nothing: no define, no line");
+
+            G.FindNode(Id(1))->Properties["Domain"] = "Opaque";
+            G.FindNode(Id(1))->Constants.erase("Refraction");
+            AddNode(G, 2, "Constant").WildcardType = "float";
+            Connect(G, 2, "Out", 1, "Refraction");
+            CompileResult Opaque;
+            CompileGraph(G, Opaque);
+            const bool bWarned = std::any_of(Opaque.Diagnostics.begin(), Opaque.Diagnostics.end(), [](const Diagnostic& D)
+            {
+                return D.Severity == ESeverity::Warning && D.Node == Id(1) && D.Pin == "Refraction";
+            });
+            Expect(!Opaque.HasErrors() && bWarned && Opaque.Code.find("MATERIAL_REFRACTION") == std::string::npos,
+                   "an Opaque material's Refraction is a warning, and refracts nothing");
+        }
     }
 
     /*

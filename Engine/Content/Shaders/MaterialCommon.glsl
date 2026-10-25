@@ -50,6 +50,10 @@ struct MaterialSurface
     float PhaseAnisotropy;      // Volume: -0.9 back scattering, 0 even, 0.9 forward (Henyey-Greenstein g)
     float NormalInfluence;      // Volume: 0 lit from every side alike, 1 wrapped toward its Normal
     float SelfOcclusion;        // Volume: how much the medium toward the sun darkens its ambient (0 none)
+
+    // Translucent: what is seen through it bent and tinted (Refraction.glsl; LIT_TRANSLUCENCY.md, Phase 11).
+    float Refraction;           // an index of refraction; 1 none
+    vec3  TransmissionTint;     // the colour what is seen through takes; 1 1 1 clear
 };
 
 MaterialSurface DefaultMaterialSurface(in MaterialInputs Inputs)
@@ -75,6 +79,8 @@ MaterialSurface DefaultMaterialSurface(in MaterialInputs Inputs)
     Surface.PhaseAnisotropy    = 0.0;
     Surface.NormalInfluence    = 0.0;
     Surface.SelfOcclusion      = 0.0;
+    Surface.Refraction         = 1.0;
+    Surface.TransmissionTint   = vec3(1.0);
     return Surface;
 }
 
