@@ -661,6 +661,10 @@ namespace
             Result.Error(Root->Id, std::string(), "Particle Self Occlusion must be a number, 0 or more");
         }
 
+        /* Refraction (LIT_TRANSLUCENCY.md, Phase 9): a Translucent surface whose pin is linked or away from 1. */
+        const PinDefinition* RefractionPin = RootDef->FindPin("Refraction", EPinDirection::Input);
+        const bool bRefraction = !bLegacy && Domain == "Translucent" && RefractionPin && IsPinSet(*Root, *RefractionPin);
+
         const PinDefinition* OffsetPin = RootDef->FindPin(OFFSET_PIN, EPinDirection::Input);
         const bool bHasOffset = OffsetPin && IsPinSet(*Root, *OffsetPin);
 
@@ -694,6 +698,10 @@ namespace
                 }
                 if(Pin.Name == "Opacity" && Domain != "Translucent")    { Why = "a " + Domain + " material (only Translucent blends)"; }
                 if(Pin.Name == "OpacityMask" && Domain != "Masked")     { Why = "a " + Domain + " material (only Masked clips)"; }
+                if((Pin.Name == "Refraction" || Pin.Name == "TransmissionTint") && Domain != "Translucent")
+                {
+                    Why = "a " + Domain + " material (only Translucent refracts)";
+                }
                 if(!Why.empty()) { Result.Warning(Root->Id, Pin.Name, Pin.Name + " is unused by " + Why); }
             }
         }
@@ -782,6 +790,12 @@ namespace
         {
             Out.Line("// Translucency Lighting Surface: specular over the opacity, premultiplied (MaterialTemplate_PS.glsl).");
             Out.Line("#define MATERIAL_TRANSLUCENCY_SURFACE 1");
+            Out.Blank();
+        }
+        if(bRefraction)
+        {
+            Out.Line("// Refraction: what is seen through it bent, read from this frame's opaque copy (Refraction.glsl).");
+            Out.Line("#define MATERIAL_REFRACTION 1");
             Out.Blank();
         }
         if(bParticleLighting)
@@ -899,6 +913,10 @@ namespace
         if(bTranslucencySurface)
         {
             Material += "TranslucencyLighting Surface\n";
+        }
+        if(bRefraction)
+        {
+            Material += "Refraction 1\n";
         }
         Material += "ClipValue " + FormatNumber(ClipValue) + "\n";
         Material += "MaxOffset " + FormatNumber(MaxOffset) + "\n";
@@ -1945,6 +1963,12 @@ namespace
                 Staged(In("NormalInfluence", "float", "0"), STAGE_PIXEL,
                        "Volume: 0 lit from every side alike, 1 shaded by its Normal like a surface (a flipbook's normal map, "
                        "Particle Sphere Normal)"),
+                Staged(In("Refraction", "float", "1"), STAGE_PIXEL,
+                       "Translucent: the index of refraction what is seen through it bends by -- 1 none, 1.33 water, 1.5 a "
+                       "glass block; a thin pane 1.02 to 1.05 (it is one surface here, not two)"),
+                Staged(In("TransmissionTint", "vec3", "1 1 1"), STAGE_PIXEL,
+                       "Translucent, with Refraction: the colour what is seen through it takes (1 1 1 clear; deep water, "
+                       "thick tinted glass)"),
                 Staged(In(OFFSET_PIN, "vec3", "0 0 0"), STAGE_VERTEX,
                        "World-space offset added to each vertex. Vertex stage: pixel-only nodes cannot feed it"),
             };

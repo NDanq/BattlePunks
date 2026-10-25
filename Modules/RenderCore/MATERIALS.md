@@ -96,6 +96,9 @@ colour). A Lit material also has a **Shading Model** -- Default, Clear Coat,
 Anisotropic, Cloth, Subsurface or Skin -- and the pins only some models read
 (Clear Coat, Clear Coat Roughness, Clear Coat Normal, Anisotropy, Tangent,
 Sheen Color, Subsurface Color, Thickness): [SHADING_MODELS.md](SHADING_MODELS.md).
+A Translucent material, Lit or Unlit, can refract what is behind it --
+**Refraction** (an index of refraction, 1 none) and **Transmission Tint**:
+[LIT_TRANSLUCENCY.md](LIT_TRANSLUCENCY.md), Phases 9-12.
 A pin the model does not read is warned about, as an Unlit material's are. The legacy Pixel Output node compiles as Unlit + Translucent, which is
 how every material drew before (the scene blended everything).
 

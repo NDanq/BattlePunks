@@ -142,6 +142,7 @@ namespace RenderCore
         bool             bTranslucencySurface = false;   // TranslucencyLighting Surface: premultiplied, specular over the opacity
         bool             bParticleLighting    = false;   // ParticleLighting 1: lit per instance in its vertex shaders (bound as forward Lit)
         float            TranslucentShadow    = 0.0f;    // TranslucentShadow <opacity>: its mesh into the opacity shadow maps; 0 none
+        bool             bRefraction          = false;   // Refraction 1: bends what is behind it, read from this frame's opaque copy
         float            ClipValue  = 0.5f;
         float            MaxOffset  = 0.0f;   // World Position Offset's reach: pads culling bounds
         bool             bHasOffset = false;

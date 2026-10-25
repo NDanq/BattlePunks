@@ -410,7 +410,7 @@ stage, read at a position the surface's normal and index of refraction move.
 reflections, 15 the opacity atlas), and nothing copies this frame's scene
 colour before the translucent stage: Phase 4 reprojects the last frame's.
 
-### Phase 9: the Refraction pin
+### Phase 9: the Refraction pin (landed)
 
 - Material Output gains **Refraction** (float, 1: an index of refraction;
   1.0 none, about 1.33 water, 1.5 a glass block) and **Transmission Tint**
@@ -424,6 +424,10 @@ colour before the translucent stage: Phase 4 reprojects the last frame's.
 - Nothing draws differently yet. **Check:** NodeGraph tests -- the define and
   the line where the pin is set, neither where it is not, the warning on an
   Opaque material.
+- **As landed:** set means linked, or a constant other than 1 (as every pin's
+  `IsPinSet`); a linked pin on a non-Translucent material is warned about, a
+  constant one is not (as Opacity's). NodeGraph.Tests and
+  NodeGraph.MaterialGLSL pass.
 
 ### Phase 10: this frame's opaque colour in slot 13
 
