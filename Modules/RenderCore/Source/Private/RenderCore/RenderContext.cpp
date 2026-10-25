@@ -1866,6 +1866,12 @@ namespace RenderCore
                     GDISetMaterialTexture(OPACITY_SHADOW_SLOT, ForwardOpacityAtlas);
                 }
             }
+            /* An Unlit material that refracts reads this frame's opaque scene too (Refraction.glsl). */
+            else if(InMaterial.Description.bRefraction && InMaterial.Description.Domain == EMaterialDomain::Translucent)
+            {
+                GDISetMaterialTexture(FORWARD_REFLECTION_SLOT, ForwardReflectionTextures[0]);
+                GDISetMaterialTexture(FORWARD_REFLECTION_SLOT + 1, ForwardReflectionTextures[1]);
+            }
 
             ApplyDomainState(InMaterial.Description.Domain,
                              InMaterial.Description.bTranslucencySurface && InMaterial.Description.Shading == EMaterialShading::Lit);
