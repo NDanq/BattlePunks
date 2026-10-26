@@ -580,7 +580,25 @@ colour before the translucent stage: Phase 4 reprojects the last frame's.
   run-to-run noise 78 dB -- its translucent water is a single surface and
   its glass Two Sided.
 
-## Not in this plan
+## Courtyard's fountain water (landed)
+
+- Courtyard's `Water` (`Tools/Courtyard/make_courtyard_materials.py`) was a
+  Legacy translucent metal: Metallic 1 and an opacity from a Fresnel term
+  (0.3 face on to 0.95 grazing), so its reflections would not fade with a
+  clear body. It is now as the lab's water: Translucency Lighting
+  **Surface** (reflections at full strength whatever the opacity), a
+  dielectric (Specular 0.25: water's 2 %, Fresnel from the BRDF), a light
+  body (Opacity 0.15, its Tint as before), **Refraction 1.33** through its
+  two moving normal maps, and a **Transmission Tint** parameter (0.78, 0.9,
+  0.86). The basin's floor and the pedestal's foot show through it, bent by
+  the waves.
+- **Checked** (Debug, frame 300): against the old water, 48.6 dB on Vulkan
+  and 48.5 on D3D12 at the default camera, the difference confined to the
+  basin's surface; Vulkan against D3D12 39.6 dB before and after alike.
+  Courtyard's cinematic camera follows the wall clock, so a run can land on
+  another pose -- one D3D12 run caught the fountain close up, the basin floor
+  clear under the water; captures are compared only where they share a pose.
+
 
 - Particles as lights (a module adding point lights to the clustered list:
   the list is built on the CPU, the particles live on the GPU).
