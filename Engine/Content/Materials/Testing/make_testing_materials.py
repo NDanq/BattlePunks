@@ -72,6 +72,9 @@ MATERIALS = [
     ("RefractLit", "Translucent", "Lit", {"Opacity": "0", "Specular": "0", "Roughness": "1", "Refraction": "1.33"},
      {"TranslucencyLighting": "Surface"}),
     ("RefractUnlit", "Translucent", "Unlit", {"Opacity": "0", "Refraction": "1.33"}, {}),
+    # Far faces: a half-covering glow, one-sided (its far faces culled) and Two Sided (drawn).
+    ("TransUnlitHalf", "Translucent", "Unlit", {"Emissive": vec(0.6, 0.6, 0.6), "Opacity": "0.5"}, {}),
+    ("TransUnlitHalfTwoSided", "Translucent", "Unlit", {"Emissive": vec(0.6, 0.6, 0.6), "Opacity": "0.5"}, {"TwoSided": "true"}),
     # Opaque surroundings.
     ("OpaqueWhite", "Opaque", "Lit", {"BaseColor": vec(0.8, 0.8, 0.8), "Roughness": "0.9"}, {}),
     ("OpaqueRed", "Opaque", "Lit", {"BaseColor": vec(0.8, 0.05, 0.05), "Roughness": "0.9"}, {}),

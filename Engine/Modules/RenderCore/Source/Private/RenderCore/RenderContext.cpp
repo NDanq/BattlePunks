@@ -1690,13 +1690,17 @@ namespace RenderCore
         /* Draw state per domain. Plain quads keep the scene's old state:
          * blended, depth written. */
         /* InPremultiplied: a Translucent Lit material whose Translucency Lighting is Surface
-         * writes its colour already times its coverage, its specular not (LIT_TRANSLUCENCY.md, Phase 3). */
-        static void ApplyDomainState(const EMaterialDomain InDomain, const bool bInPremultiplied = false)
+         * writes its colour already times its coverage, its specular not (LIT_TRANSLUCENCY.md, Phase 3).
+         * bInCullFar: a one-sided Translucent mesh drops its faces away from the eye -- nothing
+         * hides them behind its near faces, as the depth test does for an opaque one. The engine
+         * winds a face toward the eye clockwise (MaterialTemplate_PS.glsl): a face away is GL's front. */
+        static void ApplyDomainState(const EMaterialDomain InDomain, const bool bInPremultiplied = false, const bool bInCullFar = false)
         {
             IDepthStateDesc Depth;
             Depth.bDepthTest = InDomain != EMaterialDomain::PostProcess;
             Depth.bDepthMask = InDomain == EMaterialDomain::Opaque || InDomain == EMaterialDomain::Masked;
             Depth.DepthMode  = CTM_LEQUAL;
+            Depth.CullMode   = bInCullFar && InDomain == EMaterialDomain::Translucent ? GDI_CULL_FRONT : GDI_CULL_NONE;
             GDISetDepthState(Depth);
 
             if(InDomain == EMaterialDomain::Translucent)
@@ -1875,8 +1879,11 @@ namespace RenderCore
                 GDISetMaterialTexture(FORWARD_REFLECTION_SLOT + 1, ForwardReflectionTextures[1]);
             }
 
+            const bool bMesh = InInput == EMaterialVertexInput::Mesh || InInput == EMaterialVertexInput::InstancedMesh
+                            || InInput == EMaterialVertexInput::SkinnedMesh;
             ApplyDomainState(InMaterial.Description.Domain,
-                             InMaterial.Description.bTranslucencySurface && InMaterial.Description.Shading == EMaterialShading::Lit);
+                             InMaterial.Description.bTranslucencySurface && InMaterial.Description.Shading == EMaterialShading::Lit,
+                             bMesh && !InMaterial.Description.bTwoSided);
             return true;
         }
 

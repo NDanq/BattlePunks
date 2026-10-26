@@ -3949,6 +3949,40 @@ static void TestTranslucencyOnGpu()
             World.DestroyEntity(Right);
         }
 
+        /* Far faces (LIT_TRANSLUCENCY.md, "Far faces"): a cube at opacity 0.5 over black. One-sided,
+         * its faces away from the eye are culled and one layer covers the backdrop; Two Sided, both
+         * draw, the far one under the near, and the centre is brighter by a second layer. */
+        {
+            const GameCore::Entity Back = Placed("Back", Vector3(0.0, 100.0, 300.0), Vector3(), Vector3(800.0, 800.0, 2.0));
+            Back.AddComponent(Drawn(BOX, "OpaqueBlack"));
+            int Grey[2] = {};
+            const char* Names[2] = { "TransUnlitHalf", "TransUnlitHalfTwoSided" };
+            bool bBoth = true;
+            for(int Index = 0; Index < 2; ++Index)
+            {
+                const GameCore::Entity Cube = Placed("Cube", Vector3(0.0, 100.0, 0.0), Vector3(20.0, 30.0, 0.0), Vector3(150.0, 150.0, 150.0));
+                Cube.AddComponent(Drawn(BOX, Names[Index]));
+                EngineCore::Image Pixels;
+                const bool bCaptured = Capture(Pixels);
+                bBoth = bBoth && bCaptured;
+                if(bCaptured)
+                {
+                    Dump(Pixels, Names[Index]);
+                    int Value[3];
+                    Rgb(Pixels, 128, 128, Value);
+                    Grey[Index] = (Value[0] + Value[1] + Value[2]) / 3;
+                }
+                World.DestroyEntity(Cube);
+            }
+            Expect(bBoth, "the half-covering cube is captured one-sided and Two Sided");
+            if(bBoth)
+            {
+                std::printf("    far faces: the cube's centre %d one-sided, %d Two Sided\n", Grey[0], Grey[1]);
+                Expect(Grey[0] > 20 && Grey[1] - Grey[0] > 10, "a one-sided Translucent mesh culls its far faces; a Two Sided one draws them");
+            }
+            World.DestroyEntity(Back);
+        }
+
         Rend.UnbindWorld();
         Rend.Shutdown();
     }

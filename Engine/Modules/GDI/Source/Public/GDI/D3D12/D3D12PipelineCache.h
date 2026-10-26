@@ -92,6 +92,7 @@ public:
         BOOL                    DepthEnable     = FALSE;
         BOOL                    DepthWrite      = FALSE;
         D3D12_COMPARISON_FUNC   DepthFunc       = D3D12_COMPARISON_FUNC_LESS;
+        D3D12_CULL_MODE         CullMode        = D3D12_CULL_MODE_NONE;
 
         bool operator==(const PipelineKey& InOther) const;
     };

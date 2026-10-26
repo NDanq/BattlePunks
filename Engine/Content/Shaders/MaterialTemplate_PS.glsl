@@ -154,8 +154,9 @@ void main(void)
 #if MATERIAL_DOMAIN_TRANSLUCENT
 #ifdef MATERIAL_REFRACTION
     // A refracting surface is one interface (Refraction.glsl): only its faces toward the eye
-    // draw -- gl_FrontFacing is a face away from it here (see Two Sided below). Its far faces
-    // would otherwise replace or double its near ones, by triangle order: nothing culls them.
+    // draw -- gl_FrontFacing is a face away from it here (see Two Sided below). A one-sided
+    // mesh's far faces are culled already; a Two Sided one's would otherwise replace or
+    // double its near ones, by triangle order.
     if(gl_FrontFacing) { discard; }
 #endif
 #endif

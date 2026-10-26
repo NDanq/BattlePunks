@@ -507,7 +507,7 @@ colour before the translucent stage: Phase 4 reprojects the last frame's.
   each box laid a second body over the first, and the water's bottom face --
   lit with a normal facing away from the eye -- added a strong grazing
   highlight, which was most of its salmon look. Every unrefracted
-  translucent box still draws its far faces so.
+  translucent box still drew its far faces so, until "Far faces" below.
 - **Debugged on the way:** a split-screen check confirmed the copy matches
   the scene colour under a translucent draw (183, 174, 164 either side) and
   that an unbent read reproduces it.
@@ -546,6 +546,39 @@ colour before the translucent stage: Phase 4 reprojects the last frame's.
   - **Cost:** LIT_TRANSLUCENCY_PERF.md, "Refraction": the bend itself is
     within noise; the copy and the bend together at most +0.05 ms on Vulkan
     and +0.10 on D3D12 in the Forward span.
+
+## Far faces (landed)
+
+- **The problem:** GDI culled nothing, on any backend (cull mode none in
+  every pipeline). An opaque mesh's far faces are hidden by the depth test;
+  a translucent one's are not, so a closed translucent mesh drew its far
+  faces too -- a second body under the first, lit with normals facing away
+  from the eye (the lab water's bright salmon was mostly its bottom face's
+  grazing highlight; Phase 11).
+- **GDI:** `IDepthStateDesc::CullMode` (`EGDICullMode`: none, front, back;
+  front is what `gl_FrontFacing` calls front -- counter-clockwise on the
+  target as stored, on every backend). It rides in the depth state so every
+  pipeline key (Vulkan, D3D12) and every parallel recording context carries
+  it with no new plumbing; OpenGL enables `GL_CULL_FACE` only when the mode
+  changes from what GDI last set (a host that culls on its own, Odessa, keeps
+  its state); Metal sets the encoder's cull mode with its depth state (not
+  built here). The default is none: every other draw is as before.
+- **RenderCore:** `ApplyDomainState` culls front -- the faces away from the
+  eye, since the engine winds a face toward it clockwise -- for a
+  Translucent material that is not Two Sided, drawn as a mesh (static,
+  instanced or skinned); screen quads and full-screen passes never cull.
+  A Two Sided refracting mesh keeps Phase 11's discard.
+- **Checked:** RenderCore.Smoke on the GPU, 783 checks, none failing, Vulkan
+  and D3D12 alike. New: a cube at opacity 0.5 over black, its centre 113
+  one-sided (one layer) and 135 Two Sided (two). The lab with
+  `[Rendering] Refraction` 0 shows the near faces kept: the water its top
+  (no grazing highlight from below), the Lens its front.
+- **TranslucencyLab:** bit-identical (99 dB, every view): its panes are Two
+  Sided, its water and Lens already drew only their near faces by
+  refracting, and the plume's sprites (instanced quads facing the eye) are
+  not culled away. **Courtyard:** 77.6 dB against the last capture, its own
+  run-to-run noise 78 dB -- its translucent water is a single surface and
+  its glass Two Sided.
 
 ## Not in this plan
 

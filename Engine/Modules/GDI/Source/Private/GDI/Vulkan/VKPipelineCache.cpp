@@ -99,6 +99,7 @@ uint64_t VKPipelineCache::HashKey(const PipelineKey& K)
     Mix(&K.DepthWriteEnable,  sizeof(K.DepthWriteEnable));
     Mix(&K.DepthCompareOp,    sizeof(K.DepthCompareOp));
     Mix(&K.StencilTestEnable, sizeof(K.StencilTestEnable));
+    Mix(&K.CullMode,          sizeof(K.CullMode));
     Mix(&K.RTFormat,          sizeof(K.RTFormat));
     Mix(&K.ColorFormats,      sizeof(K.ColorFormats));
     Mix(&K.ColorCount,        sizeof(K.ColorCount));
@@ -654,7 +655,7 @@ VkPipeline VKPipelineCache::CreatePipeline(const PipelineKey& Key) const
     Raster.sType            = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     Raster.depthClampEnable = VK_FALSE;
     Raster.polygonMode      = VK_POLYGON_MODE_FILL;
-    Raster.cullMode         = VK_CULL_MODE_NONE;
+    Raster.cullMode         = Key.CullMode;
     Raster.frontFace        = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     Raster.lineWidth        = 1.0f;
 
@@ -840,7 +841,8 @@ bool VKPipelineCache::KeysEqual(const PipelineKey& A, const PipelineKey& B)
        || A.DstColorBlend != B.DstColorBlend || A.SrcAlphaBlend != B.SrcAlphaBlend || A.DstAlphaBlend != B.DstAlphaBlend
        || A.ColorBlendOp != B.ColorBlendOp || A.AlphaBlendOp != B.AlphaBlendOp || A.ColorWriteMask != B.ColorWriteMask
        || A.DepthTestEnable != B.DepthTestEnable || A.DepthWriteEnable != B.DepthWriteEnable
-       || A.DepthCompareOp != B.DepthCompareOp || A.StencilTestEnable != B.StencilTestEnable || A.RTFormat != B.RTFormat
+       || A.DepthCompareOp != B.DepthCompareOp || A.StencilTestEnable != B.StencilTestEnable || A.CullMode != B.CullMode
+       || A.RTFormat != B.RTFormat
        || A.ColorCount != B.ColorCount || A.DepthFormat != B.DepthFormat || A.Topology != B.Topology)
     {
         return false;
