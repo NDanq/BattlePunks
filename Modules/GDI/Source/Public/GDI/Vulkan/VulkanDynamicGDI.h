@@ -83,12 +83,15 @@ public:
         StateInfo.depthTestEnable  = InDepthState.bDepthTest ? VK_TRUE : VK_FALSE;
         StateInfo.depthWriteEnable = InDepthState.bDepthMask ? VK_TRUE : VK_FALSE;
         StateInfo.depthCompareOp   = VKUtil::DecodeCompareOp(InDepthState.DepthMode);
+        CullMode = InDepthState.CullMode == GDI_CULL_FRONT ? VK_CULL_MODE_FRONT_BIT
+                 : InDepthState.CullMode == GDI_CULL_BACK  ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
     }
     void SetStencilState(IStencilStateDesc InStencilState)
     {
         StateInfo.stencilTestEnable = InStencilState.bStencilTest ? VK_TRUE : VK_FALSE;
     }
     VkPipelineDepthStencilStateCreateInfo StateInfo{};
+    VkCullModeFlags                       CullMode = VK_CULL_MODE_NONE;   // the rasterizer's, carried with the depth test
 };
 
 class VKBlendState

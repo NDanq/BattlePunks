@@ -858,6 +858,8 @@ bool D3D12DynamicGDI::BindDrawState(const D3D12DrawInputs& InIn, GDIMesh* InMesh
     Key.DepthEnable    = Depth.bDepthTest ? TRUE : FALSE;
     Key.DepthWrite     = Depth.bDepthMask ? TRUE : FALSE;
     Key.DepthFunc      = DecodeCompareFunc(Depth.DepthMode);
+    Key.CullMode       = Depth.CullMode == GDI_CULL_FRONT ? D3D12_CULL_MODE_FRONT
+                       : Depth.CullMode == GDI_CULL_BACK  ? D3D12_CULL_MODE_BACK : D3D12_CULL_MODE_NONE;
 
     D3D12DrawCaches& Caches = *InIn.Caches;
     ID3D12GraphicsCommandList* List = InIn.List;

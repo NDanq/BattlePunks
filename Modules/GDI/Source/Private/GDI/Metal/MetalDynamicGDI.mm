@@ -740,6 +740,8 @@ bool MetalDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     {
         [Enc setDepthStencilState:DSState];
     }
+    [Enc setCullMode:(Depth.CullMode == GDI_CULL_FRONT ? MTLCullModeFront
+                      : Depth.CullMode == GDI_CULL_BACK ? MTLCullModeBack : MTLCullModeNone)];
     if(Stencil.bStencilTest)
     {
         [Enc setStencilReferenceValue:(uint32_t)Stencil.Reference];

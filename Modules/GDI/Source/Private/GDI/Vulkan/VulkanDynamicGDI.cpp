@@ -1268,6 +1268,7 @@ bool VulkanDynamicGDI::BindDrawState(const VKDrawInputs& In, GDIMesh* InMesh, bo
         VKPipelineCache::ApplyDepthStencilState(Key,
             DS.depthTestEnable, DS.depthWriteEnable, DS.stencilTestEnable,
             DS.depthCompareOp);
+        Key.CullMode = In.Depth->CullMode;
     }
     if(In.bHasTarget)
     {

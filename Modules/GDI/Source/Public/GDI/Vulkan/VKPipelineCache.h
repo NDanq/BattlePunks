@@ -115,6 +115,7 @@ public:
         VkBool32              DepthWriteEnable  = VK_FALSE;
         VkCompareOp           DepthCompareOp    = VK_COMPARE_OP_LESS;
         VkBool32              StencilTestEnable = VK_FALSE;
+        VkCullModeFlags       CullMode          = VK_CULL_MODE_NONE;
 
         // Render-target format and primitive topology.
         VkFormat              RTFormat          = VK_FORMAT_R8G8B8A8_UNORM;

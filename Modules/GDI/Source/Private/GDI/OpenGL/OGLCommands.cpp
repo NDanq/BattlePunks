@@ -273,6 +273,23 @@ void OpenGLDynamicGDI::SetDepthState(IDepthStateDesc InDepthState)
     GLenum EnableDepthMask = InDepthState.bDepthMask ? GL_TRUE : GL_FALSE;
     glDepthFunc( DecodeCTM(InDepthState.DepthMode) );
     glDepthMask( EnableDepthMask );
+
+    /* Face culling, touched only when it changes from what GDI last set (off at
+     * first, GL's default): a host that culls on its own keeps its state. */
+    static EGDICullMode Applied = GDI_CULL_NONE;
+    if(InDepthState.CullMode != Applied)
+    {
+        if(InDepthState.CullMode == GDI_CULL_NONE)
+        {
+            glDisable(GL_CULL_FACE);
+        }
+        else
+        {
+            glCullFace(InDepthState.CullMode == GDI_CULL_FRONT ? GL_FRONT : GL_BACK);
+            glEnable(GL_CULL_FACE);
+        }
+        Applied = InDepthState.CullMode;
+    }
 }
 
 void OpenGLDynamicGDI::SetStencilState( IStencilStateDesc InStencilState )

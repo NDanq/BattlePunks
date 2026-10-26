@@ -202,16 +202,31 @@ enum ERenderPlatform : char
     ERP_MAX
 };
 
+/* Which triangles the rasterizer drops before the pixel shader. Front is what
+ * gl_FrontFacing calls front -- counter-clockwise on the target as stored,
+ * top-down (GDI.h), on every backend. */
+enum EGDICullMode : char
+{
+    GDI_CULL_NONE  = 0,
+    GDI_CULL_FRONT = 1,
+    GDI_CULL_BACK  = 2,
+};
+
+/* The depth test, and the face culling that decides with it which fragments
+ * reach the pixel shader: one state, so every backend's pipeline key and every
+ * parallel recording context carries both. */
 struct IDepthStateDesc
 {
     bool				bDepthTest;
     bool                bDepthMask;
     ECompareTestMode	DepthMode;
+    EGDICullMode        CullMode;
 
     IDepthStateDesc() :
             bDepthTest(false),
             bDepthMask(false),
-            DepthMode(CTM_LESS) {  }
+            DepthMode(CTM_LESS),
+            CullMode(GDI_CULL_NONE) {  }
 };
 
 struct IStencilStateDesc
