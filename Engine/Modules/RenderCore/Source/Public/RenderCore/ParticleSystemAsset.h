@@ -125,6 +125,8 @@ namespace RenderCore
         float               VelocityStretch  = 0.05f;              // Velocity Aligned: seconds of travel added to its length
         uint8_t             MeshOrientation  = PMO_RandomSpin;     // EParticleMeshOrientation (Mesh)
         uint8_t             bRandomRotation  = 0;                  // each starts at a random angle and spins either way
+        uint8_t             bCastShadows     = 0;                  // Sprite: into the lights' opacity shadow maps (LIT_TRANSLUCENCY.md, Phase 7)
+        float               ShadowDensity    = 1.0f;               // how much of its opacity its shadow takes; above 1 darker
         float               RotationRate     = 0.0f;               // degrees a second
 
         uint8_t             SpawnMode        = PSM_Continuous;     // EParticleSpawnMode

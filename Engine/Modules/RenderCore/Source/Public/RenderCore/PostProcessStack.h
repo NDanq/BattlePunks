@@ -53,10 +53,16 @@ namespace RenderCore
         /* Screen-space reflections (RENDERPIPELINE.md): over the probes' specular, in the IBL pass. */
         uint8_t bScreenReflections = 0;
         float   SsrIntensity    = 1.0f;
-        float   SsrMaxRoughness = 0.45f;
+        float   SsrMaxRoughness = 0.8f;
         float   SsrMaxDistance  = 1500.0f;     // world units
         float   SsrThickness    = 25.0f;       // world units
         float   SsrSteps        = 32.0f;
+
+        /* Screen-space diffuse GI (GLOBAL_ILLUMINATION.md, Phase 5): over the probes' irradiance, in the IBL pass. */
+        uint8_t bScreenGI   = 0;
+        float   GiIntensity = 1.0f;
+        float   GiRays      = 4.0f;
+        float   GiRadius    = 300.0f;      // world units
 
         /* Volumetric fog (RENDERPIPELINE.md): after the translucent stages, before TAA. */
         uint8_t bVolumetricFog   = 0;
@@ -116,7 +122,7 @@ namespace RenderCore
 
         bool IsEmpty() const
         {
-            return !bAmbientOcclusion && !bScreenReflections && !bVolumetricFog && !bDepthOfField && !bMotionBlur && !bBloom && !bAntialiasing && !bToneMapping && !bAutoExposure
+            return !bAmbientOcclusion && !bScreenReflections && !bScreenGI && !bVolumetricFog && !bDepthOfField && !bMotionBlur && !bBloom && !bAntialiasing && !bToneMapping && !bAutoExposure
                 && MaterialCount == 0;
         }
     };

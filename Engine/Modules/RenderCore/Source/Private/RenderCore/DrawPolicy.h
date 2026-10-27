@@ -35,6 +35,7 @@ namespace RenderCore
         uint32_t          First = 0;
         uint32_t          Count = 0;             // 0: the whole mesh
         int32_t           ShadowView = -1;       // Shadows stage: the ShadowFrame view it draws into
+        float             CasterBounds[6] = {};  // Shadows stage, a translucent caster: its world bounds, min then max
         int32_t           Occlusion  = -1;       // the occlusion query the GPU skips it on (RenderContext::SetDrawOcclusion); -1: none
         uint8_t           PostStage  = 1;        // PostProcess stage: EPostProcessStage, before or after the effects
         uint8_t           CustomGroups = 0;      // its entity's custom pass mesh groups (RenderContext::SetDrawCustomGroups)

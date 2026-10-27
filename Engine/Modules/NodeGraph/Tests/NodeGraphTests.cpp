@@ -1659,6 +1659,47 @@ namespace
             Expect(!Unlit.HasErrors() && bWarned, "a pin the shading ignores is a warning");
         }
         {
+            /* Shading models (RenderCore/SHADING_MODELS.md): the .material names a Lit one's,
+             * Default's not at all; a model's own pin is a warning on another model. */
+            Graph G = MakeWaveGraph();
+            AddNode(G, 40, "Constant").WildcardType = "float";
+            Connect(G, 40, "Out", 1, "ClearCoat");
+            CompileResult Plain;
+            CompileGraph(G, Plain);
+            bool bWarned = false;
+            for(const Diagnostic& Each : Plain.Diagnostics)
+            {
+                bWarned |= Each.Severity == ESeverity::Warning && Each.Pin == "ClearCoat";
+            }
+            Expect(!Plain.HasErrors() && bWarned && !Plain.Companions.empty()
+                   && Plain.Companions[0].second.find("ShadingModel") == std::string::npos,
+                   "a Default material writes no ShadingModel, and Clear Coat's pin on it is a warning");
+
+            G.FindNode(Id(1))->Properties["ShadingModel"] = "ClearCoat";
+            CompileResult Coat;
+            CompileGraph(G, Coat);
+            bWarned = false;
+            for(const Diagnostic& Each : Coat.Diagnostics)
+            {
+                bWarned |= Each.Severity == ESeverity::Warning && Each.Pin == "ClearCoat";
+            }
+            Expect(!Coat.HasErrors() && !bWarned && !Coat.Companions.empty()
+                   && Coat.Companions[0].second.find("ShadingModel ClearCoat\n") != std::string::npos
+                   && Coat.Code.find("Surface.ClearCoat = ") != std::string::npos,
+                   "a Clear Coat material names its model and sets its coat");
+
+            G.FindNode(Id(1))->Properties["Shading"] = "Unlit";
+            CompileResult Unlit;
+            CompileGraph(G, Unlit);
+            Expect(!Unlit.Companions.empty() && Unlit.Companions[0].second.find("ShadingModel") == std::string::npos,
+                   "an Unlit material has no shading model");
+
+            G.FindNode(Id(1))->Properties["ShadingModel"] = "Velour";
+            CompileResult Bad;
+            CompileGraph(G, Bad);
+            Expect(HasErrorOn(Bad, Id(1)), "an unknown shading model is an error");
+        }
+        {
             Graph G = MakeWaveGraph();
             G.FindNode(Id(1))->Properties["Domain"] = "PostProcess";
             CompileResult Post;
@@ -1692,6 +1733,42 @@ namespace
             CompileResult Two;
             CompileGraph(G, Two);
             Expect(Two.HasErrors(), "a material has one output node");
+        }
+        {
+            /* Refraction (LIT_TRANSLUCENCY.md, Phase 9): a define and a .material line where it is set. */
+            Graph G;
+            G.SchemaName = "Material";
+            G.Name       = "Lens";
+            Node& Out = AddNode(G, 1, "Output.Material");
+            Out.Properties["Domain"] = "Translucent";
+            Out.Constants["Refraction"] = "1.33";
+            CompileResult Bent;
+            CompileGraph(G, Bent);
+            Expect(!Bent.HasErrors() && Bent.Code.find("#define MATERIAL_REFRACTION 1") != std::string::npos
+                   && Bent.Code.find("Surface.Refraction = 1.33") != std::string::npos,
+                   "a Translucent material with Refraction set defines MATERIAL_REFRACTION and sets it");
+            Expect(!Bent.Companions.empty() && Bent.Companions[0].second.find("Refraction 1\n") != std::string::npos,
+                   "and its .material says Refraction 1");
+
+            G.FindNode(Id(1))->Constants["Refraction"] = "1";
+            CompileResult Straight;
+            CompileGraph(G, Straight);
+            Expect(!Straight.HasErrors() && Straight.Code.find("MATERIAL_REFRACTION") == std::string::npos
+                   && !Straight.Companions.empty() && Straight.Companions[0].second.find("Refraction") == std::string::npos,
+                   "at 1 it refracts nothing: no define, no line");
+
+            G.FindNode(Id(1))->Properties["Domain"] = "Opaque";
+            G.FindNode(Id(1))->Constants.erase("Refraction");
+            AddNode(G, 2, "Constant").WildcardType = "float";
+            Connect(G, 2, "Out", 1, "Refraction");
+            CompileResult Opaque;
+            CompileGraph(G, Opaque);
+            const bool bWarned = std::any_of(Opaque.Diagnostics.begin(), Opaque.Diagnostics.end(), [](const Diagnostic& D)
+            {
+                return D.Severity == ESeverity::Warning && D.Node == Id(1) && D.Pin == "Refraction";
+            });
+            Expect(!Opaque.HasErrors() && bWarned && Opaque.Code.find("MATERIAL_REFRACTION") == std::string::npos,
+                   "an Opaque material's Refraction is a warning, and refracts nothing");
         }
     }
 

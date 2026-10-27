@@ -48,6 +48,6 @@ vec3 InverseToneMap(vec3 InMapped, float InOperator)
 vec3 SceneEncodeDisplay(vec3 InDisplay)
 {
     if(Scene_Output.x < 0.5) { return InDisplay; }
-    vec3 Linear = pow(max(InDisplay, vec3(0.0)), vec3(2.2));
+    vec3 Linear = SrgbToLinear(InDisplay);
     return InverseToneMap(Linear, Scene_Output.z) / max(Scene_Output.y, 1e-6);
 }

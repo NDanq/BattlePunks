@@ -44,6 +44,7 @@ private:
     uint NormalVBO = 0;
     uint ColorVBO  = 0;   // indexed only; location 9
     uint UV1VBO    = 0;   // indexed only; location 10
+    uint TangentVBO = 0;  // indexed only; location 13
     uint JointVBO  = 0;   // skinned only; location 11
     uint WeightVBO = 0;   // skinned only; location 12
     uint IndexEBO  = 0;

@@ -227,16 +227,17 @@ void ParticleEditorTab::BuildToolBar()
     QToolBar* Bar = addToolBar(QStringLiteral("Particles"));
     Bar->setObjectName(QStringLiteral("ParticleToolBar"));
     Bar->setMovable(false);
+    Bar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);   // the toggles are text alone
 
-    SaveAction = Bar->addAction(QStringLiteral("Save"), this, &ParticleEditorTab::Save);
+    SaveAction = Bar->addAction(EditorIcons::Get(EditorIcons::EIcon::Save), QStringLiteral("Save"), this, &ParticleEditorTab::Save);
     SaveAction->setToolTip(QStringLiteral("Save the particle system (Ctrl+S): every component naming it shows the change"));
     Bar->addSeparator();
 
-    PauseAction = Bar->addAction(QStringLiteral("Pause"));
+    PauseAction = Bar->addAction(EditorIcons::Get(EditorIcons::EIcon::Pause), QStringLiteral("Pause"));
     PauseAction->setCheckable(true);
     PauseAction->setToolTip(QStringLiteral("Freeze the preview's particles where they are"));
     connect(PauseAction, &QAction::toggled, this, &ParticleEditorTab::SetPaused);
-    Bar->addAction(QStringLiteral("Restart"), this, &ParticleEditorTab::Restart)
+    Bar->addAction(EditorIcons::Get(EditorIcons::EIcon::Reset), QStringLiteral("Restart"), this, &ParticleEditorTab::Restart)
         ->setToolTip(QStringLiteral("Clear the preview's particles and start emitting again"));
 
     Bar->addWidget(new QLabel(QStringLiteral(" Speed "), Bar));
@@ -290,7 +291,7 @@ void ParticleEditorTab::BuildToolBar()
         if(auto* Render = World.GetEntity(FloorEntity).GetComponent<RenderCore::RenderComponent>()) { Render->bVisible = bInOn ? 1 : 0; }
     });
 
-    Bar->addAction(QStringLiteral("Frame"), this, &ParticleEditorTab::FrameEffect)
+    Bar->addAction(EditorIcons::Get(EditorIcons::EIcon::Fit), QStringLiteral("Frame"), this, &ParticleEditorTab::FrameEffect)
         ->setToolTip(QStringLiteral("Frame where the particles go"));
     Bar->addSeparator();
 

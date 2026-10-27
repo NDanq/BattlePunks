@@ -17,7 +17,7 @@ MATERIAL_SAMPLER2D(4, Strip)   // slot 0
 vec3 Radiance(vec3 InDirection)
 {
     vec3 Value = IBL_SampleStrip(Strip, InDirection);
-    return PP_Settings.y > 0.5 ? pow(max(Value, vec3(0.0)), vec3(2.2)) : Value;
+    return PP_Settings.y > 0.5 ? SrgbToLinear(Value) : Value;
 }
 
 vec2 Hammersley(int InIndex, int InCount)
@@ -88,9 +88,49 @@ bool Inside(vec2 InTexel, vec3 InRect, out vec2 OutUv)
     return all(greaterThanEqual(Local, vec2(0.0))) && all(lessThan(Local, vec2(InRect.z)));
 }
 
+// THE SHEEN TABLE (IBLCommon.glsl's IBL_SheenDG; SHADING_MODELS.md, Cloth): the
+// Charlie distribution times Neubelt's visibility, averaged over the hemisphere
+// by uniform sampling (Estevez & Kulla 2017; Filament's DFV_Charlie_Uniform),
+// for NdotV InUv.x and perceptual roughness InUv.y.
+float SheenDG(vec2 InUv)
+{
+    float NdotV = max(InUv.x, 1e-3);
+    float Alpha = max(InUv.y * InUv.y, 1e-3);
+    vec3  V     = vec3(sqrt(1.0 - NdotV * NdotV), 0.0, NdotV);
+    const int Count = 512;
+    float Sum = 0.0;
+    for(int Index = 0; Index < Count; ++Index)
+    {
+        vec2  Xi       = Hammersley(Index, Count);
+        float Phi      = 2.0 * IBL_PI * Xi.x;
+        float CosTheta = 1.0 - Xi.y;
+        float SinTheta = sqrt(1.0 - CosTheta * CosTheta);
+        vec3  H        = vec3(SinTheta * cos(Phi), SinTheta * sin(Phi), CosTheta);
+        vec3  L        = 2.0 * dot(V, H) * H - V;
+        float NdotL    = clamp(L.z, 0.0, 1.0);
+        if(NdotL <= 0.0) { continue; }
+        float VdotH = clamp(dot(V, H), 0.0, 1.0);
+        float NdotH = clamp(H.z, 0.0, 1.0);
+        float InvAlpha = 1.0 / Alpha;
+        float Sin2h    = max(1.0 - NdotH * NdotH, 0.0078125);
+        float D        = (2.0 + InvAlpha) * pow(Sin2h, InvAlpha * 0.5) / (2.0 * IBL_PI);
+        float Vis      = 1.0 / (4.0 * (NdotL + NdotV - NdotL * NdotV));
+        Sum += Vis * D * NdotL * VdotH;
+    }
+    // Uniform sampling's PDF is 1 / 2pi; the 4 is the half vector's Jacobian.
+    return Sum * (4.0 * 2.0 * IBL_PI / float(Count));
+}
+
 void main(void)
 {
     int  Block = int(PP_Settings.x);
+    if(Block == IBL_SHEEN_BLOCK)
+    {
+        vec2 Local = gl_FragCoord.xy - IBL_BlockOrigin(Block);
+        if(any(lessThan(Local, vec2(0.0))) || any(greaterThanEqual(Local, vec2(IBL_SHEEN_SIZE)))) { discard; }
+        Output = vec4(SheenDG(floor(Local) / (IBL_SHEEN_SIZE - 1.0)), 0.0, 0.0, 1.0);
+        return;
+    }
     vec2 Texel = gl_FragCoord.xy - IBL_BlockOrigin(Block);
     if(any(lessThan(Texel, vec2(0.0))) || Texel.x >= 384.0 || Texel.y >= 256.0) { discard; }
 

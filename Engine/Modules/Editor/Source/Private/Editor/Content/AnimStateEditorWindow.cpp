@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Private/Editor/Content/AnimStateEditorWindow.h"
+#include "Private/Editor/EditorIcons.h"
 
 #include <algorithm>
 #include <map>
@@ -60,11 +61,11 @@ namespace
 
     QString ToQ(const std::string& InText) { return QString::fromStdString(InText); }
 
-    /* "+" and "-" under a list or table. */
+    /* Add and remove under a list or table. */
     QHBoxLayout* AddRemoveRow(QWidget* InParent, const QString& InWhat, QPushButton*& OutAdd, QPushButton*& OutRemove)
     {
-        OutAdd    = new QPushButton(QStringLiteral("+"), InParent);
-        OutRemove = new QPushButton(QStringLiteral("-"), InParent);
+        OutAdd    = new QPushButton(EditorIcons::Get(EditorIcons::EIcon::Add), QString(), InParent);
+        OutRemove = new QPushButton(EditorIcons::Get(EditorIcons::EIcon::Remove), QString(), InParent);
         OutAdd->setToolTip(QStringLiteral("Add a %1").arg(InWhat));
         OutRemove->setToolTip(QStringLiteral("Remove the selected %1").arg(InWhat));
         OutAdd->setFixedWidth(32);

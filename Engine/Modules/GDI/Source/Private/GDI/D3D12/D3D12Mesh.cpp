@@ -60,18 +60,20 @@ void D3D12Mesh::InitResource()
         return;
     }
 
-    if(RenderData.Normal && RenderData.Color && RenderData.UV1 && IsIndexed())
+    if(RenderData.Normal && RenderData.Color && RenderData.UV1 && RenderData.Tangent && IsIndexed())
     {
         const UINT ColorBytes = NumVerts * 4 * sizeof(float);
-        UV1Buffer    = D3D12Ops::CreateBuffer(Device, TexCoordBytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON);
-        IndexBytes   = RenderData.NumIndices * sizeof(uint32_t);
-        NormalBuffer = D3D12Ops::CreateBuffer(Device, PositionBytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON);
-        ColorBuffer  = D3D12Ops::CreateBuffer(Device, ColorBytes,    D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON);
-        IndexBuffer  = D3D12Ops::CreateBuffer(Device, IndexBytes,    D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON);
-        if(!NormalBuffer || !ColorBuffer || !UV1Buffer || !IndexBuffer ||
+        UV1Buffer     = D3D12Ops::CreateBuffer(Device, TexCoordBytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON);
+        IndexBytes    = RenderData.NumIndices * sizeof(uint32_t);
+        NormalBuffer  = D3D12Ops::CreateBuffer(Device, PositionBytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON);
+        ColorBuffer   = D3D12Ops::CreateBuffer(Device, ColorBytes,    D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON);
+        TangentBuffer = D3D12Ops::CreateBuffer(Device, ColorBytes,    D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON);
+        IndexBuffer   = D3D12Ops::CreateBuffer(Device, IndexBytes,    D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON);
+        if(!NormalBuffer || !ColorBuffer || !UV1Buffer || !TangentBuffer || !IndexBuffer ||
            !D3D12Ops::UploadBuffer(Device, NormalBuffer.Get(), RenderData.Normal, PositionBytes) ||
            !D3D12Ops::UploadBuffer(Device, ColorBuffer.Get(), RenderData.Color, ColorBytes) ||
            !D3D12Ops::UploadBuffer(Device, UV1Buffer.Get(), RenderData.UV1, TexCoordBytes) ||
+           !D3D12Ops::UploadBuffer(Device, TangentBuffer.Get(), RenderData.Tangent, ColorBytes) ||
            !D3D12Ops::UploadBuffer(Device, IndexBuffer.Get(), RenderData.Indices, IndexBytes))
         {
             Release();
@@ -121,12 +123,13 @@ bool D3D12Mesh::InitDynamic(const uint32_t InMaxVertices, const uint32_t InMaxIn
     TexCoordBytes = Vertices * 2 * sizeof(float);
     IndexBytes    = InMaxIndices * Regions * sizeof(uint32_t);
 
-    Microsoft::WRL::ComPtr<ID3D12Resource>* Buffers[6] = { std::addressof(PositionBuffer), std::addressof(TexCoordBuffer), std::addressof(NormalBuffer),
-                                                           std::addressof(ColorBuffer), std::addressof(UV1Buffer), std::addressof(IndexBuffer) };
-    const UINT Bytes[6] = { PositionBytes, TexCoordBytes, PositionBytes, Vertices * 4 * UINT(sizeof(float)),
-                            TexCoordBytes, IndexBytes };
+    Microsoft::WRL::ComPtr<ID3D12Resource>* Buffers[7] = { std::addressof(PositionBuffer), std::addressof(TexCoordBuffer), std::addressof(NormalBuffer),
+                                                           std::addressof(ColorBuffer), std::addressof(UV1Buffer), std::addressof(IndexBuffer),
+                                                           std::addressof(TangentBuffer) };
+    const UINT Bytes[7] = { PositionBytes, TexCoordBytes, PositionBytes, Vertices * 4 * UINT(sizeof(float)),
+                            TexCoordBytes, IndexBytes, Vertices * 4 * UINT(sizeof(float)) };
     const D3D12_RANGE NoRead{ 0, 0 };
-    for(int At = 0; At < 6; ++At)
+    for(int At = 0; At < 7; ++At)
     {
         *Buffers[At] = D3D12Ops::CreateBuffer(Device, Bytes[At], D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
         if(!*Buffers[At] || FAILED((*Buffers[At])->Map(0, &NoRead, &DynamicMapped[At])))
@@ -137,9 +140,10 @@ bool D3D12Mesh::InitDynamic(const uint32_t InMaxVertices, const uint32_t InMaxIn
         }
     }
 
-    // Normals and UV1 are written only when an update has them: zero until then.
+    // Normals, UV1 and tangents are written only when an update has them: zero until then.
     std::memset(DynamicMapped[2], 0, Bytes[2]);
     std::memset(DynamicMapped[4], 0, Bytes[4]);
+    std::memset(DynamicMapped[6], 0, Bytes[6]);
 
     bResourcesValid = true;
     ApplyDebugName();
@@ -164,7 +168,8 @@ void D3D12Mesh::ApplyDebugName() const
     Name(NormalBuffer,         "Normals");
     Name(ColorBuffer,          "Colors");
     Name(UV1Buffer,            "UV1");
-    Name(JointBuffer,          "Joints");
+    Name(TangentBuffer,        "Tangents");
+    Name(JointBuffer,         "Joints");
     Name(WeightBuffer,         "Weights");
     Name(IndexBuffer,          "Indices");
     Name(TransformRing.Buffer, "Instance Transforms");
@@ -182,6 +187,7 @@ bool D3D12Mesh::WriteDynamic(const GDIMeshDesc& InDesc, const uint32_t InBaseVer
     std::memcpy(static_cast<float*>(DynamicMapped[1]) + Base * 2, InDesc.UV0,       N * 2 * sizeof(float));
     if(InDesc.Normals) std::memcpy(static_cast<float*>(DynamicMapped[2]) + Base * 3, InDesc.Normals, N * 3 * sizeof(float));
     if(InDesc.UV1)     std::memcpy(static_cast<float*>(DynamicMapped[4]) + Base * 2, InDesc.UV1,     N * 2 * sizeof(float));
+    if(InDesc.Tangents) std::memcpy(static_cast<float*>(DynamicMapped[6]) + Base * 4, InDesc.Tangents, N * 4 * sizeof(float));
 
     float* Colors = static_cast<float*>(DynamicMapped[3]) + Base * 4;
     if(InDesc.Colors)
@@ -200,9 +206,10 @@ void D3D12Mesh::Release()
 {
     // std::addressof, not &: a ComPtr's operator& releases what it holds, which here
     // would free the buffers at once instead of deferring them past the frames using them.
-    Microsoft::WRL::ComPtr<ID3D12Resource>* Dynamic[6] = { std::addressof(PositionBuffer), std::addressof(TexCoordBuffer), std::addressof(NormalBuffer),
-                                                           std::addressof(ColorBuffer), std::addressof(UV1Buffer), std::addressof(IndexBuffer) };
-    for(int At = 0; At < 6; ++At)
+    Microsoft::WRL::ComPtr<ID3D12Resource>* Dynamic[7] = { std::addressof(PositionBuffer), std::addressof(TexCoordBuffer), std::addressof(NormalBuffer),
+                                                           std::addressof(ColorBuffer), std::addressof(UV1Buffer), std::addressof(IndexBuffer),
+                                                           std::addressof(TangentBuffer) };
+    for(int At = 0; At < 7; ++At)
     {
         if(DynamicMapped[At] && *Dynamic[At]) (*Dynamic[At])->Unmap(0, nullptr);
         DynamicMapped[At] = nullptr;
@@ -227,6 +234,7 @@ void D3D12Mesh::Release()
     ReleaseOrDefer(NormalBuffer);
     ReleaseOrDefer(ColorBuffer);
     ReleaseOrDefer(UV1Buffer);
+    ReleaseOrDefer(TangentBuffer);
     ReleaseOrDefer(JointBuffer);
     ReleaseOrDefer(WeightBuffer);
     ReleaseOrDefer(IndexBuffer);
@@ -313,6 +321,11 @@ void D3D12Mesh::Record(const D3D12DrawInputs& InIn)
         MeshViews[2].SizeInBytes    = TexCoordBytes;
         MeshViews[2].StrideInBytes  = sizeof(float) * 2;
         List->IASetVertexBuffers(2, 3, MeshViews);
+        D3D12_VERTEX_BUFFER_VIEW TangentView{};
+        TangentView.BufferLocation = TangentBuffer->GetGPUVirtualAddress();
+        TangentView.SizeInBytes    = (PositionBytes / 3) * 4;
+        TangentView.StrideInBytes  = sizeof(float) * 4;
+        List->IASetVertexBuffers(8, 1, &TangentView);
         if(JointBuffer && WeightBuffer)
         {
             // Vertex layout 4: bone indices and weights in slots 6 and 7.

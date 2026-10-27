@@ -93,6 +93,8 @@ namespace RenderCore
         Out.VelocityStretch  = std::max(VelocityStretch, 0.0f);
         Out.MeshOrientation  = MeshOrientation < PMO_Count ? MeshOrientation : uint8_t(PMO_Fixed);
         Out.bRandomRotation  = bRandomRotation != 0;
+        Out.bCastShadows     = bCastShadows != 0 && Type == PT_Sprite;
+        Out.ShadowDensity    = std::max(ShadowDensity, 0.0f);
         Out.RotationRate     = RotationRate;
         ToFloats(BeamEnd, Out.BeamEnd);
         Out.BeamSegments     = uint32_t(std::clamp<int32_t>(BeamSegments, 1, int32_t(PARTICLE_BEAM_SEGMENTS_MAX)));
@@ -606,6 +608,8 @@ namespace RenderCore
             NM_PARTICLE_FLOAT ("VelocityStretch",  VelocityStretch),
             NM_PARTICLE_CHOICE("MeshOrientation",  MeshOrientation, ORIENTATION_NAMES),
             NM_PARTICLE_FLAG  ("RandomRotation",   bRandomRotation),
+            NM_PARTICLE_FLAG  ("CastShadows",      bCastShadows),
+            NM_PARTICLE_FLOAT ("ShadowDensity",    ShadowDensity),
             NM_PARTICLE_FLOAT ("RotationRate",     RotationRate),
             NM_PARTICLE_CHOICE("SpawnMode",        SpawnMode, SPAWN_NAMES),
             NM_PARTICLE_INT   ("MaxParticles",     MaxParticles),

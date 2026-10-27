@@ -4,14 +4,15 @@
 // Fresnel. Colours arrive display space and are lit linear; the caller
 // encodes the result back.
 //
-// Shadows: only where LIGHTING_SHADOWS is defined -- DeferredLighting.fsh,
-// which binds the shadow atlases (Shadows.glsl). A forward Translucent Lit
-// material is lit unshadowed: its texture slots are its own.
+// Shadows: only where LIGHTING_SHADOWS is defined, the includer declaring the
+// shadow atlases (Shadows.glsl): DeferredLighting.fsh, in its own slots, with
+// the inset shadows and contact shadows too; a forward Lit material, in engine
+// slots 11 and 12, with neither (LIT_TRANSLUCENCY.md, Phase 2).
 
 const float LIGHTING_PI = 3.14159265;
 
-vec3 ToLinear(vec3 InColor)  { return pow(max(InColor, vec3(0.0)), vec3(2.2)); }
-vec3 ToDisplay(vec3 InColor) { return pow(max(InColor, vec3(0.0)), vec3(1.0 / 2.2)); }
+vec3 ToLinear(vec3 InColor)  { return SrgbToLinear(InColor); }
+vec3 ToDisplay(vec3 InColor) { return LinearToSrgb(InColor); }
 
 // Lit light into the scene colour: linear in an HDR scene (the tone map pass
 // makes it display space), display space in an 8-bit one.
@@ -31,44 +32,15 @@ vec3 ViewChannelColor(vec3 InBaseColor, vec3 InEmissive)
 #include <Shadows.glsl>
 #endif
 
-// What a surface reflects of every light: computed once, shared by each.
-struct LightingSurface
-{
-    vec3  Albedo;
-    float Metallic;
-    float Roughness;
-    vec3  F0;
-    vec3  N;
-    vec3  V;
-    float NdotV;
-};
-
-// Linear radiance toward the eye from one light: L toward it, InRadiance its
-// linear colour times intensity and falloff.
-vec3 EvaluateLight(in LightingSurface S, vec3 L, vec3 InRadiance)
-{
-    vec3  H     = normalize(S.V + L);
-    float NdotL = max(dot(S.N, L), 0.0);
-    if(NdotL <= 0.0) { return vec3(0.0); }
-    float NdotH = max(dot(S.N, H), 0.0);
-    float VdotH = max(dot(S.V, H), 0.0);
-
-    // GGX / Trowbridge-Reitz.
-    float Alpha  = S.Roughness * S.Roughness;
-    float Alpha2 = Alpha * Alpha;
-    float Denom  = NdotH * NdotH * (Alpha2 - 1.0) + 1.0;
-    float D      = Alpha2 / (LIGHTING_PI * Denom * Denom);
-
-    // Smith with Schlick-GGX, k for direct light.
-    float K = (S.Roughness + 1.0) * (S.Roughness + 1.0) / 8.0;
-    float G = (S.NdotV / (S.NdotV * (1.0 - K) + K)) * (NdotL / (NdotL * (1.0 - K) + K));
-
-    vec3 F = S.F0 + (vec3(1.0) - S.F0) * pow(1.0 - VdotH, 5.0);
-
-    vec3 Specular = D * G * F / max(4.0 * S.NdotV * NdotL, 1e-4);
-    vec3 Diffuse  = (vec3(1.0) - F) * (1.0 - S.Metallic) * S.Albedo / LIGHTING_PI;
-    return (Diffuse + Specular) * InRadiance * NdotL;
-}
+// The surface and its BRDF, by shading model (SHADING_MODELS.md): LightingSurface
+// and EvaluateLightModel. Default's lobes are GGX, Smith-Schlick and Schlick
+// Fresnel over Lambert, exactly as before shading models.
+#include <LightList.glsl>
+#include <ShadingModels.glsl>
+#include <AreaLights.glsl>
+#ifdef LIGHTING_IBL_ATLAS
+#include <IBLShading.glsl>
+#endif
 
 #ifdef LIGHTING_SHADOWS
 // A Modulated shadow's multiplier: toward InTint (display space) as InLit
@@ -143,20 +115,139 @@ float ContactShadow(vec3 InWorldPosition, vec3 InNormal, vec3 InL)
 }
 #endif
 
-// Linear radiance leaving the surface toward the eye, from every light and the ambient --
-// its diffuse part times InAmbientDiffuse: 0 where baked lighting already holds it
-// (BakedLighting.glsl).
-vec3 ShadeSurface(in MaterialSurface Surface, vec3 InWorldPosition, vec3 InNormal, float InAmbientDiffuse)
+// A material's surface as the lights see it: InModel's BRDF (SHADING_MODEL_*),
+// with the model's own inputs (SHADING_MODELS.md). An unset Tangent runs
+// across the normal in no particular direction.
+LightingSurface LightingSurfaceOf(in MaterialSurface Surface, int InModel, vec3 InWorldPosition, vec3 InNormal)
 {
-    LightingSurface S;
-    S.Albedo    = ToLinear(Surface.BaseColor);
-    S.Metallic  = clamp(Surface.Metallic, 0.0, 1.0);
-    S.Roughness = clamp(Surface.Roughness, 0.04, 1.0);
-    S.N         = normalize(InNormal);
-    S.V         = normalize(Scene_CameraPosition.xyz - InWorldPosition);
-    S.NdotV     = max(dot(S.N, S.V), 1e-4);
-    // Schlick Fresnel's F0; Specular 0.5 is a 4% dielectric.
-    S.F0        = mix(vec3(0.08 * clamp(Surface.Specular, 0.0, 1.0)), S.Albedo, S.Metallic);
+    LightingSurface S = MakeLightingSurface(InModel, ToLinear(Surface.BaseColor), Surface.Metallic, Surface.Roughness,
+                                            Surface.Specular, InNormal, normalize(Scene_CameraPosition.xyz - InWorldPosition));
+    SetLightingSurfaceModel(S, Surface.ClearCoat, Surface.ClearCoatRoughness, Surface.ClearCoatNormal, Surface.Anisotropy,
+                            Surface.Tangent, Surface.SheenColor, Surface.SubsurfaceColor, Surface.Thickness);
+    S.Phase           = Surface.PhaseAnisotropy;
+    S.NormalInfluence = Surface.NormalInfluence;
+    S.SelfOcclusion   = Surface.SelfOcclusion;
+    return S;
+}
+
+// One point or spot light of the light list (LightList.glsl), entry InIndex,
+// added to ShadeSurfaceSplit's parts: its shadow, when it has one, from its
+// Scene_Locals slot. Modulated shadows multiply InOutModulate.
+void LightingLocal(in LightingSurface S, int InIndex, vec3 InWorldPosition, bool bInTransmits,
+                   inout vec3 InOutDiffuse, inout vec3 InOutSpecular, inout vec3 InOutModulate)
+{
+    vec4  PositionRange  = LightList_Lights[InIndex * LIGHT_LIST_VEC4S + 0];
+    vec4  ColorIntensity = LightList_Lights[InIndex * LIGHT_LIST_VEC4S + 1];
+    vec4  DirectionType  = LightList_Lights[InIndex * LIGHT_LIST_VEC4S + 2];
+    vec4  Cone           = LightList_Lights[InIndex * LIGHT_LIST_VEC4S + 3];
+
+    vec3  ToLight  = PositionRange.xyz - InWorldPosition;
+    float Distance = length(ToLight);
+    if(Distance >= PositionRange.w) { return; }
+    vec3  L        = ToLight / max(Distance, 1e-4);
+
+    float Attenuation = LocalFalloff(Distance, PositionRange.w);
+    bool  bSpot       = DirectionType.w > 0.5 && DirectionType.w < 1.5;
+    if(bSpot)
+    {
+        // Spot: full inside the inner cone, nothing past the outer.
+        Attenuation *= smoothstep(Cone.x, Cone.y, dot(-L, DirectionType.xyz));
+    }
+    if(Attenuation <= 0.0) { return; }
+    // Facing away and not transmitting: nothing from this light (nor a shadow lookup to find so).
+    if(!bInTransmits && S.Model != SHADING_MODEL_CLOTH && dot(S.N, L) <= 0.0
+       && (S.Model != SHADING_MODEL_CLEARCOAT || dot(S.CoatN, L) <= 0.0)) { return; }
+
+    // A rect light lights only what is in front of it.
+    vec4 AreaRight = LightList_Lights[InIndex * LIGHT_LIST_VEC4S + 4];
+    vec4 AreaUp    = LightList_Lights[InIndex * LIGHT_LIST_VEC4S + 5];
+    bool bRect     = DirectionType.w > 1.5;
+    if(bRect && dot(InWorldPosition - PositionRange.xyz, DirectionType.xyz) <= 0.0) { return; }
+
+    float Shadow = 1.0;
+#ifdef LIGHTING_SHADOWS
+    int Slot = int(Cone.z);
+    vec4 ConeShadow = Slot >= 0 ? Scene_Locals[Slot * 6 + 3] : vec4(-1.0);
+    if(ConeShadow.z >= 0.0)
+    {
+        vec4  Biases = Scene_Locals[Slot * 6 + 5];
+        float Lit    = LocalShadow(int(ConeShadow.z), bSpot, ConeShadow.x, PositionRange.xyz,
+                                   InWorldPosition, S.N, L, Biases.x, Biases.y, Biases.zw);
+#ifdef LIGHTING_CONTACT_SHADOWS
+        // A shadowed point or spot light's contact shadows too ([Shadows] ContactLocalLights):
+        // no further than the light itself.
+        if(Scene_ContactLocal.x > 0.5) { Lit = min(Lit, ContactShadowWithin(InWorldPosition, S.N, L, Distance * 0.9)); }
+#endif
+        if(ConeShadow.w == 1.0)
+        {
+            // Fades out with the light: full where it is at least a quarter strength.
+            float Reach = clamp(Attenuation * 4.0, 0.0, 1.0);
+            InOutModulate *= ModulatedShadow(Lit, Reach, dot(S.N, L), Scene_Locals[Slot * 6 + 4].rgb);
+        }
+        else { Shadow = Lit; }
+    }
+#endif
+    vec3 Diffuse, Specular, Transmitted;
+    vec3 Radiance = ToLinear(ColorIntensity.rgb) * ColorIntensity.a * Attenuation;
+    // A sphere narrower than 0.05 radians from here lights as the point it nearly is.
+    if(LightList_Flag(LIGHT_LIST_FLAG_AREA) && (bRect || AreaRight.w > 0.05 * Distance) && S.Model != SHADING_MODEL_CLOTH && S.Model != SHADING_MODEL_VOLUME)
+    {
+        // An area light (AreaLights.glsl): a rect's own corners, or a sphere as the
+        // square of its area facing this point. The lobe's and the cosine's
+        // integrals over it; a sphere's brightness matches the point light it
+        // was at the same distance, a rect's is its surface's.
+        vec3 Corners[4];
+        if(bRect)
+        {
+            Corners[0] = PositionRange.xyz - AreaRight.xyz - AreaUp.xyz;
+            Corners[1] = PositionRange.xyz + AreaRight.xyz - AreaUp.xyz;
+            Corners[2] = PositionRange.xyz + AreaRight.xyz + AreaUp.xyz;
+            Corners[3] = PositionRange.xyz - AreaRight.xyz + AreaUp.xyz;
+            float X      = Distance / max(PositionRange.w, 1e-4);
+            float Window = clamp(1.0 - X * X * X * X, 0.0, 1.0);
+            Radiance = ToLinear(ColorIntensity.rgb) * ColorIntensity.a * Window * Window;
+        }
+        else
+        {
+            float Radius = min(AreaRight.w, Distance * 0.95);
+            vec3  U      = normalize(cross(L, abs(L.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+            vec3  W      = cross(L, U);
+            float Half   = Radius * 0.886227;   // sqrt(pi) / 2: the square of the disc's area
+            Corners[0] = PositionRange.xyz - U * Half - W * Half;
+            Corners[1] = PositionRange.xyz + U * Half - W * Half;
+            Corners[2] = PositionRange.xyz + U * Half + W * Half;
+            Corners[3] = PositionRange.xyz - U * Half + W * Half;
+            Radiance *= Distance * Distance / (AREA_PI * Radius * Radius);
+        }
+        mat3 Minv;
+        vec2 Amplitude;
+        Area_LTCLookup(S.Roughness, S.NdotV, Minv, Amplitude);
+        float SpecularShare = Area_LTCIntegrate(S.N, S.V, InWorldPosition, Minv, Corners);
+        float DiffuseShare  = Area_LTCIntegrate(S.N, S.V, InWorldPosition, mat3(1.0), Corners);
+        vec3  Fresnel = S.F0 * Amplitude.x + vec3(Amplitude.y);
+        Specular    = Radiance * SpecularShare * Fresnel * SM_EnergyCompensation(S.F0, S.Roughness, S.NdotV);
+        Diffuse     = Radiance * DiffuseShare * (vec3(1.0) - SM_FresnelSchlick(S.F0, S.NdotV)) * (1.0 - S.Metallic);
+        Transmitted = vec3(0.0);
+    }
+    else
+    {
+        EvaluateLightModel(S, L, Radiance, Diffuse, Specular, Transmitted);
+    }
+    // A point or spot light's transmission is unshadowed: Thickness alone limits it.
+    InOutDiffuse  += Diffuse * Shadow;
+    InOutSpecular += Specular * Shadow + Transmitted;
+}
+
+// Linear radiance leaving S toward the eye, from every light and the ambient,
+// in two parts: OutDiffuse, the diffuse light before S's albedo multiplies it --
+// its ambient part times InAmbientDiffuse, 0 where baked lighting already holds
+// it (BakedLighting.glsl) -- and OutSpecular, the rest. InOcclusion darkens the
+// ambient only.
+void ShadeSurfaceSplit(in LightingSurface S, vec3 InWorldPosition, float InOcclusion, float InAmbientDiffuse,
+                       out vec3 OutDiffuse, out vec3 OutSpecular)
+{
+    bool bTransmits = S.Model == SHADING_MODEL_SUBSURFACE || S.Model == SHADING_MODEL_SKIN;
+    vec3 Diffuse, Specular, Transmitted;
 
     // Modulated shadows darken everything lit here, toward their tint.
     vec3 Modulate = vec3(1.0);
@@ -164,12 +255,16 @@ vec3 ShadeSurface(in MaterialSurface Surface, vec3 InWorldPosition, vec3 InNorma
     // The sun.
     vec3  SunL       = normalize(Scene_LightDirection.xyz);
     float SunShadow  = 1.0;
+    float SunThrough = 1.0;   // what of the sun reaches a transmitting surface's back (Jimenez et al. 2010)
 #ifdef LIGHTING_SHADOWS
     if(Scene_LightShadow.x >= 0.0)
     {
+        if(bTransmits) { SunThrough = exp(-DirectionalShadowDepth(InWorldPosition, S.N) / SUBSURFACE_MEAN_FREE_PATH); }
         float Lit = DirectionalShadow(InWorldPosition, S.N, SunL);
         // A live sun's inset shadows (a baked sun's DeferredLighting.fsh lays over the pixel).
+#ifdef LIGHTING_INSET_SHADOWS
         if(Lighting_InsetLight.w < 0.5) { Lit = min(Lit, InsetShadow(InWorldPosition, S.N, SunL)); }
+#endif
 #ifdef LIGHTING_CONTACT_SHADOWS
         Lit = min(Lit, ContactShadow(InWorldPosition, S.N, SunL));
 #endif
@@ -177,72 +272,79 @@ vec3 ShadeSurface(in MaterialSurface Surface, vec3 InWorldPosition, vec3 InNorma
         else                           { SunShadow = Lit; }
     }
 #endif
-    vec3 Direct = EvaluateLight(S, SunL, ToLinear(Scene_LightColor.rgb) * Scene_LightDirection.w) * SunShadow;
+    EvaluateLightModel(S, SunL, ToLinear(Scene_LightColor.rgb) * Scene_LightDirection.w, Diffuse, Specular, Transmitted);
+    OutDiffuse  = Diffuse * SunShadow;
+    OutSpecular = Specular * SunShadow + Transmitted * SunThrough;
 
-    // Point and spot lights.
-    int Count = int(Scene_LocalCounts.x);
-    for(int Index = 0; Index < Count; ++Index)
+    // Point and spot lights: those the view's light list (LightList.glsl) says reach
+    // this pixel's tile and depth slice, walked bit by bit between the slice's indices.
     {
-        vec4  PositionRange  = Scene_Locals[Index * 6 + 0];
-        vec4  ColorIntensity = Scene_Locals[Index * 6 + 1];
-        vec4  DirectionType  = Scene_Locals[Index * 6 + 2];
-        vec4  ConeShadow     = Scene_Locals[Index * 6 + 3];
-
-        vec3  ToLight  = PositionRange.xyz - InWorldPosition;
-        float Distance = length(ToLight);
-        if(Distance >= PositionRange.w) { continue; }
-        vec3  L        = ToLight / max(Distance, 1e-4);
-
-        float Attenuation = LocalFalloff(Distance, PositionRange.w);
-        if(DirectionType.w > 0.5)
+        uint Range = LightList_ZBin(LightList_SliceOf(dot(InWorldPosition, Scene_CameraForward.xyz) - Scene_CameraForward.w));
+        int  First = int(Range & 0xFFFFu);
+        int  Last  = min(int(Range >> 16), int(LightList_Header.x) - 1);
+        int  Tile  = LightList_TileOf(gl_FragCoord.xy);
+        for(int Word = First >> 5; Word <= (Last >> 5) && First <= Last; ++Word)
         {
-            // Spot: full inside the inner cone, nothing past the outer.
-            Attenuation *= smoothstep(ConeShadow.x, ConeShadow.y, dot(-L, DirectionType.xyz));
-        }
-        if(Attenuation <= 0.0) { continue; }
-
-        float Shadow = 1.0;
-#ifdef LIGHTING_SHADOWS
-        if(ConeShadow.z >= 0.0)
-        {
-            vec4  Biases = Scene_Locals[Index * 6 + 5];
-            float Lit    = LocalShadow(int(ConeShadow.z), DirectionType.w > 0.5, ConeShadow.x, PositionRange.xyz,
-                                       InWorldPosition, S.N, L, Biases.x, Biases.y);
-#ifdef LIGHTING_CONTACT_SHADOWS
-            // A shadowed point or spot light's contact shadows too ([Shadows] ContactLocalLights):
-            // no further than the light itself.
-            if(Scene_ContactLocal.x > 0.5) { Lit = min(Lit, ContactShadowWithin(InWorldPosition, S.N, L, Distance * 0.9)); }
-#endif
-            if(ConeShadow.w == 1.0)
+            uint Mask = LightList_Within(LightList_TileWord(Tile + Word), Word, First, Last);
+            while(Mask != 0u)
             {
-                // Fades out with the light: full where it is at least a quarter strength.
-                float Reach = clamp(Attenuation * 4.0, 0.0, 1.0);
-                Modulate *= ModulatedShadow(Lit, Reach, dot(S.N, L), Scene_Locals[Index * 6 + 4].rgb);
+                int Bit = findLSB(Mask);
+                Mask &= Mask - 1u;
+                LightingLocal(S, Word * 32 + Bit, InWorldPosition, bTransmits, OutDiffuse, OutSpecular, Modulate);
             }
-            else { Shadow = Lit; }
         }
-#endif
-        Direct += EvaluateLight(S, L, ToLinear(ColorIntensity.rgb) * ColorIntensity.a * Attenuation) * Shadow;
     }
 
     // +Y is up, so the sky is toward +Y.
-    float Up       = clamp(S.N.y * 0.5 + 0.5, 0.0, 1.0);
-    vec3  Ambient  = mix(ToLinear(Scene_GroundColor.rgb), ToLinear(Scene_SkyColor.rgb), Up) * Scene_SkyColor.a;
-    vec3  Indirect = Ambient * (S.Albedo * (1.0 - S.Metallic) * InAmbientDiffuse + S.F0 * (1.0 - S.Roughness) * 0.5)
-                   * Surface.AmbientOcclusion;
+    float Up      = S.Model == SHADING_MODEL_VOLUME ? 0.5 : clamp(S.N.y * 0.5 + 0.5, 0.0, 1.0);   // a medium sees sky and ground alike
+    vec3  Ambient = mix(ToLinear(Scene_GroundColor.rgb), ToLinear(Scene_SkyColor.rgb), Up) * Scene_SkyColor.a;
+    vec3  IndirectDiffuse  = Ambient * (1.0 - S.Metallic) * InAmbientDiffuse * InOcclusion;
+    vec3  IndirectSpecular = Ambient * S.F0 * (1.0 - S.Roughness) * 0.5 * InOcclusion;
     // Image-based lighting replaces it: in its own pass over the G-buffer (IBLLighting.fsh), or
     // here for a forward Lit material, which has the atlas (LIGHTING_IBL_ATLAS).
     if(Scene_IBL.x > 0.5)
     {
 #ifdef LIGHTING_IBL_ATLAS
-        Indirect = IBL_Light(LIGHTING_IBL_ATLAS, InWorldPosition, S.N, S.V, S.Albedo, S.Metallic, S.Roughness, S.F0,
-                             Surface.AmbientOcclusion, InAmbientDiffuse);
+#ifdef LIGHTING_FORWARD_REFLECTIONS
+        vec4 Screen = Forward_ScreenReflection(InWorldPosition, S.N, S.V, S.Roughness);
 #else
-        Indirect = vec3(0.0);
+        vec4 Screen = vec4(0.0);
+#endif
+        IBL_LightModel(LIGHTING_IBL_ATLAS, InWorldPosition, S, InOcclusion, InAmbientDiffuse, Screen,
+                       IndirectDiffuse, IndirectSpecular);
+#else
+        IndirectDiffuse  = vec3(0.0);
+        IndirectSpecular = vec3(0.0);
 #endif
     }
 
-    return (Direct + Indirect) * Modulate;
+#ifdef LIGHTING_TRANSLUCENT_SHADOWS
+    // A medium's sky light, darkened by the medium between it and the sun -- a plume shading
+    // its own ambient (LIT_TRANSLUCENCY.md, Phase 8; Self Occlusion, 0 by default).
+    if(S.Model == SHADING_MODEL_VOLUME && S.SelfOcclusion > 0.0)
+    {
+        IndirectDiffuse *= exp(-S.SelfOcclusion * Translucent_SunDepth(TranslucentOpacity, InWorldPosition, float(LIGHTING_TRANSLUCENT_SELF)));
+    }
+#endif
+    OutDiffuse  = (OutDiffuse + IndirectDiffuse) * Modulate;
+    OutSpecular = (OutSpecular + IndirectSpecular) * Modulate;
+}
+
+// S's whole light: ShadeSurfaceSplit's two parts, the albedo in.
+vec3 ShadeLightingSurface(in LightingSurface S, vec3 InWorldPosition, float InOcclusion, float InAmbientDiffuse)
+{
+    vec3 Diffuse, Specular;
+    ShadeSurfaceSplit(S, InWorldPosition, InOcclusion, InAmbientDiffuse, Diffuse, Specular);
+    return S.Albedo * Diffuse + Specular;
+}
+
+// Linear radiance leaving a Default surface toward the eye, from every light and
+// the ambient -- its diffuse part times InAmbientDiffuse: 0 where baked lighting
+// already holds it (BakedLighting.glsl).
+vec3 ShadeSurface(in MaterialSurface Surface, vec3 InWorldPosition, vec3 InNormal, float InAmbientDiffuse)
+{
+    LightingSurface S = LightingSurfaceOf(Surface, SHADING_MODEL_DEFAULT, InWorldPosition, InNormal);
+    return ShadeLightingSurface(S, InWorldPosition, Surface.AmbientOcclusion, InAmbientDiffuse);
 }
 
 vec3 ShadeSurface(in MaterialSurface Surface, vec3 InWorldPosition, vec3 InNormal)

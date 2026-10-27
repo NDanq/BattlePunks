@@ -24,8 +24,10 @@ GDIRenderTarget* OpenGLDynamicGDI::CreateRenderTargetFormat(std::string Name, ui
 
 bool OpenGLDynamicGDI::SupportsRenderTargetFormat(const EGDIRenderTargetFormat InFormat) const
 {
-    /* GL_RGBA16F is colour-renderable and blendable from OpenGL 3.0, which the backend requires. */
-    return InFormat == GDI_RTF_RGBA8 || InFormat == GDI_RTF_RGBA16F;
+    /* GL_RGBA16F, GL_RGB10_A2, GL_RGBA32F and GL_R32F are colour-renderable, blendable and
+     * filterable from OpenGL 3.0, which the backend requires. */
+    return InFormat == GDI_RTF_RGBA8 || InFormat == GDI_RTF_RGBA16F || InFormat == GDI_RTF_RGB10A2
+        || InFormat == GDI_RTF_RGBA32F || InFormat == GDI_RTF_R32F;
 }
 
 void OpenGLDynamicGDI::SetRenderTarget(GDIRenderTarget *InRenderTarget)
@@ -137,6 +139,22 @@ void OpenGLRenderTarget::Allocate()
         {
             glBindTexture(GL_TEXTURE_2D, TextureResource->TextureHandle);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, GLsizei(Width), GLsizei(Height), 0, GL_RGBA, GL_HALF_FLOAT, nullptr);
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
+        /* A G-buffer's normals: ten bits a channel, two of alpha; read back as bytes the same way. */
+        else if(RTFormat == GDI_RTF_RGB10A2)
+        {
+            glBindTexture(GL_TEXTURE_2D, TextureResource->TextureHandle);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB10_A2, GLsizei(Width), GLsizei(Height), 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
+        /* Full float, four channels or one; read back as bytes the same way (R32F as (r, 0, 0, 1)). */
+        else if(RTFormat == GDI_RTF_RGBA32F || RTFormat == GDI_RTF_R32F)
+        {
+            const bool bOne = RTFormat == GDI_RTF_R32F;
+            glBindTexture(GL_TEXTURE_2D, TextureResource->TextureHandle);
+            glTexImage2D(GL_TEXTURE_2D, 0, bOne ? GL_R32F : GL_RGBA32F, GLsizei(Width), GLsizei(Height), 0,
+                         bOne ? GL_RED : GL_RGBA, GL_FLOAT, nullptr);
             glBindTexture(GL_TEXTURE_2D, 0);
         }
         glGenFramebuffers(1, &FrameBuffer.FrameBufferID);

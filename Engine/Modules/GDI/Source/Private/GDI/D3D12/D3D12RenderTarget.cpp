@@ -251,19 +251,33 @@ EngineCore::Image D3D12RenderTarget::ToImage()
         GDI->FlushForReadback();
     }
 
-    const bool bHalf = Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+    const bool bHalf  = Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+    const bool bFloat = Format == DXGI_FORMAT_R32G32B32A32_FLOAT;
     std::vector<uint8_t> Pixels;
-    if(!D3D12Ops::ReadbackTexture(Device, Resource.Get(), CurrentState, 0, 0, Width, Height, Pixels, bHalf ? 8u : 4u))
+    if(!D3D12Ops::ReadbackTexture(Device, Resource.Get(), CurrentState, 0, 0, Width, Height, Pixels, bFloat ? 16u : bHalf ? 8u : 4u))
     {
         return EngineCore::Image();
     }
 
     // RT rows are top-down (GDI.h), EngineCore::Image's order: they copy as
-    // they are. An HDR target's half floats come back clamped into RGBA8 (GDIHalf.h).
+    // they are. An HDR target's half floats come back clamped into RGBA8, an
+    // RGB10A2 target's texels rounded into it, a full float's clamped (GDIHalf.h).
     EngineCore::Image Result(int(Width), int(Height), EngineCore::EImageFormat::RGBA8);
     if(bHalf)
     {
         GDIHalvesToBytes(reinterpret_cast<const uint16_t*>(Pixels.data()), Result.GetData(), size_t(Width) * size_t(Height) * 4u);
+    }
+    else if(Format == DXGI_FORMAT_R10G10B10A2_UNORM)
+    {
+        GDIRgb10A2ToBytes(reinterpret_cast<const uint32_t*>(Pixels.data()), Result.GetData(), size_t(Width) * size_t(Height));
+    }
+    else if(bFloat)
+    {
+        GDIFloatsToBytes(reinterpret_cast<const float*>(Pixels.data()), Result.GetData(), size_t(Width) * size_t(Height) * 4u);
+    }
+    else if(Format == DXGI_FORMAT_R32_FLOAT)
+    {
+        GDIR32FToBytes(reinterpret_cast<const float*>(Pixels.data()), Result.GetData(), size_t(Width) * size_t(Height));
     }
     else
     {

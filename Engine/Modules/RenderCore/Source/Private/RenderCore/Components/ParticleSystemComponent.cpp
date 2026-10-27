@@ -195,6 +195,10 @@ namespace RenderCore
                     if(Run.Gpu && !bCulled)
                     {
                         InContext.DrawParticles(*Run.Gpu, EmitterPosition(Run), Run.Mesh.c_str(), Run.Material.c_str(), Run.Label.c_str());
+                        if(Run.Settings.bCastShadows)
+                        {
+                            InContext.CastParticleShadows(*Run.Gpu, Run.Mesh.c_str(), Run.Settings.ShadowDensity, GetWorldBounds());
+                        }
                     }
                 }
             }

@@ -259,7 +259,11 @@ GDIRenderTarget* D3D12DynamicGDI::CreateRenderTarget(std::string Name, uint InWi
 GDIRenderTarget* D3D12DynamicGDI::CreateRenderTargetFormat(std::string Name, uint InWidth, uint InHeight, EGDIRenderTargetFormat InFormat)
 {
     if(!DeviceObj) return nullptr;
-    const DXGI_FORMAT Format = InFormat == GDI_RTF_RGBA16F ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM;
+    const DXGI_FORMAT Format = InFormat == GDI_RTF_RGBA16F ? DXGI_FORMAT_R16G16B16A16_FLOAT
+                             : InFormat == GDI_RTF_RGB10A2 ? DXGI_FORMAT_R10G10B10A2_UNORM
+                             : InFormat == GDI_RTF_RGBA32F ? DXGI_FORMAT_R32G32B32A32_FLOAT
+                             : InFormat == GDI_RTF_R32F    ? DXGI_FORMAT_R32_FLOAT
+                             : DXGI_FORMAT_R8G8B8A8_UNORM;
     auto* RT = new D3D12RenderTarget(DeviceObj, Name, InWidth, InHeight, Format);
     RegisterRenderTarget(RT);
     return RT;
@@ -267,8 +271,10 @@ GDIRenderTarget* D3D12DynamicGDI::CreateRenderTargetFormat(std::string Name, uin
 
 bool D3D12DynamicGDI::SupportsRenderTargetFormat(const EGDIRenderTargetFormat InFormat) const
 {
-    /* R16G16B16A16_FLOAT render targets, blending and sampling are required at feature level 11_0. */
-    return InFormat == GDI_RTF_RGBA8 || InFormat == GDI_RTF_RGBA16F;
+    /* R16G16B16A16_FLOAT, R10G10B10A2_UNORM, R32G32B32A32_FLOAT and R32_FLOAT render
+     * targets, blending and filtered sampling are required at feature level 11_0. */
+    return InFormat == GDI_RTF_RGBA8 || InFormat == GDI_RTF_RGBA16F || InFormat == GDI_RTF_RGB10A2
+        || InFormat == GDI_RTF_RGBA32F || InFormat == GDI_RTF_R32F;
 }
 
 void D3D12DynamicGDI::SetRenderTarget(GDIRenderTarget* InRenderTarget)
@@ -315,14 +321,14 @@ void D3D12DynamicGDI::SetRenderTargets(GDIRenderTarget* const* InColors, uint In
         if(!IsBoundColor(RT) && RT->GetCurrentState() == D3D12_RESOURCE_STATE_RENDER_TARGET)
         {
             RecordTransition(List, RT->GetResource(), D3D12_RESOURCE_STATE_RENDER_TARGET,
-                                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-            RT->SetCurrentState(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                                       D3D12_STATE_SAMPLED);
+            RT->SetCurrentState(D3D12_STATE_SAMPLED);
         }
         if(RT != DepthRT && RT->HasDepth() && RT->GetDepthState() == D3D12_RESOURCE_STATE_DEPTH_WRITE)
         {
             RecordTransition(List, RT->GetDepthResource(), D3D12_RESOURCE_STATE_DEPTH_WRITE,
-                                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-            RT->SetDepthState(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                                       D3D12_STATE_SAMPLED);
+            RT->SetDepthState(D3D12_STATE_SAMPLED);
         }
     }
 
@@ -500,10 +506,10 @@ void D3D12DynamicGDI::RecordResolve(D3D12RenderTarget* Src, D3D12RenderTarget* D
     const D3D12_BOX Box{ 0, 0, 0, (std::min)(Src->GetWidth(), Dst->GetWidth()), (std::min)(Src->GetHeight(), Dst->GetHeight()), 1 };
     List->CopyTextureRegion(&DstLoc, 0, 0, 0, &SrcLoc, &Box);
 
-    RecordTransition(List, Src->GetResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    RecordTransition(List, Dst->GetResource(), D3D12_RESOURCE_STATE_COPY_DEST,   D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    Src->SetCurrentState(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    Dst->SetCurrentState(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    RecordTransition(List, Src->GetResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_STATE_SAMPLED);
+    RecordTransition(List, Dst->GetResource(), D3D12_RESOURCE_STATE_COPY_DEST,   D3D12_STATE_SAMPLED);
+    Src->SetCurrentState(D3D12_STATE_SAMPLED);
+    Dst->SetCurrentState(D3D12_STATE_SAMPLED);
 }
 
 #pragma endregion
@@ -852,6 +858,8 @@ bool D3D12DynamicGDI::BindDrawState(const D3D12DrawInputs& InIn, GDIMesh* InMesh
     Key.DepthEnable    = Depth.bDepthTest ? TRUE : FALSE;
     Key.DepthWrite     = Depth.bDepthMask ? TRUE : FALSE;
     Key.DepthFunc      = DecodeCompareFunc(Depth.DepthMode);
+    Key.CullMode       = Depth.CullMode == GDI_CULL_FRONT ? D3D12_CULL_MODE_FRONT
+                       : Depth.CullMode == GDI_CULL_BACK  ? D3D12_CULL_MODE_BACK : D3D12_CULL_MODE_NONE;
 
     D3D12DrawCaches& Caches = *InIn.Caches;
     ID3D12GraphicsCommandList* List = InIn.List;
@@ -967,6 +975,14 @@ bool D3D12DynamicGDI::BindDrawState(const D3D12DrawInputs& InIn, GDIMesh* InMesh
             Caches.SkinSerial[SkinIndex] = InIn.Serials[2 + SkinIndex];
             Caches.SkinEpoch[SkinIndex]  = Epoch;
         }
+
+        /* The light block (b22): the frame's light list, bound whole, uploaded once per change. */
+        if(Caches.LightSerial != InIn.Serials[4] || Caches.LightEpoch != Epoch || Caches.LightAddress == 0)
+        {
+            if(!Upload(Blocks[4], GDI_LIGHT_BLOCK_MAX_BYTES, Caches.LightAddress)) return false;
+            Caches.LightSerial = InIn.Serials[4];
+            Caches.LightEpoch  = Epoch;
+        }
     }
     else
     {
@@ -1004,6 +1020,7 @@ bool D3D12DynamicGDI::BindDrawState(const D3D12DrawInputs& InIn, GDIMesh* InMesh
         SetCBV(RP_Scene,    Caches.SceneAddress);
         SetCBV(RP_Skin,     Caches.SkinAddress[0]);
         SetCBV(RP_PrevSkin, Caches.SkinAddress[1]);
+        SetCBV(RP_Light,    Caches.LightAddress);
         for(uint32_t Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot)
         {
             /* The same resource as the list has bound: its tables are already

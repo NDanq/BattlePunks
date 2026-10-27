@@ -251,7 +251,10 @@ Two details matter:
 
 - **Half float, not RGBA8**, for anything that decays a little each
   frame. In 8 bits, `value * 0.98` rounds back to `value` and the trail
-  never fades. RGBA16F also holds negative pushes.
+  never fades. RGBA16F also holds negative pushes. For values a half
+  float rounds away too (positions, moments, a scalar eased by a tiny
+  step), ask for `RGBA32F` or `R32F`; where the backend lacks them
+  (Metal, some Vulkan GPUs) the target is RGBA16F and the log says so.
 - **Reset when the contents are undefined.** A freshly made target holds
   garbage. The pass clears on its first frame, and again when it's
   switched back on (`PP_Settings.w`).
@@ -499,8 +502,10 @@ anything and leaves nothing to undo.
 ### Scene textures (`GetSceneTexture`)
 
 `SceneColor`, `SceneDepth` (window depth, 0 near), `GBuffer0` (base colour,
-AO), `GBuffer1` (normal), `GBuffer2` (metallic, roughness, specular),
-`GBuffer3` (emissive), `Velocity`, and `Current` (the picture so far at the
+AO), `GBuffer1` (normal, octahedral: decode it with `Common.glsl`'s
+`DecodeGBufferNormal`), `GBuffer2` (metallic, roughness, specular, shading
+model), `GBuffer3` (emissive), `GBuffer4` (the shading model's custom data,
+`ShadingModels.glsl`), `Velocity`, and `Current` (the picture so far at the
 post hooks; the scene colour before them). A texture this frame doesn't
 have comes back invalid. The G-buffer and velocity exist only from
 `AfterBasePass` on, and only on a frame with Lit opaque surfaces.

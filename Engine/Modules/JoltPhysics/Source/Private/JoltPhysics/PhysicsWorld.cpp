@@ -125,12 +125,36 @@ namespace JoltPhysics
                 JPH::BodyID A;
                 JPH::BodyID B;
                 bool        bAdded = true;
+
+                /* An add: how hard they met, in metres and kilograms. */
+                JPH::RVec3 Point;
+                JPH::Vec3  Normal  = JPH::Vec3::sZero();   // from A toward B
+                float      Speed   = 0.0f;                 // closing, m/s
+                float      Impulse = 0.0f;                 // kg m/s
             };
 
-            void OnContactAdded(const JPH::Body& InA, const JPH::Body& InB, const JPH::ContactManifold&, JPH::ContactSettings&) override
+            void OnContactAdded(const JPH::Body& InA, const JPH::Body& InB, const JPH::ContactManifold& InManifold, JPH::ContactSettings& InSettings) override
             {
+                Event Added{ InA.GetID(), InB.GetID(), true };
+                if(!InManifold.mRelativeContactPointsOn1.empty())
+                {
+                    /* The impulse that stops them closing at the first contact
+                     * point: closing speed times their reduced mass, with the
+                     * bounce. Rotation is left out, so a spinning hit reads a
+                     * little high; good enough to break things by. */
+                    Added.Point  = InManifold.GetWorldSpaceContactPointOn1(0);
+                    Added.Normal = InManifold.mWorldSpaceNormal;
+                    const float Closing = (InA.GetPointVelocity(Added.Point) - InB.GetPointVelocity(Added.Point)).Dot(Added.Normal);
+                    const float InvA = InA.IsDynamic() ? InA.GetMotionPropertiesUnchecked()->GetInverseMass() : 0.0f;
+                    const float InvB = InB.IsDynamic() ? InB.GetMotionPropertiesUnchecked()->GetInverseMass() : 0.0f;
+                    if(Closing > 0.0f && InvA + InvB > 0.0f)
+                    {
+                        Added.Speed   = Closing;
+                        Added.Impulse = (1.0f + InSettings.mCombinedRestitution) * Closing / (InvA + InvB);
+                    }
+                }
                 std::lock_guard<std::mutex> Lock(Mutex);
-                Events.push_back(Event{ InA.GetID(), InB.GetID(), true });
+                Events.push_back(Added);
             }
 
             void OnContactRemoved(const JPH::SubShapeIDPair& InPair) override
@@ -232,6 +256,7 @@ namespace JoltPhysics
         Layers::ObjectPairs        ObjectPairs;
         JPH::PhysicsSystem*        System = nullptr;
         ContactQueue               Contacts;
+        std::vector<PhysicsImpact> Impacts;   // this frame's, from FlushContacts
         ShapeBuilder               Shapes;
 
         std::unordered_map<uint64_t, BodyRecord>       Bodies;        // by EntityID::Pack()
@@ -1579,6 +1604,17 @@ namespace JoltPhysics
                 /* A ragdoll's parts tell nothing: dozens of touches a fall. */
                 if(IsRagdollBody(Event.A) || IsRagdollBody(Event.B)) { continue; }
                 const uint64_t Key = PairKey(Event.A, Event.B);
+                if(Event.bAdded && Event.Impulse > 0.0f)
+                {
+                    PhysicsImpact Impact;
+                    Impact.A       = EntityOf(Event.A);
+                    Impact.B       = EntityOf(Event.B);
+                    Impact.Point   = Convert::FromRVec3(Event.Point, FromMeters());
+                    Impact.Normal  = EngineCore::Vector3(Event.Normal.GetX(), Event.Normal.GetY(), Event.Normal.GetZ());
+                    Impact.Speed   = float(Event.Speed * FromMeters());
+                    Impact.Impulse = float(Event.Impulse * FromMeters());
+                    Impacts.push_back(Impact);
+                }
                 if(Event.bAdded)
                 {
                     if(Touching.insert(Key).second)
@@ -1617,6 +1653,8 @@ namespace JoltPhysics
 
         void Frame(const float InDeltaSeconds)
         {
+            Impacts.clear();
+
             /* How many fixed steps this frame holds; the rest waits. */
             Accumulator += double(std::max(InDeltaSeconds, 0.0f));
             uint32_t StepsNow = uint32_t(Accumulator / FixedDelta());
@@ -1759,6 +1797,17 @@ namespace JoltPhysics
     void PhysicsWorld::Step(const float InDeltaSeconds)
     {
         if(P) { P->Frame(InDeltaSeconds); }
+    }
+
+    void PhysicsWorld::ForgetMeshShapes(const char* InMeshPath)
+    {
+        if(P && InMeshPath) { P->Shapes.Forget(InMeshPath); }
+    }
+
+    const std::vector<PhysicsImpact>& PhysicsWorld::GetImpacts() const
+    {
+        static const std::vector<PhysicsImpact> None;
+        return P ? P->Impacts : None;
     }
 
     bool PhysicsWorld::Raycast(const EngineCore::Vector3& InOrigin, const EngineCore::Vector3& InDirection,

@@ -95,6 +95,8 @@ typedef struct __GLsync* GLsync;
 #define GL_TEXTURE_BASE_LEVEL             0x813C   // GL 1.2: a texture's mip range (CreateTextureResourceMips)
 #define GL_TEXTURE_MAX_LEVEL              0x813D
 #define GL_RGBA16F                        0x881A   // GL 3.0: an HDR render target (CreateRenderTargetFormat)
+#define GL_RGBA32F                        0x8814   // GL 3.0: full float render targets (CreateRenderTargetFormat)
+#define GL_R32F                           0x822E
 #define GL_HALF_FLOAT                     0x140B
 #ifndef GL_DEPTH_COMPONENT
 #define GL_DEPTH_COMPONENT                0x1902

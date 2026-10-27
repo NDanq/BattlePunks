@@ -9,8 +9,9 @@
 # changes a library's layout (JPH_OBJECT_LAYER_BITS, MA_NO_ENCODING) is spelled
 # here once, so the library and its users cannot drift apart.
 #
-# Header-only libraries (cgltf, stb) have no target: their directories are
-# here for the modules that include them.
+# Header-only libraries (cgltf, stb) and MikkTSpace (one C file, compiled by
+# the module that uses it) have no target: their directories are here for the
+# modules that include them.
 #
 # Versions are spelled out rather than globbed: which release a commit builds
 # against is answerable from the source, not from whatever is on disk.
@@ -30,6 +31,7 @@ set(NIMBLE_THIRDPARTY_MINIAUDIO_DIR "${NIMBLE_THIRDPARTY_SOURCE_DIR}/miniaudio-0
 set(NIMBLE_THIRDPARTY_BC7ENC_DIR   "${NIMBLE_THIRDPARTY_SOURCE_DIR}/bc7enc_rdo-b943862")
 set(NIMBLE_THIRDPARTY_XATLAS_DIR   "${NIMBLE_THIRDPARTY_SOURCE_DIR}/xatlas-f700c77")
 set(NIMBLE_THIRDPARTY_CGLTF_DIR    "${NIMBLE_THIRDPARTY_SOURCE_DIR}/cgltf-1.15")
+set(NIMBLE_THIRDPARTY_MIKKTSPACE_DIR "${NIMBLE_THIRDPARTY_SOURCE_DIR}/mikktspace-3e895b4")
 set(NIMBLE_THIRDPARTY_STB_DIR      "${NIMBLE_THIRDPARTY_SOURCE_DIR}/stb")
 set(NIMBLE_THIRDPARTY_RECAST_DIR   "${NIMBLE_THIRDPARTY_SOURCE_DIR}/recastnavigation-1.6.0")
 set(NIMBLE_THIRDPARTY_ZSTD_DIR     "${NIMBLE_THIRDPARTY_SOURCE_DIR}/zstd-1.5.7")

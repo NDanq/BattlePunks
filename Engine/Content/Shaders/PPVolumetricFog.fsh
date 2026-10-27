@@ -15,6 +15,8 @@
 
 MATERIAL_SAMPLER2D(4, SceneDepth)          // full resolution, window depth
 MATERIAL_SAMPLER2D(5, ShadowDirectional)   // the sun's shadow atlas (Shadows.glsl's layout)
+MATERIAL_SAMPLER2D(19, TranslucentOpacity) // engine slot 15: translucent casters' opacity atlas (TranslucentShadows.glsl)
+#include <TranslucentShadows.glsl>
 
 UBO_BLOCK_BEGIN(2, PP_Block)
     // In the place of the passes' mat4, four vec4s of settings.
@@ -28,7 +30,7 @@ UBO_BLOCK_END(PP_Block)
 
 const float FOG_PI = 3.14159265;
 
-vec3 Linear(vec3 InDisplay) { return pow(max(InDisplay, vec3(0.0)), vec3(2.2)); }
+vec3 Linear(vec3 InDisplay) { return SrgbToLinear(InDisplay); }
 
 float Density(vec3 InWorld)
 {
@@ -52,7 +54,9 @@ float SunVisibility(vec3 InWorld)
     vec3 Atlas = Clip.xyz / Clip.w;
     if(Atlas.z >= 1.0 || Atlas.z <= 0.0) { return 1.0; }
     ivec2 Texel = clamp(ivec2(Atlas.xy * Scene_ShadowParams.w), ivec2(0), ivec2(Scene_ShadowParams.w) - 1);
-    return texelFetch(ShadowDirectional, Texel, 0).r + 0.001 < Atlas.z ? 0.0 : 1.0;
+    if(texelFetch(ShadowDirectional, Texel, 0).r + 0.001 < Atlas.z) { return 0.0; }
+    // And through the translucent casters -- shafts cut by a plume (LIT_TRANSLUCENCY.md, Phase 7).
+    return exp(-Translucent_Depth(TranslucentOpacity, Scene_CascadeMatrices[Cascade], InWorld, false, Translucent_CascadeRange(Cascade), 0.0));
 }
 
 float Phase(float InCos, float InG)

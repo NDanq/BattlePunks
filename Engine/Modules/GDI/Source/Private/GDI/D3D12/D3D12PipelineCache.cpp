@@ -24,13 +24,15 @@ namespace
         { "TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT,    1, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
     };
 
-    // An indexed mesh (GDICreateMesh): the normal at location 8, slot 2; colour 9, slot 3; UV1 10, slot 4.
+    // An indexed mesh (GDICreateMesh): the normal at location 8, slot 2; colour 9, slot 3; UV1 10, slot 4;
+    // tangent 13, slot 8.
     const D3D12_INPUT_ELEMENT_DESC GMeshLayout[] = {
         { "TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT,    1, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 8, DXGI_FORMAT_R32G32B32_FLOAT,    2, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 9, DXGI_FORMAT_R32G32B32A32_FLOAT, 3, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 10, DXGI_FORMAT_R32G32_FLOAT,      4, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 13, DXGI_FORMAT_R32G32B32A32_FLOAT, 8, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
     };
 
     // The mesh layout plus a skinned vertex's bone indices (location 11, slot 6) and weights (12, slot 7).
@@ -40,6 +42,7 @@ namespace
         { "TEXCOORD", 8, DXGI_FORMAT_R32G32B32_FLOAT,    2, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 9, DXGI_FORMAT_R32G32B32A32_FLOAT, 3, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 10, DXGI_FORMAT_R32G32_FLOAT,      4, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 13, DXGI_FORMAT_R32G32B32A32_FLOAT, 8, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 11, DXGI_FORMAT_R32G32B32A32_FLOAT, 6, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 12, DXGI_FORMAT_R32G32B32A32_FLOAT, 7, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
     };
@@ -52,6 +55,7 @@ namespace
         { "TEXCOORD", 8, DXGI_FORMAT_R32G32B32_FLOAT,    2, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 9, DXGI_FORMAT_R32G32B32A32_FLOAT, 3, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 10, DXGI_FORMAT_R32G32_FLOAT,      4, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 13, DXGI_FORMAT_R32G32B32A32_FLOAT, 8, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 5, 0,  D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
         { "TEXCOORD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 5, 16, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
         { "TEXCOORD", 4, DXGI_FORMAT_R32G32B32A32_FLOAT, 5, 32, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
@@ -124,6 +128,9 @@ bool D3D12PipelineCache::BuildRootSignature()
     Params[RP_PrevSkin].ParameterType              = D3D12_ROOT_PARAMETER_TYPE_CBV;
     Params[RP_PrevSkin].Descriptor.ShaderRegister  = GDI_PREV_SKIN_BLOCK_BINDING;
     Params[RP_PrevSkin].ShaderVisibility           = D3D12_SHADER_VISIBILITY_VERTEX;
+    Params[RP_Light].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    Params[RP_Light].Descriptor.ShaderRegister = GDI_LIGHT_BLOCK_BINDING;
+    Params[RP_Light].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;   // a particle's vertex lighting reads it too
 
     for(UINT Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot)
     {
@@ -158,7 +165,7 @@ bool D3D12PipelineCache::BuildRootSignature()
         P.ParameterType                         = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
         P.DescriptorTable.NumDescriptorRanges   = 1;
         P.DescriptorTable.pDescriptorRanges     = &Ranges[i];
-        P.ShaderVisibility                      = D3D12_SHADER_VISIBILITY_PIXEL;
+        P.ShaderVisibility                      = D3D12_SHADER_VISIBILITY_ALL;   // the vertex stage samples too
     }
 
     D3D12_ROOT_SIGNATURE_DESC Desc{};
@@ -289,6 +296,7 @@ uint64_t D3D12PipelineCache::HashKey(const PipelineKey& K)
     Mix(&K.DepthEnable,    sizeof(K.DepthEnable));
     Mix(&K.DepthWrite,     sizeof(K.DepthWrite));
     Mix(&K.DepthFunc,      sizeof(K.DepthFunc));
+    Mix(&K.CullMode,       sizeof(K.CullMode));
     return H;
 }
 
@@ -303,7 +311,7 @@ bool D3D12PipelineCache::PipelineKey::operator==(const PipelineKey& InOther) con
         && SrcBlend == InOther.SrcBlend && DestBlend == InOther.DestBlend && BlendOp == InOther.BlendOp
         && BlendOpAlpha == InOther.BlendOpAlpha && WriteMask == InOther.WriteMask && RTFormat == InOther.RTFormat
         && ColorCount == InOther.ColorCount && DSVFormat == InOther.DSVFormat && DepthEnable == InOther.DepthEnable
-        && DepthWrite == InOther.DepthWrite && DepthFunc == InOther.DepthFunc;
+        && DepthWrite == InOther.DepthWrite && DepthFunc == InOther.DepthFunc && CullMode == InOther.CullMode;
 }
 
 ID3D12PipelineState* D3D12PipelineCache::GetOrCreate(const PipelineKey& Key,
@@ -378,10 +386,10 @@ ComPtr<ID3D12PipelineState> D3D12PipelineCache::CreatePipeline(const PipelineKey
     Blend.RenderTargetWriteMask = Key.WriteMask;
 
     Desc.RasterizerState.FillMode        = D3D12_FILL_MODE_SOLID;
-    Desc.RasterizerState.CullMode        = D3D12_CULL_MODE_NONE;
+    Desc.RasterizerState.CullMode        = Key.CullMode;
     /* Counter-clockwise on the target as stored, top-down (GDI.h): a GL front
-     * face, as Vulkan's COUNTER_CLOCKWISE under its negative viewport. Only
-     * gl_FrontFacing sees it (Two Sided), since nothing is culled. */
+     * face, as Vulkan's COUNTER_CLOCKWISE under its negative viewport --
+     * gl_FrontFacing (Two Sided) and GDI_CULL_FRONT mean the same faces. */
     Desc.RasterizerState.FrontCounterClockwise = TRUE;
     Desc.RasterizerState.DepthClipEnable = TRUE;
 

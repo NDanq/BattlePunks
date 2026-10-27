@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="22a1f602fb82379c95f40f4beee222a2" Name="Velvet">
+  <Component Type="Render" Version="5">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/ShadingModelLab/Velvet.material.nmgraph" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
+    <Occluder Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="65.0" Y="55" Z="0" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="100" Y="100" Z="100" />
+  </Component>
+</Entity>

@@ -476,6 +476,7 @@ namespace RenderCore
                 Local.ShadowTint       = Light.ShadowTint;
                 Local.ShadowBias       = Light.ShadowBias;
                 Local.ShadowNormalBias = Light.ShadowNormalBias;
+                Local.SourceRadius     = std::max(Light.SourceRadius, 0.0f);
                 Found.push_back(Local);
             }
         }
@@ -501,6 +502,33 @@ namespace RenderCore
                 Local.ShadowTint       = Light.ShadowTint;
                 Local.ShadowBias       = Light.ShadowBias;
                 Local.ShadowNormalBias = Light.ShadowNormalBias;
+                Local.SourceRadius     = std::max(Light.SourceRadius, 0.0f);
+                Found.push_back(Local);
+            }
+        }
+        if(ComponentPool* Pool = BoundWorld->FindPool(RectLightComponent::StaticType().ID))
+        {
+            const auto* Lights = static_cast<const RectLightComponent*>(Pool->GetDenseData());
+            for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
+            {
+                const RectLightComponent& Light = Lights[Index];
+                if(!Light.bActive || Light.Intensity <= 0.0f || Light.Range <= 0.0f || Light.Width <= 0.0f || Light.Height <= 0.0f)
+                {
+                    continue;
+                }
+                const GameCore::TransformPose Pose = PoseOf(Light.Owner);
+                const auto                    Axes = GameCore::TransformMath::EulerToRotation(Pose.Rotation);
+                RenderLocalLight Local;
+                Local.Type      = RLL_Rect;
+                Local.Position  = Pose.Position;
+                Local.Direction = Axes.GetAxis(2);
+                Local.Right     = Axes.GetAxis(0);
+                Local.Up        = Axes.GetAxis(1);
+                Local.Width     = Light.Width * float(Pose.Scale.GetX());
+                Local.Height    = Light.Height * float(Pose.Scale.GetY());
+                Local.Color     = Light.Color;
+                Local.Intensity = Light.Intensity;
+                Local.Range     = Light.Range;
                 Found.push_back(Local);
             }
         }
@@ -1064,7 +1092,45 @@ namespace RenderCore
             Probe.bCaptureNow = 0;
         }
         BuildReflectionProbes(InView, List);
+        BuildGIVolume(InView, List);
         return List;
+    }
+
+    void WorldBridge::BuildGIVolume(const RenderView& InView, SceneCaptureList& OutList)
+    {
+        OutList.bGIVolume = 0;
+        ComponentPool* Pool = BoundWorld ? BoundWorld->FindPool(GIVolumeComponent::StaticType().ID) : nullptr;
+        if(!Pool)
+        {
+            return;
+        }
+        /* The enabled volume nearest the camera. */
+        double Nearest = 0.0;
+        auto* Volumes = static_cast<GIVolumeComponent*>(Pool->GetDenseData());
+        for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
+        {
+            const GIVolumeComponent& Volume = Volumes[Index];
+            if(!Volume.bEnabled || Volume.Intensity <= 0.0f)
+            {
+                continue;
+            }
+            const GameCore::TransformPose Pose = PoseOf(Volume.Owner);
+            const double Distance = (Pose.Position - InView.Origin).GetLength();
+            if(OutList.bGIVolume && Distance >= Nearest)
+            {
+                continue;
+            }
+            GIVolumeRequest& Request = OutList.GIVolume;
+            Request.Key       = Volume.Owner.GetEntity().GetID().Pack();
+            Request.Position  = Pose.Position;
+            Request.Extent[0] = float(std::max(double(Volume.Extent.GetX()), 1.0));
+            Request.Extent[1] = float(std::max(double(Volume.Extent.GetY()), 1.0));
+            Request.Extent[2] = float(std::max(double(Volume.Extent.GetZ()), 1.0));
+            Request.Spacing   = std::max(Volume.ProbeSpacing, 10.0f);
+            Request.Intensity = Volume.Intensity;
+            OutList.bGIVolume = 1;
+            Nearest = Distance;
+        }
     }
 
     void WorldBridge::BuildReflectionProbes(const RenderView& InView, SceneCaptureList& OutList)

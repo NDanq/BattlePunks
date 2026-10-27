@@ -153,7 +153,7 @@ void VulkanDynamicGDI::EndRendering()
         VkImageMemoryBarrier2 Barrier{};
         Barrier.sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
         Barrier.srcStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-        Barrier.dstStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        Barrier.dstStageMask  = (VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
         Barrier.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
         Barrier.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
         Barrier.oldLayout     = MainRT->GetCurrentLayout();

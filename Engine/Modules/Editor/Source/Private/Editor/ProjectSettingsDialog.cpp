@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Private/Editor/ProjectSettingsDialog.h"
+#include "Private/Editor/EditorIcons.h"
 #include "Private/Editor/InputMapsPage.h"
 
 #include <algorithm>
@@ -136,6 +137,7 @@ namespace
         { "Shadows", "MaxShadowedLights", ShadowLightChoices,      int(std::size(ShadowLightChoices)) },
         { "Shadows", "MaxInsetShadows",   ShadowLightChoices,      int(std::size(ShadowLightChoices)) },
         { "Shadows", "InsetFilter",       ShadowFilterChoices,     int(std::size(ShadowFilterChoices)) },
+        { "Shadows", "ForwardFilter",     ShadowFilterChoices,     int(std::size(ShadowFilterChoices)) },
     };
 
     /* A readable label and what a key does, where its name alone says too
@@ -165,6 +167,9 @@ namespace
         { "Shadows", "InsetFilter",       "Inset shadow filter",
           "How soft an inset shadow's edge is. Their maps are already sharp, so a smaller filter than Filter's "
           "usually looks the same and costs less" },
+        { "Shadows", "ForwardFilter",     "Translucent shadow filter",
+          "How soft shadows are on Translucent Lit surfaces (glass, water, lit smoke). Every overlapping "
+          "layer filters again, so one tap by default" },
         { "Shadows", "DistanceScale",     "Sun shadow distance scale",
           "Multiplies every Directional Light's Shadow Distance: lower is sharper and shorter" },
         { "Shadows", "ContactShadows",    "Sun contact shadows",
@@ -911,7 +916,7 @@ void ProjectSettingsDialog::AddRow(QFormLayout* InForm, const QString& InSection
     if(Var)
     {
         auto* Reset = new QToolButton(Holder);
-        Reset->setText(QStringLiteral("↺"));
+        Reset->setIcon(EditorIcons::Get(EditorIcons::EIcon::Reset));
         Reset->setAutoRaise(true);
         Reset->setToolTip(QStringLiteral("Put the compiled default (%1) in the field; Apply writes it").arg(Default));
         const std::function<void(const QString&)> Show = R.Show;

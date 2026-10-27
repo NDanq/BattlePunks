@@ -106,6 +106,34 @@ namespace
 
     const std::vector<std::string> GDomainChoices  = { "Opaque", "Masked", "Translucent", "PostProcess" };
     const std::vector<std::string> GShadingChoices = { "Lit", "Unlit" };
+    /* A Lit material's BRDF: RenderCore's EMaterialShadingModel, in its order (SHADING_MODELS.md). */
+    const std::vector<std::string> GShadingModelChoices = { "Default", "ClearCoat", "Anisotropic", "Cloth", "Subsurface", "Skin", "Volume" };
+    /* A Translucent Lit material's blend (LIT_TRANSLUCENCY.md, Phase 3): Surface, its
+     * specular over its opacity; Legacy, everything faded by it, as before. */
+    const std::vector<std::string> GTranslucencyLightingChoices = { "Surface", "Legacy" };
+    /* A Translucent Unlit material drawn by particles (LIT_TRANSLUCENCY.md, Phase 6): Per
+     * Particle lights each instance once, in its own vertex shader, into its colour. */
+    const std::vector<std::string> GParticleLightingChoices = { "Off", "PerParticle" };
+
+    /* The Material Output pins only some shading models read, and which. */
+    struct ShadingModelPin
+    {
+        std::string              Pin;
+        std::vector<std::string> Models;
+    };
+    const std::vector<ShadingModelPin> GShadingModelPins = {
+        { "ClearCoat",          { "ClearCoat" } },
+        { "ClearCoatRoughness", { "ClearCoat" } },
+        { "ClearCoatNormal",    { "ClearCoat" } },
+        { "Anisotropy",         { "Anisotropic" } },
+        { "Tangent",            { "Anisotropic" } },
+        { "SheenColor",         { "Cloth" } },
+        { "SubsurfaceColor",    { "Cloth", "Subsurface", "Skin" } },
+        { "Thickness",          { "Subsurface", "Skin" } },
+        { "PhaseAnisotropy",    { "Volume" } },
+        { "NormalInfluence",    { "Volume" } },
+        { "SelfOcclusion",      { "Volume" } },
+    };
 
     /* std140 base alignment and size of a float type. */
     int Std140Align(const std::string& InType) { return InType == "float" ? 4 : InType == "vec2" ? 8 : 16; }
@@ -519,6 +547,7 @@ namespace
 
         std::string                      Domain  = "Opaque";
         std::string                      Shading = "Lit";
+        std::string                      ShadingModel = "Default";
 
         /* The stage being compiled: its Output node, and the pins of it that
          * are this stage's roots (AnalyseScopes looks only through those). */
@@ -567,6 +596,20 @@ namespace
         const bool bLegacy = RootDef->Op == MOP_Output;
         Domain  = bLegacy ? "Translucent" : Root->GetProperty("Domain", "Opaque");
         Shading = bLegacy ? "Unlit" : Root->GetProperty("Shading", "Lit");
+        ShadingModel = bLegacy ? "Default" : Root->GetProperty("ShadingModel", "Default");
+        if(std::find(GShadingModelChoices.begin(), GShadingModelChoices.end(), ShadingModel) == GShadingModelChoices.end())
+        {
+            Result.Error(Root->Id, std::string(), "unknown Shading Model '" + ShadingModel + "'");
+            ShadingModel = "Default";
+        }
+        if(Shading != "Lit")
+        {
+            ShadingModel = "Default";   // an Unlit material has no BRDF to choose
+        }
+        if(ShadingModel == "Volume" && Domain != "Translucent")
+        {
+            Result.Error(Root->Id, std::string(), "the Volume shading model is forward only: set Domain to Translucent");
+        }
 
         double ClipValue = 0.5, MaxOffset = 0.0;
         if(!bLegacy)
@@ -581,6 +624,46 @@ namespace
             }
         }
         const bool bTwoSided = !bLegacy && Root->GetProperty("TwoSided", "false") == "true";
+        /* Surface only where it applies; a graph saved before the property is Legacy. */
+        const std::string TranslucencyLighting = bLegacy ? "Legacy" : Root->GetProperty("TranslucencyLighting", "Legacy");
+        if(std::find(GTranslucencyLightingChoices.begin(), GTranslucencyLightingChoices.end(), TranslucencyLighting)
+           == GTranslucencyLightingChoices.end())
+        {
+            Result.Error(Root->Id, std::string(), "unknown Translucency Lighting '" + TranslucencyLighting + "'");
+        }
+        const bool bTranslucencySurface = Domain == "Translucent" && Shading == "Lit" && TranslucencyLighting == "Surface";
+        const std::string ParticleLighting = bLegacy ? "Off" : Root->GetProperty("ParticleLighting", "Off");
+        if(std::find(GParticleLightingChoices.begin(), GParticleLightingChoices.end(), ParticleLighting) == GParticleLightingChoices.end())
+        {
+            Result.Error(Root->Id, std::string(), "unknown Particle Lighting '" + ParticleLighting + "'");
+        }
+        if(ParticleLighting == "PerParticle" && !(Domain == "Translucent" && Shading == "Unlit"))
+        {
+            Result.Error(Root->Id, std::string(), "Particle Lighting Per Particle is for Translucent Unlit materials: they take the light in "
+                                                  "their colour (use Vertex Color as Emissive)");
+        }
+        const bool bParticleLighting = ParticleLighting == "PerParticle" && Domain == "Translucent" && Shading == "Unlit";
+        /* Its mesh into the lights' opacity shadow maps (LIT_TRANSLUCENCY.md: glass casting). */
+        const bool bCastTranslucent = !bLegacy && Domain == "Translucent" && Root->GetProperty("CastTranslucentShadow", "false") == "true";
+        double TranslucentShadowOpacity = 0.3;
+        if(bCastTranslucent && (!ParseNumber(Root->GetProperty("TranslucentShadowOpacity", "0.3"), TranslucentShadowOpacity)
+                                || TranslucentShadowOpacity < 0.0 || TranslucentShadowOpacity > 1.0))
+        {
+            Result.Error(Root->Id, std::string(), "Translucent Shadow Opacity must be a number from 0 to 1");
+        }
+        double ParticlePhase = 0.3, ParticleSelfOcclusion = 0.0;
+        if(bParticleLighting && !ParseNumber(Root->GetProperty("ParticlePhase", "0.3"), ParticlePhase))
+        {
+            Result.Error(Root->Id, std::string(), "Particle Phase must be a number");
+        }
+        if(bParticleLighting && (!ParseNumber(Root->GetProperty("ParticleSelfOcclusion", "0"), ParticleSelfOcclusion) || ParticleSelfOcclusion < 0.0))
+        {
+            Result.Error(Root->Id, std::string(), "Particle Self Occlusion must be a number, 0 or more");
+        }
+
+        /* Refraction (LIT_TRANSLUCENCY.md, Phase 9): a Translucent surface whose pin is linked or away from 1. */
+        const PinDefinition* RefractionPin = RootDef->FindPin("Refraction", EPinDirection::Input);
+        const bool bRefraction = !bLegacy && Domain == "Translucent" && RefractionPin && IsPinSet(*Root, *RefractionPin);
 
         const PinDefinition* OffsetPin = RootDef->FindPin(OFFSET_PIN, EPinDirection::Input);
         const bool bHasOffset = OffsetPin && IsPinSet(*Root, *OffsetPin);
@@ -601,10 +684,24 @@ namespace
                 if(!Pin.IsInput() || !Index.LinkInto(Root->Id, Pin.Name)) { continue; }
                 const bool bLitOnly = Pin.Name == "BaseColor" || Pin.Name == "Metallic" || Pin.Name == "Roughness"
                                    || Pin.Name == "Specular" || Pin.Name == "Normal" || Pin.Name == "AmbientOcclusion";
+                /* A shading model's own pins (SHADING_MODELS.md): the models that read each. */
+                const std::vector<std::string>* Readers = nullptr;
+                for(const ShadingModelPin& Each : GShadingModelPins)
+                {
+                    if(Pin.Name == Each.Pin) { Readers = &Each.Models; }
+                }
                 std::string Why;
-                if(bLitOnly && Shading == "Unlit")                       { Why = "an Unlit material"; }
+                if((bLitOnly || Readers) && Shading == "Unlit")          { Why = "an Unlit material"; }
+                else if(Readers && std::find(Readers->begin(), Readers->end(), ShadingModel) == Readers->end())
+                {
+                    Why = "the " + ShadingModel + " shading model";
+                }
                 if(Pin.Name == "Opacity" && Domain != "Translucent")    { Why = "a " + Domain + " material (only Translucent blends)"; }
                 if(Pin.Name == "OpacityMask" && Domain != "Masked")     { Why = "a " + Domain + " material (only Masked clips)"; }
+                if((Pin.Name == "Refraction" || Pin.Name == "TransmissionTint") && Domain != "Translucent")
+                {
+                    Why = "a " + Domain + " material (only Translucent refracts)";
+                }
                 if(!Why.empty()) { Result.Warning(Root->Id, Pin.Name, Pin.Name + " is unused by " + Why); }
             }
         }
@@ -686,8 +783,32 @@ namespace
 
         CodeWriter Out;
         Out.Line("// Generated by NimbleEditor from the material graph \"" + G.Name + "\". Do not edit.");
-        Out.Line("// " + Domain + ", " + Shading + ". Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.");
+        Out.Line("// " + Domain + ", " + Shading + (ShadingModel != "Default" ? ", " + ShadingModel : std::string())
+                 + ". Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.");
         Out.Blank();
+        if(bTranslucencySurface)
+        {
+            Out.Line("// Translucency Lighting Surface: specular over the opacity, premultiplied (MaterialTemplate_PS.glsl).");
+            Out.Line("#define MATERIAL_TRANSLUCENCY_SURFACE 1");
+            Out.Blank();
+        }
+        if(bRefraction)
+        {
+            Out.Line("// Refraction: what is seen through it bent, read from this frame's opaque copy (Refraction.glsl).");
+            Out.Line("#define MATERIAL_REFRACTION 1");
+            Out.Blank();
+        }
+        if(bParticleLighting)
+        {
+            Out.Line("// Particle Lighting Per Particle: each instance lit at its centre (ParticleLighting.glsl).");
+            Out.Line("#define MATERIAL_PARTICLE_LIGHTING 1");
+            Out.Line("#define MATERIAL_PARTICLE_PHASE " + FormatNumber(std::clamp(ParticlePhase, -0.9, 0.9)));
+            if(ParticleSelfOcclusion > 0.0)
+            {
+                Out.Line("#define MATERIAL_PARTICLE_SELF_OCCLUSION " + FormatNumber(ParticleSelfOcclusion));
+            }
+            Out.Blank();
+        }
 
         /* Declared in both stages that include it, so both see the same block. */
         Out.Line("// Bytes 0-159 are the engine's; the parameters' offsets are in " + Name + ".material.");
@@ -732,6 +853,14 @@ namespace
             Out.Line("}");
             Out.Line("#endif");
         }
+        else if(bParticleLighting)
+        {
+            /* Its own vertex shaders, so none: the shared ones cannot light it. */
+            Out.Blank();
+            Out.Line("#if VERTEX_SHADER");
+            Out.Line("vec3 CalcMaterialOffset(in MaterialInputs Inputs) { return vec3(0.0); }");
+            Out.Line("#endif");
+        }
 
         Out.Blank();
         Out.Line("#if PIXEL_SHADER");
@@ -752,7 +881,11 @@ namespace
          *     NimbleMaterial 3
          *     Domain <Opaque|Masked|Translucent|PostProcess>
          *     Shading <Lit|Unlit>
+         *     ShadingModel <ClearCoat|Anisotropic|Cloth|Subsurface|Skin|Volume>   (a Lit one's; none for Default)
          *     TwoSided <0|1>
+         *     TranslucencyLighting Surface   (a Translucent Lit one's, when not Legacy)
+         *     ParticleLighting 1             (a Translucent Unlit one's, lit per particle; HasOffset then 1)
+         *     TranslucentShadow <opacity>    (a Translucent one's that casts into the opacity shadow maps)
          *     ClipValue <x>
          *     MaxOffset <x>
          *     HasOffset <0|1>
@@ -772,10 +905,30 @@ namespace
                                "NimbleMaterial 3\n";
         Material += "Domain " + Domain + "\n";
         Material += "Shading " + Shading + "\n";
+        if(ShadingModel != "Default")
+        {
+            Material += "ShadingModel " + ShadingModel + "\n";
+        }
         Material += std::string("TwoSided ") + (bTwoSided ? "1" : "0") + "\n";
+        if(bTranslucencySurface)
+        {
+            Material += "TranslucencyLighting Surface\n";
+        }
+        if(bRefraction)
+        {
+            Material += "Refraction 1\n";
+        }
         Material += "ClipValue " + FormatNumber(ClipValue) + "\n";
         Material += "MaxOffset " + FormatNumber(MaxOffset) + "\n";
-        Material += std::string("HasOffset ") + (bHasOffset ? "1" : "0") + "\n";
+        Material += std::string("HasOffset ") + (bHasOffset || bParticleLighting ? "1" : "0") + "\n";   // its own vertex shaders
+        if(bParticleLighting)
+        {
+            Material += "ParticleLighting 1\n";
+        }
+        if(bCastTranslucent && TranslucentShadowOpacity > 0.0)
+        {
+            Material += "TranslucentShadow " + FormatNumber(std::clamp(TranslucentShadowOpacity, 0.0, 1.0)) + "\n";
+        }
         Material += "BlockSize " + std::to_string(BlockBytes) + "\n";
         for(const auto& Each : Parameters)
         {
@@ -1787,6 +1940,35 @@ namespace
                 Staged(In("OpacityMask", "float", "1"), STAGE_PIXEL, "Masked: the pixel is discarded below Clip Value"),
                 Staged(In("Normal", "vec3", "0 0 -1"), STAGE_PIXEL, "Lit: the world-space normal; unlinked, the vertex normal"),
                 Staged(In("AmbientOcclusion", "float", "1"), STAGE_PIXEL, "Lit: how much ambient light reaches the surface"),
+                Staged(In("ClearCoat", "float", "1"), STAGE_PIXEL, "Clear Coat: how much of the clear layer there is, 0 to 1"),
+                Staged(In("ClearCoatRoughness", "float", "0.05"), STAGE_PIXEL, "Clear Coat: the clear layer's roughness"),
+                Staged(In("ClearCoatNormal", "vec3", "0 0 -1"), STAGE_PIXEL,
+                       "Clear Coat: the clear layer's world-space normal; unlinked, the vertex normal (smooth over a bumpy base)"),
+                Staged(In("Anisotropy", "float", "0"), STAGE_PIXEL,
+                       "Anisotropic: -1 to 1; above 0 highlights stretch along the Tangent, below 0 across it"),
+                Staged(In("Tangent", "vec3", "0 0 0"), STAGE_PIXEL,
+                       "Anisotropic: the world-space direction of the grain; unlinked, along the mesh's tangent (its UV's U)"),
+                Staged(In("SheenColor", "vec3", "-1 -1 -1"), STAGE_PIXEL,
+                       "Cloth: the sheen's colour at grazing angles; unlinked, the square root of Base Color"),
+                Staged(In("SubsurfaceColor", "vec3", "1 1 1"), STAGE_PIXEL,
+                       "Cloth: the tint light wraps round with. Subsurface and Skin: the colour of light that has passed through"),
+                Staged(In("Thickness", "float", "0.5"), STAGE_PIXEL,
+                       "Subsurface and Skin: 0 thin (light shines through), 1 thick (none does)"),
+                Staged(In("PhaseAnisotropy", "float", "0"), STAGE_PIXEL,
+                       "Volume: which way the medium scatters light -- below 0 back toward the light, 0 every way alike, "
+                       "above 0 on along its path (smoke about 0.3: bright looking toward the sun)"),
+                Staged(In("SelfOcclusion", "float", "0"), STAGE_PIXEL,
+                       "Volume: how much the medium between it and the sun (casting particles and glass) darkens its sky "
+                       "light -- a plume shading its own ambient; 0 none, 1 by its optical depth"),
+                Staged(In("NormalInfluence", "float", "0"), STAGE_PIXEL,
+                       "Volume: 0 lit from every side alike, 1 shaded by its Normal like a surface (a flipbook's normal map, "
+                       "Particle Sphere Normal)"),
+                Staged(In("Refraction", "float", "1"), STAGE_PIXEL,
+                       "Translucent: the index of refraction what is seen through it bends by -- 1 none, 1.33 water, 1.5 a "
+                       "glass block; a thin pane 1.02 to 1.05 (it is one surface here, not two)"),
+                Staged(In("TransmissionTint", "vec3", "1 1 1"), STAGE_PIXEL,
+                       "Translucent, with Refraction: the colour what is seen through it takes (1 1 1 clear; deep water, "
+                       "thick tinted glass)"),
                 Staged(In(OFFSET_PIN, "vec3", "0 0 0"), STAGE_VERTEX,
                        "World-space offset added to each vertex. Vertex stage: pixel-only nodes cannot feed it"),
             };
@@ -1794,7 +1976,28 @@ namespace
                 { "Domain", EPropertyKind::Choice, "Opaque", GDomainChoices,
                   "Opaque, Masked (clips at Clip Value), Translucent (blends, drawn after) or PostProcess (a full-screen pass)" },
                 { "Shading", EPropertyKind::Choice, "Lit", GShadingChoices, "Lit: physically based, by the scene's light. Unlit: Emissive only" },
+                { "ShadingModel", EPropertyKind::Choice, "Default", GShadingModelChoices,
+                  "Lit: the surface's BRDF. Default (plastic, metal, stone), Clear Coat (car paint, varnish), Anisotropic "
+                  "(brushed metal), Cloth (velvet, cotton), Subsurface (leaves, wax, marble), Skin, or Volume (lit smoke, "
+                  "dust, steam: Translucent only)" },
                 { "TwoSided", EPropertyKind::Bool, "false", {}, "Light back faces with a flipped normal" },
+                { "CastTranslucentShadow", EPropertyKind::Bool, "false", {},
+                  "Translucent: its mesh casts a see-through shadow -- the light through it times 1 - Translucent Shadow Opacity "
+                  "(its Render component must Cast Shadows)" },
+                { "TranslucentShadowOpacity", EPropertyKind::String, "0.3", {},
+                  "Cast Translucent Shadow: how much light it stops, 0 to 1 (clear glass 0.1, tinted 0.4)" },
+                { "ParticleLighting", EPropertyKind::Choice, "Off", GParticleLightingChoices,
+                  "Translucent Unlit, drawn by particles: Per Particle lights each particle once at its centre -- sun, shadows, "
+                  "lights, probes -- into its Vertex Color, for an unlit plume's cost (feed Vertex Color to Emissive)" },
+                { "ParticleSelfOcclusion", EPropertyKind::String, "0", {},
+                  "Particle Lighting Per Particle: how much the medium between a particle and the sun darkens its sky light "
+                  "(0 none)" },
+                { "ParticlePhase", EPropertyKind::String, "0.3", {},
+                  "Particle Lighting Per Particle: which way it scatters light, -0.9 back to 0.9 forward (as Volume's Phase Anisotropy)" },
+                { "TranslucencyLighting", EPropertyKind::Choice, "Surface", GTranslucencyLightingChoices,
+                  "Translucent Lit: Surface keeps the reflections and highlights whatever the Opacity (clear glass still "
+                  "shines); Legacy fades everything by it, as materials made before it did",
+                  "Legacy" },
                 { "ClipValue", EPropertyKind::String, "0.5", {}, "Masked: Opacity Mask below this discards the pixel" },
                 { "MaxOffset", EPropertyKind::String, "0", {},
                   "The farthest World Position Offset moves a vertex, in world units: pads the culling bounds" },
@@ -1851,6 +2054,10 @@ namespace
                        "mesh: times each particle's colour, which fades over its life.";
         Pure("Input.WorldPosition", "World Position", "Inputs", { Out("Position", "vec3", "Inputs.WorldPosition") }, {}, "absolute")
             .Tooltip = "Where this point is in the world. In the vertex stage, before World Position Offset moves it.";
+        PixelOnly(Pure("Input.ParticleSphereNormal", "Particle Sphere Normal", "Inputs",
+                       { Out("Normal", "vec3", "Material_SphereNormal(Inputs)") }, {}, "sprite puff round smoke billboard"),
+                  "A world normal bulging out of a quad like a sphere, by its UV: feed Normal so a flat sprite shades round "
+                  "(with the Volume model, raise Normal Influence).");
         Pure("Input.CameraPosition", "Camera Position", "Inputs", { Out("Position", "vec3", "Scene_CameraPosition.xyz") }, {},
              "eye view camera fresnel")
             .Tooltip = "Where the view's eye is in the world: with World Position, the direction to the camera (Fresnel).";

@@ -1,9 +1,11 @@
 // IBLCommon.glsl -- image-based lighting (RenderCore/RENDERPIPELINE.md,
 // "Image-based lighting"): the probe atlas, its octahedral maps, and how a
-// surface is lit from it. Needs SceneUniforms.glsl.
+// surface is lit from it. Needs SceneUniforms.glsl; the probes themselves are
+// the light block's (LightList.glsl).
 //
-// THE ATLAS (RGBA16F, 768 x 768, linear light) is five blocks of 384 x 256,
-// two to a row: blocks 0-3 the reflection probes, block 4 the sky. A block is
+// THE ATLAS (RGBA16F, 1536 x 1280, linear light) is twenty blocks of 384 x 256,
+// four to a row: blocks 0-15 the reflection probes, block 16 the sky, 17 the
+// sheen table (GLOBAL_ILLUMINATION.md, Phase 4). A block is
 // an octahedral map (+Z the centre, -Z the corners) at six roughnesses and a
 // diffuse irradiance:
 //
@@ -19,15 +21,17 @@
 // (x + 0.5, y + 0.5) / size when sampled, on every backend, so blocks are
 // placed by those and never by a viewport offset.
 
-#define IBL_PROBES_MAX  4
-#define IBL_SKY_BLOCK   4
-#define IBL_ATLAS_SIZE  768.0
+#include <LightList.glsl>
+
+#define IBL_PROBES_MAX  16
+#define IBL_SKY_BLOCK   16
+#define IBL_ATLAS_SIZE  vec2(1536.0, 1280.0)
 #define IBL_LEVELS      6
 #define IBL_PI          3.14159265359
 
 vec2 IBL_BlockOrigin(int InBlock)
 {
-    return vec2(float(InBlock % 2) * 384.0, float(InBlock / 2) * 256.0);
+    return vec2(float(InBlock % 4) * 384.0, float(InBlock / 4) * 256.0);
 }
 
 // A level's square in its block: xy its corner, z its side (texels).
@@ -172,8 +176,8 @@ float IBL_SpecularOcclusion(float InNdotV, float InOcclusion, float InRoughness)
 // How much probe InIndex lights InPosition: 1 inside 80% of its reach, none at it.
 float IBL_ProbeWeight(int InIndex, vec3 InPosition)
 {
-    vec4 CentreRadius = Scene_Probes[InIndex * 3];
-    vec4 Extent       = Scene_Probes[InIndex * 3 + 1];
+    vec4 CentreRadius = LightList_Probes[InIndex * 3];
+    vec4 Extent       = LightList_Probes[InIndex * 3 + 1];
     vec3 Offset       = InPosition - CentreRadius.xyz;
     if(Extent.x > 0.0 && Extent.y > 0.0 && Extent.z > 0.0)
     {
@@ -186,8 +190,8 @@ float IBL_ProbeWeight(int InIndex, vec3 InPosition)
 // InDirection from InPosition as probe InIndex saw it: onto its box, if it has one.
 vec3 IBL_ProbeDirection(int InIndex, vec3 InPosition, vec3 InDirection)
 {
-    vec4 CentreRadius = Scene_Probes[InIndex * 3];
-    vec4 Extent       = Scene_Probes[InIndex * 3 + 1];
+    vec4 CentreRadius = LightList_Probes[InIndex * 3];
+    vec4 Extent       = LightList_Probes[InIndex * 3 + 1];
     if(!(Extent.x > 0.0 && Extent.y > 0.0 && Extent.z > 0.0)) { return InDirection; }
     vec3 Lo  = CentreRadius.xyz - Extent.xyz;
     vec3 Hi  = CentreRadius.xyz + Extent.xyz;
@@ -198,6 +202,65 @@ vec3 IBL_ProbeDirection(int InIndex, vec3 InPosition, vec3 InDirection)
     vec3 Far = max(T1, T2);
     float T = min(Far.x, min(Far.y, Far.z));
     return T > 0.0 ? normalize(InPosition + InDirection * T - CentreRadius.xyz) : InDirection;
+}
+
+// The probes' and the sky's light toward InPosition along InDirection at
+// InRoughness, blended as IBL_LightReflected blends them: the shading models'
+// (IBLShading.glsl) lobes each gather their own.
+vec3 IBL_GatherSpecular(sampler2D InAtlas, vec3 InPosition, vec3 InDirection, float InRoughness)
+{
+    vec3  Specular  = vec3(0.0);
+    float Remaining = 1.0;
+    int   Count = int(Scene_IBL.y);
+    for(int Index = 0; Index < IBL_PROBES_MAX; ++Index)
+    {
+        if(Index >= Count || Remaining <= 0.0) { break; }
+        float Weight = min(IBL_ProbeWeight(Index, InPosition), Remaining);
+        if(Weight <= 0.0) { continue; }
+        int   Block     = int(LightList_Probes[Index * 3 + 2].x);
+        float Intensity = LightList_Probes[Index * 3 + 1].w;
+        Specular += IBL_SampleSpecular(InAtlas, Block, IBL_ProbeDirection(Index, InPosition, InDirection), InRoughness) * Weight * Intensity;
+        Remaining -= Weight;
+    }
+    if(Remaining > 0.0 && Scene_IBL.z > 0.0)
+    {
+        Specular += IBL_SampleSpecular(InAtlas, IBL_SKY_BLOCK, InDirection, InRoughness) * Remaining * Scene_IBL.z;
+    }
+    return Specular;
+}
+
+// The irradiance toward InNormal at InPosition, blended the same way.
+vec3 IBL_GatherIrradiance(sampler2D InAtlas, vec3 InPosition, vec3 InNormal)
+{
+    vec3  Diffuse   = vec3(0.0);
+    float Remaining = 1.0;
+    int   Count = int(Scene_IBL.y);
+    for(int Index = 0; Index < IBL_PROBES_MAX; ++Index)
+    {
+        if(Index >= Count || Remaining <= 0.0) { break; }
+        float Weight = min(IBL_ProbeWeight(Index, InPosition), Remaining);
+        if(Weight <= 0.0) { continue; }
+        int   Block     = int(LightList_Probes[Index * 3 + 2].x);
+        float Intensity = LightList_Probes[Index * 3 + 1].w;
+        Diffuse += IBL_SampleIrradiance(InAtlas, Block, InNormal) * Weight * Intensity;
+        Remaining -= Weight;
+    }
+    if(Remaining > 0.0 && Scene_IBL.z > 0.0)
+    {
+        Diffuse += IBL_SampleIrradiance(InAtlas, IBL_SKY_BLOCK, InNormal) * Remaining * Scene_IBL.z;
+    }
+    return Diffuse;
+}
+
+// THE SHEEN TABLE (SHADING_MODELS.md, Cloth): the Charlie sheen's DG averaged
+// over the hemisphere, 32 x 32 in the atlas's spare sixth block -- x NdotV,
+// y perceptual roughness, in r. IBLPrefilter.fsh writes it once (block 5).
+#define IBL_SHEEN_BLOCK 17
+#define IBL_SHEEN_SIZE  32.0
+float IBL_SheenDG(sampler2D InAtlas, float InNdotV, float InRoughness)
+{
+    vec2 Texel = IBL_BlockOrigin(IBL_SHEEN_BLOCK) + 0.5 + clamp(vec2(InNdotV, InRoughness), 0.0, 1.0) * (IBL_SHEEN_SIZE - 1.0);
+    return texture(InAtlas, Texel / IBL_ATLAS_SIZE).r;
 }
 
 // The image-based light a surface receives: diffuse (InAlbedo linear, times
@@ -219,8 +282,8 @@ vec3 IBL_LightReflected(sampler2D InAtlas, vec3 InPosition, vec3 InNormal, vec3 
         if(Index >= Count || Remaining <= 0.0) { break; }
         float Weight = min(IBL_ProbeWeight(Index, InPosition), Remaining);
         if(Weight <= 0.0) { continue; }
-        int   Block     = int(Scene_Probes[Index * 3 + 2].x);
-        float Intensity = Scene_Probes[Index * 3 + 1].w;
+        int   Block     = int(LightList_Probes[Index * 3 + 2].x);
+        float Intensity = LightList_Probes[Index * 3 + 1].w;
         Specular += IBL_SampleSpecular(InAtlas, Block, IBL_ProbeDirection(Index, InPosition, R), InRoughness) * Weight * Intensity;
         Diffuse  += IBL_SampleIrradiance(InAtlas, Block, InNormal) * Weight * Intensity;
         Remaining -= Weight;

@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Public/Editor/OutlinerPanel.h"
+#include "Private/Editor/EditorIcons.h"
 
 #include <algorithm>
 #include <functional>
@@ -265,7 +266,7 @@ void OutlinerPanel::Rebuild()
             auto* Item = ParentItem ? new QTreeWidgetItem(ParentItem) : new QTreeWidgetItem(Tree);
             Item->setFlags(Item->flags() | Qt::ItemIsEditable);
             Item->setText(COL_Name, Folder.section(QLatin1Char('/'), -1));
-            Item->setIcon(COL_Name, style()->standardIcon(QStyle::SP_DirIcon));
+            Item->setIcon(COL_Name, EditorIcons::Get(EditorIcons::EIcon::Folder));
             Item->setToolTip(COL_Name, Folder);
             Item->setData(COL_Name, FolderRole, Folder);
             FolderItems.insert(Folder, Item);
@@ -322,7 +323,7 @@ void OutlinerPanel::Rebuild()
         else if(LooseRoots.contains(InID.Pack()))
         {
             /* MIGRATION: a level is made of prefab instances; this is not one. */
-            Item->setIcon(COL_Name, style()->standardIcon(QStyle::SP_MessageBoxWarning));
+            Item->setIcon(COL_Name, EditorIcons::Get(EditorIcons::EIcon::Warning));
             Item->setToolTip(COL_Name, QStringLiteral("%1 -- not a prefab instance: World > Convert Level to Prefabs, "
                                                       "or right-click > Convert to Prefab").arg(Item->toolTip(COL_Name)));
         }

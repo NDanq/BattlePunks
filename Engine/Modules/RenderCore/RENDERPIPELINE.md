@@ -16,20 +16,19 @@ A frame runs these stages, in this order (`ERenderStage`, RenderPipeline.h):
 | **Lighting** | one full-screen pass | scene colour | reads the G-buffer and depth; lit pixels only |
 | &nbsp;&nbsp;Shadows | shadow casters: Opaque and Masked mesh sections whose component casts | the two shadow atlases' depth | a sub-stage of Lighting, run first; depth test and write, no colour. See [Shadows](#shadows) |
 | **Unlit** | Opaque and Masked, **Unlit**; plain quads; tinted meshes | scene colour, with the Base Pass depth | depth test and write; plain quads keep their alpha blend |
-| **Translucent Lit** | Translucent, **Lit** | scene colour | depth test, no write, alpha blend; back to front; forward-shaded |
-| **Translucent Unlit** | Translucent, **Unlit** | scene colour | as above |
+| **Translucent** | Translucent, **Lit** and **Unlit** | scene colour | depth test, no write, alpha blend; back to front, Lit and Unlit together; Lit forward-shaded |
 | **PostProcess** | the post process stack: its PostProcess materials and effects (Post Process volumes) | two full-size targets in turn, and smaller ones | full screen; a fixed order. See [Post process](#post-process) |
 
 A module's own passes run between these at named hooks: see [Custom render passes](#custom-render-passes).
 
-Translucent Lit runs after Lighting, not before it: a deferred resolve writes
+Translucent runs after Lighting, not before it: a deferred resolve writes
 every lit pixel, so anything drawn earlier would be overwritten, and a
-translucent surface cannot be in the G-buffer (one surface per pixel). It is
-shaded forward, by the same `ShadeSurface` the resolve uses.
+translucent surface cannot be in the G-buffer (one surface per pixel). A Lit
+one is shaded forward, by the same `ShadeSurface` the resolve uses.
 
-The two translucent stages are sorted separately, each back to front. A
-Translucent Unlit surface behind a Translucent Lit one therefore draws over it;
-use one shading model for surfaces that overlap, or move them apart.
+Lit and Unlit translucent draws are one stage, sorted back to front together
+(LIT_TRANSLUCENCY.md, Phase 1): lit smoke and unlit sparks in one system
+overlap in the right order. Each draw keeps its own shader.
 
 ## The material is the key
 
@@ -39,7 +38,7 @@ A draw's stage comes from its material's Domain and Shading only
 | Domain | Lit | Unlit |
 |---|---|---|
 | Opaque, Masked | Base Pass | Unlit |
-| Translucent | Translucent Lit | Translucent Unlit |
+| Translucent | Translucent | Translucent |
 | PostProcess | PostProcess | PostProcess |
 
 Draws with no usable material -- a plain tinted quad, or a mesh drawn with
@@ -104,27 +103,35 @@ The editor's "Apply to Selected Entity" (material graph window) sets slot 0.
 
 ### The G-buffer
 
-Four RGBA8 colour targets beside the scene colour, all the viewport's size, and
-the scene colour target's depth:
+Five colour targets beside the scene colour, all the viewport's size, and
+the scene colour target's depth. Each pixel is lit by its material's shading
+model ([SHADING_MODELS.md](SHADING_MODELS.md)):
 
-| Target | R | G | B | A |
-|---|---|---|---|---|
-| GBuffer0 | Base Color | | | Ambient Occlusion |
-| GBuffer1 | Normal (world, ×0.5+0.5) | | | 1 = lit pixel; 0.75 = lit, its diffuse ambient baked |
-| GBuffer2 | Metallic | Roughness | Specular | -- |
-| GBuffer3 | Emissive ÷ scale | | | log2(scale) / 12 |
+| Target | Format | R | G | B | A |
+|---|---|---|---|---|---|
+| GBuffer0 | RGBA8 | Base Color | | | Ambient Occlusion (the screen's folded in: [Ambient occlusion](#ambient-occlusion)) |
+| GBuffer1 | RGB10A2 | Normal (world, octahedral) | | -- | 1 = lit pixel; 2/3 = lit, its diffuse ambient baked |
+| GBuffer2 | RGBA8 | Metallic | Roughness | Specular | shading model (`EncodeShadingModel`) |
+| GBuffer3 | RGBA8 | Emissive ÷ scale | | | log2(scale) / 12 |
+| GBuffer4 | RGBA8 | the shading model's custom data (`ShadingModels.glsl`) | | | |
+
+GBuffer1 is RGB10A2 where the backend has it (`GDI_RTF_RGB10A2`: Vulkan,
+D3D12, OpenGL); elsewhere RGBA8, the same encoding at eight bits. Its normal
+is octahedral (`EncodeGBufferNormal` / `DecodeGBufferNormal`, `Common.glsl`;
+Cigolle et al. 2014), ten bits an axis, which no longer bands on glossy
+surfaces as eight-bit xyz did. Its alpha's two bits hold 0, 2/3 or 1, so
+every reader's `a < 0.5` (unlit) and `a < 0.875` (baked) still hold.
 
 Colours are stored display space, as authored, exactly what `ShadeSurface`
 already takes. Emissive may be far past 1, so GBuffer3 stores it divided by its
 brightest channel, when that is over 1, with that scale in alpha as log2 over
 12 octaves, up to 4096 (`EncodeGBufferEmissive` / `DecodeGBufferEmissive` in
-`Common.glsl`). The Lighting stage reads it back whole, and Bloom uses it too. Eight-bit normals band a little on smooth, glossy surfaces;
-RGBA16F targets need a render-target format in GDI (MATERIALS.md, "Later").
+`Common.glsl`). The Lighting stage reads it back whole, and Bloom uses it too.
 
 ### Velocity
 
 Beside the G-buffer, where the backend has RGBA16F targets, the Base Pass
-writes a fifth target, **Velocity** (`SceneTargets::Velocity`): each pixel's
+writes a sixth target, **Velocity** (`SceneTargets::Velocity`): each pixel's
 **world motion** since the frame before -- xyz in world units, a 1 where
 written. What nothing writes stays 0: not moving. Motion Blur takes the
 pixel's world position from depth, less that motion, to last frame's camera
@@ -163,7 +170,7 @@ four G-buffer outputs instead of a lit colour (`MATERIAL_GBUFFER`). The
 permutation key does not change: those two domain/shading pairs only ever draw
 in the Base Pass. Masked still discards below Clip Value; Two Sided still flips
 a back face's normal, before it is stored. A draw with baked lighting adds it
-to the emissive it stores and marks the pixel 0.75 (see [Baked
+to the emissive it stores and marks the pixel 2/3 (see [Baked
 lighting](#baked-lighting)).
 
 ### Lighting
@@ -172,12 +179,12 @@ lighting](#baked-lighting)).
 vertex shader (`MaterialDefault`, Fullscreen input) and the material binding
 layout:
 
-- textures 4-8: GBuffer0-3 and the scene depth, read with `texelFetch`;
-- textures 9-10: the directional and local shadow atlases (see [Shadows](#shadows));
-- texture 11: this frame's screen-space ambient occlusion, half size (see
-  [Ambient occlusion](#ambient-occlusion));
-- binding 2, `Lighting_Block`: x is 1 when texture 11 holds this frame's
-  occlusion, 0 otherwise;
+- textures 4-9: GBuffer0-4 and the scene depth, read with `texelFetch`;
+- textures 10-11: the directional and local shadow atlases (see [Shadows](#shadows));
+- this frame's screen-space ambient occlusion is in GBuffer0's alpha already (see
+  [Ambient occlusion](#ambient-occlusion)): every slot is taken;
+- binding 2, `Lighting_Block`: x is 1 when a second target, Subsurface, is
+  bound for Skin pixels' diffuse ([SHADING_MODELS.md](SHADING_MODELS.md));
 - binding 3, the scene block, which gains `Scene_InvViewProjection`, the
   point and spot lights and the shadow matrices.
 
@@ -206,16 +213,22 @@ DefaultLit, Glow and Wave pixels are unchanged.
 - **the sun**: the first active Directional Light, shining along its entity's
   forward (+Z turned by the Transform's Rotation, `LightForward` in
   `Components/LightShadow.h`). With none, the old fixed light.
-- **point and spot lights**: up to `RENDER_LOCAL_LIGHT_MAX` (16) a frame,
+- **point and spot lights**: up to `RENDER_LOCAL_LIGHT_MAX` (256) a frame,
   gathered by `WorldBridge::BuildLighting` -- shadow casters first, then nearest
-  the camera; more are warned once and dropped. Falloff is inverse-square-like,
+  the camera; more are warned once and dropped. Each pixel lights only those its
+  screen tile and depth slice reach: the light list in the light block,
+  clustered on the CPU per view ([GLOBAL_ILLUMINATION.md](GLOBAL_ILLUMINATION.md),
+  Phase 2). The first 16 are also the scene block's (`Scene_Locals`), which
+  volumetric fog lights with and which holds the shadowed ones' shadows. Falloff is inverse-square-like,
   windowed to reach zero at Radius (point) or Range (spot); a spot fades from
   its inner to its outer cone half-angle.
 - **the sky**: the first active Sky Light's hemisphere ambient -- or, in an
   HDR scene, its image-based lighting (see [Image-based lighting](#image-based-lighting)).
 
 Every light shares one BRDF (`EvaluateLight`). Translucent Lit surfaces get the
-same lights forward, but unshadowed: their texture slots are their material's.
+same lights forward, shadowed by the same maps at the engine's texture slots 11
+and 12, one tap by default (`[Shadows] ForwardFilter`; LIT_TRANSLUCENCY.md,
+Phase 2), without inset or contact shadows.
 
 ### Shadows
 
@@ -254,12 +267,27 @@ The Lighting pass samples the atlases' depth with `texelFetch` and compares by
 hand (`Shadows.glsl`), Filter's 1, 9 or 25 taps kept inside the tile. GDI has
 no comparison samplers, depth bias or cull mode yet, so the bias is the
 receiver's: Depth Bias in the shadow map's depth, Normal Bias in world units
-along the surface normal (more where the light grazes it).
+along the surface normal (more where the light grazes it). The sun's Depth Bias
+counts texels of its cascade (Depth Bias x 256: 0.0015 is under half a texel),
+not a share of the cascade's depth range, which runs thousands of units of
+caster reach toward the sun: in its terms the bias grew to tens of world units
+and the 5 x 5 filter let light through thin roofs and walls where they met.
+Even so, a roof only as wide as the walls under it can leak a texel-stepped
+fringe where the filter's far taps step off its edge: a roof that overhangs
+its walls by a few texels (at the sun's distance from the camera) does not. Likewise
+a wall the sun sees nearly edge-on needs to be a few texels thick where it is
+seen from: the filter's far taps read such a face many texels' slope deeper,
+and a wall under two texels thick lets a line of light down the corner behind
+it. (The far cascade's texels are about 11 units at a 6000-unit Shadow
+Distance and 2048 atlas.)
 
 Limits: Masked casters cast their whole shape (their clip is not run in the
-Shadows sub-stage); a quad casts nothing; Translucent Lit surfaces are
-unshadowed; Metal, which cannot sample a depth target, draws no shadows (warned
-once). A material preview never draws shadows.
+Shadows sub-stage); a quad casts nothing; Translucent Lit surfaces receive
+shadows but cast none, and get no inset shadows; particle emitters with Cast
+Shadows cast into opacity shadow maps that everything receives
+(LIT_TRANSLUCENCY.md, Phase 7); Metal, which cannot sample a
+depth target, draws no shadows (warned once). A material preview never draws
+shadows.
 
 ### Contact shadows
 
@@ -484,9 +512,11 @@ passes run mid-frame, between the Base Pass and Shadows, so that only the
 - **`PPAmbientBlur`** (when Blur is on) averages 4 x 4 half-size texels into
   `Half[1]`, weighting each tap by how close its distance is to the centre's,
   so occlusion does not bleed across edges.
-- **The Lighting stage** samples the result bilinearly and multiplies it into
-  `Surface.AmbientOcclusion`, the material's own AO. `ShadeSurface` applies
-  that to the indirect term only.
+- **`PPAmbientApply`** folds the result into GBuffer0's alpha, the material's
+  own AO: a multiplying blend (zero, source colour) over GBuffer0, the result
+  sampled bilinearly. The Lighting stage and the IBL pass read one occlusion
+  and spend no texture slot on it; `ShadeSurfaceSplit` applies it to the
+  indirect term only.
 - **Scope:** Opaque and Masked Lit surfaces, the G-buffer's. Forward
   (Translucent, Unlit) surfaces get none. With no G-buffer, or on a backend
   that cannot sample depth, it is skipped. `Half[0..1]` are free again by the
@@ -520,7 +550,7 @@ Where the backend can make a half-float render target
 
 Null has none. Only Vulkan is built and tested on Linux. The D3D12, Metal and
 OpenGL code is written to match and awaits its platforms. So does the
-shaders' cross-compilation: HLSL through `fxc` at shader model 5.0, and MSL.
+shaders' cross-compilation: HLSL through `dxc` at shader model 6.0 (DXIL), and MSL 2.3.
 
 - **Writing it:** `Scene_Output.x` tells the shaders. Lit output skips its
   `ToDisplay` (`ToSceneColor` in `Lighting.glsl`). An Unlit material's emissive,
@@ -562,7 +592,10 @@ eye adaptation, all on the GPU -- nothing is read back:
   that, at Speed Up toward a brighter view and Speed Down toward a darker
   (per second, `1 - exp(-dt * speed)`), into the other of two 1 x 1s the
   scene's targets ping-pong. A first frame -- or the node newly on --
-  starts at what it meters.
+  starts at what it meters. The pair is R32F where the backend has
+  `GDI_RTF_R32F` (else RGBA16F): a half float's step near log2 8 is 1/128
+  of a stop, more than a frame's easing moves it, so half floats stall
+  short of the target.
 - **Exposure:** the tone map multiplies the scene by `Key / 2^adapted`,
   clamped to Min EV - Max EV stops, then by Tone Mapping's own Exposure,
   which compensates on top. Previews and captures run no stack, so none.
@@ -621,9 +654,30 @@ reflect what is on screen, over the probes' specular.
   where it was), with roughness, and toward the ray's end, times
   Intensity. `IBL_LightReflected` blends the probes' specular toward it by
   that, under the same split-sum BRDF and specular occlusion.
-- **Limits:** only G-buffer surfaces: Translucent Lit (glass, water) keep
-  the probes; what is off screen or hidden reflects the probes; a rough
-  surface's reflection is sharp, so it is faded out by Max Roughness.
+- **Rough surfaces** (`[Rendering] StochasticReflections`, on;
+  GLOBAL_ILLUMINATION.md, Phase 4): the ray is reflected off a microfacet
+  normal drawn from GGX's visible normals, new each frame, and
+  `PPReflectionResolve` accumulates the hits over about ten frames
+  (reprojected, clipped to the 3 x 3 neighbourhood), so a rough surface
+  reflects its lobe, blurred. Trust fades only near Max Roughness (default
+  0.8). Off: one mirror ray, faded out from 0.6 of Max Roughness.
+- **Forward Lit surfaces** (glass, water) march their own mirror ray in
+  their pixel shader against a copy of the opaque depth
+  (`ForwardReflections.glsl`; LIT_TRANSLUCENCY.md, Phase 4), with the
+  node's settings; `[Rendering] ForwardReflections` turns that off alone.
+- **Limits:** what is off screen or hidden reflects the probes; a forward
+  surface's reflection is one ray, not accumulated, so it bands a little
+  where the G-buffer's would be smoothed.
+
+### Screen-space GI
+
+A stack's **Screen-Space GI** node (an HDR scene with image-based lighting;
+GLOBAL_ILLUMINATION.md, Phase 5): `PPScreenGI` marches a few cosine-weighted
+rays a pixel at half size through the depth, reading each hit's colour from
+the last frame (so light bounces again each frame); `PPReflectionResolve`
+accumulates it; the IBL pass upsamples it depth-aware and lights Opaque and
+Masked Lit surfaces with it, the probes filling in for the rays that missed.
+Baked surfaces keep their lightmap.
 
 ### Volumetric fog
 
@@ -635,7 +689,8 @@ that the lights shine through.
   for the sky), Steps jittered samples. Density is Density at Base Height
   and below, falling by `exp(-Height Falloff * height above)`. Each sample
   is lit by the sun -- its cascaded shadow map, one tap, when Shadows is on
-  (shafts) -- through a Henyey-Greenstein phase of Anisotropy (forward
+  (shafts), and through casting particles and glass (their opacity shadow
+  maps; LIT_TRANSLUCENCY.md) -- through a Henyey-Greenstein phase of Anisotropy (forward
   scattering: a glow round a low sun); by every point and spot light in
   reach (Lighting.glsl's falloff and cones, unshadowed); and by the sky
   ambient. Scattering integrates per step (energy conserving), times
@@ -657,11 +712,12 @@ more GPU a frame (4.0 to 6.4), fog the most (about 1.2).
 
 In an HDR scene, Lit surfaces take their ambient light and reflections from
 images instead of the Sky Light's hemisphere. The images are the sky and up to
-four **Reflection Probes**.
+sixteen **Reflection Probes**.
 
-**The atlas** (`IBLCommon.glsl`) is one RGBA16F 768 x 768 target per scene
-(`IBLResources`, owned by `RenderScene`). It holds five blocks of 384 x 256:
-four probes and the sky. Each block is an octahedral map:
+**The atlas** (`IBLCommon.glsl`) is one RGBA16F 1536 x 1280 target per scene
+(`IBLResources`, owned by `RenderScene`). It holds twenty blocks of 384 x 256,
+four to a row: sixteen probes, the sky, Cloth's sheen table. Each block is an
+octahedral map:
 - six roughness levels, from 256 texels (roughness 0, a copy) down to 8
   (roughness 1), each a GGX-weighted average, importance sampled;
 - a 32-texel diffuse irradiance, cosine weighted.
@@ -680,15 +736,26 @@ With Draw Background on, an HDRI is also drawn behind the scene along each view
 ray (`Sky.fsh`).
 
 **Reflection Probes:**
-- **Selection:** `WorldBridge::BuildReflectionProbes` sends the four enabled
+- **Selection:** `WorldBridge::BuildReflectionProbes` sends the sixteen enabled
   probes nearest the camera whose influence the view reaches, each marked due
   by its Frequency (Once by default, Interval, Every Frame, Manual).
 - **Capture:** `RenderScene` keeps which block holds which probe. It captures a
-  probe that is due, or new to a block, at most two a frame. A capture is six
-  90-degree HDR views, shadows included unless Capture Shadows is off, lit by
-  the sky alone so no probe sees another. The sky is drawn behind. The linear
-  scene colour of each view is copied into the strip, then prefiltered into the
-  probe's block.
+  probe that is due, or new to a block, one at a time, taking turns round the
+  list. A capture is six 90-degree HDR views, shadows included unless Capture
+  Shadows is off, lit by the sky alone so no probe sees another. The sky is
+  drawn behind. `[Rendering] ProbeFacesPerFrame` of them render a frame (1 by
+  default), each one's linear scene colour copied into the strip; after the
+  sixth the strip is prefiltered into the probe's block, its old capture
+  lighting until then.
+- **Their data** (centre, radius, box, intensity, block) is in the light block
+  (`LightList_Probes`), the scene block having room for only four.
+
+**GI Volumes** (GLOBAL_ILLUMINATION.md, Phase 6; `DDGI.glsl`): inside one, the
+IBL pass takes non-baked pixels' diffuse ambient from a grid of irradiance
+probes in place of the reflection probes'. `RenderScene` renders a few probes
+a frame (`[Rendering] GIProbesPerFrame`) in six 16 x 16 views, lit by the
+volume too, into an octahedral irradiance tile and a distance-moments tile
+each; the lookup weights the eight probes round a point by visibility.
 
 **Lighting** (`IBL_Light`):
 - **`IBLLighting.fsh` pass:** added (one, one) over the Lighting stage, from
@@ -765,8 +832,13 @@ progress dialog that can cancel:
    sqrt(area) x density texels, shelf-packed into atlases with a texel of
    border; its UV1 maps into it.
 4. **Lighting.** A texel whose short rays along its surface find the back of
-   one is inside or under something (the floor under a wall): it is left out
-   and filled from its neighbours, so walls leak no dark line. Then per texel:
+   one has its centre inside or under something (the floor under a wall
+   standing through it). Its sample moves to just past the nearest such back
+   face -- where its surface comes out from under -- if that is still within
+   the texel and in the open, so a texel a thin wall straddles takes the light
+   of the side it mostly lies on rather than its neighbours' from both sides.
+   Wholly buried, it is left out and filled from its neighbours, so walls leak
+   no dark line. Then per texel:
    every Static light, through shadow rays jittered over
    its size for soft shadows -- a Directional Light's **Source Angle** (degrees,
    0.75 by default), a point or spot light's **Source Radius** (units, 4), each
@@ -777,8 +849,12 @@ progress dialog that can cancel:
    also keeps the light's dominant direction (luminance weighted) and how
    one-sided it is, for directional lightmaps.
 5. **Filtering.** The bounced light (and its direction) is smoothed across texels of the same
-   mesh with similar positions and normals; lit texels grow into the empty
-   ones round them.
+   mesh with similar positions and normals that see each other -- nothing
+   between their points (`Tracer::Sees`), so no light is smoothed through a
+   wall standing on or through the surface; lit texels grow into the empty
+   ones round them. (A wall thinner than half a texel can still show its two
+   sides' light blended within half a texel of it, by the lightmap's own
+   filtering: raise the density there.)
 6. **Probes.** A grid over the static geometry at Probe Spacing, each an
    ambient cube (+X -X +Y -Y +Z -Z) from rays over the whole sphere plus each
    Static light's direct part. A probe that sees mostly backfaces is inside something
@@ -820,7 +896,7 @@ and `[Rendering] BakedLighting` is on:
   half-Lambert of the normal against the stored direction, over the same at
   the texel's own normal, so a flat surface shows the bake as it is.
 - **The Base Pass** adds baked light x diffuse albedo x AO to the emissive it
-  stores, and writes GBuffer1.a = 0.75. The Lighting stage and the IBL pass
+  stores, and writes GBuffer1.a = 2/3. The Lighting stage and the IBL pass
   then leave out their diffuse ambient there (specular reflections stay) --
   unless the bake did not have the sky (a dynamic Sky Light), whose live
   ambient then still applies (`Scene_Baked.y`).
@@ -1352,7 +1428,7 @@ Scene
   Lighting
     DeferredLighting
     IBLLighting
-  Unlit, TranslucentLit, TranslucentUnlit
+  Unlit, Translucent
   PostProcess
     Tonemap
     Materials (Before Effects)
@@ -1375,7 +1451,7 @@ BasePass
     Cylinder [Cylinder] | FlareBody
   Dynamic
     Particles Debris/Chunks (up to 128) | DefaultLit  a particle emitter: its system and emitter, its capacity
-TranslucentUnlit
+Translucent
   Particles Sparks/Sparks (up to 512) | ParticleStreak
   Quad | Glow                                  a material quad
 PostProcess
@@ -1769,7 +1845,7 @@ the backend has them -- Vulkan, D3D12 and Null so far:
   (`GDI_BU_Storage`), per-instance vertex data (`GDI_BU_Instance`), or both;
   filled once at creation (or zeroed), then only shaders write it.
   `GDIReadBuffer` reads one back, waiting for the GPU, for tests and tools.
-- **Compute shaders.** A `.csh` is cooked like the other stages (`cs_5_0` for
+- **Compute shaders.** A `.csh` is cooked like the other stages (`cs_6_0` for
   D3D12) and loaded as `ST_Compute`. `GDIDispatchCompute(Shader, Params,
   Bytes, Buffers, Count, X, Y, Z)`: the parameters at binding 0 (up to 1 KB),
   the storage buffers at 1.. (up to 4), declared with `ComputeCommon.glsl`'s
@@ -1851,8 +1927,7 @@ finished on the GPU, never waiting. A query never ended answers "visible".
 Post process: bloom from the HDR scene colour (it still thresholds display
 colours after the tone map); auto exposure; a velocity target for per-object
 motion blur; temporal AA; colour grading. Running HDR and image-based lighting
-on D3D12, Metal and OpenGL (written, not yet built there). Reflection probe blending
-across more than four; cube-face capture time-slicing; SH irradiance.
+on D3D12, Metal and OpenGL (written, not yet built there). SH irradiance.
 
 Hardware shadow comparison, depth bias and front-face culling in GDI (then
 drop most of the receiver bias); Masked casters clipped in the Shadows

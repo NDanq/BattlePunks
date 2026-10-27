@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Private/Editor/DocumentationWindow.h"
+#include "Private/Editor/EditorIcons.h"
 
 #include <algorithm>
 #include <cmath>
@@ -178,24 +179,24 @@ void DocumentationWindow::BuildUi()
     QToolBar* Bar = addToolBar(QStringLiteral("Navigation"));
     Bar->setMovable(false);
 
-    BackAction = Bar->addAction(style()->standardIcon(QStyle::SP_ArrowBack), QStringLiteral("Back"));
+    BackAction = Bar->addAction(EditorIcons::Get(EditorIcons::EIcon::Back), QStringLiteral("Back"));
     BackAction->setShortcut(QKeySequence::Back);
     BackAction->setToolTip(QStringLiteral("Back (Alt+Left)"));
     BackAction->setEnabled(false);
 
-    ForwardAction = Bar->addAction(style()->standardIcon(QStyle::SP_ArrowForward), QStringLiteral("Forward"));
+    ForwardAction = Bar->addAction(EditorIcons::Get(EditorIcons::EIcon::Forward), QStringLiteral("Forward"));
     ForwardAction->setShortcut(QKeySequence::Forward);
     ForwardAction->setToolTip(QStringLiteral("Forward (Alt+Right)"));
     ForwardAction->setEnabled(false);
 
     Bar->addSeparator();
 
-    QAction* Refresh = Bar->addAction(style()->standardIcon(QStyle::SP_BrowserReload), QStringLiteral("Refresh"));
+    QAction* Refresh = Bar->addAction(EditorIcons::Get(EditorIcons::EIcon::Refresh), QStringLiteral("Refresh"));
     Refresh->setShortcut(QKeySequence::Refresh);
     Refresh->setToolTip(QStringLiteral("Find new and removed .md files (F5)"));
     connect(Refresh, &QAction::triggered, this, &DocumentationWindow::Rescan);
 
-    QAction* External = Bar->addAction(style()->standardIcon(QStyle::SP_DialogOpenButton), QStringLiteral("Open Externally"));
+    QAction* External = Bar->addAction(EditorIcons::Get(EditorIcons::EIcon::External), QStringLiteral("Open Externally"));
     External->setToolTip(QStringLiteral("Open this file in the system's editor for .md files"));
     connect(External, &QAction::triggered, this, [this]()
     {
@@ -329,7 +330,7 @@ void DocumentationWindow::Rescan()
                 if(!FolderItem)
                 {
                     FolderItem = new QTreeWidgetItem(Top, { Folder });
-                    FolderItem->setIcon(0, style()->standardIcon(QStyle::SP_DirIcon));
+                    FolderItem->setIcon(0, EditorIcons::Get(EditorIcons::EIcon::Folder));
                     FolderItem->setData(0, SearchRole, Folder.toLower());
                 }
                 Parent = FolderItem;
@@ -341,7 +342,7 @@ void DocumentationWindow::Rescan()
             const QString Title = TitleOf(Text);
 
             auto* Item = new QTreeWidgetItem(Parent, { Info.fileName() });
-            Item->setIcon(0, style()->standardIcon(QStyle::SP_FileIcon));
+            Item->setIcon(0, EditorIcons::Get(EditorIcons::EIcon::Document));
             Item->setData(0, PathRole, Info.absoluteFilePath());
             Item->setData(0, SearchRole, (Info.fileName() + QLatin1Char('\n') + Text).toLower());
             Item->setToolTip(0, (Title.isEmpty() ? QString() : Title + QLatin1Char('\n'))

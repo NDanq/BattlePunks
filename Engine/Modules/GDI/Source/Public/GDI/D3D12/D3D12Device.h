@@ -18,6 +18,12 @@
  * CPU-side bookkeeping (see D3D12RenderTarget::GetSubmittedState), so every
  * submit goes through GetQueueMutex().
  */
+/* A texture or render target any shader stage may sample: the vertex stage
+ * too (per-particle lighting reads shadow maps and probes there). Where every
+ * sampled resource rests between uses. */
+constexpr D3D12_RESOURCE_STATES D3D12_STATE_SAMPLED =
+    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+
 class D3D12Device
 {
 public:

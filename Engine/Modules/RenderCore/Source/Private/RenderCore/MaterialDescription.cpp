@@ -70,6 +70,31 @@ namespace RenderCore
         return "Opaque";
     }
 
+    namespace
+    {
+        const char* const SHADING_MODEL_NAMES[MATERIAL_SHADING_MODEL_COUNT] = {
+            "Default", "ClearCoat", "Anisotropic", "Cloth", "Subsurface", "Skin", "Volume",
+        };
+    }
+
+    const char* GetShadingModelName(const EMaterialShadingModel InModel)
+    {
+        return uint32_t(InModel) < MATERIAL_SHADING_MODEL_COUNT ? SHADING_MODEL_NAMES[uint32_t(InModel)] : "Default";
+    }
+
+    bool FindShadingModel(const std::string& InName, EMaterialShadingModel& OutModel)
+    {
+        for(uint32_t Index = 0; Index < MATERIAL_SHADING_MODEL_COUNT; ++Index)
+        {
+            if(InName == SHADING_MODEL_NAMES[Index])
+            {
+                OutModel = EMaterialShadingModel(Index);
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool ParseMaterialDescription(const std::string& InText, MaterialDescription& OutDescription, std::string& OutError)
     {
         MaterialDescription Result;
@@ -122,7 +147,22 @@ namespace RenderCore
                 else if(Value == "Unlit") { Result.Shading = EMaterialShading::Unlit; }
                 else { OutError = "unknown Shading '" + Value + "'"; return false; }
             }
+            else if(Keyword == "ShadingModel")
+            {
+                Words >> Value;
+                if(!FindShadingModel(Value, Result.ShadingModel)) { OutError = "unknown ShadingModel '" + Value + "'"; return false; }
+            }
             else if(Keyword == "TwoSided")  { int Flag = 0; Words >> Flag; Result.bTwoSided  = Flag != 0; }
+            else if(Keyword == "ParticleLighting") { int Flag = 0; Words >> Flag; Result.bParticleLighting = Flag != 0; }
+            else if(Keyword == "Refraction") { int Flag = 0; Words >> Flag; Result.bRefraction = Flag != 0; }
+            else if(Keyword == "TranslucentShadow") { Words >> Result.TranslucentShadow; Result.TranslucentShadow = std::clamp(Result.TranslucentShadow, 0.0f, 1.0f); }
+            else if(Keyword == "TranslucencyLighting")
+            {
+                Words >> Value;
+                if(Value == "Surface")     { Result.bTranslucencySurface = true; }
+                else if(Value == "Legacy") { Result.bTranslucencySurface = false; }
+                else { OutError = "unknown TranslucencyLighting '" + Value + "'"; return false; }
+            }
             else if(Keyword == "HasOffset") { int Flag = 0; Words >> Flag; Result.bHasOffset = Flag != 0; }
             else if(Keyword == "ClipValue") { Words >> Result.ClipValue; }
             else if(Keyword == "MaxOffset") { Words >> Result.MaxOffset; }

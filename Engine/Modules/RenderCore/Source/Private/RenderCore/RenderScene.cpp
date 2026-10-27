@@ -38,6 +38,13 @@
  * occluders (RenderComponent::bOccluder) are skipped (RENDERPIPELINE.md,
  * "Occlusion culling"), where the backend has occlusion queries. */
 NIMBLE_CONFIG_BOOL(GRenderOcclusionCulling, "Rendering", "OcclusionCulling", true, nullptr);
+/* A reflection probe's capture spread over frames (GLOBAL_ILLUMINATION.md, Phase 4): cube faces
+ * rendered a frame, 1-6; 6 captures a probe whole in one frame, as before. */
+NIMBLE_CONFIG_INT(GRenderProbeFacesPerFrame, "Rendering", "ProbeFacesPerFrame", 1, nullptr);
+/* A GI Volume's probes (GLOBAL_ILLUMINATION.md, Phase 6): whether they light, and how many update a frame
+ * (each six 16 x 16 views of the scene); 0 holds them as they are. */
+NIMBLE_CONFIG_BOOL(GRenderDynamicGI, "Rendering", "DynamicGI", true, nullptr);
+NIMBLE_CONFIG_INT(GRenderGIProbesPerFrame, "Rendering", "GIProbesPerFrame", 1, nullptr);
 
 namespace RenderCore
 {
@@ -805,8 +812,10 @@ namespace RenderCore
         /*
          * IMAGE-BASED LIGHTING (RENDERPIPELINE.md, "Image-based lighting"): the
          * probe atlas and cube strip; the stage targets a reflection probe's
-         * faces render through; which probe each of the atlas's four probe
-         * blocks holds (by entity key) and whether its capture is in it; and
+         * faces render through; which probe each of the atlas's sixteen probe
+         * blocks holds (by entity key) and whether its capture is in it; the
+         * one capture in progress, its faces in the strip so far (a probe is
+         * captured a few faces a frame, ProbeFacesPerFrame); and
          * whether the sky block is, for which sky. UpdateImageBasedLighting
          * keeps them; ApplyImageBasedLighting hands the context what the next
          * stages light with.
@@ -815,6 +824,9 @@ namespace RenderCore
         SceneTargets ProbeStages{"RenderCore.ProbeStages"};
         struct ProbeSlot { uint64_t Key = 0; bool bValid = false; bool bPending = false; };
         ProbeSlot    Slots[RENDER_REFLECTION_PROBES_MAX];
+        int32_t      Capturing = -1;      // the block whose probe is mid-capture, or -1
+        uint32_t     CapturedFaces = 0;   // its faces in the strip
+        uint32_t     SearchFrom = 0;      // where the next search for a probe to capture starts: round the list, so none starves
         bool         bSkyValid = false;
         uint64_t     SkyHash   = 0;
         float        ProbeData[RENDER_REFLECTION_PROBES_MAX * 3][4] = {};
@@ -849,8 +861,10 @@ namespace RenderCore
             return Hash;
         }
 
-        /* A reflection probe's six faces, HDR, into the strip, prefiltered into atlas block InBlock. */
-        bool CaptureReflectionProbe(RenderContext& InContext, const ReflectionProbeRequest& InProbe, const uint32_t InBlock)
+        /* A reflection probe's faces InFirst to InFirst + InCount - 1, HDR, into the strip; after its
+         * sixth, the strip prefiltered into atlas block InBlock. False if one failed. */
+        bool CaptureReflectionProbe(RenderContext& InContext, const ReflectionProbeRequest& InProbe, const uint32_t InBlock,
+                                    const uint32_t InFirst, const uint32_t InCount)
         {
             const uint32_t Face = InProbe.Resolution;
             if(!InContext.EnsureIBLResources(IBL, Face) || !ProbeStages.Allocate(Face, Face))
@@ -870,7 +884,7 @@ namespace RenderCore
             InContext.SetImageBasedLighting(&IBL, nullptr, 0, bSkyValid);
             InContext.SetSkyBackground(true);
             bool bCopied = ViewCount == 6;
-            for(uint32_t Index = 0; Index < ViewCount; ++Index)
+            for(uint32_t Index = InFirst; Index < std::min(InFirst + InCount, ViewCount); ++Index)
             {
                 SCOPED_DRAW_EVENT(GetCubeFaceName(Index));
                 InContext.SetView(Views[Index]);
@@ -880,11 +894,12 @@ namespace RenderCore
                 bCopied = InContext.CopyCaptureToStrip(ProbeStages, IBL, Index) && bCopied;
             }
             InContext.SetSkyBackground(false);
-            return bCopied && InContext.PrefilterIBLBlock(IBL, InBlock);
+            return bCopied && (InFirst + InCount < 6 || InContext.PrefilterIBLBlock(IBL, InBlock));
         }
 
         /* The sky block when the sky changed, then the probes in view: a block each, captured when due
-         * or new to it -- two a frame at most, the rest next frame. Leaves the context on the main view. */
+         * or new to it -- one at a time, ProbeFacesPerFrame faces a frame, the probe's old capture (if any)
+         * lighting until its last face is in. Leaves the context on the main view. */
         void UpdateImageBasedLighting(RenderContext& InContext)
         {
             ProbeDataCount = 0;
@@ -899,8 +914,9 @@ namespace RenderCore
             {
                 SCOPED_DRAW_EVENT("SkyLight");
                 bSkyValid = InContext.EnsureIBLResources(IBL, 128) && InContext.RenderSkyToStrip(IBL)
-                         && InContext.PrefilterIBLBlock(IBL, 4);
+                         && InContext.PrefilterIBLBlock(IBL, IBL_SKY_BLOCK);
                 SkyHash = Hash;
+                CapturedFaces = 0;   // the sky took the strip: a capture in progress starts over
             }
 
             const uint32_t Count = std::min<uint32_t>(CaptureList.ProbeCount, RENDER_REFLECTION_PROBES_MAX);
@@ -924,6 +940,7 @@ namespace RenderCore
                     {
                         if(Slots[Block].Key == 0 || !Listed(Slots[Block].Key))
                         {
+                            if(Capturing == int32_t(Block)) { Capturing = -1; }
                             Slots[Block] = ProbeSlot{ Probe.Key, false, true };
                             BlockOf[Index] = int32_t(Block);
                             break;
@@ -933,19 +950,47 @@ namespace RenderCore
                 if(BlockOf[Index] >= 0 && Probe.bDue) { Slots[BlockOf[Index]].bPending = true; }
             }
 
-            uint32_t Captures = 0;
-            for(uint32_t Index = 0; Index < Count && Captures < 2; ++Index)
+            /* The capture in progress, else the nearest probe wanting one. */
+            int32_t Current = -1;
+            for(uint32_t Index = 0; Index < Count; ++Index)
             {
-                if(BlockOf[Index] < 0) { continue; }
-                ProbeSlot& Slot = Slots[BlockOf[Index]];
-                if(!Slot.bPending && Slot.bValid) { continue; }
-                SCOPED_DRAW_EVENT("ReflectionProbe " + std::to_string(BlockOf[Index]));
-                Slot.bValid   = CaptureReflectionProbe(InContext, CaptureList.Probes[Index], uint32_t(BlockOf[Index]));
-                Slot.bPending = false;
-                ++Captures;
+                if(BlockOf[Index] >= 0 && BlockOf[Index] == Capturing) { Current = int32_t(Index); break; }
             }
-            if(Captures > 0)
+            if(Current < 0)
             {
+                Capturing = -1;
+                for(uint32_t Step = 0; Step < Count; ++Step)
+                {
+                    const uint32_t Index = (SearchFrom + Step) % Count;
+                    if(BlockOf[Index] < 0) { continue; }
+                    const ProbeSlot& Slot = Slots[BlockOf[Index]];
+                    if(Slot.bPending || !Slot.bValid)
+                    {
+                        Current       = int32_t(Index);
+                        Capturing     = BlockOf[Index];
+                        CapturedFaces = 0;
+                        SearchFrom    = Index + 1;
+                        break;
+                    }
+                }
+            }
+            if(Current >= 0)
+            {
+                SCOPED_DRAW_EVENT("ReflectionProbe " + std::to_string(Capturing));
+                ProbeSlot& Slot = Slots[Capturing];
+                Slot.bPending = false;   // a request while it captures starts the next
+                const uint32_t Faces = uint32_t(std::clamp<int>(GRenderProbeFacesPerFrame.GetInt(), 1, 6));
+                const uint32_t Now   = std::min(Faces, 6u - CapturedFaces);
+                if(!CaptureReflectionProbe(InContext, CaptureList.Probes[Current], uint32_t(Capturing), CapturedFaces, Now))
+                {
+                    Slot.bValid = false;
+                    Capturing   = -1;
+                }
+                else if((CapturedFaces += Now) >= 6)
+                {
+                    Slot.bValid = true;
+                    Capturing   = -1;
+                }
                 InContext.SetView(Views[0].View);
             }
 
@@ -961,6 +1006,109 @@ namespace RenderCore
                 ++ProbeDataCount;
             }
             ApplyImageBasedLighting(InContext);
+        }
+
+        /*
+         * DYNAMIC GI (GLOBAL_ILLUMINATION.md, Phase 6): the GI Volume's probes
+         * and the stage targets their faces render through; which volume they
+         * are for (a hash of its grid: a change starts them over), the next
+         * probe to update, how many have since that start, and whether all
+         * have -- the volume lights only then, a probe never seen being black.
+         */
+        DDGIResources DDGI;
+        SceneTargets  DDGIStages{"RenderCore.DDGIStages"};
+        uint64_t      DDGIGrid    = 0;
+        uint32_t      DDGICursor  = 0;
+        uint32_t      DDGIUpdated = 0;
+        bool          bDDGIReady  = false;
+
+        /* The volume's probes, GIProbesPerFrame a frame round the grid, each six views lit by the
+         * live lights, the sky and (once every probe has been seen) the volume itself, so light
+         * bounces again each round. Leaves the context on the main view, lit by the volume. */
+        void UpdateGlobalIllumination(RenderContext& InContext)
+        {
+            if(!CaptureList.bGIVolume || !GRenderDynamicGI.GetBool() || !InContext.CanImageBasedLight())
+            {
+                InContext.SetDDGI(nullptr, nullptr);
+                return;
+            }
+            const GIVolumeRequest& Volume = CaptureList.GIVolume;
+            const uint32_t Most[3] = { 32, 8, 32 };
+            uint32_t Count[3];
+            float    Spacing[3];
+            for(int Axis = 0; Axis < 3; ++Axis)
+            {
+                Count[Axis]   = std::clamp<uint32_t>(uint32_t(2.0f * Volume.Extent[Axis] / Volume.Spacing) + 1u, 2u, Most[Axis]);
+                Spacing[Axis] = 2.0f * Volume.Extent[Axis] / float(Count[Axis] - 1);
+            }
+            const float First[3] = { float(Volume.Position.GetX()) - Volume.Extent[0], float(Volume.Position.GetY()) - Volume.Extent[1],
+                                     float(Volume.Position.GetZ()) - Volume.Extent[2] };
+            const uint32_t Total   = Count[0] * Count[1] * Count[2];
+            const float    Longest = 1.5f * std::sqrt(Spacing[0] * Spacing[0] + Spacing[1] * Spacing[1] + Spacing[2] * Spacing[2]);
+
+            uint64_t Grid = 1469598103934665603ull;
+            const auto Mix = [&Grid](const void* InData, const size_t InSize)
+            {
+                const auto* Bytes = static_cast<const uint8_t*>(InData);
+                for(size_t Index = 0; Index < InSize; ++Index) { Grid = (Grid ^ Bytes[Index]) * 1099511628211ull; }
+            };
+            Mix(First, sizeof(First)); Mix(Spacing, sizeof(Spacing)); Mix(Count, sizeof(Count));
+            if(Grid != DDGIGrid)
+            {
+                DDGIGrid = Grid; DDGICursor = 0; DDGIUpdated = 0; bDDGIReady = false;
+            }
+            if(!InContext.EnsureDDGIResources(DDGI, Total) || !DDGIStages.Allocate(DDGI_FACE, DDGI_FACE))
+            {
+                InContext.SetDDGI(nullptr, nullptr);
+                return;
+            }
+
+            float Header[4][4] = {
+                { First[0], First[1], First[2], Volume.Intensity },
+                { Spacing[0], Spacing[1], Spacing[2], Longest },
+                { float(Count[0]), float(Count[1]), float(Count[2]), float(DDGI_TILES_PER_ROW) },
+                { float(DDGI.Irradiance->GetWidth()), float(DDGI.Irradiance->GetHeight()),
+                  float(DDGI.Distance->GetWidth()), float(DDGI.Distance->GetHeight()) } };
+            if(!bDDGIReady) { Header[0][3] = 0.0f; }
+
+            const uint32_t PerFrame = uint32_t(std::clamp<int>(GRenderGIProbesPerFrame.GetInt(), 0, 64));
+            if(PerFrame > 0)
+            {
+                SCOPED_DRAW_EVENT("GIVolume");
+                ApplyImageBasedLighting(InContext);
+                InContext.SetDDGI(bDDGIReady ? &DDGI : nullptr, Header);
+                InContext.SetSkyBackground(true);
+                for(uint32_t Each = 0; Each < std::min(PerFrame, Total); ++Each)
+                {
+                    const uint32_t Probe = DDGICursor;
+                    const uint32_t Cell[3] = { Probe % Count[0], (Probe / Count[0]) % Count[1], Probe / (Count[0] * Count[1]) };
+                    SceneCaptureRequest Cube;
+                    Cube.Mode     = SCM_Omnidirectional;
+                    Cube.Position = EngineCore::Vector3(First[0] + float(Cell[0]) * Spacing[0], First[1] + float(Cell[1]) * Spacing[1],
+                                                        First[2] + float(Cell[2]) * Spacing[2]);
+                    Cube.NearClip = 1.0f;
+                    Cube.FarClip  = 20000.0f;
+                    Cube.bShadows = 1;
+                    RenderView Faces[6];
+                    const uint32_t FaceCount = BuildCaptureViews(Cube, Views[0].View, DDGI_FACE, DDGI_FACE, Faces);
+                    bool bDone = FaceCount == 6;
+                    for(uint32_t Face = 0; Face < FaceCount; ++Face)
+                    {
+                        InContext.SetView(Faces[Face]);
+                        uint64_t Visible = 0, Culled = 0, Static = 0;
+                        QueueDraws(InContext, Faces[Face], Views[0].Lighting, &Cube, Visible, Culled, Static);
+                        InContext.RenderSceneStages(DDGIStages, ClearColor);
+                        bDone = InContext.CopyDDGIFace(DDGIStages, DDGI, Face, Longest) && bDone;
+                    }
+                    if(bDone) { InContext.UpdateDDGIProbe(DDGI, Probe, Longest); }
+                    DDGICursor = (DDGICursor + 1) % Total;
+                    if(++DDGIUpdated >= Total) { bDDGIReady = true; }
+                }
+                InContext.SetSkyBackground(false);
+                InContext.SetView(Views[0].View);
+            }
+            Header[0][3] = bDDGIReady ? Volume.Intensity : 0.0f;
+            InContext.SetDDGI(bDDGIReady ? &DDGI : nullptr, Header);
         }
 
         /* Targets.Final as of the last Render(), for PresentToWindow on the UI
@@ -991,7 +1139,8 @@ namespace RenderCore
          * failure) must still not leak a GPU image. Idempotent. */
         P->ReleaseViews();
         P->ProbeStages.Release();
-        for(GDIRenderTarget** Each : { &P->IBL.Atlas, &P->IBL.Strip })
+        P->DDGIStages.Release();
+        for(GDIRenderTarget** Each : { &P->IBL.Atlas, &P->IBL.Strip, &P->DDGI.Irradiance, &P->DDGI.Distance, &P->DDGI.Strip })
         {
             if(*Each) { GDIReleaseRenderTarget(*Each); delete *Each; *Each = nullptr; }
         }
@@ -1300,6 +1449,7 @@ namespace RenderCore
         {
             SCOPED_DRAW_EVENT("ImageBasedLighting");
             P->UpdateImageBasedLighting(InContext);
+            P->UpdateGlobalIllumination(InContext);
         }
         InContext.WriteGpuTimestamp(RGT_SceneCapture, true);
 
@@ -1514,7 +1664,11 @@ namespace RenderCore
         P->UI.Release();
         P->ReleaseViews();
         P->ProbeStages.Release();
+        P->DDGIStages.Release();
         InContext.ReleaseIBLResources(P->IBL);
+        InContext.ReleaseDDGIResources(P->DDGI);
+        P->DDGIGrid = 0;
+        P->bDDGIReady = false;
         P->bSkyValid = false;
         for(Impl::ProbeSlot& Each : P->Slots) { Each = Impl::ProbeSlot(); }
     }

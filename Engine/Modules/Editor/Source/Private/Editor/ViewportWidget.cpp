@@ -717,6 +717,24 @@ void ViewportWidget::QueueLightGizmos()
         }
     });
 
+    /* Rect: its rectangle, and a short line out of its lit face. */
+    World.Each<RenderCore::RectLightComponent>(
+        [&](const GameCore::Entity& InEntity, RenderCore::RectLightComponent& InLight)
+    {
+        EngineCore::Color Color;
+        float Thickness = 0.0f;
+        if(!Style(InEntity, InLight.Color, Color, Thickness)) { return; }
+        const GameCore::TransformPose Pose = InEntity.GetWorldPose();
+        const GameCore::Rotation3     Axes = GameCore::TransformMath::EulerToRotation(Pose.Rotation);
+        const EngineCore::Vector3 Right   = Axes.GetAxis(0) * (0.5 * double(InLight.Width) * Pose.Scale.GetX());
+        const EngineCore::Vector3 Up      = Axes.GetAxis(1) * (0.5 * double(InLight.Height) * Pose.Scale.GetY());
+        const EngineCore::Vector3 Forward = Axes.GetAxis(2);
+        const EngineCore::Vector3 Corners[4] = { Pose.Position - Right - Up, Pose.Position + Right - Up,
+                                                 Pose.Position + Right + Up, Pose.Position - Right + Up };
+        for(int Corner = 0; Corner < 4; ++Corner) { Segment(Corners[Corner], Corners[(Corner + 1) % 4], Color, Thickness); }
+        Segment(Pose.Position, Pose.Position + Forward * std::max(Right.GetLength(), Up.GetLength()), Color, Thickness);
+    });
+
     /* Directional: an arrow from the entity along the way it shines, a fixed size on screen. */
     World.Each<RenderCore::DirectionalLightComponent>(
         [&](const GameCore::Entity& InEntity, RenderCore::DirectionalLightComponent& InLight)
@@ -1801,6 +1819,7 @@ GameCore::EntityID ViewportWidget::Pick(const QPoint& InLogicalPos) const
     GameCore::World& World = Document.GetWorld();
     World.Each<RenderCore::PointLightComponent>([&](const GameCore::Entity& InEntity, RenderCore::PointLightComponent&) { TryLight(InEntity); });
     World.Each<RenderCore::SpotLightComponent>([&](const GameCore::Entity& InEntity, RenderCore::SpotLightComponent&) { TryLight(InEntity); });
+    World.Each<RenderCore::RectLightComponent>([&](const GameCore::Entity& InEntity, RenderCore::RectLightComponent&) { TryLight(InEntity); });
     World.Each<RenderCore::DirectionalLightComponent>([&](const GameCore::Entity& InEntity, RenderCore::DirectionalLightComponent&) { TryLight(InEntity); });
     World.Each<RenderCore::SkyLightComponent>([&](const GameCore::Entity& InEntity, RenderCore::SkyLightComponent&) { TryLight(InEntity); });
     World.Each<RenderCore::SceneCaptureProbeComponent>([&](const GameCore::Entity& InEntity, RenderCore::SceneCaptureProbeComponent&)

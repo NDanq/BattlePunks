@@ -53,6 +53,7 @@
 #include "Private/Editor/EditorIcons.h"
 #include "Public/Editor/ViewportWidget.h"
 #include "Public/RenderCore/RenderComponents.h"
+#include "Public/NimbleEngine/Destruction.h"
 #include "Private/Editor/Content/RenderTargetAssets.h"
 #include "Private/Editor/EditorEditActions.h"
 #include "Private/Editor/EditorLights.h"
@@ -1798,6 +1799,77 @@ void EditorMainWindow::RegisterConsoleCommands()
         SaveCaptureWhenReady(Request, Path);
     });
 
+    Console.Register(QStringLiteral("destruction"),
+                     QStringLiteral("<stats | break [name | #index] | boom <x> <y> <z> <radius> <impulse> | bake [name | #index]>"),
+                     QStringLiteral("Destructibles (Destruction.h): count them while playing, break one (or the selection), "
+                                    "set off an explosion, or cut one's pieces into Content/Fractures"),
+                     [this, Resolve](const QStringList& InArgs)
+    {
+        const QString Verb = InArgs.value(0);
+        GameCore::World& World = Level.GetWorld();
+        auto Target = [&]()
+        {
+            return InArgs.size() > 1 ? Resolve(InArgs.at(1)) : Level.GetSelection();
+        };
+        if(Verb == QStringLiteral("stats"))
+        {
+            const NimbleEngine::DestructionWorld* System = NimbleEngine::DestructionWorld::Find(&World);
+            if(!System) { Console.PrintError(QStringLiteral("Nothing breaks in this world until it plays")); return; }
+            NimbleEngine::DestructionStats Stats;
+            System->GetStats(Stats);
+            Console.Print(QStringLiteral("%1 destructibles, %2 broken; %3 debris, %4 standing pieces; %5 cuts cached (last %6 ms)")
+                              .arg(Stats.Destructibles).arg(Stats.Broken).arg(Stats.Debris).arg(Stats.Remnants)
+                              .arg(Stats.CachedCuts).arg(double(Stats.LastFractureMs), 0, 'f', 2));
+            return;
+        }
+        if(Verb == QStringLiteral("break") || Verb == QStringLiteral("bake"))
+        {
+            const EntityID Found = Target();
+            auto* C = Found.IsSet() && World.IsAlive(Found) ? World.GetEntity(Found).GetComponent<NimbleEngine::DestructibleComponent>() : nullptr;
+            if(!C) { Console.PrintError(QStringLiteral("No Destructible there: name one, or select one")); return; }
+            if(Verb == QStringLiteral("break"))
+            {
+                const EngineCore::Vector3 At = World.GetEntity(Found).GetWorldPose().Position;
+                C->Break(At, EngineCore::Vector3());
+                Console.Print(QStringLiteral("Breaking %1%2").arg(Level.GetDisplayName(Found),
+                              Context.IsPlaying() ? QString() : QStringLiteral(" (it breaks when the world next plays)")));
+                return;
+            }
+            if(Context.IsPlaying()) { Console.PrintError(QStringLiteral("Bake while editing, not playing")); return; }
+            const QString Runtime  = QStringLiteral("Content/Fractures/%1.nmfrac").arg(Level.GetDisplayName(Found));
+            const QString Absolute = QDir(EditorGraphs::GetProjectRoot()).filePath(Runtime);
+            QDir().mkpath(QFileInfo(Absolute).absolutePath());
+            std::string Error;
+            if(!NimbleEngine::BakeDestructible(World, Found, Absolute.toStdString(), Runtime.toStdString(), Error))
+            {
+                Console.PrintError(QStringLiteral("Cannot bake %1: %2").arg(Level.GetDisplayName(Found), QString::fromStdString(Error)));
+                return;
+            }
+            Level.NotifyPropertyEdited(Found, NimbleEngine::DestructibleComponent::StaticType().ID);
+            Console.Print(QStringLiteral("Baked %1 into %2").arg(Level.GetDisplayName(Found), Runtime));
+            return;
+        }
+        if(Verb == QStringLiteral("boom") && InArgs.size() == 6)
+        {
+            bool bOk = true;
+            double Numbers[5];
+            for(int I = 0; I < 5; ++I)
+            {
+                bool bThis = false;
+                Numbers[I] = InArgs.at(I + 1).toDouble(&bThis);
+                bOk = bOk && bThis;
+            }
+            if(bOk)
+            {
+                const int32_t Reached = NimbleEngine::RadialDamage(World, EngineCore::Vector3(Numbers[0], Numbers[1], Numbers[2]),
+                                                                   float(Numbers[3]), float(Numbers[4]));
+                Console.Print(QStringLiteral("The explosion reached %1 destructibles").arg(Reached));
+                return;
+            }
+        }
+        Console.PrintError(QStringLiteral("Usage: destruction <stats | break [name] | boom <x> <y> <z> <radius> <impulse> | bake [name]>"));
+    });
+
     Console.Register(QStringLiteral("windowshot"), QStringLiteral("[-gizmos] <file.png>"),
                      QStringLiteral("Save the whole editor window, panels and docks included, as an image; -gizmos keeps the viewport's gizmos"),
                      [this](QStringList InArgs)
@@ -2683,6 +2755,21 @@ void EditorMainWindow::RegisterConsoleCommands()
                       .arg(double(Stats.FrameMs), 0, 'f', 2)
                       .arg(double(Stats.GameThreadMs), 0, 'f', 2)
                       .arg(double(Stats.RenderThreadMs), 0, 'f', 2));
+        /* With "stat frame" on: each span's GPU time, also written to the run log so a
+         * scripted session (--command) can measure a change. */
+        QStringList Spans;
+        for(uint32_t Timer = 0; Timer < RenderCore::RGT_Count; ++Timer)
+        {
+            if(Stats.GpuMs[Timer] < 0.0f) { continue; }
+            Spans << QStringLiteral("%1 %2").arg(QString::fromLatin1(RenderCore::GetRenderGpuTimerName(RenderCore::ERenderGpuTimer(Timer))))
+                                            .arg(double(Stats.GpuMs[Timer]), 0, 'f', 3);
+        }
+        if(!Spans.isEmpty())
+        {
+            const QString Line = QStringLiteral("GPU ms: ") + Spans.join(QStringLiteral(", "));
+            Console.Print(Line);
+            CORE_LOG("[Editor] stats " + Line.toStdString())
+        }
     });
 
     /* Unreal's spelling: "stat unit" toggles the frame, game and render
@@ -2726,6 +2813,33 @@ void EditorMainWindow::RegisterConsoleCommands()
             return;
         }
         Console.PrintError(QStringLiteral("Usage: stat unit | frame | physics | audio | none"));
+    });
+
+    /* A config variable by section and name: printed, or set as an .ini line would set it
+     * (for a scripted session to compare a renderer setting on and off). */
+    Console.Register(QStringLiteral("config"), QStringLiteral("<Section> <Name> [value]"),
+                     QStringLiteral("Print a config variable, or set it ([Rendering] SubsurfaceScattering false)"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.size() < 2)
+        {
+            Console.PrintError(QStringLiteral("Usage: config <Section> <Name> [value]"));
+            return;
+        }
+        EngineCore::ConfigVar* Var = EngineCore::ConfigFindVar(InArgs[0].toStdString().c_str(), InArgs[1].toStdString().c_str());
+        if(!Var)
+        {
+            Console.PrintError(QStringLiteral("No config variable [%1] %2").arg(InArgs[0], InArgs[1]));
+            return;
+        }
+        if(InArgs.size() > 2 && !Var->SetFromString(InArgs.mid(2).join(QLatin1Char(' ')).toStdString()))
+        {
+            Console.PrintError(QStringLiteral("Not a value for %1: %2").arg(QString::fromStdString(Var->GetQualifiedName()), InArgs[2]));
+            return;
+        }
+        const QString Line = QStringLiteral("%1 = %2").arg(QString::fromStdString(Var->GetQualifiedName()), QString::fromStdString(Var->ToString()));
+        Console.Print(Line);
+        CORE_LOG("[Editor] config " + Line.toStdString())
     });
 
     Console.Register(QStringLiteral("undo"), QStringLiteral("[count]"), QStringLiteral("Undo the last change (Ctrl+Z)"),

@@ -29,6 +29,7 @@ namespace EngineCore
  *     MSKN v1 (optional)   skinning (ANIMATION.md): the skeleton's path, an
  *                          inverse bind matrix per skeleton bone, then four
  *                          bone indices (uint16) and four weights per vertex
+ *     MTAN v1 (optional)   tangents, four floats per vertex (MeshData::Tangents)
  *     ISRC v1 (optional)   AssetImportInfo, for Reimport
  *
  * Every vertex has a normal and UV. Loading bounds-checks indices and
@@ -51,6 +52,13 @@ namespace RenderCore
         std::vector<float>       UV0;         // 2 per vertex
         std::vector<float>       Colors;      // RGBA, 4 per vertex; empty: white (the optional MCOL chunk)
         std::vector<float>       UV1;         // 2 per vertex; empty: no lightmap UVs (the optional MUV1 chunk)
+
+        /* 4 per vertex, the optional MTAN chunk: xyz a unit tangent along UV0's
+         * +U at right angles to the normal, w +1 or -1 so that the bitangent
+         * w * cross(normal, tangent) runs along +V -- MikkTSpace's frame
+         * [Mikkelsen 2008], as a normal map is baked against. Empty: none, and
+         * the material templates take one from the UV's screen derivatives. */
+        std::vector<float>       Tangents;
         std::vector<uint32_t>    Indices;     // 3 per triangle
         std::vector<MeshSection> Sections;
 

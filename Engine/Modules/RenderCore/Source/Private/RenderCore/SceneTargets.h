@@ -16,17 +16,44 @@
  */
 namespace RenderCore
 {
-    enum : uint32_t { RENDER_GBUFFER_TARGETS = 4 };
+    enum : uint32_t { RENDER_GBUFFER_TARGETS = 5 };
 
     /* A scene's image-based lighting targets (RENDERPIPELINE.md, "Image-based
      * lighting"), made by RenderContext::EnsureIBLResources: the probe atlas
      * (RGBA16F, IBLCommon.glsl's layout) and the cube strip a capture or the
      * sky is prefiltered from. The scene owns them; ReleaseIBLResources frees them. */
+    /* The atlas: 20 blocks of 384 x 256, four to a row -- 0-15 the probes,
+     * 16 the sky, 17 the sheen table (IBLCommon.glsl). */
+    constexpr uint32_t IBL_ATLAS_WIDTH  = 1536;
+    constexpr uint32_t IBL_ATLAS_HEIGHT = 1280;
+    constexpr uint32_t IBL_SKY_BLOCK    = 16;
+    constexpr uint32_t IBL_SHEEN_BLOCK  = 17;
+
     struct IBLResources
     {
         GDIRenderTarget* Atlas     = nullptr;
         GDIRenderTarget* Strip     = nullptr;
         uint32_t         StripFace = 0;
+        bool             bSheenTable = false;   // the atlas's block 17 holds Cloth's sheen table (SHADING_MODELS.md)
+    };
+
+    /* A GI Volume's probes on the GPU (DDGI.glsl; GLOBAL_ILLUMINATION.md, Phase 6),
+     * made by RenderContext::EnsureDDGIResources: the irradiance atlas (8 x 8 a
+     * probe, RGBA16F), the distance atlas (16 x 16, RGBA32F where the backend has
+     * it: its moments' variance, E[d^2] - E[d]^2, loses most of a half
+     * float's bits to cancellation and the probes leak), tiles 64 to a row; and the
+     * cube strip a probe's faces are rendered into (6 x 16 x 16, rgb radiance,
+     * a distance). The scene owns them; ReleaseDDGIResources frees them. */
+    constexpr uint32_t DDGI_TILES_PER_ROW   = 64;
+    constexpr uint32_t DDGI_IRRADIANCE_TILE = 8;
+    constexpr uint32_t DDGI_DISTANCE_TILE   = 16;
+    constexpr uint32_t DDGI_FACE            = 16;
+    struct DDGIResources
+    {
+        GDIRenderTarget* Irradiance = nullptr;
+        GDIRenderTarget* Distance   = nullptr;
+        GDIRenderTarget* Strip      = nullptr;
+        uint32_t         Rows       = 0;
     };
 
     struct SceneTargets
@@ -64,7 +91,24 @@ namespace RenderCore
          * frame's finished linear colour they read -- TAA's history when it ran (LastColor
          * then points at it), else a copy kept in LastCopy. Forgotten with a resize. */
         GDIRenderTarget* Fog         = nullptr;                 // volumetric fog's march, half size, half float
+        GDIRenderTarget* DepthCopy   = nullptr;                 // the opaque depth, for forward reflections (R32F; LIT_TRANSLUCENCY.md, Phase 4)
+        GDIRenderTarget* OpaqueCopy  = nullptr;                 // the lit opaque scene before the translucent stage: forward reflections and refraction read it (Phase 10)
         GDIRenderTarget* Reflections = nullptr;
+        /* Stochastic reflections' history (PPReflectionResolve.fsh; GLOBAL_ILLUMINATION.md, Phase 4):
+         * the resolve ping-pongs these, ReflectionCurrent the last frame's when bReflectionValid. */
+        GDIRenderTarget* ReflectionHistory[2] = {};
+        uint32_t         ReflectionCurrent = 0;
+        bool             bReflectionValid  = false;
+        /* Screen-space GI (PPScreenGI.fsh; GLOBAL_ILLUMINATION.md, Phase 5): this frame's bounce
+         * and its history, half size, half float; the resolve ping-pongs GIHistory likewise. */
+        GDIRenderTarget* GI = nullptr;
+        GDIRenderTarget* GIHistory[2] = {};
+        uint32_t         GICurrent = 0;
+        bool             bGIValid  = false;
+        /* Skin (SHADING_MODELS.md): its pixels' diffuse light before albedo, as the Lighting and
+         * IBL passes write it, and PPSubsurface's first blur. Full size, half float, on first use. */
+        GDIRenderTarget* Subsurface     = nullptr;
+        GDIRenderTarget* SubsurfaceBlur = nullptr;
         GDIRenderTarget* LastCopy    = nullptr;
         GDIRenderTarget* LastColor   = nullptr;                 // not owned: LastCopy or a History
         GDIRenderTarget* Luminance[3] = {};
@@ -128,7 +172,21 @@ namespace RenderCore
                 }
                 bHistoryValid = false;
                 if(Reflections) { Reflections->Resize(InWidth, InHeight); }
+                for(GDIRenderTarget* Each : ReflectionHistory)
+                {
+                    if(Each) { Each->Resize(InWidth, InHeight); }
+                }
+                bReflectionValid = false;
+                for(GDIRenderTarget* Each : { GI, GIHistory[0], GIHistory[1] })
+                {
+                    if(Each) { Each->Resize(HalfSize(InWidth, 1), HalfSize(InHeight, 1)); }
+                }
+                bGIValid = false;
+                if(Subsurface)     { Subsurface->Resize(InWidth, InHeight); }
+                if(SubsurfaceBlur) { SubsurfaceBlur->Resize(InWidth, InHeight); }
                 if(Fog)         { Fog->Resize(HalfSize(InWidth, 1), HalfSize(InHeight, 1)); }
+                if(DepthCopy)   { DepthCopy->Resize(HalfSize(InWidth, 1), HalfSize(InHeight, 1)); }
+                if(OpaqueCopy)  { OpaqueCopy->Resize(InWidth, InHeight); }
                 if(LastCopy)    { LastCopy->Resize(InWidth, InHeight); }
                 LastColor = nullptr;
                 for(uint32_t Level = 0; Level < 6; ++Level)
@@ -145,14 +203,19 @@ namespace RenderCore
             return SceneColor != nullptr;
         }
 
-        /* The four G-buffer targets, created on first use. False if any failed. */
+        /* The five G-buffer targets, created on first use. False if any failed.
+         * GBuffer1, the normal, is RGB10A2 where the backend has it (RENDERPIPELINE.md,
+         * "The G-buffer"); the rest RGBA8. */
         bool EnsureGBuffer()
         {
             for(uint32_t Index = 0; Index < RENDER_GBUFFER_TARGETS; ++Index)
             {
                 if(!GBuffer[Index] && Width > 0 && Height > 0)
                 {
-                    GBuffer[Index] = GDICreateRenderTarget(Name + ".GBuffer" + std::to_string(Index), Width, Height);
+                    const std::string TargetName = Name + ".GBuffer" + std::to_string(Index);
+                    GBuffer[Index] = Index == 1 && GDISupportsRenderTargetFormat(GDI_RTF_RGB10A2)
+                                         ? GDICreateRenderTargetFormat(TargetName, Width, Height, GDI_RTF_RGB10A2)
+                                         : GDICreateRenderTarget(TargetName, Width, Height);
                 }
                 if(!GBuffer[Index] || !GBuffer[Index]->IsValid())
                 {
@@ -246,7 +309,7 @@ namespace RenderCore
             return true;
         }
 
-        /* A full-size half-float target, made on first use: Reflections, LastCopy. */
+        /* A full-size half-float target, made on first use: Reflections, ReflectionHistory, LastCopy, OpaqueCopy. */
         GDIRenderTarget* EnsureFullHalfFloat(GDIRenderTarget*& InOutTarget, const char* InName)
         {
             if(!InOutTarget && Width > 0 && Height > 0 && GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
@@ -254,6 +317,34 @@ namespace RenderCore
                 InOutTarget = GDICreateRenderTargetFormat(Name + "." + InName, Width, Height, GDI_RTF_RGBA16F);
             }
             return InOutTarget && InOutTarget->IsValid() ? InOutTarget : nullptr;
+        }
+
+        /* A half-size half-float target, made on first use: GI, GIHistory. */
+        GDIRenderTarget* EnsureHalfHalfFloat(GDIRenderTarget*& InOutTarget, const char* InName)
+        {
+            if(!InOutTarget && Width > 0 && Height > 0 && GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
+            {
+                InOutTarget = GDICreateRenderTargetFormat(Name + "." + InName, HalfSize(Width, 1), HalfSize(Height, 1), GDI_RTF_RGBA16F);
+            }
+            return InOutTarget && InOutTarget->IsValid() ? InOutTarget : nullptr;
+        }
+
+        /* Forward reflections' copy of the opaque depth, half size (the nearest of each four), R32F
+         * (RGBA32F where that is all there is), made on first use; null where neither is: a half
+         * float cannot hold depth. */
+        GDIRenderTarget* EnsureDepthCopy()
+        {
+            if(!DepthCopy && Width > 0 && Height > 0)
+            {
+                const EGDIRenderTargetFormat Format = GDISupportsRenderTargetFormat(GDI_RTF_R32F) ? GDI_RTF_R32F
+                                                    : GDISupportsRenderTargetFormat(GDI_RTF_RGBA32F) ? GDI_RTF_RGBA32F
+                                                    : GDI_RTF_RGBA8;
+                if(Format != GDI_RTF_RGBA8)
+                {
+                    DepthCopy = GDICreateRenderTargetFormat(Name + ".DepthCopy", HalfSize(Width, 1), HalfSize(Height, 1), Format);
+                }
+            }
+            return DepthCopy && DepthCopy->IsValid() ? DepthCopy : nullptr;
         }
 
         /* Volumetric fog's half-size half-float target, made on first use. */
@@ -266,10 +357,14 @@ namespace RenderCore
             return Fog && Fog->IsValid() ? Fog : nullptr;
         }
 
-        /* Auto exposure's targets, half float; false if the backend cannot make them. */
+        /* Auto exposure's targets, half float; false if the backend cannot make them.
+         * The adapted pair is R32F where the backend has it: a half float's step near
+         * log2 8 is 1/128 of a stop, more than a frame's easing at 60 Hz moves it, so
+         * the adaptation would stall short of its target. */
         bool EnsureExposure()
         {
             if(!GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F)) { return false; }
+            const EGDIRenderTargetFormat Adapted = GDISupportsRenderTargetFormat(GDI_RTF_R32F) ? GDI_RTF_R32F : GDI_RTF_RGBA16F;
             const uint Sizes[3] = { 64, 8, 1 };
             for(uint32_t Index = 0; Index < 3; ++Index)
             {
@@ -284,7 +379,7 @@ namespace RenderCore
             {
                 if(!Exposure[Index])
                 {
-                    Exposure[Index] = GDICreateRenderTargetFormat(Name + ".Exposure" + std::to_string(Index), 1, 1, GDI_RTF_RGBA16F);
+                    Exposure[Index] = GDICreateRenderTargetFormat(Name + ".Exposure" + std::to_string(Index), 1, 1, Adapted);
                 }
                 if(!Exposure[Index] || !Exposure[Index]->IsValid()) { return false; }
             }
@@ -302,11 +397,11 @@ namespace RenderCore
 
         void Release()
         {
-            for(GDIRenderTarget** Each : { &SceneColor, &GBuffer[0], &GBuffer[1], &GBuffer[2], &GBuffer[3], &Velocity, &PostProcess, &PostProcessB,
+            for(GDIRenderTarget** Each : { &SceneColor, &GBuffer[0], &GBuffer[1], &GBuffer[2], &GBuffer[3], &GBuffer[4], &Velocity, &PostProcess, &PostProcessB,
                                            &Half[0], &Half[1], &Bloom[0], &Bloom[1], &Bloom[2], &Bloom[3], &Bloom[4], &Bloom[5],
                                            &BloomUp[0], &BloomUp[1], &BloomUp[2], &BloomUp[3], &BloomUp[4],
                                            &Luminance[0], &Luminance[1], &Luminance[2], &Exposure[0], &Exposure[1],
-                                           &History[0], &History[1], &Reflections, &LastCopy, &Fog })
+                                           &History[0], &History[1], &Reflections, &ReflectionHistory[0], &ReflectionHistory[1], &GI, &GIHistory[0], &GIHistory[1], &LastCopy, &Fog, &DepthCopy, &OpaqueCopy, &Subsurface, &SubsurfaceBlur })
             {
                 if(*Each)
                 {

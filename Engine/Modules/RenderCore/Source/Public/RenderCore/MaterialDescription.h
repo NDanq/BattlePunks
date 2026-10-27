@@ -22,7 +22,7 @@ namespace RenderCore
 {
     /* MaterialCommon.glsl's MATERIAL_TEMPLATE_VERSION: a shader cache cooked
      * against another is refused (ShaderCache.h). */
-    constexpr uint32_t MATERIAL_TEMPLATE_VERSION = 14;   // 3: Y up (Two Sided facing); 4: point/spot lights and shadows; 5: Scene Depth;
+    constexpr uint32_t MATERIAL_TEMPLATE_VERSION = 18;   // 3: Y up (Two Sided facing); 4: point/spot lights and shadows; 5: Scene Depth;
                                                         // 6: emissive past 1 in GBuffer3; 7: HDR scene colour (Scene_Output);
                                                         // 8: baked lighting (the 160-byte engine block, UV1, Scene_Baked);
                                                         // 9: the Unlit view mode (Scene_View); 10: preview channels,
@@ -30,19 +30,30 @@ namespace RenderCore
                                                         // 12: a particle's flipbook frame in its instance transform's bottom row
                                                         // 13: skinned meshes (Skinning.glsl, the SkinnedMesh input)
                                                         // 14: velocity (Transform.PrevModel, the previous skin block, GBuffer output 4)
+                                                        // 15: shading models (SHADING_MODELS.md): octahedral normals, GBuffer4, velocity at 5
+                                                        // 16: mesh tangents (location 13, the WorldTangent interpolant)
+                                                        // 17: sRGB's curve for display to linear, skin blocks at 20 and 21 (GLOBAL_ILLUMINATION.md)
+                                                        // 18: sixteen reflection probes, their data in the light block (GLOBAL_ILLUMINATION.md)
 
     enum class EMaterialDomain : uint8_t { Opaque = 0, Masked = 1, Translucent = 2, PostProcess = 3 };
     enum class EMaterialShading : uint8_t { Lit = 0, Unlit = 1 };
+    /* A Lit material's BRDF (SHADING_MODELS.md): GBuffer2's alpha in the Base
+     * Pass, a compile-time choice in a forward one. Unlit materials are Default. */
+    /* Volume: forward only, a thin medium (LIT_TRANSLUCENCY.md, Phase 5). */
+    enum class EMaterialShadingModel : uint8_t { Default = 0, ClearCoat = 1, Anisotropic = 2, Cloth = 3, Subsurface = 4, Skin = 5, Volume = 6 };
+    constexpr uint32_t MATERIAL_SHADING_MODEL_COUNT = 7;
     /* InstancedMesh: a mesh drawn many times in one draw (GDISetInstanceBuffer),
      * each instance's transform after the model's and its colour times the
      * vertex colour -- what a particle system draws with. SkinnedMesh: a mesh
      * whose vertices follow bones (Skinning.glsl, ANIMATION.md). */
     enum class EMaterialVertexInput : uint8_t { Quad = 0, Mesh = 1, Fullscreen = 2, InstancedMesh = 3, SkinnedMesh = 4 };
 
-    /* Bits 0-2 domain, 3-4 shading: a pixel stage's key. */
-    constexpr uint32_t GetPixelPermutationKey(const EMaterialDomain InDomain, const EMaterialShading InShading)
+    /* Bits 0-2 domain, 3-4 shading, 5-7 shading model: a pixel stage's key.
+     * A Default material's key is what it was before shading models. */
+    constexpr uint32_t GetPixelPermutationKey(const EMaterialDomain InDomain, const EMaterialShading InShading,
+                                              const EMaterialShadingModel InModel = EMaterialShadingModel::Default)
     {
-        return uint32_t(InDomain) | (uint32_t(InShading) << 3);
+        return uint32_t(InDomain) | (uint32_t(InShading) << 3) | (uint32_t(InModel) << 5);
     }
 
     /* Bits 8-10 vertex input: a vertex stage's key. */
@@ -126,7 +137,12 @@ namespace RenderCore
     {
         EMaterialDomain  Domain     = EMaterialDomain::Opaque;
         EMaterialShading Shading    = EMaterialShading::Lit;
+        EMaterialShadingModel ShadingModel = EMaterialShadingModel::Default;   // the ShadingModel line; Default without one
         bool             bTwoSided  = false;
+        bool             bTranslucencySurface = false;   // TranslucencyLighting Surface: premultiplied, specular over the opacity
+        bool             bParticleLighting    = false;   // ParticleLighting 1: lit per instance in its vertex shaders (bound as forward Lit)
+        float            TranslucentShadow    = 0.0f;    // TranslucentShadow <opacity>: its mesh into the opacity shadow maps; 0 none
+        bool             bRefraction          = false;   // Refraction 1: bends what is behind it, read from this frame's opaque copy
         float            ClipValue  = 0.5f;
         float            MaxOffset  = 0.0f;   // World Position Offset's reach: pads culling bounds
         bool             bHasOffset = false;
@@ -148,6 +164,11 @@ namespace RenderCore
                                            std::vector<uint8_t>& OutBytes);
 
     RENDERCORE_API const char* GetMaterialDomainName(EMaterialDomain InDomain);
+
+    /* "ClearCoat", as the .material file and the Material Output spell it; false
+     * for a name that is none. */
+    RENDERCORE_API const char* GetShadingModelName(EMaterialShadingModel InModel);
+    RENDERCORE_API bool        FindShadingModel(const std::string& InName, EMaterialShadingModel& OutModel);
 }
 
 #endif //RENDERCORE_MATERIALDESCRIPTION_H

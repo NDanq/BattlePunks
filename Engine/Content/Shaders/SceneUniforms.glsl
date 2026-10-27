@@ -14,7 +14,7 @@ UBO_BLOCK_BEGIN(3, Scene_Block)
     mat4 Scene_InvViewProjection; // clip space (GL's: z_ndc = 2 * depth - 1) back to world space
 
     // Shadows (Shadows.glsl, RENDERPIPELINE.md's "Shadows").
-    vec4 Scene_ShadowParams;     // x: 1 if any shadow is drawn; y: PCF radius in texels (0-2); z: 1 / atlas size; w: atlas size
+    vec4 Scene_ShadowParams;     // x: 1 if any shadow is drawn; y: PCF radius in texels (0-2); z: forward draws' (0-2); w: atlas size
     vec4 Scene_LightShadow;      // the sun's: x technique (-1 none, 0 Standard, 1 Modulated, 2 Cascaded); y cascades; z depth bias; w normal bias
     vec4 Scene_LightShadowTint;  // rgb: the sun's Modulated tint, display space
     vec4 Scene_CascadeSplits;    // each cascade's far edge, as view depth
@@ -26,7 +26,7 @@ UBO_BLOCK_BEGIN(3, Scene_Block)
     vec4 Scene_Locals[96];       // [6i] xyz position, w range; [6i+1] rgb colour (display), a intensity;
                                  // [6i+2] xyz direction (spot), w type (0 point, 1 spot);
                                  // [6i+3] x cos outer, y cos inner, z first shadow matrix (-1 none), w technique;
-                                 // [6i+4] rgb Modulated tint; [6i+5] x depth bias, y normal bias
+                                 // [6i+4] rgb Modulated tint; [6i+5] x depth bias, y normal bias, zw its translucent casters' depth span
     mat4 Scene_LocalShadowMatrices[24]; // world to (u, v, depth) * w in the local atlas; a point light's six faces +X -X +Y -Y +Z -Z
     vec4 Scene_CascadeTexels;    // each cascade's texel, world units: the normal offset is at least a texel and a half
 
@@ -38,8 +38,16 @@ UBO_BLOCK_BEGIN(3, Scene_Block)
     // Image-based lighting (IBLCommon.glsl): x 1 if the probe atlas lights this view -- the
     // Lighting stage's hemisphere ambient then gives way to it; y the probes; z the sky block's weight.
     vec4 Scene_IBL;
-    vec4 Scene_Probes[12];       // [3i] xyz centre, w radius; [3i+1] xyz box half sizes (0: a sphere), w intensity;
-                                 // [3i+2] x its block in the atlas
+    // Forward Lit surfaces' screen-space reflections (ForwardReflections.glsl; LIT_TRANSLUCENCY.md,
+    // Phase 4), set for the translucent stage: [0] x intensity, y most roughness, z steps, w thickness;
+    // [1] x longest ray, y 1 if on, zw the half-size depth's size. Scene_PrevViewProjection is
+    // unused since they read this frame's opaque colour (Phase 10). (Where the probes once were,
+    // before the light block held them.)
+    mat4 Scene_PrevViewProjection;
+    vec4 Scene_ForwardReflections[2];
+    vec4 Scene_Spare[6];         // translucent shadows (Shadows.glsl, Phase 7): [0] cascades 0 and 1's casters' depth span
+                                 // (near, far), [1] cascades 2 and 3's, [2].x 1 while the opacity atlas is bound;
+                                 // [2].y 1 while this frame's opaque colour and depth are (engine slots 13, 14; Phase 10)
 
     // Baked lighting (BakedLighting.glsl): x 1 if the view draws with a bake; y 1 if that bake
     // has the sky in it, so a baked surface takes no live sky ambient; z 1 if its lightmaps

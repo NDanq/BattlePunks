@@ -46,12 +46,14 @@ layout(location=0) out Interp_Block
     float ViewDepth;
     vec2  LightmapUV;     // a mesh's UV1, its lightmap UVs (BakedLighting.glsl); 0 elsewhere
     vec3  WorldMotion;    // how far the surface moved in the world since the frame before (the Base Pass's velocity)
+    vec4  WorldTangent;   // a mesh's tangent in world space, w the bitangent's sign (MeshAsset.h); 0 without one
 } Interpolants;
 
 void CalculateInterpolants( vec3 InPosition, vec2 InTexCoord, vec3 InNormal, vec4 InColor, vec3 InWorldPosition, float InViewDepth,
                             vec2 InLightmapUV )
 {
     Interpolants.WorldMotion   = vec3(0.0);   // the material template's vertex stage sets its own after
+    Interpolants.WorldTangent  = vec4(0.0);   // and its tangent
     Interpolants.Position      = InPosition;
     Interpolants.TexCoord      = InTexCoord;
     Interpolants.Normal        = InNormal;
@@ -88,6 +90,7 @@ layout(location=0) in Interp_Block
     float ViewDepth;
     vec2  LightmapUV;     // a mesh's UV1, its lightmap UVs (BakedLighting.glsl); 0 elsewhere
     vec3  WorldMotion;    // how far the surface moved in the world since the frame before (the Base Pass's velocity)
+    vec4  WorldTangent;   // a mesh's tangent in world space, w the bitangent's sign (MeshAsset.h); 0 without one
 } Interpolants;
 
 GDIVSToPSInterpolants GetInterpolants()
@@ -125,6 +128,19 @@ layout(std140, set=0, binding=1) uniform TR_Block { vec3 PositionWorldSpace; mat
 GDITransform Transform = GDITransform(PositionWorldSpace, Model, PrevModel);
 #endif
 
+// sRGB's transfer functions (IEC 61966-2-1): a display colour, as authored, to
+// linear light and back. Past 1 (emissive, HDR) the curve's power part goes on.
+vec3 SrgbToLinear(vec3 InDisplay)
+{
+    vec3 C = max(InDisplay, vec3(0.0));
+    return mix(C * (1.0 / 12.92), pow((C + 0.055) * (1.0 / 1.055), vec3(2.4)), step(vec3(0.04045), C));
+}
+vec3 LinearToSrgb(vec3 InLinear)
+{
+    vec3 C = max(InLinear, vec3(0.0));
+    return mix(C * 12.92, 1.055 * pow(C, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), C));
+}
+
 // Emissive past 1 in an 8-bit G-buffer target (GBuffer3): rgb the colour
 // divided by its brightest channel (when that is over 1), a that divisor as
 // log2 over GBUFFER_EMISSIVE_LOG_RANGE octaves -- up to 4096. The Lighting
@@ -140,6 +156,51 @@ vec3 DecodeGBufferEmissive(vec4 InEncoded)
 {
     return InEncoded.rgb * exp2(InEncoded.a * GBUFFER_EMISSIVE_LOG_RANGE);
 }
+
+// A unit vector as two 0-1 numbers: its octahedral map (Cigolle et al. 2014,
+// "A Survey of Efficient Representations for Independent Unit Vectors").
+// GBuffer1's normal (10 bits each), and the custom data's coat normal and
+// tangent (8 bits each).
+vec2 EncodeUnitVector(vec3 InVector)
+{
+    vec3 N  = InVector / max(abs(InVector.x) + abs(InVector.y) + abs(InVector.z), 1e-6);
+    vec2 Xy = N.z >= 0.0 ? N.xy : (1.0 - abs(N.yx)) * vec2(N.x >= 0.0 ? 1.0 : -1.0, N.y >= 0.0 ? 1.0 : -1.0);
+    return Xy * 0.5 + 0.5;
+}
+vec3 DecodeUnitVector(vec2 InEncoded)
+{
+    vec2  F = InEncoded * 2.0 - 1.0;
+    vec3  N = vec3(F, 1.0 - abs(F.x) - abs(F.y));
+    float T = clamp(-N.z, 0.0, 1.0);
+    N.xy += vec2(N.x >= 0.0 ? -T : T, N.y >= 0.0 ? -T : T);
+    return normalize(N);
+}
+
+// GBuffer1 (RENDERPIPELINE.md, "The G-buffer"): the normal, octahedral, and in
+// alpha whether the pixel is lit -- 1, or 2/3 where its diffuse ambient is
+// baked (exact in RGB10A2's two alpha bits). Readers test a < 0.5 (unlit) and
+// a < 0.875 (baked).
+vec4 EncodeGBufferNormal(vec3 InNormal, bool bInBaked)
+{
+    return vec4(EncodeUnitVector(InNormal), 0.0, bInBaked ? 2.0 / 3.0 : 1.0);
+}
+vec3 DecodeGBufferNormal(vec4 InEncoded)
+{
+    return DecodeUnitVector(InEncoded.xy);
+}
+
+// GBuffer2's alpha: the pixel's shading model (SHADING_MODELS.md;
+// RenderCore's EMaterialShadingModel).
+#define SHADING_MODEL_DEFAULT     0
+#define SHADING_MODEL_CLEARCOAT   1
+#define SHADING_MODEL_ANISOTROPIC 2
+#define SHADING_MODEL_CLOTH       3
+#define SHADING_MODEL_SUBSURFACE  4
+#define SHADING_MODEL_SKIN        5
+// Volume: forward only, a thin medium (lit smoke); never in the G-buffer.
+#define SHADING_MODEL_VOLUME      6
+float EncodeShadingModel(int InModel) { return float(InModel) / 255.0; }
+int   DecodeShadingModel(float InEncoded) { return int(InEncoded * 255.0 + 0.5); }
 
 // Bloom's chain in 8-bit targets: brightness 0-BLOOM_CHAIN_RANGE stored as
 // sqrt(v / range), so the faint tail of a glow keeps its precision.

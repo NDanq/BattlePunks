@@ -84,6 +84,21 @@ namespace
         { "git-commit-horizontal.svg", QStyle::SP_DialogSaveButton },
         { "lock.svg",                 QStyle::SP_MessageBoxWarning },
         { "git-merge.svg",            QStyle::SP_MessageBoxWarning },
+        { "arrow-left.svg",           QStyle::SP_ArrowBack },
+        { "arrow-right.svg",          QStyle::SP_ArrowForward },
+        { "folder-up.svg",            QStyle::SP_FileDialogToParent },
+        { "folder-plus.svg",          QStyle::SP_FileDialogNewFolder },
+        { "folder-open.svg",          QStyle::SP_DialogOpenButton },
+        { "folder.svg",               QStyle::SP_DirIcon },
+        { "file-text.svg",            QStyle::SP_FileIcon },
+        { "list.svg",                 QStyle::SP_FileDialogDetailedView },
+        { "import.svg",               QStyle::SP_ArrowDown },
+        { "external-link.svg",        QStyle::SP_DialogOpenButton },
+        { "rotate-ccw.svg",           QStyle::SP_BrowserReload },
+        { "minus.svg",                QStyle::SP_TitleBarMinButton },
+        { "chevron-up.svg",           QStyle::SP_ArrowUp },
+        { "chevron-down.svg",         QStyle::SP_ArrowDown },
+        { "brush-cleaning.svg",       QStyle::SP_DialogResetButton },
     }};
 
     QIcon FallbackIcon(const EditorIcons::EIcon InIcon)

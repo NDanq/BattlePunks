@@ -366,7 +366,7 @@ def _compile_spirv(glslc, src, spv_path, extra_defines=None):
         with os.fdopen(tmp_fd, "w", encoding="utf-8") as tmp:
             tmp.write(processed)
         result = subprocess.run(
-            [glslc, tmp_path, "-o", str(spv_path)],
+            [glslc, *GLSLC_TARGET, tmp_path, "-o", str(spv_path)],
             capture_output=True,
             text=True,
         )
@@ -462,7 +462,7 @@ def cook_metal(extra_defines=None):
                 # sampler() indices, so the Metal backend can bind by the same
                 # indices the Vulkan descriptor conventions use.
                 "--msl-decoration-binding",
-                "--msl-version", "20200",
+                "--msl-version", MSL_VERSION,
                 str(spv), "--output", str(metal_path),
             ],
             capture_output=True,
@@ -482,17 +482,42 @@ def cook_metal(extra_defines=None):
     print(f"[Metal] Done -- {len(cooked)} shaders transpiled to MSL.")
 
 
-def _find_fxc():
-    found = shutil.which("fxc")
+# --- Shader targets -----------------------------------------------------------
+# Vulkan: SPIR-V for Vulkan 1.3 (SPIR-V 1.6), the version the backend requires.
+GLSLC_TARGET = ["--target-env=vulkan1.3"]
+# D3D12: shader model 6.0, DXIL from dxc (signed with the dxil.dll beside it),
+# from spirv-cross's HLSL; HLSL 2018 rules, which spirv-cross writes to.
+HLSL_SHADER_MODEL = "60"
+DXIL_PROFILE      = {VERTEX_SHADER: "vs_6_0", PIXEL_SHADER: "ps_6_0", COMPUTE_SHADER: "cs_6_0"}
+# Metal: MSL 2.3 (macOS 11), whose SIMD-group functions match SM 6.0's wave operations.
+MSL_VERSION = "20300"
+
+
+def dxc_args(dxc, profile, out_path, hlsl_path, pdb_path=None):
+    """dxc's command line for one shader: entry main, optimised, DXIL at out_path;
+    with pdb_path, its debug information there and stripped from the shader."""
+    args = [dxc, "-nologo", "-T", profile, "-E", "main", "-O3", "-HV", "2018", "-Fo", str(out_path)]
+    if pdb_path:
+        args += ["-Zi", "-Qstrip_debug", "-Fd", str(pdb_path)]
+    return args + [str(hlsl_path)]
+
+
+def _find_dxc():
+    """The Windows SDK's dxc beside a dxil.dll (so the DXIL is signed: D3D12
+    refuses unsigned shaders), the newest first; else the Vulkan SDK's or PATH's."""
+    kits = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Windows Kits" / "10" / "bin"
+    for candidate in sorted(kits.glob("10.*/x64/dxc.exe"), reverse=True):
+        if (candidate.parent / "dxil.dll").is_file():
+            return str(candidate)
+    vulkan_sdk = os.environ.get("VULKAN_SDK")
+    if vulkan_sdk and (Path(vulkan_sdk) / "Bin" / "dxc.exe").is_file():
+        return str(Path(vulkan_sdk) / "Bin" / "dxc.exe")
+    found = shutil.which("dxc")
     if found:
         return found
-    kits = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Windows Kits" / "10" / "bin"
-    candidates = sorted(kits.glob("10.*/x64/fxc.exe"), reverse=True)
-    if candidates:
-        return str(candidates[0])
     print(
-        "ERROR: fxc not found.\n"
-        "  Install the Windows SDK or add fxc to PATH.",
+        "ERROR: dxc not found.\n"
+        "  Install the Windows SDK (10.0.20348 or newer ships dxc and dxil.dll) or add dxc to PATH.",
         file=sys.stderr,
     )
     sys.exit(1)
@@ -500,7 +525,7 @@ def _find_fxc():
 
 def cook_d3d12(extra_defines=None):
     """
-    GLSL -> SPIR-V (glslc) -> HLSL (spirv-cross) -> DXBC (fxc).
+    GLSL -> SPIR-V (glslc) -> HLSL (spirv-cross) -> DXIL (dxc).
 
     No --flip-vert-y: D3D12 maps NDC +1 to a target's first row, which is
     GDI's convention on every backend (render targets stored top-down, GDI.h).
@@ -511,8 +536,8 @@ def cook_d3d12(extra_defines=None):
 
     glslc       = _find_glslc()
     spirv_cross = _find_spirv_cross()
-    fxc         = _find_fxc()
-    print(f"  glslc: {glslc}\n  spirv-cross: {spirv_cross}\n  fxc: {fxc}")
+    dxc         = _find_dxc()
+    print(f"  glslc: {glslc}\n  spirv-cross: {spirv_cross}\n  dxc: {dxc}")
 
     cooked = []
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -524,18 +549,16 @@ def cook_d3d12(extra_defines=None):
 
             _compile_spirv(glslc, src, spv_path, extra_defines)
 
-            cross_args = [spirv_cross, "--hlsl", "--shader-model", "50"]
+            cross_args = [spirv_cross, "--hlsl", "--shader-model", HLSL_SHADER_MODEL]
             if is_vertex:
                 # One TEXCOORD per matrix column, matching the D3D12 input layouts.
                 cross_args += ["--hlsl-flatten-matrix-vertex-input-semantics"]
             cross_args += [str(spv_path), "--output", str(hlsl_path)]
 
             stage_type = EXT_TO_TYPE[src.suffix]
-            profile    = {VERTEX_SHADER: "vs_5_0", PIXEL_SHADER: "ps_5_0", COMPUTE_SHADER: "cs_5_0"}[stage_type]
-            fxc_args = [fxc, "/nologo", "/T", profile,
-                        "/E", "main", "/O3", "/Fo", str(out_dir / cso_name), str(hlsl_path)]
+            dxc_cmd    = dxc_args(dxc, DXIL_PROFILE[stage_type], out_dir / cso_name, hlsl_path)
 
-            for args, tool in ((cross_args, "spirv-cross"), (fxc_args, "fxc")):
+            for args, tool in ((cross_args, "spirv-cross"), (dxc_cmd, "dxc")):
                 result = subprocess.run(args, capture_output=True, text=True)
                 if result.returncode != 0:
                     print(

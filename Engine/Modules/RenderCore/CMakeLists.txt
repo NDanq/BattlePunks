@@ -31,6 +31,7 @@ endif()
 option(RENDERCORE_BUILD_SMOKETEST "Build RenderCoreSmokeTest" OFF)
 option(RENDERCORE_BUILD_ANIMATION_TESTS "Build RenderCoreAnimationTests (headless; no window or GPU)" ON)
 option(RENDERCORE_BUILD_PROCEDURAL_TESTS "Build RenderCoreProceduralTests (headless; no window or GPU)" ON)
+option(RENDERCORE_BUILD_FRACTURE_TESTS "Build RenderCoreFractureTests (headless; no window or GPU)" ON)
 
 # ===========================================================================
 # Sources
@@ -75,6 +76,7 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/Components/SkyLightComponent.cpp
         Source/Private/RenderCore/Components/PointLightComponent.cpp
         Source/Private/RenderCore/Components/SpotLightComponent.cpp
+        Source/Private/RenderCore/Components/RectLightComponent.cpp
         Source/Private/RenderCore/ShadowSetup.h
         Source/Private/RenderCore/ShadowSetup.cpp
         Source/Private/RenderCore/ShadowSettings.cpp
@@ -82,8 +84,10 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/Components/PostProcessComponent.cpp
         Source/Private/RenderCore/Components/SceneCaptureProbeComponent.cpp
         Source/Private/RenderCore/Components/ReflectionProbeComponent.cpp
+        Source/Private/RenderCore/Components/GIVolumeComponent.cpp
         Source/Private/RenderCore/AssetFileCommon.h
         Source/Private/RenderCore/MeshAsset.cpp
+        Source/Private/RenderCore/MeshFracture.cpp
         Source/Private/RenderCore/AssetCacheCommon.h
         Source/Private/RenderCore/SkeletonAsset.cpp
         Source/Private/RenderCore/RetargetAsset.cpp
@@ -125,6 +129,7 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/RenderScene.h
         Source/Public/RenderCore/AssetImportInfo.h
         Source/Public/RenderCore/MeshAsset.h
+        Source/Public/RenderCore/MeshFracture.h
         Source/Public/RenderCore/AnimMath.h
         Source/Public/RenderCore/SkeletonAsset.h
         Source/Public/RenderCore/RetargetAsset.h
@@ -155,11 +160,13 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/Components/SkyLightComponent.h
         Source/Public/RenderCore/Components/PointLightComponent.h
         Source/Public/RenderCore/Components/SpotLightComponent.h
+        Source/Public/RenderCore/Components/RectLightComponent.h
         Source/Public/RenderCore/Components/LightShadow.h
         Source/Public/RenderCore/PostProcessStack.h
         Source/Public/RenderCore/Components/PostProcessComponent.h
         Source/Public/RenderCore/Components/SceneCaptureProbeComponent.h
         Source/Public/RenderCore/Components/ReflectionProbeComponent.h
+        Source/Public/RenderCore/Components/GIVolumeComponent.h
         Source/Public/RenderCore/Renderer.h
         Source/Public/RenderCore/MaterialDescription.h
         Source/Public/RenderCore/RenderLighting.h
@@ -260,6 +267,18 @@ if(RENDERCORE_BUILD_PROCEDURAL_TESTS)
     enable_testing()
     add_test(NAME RenderCore.Procedural COMMAND RenderCoreProceduralTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:RenderCoreProceduralTests>")
+endif()
+
+# Voronoi fracture, headless (MeshFracture.h): hand-made boxes, an L prism and
+# a hollow box cut into pieces that must be closed and add up to the source.
+if(RENDERCORE_BUILD_FRACTURE_TESTS)
+    add_executable(RenderCoreFractureTests Tests/FractureTests.cpp)
+    target_link_libraries(RenderCoreFractureTests PRIVATE RenderCore::RenderCore)
+    set_target_properties(RenderCoreFractureTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "RenderCore")
+
+    enable_testing()
+    add_test(NAME RenderCore.Fracture COMMAND RenderCoreFractureTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:RenderCoreFractureTests>")
 endif()
 
 source_group("RenderCore" FILES ${RENDERCORE_SOURCES})

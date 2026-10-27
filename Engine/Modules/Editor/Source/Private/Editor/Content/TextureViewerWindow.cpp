@@ -30,6 +30,7 @@
 
 #include "Public/Core/CoreArchive.h"
 #include "Public/RenderCore/TextureCompression.h"
+#include "Public/RenderCore/RenderTypes.h"
 #include "Private/Editor/Content/AssetImport.h"
 #include "Private/Editor/Content/ContentPaths.h"
 
@@ -60,7 +61,7 @@ namespace
             for(int Channel = 0; Channel < 3; ++Channel)
             {
                 const float Mapped = Rgb[Channel] / (1.0f + Rgb[Channel]);
-                Out.GetData()[At + Channel] = uint8_t(std::lround(std::pow(Mapped, 1.0f / 2.2f) * 255.0f));
+                Out.GetData()[At + Channel] = uint8_t(std::lround(RenderCore::LinearToSrgb(Mapped) * 255.0f));
             }
             Out.GetData()[At + 3] = 255;
         }

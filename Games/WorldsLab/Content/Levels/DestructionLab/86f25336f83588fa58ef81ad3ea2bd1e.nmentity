@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="86f25336f83588fa58ef81ad3ea2bd1e" Name="StonePillar1">
+  <Component Type="Render" Version="5">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/Courtyard/Stone.material.nmgraph" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
+    <Occluder Value="false" />
+  </Component>
+  <Component Type="Rigid Body" Version="1">
+    <Enabled Value="true" />
+    <Motion Value="2" />
+    <Shape Value="0" />
+    <ShapeSource Value="0" />
+    <Mass Value="0" />
+    <Friction Value="0.6" />
+    <Restitution Value="0" />
+    <LinearDamping Value="0.05" />
+    <AngularDamping Value="0.05" />
+    <GravityFactor Value="1" />
+    <Continuous Value="false" />
+    <Sensor Value="false" />
+    <AllowSleeping Value="true" />
+    <Layer Value="1" />
+    <Mask Value="-1" />
+    <InitialLinearVelocity X="0" Y="0" Z="0" />
+    <InitialAngularVelocity X="0" Y="0" Z="0" />
+  </Component>
+  <Component Type="Destructible" Version="1">
+    <Enabled Value="true" />
+    <Mode Value="0" />
+    <Structural Value="true" />
+    <Anchored Value="true" />
+    <Material Value="Stone" />
+    <Fracture Value="" />
+    <Pieces Value="20" />
+    <Seed Value="300" />
+    <Strength Value="0" />
+    <Health Value="0" />
+    <DebrisLifetime Value="0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="820" Y="160" Z="420" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="80" Y="320" Z="80" />
+  </Component>
+</Entity>

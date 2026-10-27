@@ -19,6 +19,8 @@
  *   location 11 vec4 bone indices  (skinned only: Joints and Weights both set;
  *   location 12 vec4 bone weights   a skinned vertex shader reads them --
  *                                   GDI_SKIN_BLOCK_BINDING has its bones)
+ *   location 13 vec4 tangent       (indexed only; xyz along UV0's U, w the
+ *                                   bitangent's sign; zero when Tangents is null)
  */
 struct GDIMeshDesc
 {
@@ -27,6 +29,7 @@ struct GDIMeshDesc
     const float*    UV0         = nullptr;
     const float*    Colors      = nullptr;   // RGBA, 4 per vertex; optional
     const float*    UV1         = nullptr;   // 2 per vertex; optional
+    const float*    Tangents    = nullptr;   // 4 per vertex (RenderCore's MeshData::Tangents); optional
     const float*    Joints      = nullptr;   // 4 per vertex, bone indices as floats; optional, with Weights
     const float*    Weights     = nullptr;   // 4 per vertex; optional, with Joints
     uint32_t        NumVertices = 0;
@@ -56,6 +59,7 @@ public:
         float*    Normal     = nullptr;
         float*    Color      = nullptr;   // RGBA, 4 per vertex
         float*    UV1        = nullptr;   // 2 per vertex, the lightmap UVs
+        float*    Tangent    = nullptr;   // 4 per vertex; zero without tangents
         float*    Joints     = nullptr;   // 4 per vertex, skinned meshes only
         float*    Weights    = nullptr;   // 4 per vertex, skinned meshes only
         uint32_t* Indices    = nullptr;
@@ -230,6 +234,7 @@ protected:
         free(RenderData.Normal);   RenderData.Normal   = nullptr;
         free(RenderData.Color);    RenderData.Color    = nullptr;
         free(RenderData.UV1);      RenderData.UV1      = nullptr;
+        free(RenderData.Tangent);  RenderData.Tangent  = nullptr;
         free(RenderData.Joints);   RenderData.Joints   = nullptr;
         free(RenderData.Weights);  RenderData.Weights  = nullptr;
         free(RenderData.Indices);  RenderData.Indices  = nullptr;

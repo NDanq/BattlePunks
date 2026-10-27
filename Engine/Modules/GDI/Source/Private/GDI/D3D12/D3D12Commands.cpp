@@ -137,8 +137,8 @@ void D3D12DynamicGDI::EndRendering()
         if(MainRT->IsValid())
         {
             D3D12Ops::RecordTransition(CurrentStateData->CurrentCmd, MainRT->GetResource(),
-                                       MainRT->GetCurrentState(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-            MainRT->SetCurrentState(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                                       MainRT->GetCurrentState(), D3D12_STATE_SAMPLED);
+            MainRT->SetCurrentState(D3D12_STATE_SAMPLED);
         }
     }
 

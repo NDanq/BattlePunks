@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Private/Editor/Graph/GraphDetailsPanel.h"
+#include "Private/Editor/EditorIcons.h"
 
 #include <algorithm>
 #include <cmath>
@@ -253,7 +254,7 @@ void GraphDetailsPanel::BuildNode(QFormLayout* InForm, const Node& InNode)
     // --- Properties ------------------------------------------------------------
     for(const PropertyDefinition& Property : Def->Properties)
     {
-        const std::string Value = InNode.GetProperty(Property.Name, Property.Default);
+        const std::string Value = InNode.GetProperty(Property.Name, Property.ValueWhenAbsent());
         const std::string Name  = Property.Name;
         QWidget* Editor = nullptr;
 
@@ -320,7 +321,7 @@ void GraphDetailsPanel::BuildNode(QFormLayout* InForm, const Node& InNode)
             Layout->addWidget(Edit, 1);
 
             auto* Pick = new QToolButton();
-            Pick->setText(QStringLiteral("..."));
+            Pick->setIcon(EditorIcons::Get(EditorIcons::EIcon::Browse));
             Pick->setToolTip(QStringLiteral("Choose a texture in the project"));
             Layout->addWidget(Pick);
             connect(Pick, &QToolButton::clicked, this, [this, Edit]()
@@ -486,7 +487,7 @@ void GraphDetailsPanel::BuildGraph(QFormLayout* InForm)
         Layout->addWidget(Default, 1);
 
         auto* Remove = new QToolButton();
-        Remove->setText(QStringLiteral("x"));
+        Remove->setIcon(EditorIcons::Get(EditorIcons::EIcon::Close));
         Remove->setToolTip(QStringLiteral("Remove this variable"));
         connect(Remove, &QToolButton::clicked, this, [this, Index]()
         {
@@ -570,7 +571,7 @@ void GraphDetailsPanel::BuildFunctions(QFormLayout* InForm)
         HeaderLayout->addWidget(Name, 1);
 
         auto* Remove = new QToolButton();
-        Remove->setText(QStringLiteral("x"));
+        Remove->setIcon(EditorIcons::Get(EditorIcons::EIcon::Close));
         Remove->setToolTip(QStringLiteral("Remove this function (its nodes stay, and no longer compile)"));
         connect(Remove, &QToolButton::clicked, this, [Change, Index]()
         {
@@ -613,7 +614,7 @@ void GraphDetailsPanel::BuildFunctions(QFormLayout* InForm)
                 Layout->addWidget(Type, 1);
 
                 auto* RemovePin = new QToolButton();
-                RemovePin->setText(QStringLiteral("x"));
+                RemovePin->setIcon(EditorIcons::Get(EditorIcons::EIcon::Close));
                 RemovePin->setToolTip(bOutputs ? QStringLiteral("Remove this output") : QStringLiteral("Remove this input"));
                 connect(RemovePin, &QToolButton::clicked, this, [Change, ListOf, PinIndex]()
                 {

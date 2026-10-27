@@ -40,9 +40,15 @@
 #include "Private/RenderCore/OverlayFont.h"
 #include "Private/RenderCore/UIRenderer.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
+#include "Private/RenderCore/SceneCapture.h"
 #include "Private/RenderCore/SceneTargets.h"
 #include "Private/RenderCore/ShadowSetup.h"
 #include "Private/RenderCore/TextureStreaming.h"
+
+namespace
+{
+#include "Private/RenderCore/LTCTables.inl"
+}
 
 /*
  * DrawQuad: a 1x1 quad mesh, Basic_VS/Basic_PS, and a GDIView whose camera
@@ -57,8 +63,8 @@
  *
  * STAGES (RENDERPIPELINE.md). Inside a scene (BeginSceneDraws to
  * RenderSceneStages) each draw is queued in the draw policy of the stage its
- * material names -- Base Pass (the G-buffer), Unlit, Translucent Lit,
- * Translucent Unlit, PostProcess -- and the stages then run in order, with
+ * material names -- Base Pass (the G-buffer), Unlit, Translucent (Lit and
+ * Unlit, back to front together), PostProcess -- and the stages then run in order, with
  * the Lighting stage resolving the G-buffer between the Base Pass and Unlit.
  * Outside a scene (a test) draws are issued at once.
  */
@@ -67,6 +73,33 @@
  * for capture tools; off saves building the names. Only where the backend records
  * regions (GDIHasDrawEvents: Vulkan with VK_EXT_debug_utils, as under RenderDoc). */
 NIMBLE_CONFIG_BOOL(GRenderDrawLabels, "Rendering", "DrawLabels", true, nullptr);
+/* Skin's screen-space subsurface scattering (SHADING_MODELS.md, PPSubsurface.fsh): on, and the
+ * diffusion profile's width in world units (1.2: skin, in centimetres). Off, Skin lights as
+ * Subsurface does: its diffuse in place, with its transmission. */
+NIMBLE_CONFIG_BOOL(GRenderSubsurfaceScattering, "Rendering", "SubsurfaceScattering", true, nullptr);
+NIMBLE_CONFIG_FLOAT(GRenderSubsurfaceWidth, "Rendering", "SubsurfaceWidth", 1.2f, nullptr);
+/* The light list's culling (GLOBAL_ILLUMINATION.md, Phase 2): off, every light is in every tile
+ * and depth slice, so each pixel weighs them all -- what lighting cost before, to compare with. */
+NIMBLE_CONFIG_BOOL(GRenderClusteredLights, "Rendering", "ClusteredLights", true, nullptr);
+/* Phase 3: area lights by linearly transformed cosines (off: every light a point, as before),
+ * and multiple-scattering energy compensation of specular (off: single scattering, as before). */
+NIMBLE_CONFIG_BOOL(GRenderAreaLights, "Rendering", "AreaLights", true, nullptr);
+NIMBLE_CONFIG_BOOL(GRenderEnergyCompensation, "Rendering", "EnergyCompensation", true, nullptr);
+/* Screen-space reflections' rays drawn from GGX's visible normals and accumulated over frames
+ * (GLOBAL_ILLUMINATION.md, Phase 4); off, one mirror ray a pixel, faded out on rough surfaces. */
+NIMBLE_CONFIG_BOOL(GRenderStochasticReflections, "Rendering", "StochasticReflections", true, nullptr);
+/* Particle emitters with Cast Shadows darken the light through them (LIT_TRANSLUCENCY.md, Phase 7); off, none do. */
+NIMBLE_CONFIG_BOOL(GShadowsTranslucent, "Shadows", "TranslucentShadows", true, nullptr);
+/* Forward Lit surfaces reflect the screen where a stack has Screen-Space Reflections (LIT_TRANSLUCENCY.md, Phase 4). */
+NIMBLE_CONFIG_BOOL(GRenderForwardReflections, "Rendering", "ForwardReflections", true, nullptr);
+/* Translucent materials with Refraction bend what is behind them (LIT_TRANSLUCENCY.md, Phase 11); off, they blend as before. */
+NIMBLE_CONFIG_BOOL(GRenderRefraction, "Rendering", "Refraction", true, nullptr);
+/* Screen-space GI where a stack has it (GLOBAL_ILLUMINATION.md, Phase 5); off, the stack's node is ignored. */
+NIMBLE_CONFIG_BOOL(GRenderScreenGI, "Rendering", "ScreenSpaceGI", true, nullptr);
+/* Seconds the render clock advances a frame -- particles, material Time, exposure --
+ * whatever the wall clock did; 0 follows the wall clock. For captures that must be
+ * the same frame every run (LIT_TRANSLUCENCY.md, "Validation"). */
+NIMBLE_CONFIG_FLOAT(GRenderFixedStep, "Rendering", "FixedStep", 0.0f, nullptr);
 
 namespace RenderCore
 {
@@ -147,8 +180,8 @@ namespace RenderCore
             PP_AmbientOcclusion, PP_AmbientBlur, PP_StatsOverlay, PP_ClearGradient, PP_CaptureCopy, PP_Tonemap,
             PP_IBLSky, PP_IBLPrefilter, PP_IBLLighting, PP_Sky, PP_ViewTarget, PP_UI,
             PP_Luminance, PP_LuminanceReduce, PP_AdaptExposure, PP_TemporalAA, PP_ScreenReflections, PP_Copy,
-            PP_VolumetricFog, PP_FogComposite, PP_ViewSites,
-            PP_PassCount
+            PP_VolumetricFog, PP_FogComposite, PP_ViewSites, PP_AmbientApply, PP_Subsurface, PP_LTCDecode,
+            PP_ReflectionResolve, PP_ScreenGI, PP_DDGICopy, PP_DDGIUpdate, PP_DepthHalf, PP_PassCount
         };
         const char* const POST_PASS_SHADERS[PP_PassCount] = {
             "PPDofPrepare.fsh", "PPDofBlur.fsh", "PPDofComposite.fsh", "PPMotionBlur.fsh",
@@ -156,7 +189,8 @@ namespace RenderCore
             "PPAmbientOcclusion.fsh", "PPAmbientBlur.fsh", "StatsOverlay.fsh", "ClearGradient.fsh", "CaptureCopy.fsh", "Tonemap.fsh",
             "IBLSky.fsh", "IBLPrefilter.fsh", "IBLLighting.fsh", "Sky.fsh", "ViewTarget.fsh", "UI.fsh",
             "PPLuminance.fsh", "PPLuminanceReduce.fsh", "PPAdaptExposure.fsh", "PPTemporalAA.fsh", "PPScreenReflections.fsh",
-            "PPCopy.fsh", "PPVolumetricFog.fsh", "PPFogComposite.fsh", "ViewSites.fsh",
+            "PPCopy.fsh", "PPVolumetricFog.fsh", "PPFogComposite.fsh", "ViewSites.fsh", "PPAmbientApply.fsh", "PPSubsurface.fsh", "LTCDecode.fsh",
+            "PPReflectionResolve.fsh", "PPScreenGI.fsh", "DDGICopy.fsh", "DDGIUpdate.fsh", "PPDepthHalf.fsh",
         };
         /* Each pass's draw event (DrawPost). */
         const char* const POST_PASS_NAMES[PP_PassCount] = {
@@ -165,7 +199,8 @@ namespace RenderCore
             "AmbientOcclusion", "AmbientBlur", "StatsOverlay", "ClearGradient", "CaptureCopy", "Tonemap",
             "IBLSky", "IBLPrefilter", "IBLLighting", "Sky", "ViewTarget", "UI",
             "Luminance", "LuminanceReduce", "AdaptExposure", "TemporalAA", "ScreenReflections", "Copy",
-            "VolumetricFog", "FogComposite", "ViewSites",
+            "VolumetricFog", "FogComposite", "ViewSites", "AmbientApply", "Subsurface", "LTCDecode",
+            "ReflectionResolve", "ScreenGI", "DDGICopy", "DDGIUpdate", "DepthHalf",
         };
 
         /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
@@ -190,6 +225,41 @@ namespace RenderCore
 
         /* Scene_Locals' vec4s per light. */
         constexpr uint32_t SCENE_LOCAL_VEC4S = 6;
+
+        /*
+         * The light block (LightList.glsl's Light_Block, GDI binding 22): the
+         * view's point and spot lights, sorted by view depth, and where each
+         * reaches -- clustered shading's lists [Olsson 2012] as Drobot's
+         * z-binning keeps them [Drobot 2017]. The screen in LIGHT_TILES_X x
+         * LIGHT_TILES_Y tiles, each a bit mask over the list; the view's depth
+         * in LIGHT_ZBINS slices, logarithmic, each the first and last index of
+         * the lights whose depth reaches it. A pixel walks its tile's bits
+         * between its slice's two. GLOBAL_ILLUMINATION.md, Phase 2.
+         */
+        constexpr uint32_t LIGHT_LIST_VEC4S = 6;
+        constexpr uint32_t LIGHTING_LTC_SLOT = 8;   // the engine's texture slot for the LTC tables (LightList.glsl)
+        constexpr uint32_t FORWARD_SHADOW_SLOT = 11; // the engine's slots 11, 12: forward Lit draws' shadow atlases (MaterialTemplate_PS.glsl)
+        constexpr uint32_t FORWARD_DDGI_SLOT   = 9;  // the engine's slots 9, 10: a GI Volume's atlases (DDGI.glsl), for forward Lit draws too
+        constexpr uint32_t FORWARD_REFLECTION_SLOT = 13; // the engine's slots 13, 14: this frame's opaque colour and half-size depth (ForwardReflections.glsl, Refraction.glsl)
+        constexpr uint32_t OPACITY_SHADOW_SLOT     = 15; // the engine's slot 15: translucent casters' opacity atlas (Shadows.glsl)
+        constexpr uint32_t LIGHT_TILES_X    = 32;
+        constexpr uint32_t LIGHT_TILES_Y    = 18;
+        constexpr uint32_t LIGHT_TILE_WORDS = RENDER_LOCAL_LIGHT_MAX / 32;
+        constexpr uint32_t LIGHT_ZBINS      = 64;
+        struct LightListBlock
+        {
+            float    Header[4] = {};   // x: lights; yz: a tile's size, pixels; w: flags, LIGHT_LIST_FLAG_*
+            float    Depth[4]  = {};   // x: the first slice's near view depth; y: slices per natural log of depth over it
+            float    Lights[RENDER_LOCAL_LIGHT_MAX * LIGHT_LIST_VEC4S][4] = {};
+            uint32_t Tiles[LIGHT_TILES_X * LIGHT_TILES_Y * LIGHT_TILE_WORDS] = {};
+            uint32_t ZBins[LIGHT_ZBINS] = {};
+            float    Probes[RENDER_REFLECTION_PROBES_MAX * 3][4] = {};   // the reflection probes (IBLCommon.glsl)
+            float    DDGI[4][4] = {};                                     // the GI Volume (DDGI.glsl)
+        };
+        static_assert(sizeof(LightListBlock) <= GDI_LIGHT_BLOCK_MAX_BYTES, "the light list fits the light block");
+        constexpr uint32_t LIGHT_LIST_FLAG_AREA   = 1;   // area lights by LTC ([Rendering] AreaLights)
+        constexpr uint32_t LIGHT_LIST_FLAG_ENERGY = 2;   // energy compensation ([Rendering] EnergyCompensation)
+        static_assert(RENDER_LOCAL_LIGHT_MAX % 32 == 0 && RENDER_LOCAL_LIGHT_MAX <= 0xFFFF, "a tile's words hold the list; a slice's indices are 16 bits");
 
         /* DeferredLighting.fsh's Lighting_Block: Params, the inset light and
          * tint, then RENDER_INSET_SHADOW_MAX insets and as many screen rects. */
@@ -216,12 +286,14 @@ namespace RenderCore
             float CascadeMatrices[RENDER_CASCADE_MAX][16] = {};
 
             float LocalCounts[4]        = {};
-            float Locals[RENDER_LOCAL_LIGHT_MAX * SCENE_LOCAL_VEC4S][4] = {};
+            float Locals[RENDER_SCENE_LOCAL_LIGHT_MAX * SCENE_LOCAL_VEC4S][4] = {};
             float LocalShadowMatrices[SHADOW_LOCAL_ATLAS_COLUMNS * SHADOW_LOCAL_ATLAS_ROWS][16] = {};
             float CascadeTexels[4]      = {};
             float Output[4]             = { 0.0f, 1.0f, 0.0f, 0.0f };   // HDR, exposure multiplier, tone map operator
             float IBL[4]                = {};                           // on, probes, sky block weight (IBLCommon.glsl)
-            float Probes[12][4]         = {};                           // 3 vec4s a probe
+            float PrevViewProjection[16] = {};                          // forward reflections' (Phase 4): the last frame's view
+            float ForwardReflections[2][4] = {};                        // their settings; [1][1] 1 while on
+            float Spare[6][4]           = {};
             float Baked[4]              = {};                           // drawing with a bake, it has the sky (BakedLighting.glsl)
             float View[4]               = {};                           // 1: Unlit (ERenderViewMode)
             float ViewProjection[16]    = {};                           // world to clip: contact shadows' march (Lighting.glsl)
@@ -238,9 +310,11 @@ namespace RenderCore
                       && offsetof(SceneUniforms, Locals) == 512 && offsetof(SceneUniforms, LocalShadowMatrices) == 2048,
                       "Scene_Block's shadow and local-light members are in this order");
         static_assert(offsetof(SceneUniforms, CascadeTexels) == 3584 && offsetof(SceneUniforms, Output) == 3600
-                      && offsetof(SceneUniforms, IBL) == 3616 && offsetof(SceneUniforms, Probes) == 3632,
-                      "Scene_CascadeTexels, Scene_Output, Scene_IBL and Scene_Probes come last");
-        static_assert(offsetof(SceneUniforms, Baked) == 3824, "Scene_Baked comes after Scene_Probes");
+                      && offsetof(SceneUniforms, IBL) == 3616 && offsetof(SceneUniforms, PrevViewProjection) == 3632,
+                      "Scene_CascadeTexels, Scene_Output, Scene_IBL and Scene_PrevViewProjection come last");
+        static_assert(offsetof(SceneUniforms, ForwardReflections) == 3696 && offsetof(SceneUniforms, Spare) == 3728,
+                      "Scene_ForwardReflections and Scene_Spare come after Scene_PrevViewProjection");
+        static_assert(offsetof(SceneUniforms, Baked) == 3824, "Scene_Baked comes after Scene_Spare");
         static_assert(offsetof(SceneUniforms, View) == 3840, "Scene_View comes after Scene_Baked");
         static_assert(offsetof(SceneUniforms, ViewProjection) == 3856 && offsetof(SceneUniforms, ContactShadow) == 3920,
                       "Scene_ViewProjection and Scene_ContactShadow come after Scene_View");
@@ -603,6 +677,7 @@ namespace RenderCore
         std::chrono::steady_clock::time_point Start     = std::chrono::steady_clock::now();
         std::chrono::steady_clock::time_point LastFrame = Start;
         float                                 FrameDelta = 0.0f;
+        double                                FixedClock = 0.0;   // the frames' time under [Rendering] FixedStep
 
         /* Inside a scene (BeginSceneDraws to RenderSceneStages) draws queue in
          * their stage's policy; outside one they are issued at once. */
@@ -674,7 +749,7 @@ namespace RenderCore
             for(size_t Index = 0; Index < size_t(ERenderStage::Count); ++Index)
             {
                 const ERenderStage Stage        = ERenderStage(Index);
-                const bool         bBackToFront = Stage == ERenderStage::TranslucentLit || Stage == ERenderStage::TranslucentUnlit;
+                const bool         bBackToFront = Stage == ERenderStage::Translucent;
                 Policies[Index].Init(Stage, bBackToFront ? EDrawSort::BackToFront : EDrawSort::Submission);
             }
         }
@@ -815,6 +890,8 @@ namespace RenderCore
             Desc.UV0         = OutSource->UV0.data();
             Desc.Colors      = OutSource->Colors.empty() ? nullptr : OutSource->Colors.data();
             Desc.UV1         = OutSource->UV1.empty() ? nullptr : OutSource->UV1.data();
+            /* A mesh made in memory may fill its arrays itself: tangents only if every vertex has one. */
+            Desc.Tangents    = OutSource->Tangents.size() == size_t(OutSource->GetVertexCount()) * 4 ? OutSource->Tangents.data() : nullptr;
             Desc.NumVertices = OutSource->GetVertexCount();
             Desc.Indices     = OutSource->Indices.data();
             Desc.NumIndices  = uint32_t(OutSource->Indices.size());
@@ -1048,17 +1125,20 @@ namespace RenderCore
             Additive,
             Transmit,     // the target times the source's alpha, plus its colour (a medium laid over it: fog)
             AlphaBlend,   // the source over the target by its alpha
+            Multiply,     // the target times the source's colour, its alpha times the source's (PPAmbientApply.fsh)
         };
 
         /*
          * One full-screen pass: InPixel into InTarget (InWidth x InHeight at
          * InX, no depth), InTextures as material slots 0.., InBlock's
-         * InBlockBytes as the material block. False if a shader or the target
-         * is missing.
+         * InBlockBytes as the material block. InSecond: a second target written
+         * beside InTarget (output 1), blended the same way. False if a shader
+         * or the target is missing.
          */
         bool DrawFullscreenShader(GDIShader* InPixel, const char* InEvent, GDIRenderTarget* InTarget, const uint InWidth, const uint InHeight,
                                   GDITextureResource* const* InTextures, const uint32_t InTextureCount, const void* InBlock,
-                                  const uint InBlockBytes, const EFullscreenBlend InBlend, const uint InX = 0, const uint InY = 0)
+                                  const uint InBlockBytes, const EFullscreenBlend InBlend, const uint InX = 0, const uint InY = 0,
+                                  GDIRenderTarget* InSecond = nullptr)
         {
             GDIShader* Vertex = GetDefaultVertex(EMaterialVertexInput::Fullscreen);
             if(!InPixel || !Vertex || !InTarget)
@@ -1066,7 +1146,8 @@ namespace RenderCore
                 return false;
             }
             SCOPED_DRAW_EVENT(InEvent);
-            GDISetRenderTargets(&InTarget, 1, nullptr);
+            GDIRenderTarget* Targets[2] = { InTarget, InSecond };
+            GDISetRenderTargets(Targets, InSecond ? 2 : 1, nullptr);
             GDISetViewport(InX, InY, InWidth, InHeight);   // InX: a cube face's place in its strip; InX, InY: a view's in the window
             GDISetColorMask(EColM_RGBA);
 
@@ -1085,6 +1166,7 @@ namespace RenderCore
                 case EFullscreenBlend::Additive:   GDISetBlendState(IBlendStateDesc(true, BM_One, BM_One)); break;
                 case EFullscreenBlend::Transmit:   GDISetBlendState(IBlendStateDesc(true, BM_One, BM_Src_Alpha)); break;
                 case EFullscreenBlend::AlphaBlend: GDISetBlendState(IBlendStateDesc(true, BM_Src_Alpha, BM_One_Minus_Src_Alpha)); break;
+                case EFullscreenBlend::Multiply:   GDISetBlendState(IBlendStateDesc(true, BM_Zero, BM_Src_Color)); break;
             }
             GDIDrawObject(ScreenObject);
             DrawCallCount.fetch_add(1, std::memory_order_relaxed);
@@ -1107,7 +1189,8 @@ namespace RenderCore
         {
             /* These blocks carry their matrix first; the others start at A. */
             const bool bMatrix = InPass == PP_MotionBlur || InPass == PP_AmbientOcclusion || InPass == PP_IBLSky || InPass == PP_Sky
-                              || InPass == PP_TemporalAA || InPass == PP_ScreenReflections || InPass == PP_VolumetricFog;
+                              || InPass == PP_TemporalAA || InPass == PP_ScreenReflections || InPass == PP_VolumetricFog
+                              || InPass == PP_ReflectionResolve || InPass == PP_ScreenGI;
             const void* Block      = bMatrix ? static_cast<const void*>(&InBlock) : static_cast<const void*>(InBlock.A);
             const uint  BlockBytes = uint(bMatrix ? sizeof(InBlock) : sizeof(InBlock) - sizeof(InBlock.Matrix));
             return DrawFullscreenShader(GetPostShader(InPass), POST_PASS_NAMES[InPass], InTarget, InWidth, InHeight,
@@ -1216,6 +1299,23 @@ namespace RenderCore
          * which stays null if InPost has none or this backend cannot. */
         void IssueAmbientOcclusion(SceneTargets& InTargets, const PostProcessSettings& InPost);
         GDITextureResource* AmbientOcclusion = nullptr;
+
+        /* Whether any of this frame's Base Pass draws has InModel (SHADING_MODELS.md). */
+        bool BasePassHasModel(const EMaterialShadingModel InModel) const
+        {
+            const DrawPolicy& Base = Policies[size_t(ERenderStage::BasePass)];
+            for(size_t Index = 0; Index < Base.Num(); ++Index)
+            {
+                const RenderMaterial* Mat = Base[Index].Mat;
+                if(Mat && Mat->Description.ShadingModel == InModel) { return true; }
+            }
+            return false;
+        }
+
+        /* Skin's screen-space subsurface scattering (SHADING_MODELS.md, PPSubsurface.fsh):
+         * InDiffuse, its pixels' diffuse light before albedo, blurred across into
+         * InTargets.SubsurfaceBlur, then down, times the albedo, added to InSceneColor. */
+        void IssueSubsurface(SceneTargets& InTargets, GDIRenderTarget* InDiffuse, GDIRenderTarget* InSceneColor);
         GDITextureResource* OverlayFont      = nullptr;   // OverlayFont.h's glyphs side by side, made on first use
 
         /* DrawUI's: its vertex shader (UI.fsh is PP_UI), the white texture a
@@ -1300,7 +1400,7 @@ namespace RenderCore
             Spans[RGT_BasePass]    = Count(ERenderStage::BasePass);
             Spans[RGT_Shadows]     = Count(ERenderStage::Shadows);
             Spans[RGT_Lighting]    = Count(ERenderStage::Lighting);
-            Spans[RGT_Forward]     = Count(ERenderStage::Unlit) + Count(ERenderStage::TranslucentLit) + Count(ERenderStage::TranslucentUnlit);
+            Spans[RGT_Forward]     = Count(ERenderStage::Unlit) + Count(ERenderStage::Translucent);
             Spans[RGT_PostProcess] = Count(ERenderStage::PostProcess);
             int32_t Total = 0;
             for(uint32_t Timer = RGT_PrePass; Timer < RGT_Total; ++Timer)
@@ -1429,8 +1529,11 @@ namespace RenderCore
         /* Image-based lighting (SetImageBasedLighting): the scene's atlas and its probes, for the next
          * RenderSceneStages; and whether every view draws the sky behind it (a reflection probe's captures). */
         const IBLResources* IBL = nullptr;
-        float               IBLProbes[12][4] = {};
+        float               IBLProbes[RENDER_REFLECTION_PROBES_MAX * 3][4] = {};
         uint32_t            IBLProbeCount = 0;
+        /* Dynamic GI (SetDDGI): the volume's atlases and LightList_DDGI, for the next RenderSceneStages. */
+        const DDGIResources* DDGI = nullptr;
+        float                DDGIHeader[4][4] = {};
         bool                bIBLSky = false;
         bool                bForceSkyBackground = false;
 
@@ -1460,9 +1563,9 @@ namespace RenderCore
         {
             const auto Linear = [](float (&OutColor)[4], const EngineCore::Color InColor, const float InScale)
             {
-                OutColor[0] = std::pow(InColor.Rf(), 2.2f) * InScale;
-                OutColor[1] = std::pow(InColor.Gf(), 2.2f) * InScale;
-                OutColor[2] = std::pow(InColor.Bf(), 2.2f) * InScale;
+                OutColor[0] = SrgbToLinear(InColor.Rf()) * InScale;
+                OutColor[1] = SrgbToLinear(InColor.Gf()) * InScale;
+                OutColor[2] = SrgbToLinear(InColor.Bf()) * InScale;
                 OutColor[3] = 1.0f;
             };
             float Sky[4], Ground[4];
@@ -1541,7 +1644,9 @@ namespace RenderCore
             }
 
             const MaterialDescription& Desc = Loaded.Description;
-            const uint32_t PixelKey = GetPixelPermutationKey(Desc.Domain, Desc.Shading);
+            const uint32_t PixelKey = GetPixelPermutationKey(Desc.Domain, Desc.Shading,
+                                                             Desc.Shading == EMaterialShading::Lit ? Desc.ShadingModel
+                                                                                                   : EMaterialShadingModel::Default);
             GDIShader* Pixel = LoadShader(GetPermutationFileName(Stem, PixelKey, false), ST_Pixel, Who, false);
             if(!Pixel)
             {
@@ -1584,17 +1689,24 @@ namespace RenderCore
 
         /* Draw state per domain. Plain quads keep the scene's old state:
          * blended, depth written. */
-        static void ApplyDomainState(const EMaterialDomain InDomain)
+        /* InPremultiplied: a Translucent Lit material whose Translucency Lighting is Surface
+         * writes its colour already times its coverage, its specular not (LIT_TRANSLUCENCY.md, Phase 3).
+         * bInCullFar: a one-sided Translucent mesh drops its faces away from the eye -- nothing
+         * hides them behind its near faces, as the depth test does for an opaque one. The engine
+         * winds a face toward the eye clockwise (MaterialTemplate_PS.glsl): a face away is GL's front. */
+        static void ApplyDomainState(const EMaterialDomain InDomain, const bool bInPremultiplied = false, const bool bInCullFar = false)
         {
             IDepthStateDesc Depth;
             Depth.bDepthTest = InDomain != EMaterialDomain::PostProcess;
             Depth.bDepthMask = InDomain == EMaterialDomain::Opaque || InDomain == EMaterialDomain::Masked;
             Depth.DepthMode  = CTM_LEQUAL;
+            Depth.CullMode   = bInCullFar && InDomain == EMaterialDomain::Translucent ? GDI_CULL_FRONT : GDI_CULL_NONE;
             GDISetDepthState(Depth);
 
             if(InDomain == EMaterialDomain::Translucent)
             {
-                GDISetBlendState(IBlendStateDesc(true, BM_Src_Alpha, BM_One_Minus_Src_Alpha));
+                GDISetBlendState(bInPremultiplied ? IBlendStateDesc(true, BM_One, BM_One_Minus_Src_Alpha)
+                                                  : IBlendStateDesc(true, BM_Src_Alpha, BM_One_Minus_Src_Alpha));
             }
             else
             {
@@ -1680,6 +1792,8 @@ namespace RenderCore
                 GDISetMaterialTexture(Each.Slot, !GIssueScratch ? FindTexture(Each)
                                                  : (Index < InMaterial.Resolved.size() ? InMaterial.Resolved[Index] : nullptr));
             }
+            /* The engine's: the area lights' LTC tables (LightList.glsl). */
+            GDISetMaterialTexture(LIGHTING_LTC_SLOT, LTCTable);
         }
 
         bool BindMaterial(Material& InMaterial, const EMaterialVertexInput InInput, const EngineCore::Color InTint,
@@ -1733,7 +1847,9 @@ namespace RenderCore
             BindMaterialTextures(InMaterial);
             /* Slot 0, its own outside PostProcess (MaterialTemplate_PS.glsl): a Base
              * Pass material's lightmap, a forward Lit material's probe atlas. */
-            if(InMaterial.Description.Domain != EMaterialDomain::PostProcess && InMaterial.Description.Shading == EMaterialShading::Lit)
+            /* A per-particle lit material's vertex shaders read the forward Lit draws' textures (ParticleLighting.glsl). */
+            if(InMaterial.Description.Domain != EMaterialDomain::PostProcess
+               && (InMaterial.Description.Shading == EMaterialShading::Lit || InMaterial.Description.bParticleLighting))
             {
                 const bool bBasePass = InMaterial.Description.Domain == EMaterialDomain::Opaque
                                     || InMaterial.Description.Domain == EMaterialDomain::Masked;
@@ -1745,10 +1861,29 @@ namespace RenderCore
                 else
                 {
                     GDISetMaterialTexture(0, Scene.IBL[0] > 0.5f ? IBLAtlasTexture() : nullptr);
+                    for(uint32_t Atlas = 0; Atlas < SA_Count; ++Atlas)
+                    {
+                        GDISetMaterialTexture(FORWARD_SHADOW_SLOT + Atlas, ForwardShadowAtlas[Atlas]);
+                    }
+                    GDISetMaterialTexture(FORWARD_DDGI_SLOT, ForwardDDGIAtlas[0]);
+                    GDISetMaterialTexture(FORWARD_DDGI_SLOT + 1, ForwardDDGIAtlas[1]);
+                    GDISetMaterialTexture(FORWARD_REFLECTION_SLOT, ForwardReflectionTextures[0]);
+                    GDISetMaterialTexture(FORWARD_REFLECTION_SLOT + 1, ForwardReflectionTextures[1]);
+                    GDISetMaterialTexture(OPACITY_SHADOW_SLOT, ForwardOpacityAtlas);
                 }
             }
+            /* An Unlit material that refracts reads this frame's opaque scene too (Refraction.glsl). */
+            else if(InMaterial.Description.bRefraction && InMaterial.Description.Domain == EMaterialDomain::Translucent)
+            {
+                GDISetMaterialTexture(FORWARD_REFLECTION_SLOT, ForwardReflectionTextures[0]);
+                GDISetMaterialTexture(FORWARD_REFLECTION_SLOT + 1, ForwardReflectionTextures[1]);
+            }
 
-            ApplyDomainState(InMaterial.Description.Domain);
+            const bool bMesh = InInput == EMaterialVertexInput::Mesh || InInput == EMaterialVertexInput::InstancedMesh
+                            || InInput == EMaterialVertexInput::SkinnedMesh;
+            ApplyDomainState(InMaterial.Description.Domain,
+                             InMaterial.Description.bTranslucencySurface && InMaterial.Description.Shading == EMaterialShading::Lit,
+                             bMesh && !InMaterial.Description.bTwoSided);
             return true;
         }
 
@@ -1773,7 +1908,8 @@ namespace RenderCore
             Scene.CameraPosition[1] = float(Camera.GetY());
             Scene.CameraPosition[2] = float(Camera.GetZ());
 
-            Scene.Time[0] = std::chrono::duration<float>(LastFrame - Start).count();
+            Scene.Time[0] = GRenderFixedStep.GetFloat() > 0.0f ? float(FixedClock)
+                                                                : std::chrono::duration<float>(LastFrame - Start).count();
             Scene.Time[1] = FrameDelta;
 
             /* Toward the light: the way it travels, reversed. */
@@ -1831,7 +1967,7 @@ namespace RenderCore
             Scene.CameraForward[3] = float(View.Origin.Dot(Forward));
 
             /* Point and spot lights. */
-            const uint32_t LocalCount = std::min<uint32_t>(Lighting.LocalCount, RENDER_LOCAL_LIGHT_MAX);
+            const uint32_t LocalCount = std::min<uint32_t>(Lighting.LocalCount, RENDER_SCENE_LOCAL_LIGHT_MAX);
             Scene.LocalCounts[0] = float(LocalCount);
             for(uint32_t Index = 0; Index < LocalCount; ++Index)
             {
@@ -1899,6 +2035,13 @@ namespace RenderCore
                     Atlas = nullptr;
                 }
             }
+            if(OpacityAtlas)
+            {
+                GDIReleaseRenderTarget(OpacityAtlas);
+                delete OpacityAtlas;
+                OpacityAtlas = nullptr;
+            }
+            ForwardOpacityAtlas = nullptr;
             ShadowAtlasSize = 0;
         }
 
@@ -1923,7 +2066,7 @@ namespace RenderCore
             const float Size = float(Shadows.AtlasSize);
             Scene.ShadowParams[0] = 1.0f;
             Scene.ShadowParams[1] = float(std::clamp(Lighting.Shadows.Filter, 0, 2));
-            Scene.ShadowParams[2] = 1.0f / Size;
+            Scene.ShadowParams[2] = float(std::clamp(Lighting.Shadows.ForwardFilter, 0, 2));
             Scene.ShadowParams[3] = Size;
 
             /* The sun's contact shadows ([Shadows] ContactShadows): with shadows drawn at all, so
@@ -1963,12 +2106,180 @@ namespace RenderCore
             {
                 PutMatrix(Scene.LocalShadowMatrices[View - DirectionalViews], Shadows.Views[View].WorldToAtlas);
             }
-            for(uint32_t Index = 0; Index < std::min<uint32_t>(Lighting.LocalCount, RENDER_LOCAL_LIGHT_MAX); ++Index)
+            for(uint32_t Index = 0; Index < std::min<uint32_t>(Lighting.LocalCount, RENDER_SCENE_LOCAL_LIGHT_MAX); ++Index)
             {
                 const int32_t First = Shadows.LocalFirstView[Index];
                 Scene.Locals[Index * SCENE_LOCAL_VEC4S + 3][2] = First >= 0 ? float(uint32_t(First) - DirectionalViews) : -1.0f;
             }
         }
+
+        /* The light block for the current view and lighting, its tiles over a
+         * InWidth x InHeight target (LightListBlock). */
+        void BuildLightList(const uint InWidth, const uint InHeight)
+        {
+            LightListBlock& Out = LightList;
+            const uint32_t Count = std::min<uint32_t>(Lighting.LocalCount, RENDER_LOCAL_LIGHT_MAX);
+            const EngineCore::Vector3 Forward = ViewForward(View);
+            const double ForwardW = View.Origin.Dot(Forward);
+            const bool   bOrtho   = IsOrthographic(View);
+
+            /* Sorted by the view depth of their centres. */
+            uint32_t Order[RENDER_LOCAL_LIGHT_MAX];
+            double   Depths[RENDER_LOCAL_LIGHT_MAX];
+            for(uint32_t Index = 0; Index < Count; ++Index)
+            {
+                Order[Index]  = Index;
+                Depths[Index] = Lighting.Locals[Index].Position.Dot(Forward) - ForwardW;
+            }
+            std::sort(Order, Order + Count, [&Depths](const uint32_t InA, const uint32_t InB) { return Depths[InA] < Depths[InB]; });
+
+            /* Slices from the near plane (at least a unit) to the furthest light's reach. */
+            const double Near = std::max(double(View.ZNear), 1.0);
+            double Far = Near * 2.0;
+            for(uint32_t Index = 0; Index < Count; ++Index) { Far = std::max(Far, Depths[Index] + double(Lighting.Locals[Index].Range)); }
+            const double PerLog = double(LIGHT_ZBINS) / std::log(Far / Near);
+            const auto Slice = [&](const double InDepth)
+            {
+                if(InDepth <= Near) { return 0; }
+                return std::clamp(int(std::log(InDepth / Near) * PerLog), 0, int(LIGHT_ZBINS) - 1);
+            };
+
+            const double TileW = std::ceil(double(std::max<uint>(InWidth, 1)) / double(LIGHT_TILES_X));
+            const double TileH = std::ceil(double(std::max<uint>(InHeight, 1)) / double(LIGHT_TILES_Y));
+            Out.Header[0] = float(Count);
+            Out.Header[1] = float(TileW);
+            Out.Header[2] = float(TileH);
+            Out.Header[3] = float((GRenderAreaLights.GetBool() && LTCTable ? LIGHT_LIST_FLAG_AREA : 0u)
+                                | (GRenderEnergyCompensation.GetBool() ? LIGHT_LIST_FLAG_ENERGY : 0u));
+            Out.Depth[0]  = float(Near);
+            Out.Depth[1]  = float(PerLog);
+            std::memset(Out.Tiles, 0, sizeof(Out.Tiles));
+            for(uint32_t& Bin : Out.ZBins) { Bin = 0x0000FFFFu; }   // first 0xFFFF, last 0: none
+
+            float ViewProjection[16];
+            PutMatrix(ViewProjection, View.Projection * View.View);
+            const auto Project = [&ViewProjection](const double InX, const double InY, const double InZ, double& OutX, double& OutY)
+            {
+                const float* M = ViewProjection;   // column-major: element (row, col) at M[col * 4 + row]
+                const double X = M[0] * InX + M[4] * InY + M[8]  * InZ + M[12];
+                const double Y = M[1] * InX + M[5] * InY + M[9]  * InZ + M[13];
+                const double W = M[3] * InX + M[7] * InY + M[11] * InZ + M[15];
+                OutX = X / W;
+                OutY = Y / W;
+            };
+
+            const double Degrees = 3.14159265358979 / 180.0;
+            for(uint32_t Sorted = 0; Sorted < Count; ++Sorted)
+            {
+                const uint32_t          Index = Order[Sorted];
+                const RenderLocalLight& Light = Lighting.Locals[Index];
+                float (*Entry)[4] = &Out.Lights[Sorted * LIGHT_LIST_VEC4S];
+                const double Length = Light.Direction.GetLength();
+                const EngineCore::Vector3 Direction = Length > 1e-9 ? Light.Direction * (1.0 / Length) : EngineCore::Vector3(0.0, 0.0, 1.0);
+                Entry[0][0] = float(Light.Position.GetX()); Entry[0][1] = float(Light.Position.GetY());
+                Entry[0][2] = float(Light.Position.GetZ()); Entry[0][3] = Light.Range;
+                PutColor(Entry[1], Light.Color, Light.Intensity);
+                Entry[2][0] = float(Direction.GetX()); Entry[2][1] = float(Direction.GetY());
+                Entry[2][2] = float(Direction.GetZ()); Entry[2][3] = float(Light.Type);
+                Entry[3][0] = float(std::cos(double(Light.OuterConeAngle) * Degrees));
+                Entry[3][1] = float(std::cos(double(std::min(Light.InnerConeAngle, Light.OuterConeAngle - 0.01f)) * Degrees));
+                /* Its place in Scene_Locals, which holds its shadow (the first RENDER_SCENE_LOCAL_LIGHT_MAX; casters come first). */
+                Entry[3][2] = Index < RENDER_SCENE_LOCAL_LIGHT_MAX ? float(Index) : -1.0f;
+                Entry[3][3] = 0.0f;
+                /* Area: a rect's half axes, or a sphere's radius (LightingLocal). */
+                const bool bRect = Light.Type == RLL_Rect;
+                const EngineCore::Vector3 HalfRight = Light.Right * (bRect ? 0.5 * double(Light.Width) : 0.0);
+                const EngineCore::Vector3 HalfUp    = Light.Up * (bRect ? 0.5 * double(Light.Height) : 0.0);
+                Entry[4][0] = float(HalfRight.GetX()); Entry[4][1] = float(HalfRight.GetY()); Entry[4][2] = float(HalfRight.GetZ());
+                Entry[4][3] = bRect ? 0.0f : Light.SourceRadius;
+                Entry[5][0] = float(HalfUp.GetX()); Entry[5][1] = float(HalfUp.GetY()); Entry[5][2] = float(HalfUp.GetZ());
+                Entry[5][3] = 0.0f;
+
+                /* Depth: the slices its sphere reaches (all of them, unculled). */
+                const bool   bCull  = GRenderClusteredLights.GetBool();
+                const double Radius = double(Light.Range);
+                const int First = bCull ? Slice(Depths[Index] - Radius) : 0;
+                const int Last  = bCull ? Slice(Depths[Index] + Radius) : int(LIGHT_ZBINS) - 1;
+                for(int Bin = First; Bin <= Last; ++Bin)
+                {
+                    const uint32_t Low  = std::min<uint32_t>(Out.ZBins[Bin] & 0xFFFFu, Sorted);
+                    const uint32_t High = std::max<uint32_t>(Out.ZBins[Bin] >> 16, Sorted);
+                    Out.ZBins[Bin] = Low | (High << 16);
+                }
+
+                /* Screen: the tiles its bounding cube's corners span; all of them if the sphere reaches the near plane. */
+                int TileX0 = 0, TileY0 = 0, TileX1 = int(LIGHT_TILES_X) - 1, TileY1 = int(LIGHT_TILES_Y) - 1;
+                if(bCull && (bOrtho || Depths[Index] - Radius > Near))
+                {
+                    double MinX = 1e30, MinY = 1e30, MaxX = -1e30, MaxY = -1e30;
+                    for(int Corner = 0; Corner < 8; ++Corner)
+                    {
+                        double X, Y;
+                        Project(Light.Position.GetX() + ((Corner & 1) ? Radius : -Radius), Light.Position.GetY() + ((Corner & 2) ? Radius : -Radius),
+                                Light.Position.GetZ() + ((Corner & 4) ? Radius : -Radius), X, Y);
+                        MinX = std::min(MinX, X); MaxX = std::max(MaxX, X);
+                        MinY = std::min(MinY, Y); MaxY = std::max(MaxY, Y);
+                    }
+                    if(MaxX < -1.0 || MinX > 1.0 || MaxY < -1.0 || MinY > 1.0) { continue; }   // off screen: in no tile
+                    /* NDC to pixels: y runs down the target (NdcToTargetUv). */
+                    const auto Column = [&](const double InNdc) { return std::clamp(int((InNdc * 0.5 + 0.5) * InWidth / TileW), 0, int(LIGHT_TILES_X) - 1); };
+                    const auto Row    = [&](const double InNdc) { return std::clamp(int((0.5 - InNdc * 0.5) * InHeight / TileH), 0, int(LIGHT_TILES_Y) - 1); };
+                    TileX0 = Column(MinX); TileX1 = Column(MaxX);
+                    TileY0 = Row(MaxY);    TileY1 = Row(MinY);
+                }
+                const uint32_t Word = Sorted / 32, Bit = 1u << (Sorted % 32);
+                for(int TileY = TileY0; TileY <= TileY1; ++TileY)
+                {
+                    for(int TileX = TileX0; TileX <= TileX1; ++TileX)
+                    {
+                        Out.Tiles[(uint32_t(TileY) * LIGHT_TILES_X + uint32_t(TileX)) * LIGHT_TILE_WORDS + Word] |= Bit;
+                    }
+                }
+            }
+        }
+        LightListBlock LightList;
+
+        /* The LTC tables (fit_ltc.py, LTCTables.inl) on the GPU: 64 x 128,
+         * half float, the matrices in rows 0-63 and the amplitudes in 64-127,
+         * made once (EnsureLTC) and bound at engine texture slot 8 for the
+         * Lighting stage and forward Lit draws. */
+        GDIRenderTarget*    LTCTarget = nullptr;
+        GDITextureResource* LTCTable  = nullptr;
+        /* The shadow atlases this scene's Lighting stage read, bound for its forward Lit
+         * draws at the engine's slots 11 and 12 (LIT_TRANSLUCENCY.md, Phase 2); cleared
+         * at BeginSceneDraws, so a scene without the stage draws them unshadowed. */
+        GDITextureResource* ForwardShadowAtlas[SA_Count] = {};
+        /* A GI Volume's irradiance and distance atlases, as the IBL pass bound them, for the
+         * forward Lit draws after it (LIT_TRANSLUCENCY.md, Phase 3); cleared at BeginSceneDraws. */
+        GDITextureResource* ForwardDDGIAtlas[2] = {};
+        /* Forward reflections' last colour and copied depth (Phase 4), set for the forward stage. */
+        GDITextureResource* ForwardReflectionTextures[2] = {};
+
+        /* Translucent shadows (LIT_TRANSLUCENCY.md, Phase 7): this frame's casting emitters'
+         * draws, made by CastParticleShadows; the opacity atlas they go into -- the
+         * directional atlas's tiles in its left half, the local's in its right, at half
+         * resolution, four slices of optical depth a texel (RGBA16F) -- and its texture
+         * once drawn this frame (engine slot 15), null otherwise. */
+        struct TranslucentCaster
+        {
+            const void*    Key      = nullptr;   // the emitter: once a frame however many views draw it
+            GDIMesh*       Mesh     = nullptr;
+            uint32_t       First    = 0, Count = 0;
+            GDIBuffer*     Instances = nullptr;
+            uint32_t       InstanceCount = 0;
+            GDIBuffer*     Args     = nullptr;
+            float          Density  = 1.0f;
+            GameCore::AABB Bounds;
+        };
+        std::vector<TranslucentCaster> TranslucentCasters;
+        GDIRenderTarget*    OpacityAtlas = nullptr;
+        GDITextureResource* ForwardOpacityAtlas = nullptr;
+        GDIShader*          OpacityCasterVertex = nullptr;
+        GDIShader*          OpacityCasterPixel  = nullptr;
+        GDIShader*          OpacityMeshVertex   = nullptr;
+        bool                bOpacityCasterTried = false;
+        bool                bLTCTried = false;
+        void EnsureLTC();
 
         /* A loaded material's own, else the section's, else DefaultLit: the
          * one a mesh section draws with (null: the plain fallback). */
@@ -2225,7 +2536,7 @@ namespace RenderCore
                     {
                         for(const uint32_t Index : MobilityOrder(Policy, Order.data() + Start, Order.data() + End))
                         {
-                            if(Policy[Index].Mesh) { Flat.push_back(Index); }
+                            if(Policy[Index].Mesh && !IsTranslucentCaster(Policy[Index])) { Flat.push_back(Index); }
                         }
                     }
                     Start = End;
@@ -2258,7 +2569,7 @@ namespace RenderCore
                         SCOPED_DRAW_EVENT(GetShadowViewName(ViewIndex));
                         IssueByMobility(Policy, Order.data() + Start, Order.data() + End, [this](const DrawCommand& InItem)
                         {
-                            if(InItem.Mesh) { IssueShadowCaster(InItem); }
+                            if(InItem.Mesh && !IsTranslucentCaster(InItem)) { IssueShadowCaster(InItem); }
                         });
                     }
                     Start = End;
@@ -2267,6 +2578,208 @@ namespace RenderCore
             }
             PlaceProjection = nullptr;
             PlaceView       = nullptr;
+
+            /* The atlases for this scene's forward Lit draws, whether or not a Lighting stage runs
+             * (a scene of translucent surfaces alone has none, and they would read no atlas). */
+            for(uint32_t Atlas = 0; Atlas < SA_Count; ++Atlas)
+            {
+                GDITexture2D* Map = Shadows.UsesAtlas(EShadowAtlas(Atlas)) && ShadowAtlas[Atlas] ? ShadowAtlas[Atlas]->ToDepthTexture2D() : nullptr;
+                ForwardShadowAtlas[Atlas] = Map ? Map->Resource : nullptr;
+            }
+            IssueTranslucentShadows();
+        }
+
+        /* A Shadows-stage draw that is a Translucent material's see-through shadow (Cast Translucent Shadow). */
+        static bool IsTranslucentCaster(const DrawCommand& InItem)
+        {
+            return InItem.Mat && InItem.Mat->Description.Domain == EMaterialDomain::Translucent;
+        }
+
+        /* Translucent shadows (LIT_TRANSLUCENCY.md, Phase 7; Kim and Neumann 2001): each light
+         * view's casting particles into its tile of the opacity atlas (OpacityShadowCaster.vsh/
+         * .fsh), turned to the light, their optical depth added into four slices between the
+         * casters' nearest and farthest depth in that view -- which the scene block carries
+         * per cascade (Scene_Spare) and per shadowed local light (Scene_Locals[6i+5].zw) for
+         * Shadows.glsl to read back. Nothing (and every span empty) without casters. */
+        void IssueTranslucentShadows()
+        {
+            for(uint32_t Index = 0; Index < RENDER_SCENE_LOCAL_LIGHT_MAX; ++Index)
+            {
+                Scene.Locals[Index * SCENE_LOCAL_VEC4S + 5][2] = 0.0f;
+                Scene.Locals[Index * SCENE_LOCAL_VEC4S + 5][3] = 0.0f;
+            }
+            std::memset(Scene.Spare, 0, sizeof(float) * 12);
+            ForwardOpacityAtlas = nullptr;
+            const DrawPolicy& Policy = PolicyFor(ERenderStage::Shadows);
+            bool bMeshCasters = false;
+            for(size_t Index = 0; Index < Policy.Num() && !bMeshCasters; ++Index) { bMeshCasters = IsTranslucentCaster(Policy[Index]); }
+            if(!GShadowsTranslucent.GetBool() || (TranslucentCasters.empty() && !bMeshCasters) || Shadows.ViewCount == 0
+               || Shadows.AtlasSize < 2 || !GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
+            {
+                return;
+            }
+            if(!bOpacityCasterTried)
+            {
+                bOpacityCasterTried = true;
+                OpacityCasterVertex = LoadShader("OpacityShadowCaster.vsh", ST_Vertex, "translucent shadows", false);
+                OpacityCasterPixel  = LoadShader("OpacityShadowCaster.fsh", ST_Pixel, "translucent shadows", false);
+                OpacityMeshVertex   = LoadShader("OpacityShadowMesh.vsh", ST_Vertex, "translucent shadows", false);
+            }
+            const uint Size = uint(Shadows.AtlasSize);
+            if(OpacityAtlas && (OpacityAtlas->GetWidth() != Size || OpacityAtlas->GetHeight() != Size / 2))
+            {
+                OpacityAtlas->Resize(Size, Size / 2);
+            }
+            if(!OpacityAtlas)
+            {
+                OpacityAtlas = GDICreateRenderTargetFormat("RenderCore.OpacityShadows", Size, Size / 2, GDI_RTF_RGBA16F);
+            }
+            if(!OpacityCasterVertex || !OpacityCasterPixel || !OpacityAtlas || !OpacityAtlas->IsValid())
+            {
+                return;
+            }
+
+            SCOPED_DRAW_EVENT("TranslucentShadows");
+            GDIRenderTarget* Target = OpacityAtlas;
+            GDISetRenderTargets(&Target, 1, Target);
+            GDISetViewport(0, 0, Size, Size / 2);
+            GDISetColorMask(EColM_RGBA);
+            GDIClear(CM_Color | CM_Depth, EngineCore::Color(0, 0, 0, 0), 1.0f);
+            IDepthStateDesc NoDepth;
+            NoDepth.bDepthTest = false;
+            NoDepth.bDepthMask = false;
+
+            /* A view's casters' window-depth span: their bounds' corners through its matrix. */
+            float Span[SHADOW_VIEW_MAX][2] = {};
+            const auto DepthSpan = [&](const ShadowView& InView, const GameCore::AABB& InBox, float& InOutNear, float& InOutFar)
+            {
+                const EngineCore::Vector3& Min = InBox.Min; const EngineCore::Vector3& Max = InBox.Max;
+                const EngineCore::Matrix4x4& M = InView.WorldToAtlas;
+                for(int Corner = 0; Corner < 8; ++Corner)
+                {
+                    const double P[3] = { (Corner & 1) ? Max.GetX() : Min.GetX(), (Corner & 2) ? Max.GetY() : Min.GetY(),
+                                          (Corner & 4) ? Max.GetZ() : Min.GetZ() };
+                    const double Z = M.Data[2][0] * P[0] + M.Data[2][1] * P[1] + M.Data[2][2] * P[2] + M.Data[2][3];
+                    const double W = M.Data[3][0] * P[0] + M.Data[3][1] * P[1] + M.Data[3][2] * P[2] + M.Data[3][3];
+                    if(W <= 1e-9) { InOutNear = 0.0f; continue; }   // behind a spot's eye: from its near plane
+                    const float D = float(std::clamp(Z / W, 0.0, 1.0));
+                    InOutNear = std::min(InOutNear, D);
+                    InOutFar  = std::max(InOutFar, D);
+                }
+            };
+            static const RenderTransform Identity;
+            const uint Half = Size / 2;
+            bool bAny = false;
+            for(uint32_t ViewIndex = 0; ViewIndex < Shadows.ViewCount; ++ViewIndex)
+            {
+                const ShadowView& View = Shadows.Views[ViewIndex];
+                if(View.Inset >= 0) { continue; }
+                float Near = 1.0f, Far = 0.0f;
+                std::vector<const TranslucentCaster*> InView;
+                for(const TranslucentCaster& Each : TranslucentCasters)
+                {
+                    if(!Each.Bounds.Overlaps(View.WorldBounds)) { continue; }
+                    DepthSpan(View, Each.Bounds, Near, Far);
+                    InView.push_back(&Each);
+                }
+                std::vector<const DrawCommand*> Meshes;   // this view's translucent mesh casters
+                for(size_t Index = 0; Index < Policy.Num(); ++Index)
+                {
+                    const DrawCommand& Item = Policy[Index];
+                    if(Item.ShadowView != int32_t(ViewIndex) || !Item.Mesh || !IsTranslucentCaster(Item)) { continue; }
+                    const GameCore::AABB Box(EngineCore::Vector3(Item.CasterBounds[0], Item.CasterBounds[1], Item.CasterBounds[2]),
+                                             EngineCore::Vector3(Item.CasterBounds[3], Item.CasterBounds[4], Item.CasterBounds[5]));
+                    DepthSpan(View, Box, Near, Far);
+                    Meshes.push_back(&Item);
+                }
+                if((InView.empty() && Meshes.empty()) || Far <= Near) { continue; }
+                Far = std::max(Far, Near + 1e-5f);
+                Span[ViewIndex][0] = Near;
+                Span[ViewIndex][1] = Far;
+                bAny = true;
+
+                GDISetViewport((View.Atlas == SA_Local ? Half : 0u) + View.TileX / 2, View.TileY / 2,
+                               std::max(View.TileSize / 2, 1u), std::max(View.TileSize / 2, 1u));
+                PlaceProjection = &View.Projection;
+                PlaceView       = &View.View;
+                for(const TranslucentCaster* Each : InView)
+                {
+                    GDIViewObject* const MeshObject = RefMeshObject();
+                    Place(MeshObject, Identity, 1.0f, 1.0f);
+                    MeshObject->Mesh = Each->Mesh;
+                    Bind(OpacityCasterVertex, OpacityCasterPixel);
+                    const float Block[MATERIAL_ENGINE_BLOCK_BYTES / sizeof(float)] = { Near, Far, Each->Density, 0.0f };
+                    GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, Block, uint(sizeof(Block)));
+                    GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &Scene, uint(sizeof(Scene)));
+                    GDISetDepthState(NoDepth);
+                    GDISetBlendState(IBlendStateDesc(true, BM_One, BM_One));
+                    GDISetDrawRange(Each->Mesh, Each->First, Each->Count);
+                    GDISetInstanceBuffer(Each->Instances, Each->InstanceCount);
+                    GDISetIndirectArgs(Each->Args, 0);
+                    GDIDrawObject(MeshObject);
+                    GDISetIndirectArgs(nullptr);
+                    GDISetInstanceBuffer(nullptr, 0);
+                    GDISetDrawRange(Each->Mesh, 0, 0);
+                    MeshObject->Mesh = nullptr;
+                    DrawCallCount.fetch_add(1, std::memory_order_relaxed);
+                }
+                for(const DrawCommand* Each : Meshes)
+                {
+                    if(!OpacityMeshVertex) { break; }
+                    GDIViewObject* const MeshObject = RefMeshObject();
+                    Place(MeshObject, Each->Transform, 1.0f, 1.0f);
+                    MeshObject->Mesh = Each->Mesh;
+                    Bind(OpacityMeshVertex, OpacityCasterPixel);
+                    const float Block[MATERIAL_ENGINE_BLOCK_BYTES / sizeof(float)] = { Near, Far, Each->Mat->Description.TranslucentShadow, 1.0f };
+                    GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, Block, uint(sizeof(Block)));
+                    GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &Scene, uint(sizeof(Scene)));
+                    GDISetDepthState(NoDepth);
+                    GDISetBlendState(IBlendStateDesc(true, BM_One, BM_One));
+                    GDISetDrawRange(Each->Mesh, Each->First, Each->Count);
+                    GDIDrawObject(MeshObject);
+                    GDISetDrawRange(Each->Mesh, 0, 0);
+                    MeshObject->Mesh = nullptr;
+                    DrawCallCount.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+            PlaceProjection = nullptr;
+            PlaceView       = nullptr;
+            GDISetBlendState(IBlendStateDesc());
+            if(!bAny)
+            {
+                return;
+            }
+
+            /* The spans where Shadows.glsl reads them: the sun's per cascade, a local light's over its views. */
+            for(uint32_t Cascade = 0; Cascade < std::min<uint32_t>(Shadows.CascadeCount, 4u) && Shadows.DirectionalFirstView >= 0; ++Cascade)
+            {
+                const uint32_t ViewIndex = uint32_t(Shadows.DirectionalFirstView) + Cascade;
+                Scene.Spare[Cascade / 2][(Cascade % 2) * 2]     = Span[ViewIndex][0];
+                Scene.Spare[Cascade / 2][(Cascade % 2) * 2 + 1] = Span[ViewIndex][1];
+            }
+            for(uint32_t Index = 0; Index < std::min<uint32_t>(Lighting.LocalCount, RENDER_SCENE_LOCAL_LIGHT_MAX); ++Index)
+            {
+                const int32_t First = Shadows.LocalFirstView[Index];
+                if(First < 0) { continue; }
+                const uint32_t Views = Lighting.Locals[Index].Type == RLL_Spot ? 1u : 6u;
+                float Near = 1.0f, Far = 0.0f;
+                for(uint32_t ViewIndex = uint32_t(First); ViewIndex < std::min<uint32_t>(uint32_t(First) + Views, Shadows.ViewCount); ++ViewIndex)
+                {
+                    if(Span[ViewIndex][1] > Span[ViewIndex][0])
+                    {
+                        Near = std::min(Near, Span[ViewIndex][0]);
+                        Far  = std::max(Far, Span[ViewIndex][1]);
+                    }
+                }
+                if(Far > Near)
+                {
+                    Scene.Locals[Index * SCENE_LOCAL_VEC4S + 5][2] = Near;
+                    Scene.Locals[Index * SCENE_LOCAL_VEC4S + 5][3] = Far;
+                }
+            }
+            Scene.Spare[2][0] = 1.0f;
+            GDITexture2D* Texture = OpacityAtlas->ToGDITexture2D();
+            ForwardOpacityAtlas = Texture ? Texture->Resource : nullptr;
         }
 
         /* Lighting_Block's inset shadows, after its first vec4's x: y how
@@ -2436,7 +2949,7 @@ namespace RenderCore
                 return false;
             }
             /* After BindMaterial, which clears every slot but 0: Scene Depth's. */
-            GDISetMaterialTexture(GDI_MATERIAL_TEXTURE_SLOTS - 1, PostSceneDepth);
+            GDISetMaterialTexture(MATERIAL_TEXTURE_SLOTS - 1, PostSceneDepth);
             GDIDrawObject(ScreenObject);
             DrawCallCount.fetch_add(1, std::memory_order_relaxed);
             return true;
@@ -2772,10 +3285,11 @@ namespace RenderCore
         /*
          * The Lighting stage: DeferredLighting.fsh over InTargets' G-buffer
          * into the bound scene colour, whose depth is a texture here -- bound
-         * as material texture 4, after GBuffer0-3. False (warned) if this
-         * backend cannot.
+         * as material texture 5, after GBuffer0-4. bInSubsurface: a second
+         * target, Subsurface, is bound beside it for Skin pixels' diffuse
+         * (SHADING_MODELS.md). False (warned) if this backend cannot.
          */
-        bool IssueLighting(SceneTargets& InTargets)
+        bool IssueLighting(SceneTargets& InTargets, const bool bInSubsurface)
         {
             GDIShader* Pixel  = GetLightingShader();
             GDIShader* Vertex = GetDefaultVertex(EMaterialVertexInput::Fullscreen);
@@ -2802,20 +3316,23 @@ namespace RenderCore
             }
             GDISetMaterialTexture(RENDER_GBUFFER_TARGETS, Depth->Resource);
 
-            /* The shadow atlases this frame drew, after the scene depth; then
-             * this frame's ambient occlusion, if it has any. */
+            /* The shadow atlases this frame drew, after the scene depth. This
+             * frame's ambient occlusion is in GBuffer0's alpha already (PPAmbientApply.fsh). */
             for(uint32_t Atlas = 0; Atlas < SA_Count; ++Atlas)
             {
                 GDITexture2D* Map = Shadows.ViewCount > 0 && ShadowAtlas[Atlas] ? ShadowAtlas[Atlas]->ToDepthTexture2D() : nullptr;
                 GDISetMaterialTexture(RENDER_GBUFFER_TARGETS + 1 + Atlas, Map ? Map->Resource : nullptr);
+                ForwardShadowAtlas[Atlas] = Map ? Map->Resource : nullptr;   // the forward Lit draws after it
             }
-            const uint32_t OcclusionSlot = RENDER_GBUFFER_TARGETS + 1 + SA_Count;
-            GDISetMaterialTexture(OcclusionSlot, AmbientOcclusion);
+            const uint32_t LastSlot = RENDER_GBUFFER_TARGETS + SA_Count;
+            static_assert(RENDER_GBUFFER_TARGETS + SA_Count < LIGHTING_LTC_SLOT, "the Lighting stage's textures come before the engine's");
+            GDISetMaterialTexture(LIGHTING_LTC_SLOT, LTCTable);   // the area lights' (LightList.glsl)
+            GDISetMaterialTexture(OPACITY_SHADOW_SLOT, ForwardOpacityAtlas);   // translucent casters' (Shadows.glsl)
 
-            /* Lighting_Block (DeferredLighting.fsh): whether the occlusion
-             * texture is this frame's, then the inset shadows. */
+            /* Lighting_Block (DeferredLighting.fsh): whether Skin's diffuse has
+             * its own target, then the inset shadows. */
             float LightingBlock[LIGHTING_BLOCK_FLOATS] = {};
-            LightingBlock[0] = AmbientOcclusion ? 1.0f : 0.0f;
+            LightingBlock[0] = bInSubsurface ? 1.0f : 0.0f;
             PutInsetShadows(LightingBlock, InTargets.Width, InTargets.Height);
             EnsureInitialised();
             Bind(Vertex, Pixel);
@@ -2827,7 +3344,7 @@ namespace RenderCore
             DrawCallCount.fetch_add(1, std::memory_order_relaxed);
 
             /* Unbound again: the depth is about to be an attachment. */
-            for(uint32_t Index = 0; Index <= OcclusionSlot; ++Index)
+            for(uint32_t Index = 0; Index <= LastSlot; ++Index)
             {
                 GDISetMaterialTexture(Index, nullptr);
             }
@@ -2929,7 +3446,168 @@ namespace RenderCore
             {
                 AmbientOcclusion = Texture(InTargets.Half[1]);
             }
+            /* Folded into GBuffer0's alpha, the material's own occlusion: the Lighting
+             * and IBL passes read one, and spend no texture slot on it. */
+            GDITextureResource* Occlusion[1] = { AmbientOcclusion };
+            DrawFullscreenShader(GetPostShader(PP_AmbientApply), POST_PASS_NAMES[PP_AmbientApply], InTargets.GBuffer[0], Width, Height,
+                                 Occlusion, 1, Block.A, uint(sizeof(Block) - sizeof(Block.Matrix)), EFullscreenBlend::Multiply);
+            GDISetMaterialTexture(0, nullptr);
         }
+    }
+
+    namespace
+    {
+        /* PPSubsurface.fsh's PP_Block. */
+        constexpr int SUBSURFACE_TAPS = 25;
+        struct SubsurfaceBlock
+        {
+            float Params[4] = {};
+            float Scale[4]  = {};
+            float Sizes[4]  = {};
+            float Kernel[SUBSURFACE_TAPS][4] = {};
+        };
+
+        /*
+         * Skin's separable kernel (Jimenez et al. 2015, "Separable Subsurface
+         * Scattering", and its reference code): SUBSURFACE_TAPS offsets from -3
+         * to 3, packed toward the centre, each weighted by the area it stands
+         * for times d'Eon and Luebke's skin profile (GPU Gems 3, chapter 14:
+         * a sum of Gaussians, the narrowest left out as the surface's own
+         * reflection), stretched per channel by its falloff; normalised per
+         * channel, the centre moved first, and mixed toward no blur by each
+         * channel's strength.
+         */
+        void BuildSkinKernel(float (&OutKernel)[SUBSURFACE_TAPS][4])
+        {
+            constexpr float Range    = 3.0f;
+            constexpr float Falloff[3]  = { 1.0f, 0.37f, 0.3f };
+            constexpr float Strength[3] = { 0.48f, 0.41f, 0.28f };
+            constexpr float Variances[5] = { 0.0484f, 0.187f, 0.567f, 1.99f, 7.41f };
+            constexpr float Weights[5]   = { 0.100f, 0.118f, 0.113f, 0.358f, 0.078f };
+            const auto Profile = [&](const float InR, const int InChannel)
+            {
+                float Sum = 0.0f;
+                for(int Each = 0; Each < 5; ++Each)
+                {
+                    const float R = InR / (0.001f + Falloff[InChannel]);
+                    Sum += Weights[Each] * std::exp(-(R * R) / (2.0f * Variances[Each])) / (2.0f * 3.14159265f * Variances[Each]);
+                }
+                return Sum;
+            };
+
+            float Offsets[SUBSURFACE_TAPS];
+            const float Step = 2.0f * Range / float(SUBSURFACE_TAPS - 1);
+            for(int Index = 0; Index < SUBSURFACE_TAPS; ++Index)
+            {
+                const float O = -Range + float(Index) * Step;
+                Offsets[Index] = (O < 0.0f ? -1.0f : 1.0f) * O * O / Range;   // Range * sign(o) * o^2 / Range^2
+            }
+            float Kernel[SUBSURFACE_TAPS][4] = {};
+            float Sums[3] = {};
+            for(int Index = 0; Index < SUBSURFACE_TAPS; ++Index)
+            {
+                const float Before = Index > 0 ? std::fabs(Offsets[Index] - Offsets[Index - 1]) : 0.0f;
+                const float After  = Index < SUBSURFACE_TAPS - 1 ? std::fabs(Offsets[Index] - Offsets[Index + 1]) : 0.0f;
+                const float Area   = 0.5f * (Before + After);
+                for(int Channel = 0; Channel < 3; ++Channel)
+                {
+                    Kernel[Index][Channel] = Area * Profile(Offsets[Index], Channel);
+                    Sums[Channel] += Kernel[Index][Channel];
+                }
+                Kernel[Index][3] = Offsets[Index];
+            }
+            constexpr int Centre = SUBSURFACE_TAPS / 2;
+            int Out = 0;
+            std::memcpy(OutKernel[Out++], Kernel[Centre], sizeof(Kernel[Centre]));
+            for(int Index = 0; Index < SUBSURFACE_TAPS; ++Index)
+            {
+                if(Index != Centre) { std::memcpy(OutKernel[Out++], Kernel[Index], sizeof(Kernel[Index])); }
+            }
+            for(int Index = 0; Index < SUBSURFACE_TAPS; ++Index)
+            {
+                for(int Channel = 0; Channel < 3; ++Channel)
+                {
+                    const float Normalised = OutKernel[Index][Channel] / Sums[Channel];
+                    OutKernel[Index][Channel] = Index == 0 ? 1.0f + (Normalised - 1.0f) * Strength[Channel] : Normalised * Strength[Channel];
+                }
+            }
+        }
+    }
+
+    void RenderContext::Impl::EnsureLTC()
+    {
+        if(LTCTable || bLTCTried)
+        {
+            return;
+        }
+        bLTCTried = true;
+        if(Backend == ERenderBackend::Null || !GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
+        {
+            return;   // area lights light as points (LightList.glsl: no LIGHT_LIST_FLAG_AREA)
+        }
+        /* The fitted floats, a texel each in an RGBA8 image -- every backend uploads
+         * those, bit for bit -- decoded once into the half-float target (LTCDecode.fsh). */
+        constexpr uint32_t MatrixFloats = 64 * 64 * 4;
+        constexpr uint32_t Floats       = MatrixFloats + 64 * 64 * 2;
+        static_assert(sizeof(LTC_MATRIX) == MatrixFloats * sizeof(float) && Floats % 128 == 0, "LTCTables.inl's layout");
+        EngineCore::Image Packed(128, int(Floats / 128), EngineCore::EImageFormat::RGBA8);
+        std::memcpy(Packed.GetData(), LTC_MATRIX, sizeof(LTC_MATRIX));
+        std::memcpy(Packed.GetData() + sizeof(LTC_MATRIX), LTC_AMPLITUDE, sizeof(LTC_AMPLITUDE));
+        GDITextureResource* Source = GDICreateTextureResource(Packed, GDI_TB_Clamp_To_Edge, GDI_TF_Nearest);
+        LTCTarget = GDICreateRenderTargetFormat("RenderCore.LTC", 64, 128, GDI_RTF_RGBA16F);
+        const float Block[4] = {};
+        GDITexture2D* Table = LTCTarget ? LTCTarget->ToGDITexture2D() : nullptr;
+        if(Source && Table && DrawFullscreenShader(GetPostShader(PP_LTCDecode), POST_PASS_NAMES[PP_LTCDecode], LTCTarget, 64, 128,
+                                                   &Source, 1, Block, uint(sizeof(Block)), EFullscreenBlend::Opaque))
+        {
+            LTCTable = Table->Resource;
+        }
+        if(Source) { RetiredTextures.push_back(Source); }
+    }
+
+    void RenderContext::Impl::IssueSubsurface(SceneTargets& InTargets, GDIRenderTarget* InDiffuse, GDIRenderTarget* InSceneColor)
+    {
+        GDITexture2D* Depth   = InSceneColor ? InSceneColor->ToDepthTexture2D() : nullptr;
+        GDITexture2D* Diffuse = InDiffuse ? InDiffuse->ToGDITexture2D() : nullptr;
+        GDIRenderTarget* Blur = InTargets.EnsureFullHalfFloat(InTargets.SubsurfaceBlur, "SubsurfaceBlur");
+        GDITexture2D* Blurred = Blur ? Blur->ToGDITexture2D() : nullptr;
+        GDITexture2D* Albedo  = InTargets.GBuffer[0] ? InTargets.GBuffer[0]->ToGDITexture2D() : nullptr;
+        if(!Depth || !Diffuse || !Blurred || !Albedo)
+        {
+            return;
+        }
+        static const SubsurfaceBlock Skin = []
+        {
+            SubsurfaceBlock Made;
+            BuildSkinKernel(Made.Kernel);
+            return Made;
+        }();
+        SubsurfaceBlock Block = Skin;
+        const uint Width  = InTargets.Width;
+        const uint Height = InTargets.Height;
+        Block.Params[3] = float(SUBSURFACE_TAPS);
+        Block.Scale[0]  = std::max(GRenderSubsurfaceWidth.GetFloat(), 0.0f);
+        Block.Scale[1]  = View.Projection.Data[1][1];   // 1 / tan(half the vertical field of view)
+        Block.Scale[2]  = float(Width) / float(std::max<uint>(Height, 1));
+        Block.Sizes[0]  = 1.0f / float(Width);
+        Block.Sizes[1]  = 1.0f / float(Height);
+        Block.Sizes[2]  = float(Width);
+        Block.Sizes[3]  = float(Height);
+
+        SCOPED_DRAW_EVENT("Subsurface");
+        GDIShader* Shader = GetPostShader(PP_Subsurface);
+        Block.Params[0] = 1.0f;
+        Block.Params[1] = 0.0f;
+        Block.Params[2] = 0.0f;
+        GDITextureResource* Across[3] = { Diffuse->Resource, Depth->Resource, Albedo->Resource };
+        DrawFullscreenShader(Shader, "SubsurfaceAcross", Blur, Width, Height, Across, 3, &Block, uint(sizeof(Block)),
+                             EFullscreenBlend::Opaque);
+        Block.Params[0] = 0.0f;
+        Block.Params[1] = 1.0f;
+        Block.Params[2] = 1.0f;
+        GDITextureResource* Down[3] = { Blurred->Resource, Depth->Resource, Albedo->Resource };
+        DrawFullscreenShader(Shader, "SubsurfaceDown", InSceneColor, Width, Height, Down, 3, &Block, uint(sizeof(Block)),
+                             EFullscreenBlend::Additive);
     }
 
     GDIRenderTarget* RenderContext::Impl::RunPostProcessStack(SceneTargets& InTargets, const PostProcessSettings& InPost, const bool bInHasPrevious,
@@ -3009,7 +3687,7 @@ namespace RenderCore
                 }
             }
             GDISetMaterialTexture(0, nullptr);
-            GDISetMaterialTexture(GDI_MATERIAL_TEXTURE_SLOTS - 1, nullptr);
+            GDISetMaterialTexture(MATERIAL_TEXTURE_SLOTS - 1, nullptr);
             PostSceneDepth = nullptr;
         };
         RunMaterials(PPS_BeforeEffects);
@@ -3163,6 +3841,7 @@ namespace RenderCore
 
     double RenderContext::GetTimeSeconds() const
     {
+        if(GRenderFixedStep.GetFloat() > 0.0f) { return P->FixedClock; }
         return std::chrono::duration<double>(P->LastFrame - P->Start).count();
     }
 
@@ -3365,6 +4044,36 @@ namespace RenderCore
             return bA && bB;
         }
         return Draw(InMeshPath, InEmitter.Instances, 0);
+    }
+
+    void RenderContext::CastParticleShadows(ParticleEmitterGpu& InEmitter, const char* InMeshPath, const float InDensity,
+                                            const GameCore::AABB& InBounds)
+    {
+        if(!InEmitter.bSimulated || InEmitter.bIdle || !InEmitter.Instances || InEmitter.Type != PT_Sprite || InDensity <= 0.0f)
+        {
+            return;
+        }
+        for(const Impl::TranslucentCaster& Each : P->TranslucentCasters)
+        {
+            if(Each.Key == &InEmitter) { return; }
+        }
+        std::shared_ptr<const MeshData> Source;
+        GDIMesh* Mesh = InMeshPath && InMeshPath[0] != '\0' ? P->FindMesh(InMeshPath, Source) : nullptr;
+        if(!Mesh || !Source)
+        {
+            return;
+        }
+        Impl::TranslucentCaster Caster;
+        Caster.Key           = &InEmitter;
+        Caster.Mesh          = Mesh;
+        Caster.Count         = Source->Sections.empty() ? 0u : Source->Sections[0].IndexCount;
+        Caster.First         = Source->Sections.empty() ? 0u : Source->Sections[0].FirstIndex;
+        Caster.Instances     = InEmitter.Instances;
+        Caster.InstanceCount = InEmitter.MaxParticles;
+        Caster.Args          = GDISupportsIndirectDraw() && InEmitter.ArgsMesh == Source.get() ? InEmitter.Args : nullptr;   // the living, laid out by DrawParticles
+        Caster.Density       = InDensity;
+        Caster.Bounds        = InBounds;
+        P->TranslucentCasters.push_back(Caster);
     }
 
     void RenderContext::DrawQuad(const RenderTransform& InTransform, const float InWidth, const float InHeight,
@@ -3679,6 +4388,11 @@ namespace RenderCore
         const auto Now = std::chrono::steady_clock::now();
         P->FrameDelta = std::chrono::duration<float>(Now - P->LastFrame).count();
         P->LastFrame  = Now;
+        if(const float Step = GRenderFixedStep.GetFloat(); Step > 0.0f)
+        {
+            P->FrameDelta  = Step;
+            P->FixedClock += Step;
+        }
     }
 
     void RenderContext::SetView(const RenderView& InView)
@@ -3700,6 +4414,14 @@ namespace RenderCore
         P->bDeferring        = true;
         P->DrawPixelsPerWorld = 0.0f;   // a scene's RenderScene sets it per proxy
         P->Shadows.ViewCount = 0;   // a preview has none; a scene's PrepareShadows adds them
+        for(GDITextureResource*& Each : P->ForwardShadowAtlas) { Each = nullptr; }
+        for(GDITextureResource*& Each : P->ForwardDDGIAtlas) { Each = nullptr; }
+        P->TranslucentCasters.clear();
+        P->ForwardOpacityAtlas = nullptr;
+        P->Scene.Spare[2][0]   = 0.0f;
+        for(GDITextureResource*& Each : P->ForwardReflectionTextures) { Each = nullptr; }
+        P->Scene.ForwardReflections[1][1] = 0.0f;
+        P->Scene.Spare[2][1] = 0.0f;
         P->CasterView        = -1;
     }
 
@@ -3769,9 +4491,14 @@ namespace RenderCore
             const char* Slot = InSlots && Index < InSlotCount && InSlots[Index] && InSlots[Index][0] != '\0' ? InSlots[Index] : nullptr;
             RenderMaterial* Chosen = P.SectionMaterial(Slot, Section.Material);
 
-            /* Only what writes depth: Opaque, and Masked if asked. The plain fallback is opaque. */
+            /* Only what writes depth: Opaque, and Masked if asked. The plain fallback is opaque. A
+             * Translucent section that casts a see-through shadow goes to the Shadows stage too,
+             * for its opacity pass (IssueTranslucentShadows), not its depth. */
             const EMaterialDomain Domain = Chosen ? Chosen->Description.Domain : EMaterialDomain::Opaque;
-            if(Domain != EMaterialDomain::Opaque && (InWhich == EDepthSections::Opaque || Domain != EMaterialDomain::Masked))
+            const bool bTranslucentCaster = Domain == EMaterialDomain::Translucent && InStage == ERenderStage::Shadows
+                                         && InWhich == EDepthSections::OpaqueAndMasked && Chosen->Description.TranslucentShadow > 0.0f
+                                         && !InOverrides.Instances && !Source->IsSkinned();
+            if(!bTranslucentCaster && Domain != EMaterialDomain::Opaque && (InWhich == EDepthSections::Opaque || Domain != EMaterialDomain::Masked))
             {
                 continue;
             }
@@ -3790,6 +4517,27 @@ namespace RenderCore
             Item.SkinPalette   = SkinPalette;
             Item.SkinBones     = SkinBones;
             Item.MaterialSlot  = uint8_t(Index);
+            if(bTranslucentCaster)
+            {
+                /* Its world bounds: the mesh's corners through its transform. */
+                const EngineCore::Matrix4x4 World = InTransform.ToMatrix();
+                float* Box = Item.CasterBounds;
+                Box[0] = Box[1] = Box[2] = FLT_MAX;
+                Box[3] = Box[4] = Box[5] = -FLT_MAX;
+                for(int Corner = 0; Corner < 8; ++Corner)
+                {
+                    const double Local[3] = { (Corner & 1) ? Source->BoundsMax[0] : Source->BoundsMin[0],
+                                              (Corner & 2) ? Source->BoundsMax[1] : Source->BoundsMin[1],
+                                              (Corner & 4) ? Source->BoundsMax[2] : Source->BoundsMin[2] };
+                    for(int Axis = 0; Axis < 3; ++Axis)
+                    {
+                        const double V = World.Data[Axis][0] * Local[0] + World.Data[Axis][1] * Local[1]
+                                       + World.Data[Axis][2] * Local[2] + World.Data[Axis][3];
+                        Box[Axis]     = std::min(Box[Axis], float(V));
+                        Box[Axis + 3] = std::max(Box[Axis + 3], float(V));
+                    }
+                }
+            }
             if(InOverrides.Instances)
             {
                 Item.Instances     = InOverrides.Instances->Buffer;
@@ -4116,6 +4864,7 @@ namespace RenderCore
             case ESceneTexture::GBuffer1:
             case ESceneTexture::GBuffer2:
             case ESceneTexture::GBuffer3:
+            case ESceneTexture::GBuffer4:
                 return bWritten && F->P->bGBufferThisFrame
                      ? ColorOf(Targets.GBuffer[size_t(InTexture) - size_t(ESceneTexture::GBuffer0)]) : RenderPassTexture();
             case ESceneTexture::Velocity:
@@ -4143,12 +4892,28 @@ namespace RenderCore
             return Out;
         }
 
-        ERenderPassFormat Format = InDesc.Format;
-        if(Format == ERenderPassFormat::RGBA16F && !GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
+        const auto ToGDI = [](const ERenderPassFormat InFormat)
         {
+            return InFormat == ERenderPassFormat::RGBA16F ? GDI_RTF_RGBA16F
+                 : InFormat == ERenderPassFormat::RGBA32F ? GDI_RTF_RGBA32F
+                 : InFormat == ERenderPassFormat::R32F    ? GDI_RTF_R32F
+                 : GDI_RTF_RGBA8;
+        };
+        const auto FormatName = [](const ERenderPassFormat InFormat)
+        {
+            return InFormat == ERenderPassFormat::RGBA16F ? "RGBA16F"
+                 : InFormat == ERenderPassFormat::RGBA32F ? "RGBA32F"
+                 : InFormat == ERenderPassFormat::R32F    ? "R32F"
+                 : "RGBA8";
+        };
+        ERenderPassFormat Format = InDesc.Format;
+        if(Format != ERenderPassFormat::RGBA8 && !GDISupportsRenderTargetFormat(ToGDI(Format)))
+        {
+            // A full float falls back to half float, a half float to RGBA8.
+            Format = Format != ERenderPassFormat::RGBA16F && GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F)
+                   ? ERenderPassFormat::RGBA16F : ERenderPassFormat::RGBA8;
             F->P->WarnOnce(std::string("|pass-format|") + F->PassName(), std::string("custom render pass '") + F->PassName()
-                           + "': this backend has no half float targets; they are RGBA8");
-            Format = ERenderPassFormat::RGBA8;
+                           + "': this backend has no " + FormatName(InDesc.Format) + " targets; they are " + FormatName(Format));
         }
 
         RenderContext::Impl::PassTarget& Entry = F->P->PassPoolsOfView()[F->Entry->Handle].Targets[InName];
@@ -4161,8 +4926,8 @@ namespace RenderCore
         if(!Entry.Target)
         {
             const std::string Name = std::string("RenderCore.Pass.") + F->PassName() + "." + InName;
-            Entry.Target = Format == ERenderPassFormat::RGBA16F ? GDICreateRenderTargetFormat(Name, Width, Height, GDI_RTF_RGBA16F)
-                                                                : GDICreateRenderTarget(Name, Width, Height);
+            Entry.Target = Format != ERenderPassFormat::RGBA8 ? GDICreateRenderTargetFormat(Name, Width, Height, ToGDI(Format))
+                                                              : GDICreateRenderTarget(Name, Width, Height);
             Entry.Format = Format;
         }
         else if(Entry.Target->GetWidth() != Width || Entry.Target->GetHeight() != Height)
@@ -4252,7 +5017,7 @@ namespace RenderCore
             if(Slot >= RENDER_PASS_INPUTS_MAX) { break; }
             Textures[Slot++] = PassTexture(Each);
         }
-        Textures[GDI_MATERIAL_TEXTURE_SLOTS - 1] = PassTexture(DepthOf(F->Targets->SceneColor));   // slot 7: the scene depth
+        Textures[MATERIAL_TEXTURE_SLOTS - 1] = PassTexture(DepthOf(F->Targets->SceneColor));   // slot 7: the scene depth
         static_assert(sizeof(RenderPassParams) == 96 && sizeof(RenderPassParams) <= GDI_MATERIAL_BLOCK_MAX_BYTES,
                       "RenderPassParams is PP_Block: mat4, vec4, vec4");
         using Blends = RenderContext::Impl::EFullscreenBlend;
@@ -4521,7 +5286,8 @@ namespace RenderCore
         };
 
         void CollectViewableTargets(const SceneTargets& InTargets, GDIRenderTarget* const (&InShadows)[SA_Count], const IBLResources* InIBL,
-                                    const std::vector<std::pair<std::string, GDIRenderTarget*>>& InAssets, std::vector<ViewableTarget>& Out)
+                                    GDIRenderTarget* InLTC, const std::vector<std::pair<std::string, GDIRenderTarget*>>& InAssets,
+                                    std::vector<ViewableTarget>& Out)
         {
             const auto Add = [&Out](GDIRenderTarget* InTarget, std::string InName)
             {
@@ -4533,10 +5299,13 @@ namespace RenderCore
             };
             Add(InTargets.SceneColor, "Scene colour");
             AddDepth(InTargets.SceneColor, "Scene depth", 2.0f);
-            const char* const GBufferNames[RENDER_GBUFFER_TARGETS] = { "GBuffer0 (base colour, AO)", "GBuffer1 (normal)",
-                                                                       "GBuffer2 (metallic, roughness, specular)", "GBuffer3 (emissive)" };
+            const char* const GBufferNames[RENDER_GBUFFER_TARGETS] = { "GBuffer0 (base colour, AO)", "GBuffer1 (normal, octahedral)",
+                                                                       "GBuffer2 (metallic, roughness, specular, shading model)",
+                                                                       "GBuffer3 (emissive)", "GBuffer4 (shading model data)" };
             for(uint32_t Index = 0; Index < RENDER_GBUFFER_TARGETS; ++Index) { Add(InTargets.GBuffer[Index], GBufferNames[Index]); }
             Add(InTargets.Velocity,     "Velocity (world motion, units a frame)");
+            Add(InTargets.Subsurface,     "Subsurface (Skin's diffuse before albedo)");
+            Add(InTargets.SubsurfaceBlur, "Subsurface blur (across)");
             Add(InTargets.PostProcess,  "Post process");
             Add(InTargets.PostProcessB, "Post process B");
             for(size_t Index = 0; Index < std::size(InTargets.Half); ++Index)    { Add(InTargets.Half[Index], "Half size " + std::to_string(Index) + " (ambient occlusion)"); }
@@ -4544,6 +5313,7 @@ namespace RenderCore
             for(size_t Index = 0; Index < std::size(InTargets.BloomUp); ++Index) { Add(InTargets.BloomUp[Index], "Bloom up " + std::to_string(Index)); }
             AddDepth(InShadows[SA_Directional], "Shadow atlas (directional)", 1.0f);
             AddDepth(InShadows[SA_Local],       "Shadow atlas (point and spot)", 1.0f);
+            Add(InLTC, "Area lights' LTC tables");
             if(InIBL)
             {
                 Add(InIBL->Atlas, "Image-based lighting atlas");
@@ -4559,7 +5329,7 @@ namespace RenderCore
         for(const auto& Each : P->RenderTargets) { if(Each.second.Target) { Assets.emplace_back(Each.first, Each.second.Target); } }
         std::sort(Assets.begin(), Assets.end());
         std::vector<ViewableTarget> All;
-        CollectViewableTargets(InTargets, P->ShadowAtlas, P->IBL, Assets, All);
+        CollectViewableTargets(InTargets, P->ShadowAtlas, P->IBL, P->LTCTarget, Assets, All);
         OutNames.clear();
         for(ViewableTarget& Each : All) { OutNames.push_back(std::move(Each.Name)); }
     }
@@ -4569,7 +5339,7 @@ namespace RenderCore
         std::vector<std::pair<std::string, GDIRenderTarget*>> Assets;
         for(const auto& Each : P->RenderTargets) { if(Each.second.Target) { Assets.emplace_back(Each.first, Each.second.Target); } }
         std::vector<ViewableTarget> All;
-        CollectViewableTargets(InTargets, P->ShadowAtlas, P->IBL, Assets, All);
+        CollectViewableTargets(InTargets, P->ShadowAtlas, P->IBL, P->LTCTarget, Assets, All);
         const auto Found = std::find_if(All.begin(), All.end(), [&InName](const ViewableTarget& Each) { return Each.Name == InName; });
         if(Found == All.end() || !InTargets.Final || Found->Target == InTargets.Final)
         {
@@ -4769,6 +5539,15 @@ namespace RenderCore
 
         const uint Width  = InTargets.Width;
         const uint Height = InTargets.Height;
+
+        /* This view's light list (LightList.glsl), for the Lighting stage and forward Lit draws. */
+        P->EnsureLTC();
+        P->BuildLightList(Width, Height);
+        std::memcpy(P->LightList.Probes, P->IBLProbes, sizeof(P->LightList.Probes));
+        if(P->DDGI && InTargets.bHDR) { std::memcpy(P->LightList.DDGI, P->DDGIHeader, sizeof(P->LightList.DDGI)); }
+        else                          { std::memset(P->LightList.DDGI, 0, sizeof(P->LightList.DDGI)); }
+        GDISetUniformBlock(GDI_LIGHT_BLOCK_BINDING, &P->LightList, uint(sizeof(P->LightList)));
+
         const auto BindTargets = [Width, Height](GDIRenderTarget* const* InColors, const uint InCount, GDIRenderTarget* InDepthFrom)
         {
             GDISetRenderTargets(InColors, InCount, InDepthFrom);
@@ -4791,7 +5570,6 @@ namespace RenderCore
         P->Scene.IBL[0] = bIBL ? 1.0f : 0.0f;
         P->Scene.IBL[1] = bIBL ? float(P->IBLProbeCount) : 0.0f;
         P->Scene.IBL[2] = bIBL && P->bIBLSky ? 1.0f : 0.0f;
-        std::memcpy(P->Scene.Probes, P->IBLProbes, sizeof(P->Scene.Probes));
 
         P->StageTimestamp(RGT_Total, false);
         {
@@ -4865,7 +5643,7 @@ namespace RenderCore
              * nothing here writes stays 0, not moving (the camera's motion
              * alone, to Motion Blur). */
             GDIRenderTarget* Targets[RENDER_GBUFFER_TARGETS + 1] = { InTargets.GBuffer[0], InTargets.GBuffer[1], InTargets.GBuffer[2],
-                                                                     InTargets.GBuffer[3], InTargets.EnsureVelocity() };
+                                                                     InTargets.GBuffer[3], InTargets.GBuffer[4], InTargets.EnsureVelocity() };
             P->bVelocityThisFrame = Targets[RENDER_GBUFFER_TARGETS] != nullptr;
             BindTargets(Targets, P->bVelocityThisFrame ? RENDER_GBUFFER_TARGETS + 1 : RENDER_GBUFFER_TARGETS, SceneColor);
             GDIClear(CM_Color, EngineCore::Color(0, 0, 0, 0));   // alpha 0 in GBuffer1: no lit surface
@@ -4885,11 +5663,17 @@ namespace RenderCore
 
         /* Lighting: Shadows (only when something will sample them), then
          * the resolve into the scene colour. */
+        /* Shadows for the G-buffer -- or for forward Lit draws alone (LIT_TRANSLUCENCY.md, Phase 2):
+         * a scene of glass and lit smoke and nothing opaque still has a sun that casts. */
+        const bool bShadowed = bDeferred || !P->PolicyFor(ERenderStage::Translucent).IsEmpty();
         if(bDeferred)
         {
             P->StageTimestamp(RGT_AmbientOcclusion, false);
             P->IssueAmbientOcclusion(InTargets, P->PostSettings);
             P->StageTimestamp(RGT_AmbientOcclusion, true);
+        }
+        if(bShadowed)
+        {
             P->StageTimestamp(RGT_Shadows, false);
             P->IssueShadows();
             P->StageTimestamp(RGT_Shadows, true);
@@ -4901,11 +5685,25 @@ namespace RenderCore
         if(bDeferred)
         {
             P->StageTimestamp(RGT_Lighting, false);
-            BindTargets(&SceneColor, 1, nullptr);
             SCOPED_DRAW_EVENT(GetRenderStageName(ERenderStage::Lighting));
+
+            /* Skin (SHADING_MODELS.md): where a Skin material drew and the scene is HDR, its
+             * diffuse goes to its own target, cleared first, for PPSubsurface to blur. */
+            GDIRenderTarget* Subsurface = nullptr;
+            if(GRenderSubsurfaceScattering.GetBool() && InTargets.bHDR && P->BasePassHasModel(EMaterialShadingModel::Skin))
+            {
+                Subsurface = InTargets.EnsureFullHalfFloat(InTargets.Subsurface, "Subsurface");
+                if(Subsurface)
+                {
+                    BindTargets(&Subsurface, 1, nullptr);
+                    GDIClear(CM_Color, EngineCore::Color(0, 0, 0, 0));
+                }
+            }
+            GDIRenderTarget* LightingTargets[2] = { SceneColor, Subsurface };
+            BindTargets(LightingTargets, Subsurface ? 2 : 1, nullptr);
             {
                 SCOPED_DRAW_EVENT("DeferredLighting");
-                if(P->IssueLighting(InTargets))
+                if(P->IssueLighting(InTargets, Subsurface != nullptr))
                 {
                     P->StageDrawCounts[size_t(ERenderStage::Lighting)] = 1;
                 }
@@ -4936,27 +5734,128 @@ namespace RenderCore
                         Ssr.A[2]     = std::clamp(Stack.SsrSteps, 8.0f, 64.0f);
                         Ssr.A[3]     = std::max(Stack.SsrThickness, 0.1f);
                         Ssr.Sizes[0] = std::max(Stack.SsrMaxDistance, 10.0f);
-                        Ssr.Sizes[1] = 1.0f;
+                        const bool bStochastic = GRenderStochasticReflections.GetBool()
+                                              && InTargets.EnsureFullHalfFloat(InTargets.ReflectionHistory[0], "ReflectionHistory0")
+                                              && InTargets.EnsureFullHalfFloat(InTargets.ReflectionHistory[1], "ReflectionHistory1");
+                        Ssr.Sizes[1] = bStochastic ? 2.0f : 1.0f;
                         Ssr.Sizes[2] = float(Width);
                         Ssr.Sizes[3] = float(Height);
                         if(P->DrawPost(PP_ScreenReflections, Reflections, Width, Height,
                                        { Texture(InTargets.GBuffer[1]), Texture(InTargets.GBuffer[2]), Depth->Resource,
-                                         Texture(InTargets.LastColor), Motion->Resource }, Ssr))
+                                         Texture(InTargets.LastColor), Motion->Resource, Texture(InTargets.GBuffer[4]) }, Ssr))
                         {
                             Screen = Texture(Reflections);
                         }
-                        for(uint32_t Slot = 0; Slot < 5; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
+                        for(uint32_t Slot = 0; Slot < 6; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
+
+                        /* Stochastic: this frame's rays into the history (PPReflectionResolve.fsh). */
+                        if(Screen && bStochastic)
+                        {
+                            const uint32_t Write = InTargets.ReflectionCurrent ^ 1u;
+                            PostBlock Resolve;
+                            PutMatrix(Resolve.Matrix, P->PrevViewProjection);
+                            Resolve.A[0]     = InTargets.bReflectionValid ? 1.0f : 0.0f;
+                            Resolve.A[1]     = 0.9f;   // about ten frames' rays
+                            Resolve.Sizes[2] = float(Width);
+                            Resolve.Sizes[3] = float(Height);
+                            const bool bResolved = P->DrawPost(PP_ReflectionResolve, InTargets.ReflectionHistory[Write], Width, Height,
+                                                               { Screen, Texture(InTargets.ReflectionHistory[InTargets.ReflectionCurrent]),
+                                                                 Depth->Resource, Motion->Resource }, Resolve);
+                            for(uint32_t Slot = 0; Slot < 4; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
+                            InTargets.bReflectionValid = bResolved;
+                            if(bResolved)
+                            {
+                                InTargets.ReflectionCurrent = Write;
+                                Screen = Texture(InTargets.ReflectionHistory[Write]);
+                            }
+                        }
+                        else
+                        {
+                            InTargets.bReflectionValid = false;
+                        }
                     }
+                }
+                else
+                {
+                    InTargets.bReflectionValid = false;
+                }
+
+                /* Screen-space GI (PPScreenGI.fsh): half size, from the last frame's colour, accumulated
+                 * over frames by the reflections' resolve; the IBL pass takes it over the probes' irradiance. */
+                GDITextureResource* Bounce = nullptr;
+                if(GRenderScreenGI.GetBool() && Stack.bScreenGI && Stack.GiIntensity > 0.0f && InTargets.LastColor
+                   && P->bHasPrevViewProjection && Depth && Motion
+                   && InTargets.EnsureHalfHalfFloat(InTargets.GI, "GI")
+                   && InTargets.EnsureHalfHalfFloat(InTargets.GIHistory[0], "GIHistory0")
+                   && InTargets.EnsureHalfHalfFloat(InTargets.GIHistory[1], "GIHistory1"))
+                {
+                    const uint HalfW = InTargets.GI->GetWidth(), HalfH = InTargets.GI->GetHeight();
+                    PostBlock Gi;
+                    PutMatrix(Gi.Matrix, P->PrevViewProjection);
+                    Gi.A[0]     = std::clamp(Stack.GiIntensity, 0.0f, 1.0f);
+                    Gi.A[1]     = std::clamp(Stack.GiRays, 1.0f, 16.0f);
+                    Gi.A[2]     = std::max(Stack.GiRadius, 10.0f);
+                    Gi.A[3]     = 12.0f;   // steps a ray
+                    Gi.Sizes[0] = float(HalfW);
+                    Gi.Sizes[1] = float(HalfH);
+                    Gi.Sizes[2] = float(Width);
+                    Gi.Sizes[3] = float(Height);
+                    const bool bMarched = P->DrawPost(PP_ScreenGI, InTargets.GI, HalfW, HalfH,
+                                                      { Texture(InTargets.GBuffer[1]), Depth->Resource, Texture(InTargets.LastColor), Motion->Resource }, Gi);
+                    for(uint32_t Slot = 0; Slot < 4; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
+                    if(bMarched)
+                    {
+                        const uint32_t Write = InTargets.GICurrent ^ 1u;
+                        PostBlock Resolve;
+                        PutMatrix(Resolve.Matrix, P->PrevViewProjection);
+                        Resolve.A[0]     = InTargets.bGIValid ? 1.0f : 0.0f;
+                        Resolve.A[1]     = 0.9f;
+                        Resolve.Sizes[2] = float(HalfW);
+                        Resolve.Sizes[3] = float(HalfH);
+                        InTargets.bGIValid = P->DrawPost(PP_ReflectionResolve, InTargets.GIHistory[Write], HalfW, HalfH,
+                                                         { Texture(InTargets.GI), Texture(InTargets.GIHistory[InTargets.GICurrent]),
+                                                           Depth->Resource, Motion->Resource }, Resolve);
+                        for(uint32_t Slot = 0; Slot < 4; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
+                        if(InTargets.bGIValid)
+                        {
+                            InTargets.GICurrent = Write;
+                            Bounce = Texture(InTargets.GIHistory[Write]);
+                        }
+                    }
+                    else
+                    {
+                        InTargets.bGIValid = false;
+                    }
+                }
+                else
+                {
+                    InTargets.bGIValid = false;
                 }
 
                 PostBlock Block;
-                Block.A[0] = P->AmbientOcclusion ? 1.0f : 0.0f;
+                Block.A[0] = Subsurface ? 1.0f : 0.0f;
                 Block.A[1] = Screen ? 1.0f : 0.0f;
-                P->DrawPost(PP_IBLLighting, SceneColor, Width, Height,
-                            { Texture(InTargets.GBuffer[0]), Texture(InTargets.GBuffer[1]), Texture(InTargets.GBuffer[2]),
-                              Depth ? Depth->Resource : nullptr, P->AmbientOcclusion, P->IBLAtlasTexture(), Screen },
-                            Block, /*bInAdditive*/ true);
-                for(uint32_t Slot = 0; Slot < 7; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
+                Block.A[2] = Bounce ? 1.0f : 0.0f;
+                GDITextureResource* IBLTextures[] = { Texture(InTargets.GBuffer[0]), Texture(InTargets.GBuffer[1]), Texture(InTargets.GBuffer[2]),
+                                                      Texture(InTargets.GBuffer[4]), Depth ? Depth->Resource : nullptr,
+                                                      P->IBLAtlasTexture(), Screen, Bounce };
+                /* A GI Volume's atlases at engine slots 9 and 10 (DDGI.glsl). */
+                const bool bVolume = P->DDGI && P->LightList.DDGI[0][3] > 0.0f;
+                GDISetMaterialTexture(9, bVolume ? Texture(P->DDGI->Irradiance) : nullptr);
+                GDISetMaterialTexture(10, bVolume ? Texture(P->DDGI->Distance) : nullptr);
+                P->ForwardDDGIAtlas[0] = bVolume ? Texture(P->DDGI->Irradiance) : nullptr;   // the forward Lit draws after
+                P->ForwardDDGIAtlas[1] = bVolume ? Texture(P->DDGI->Distance) : nullptr;
+                P->DrawFullscreenShader(P->GetPostShader(PP_IBLLighting), POST_PASS_NAMES[PP_IBLLighting], SceneColor, Width, Height,
+                                        IBLTextures, uint32_t(std::size(IBLTextures)), Block.A,
+                                        uint(sizeof(Block) - sizeof(Block.Matrix)), Impl::EFullscreenBlend::Additive, 0, 0, Subsurface);
+                GDISetMaterialTexture(9, nullptr);
+                GDISetMaterialTexture(10, nullptr);
+            }
+
+            /* Skin's diffuse blurred across, then down and into the scene colour (PPSubsurface.fsh). */
+            if(Subsurface)
+            {
+                P->IssueSubsurface(InTargets, Subsurface, SceneColor);
             }
             P->AmbientOcclusion = nullptr;
             P->StageTimestamp(RGT_Lighting, true);
@@ -4967,10 +5866,58 @@ namespace RenderCore
 
         /* Forward, over the lit scene and against its depth. */
         P->StageTimestamp(RGT_Forward, false);
+
+        /* This frame's opaque scene for the forward draws (LIT_TRANSLUCENCY.md, Phase 10): the lit
+         * colour, and the depth at half size since the depth itself is bound for the depth test --
+         * engine slots 13 and 14, while forward Lit surfaces reflect (ForwardReflections.glsl, Phase 4)
+         * or a queued draw refracts (Refraction.glsl). Their settings in the scene block for this stage. */
+        {
+            const PostProcessSettings& Stack = P->PostSettings;
+            const bool bReflect = GRenderForwardReflections.GetBool() && Stack.bScreenReflections;
+            bool bRefract = false;
+            for(const ERenderStage Stage : { ERenderStage::Unlit, ERenderStage::Translucent })
+            {
+                if(!GRenderRefraction.GetBool()) { break; }
+                const DrawPolicy& Policy = P->PolicyFor(Stage);
+                for(size_t Index = 0; Index < Policy.Num() && !bRefract; ++Index)
+                {
+                    bRefract = Policy[Index].Mat && Policy[Index].Mat->Description.bRefraction;
+                }
+            }
+            GDITexture2D* Depth = SceneColor->ToDepthTexture2D();
+            GDITexture2D* Lit   = SceneColor->ToGDITexture2D();
+            const bool bCopy = (bReflect || bRefract) && InTargets.bHDR && Depth && Lit;
+            GDIRenderTarget* DepthCopy = bCopy ? InTargets.EnsureDepthCopy() : nullptr;
+            GDIRenderTarget* ColorCopy = bCopy ? InTargets.EnsureFullHalfFloat(InTargets.OpaqueCopy, "OpaqueColor") : nullptr;
+            /* At half size, each texel the nearest of four (PPDepthHalf.fsh): the march reads it
+             * a quarter as often and the copy writes a quarter (LIT_TRANSLUCENCY_PERF.md). */
+            const uint HalfW = SceneTargets::HalfSize(Width, 1), HalfH = SceneTargets::HalfSize(Height, 1);
+            PostBlock DepthBlock, ColorBlock;
+            if(DepthCopy && ColorCopy && P->DrawPost(PP_DepthHalf, DepthCopy, HalfW, HalfH, { Depth->Resource }, DepthBlock)
+               && P->DrawPost(PP_Copy, ColorCopy, Width, Height, { Lit->Resource }, ColorBlock))
+            {
+                GDISetMaterialTexture(0, nullptr);
+                GDITexture2D* DepthCopied = DepthCopy->ToGDITexture2D();
+                GDITexture2D* ColorCopied = ColorCopy->ToGDITexture2D();
+                if(DepthCopied && ColorCopied)
+                {
+                    P->ForwardReflectionTextures[0] = ColorCopied->Resource;
+                    P->ForwardReflectionTextures[1] = DepthCopied->Resource;
+                    P->Scene.Spare[2][1] = bRefract ? 1.0f : 0.0f;   // the copy is there for refraction too
+                    const float Settings[8] = { std::clamp(Stack.SsrIntensity, 0.0f, 1.0f), std::clamp(Stack.SsrMaxRoughness, 0.05f, 1.0f),
+                                                std::clamp(Stack.SsrSteps, 8.0f, 64.0f), std::max(Stack.SsrThickness, 0.1f),
+                                                std::max(Stack.SsrMaxDistance, 10.0f), bReflect ? 1.0f : 0.0f, float(HalfW), float(HalfH) };
+                    std::memcpy(P->Scene.ForwardReflections, Settings, sizeof(Settings));
+                }
+            }
+        }
+
         BindTargets(&SceneColor, 1, SceneColor);
         P->IssueStage(ERenderStage::Unlit);
-        P->IssueStage(ERenderStage::TranslucentLit);
-        P->IssueStage(ERenderStage::TranslucentUnlit);
+        P->IssueStage(ERenderStage::Translucent);
+        for(GDITextureResource*& Each : P->ForwardReflectionTextures) { Each = nullptr; }
+        P->Scene.ForwardReflections[1][1] = 0.0f;
+        P->Scene.Spare[2][1] = 0.0f;
         P->RunHook(ERenderHook::AfterForward, InTargets, bInTimed, &Current);   // fog and the stack bind their own
 
         /* Volumetric fog (PPVolumetricFog.fsh): marched at half size through the depth and the
@@ -4995,6 +5942,7 @@ namespace RenderCore
                 March.Sizes[2] = float(Width);
                 March.Sizes[3] = float(Height);
                 const uint HalfW = Fog->GetWidth(), HalfH = Fog->GetHeight();
+                GDISetMaterialTexture(OPACITY_SHADOW_SLOT, P->ForwardOpacityAtlas);   // shafts through the casting plumes (TranslucentShadows.glsl)
                 const bool bMarched = P->DrawPost(PP_VolumetricFog, Fog, HalfW, HalfH, { Depth->Resource, Sun ? Sun->Resource : nullptr }, March);
                 GDISetMaterialTexture(0, nullptr);
                 GDISetMaterialTexture(1, nullptr);
@@ -5049,7 +5997,7 @@ namespace RenderCore
                 {
                     InTargets.LastColor = InTargets.History[InTargets.HistoryCurrent];
                 }
-                else if(Post.bScreenReflections && Linear && InTargets.EnsureFullHalfFloat(InTargets.LastCopy, "LastColor"))
+                else if((Post.bScreenReflections || Post.bScreenGI) && Linear && InTargets.EnsureFullHalfFloat(InTargets.LastCopy, "LastColor"))
                 {
                     PostBlock Copy;
                     InTargets.LastColor = P->DrawPost(PP_Copy, InTargets.LastCopy, Width, Height, { Linear }, Copy)
@@ -5123,7 +6071,7 @@ namespace RenderCore
         }
         if(!InOut.Atlas)
         {
-            InOut.Atlas = GDICreateRenderTargetFormat("RenderCore.IBLAtlas", 768, 768, GDI_RTF_RGBA16F);
+            InOut.Atlas = GDICreateRenderTargetFormat("RenderCore.IBLAtlas", IBL_ATLAS_WIDTH, IBL_ATLAS_HEIGHT, GDI_RTF_RGBA16F);
         }
         if(!InOut.Strip)
         {
@@ -5150,6 +6098,7 @@ namespace RenderCore
             }
         }
         InOut.StripFace = 0;
+        InOut.bSheenTable = false;
     }
 
     bool RenderContext::RenderSkyToStrip(IBLResources& InResources)
@@ -5183,14 +6132,20 @@ namespace RenderCore
     bool RenderContext::PrefilterIBLBlock(IBLResources& InResources, const uint32_t InBlock)
     {
         GDITexture2D* Strip = InResources.Strip ? InResources.Strip->ToGDITexture2D() : nullptr;
-        if(!Strip || !InResources.Atlas || InBlock > 4)
+        if(!Strip || !InResources.Atlas || InBlock > IBL_SKY_BLOCK)
         {
             return false;
         }
         PostBlock Block;
         Block.A[0] = float(InBlock);
         Block.A[1] = 0.0f;   // the strip holds linear light
-        const bool bDrawn = P->DrawPost(PP_IBLPrefilter, InResources.Atlas, 768, 768, { Strip->Resource }, Block);
+        const bool bDrawn = P->DrawPost(PP_IBLPrefilter, InResources.Atlas, IBL_ATLAS_WIDTH, IBL_ATLAS_HEIGHT, { Strip->Resource }, Block);
+        /* Once per atlas, Cloth's sheen table into its spare block (IBLCommon.glsl, IBL_SheenDG). */
+        if(bDrawn && !InResources.bSheenTable)
+        {
+            Block.A[0] = float(IBL_SHEEN_BLOCK);
+            InResources.bSheenTable = P->DrawPost(PP_IBLPrefilter, InResources.Atlas, IBL_ATLAS_WIDTH, IBL_ATLAS_HEIGHT, { Strip->Resource }, Block);
+        }
         GDISetMaterialTexture(0, nullptr);
         return bDrawn;
     }
@@ -5199,12 +6154,105 @@ namespace RenderCore
                                               const bool bInSky)
     {
         P->IBL           = InResources;
-        P->IBLProbeCount = InResources ? std::min<uint32_t>(InCount, 4) : 0;
+        P->IBLProbeCount = InResources ? std::min<uint32_t>(InCount, RENDER_REFLECTION_PROBES_MAX) : 0;
         P->bIBLSky       = InResources && bInSky;
         std::memset(P->IBLProbes, 0, sizeof(P->IBLProbes));
         if(InProbes)
         {
             std::memcpy(P->IBLProbes, InProbes, sizeof(float) * 4 * 3 * P->IBLProbeCount);
+        }
+    }
+
+    bool RenderContext::EnsureDDGIResources(DDGIResources& InOut, const uint32_t InProbes)
+    {
+        if(!CanImageBasedLight() || InProbes == 0)
+        {
+            return false;
+        }
+        const uint32_t Rows = (InProbes + DDGI_TILES_PER_ROW - 1) / DDGI_TILES_PER_ROW;
+        const auto Make = [](GDIRenderTarget*& InOutTarget, const char* InName, const uint32_t InWidth, const uint32_t InHeight,
+                             const EGDIRenderTargetFormat InFormat = GDI_RTF_RGBA16F)
+        {
+            if(!InOutTarget)
+            {
+                InOutTarget = GDICreateRenderTargetFormat(InName, InWidth, InHeight, InFormat);
+            }
+            else if(InOutTarget->GetWidth() != InWidth || InOutTarget->GetHeight() != InHeight)
+            {
+                InOutTarget->Resize(InWidth, InHeight);
+            }
+            return InOutTarget && InOutTarget->IsValid();
+        };
+        const bool bMade = Make(InOut.Irradiance, "RenderCore.DDGIIrradiance", DDGI_TILES_PER_ROW * DDGI_IRRADIANCE_TILE, Rows * DDGI_IRRADIANCE_TILE)
+                        && Make(InOut.Distance, "RenderCore.DDGIDistance", DDGI_TILES_PER_ROW * DDGI_DISTANCE_TILE, Rows * DDGI_DISTANCE_TILE,
+                                GDISupportsRenderTargetFormat(GDI_RTF_RGBA32F) ? GDI_RTF_RGBA32F : GDI_RTF_RGBA16F)
+                        && Make(InOut.Strip, "RenderCore.DDGIStrip", DDGI_FACE * 6, DDGI_FACE);
+        InOut.Rows = bMade ? Rows : 0;
+        return bMade;
+    }
+
+    void RenderContext::ReleaseDDGIResources(DDGIResources& InOut)
+    {
+        if(P->DDGI == &InOut) { P->DDGI = nullptr; }
+        for(GDIRenderTarget** Each : { &InOut.Irradiance, &InOut.Distance, &InOut.Strip })
+        {
+            if(*Each)
+            {
+                GDIReleaseRenderTarget(*Each);
+                delete *Each;
+                *Each = nullptr;
+            }
+        }
+        InOut.Rows = 0;
+    }
+
+    bool RenderContext::CopyDDGIFace(SceneTargets& InStages, DDGIResources& InResources, const uint32_t InFace, const float InLongest)
+    {
+        GDITexture2D* Source = InStages.SceneColor ? InStages.SceneColor->ToGDITexture2D() : nullptr;
+        GDITexture2D* Depth  = InStages.SceneColor ? InStages.SceneColor->ToDepthTexture2D() : nullptr;
+        if(!Source || !Depth || !InResources.Strip || InFace >= 6)
+        {
+            return false;
+        }
+        PostBlock Block;
+        Block.A[0] = InLongest;
+        const bool bDrawn = P->DrawPost(PP_DDGICopy, InResources.Strip, DDGI_FACE, DDGI_FACE, { Source->Resource, Depth->Resource }, Block,
+                                        false, InFace * DDGI_FACE);
+        GDISetMaterialTexture(0, nullptr);
+        GDISetMaterialTexture(1, nullptr);
+        return bDrawn;
+    }
+
+    bool RenderContext::UpdateDDGIProbe(DDGIResources& InResources, const uint32_t InProbe, const float InLongest)
+    {
+        GDITexture2D* Strip = InResources.Strip ? InResources.Strip->ToGDITexture2D() : nullptr;
+        if(!Strip || !InResources.Irradiance || !InResources.Distance || InProbe >= InResources.Rows * DDGI_TILES_PER_ROW)
+        {
+            return false;
+        }
+        PostBlock Block;
+        Block.A[0]     = float(InProbe);
+        Block.A[3]     = float(DDGI_TILES_PER_ROW);
+        Block.Sizes[0] = InLongest;
+        Block.A[1] = float(DDGI_IRRADIANCE_TILE);
+        Block.A[2] = 0.0f;
+        bool bDrawn = P->DrawPost(PP_DDGIUpdate, InResources.Irradiance, InResources.Irradiance->GetWidth(), InResources.Irradiance->GetHeight(),
+                                  { Strip->Resource }, Block);
+        Block.A[1] = float(DDGI_DISTANCE_TILE);
+        Block.A[2] = 1.0f;
+        bDrawn = P->DrawPost(PP_DDGIUpdate, InResources.Distance, InResources.Distance->GetWidth(), InResources.Distance->GetHeight(),
+                             { Strip->Resource }, Block) && bDrawn;
+        GDISetMaterialTexture(0, nullptr);
+        return bDrawn;
+    }
+
+    void RenderContext::SetDDGI(const DDGIResources* InResources, const float (*InHeader)[4])
+    {
+        P->DDGI = InResources && InResources->Irradiance && InResources->Distance ? InResources : nullptr;
+        std::memset(P->DDGIHeader, 0, sizeof(P->DDGIHeader));
+        if(P->DDGI && InHeader)
+        {
+            std::memcpy(P->DDGIHeader, InHeader, sizeof(P->DDGIHeader));
         }
     }
 
@@ -5865,6 +6913,14 @@ namespace RenderCore
         P->ReleaseRenderTargets();
         P->ReleaseShadowAtlases();
         P->Shadows.ViewCount = 0;
+        if(P->LTCTarget)
+        {
+            GDIReleaseRenderTarget(P->LTCTarget);
+            delete P->LTCTarget;
+        }
+        P->LTCTarget = nullptr;
+        P->LTCTable  = nullptr;
+        P->bLTCTried = false;
         P->FinalTarget = nullptr;
 
         for(auto& Each : P->Meshes) { delete Each.second.Gpu; }

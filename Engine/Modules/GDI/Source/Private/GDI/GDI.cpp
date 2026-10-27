@@ -275,7 +275,21 @@ void AssignContextGDI( GDIContext* InContext )
 
 void AllocateResourcesGDI()
 {
-    if( GDynamicGDI ) GDynamicGDI->Allocate();
+    if( !GDynamicGDI ) return;
+    GDynamicGDI->Allocate();
+
+    // Which render target formats this device offers: a target asking for one
+    // it lacks falls back (RENDERPIPELINE.md says to what).
+    const std::pair<EGDIRenderTargetFormat, const char*> Formats[] = {
+        { GDI_RTF_RGBA8, "RGBA8" }, { GDI_RTF_RGBA16F, "RGBA16F" }, { GDI_RTF_RGB10A2, "RGB10A2" },
+        { GDI_RTF_RGBA32F, "RGBA32F" }, { GDI_RTF_R32F, "R32F" } };
+    std::string Has, Lacks;
+    for(const auto& Each : Formats)
+    {
+        std::string& Into = GDynamicGDI->SupportsRenderTargetFormat(Each.first) ? Has : Lacks;
+        Into += (Into.empty() ? "" : " ") + std::string(Each.second);
+    }
+    GDI_LOG("[GDI] render target formats: " + Has + (Lacks.empty() ? std::string() : "; not " + Lacks))
 }
 
 void ReleaseGDI()
@@ -327,6 +341,10 @@ bool GDIMakeIndexedRenderData(const GDIMeshDesc& InDesc, GDIMesh::ORenderData& O
     /* Zero without lightmap UVs, so the stream is always there too. */
     Data.UV1 = InDesc.UV1 ? static_cast<float*>(Copy(InDesc.UV1, sizeof(float) * 2 * InDesc.NumVertices))
                           : static_cast<float*>(calloc(size_t(InDesc.NumVertices) * 2, sizeof(float)));
+    /* Zero without tangents: the material templates then take one from the
+     * UV's screen derivatives (MaterialCommon.glsl). */
+    Data.Tangent = InDesc.Tangents ? static_cast<float*>(Copy(InDesc.Tangents, sizeof(float) * 4 * InDesc.NumVertices))
+                                   : static_cast<float*>(calloc(size_t(InDesc.NumVertices) * 4, sizeof(float)));
     /* Skinning streams only when both are given: a static mesh has neither. */
     const bool bSkinned = InDesc.Joints && InDesc.Weights;
     if(bSkinned)
@@ -340,13 +358,14 @@ bool GDIMakeIndexedRenderData(const GDIMeshDesc& InDesc, GDIMesh::ORenderData& O
     /* As CreateQuadMesh: the POSITION FLOAT count, not the vertex count. */
     Data.NumVertices = InDesc.NumVertices * 3;
 
-    if(!Data.Position || !Data.Normal || !Data.TexCoord || !Data.Color || !Data.UV1 || !Data.Indices
+    if(!Data.Position || !Data.Normal || !Data.TexCoord || !Data.Color || !Data.UV1 || !Data.Tangent || !Data.Indices
        || (bSkinned && (!Data.Joints || !Data.Weights)))
     {
         free(Data.Position);
         free(Data.Normal);
         free(Data.Color);
         free(Data.UV1);
+        free(Data.Tangent);
         free(Data.Joints);
         free(Data.Weights);
         free(Data.TexCoord);
@@ -362,7 +381,7 @@ void GDIDynamicDriver::SetUniformBlock(const uint InBinding, const void* InData,
     GDIStoreUniformBlock(MaterialBlocks, MaterialBlockSerials, InBinding, InData, InSize);
 }
 
-bool GDIStoreUniformBlock(std::vector<uint8_t> (&MaterialBlocks)[4], uint64_t (&MaterialBlockSerials)[4], const uint InBinding,
+bool GDIStoreUniformBlock(std::vector<uint8_t> (&MaterialBlocks)[GDI_UNIFORM_BLOCK_COUNT], uint64_t (&MaterialBlockSerials)[GDI_UNIFORM_BLOCK_COUNT], const uint InBinding,
                           const void* InData, const uint InSize)
 {
     uint Index = 0, MaxBytes = 0;
@@ -372,6 +391,7 @@ bool GDIStoreUniformBlock(std::vector<uint8_t> (&MaterialBlocks)[4], uint64_t (&
         case GDI_SCENE_BLOCK_BINDING:    Index = 1; MaxBytes = GDI_SCENE_BLOCK_MAX_BYTES;    break;
         case GDI_SKIN_BLOCK_BINDING:     Index = 2; MaxBytes = GDI_SKIN_BLOCK_MAX_BYTES;     break;
         case GDI_PREV_SKIN_BLOCK_BINDING: Index = 3; MaxBytes = GDI_SKIN_BLOCK_MAX_BYTES;    break;
+        case GDI_LIGHT_BLOCK_BINDING:    Index = 4; MaxBytes = GDI_LIGHT_BLOCK_MAX_BYTES;    break;
         default: return false;
     }
     std::vector<uint8_t>& Block = MaterialBlocks[Index];

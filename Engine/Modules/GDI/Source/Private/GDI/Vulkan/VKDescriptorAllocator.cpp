@@ -1,6 +1,7 @@
 #include "Public/GDI/Vulkan/VKDescriptorAllocator.h"
 #include "Public/GDI/Vulkan/VKDevice.h"
 #include "Public/GDI/GDILog.h"
+#include "Public/GDI/GDIDefinitions.h"
 
 #include <atomic>
 
@@ -170,19 +171,19 @@ VKUBOAllocation VKDescriptorAllocator::AllocateUBO(VkDeviceSize Size)
 bool VKDescriptorAllocator::GrowPool()
 {
     // Pool sizes:
-    //   UNIFORM_BUFFER         — up to 6 UBO bindings per set (VP@0, Transform@1, material@2, scene@3, skin@12, previous skin@13)
+    //   UNIFORM_BUFFER         — up to 7 UBO bindings per set (VP@0, Transform@1, material@2, scene@3, skin@20, previous skin@21, light@22)
     //   COMBINED_IMAGE_SAMPLER — up to 2 sampler bindings per set
     //   STORAGE_BUFFER         — a compute set's buffers (GDI_COMPUTE_MAX_STORAGE_BUFFERS)
-    //   UNIFORM_BUFFER_DYNAMIC — the draw layouts' ring-backed blocks (up to 6 per set)
+    //   UNIFORM_BUFFER_DYNAMIC — the draw layouts' ring-backed blocks (up to 7 per set)
     VkDescriptorPoolSize PoolSizes[4]{};
     PoolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    PoolSizes[0].descriptorCount = kSetsPerPool * 6;
+    PoolSizes[0].descriptorCount = kSetsPerPool * 7;
     PoolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    PoolSizes[1].descriptorCount = kSetsPerPool * 8;   // a material set holds GDI_MATERIAL_TEXTURE_SLOTS
+    PoolSizes[1].descriptorCount = kSetsPerPool * GDI_MATERIAL_TEXTURE_SLOTS;   // a material set holds them all
     PoolSizes[2].type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     PoolSizes[2].descriptorCount = kSetsPerPool * 4;
     PoolSizes[3].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-    PoolSizes[3].descriptorCount = kSetsPerPool * 6;
+    PoolSizes[3].descriptorCount = kSetsPerPool * 7;
 
     VkDescriptorPoolCreateInfo PoolCI{};
     PoolCI.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;

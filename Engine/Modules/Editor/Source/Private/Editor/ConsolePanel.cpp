@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Public/Editor/ConsolePanel.h"
+#include "Private/Editor/EditorIcons.h"
 
 #include <QAbstractItemView>
 #include <QCompleter>
@@ -76,6 +77,8 @@ ConsolePanel::ConsolePanel(EditorConsole& InConsole, QWidget* InParent)
 
     auto* ClearButton = new QToolButton(this);
     ClearButton->setText(QStringLiteral("Clear"));
+    ClearButton->setIcon(EditorIcons::Get(EditorIcons::EIcon::Clear));
+    ClearButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     ClearButton->setAutoRaise(true);
     ClearButton->setToolTip(QStringLiteral("Empty the console"));
 

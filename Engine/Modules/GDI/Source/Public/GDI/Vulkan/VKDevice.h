@@ -90,6 +90,8 @@ public:
      *  textureCompressionBC feature, enabled when the GPU has it, and the
      *  format's own sampled-image support. */
     bool SupportsSampledFormat(VkFormat InFormat) const;
+    /* InFormat as a render target: an attachment that blends, sampled with linear filtering, copied to and from. */
+    bool SupportsRenderTargetFormat(VkFormat InFormat) const;
 
     /* Anisotropic filtering: 1 if the device has no samplerAnisotropy, else its limit (maxSamplerAnisotropy). */
     inline float GetMaxSamplerAnisotropy() const { return MaxSamplerAnisotropy; }

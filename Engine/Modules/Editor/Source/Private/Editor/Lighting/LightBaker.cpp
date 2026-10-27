@@ -176,11 +176,15 @@ namespace LightBake
 
             /* Whether a texel at InPoint (normal InN, InTexel world units
              * across) is inside or under something: a short ray along its
-             * surface finds the back of one -- a floor texel under a wall. */
-            bool IsBuried(const Vec3& InPoint, const Vec3& InN, const float InTexel) const
+             * surface finds the back of one -- a floor texel under a wall.
+             * OutExit, if given: the nearest such back face's point, where the
+             * texel's surface comes out from under it. */
+            bool IsBuried(const Vec3& InPoint, const Vec3& InN, const float InTexel, Vec3* OutExit = nullptr) const
             {
                 Vec3 T, B;
                 Basis(InN, T, B);
+                bool  bBuried = false;
+                float Nearest = InTexel;
                 for(int Ray = 0; Ray < 8; ++Ray)
                 {
                     const float Angle = float(Ray) * (PI / 4.0f);
@@ -189,9 +193,26 @@ namespace LightBake
                     if(!Tree.Intersect(InPoint, Dir, 0.0f, InTexel, H)) { continue; }
                     const Triangle& Tri = S.Triangles[H.Triangle];
                     const float W = 1.0f - H.U - H.V;
-                    if(Dot(Normalize(Tri.N[0] * W + Tri.N[1] * H.U + Tri.N[2] * H.V), Dir) > 0.0f) { return true; }
+                    if(Dot(Normalize(Tri.N[0] * W + Tri.N[1] * H.U + Tri.N[2] * H.V), Dir) <= 0.0f) { continue; }
+                    if(!OutExit) { return true; }
+                    bBuried = true;
+                    if(H.T <= Nearest)
+                    {
+                        Nearest  = H.T;
+                        *OutExit = InPoint + Dir * H.T;
+                    }
                 }
-                return false;
+                return bBuried;
+            }
+
+            /* Whether InA and InB, two texels' points, see each other: nothing
+             * between them. Smoothing spreads light only between such texels, so
+             * none crosses a wall standing on (or through) the surface. */
+            bool Sees(const Vec3& InA, const Vec3& InB) const
+            {
+                const Vec3  Delta  = InB - InA;
+                const float Length = std::sqrt(Dot(Delta, Delta));
+                return Length <= Bias || !Tree.Occluded(InA, Delta * (1.0f / Length), 0.0f, Length);
             }
 
             /* The radiance arriving at InOrigin from InDirection: the sky if
@@ -438,8 +459,46 @@ namespace LightBake
 
         // === Filtering ============================================================
 
+        /* Which texels in each texel's filter window it sees (Tracer::Sees): bit
+         * (DY + FILTER_RADIUS) * FILTER_WIDTH + DX + FILTER_RADIUS. */
+        constexpr int FILTER_WIDTH = 2 * FILTER_RADIUS + 1;
+        static_assert(FILTER_WIDTH * FILTER_WIDTH <= 64, "a window's visibility fits a mask");
+        template<typename TTracer>
+        bool FindVisibility(const std::vector<Texel>& InTexels, const int InSize, const TTracer& InTracer, const int InThreads,
+                            const ProgressFn& InProgress, const std::atomic<bool>* InCancel, std::vector<uint64_t>& OutVisible)
+        {
+            OutVisible.assign(InTexels.size(), 0);
+            const auto Row = [&](const size_t InRow)
+            {
+                const int Y = int(InRow);
+                for(int X = 0; X < InSize; ++X)
+                {
+                    const size_t Index = size_t(Y) * size_t(InSize) + size_t(X);
+                    const Texel& Centre = InTexels[Index];
+                    if(!Centre.bUsed) { continue; }
+                    uint64_t Mask = 0;
+                    for(int DY = -FILTER_RADIUS; DY <= FILTER_RADIUS; ++DY)
+                    {
+                        for(int DX = -FILTER_RADIUS; DX <= FILTER_RADIUS; ++DX)
+                        {
+                            const int NX = X + DX, NY = Y + DY;
+                            if(NX < 0 || NY < 0 || NX >= InSize || NY >= InSize) { continue; }
+                            const Texel& Near = InTexels[size_t(NY) * size_t(InSize) + size_t(NX)];
+                            if(!Near.bUsed || Near.Instance != Centre.Instance) { continue; }
+                            if(InTracer.Sees(Centre.Position, Near.Position))
+                            {
+                                Mask |= uint64_t(1) << uint32_t((DY + FILTER_RADIUS) * FILTER_WIDTH + DX + FILTER_RADIUS);
+                            }
+                        }
+                    }
+                    OutVisible[Index] = Mask;
+                }
+            };
+            return Parallel(size_t(InSize), InThreads, Row, "Filtering", InProgress, InCancel);
+        }
+
         void Smooth(const std::vector<Texel>& InTexels, const int InSize, const float InWorldTexel, std::vector<float>& InOutIndirect,
-                    const int InChannels = 3)
+                    const std::vector<uint64_t>& InVisible, const int InChannels = 3)
         {
             const size_t C = size_t(InChannels);
             const std::vector<float> Source = InOutIndirect;
@@ -462,6 +521,7 @@ namespace LightBake
                             const size_t Other = size_t(NY) * size_t(InSize) + size_t(NX);
                             const Texel& Near = InTexels[Other];
                             if(!Near.bUsed || Near.Instance != Centre.Instance) { continue; }
+                            if(!(InVisible[Index] >> uint32_t((DY + FILTER_RADIUS) * FILTER_WIDTH + DX + FILTER_RADIUS) & 1u)) { continue; }
                             const float Facing = Dot(Centre.Normal, Near.Normal);
                             if(Facing <= 0.0f) { continue; }
                             const Vec3  Delta = Near.Position - Centre.Position;
@@ -634,11 +694,26 @@ namespace LightBake
                     const size_t Index = InRow * size_t(A.Size) + size_t(X);
                     Texel& Each = Used[Index];
                     if(!Each.bUsed) { continue; }
-                    /* Inside or under something: left out, filled from its neighbours. */
-                    if(T.IsBuried(Each.Position, Each.Normal, std::max(Each.Size, T.Bias * 4.0f)))
+                    /* Its centre inside or under something (a floor texel under a
+                     * wall standing through it): lit at the nearest point it comes
+                     * out from under, if that is still within the texel and in the
+                     * open -- so a texel the wall straddles takes the light of the
+                     * side it is on, not its neighbours' from both. Wholly buried,
+                     * it is left out and filled from its neighbours. */
+                    const float Reach = std::max(Each.Size, T.Bias * 4.0f);
+                    Vec3 Exit;
+                    if(T.IsBuried(Each.Position, Each.Normal, Reach, &Exit))
                     {
-                        Each.bUsed = false;
-                        continue;
+                        Vec3 Out = Exit - Each.Position;
+                        Out = Out - Each.Normal * Dot(Out, Each.Normal);
+                        const float Moved = std::sqrt(Dot(Out, Out));
+                        const Vec3 Outside = Moved > 1e-6f ? Each.Position + Out * ((Moved + T.Bias * 2.0f) / Moved) : Each.Position;
+                        if(Moved <= 1e-6f || Moved + T.Bias * 2.0f > Each.Size * 0.75f || T.IsBuried(Outside, Each.Normal, Reach))
+                        {
+                            Each.bUsed = false;
+                            continue;
+                        }
+                        Each.Position = Outside;
                     }
                     Random R(Mix((uint64_t(AtlasIndex) << 40) ^ uint64_t(Index)));
                     Vec3 DirectToward;
@@ -672,8 +747,10 @@ namespace LightBake
             if(!Parallel(size_t(A.Size), Threads, LightRow, Stage.c_str(), InProgress, InCancel)) { return EBakeStatus::Cancelled; }
 
             if(InProgress) { InProgress("Filtering", 0.0f); }
-            Smooth(Used, A.Size, WorldTexel, Indirect);
-            Smooth(Used, A.Size, WorldTexel, BouncedWay, 4);
+            std::vector<uint64_t> Visible;
+            if(!FindVisibility(Used, A.Size, T, Threads, InProgress, InCancel, Visible)) { return EBakeStatus::Cancelled; }
+            Smooth(Used, A.Size, WorldTexel, Indirect, Visible);
+            Smooth(Used, A.Size, WorldTexel, BouncedWay, Visible, 4);
             std::vector<uint8_t> Filled(Used.size(), 0);
             A.Directions.assign(TexelCount * 4, 0.0f);
             for(size_t Index = 0; Index < Used.size(); ++Index)

@@ -17,7 +17,8 @@ namespace RenderCore
 {
     enum : uint32_t
     {
-        RENDER_LOCAL_LIGHT_MAX          = 16,  // point + spot lights a frame, nearest first
+        RENDER_LOCAL_LIGHT_MAX          = 256, // point + spot lights a frame, shadow casters then nearest first: the light list (GLOBAL_ILLUMINATION.md)
+        RENDER_SCENE_LOCAL_LIGHT_MAX    = 16,  // of those, the first in the scene block too (Scene_Locals): volumetric fog's, and the shadowed ones'
         RENDER_SHADOWED_LOCAL_LIGHT_MAX = 4,   // of those, how many may draw shadows (the local atlas's 6x4 tiles)
         RENDER_CASCADE_MAX              = 4,
         RENDER_INSET_SHADOW_MAX         = 4,   // per-object sun shadows a view (in the local atlas's spare tiles)
@@ -27,6 +28,7 @@ namespace RenderCore
     {
         RLL_Point = 0,
         RLL_Spot  = 1,
+        RLL_Rect  = 2,   // a Rect Light: Width x Height across Right and Up, facing Direction
     };
 
     /* A point or spot light, as WorldBridge found it this frame. */
@@ -40,6 +42,13 @@ namespace RenderCore
         float               InnerConeAngle = 0.0f;        // spot: half-angles, degrees
         float               OuterConeAngle = 0.0f;
         uint8_t             Type           = RLL_Point;
+        /* Area (GLOBAL_ILLUMINATION.md, Phase 3): a point or spot light's sphere,
+         * and a rect light's rectangle -- its axes unit, its sizes world units. */
+        float               SourceRadius   = 0.0f;
+        EngineCore::Vector3 Right{ 1.0, 0.0, 0.0 };
+        EngineCore::Vector3 Up{ 0.0, 1.0, 0.0 };
+        float               Width          = 0.0f;
+        float               Height         = 0.0f;
 
         uint8_t             bCastShadows     = 0;
         uint8_t             ShadowTechnique  = 0;         // ELightShadowTechnique
@@ -60,6 +69,7 @@ namespace RenderCore
         float    DistanceScale     = 1.0f;    // multiplies the sun's ShadowDistance
         int32_t  MaxInsetShadows   = int32_t(RENDER_INSET_SHADOW_MAX);   // Render components' inset shadows a view
         int32_t  InsetFilter       = 1;       // theirs, as Filter: their maps are sharp, so smaller
+        int32_t  ForwardFilter     = 0;       // forward Lit (translucent) draws', as Filter: each overdrawn layer filters again, so one tap
         /* Sun contact shadows (RENDERPIPELINE.md, "Contact shadows"): a short screen-space march
          * toward the sun from each lit pixel, for the small shadows the shadow maps are too coarse for. */
         uint8_t  bContactShadows   = 0;

@@ -37,6 +37,7 @@ namespace RenderCore
 {
     struct SceneTargets;             // Private/RenderCore/SceneTargets.h
     struct IBLResources;             // likewise: a scene's probe atlas and cube strip
+    struct DDGIResources;            // likewise: a scene's GI Volume probes
     struct StagedDraw;               // Private/RenderCore/DrawPolicy.h
     struct MaterialPreviewRequest;   // RenderScene.h
     struct RenderMaterialParameter;  // Components/RenderComponent.h
@@ -137,6 +138,11 @@ namespace RenderCore
         bool                DrawParticles(ParticleEmitterGpu& InEmitter, const EngineCore::Vector3& InSortOrigin,
                                           const char* InMeshPath, const char* InMaterial,
                                           const char* InLabel = nullptr);
+        /* After DrawParticles, this frame: its living particles into the shadowed lights'
+         * opacity shadow maps, InDensity times their alpha, InBounds where they can be
+         * (LIT_TRANSLUCENCY.md, Phase 7). A sprite emitter; once a frame however many views draw it. */
+        void                CastParticleShadows(ParticleEmitterGpu& InEmitter, const char* InMeshPath, float InDensity,
+                                                const GameCore::AABB& InBounds);
         /* Its particles as the GPU left them, one per slot (MaxParticles),
          * waiting for the GPU: for tests and tools. False where unsupported. */
         bool                ReadParticles(const ParticleEmitterGpu& InEmitter, std::vector<ParticleSample>& OutParticles);
@@ -419,9 +425,9 @@ namespace RenderCore
          *   EnsureIBLResources   the atlas, and the strip at InFace a side
          *   RenderSkyToStrip     the current lighting's sky (its HDRI, else its colours)
          *   CopyCaptureToStrip   a cube face InStages rendered (its linear scene colour)
-         *   PrefilterIBLBlock    the strip into atlas block InBlock (0-3 probes, 4 the sky)
+         *   PrefilterIBLBlock    the strip into atlas block InBlock (0-15 probes, 16 the sky)
          *   SetImageBasedLighting  what lights the next RenderSceneStages: InResources'
-         *                        atlas (null: none), InCount probes as Scene_Probes' vec4s
+         *                        atlas (null: none), InCount probes as LightList_Probes' vec4s
          *                        (3 each), and whether the sky block is valid
          *   SetSkyBackground     draw the sky (HDRI or colours) behind every view
          *                        while set: a reflection probe's captures
@@ -434,6 +440,22 @@ namespace RenderCore
         bool PrefilterIBLBlock(IBLResources& InResources, uint32_t InBlock);
         void SetImageBasedLighting(const IBLResources* InResources, const float (*InProbes)[4], uint32_t InCount, bool bInSky);
         void SetSkyBackground(bool bInForce);
+
+        /*
+         * DYNAMIC GI (GLOBAL_ILLUMINATION.md, Phase 6; DDGI.glsl): a GI Volume's
+         * probes, kept by RenderScene::UpdateGlobalIllumination.
+         *
+         *   EnsureDDGIResources  the atlases for InProbes probes, and the strip
+         *   CopyDDGIFace         a cube face InStages rendered into the strip, with its distances
+         *   UpdateDDGIProbe      the strip into probe InProbe's tiles
+         *   SetDDGI              what lights the next RenderSceneStages: InResources' atlases
+         *                        (null: none) and InHeader, LightList_DDGI's four vec4s
+         */
+        bool EnsureDDGIResources(DDGIResources& InOut, uint32_t InProbes);
+        void ReleaseDDGIResources(DDGIResources& InOut);
+        bool CopyDDGIFace(SceneTargets& InStages, DDGIResources& InResources, uint32_t InFace, float InLongest);
+        bool UpdateDDGIProbe(DDGIResources& InResources, uint32_t InProbe, float InLongest);
+        void SetDDGI(const DDGIResources* InResources, const float (*InHeader)[4]);
         void          FinishTargetFace(const char* InPath, uint32_t InFace);
         bool          ReadRenderTarget(const char* InPath, EngineCore::Image& OutPixels);
 

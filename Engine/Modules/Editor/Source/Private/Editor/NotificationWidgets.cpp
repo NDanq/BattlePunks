@@ -405,7 +405,7 @@ NotificationCenter::NotificationCenter(QWidget* InParent)
     auto* Spacer = new QWidget(Bar);
     Spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     Bar->addWidget(Spacer);
-    QAction* ClearAll = Bar->addAction(QStringLiteral("Clear All"));
+    QAction* ClearAll = Bar->addAction(EditorIcons::Get(EditorIcons::EIcon::Clear), QStringLiteral("Clear All"));
     connect(ClearAll, &QAction::triggered, &Model, &EditorNotifications::Clear);
     Column->addWidget(Bar);
 

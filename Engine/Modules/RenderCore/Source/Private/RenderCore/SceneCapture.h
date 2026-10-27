@@ -21,7 +21,7 @@ namespace RenderCore
     {
         RENDER_CAPTURES_MAX         = 8,    // probes captured in one frame; the rest wait
         RENDER_CAPTURE_EXCLUDED_MAX = 32,   // entities a probe leaves out (its owner's subtree)
-        RENDER_REFLECTION_PROBES_MAX = 4,   // reflection probes lighting a view at once (IBLCommon.glsl's IBL_PROBES_MAX)
+        RENDER_REFLECTION_PROBES_MAX = 16,  // reflection probes lighting a view at once (IBLCommon.glsl's IBL_PROBES_MAX)
     };
 
     /* A Reflection Probe lighting this view: where, its influence, and whether
@@ -39,6 +39,17 @@ namespace RenderCore
         uint32_t            Resolution = 128;        // a face's side
         uint8_t             bDue      = 0;
         uint8_t             bShadows  = 1;
+    };
+
+    /* The GI Volume lighting this view (GLOBAL_ILLUMINATION.md, Phase 6): its
+     * box and probe spacing. RenderScene keeps its probes (UpdateGlobalIllumination). */
+    struct GIVolumeRequest
+    {
+        uint64_t            Key = 0;                 // its entity, packed
+        EngineCore::Vector3 Position;
+        float               Extent[3] = { 1000.0f, 400.0f, 1000.0f };   // half sizes
+        float               Spacing   = 200.0f;
+        float               Intensity = 1.0f;
     };
 
     struct SceneCaptureRequest
@@ -63,6 +74,10 @@ namespace RenderCore
         /* The Reflection Probes lighting the view, nearest the camera first. */
         uint32_t               ProbeCount = 0;
         ReflectionProbeRequest Probes[RENDER_REFLECTION_PROBES_MAX];
+
+        /* The GI Volume nearest the camera, if any. */
+        uint8_t                bGIVolume = 0;
+        GIVolumeRequest        GIVolume;
     };
 
     /* A cube face's forward and up, +X -X +Y -Y +Z -Z -- the order of a

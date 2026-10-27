@@ -269,6 +269,9 @@ set(NIMBLE_EDITOR_IMPORT_SOURCES
         Source/Private/Editor/Content/GltfImporter.h
         Source/Private/Editor/Content/LightmapUVs.cpp
         Source/Private/Editor/Content/LightmapUVs.h
+        Source/Private/Editor/Content/MeshTangents.cpp
+        Source/Private/Editor/Content/MeshTangents.h
+        Source/Private/Editor/Content/MikkTSpaceImpl.cpp
 )
 list(APPEND NIMBLE_EDITOR_SOURCES ${NIMBLE_EDITOR_IMPORT_SOURCES})
 
@@ -302,6 +305,12 @@ endif()
 # NimbleXatlas: lightmap UV charts, LightmapUVs.cpp) are vendored at
 # Engine/ThirdParty/Source; xatlas is built by Engine/ThirdParty/CMakeLists.txt.
 set(NIMBLE_EDITOR_CGLTF_DIR "${NIMBLE_THIRDPARTY_CGLTF_DIR}")
+# MikkTSpace (zlib; mesh tangents, MeshTangents.cpp) is vendored there too and
+# compiled as C++ by MikkTSpaceImpl.cpp, the engine project having no C.
+set_source_files_properties(
+        Source/Private/Editor/Content/MeshTangents.cpp
+        Source/Private/Editor/Content/MikkTSpaceImpl.cpp
+        PROPERTIES INCLUDE_DIRECTORIES "${NIMBLE_THIRDPARTY_MIKKTSPACE_DIR}")
 
 add_executable(NimbleEditor WIN32 ${NIMBLE_EDITOR_SOURCES})
 # The application icon: the .exe's own icon on Windows (Explorer, the taskbar
@@ -398,6 +407,21 @@ qt_add_resources(NimbleEditor "LucideIcons"
             "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/git-commit-horizontal.svg"
             "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/lock.svg"
             "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/git-merge.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/arrow-left.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/arrow-right.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/folder-up.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/folder-plus.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/folder-open.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/folder.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/file-text.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/list.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/import.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/external-link.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/rotate-ccw.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/minus.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/chevron-up.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/chevron-down.svg"
+            "${NIMBLE_EDITOR_LUCIDE_DIR}/icons/brush-cleaning.svg"
 )
 # The editor's own icons in Lucide's style (the Terrain tools), beside them as :/lucide/<name>.svg.
 set(NIMBLE_EDITOR_OWN_ICONS

@@ -57,8 +57,32 @@ templates, beside the engine's other shaders.
 |---|---|---|---|---|
 | Opaque | Base Pass / Unlit | off | on | |
 | Masked | Base Pass / Unlit | off | on | `discard` when OpacityMask < Clip Value |
-| Translucent | Translucent Lit / Translucent Unlit | alpha | off | sorted back to front |
+| Translucent | Translucent (Lit forward-shaded, Unlit as authored) | alpha; premultiplied for Lit with Translucency Lighting Surface | off | sorted back to front, Lit and Unlit together |
 | PostProcess | PostProcess | off | off | full-screen, Unlit only, samples Scene Color and Scene Depth; no WPO; run by a post process stack (RENDERPIPELINE.md) |
+
+**Translucency Lighting** (the Material Output's, Translucent Lit only;
+LIT_TRANSLUCENCY.md, Phase 3): **Surface** fades only the body -- diffuse and
+emissive -- by Opacity and keeps the specular whole, so clear glass still
+reflects; the shader writes it premultiplied (`MATERIAL_TRANSLUCENCY_SURFACE`
+in the generated code) and it blends (one, one minus source alpha). **Legacy**
+fades everything by Opacity, as before. A new Material Output node is Surface;
+a graph saved before the property existed has none and is Legacy, so old
+content looks as it did.
+
+**Cast Translucent Shadow** (the Material Output's, Translucent only;
+LIT_TRANSLUCENCY.md): its mesh casts a see-through shadow into the lights'
+opacity shadow maps, stopping **Translucent Shadow Opacity** of the light at
+each face it crosses (`.material`: `TranslucentShadow <opacity>`); its Render
+component must Cast Shadows.
+
+**Particle Lighting** (the Material Output's, Translucent Unlit only;
+LIT_TRANSLUCENCY.md, Phase 6): **Per Particle** lights each particle once, at
+its centre, in the material's own vertex shaders -- the sun through its shadow
+maps, every point and spot light, the probes or a GI Volume, through a
+Henyey-Greenstein phase of **Particle Phase** -- and multiplies its Vertex
+Color by that light, so feeding Vertex Color to Emissive draws a lit plume for
+an unlit one's cost. The `.material` says `ParticleLighting 1` and
+`HasOffset 1` (it needs its own vertex shaders, the offset zero).
 
 The domain and shading are the key to where a material draws:
 [RENDERPIPELINE.md](RENDERPIPELINE.md) has the stages, their draw policies and
@@ -68,7 +92,14 @@ writes its colour directly. Plain tinted quads and meshes drawn with Mesh_PS go
 to the Unlit stage, in their old blended, depth-written state.
 
 Shading is **Lit** (Emissive plus `ShadeSurface`) or **Unlit** (Emissive is the
-colour). The legacy Pixel Output node compiles as Unlit + Translucent, which is
+colour). A Lit material also has a **Shading Model** -- Default, Clear Coat,
+Anisotropic, Cloth, Subsurface or Skin -- and the pins only some models read
+(Clear Coat, Clear Coat Roughness, Clear Coat Normal, Anisotropy, Tangent,
+Sheen Color, Subsurface Color, Thickness): [SHADING_MODELS.md](SHADING_MODELS.md).
+A Translucent material, Lit or Unlit, can refract what is behind it --
+**Refraction** (an index of refraction, 1 none) and **Transmission Tint**:
+[LIT_TRANSLUCENCY.md](LIT_TRANSLUCENCY.md), Phases 9-12.
+A pin the model does not read is warned about, as an Unlit material's are. The legacy Pixel Output node compiles as Unlit + Translucent, which is
 how every material drew before (the scene blended everything).
 
 Two Sided does not change culling -- GDI culls nothing on any backend -- it
@@ -83,11 +114,12 @@ A permutation key is a `uint32_t` (`MaterialDescription.h`):
 |---|---|---|
 | 0-2 | Domain | Opaque 0, Masked 1, Translucent 2, PostProcess 3 |
 | 3-4 | Shading | Lit 0, Unlit 1 |
+| 5-7 | Shading model | Default 0, ClearCoat 1, Anisotropic 2, Cloth 3, Subsurface 4, Skin 5 (Lit only; a Default key is what it was before) |
 | 8-10 | Vertex input | Quad 0, Mesh 1, Fullscreen 2, InstancedMesh 3 (vertex stage only) |
 | rest | reserved | quality levels, static switches |
 
 Each field becomes 0/1 defines (`MATERIAL_DOMAIN_MASKED`, `MATERIAL_SHADING_LIT`,
-`MATERIAL_VERTEX_MESH`), because the cook's preprocessor has no `#elif`. Files
+`MATERIAL_SHADING_MODEL_CLOTH`, `MATERIAL_VERTEX_MESH`), because the cook's preprocessor has no `#elif`. Files
 are named `<Name>@<key as 8 hex digits>.vsh/.fsh`.
 
 **Which keys a material builds:** its own Domain and Shading for the pixel
@@ -122,6 +154,9 @@ uploads verbatim.
 | 2 | `<Name>_Block`: `Material_Tint`, `Material_ClipValue`, `Material_TwoSided`, two reserved floats, then `Param_<Name>` for each parameter | RenderContext, per draw | MaterialSchema (offsets in `.material`) |
 | 3 | `Scene_Block`: camera, time, light, ambient, and the inverse view-projection (the Lighting stage's) | RenderContext, per frame | SceneUniforms.glsl, mirrored by `SceneUniforms` in RenderContext.cpp with static_asserts |
 | 4-11 | Material textures (slot 0-7); for PostProcess, slot 0 is Scene Color and slot 7 the scene depth | RenderContext | fixed |
+| 12-19 | The engine's texture slots 8-15: its passes', and forward Lit materials' light list (GLOBAL_ILLUMINATION.md) | RenderContext | fixed |
+| 20, 21 | Skin blocks (ANIMATION.md) | RenderContext, per skinned draw | Skinning.glsl |
+| 22 | Light block: the frame's light list (GLOBAL_ILLUMINATION.md) | RenderContext, per frame | LightList.glsl |
 
 Both blocks are visible to both stages, so World Position Offset can read
 parameters and time. Parameters are float, vec2, vec3 or vec4, in name order;
@@ -231,6 +266,15 @@ Lightmap UVs (UV1) are another, at location 10 (`GDIMeshDesc::UV1`, zero when
 the mesh has none), stored as an optional `MUV1` chunk. The vertex stage
 passes them through as `Interpolants.LightmapUV`; only the Base Pass reads
 them, for baked lighting (RENDERPIPELINE.md, "Baked lighting").
+
+Tangents are another, at location 13 (`GDIMeshDesc::Tangents`, vec4: xyz along
+UV0's U, w the bitangent's sign; zero when the mesh has none), stored as an
+optional `MTAN` chunk. The vertex stage carries xyz by the model transform
+(rotated by the bones too, for a skinned mesh), flips w under a mirroring one,
+and passes them as `Interpolants.WorldTangent`; the pixel stage's
+`Inputs.WorldTangent`. The Normal Map node and an Anisotropic material's
+default Tangent read it, and take their frame from the UV's screen
+derivatives where it is zero (SHADING_MODELS.md, "Tangents").
 
 `WorldMotion` (vec3) is how far the surface moved in the world since the
 frame before: the material vertex stage takes its position less where
@@ -395,9 +439,9 @@ colour.
 - `UBO_BLOCK_BEGIN/END` and `MATERIAL_SAMPLER2D` macros (engine copies of
   OpenGLCommon/VulkanCommon.glsl): real std140 blocks and bound samplers on
   OpenGL too.
-- Vulkan: descriptor layout group `DLG_Material` (UBO 0-3, samplers 4-11).
+- Vulkan: descriptor layout group `DLG_Material` (UBO 0-3, samplers 4-19, UBO 20-22).
 - D3D12: root parameters for b3 and t4-t11/s4-s11.
-- OpenGL: a UBO per binding, `glBindBufferBase`; texture units 4-11.
+- OpenGL: a UBO per binding, `glBindBufferBase`; texture units 4-19.
 - Vertex colour at location 9, and lightmap UVs at 10, on Vulkan, D3D12 and OpenGL.
 - Metal: not done. The engine does not cook Metal, and Metal has no indexed
   meshes yet.
@@ -411,7 +455,7 @@ colour.
 | Backend | Compiles | Verified drawing |
 |---|---|---|
 | Vulkan | yes | yes -- RenderCore smoke `NIMBLE_SMOKE_GPU=Vulkan` renders DefaultLit and Wave (WPO) through the G-buffer, Glow and Negative (PostProcess) through the caches and checks their pixels (clean under the validation layer); Sandbox (Editor and Client targets) loads every material and its cache |
-| D3D12 | yes (every permutation through spirv-cross and fxc; registers match the root signature) | yes -- the same smoke check with `NIMBLE_SMOKE_GPU=D3D12` gives Vulkan's pixels; Sandbox and the editor viewport (`--rhi 4`) run on it |
+| D3D12 | yes (every permutation through spirv-cross and dxc, shader model 6.0; registers match the root signature) | yes -- the same smoke check with `NIMBLE_SMOKE_GPU=D3D12` gives Vulkan's pixels; Sandbox and the editor viewport (`--rhi 4`) run on it |
 | OpenGL | yes (preprocessed; the backend's multiple targets and depth textures compile) | no -- the host does not create a WGL context yet |
 | Metal | -- | -- |
 

@@ -34,9 +34,10 @@ enum ED3D12RootParam : UINT
     RP_Sampler3,
     RP_Scene,
     RP_MaterialTexture0,
-    RP_MaterialSampler0 = RP_MaterialTexture0 + 8,   // GDI_MATERIAL_TEXTURE_SLOTS
-    RP_Skin             = RP_MaterialSampler0 + 8,   // b12, GDI_SKIN_BLOCK_BINDING
-    RP_PrevSkin,                                     // b13, GDI_PREV_SKIN_BLOCK_BINDING
+    RP_MaterialSampler0 = RP_MaterialTexture0 + 16,  // GDI_MATERIAL_TEXTURE_SLOTS
+    RP_Skin             = RP_MaterialSampler0 + 16,  // b20, GDI_SKIN_BLOCK_BINDING
+    RP_PrevSkin,                                     // b21, GDI_PREV_SKIN_BLOCK_BINDING
+    RP_Light,                                        // b22, GDI_LIGHT_BLOCK_BINDING
     RP_Count
 };
 
@@ -59,7 +60,8 @@ enum ED3D12ComputeRootParam : UINT
  * Vertex layout IDs:
  *   0 -- standard:  slot 0 float3 position, slot 1 float2 texcoord
  *   1 -- instanced: plus slot 2 float4x4 transform, slot 3 float opacity, slot 4 float3 color
- *   2 -- indexed mesh: plus slot 2 float3 normal, slot 3 float4 colour, slot 4 float2 UV1
+ *   2 -- indexed mesh: plus slot 2 float3 normal, slot 3 float4 colour, slot 4 float2 UV1,
+ *        slot 8 float4 tangent (location 13; in 3 and 4 too)
  *   3 -- indexed mesh instanced from a GDIBuffer (GDISetInstanceBuffer): plus
  *        slot 5, one GDI_INSTANCE_STRIDE record per instance
  *   4 -- skinned mesh: 2 plus slot 6 float4 bone indices, slot 7 float4 weights
@@ -90,6 +92,7 @@ public:
         BOOL                    DepthEnable     = FALSE;
         BOOL                    DepthWrite      = FALSE;
         D3D12_COMPARISON_FUNC   DepthFunc       = D3D12_COMPARISON_FUNC_LESS;
+        D3D12_CULL_MODE         CullMode        = D3D12_CULL_MODE_NONE;
 
         bool operator==(const PipelineKey& InOther) const;
     };

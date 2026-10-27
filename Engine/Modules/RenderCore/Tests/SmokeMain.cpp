@@ -1506,6 +1506,23 @@ static void TestMaterialRuntime()
            "a parameter over the engine's bytes is refused");
     Expect(!ParseMaterialDescription("NimbleMaterial 3\nDomain Sideways\n", Desc, Error), "an unknown domain is refused");
 
+    // --- Shading models (SHADING_MODELS.md) ---------------------------------------------
+    Expect(ParseMaterialDescription("NimbleMaterial 3\nShading Lit\nShadingModel Skin\n", Desc, Error)
+           && Desc.ShadingModel == EMaterialShadingModel::Skin, "a ShadingModel line names the model");
+    Expect(ParseMaterialDescription("NimbleMaterial 3\nShading Lit\n", Desc, Error) && Desc.ShadingModel == EMaterialShadingModel::Default,
+           "without one it is Default");
+    Expect(!ParseMaterialDescription("NimbleMaterial 3\nShadingModel Velour\n", Desc, Error), "an unknown shading model is refused");
+    Expect(GetPixelPermutationKey(EMaterialDomain::Opaque, EMaterialShading::Lit) == 0u
+           && GetPixelPermutationKey(EMaterialDomain::Opaque, EMaterialShading::Lit, EMaterialShadingModel::ClearCoat) == 0x20u
+           && GetPixelPermutationKey(EMaterialDomain::Masked, EMaterialShading::Lit, EMaterialShadingModel::Skin) == 0xa1u,
+           "a shading model takes the pixel key's bits 5-7; Default's keys are unchanged");
+    for(uint32_t Each = 0; Each < MATERIAL_SHADING_MODEL_COUNT; ++Each)
+    {
+        EMaterialShadingModel Found = EMaterialShadingModel::Default;
+        Expect(FindShadingModel(GetShadingModelName(EMaterialShadingModel(Each)), Found) && uint32_t(Found) == Each,
+               "a shading model's name finds it again");
+    }
+
     // --- Texture lines: what a Texture Sample writes -----------------------------------
     const char* Textured = "NimbleMaterial 3\nBlockSize 160\n"
                            "Texture 1 Default Default Content/Textures/Brick.nmtexture\n"
@@ -1665,6 +1682,20 @@ static void TestMaterialRuntime()
     Coloured.Colors.pop_back();
     Archive Bad = Archive::ForWriting();
     Expect(!SerializeMesh(Bad, Coloured), "colours for only some vertices are refused");
+
+    // --- Tangents (MTAN) in .nmmesh ---------------------------------------------------------
+    MeshData Tangented = Plain;
+    Tangented.Tangents = { 1, 0, 0, 1,  1, 0, 0, 1,  1, 0, 0, -1 };
+    Archive SaveTangents = Archive::ForWriting();
+    Expect(SerializeMesh(SaveTangents, Tangented), "a mesh with tangents saves");
+    Archive LoadTangents = Archive::ForReading(SaveTangents.GetBytes());
+    MeshData TangentsBack;
+    Expect(SerializeMesh(LoadTangents, TangentsBack) && TangentsBack.Tangents == Tangented.Tangents
+           && TangentsBack.Indices == Tangented.Indices, "and loads them back, handedness and all");
+    Expect(PlainBack.Tangents.empty(), "a mesh saved without tangents (every file before MTAN) loads with none");
+    Tangented.Tangents.resize(8);
+    Archive BadTangents = Archive::ForWriting();
+    Expect(!SerializeMesh(BadTangents, Tangented), "tangents for only some vertices are refused");
 }
 
 #if WITH_EDITOR
@@ -3376,6 +3407,591 @@ static void TestShadowsOnGpu()
 
 #if WITH_EDITOR
 /*
+ * Lit translucency on the GPU (NIMBLE_SMOKE_GPU=Vulkan or D3D12;
+ * LIT_TRANSLUCENCY.md, "Validation"): small scenes drawn with the Engine
+ * cache's Testing materials (Engine/Content/Materials/Testing), their pixels
+ * checked against what each phase predicts. NIMBLE_SMOKE_DUMP=<dir> keeps
+ * each capture as a PPM.
+ */
+static void TestTranslucencyOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[translucency on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[translucency on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = RenderView::MakePerspective(Viewport, Vector3(0.0, 100.0, -600.0), Vector3(0.0, 0.0, 1.0),
+                                                            50.0f, 10.0f, 5000.0f);
+        Rend.SetViewOverride(&View);
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](EngineCore::Image& OutPixels)
+        {
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            const uint64_t Request = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 4; ++Each)
+            {
+                Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+                Rend.WaitForPreviousFrame();
+            }
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto Rgb = [](const EngineCore::Image& InPixels, const int InX, const int InY, int (&OutRgb)[3])
+        {
+            const uint8_t* Px = InPixels.GetData() + InPixels.GetStride() * InY + InX * BytesPerPixel(InPixels.GetFormat());
+            const bool bBgra = InPixels.GetFormat() == EImageFormat::BGRA8;
+            OutRgb[0] = bBgra ? Px[2] : Px[0];
+            OutRgb[1] = Px[1];
+            OutRgb[2] = bBgra ? Px[0] : Px[2];
+        };
+        const char* DumpDir = std::getenv("NIMBLE_SMOKE_DUMP");
+        const auto Dump = [&](const EngineCore::Image& InPixels, const char* InName)
+        {
+            if(!DumpDir || !DumpDir[0] || InPixels.GetWidth() == 0) { return; }
+            std::ofstream File(std::string(DumpDir) + "/" + InName + ".ppm", std::ios::binary);
+            File << "P6\n" << InPixels.GetWidth() << " " << InPixels.GetHeight() << "\n255\n";
+            for(int Y = 0; Y < int(InPixels.GetHeight()); ++Y)
+            {
+                for(int X = 0; X < int(InPixels.GetWidth()); ++X)
+                {
+                    int Value[3];
+                    Rgb(InPixels, X, Y, Value);
+                    const char Bytes[3] = { char(Value[0]), char(Value[1]), char(Value[2]) };
+                    File.write(Bytes, 3);
+                }
+            }
+        };
+
+        GameCore::World World;
+        Rend.BindWorld(World);
+        const auto Placed = [&World](const char* InName, const Vector3& InPosition, const Vector3& InRotation, const Vector3& InScale)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InPosition;
+            Transform.Rotation = InRotation;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            return Each;
+        };
+        const auto Drawn = [](const char* InMesh, const char* InMaterial)
+        {
+            RenderComponent Render;
+            std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", InMesh);
+            std::snprintf(Render.Materials[0], sizeof(Render.Materials[0]), "Engine/Content/Materials/Testing/%s.material.nmgraph", InMaterial);
+            return Render;
+        };
+        const char* BOX = "Engine/Content/Meshes/Box.nmmesh";
+
+        /* A sun from behind the camera, and the sky. */
+        DirectionalLightComponent SunInit;
+        SunInit.ShadowDistance = 3000.0f;
+        const GameCore::Entity Sun = Placed("Sun", Vector3(), Vector3(35.0, 10.0, 0.0), Vector3(1.0, 1.0, 1.0));
+        Sun.AddComponent(SunInit);
+        Placed("Sky", Vector3(), Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(SkyLightComponent());
+
+        /* Phase 1: a red Lit quad and a green Unlit one overlapping in the middle of
+         * the view; whichever is nearer wins there, both ways round. */
+        {
+            const GameCore::Entity Red   = Placed("Red", Vector3(-40.0, 100.0, 0.0), Vector3(), Vector3(200.0, 200.0, 2.0));
+            const GameCore::Entity Green = Placed("Green", Vector3(40.0, 100.0, 150.0), Vector3(), Vector3(200.0, 200.0, 2.0));
+            Red.AddComponent(Drawn(BOX, "TransLitRed"));
+            Green.AddComponent(Drawn(BOX, "TransUnlitGreen"));
+            EngineCore::Image RedFront, GreenFront;
+            const bool bRedFront = Capture(RedFront);
+            Red.GetComponent<GameCore::TransformComponent>()->Position   = Vector3(-40.0, 100.0, 150.0);
+            Green.GetComponent<GameCore::TransformComponent>()->Position = Vector3(40.0, 100.0, 0.0);
+            const bool bGreenFront = Capture(GreenFront);
+            Expect(bRedFront && bGreenFront, "the overlapping quads are captured both ways round");
+            if(bRedFront && bGreenFront)
+            {
+                Dump(RedFront, "order-red-front");
+                Dump(GreenFront, "order-green-front");
+                int A[3], B[3];
+                Rgb(RedFront, 128, 128, A);
+                Rgb(GreenFront, 128, 128, B);
+                std::printf("    overlap: red in front %d %d %d, green in front %d %d %d\n", A[0], A[1], A[2], B[0], B[1], B[2]);
+                Expect(A[0] > A[1] + 40, "a Lit quad in front of an Unlit one covers it");
+                Expect(B[1] > B[0] + 40, "and an Unlit quad in front of a Lit one covers that (one translucent stage)");
+            }
+            World.DestroyEntity(Red);
+            World.DestroyEntity(Green);
+        }
+
+        /* Phase 2: a white quad at half opacity, its left half behind an opaque blocker
+         * from the sun (up the light from x -50 on the quad, above the view of it). Its
+         * shadowed half is darker; with shadows off the halves match. */
+        ConfigVar* ShadowsOn = ConfigFindVarByPath("Shadows.Enabled");
+        if(ShadowsOn)
+        {
+            const GameCore::Entity Pane    = Placed("Pane", Vector3(0.0, 100.0, 0.0), Vector3(), Vector3(200.0, 200.0, 2.0));
+            const GameCore::Entity Blocker = Placed("Blocker", Vector3(-85.0, 243.0, -202.0), Vector3(), Vector3(100.0, 40.0, 100.0));
+            Pane.AddComponent(Drawn(BOX, "TransLitWhite"));
+            Blocker.AddComponent(Drawn(BOX, "OpaqueBlack"));
+            EngineCore::Image On, Off;
+            ShadowsOn->SetFromString("1");
+            const bool bOn = Capture(On);
+            ShadowsOn->SetFromString("0");
+            const bool bOff = Capture(Off);
+            ShadowsOn->SetFromString("1");
+            Expect(bOn && bOff, "the half-shadowed pane is captured with shadows on and off");
+            if(bOn && bOff)
+            {
+                Dump(On, "pane-shadowed");
+                Dump(Off, "pane-unshadowed");
+                const auto Grey = [&](const EngineCore::Image& InPixels, const int InX)
+                {
+                    int Sum = 0;
+                    for(int Y = 118; Y <= 138; ++Y)
+                    {
+                        int Value[3];
+                        Rgb(InPixels, InX, Y, Value);
+                        Sum += Value[0] + Value[1] + Value[2];
+                    }
+                    return Sum / (21 * 3);
+                };
+                const int ShadowedOn = Grey(On, 101), LitOn = Grey(On, 155), ShadowedOff = Grey(Off, 101), LitOff = Grey(Off, 155);
+                std::printf("    pane: shadows on %d | %d, off %d | %d (left, the blocker's side | right)\n", ShadowedOn, LitOn, ShadowedOff, LitOff);
+                Expect(LitOn - ShadowedOn > 15, "a Translucent Lit surface is shadowed by an opaque caster (forward shadows)");
+                Expect(std::abs(LitOff - ShadowedOff) < 6, "and with shadows off its halves match");
+            }
+            World.DestroyEntity(Pane);
+            World.DestroyEntity(Blocker);
+        }
+
+        /* Phase 3: a pane at opacity 0.02, roughness 0.3, over black, the sun straight
+         * down the view so its highlight is at the centre. Translucency Lighting Surface
+         * keeps the highlight; Legacy fades it with the opacity to nearly nothing. */
+        {
+            Sun.GetComponent<GameCore::TransformComponent>()->Rotation = Vector3(0.0, 0.0, 0.0);
+            const GameCore::Entity Back = Placed("Back", Vector3(0.0, 100.0, 120.0), Vector3(), Vector3(800.0, 800.0, 2.0));
+            GameCore::Entity Pane = Placed("Pane", Vector3(0.0, 100.0, 0.0), Vector3(), Vector3(200.0, 200.0, 2.0));
+            Back.AddComponent(Drawn(BOX, "OpaqueBlack"));
+            Pane.AddComponent(Drawn(BOX, "TransLitShiny"));
+            EngineCore::Image Surface, Legacy;
+            const bool bSurface = Capture(Surface);
+            World.DestroyEntity(Pane);
+            Pane = Placed("PaneLegacy", Vector3(0.0, 100.0, 0.0), Vector3(), Vector3(200.0, 200.0, 2.0));
+            Pane.AddComponent(Drawn(BOX, "TransLitShinyLegacy"));
+            const bool bLegacy = Capture(Legacy);
+            Expect(bSurface && bLegacy, "the shiny pane is captured as Surface and as Legacy");
+            if(bSurface && bLegacy)
+            {
+                Dump(Surface, "shiny-surface");
+                Dump(Legacy, "shiny-legacy");
+                const auto Centre = [&](const EngineCore::Image& InPixels)
+                {
+                    int Sum = 0;
+                    for(int Y = 126; Y <= 130; ++Y)
+                    {
+                        for(int X = 126; X <= 130; ++X)
+                        {
+                            int Value[3];
+                            Rgb(InPixels, X, Y, Value);
+                            Sum += Value[0] + Value[1] + Value[2];
+                        }
+                    }
+                    return Sum / 75;
+                };
+                int Outside[3];
+                Rgb(Legacy, 20, 128, Outside);
+                const int SurfaceGrey = Centre(Surface), LegacyGrey = Centre(Legacy);
+                std::printf("    shiny pane: Surface %d, Legacy %d, the backdrop %d\n", SurfaceGrey, LegacyGrey, (Outside[0] + Outside[1] + Outside[2]) / 3);
+                Expect(SurfaceGrey - LegacyGrey > 20, "Translucency Lighting Surface keeps a clear pane's highlight");
+                /* Legacy keeps 2% of an HDR highlight, which the tone map still shows a little. */
+                const int Backdrop = (Outside[0] + Outside[1] + Outside[2]) / 3;
+                Expect(LegacyGrey - Backdrop < (SurfaceGrey - Backdrop) / 2, "and Legacy fades it with the opacity, as before");
+            }
+            World.DestroyEntity(Back);
+            World.DestroyEntity(Pane);
+            Sun.GetComponent<GameCore::TransformComponent>()->Rotation = Vector3(35.0, 10.0, 0.0);
+        }
+
+        /* Phase 5: a Volume quad over black with the sun behind it, shining toward the camera.
+         * Scattering forward (g 0.6) it is brighter than scattering back (g -0.6); with Normal
+         * Influence 0 it is lit evenly across, not by its facing. */
+        {
+            Sun.GetComponent<GameCore::TransformComponent>()->Rotation = Vector3(20.0, 180.0, 0.0);
+            Sun.GetComponent<DirectionalLightComponent>()->Intensity = 0.15f;   // forward scattering is ten times the light: below the tone map's top
+            const GameCore::Entity Back = Placed("Back", Vector3(0.0, 100.0, 120.0), Vector3(), Vector3(800.0, 800.0, 2.0));
+            GameCore::Entity Puff = Placed("Puff", Vector3(0.0, 100.0, 0.0), Vector3(), Vector3(200.0, 200.0, 2.0));
+            Back.AddComponent(Drawn(BOX, "OpaqueBlack"));
+            Back.GetComponent<RenderComponent>()->bCastShadows = 0;   // it stands between the sun and the quad
+            Puff.AddComponent(Drawn(BOX, "VolumeForward"));
+            EngineCore::Image Forward, Backward;
+            const bool bForward = Capture(Forward);
+            World.DestroyEntity(Puff);
+            Puff = Placed("PuffBack", Vector3(0.0, 100.0, 0.0), Vector3(), Vector3(200.0, 200.0, 2.0));
+            Puff.AddComponent(Drawn(BOX, "VolumeBack"));
+            const bool bBackward = Capture(Backward);
+            Expect(bForward && bBackward, "the Volume quad is captured scattering forward and back");
+            if(bForward && bBackward)
+            {
+                Dump(Forward, "volume-forward");
+                Dump(Backward, "volume-back");
+                const auto Grey = [&](const EngineCore::Image& InPixels, const int InX)
+                {
+                    int Sum = 0;
+                    for(int Y = 118; Y <= 138; ++Y)
+                    {
+                        int Value[3];
+                        Rgb(InPixels, InX, Y, Value);
+                        Sum += Value[0] + Value[1] + Value[2];
+                    }
+                    return Sum / (21 * 3);
+                };
+                const int ForwardMid = Grey(Forward, 128), BackMid = Grey(Backward, 128);
+                const int ForwardLeft = Grey(Forward, 90), ForwardRight = Grey(Forward, 166);
+                std::printf("    volume: forward %d, back %d; forward across %d | %d | %d\n", ForwardMid, BackMid, ForwardLeft, ForwardMid,
+                            ForwardRight);
+                Expect(ForwardMid - BackMid > 15, "a Volume medium scattering forward is brighter against the light than one scattering back");
+                Expect(std::abs(ForwardLeft - ForwardRight) < 8, "and with Normal Influence 0 it is lit evenly across");
+            }
+            World.DestroyEntity(Back);
+            World.DestroyEntity(Puff);
+            Sun.GetComponent<GameCore::TransformComponent>()->Rotation = Vector3(35.0, 10.0, 0.0);
+            Sun.GetComponent<DirectionalLightComponent>()->Intensity   = SunInit.Intensity;
+        }
+
+        /* Phase 7: a cloud of half-opaque particles that draw nothing (an opacity-0
+         * material) but cast, under a sun straight down, over a white floor. The floor under
+         * it is darker with translucent shadows on than off; an emitter of Shadow Density 0
+         * leaves it as off; the floor away from it is the same either way. */
+        ConfigVar* Translucent = ConfigFindVarByPath("Shadows.TranslucentShadows");
+        Expect(Translucent != nullptr, "[Shadows] TranslucentShadows is a config var");
+        if(Translucent)
+        {
+            std::filesystem::create_directories("Saved/TranslucencySmoke");
+            const auto WriteSystem = [](const char* InPath, const char* InDensity)
+            {
+                std::ofstream File(InPath, std::ios::binary);
+                File << "NimbleParticleSystem 1\n\nEmitter Puffs\n    Enabled true\n    Type Sprite\n"
+                        "    Material Engine/Content/Materials/Testing/Invisible.material.nmgraph\n"
+                        "    SpawnMode Burst\n    MaxParticles 64\n    BurstCount 48\n    BurstInterval 0\n    BurstCycles 1\n"
+                        "    Lifetime 60\n    LifetimeVariance 0\n    EmitterRadius 25\n    Velocity 0,0,0\n    VelocitySpread 0\n"
+                        "    StartSize 200\n    EndSize 200\n    StartColor 255,255,255,128\n    EndColor 255,255,255,128\n"
+                        "    FadeIn 0\n    FadeOut 0\n    PauseOffscreen false\n    CastShadows true\n    ShadowDensity "
+                     << InDensity << "\n";
+            };
+            WriteSystem("Saved/TranslucencySmoke/Casting.nmparticle", "1");
+            WriteSystem("Saved/TranslucencySmoke/Faint.nmparticle", "0");
+
+            Sun.GetComponent<GameCore::TransformComponent>()->Rotation = Vector3(90.0, 0.0, 0.0);
+            const GameCore::Entity Floor = Placed("Floor", Vector3(0.0, -1.0, 300.0), Vector3(), Vector3(2000.0, 2.0, 2000.0));
+            Floor.AddComponent(Drawn(BOX, "OpaqueWhite"));
+            const auto Cloud = [&](const char* InSystem)
+            {
+                const GameCore::Entity Each = Placed("Cloud", Vector3(0.0, 220.0, 300.0), Vector3(), Vector3(1.0, 1.0, 1.0));
+                ParticleSystemComponent System;
+                std::snprintf(System.System, sizeof(System.System), "%s", InSystem);
+                Each.AddComponent(System);
+                return Each;
+            };
+            const auto FloorGrey = [&](const EngineCore::Image& InPixels, const int InX)
+            {
+                int Sum = 0;
+                for(int Y = 154; Y <= 162; ++Y)
+                {
+                    for(int X = InX - 4; X <= InX + 4; ++X)
+                    {
+                        int Value[3];
+                        Rgb(InPixels, X, Y, Value);
+                        Sum += Value[0] + Value[1] + Value[2];
+                    }
+                }
+                return Sum / (81 * 3);
+            };
+            EngineCore::Image On, Off, Faint;
+            GameCore::Entity Casting = Cloud("Saved/TranslucencySmoke/Casting.nmparticle");
+            Translucent->SetFromString("1");
+            const bool bOn = Capture(On);
+            Translucent->SetFromString("0");
+            const bool bOff = Capture(Off);
+            Translucent->SetFromString("1");
+            World.DestroyEntity(Casting);
+            Casting = Cloud("Saved/TranslucencySmoke/Faint.nmparticle");
+            const bool bFaint = Capture(Faint);
+            Expect(bOn && bOff && bFaint, "the casting cloud is captured with translucent shadows on, off and at density 0");
+            if(bOn && bOff && bFaint)
+            {
+                Dump(On, "cloud-shadow-on");
+                Dump(Off, "cloud-shadow-off");
+                const int UnderOn = FloorGrey(On, 128), UnderOff = FloorGrey(Off, 128), UnderFaint = FloorGrey(Faint, 128);
+                const int AsideOn = FloorGrey(On, 24), AsideOff = FloorGrey(Off, 24);
+                std::printf("    cloud: floor under it %d on, %d off, %d at density 0; aside %d on, %d off\n", UnderOn, UnderOff,
+                            UnderFaint, AsideOn, AsideOff);
+                Expect(UnderOn < UnderOff * 85 / 100, "particles with Cast Shadows darken the floor under them (translucent shadows)");
+                Expect(std::abs(UnderFaint - UnderOff) < 4, "an emitter of Shadow Density 0 casts none");
+                Expect(std::abs(AsideOn - AsideOff) < 4, "and the floor away from them is unchanged");
+            }
+            World.DestroyEntity(Casting);
+            World.DestroyEntity(Floor);
+
+            /* Phase 8: single casting Volume particles under the same sun. A lone one keeps at
+             * least nine tenths of its light with translucent shadows on (it is not shadowed by
+             * itself); one with another straight above it is darker than it was alone. */
+            const auto WriteOne = [](const char* InPath)
+            {
+                std::ofstream File(InPath, std::ios::binary);
+                File << "NimbleParticleSystem 1\n\nEmitter One\n    Enabled true\n    Type Sprite\n"
+                        "    Material Engine/Content/Materials/Testing/VolumeForward.material.nmgraph\n"
+                        "    SpawnMode Burst\n    MaxParticles 1\n    BurstCount 1\n    BurstInterval 0\n    BurstCycles 1\n"
+                        "    Lifetime 60\n    LifetimeVariance 0\n    EmitterRadius 0\n    Velocity 0,0,0\n    VelocitySpread 0\n"
+                        "    StartSize 120\n    EndSize 120\n    StartColor 255,255,255,180\n    EndColor 255,255,255,180\n"
+                        "    FadeIn 0\n    FadeOut 0\n    PauseOffscreen false\n    CastShadows true\n    ShadowDensity 1\n";
+            };
+            WriteOne("Saved/TranslucencySmoke/One.nmparticle");
+            const auto Single = [&](const double InHeight)
+            {
+                const GameCore::Entity Each = Placed("One", Vector3(0.0, InHeight, 300.0), Vector3(), Vector3(1.0, 1.0, 1.0));
+                ParticleSystemComponent System;
+                std::snprintf(System.System, sizeof(System.System), "%s", "Saved/TranslucencySmoke/One.nmparticle");
+                Each.AddComponent(System);
+                return Each;
+            };
+            const auto Centre = [&](const EngineCore::Image& InPixels, const int InY)
+            {
+                int Sum = 0;
+                for(int Y = InY - 3; Y <= InY + 3; ++Y)
+                {
+                    for(int X = 125; X <= 131; ++X)
+                    {
+                        int Value[3];
+                        Rgb(InPixels, X, Y, Value);
+                        Sum += Value[0] + Value[1] + Value[2];
+                    }
+                }
+                return Sum / (49 * 3);
+            };
+            const GameCore::Entity Lower = Single(200.0);
+            EngineCore::Image AloneOn, AloneOff, Paired;
+            Translucent->SetFromString("0");
+            const bool bAloneOff = Capture(AloneOff);
+            Translucent->SetFromString("1");
+            const bool bAloneOn = Capture(AloneOn);
+            const GameCore::Entity Upper = Single(420.0);
+            const bool bPaired = Capture(Paired);
+            Expect(bAloneOff && bAloneOn && bPaired, "the single particles are captured alone and paired");
+            if(bAloneOff && bAloneOn && bPaired)
+            {
+                Dump(AloneOn, "particle-alone");
+                Dump(Paired, "particle-paired");
+                /* The lower particle at y 200, 900 in front of the eye at y 100: 30 pixels above the middle. */
+                const int Off = Centre(AloneOff, 97), On = Centre(AloneOn, 97), Below = Centre(Paired, 97);
+                std::printf("    self-shadow: alone %d off, %d on; under another %d\n", Off, On, Below);
+                Expect(On * 10 >= Off * 9, "a lone casting particle is not shadowed by itself (at least nine tenths of its light)");
+                Expect(Below * 10 < On * 9, "and one under another is shadowed by it");
+            }
+            World.DestroyEntity(Lower);
+
+            /* Ambient self-occlusion: the sun nearly off, so the sky lights the lower particle
+             * alone; under the casting one, a medium with Self Occlusion 1 is darker than one
+             * with 0. */
+            const auto WriteMaterial = [](const char* InPath, const char* InMaterial)
+            {
+                std::ofstream File(InPath, std::ios::binary);
+                File << "NimbleParticleSystem 1\n\nEmitter One\n    Enabled true\n    Type Sprite\n"
+                        "    Material Engine/Content/Materials/Testing/" << InMaterial << ".material.nmgraph\n"
+                        "    SpawnMode Burst\n    MaxParticles 1\n    BurstCount 1\n    BurstInterval 0\n    BurstCycles 1\n"
+                        "    Lifetime 60\n    LifetimeVariance 0\n    EmitterRadius 0\n    Velocity 0,0,0\n    VelocitySpread 0\n"
+                        "    StartSize 120\n    EndSize 120\n    StartColor 255,255,255,180\n    EndColor 255,255,255,180\n"
+                        "    FadeIn 0\n    FadeOut 0\n    PauseOffscreen false\n";
+            };
+            WriteMaterial("Saved/TranslucencySmoke/Occluded.nmparticle", "VolumeOccluded");
+            WriteMaterial("Saved/TranslucencySmoke/Open.nmparticle", "VolumeOpen");
+            const auto Receiver = [&](const char* InSystem)
+            {
+                const GameCore::Entity Each = Placed("Receiver", Vector3(0.0, 200.0, 300.0), Vector3(), Vector3(1.0, 1.0, 1.0));
+                ParticleSystemComponent System;
+                std::snprintf(System.System, sizeof(System.System), "%s", InSystem);
+                Each.AddComponent(System);
+                return Each;
+            };
+            Sun.GetComponent<DirectionalLightComponent>()->Intensity = 0.02f;
+            EngineCore::Image Occluded, Open;
+            GameCore::Entity Under = Receiver("Saved/TranslucencySmoke/Occluded.nmparticle");
+            const bool bOccluded = Capture(Occluded);
+            World.DestroyEntity(Under);
+            Under = Receiver("Saved/TranslucencySmoke/Open.nmparticle");
+            const bool bOpen = Capture(Open);
+            World.DestroyEntity(Under);
+            World.DestroyEntity(Upper);
+            Sun.GetComponent<DirectionalLightComponent>()->Intensity = SunInit.Intensity;
+            Expect(bOccluded && bOpen, "the receiver under a casting particle is captured with Self Occlusion 1 and 0");
+            if(bOccluded && bOpen)
+            {
+                const int Dark = Centre(Occluded, 97), Lit = Centre(Open, 97);
+                std::printf("    self-occlusion: under a caster, the sky's light %d with it, %d without\n", Dark, Lit);
+                Expect(Dark * 10 < Lit * 9, "Self Occlusion darkens a medium's sky light by the medium toward the sun");
+            }
+
+            /* Glass casting: a flat pane (a skylight) over the floor with Cast Translucent Shadow at
+             * opacity 0.5. The floor under it is darker with translucent shadows on, never black. */
+            const GameCore::Entity GlassFloor = Placed("GlassFloor", Vector3(0.0, -1.0, 300.0), Vector3(), Vector3(2000.0, 2.0, 2000.0));
+            GlassFloor.AddComponent(Drawn(BOX, "OpaqueWhite"));
+            const GameCore::Entity Skylight = Placed("Skylight", Vector3(0.0, 160.0, 300.0), Vector3(), Vector3(240.0, 2.0, 240.0));
+            Skylight.AddComponent(Drawn(BOX, "GlassCaster"));
+            EngineCore::Image GlassOn, GlassOff;
+            Translucent->SetFromString("1");
+            const bool bGlassOn = Capture(GlassOn);
+            Translucent->SetFromString("0");
+            const bool bGlassOff = Capture(GlassOff);
+            Translucent->SetFromString("1");
+            Expect(bGlassOn && bGlassOff, "the skylight is captured with translucent shadows on and off");
+            if(bGlassOn && bGlassOff)
+            {
+                Dump(GlassOn, "glass-shadow-on");
+                const int UnderOn = FloorGrey(GlassOn, 128), UnderOff = FloorGrey(GlassOff, 128);
+                std::printf("    glass: floor under the skylight %d on, %d off\n", UnderOn, UnderOff);
+                Expect(UnderOn < UnderOff * 85 / 100, "a Translucent material with Cast Translucent Shadow casts a see-through shadow");
+                Expect(UnderOn > UnderOff * 20 / 100, "which lets light through");
+            }
+            World.DestroyEntity(Skylight);
+            World.DestroyEntity(GlassFloor);
+            Sun.GetComponent<GameCore::TransformComponent>()->Rotation = Vector3(35.0, 10.0, 0.0);
+        }
+
+        /* Refraction (LIT_TRANSLUCENCY.md, Phases 11-12): a backdrop red on the left and white on
+         * the right, and a clear pane (Opacity 0, no specular) turned 35 degrees about its vertical
+         * axis between it and the eye. Refracting at 1.33, Lit or Unlit, it moves the colour edge
+         * behind it and nothing outside it; an opaque block in front of it does not bleed into the
+         * pane's pixels beside it. */
+        {
+            const GameCore::Entity Left  = Placed("BackRed", Vector3(-250.0, 100.0, 150.0), Vector3(), Vector3(500.0, 800.0, 2.0));
+            const GameCore::Entity Right = Placed("BackWhite", Vector3(250.0, 100.0, 150.0), Vector3(), Vector3(500.0, 800.0, 2.0));
+            Left.AddComponent(Drawn(BOX, "OpaqueRed"));
+            Right.AddComponent(Drawn(BOX, "OpaqueWhite"));
+            /* Where row InY turns from red to white; -1 if it does not. */
+            const auto EdgeAt = [&](const EngineCore::Image& InPixels, const int InY)
+            {
+                for(int X = 40; X < 216; ++X)
+                {
+                    int Value[3];
+                    Rgb(InPixels, X, InY, Value);
+                    if(Value[1] > 100 && Value[2] > 100) { return X; }   // white: green and blue up with red
+                }
+                return -1;
+            };
+            /* Near-black pixels round the pane's centre: the block, and anything bled from it. */
+            const auto BlackAround = [&](const EngineCore::Image& InPixels)
+            {
+                int Count = 0;
+                for(int Y = 100; Y < 156; ++Y)
+                {
+                    for(int X = 80; X < 176; ++X)
+                    {
+                        int Value[3];
+                        Rgb(InPixels, X, Y, Value);
+                        Count += Value[0] + Value[1] + Value[2] < 120 ? 1 : 0;
+                    }
+                }
+                return Count;
+            };
+
+            EngineCore::Image Plain;
+            const bool bPlain = Capture(Plain);
+            for(const char* Each : { "RefractLit", "RefractUnlit" })
+            {
+                const GameCore::Entity Pane = Placed("Pane", Vector3(0.0, 100.0, 0.0), Vector3(0.0, 35.0, 0.0), Vector3(200.0, 200.0, 2.0));
+                Pane.AddComponent(Drawn(BOX, Each));
+                EngineCore::Image Bent;
+                const bool bBent = Capture(Bent);
+                Expect(bPlain && bBent, "the backdrop is captured without and with a refracting pane");
+                if(bPlain && bBent)
+                {
+                    Dump(Bent, Each);
+                    const int Before = EdgeAt(Plain, 128), After = EdgeAt(Bent, 128);
+                    const int Above = EdgeAt(Plain, 30), AboveBent = EdgeAt(Bent, 30);
+                    std::printf("    %s: the edge at x %d through the pane, %d without; above it %d and %d\n",
+                                Each, After, Before, AboveBent, Above);
+                    Expect(Before > 0 && After > 0 && std::abs(After - Before) >= 3, "a refracting pane moves the edge behind it");
+                    Expect(Above > 0 && std::abs(AboveBent - Above) <= 1, "and nothing outside it");
+                }
+
+                /* A black block in front of the pane, beside the edge: through the pane the backdrop
+                 * shows round it, never the block (it is nearer than the pane). */
+                const GameCore::Entity Block = Placed("Block", Vector3(-25.0, 100.0, -150.0), Vector3(), Vector3(30.0, 30.0, 10.0));
+                Block.AddComponent(Drawn(BOX, "OpaqueBlack"));
+                EngineCore::Image Blocked;
+                const bool bBlocked = Capture(Blocked);
+                World.DestroyEntity(Pane);
+                EngineCore::Image BlockOnly;
+                const bool bBlockOnly = Capture(BlockOnly);
+                World.DestroyEntity(Block);
+                Expect(bBlocked && bBlockOnly, "the block is captured with and without the pane behind it");
+                if(bBlocked && bBlockOnly)
+                {
+                    Dump(Blocked, (std::string(Each) + "-block").c_str());
+                    const int With = BlackAround(Blocked), Without = BlackAround(BlockOnly);
+                    std::printf("    %s: %d black pixels round the block with the pane, %d without\n", Each, With, Without);
+                    Expect(Without > 50 && With <= Without + 24, "what is in front of a refracting pane does not bleed into it");
+                }
+            }
+            World.DestroyEntity(Left);
+            World.DestroyEntity(Right);
+        }
+
+        /* Far faces (LIT_TRANSLUCENCY.md, "Far faces"): a cube at opacity 0.5 over black. One-sided,
+         * its faces away from the eye are culled and one layer covers the backdrop; Two Sided, both
+         * draw, the far one under the near, and the centre is brighter by a second layer. */
+        {
+            const GameCore::Entity Back = Placed("Back", Vector3(0.0, 100.0, 300.0), Vector3(), Vector3(800.0, 800.0, 2.0));
+            Back.AddComponent(Drawn(BOX, "OpaqueBlack"));
+            int Grey[2] = {};
+            const char* Names[2] = { "TransUnlitHalf", "TransUnlitHalfTwoSided" };
+            bool bBoth = true;
+            for(int Index = 0; Index < 2; ++Index)
+            {
+                const GameCore::Entity Cube = Placed("Cube", Vector3(0.0, 100.0, 0.0), Vector3(20.0, 30.0, 0.0), Vector3(150.0, 150.0, 150.0));
+                Cube.AddComponent(Drawn(BOX, Names[Index]));
+                EngineCore::Image Pixels;
+                const bool bCaptured = Capture(Pixels);
+                bBoth = bBoth && bCaptured;
+                if(bCaptured)
+                {
+                    Dump(Pixels, Names[Index]);
+                    int Value[3];
+                    Rgb(Pixels, 128, 128, Value);
+                    Grey[Index] = (Value[0] + Value[1] + Value[2]) / 3;
+                }
+                World.DestroyEntity(Cube);
+            }
+            Expect(bBoth, "the half-covering cube is captured one-sided and Two Sided");
+            if(bBoth)
+            {
+                std::printf("    far faces: the cube's centre %d one-sided, %d Two Sided\n", Grey[0], Grey[1]);
+                Expect(Grey[0] > 20 && Grey[1] - Grey[0] > 10, "a one-sided Translucent mesh culls its far faces; a Two Sided one draws them");
+            }
+            World.DestroyEntity(Back);
+        }
+
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+}
+#endif // WITH_EDITOR
+
+#if WITH_EDITOR
+/*
  * Parallel draw recording on the GPU (NIMBLE_SMOKE_GPU=Vulkan;
  * MULTITHREADED_RENDERING.md, phase 3): a floor and a grid of boxes under a
  * cascaded sun, captured with [Rendering] ParallelRecording Off and On. The
@@ -4116,7 +4732,9 @@ static void TestClearGradientOnGpu()
             int Top[3], Bottom[3];
             At_(Solid, 4, 0, Top);
             At_(Solid, 4, 255, Bottom);
-            Expect(Near(Top, 10, 120, 30, 0) && Near(Bottom, 10, 120, 30, 0), "SetClearColor goes back to one colour");
+            std::printf("    clear colour: top %d %d %d, bottom %d %d %d\n", Top[0], Top[1], Top[2], Bottom[0], Bottom[1], Bottom[2]);
+            /* Within a step: display to linear (sRGB) in the half-float scene colour and back. */
+            Expect(Near(Top, 10, 120, 30, 1) && Near(Bottom, 10, 120, 30, 1), "SetClearColor goes back to one colour");
         }
 
         Rend.UnbindWorld();
@@ -4161,6 +4779,9 @@ static void TestImageBasedLightingData()
     const ReflectionProbeComponent Defaults;
     Expect(Defaults.Frequency == SCF_Once && Defaults.bCaptureShadows && Defaults.Radius > 0.0f,
            "a probe captures once by default, with shadows, a sphere of influence");
+    const GameCore::ComponentSerializerInfo* VolumeInfo = GameCore::FindComponentSerializer(GIVolumeComponent::StaticType().ID);
+    Expect(VolumeInfo && VolumeInfo->Version == 1 && std::string(GIVolumeComponent::StaticType().Name) == "GI Volume",
+           "GI Volume is a registered component (GLOBAL_ILLUMINATION.md, Phase 6)");
 
     Renderer Rend;
     if(Rend.Initialize(ERenderBackend::Null, WindowHandle()))
@@ -4209,6 +4830,7 @@ static void TestFidelitySettings()
     const bool bParsed = ParsePostProcessStack(
         "Effect AutoExposure Key=0.12 MinEV=-3 MaxEV=2 SpeedUp=4 SpeedDown=0.5 CentreWeight=0.8\n"
         "Effect ScreenSpaceReflections Intensity=0.7 MaxRoughness=0.3 MaxDistance=900 Thickness=12 Steps=40\n"
+        "Effect ScreenSpaceGI Intensity=0.6 Rays=8 Radius=450\n"
         "Effect VolumetricFog Density=0.0002 HeightFalloff=0.001 BaseHeight=50 MaxDistance=5000 Anisotropy=0.7 "
         "SunScattering=2 SkyScattering=0.5 LightScattering=3 Albedo=1,0.9,0.8 Steps=16 Shadows=false\n"
         "Effect Antialiasing Method=TAA Sharpness=0.5 Quality=High\n", S, Error);
@@ -4216,6 +4838,7 @@ static void TestFidelitySettings()
            && S.AeSpeedDown == 0.5f && S.AeCentreWeight == 0.8f, "AutoExposure reads its key, range, speeds and weighting");
     Expect(S.bScreenReflections && S.SsrIntensity == 0.7f && S.SsrMaxRoughness == 0.3f && S.SsrMaxDistance == 900.0f
            && S.SsrThickness == 12.0f && S.SsrSteps == 40.0f, "ScreenSpaceReflections reads its settings");
+    Expect(S.bScreenGI && S.GiIntensity == 0.6f && S.GiRays == 8.0f && S.GiRadius == 450.0f, "ScreenSpaceGI reads its settings");
     Expect(S.bVolumetricFog && S.FogDensity == 0.0002f && S.FogBaseHeight == 50.0f && S.FogAnisotropy == 0.7f
            && S.FogAlbedo[1] == 0.9f && S.FogSteps == 16.0f && !S.bFogShadows, "VolumetricFog reads its settings and Albedo");
     Expect(S.bAntialiasing && S.AaMethod == 1 && S.AaSharpness == 0.5f, "Antialiasing reads Method TAA and its Sharpness");
@@ -4442,7 +5065,8 @@ static void TestImageBasedLightingOnGpu()
         uint64_t Frame = 1;
         const auto Capture = [&](EngineCore::Image& OutPixels)
         {
-            for(int Each = 0; Each < 3; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            // Eight frames: a probe's capture is a face a frame ([Rendering] ProbeFacesPerFrame).
+            for(int Each = 0; Each < 8; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
             const uint64_t Request = Rend.RequestSceneCapture();
             for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
             std::string Error;
@@ -6466,8 +7090,8 @@ static void TestRenderStages()
 
     Expect(GetMaterialRenderStage(EMaterialDomain::Opaque, EMaterialShading::Lit) == ERenderStage::BasePass
            && GetMaterialRenderStage(EMaterialDomain::Masked, EMaterialShading::Unlit) == ERenderStage::Unlit
-           && GetMaterialRenderStage(EMaterialDomain::Translucent, EMaterialShading::Lit) == ERenderStage::TranslucentLit
-           && GetMaterialRenderStage(EMaterialDomain::Translucent, EMaterialShading::Unlit) == ERenderStage::TranslucentUnlit
+           && GetMaterialRenderStage(EMaterialDomain::Translucent, EMaterialShading::Lit) == ERenderStage::Translucent
+           && GetMaterialRenderStage(EMaterialDomain::Translucent, EMaterialShading::Unlit) == ERenderStage::Translucent
            && GetMaterialRenderStage(EMaterialDomain::PostProcess, EMaterialShading::Lit) == ERenderStage::PostProcess,
            "a material's Domain and Shading name its stage");
 
@@ -6535,9 +7159,9 @@ static void TestRenderStages()
         const auto At = [&Counts](const ERenderStage InStage) { return Counts[size_t(InStage)]; };
         Expect(At(ERenderStage::BasePass) == 2, "an Opaque Lit material draws in the Base Pass, by its graph's path from any folder");
         Expect(At(ERenderStage::Unlit) == 5, "Masked Unlit, a plain quad and three meshes' material-less sections draw in Unlit");
-        Expect(At(ERenderStage::TranslucentLit) == 2, "Translucent Lit takes a quad and the section whose slot names one");
-        Expect(At(ERenderStage::TranslucentUnlit) == 3,
-               "Translucent Unlit takes a quad and the sections falling back to their own material (an empty slot, a missing one)");
+        Expect(At(ERenderStage::Translucent) == 5,
+               "Translucent takes Lit and Unlit together: two quads, the section whose slot names one, and the sections "
+               "falling back to their own material (an empty slot, a missing one)");
         Expect(At(ERenderStage::PostProcess) == 1, "a Post Process component's material is a PostProcess draw");
         Expect(At(ERenderStage::PrePass) == 0 && At(ERenderStage::Shadows) == 0, "PrePass and Shadows draw nothing yet");
 
@@ -6639,6 +7263,46 @@ static void TestEngineMeshes()
         for(size_t At = 0; bUV1InRange && At < Mesh.UV1.size(); ++At) { bUV1InRange &= Mesh.UV1[At] >= 0.0f && Mesh.UV1[At] <= 1.0f; }
         Expect(bUV1InRange, (std::string(Each.Path) + " has lightmap UVs (UV1) in 0-1").c_str());
         Expect(bFacing, (std::string(Each.Path) + " winds every triangle to face its normals").c_str());
+
+        /* MeshAsset.h's frame: a unit tangent at right angles to the normal, and
+         * on every triangle with UV area, along its +U with w * cross(N, T) along +V. */
+        bool bTangentFrames = Mesh.Tangents.size() == size_t(Mesh.GetVertexCount()) * 4;
+        for(size_t Vertex = 0; bTangentFrames && Vertex < Mesh.GetVertexCount(); ++Vertex)
+        {
+            const float* T = &Mesh.Tangents[Vertex * 4];
+            const float* N = &Mesh.Normals[Vertex * 3];
+            bTangentFrames &= std::fabs(T[0] * T[0] + T[1] * T[1] + T[2] * T[2] - 1.0f) < 1e-3f
+                              && std::fabs(T[0] * N[0] + T[1] * N[1] + T[2] * N[2]) < 1e-3f && std::fabs(T[3]) == 1.0f;
+        }
+        for(size_t At = 0; bTangentFrames && At + 2 < Mesh.Indices.size(); At += 3)
+        {
+            const uint32_t I[3] = { Mesh.Indices[At], Mesh.Indices[At + 1], Mesh.Indices[At + 2] };
+            float E1[3], E2[3];
+            for(int Axis = 0; Axis < 3; ++Axis)
+            {
+                E1[Axis] = Mesh.Positions[I[1] * 3 + Axis] - Mesh.Positions[I[0] * 3 + Axis];
+                E2[Axis] = Mesh.Positions[I[2] * 3 + Axis] - Mesh.Positions[I[0] * 3 + Axis];
+            }
+            const float Du1 = Mesh.UV0[I[1] * 2] - Mesh.UV0[I[0] * 2], Dv1 = Mesh.UV0[I[1] * 2 + 1] - Mesh.UV0[I[0] * 2 + 1];
+            const float Du2 = Mesh.UV0[I[2] * 2] - Mesh.UV0[I[0] * 2], Dv2 = Mesh.UV0[I[2] * 2 + 1] - Mesh.UV0[I[0] * 2 + 1];
+            const float Det = Du1 * Dv2 - Du2 * Dv1;
+            if(std::fabs(Det) < 1e-9f) { continue; }
+            float AlongU[3], AlongV[3];
+            for(int Axis = 0; Axis < 3; ++Axis)
+            {
+                AlongU[Axis] = (E1[Axis] * Dv2 - E2[Axis] * Dv1) / Det;
+                AlongV[Axis] = (E2[Axis] * Du1 - E1[Axis] * Du2) / Det;
+            }
+            for(const uint32_t Corner : I)
+            {
+                const float* T = &Mesh.Tangents[Corner * 4];
+                const float* N = &Mesh.Normals[Corner * 3];
+                const float B[3] = { T[3] * (N[1] * T[2] - N[2] * T[1]), T[3] * (N[2] * T[0] - N[0] * T[2]), T[3] * (N[0] * T[1] - N[1] * T[0]) };
+                bTangentFrames &= T[0] * AlongU[0] + T[1] * AlongU[1] + T[2] * AlongU[2] > 0.0f
+                                  && B[0] * AlongV[0] + B[1] * AlongV[1] + B[2] * AlongV[2] > 0.0f;
+            }
+        }
+        Expect(bTangentFrames, (std::string(Each.Path) + " has tangents along +U, their bitangents along +V (MTAN)").c_str());
     }
 
     MeshData Plane;
@@ -6959,6 +7623,7 @@ int main()
     TestMaterials();
     TestMaterialsOnGpu();
     TestShadowsOnGpu();
+    TestTranslucencyOnGpu();
     TestParallelRecordingOnGpu();
     TestPostProcessOnGpu();
     TestBloomHdrOnGpu();

@@ -251,8 +251,14 @@ def glass():
 
 
 def water():
+    """Clear fountain water (Engine/Modules/RenderCore/LIT_TRANSLUCENCY.md, Phases 3
+    and 9-12): a dielectric (2 % at normal incidence, Fresnel from the BRDF) whose
+    reflections keep their strength whatever its opacity (Translucency Lighting
+    Surface), a light body, and the basin seen through it bent by the waves
+    (Refraction 1.33) and tinted (Transmission Tint)."""
     g = Graph("Water")
     out = output(g, domain="Translucent")
+    next(n for n in g.nodes if n[0] == out)[3]["TranslucencyLighting"] = "Surface"
     time = g.node("Input.Time")
     t2 = g.node("Vector.Make2")
     g.link(time, "Time", t2, "X")
@@ -274,12 +280,11 @@ def water():
     nm = g.normal_map(None, (samples[0][1], "Out"), 0.45, color=(mix, "Out"))
     g.link(nm, "Normal", out, "Normal")
     g.link(g.param("Tint", "vec3", vec(0.20, 0.25, 0.23)), "Value", out, "BaseColor")
-    g.link(g.const("1", "float"), "Out", out, "Metallic")
+    g.link(g.const("0.25", "float"), "Out", out, "Specular")
     g.link(g.const("0.03", "float"), "Out", out, "Roughness")
-    f = fresnel(g, 5.0)
-    lift = g.node("Math.Lerp", consts={"A": "0.3", "B": "0.95"}, wildcard="float")
-    g.link(f[0], f[1], lift, "T")
-    g.link(lift, "Out", out, "Opacity")
+    g.link(g.const("0.15", "float"), "Out", out, "Opacity")
+    g.link(g.const("1.33", "float"), "Out", out, "Refraction")
+    g.link(g.param("TransmissionTint", "vec3", vec(0.78, 0.9, 0.86)), "Value", out, "TransmissionTint")
     return g
 
 
@@ -454,8 +459,8 @@ def post_stack():
     # The waxed floors and the fountain's stone catch the room and the arcade, where the probes cannot place them.
     g.node("Effect.ScreenSpaceReflections", props={"Intensity": "1", "Max Roughness": "0.5", "Max Distance": "1500",
                                                    "Thickness": "25", "Steps": "32"})
-    g.node("Effect.AmbientOcclusion", props={"Blur": "true", "Intensity": "1", "Power": "1.4", "Radius": "60", "Samples": "16"})
-    g.node("Effect.Antialiasing", props={"Method": "TAA", "Quality": "High"})   # TAA: FXAA stands in where it cannot run
+    g.node("Effect.AmbientOcclusion", props={"Blur": "true", "Intensity": "3", "Power": "1.4", "Radius": "60", "Samples": "16"})
+    g.node("Effect.Antialiasing", props={"Method": "TAA", "Quality": "Low"})   # TAA: FXAA stands in where it cannot run
     return g
 
 

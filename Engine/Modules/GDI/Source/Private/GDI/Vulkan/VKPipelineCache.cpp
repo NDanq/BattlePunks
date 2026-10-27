@@ -25,7 +25,7 @@ static constexpr uint32_t kLayoutMeshSkinned   = 4;   // kLayoutMesh + bone indi
 
 /** Maximum vertex bindings / attributes across all known layouts */
 static constexpr uint32_t kMaxBindings = 8;
-static constexpr uint32_t kMaxAttribs  = 10;
+static constexpr uint32_t kMaxAttribs  = 11;
 
 /** Push-constant range (bytes). Included in all layouts for future use. */
 static constexpr uint32_t kPushConstantBytes = 128;
@@ -99,6 +99,7 @@ uint64_t VKPipelineCache::HashKey(const PipelineKey& K)
     Mix(&K.DepthWriteEnable,  sizeof(K.DepthWriteEnable));
     Mix(&K.DepthCompareOp,    sizeof(K.DepthCompareOp));
     Mix(&K.StencilTestEnable, sizeof(K.StencilTestEnable));
+    Mix(&K.CullMode,          sizeof(K.CullMode));
     Mix(&K.RTFormat,          sizeof(K.RTFormat));
     Mix(&K.ColorFormats,      sizeof(K.ColorFormats));
     Mix(&K.ColorCount,        sizeof(K.ColorCount));
@@ -220,6 +221,19 @@ void VKPipelineCache::GetVertexInputState(
             OutAttribs[9].offset   = sizeof(float) * 16;
             OutAttribCount = 10;
         }
+
+        // Binding 8 / location 13: vec4 tangent, per vertex -- after whichever
+        // of the above the layout has.
+        OutBindings[OutBindingCount].binding   = 8;
+        OutBindings[OutBindingCount].stride    = sizeof(float) * 4;
+        OutBindings[OutBindingCount].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        ++OutBindingCount;
+
+        OutAttribs[OutAttribCount].location = 13;
+        OutAttribs[OutAttribCount].binding  = 8;
+        OutAttribs[OutAttribCount].format   = VK_FORMAT_R32G32B32A32_SFLOAT;
+        OutAttribs[OutAttribCount].offset   = 0;
+        ++OutAttribCount;
         return;
     }
 
@@ -434,7 +448,7 @@ bool VKPipelineCache::BuildLayouts()
         B.binding         = Binding;
         B.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         B.descriptorCount = 1;
-        B.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+        B.stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;   // a particle's vertex lighting samples too
         return B;
     };
 
@@ -450,7 +464,7 @@ bool VKPipelineCache::BuildLayouts()
                   "the skin blocks follow the material textures");
     struct GroupDef
     {
-        VkDescriptorSetLayoutBinding Bindings[GDI_PREV_SKIN_BLOCK_BINDING + 1];
+        VkDescriptorSetLayoutBinding Bindings[GDI_LIGHT_BLOCK_BINDING + 1];
         uint32_t                     Count;
     } Groups[DLG_Count];
 
@@ -490,10 +504,13 @@ bool VKPipelineCache::BuildLayouts()
         Sampler.stageFlags = kAllStages;
         Groups[DLG_Material].Bindings[GDI_MATERIAL_TEXTURE_BINDING + s] = Sampler;
     }
-    // The skin blocks at 12 and 13: a skinned vertex shader's bone palette, and the frame before's.
+    // The skin blocks at 20 and 21: a skinned vertex shader's bone palette, and the frame before's.
     Groups[DLG_Material].Bindings[GDI_SKIN_BLOCK_BINDING]      = MakeUBO(GDI_SKIN_BLOCK_BINDING);
     Groups[DLG_Material].Bindings[GDI_PREV_SKIN_BLOCK_BINDING] = MakeUBO(GDI_PREV_SKIN_BLOCK_BINDING);
-    Groups[DLG_Material].Count = GDI_PREV_SKIN_BLOCK_BINDING + 1;
+    // The light block at 22: the frame's light list.
+    static_assert(GDI_LIGHT_BLOCK_BINDING == GDI_PREV_SKIN_BLOCK_BINDING + 1, "the light block follows the skin blocks");
+    Groups[DLG_Material].Bindings[GDI_LIGHT_BLOCK_BINDING] = MakeUBO(GDI_LIGHT_BLOCK_BINDING);
+    Groups[DLG_Material].Count = GDI_LIGHT_BLOCK_BINDING + 1;
 
     for(uint32_t g = 0; g < DLG_Count; ++g)
     {
@@ -638,7 +655,7 @@ VkPipeline VKPipelineCache::CreatePipeline(const PipelineKey& Key) const
     Raster.sType            = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     Raster.depthClampEnable = VK_FALSE;
     Raster.polygonMode      = VK_POLYGON_MODE_FILL;
-    Raster.cullMode         = VK_CULL_MODE_NONE;
+    Raster.cullMode         = Key.CullMode;
     Raster.frontFace        = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     Raster.lineWidth        = 1.0f;
 
@@ -824,7 +841,8 @@ bool VKPipelineCache::KeysEqual(const PipelineKey& A, const PipelineKey& B)
        || A.DstColorBlend != B.DstColorBlend || A.SrcAlphaBlend != B.SrcAlphaBlend || A.DstAlphaBlend != B.DstAlphaBlend
        || A.ColorBlendOp != B.ColorBlendOp || A.AlphaBlendOp != B.AlphaBlendOp || A.ColorWriteMask != B.ColorWriteMask
        || A.DepthTestEnable != B.DepthTestEnable || A.DepthWriteEnable != B.DepthWriteEnable
-       || A.DepthCompareOp != B.DepthCompareOp || A.StencilTestEnable != B.StencilTestEnable || A.RTFormat != B.RTFormat
+       || A.DepthCompareOp != B.DepthCompareOp || A.StencilTestEnable != B.StencilTestEnable || A.CullMode != B.CullMode
+       || A.RTFormat != B.RTFormat
        || A.ColorCount != B.ColorCount || A.DepthFormat != B.DepthFormat || A.Topology != B.Topology)
     {
         return false;

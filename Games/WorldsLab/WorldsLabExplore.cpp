@@ -38,6 +38,9 @@
  * An entity named Airship, if the world has one, drifts slowly along its
  * heading and back, bobbing.
  *
+ * [WorldsLab] HoldCamera=1 leaves the Player where the world put it, input
+ * ignored: what captures of a world set.
+ *
  * WorldsLabCourtyard is the same mode for the Courtyard world
  * (Tools/Courtyard/make_courtyard_level.py, brought over from LightLab): its
  * hearth's light, the entity named Fire, flickers (WorldsLab.Flicker), and
@@ -59,6 +62,11 @@ NIMBLE_CONFIG_FLOAT(GWorldsLabPerfInterval,    "WorldsLab", "PerfInterval",    2
  * frames every run, for comparing renderer settings. */
 NIMBLE_CONFIG_BOOL(GWorldsLabPerfTour,         "WorldsLab", "PerfTour",        false,  nullptr);
 NIMBLE_CONFIG_FLOAT(GWorldsLabPerfTourHold,    "WorldsLab", "PerfTourHold",    -1.0f,  nullptr);   // >= 0: the tour stays at this time (screenshots)
+
+/* HoldCamera=1: the Player stays where the world put it and reads no input -- a
+ * capture's window takes focus, and a mouse moved or a key typed meanwhile
+ * would turn or walk it (Tools/TranslucencyLab/capture.ps1 sets it). */
+NIMBLE_CONFIG_BOOL(GWorldsLabHoldCamera,       "WorldsLab", "HoldCamera",      false,  nullptr);
 
 /* The explore controls: the Player's Input component reads map "Default".
  * Each entry is also [Input_Default] <Name> in Config/DefaultEngine.ini. */
@@ -243,6 +251,10 @@ namespace
             }
             return;
         }
+        if(GWorldsLabHoldCamera.GetBool())
+        {
+            return;
+        }
 
         const double Look = double(GWorldsLabLookSensitivity.GetFloat());
         Context.Yaw   = std::fmod(Context.Yaw + double(Input->GetAxis("LookX")) * Look, 360.0);
@@ -324,7 +336,11 @@ namespace
      * with it. */
     void StepFlicker(GameCore::World& InWorld, const float InDeltaSeconds, FlickerContext& Context)
     {
-        Context.ElapsedSeconds += double(InDeltaSeconds);
+        /* Under [Rendering] FixedStep a frame is that long for the fire too, so a capture's
+         * frame N has the same light every run. */
+        static EngineCore::ConfigVar* const FixedStep = EngineCore::ConfigFindVarByPath("Rendering.FixedStep");
+        const float Fixed = FixedStep ? FixedStep->GetFloat() : 0.0f;
+        Context.ElapsedSeconds += Fixed > 0.0f ? double(Fixed) : double(InDeltaSeconds);
         GameCore::Entity Fire = InWorld.GetEntity(Context.Light);
         /* A point light, or a spot aimed out of a fireplace (so none of it reaches through the wall behind). */
         RenderCore::PointLightComponent* Point = Fire.GetComponent<RenderCore::PointLightComponent>();
