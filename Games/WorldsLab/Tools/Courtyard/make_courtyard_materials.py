@@ -459,8 +459,8 @@ def post_stack():
     # The waxed floors and the fountain's stone catch the room and the arcade, where the probes cannot place them.
     g.node("Effect.ScreenSpaceReflections", props={"Intensity": "1", "Max Roughness": "0.5", "Max Distance": "1500",
                                                    "Thickness": "25", "Steps": "32"})
-    g.node("Effect.AmbientOcclusion", props={"Blur": "true", "Intensity": "1", "Power": "1.4", "Radius": "60", "Samples": "16"})
-    g.node("Effect.Antialiasing", props={"Method": "TAA", "Quality": "High"})   # TAA: FXAA stands in where it cannot run
+    g.node("Effect.AmbientOcclusion", props={"Blur": "true", "Intensity": "3", "Power": "1.4", "Radius": "60", "Samples": "16"})
+    g.node("Effect.Antialiasing", props={"Method": "TAA", "Quality": "Low"})   # TAA: FXAA stands in where it cannot run
     return g
 
 

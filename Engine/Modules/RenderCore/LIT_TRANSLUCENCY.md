@@ -595,9 +595,21 @@ colour before the translucent stage: Phase 4 reprojects the last frame's.
 - **Checked** (Debug, frame 300): against the old water, 48.6 dB on Vulkan
   and 48.5 on D3D12 at the default camera, the difference confined to the
   basin's surface; Vulkan against D3D12 39.6 dB before and after alike.
-  Courtyard's cinematic camera follows the wall clock, so a run can land on
-  another pose -- one D3D12 run caught the fountain close up, the basin floor
-  clear under the water; captures are compared only where they share a pose.
+  Some runs landed on another pose -- one D3D12 run caught the fountain close
+  up, the basin floor clear under the water.
+- **Repeatable Courtyard captures:** the other poses were input, not a
+  clock: Courtyard's camera is the explore mode's Player, and a capture's
+  window takes focus, so a mouse moved or a key typed meanwhile turned or
+  walked it. `[WorldsLab] HoldCamera` 1 leaves the Player where the world put
+  it, input ignored, and `capture.ps1` sets it. The hearth's flicker stepped
+  by the frame's wall time; under `[Rendering] FixedStep` it now steps by
+  that. Two runs of Courtyard at frame 300 are now bit-identical (99 dB) on
+  Vulkan and on D3D12, where they were 78 dB apart.
+- **The generator's stack:** `make_courtyard_materials.py`'s post stack now
+  has the editor-tuned Ambient Occlusion Intensity 3 and TAA Quality Low the
+  committed `Courtyard.pp.nmgraph` has, so running it no longer reverts them
+  (it still writes the graph without its generated code, and one node 3 units
+  from where the editor left it: run `NodeGraphGenerate` after).
 
 
 - Particles as lights (a module adding point lights to the clustered list:

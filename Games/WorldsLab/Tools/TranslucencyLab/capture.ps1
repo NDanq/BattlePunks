@@ -22,7 +22,7 @@ foreach ($view in $Views) {
     Remove-Item "$stem.bmp" -ErrorAction SilentlyContinue
     $gameArgs = @("-Game.StartLevel=$Level", "-WorldsLab.TranslucencyLabView=$view", "-Display.RHI=$Rhi",
               "-Rendering.FixedStep=0.0166667", "-Record.File=$stem.mp4", "-Record.Fps=30",
-              "-Record.StartFrame=$Frame", "-Record.Seconds=0.03") + $Extra
+              "-Record.StartFrame=$Frame", "-Record.Seconds=0.03", "-WorldsLab.HoldCamera=1") + $Extra
     if ($Stats) { $gameArgs += @("-Stats.Frame=1", "-WorldsLab.TranslucencyLabStats=$Frame") }
     $p = Start-Process -FilePath $Exe -ArgumentList $gameArgs -WorkingDirectory (Split-Path $Exe) -PassThru
     $waited = 0
