@@ -6,6 +6,13 @@
 #include "GDIDefinitions.h"
 
 class GDITexture2D;
+class GDITextureResource;
+
+/* A texture resource is going away: the driver forgets it wherever it holds
+ * it for a later draw (GDIDynamicDriver::ForgetTextureResource), so a texture
+ * freed between draws never reaches a backend as a dangling material slot.
+ * Called by ~GDITextureResource. */
+void GDIForgetTextureResource(const GDITextureResource* InTexture);
 
 /*
  * ORIENTATION AND FORMAT -- read before changing anything in this file.
@@ -30,6 +37,10 @@ class GDITexture2D;
 class GDITextureResource {
 public:
     GDITextureResource() = default;
+
+    /* Virtual: owners delete through this base. Each backend's destructor
+     * calls its own Release(), which is safe after an explicit one. */
+    virtual ~GDITextureResource() { GDIForgetTextureResource(this); }
 
     explicit GDITextureResource(const EngineCore::Image& InImage, const uint InIdx = 0, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest):
     bInitialized(false){
