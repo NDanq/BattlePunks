@@ -615,6 +615,12 @@ public:
      */
     void SetUniformBlock(uint InBinding, const void* InData, uint InSize);
     void SetMaterialTexture(uint InSlot, GDITextureResource* InTexture);
+    /* InTexture is being destroyed: clear every material slot that still
+     * holds it. A slot keeps its texture until changed, and a draw reads all
+     * of them, so a texture freed while still in one (a streamed texture
+     * retired after frames with no material draws) would otherwise reach the
+     * next draw as a dangling pointer. */
+    void ForgetTextureResource(const GDITextureResource* InTexture);
 
     /* Whether the bound pair asks for the material layout. */
     bool IsMaterialDraw() const;

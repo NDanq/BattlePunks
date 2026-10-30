@@ -426,6 +426,19 @@ void GDIDynamicDriver::SetMaterialTexture(const uint InSlot, GDITextureResource*
     if(InSlot < GDI_MATERIAL_TEXTURE_SLOTS) MaterialTextures[InSlot] = InTexture;
 }
 
+void GDIDynamicDriver::ForgetTextureResource(const GDITextureResource* InTexture)
+{
+    for(GDITextureResource*& Slot : MaterialTextures)
+    {
+        if(Slot == InTexture) { Slot = nullptr; }
+    }
+}
+
+void GDIForgetTextureResource(const GDITextureResource* InTexture)
+{
+    if(GDynamicGDI && InTexture) { GDynamicGDI->ForgetTextureResource(InTexture); }
+}
+
 bool GDIDynamicDriver::IsMaterialDraw() const
 {
     return (BoundVertexShader && BoundVertexShader->Resource && BoundVertexShader->Resource->UsesMaterialLayout())
