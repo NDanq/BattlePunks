@@ -3,6 +3,8 @@
 #include "Private/Editor/ProjectSettingsDialog.h"
 #include "Private/Editor/EditorIcons.h"
 #include "Private/Editor/InputMapsPage.h"
+#include "Private/Editor/Project/PluginsPage.h"
+#include "Public/Editor/EditorMainWindow.h"
 
 #include <algorithm>
 #include <climits>
@@ -355,6 +357,7 @@ ProjectSettingsDialog::ProjectSettingsDialog(QWidget* InParent)
     connect(Pages, &QListWidget::currentRowChanged, Stack, &QStackedWidget::setCurrentIndex);
 
     BuildProjectPage();
+    BuildPluginsPage();
     BuildWorldsPage();
     BuildInputPage();
     BuildSectionPages();
@@ -758,6 +761,13 @@ void ProjectSettingsDialog::BuildInputPage()
     Pages->addItem(QStringLiteral("Input"));
 }
 
+void ProjectSettingsDialog::BuildPluginsPage()
+{
+    Plugins = new PluginsPage(File, FilePath, Stack);
+    Stack->addWidget(Plugins);
+    Pages->addItem(QStringLiteral("Plugins"));
+}
+
 void ProjectSettingsDialog::BuildSectionPages()
 {
     /* Section (as first spelled) -> keys, from the registry and the file. */
@@ -766,7 +776,8 @@ void ProjectSettingsDialog::BuildSectionPages()
     {
         if(InSection.isEmpty() || Same(InSection, "Editor") || Same(InSection, "Build") || IsProjectKey(InSection, InKey)
            || InSection.startsWith(QLatin1String(NimbleEngine::WORLD_SECTION_PREFIX), Qt::CaseInsensitive)
-           || InSection.startsWith(QLatin1String("Input_"), Qt::CaseInsensitive))   // the Input page's
+           || InSection.startsWith(QLatin1String("Input_"), Qt::CaseInsensitive)    // the Input page's
+           || Same(InSection, "Plugins"))                                            // the Plugins page's
         {
             return;
         }
@@ -1097,6 +1108,10 @@ bool ProjectSettingsDialog::Apply()
         Changed << QStringLiteral("Worlds = %1").arg(Names.isEmpty() ? QStringLiteral("(none)") : Names.join(QStringLiteral(", ")));
     }
 
+    /* Plugins: [Plugins], a build-time change like [Modules]. */
+    const QStringList PluginsChanged = Plugins ? Plugins->Apply(File) : QStringList();
+    Changed << PluginsChanged;
+
     /* Input bindings are the game's: DefaultGame.ini, with the game-scope vars. */
     const QStringList GameFileChanged = (Input ? Input->Apply(GameFile) : QStringList()) + GameChanged;
 
@@ -1155,6 +1170,24 @@ bool ProjectSettingsDialog::Apply()
     {
         CORE_LOG_WARN("[Editor] project settings: " + ToStd(ModulesChanged.join(QStringLiteral(", ")))
                       + " -- a native recompile applies it: close the editor and build the project")
+    }
+
+    /* Plugins are built, then loaded at startup: offer both. */
+    if(!PluginsChanged.isEmpty())
+    {
+        auto* Main = qobject_cast<EditorMainWindow*>(parentWidget());
+        if(Main)
+        {
+            Main->UpdatePluginNotice();
+        }
+        const auto Answer = QMessageBox::question(this, QStringLiteral("Plugins changed"),
+            QStringLiteral("%1\n\nPlugins are built with the game and loaded when the editor starts. Build now? The editor "
+                           "offers to restart when the build is done.").arg(PluginsChanged.join(QLatin1Char('\n'))),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+        if(Answer == QMessageBox::Yes && Main)
+        {
+            Main->RebuildForPlugins();
+        }
     }
     return bModulesConfirmed;
 }

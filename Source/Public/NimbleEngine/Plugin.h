@@ -187,6 +187,16 @@ namespace NimbleEngine
         NE_API void MountShaderCaches(RenderCore::Renderer& InRenderer);
         NE_API void UnmountShaderCaches(RenderCore::Renderer& InRenderer);
 
+        /* Where LoadModules opens each library from: a copy of it in a folder
+         * of this run's below InDir, so a build can replace the original while
+         * this process runs -- the editor's, whose Compile Source rebuilds
+         * plugins (Windows locks a loaded DLL; its PDB too, which goes
+         * along). Empty (the default): the library itself, as a game does.
+         * Before LoadModules. Other runs' leftover folders are removed where
+         * they can be. A library a game module links finds the copy already
+         * loaded, by its name. */
+        NE_API void SetShadowCopyDir(const std::string& InDir);
+
         /* Opens every discovered plugin's libraries in load order and starts
          * each IPlugin. False if any library failed (logged); the rest still
          * load. */
@@ -205,6 +215,26 @@ namespace NimbleEngine
          * section's lines, so they are not reported as unknown config.
          * After the project's config loads. True if it warned. */
         NE_API bool WarnConfigMismatch();
+
+        /* [Plugins] lines the build does not match, without warning: Wanted
+         * what the line says, and the build has the plugin or not. */
+        struct ConfigMismatch
+        {
+            std::string Name;
+            bool        bWanted = false;
+        };
+        NE_API std::vector<ConfigMismatch> GetConfigMismatches();
+
+        /* The folders the build looked for plugins in, in order (the
+         * manifest's [Search]; empty in Shipping), and the engine version it
+         * checked them against. */
+        NE_API const std::vector<std::string>& GetSearchRoots();
+        NE_API const std::string&              GetBuiltEngineVersion();
+
+        /* Whether this build has InName (the manifest lists it), and why it
+         * did not start if it did not (empty if it did, or was not loaded). */
+        NE_API bool        IsBuilt(const std::string& InName);
+        NE_API std::string GetLoadProblem(const std::string& InName);
 
         NE_API size_t             GetCount();
         NE_API const std::string& GetNameAt(size_t InIndex);

@@ -12,6 +12,7 @@
 #include "Private/Editor/ConfigIniFile.h"
 
 class InputMapsPage;
+class PluginsPage;
 class QComboBox;
 class QDialogButtonBox;
 class QFormLayout;
@@ -32,7 +33,8 @@ namespace EngineCore { class ConfigVar; }
  * (ConfigIniFile), changed values only.
  *
  * Pages: Project (title, module, start world, and the
- * optional engine modules -- [Modules], build-time); Worlds (the project's
+ * optional engine modules -- [Modules], build-time); Plugins (every plugin
+ * found, [Plugins], build-time: PluginsPage.h); Worlds (the project's
  * [World_*] list, NimbleEngine/WorldList.h: every world a level, with its
  * game mode, startup script and whether it is cooked); Input (the game's
  * input maps, [Input_*] in DefaultGame.ini: InputMapsPage.h); one per config
@@ -57,6 +59,9 @@ public:
     /* The page named InName (a section: "Net", "Shadows"...), any case; false if there is none. */
     bool ShowPage(const QString& InName);
 
+    /* The Plugins page (OpenNewPluginDialog: File > New Plugin). */
+    PluginsPage* GetPluginsPage() const { return Plugins; }
+
     /* The world open in the editor (runtime path): Worlds > Add Open World. */
     void SetOpenWorld(const QString& InRuntimePath) { OpenWorld = InRuntimePath; }
 
@@ -77,6 +82,7 @@ private:
     void     BuildWorldsPage();
     void     BuildSectionPages();
     void     BuildInputPage();
+    void     BuildPluginsPage();
 
     /* One row of the Worlds table, from a [World_*] section. */
     void     AddWorldRow(const ConfigIniFile::Section& InSection);
@@ -107,6 +113,7 @@ private:
     std::vector<Row>  Rows;
     QTableWidget*     Worlds = nullptr;
     InputMapsPage*    Input = nullptr;
+    PluginsPage*      Plugins = nullptr;
     QList<ConfigIniFile::Section> WorldsBaseline;
     QStringList       ProjectScripts;   // runtime paths: each row's startup script choices
     QComboBox*        StartLevelChoice = nullptr;

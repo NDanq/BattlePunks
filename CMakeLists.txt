@@ -705,6 +705,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/CharacterMover.cpp
         Source/Private/NimbleEngine/GameModule.cpp
         Source/Private/NimbleEngine/Plugin.cpp
+        Source/Private/NimbleEngine/PluginCatalog.cpp
         Source/Private/NimbleEngine/Level.cpp
         Source/Private/NimbleEngine/SaveGame.cpp
         Source/Private/NimbleEngine/WorldList.cpp
@@ -740,6 +741,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/GameConsole.h
         Source/Public/NimbleEngine/GameModule.h
         Source/Public/NimbleEngine/Plugin.h
+        Source/Public/NimbleEngine/PluginCatalog.h
         Source/Public/NimbleEngine/NimbleEngineAPI.h
         Source/Public/NimbleEngine/Level.h
         Source/Public/NimbleEngine/GameState.h
@@ -764,6 +766,10 @@ set(NIMBLEENGINE_SOURCES
 nimble_add_module(NimbleEngine SHARED
         PREFIX  NIMBLEENGINE
         SOURCES ${NIMBLEENGINE_SOURCES})
+
+# The engine's version, what a plugin's EngineVersion is checked against
+# (PluginCatalog.h; NimblePlugins.cmake checks PROJECT_VERSION itself).
+target_compile_definitions(NimbleEngine PRIVATE "NIMBLE_ENGINE_VERSION=\"${PROJECT_VERSION}\"")
 
 # Where a development build finds NimbleCook's output (ShaderCook.h): the
 # Engine folder it was built from. Not in Shipping, which names no source path.
@@ -886,6 +892,15 @@ if(NIMBLEENGINE_BUILD_TESTS)
     add_test(NAME NimbleEngine.InputTests COMMAND NimbleEngineInputTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineInputTests>")
     set_tests_properties(NimbleEngine.InputTests PROPERTIES TIMEOUT 120 LABELS "smoke")
+
+    # Plugins, in C++: PluginCatalog on Plugins.Resolve's cases, and the
+    # host's shadow copies on the plugins built beside it.
+    add_executable(NimbleEnginePluginCatalogTests Tests/PluginCatalogTests.cpp)
+    target_link_libraries(NimbleEnginePluginCatalogTests PRIVATE NimbleEngine::NimbleEngine)
+    set_target_properties(NimbleEnginePluginCatalogTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
+    add_test(NAME Plugins.Catalog COMMAND NimbleEnginePluginCatalogTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEnginePluginCatalogTests>")
+    set_tests_properties(Plugins.Catalog PROPERTIES TIMEOUT 120 LABELS "plugin;smoke")
 
     # Plugins: descriptor parsing, enabling, overrides and dependency order
     # (cmake/NimblePlugins.cmake), in script mode -- no plugin needs to exist.
