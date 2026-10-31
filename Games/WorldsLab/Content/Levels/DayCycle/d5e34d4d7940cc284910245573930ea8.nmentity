@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="d5e34d4d7940cc284910245573930ea8" Name="Sun" Mobility="Dynamic">
+  <Component Type="Directional Light" Version="3">
+    <Color R="255" G="230" B="200" A="255" />
+    <Intensity Value="12" />
+    <Active Value="true" />
+    <CastShadows Value="true" />
+    <ShadowTechnique Value="2" />
+    <ShadowTint R="40" G="50" B="80" A="255" />
+    <ShadowBias Value="0.0012" />
+    <ShadowNormalBias Value="2" />
+    <ShadowDistance Value="12000" />
+    <CascadeCount Value="4" />
+    <CascadeSplitLambda Value="0.8" />
+    <SourceAngle Value="0.6" />
+  </Component>
+  <Component Type="Sky Light" Version="2">
+    <SkyColor R="150" G="170" B="200" A="255" />
+    <GroundColor R="70" G="65" B="55" A="255" />
+    <Intensity Value="0.7" />
+    <Active Value="true" />
+    <Environment Value="" />
+    <EnvironmentIntensity Value="1" />
+    <EnvironmentRotation Value="0" />
+    <DrawBackground Value="true" />
+  </Component>
+  <Component Type="Time Of Day" Version="1">
+    <Hour Value="6" />
+    <DayLengthMinutes Value="2" />
+    <Running Value="true" />
+    <NorthYaw Value="35" />
+    <Latitude Value="35" />
+    <SunIntensityScale Value="4" />
+    <Preset Value="TimeOfDay:/Presets/Default.todpreset" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="8000" Z="0" />
+    <Rotation X="32" Y="215" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>
