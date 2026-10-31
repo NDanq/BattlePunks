@@ -119,9 +119,26 @@ falloff are the shared Brush settings below the tabs (<kbd>[</kbd>
   flat card, and they don't wash out white from above.
 - **Card UVs:** use a card's own 0–1 UVs. World-tiled UVs make a leaf
   texture's alpha clip most of the card away.
+- **Both faces, one-sided material:** a Two Sided material turns a back
+  face's normal round, so a crown of cards seen from below goes dark. Give
+  each card both windings with the same (outward) normals instead, and leave
+  Two Sided off.
+- **Light through leaves:** the **Subsurface** shading model
+  (RenderCore `SHADING_MODELS.md`), Thickness 0.3–0.5, Subsurface Color a
+  brighter, yellower copy of the base colour. Keep Specular low (about 0.25):
+  an upward-leaning card normal otherwise catches the sky white.
+- **Vertex colour** can carry ambient occlusion (RGB, dark inside a crown)
+  and how far a vertex bends in the wind (A); a material reads both from
+  Vertex Color, even in World Position Offset.
+- **Card outlines:** the Shadows stage casts a Masked card whole, so cut the
+  card's polygon close to its texture's alpha (a frond-shaped strip rather
+  than a rectangle); its shadow is then the frond's shape.
 
-`Games/WorldsLab/Tools/Terrain/make_foliage_meshes.py` (local) builds a
-grass tuft, a bush, a pine with two LOD meshes, and a rock this way.
+`Games/WorldsLab/Tools/Terrain/` builds WorldsLab's terrain foliage this way:
+`make_foliage_textures.py` (a spruce frond, bark, grass), `make_foliage_materials.py`
+(Subsurface needles, grass and shrub cards, bark, with wind) and
+`make_foliage_meshes.py` (a grass tuft, a bush, a spruce with two LOD meshes,
+and a rock).
 
 ## Console
 
