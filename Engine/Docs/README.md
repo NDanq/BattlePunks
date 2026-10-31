@@ -13,6 +13,7 @@ The editor's Help > Documentation shows only this folder.
 - [Retargeting](Guides/RetargetGuide.md): a clip pack made for another rig, played on your character, then baked
 - [Procedural content: splines and Procedural Spawners](Guides/ProceduralGuide.md)
 - [Custom render passes](Guides/CustomRenderPassGuide.md): your own GPU work at hooks in the frame, built on WorldsLab's GrassLab
+- [Plugins](Guides/PluginGuide.md): drop-in modules a project enables in one line; a worked example (Spinner) and TimeOfDay
 
 ## Component reference
 
