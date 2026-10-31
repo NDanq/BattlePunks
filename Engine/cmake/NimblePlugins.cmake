@@ -60,8 +60,16 @@
 #
 #     Plugins/Plugins.manifest     the enabled plugins in load order, and
 #                                  each one's module libraries
-#     Plugins/<Name>/              its descriptor, Config/ and Content/ --
+#     Plugins/<Name>/              its descriptor, Config/ and Content/, and
+#                                  its shader cache (Shaders/Cache/<Name>.*) --
 #                                  or, packaged, Paks/Plugins/<Name>.nmpak
+#
+# SHADERS: a plugin's Content/Shaders (custom render passes, by file name;
+# name them for the plugin, "TimeOfDaySky.fsh" -- the namespace is shared)
+# and Content/Materials are cooked by NimbleCook, as a project's are -- the
+# build never runs a shader compiler. `NimbleCook shaders -project <game>`
+# cooks every plugin the game enables, below <plugin>/Saved/Cooked/Shaders/,
+# into a cache named for it; the build stages that, and the host mounts it.
 #
 # The resolution half (descriptor parsing, enabling, dependency order) is
 # kept free of targets so Engine/Tests/Plugins/PluginResolveTest.cmake can
@@ -488,7 +496,10 @@ endfunction()
 function(_nimble_stage_plugin NM_NAME NM_DIR NM_RT_DIR)
     file(GLOB_RECURSE NM_FILES CONFIGURE_DEPENDS LIST_DIRECTORIES false
          "${NM_DIR}/Config/*" "${NM_DIR}/Content/*")
+    # Shader sources are cooked into its cache (below), not read as content.
+    list(FILTER NM_FILES EXCLUDE REGEX "^${NM_DIR}/Content/(Shaders|Materials)/")
     list(APPEND NM_FILES "${NM_DIR}/${NM_NAME}.nmplugin")
+    _nimble_stage_plugin_shaders(${NM_NAME} "${NM_DIR}" "${NM_RT_DIR}")
 
     if(NIMBLE_PACKAGE_CONTENT)
         nimble_pack_add_files(Plugin_${NM_NAME} "${NM_DIR}" ${NM_FILES})
@@ -515,6 +526,53 @@ function(_nimble_stage_plugin NM_NAME NM_DIR NM_RT_DIR)
     endforeach()
     add_custom_target(NimblePlugin${NM_NAME}Stage ALL DEPENDS ${NM_OUTPUTS})
     set_target_properties(NimblePlugin${NM_NAME}Stage PROPERTIES FOLDER "Plugins/${NM_NAME}")
+    if(TARGET NimblePlugin${NM_NAME}StageShaders)
+        add_dependencies(NimblePlugin${NM_NAME}Stage NimblePlugin${NM_NAME}StageShaders)
+    endif()
+endfunction()
+
+# ---------------------------------------------------------------------------
+# _nimble_stage_plugin_shaders(<Name> <Dir> <RuntimeDir>)
+#   What NimbleCook cooked from <Dir>/Content/Shaders and Content/Materials
+#   (<Dir>/Saved/Cooked/Shaders/Runtime/, and Shipping/ over it for a packaged
+#   Shipping build) into Plugins/<Name>/ beside the executable, or its pack.
+#   Not cooked yet: a warning, as for a game's materials (NimbleMaterials.cmake).
+# ---------------------------------------------------------------------------
+function(_nimble_stage_plugin_shaders NM_NAME NM_DIR NM_RT_DIR)
+    if(NOT IS_DIRECTORY "${NM_DIR}/Content/Shaders" AND NOT IS_DIRECTORY "${NM_DIR}/Content/Materials")
+        return()
+    endif()
+    set_property(GLOBAL PROPERTY NIMBLE_PLUGIN_${NM_NAME}_SHADERS ON)
+
+    if(NIMBLE_PACKAGE_CONTENT)
+        nimble_pack_stage_dir(Plugin_${NM_NAME} NM_DEST)
+    elseif(NM_RT_DIR)
+        set(NM_DEST "${NM_RT_DIR}/Plugins/${NM_NAME}")
+    else()
+        return()
+    endif()
+    set(NM_VARIANTS Runtime "${NM_DEST}")
+    if(NIMBLE_PACKAGE_CONTENT AND CMAKE_BUILD_TYPE STREQUAL "Shipping")
+        list(APPEND NM_VARIANTS Shipping "${NM_DEST}")
+    endif()
+    nimble_cooked_shader_commands(NM_COMMANDS NM_DEPENDS "${NM_NAME}" "${NM_DIR}/Saved/Cooked/Shaders" ${NM_VARIANTS})
+    if(NOT NM_COMMANDS)
+        return()
+    endif()
+
+    set(NM_STAMP "${CMAKE_BINARY_DIR}/Plugins/${NM_NAME}_Shaders.stamp")
+    add_custom_command(
+            OUTPUT  "${NM_STAMP}"
+            ${NM_COMMANDS}
+            COMMAND ${CMAKE_COMMAND} -E touch "${NM_STAMP}"
+            DEPENDS ${NM_DEPENDS}
+            COMMENT "${NM_NAME}: staging the shaders NimbleCook cooked"
+            VERBATIM)
+    add_custom_target(NimblePlugin${NM_NAME}StageShaders ALL DEPENDS "${NM_STAMP}")
+    set_target_properties(NimblePlugin${NM_NAME}StageShaders PROPERTIES FOLDER "Plugins/${NM_NAME}")
+    if(NIMBLE_PACKAGE_CONTENT)
+        nimble_pack_add_dir(Plugin_${NM_NAME} "Shaders" "${NM_DEST}/Shaders" "${NM_STAMP}" NimblePlugin${NM_NAME}StageShaders)
+    endif()
 endfunction()
 
 # ---------------------------------------------------------------------------
@@ -575,7 +633,13 @@ function(nimble_add_plugins)
             list(APPEND NM_FILES "$<TARGET_FILE_NAME:${NM_MODULE}>")
         endforeach()
         string(REPLACE ";" "," NM_FILES "${NM_FILES}")
-        string(APPEND NM_MANIFEST "\n[Plugin_${NM_NAME}]\nVersion=${NM_VERSION}\nModules=${NM_FILES}\n")
+        get_property(NM_SHADERS GLOBAL PROPERTY NIMBLE_PLUGIN_${NM_NAME}_SHADERS)
+        if(NM_SHADERS)
+            set(NM_SHADERS "true")
+        else()
+            set(NM_SHADERS "false")
+        endif()
+        string(APPEND NM_MANIFEST "\n[Plugin_${NM_NAME}]\nVersion=${NM_VERSION}\nModules=${NM_FILES}\nShaders=${NM_SHADERS}\n")
         # Where -uncooked and the editor read its raw files. Never in Shipping.
         string(APPEND NM_MANIFEST "$<$<NOT:$<CONFIG:Shipping>>:Source=${NM_DIR}\n>")
     endforeach()

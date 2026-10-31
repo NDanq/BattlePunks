@@ -21,6 +21,7 @@ TimeOfDay/
   Source/TimeOfDay/Public/TimeOfDay/...    #include "Public/TimeOfDay/X.h"
   Source/TimeOfDay/Private/TimeOfDay/...
   Content/                      read as "TimeOfDay:/..." and only so
+  Content/Shaders/              custom pass shaders, cooked into the plugin's own cache
   Config/DefaultTimeOfDay.ini   defaults, under the project's config
   Tests/
 ```
@@ -155,12 +156,39 @@ The prefix is a namespace, not a sandbox. In a development build the staged
 files also sit on disk under `Plugins/<Name>/` beside the executable, so don't
 reference those paths.
 
+## Shaders
+
+A plugin's `Content/Shaders` (custom render pass shaders) and
+`Content/Materials` are cooked by `NimbleCook`, the same way a game's are. The
+build never runs a shader compiler.
+
+```bash
+NimbleCook shaders -project Games/WorldsLab
+```
+
+This cooks the engine, the project, and every plugin the project enables.
+`-plugin <dir>` adds one more plugin, for example one from
+`NIMBLE_PLUGIN_DIRS`. Each plugin gets its own cache,
+`<plugin>/Saved/Cooked/Shaders/Runtime/Shaders/Cache/<Name>.<Platform>.nmsc`.
+
+- **Build:** stages the cache under `Plugins/<Name>/`, or packs it into
+  `Paks/Plugins/<Name>.nmpak`. If the plugin hasn't been cooked, the
+  configure warns, as it does for a game's materials.
+- **Run:** the host mounts each cache on the renderer
+  (`Plugins::MountShaderCaches`). In development builds it reads a newer cook
+  straight from the plugin folder, so you don't need to rebuild after
+  recooking.
+
+Shader names are one shared namespace (a custom pass names its shader by
+file), so prefix yours with the plugin's name: `TimeOfDaySky.fsh`. The cache
+file is the only thing a plugin exposes without its `<Name>:/` prefix.
+
 ## What the build leaves beside the executable
 
 ```
 Plugins/Plugins.manifest        enabled plugins in load order, their libraries,
                                 and (outside Shipping) their source folders
-Plugins/<Name>/                 descriptor, Config/, Content/: a development build
+Plugins/<Name>/                 descriptor, Config/, Content/, Shaders/Cache/: a development build
 Paks/Plugins/<Name>.nmpak       the same files, packaged (NIMBLE_PACKAGE_CONTENT)
 <Module>.so / .dll
 ```
@@ -191,7 +219,6 @@ the project's file, then the user's settings, then the command line. A
 - **No plugin asset kinds:** the Details asset pickers (`PF_Asset*`) are a
   fixed list, so a plugin's own file types are edited as plain text.
 - **No Project Settings page:** `[Plugins]` is edited by hand.
-- **No plugin shaders** or plugin shader caches.
 - **No migration of AICore, Sequencer, JoltPhysics, Audio or Collab.** They
   move once TimeOfDay has proven the system. NetCore stays an engine feature
   switch, because `WITH_NETCORE` changes GameCore's layouts.

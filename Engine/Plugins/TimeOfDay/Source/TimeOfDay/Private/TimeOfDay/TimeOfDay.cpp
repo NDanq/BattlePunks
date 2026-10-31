@@ -20,9 +20,15 @@
  * these defaults only hold where neither is read (a bare test). */
 NIMBLE_CONFIG_FLOAT(GTimeOfDayDayLength, "TimeOfDay", "DayLengthMinutes", 30.0f, nullptr);
 NIMBLE_CONFIG_FLOAT(GTimeOfDaySpeed,     "TimeOfDay", "Speed",            1.0f,  nullptr);
+/* 0-24 pins every clock at that hour (a preview, a screenshot: -TimeOfDay.Hour=18.5); below 0, off. */
+NIMBLE_CONFIG_FLOAT(GTimeOfDayPinnedHour, "TimeOfDay", "Hour",            -1.0f, nullptr);
 
 namespace TimeOfDay
 {
+    /* TimeOfDaySky.cpp: the lights' colours from the atmosphere. */
+    void SkyLightColors(const TimeOfDayComponent& InClock, EngineCore::Color& InOutSun, EngineCore::Color& OutSky,
+                        EngineCore::Color& OutGround, bool& bOutDay);
+
     namespace
     {
         std::string Trim(const std::string& InText)
@@ -261,6 +267,7 @@ namespace TimeOfDay
     {
         const float Speed      = GTimeOfDaySpeed.GetFloat();
         const float DefaultDay = GTimeOfDayDayLength.GetFloat();
+        const float Pinned     = GTimeOfDayPinnedHour.GetFloat();
         static const char* HourEvent = "TimeOfDayHour";
 
         InWorld.Each<TimeOfDayComponent>([&](GameCore::Entity InEntity, TimeOfDayComponent& Clock)
@@ -274,6 +281,7 @@ namespace TimeOfDay
                     Clock.Hour += InDeltaSeconds * Speed * 24.0f / (Minutes * 60.0f);
                 }
             }
+            if(Pinned >= 0.0f) { Clock.Hour = Pinned; }
             Clock.Hour = WrapHour(Clock.Hour);
 
             /* TimeOfDayHour(hour, clock) as each whole hour begins. */
@@ -287,7 +295,14 @@ namespace TimeOfDay
             }
 
             Clock.Preset[sizeof(Clock.Preset) - 1] = '\0';
-            const TimeOfDayKey Now = Evaluate(LoadPreset(Clock.Preset), Clock.Hour);
+            TimeOfDayKey Now = Evaluate(LoadPreset(Clock.Preset), Clock.Hour);
+            if(Clock.bDrawSky)
+            {
+                /* The colours the drawn sky implies; the preset keeps every
+                 * intensity, and the moonlight's colour. */
+                bool bDay = false;
+                SkyLightColors(Clock, Now.SunColor, Now.SkyColor, Now.GroundColor, bDay);
+            }
 
             if(GameCore::TransformComponent* Transform = InEntity.GetComponent<GameCore::TransformComponent>())
             {

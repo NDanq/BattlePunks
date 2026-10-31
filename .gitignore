@@ -23,6 +23,10 @@
 /Games/*/Saved/
 # And the engine's: its shaders, cooked by NimbleCook (Saved/Cooked/Shaders/).
 /Engine/Saved/
+# And each plugin's (Engine/cmake/NimblePlugins.cmake): its shaders, cooked
+# by NimbleCook into <plugin>/Saved/Cooked/Shaders/.
+/Engine/Plugins/*/Saved/
+/Games/*/Plugins/*/Saved/
 
 # The vendored libraries, built once per toolchain and shared by every build
 # tree (Engine/cmake/NimbleThirdParty.cmake).

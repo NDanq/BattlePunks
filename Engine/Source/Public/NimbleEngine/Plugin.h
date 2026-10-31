@@ -15,6 +15,11 @@ namespace GameCore
     class World;
 }
 
+namespace RenderCore
+{
+    class Renderer;
+}
+
 /*
  * PLUGINS: modules a project drops in (Engine/cmake/NimblePlugins.cmake says
  * how they are found, enabled and built). At run time a plugin is
@@ -26,6 +31,9 @@ namespace GameCore
  *     Content/ readable ONLY as "<Name>:/<path>" (strict: an unprefixed path
  *     never reaches a plugin's content, and a prefix no enabled plugin owns
  *     is an error, logged once);
+ *   * its shaders (Content/Shaders, Content/Materials), cooked by NimbleCook
+ *     into a cache of its own, Shaders/Cache/<Name>.<Platform>.nmsc: the
+ *     only unprefixed path a plugin answers, mounted on the renderer;
  *   * an IPlugin per library, whose OnStartup registers what cannot register
  *     itself -- systems on each level's World (PluginContext::AddWorldHook).
  *     Components, script libraries and config vars still register themselves
@@ -38,7 +46,9 @@ namespace GameCore
  *     Plugins::Discover(RuntimeDir, bUseSource)   before the project's config
  *     Plugins::MountContent(Assets)               once the asset provider exists
  *     Plugins::LoadModules()                      after config, before the game
+ *     Plugins::MountShaderCaches(Renderer)        once the renderer is up
  *     ...
+ *     Plugins::UnmountShaderCaches(Renderer)      before it shuts down
  *     Plugins::ShutdownModules()                  after the game module unloads
  *     Plugins::Close()                            last
  *
@@ -164,10 +174,18 @@ namespace NimbleEngine
         NE_API int Discover(const std::string& InRuntimeDir, bool bInUseSource);
 
         /* Each discovered plugin's content on InAssets as layer
-         * "Plugin:<Name>" (PrefixFileProvider), and the strict-prefix check
+         * "Plugin:<Name>" (PrefixFileProvider), its shader cache as
+         * "PluginShaders:<Name>" (that one file, from a newer cook in its
+         * source folder where there is one), and the strict-prefix check
          * under them. */
         NE_API void MountContent(EngineCore::IFileProvider& InAssets);
         NE_API void UnmountContent(EngineCore::IFileProvider& InAssets);
+
+        /* Each plugin with shaders: its cache on InRenderer
+         * (Renderer::MountShaderCache), so its custom passes' shaders and
+         * its materials load. After MountContent. */
+        NE_API void MountShaderCaches(RenderCore::Renderer& InRenderer);
+        NE_API void UnmountShaderCaches(RenderCore::Renderer& InRenderer);
 
         /* Opens every discovered plugin's libraries in load order and starts
          * each IPlugin. False if any library failed (logged); the rest still

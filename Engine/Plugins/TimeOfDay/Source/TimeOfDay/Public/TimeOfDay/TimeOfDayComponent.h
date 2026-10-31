@@ -24,6 +24,14 @@ namespace TimeOfDay
      * project's own "Content/..."). Without a Directional Light on the entity
      * only the Sky Light follows, and the reverse.
      *
+     * With bDrawSky the plugin draws the sky too (TimeOfDaySky.fsh): a
+     * physical atmosphere lit by the sun and moon, with both discs and stars,
+     * behind everything -- over the Sky Light's HDRI background, if it has
+     * one. The light's colour by day, and the Sky Light's sky and ground
+     * colours, then come from that same atmosphere; the preset still sets
+     * every intensity, and the moonlight's colour. The first clock in a
+     * World with bDrawSky draws its sky.
+     *
      * The server's clock is the clock: Hour replicates, and a client runs
      * its copy between updates.
      */
@@ -37,6 +45,12 @@ namespace TimeOfDay
         float   NorthYaw         = 0.0f;    // degrees about +Y: where the sun's arc faces
         float   Latitude         = 35.0f;   // degrees: the noon sun stands 90 - Latitude up
         float   SunIntensityScale = 1.0f;   // x the preset's SunIntensity
+
+        uint8_t bDrawSky      = 1;
+        float   Haze          = 1.0f;       // the atmosphere's Mie (aerosol) density, x: hazier sunsets, a whiter sky
+        float   SkyBrightness = 1.0f;       // x the drawn sky
+        float   SunDiscSize   = 1.0f;       // the sun disc's radius, degrees
+        float   StarBrightness = 1.0f;      // 0: no stars
         char    Preset[128]      = "TimeOfDay:/Presets/Default.todpreset";
     };
 }

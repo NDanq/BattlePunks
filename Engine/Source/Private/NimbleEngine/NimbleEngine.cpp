@@ -613,6 +613,8 @@ namespace NimbleEngine
             CORE_LOG_ERROR("Failed to initialize RenderCore")
             return false;
         }
+        /* The plugins' own shaders (their custom passes and materials). */
+        Plugins::MountShaderCaches(*Rendering);
 
         /* -record: the game as a video, from the first frame (or [Record] StartSeconds in). */
         if(!Desc.bHeadless)
@@ -979,6 +981,7 @@ namespace NimbleEngine
         }
         if(Rendering)
         {
+            Plugins::UnmountShaderCaches(*Rendering);
             Rendering->Shutdown();
             EngineCore::Memory::Dealloc(Rendering);
             Rendering = nullptr;
