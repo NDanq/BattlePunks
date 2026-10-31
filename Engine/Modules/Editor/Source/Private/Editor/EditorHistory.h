@@ -161,6 +161,41 @@ namespace EditorHistory
         int64_t                   TimeMs;      // of the latest edit merged in
     };
 
+    /* One component's properties edited on several entities at once (the
+     * Details panel with a multi-selection): every entity's before and after
+     * in one step. Merges like PropertyEditCommand, when the same entities
+     * and component. */
+    class MultiPropertyEditCommand final : public Command
+    {
+    public:
+        enum { ID = 2 };
+
+        struct Change
+        {
+            GameCore::EntityGuid Guid;
+            std::vector<uint8_t> Before;
+            std::vector<uint8_t> After;
+        };
+
+        /* InChanges' first is the primary: selected again on undo and redo. */
+        MultiPropertyEditCommand(EditorDocument& InDocument, const QString& InText, GameCore::ComponentTypeID InType,
+                                 std::vector<Change> InChanges, uint64_t InGesture);
+
+        int  id() const override { return ID; }
+        bool mergeWith(const QUndoCommand* InOther) override;
+
+    protected:
+        void Apply(bool bInForward) override;
+
+    private:
+        bool IsUnchanged() const;
+
+        GameCore::ComponentTypeID Type;
+        std::vector<Change>       Changes;
+        uint64_t                  Gesture;
+        int64_t                   TimeMs;
+    };
+
     /* What an entity carries besides components: its name, mobility and
      * Outliner folder. */
     struct EntityMembers

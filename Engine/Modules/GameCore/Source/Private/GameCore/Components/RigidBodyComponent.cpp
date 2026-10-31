@@ -115,10 +115,17 @@ namespace GameCore
                      "Auto|Bounds component|Render component mesh");                        // ERigidBodyShapeSource
         Props.Category("Material");
         Props.Field("Mass",            &RigidBodyComponent::Mass);
+        Props.Range(0.0f, 1.0e9f);
+        Props.Tooltip("Kilograms; 0 computes it from the shape's volume at water's density");
         Props.Field("Friction",        &RigidBodyComponent::Friction);
+        Props.Range(0.0f, 1.0e9f);
         Props.Field("Restitution",     &RigidBodyComponent::Restitution);
+        Props.Range(0.0f, 1.0f);
+        Props.Tooltip("Bounciness: 0 none, 1 keeps all its speed");
         Props.Field("Linear Damping",  &RigidBodyComponent::LinearDamping);
+        Props.Range(0.0f, 1.0e9f);
         Props.Field("Angular Damping", &RigidBodyComponent::AngularDamping);
+        Props.Range(0.0f, 1.0e9f);
         Props.Field("Gravity Factor",  &RigidBodyComponent::GravityFactor);
         Props.Category("Simulation");
         Props.Flag("Continuous",       &RigidBodyComponent::bContinuous);

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <climits>
+#include <cmath>
 #include <cstring>
 
 #include <QDir>
@@ -21,6 +22,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMimeData>
+#include <QMouseEvent>
+#include <QPointer>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -50,6 +53,10 @@ PropertyEditor::PropertyEditor(const GameCore::ComponentPropertyEntry& InEntry, 
     , Entry(InEntry)
     , Resolve(std::move(InResolve))
 {
+    if(Entry.Tooltip)
+    {
+        setToolTip(QString::fromUtf8(Entry.Tooltip));
+    }
 }
 
 void PropertyEditor::Refresh(const bool bInForce)
@@ -82,12 +89,81 @@ bool PropertyEditor::IsBeingEdited() const
 
 namespace
 {
-    QDoubleSpinBox* MakeRealSpin(QWidget* InParent, const bool bInReadOnly)
+    /* The drag behind InstallScrub: the value at the press, plus the pixels
+     * moved since times the step. */
+    class ScrubFilter final : public QObject
     {
+    public:
+        ScrubFilter(QAbstractSpinBox* InSpin, QObject* InParent) : QObject(InParent), Spin(InSpin) {}
+
+    protected:
+        bool eventFilter(QObject* InWatched, QEvent* InEvent) override
+        {
+            if(!Spin || Spin->isReadOnly() || !Spin->isEnabled())
+            {
+                return QObject::eventFilter(InWatched, InEvent);
+            }
+            switch(InEvent->type())
+            {
+                case QEvent::MouseButtonPress:
+                {
+                    const auto* Press = static_cast<QMouseEvent*>(InEvent);
+                    if(Press->button() != Qt::LeftButton) { break; }
+                    bPressed  = true;
+                    bDragging = false;
+                    PressX    = Press->globalPosition().x();
+                    if(const auto* Real = qobject_cast<QDoubleSpinBox*>(Spin)) { StartValue = Real->value(); }
+                    if(const auto* Whole = qobject_cast<QSpinBox*>(Spin))      { StartValue = Whole->value(); }
+                    return true;
+                }
+                case QEvent::MouseMove:
+                {
+                    if(!bPressed) { break; }
+                    const auto* Move = static_cast<QMouseEvent*>(InEvent);
+                    const double Pixels = Move->globalPosition().x() - PressX;
+                    /* A few pixels first: a click on the label is not a drag. */
+                    if(!bDragging && std::abs(Pixels) < 3.0) { return true; }
+                    bDragging = true;
+                    double Scale = 1.0;
+                    if(Move->modifiers() & Qt::ShiftModifier)   { Scale *= 10.0; }
+                    if(Move->modifiers() & Qt::ControlModifier) { Scale *= 0.1; }
+                    if(auto* Real = qobject_cast<QDoubleSpinBox*>(Spin))
+                    {
+                        Real->setValue(StartValue + Pixels * Real->singleStep() * Scale);
+                    }
+                    else if(auto* Whole = qobject_cast<QSpinBox*>(Spin))
+                    {
+                        /* Integers: a step per few pixels, or every one is a jump. */
+                        Whole->setValue(int(StartValue + std::round(Pixels * 0.25 * Scale) * Whole->singleStep()));
+                    }
+                    return true;
+                }
+                case QEvent::MouseButtonRelease:
+                    if(!bPressed) { break; }
+                    bPressed = false;
+                    return bDragging;
+                default:
+                    break;
+            }
+            return QObject::eventFilter(InWatched, InEvent);
+        }
+
+    private:
+        QPointer<QAbstractSpinBox> Spin;
+        bool   bPressed   = false;
+        bool   bDragging  = false;
+        double PressX     = 0.0;
+        double StartValue = 0.0;
+    };
+
+    QDoubleSpinBox* MakeRealSpin(QWidget* InParent, const GameCore::ComponentPropertyEntry& InEntry)
+    {
+        const bool bInReadOnly = InEntry.IsReadOnly();
         auto* Spin = new QDoubleSpinBox(InParent);
-        Spin->setRange(-1.0e9, 1.0e9);
+        Spin->setRange(InEntry.HasRange() ? double(InEntry.Min) : -1.0e9, InEntry.HasRange() ? double(InEntry.Max) : 1.0e9);
         Spin->setDecimals(3);
-        Spin->setSingleStep(1.0);
+        /* A narrow range (0..1, say) steps in hundredths. */
+        Spin->setSingleStep(InEntry.HasRange() && InEntry.Max - InEntry.Min <= 2.0f ? 0.01 : 1.0);
         Spin->setKeyboardTracking(false);   // write on Enter / focus-out / arrows, not per keystroke
         Spin->setReadOnly(bInReadOnly);
         Spin->setButtonSymbols(bInReadOnly ? QAbstractSpinBox::NoButtons : QAbstractSpinBox::UpDownArrows);
@@ -108,11 +184,17 @@ namespace
         InSpin->setValue(InValue);
     }
 
-    /* A small "X" / "Y" / "Z" caption in front of a vector component. */
+    /* A small "X" / "Y" / "Z" caption in front of a vector component: in the
+     * gizmo's axis colours (red, green, blue), toned to read on either theme;
+     * other captions ("Min") muted. */
     QLabel* AxisLabel(const char* InText, QWidget* InParent)
     {
         auto* Label = new QLabel(QString::fromLatin1(InText), InParent);
-        Label->setStyleSheet(QStringLiteral("color: palette(mid);"));
+        const char* Color = std::strcmp(InText, "X") == 0 ? "#e0605a"
+                          : std::strcmp(InText, "Y") == 0 ? "#6cbf52"
+                          : std::strcmp(InText, "Z") == 0 ? "#5a8fe0" : nullptr;
+        Label->setStyleSheet(Color ? QStringLiteral("color: %1; font-weight: bold;").arg(QLatin1String(Color))
+                                   : QStringLiteral("color: palette(mid);"));
         return Label;
     }
 
@@ -126,7 +208,7 @@ namespace
         {
             auto* Layout = new QHBoxLayout(this);
             Layout->setContentsMargins(0, 0, 0, 0);
-            Spin = MakeRealSpin(this, Entry.IsReadOnly());
+            Spin = MakeRealSpin(this, Entry);
             Layout->addWidget(Spin);
 
             connect(Spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](const double InValue)
@@ -160,6 +242,9 @@ namespace
                 SetSpin(Spin, double(Value));
             }
         }
+
+    public:
+        QAbstractSpinBox* GetScrubSpin() const override { return Spin; }
 
     private:
         QDoubleSpinBox* Spin = nullptr;
@@ -231,8 +316,16 @@ namespace
             auto* Layout = new QHBoxLayout(this);
             Layout->setContentsMargins(0, 0, 0, 0);
             Spin = new QSpinBox(this);
-            if(Entry.Type == EPropertyType::UInt8) { Spin->setRange(0, 255); }
-            else                                  { Spin->setRange(INT_MIN, INT_MAX); }
+            const int Lowest  = Entry.Type == EPropertyType::UInt8 ? 0 : INT_MIN;
+            const int Highest = Entry.Type == EPropertyType::UInt8 ? 255 : INT_MAX;
+            if(Entry.HasRange())
+            {
+                Spin->setRange(std::max(Lowest, int(std::ceil(Entry.Min))), std::min(Highest, int(std::floor(Entry.Max))));
+            }
+            else
+            {
+                Spin->setRange(Lowest, Highest);
+            }
             Spin->setKeyboardTracking(false);
             Spin->setReadOnly(Entry.IsReadOnly());
             Spin->setButtonSymbols(Entry.IsReadOnly() ? QAbstractSpinBox::NoButtons : QAbstractSpinBox::UpDownArrows);
@@ -275,6 +368,9 @@ namespace
                 Spin->setValue(Value);
             }
         }
+
+    public:
+        QAbstractSpinBox* GetScrubSpin() const override { return Spin; }
 
     private:
         QSpinBox* Spin = nullptr;
@@ -352,9 +448,11 @@ namespace
                 }
                 for(int Axis = 0; Axis < 3; ++Axis)
                 {
-                    Layout->addWidget(AxisLabel(Axes[Axis], this), Row, Column++);
-                    QDoubleSpinBox* Spin = MakeRealSpin(this, Entry.IsReadOnly());
+                    QLabel* Caption = AxisLabel(Axes[Axis], this);
+                    Layout->addWidget(Caption, Row, Column++);
+                    QDoubleSpinBox* Spin = MakeRealSpin(this, Entry);
                     Spins[Row * 3 + Axis] = Spin;
+                    InstallScrub(Caption, Spin);
                     Layout->addWidget(Spin, Row, Column++);
 
                     connect(Spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this, Row, Axis](const double InValue)
@@ -855,6 +953,16 @@ namespace
         QLineEdit* Edit      = nullptr;
         EAsset     AssetKind = EAsset::None;
     };
+}
+
+void InstallScrub(QWidget* InHandle, QAbstractSpinBox* InSpin)
+{
+    if(!InHandle || !InSpin || InSpin->isReadOnly())
+    {
+        return;
+    }
+    InHandle->installEventFilter(new ScrubFilter(InSpin, InHandle));
+    InHandle->setCursor(Qt::SizeHorCursor);
 }
 
 bool IsPropertyAtDefault(const GameCore::ComponentPropertyEntry& InEntry, const uint8_t* InField, const uint8_t* InDefault)

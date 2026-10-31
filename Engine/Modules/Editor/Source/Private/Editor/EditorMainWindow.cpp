@@ -29,6 +29,7 @@
 #include <QMessageBox>
 #include <QCoreApplication>
 #include <QProcess>
+#include <QSettings>
 #include <QSignalBlocker>
 #include <QStatusBar>
 #include <QToolBar>
@@ -53,6 +54,7 @@
 #include "Public/Editor/OutlinerPanel.h"
 #include "Public/Editor/ViewportPanel.h"
 #include "Private/Editor/EditorIcons.h"
+#include "Private/Editor/EditorLayoutSettings.h"
 #include "Public/Editor/ViewportWidget.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/NimbleEngine/Destruction.h"
@@ -137,6 +139,21 @@ NIMBLE_CONFIG_STRING(GEditorStartupWorld, "Editor", "StartupWorld", "", nullptr)
 namespace
 {
     const char* const WorldFileFilter = "Nimble World (*.nmworld);;All Files (*)";
+
+    /* The docks' layout (EditorLayoutSettings.h). Bump LayoutVersion when the
+     * docks change enough that an old layout would restore badly;
+     * restoreState refuses another version. */
+    constexpr int LayoutVersion = 1;
+    constexpr int MaxRecentWorlds = 10;
+
+    QSettings& LayoutSettings() { return EditorLayoutSettings::Get(); }
+
+    /* Recent worlds are the project's: another game's would not open here. */
+    QString RecentWorldsKey()
+    {
+        const QByteArray Root = QDir(EditorGraphs::GetProjectRoot()).absolutePath().toUtf8();
+        return QStringLiteral("RecentWorlds/") + QString::number(qHash(Root), 16);
+    }
 
     /* Where Open and Save As start: the open world, else <project>/Content/Levels. */
     QString WorldDialogPath(const QString& InCurrentPath)
@@ -375,7 +392,7 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
      * and Play see the new ones. */
     connect(&EditorContentEvents::Get(), &EditorContentEvents::ContentChanged, this, &EditorMainWindow::OnContentChanged);
     ContentDock->raise();
-    connect(ContentArea, &ContentBrowserPanel::OpenWorldRequested, this, &EditorMainWindow::OpenWorldFile);
+    connect(ContentArea, &ContentBrowserPanel::OpenWorldRequested, this, &EditorMainWindow::RequestOpenWorld);
 
     /* The eye button on a Details asset field: its folder, selected, and opened. */
     EditorContent::SetRevealHandler([this, ContentDock](const QString& InFile)
@@ -470,6 +487,7 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
      * information, so it is written here, in the background. */
     EditorGraphs::CookShaderPDBs(Backend);
 
+    RestoreLayout();
     UpdateTitle();
 }
 
@@ -509,6 +527,7 @@ void EditorMainWindow::BuildMenus()
     New->setShortcut(QKeySequence::New);
     connect(New, &QAction::triggered, this, [this]()
     {
+        if(!MaybeSaveLevel(QStringLiteral("New World"))) { return; }
         Level.NewWorld();
         CurrentPath.clear();
         UpdateTitle();
@@ -520,6 +539,9 @@ void EditorMainWindow::BuildMenus()
     Open->setShortcut(QKeySequence::Open);
     connect(Open, &QAction::triggered, this, &EditorMainWindow::OpenWorld);
 
+    RecentMenu = File->addMenu(QStringLiteral("Open &Recent"));
+    connect(RecentMenu, &QMenu::aboutToShow, this, &EditorMainWindow::FillRecentMenu);
+
     QAction* Save = File->addAction(EditorIcons::Get(EditorIcons::EIcon::Save), QStringLiteral("&Save World"));
     Save->setShortcut(QKeySequence::Save);
     connect(Save, &QAction::triggered, this, &EditorMainWindow::SaveWorld);
@@ -529,7 +551,7 @@ void EditorMainWindow::BuildMenus()
     connect(SaveAs, &QAction::triggered, this, &EditorMainWindow::SaveWorldAs);
 
     /* Save stays: it writes the edited World, which a run never touches. */
-    SceneActions = { New, Open };
+    SceneActions = { New, Open, RecentMenu->menuAction() };
 
     File->addSeparator();
 
@@ -778,6 +800,10 @@ void EditorMainWindow::BuildMenus()
         Dock->raise();
         ConsoleArea->FocusInput();
     });
+
+    QAction* ResetLayoutAction = View->addAction(QStringLiteral("Reset &Layout"));
+    ResetLayoutAction->setToolTip(QStringLiteral("The docks where a new editor puts them"));
+    connect(ResetLayoutAction, &QAction::triggered, this, &EditorMainWindow::ResetLayout);
 
     View->addSeparator();
 
@@ -1436,13 +1462,30 @@ void EditorMainWindow::RegisterConsoleCommands()
         Console.Print(Lines.join(QLatin1Char('\n')));
     });
 
-    Console.Register(QStringLiteral("select"), QStringLiteral("<name | #index | none>"),
-                     QStringLiteral("Select an entity"),
+    Console.Register(QStringLiteral("select"), QStringLiteral("<name | #index | none> [more...]"),
+                     QStringLiteral("Select an entity, or several (the first the primary)"),
                      [this, Resolve](const QStringList& InArgs)
     {
-        if(InArgs.size() != 1)
+        if(InArgs.isEmpty())
         {
-            Console.PrintError(QStringLiteral("Usage: select <name | #index | none>"));
+            Console.PrintError(QStringLiteral("Usage: select <name | #index | none> [more...]"));
+            return;
+        }
+        if(InArgs.size() > 1)
+        {
+            std::vector<EntityID> Picked;
+            for(const QString& Each : InArgs)
+            {
+                const EntityID Found = Resolve(Each);
+                if(!Found.IsSet() || !Level.GetWorld().IsAlive(Found))
+                {
+                    Console.PrintError(QStringLiteral("No entity '%1'").arg(Each));
+                    return;
+                }
+                Picked.push_back(Found);
+            }
+            Level.SetSelection(Picked, Picked.front());
+            Console.Print(QStringLiteral("Selected %1 entities").arg(Picked.size()));
             return;
         }
         if(InArgs.front().compare(QStringLiteral("none"), Qt::CaseInsensitive) == 0)
@@ -1460,13 +1503,18 @@ void EditorMainWindow::RegisterConsoleCommands()
         Console.Print(QStringLiteral("Selected %1 #%2").arg(Level.GetDisplayName(Found)).arg(Found.Index));
     });
 
-    Console.Register(QStringLiteral("details"), QStringLiteral("focus <component type>"),
-                     QStringLiteral("Collapse every Details section but one component's, and scroll to it"),
+    Console.Register(QStringLiteral("details"), QStringLiteral("focus <component type> | search [text]"),
+                     QStringLiteral("Collapse every Details section but one component's, and scroll to it; or set its search"),
                      [this](const QStringList& InArgs)
     {
+        if(!InArgs.isEmpty() && InArgs.front() == QStringLiteral("search"))
+        {
+            Details->SetSearchText(InArgs.mid(1).join(QLatin1Char(' ')));
+            return;
+        }
         if(InArgs.size() < 2 || InArgs.front() != QStringLiteral("focus"))
         {
-            Console.PrintError(QStringLiteral("Usage: details focus <component type>"));
+            Console.PrintError(QStringLiteral("Usage: details focus <component type> | search [text]"));
             return;
         }
         const QString Type = InArgs.mid(1).join(QLatin1Char(' '));   // "Character Mover": its words rejoined
@@ -1906,9 +1954,11 @@ void EditorMainWindow::RegisterConsoleCommands()
         else                   { Console.Print(QStringLiteral("Saved %1").arg(QDir::toNativeSeparators(File))); }
     });
 
-    Console.Register(QStringLiteral("quit"), QString(), QStringLiteral("File > Exit (asks to save unsaved changes)"),
-                     [this](const QStringList&)
+    Console.Register(QStringLiteral("quit"), QStringLiteral("[discard]"),
+                     QStringLiteral("File > Exit (asks to save unsaved changes; discard: not the level's, for scripts)"),
+                     [this](const QStringList& InArgs)
     {
+        bDiscardLevelOnClose = !InArgs.isEmpty() && InArgs.first() == QLatin1String("discard");
         QMetaObject::invokeMethod(this, &QWidget::close, Qt::QueuedConnection);
     });
 
@@ -3049,6 +3099,7 @@ void EditorMainWindow::StartRenderer()
     if(!StartWorld.isEmpty() && Level.LoadWorld(StartWorld))
     {
         CurrentPath = StartWorld;
+        AddRecentWorld(StartWorld);
         Viewport->ApplyGameCameraView();
     }
     else
@@ -3087,6 +3138,11 @@ void EditorMainWindow::closeEvent(QCloseEvent* InEvent)
 {
     /* Open prefabs, particle systems and graphs first: an unsaved one may cancel the close.
      * Prefabs and particle systems before the Renderer stops: their viewports' swapchains go now. */
+    if(!bDiscardLevelOnClose && !MaybeSaveLevel(QStringLiteral("Exit")))
+    {
+        InEvent->ignore();
+        return;
+    }
     if(!EditorSequencer::CloseAll() || !EditorPrefabs::CloseAllPrefabs() || !EditorParticles::CloseAll() || !EditorUI::CloseAll()
        || !EditorGraphs::CloseAllGraphs())
     {
@@ -3097,6 +3153,7 @@ void EditorMainWindow::closeEvent(QCloseEvent* InEvent)
     CORE_LOG(std::string("[Editor] closing -- ") + (InEvent->spontaneous() ? "requested by the window system" : "requested by the editor"))
 
     DocumentationWindow::CloseIfOpen();
+    SaveLayout();
 
     /* Before any widget is destroyed: the Renderer releases its swapchain
      * against the viewport's native window, which must still exist. */
@@ -3217,6 +3274,7 @@ void EditorMainWindow::UpdateStats()
 
 void EditorMainWindow::OpenWorld()
 {
+    if(!MaybeSaveLevel(QStringLiteral("Open World"))) { return; }
     const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open World"), WorldDialogPath(CurrentPath),
                                                       QString::fromLatin1(WorldFileFilter));
     if(!Path.isEmpty())
@@ -3252,8 +3310,124 @@ void EditorMainWindow::OpenWorldFile(const QString& Path)
     else
     {
         CurrentPath = Path;
+        AddRecentWorld(Path);
     }
     UpdateTitle();
+}
+
+void EditorMainWindow::RequestOpenWorld(const QString& InPath)
+{
+    if(Context.IsPlaying())
+    {
+        statusBar()->showMessage(QStringLiteral("Stop playing to open another world"), 4000);
+        return;
+    }
+    if(MaybeSaveLevel(QStringLiteral("Open World")))
+    {
+        OpenWorldFile(InPath);
+    }
+}
+
+bool EditorMainWindow::MaybeSaveLevel(const QString& InTitle)
+{
+    if(Level.GetHistory().isClean())
+    {
+        return true;
+    }
+    const QString Name = CurrentPath.isEmpty() ? QStringLiteral("Untitled") : QFileInfo(CurrentPath).fileName();
+    const QMessageBox::StandardButton Answer =
+        QMessageBox::question(this, InTitle, QStringLiteral("%1 has unsaved changes.\n\nSave them first?").arg(Name),
+                              QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+    if(Answer == QMessageBox::Save)
+    {
+        return SaveWorld();
+    }
+    return Answer == QMessageBox::Discard;
+}
+
+void EditorMainWindow::AddRecentWorld(const QString& InPath)
+{
+    const QString Path = QFileInfo(InPath).absoluteFilePath();
+    QStringList Recent = LayoutSettings().value(RecentWorldsKey()).toStringList();
+    Recent.removeAll(Path);
+    Recent.prepend(Path);
+    while(Recent.size() > MaxRecentWorlds) { Recent.removeLast(); }
+    LayoutSettings().setValue(RecentWorldsKey(), Recent);
+}
+
+void EditorMainWindow::FillRecentMenu()
+{
+    RecentMenu->clear();
+
+    /* Moved or deleted since: dropped rather than listed. */
+    QStringList Recent = LayoutSettings().value(RecentWorldsKey()).toStringList();
+    const qsizetype Before = Recent.size();
+    Recent.erase(std::remove_if(Recent.begin(), Recent.end(), [](const QString& InPath) { return !QFileInfo::exists(InPath); }),
+                 Recent.end());
+    if(Recent.size() != Before) { LayoutSettings().setValue(RecentWorldsKey(), Recent); }
+
+    if(Recent.isEmpty())
+    {
+        RecentMenu->addAction(QStringLiteral("(none)"))->setEnabled(false);
+        return;
+    }
+    const QDir Root(EditorGraphs::GetProjectRoot());
+    for(int Index = 0; Index < Recent.size(); ++Index)
+    {
+        const QString& Path = Recent[Index];
+        /* &1..&9, then &0: the first ten pick by number. */
+        const QString Label = QStringLiteral("&%1  %2").arg((Index + 1) % 10).arg(QDir::toNativeSeparators(Root.relativeFilePath(Path)));
+        QAction* Each = RecentMenu->addAction(Label);
+        Each->setToolTip(QDir::toNativeSeparators(Path));
+        Each->setEnabled(Path != QFileInfo(CurrentPath).absoluteFilePath());   // the one open
+        connect(Each, &QAction::triggered, this, [this, Path]() { RequestOpenWorld(Path); });
+    }
+    RecentMenu->addSeparator();
+    connect(RecentMenu->addAction(QStringLiteral("&Clear Recent")), &QAction::triggered, this, []()
+    {
+        LayoutSettings().remove(RecentWorldsKey());
+    });
+}
+
+void EditorMainWindow::RestoreLayout()
+{
+    DefaultLayout = saveState(LayoutVersion);
+
+    QSettings& Settings = LayoutSettings();
+    const QByteArray Geometry = Settings.value(QStringLiteral("MainWindow/Geometry")).toByteArray();
+    const QByteArray State    = Settings.value(QStringLiteral("MainWindow/State")).toByteArray();
+    if(!Geometry.isEmpty()) { restoreGeometry(Geometry); }
+    if(State.isEmpty() || !restoreState(State, LayoutVersion))
+    {
+        return;
+    }
+
+    /* Mode docks wait for their menu, wherever they were left: Terrain would
+     * otherwise start with its tool live, the Sequencer with nothing open. */
+    for(const char* Mode : { "TerrainDock", "SequencerDock", "NavigationDock", "AIDebuggerDock" })
+    {
+        if(QDockWidget* Dock = findChild<QDockWidget*>(QLatin1String(Mode))) { Dock->hide(); }
+    }
+}
+
+void EditorMainWindow::SaveLayout() const
+{
+    QSettings& Settings = LayoutSettings();
+    Settings.setValue(QStringLiteral("MainWindow/Geometry"), saveGeometry());
+    Settings.setValue(QStringLiteral("MainWindow/State"), saveState(LayoutVersion));
+}
+
+void EditorMainWindow::ResetLayout()
+{
+    restoreState(DefaultLayout, LayoutVersion);
+    if(auto* Outline = findChild<QDockWidget*>(QStringLiteral("OutlinerDock")))
+    {
+        auto* DetailsDock = findChild<QDockWidget*>(QStringLiteral("DetailsDock"));
+        auto* ConsoleDock = findChild<QDockWidget*>(QStringLiteral("ConsoleDock"));
+        resizeDocks({ Outline, DetailsDock }, { 300, 360 }, Qt::Horizontal);
+        resizeDocks({ ConsoleDock }, { 240 }, Qt::Vertical);
+    }
+    statusBar()->showMessage(QStringLiteral("Layout reset"), 3000);
 }
 
 void EditorMainWindow::CheckBake()
@@ -3296,7 +3470,9 @@ bool EditorMainWindow::SaveWorldAs()
     }
     CurrentPath = Path;
     UpdateTitle();
-    return SaveWorld();
+    if(!SaveWorld()) { return false; }
+    AddRecentWorld(Path);
+    return true;
 }
 
 

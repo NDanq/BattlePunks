@@ -142,7 +142,11 @@ namespace GameCore
         Props.TypeCategory("Audio");
         Props.Field("Sound",     &AudioSourceComponent::Sound, PF_AssetSound);
         Props.Field("Volume",    &AudioSourceComponent::Volume);
+        Props.Range(0.0f, 4.0f);
+        Props.Tooltip("Times the sound's own volume");
         Props.Field("Pitch",     &AudioSourceComponent::Pitch);
+        Props.Range(0.01f, 16.0f);
+        Props.Tooltip("Times the sound's rate: 2 is an octave up");
         Props.Flag("Auto Play",  &AudioSourceComponent::bAutoPlay);
         Props.Choice("Force Bus",     &AudioSourceComponent::ForceBus, "The Sound's|Master|Music|SFX|UI|Voice|Ambient");
         Props.Choice("Force 2D / 3D", &AudioSourceComponent::ForceSpatial, "The Sound's|2D|3D");
@@ -152,9 +156,16 @@ namespace GameCore
         Props.Flag("Spatial",    &AudioSourceComponent::bSpatial);
         Props.Choice("Bus",      &AudioSourceComponent::Bus, "Master|Music|SFX|UI|Voice|Ambient");   // EAudioSourceBus
         Props.Field("Min Distance",   &AudioSourceComponent::MinDistance);
+        Props.Range(0.0f, 1.0e9f);
+        Props.Tooltip("World units: full volume within this");
         Props.Field("Max Distance",   &AudioSourceComponent::MaxDistance);
+        Props.Range(0.0f, 1.0e9f);
+        Props.Tooltip("World units: no quieter beyond this");
         Props.Field("Rolloff",        &AudioSourceComponent::Rolloff);
+        Props.Range(0.0f, 1.0e9f);
         Props.Field("Doppler Factor", &AudioSourceComponent::DopplerFactor);
+        Props.Range(0.0f, 1.0e9f);
+        Props.Tooltip("0: no doppler shift");
         Props.Category("State");
         Props.Flag("Playing",          &AudioSourceComponent::bPlaying, PF_ReadOnly);
         Props.Field("Playback Seconds", &AudioSourceComponent::PlaybackSeconds, PF_ReadOnly);

@@ -71,6 +71,7 @@ uses it.
 | `EditorIcons` (private) | The editor's icons: Lucide (ISC, `External/lucide-1.53.0`, compiled in as `:/lucide/*.svg`), drawn in the palette's button text so they follow `Editor.Theme`; the style's standard icons without Qt Svg. Play, pause, stop, undo, redo, save, the transport, loop, record, key, camera cuts, pilot, snap, add, zoom and fit, the notification bell and severities, and source control; `Get(icon, colour)` draws one in a fixed colour. Undo and Redo also sit at the front of the viewport toolbar |
 | `ProjectSettingsDialog` + `ConfigIniFile` (private) | Edit > Project Settings: the project's `DefaultEngine.ini` as pages of settings, edited line by line so its comments stay |
 | `SettingsDialog` (private) | Edit > Editor Settings: the `[Editor]` config vars as a form, saved to the user's `EditorSettings.ini` |
+| `EditorLayoutSettings` (private) | Window state kept between runs in `EditorLayout.ini` beside it: dock layout and window size (View > Reset Layout), File > Open Recent, folded Details sections |
 | `SourceControl/SourceControlWindow`, `GitClient`, `GitStatus` (private) | The **Source Control** dock (View > Source Control, tabbed with the Console): the project's git repository -- branch, upstream, ahead/behind, Fetch / Pull / Push, the commit message, and changed files grouped as Content, Scripts, GameModule source, Config, Engine (flagged: not supported in a collaboration session) and Other; a box stages or unstages a file or group, and the split pane shows the selected file's diff. Pull is fast-forward only, a rebase (autostashed) with local commits, never a merge; conflicts go to your own `git mergetool`. The session branch is `[Collaboration] Branch` in the project's config, with a banner when HEAD is elsewhere. Git runs one command at a time with `GIT_TERMINAL_PROMPT=0` (credentials stay with your helper; commit messages go on stdin); status is `--porcelain=v2 -z`, parsed without Qt. Refreshes on `.git/HEAD` and `.git/index` changes, saves and focus. LFS locks shown when `.gitattributes` uses LFS. Tested by `NimbleEditorSourceControlTests` (fixtures, then a real bare repository) |
 | `SourceBuild` (private) | Build > Compile Source: runs `cmake --build` on the editor's own build tree (`EditorBuildTree.h.in`) in the background, logging its output; any cmake command line too (`StartCommand`), for Build Project |
 | `Build/ContentCook`, `Build/ProjectBuild`, `Build/ProjectBuildDialog` (private) | Build > Cook Content and Build > Build Project: the project's content cooked into `Saved/Cooked/` with stats, and the game's Client preset configured and built |
@@ -713,14 +714,15 @@ registered:
 | `reset <Section.Name>` | A config var back to its compiled default |
 | `Section.Name [value]` | Print a config var, or set it |
 | `entities [filter]` | The scene's entities, the selection marked `*` |
-| `select <name \| #index \| none>` | Select an entity (drives Outliner and Details) |
+| `select <name \| #index \| none> [more...]` | Select an entity, or several (the first is the primary; drives Outliner and Details) |
 | `details focus <component type>` | Collapse every Details section but that component's (`details focus Character Mover`) and scroll to it: for a documentation screenshot |
+| `details search [text]` | Set the Details panel's property search (empty clears it) |
 | `create [name]`, `delete [name \| #index]` | As the Edit menu |
 | `frame [all]` | Frame the selection, or the scene |
 | `scene <new \| sandbox>` | As the File menu |
 | `viewmode <lit \| unlit \| target [name]>` | Show > View Mode; `target` alone lists the render targets it can show |
 | `save` | File > Save World (the world must have a file) |
-| `quit` | File > Exit, which still asks about unsaved changes |
+| `quit [discard]` | File > Exit, which still asks about unsaved changes; `discard` skips the level's prompt, for `--command` scripts that edit without saving |
 | `lighting <bake \| baked \| live>` | Build > Bake Lightmaps, or Show > Lighting > Baked / Live |
 | `screenshot [-gizmos] <file.png>` | Save the viewport's next frame, without gizmos or debug lines (`Renderer::RequestSceneCapture`); with `-gizmos`, with them (`RequestSceneCaptureWithDebugLines`). `windowshot` takes `-gizmos` too |
 | `import <source> [folder]` | The Content Browser's import with default options: a `.gltf`/`.glb`, an image, or a `.wav`/`.flac`/`.mp3`/`.ogg` (with the Audio module) into the project folder given, `Content` by default |

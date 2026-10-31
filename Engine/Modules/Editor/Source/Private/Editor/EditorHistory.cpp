@@ -677,6 +677,73 @@ namespace EditorHistory
         Document.NotifyPropertyEdited(Entity, Type);
     }
 
+    // === MultiPropertyEditCommand ============================================
+
+    MultiPropertyEditCommand::MultiPropertyEditCommand(EditorDocument& InDocument, const QString& InText, const ComponentTypeID InType,
+                                                       std::vector<Change> InChanges, const uint64_t InGesture)
+        : Command(InDocument, InText)
+        , Type(InType)
+        , Changes(std::move(InChanges))
+        , Gesture(InGesture)
+        , TimeMs(NowMs())
+    {
+        setObsolete(IsUnchanged());
+    }
+
+    bool MultiPropertyEditCommand::IsUnchanged() const
+    {
+        return std::all_of(Changes.begin(), Changes.end(), [](const Change& InEach) { return InEach.Before == InEach.After; });
+    }
+
+    bool MultiPropertyEditCommand::mergeWith(const QUndoCommand* InOther)
+    {
+        const auto* Other = static_cast<const MultiPropertyEditCommand*>(InOther);
+        if(!Document.IsLatestRecorded(this) || Other->Type != Type || Other->Changes.size() != Changes.size())
+        {
+            return false;
+        }
+        for(size_t Index = 0; Index < Changes.size(); ++Index)
+        {
+            if(!(Other->Changes[Index].Guid == Changes[Index].Guid)) { return false; }
+        }
+        const bool bSameGesture = Gesture != 0 && Other->Gesture == Gesture;
+        const bool bQuickEdits  = Gesture == 0 && Other->Gesture == 0 && Other->TimeMs - TimeMs <= MergeWindowMs;
+        if(!bSameGesture && !bQuickEdits)
+        {
+            return false;
+        }
+        for(size_t Index = 0; Index < Changes.size(); ++Index)
+        {
+            Changes[Index].After = Other->Changes[Index].After;
+        }
+        TimeMs = Other->TimeMs;
+        setObsolete(IsUnchanged());
+        return true;
+    }
+
+    void MultiPropertyEditCommand::Apply(const bool bInForward)
+    {
+        World& W = Document.GetEditedWorld();
+        std::vector<EntityID> Applied;
+        for(const Change& Each : Changes)
+        {
+            const EntityID Entity = Resolve(W, Each.Guid, text());
+            if(!Entity.IsSet()) { continue; }
+            ApplyProperties(W, Entity, Type, bInForward ? Each.After : Each.Before);
+            W.RefreshEntityBounds(Entity);
+            Applied.push_back(Entity);
+        }
+        if(Applied.empty())
+        {
+            return;
+        }
+        Document.SetSelection(Applied, Applied.front());
+        for(const EntityID Entity : Applied)
+        {
+            Document.NotifyPropertyEdited(Entity, Type);
+        }
+    }
+
     // === EntityMembersCommand ================================================
 
     EntityMembersCommand::EntityMembersCommand(EditorDocument& InDocument, const QString& InText, const EntityGuid& InGuid,

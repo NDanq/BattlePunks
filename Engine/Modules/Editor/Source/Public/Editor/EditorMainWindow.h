@@ -3,6 +3,7 @@
 
 #if WITH_EDITOR
 
+#include <QByteArray>
 #include <QList>
 #include <QMainWindow>
 #include <QString>
@@ -23,6 +24,7 @@ class NotificationCenter;
 class NotificationToasts;
 class ProjectBuildDialog;
 class QAction;
+class QMenu;
 class QProcess;
 class QLabel;
 class SDLInputProbe;
@@ -109,8 +111,24 @@ private:
 
     void OpenWorld();
     void OpenWorldFile(const QString& InPath);
+    /* OpenWorldFile once MaybeSaveLevel lets it: the Content Browser and Open Recent. */
+    void RequestOpenWorld(const QString& InPath);
     bool SaveWorld();
     bool SaveWorldAs();
+
+    /* Unsaved level edits: Save, Discard or Cancel. False to stay put (Cancel,
+     * or a save that failed); true at once when the level is clean. */
+    bool MaybeSaveLevel(const QString& InTitle);
+
+    /* File > Open Recent: this project's worlds, newest first (EditorLayout.ini). */
+    void AddRecentWorld(const QString& InPath);
+    void FillRecentMenu();
+
+    /* The docks' arrangement and the window's size, kept in EditorLayout.ini
+     * between runs; View > Reset Layout puts back the one built here. */
+    void RestoreLayout();
+    void SaveLayout() const;
+    void ResetLayout();
 
     EditorContext&             Context;
     EditorDocument&            Level;     // the context's level document
@@ -158,6 +176,10 @@ private:
     QString CurrentPath;
     QString InitialWorld;
     bool    bRendererStarted = false;
+
+    QMenu*     RecentMenu = nullptr;
+    QByteArray DefaultLayout;          // saveState() as built, before the user's was restored
+    bool       bDiscardLevelOnClose = false;   // "quit discard": no prompt, for scripted runs
 
     /* The game module was rebuilt while a run kept the old one: script nodes
      * are reread when it stops. */
