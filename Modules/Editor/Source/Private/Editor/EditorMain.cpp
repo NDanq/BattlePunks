@@ -34,6 +34,7 @@
 #include "Private/Editor/SettingsDialog.h"
 #include "Public/NimbleEngine/AudioFacade.h"
 #include "Public/NimbleEngine/GameSession.h"
+#include "Public/NimbleEngine/Plugin.h"
 
 /*
  * NimbleEditor's entry point.
@@ -129,6 +130,11 @@ int main(int argc, char* argv[])
         CORE_LOG("[Editor] logging to " + EngineCore::GetRunLogPath())
     }
 
+    /* Plugins (NimbleEngine/Plugin.h): their defaults under the project's
+     * config, from each plugin's source folder -- the files the editor edits.
+     * Their content mounts with the editor's assets (EditorContext). */
+    NimbleEngine::Plugins::Discover(std::string(), /*bInUseSource=*/true);
+
     if(QFileInfo::exists(QStringLiteral("Config/DefaultEngine.ini")))
     {
         EngineCore::LoadConfigFile("Config/DefaultEngine.ini");
@@ -146,6 +152,7 @@ int main(int argc, char* argv[])
     /* [Modules] asking for what this build was configured without, or the
      * reverse: the project's next build applies it (Project Settings). */
     NimbleEngine::WarnModuleConfigMismatch();
+    NimbleEngine::Plugins::WarnConfigMismatch();
     EditorGraphs::InstallShaderPDBDir();   // before the renderer loads a shader
     EditorTheme::Install();
 
@@ -179,6 +186,10 @@ int main(int argc, char* argv[])
      * leaves the editor silent. */
     NimbleEngine::StartAudio();
 
+    /* Their components and scripts registered before the editor lists
+     * either, and before the game module, which may link them. */
+    NimbleEngine::Plugins::LoadModules();
+
     int Result = 0;
     {
         EditorContext    Context;
@@ -193,6 +204,9 @@ int main(int argc, char* argv[])
     }
     Jobs.WaitForIdle();
     EngineCore::SetJobSystem(nullptr);
+
+    /* Every game module and Play session is gone. */
+    NimbleEngine::Plugins::Close();
 
     /* The window and every Play session are gone, and their voices with them. */
     NimbleEngine::StopAudio();

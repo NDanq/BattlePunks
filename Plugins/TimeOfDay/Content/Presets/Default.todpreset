@@ -1,0 +1,62 @@
+; A clear day. Each [Key_*] is one moment, Hour 0-24; between keys every value
+; blends linearly, and the last key blends back into the first across midnight.
+; Read as TimeOfDay:/Presets/Default.todpreset.
+;
+;   SunColor / SkyColor / GroundColor   R,G,B 0-255
+;   SunIntensity / SkyIntensity         the Directional / Sky Light's Intensity
+
+[Key_Midnight]
+Hour=0
+SunColor=90,110,170
+SunIntensity=0.15
+SkyColor=20,26,45
+GroundColor=10,10,14
+SkyIntensity=0.15
+
+[Key_Dawn]
+Hour=5.5
+SunColor=255,140,90
+SunIntensity=0.6
+SkyColor=90,80,110
+GroundColor=40,32,30
+SkyIntensity=0.3
+
+[Key_Morning]
+Hour=8
+SunColor=255,225,190
+SunIntensity=2.4
+SkyColor=125,145,180
+GroundColor=60,55,50
+SkyIntensity=0.55
+
+[Key_Noon]
+Hour=12
+SunColor=255,250,240
+SunIntensity=3.2
+SkyColor=130,150,190
+GroundColor=65,60,55
+SkyIntensity=0.65
+
+[Key_Evening]
+Hour=17
+SunColor=255,210,160
+SunIntensity=2.2
+SkyColor=120,130,165
+GroundColor=60,52,46
+SkyIntensity=0.5
+
+[Key_Dusk]
+Hour=19
+SunColor=255,120,70
+SunIntensity=0.7
+SkyColor=95,70,95
+GroundColor=36,28,28
+SkyIntensity=0.3
+
+[Key_Night]
+Hour=21
+SunColor=100,120,180
+SunIntensity=0.2
+SkyColor=25,30,55
+GroundColor=12,12,16
+SkyIntensity=0.18

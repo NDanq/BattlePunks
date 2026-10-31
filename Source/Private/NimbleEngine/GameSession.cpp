@@ -18,6 +18,7 @@
 #include "Public/NimbleEngine/GameState.h"
 #include "Public/NimbleEngine/Level.h"
 #include "Public/NimbleEngine/PlayerState.h"
+#include "Public/NimbleEngine/Plugin.h"
 
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
@@ -370,6 +371,10 @@ namespace NimbleEngine
          * An authority's only: a client follows the server's. */
         AIDetail::AttachLevelAI(*LevelWorld);
 
+        /* Plugins' systems (Plugin.h, PluginContext::AddWorldHook): after
+         * the engine's, before OnLoad, so the level's entities start with them. */
+        Plugins::AttachWorld(*LevelWorld);
+
         CORE_LOG("[Level] loading '" + std::string(InLevel.GetName()) + "'")
 
         if(!InLevel.OnLoad(*this))
@@ -580,6 +585,9 @@ namespace NimbleEngine
             for(GameCore::EntityID& Each : SplitCameras) { Each = GameCore::EntityID(); }
             bSequenceView  = false;
             bSplitAngleSet = false;
+
+            /* Plugins first, in reverse: they attached last. */
+            Plugins::DetachWorld(*LevelWorld);
 
             /* Brains let go of their agents while the components still exist. */
             AIDetail::DetachLevelAI(*LevelWorld);

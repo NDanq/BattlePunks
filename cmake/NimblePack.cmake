@@ -60,7 +60,8 @@ function(nimble_pack_add_dir NP_PACK NP_PREFIX NP_DIR NP_STAMP NP_TARGET)
 endfunction()
 
 # nimble_package_game(TARGET <game executable> RUNTIME_DIR <dir> [DEPENDS <targets...>])
-#   Paks/Engine.nmpak and Paks/Game.nmpak in <dir>, built before <game>.
+#   Paks/Engine.nmpak, Paks/Game.nmpak and each enabled plugin's
+#   Paks/Plugins/<Name>.nmpak in <dir>, built before <game>.
 #   Nothing without NIMBLE_PACKAGE_CONTENT.
 function(nimble_package_game)
     cmake_parse_arguments(NPG "" "TARGET;RUNTIME_DIR" "DEPENDS" ${ARGN})
@@ -81,9 +82,19 @@ function(nimble_package_game)
         set(NP_NAMES "--names" "--zstd=${NIMBLE_PACK_ZSTD_LEVEL}")
     endif()
 
+    # Each enabled plugin's in a pack of its own, Paks/Plugins/<Name>.nmpak
+    # (NimblePlugins.cmake): MountPackFiles reads only Paks/ itself, so a
+    # plugin's files are never mounted unprefixed -- NimbleEngine/Plugin.h
+    # mounts them under "<Name>:/".
+    get_property(NP_PLUGINS GLOBAL PROPERTY NIMBLE_PACK_PLUGINS)
+    set(NP_PACKS Engine Game)
+    foreach(NP_PLUGIN IN LISTS NP_PLUGINS)
+        list(APPEND NP_PACKS Plugin_${NP_PLUGIN})
+    endforeach()
+
     set(NP_OUTPUTS)
     set(NP_TARGETS)
-    foreach(NP_PACK Engine Game)
+    foreach(NP_PACK IN LISTS NP_PACKS)
         get_property(NP_LINES GLOBAL PROPERTY NIMBLE_PACK_${NP_PACK}_LINES)
         get_property(NP_DEPENDS GLOBAL PROPERTY NIMBLE_PACK_${NP_PACK}_DEPENDS)
         get_property(NP_PACK_TARGETS GLOBAL PROPERTY NIMBLE_PACK_${NP_PACK}_TARGETS)
@@ -94,12 +105,18 @@ function(nimble_package_game)
         file(WRITE "${NP_MANIFEST}.new" "${NP_TEXT}\n")
         configure_file("${NP_MANIFEST}.new" "${NP_MANIFEST}" COPYONLY)   # touched only when it changes
 
-        set(NP_OUT "${NP_RUNTIME_DIR}/Paks/${NP_PACK}.nmpak")
+        if(NP_PACK MATCHES "^Plugin_(.+)$")
+            set(NP_REL "Paks/Plugins/${CMAKE_MATCH_1}.nmpak")
+        else()
+            set(NP_REL "Paks/${NP_PACK}.nmpak")
+        endif()
+        set(NP_OUT "${NP_RUNTIME_DIR}/${NP_REL}")
         add_custom_command(
                 OUTPUT  "${NP_OUT}"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${NP_RUNTIME_DIR}/Paks/Plugins"
                 COMMAND NimblePak pack "${NP_MANIFEST}" "${NP_OUT}" ${NP_PACK} ${NP_NAMES}
                 DEPENDS NimblePak "${NP_MANIFEST}" ${NP_DEPENDS}
-                COMMENT "${NP_TARGET}: packing Paks/${NP_PACK}.nmpak"
+                COMMENT "${NP_TARGET}: packing ${NP_REL}"
                 VERBATIM)
         list(APPEND NP_OUTPUTS "${NP_OUT}")
     endforeach()

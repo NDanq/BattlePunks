@@ -43,6 +43,7 @@ include(NimbleModule)
 include(NimbleMaterials)
 include(NimbleProject)
 include(NimblePack)
+include(NimblePlugins)
 
 enable_testing()
 
@@ -703,6 +704,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/PlayerStart.cpp
         Source/Private/NimbleEngine/CharacterMover.cpp
         Source/Private/NimbleEngine/GameModule.cpp
+        Source/Private/NimbleEngine/Plugin.cpp
         Source/Private/NimbleEngine/Level.cpp
         Source/Private/NimbleEngine/SaveGame.cpp
         Source/Private/NimbleEngine/WorldList.cpp
@@ -737,6 +739,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/SplitCamera.h
         Source/Public/NimbleEngine/GameConsole.h
         Source/Public/NimbleEngine/GameModule.h
+        Source/Public/NimbleEngine/Plugin.h
         Source/Public/NimbleEngine/NimbleEngineAPI.h
         Source/Public/NimbleEngine/Level.h
         Source/Public/NimbleEngine/GameState.h
@@ -883,6 +886,14 @@ if(NIMBLEENGINE_BUILD_TESTS)
     add_test(NAME NimbleEngine.InputTests COMMAND NimbleEngineInputTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineInputTests>")
     set_tests_properties(NimbleEngine.InputTests PROPERTIES TIMEOUT 120 LABELS "smoke")
+
+    # Plugins: descriptor parsing, enabling, overrides and dependency order
+    # (cmake/NimblePlugins.cmake), in script mode -- no plugin needs to exist.
+    add_test(NAME Plugins.Resolve
+             COMMAND ${CMAKE_COMMAND} "-DNIMBLE_CMAKE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/cmake"
+                     "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/PluginResolveTest"
+                     -P "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Plugins/PluginResolveTest.cmake")
+    set_tests_properties(Plugins.Resolve PROPERTIES TIMEOUT 120 LABELS "plugin;smoke")
 
     # Collision: overlaps, events, layers, queries, and shapes from meshes.
     add_executable(NimbleEngineTerrainTests Tests/TerrainTests.cpp)
@@ -1173,6 +1184,17 @@ if(NIMBLE_BUILD_EDITOR AND NIMBLE_WITH_EDITOR AND TARGET RenderCore
     add_subdirectory(Modules/Editor)
 elseif(NOT NIMBLE_WITH_EDITOR)
     message(STATUS "NimbleEditor: not built for a ${NIMBLE_TARGET} target")
+endif()
+
+# === Plugins ===============================================================
+# Drop-in modules (cmake/NimblePlugins.cmake): every <Project>/Plugins,
+# NIMBLE_PLUGIN_DIRS and Engine/Plugins folder with a <Name>.nmplugin, built
+# when the project's [Plugins] section (or the descriptor's default) enables
+# it. Below NimbleEngine, which every plugin module links, and the editor;
+# above Games/, whose game modules link the plugins they use. Nothing here
+# names a plugin: adding one never edits this file.
+if(TARGET NimbleEngine)
+    nimble_add_plugins()
 endif()
 
 # === Games/ ================================================================
