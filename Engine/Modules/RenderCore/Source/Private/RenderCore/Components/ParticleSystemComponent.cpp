@@ -119,6 +119,11 @@ namespace RenderCore
                 }
                 Retired.clear();
 
+                /* Bucketed out at this tier (DetailMode.h): nothing draws it, so
+                 * nothing simulates it. Its emitters keep their state and pick up
+                 * where they stopped when the tier lets it back. */
+                if(IsDetailHidden()) { return; }
+
                 const float Delta = InContext.GetDeltaSeconds() * TimeScale;
 
                 /* Offscreen: no view drew it for half a second (Draw marks the time). A new proxy counts as seen. */

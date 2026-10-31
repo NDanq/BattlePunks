@@ -133,20 +133,22 @@ class Level:
         self.names.add(name)
         return name
 
-    def add(self, name, components, mobility="Static"):
+    def add(self, name, components, mobility="Static", detail=None):
+        """detail: the lowest scalability tier it renders at (DetailMode.h); None, every tier.
+        Only for what nothing collides with -- a bucket hides the draw, not the Bounds."""
         name = self.unique(name)
-        self.entities.append((name, nm.entity_xml(guid(name), name, components, mobility)))
+        self.entities.append((name, nm.entity_xml(guid(name), name, components, mobility, detail=detail)))
         return name
 
     def mesh_entity(self, name, mesh_path, position, yaw=0.0, mobility="Static", occluder=False, casts=True,
-                    scale=(1, 1, 1), rotation=None, solid=False):
+                    scale=(1, 1, 1), rotation=None, solid=False, detail=None):
         """solid: a Bounds component boxing the mesh -- the explore mode walks round it."""
         render = render_xml(mesh_path, occluder=occluder, casts=casts)
         rot = rotation if rotation is not None else (0, yaw, 0)
         components = [("Render", render), ("Transform", nm.transform_xml(position, rot, scale))]
         if solid:
             components.append(("Bounds", bounds_xml(*self.bounds[mesh_path])))
-        return self.add(name, components, mobility)
+        return self.add(name, components, mobility, detail)
 
     def instance(self, name, prefab, position, yaw=0.0):
         name = self.unique(name)
@@ -510,7 +512,7 @@ def make_props(level):
     bx = (CROSS_X[1] + LOT_IN) / 2
     level.mesh_entity("Boiler", paths["Boiler"], (bx, CURB_H, 250), 90.0, solid=True)
     level.add("BoilerSteam", [("Particle System", particle_xml(STEAM, 0.6)),
-                              ("Transform", nm.transform_xml((bx, CURB_H + 275, 190)))], mobility=None)
+                              ("Transform", nm.transform_xml((bx, CURB_H + 275, 190)))], mobility=None, detail="Medium")
     rng = random.Random(5)
     wx = -(CROSS_X[1] + LOT_IN) / 2
     for k, (x, z) in enumerate(((bx, -350), (bx + 50, -470), (bx, -560), (wx, 600), (wx - 40, 470), (wx + 10, 520))):
@@ -539,18 +541,19 @@ def make_props(level):
     for x in (-a, a):
         pipes.box(kit.IRON, (x - (0 if x < 0 else 40), 690, -280), (x + (40 if x < 0 else 0), 700, -180))
     path = write_mesh(level, "OverheadPipes", pipes)
-    level.mesh_entity("OverheadPipes", path, (0, 0, 0))
+    # Scalability buckets (RenderCore's SCALABILITY.md): dressing nothing collides with.
+    level.mesh_entity("OverheadPipes", path, (0, 0, 0), detail="High")
     level.add("PipeLeak", [("Particle System", particle_xml(STEAM, 0.35)),
-                           ("Transform", nm.transform_xml((100, 690, -250)))], mobility=None)
+                           ("Transform", nm.transform_xml((100, 690, -250)))], mobility=None, detail="High")
 
     # --- Chimney smoke from every fifth chimney.
     for k, (x, y, z) in enumerate(level.chimneys):
         if k % 5 == 2:
             level.add("ChimneySmoke", [("Particle System", particle_xml(SMOKE, 1.0)),
-                                       ("Transform", nm.transform_xml((x, y, z)))], mobility=None)
+                                       ("Transform", nm.transform_xml((x, y, z)))], mobility=None, detail="Medium")
 
     # --- The airship, high over the back street, heading east-north-east.
-    level.mesh_entity("Airship", paths["Airship"], (-1200, 5200, 3400), -18.0, mobility=None, casts=True)
+    level.mesh_entity("Airship", paths["Airship"], (-1200, 5200, 3400), -18.0, mobility=None, casts=True, detail="Ultra")
 
 
 def frange(a, b, n):

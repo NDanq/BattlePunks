@@ -329,8 +329,9 @@ namespace RenderCore
         float   QueueCpuMs            = -1.0f;
 
         /* Parallel draw recording's gate (ParallelRecording.h), as the render
-         * thread decided it at startup: whether stages may be split, and the
-         * job workers they would run on. */
+         * thread last decided it: whether stages may be split, and the
+         * active job workers they would run on (a power profile parks the
+         * rest). */
         bool     bParallelRecordingAvailable = false;
         uint32_t ParallelRecordingWorkers    = 0;
         /* Stages recorded in parallel chunks, over the renderer's life. */

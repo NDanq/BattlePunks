@@ -15,6 +15,7 @@
 #include <QFileInfo>
 #include <QIcon>
 
+#include "Public/GameCore/Scalability.h"
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreJob.h"
 #include "Public/Core/CoreLog.h"
@@ -137,6 +138,9 @@ int main(int argc, char* argv[])
     {
         EngineCore::LoadConfigFile("Config/DefaultGame.ini");
     }
+    /* The scalability overlays (GameCore's Scalability.h) over the project's
+     * files and under the user's, as the launcher stacks them. */
+    GameCore::Scalability::Initialize();
     /* The user's own choices, over the project's (Edit > Editor Settings). */
     SettingsDialog::LoadUserSettings();
     /* [Modules] asking for what this build was configured without, or the

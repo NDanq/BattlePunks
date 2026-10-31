@@ -84,6 +84,12 @@ namespace GameCore
         /* False if not alive. */
         bool SetMobility(EMobility InMobility) const { return OwningWorld && OwningWorld->SetEntityMobility(ID, InMobility); }
 
+        /* The scalability bucket (DetailMode.h): the lowest tier this entity
+         * renders at. Low, the default, renders at every tier. Render-only. */
+        EDetailMode GetDetailMode() const { return OwningWorld ? OwningWorld->GetEntityDetailMode(ID) : EDetailMode::Low; }
+        /* False if not alive. */
+        bool SetDetailMode(EDetailMode InMode) const { return OwningWorld && OwningWorld->SetEntityDetailMode(ID, InMode); }
+
 
         // === Hierarchy ======================================================
         // Parent and children are members too. TransformComponent is LOCAL:

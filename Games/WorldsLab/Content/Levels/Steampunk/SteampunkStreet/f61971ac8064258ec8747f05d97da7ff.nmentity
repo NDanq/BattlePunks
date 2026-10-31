@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="f61971ac8064258ec8747f05d97da7ff" Name="Airship">
+<Entity Guid="f61971ac8064258ec8747f05d97da7ff" Name="Airship" DetailMode="Ultra">
   <Component Type="Render" Version="5">
     <Visible Value="true" />
     <Material0 Value="" />

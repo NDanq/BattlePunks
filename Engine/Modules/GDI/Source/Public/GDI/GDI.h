@@ -848,6 +848,10 @@ uint32_t GDIGetFramesInFlight();
  * backend that can run ahead reads when it makes its device. */
 uint32_t GDIGetConfiguredFramesInFlight();
 
+/* [Rendering] SwapchainExtraImages, clamped to 0..2: images a swapchain asks
+ * for beyond the surface's minimum. */
+uint32_t GDIGetConfiguredSwapchainExtraImages();
+
 /*
  * Scissor, in pixels of the current viewport from its TOP-LEFT (the way a
  * UI lays out), which are the target's own rows: draws after this touch only

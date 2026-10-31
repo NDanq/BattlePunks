@@ -15,6 +15,7 @@
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/GameCoreLog.h"
 #include "Public/GameCore/Prefab.h"
+#include "Public/GameCore/Scalability.h"
 #include "Private/GameCore/PrefabInternal.h"
 
 /*
@@ -48,6 +49,7 @@ namespace GameCore
             EntityGuid        Guid;
             std::string       Name;
             EMobility         Mobility = EMobility::Dynamic;
+            EDetailMode       DetailMode = EDetailMode::Low;   // the scalability bucket
             std::string       Folder;   // the editor Outliner's, "" for none
 
             /* The hierarchy, as slot indices: an intrusive, ordered child
@@ -105,6 +107,11 @@ namespace GameCore
     struct World::Impl
     {
         WorldSettings Settings;
+
+        /* SetPreviewDetailMode's, -1 for none; DetailSerial bumps on any
+         * change that can move an entity in or out of its detail bucket. */
+        int      PreviewDetailMode = -1;
+        uint32_t DetailSerial      = 0;
 
         // --- entities --------------------------------------------------------
 
@@ -244,6 +251,7 @@ namespace GameCore
             Members[Index].Guid     = InGuid;
             Members[Index].Name     = InName ? InName : "";
             Members[Index].Mobility = EMobility::Dynamic;
+            Members[Index].DetailMode = EDetailMode::Low;
             Members[Index].Folder.clear();
             GuidToSlot[InGuid]  = Index;
 
@@ -680,6 +688,39 @@ namespace GameCore
         return false;
     }
 
+    // === Detail mode =============================================================
+
+    const char* DetailModeName(const EDetailMode InMode)
+    {
+        switch(InMode)
+        {
+            case EDetailMode::Medium: return "Medium";
+            case EDetailMode::High:   return "High";
+            case EDetailMode::Ultra:  return "Ultra";
+            default:                  return "Low";
+        }
+    }
+
+    bool ParseDetailMode(const char* InText, EDetailMode& OutMode)
+    {
+        if(!InText) { return false; }
+        const auto Equals = [InText](const char* InName)
+        {
+            const char* A = InText;
+            const char* B = InName;
+            for(; *A && *B; ++A, ++B)
+            {
+                if(std::tolower(static_cast<unsigned char>(*A)) != std::tolower(static_cast<unsigned char>(*B))) { return false; }
+            }
+            return *A == *B;
+        };
+        if(Equals("Low")    || Equals("0")) { OutMode = EDetailMode::Low;    return true; }
+        if(Equals("Medium") || Equals("Med") || Equals("1")) { OutMode = EDetailMode::Medium; return true; }
+        if(Equals("High")   || Equals("2")) { OutMode = EDetailMode::High;   return true; }
+        if(Equals("Ultra")  || Equals("3")) { OutMode = EDetailMode::Ultra;  return true; }
+        return false;
+    }
+
     // === Entity members ==========================================================
 
     EntityGuid World::GetEntityGuid(const EntityID InEntity) const
@@ -744,6 +785,50 @@ namespace GameCore
         }
         return true;
     }
+
+    EDetailMode World::GetEntityDetailMode(const EntityID InEntity) const
+    {
+        return P->IsAliveIndex(InEntity) ? P->Members[InEntity.Index].DetailMode : EDetailMode::Low;
+    }
+
+    bool World::SetEntityDetailMode(const EntityID InEntity, const EDetailMode InMode)
+    {
+        if(!P->IsAliveIndex(InEntity) || uint8_t(InMode) >= DETAIL_MODE_COUNT) { return false; }
+        EntityMembers& Member = P->Members[InEntity.Index];
+        if(Member.DetailMode != InMode)
+        {
+            Member.DetailMode = InMode;
+            ++P->DetailSerial;
+        }
+        return true;
+    }
+
+    bool World::IsEntityDetailVisible(const EntityID InEntity) const
+    {
+        return IsDetailVisible(GetEntityDetailMode(InEntity), GetEffectiveDetailMode());
+    }
+
+    EDetailMode World::GetEffectiveDetailMode() const
+    {
+        if(P->PreviewDetailMode >= 0) { return EDetailMode(P->PreviewDetailMode); }
+        const uint8_t Override = GetSettings().DetailMode;
+        if(Override != WORLD_DETAIL_USE_GLOBAL && Override < DETAIL_MODE_COUNT) { return EDetailMode(Override); }
+        return Scalability::GetDetailMode();
+    }
+
+    void World::SetPreviewDetailMode(const int InMode)
+    {
+        const int Clamped = InMode >= 0 && InMode < int(DETAIL_MODE_COUNT) ? InMode : -1;
+        if(P->PreviewDetailMode != Clamped)
+        {
+            P->PreviewDetailMode = Clamped;
+            ++P->DetailSerial;
+        }
+    }
+
+    int World::GetPreviewDetailMode() const { return P->PreviewDetailMode; }
+
+    uint32_t World::GetDetailSerial() const { return P->DetailSerial; }
 
     // === Hierarchy ===============================================================
 
@@ -894,6 +979,7 @@ namespace GameCore
             P->Members[New.Index].InstanceSlot = Slot;
             P->Members[New.Index].LocalId      = Template.LocalId;
             P->Members[New.Index].Mobility     = Template.Mobility;
+            P->Members[New.Index].DetailMode   = Template.DetailMode;
             ToLive[Template.LocalId] = New;
             Spawned.push_back(New);
         }

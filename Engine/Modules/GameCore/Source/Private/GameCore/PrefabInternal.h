@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "Public/GameCore/ComponentType.h"
+#include "Public/GameCore/DetailMode.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/Prefab.h"
 
@@ -33,6 +34,7 @@ namespace GameCore
         uint32_t                         ParentId = PREFAB_NO_LOCAL_ID;
         std::string                      Name;
         EMobility                        Mobility = EMobility::Dynamic;
+        EDetailMode                      DetailMode = EDetailMode::Low;
         std::vector<PrefabComponentData> Components;   // sorted by type name
     };
 

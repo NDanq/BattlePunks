@@ -53,6 +53,16 @@ namespace
      */
     std::vector<ConfigEntry>* GConfigEntries = nullptr;
 
+    /* ConfigSetOverlay's, one list per EConfigOverlay; leaked for the same
+     * reason. Section and Key split from the path once, at set. */
+    struct OverlayEntry
+    {
+        std::string Section;
+        std::string Key;
+        std::string Value;
+    };
+    std::vector<OverlayEntry>* GOverlays = nullptr;
+
     // --- string helpers, kept local to this file ---------------------------
     //
     // CoreString.h says outright that it is not the beginning of a string
@@ -185,6 +195,28 @@ namespace
         return nullptr;
     }
 
+    /* The highest overlay's value for (Section, Key), or nullptr. */
+    const std::string* FindOverlayValue(const std::string& InSection, const std::string& InKey)
+    {
+        if(!GOverlays) return nullptr;
+        for(int Layer = int(EConfigOverlay::Count) - 1; Layer >= 0; --Layer)
+        {
+            for(const OverlayEntry& Entry : GOverlays[Layer])
+            {
+                if(EqualsIgnoreCase(Entry.Section, InSection) && EqualsIgnoreCase(Entry.Key, InKey)) return &Entry.Value;
+            }
+        }
+        return nullptr;
+    }
+
+    /* What a var is measured against: overlay > project file > compiled default. */
+    std::string BaselineText(const ConfigVar& InVar)
+    {
+        if(const std::string* Overlay = FindOverlayValue(InVar.GetSection(), InVar.GetName())) return *Overlay;
+        const ConfigEntry* Entry = FindConfigEntry(InVar.GetSection(), InVar.GetName());
+        return Entry && Entry->bHasProject ? Entry->ProjectValue : InVar.DefaultToString();
+    }
+
     void ClaimConfigEntry(const std::string& InSection, const std::string& InKey)
     {
         if(!GConfigEntries) return;
@@ -270,10 +302,18 @@ ConfigVar::ConfigVar(const EConfigType InType, const char* InSection, const char
             if(EqualsIgnoreCase(Entry.Section, Section) && EqualsIgnoreCase(Entry.Key, Name))
             {
                 Entry.bClaimed = true;
-                SetFromString(Entry.Value);
+                if(Entry.bFromUser || !FindOverlayValue(Section, Name)) SetFromString(Entry.Value);
                 break;
             }
         }
+    }
+
+    /* An overlay set before this var existed; a User file's value, applied
+     * above, still wins. */
+    const ConfigEntry* Entry = FindConfigEntry(Section, Name);
+    if(!(Entry && Entry->bFromUser))
+    {
+        if(const std::string* Overlay = FindOverlayValue(Section, Name)) SetFromString(*Overlay);
     }
 }
 
@@ -672,6 +712,10 @@ bool LoadConfigText(const std::string& InText, ConfigLoadStats* OutStats, const 
         // ConfigWarnUnclaimedEntries to find.
         RecordConfigEntry(CurrentSection, Key, Value, InLayer);
 
+        /* An overlay sits above the project file: the value is recorded as the
+         * project's, and the var stays where the overlay put it. */
+        const bool bOverlaid = InLayer == EConfigLayer::Project && FindOverlayValue(CurrentSection, Key);
+
         bool bAnyMatch = false;
         for(ConfigVar* V = GConfigHead; V; V = V->GetNext())
         {
@@ -680,6 +724,11 @@ bool LoadConfigText(const std::string& InText, ConfigLoadStats* OutStats, const 
                 continue;
             }
             bAnyMatch = true;
+            if(bOverlaid)
+            {
+                ++Stats.KeysApplied;
+                continue;
+            }
 
             bool bChanged = false;
             if(V->SetFromString(Value, &bChanged))
@@ -733,8 +782,7 @@ const std::string& ConfigGetUserFile()
 
 std::string ConfigGetBaselineText(const ConfigVar& InVar)
 {
-    const ConfigEntry* Entry = FindConfigEntry(InVar.GetSection(), InVar.GetName());
-    return Entry && Entry->bHasProject ? Entry->ProjectValue : InVar.DefaultToString();
+    return BaselineText(InVar);
 }
 
 bool ConfigResetToBaseline(ConfigVar& InVar)
@@ -762,9 +810,7 @@ std::string ConfigBuildUserText()
 
     for(ConfigVar* V = GConfigHead; V; V = V->GetNext())
     {
-        const ConfigEntry* Entry = FindConfigEntry(V->GetSection(), V->GetName());
-        const std::string Baseline = Entry && Entry->bHasProject ? Entry->ProjectValue : V->DefaultToString();
-        if(!V->HoldsText(Baseline)) Add(V->GetSection(), V->GetName(), V->ToString());
+        if(!V->HoldsText(BaselineText(*V))) Add(V->GetSection(), V->GetName(), V->ToString());
     }
     if(GConfigEntries)
     {
@@ -869,6 +915,92 @@ void ConfigRemoveEntries(const char* InSectionPrefix)
     {
         return InEntry.Section.size() >= Prefix.size() && EqualsIgnoreCase(InEntry.Section.substr(0, Prefix.size()), Prefix);
     }), GConfigEntries->end());
+}
+
+// ============================================================================
+// Overlays
+// ============================================================================
+
+int ConfigSetOverlay(const EConfigOverlay InOverlay, const std::vector<ConfigOverlayValue>& InValues)
+{
+    if(InOverlay >= EConfigOverlay::Count) return 0;
+    if(!GOverlays) GOverlays = new std::vector<OverlayEntry>[size_t(EConfigOverlay::Count)];
+
+    std::vector<OverlayEntry> Next;
+    Next.reserve(InValues.size());
+    for(const ConfigOverlayValue& Value : InValues)
+    {
+        const size_t Dot = Value.Path.find('.');
+        if(Dot == std::string::npos || Dot == 0 || Dot + 1 >= Value.Path.size())
+        {
+            CORE_LOG_WARN("CoreConfig: overlay path '" + Value.Path + "' is not Section.Key -- skipped")
+            continue;
+        }
+        OverlayEntry Entry{ Trim(Value.Path.substr(0, Dot)), Trim(Value.Path.substr(Dot + 1)), Trim(Value.Value) };
+        /* A later duplicate replaces the earlier: last line wins, as in a file. */
+        bool bReplaced = false;
+        for(OverlayEntry& Existing : Next)
+        {
+            if(EqualsIgnoreCase(Existing.Section, Entry.Section) && EqualsIgnoreCase(Existing.Key, Entry.Key))
+            {
+                Existing.Value = Entry.Value;
+                bReplaced = true;
+                break;
+            }
+        }
+        if(!bReplaced) Next.push_back(std::move(Entry));
+    }
+
+    /* Every var the old or the new contents touch, with its baseline before
+     * the swap: only a var still holding that baseline moves. */
+    std::vector<std::pair<ConfigVar*, std::string>> Touched;
+    const auto Touch = [&Touched](const OverlayEntry& InEntry)
+    {
+        for(ConfigVar* V = GConfigHead; V; V = V->GetNext())
+        {
+            if(!EqualsIgnoreCase(V->GetSection(), InEntry.Section) || !EqualsIgnoreCase(V->GetName(), InEntry.Key)) continue;
+            bool bSeen = false;
+            for(const auto& Each : Touched) bSeen = bSeen || Each.first == V;
+            if(!bSeen) Touched.emplace_back(V, BaselineText(*V));
+        }
+    };
+    for(const OverlayEntry& Entry : GOverlays[size_t(InOverlay)]) Touch(Entry);
+    for(const OverlayEntry& Entry : Next) Touch(Entry);
+
+    GOverlays[size_t(InOverlay)] = std::move(Next);
+
+    int Changed = 0;
+    for(const auto& Each : Touched)
+    {
+        ConfigVar& Var = *Each.first;
+        if(!Var.HoldsText(Each.second)) continue;   // the player's value: keep it
+
+        const std::string NewBaseline = BaselineText(Var);
+        bool bChanged = false;
+        if(!Var.SetFromString(NewBaseline, &bChanged))
+        {
+            CORE_LOG_ERROR("CoreConfig: overlay value '" + NewBaseline + "' is not valid for '" + Var.GetQualifiedName() + "'")
+            continue;
+        }
+        if(bChanged) ++Changed;
+    }
+    return Changed;
+}
+
+bool ConfigGetProjectValue(const char* InSection, const char* InKey, std::string* OutValue)
+{
+    const ConfigEntry* Entry = FindConfigEntry(InSection ? InSection : "", InKey ? InKey : "");
+    if(!Entry || !Entry->bHasProject) return false;
+    if(OutValue) *OutValue = Entry->ProjectValue;
+    return true;
+}
+
+std::vector<ConfigOverlayValue> ConfigGetOverlay(const EConfigOverlay InOverlay)
+{
+    std::vector<ConfigOverlayValue> Out;
+    if(!GOverlays || InOverlay >= EConfigOverlay::Count) return Out;
+    for(const OverlayEntry& Entry : GOverlays[size_t(InOverlay)]) Out.push_back({ Entry.Section + "." + Entry.Key, Entry.Value });
+    return Out;
 }
 
 // ============================================================================

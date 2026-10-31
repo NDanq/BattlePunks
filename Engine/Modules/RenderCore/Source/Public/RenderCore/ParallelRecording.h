@@ -35,7 +35,9 @@ namespace RenderCore
         bool        bInheritedQueries     = false;   // GDIParallelRecordingSupport's, for the log
         bool        bInheritedPredication = false;
         uint32_t    Workers               = 0;       // the job system's workers; 0 without one
+        uint32_t    ActiveWorkers         = 0;       // ... of them taking jobs (a power profile parks the rest)
         uint32_t    MinDraws              = 0;       // [Rendering] ParallelMinDraws
+        uint32_t    MaxThreads            = 0;       // [Rendering] ParallelMaxThreads; 0 no cap
         bool        bEnabled              = false;   // Mode not Off, the backend can, and there is somewhere to run chunks
         std::string Summary;                         // the verdict, a line for the log
     };
