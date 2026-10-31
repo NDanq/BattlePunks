@@ -7,6 +7,7 @@ nothing in `Engine/CMakeLists.txt` names it.
 - Build side: [`Engine/cmake/NimblePlugins.cmake`](../cmake/NimblePlugins.cmake)
 - Run side: [`NimbleEngine/Plugin.h`](../Source/Public/NimbleEngine/Plugin.h)
 - Example: [`Engine/Plugins/TimeOfDay`](../Plugins/TimeOfDay)
+- How to write one, step by step: [Guides/PluginGuide.md](Guides/PluginGuide.md)
 
 Plugins are **source only**. Every project compiles its plugins with its own
 toolchain, so the C++ ABI always matches. There are no prebuilt plugin
