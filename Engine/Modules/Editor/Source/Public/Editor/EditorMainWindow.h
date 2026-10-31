@@ -99,6 +99,7 @@ private:
     void UpdateTitle();
     void UpdateHistoryActions();
     void UpdateStats();
+    void UpdateDetailLabel();
 
     /* Whether the world's bake still matches its static entities and lights
      * (LightBake::Scene::Hash): the status bar says when it needs rebaking.
@@ -125,6 +126,7 @@ private:
 
     /* This editor in a collaboration session (EditorCollabSession.h). */
     EditorCollabSession* CollabSession = nullptr;
+    QLabel*         DetailLabel = nullptr;   // the world's detail tier, and where it comes from
     QLabel*         StatsLabel = nullptr;
     QLabel*         PlayLabel  = nullptr;
     QLabel*         BakeLabel  = nullptr;   // "Lighting needs to be rebuilt"
