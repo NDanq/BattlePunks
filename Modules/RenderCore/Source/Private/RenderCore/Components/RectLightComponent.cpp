@@ -41,9 +41,14 @@ namespace RenderCore
         Props.Category("Light");
         Props.Field("Color",     &RectLightComponent::Color);
         Props.Field("Intensity", &RectLightComponent::Intensity);
+        Props.Range(0.0f, 1.0e9f);
         Props.Field("Width",     &RectLightComponent::Width);
+        Props.Range(0.0f, 1.0e9f);
         Props.Field("Height",    &RectLightComponent::Height);
+        Props.Range(0.0f, 1.0e9f);
         Props.Field("Range",     &RectLightComponent::Range);
+        Props.Range(0.0f, 1.0e9f);
+        Props.Tooltip("World units: no light reaches past this");
         Props.Flag("Active",     &RectLightComponent::bActive);
     }
 #endif

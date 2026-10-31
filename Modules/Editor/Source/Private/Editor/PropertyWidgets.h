@@ -20,6 +20,8 @@
  *
  * PF_ReadOnly entries never write.
  */
+class QAbstractSpinBox;
+
 class PropertyEditor : public QWidget
 {
     Q_OBJECT
@@ -33,6 +35,10 @@ public:
     void Refresh(bool bInForce = false);
 
     const GameCore::ComponentPropertyEntry& GetEntry() const { return Entry; }
+
+    /* A one-number editor's box, for its row label to scrub (InstallScrub);
+     * null for the rest (vectors scrub on their own X / Y / Z). */
+    virtual QAbstractSpinBox* GetScrubSpin() const { return nullptr; }
 
 signals:
     void Written();
@@ -52,6 +58,11 @@ protected:
     GameCore::ComponentPropertyEntry Entry;
     ResolveFn                        Resolve;
 };
+
+/* Dragging InHandle (a label) left and right steps InSpin by its single step
+ * per pixel: Shift ten times faster, Ctrl ten times finer. A double click
+ * still reaches InHandle. */
+void InstallScrub(QWidget* InHandle, QAbstractSpinBox* InSpin);
 
 /* Value comparison against the default: Vector3/AABB on X/Y/Z only (ignoring
  * the SIMD lane), FixedString up to NUL, else bytes. */

@@ -53,7 +53,11 @@ namespace RenderCore
         Props.Category("Light");
         Props.Field("Color",     &PointLightComponent::Color);
         Props.Field("Intensity", &PointLightComponent::Intensity);
+        Props.Range(0.0f, 1.0e9f);
+        Props.Tooltip("Brightness at the light; falls off by inverse square");
         Props.Field("Radius",    &PointLightComponent::Radius);
+        Props.Range(0.0f, 1.0e9f);
+        Props.Tooltip("World units: no light reaches past this");
         Props.Flag("Active",     &PointLightComponent::bActive);
 
         Props.Category("Shadows");
@@ -61,10 +65,14 @@ namespace RenderCore
         Props.Choice("Technique",     &PointLightComponent::ShadowTechnique, "Standard|Modulated");
         Props.Field("Modulated Tint", &PointLightComponent::ShadowTint);
         Props.Field("Depth Bias",     &PointLightComponent::ShadowBias);
+        Props.Range(0.0f, 1.0e9f);
         Props.Field("Normal Bias",    &PointLightComponent::ShadowNormalBias);
+        Props.Range(0.0f, 1.0e9f);
 
         Props.Category("Baked Lighting");
         Props.Field("Source Radius", &PointLightComponent::SourceRadius);
+        Props.Range(0.0f, 1.0e9f);
+        Props.Tooltip("World units: the sphere the light comes from -- softer shadows when larger");
     }
 #endif
 }

@@ -13,6 +13,7 @@
 
 #include "Public/Core/CoreMemory.h"
 #include "Public/Editor/EditorDocument.h"
+#include "Public/GameCore/ComponentProperties.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/Prefab.h"
@@ -249,6 +250,64 @@ static void TestGroupEdit()
     W.GetEntity(A).GetComponent<GameCore::TransformComponent>()->Position = EngineCore::Vector3(999.0, 0.0, 0.0);
     Doc.EndGroupEdit(true);
     Expect(W.GetEntity(A).GetComponent<GameCore::TransformComponent>()->Position.GetX() == 0.0, "a cancelled group edit puts it back");
+}
+
+/* The Details panel with several selected: an edit on the primary copied to
+ * the rest, one undo step for all; and repeated edits merging into it. */
+static void TestEditOnMany()
+{
+    std::printf("Property edit on many\n");
+    EditorDocument Doc;
+    GameCore::World& W = Doc.GetWorld();
+    const EntityID A = Doc.CreateEntity(QStringLiteral("A"), EngineCore::Vector3(0.0, 0.0, 0.0));
+    const EntityID B = Doc.CreateEntity(QStringLiteral("B"), EngineCore::Vector3(50.0, 0.0, 0.0));
+    const EntityID C = Doc.CreateEntity(QStringLiteral("C"), EngineCore::Vector3(90.0, 0.0, 0.0));
+    Doc.SetSelection({ A, B, C }, A);
+
+    const GameCore::ComponentTypeID Transform = GameCore::TransformComponent::StaticType().ID;
+    size_t Count = 0;
+    const GameCore::ComponentPropertyEntry* Entries = GameCore::FindComponentProperties(Transform, Count);
+    const GameCore::ComponentPropertyEntry* Scale = nullptr;
+    for(size_t Index = 0; Index < Count; ++Index)
+    {
+        if(std::string(Entries[Index].Name) == "Scale") { Scale = &Entries[Index]; }
+    }
+    Expect(Scale != nullptr, "Transform lists Scale");
+    if(!Scale) { return; }
+
+    const int Steps = Doc.GetHistory().count();
+    const auto ScaleOf = [&W](const EntityID InEntity) { return W.GetEntity(InEntity).GetComponent<GameCore::TransformComponent>()->Scale.GetX(); };
+    for(const double Value : { 2.0, 3.0 })
+    {
+        W.GetEntity(A).GetComponent<GameCore::TransformComponent>()->Scale = EngineCore::Vector3(Value, Value, Value);
+        Expect(Doc.NotifyPropertyEditedOnMany(A, Transform, { B, C }, Scale->Offset, Scale->Size) == 2, "copied to both others");
+    }
+    Expect(ScaleOf(B) == 3.0 && ScaleOf(C) == 3.0, "the others hold the primary's value");
+    Expect(W.GetEntity(B).GetComponent<GameCore::TransformComponent>()->Position.GetX() == 50.0, "and only that property");
+    Expect(Doc.GetHistory().count() == Steps + 1, "two quick edits are one undo step");
+
+    Doc.Undo();
+    Expect(ScaleOf(A) == 1.0 && ScaleOf(B) == 1.0 && ScaleOf(C) == 1.0, "undo puts every one back");
+    Doc.Redo();
+    Expect(ScaleOf(A) == 3.0 && ScaleOf(C) == 3.0, "redo sets them again");
+}
+
+/* The Outliner dropping a multi-selection onto an entity: one undo step. */
+static void TestParentMany()
+{
+    std::printf("Parent many\n");
+    EditorDocument Doc;
+    GameCore::World& W = Doc.GetWorld();
+    const EntityID Parent = Doc.CreateEntity(QStringLiteral("Parent"), EngineCore::Vector3(0.0, 0.0, 0.0));
+    const EntityID A = Doc.CreateEntity(QStringLiteral("A"), EngineCore::Vector3(10.0, 0.0, 0.0));
+    const EntityID B = Doc.CreateEntity(QStringLiteral("B"), EngineCore::Vector3(20.0, 0.0, 0.0));
+    const int Steps = Doc.GetHistory().count();
+
+    Expect(Doc.SetEntitiesParent({ A, B, Parent }, Parent) == 2, "the parent itself is skipped");
+    Expect(W.GetEntity(A).GetParent() == Parent && W.GetEntity(B).GetParent() == Parent, "both under it");
+    Expect(Doc.GetHistory().count() == Steps + 1, "one undo step");
+    Doc.Undo();
+    Expect(!W.GetEntity(A).GetParent().IsSet() && !W.GetEntity(B).GetParent().IsSet(), "undo detaches both");
 }
 
 /* Mobility on the Details panel: one undo step, for one entity or several. */
@@ -854,6 +913,8 @@ int main(int argc, char* argv[])
     TestClipboard();
     TestCopyInstance();
     TestGroupEdit();
+    TestEditOnMany();
+    TestParentMany();
     TestMobility();
     TestNewScene();
     TestBorrowedWorld();

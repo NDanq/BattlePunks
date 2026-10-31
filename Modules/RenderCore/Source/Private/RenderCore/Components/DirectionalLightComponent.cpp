@@ -67,6 +67,7 @@ namespace RenderCore
         Props.Category("Light");
         Props.Field("Color",     &DirectionalLightComponent::Color);
         Props.Field("Intensity", &DirectionalLightComponent::Intensity);
+        Props.Range(0.0f, 1.0e9f);
         Props.Flag("Active",     &DirectionalLightComponent::bActive);
 
         Props.Category("Shadows");
@@ -76,11 +77,19 @@ namespace RenderCore
         Props.Field("Depth Bias",           &DirectionalLightComponent::ShadowBias);
         Props.Field("Normal Bias",          &DirectionalLightComponent::ShadowNormalBias);
         Props.Field("Shadow Distance",      &DirectionalLightComponent::ShadowDistance);
+        Props.Range(0.0f, 1.0e9f);
+        Props.Tooltip("World units from the camera that cast shadows");
         Props.Field("Cascade Count",        &DirectionalLightComponent::CascadeCount);
+        Props.Range(1.0f, 4.0f);
+        Props.Tooltip("Cascaded: how many slices the shadow distance is cut into");
         Props.Field("Cascade Split Lambda", &DirectionalLightComponent::CascadeSplitLambda);
+        Props.Range(0.0f, 1.0f);
+        Props.Tooltip("Cascaded: 0 slices evenly, 1 logarithmically (finer near the camera)");
 
         Props.Category("Baked Lighting");
         Props.Field("Source Angle", &DirectionalLightComponent::SourceAngle);
+        Props.Range(0.0f, 90.0f);
+        Props.Tooltip("Degrees across the sun's disc -- softer baked shadows when larger");
     }
 #endif
 }

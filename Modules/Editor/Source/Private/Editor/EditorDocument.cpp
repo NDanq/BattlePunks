@@ -818,6 +818,27 @@ bool EditorDocument::SetEntityParent(const EntityID InEntity, const EntityID InP
     return true;
 }
 
+int EditorDocument::SetEntitiesParent(const std::vector<EntityID>& InEntities, const EntityID InParent)
+{
+    if(InEntities.size() == 1)
+    {
+        return SetEntityParent(InEntities.front(), InParent) ? 1 : 0;
+    }
+    const bool bMacro = IsRecording() && !InEntities.empty();
+    if(bMacro)
+    {
+        History->beginMacro(InParent.IsSet() ? QStringLiteral("Parent %1 Entities to %2").arg(InEntities.size()).arg(GetDisplayName(InParent))
+                                             : QStringLiteral("Detach %1 Entities").arg(InEntities.size()));
+    }
+    int Moved = 0;
+    for(const EntityID Each : InEntities)
+    {
+        Moved += Each != InParent && SetEntityParent(Each, InParent) ? 1 : 0;
+    }
+    if(bMacro) { EndMacro(); }
+    return Moved;
+}
+
 void EditorDocument::NotifyHierarchyEdited(const EntityID InEntity)
 {
     QueueEntitiesChanged();
@@ -1311,6 +1332,70 @@ void EditorDocument::NotifyPropertyEdited(const EntityID InEntity, const GameCor
         Entry.Values = std::move(After);
         return;
     }
+}
+
+int EditorDocument::NotifyPropertyEditedOnMany(const EntityID InSource, const GameCore::ComponentTypeID InType,
+                                               const std::vector<EntityID>& InOthers, const uint32_t InOffset, const uint32_t InSize)
+{
+    const GameCore::ComponentTypeInfo* Info = GameCore::GetComponentType(InType);
+    if(!ActiveWorld || !Info || !ActiveWorld->IsAlive(InSource) || size_t(InOffset) + InSize > Info->SizeBytes)
+    {
+        return 0;
+    }
+    const auto* From = static_cast<const uint8_t*>(ActiveWorld->GetEntity(InSource).GetComponentByType(InType));
+    if(!From)
+    {
+        return 0;
+    }
+
+    const bool bRecord = IsRecording() && !bGroupEditing;
+    std::vector<EditorHistory::MultiPropertyEditCommand::Change> Changes;
+
+    /* The source first: its before is the shadow's, as NotifyPropertyEdited's. */
+    ShadowComponent* SourceShadow = nullptr;
+    if(bRecord && InSource == ShadowEntity)
+    {
+        for(ShadowComponent& Entry : Shadow)
+        {
+            if(Entry.Type == InType) { SourceShadow = &Entry; }
+        }
+    }
+    if(bRecord)
+    {
+        Changes.push_back({ ActiveWorld->GetEntity(InSource).GetGuid(),
+                            SourceShadow ? SourceShadow->Values : EditorHistory::CaptureProperties(*ActiveWorld, InSource, InType),
+                            EditorHistory::CaptureProperties(*ActiveWorld, InSource, InType) });
+    }
+    emit PropertyEdited(InSource, InType);
+
+    int Copied = 0;
+    for(const EntityID Each : InOthers)
+    {
+        if(Each == InSource || !ActiveWorld->IsAlive(Each)) { continue; }
+        auto* To = static_cast<uint8_t*>(ActiveWorld->GetEntity(Each).GetComponentByType(InType));
+        if(!To) { continue; }
+
+        std::vector<uint8_t> Before;
+        if(bRecord) { Before = EditorHistory::CaptureProperties(*ActiveWorld, Each, InType); }
+        std::memcpy(To + InOffset, From + InOffset, InSize);
+        ActiveWorld->RefreshEntityBounds(Each);
+        if(bRecord)
+        {
+            Changes.push_back({ ActiveWorld->GetEntity(Each).GetGuid(), std::move(Before), EditorHistory::CaptureProperties(*ActiveWorld, Each, InType) });
+        }
+        emit PropertyEdited(Each, InType);
+        ++Copied;
+    }
+
+    if(bRecord)
+    {
+        const QString Text = OpenGesture != 0
+            ? QStringLiteral("%1 %2 entities").arg(GestureLabel).arg(Changes.size())
+            : QStringLiteral("Edit %1 on %2 entities").arg(ComponentName(InType)).arg(Changes.size());
+        if(SourceShadow) { SourceShadow->Values = Changes.front().After; }
+        Record(new EditorHistory::MultiPropertyEditCommand(*this, Text, InType, std::move(Changes), OpenGesture));
+    }
+    return Copied;
 }
 
 // === History =================================================================

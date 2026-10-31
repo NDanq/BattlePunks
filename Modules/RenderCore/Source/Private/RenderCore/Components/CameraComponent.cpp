@@ -51,6 +51,8 @@ namespace RenderCore
         Props.Flag("Active", &CameraComponent::bActive);
         Props.Choice("Projection", &CameraComponent::Projection, "Orthographic|Perspective");
         Props.Field("FovY",        &CameraComponent::FovY);
+        Props.Range(1.0f, 179.0f);
+        Props.Tooltip("Vertical field of view, in degrees (Perspective)");
     }
 #endif // WITH_EDITOR
 }

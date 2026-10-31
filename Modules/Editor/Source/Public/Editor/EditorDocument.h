@@ -266,6 +266,10 @@ public:
      * unset InParent detaches. False if refused (a cycle) or unchanged. */
     bool SetEntityParent(GameCore::EntityID InEntity, GameCore::EntityID InParent);
 
+    /* SetEntityParent for each, one undo step; those refused are skipped.
+     * How many moved. */
+    int SetEntitiesParent(const std::vector<GameCore::EntityID>& InEntities, GameCore::EntityID InParent);
+
     /* InEntity's parent changed outside SetEntityParent (undo/redo): the
      * Outliner's tree and the Transform's values are stale. */
     void NotifyHierarchyEdited(GameCore::EntityID InEntity);
@@ -324,6 +328,12 @@ public:
     /* A panel wrote InType on InEntity. Recorded only for the selection, the
      * one entity whose previous values are known. */
     void NotifyPropertyEdited(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType);
+
+    /* A panel wrote InType on InSource (the selection) with others selected:
+     * the bytes [InOffset, InOffset + InSize) copied to each of InOthers that
+     * has InType, and all of it recorded as one step. How many others took it. */
+    int NotifyPropertyEditedOnMany(GameCore::EntityID InSource, GameCore::ComponentTypeID InType,
+                                   const std::vector<GameCore::EntityID>& InOthers, uint32_t InOffset, uint32_t InSize);
 
     // === History ============================================================
     // Undo/redo for the EDITED World (EditorHistory.h). Every change made
