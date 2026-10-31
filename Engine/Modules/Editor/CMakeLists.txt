@@ -244,6 +244,10 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/Content/TextureViewerWindow.h
         Source/Private/Editor/Content/ImportWizard.cpp
         Source/Private/Editor/Content/ImportWizard.h
+        Source/Private/Editor/Project/NewPluginDialog.cpp
+        Source/Private/Editor/Project/NewPluginDialog.h
+        Source/Private/Editor/Project/PluginsPage.cpp
+        Source/Private/Editor/Project/PluginsPage.h
         Source/Private/Editor/Project/NewProjectWizard.cpp
         Source/Private/Editor/Project/NewProjectWizard.h
 )
@@ -258,6 +262,8 @@ list(APPEND NIMBLE_EDITOR_SOURCES ${NIMBLE_EDITOR_GIT_SOURCES})
 
 # File > New Project's generator. Widget-free, so the project tests build it alone.
 set(NIMBLE_EDITOR_PROJECT_SOURCES
+        Source/Private/Editor/Project/PluginTemplate.cpp
+        Source/Private/Editor/Project/PluginTemplate.h
         Source/Private/Editor/Project/ProjectTemplate.cpp
         Source/Private/Editor/Project/ProjectTemplate.h
 )
@@ -554,9 +560,12 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     # And Engine/Binaries/NewProject.cmake, the same without the editor: its
     # output must match file for file.
     get_filename_component(NM_EDITOR_NEW_PROJECT_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/../../Binaries/NewProject.cmake" ABSOLUTE)
+    # And NewPlugin.cmake, File > New Plugin's twin, the same way.
+    get_filename_component(NM_EDITOR_NEW_PLUGIN_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/../../Binaries/NewPlugin.cmake" ABSOLUTE)
     target_compile_definitions(NimbleEditorProjectTests PRIVATE
             "NIMBLEEDITOR_CMAKE_COMMAND=\"${CMAKE_COMMAND}\""
-            "NIMBLEEDITOR_NEW_PROJECT_SCRIPT=\"${NM_EDITOR_NEW_PROJECT_SCRIPT}\"")
+            "NIMBLEEDITOR_NEW_PROJECT_SCRIPT=\"${NM_EDITOR_NEW_PROJECT_SCRIPT}\""
+            "NIMBLEEDITOR_NEW_PLUGIN_SCRIPT=\"${NM_EDITOR_NEW_PLUGIN_SCRIPT}\"")
     add_dependencies(NimbleEditorProjectTests NimbleEditor)
     add_test(NAME Editor.Project COMMAND NimbleEditorProjectTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorProjectTests>")

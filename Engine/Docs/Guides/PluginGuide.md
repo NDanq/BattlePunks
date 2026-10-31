@@ -14,16 +14,17 @@ pass). For how the plugin system works inside, read
 
 1. [What a plugin is](#1-what-a-plugin-is)
 2. [Walkthrough: Spinner in seven steps](#2-walkthrough-spinner-in-seven-steps)
-3. [The descriptor](#3-the-descriptor)
-4. [Writing the module](#4-writing-the-module)
-5. [Content and config](#5-content-and-config)
-6. [Shaders and render passes](#6-shaders-and-render-passes)
-7. [Integrating a plugin into a game](#7-integrating-a-plugin-into-a-game)
-8. [Sharing a plugin between projects](#8-sharing-a-plugin-between-projects)
-9. [Testing](#9-testing)
-10. [Troubleshooting](#10-troubleshooting)
-11. [Checklist](#11-checklist)
-12. [What plugins can't do yet](#12-what-plugins-cant-do-yet)
+3. [Doing it in the editor](#3-doing-it-in-the-editor)
+4. [The descriptor](#4-the-descriptor)
+5. [Writing the module](#5-writing-the-module)
+6. [Content and config](#6-content-and-config)
+7. [Shaders and render passes](#7-shaders-and-render-passes)
+8. [Integrating a plugin into a game](#8-integrating-a-plugin-into-a-game)
+9. [Sharing a plugin between projects](#9-sharing-a-plugin-between-projects)
+10. [Testing](#10-testing)
+11. [Troubleshooting](#11-troubleshooting)
+12. [Checklist](#12-checklist)
+13. [What plugins can't do yet](#13-what-plugins-cant-do-yet)
 
 ---
 
@@ -73,6 +74,10 @@ compiler and settings, so the C++ ABI always matches. There are no prebuilt
 plugin binaries.
 
 ## 2. Walkthrough: Spinner in seven steps
+
+> **The quick way:** File > New Plugin, with the **Component** starter, makes
+> the same pieces, already named and wired up (§3). This walkthrough shows
+> what each piece is.
 
 Spinner makes an entity turn. It lives in WorldsLab's own folder,
 [`Games/WorldsLab/Plugins/Spinner`](../../../Games/WorldsLab/Plugins/Spinner),
@@ -252,7 +257,109 @@ The **Spinner** component now appears in the editor's Add Component picker
 under Gameplay, and the `Spinner` library in Lua and the script graph
 palette.
 
-## 3. The descriptor
+## 3. Doing it in the editor
+
+### Project Settings > Plugins
+
+Edit > Project Settings > **Plugins** lists every plugin in the build's
+search folders, enabled or not:
+
+![Project Settings > Plugins: every plugin found, its status and details](Images/Plugins/plugins_page.jpg)
+
+| Column | |
+|---|---|
+| On | Enabled in `[Plugins]` (or by its descriptor's default). Bold names have changes not applied yet. |
+| Location | **Project**, **Engine** or **Shared** (a `NIMBLE_PLUGIN_DIRS` folder). The tooltip gives the path. |
+| Status | **Loaded**; **Enabled: build and restart to load**; **Disabled: build and restart to remove**; **Built, not started** (the tooltip says why); **Error** (a bad descriptor); plus **shaders not cooked** where that applies. |
+
+**The details pane** shows the plugin's folder (click it to open it), its
+modules and their types, what it needs (a ✓ or ✗ for each), and its content
+and shaders.
+
+**Above the table** is what the next configure would make of the plugins,
+before one runs: **The next build will stop: ...** with the same message
+CMake would give. The page reads descriptors with `PluginCatalog`, the C++
+copy of `NimblePlugins.cmake`'s rules, and a test holds the two to the same
+cases.
+
+**Switching a plugin:**
+- **Enabling** one that needs others offers to enable them too, all the way
+  down the dependency chain.
+- **Disabling** one that others need offers to disable those too. A level
+  that uses a disabled plugin's components loads without them (the log names
+  each), and saving it in the editor drops them.
+- **OK or Apply** writes `[Plugins]`, then asks **Build now?** That runs
+  Build > Compile Source, which builds every enabled plugin with the game.
+  When it's done, a notification offers **Restart**, because plugins load
+  only when the editor starts.
+- **Until you restart,** the status bar shows **Plugins: rebuild and
+  restart**. Click it to come back to this page.
+
+**Rebuilding while the editor runs:** the editor loads each plugin from a
+shadow copy under `Plugins/.Shadow/`, so Compile Source can replace a
+plugin's library while it's loaded. Windows locks a loaded DLL, so without
+the copy the build would fail.
+
+### New Plugin
+
+File > **New Plugin...**, or the page's **New Plugin...** button:
+
+![New Plugin: one name, a starter, and the files it will write](Images/Plugins/new_plugin_dialog.jpg)
+
+| Starter | Makes |
+|---|---|
+| **Empty** | a runtime module and its `IPlugin`, starting and stopping; add what you need |
+| **Component** | a component (saved, scripted, in Details), its system on every level, a script library and a config default, as in Spinner |
+| **Render Pass** | a custom render pass on every level and its shader, as in TimeOfDay's sky; it starts as a sepia tint |
+
+Options: a **test** (on by default), a **Content folder**, and an
+**Editor-only module**.
+
+**What it guarantees** is what goes wrong by hand (§11). The folder, the
+descriptor, the `[Module_X]` section, the CMake target, the generated
+`X_API.h` export header, `NIMBLE_IMPLEMENT_PLUGIN`, the script library and
+the plugin-prefixed shader name all come from the **one name**. The name is
+checked as you type: the descriptor's rule, plus every plugin, engine module
+and game module name already in use. The **It will write** list comes from a
+dry run of the real generator.
+
+**Create** makes the plugin and lists it on the page, checked. **OK** enables
+it, and the build-and-restart offer follows.
+
+### Without the editor
+
+`Engine/Binaries/NewPlugin.cmake` makes the same plugin, byte for byte (a
+test compares the two):
+
+```bash
+cmake -DNAME=Weather -DPROJECT=Games/WorldsLab -DSTARTER=Component -P Engine/Binaries/NewPlugin.cmake
+```
+
+- `-DPROJECT=<game>` puts it in `<game>/Plugins` and enables it in that game's
+  `[Plugins]`.
+- `-DLOCATION=<folder>` puts it anywhere, `Engine/Plugins` say, and enables
+  nothing.
+- Also: `-DCATEGORY=`, `-DDESCRIPTION=`, `-DTEST=OFF`, `-DEDITOR=ON` and
+  `-DCONTENT=ON`.
+
+### From the editor's console
+
+| Command | |
+|---|---|
+| `plugins` | every plugin found: enabled, built, loaded, and anything that would stop the next build |
+| `plugin.new <Name> [Empty\|Component\|RenderPass] [project\|engine]` | make one without the dialog; a project plugin is enabled in `[Plugins]` too |
+| `plugin.newdialog [Name] [Starter]` | the dialog, filled in |
+| `dialogshot [-close] <file.png>` | the dialog in front, as an image (how this guide's shots were taken) |
+
+### The starters stay compilable
+
+The starters live in [`Engine/Templates/Plugin`](../../Templates/Plugin); its
+README lists the tokens and options. Configure with
+`-DNIMBLE_CHECK_PLUGIN_TEMPLATES=ON` to make every starter (every option on)
+in the build tree, build it, and add its test under `ctest -L template`.
+These check plugins are never in the manifest, so no game loads them.
+
+## 4. The descriptor
 
 | Key | |
 |---|---|
@@ -268,14 +375,14 @@ palette.
 | Module type | Built in | Use it for |
 |---|---|---|
 | `Runtime` | every target | components, systems, scripts |
-| `Editor` | Editor builds only (`WITH_EDITOR=1`) | editor-only code (there are no editor hooks yet, §12) |
+| `Editor` | Editor builds only (`WITH_EDITOR=1`) | editor-only code (there are no editor hooks yet, §13) |
 | `ClientOnly` | Editor and Client | cosmetics a dedicated server never needs |
 | `ServerOnly` | Editor and Server | authority-only logic |
 
 A module that its Type excludes isn't created at all. Code that might link it
 must check `if(TARGET <Module>)`.
 
-## 4. Writing the module
+## 5. Writing the module
 
 ### What registers itself, and what needs OnStartup
 
@@ -285,7 +392,7 @@ must check `if(TARGET <Module>)`.
 | Script library (Lua global + graph nodes) | `GAMECORE_DEFINE_SCRIPT_LIBRARY` | as the library loads |
 | Config var | `NIMBLE_CONFIG_*` | as the library loads; it takes the value the config files already set |
 | A system on each level's World | `PluginContext::AddWorldHook` in `OnStartup` | each level load, after the engine's own systems, before the level's `OnLoad` |
-| A custom render pass | `RegisterCustomRenderPass` inside a world hook | the same (TimeOfDay's sky, §6) |
+| A custom render pass | `RegisterCustomRenderPass` inside a world hook | the same (TimeOfDay's sky, §7) |
 
 `OnStartup` returns `false` to refuse to start. Anything it registered by
 hand must be undone in `OnShutdown`. World hooks are removed for you.
@@ -305,7 +412,7 @@ hand must be undone in `OnShutdown`. World hooks are removed for you.
 - **Read your own files** with `PluginContext::ReadPluginFile("Config/...")`.
   Read your content through the asset provider, as `Name:/...`.
 
-## 5. Content and config
+## 6. Content and config
 
 ### Content is strict
 
@@ -340,7 +447,7 @@ From lowest to highest priority: the var's C++ default, then the plugin's
 `Config/Default<Name>.ini`, then the project's `Config/DefaultEngine.ini`,
 then the player's `User.ini`, then the command line (`-Spinner.SpeedScale=4`).
 
-## 6. Shaders and render passes
+## 7. Shaders and render passes
 
 TimeOfDay draws the sky with a custom render pass and its own shader:
 
@@ -388,7 +495,7 @@ NimbleCook: cooking TimeOfDay Runtime (Vulkan) into .../Engine/Plugins/TimeOfDay
 A plugin with shaders that haven't been cooked gets a configure warning
 (`TimeOfDay: shaders not cooked`), and its pass logs a missing shader.
 
-## 7. Integrating a plugin into a game
+## 8. Integrating a plugin into a game
 
 ### In levels: the editor
 
@@ -518,7 +625,7 @@ Paks/Plugins/TimeOfDay.nmpak: pack 'Plugin_TimeOfDay', 4 file(s)
 
 Shader and material sources are never shipped, only the cooked cache.
 
-## 8. Sharing a plugin between projects
+## 9. Sharing a plugin between projects
 
 Choose where the plugin lives:
 
@@ -541,13 +648,14 @@ When two folders have a plugin of the same name, the first one in the search
 order wins, and the configure says so:
 `plugin Beta at .../Project/Plugins/Beta overrides the one in .../Engine/Plugins`.
 
-## 9. Testing
+## 10. Testing
 
 ```bash
 ctest --test-dir Games/WorldsLab/Build/debug -L plugin
 ```
 
 ```
+Plugins.Catalog ...................   Passed
 Plugins.Resolve ...................   Passed
 Plugin.Spinner.SpinnerTests .......   Passed
 Plugin.TimeOfDay.TimeOfDayTests ...   Passed
@@ -566,10 +674,22 @@ manifest and staged files, just as a game sees them. A plugin test usually:
 [`SpinnerTests.cpp`](../../../Games/WorldsLab/Plugins/Spinner/Tests/SpinnerTests.cpp)
 does all four in about 40 lines.
 
-`Plugins.Resolve` tests the build-side rules (descriptors, enabling,
-dependency order and each refusal) without needing any plugin to exist.
+A starter's own test (`Tests/<Name>Tests.cpp`) is simpler: it starts the
+plugin through the entry points `NIMBLE_IMPLEMENT_PLUGIN` exports, without
+a manifest, so it runs the same in the starter check as in your project.
 
-## 10. Troubleshooting
+The plugin system has tests of its own:
+
+- **`Plugins.Resolve`** tests the build-side rules (descriptors, enabling,
+  dependency order and each refusal) without needing any plugin to exist.
+- **`Plugins.Catalog`** runs the same cases against the editor's C++ copy of
+  those rules, and tests the shadow copies.
+- **`Editor.Project`** checks that the editor's New Plugin and
+  `NewPlugin.cmake` write the same files, byte for byte, for every starter.
+- **`ctest -L template`**, with `NIMBLE_CHECK_PLUGIN_TEMPLATES=ON`, builds and
+  tests every starter.
+
+## 11. Troubleshooting
 
 | You see | Because | Do |
 |---|---|---|
@@ -579,6 +699,8 @@ dependency order and each refusal) without needing any plugin to exist.
 | `depends on Y, which is in none of: ...` | Y wasn't found | add it to a search folder, or `NIMBLE_PLUGIN_DIRS` |
 | `Plugin dependency cycle: A -> B -> A` | the plugins depend on each other | break the cycle; split the shared part out |
 | `module X is not declared in P.nmplugin` | a `nimble_add_plugin_module` target has no section | add `[Module_X] Type=...` |
+| `a target named X already exists` | a module named like an engine module, a game or another plugin's | rename it (New Plugin refuses such names) |
+| **Plugins: rebuild and restart** in the status bar | `[Plugins]` changed since this build | Build > Compile Source, then restart |
 | `[Plugins] X=true, but this build was configured without it` | config edited since the build | rebuild; the configure reruns by itself |
 | `'X:/...' names plugin X, which is not enabled` | content asked for by a disabled or missing plugin | enable it, or fix the path |
 | `X: shaders not cooked` (configure) | no cook since adding shaders | `NimbleCook shaders -project <game>` |
@@ -587,7 +709,7 @@ dependency order and each refusal) without needing any plugin to exist.
 | a component reads `Time Of Day` but nothing ticks | `OnStartup` didn't add the world hook, or the plugin was refused | check the log for `[Plugins]` lines |
 | **Windows:** `LNK2019` on a plugin function | missing `<MODULE>_API` | add it (msvc-compat, rule 1) |
 
-## 11. Checklist
+## 12. Checklist
 
 Before committing or sharing a plugin:
 
@@ -602,14 +724,13 @@ Before committing or sharing a plugin:
       hidden-visibility build for new exported APIs (msvc-compat skill).
 - [ ] It works in a project with the plugin turned off (`if(TARGET ...)` guards).
 
-## 12. What plugins can't do yet
+## 13. What plugins can't do yet
 
 - **No editor extension points.** An `Editor` module builds and loads, but
   there are no menus, panels, Details customizations or importers to
   register into.
 - **No plugin asset kinds.** The Details asset pickers are a fixed list, so a
   plugin's own file types (TimeOfDay's `.todpreset`) are edited as text.
-- **No Project Settings page.** Edit `[Plugins]` by hand.
 - **No hot reload** for plugins; restart the game or editor after rebuilding.
 - **No world hooks for the editor's own (non-playing) World.** Plugin systems
   run in games and in Play mode only, so TimeOfDay's sky doesn't show while

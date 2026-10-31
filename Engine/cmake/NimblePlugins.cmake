@@ -76,6 +76,13 @@
 # run it in script mode.
 # ===========================================================================
 
+include("${CMAKE_CURRENT_LIST_DIR}/NimblePluginTemplate.cmake")
+
+# Every starter in Engine/Templates/Plugin made into a plugin in the build
+# tree, built and its test run, so a starter that no longer compiles is
+# caught. Check-only: never in the manifest, never loaded by a game.
+option(NIMBLE_CHECK_PLUGIN_TEMPLATES "Build and test every plugin starter (Engine/Templates/Plugin)" OFF)
+
 # ---------------------------------------------------------------------------
 # _nimble_ini_read(<File> <OutPrefix>)
 #   Every [Section] Key=Value of <File> as <OutPrefix>_<section>_<key> (both
@@ -200,6 +207,7 @@ endfunction()
 #     DIRS           <search roots, first wins...>
 #     CONFIG         <project .ini, may be empty>
 #     ENGINE_VERSION <x.y>
+#     [ENABLE        <names...>]      enabled whatever the config says
 #     OUT_ORDER      <var>)
 #
 #   Finds every <root>/<Name>/<Name>.nmplugin, decides which are enabled,
@@ -208,7 +216,7 @@ endfunction()
 #   NIMBLE_PLUGINS_FOUND (every plugin found, enabled or not).
 # ---------------------------------------------------------------------------
 function(nimble_plugins_resolve)
-    cmake_parse_arguments(NM "" "CONFIG;ENGINE_VERSION;OUT_ORDER" "DIRS" ${ARGN})
+    cmake_parse_arguments(NM "" "CONFIG;ENGINE_VERSION;OUT_ORDER" "DIRS;ENABLE" ${ARGN})
 
     # Discovery: the first root that has a name keeps it.
     set(NM_FOUND "")
@@ -249,7 +257,7 @@ function(nimble_plugins_resolve)
                 message(WARNING "${NM_CONFIG}: [Plugins] ${NM_NAME}=${NM_VALUE} is not true or false; ignored")
             endif()
         endif()
-        if(NM_ON)
+        if(NM_ON OR NM_NAME IN_LIST NM_ENABLE)
             list(APPEND NM_ENABLED "${NM_NAME}")
         endif()
     endforeach()
@@ -397,6 +405,11 @@ function(nimble_add_plugin_module NM_TARGET)
         return()
     endif()
 
+    if(TARGET ${NM_TARGET})
+        message(FATAL_ERROR "${NIMBLE_PLUGIN_NAME}: a target named ${NM_TARGET} already exists (an engine module, a game "
+                            "or another plugin's) -- rename the module, its [Module_] section and its Source/ folder")
+    endif()
+
     string(TOUPPER "${NM_TARGET}" NM_PREFIX)
     nimble_add_module(${NM_TARGET} SHARED
             PREFIX       ${NM_PREFIX}
@@ -452,13 +465,23 @@ function(nimble_add_plugin_module NM_TARGET)
     set_target_properties(${NM_TARGET} PROPERTIES
             PREFIX ""
             FOLDER "Plugins/${NIMBLE_PLUGIN_NAME}")
+    if(MSVC)
+        # The editor loads a shadow copy (Plugin.h, SetShadowCopyDir) so a
+        # build can replace the library while it runs; the PDB's file name
+        # only, so the copy's symbols come from the PDB copied beside it and
+        # the original is never locked either (as nimble_add_hot_module).
+        target_link_options(${NM_TARGET} PRIVATE /PDBALTPATH:%_PDB%)
+    endif()
 
     set_property(GLOBAL APPEND PROPERTY NIMBLE_PLUGIN_${NIMBLE_PLUGIN_NAME}_BUILT_MODULES ${NM_TARGET})
     # Loaded, not necessarily linked: every launcher (_nimble_add_launcher)
-    # and the editor build it first.
-    set_property(GLOBAL APPEND PROPERTY NIMBLE_PLUGIN_MODULE_TARGETS ${NM_TARGET})
-    if(TARGET NimbleEditor)
-        add_dependencies(NimbleEditor ${NM_TARGET})
+    # and the editor build it first. A template check's never is.
+    get_property(NM_CHECK_ONLY GLOBAL PROPERTY NIMBLE_PLUGIN_${NIMBLE_PLUGIN_NAME}_CHECK_ONLY)
+    if(NOT NM_CHECK_ONLY)
+        set_property(GLOBAL APPEND PROPERTY NIMBLE_PLUGIN_MODULE_TARGETS ${NM_TARGET})
+        if(TARGET NimbleEditor)
+            add_dependencies(NimbleEditor ${NM_TARGET})
+        endif()
     endif()
     if(TARGET NimblePlugin${NIMBLE_PLUGIN_NAME}Stage)
         add_dependencies(${NM_TARGET} NimblePlugin${NIMBLE_PLUGIN_NAME}Stage)
@@ -484,7 +507,12 @@ function(nimble_add_plugin_test NM_TARGET)
             FOLDER "Plugins/${NIMBLE_PLUGIN_NAME}")
     add_test(NAME Plugin.${NIMBLE_PLUGIN_NAME}.${NM_TARGET} COMMAND ${NM_TARGET}
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:${NM_TARGET}>")
-    set_tests_properties(Plugin.${NIMBLE_PLUGIN_NAME}.${NM_TARGET} PROPERTIES TIMEOUT 120 LABELS "plugin;smoke")
+    get_property(NM_CHECK_ONLY GLOBAL PROPERTY NIMBLE_PLUGIN_${NIMBLE_PLUGIN_NAME}_CHECK_ONLY)
+    if(NM_CHECK_ONLY)
+        set_tests_properties(Plugin.${NIMBLE_PLUGIN_NAME}.${NM_TARGET} PROPERTIES TIMEOUT 120 LABELS "plugin;template")
+    else()
+        set_tests_properties(Plugin.${NIMBLE_PLUGIN_NAME}.${NM_TARGET} PROPERTIES TIMEOUT 120 LABELS "plugin;smoke")
+    endif()
 endfunction()
 
 # ---------------------------------------------------------------------------
@@ -600,10 +628,34 @@ function(nimble_add_plugins)
         endif()
     endforeach()
 
+    set(NM_SEARCH_DIRS ${NM_DIRS})   # what the manifest records: never the checks' folder
+    set(NM_CHECKS "")
+    if(NIMBLE_CHECK_PLUGIN_TEMPLATES)
+        set(NM_CHECK_ROOT "${CMAKE_BINARY_DIR}/PluginTemplateCheck")
+        set(NM_TEMPLATE_DIR "${PROJECT_SOURCE_DIR}/Templates/Plugin")
+        file(GLOB_RECURSE NM_TEMPLATE_FILES CONFIGURE_DEPENDS "${NM_TEMPLATE_DIR}/*")
+        file(GLOB NM_STARTERS LIST_DIRECTORIES true "${NM_TEMPLATE_DIR}/*")
+        foreach(NM_STARTER IN LISTS NM_STARTERS)
+            get_filename_component(NM_STARTER "${NM_STARTER}" NAME)
+            if(NOT IS_DIRECTORY "${NM_TEMPLATE_DIR}/${NM_STARTER}" OR NM_STARTER STREQUAL "Common")
+                continue()
+            endif()
+            # Every option on: the most of each starter compiled.
+            nimble_create_plugin(TEMPLATE_DIR "${NM_TEMPLATE_DIR}" STARTER ${NM_STARTER} DEST "${NM_CHECK_ROOT}"
+                                 NAME Check${NM_STARTER} ENGINE_VERSION "${PROJECT_VERSION}"
+                                 DESCRIPTION "The ${NM_STARTER} starter, checked" TEST EDITOR CONTENT UPDATE)
+            list(APPEND NM_CHECKS Check${NM_STARTER})
+            set_property(GLOBAL PROPERTY NIMBLE_PLUGIN_Check${NM_STARTER}_CHECK_ONLY ON)
+        endforeach()
+        list(APPEND NM_DIRS "${NM_CHECK_ROOT}")
+        message(STATUS "NimbleEngine: checking the plugin starters: ${NM_CHECKS} (NIMBLE_CHECK_PLUGIN_TEMPLATES)")
+    endif()
+
     nimble_plugins_resolve(
             DIRS           ${NM_DIRS}
             CONFIG         "${NIMBLE_PROJECT_CONFIG}"
             ENGINE_VERSION "${PROJECT_VERSION}"
+            ENABLE         ${NM_CHECKS}
             OUT_ORDER      NM_ORDER)
     set_property(GLOBAL PROPERTY NIMBLE_PLUGINS_ENABLED "${NM_ORDER}")
 
@@ -615,18 +667,27 @@ function(nimble_add_plugins)
 
     set(NIMBLE_PLUGIN_TESTS ${NM_TESTS_ENABLED})
     set(NM_MANIFEST "; Generated by Engine/cmake/NimblePlugins.cmake -- the enabled plugins, in load order.\n")
+    # Where they were looked for, for the tools that list every plugin (the
+    # editor's Project Settings > Plugins). Source paths: never in Shipping.
+    string(REPLACE ";" "|" NM_ROOTS "${NM_SEARCH_DIRS}")
+    string(APPEND NM_MANIFEST "$<$<NOT:$<CONFIG:Shipping>>:\n[Search]\nRoots=${NM_ROOTS}\nEngineVersion=${PROJECT_VERSION}\n>")
     foreach(NM_NAME IN LISTS NM_ORDER)
         get_property(NM_DIR GLOBAL PROPERTY NIMBLE_PLUGIN_${NM_NAME}_DIR)
         get_property(NM_VERSION GLOBAL PROPERTY NIMBLE_PLUGIN_${NM_NAME}_VERSION)
-        message(STATUS "NimbleEngine: plugin ${NM_NAME} ${NM_VERSION} (${NM_DIR})")
-
-        _nimble_stage_plugin(${NM_NAME} "${NM_DIR}" "${NM_RT_DIR}")
+        get_property(NM_CHECK_ONLY GLOBAL PROPERTY NIMBLE_PLUGIN_${NM_NAME}_CHECK_ONLY)
+        if(NOT NM_CHECK_ONLY)
+            message(STATUS "NimbleEngine: plugin ${NM_NAME} ${NM_VERSION} (${NM_DIR})")
+            _nimble_stage_plugin(${NM_NAME} "${NM_DIR}" "${NM_RT_DIR}")
+        endif()
         set(NIMBLE_PLUGIN_NAME "${NM_NAME}")
         set(NIMBLE_PLUGIN_DIR  "${NM_DIR}")
         if(EXISTS "${NM_DIR}/CMakeLists.txt")
             add_subdirectory("${NM_DIR}" "${CMAKE_BINARY_DIR}/Plugins/${NM_NAME}")
         endif()
 
+        if(NM_CHECK_ONLY)
+            continue()   # built and tested, never loaded
+        endif()
         get_property(NM_BUILT GLOBAL PROPERTY NIMBLE_PLUGIN_${NM_NAME}_BUILT_MODULES)
         set(NM_FILES "")
         foreach(NM_MODULE IN LISTS NM_BUILT)

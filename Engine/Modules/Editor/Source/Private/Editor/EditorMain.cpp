@@ -187,7 +187,10 @@ int main(int argc, char* argv[])
     NimbleEngine::StartAudio();
 
     /* Their components and scripts registered before the editor lists
-     * either, and before the game module, which may link them. */
+     * either, and before the game module, which may link them. From shadow
+     * copies, so Compile Source can rebuild them while the editor runs
+     * (Windows locks a loaded DLL). */
+    NimbleEngine::Plugins::SetShadowCopyDir(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("Plugins/.Shadow")).toStdString());
     NimbleEngine::Plugins::LoadModules();
 
     int Result = 0;

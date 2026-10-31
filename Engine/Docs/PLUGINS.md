@@ -212,6 +212,30 @@ the project's file, then the user's settings, then the command line. A
   build's real manifest. It covers config layering, strict prefixes, startup,
   world hooks and shutdown, then TimeOfDay itself.
 
+## In the editor
+
+- **Project Settings > Plugins** lists every plugin in the search folders,
+  enabled or not, with its version, location, status (loaded, needs a
+  rebuild, error) and details. Its checkboxes edit `[Plugins]`, offering to
+  enable what a plugin needs, or disable what needs it. Saving offers to
+  build, and when the build is done, to restart the editor.
+- **New Plugin** (File menu, or the page's button) makes a plugin from a
+  starter in [`Engine/Templates/Plugin`](../Templates/Plugin): Empty,
+  Component or Render Pass. Everything is derived from the one name, which is
+  checked as you type. It lists the files it will write before writing them.
+  `Engine/Binaries/NewPlugin.cmake` makes the same plugin without the editor.
+- **Rules:** both read descriptors with `PluginCatalog`
+  (`NimbleEngine/PluginCatalog.h`), the C++ copy of this file's rules. A
+  configure that would stop says so on the page first, with the same message.
+- **Shadow copies:** the editor loads each plugin from a copy
+  (`Plugins::SetShadowCopyDir`), so Compile Source can rebuild one while the
+  editor runs. Windows would otherwise refuse to overwrite the loaded DLL.
+- **Status bar:** shows "Plugins: rebuild and restart" while `[Plugins]` and
+  the running build disagree.
+- **Starter check:** configure with `-DNIMBLE_CHECK_PLUGIN_TEMPLATES=ON` to
+  build every starter and run its test (`ctest -L template`), so a starter
+  that has stopped compiling is caught.
+
 ## Not done yet
 
 - **No editor extension points:** no menus, panels, Details customizations or
@@ -219,7 +243,6 @@ the project's file, then the user's settings, then the command line. A
   into.
 - **No plugin asset kinds:** the Details asset pickers (`PF_Asset*`) are a
   fixed list, so a plugin's own file types are edited as plain text.
-- **No Project Settings page:** `[Plugins]` is edited by hand.
 - **No migration of AICore, Sequencer, JoltPhysics, Audio or Collab.** They
   move once TimeOfDay has proven the system. NetCore stays an engine feature
   switch, because `WITH_NETCORE` changes GameCore's layouts.

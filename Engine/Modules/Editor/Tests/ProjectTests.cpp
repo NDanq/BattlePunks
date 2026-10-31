@@ -15,6 +15,7 @@
 #include <QTemporaryDir>
 
 #include "Private/Editor/ConfigIniFile.h"
+#include "Private/Editor/Project/PluginTemplate.h"
 #include "Private/Editor/Project/ProjectTemplate.h"
 
 using namespace EditorProject;
@@ -194,6 +195,107 @@ static void TestScriptMatchesEditor(const QDir& InRoot)
     Expect(ListFiles(ScriptParent).size() == Files.size(), "and writes nothing");
 }
 
+/* File > New Plugin: every starter, made by the editor and by
+ * Engine/Binaries/NewPlugin.cmake, must come out byte for byte the same. */
+static void TestPluginTemplates(const QDir& InRoot)
+{
+    std::printf("[plugin templates]\n");
+    const QString Template = EditorPlugins::GetPluginTemplateDir();
+    const QString Engine   = GetEngineDir();
+    const QString Version  = EditorPlugins::ReadEngineVersion(Engine);
+    Expect(!Template.isEmpty(), "the plugin template is found");
+    Expect(!Version.isEmpty(), "the engine's version is read");
+    const QStringList Starters = EditorPlugins::GetStarters(Template);
+    Expect(Starters.contains(QStringLiteral("Empty")) && Starters.contains(QStringLiteral("Component"))
+           && Starters.contains(QStringLiteral("RenderPass")) && !Starters.contains(QStringLiteral("Common")), "the three starters, not Common");
+
+    struct Case { const char* Name; const char* Starter; bool bAll; };
+    const Case Cases[] = { { "PlainEmpty", "Empty", false }, { "FullEmpty", "Empty", true },
+                           { "PlainComponent", "Component", false }, { "FullComponent", "Component", true },
+                           { "FullRenderPass", "RenderPass", true } };
+    const QString EditorParent = InRoot.filePath(QStringLiteral("PluginsEditor"));
+    const QString ScriptParent = InRoot.filePath(QStringLiteral("PluginsScript"));
+    for(const Case& Each : Cases)
+    {
+        EditorPlugins::NewPluginOptions Options;
+        Options.Name          = QString::fromLatin1(Each.Name);
+        Options.Starter       = QString::fromLatin1(Each.Starter);
+        Options.Category      = Each.bAll ? QStringLiteral("World Building") : QString();
+        Options.Description   = Each.bAll ? QStringLiteral("Line one\nline two") : QString();
+        Options.EngineVersion = Version;
+        Options.bTest = Options.bEditor = Options.bContent = Each.bAll;
+        QString PluginDir, Error;
+        QStringList Files;
+        const bool bMade = EditorPlugins::CreatePlugin(Template, EditorParent, Options, {}, PluginDir, Error, &Files);
+        if(!bMade) { std::printf("  %s\n", qPrintable(Error)); }
+        Expect(bMade, "the editor makes the plugin");
+
+        QStringList Args = { QStringLiteral("-DNAME=") + Options.Name, QStringLiteral("-DLOCATION=") + ScriptParent,
+                             QStringLiteral("-DSTARTER=") + Options.Starter };
+        Args << (Each.bAll ? QStringList{ QStringLiteral("-DTEST=ON"), QStringLiteral("-DEDITOR=ON"), QStringLiteral("-DCONTENT=ON"),
+                                          QStringLiteral("-DCATEGORY=World Building"), QStringLiteral("-DDESCRIPTION=Line one\nline two") }
+                           : QStringList{ QStringLiteral("-DTEST=OFF") });
+        Args << QStringLiteral("-P") << QStringLiteral(NIMBLEEDITOR_NEW_PLUGIN_SCRIPT);
+        QProcess Script;
+        Script.setProcessChannelMode(QProcess::MergedChannels);
+        Script.start(QStringLiteral(NIMBLEEDITOR_CMAKE_COMMAND), Args);
+        const bool bRan = Script.waitForFinished(60000) && Script.exitStatus() == QProcess::NormalExit && Script.exitCode() == 0;
+        if(!bRan) { std::printf("%s\n", Script.readAll().constData()); }
+        Expect(bRan, "NewPlugin.cmake makes it too");
+
+        const QString Mine   = QDir(EditorParent).filePath(Options.Name);
+        const QString Theirs = QDir(ScriptParent).filePath(Options.Name);
+        const QStringList List = ListFiles(Mine);
+        Expect(!List.isEmpty() && List == ListFiles(Theirs), "the same files");
+        bool bSame = true;
+        for(const QString& File : List)
+        {
+            if(ReadBytes(QDir(Mine).filePath(File)) != ReadBytes(QDir(Theirs).filePath(File)))
+            {
+                bSame = false;
+                std::printf("  differs: %s/%s\n", Each.Name, qPrintable(File));
+            }
+        }
+        Expect(bSame, "byte for byte");
+        Expect(!ReadText(QDir(Mine).filePath(Options.Name + QStringLiteral(".nmplugin"))).contains(QLatin1Char('@')),
+               "no token or marker is left in the descriptor");
+        Expect(List.contains(QStringLiteral("Tests/") + Options.Name + QStringLiteral("Tests.cpp")) == Each.bAll, "Tests/ only with a test");
+        Expect(List.contains(QStringLiteral("Source/") + Options.Name + QStringLiteral("Editor/Private/") + Options.Name
+                             + QStringLiteral("Editor/") + Options.Name + QStringLiteral("EditorPlugin.cpp")) == Each.bAll,
+               "the Editor module only when asked");
+    }
+
+    QString PluginDir, Error;
+    EditorPlugins::NewPluginOptions Bad;
+    Bad.EngineVersion = Version;
+    Bad.Name = QStringLiteral("Q");
+    Expect(!EditorPlugins::CreatePlugin(Template, EditorParent, Bad, {}, PluginDir, Error), "a one-letter name is refused");
+    Bad.Name = QStringLiteral("Has Space");
+    Expect(!EditorPlugins::CreatePlugin(Template, EditorParent, Bad, {}, PluginDir, Error), "a space is refused");
+    Bad.Name = QStringLiteral("audio");
+    Expect(!EditorPlugins::CreatePlugin(Template, EditorParent, Bad, EditorPlugins::GetReservedNames(Engine), PluginDir, Error),
+           "an engine module's name is refused, in any case");
+    Bad.Name = QStringLiteral("FullComponent");
+    Expect(!EditorPlugins::CreatePlugin(Template, EditorParent, Bad, {}, PluginDir, Error) && Error.contains(QStringLiteral("exists")),
+           "an existing folder is refused");
+    Bad.Name = QStringLiteral("Fine");
+    Bad.Category = QStringLiteral("Bad/Category");
+    Expect(!EditorPlugins::CreatePlugin(Template, EditorParent, Bad, {}, PluginDir, Error), "a category with symbols is refused");
+    Expect(!QFileInfo::exists(QDir(EditorParent).filePath(QStringLiteral("Fine"))), "and nothing is left behind");
+
+    /* SetPluginEnabled: the line, the rest of the file as it was. */
+    const QString Config = InRoot.filePath(QStringLiteral("Plugins.ini"));
+    {
+        QFile Out(Config);
+        Out.open(QIODevice::WriteOnly);
+        Out.write("; keep me\n[Game]\nModule=X\n");
+    }
+    Expect(EditorPlugins::SetPluginEnabled(Config, QStringLiteral("Weather"), true, Error), "a plugin is enabled");
+    const QString Text = ReadText(Config);
+    Expect(Text.startsWith(QStringLiteral("; keep me\n[Game]\nModule=X\n")) && Text.contains(QStringLiteral("[Plugins]"))
+           && Text.contains(QStringLiteral("Weather=true")), "as [Plugins] Weather=true, the file kept");
+}
+
 /* Project Settings > Worlds rewrites the [World_*] sections as a list. */
 static void TestWorldSections(const QDir& InRoot)
 {
@@ -249,6 +351,7 @@ int main(int argc, char** argv)
     TestEngineDir();
     TestCreate(Root);
     TestScriptMatchesEditor(Root);
+    TestPluginTemplates(Root);
     TestWorldSections(Root);
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);

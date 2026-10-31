@@ -27,6 +27,7 @@ class QAction;
 class QMenu;
 class QProcess;
 class QLabel;
+class QToolButton;
 class SDLInputProbe;
 class SourceBuild;
 class EditorCollabSession;
@@ -59,6 +60,18 @@ public:
 
     /* Console commands to run once the renderer is up (after --play). */
     void SetStartupCommands(const QStringList& InCommands) { StartupCommands = InCommands; }
+
+    /* Plugins (Project Settings > Plugins): Compile Source, which builds the
+     * enabled plugins with the game, and when it succeeds a notification
+     * offering RestartEditor -- plugins load only at startup. */
+    void RebuildForPlugins();
+    /* Asks to save the level, then starts this editor again on it and closes. */
+    void RestartEditor();
+    /* Project Settings at Plugins; bInNewPlugin opens New Plugin over it. */
+    void OpenPluginSettings(bool bInNewPlugin = false, const QString& InName = QString(), const QString& InStarter = QString());
+    /* The status bar's "Plugins: rebuild" notice, shown while [Plugins] and
+     * this build disagree (NimbleEngine::Plugins::GetConfigMismatches). */
+    void UpdatePluginNotice();
 
 protected:
     void showEvent(QShowEvent* InEvent) override;
@@ -147,6 +160,9 @@ private:
     QLabel*         DetailLabel = nullptr;   // the world's detail tier, and where it comes from
     QLabel*         StatsLabel = nullptr;
     QLabel*         PlayLabel  = nullptr;
+    QToolButton*    PluginNotice = nullptr;
+    bool            bOfferPluginRestart = false;
+    bool            bRestartOnClose     = false;   // RestartEditor: start again once the close goes through
     QLabel*         BakeLabel  = nullptr;   // "Lighting needs to be rebuilt"
 
     /* EditorNotifications on screen (NotificationWidgets.h). */

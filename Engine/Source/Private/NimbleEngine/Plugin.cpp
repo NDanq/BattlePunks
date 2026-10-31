@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <filesystem>
 #include <mutex>
 #include <set>
@@ -47,6 +48,7 @@ namespace NimbleEngine
             std::string                                SourceDir;
             std::vector<std::string>                   ModuleFiles;
             bool                                       bShaders = false;
+            std::string                                Problem;   // why a library did not start
             std::shared_ptr<EngineCore::IFileProvider> Files;     // the plugin folder: descriptor, Config/, Content/
             std::unique_ptr<PluginContext>             Context;
             std::vector<LoadedLibrary>                 Libraries;
@@ -61,6 +63,9 @@ namespace NimbleEngine
         struct PluginHostState
         {
             std::string                  RuntimeDir;
+            std::vector<std::string>     SearchRoots;
+            std::string                  BuiltEngineVersion;
+            std::string                  ShadowDir;      // this run's copies, when SetShadowCopyDir asked
             std::vector<PluginRecord>    Records;   // load order
             std::vector<WorldHookRecord> Hooks;     // registration order
             std::vector<std::string>     MountedLayers;
@@ -93,10 +98,11 @@ namespace NimbleEngine
             return !InPath.empty() && std::filesystem::is_directory(std::filesystem::u8path(InPath), Error);
         }
 
-        /* The manifest's [Plugin_<Name>] sections, in file order. */
+        /* The manifest's [Plugin_<Name>] sections, in file order; its [Search] into the host. */
         std::vector<PluginRecord> ParseManifest(const std::string& InText)
         {
             std::vector<PluginRecord> Result;
+            bool bSearch = false;
             size_t Begin = 0;
             while(Begin <= InText.size())
             {
@@ -109,6 +115,7 @@ namespace NimbleEngine
                 if(Line.front() == '[' && Line.back() == ']')
                 {
                     const std::string Section = Line.substr(1, Line.size() - 2);
+                    bSearch = Section == "Search";
                     static const std::string Prefix = "Plugin_";
                     if(Section.compare(0, Prefix.size(), Prefix) == 0 && Section.size() > Prefix.size())
                     {
@@ -118,9 +125,27 @@ namespace NimbleEngine
                     continue;
                 }
                 const size_t Eq = Line.find('=');
-                if(Eq == std::string::npos || Result.empty()) { continue; }
+                if(Eq == std::string::npos) { continue; }
                 const std::string Key   = Trim(Line.substr(0, Eq));
                 const std::string Value = Trim(Line.substr(Eq + 1));
+                if(bSearch)
+                {
+                    if(Key == "EngineVersion") { Host().BuiltEngineVersion = Value; }
+                    if(Key == "Roots")
+                    {
+                        size_t From = 0;
+                        while(From <= Value.size())
+                        {
+                            size_t Bar = Value.find('|', From);
+                            if(Bar == std::string::npos) { Bar = Value.size(); }
+                            const std::string Root = Trim(Value.substr(From, Bar - From));
+                            if(!Root.empty()) { Host().SearchRoots.push_back(Root); }
+                            From = Bar + 1;
+                        }
+                    }
+                    continue;
+                }
+                if(Result.empty()) { continue; }
                 PluginRecord& Record = Result.back();
                 if(Key == "Version")     { Record.Version = Value; }
                 else if(Key == "Source") { Record.SourceDir = Value; }
@@ -259,14 +284,40 @@ namespace NimbleEngine
 
         void StartLibrary(PluginRecord& InRecord, LoadedLibrary& InLibrary, bool& bInOutOk)
         {
-            const std::filesystem::path Path = std::filesystem::absolute(
+            std::filesystem::path Path = std::filesystem::absolute(
                 std::filesystem::u8path(JoinPath(Host().RuntimeDir, InLibrary.File)));
+            if(!Host().ShadowDir.empty())
+            {
+                /* Same file name, another folder: a game module that links it
+                 * finds this copy loaded by name, on every platform. */
+                std::error_code CopyError;
+                const std::filesystem::path Copy = std::filesystem::u8path(Host().ShadowDir) / Path.filename();
+                std::filesystem::create_directories(Copy.parent_path(), CopyError);
+                std::filesystem::copy_file(Path, Copy, std::filesystem::copy_options::overwrite_existing, CopyError);
+                std::filesystem::path Pdb = Path;
+                Pdb.replace_extension(".pdb");
+                if(!CopyError && std::filesystem::exists(Pdb, CopyError))
+                {
+                    std::error_code PdbError;
+                    std::filesystem::copy_file(Pdb, Copy.parent_path() / Pdb.filename(), std::filesystem::copy_options::overwrite_existing, PdbError);
+                }
+                if(CopyError)
+                {
+                    CORE_LOG_WARN("[Plugins] " + InRecord.Name + ": could not shadow-copy " + InLibrary.File + " (" + CopyError.message()
+                                  + "); loading it in place, so a build cannot replace it while this runs")
+                }
+                else
+                {
+                    Path = Copy;
+                }
+            }
             const auto PathU8 = Path.u8string();
             const std::string PathText(PathU8.begin(), PathU8.end());
 
             InLibrary.Handle = EngineCore::appDLLOpen(PathText);
             if(!InLibrary.Handle)
             {
+                InRecord.Problem = "could not open " + InLibrary.File + ": " + EngineCore::appDLLGetLastError();
                 CORE_LOG_ERROR("[Plugins] " + InRecord.Name + ": could not open " + PathText + ": " + EngineCore::appDLLGetLastError())
                 bInOutOk = false;
                 return;
@@ -282,6 +333,7 @@ namespace NimbleEngine
                 EngineCore::appDLLGetSymbol(InLibrary.Handle, PLUGIN_SYMBOL_DESTROY));
             if(!GetVersion || !Create || !InLibrary.Destroy)
             {
+                InRecord.Problem = InLibrary.File + " has no NIMBLE_IMPLEMENT_PLUGIN: it is loaded but not started";
                 CORE_LOG_ERROR("[Plugins] " + InRecord.Name + ": " + InLibrary.File
                                + " has no NIMBLE_IMPLEMENT_PLUGIN; its components and scripts are registered, but it is not started")
                 InLibrary.Destroy = nullptr;
@@ -293,6 +345,7 @@ namespace NimbleEngine
                 CORE_LOG_ERROR("[Plugins] " + InRecord.Name + ": " + InLibrary.File + " was built for plugin ABI "
                                + std::to_string(Version) + ", this build is " + std::to_string(NIMBLE_PLUGIN_ABI_VERSION)
                                + ": rebuild it with this project")
+                InRecord.Problem = InLibrary.File + " was built for another plugin ABI: rebuild it with this project";
                 InLibrary.Destroy = nullptr;
                 bInOutOk = false;
                 return;
@@ -306,6 +359,7 @@ namespace NimbleEngine
             }
             if(!InLibrary.Plugin->OnStartup(*InRecord.Context))
             {
+                InRecord.Problem = InLibrary.File + " refused to start (its OnStartup returned false)";
                 CORE_LOG_ERROR("[Plugins] " + InRecord.Name + ": " + InLibrary.File + " refused to start")
                 InLibrary.Destroy(InLibrary.Plugin);
                 InLibrary.Plugin = nullptr;
@@ -417,6 +471,8 @@ namespace NimbleEngine
                 State.Records.clear();
             }
             State.RuntimeDir = InRuntimeDir;
+            State.SearchRoots.clear();
+            State.BuiltEngineVersion.clear();
 
             const std::string ManifestPath = JoinPath(InRuntimeDir, "Plugins/Plugins.manifest");
             std::vector<uint8_t> Bytes;
@@ -579,9 +635,39 @@ namespace NimbleEngine
             }
             Records.clear();
             Host().Hooks.clear();
+
+            if(!Host().ShadowDir.empty())
+            {
+                std::error_code Error;
+                std::filesystem::remove_all(std::filesystem::u8path(Host().ShadowDir), Error);
+            }
         }
 
-        bool WarnConfigMismatch()
+        void SetShadowCopyDir(const std::string& InDir)
+        {
+            PluginHostState& State = Host();
+            if(InDir.empty())
+            {
+                State.ShadowDir.clear();
+                return;
+            }
+            /* Earlier runs' copies: a folder another live process still holds
+             * stays (Windows), the rest go. */
+            namespace fs = std::filesystem;
+            std::error_code Error;
+            const fs::path Root = fs::absolute(fs::u8path(InDir), Error);
+            for(const fs::directory_entry& Old : fs::directory_iterator(Root, Error))
+            {
+                std::error_code Ignored;
+                fs::remove_all(Old.path(), Ignored);
+            }
+            const auto Ticks = std::chrono::steady_clock::now().time_since_epoch().count()
+                             ^ std::chrono::system_clock::now().time_since_epoch().count();
+            const auto Name = (Root / ("Run-" + std::to_string(uint64_t(Ticks)))).u8string();
+            State.ShadowDir = std::string(Name.begin(), Name.end());
+        }
+
+        std::vector<ConfigMismatch> GetConfigMismatches()
         {
             struct Visit
             {
@@ -590,30 +676,65 @@ namespace NimbleEngine
                     std::string Section(InSection);
                     std::transform(Section.begin(), Section.end(), Section.begin(), [](unsigned char C) { return char(std::tolower(C)); });
                     if(Section != "plugins") { return; }
-
                     std::string Value(InValue);
                     std::transform(Value.begin(), Value.end(), Value.begin(), [](unsigned char C) { return char(std::tolower(C)); });
                     const bool bWanted = Value == "true" || Value == "1" || Value == "yes" || Value == "on";
-
-                    std::string Key(InKey);
-                    std::transform(Key.begin(), Key.end(), Key.begin(), [](unsigned char C) { return char(std::tolower(C)); });
-                    bool bBuilt = false;
-                    for(const PluginRecord& Record : Host().Records)
+                    if(bWanted != IsBuilt(InKey))
                     {
-                        std::string Name = Record.Name;
-                        std::transform(Name.begin(), Name.end(), Name.begin(), [](unsigned char C) { return char(std::tolower(C)); });
-                        bBuilt = bBuilt || Name == Key;
+                        ConfigMismatch Each;
+                        Each.Name    = InKey;
+                        Each.bWanted = bWanted;
+                        static_cast<std::vector<ConfigMismatch>*>(InUserData)->push_back(Each);
                     }
-                    if(bWanted == bBuilt) { return; }
-                    CORE_LOG_WARN(std::string("[Plugins] ") + InKey + "=" + InValue + ", but this build was configured "
-                                  + (bBuilt ? "with" : "without") + " it; rebuild the game to apply the change -- its next "
-                                  "build re-configures from the project's config")
-                    *static_cast<bool*>(InUserData) = true;
                 }
             };
-            bool bWarned = false;
-            EngineCore::ConfigForEachEntry("Plugins", &Visit::Entry, &bWarned);
-            return bWarned;
+            std::vector<ConfigMismatch> Result;
+            EngineCore::ConfigForEachEntry("Plugins", &Visit::Entry, &Result);
+            return Result;
+        }
+
+        const std::vector<std::string>& GetSearchRoots()
+        {
+            return Host().SearchRoots;
+        }
+
+        const std::string& GetBuiltEngineVersion()
+        {
+            return Host().BuiltEngineVersion;
+        }
+
+        bool IsBuilt(const std::string& InName)
+        {
+            std::string Want = InName;
+            std::transform(Want.begin(), Want.end(), Want.begin(), [](unsigned char C) { return char(std::tolower(C)); });
+            for(const PluginRecord& Record : Host().Records)
+            {
+                std::string Name = Record.Name;
+                std::transform(Name.begin(), Name.end(), Name.begin(), [](unsigned char C) { return char(std::tolower(C)); });
+                if(Name == Want) { return true; }
+            }
+            return false;
+        }
+
+        std::string GetLoadProblem(const std::string& InName)
+        {
+            for(const PluginRecord& Record : Host().Records)
+            {
+                if(Record.Name == InName) { return Record.Problem; }
+            }
+            return std::string();
+        }
+
+        bool WarnConfigMismatch()
+        {
+            const std::vector<ConfigMismatch> Mismatches = GetConfigMismatches();
+            for(const ConfigMismatch& Each : Mismatches)
+            {
+                CORE_LOG_WARN(std::string("[Plugins] ") + Each.Name + "=" + (Each.bWanted ? "true" : "false")
+                              + ", but this build was configured " + (Each.bWanted ? "without" : "with")
+                              + " it; rebuild the game to apply the change -- its next build re-configures from the project's config")
+            }
+            return !Mismatches.empty();
         }
 
         size_t GetCount()
