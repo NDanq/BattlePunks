@@ -126,6 +126,8 @@ namespace RenderCore
         /* Every enabled Post Process volume InView's camera is in or near,
          * blended Priority low first, weighted by how far inside it is. */
         RenderPostProcess BuildPostProcess(const RenderView& InView) const;
+        /* The volumes and a sequence's override blended, before the scalability caps. */
+        RenderPostProcess BuildBlendedPostProcess(const RenderView& InView) const;
 
         /* The SceneCaptureProbes due this frame (Frequency, CaptureNow --
          * cleared once taken), as capture requests for InView; a mirror out of

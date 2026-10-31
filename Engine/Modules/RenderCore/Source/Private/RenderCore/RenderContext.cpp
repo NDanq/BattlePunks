@@ -3105,7 +3105,9 @@ namespace RenderCore
             {
                 return false;
             }
-            const uint32_t Threads = Parallel.bSerialOnly ? 4u : Jobs->GetWorkerCount() + 1;
+            /* The ACTIVE workers: a power profile parks the rest (CoreJob.h). */
+            uint32_t Threads = Parallel.bSerialOnly ? 4u : Jobs->GetActiveWorkerCount() + 1;
+            if(Parallel.MaxThreads > 0) { Threads = std::min(Threads, Parallel.MaxThreads); }
             const uint32_t ByDraws = std::max<uint32_t>(1, Count / PARALLEL_MIN_DRAWS_PER_CHUNK);
             const uint32_t Chunks  = std::min<uint32_t>(std::min<uint32_t>(Threads, ByDraws), GDI_PARALLEL_CHUNKS_MAX);
             EnsureInitialised();   // the Impl's own objects: never made on a chunk's thread

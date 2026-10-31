@@ -213,6 +213,40 @@ namespace
 }
 
 /* The Texture Viewer, offscreen: settings edited, mips rebuilt and shown, saved. */
+/* The entity section's Detail Mode row (GameCore's DetailMode.h): there,
+ * listing the four tiers, setting the bucket as one undo step. */
+static void TestDetailModeRow()
+{
+    std::printf("Detail Mode row\n");
+
+    EditorDocument Doc;
+    const EntityID Vase = Doc.CreateEntity(QStringLiteral("Vase"), EngineCore::Vector3(0.0, 0.0, 0.0));
+
+    DetailsPanel Panel(Doc);
+    Panel.resize(460, 1200);
+    Panel.show();
+    Doc.SetSelection(Vase);
+    PumpFor(200);
+
+    Expect(HasLabel(Panel, QStringLiteral("Detail Mode")), "the entity section has a Detail Mode row");
+    QComboBox* Combo = nullptr;
+    for(QComboBox* Each : Panel.findChildren<QComboBox*>())
+    {
+        if(Each->count() == 4 && Each->itemText(0) == QStringLiteral("Low") && Each->itemText(3) == QStringLiteral("Ultra")) { Combo = Each; }
+    }
+    Expect(Combo != nullptr && Combo->currentText() == QStringLiteral("Low"), "its combo lists Low to Ultra, at Low");
+    if(!Combo) { return; }
+
+    Combo->setCurrentIndex(2);
+    emit Combo->activated(2);
+    PumpFor(50);
+    Expect(Doc.GetWorld().GetEntity(Vase).GetDetailMode() == GameCore::EDetailMode::High, "choosing High sets the bucket");
+    Doc.Undo();
+    PumpFor(50);
+    Expect(Doc.GetWorld().GetEntity(Vase).GetDetailMode() == GameCore::EDetailMode::Low, "and one undo puts it back");
+    Expect(Combo->currentText() == QStringLiteral("Low"), "the row follows the undo");
+}
+
 static void TestTextureViewer()
 {
     std::printf("Texture Viewer\n");
@@ -875,6 +909,7 @@ int main(int argc, char** argv)
 
     std::printf("NimbleEditorDetailsTests\n");
     TestMaterialParameters();
+    TestDetailModeRow();
     TestTextureViewer();
     TestAnimStateGraph();
     TestClipTimeline();

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "Public/Core/CoreAPI.h"
 
@@ -362,6 +363,41 @@ namespace EngineCore
      * can load them again without stale ones lingering. Vars keep their
      * values. */
     CORE_API void ConfigRemoveEntries(const char* InSectionPrefix);
+
+    // === Overlays ============================================================
+    /*
+     * A preset of values laid over the project file: the scalability tier and
+     * the power profile (GameCore/Scalability.h) are each one. The order is
+     *
+     *     compiled default < project file < Power < Detail < User / console
+     *
+     * An overlay's value IS the var's baseline (ConfigGetBaselineText), so a
+     * player's User file never captures a preset -- it keeps only what they
+     * changed themselves -- and switching a preset moves only the vars still
+     * at their old baseline: a value the player set wins. A project file
+     * loaded later does not move a var an overlay covers.
+     *
+     * Paths are "Section.Key". A path no var claims is kept, for a module that
+     * declares it later.
+     */
+    enum class EConfigOverlay : uint8_t { Power = 0, Detail, Count };
+
+    struct ConfigOverlayValue
+    {
+        std::string Path;    // "Shadows.Resolution"
+        std::string Value;   // text, as an .ini line would give it
+    };
+
+    /* Replaces InOverlay's whole contents and applies the difference; an empty
+     * list clears it. Returns how many vars changed value. */
+    CORE_API int ConfigSetOverlay(EConfigOverlay InOverlay, const std::vector<ConfigOverlayValue>& InValues);
+
+    /* The project file's own value for Section.Key, if it set one -- so a
+     * preset's engine-side defaults can yield to what a project chose. */
+    CORE_API bool ConfigGetProjectValue(const char* InSection, const char* InKey, std::string* OutValue = nullptr);
+
+    /* InOverlay's current contents, in the order they were set. */
+    CORE_API std::vector<ConfigOverlayValue> ConfigGetOverlay(EConfigOverlay InOverlay);
 
     // === Console =============================================================
 

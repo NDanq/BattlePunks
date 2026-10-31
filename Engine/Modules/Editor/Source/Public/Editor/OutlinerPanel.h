@@ -3,6 +3,7 @@
 
 #if WITH_EDITOR
 
+#include <cstdint>
 #include <vector>
 
 #include <QHash>
@@ -41,6 +42,7 @@ public:
     explicit OutlinerPanel(EditorDocument& InDocument, QWidget* InParent = nullptr);
 
 private:
+    uint32_t SeenScalabilitySerial = 0;   // GameCore::Scalability::GetSerial at the last check
     void Rebuild();
     void QueueRebuild();
     void ApplyFilter();

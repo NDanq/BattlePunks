@@ -167,7 +167,7 @@ bool VKSwapchain::CreateSwapchain()
         Extent.height = std::clamp<uint32_t>(PixelHeight, Caps.minImageExtent.height, Caps.maxImageExtent.height);
     }
 
-    uint32_t ImageCount = Caps.minImageCount + 1;
+    uint32_t ImageCount = Caps.minImageCount + GDIGetConfiguredSwapchainExtraImages();
     if(Caps.maxImageCount > 0 && ImageCount > Caps.maxImageCount) ImageCount = Caps.maxImageCount;
 
     VkSwapchainCreateInfoKHR CreateInfo{};

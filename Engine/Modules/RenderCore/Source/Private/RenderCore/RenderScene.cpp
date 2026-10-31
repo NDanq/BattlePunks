@@ -338,7 +338,7 @@ namespace RenderCore
             /* Nothing to test against without an occluder in view: no queries. */
             const bool bQueries = bOcclusion && std::any_of(Proxies.begin(), Proxies.end(), [&InView](const RenderProxy* InProxy)
             {
-                return InProxy->IsVisible() && InProxy->IsOccluder()
+                return InProxy->IsRenderable() && InProxy->IsOccluder()
                     && (InView.Bounds.IsEmpty() || InProxy->GetWorldBounds().IsEmpty() || InProxy->GetWorldBounds().Overlaps(InView.Bounds));
             });
             uint32_t OcclusionWantedNow = 0;
@@ -433,7 +433,7 @@ namespace RenderCore
                     *Query           = -1;
                     Proxy->bOccluded = false;
                 }
-                if(!Proxy->IsVisible() || Excluded(Proxy))
+                if(!Proxy->IsRenderable() || Excluded(Proxy))
                 {
                     continue;
                 }
@@ -618,7 +618,7 @@ namespace RenderCore
 
                 for(RenderProxy* Proxy : Proxies)
                 {
-                    if(!Proxy->IsVisible() || Excluded(Proxy) || (bSunView && !Inset.empty() && HasInset(Proxy)))
+                    if(!Proxy->IsRenderable() || Excluded(Proxy) || (bSunView && !Inset.empty() && HasInset(Proxy)))
                     {
                         continue;
                     }

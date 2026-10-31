@@ -43,6 +43,17 @@ NIMBLE_CONFIG_BOOL(GBakedLighting, "Rendering", "BakedLighting", true, nullptr);
  * animations in the viewport; off, each holds its first frame (ANIMATION.md). */
 NIMBLE_CONFIG_BOOL(GAnimationPreview, "Animation", "PreviewInEditor", true, nullptr);
 
+/* Scalability caps over every view's blended post process (SCALABILITY.md):
+ * false turns the effect off whatever the volumes ask; true leaves it to
+ * them. The [Scalability_<Tier>] overlays set them -- Low drops AO, SSR,
+ * volumetric fog, depth of field and motion blur. */
+NIMBLE_CONFIG_BOOL(GAllowAmbientOcclusion,       "Rendering", "AllowAmbientOcclusion",       true, nullptr);
+NIMBLE_CONFIG_BOOL(GAllowScreenSpaceReflections, "Rendering", "AllowScreenSpaceReflections", true, nullptr);
+NIMBLE_CONFIG_BOOL(GAllowVolumetricFog,          "Rendering", "AllowVolumetricFog",          true, nullptr);
+NIMBLE_CONFIG_BOOL(GAllowDepthOfField,           "Rendering", "AllowDepthOfField",           true, nullptr);
+NIMBLE_CONFIG_BOOL(GAllowMotionBlur,             "Rendering", "AllowMotionBlur",             true, nullptr);
+NIMBLE_CONFIG_BOOL(GAllowBloom,                  "Rendering", "AllowBloom",                  true, nullptr);
+
 /*
  * See WorldBridge.h for the contract; this is the "how". Three pieces:
  * proxy lifecycle (bound to World's own delegates), the per-frame extraction
@@ -64,6 +75,7 @@ namespace RenderCore
             RenderProxyHandle Handle;
             RenderTransform   Transform;
             uint8_t           bStatic = 0;   // the owner's mobility
+            uint8_t           bDetailHidden = 0;   // the owner's bucket is above the tier (DetailMode.h)
             RenderBakedDraw   Baked;         // a Render component's; empty for the rest
             // component bytes follow immediately after this header
         };
@@ -379,6 +391,13 @@ namespace RenderCore
         /* Drawing with a bake: its static lights are in it, so they are left
          * out here -- the sun's default too, if a static one was the only one. */
         const auto Baked = [this](const ComponentOwner& InOwner) { return bBakeActive && InOwner.GetEntity().IsStatic(); };
+        /* A local light bucketed above the tier is not lit (DetailMode.h);
+         * suns and skies light the whole world and are never bucketed. */
+        const GameCore::EDetailMode Tier = BoundWorld->GetEffectiveDetailMode();
+        const auto DetailHidden = [Tier](const ComponentOwner& InOwner)
+        {
+            return !GameCore::IsDetailVisible(InOwner.GetEntity().GetDetailMode(), Tier);
+        };
         if(bBakeActive)
         {
             Lighting.bBaked    = 1;
@@ -464,7 +483,7 @@ namespace RenderCore
             for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
             {
                 const PointLightComponent& Light = Lights[Index];
-                if(!Light.bActive || Light.Intensity <= 0.0f || Light.Radius <= 0.0f || Baked(Light.Owner)) { continue; }
+                if(!Light.bActive || Light.Intensity <= 0.0f || Light.Radius <= 0.0f || Baked(Light.Owner) || DetailHidden(Light.Owner)) { continue; }
                 RenderLocalLight Local;
                 Local.Type             = RLL_Point;
                 Local.Position         = PoseOf(Light.Owner).Position;
@@ -486,7 +505,7 @@ namespace RenderCore
             for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
             {
                 const SpotLightComponent& Light = Lights[Index];
-                if(!Light.bActive || Light.Intensity <= 0.0f || Light.Range <= 0.0f || Baked(Light.Owner)) { continue; }
+                if(!Light.bActive || Light.Intensity <= 0.0f || Light.Range <= 0.0f || Baked(Light.Owner) || DetailHidden(Light.Owner)) { continue; }
                 const GameCore::TransformPose Pose = PoseOf(Light.Owner);
                 RenderLocalLight Local;
                 Local.Type             = RLL_Spot;
@@ -620,7 +639,27 @@ namespace RenderCore
         return Out;
     }
 
+    namespace
+    {
+        void ApplyScalabilityCaps(PostProcessSettings& InOutSettings)
+        {
+            if(!GAllowAmbientOcclusion.GetBool())       { InOutSettings.bAmbientOcclusion  = 0; }
+            if(!GAllowScreenSpaceReflections.GetBool()) { InOutSettings.bScreenReflections = 0; }
+            if(!GAllowVolumetricFog.GetBool())          { InOutSettings.bVolumetricFog     = 0; }
+            if(!GAllowDepthOfField.GetBool())           { InOutSettings.bDepthOfField      = 0; }
+            if(!GAllowMotionBlur.GetBool())             { InOutSettings.bMotionBlur        = 0; }
+            if(!GAllowBloom.GetBool())                  { InOutSettings.bBloom             = 0; }
+        }
+    }
+
     RenderPostProcess WorldBridge::BuildPostProcess(const RenderView& InView) const
+    {
+        RenderPostProcess Result = BuildBlendedPostProcess(InView);
+        ApplyScalabilityCaps(Result.Settings);
+        return Result;
+    }
+
+    RenderPostProcess WorldBridge::BuildBlendedPostProcess(const RenderView& InView) const
     {
         RenderPostProcess Result;
         ComponentPool* Pool = BoundWorld ? BoundWorld->FindPool(PostProcessComponent::StaticType().ID) : nullptr;
@@ -720,6 +759,9 @@ namespace RenderCore
         UpdateBake();
         Procedural.Update(*BoundWorld);
         const ComponentTypeID RenderType = RenderComponent::StaticType().ID;
+        /* The tier entity buckets are measured against this frame; a record
+         * whose answer flips differs from the last, so a static one resends. */
+        const GameCore::EDetailMode DetailTier = BoundWorld->GetEffectiveDetailMode();
 
         for(ComponentTypeID Type = 0; Type < COMPONENT_TYPE_MAX; ++Type)
         {
@@ -796,6 +838,7 @@ namespace RenderCore
                     Record.Transform = RenderTransform();
                 }
                 Record.bStatic = OwnerEntity.IsStatic() ? 1 : 0;
+                Record.bDetailHidden = GameCore::IsDetailVisible(OwnerEntity.GetDetailMode(), DetailTier) ? 0 : 1;
                 if(Type == RenderType)
                 {
                     Record.Baked = BakedDrawFor(OwnerEntity, Record.Transform.Position);
@@ -843,6 +886,7 @@ namespace RenderCore
                     if(RenderProxy* Proxy = Record->Handle.Ptr)
                     {
                         Proxy->SetStatic(Record->bStatic != 0);
+                        Proxy->SetDetailHidden(Record->bDetailHidden != 0);
                         Proxy->SetTransform(Record->Transform);
                         Proxy->SetBakedDraw(Record->Baked);
                         Proxy->ApplyComponent(Read + sizeof(ExtractHeader));

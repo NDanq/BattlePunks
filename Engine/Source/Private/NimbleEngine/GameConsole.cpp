@@ -4,7 +4,9 @@
 #include "Public/NimbleEngine/Input.h"
 #include "Public/NimbleEngine/SaveGame.h"
 #include "Public/Core/CoreConfig.h"
+#include "Public/Core/CoreJob.h"
 #include "Public/Core/CoreLog.h"
+#include "Public/GameCore/Scalability.h"
 #include "Public/UI/UIDocument.h"
 #include "Public/UI/UISystem.h"
 
@@ -665,6 +667,79 @@ NIMBLE_CONSOLE_COMMAND(cvars, "[filter]", "List config vars and their values; * 
     std::string Text;
     for(const std::string& Each : Lines) { Text += Each + "\n"; }
     Text += std::to_string(Lines.size()) + " of " + std::to_string(EngineCore::ConfigGetVarCount());
+    Console.Print(Text);
+}
+
+NIMBLE_CONSOLE_COMMAND(scalability, "[detail <low|medium|high|ultra>] [power <auto|saver|max>]",
+                       "Show the detail tier and power profile and what each sets, or switch one")
+{
+    namespace S = GameCore::Scalability;
+    const auto Lower = [](std::string InText)
+    {
+        for(char& Each : InText) { Each = char(std::tolower(static_cast<unsigned char>(Each))); }
+        return InText;
+    };
+
+    if(Console.Args.size() >= 2)
+    {
+        for(size_t Index = 0; Index + 1 < Console.Args.size(); Index += 2)
+        {
+            const std::string Verb = Lower(Console.Args[Index]);
+            const std::string Value = Console.Args[Index + 1];
+            if(Verb == "detail")
+            {
+                GameCore::EDetailMode Mode;
+                if(!GameCore::ParseDetailMode(Value.c_str(), Mode))
+                {
+                    Console.PrintError("'" + Value + "' is not a detail mode: low, medium, high or ultra");
+                    return;
+                }
+                S::SetDetailMode(Mode);
+            }
+            else if(Verb == "power")
+            {
+                if(!S::SetPowerProfileSetting(Value.c_str()))
+                {
+                    Console.PrintError("'" + Value + "' is not a power profile: auto, saver or max");
+                    return;
+                }
+            }
+            else
+            {
+                Console.PrintError("Usage: scalability [detail <low|medium|high|ultra>] [power <auto|saver|max>]");
+                return;
+            }
+        }
+    }
+    else if(!Console.Args.empty())
+    {
+        Console.PrintError("Usage: scalability [detail <low|medium|high|ultra>] [power <auto|saver|max>]");
+        return;
+    }
+
+    /* Each overlay's lines, marking one the player's own value overrides. */
+    const auto Describe = [](const EngineCore::EConfigOverlay InOverlay)
+    {
+        std::string Text;
+        for(const EngineCore::ConfigOverlayValue& Each : EngineCore::ConfigGetOverlay(InOverlay))
+        {
+            const EngineCore::ConfigVar* Var = EngineCore::ConfigFindVarByPath(Each.Path);
+            const bool bMine = Var && !Var->HoldsText(Each.Value);
+            Text += "    " + Each.Path + " = " + Each.Value
+                  + (bMine ? "   (yours: " + Var->ToString() + ")" : Var ? "" : "   (no such var loaded)") + "\n";
+        }
+        return Text;
+    };
+
+    std::string Text = std::string("Detail: ") + GameCore::DetailModeName(S::GetDetailMode()) + "\n";
+    Text += Describe(EngineCore::EConfigOverlay::Detail);
+    Text += std::string("Power: ") + S::PowerProfileName(S::GetPowerProfile());
+    if(std::string(S::GetPowerProfileSetting()) == "Auto") { Text += std::string(" (Auto: ") + S::PowerSourceName(S::GetPowerSource()) + ")"; }
+    if(const EngineCore::JobSystem* Jobs = EngineCore::GetJobSystem())
+    {
+        Text += ", " + std::to_string(Jobs->GetActiveWorkerCount()) + " of " + std::to_string(Jobs->GetWorkerCount()) + " job workers active";
+    }
+    Text += "\n" + Describe(EngineCore::EConfigOverlay::Power);
     Console.Print(Text);
 }
 

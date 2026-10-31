@@ -615,6 +615,12 @@ public:
      */
     void SetUniformBlock(uint InBinding, const void* InData, uint InSize);
     void SetMaterialTexture(uint InSlot, GDITextureResource* InTexture);
+    /* InTexture is being destroyed: clear every material slot that still
+     * holds it. A slot keeps its texture until changed, and a draw reads all
+     * of them, so a texture freed while still in one (a streamed texture
+     * retired after frames with no material draws) would otherwise reach the
+     * next draw as a dangling pointer. */
+    void ForgetTextureResource(const GDITextureResource* InTexture);
 
     /* Whether the bound pair asks for the material layout. */
     bool IsMaterialDraw() const;
@@ -841,6 +847,10 @@ uint32_t GDIGetFramesInFlight();
 /* [Rendering] FramesInFlight, clamped to 1..GDI_FRAMES_IN_FLIGHT_MAX: what a
  * backend that can run ahead reads when it makes its device. */
 uint32_t GDIGetConfiguredFramesInFlight();
+
+/* [Rendering] SwapchainExtraImages, clamped to 0..2: images a swapchain asks
+ * for beyond the surface's minimum. */
+uint32_t GDIGetConfiguredSwapchainExtraImages();
 
 /*
  * Scissor, in pixels of the current viewport from its TOP-LEFT (the way a

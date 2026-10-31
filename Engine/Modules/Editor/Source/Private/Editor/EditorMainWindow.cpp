@@ -38,6 +38,8 @@
 
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
+#include "Public/GameCore/DetailMode.h"
+#include "Public/GameCore/Scalability.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
@@ -396,6 +398,16 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     PlayLabel = new QLabel(this);
     PlayLabel->setStyleSheet(QStringLiteral("QLabel { color: rgb(90, 200, 110); font-weight: bold; }"));
     statusBar()->addPermanentWidget(PlayLabel);
+
+    /* The tier the viewport renders entities at (GameCore's DetailMode.h):
+     * Show > World Detail's preview, the World Settings lock, or the
+     * project's / player's Scalability.DetailMode. Before the stats. */
+    DetailLabel = new QLabel(this);
+    statusBar()->addPermanentWidget(DetailLabel);
+    connect(&Level, &EditorDocument::DetailPreviewChanged, this, &EditorMainWindow::UpdateDetailLabel);
+    connect(&Level, &EditorDocument::WorldSettingsChanged, this, &EditorMainWindow::UpdateDetailLabel);
+    connect(&Level, &EditorDocument::WorldReset,           this, &EditorMainWindow::UpdateDetailLabel);
+    UpdateDetailLabel();
 
     StatsLabel = new QLabel(this);
     statusBar()->addPermanentWidget(StatsLabel);
@@ -1182,6 +1194,7 @@ void EditorMainWindow::ReloadProjectConfig()
             EngineCore::LoadConfigFile(Each.toUtf8().toStdString());
         }
     }
+    GameCore::Scalability::Initialize();   // the tier tables may have changed with them
     SettingsDialog::LoadUserSettings();
     EditorNotifications::Notify(EditorNotifications::ESeverity::Info, QStringLiteral("Config reloaded"),
                                 QStringLiteral("Settings read only at startup -- the renderer, the modules -- apply after a restart."),
@@ -3155,8 +3168,36 @@ void EditorMainWindow::UpdateHistoryActions()
     UpdateTitle();
 }
 
+void EditorMainWindow::UpdateDetailLabel()
+{
+    const GameCore::World& World = Level.GetWorld();
+    const QString Tier = QString::fromLatin1(GameCore::DetailModeName(World.GetEffectiveDetailMode()));
+    QString Source;
+    QString Why;
+    if(World.GetPreviewDetailMode() >= 0)
+    {
+        Source = QStringLiteral(" (preview)");
+        Why    = QStringLiteral("Previewed from the viewport's Show > World Detail; World's Own ends it");
+    }
+    else if(World.GetSettings().DetailMode != GameCore::WORLD_DETAIL_USE_GLOBAL)
+    {
+        Source = QStringLiteral(" (world)");
+        Why    = QStringLiteral("Locked by this world's World Settings > Detail mode");
+    }
+    else
+    {
+        Why = QStringLiteral("Scalability.DetailMode, the project's or the console's");
+    }
+    const QString Text = QStringLiteral("Detail: %1%2 |").arg(Tier, Source);
+    if(DetailLabel->text() != Text) { DetailLabel->setText(Text); }
+    DetailLabel->setToolTip(QStringLiteral("The tier entities render at: those whose Detail Mode is above it are hidden. %1.").arg(Why));
+}
+
 void EditorMainWindow::UpdateStats()
 {
+    /* Also catches the tier changing from the console (Scalability.DetailMode). */
+    UpdateDetailLabel();
+
     RenderCore::RenderStats Stats;
     if(!Context.GetRenderStats(Stats))
     {

@@ -92,6 +92,9 @@ bool MTLSwapchain::Initialize(MTLDevice* InDevice, EngineCore::WindowHandle InWi
     Layer.pixelFormat     = MTLPixelFormatBGRA8Unorm;
     // The drawable is only ever a render target here, never sampled or copied.
     Layer.framebufferOnly = YES;
+    /* [Rendering] SwapchainExtraImages: 0 is two drawables, anything more
+     * three -- all a CAMetalLayer allows (and its default). */
+    Layer.maximumDrawableCount = GDIGetConfiguredSwapchainExtraImages() == 0 ? 2 : 3;
     UpdateDrawableSize();
 
     if(!CreateBlitPipeline())

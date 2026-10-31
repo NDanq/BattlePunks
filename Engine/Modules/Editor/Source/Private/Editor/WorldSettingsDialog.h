@@ -28,6 +28,7 @@ private:
 
     EditorDocument& Document;
 
+    QComboBox*      DetailMode      = nullptr;   // WORLD_DETAIL_USE_GLOBAL or a tier
     QComboBox*      GameMode        = nullptr;   // editable: a mode the loaded module lacks can still be named
     QCheckBox*      BakedLighting   = nullptr;
     QDoubleSpinBox* TexelsPerMetre  = nullptr;   // shown per metre; stored per unit

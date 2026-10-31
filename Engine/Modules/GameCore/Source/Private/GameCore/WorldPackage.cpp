@@ -190,6 +190,11 @@ namespace
         {
             Root.append_attribute("Mobility") = MobilityName(Handle.GetAuthoredMobility());
         }
+        /* The scalability bucket, likewise only when not Low (DetailMode.h). */
+        if(Handle.GetDetailMode() != EDetailMode::Low)
+        {
+            Root.append_attribute("DetailMode") = DetailModeName(Handle.GetDetailMode());
+        }
         /* The Outliner's; only a top-level entity shows one, so only it saves one. */
         if(Handle.GetFolder()[0] != '\0' && !Handle.HasParent())
         {
@@ -350,6 +355,10 @@ namespace
             {
                 Element.append_attribute("Mobility") = MobilityName(Member.GetAuthoredMobility());
             }
+            if(Template.DetailMode != Member.GetDetailMode())
+            {
+                Element.append_attribute("DetailMode") = DetailModeName(Member.GetDetailMode());
+            }
 
             /* Every type either side has, by name. */
             std::vector<std::string> Names;
@@ -425,7 +434,8 @@ namespace
             }
 
             /* Nothing differs: no element at all. */
-            if(!Element.first_child() && !Element.attribute("Name") && !Element.attribute("Mobility"))
+            if(!Element.first_child() && !Element.attribute("Name") && !Element.attribute("Mobility")
+               && !Element.attribute("DetailMode"))
             {
                 Root.remove_child(Element);
             }
@@ -531,6 +541,12 @@ namespace
                 if(ParseMobility(Mobility.as_string(), Parsed)) { Member.SetMobility(Parsed); }
                 else { GAMECORE_LOG_WARN("WorldPackage: '" + InEntry.File + "' has an unknown mobility '" + Mobility.as_string() + "'") }
             }
+            if(const pugi::xml_attribute Detail = Item.attribute("DetailMode"))
+            {
+                EDetailMode Parsed;
+                if(ParseDetailMode(Detail.as_string(), Parsed)) { Member.SetDetailMode(Parsed); }
+                else { GAMECORE_LOG_WARN("WorldPackage: '" + InEntry.File + "' has an unknown detail mode '" + Detail.as_string() + "'") }
+            }
             for(const pugi::xml_node Removed : Item.children("RemovedComponent"))
             {
                 if(const ComponentTypeInfo* Info = FindComponentType(Removed.attribute("Type").as_string()))
@@ -581,12 +597,17 @@ namespace
 
         const WorldLightingSettings Defaults;
         const WorldLightingSettings& Lighting = InSettings.Lighting;
-        if(Lighting == Defaults && InSettings.GameMode.empty()) { return; }
+        const bool bDetail = InSettings.DetailMode != WORLD_DETAIL_USE_GLOBAL;
+        if(Lighting == Defaults && InSettings.GameMode.empty() && !bDetail) { return; }
 
         pugi::xml_node Settings = InRoot.append_child("Settings");
         if(!InSettings.GameMode.empty())
         {
             Settings.append_attribute("GameMode") = InSettings.GameMode.c_str();
+        }
+        if(bDetail)
+        {
+            Settings.append_attribute("DetailMode") = DetailModeName(EDetailMode(InSettings.DetailMode));
         }
         if(Lighting == Defaults) { return; }
 
@@ -614,6 +635,9 @@ namespace
         OutSettings.Folders.erase(std::unique(OutSettings.Folders.begin(), OutSettings.Folders.end()), OutSettings.Folders.end());
 
         OutSettings.GameMode = InRoot.child("Settings").attribute("GameMode").as_string("");
+        OutSettings.DetailMode = WORLD_DETAIL_USE_GLOBAL;
+        EDetailMode Detail;
+        if(ParseDetailMode(InRoot.child("Settings").attribute("DetailMode").as_string(""), Detail)) { OutSettings.DetailMode = uint8_t(Detail); }
 
         const pugi::xml_node Element = InRoot.child("Settings").child("Lighting");
         WorldLightingSettings& Lighting = OutSettings.Lighting;
@@ -731,6 +755,12 @@ namespace
                 EMobility Parsed;
                 if(ParseMobility(Mobility.as_string(), Parsed)) { Created.SetMobility(Parsed); }
                 else { GAMECORE_LOG_WARN("WorldPackage: '" + File + "' has an unknown mobility '" + Mobility.as_string() + "'") }
+            }
+            if(const pugi::xml_attribute Detail = EntityRoot.attribute("DetailMode"))
+            {
+                EDetailMode Parsed;
+                if(ParseDetailMode(Detail.as_string(), Parsed)) { Created.SetDetailMode(Parsed); }
+                else { GAMECORE_LOG_WARN("WorldPackage: '" + File + "' has an unknown detail mode '" + Detail.as_string() + "'") }
             }
             Created.SetFolder(EntityRoot.attribute("Folder").as_string());
 

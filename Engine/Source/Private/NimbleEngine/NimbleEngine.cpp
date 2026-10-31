@@ -1,5 +1,6 @@
 #include "Public/NimbleEngine/NimbleEngine.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -25,6 +26,7 @@
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/NimbleEngine/InputRouter.h"
 #include "Public/Core/CoreMemory.h"
+#include "Public/GameCore/Scalability.h"
 #include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/World.h"
 #include "Public/GameWindow/GameWindowSystem.h"
@@ -83,6 +85,12 @@ namespace
  * "Display.FrameRateLimit 0" uncaps a running game. With [Display] VSync on,
  * the display's refresh caps it too (GDISetVSync). */
 NIMBLE_CONFIG_INT(GFrameRateLimit, "Display", "FrameRateLimit", 60, &OnFrameRateLimitChanged);
+
+/* How much of each paced wait is spent spinning rather than asleep, in
+ * milliseconds, 0-4. 2 holds the frame to within a few microseconds of its
+ * deadline; 0 (the PowerSaver profile's) only ever sleeps, so the core idles
+ * -- at up to a millisecond of overshoot. Applies live. */
+NIMBLE_CONFIG_INT(GDisplayPaceSpinMs, "Display", "PaceSpinMs", 2, nullptr);
 
 using namespace EngineCore;
 
@@ -208,8 +216,10 @@ namespace
             return;
         }
 
-        /* 2ms, sized from the ~1ms sleep overshoot measured above. */
-        const int64_t SpinWindowNs = 2000000;
+        /* 2ms by default, sized from the ~1ms sleep overshoot measured above;
+         * [Display] PaceSpinMs. */
+        const int     SpinMs       = std::clamp(GDisplayPaceSpinMs.GetInt(), 0, 4);
+        const int64_t SpinWindowNs = int64_t(SpinMs) * 1000000;
 
         InTimer.EnsureRaised();
 
@@ -218,6 +228,13 @@ namespace
             const int64_t RemainingNs = InOutDeadlineNs - SteadyNowNs();
             if(RemainingNs <= 0)
             {
+                break;
+            }
+
+            /* No spin window: sleep out the rest, rounded up, and stop. */
+            if(SpinWindowNs == 0)
+            {
+                Threads::SleepMs(uint32_t((RemainingNs + 999999) / 1000000));
                 break;
             }
 
@@ -233,6 +250,22 @@ namespace
         }
 
         InOutDeadlineNs += FrameNs;
+    }
+}
+
+namespace
+{
+    /* Scalability's Auto power profile reads this (GameWindowSystem's, SDL's). */
+    GameCore::Scalability::EPowerSource QueryPowerSource()
+    {
+        using GameCore::Scalability::EPowerSource;
+        switch(GameWindowSystem::GetPowerSource())
+        {
+            case GameWindowSystem::EPowerSource::NoBattery: return EPowerSource::NoBattery;
+            case GameWindowSystem::EPowerSource::Plugged:   return EPowerSource::Plugged;
+            case GameWindowSystem::EPowerSource::OnBattery: return EPowerSource::OnBattery;
+            default:                                        return EPowerSource::Unknown;
+        }
     }
 }
 
@@ -467,6 +500,12 @@ namespace NimbleEngine
         {
             CORE_LOG_WARN("No Config/DefaultEngine.ini Found")
         }
+        /* The scalability overlays over the project's file and under the
+         * player's (Scalability.h): User.ini and the command line below land
+         * on top, and a [Scalability] value among them re-applies its own. */
+        GameCore::Scalability::SetPowerSourceQuery(&QueryPowerSource);
+        GameCore::Scalability::Initialize();
+
         LoadUserSettings();
 
         /* The command line wins over the file. */
@@ -697,6 +736,7 @@ namespace NimbleEngine
         Frame.ViewportPixels = Window ? Window->GetPixelSize() : Size();
         PreviousTickNs       = NowNs;
 
+        GameCore::Scalability::Tick(Frame.DeltaSeconds);
         Session->Tick(Frame);
 
         /* What changed this frame goes out. */

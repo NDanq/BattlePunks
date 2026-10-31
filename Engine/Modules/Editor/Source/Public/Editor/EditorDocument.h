@@ -18,6 +18,7 @@
 #include "Public/GameCore/Delegate.h"
 #include "Public/GameCore/EntityGuid.h"
 #include "Public/GameCore/EntityID.h"
+#include "Public/GameCore/DetailMode.h"
 #include "Public/GameCore/Mobility.h"
 #include "Public/GameCore/WorldSettings.h"
 #include "Public/GameCore/TransformMath.h"
@@ -180,6 +181,13 @@ public:
 
     /* The same for each of InEntities, all one undo step. */
     void SetEntitiesMobility(const std::vector<GameCore::EntityID>& InEntities, GameCore::EMobility InMobility);
+    /* Entity::SetDetailMode -- the scalability bucket (DetailMode.h) -- one undo step. */
+    void SetEntityDetailMode(GameCore::EntityID InEntity, GameCore::EDetailMode InMode);
+    /* The same for several, one undo step for all. */
+    void SetEntitiesDetailMode(const std::vector<GameCore::EntityID>& InEntities, GameCore::EDetailMode InMode);
+    /* The viewport's Show > World Detail: World::SetPreviewDetailMode on the shown
+     * world, -1 off. Not an edit -- no undo step, never saved. */
+    void SetPreviewDetailMode(int InMode);
 
     // === Outliner folders ===================================================
     // Organisation only, nothing at runtime reads them. A top-level entity
@@ -374,6 +382,8 @@ signals:
     /* SetWorldSettings changed them (also on undo/redo). A new or opened
      * World brings its own: WorldReset. */
     void WorldSettingsChanged();
+    /* The viewport's previewed detail tier changed (SetPreviewDetailMode). */
+    void DetailPreviewChanged();
 
     /* Around SaveWorld's write: what a preview has written into the edited
      * World (the Sequencer's) goes back first, and comes back after, so a

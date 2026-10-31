@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="ad346d65ef232b67815c45fffcb0c765" Name="BoilerSteam">
+<Entity Guid="ad346d65ef232b67815c45fffcb0c765" Name="BoilerSteam" DetailMode="Medium">
   <Component Type="Particle System" Version="3">
     <System Value="Content/Particles/Steampunk/Steam.nmparticle" />
     <Emitting Value="true" />

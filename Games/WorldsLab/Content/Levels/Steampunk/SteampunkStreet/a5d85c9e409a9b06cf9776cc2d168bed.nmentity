@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="a5d85c9e409a9b06cf9776cc2d168bed" Name="PipeLeak">
+<Entity Guid="a5d85c9e409a9b06cf9776cc2d168bed" Name="PipeLeak" DetailMode="High">
   <Component Type="Particle System" Version="3">
     <System Value="Content/Particles/Steampunk/Steam.nmparticle" />
     <Emitting Value="true" />

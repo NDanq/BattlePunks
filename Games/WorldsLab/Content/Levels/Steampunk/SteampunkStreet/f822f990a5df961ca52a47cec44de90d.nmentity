@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="f822f990a5df961ca52a47cec44de90d" Name="ChimneySmoke_7">
+<Entity Guid="f822f990a5df961ca52a47cec44de90d" Name="ChimneySmoke_7" DetailMode="Medium">
   <Component Type="Particle System" Version="3">
     <System Value="Content/Particles/Steampunk/ChimneySmoke.nmparticle" />
     <Emitting Value="true" />
