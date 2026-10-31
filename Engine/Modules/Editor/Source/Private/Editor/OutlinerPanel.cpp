@@ -492,15 +492,24 @@ void OutlinerPanel::Drop(QTreeWidgetItem* InDragged, QTreeWidgetItem* InNewParen
         }
         return;
     }
+    /* The selection, if the row dragged is in it; else that row alone. */
     const EntityID Dragged = EntityOf(InDragged);
+    const std::vector<EntityID> Moving = Document.IsSelected(Dragged) ? Document.GetSelectedRoots() : std::vector<EntityID>{ Dragged };
     if(bOntoEntity || !HasFolders())
     {
-        Reparent(Dragged, EntityOf(InNewParent));
+        const EntityID NewParent = EntityOf(InNewParent);
+        if(Moving.size() == 1)
+        {
+            Reparent(Dragged, NewParent);
+        }
+        else if(Document.SetEntitiesParent(Moving, NewParent) > 0)
+        {
+            Document.SetSelection(Moving, Dragged);
+        }
         return;
     }
 
-    /* Into a folder, or the top: the selection, if the row dragged is in it. */
-    const std::vector<EntityID> Moving = Document.IsSelected(Dragged) ? Document.GetSelectedRoots() : std::vector<EntityID>{ Dragged };
+    /* Into a folder, or the top. */
     if(Document.MoveEntitiesToFolder(Moving, Target) > 0)
     {
         Document.SetSelection(Moving, Dragged);

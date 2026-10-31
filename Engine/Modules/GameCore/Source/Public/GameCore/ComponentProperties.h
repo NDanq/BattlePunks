@@ -33,6 +33,15 @@
  *         Props.Category("Filtering");
  *         Props.Field("Layer", &CollisionComponent::Layer);
  *
+ * RANGES AND TOOLTIPS. Props.Range(Min, Max) clamps the property declared
+ * just before it to [Min, Max] in a tool's number fields; Props.Tooltip(Text)
+ * describes it (shown on hover, and in its documentation page). Text must
+ * live as long as the registration: a string literal.
+ *
+ *         Props.Field("Intensity", &PointLightComponent::Intensity);
+ *         Props.Range(0.0f, 1000.0f);
+ *         Props.Tooltip("Brightness, in candela");
+ *
  * STRUCT ARRAYS. Props.StructArray lists an array of small structs, each
  * element shown as a group of its members; the members are entries of their
  * own, after the array's, with Parent naming it:
@@ -118,6 +127,13 @@ namespace GameCore
          * GetMember(i, Member). PROPERTY_NO_PARENT: not a member. */
         uint8_t       Parent = PROPERTY_NO_PARENT;
 
+        /* Props.Range: a number field's limits, for every element of an
+         * array; none while Min >= Max. Props.Tooltip: what it is, or null. */
+        float         Min     = 0.0f;
+        float         Max     = 0.0f;
+        const char*   Tooltip = nullptr;
+
+        bool HasRange() const    { return Min < Max; }
         bool IsChoice() const    { return Choices[0] != '\0'; }
         bool HasCategory() const { return Category[0] != '\0'; }
 
@@ -214,6 +230,10 @@ namespace GameCore
             AddMember(InName, Probe, &(Probe.*InMember), uint32_t(sizeof(uint8_t)), EPropertyType::Flag, InFlags);
         }
 
+        /* The member declared just before: as ComponentPropertyBinder's. */
+        void Range(const float InMin, const float InMax) { Owner.Range(InMin, InMax); }
+        void Tooltip(const char* InText)                 { Owner.Tooltip(InText); }
+
         /* One element of an array member of the struct, as its own field. */
         template<typename TPart, size_t N>
         void Element(const char* InName, TPart (TElement::* InArray)[N], const size_t InIndex, const uint16_t InFlags = PF_None)
@@ -293,6 +313,7 @@ namespace GameCore
             if(InIndex >= N)
             {
                 ++Rejected;
+                bLastRejected = true;
                 return;
             }
             const T Probe{};
@@ -362,6 +383,21 @@ namespace GameCore
             for(size_t Index = 0; Index < Length; ++Index) { CurrentCategory[Index] = InName[Index]; }
         }
 
+        /* The property declared just before this: its number field's limits
+         * (InMin < InMax), or what it is, for a tool's tooltip. Ignored with
+         * none declared yet (or that one rejected). */
+        void Range(const float InMin, const float InMax)
+        {
+            if(Count == 0 || bLastRejected) { return; }
+            Entries[Count - 1].Min = InMin;
+            Entries[Count - 1].Max = InMax;
+        }
+        void Tooltip(const char* InText)
+        {
+            if(Count == 0 || bLastRejected) { return; }
+            Entries[Count - 1].Tooltip = InText;
+        }
+
         /* Keeps the type out of a tool's "Add Component" (CPF_NotAddable). */
         void NotAddable() { TypeFlags |= CPF_NotAddable; }
 
@@ -391,7 +427,7 @@ namespace GameCore
     private:
         template<typename, typename> friend class ComponentStructBinder;
 
-        void Reject() { ++Rejected; }
+        void Reject() { ++Rejected; bLastRejected = true; }
 
         /* memcpy is sound: GAMECORE_DEFINE_COMPONENT asserts trivial copyability. */
         static void Defaults(void* OutBytes)
@@ -419,8 +455,10 @@ namespace GameCore
             if(Count >= COMPONENT_PROPERTIES_PER_TYPE_MAX || Length == 0 || Length >= COMPONENT_PROPERTY_NAME_MAX)
             {
                 ++Rejected;
+                bLastRejected = true;
                 return nullptr;
             }
+            bLastRejected = false;
 
             ComponentPropertyEntry& Entry = Entries[Count++];
             for(size_t Index = 0; Index < Length; ++Index) { Entry.Name[Index] = InName[Index]; }
@@ -439,6 +477,7 @@ namespace GameCore
         size_t                 Count     = 0;
         size_t                 Rejected  = 0;
         uint8_t                TypeFlags = CPF_None;
+        bool                   bLastRejected = false;   // Range / Tooltip then apply to nothing
     };
 }
 

@@ -48,10 +48,12 @@ namespace RenderCore
         Props.Field("SkyColor",    &SkyLightComponent::SkyColor);
         Props.Field("GroundColor", &SkyLightComponent::GroundColor);
         Props.Field("Intensity",   &SkyLightComponent::Intensity);
+        Props.Range(0.0f, 1.0e9f);
         Props.Flag("Active",       &SkyLightComponent::bActive);
         Props.Category("Environment");
         Props.Field("Environment", &SkyLightComponent::Environment, GameCore::PF_AssetTexture);
         Props.Field("Environment Intensity", &SkyLightComponent::EnvironmentIntensity);
+        Props.Range(0.0f, 1.0e9f);
         Props.Field("Environment Rotation",  &SkyLightComponent::EnvironmentRotation);
         Props.Flag("Draw Background",        &SkyLightComponent::bDrawBackground);
     }

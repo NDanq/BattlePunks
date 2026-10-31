@@ -220,7 +220,16 @@ namespace
     QString NotesOf(const ComponentPropertyEntry& InEntry)
     {
         QStringList Notes;
+        if(InEntry.Tooltip) { Notes << QString::fromUtf8(InEntry.Tooltip); }
         if(InEntry.IsReadOnly()) { Notes << QStringLiteral("read-only"); }
+        if(InEntry.HasRange() && InEntry.Max < 1.0e9f)
+        {
+            Notes << QStringLiteral("%1 to %2").arg(double(InEntry.Min)).arg(double(InEntry.Max));
+        }
+        else if(InEntry.HasRange())
+        {
+            Notes << QStringLiteral("at least %1").arg(double(InEntry.Min));
+        }
         if(InEntry.IsChoice())
         {
             Notes << QStringLiteral("choice: %1").arg(QString::fromLatin1(InEntry.Choices).split(QLatin1Char('|')).join(QStringLiteral(", ")));

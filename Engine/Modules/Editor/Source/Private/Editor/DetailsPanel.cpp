@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <cstring>
 
+#include <QApplication>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QComboBox>
 #include <QDir>
 #include <QDropEvent>
@@ -17,7 +19,9 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMimeData>
 #include <QScrollArea>
+#include <QSettings>
 #include <QScrollBar>
 #include <QTimer>
 #include <QToolButton>
@@ -33,6 +37,7 @@
 #include "Private/Editor/ComponentPicker.h"
 #include "Private/Editor/DocumentationWindow.h"
 #include "Private/Editor/EditorIcons.h"
+#include "Private/Editor/EditorLayoutSettings.h"
 #include "Private/Editor/Prefab/PrefabAssets.h"
 #include "Private/Editor/PropertyWidgets.h"
 #include "Private/Editor/Content/ContentPaths.h"
@@ -44,6 +49,43 @@ using GameCore::EntityID;
 namespace
 {
     constexpr int RefreshIntervalMs = 100;
+
+    /* How many of the other selected entities a refresh compares for mixed
+     * values: past this, a big selection would cost every refresh. */
+    constexpr size_t MixedCheckMax = 64;
+
+    /* Copy Values' clipboard: the type's name, a NUL, then its bytes. */
+    const char* const ComponentValuesMime = "application/x-nimble-component-values";
+
+    /* Folded sections and categories, by "Type" or "Type/Category": the same
+     * for every entity and every Details panel, kept between runs. */
+    QString CollapsedKey(const QString& InKey)
+    {
+        return QStringLiteral("DetailsPanel/Collapsed/") + InKey;
+    }
+    bool IsCollapsed(const QString& InKey)
+    {
+        return EditorLayoutSettings::Get().value(CollapsedKey(InKey), false).toBool();
+    }
+    void SetCollapsed(const QString& InKey, const bool bInCollapsed)
+    {
+        if(bInCollapsed) { EditorLayoutSettings::Get().setValue(CollapsedKey(InKey), true); }
+        else             { EditorLayoutSettings::Get().remove(CollapsedKey(InKey)); }
+    }
+
+    /* A fold arrow and title, bold: a section's or a category's header. */
+    QToolButton* MakeFoldToggle(const QString& InText, QWidget* InParent)
+    {
+        auto* Toggle = new QToolButton(InParent);
+        Toggle->setText(InText);
+        Toggle->setCheckable(true);
+        Toggle->setChecked(true);
+        Toggle->setArrowType(Qt::DownArrow);
+        Toggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        Toggle->setAutoRaise(true);
+        Toggle->setStyleSheet(QStringLiteral("QToolButton { font-weight: bold; }"));
+        return Toggle;
+    }
 
     /* The reset arrow: small, flat, and holding its space while hidden so the
      * editors do not shift sideways as values change. */
@@ -134,6 +176,13 @@ DetailsPanel::DetailsPanel(EditorDocument& InDocument, QWidget* InParent)
     Header->setTextFormat(Qt::RichText);
     Layout->addWidget(Header);
 
+    Search = new QLineEdit(this);
+    Search->setPlaceholderText(QStringLiteral("Search properties..."));
+    Search->setClearButtonEnabled(true);
+    Search->setToolTip(QStringLiteral("Show only the properties, or components, whose name holds this"));
+    connect(Search, &QLineEdit::textChanged, this, [this]() { ApplyFilter(); });
+    Layout->addWidget(Search);
+
     Scroll = new QScrollArea(this);
     Scroll->setWidgetResizable(true);
     Scroll->setFrameShape(QFrame::NoFrame);
@@ -199,6 +248,16 @@ void DetailsPanel::UpdateHeader()
         Header->setText(QStringLiteral("<span style='color:gray'>Nothing selected</span>"));
         return;
     }
+    if(!ShownOthers.empty())
+    {
+        Header->setText(QStringLiteral("<b>%1</b> &nbsp;<span style='color:gray'>and %2 more -- %3 selected</span>")
+                        .arg(Document.GetDisplayName(ShownEntity).toHtmlEscaped())
+                        .arg(ShownOthers.size()).arg(ShownOthers.size() + 1));
+        Header->setToolTip(QStringLiteral("Showing %1's values. An edit applies to every selected entity with that component.")
+                           .arg(Document.GetDisplayName(ShownEntity)));
+        return;
+    }
+    Header->setToolTip(QString());
     Header->setText(QStringLiteral("<b>%1</b> &nbsp;<span style='color:gray'>#%2 gen %3</span>")
                     .arg(Document.GetDisplayName(ShownEntity).toHtmlEscaped())
                     .arg(ShownEntity.Index).arg(ShownEntity.Generation));
@@ -242,11 +301,18 @@ void DetailsPanel::Rebuild()
     Rows.clear();
     Sections.clear();
     Arrays.clear();
+    FilterRows.clear();
+    Categories.clear();
     NameEdit      = nullptr;
     MobilityCombo = nullptr;
     DetailModeCombo = nullptr;
     ShownEntity = Document.GetSelection();
     ShownTypes  = CollectComponentTypes(ShownEntity);
+    ShownOthers.clear();
+    for(const EntityID Each : Document.GetSelectedEntities())
+    {
+        if(Each != ShownEntity && Document.GetWorld().IsAlive(Each)) { ShownOthers.push_back(Each); }
+    }
 
     /* A fresh body each time: takeWidget/delete drops every old editor at once. */
     delete Scroll->takeWidget();
@@ -268,6 +334,7 @@ void DetailsPanel::Rebuild()
 
     BodyLayout->addStretch(1);
     Scroll->setWidget(Body);
+    ApplyFilter();
 
     /* The same entity rebuilt (an entry added, say) stays where it was. */
     QTimer::singleShot(0, this, [this, Scrolled]() { Scroll->verticalScrollBar()->setValue(Scrolled); });
@@ -437,6 +504,11 @@ bool DetailsPanel::FocusComponent(const QString& InTypeName)
     return true;
 }
 
+void DetailsPanel::SetSearchText(const QString& InText)
+{
+    Search->setText(InText);
+}
+
 QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const ComponentTypeID InType)
 {
     const GameCore::ComponentTypeInfo* Info = GameCore::GetComponentType(InType);
@@ -486,21 +558,44 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
         }
     }
 
-    auto* Toggle = new QToolButton(Section);
-    Toggle->setText(bAddedToInstance ? QStringLiteral("%1 (added here)").arg(TypeName) : TypeName);
-    if(bAddedToInstance)
+    /* With several selected: how many of them have it, when not all do. */
+    size_t Sharing = 1;
+    for(const EntityID Each : ShownOthers)
     {
-        Toggle->setToolTip(QStringLiteral("This instance has %1; the prefab does not").arg(TypeName));
+        Sharing += Document.GetWorld().GetEntity(Each).HasComponentByType(InType) ? 1 : 0;
     }
-    Toggle->setCheckable(true);
-    Toggle->setChecked(true);
-    Toggle->setArrowType(Qt::DownArrow);
-    Toggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    Toggle->setAutoRaise(true);
-    Toggle->setStyleSheet(QStringLiteral("QToolButton { font-weight: bold; }"));
+    QString ToggleText = bAddedToInstance ? QStringLiteral("%1 (added here)").arg(TypeName) : TypeName;
+    QStringList ToggleTips;
+    if(bAddedToInstance) { ToggleTips << QStringLiteral("This instance has %1; the prefab does not").arg(TypeName); }
+    if(Sharing <= ShownOthers.size())
+    {
+        ToggleText += QStringLiteral(" (%1 of %2)").arg(Sharing).arg(ShownOthers.size() + 1);
+        ToggleTips << QStringLiteral("%1 of the %2 selected have %3: edits apply to those").arg(Sharing).arg(ShownOthers.size() + 1).arg(TypeName);
+    }
+    ToggleTips << QStringLiteral("Right-click: copy or paste its values; collapse or expand every section");
+
+    auto* Toggle = MakeFoldToggle(ToggleText, Section);
+    Toggle->setToolTip(ToggleTips.join(QLatin1Char('\n')));
+    Toggle->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(Toggle, &QToolButton::customContextMenuRequested, this, [this, Toggle, InType, TypeName](const QPoint& InAt)
+    {
+        QMenu Menu(this);
+        QAction* Copy  = Menu.addAction(QStringLiteral("Copy %1 Values").arg(TypeName));
+        QAction* Paste = Menu.addAction(QStringLiteral("Paste %1 Values").arg(TypeName));
+        Paste->setEnabled(CanPasteComponentValues(InType));
+        Menu.addSeparator();
+        QAction* CollapseAll = Menu.addAction(QStringLiteral("Collapse All"));
+        QAction* ExpandAll   = Menu.addAction(QStringLiteral("Expand All"));
+        QAction* Chosen = Menu.exec(Toggle->mapToGlobal(InAt));
+        if(Chosen == Copy)             { CopyComponentValues(InType); }
+        else if(Chosen == Paste)       { PasteComponentValues(InType); }
+        else if(Chosen == CollapseAll) { SetAllCollapsed(true); }
+        else if(Chosen == ExpandAll)   { SetAllCollapsed(false); }
+    });
     HeaderRow->addWidget(Toggle);
-    State.Toggle = Toggle;
-    State.Frame  = Section;
+    State.Toggle   = Toggle;
+    State.Frame    = Section;
+    State.TypeName = TypeName;
 
     /* The ?: this component's reference page (Engine/Docs/Components), written first if it has none. */
     auto* Help = new QToolButton(Section);
@@ -587,13 +682,51 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
         {
             if(Each.first == Category) { return Each.second; }
         }
-        auto* Box = new QGroupBox(Category, Content);
+        /* A foldable box: its title an arrow, as the section's. */
+        auto* Box       = new QFrame(Content);
+        Box->setFrameShape(QFrame::StyledPanel);
+        auto* BoxLayout = new QVBoxLayout(Box);
+        BoxLayout->setContentsMargins(2, 0, 2, 2);
+        BoxLayout->setSpacing(0);
+        auto* BoxToggle = MakeFoldToggle(Category, Box);
+        BoxToggle->setStyleSheet(QString());
+        BoxLayout->addWidget(BoxToggle, 0, Qt::AlignLeft);
+        auto* Inner = new QWidget(Box);
         QFormLayout* BoxForm = MakeForm();
-        BoxForm->setContentsMargins(6, 4, 0, 4);
-        Box->setLayout(BoxForm);
+        BoxForm->setContentsMargins(6, 2, 0, 2);
+        Inner->setLayout(BoxForm);
+        BoxLayout->addWidget(Inner);
         ContentLayout->addWidget(Box);
+
+        const QString Key = TypeName + QLatin1Char('/') + Category;
+        connect(BoxToggle, &QToolButton::toggled, Inner, [BoxToggle, Inner](const bool bInOpen)
+        {
+            BoxToggle->setArrowType(bInOpen ? Qt::DownArrow : Qt::RightArrow);
+            Inner->setVisible(bInOpen);
+        });
+        connect(BoxToggle, &QToolButton::clicked, this, [Key](const bool bInOpen) { SetCollapsed(Key, !bInOpen); });
+        BoxToggle->setChecked(!IsCollapsed(Key));
+
+        Categories.push_back({ Box, BoxToggle, Inner });
         CategoryForms.emplace_back(Category, BoxForm);
         return BoxForm;
+    };
+    /* The category index FormFor last returned (or -1), for Search. */
+    const auto CategoryOf = [&](const GameCore::ComponentPropertyEntry& InEntry) -> int
+    {
+        if(!InEntry.HasCategory()) { return -1; }
+        const QString Category = QString::fromLatin1(InEntry.Category);
+        for(size_t Index = 0; Index < CategoryForms.size(); ++Index)
+        {
+            if(CategoryForms[Index].first == Category) { return int(Categories.size() - CategoryForms.size() + Index); }
+        }
+        return -1;
+    };
+    const auto AddFilterRow = [&](const GameCore::ComponentPropertyEntry& InEntry, QWidget* InLabel, const QString& InName)
+    {
+        QFormLayout* Into = FormFor(InEntry);
+        FilterRows.push_back({ Into, InLabel, InType, InName, CategoryOf(InEntry) });
+        return Into;
     };
 
     connect(Toggle, &QToolButton::toggled, Content, [Toggle, Content](const bool bInOpen)
@@ -601,6 +734,10 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
         Toggle->setArrowType(bInOpen ? Qt::DownArrow : Qt::RightArrow);
         Content->setVisible(bInOpen);
     });
+    /* Clicked, not toggled: FocusComponent's folding is not the user's. */
+    connect(Toggle, &QToolButton::clicked, this, [TypeName](const bool bInOpen) { SetCollapsed(TypeName, !bInOpen); });
+    Toggle->setChecked(!IsCollapsed(TypeName));
+    State.Content = Content;
 
     Sections.push_back(State);
 
@@ -628,7 +765,8 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
 
     /* One editor row: the editor, its reset arrow, then InExtra (an array
      * element's remove button). */
-    const auto AddRow = [&](const GameCore::ComponentPropertyEntry& Entry, const QString& InLabel, QToolButton* InExtra)
+    const auto AddRow = [&](const GameCore::ComponentPropertyEntry& Entry, const QString& InLabel, QToolButton* InExtra,
+                            const QString& InFilterName)
     {
         auto* Field  = new QWidget(Content);
         auto* FieldRow = new QHBoxLayout(Field);
@@ -678,6 +816,11 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
 
         auto* Label = new QLabel(InLabel, Content);
         Row.Label = Label;
+        if(Entry.Tooltip) { Label->setToolTip(QString::fromUtf8(Entry.Tooltip)); }
+        if(QAbstractSpinBox* Spin = Editor->GetScrubSpin())
+        {
+            InstallScrub(Label, Spin);
+        }
         if(State.PrefabValues && !Entry.IsReadOnly())
         {
             Label->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -694,12 +837,12 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
                 }
             });
         }
-        FormFor(Entry)->addRow(Label, Field);
+        AddFilterRow(Entry, Label, InFilterName)->addRow(Label, Field);
         Rows.push_back(Row);
 
-        connect(Editor, &PropertyEditor::Written, this, [Doc, InEntity, InType]()
+        connect(Editor, &PropertyEditor::Written, this, [this, InType, Entry]()
         {
-            Doc->NotifyPropertyEdited(InEntity, InType);
+            PropagateEdit(InType, Entry.Offset, Entry.GetSpan());
         });
     };
 
@@ -713,7 +856,7 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
         }
         if(!Entry.IsArray())
         {
-            AddRow(Entry, Name, nullptr);
+            AddRow(Entry, Name, nullptr, Name);
             continue;
         }
 
@@ -747,7 +890,8 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
             });
             HeadingRow->addWidget(Add);
         }
-        FormFor(Entry)->addRow(Name, Heading);
+        auto* HeadingLabel = new QLabel(Name, Content);
+        AddFilterRow(Entry, HeadingLabel, Name)->addRow(HeadingLabel, Heading);
 
         for(size_t Element = 0; Element < Shown; ++Element)
         {
@@ -766,7 +910,7 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
             }
             if(!Entry.IsStructArray())
             {
-                AddRow(Entry.GetElement(Element), QStringLiteral("    %1").arg(Element), Remove);
+                AddRow(Entry.GetElement(Element), QStringLiteral("    %1").arg(Element), Remove, Name);
                 continue;
             }
 
@@ -783,11 +927,12 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
             }
             auto* ElementLabel = new QLabel(QStringLiteral("    %1").arg(Element), Content);
             ElementLabel->setStyleSheet(QStringLiteral("font-weight: bold;"));
-            FormFor(Entry)->addRow(ElementLabel, ElementHeading);
+            AddFilterRow(Entry, ElementLabel, Name)->addRow(ElementLabel, ElementHeading);
 
             for(const GameCore::ComponentPropertyEntry& Member : CollectMembers(InType, Entry))
             {
-                AddRow(Entry.GetMember(Element, Member), QStringLiteral("        %1").arg(QString::fromLatin1(Member.Name)), nullptr);
+                AddRow(Entry.GetMember(Element, Member), QStringLiteral("        %1").arg(QString::fromLatin1(Member.Name)), nullptr,
+                       Name + QLatin1Char(' ') + QString::fromLatin1(Member.Name));
             }
         }
     }
@@ -835,7 +980,7 @@ void DetailsPanel::ResetProperty(const PropertyRow& InRow)
 
     std::memcpy(Component + InRow.Entry.Offset, Section->Defaults->data() + InRow.Entry.Offset, InRow.Entry.Size);
     InRow.Editor->Refresh(true);
-    Document.NotifyPropertyEdited(ShownEntity, InRow.Type);
+    PropagateEdit(InRow.Type, InRow.Entry.Offset, InRow.Entry.Size);
     RefreshValues();
 }
 
@@ -867,7 +1012,7 @@ void DetailsPanel::RemoveArrayElement(const ComponentTypeID InType, const GameCo
     {
         --Shown;
     }
-    Document.NotifyPropertyEdited(ShownEntity, InType);
+    PropagateEdit(InType, InEntry.Offset, InEntry.GetSpan());
     QueueRebuild();
 }
 
@@ -889,7 +1034,18 @@ void DetailsPanel::ResetComponent(const ComponentTypeID InType)
             Row.Editor->Refresh(true);
         }
     }
-    Document.NotifyPropertyEdited(ShownEntity, InType);
+    if(ShownOthers.empty())
+    {
+        Document.NotifyPropertyEdited(ShownEntity, InType);
+    }
+    else
+    {
+        /* Row by row, merged into one step: only the properties go to the others. */
+        for(const PropertyRow& Row : Rows)
+        {
+            if(Row.Type == InType && !Row.Entry.IsReadOnly()) { PropagateEdit(InType, Row.Entry.Offset, Row.Entry.Size); }
+        }
+    }
     RefreshValues();
 }
 
@@ -935,6 +1091,124 @@ void DetailsPanel::RevertComponentToPrefab(const ComponentTypeID InType)
     RefreshValues();
 }
 
+void DetailsPanel::PropagateEdit(const ComponentTypeID InType, const uint32_t InOffset, const uint32_t InSize)
+{
+    if(ShownOthers.empty())
+    {
+        Document.NotifyPropertyEdited(ShownEntity, InType);
+        return;
+    }
+    Document.NotifyPropertyEditedOnMany(ShownEntity, InType, ShownOthers, InOffset, InSize);
+}
+
+void DetailsPanel::ApplyFilter()
+{
+    const QString Text = Search ? Search->text().trimmed() : QString();
+    const bool bFiltering = !Text.isEmpty();
+
+    std::vector<int> CategoryHits(Categories.size(), 0);
+    std::map<ComponentTypeID, int> SectionHits;
+    for(const FilterRow& Row : FilterRows)
+    {
+        const ComponentSection* Section = FindSection(Row.Type);
+        const bool bShow = !bFiltering || Row.Name.contains(Text, Qt::CaseInsensitive)
+                        || (Section && Section->TypeName.contains(Text, Qt::CaseInsensitive));
+        Row.Form->setRowVisible(Row.Label, bShow);
+        if(bShow)
+        {
+            ++SectionHits[Row.Type];
+            if(Row.Category >= 0) { ++CategoryHits[size_t(Row.Category)]; }
+        }
+    }
+    for(size_t Index = 0; Index < Categories.size(); ++Index)
+    {
+        const CategoryBox& Box = Categories[Index];
+        Box.Box->setVisible(!bFiltering || CategoryHits[Index] > 0);
+        /* A search opens what it found; clearing it puts the folds back. */
+        Box.Content->setVisible(bFiltering ? CategoryHits[Index] > 0 : Box.Toggle->isChecked());
+    }
+    for(const ComponentSection& Section : Sections)
+    {
+        const bool bHits = SectionHits[Section.Type] > 0 || Section.TypeName.contains(Text, Qt::CaseInsensitive);
+        if(Section.Frame)   { Section.Frame->setVisible(!bFiltering || bHits); }
+        if(Section.Content) { Section.Content->setVisible(bFiltering ? bHits : Section.Toggle->isChecked()); }
+    }
+}
+
+void DetailsPanel::SetAllCollapsed(const bool bInCollapsed)
+{
+    for(const ComponentSection& Section : Sections)
+    {
+        if(!Section.Toggle) { continue; }
+        Section.Toggle->setChecked(!bInCollapsed);
+        SetCollapsed(Section.TypeName, bInCollapsed);
+    }
+}
+
+void DetailsPanel::CopyComponentValues(const ComponentTypeID InType) const
+{
+    const GameCore::ComponentTypeInfo* Info = GameCore::GetComponentType(InType);
+    const uint8_t* Component = ResolveComponent(InType);
+    if(!Info || !Component)
+    {
+        return;
+    }
+    QByteArray Payload(Info->Name);
+    Payload.append('\0');
+    Payload.append(reinterpret_cast<const char*>(Component), qsizetype(Info->SizeBytes));
+
+    auto* Data = new QMimeData();
+    Data->setData(QLatin1String(ComponentValuesMime), Payload);
+    Data->setText(QStringLiteral("%1 values").arg(QString::fromLatin1(Info->Name)));
+    QApplication::clipboard()->setMimeData(Data);
+}
+
+bool DetailsPanel::CanPasteComponentValues(const ComponentTypeID InType) const
+{
+    const GameCore::ComponentTypeInfo* Info = GameCore::GetComponentType(InType);
+    const QMimeData* Data = QApplication::clipboard()->mimeData();
+    if(!Info || !Data || !Data->hasFormat(QLatin1String(ComponentValuesMime)))
+    {
+        return false;
+    }
+    const QByteArray Payload = Data->data(QLatin1String(ComponentValuesMime));
+    const QByteArray Name(Info->Name);
+    return Payload.size() == Name.size() + 1 + qsizetype(Info->SizeBytes) && Payload.startsWith(Name) && Payload[Name.size()] == '\0';
+}
+
+void DetailsPanel::PasteComponentValues(const ComponentTypeID InType)
+{
+    uint8_t* Component = ResolveComponent(InType);
+    if(!Component || !CanPasteComponentValues(InType))
+    {
+        return;
+    }
+    const QByteArray Payload = QApplication::clipboard()->mimeData()->data(QLatin1String(ComponentValuesMime));
+    const auto* Values = reinterpret_cast<const uint8_t*>(Payload.constData()) + std::strlen(GameCore::GetComponentType(InType)->Name) + 1;
+
+    /* The editable properties only: the rest is per-run state, or the owner's. */
+    size_t Count = 0;
+    const GameCore::ComponentPropertyEntry* Entries = GameCore::FindComponentProperties(InType, Count);
+    std::vector<const GameCore::ComponentPropertyEntry*> Pasted;
+    for(size_t Index = 0; Index < Count; ++Index)
+    {
+        const GameCore::ComponentPropertyEntry& Entry = Entries[Index];
+        if(Entry.IsMember() || Entry.IsReadOnly()) { continue; }
+        std::memcpy(Component + Entry.Offset, Values + Entry.Offset, Entry.GetSpan());
+        Pasted.push_back(&Entry);
+    }
+    if(ShownOthers.empty())
+    {
+        Document.NotifyPropertyEdited(ShownEntity, InType);
+    }
+    else
+    {
+        for(const GameCore::ComponentPropertyEntry* Entry : Pasted) { PropagateEdit(InType, Entry->Offset, Entry->GetSpan()); }
+    }
+    /* Arrays may now use more entries than they show. */
+    QueueRebuild();
+}
+
 void DetailsPanel::RefreshValues()
 {
     if(!isVisible())
@@ -974,12 +1248,32 @@ void DetailsPanel::RefreshValues()
         Row.Editor->Refresh();
 
         const bool bOverridden = IsOverridden(Row);
-        if(Row.Label && Row.Label->font().bold() != bOverridden)
+
+        /* Mixed: another selected entity holds a different value. */
+        bool bMixed = false;
+        if(!ShownOthers.empty())
+        {
+            const uint8_t* Mine = ResolveComponent(Row.Type);
+            for(size_t Index = 0; Mine && !bMixed && Index < ShownOthers.size() && Index < MixedCheckMax; ++Index)
+            {
+                GameCore::World& World = Document.GetWorld();
+                if(!World.IsAlive(ShownOthers[Index])) { continue; }
+                const auto* Theirs = static_cast<const uint8_t*>(World.GetEntity(ShownOthers[Index]).GetComponentByType(Row.Type));
+                bMixed = Theirs && !IsPropertyAtDefault(Row.Entry, Theirs + Row.Entry.Offset, Mine + Row.Entry.Offset);
+            }
+        }
+        if(Row.Label && (Row.Label->font().bold() != bOverridden || Row.Label->font().italic() != bMixed))
         {
             QFont Font = Row.Label->font();
             Font.setBold(bOverridden);
+            Font.setItalic(bMixed);
             Row.Label->setFont(Font);
-            Row.Label->setToolTip(bOverridden ? QStringLiteral("Overrides the prefab -- right-click to revert") : QString());
+            QStringList Tips;
+            if(Row.Entry.Tooltip) { Tips << QString::fromUtf8(Row.Entry.Tooltip); }
+            if(bOverridden) { Tips << QStringLiteral("Overrides the prefab -- right-click to revert"); }
+            if(bMixed)      { Tips << QStringLiteral("Differs among the selected entities (this is %1's) -- an edit sets them all")
+                                      .arg(Document.GetDisplayName(ShownEntity)); }
+            Row.Label->setToolTip(Tips.join(QLatin1Char('\n')));
         }
         if(bOverridden)
         {
