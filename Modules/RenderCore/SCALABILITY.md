@@ -212,6 +212,11 @@ What a bucketed-out entity loses:
 - **Particle systems** stop simulating as well as drawing. Their emitters keep
   their state and resume where they stopped.
 
+The editor's status bar names the tier the viewport renders at, for example
+`Detail: High`. It adds **(preview)** while Show > World Detail is previewing
+a tier, and **(world)** while World Settings locks the world to one; its
+tooltip says which.
+
 In the editor, the Outliner greys out (in italics) every entity the world's
 current tier hides. Its tooltip names the tier and the entity's bucket. The
 Outliner follows the preview, the world settings and the player's tier.

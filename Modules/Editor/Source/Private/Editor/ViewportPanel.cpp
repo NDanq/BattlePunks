@@ -321,7 +321,6 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocumen
         connect(Choice, &QAction::triggered, this, [this, Mode]()
         {
             Document.SetPreviewDetailMode(Mode);
-            UpdateViewModeUI();
             emit StatusMessage(Mode < 0 ? QStringLiteral("World Detail: the world's own (%1)")
                                               .arg(QString::fromLatin1(GameCore::DetailModeName(Document.GetWorld().GetEffectiveDetailMode())))
                                         : QStringLiteral("World Detail: previewing %1").arg(QString::fromLatin1(GameCore::DetailModeName(GameCore::EDetailMode(Mode)))));
@@ -333,8 +332,6 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocumen
         const int Current = Document.GetWorld().GetPreviewDetailMode();
         for(QAction* Each : Details->actions()) { Each->setChecked(Each->data().toInt() == Current); }
     });
-    connect(&Document, &EditorDocument::DetailPreviewChanged, this, [this]() { UpdateViewModeUI(); });
-    connect(&Document, &EditorDocument::WorldReset, this, [this]() { UpdateViewModeUI(); });
 
     QMenu* GizmoMenu = ShowMenu->addMenu(QStringLiteral("Editor Gizmos"));
     ShowAllBoundsAction = GizmoMenu->addAction(QStringLiteral("All Bounds"));
@@ -491,13 +488,6 @@ void ViewportPanel::UpdateViewModeUI()
     QString Text = QStringLiteral("Show");
     if(Mode == RenderCore::ERenderViewMode::Unlit)        { Text = QStringLiteral("Show: Unlit"); }
     if(Mode == RenderCore::ERenderViewMode::RenderTarget) { Text = QStringLiteral("Show: %1").arg(Context.GetViewTarget()); }
-    /* A previewed tier stays in sight: it hides entities. */
-    const int Preview = Document.GetWorld().GetPreviewDetailMode();
-    if(Preview >= 0)
-    {
-        const QString Tier = QString::fromLatin1(GameCore::DetailModeName(GameCore::EDetailMode(Preview)));
-        Text = Text == QLatin1String("Show") ? QStringLiteral("Show: %1 Detail").arg(Tier) : QStringLiteral("%1, %2 Detail").arg(Text, Tier);
-    }
     ShowButton->setText(Text);
     ShowButton->setToolTip(QStringLiteral("View mode (Lit, Unlit, a render target), lighting, the world detail tier and the editor's gizmos"));
 }
