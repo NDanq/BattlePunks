@@ -27,6 +27,7 @@
 #include "Public/GameCore/World.h"
 #include "Public/Editor/EditorDocument.h"
 #include "Public/GameCore/Prefab.h"
+#include "Public/GameCore/Scalability.h"
 #include "Private/Editor/Prefab/PrefabAssets.h"
 #include "Private/Editor/EditorEditActions.h"
 #include "Private/Editor/EditorLights.h"
@@ -204,6 +205,16 @@ OutlinerPanel::OutlinerPanel(EditorDocument& InDocument, QWidget* InParent)
     connect(&Document, &EditorDocument::EntitiesChanged,  this, &OutlinerPanel::Rebuild);
     connect(&Document, &EditorDocument::WorldReset,       this, [this]() { Collapsed.clear(); CollapsedFolders.clear(); Rebuild(); });
     connect(&Document, &EditorDocument::WorldSettingsChanged, this, &OutlinerPanel::QueueRebuild);   // folders live there
+    connect(&Document, &EditorDocument::DetailPreviewChanged, this, &OutlinerPanel::QueueRebuild);   // which entities are greyed
+    /* The player's tier changes outside any document signal (the console's
+     * "scalability detail"): Scalability's serial says when. */
+    auto* TierWatch = new QTimer(this);
+    connect(TierWatch, &QTimer::timeout, this, [this]()
+    {
+        const uint32_t Serial = GameCore::Scalability::GetSerial();
+        if(Serial != SeenScalabilitySerial) { SeenScalabilitySerial = Serial; QueueRebuild(); }
+    });
+    TierWatch->start(500);
     connect(&Document, &EditorDocument::SelectionChanged, this, &OutlinerPanel::SyncSelectionFromDocument);
 
     Rebuild();
@@ -326,6 +337,20 @@ void OutlinerPanel::Rebuild()
             Item->setIcon(COL_Name, EditorIcons::Get(EditorIcons::EIcon::Warning));
             Item->setToolTip(COL_Name, QStringLiteral("%1 -- not a prefab instance: World > Convert Level to Prefabs, "
                                                       "or right-click > Convert to Prefab").arg(Item->toolTip(COL_Name)));
+        }
+        /* Bucketed out at the tier the world renders at now (DetailMode.h,
+         * the viewport's Show > World Detail): greyed and italic, still selectable. */
+        if(!World.IsEntityDetailVisible(InID))
+        {
+            Item->setForeground(COL_Name, QColor(125, 125, 125));
+            Item->setForeground(COL_Components, QColor(125, 125, 125));
+            QFont Font = Item->font(COL_Name);
+            Font.setItalic(true);
+            Item->setFont(COL_Name, Font);
+            Item->setToolTip(COL_Name, QStringLiteral("%1 -- not drawn at %2 detail (its Detail Mode is %3)")
+                                           .arg(Item->toolTip(COL_Name),
+                                                QString::fromLatin1(GameCore::DetailModeName(World.GetEffectiveDetailMode())),
+                                                QString::fromLatin1(GameCore::DetailModeName(E.GetDetailMode()))));
         }
         Items.insert(InID.Pack(), Item);
         return Item;

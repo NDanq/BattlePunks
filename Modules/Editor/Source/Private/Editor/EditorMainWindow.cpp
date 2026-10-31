@@ -38,6 +38,8 @@
 
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
+#include "Public/GameCore/DetailMode.h"
+#include "Public/GameCore/Scalability.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
@@ -1182,6 +1184,7 @@ void EditorMainWindow::ReloadProjectConfig()
             EngineCore::LoadConfigFile(Each.toUtf8().toStdString());
         }
     }
+    GameCore::Scalability::Initialize();   // the tier tables may have changed with them
     SettingsDialog::LoadUserSettings();
     EditorNotifications::Notify(EditorNotifications::ESeverity::Info, QStringLiteral("Config reloaded"),
                                 QStringLiteral("Settings read only at startup -- the renderer, the modules -- apply after a restart."),

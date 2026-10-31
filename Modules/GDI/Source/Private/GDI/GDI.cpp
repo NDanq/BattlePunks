@@ -75,6 +75,20 @@ NIMBLE_CONFIG_STRING(GShaderPDBDir, "Shaders", "PDBDir", "", nullptr);
  * draws frame N. Read when the device is made (Vulkan, D3D12). */
 NIMBLE_CONFIG_INT(GFramesInFlight, "Rendering", "FramesInFlight", 2, nullptr);
 
+/* [Rendering] SwapchainExtraImages: how deep the present queue is, 0-2. 1
+ * lets the CPU queue one present ahead; 2 (a power profile's PowerMax) a
+ * second, for throughput over latency. Read whenever a swapchain is made:
+ * Vulkan asks for the surface's minimum plus this many images (and again
+ * at a rebuild); D3D12 allows this many queued frames (at least 1); Metal
+ * keeps 2 drawables for 0, else 3. OpenGL's driver decides. */
+NIMBLE_CONFIG_INT(GSwapchainExtraImages, "Rendering", "SwapchainExtraImages", 1, nullptr);
+
+uint32_t GDIGetConfiguredSwapchainExtraImages()
+{
+    const int Value = GSwapchainExtraImages.GetInt();
+    return Value < 0 ? 0u : (Value > 2 ? 2u : uint32_t(Value));
+}
+
 uint32_t GDIGetConfiguredFramesInFlight()
 {
     const int Value = GFramesInFlight.GetInt();

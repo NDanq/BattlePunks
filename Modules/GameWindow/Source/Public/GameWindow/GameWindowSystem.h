@@ -74,6 +74,11 @@ namespace GameWindowSystem
     GAMEWINDOW_API void InjectTextInput(GameWindow* InWindow, const char* InUtf8);
 
     /* The system clipboard's text (UTF-8): "" when it holds none. */
+    /* What the machine runs on, as the platform reports it now (SDL's power
+     * info). Cheap enough to poll every few seconds; needs no Initialize. */
+    enum class EPowerSource : uint8_t { Unknown = 0, NoBattery, Plugged, OnBattery };
+    GAMEWINDOW_API EPowerSource GetPowerSource();
+
     GAMEWINDOW_API std::string GetClipboardText();
     GAMEWINDOW_API void        SetClipboardText(const std::string& InUtf8);
 

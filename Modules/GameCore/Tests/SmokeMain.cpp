@@ -38,6 +38,7 @@
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/NativePrefab.h"
 #include "Public/GameCore/Prefab.h"
+#include "Public/GameCore/Scalability.h"
 #include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/SpatialIndex.h"
 #include "Public/GameCore/TransformMath.h"
@@ -3166,6 +3167,142 @@ static void TestMobility()
     }
 }
 
+/*
+ * Detail mode (DetailMode.h, Scalability.h): an entity's scalability bucket,
+ * saved by every format and carried by prefabs; the world's tier from its
+ * settings, the editor's preview or the global setting; and the tier's
+ * config overlay.
+ */
+static void TestDetailMode()
+{
+    std::printf("[detail mode]\n");
+
+    EDetailMode Parsed = EDetailMode::Low;
+    Expect(ParseDetailMode("ultra", Parsed) && Parsed == EDetailMode::Ultra && ParseDetailMode("Med", Parsed)
+           && Parsed == EDetailMode::Medium && ParseDetailMode("2", Parsed) && Parsed == EDetailMode::High
+           && !ParseDetailMode("Epic", Parsed), "ParseDetailMode reads names, Med and digits, nothing else");
+    Expect(std::string(DetailModeName(EDetailMode::Ultra)) == "Ultra", "DetailModeName");
+    Expect(IsDetailVisible(EDetailMode::Low, EDetailMode::Low) && IsDetailVisible(EDetailMode::High, EDetailMode::Ultra)
+           && !IsDetailVisible(EDetailMode::Ultra, EDetailMode::High), "a bucket renders at its tier and above");
+
+    /* The world's tier: preview > settings > the global setting. */
+    {
+        World W;
+        Scalability::Initialize();
+        Scalability::SetDetailMode(EDetailMode::Medium);
+        Expect(W.GetEffectiveDetailMode() == EDetailMode::Medium, "a world follows the global tier");
+        W.GetSettings().DetailMode = uint8_t(EDetailMode::Ultra);
+        Expect(W.GetEffectiveDetailMode() == EDetailMode::Ultra, "unless its settings lock one");
+        W.SetPreviewDetailMode(int(EDetailMode::Low));
+        Expect(W.GetEffectiveDetailMode() == EDetailMode::Low, "and the editor's preview beats both");
+        W.SetPreviewDetailMode(-1);
+        W.GetSettings().DetailMode = WORLD_DETAIL_USE_GLOBAL;
+
+        const Entity Clutter = W.CreateEntity("Clutter");
+        Expect(Clutter.GetDetailMode() == EDetailMode::Low && W.IsEntityDetailVisible(Clutter.GetID()), "an entity starts in Low: always shown");
+        const uint32_t Serial = W.GetDetailSerial();
+        Expect(Clutter.SetDetailMode(EDetailMode::High) && W.GetDetailSerial() != Serial, "a bucket change bumps the serial");
+        Expect(!W.IsEntityDetailVisible(Clutter.GetID()), "a High entity is hidden at Medium");
+        Scalability::SetDetailMode(EDetailMode::High);
+        Expect(W.IsEntityDetailVisible(Clutter.GetID()), "and shown at High");
+        W.DestroyEntity(Clutter.GetID());
+        Expect(W.CreateEntity("Reused").GetDetailMode() == EDetailMode::Low, "a recycled slot starts in Low again");
+    }
+
+    /* The tier's overlay: the engine's table, the project's section over it. */
+    {
+        LoadConfigText("[Scalability_Low]\nShadows.Resolution = 512\n");
+        const std::vector<Scalability::Override> Low = Scalability::ResolveDetailOverrides(EDetailMode::Low);
+        bool bProject = false, bEngine = false;
+        for(const Scalability::Override& Each : Low)
+        {
+            bProject = bProject || (Each.Path == "Shadows.Resolution" && Each.Value == "512");
+            bEngine  = bEngine  || (Each.Path == "Rendering.ScreenSpaceGI" && Each.Value == "false");
+        }
+        Expect(bProject, "a project's [Scalability_Low] line replaces the engine's row");
+        Expect(bEngine, "and the rows it leaves keep the engine's values");
+        Expect(!Scalability::ResolvePowerOverrides(Scalability::EPowerProfile::PowerSaver).empty(), "PowerSaver has a table");
+        Expect(Scalability::SetPowerProfileSetting("saver") && Scalability::GetPowerProfile() == Scalability::EPowerProfile::PowerSaver,
+               "an explicit PowerSaver resolves to it");
+        Expect(!Scalability::SetPowerProfileSetting("Turbo"), "an unknown profile is refused");
+        Scalability::SetPowerProfileSetting("Max");
+        Expect(Scalability::GetPowerProfile() == Scalability::EPowerProfile::PowerMax, "and PowerMax to it");
+        Scalability::SetPowerProfileSetting("Auto");
+    }
+
+    const std::filesystem::path Dir = std::filesystem::temp_directory_path() / "NimbleGameCoreSmoke" / "DetailMode";
+    std::error_code Ignored;
+    std::filesystem::remove_all(Dir, Ignored);
+    std::filesystem::create_directories(Dir, Ignored);
+
+    /* Binary and text worlds, and the settings' lock. */
+    {
+        World Out;
+        Out.CreateEntity("Vase").SetDetailMode(EDetailMode::Ultra);
+        Out.CreateEntity("Floor");
+        Out.GetSettings().DetailMode = uint8_t(EDetailMode::High);
+
+        Archive Writer = Archive::ForWriting();
+        Expect(SerializeWorld(Writer, Out) && !Writer.HasError(), "a world with a bucketed entity saves");
+        World In;
+        Archive Reader = Archive::ForReading(Writer.GetBytes());
+        Expect(SerializeWorld(Reader, In) && In.GetEntity(In.FindEntityByName("Vase")).GetDetailMode() == EDetailMode::Ultra
+               && In.GetEntity(In.FindEntityByName("Floor")).GetDetailMode() == EDetailMode::Low,
+               "the bucket survives the binary round trip");
+        Expect(In.GetSettings().DetailMode == uint8_t(EDetailMode::High), "and so does the settings' tier");
+
+        const std::string Path = (Dir / "Level.nmworld").generic_string();
+        Expect(SaveWorldPackage(Path.c_str(), Out), "a text world with a bucketed entity saves");
+        World FromText;
+        Expect(LoadWorldFile(Path.c_str(), FromText)
+               && FromText.GetEntity(FromText.FindEntityByName("Vase")).GetDetailMode() == EDetailMode::Ultra
+               && FromText.GetSettings().DetailMode == uint8_t(EDetailMode::High),
+               "the bucket and the settings' tier survive the text round trip");
+    }
+
+    /* Prefabs: captured, written both ways, spawned, overridden per instance. */
+    {
+        World Source;
+        const Entity Root = Source.CreateEntity("Root");
+        Root.AddComponent<TransformComponent>();
+        const Entity Trim = Source.CreateEntity("Trim");
+        Trim.AddComponent<TransformComponent>();
+        Trim.SetParent(Root.GetID(), false);
+        Trim.SetDetailMode(EDetailMode::High);
+        PrefabAsset Asset;
+        Expect(CapturePrefab(Source, Root.GetID(), Asset), "a prefab with a bucketed member captures");
+
+        const std::string TextPath = (Dir / "Trim.nmprefab").generic_string();
+        PrefabAsset FromText;
+        Expect(SavePrefabFile(TextPath.c_str(), Asset) && LoadPrefabFile(TextPath.c_str(), FromText), "and round-trips as text");
+        Archive Writer = Archive::ForWriting();
+        SerializePrefab(Writer, Asset);
+        PrefabAsset FromBinary;
+        Archive Reader = Archive::ForReading(Writer.GetBytes());
+        Expect(SerializePrefab(Reader, FromBinary) && !Reader.HasError(), "and as binary");
+        for(const PrefabAsset* Each : { &Asset, &FromText, &FromBinary })
+        {
+            World Spawned;
+            const PrefabInstance Instance = Spawned.SpawnPrefab(*Each, TransformPose(), "Trim");
+            Expect(Instance.FindEntity("Trim").GetDetailMode() == EDetailMode::High
+                   && Instance.GetRoot().GetDetailMode() == EDetailMode::Low, "a spawned member keeps its bucket");
+        }
+
+        World Level;
+        Level.SpawnPrefab(TextPath.c_str(), TransformPose(), "Trim").FindEntity("Trim").SetDetailMode(EDetailMode::Medium);
+        const std::string LevelPath = (Dir / "WithTrim.nmworld").generic_string();
+        World Reloaded;
+        Expect(SaveWorldPackage(LevelPath.c_str(), Level) && LoadWorldFile(LevelPath.c_str(), Reloaded), "a level with an overridden bucket round-trips");
+        PrefabInstanceID Back;
+        Reloaded.ForEachInstance([](const PrefabInstanceID InInstance, void* InUserData)
+        {
+            *static_cast<PrefabInstanceID*>(InUserData) = InInstance;
+        }, &Back);
+        Expect(Back.IsSet() && Reloaded.GetInstance(Back).FindEntity("Trim").GetDetailMode() == EDetailMode::Medium,
+               "a bucket override survives the load");
+    }
+}
+
 static void TestInstanceScriptDetails()
 {
     std::printf("[instance script details]\n");
@@ -3692,6 +3829,7 @@ int main()
     TestPrefabFiles();
     TestInstanceScripts();
     TestMobility();
+    TestDetailMode();
     TestInstanceScriptDetails();
     TestPrefabWorldBinary();
 #if WITH_EDITOR

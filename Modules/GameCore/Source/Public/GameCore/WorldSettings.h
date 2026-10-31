@@ -62,9 +62,19 @@ namespace GameCore
          * (Entity::GetFolder). Text worlds only: a cooked world has none. */
         std::vector<std::string> Folders;
 
+        /*
+         * The tier this world always renders at (an EDetailMode), or
+         * WORLD_DETAIL_USE_GLOBAL -- the default -- for the player's
+         * Scalability.DetailMode. For a showcase or cinematic world locked to
+         * Ultra, or a test world locked to Low. Picks entity buckets only; the
+         * config overlay follows the global tier.
+         */
+        uint8_t DetailMode = 0xFF;
+
         bool operator==(const WorldSettings& InOther) const
         {
-            return Lighting == InOther.Lighting && GameMode == InOther.GameMode && Folders == InOther.Folders;
+            return Lighting == InOther.Lighting && GameMode == InOther.GameMode && Folders == InOther.Folders
+                && DetailMode == InOther.DetailMode;
         }
         bool operator!=(const WorldSettings& InOther) const { return !(*this == InOther); }
     };
@@ -72,7 +82,8 @@ namespace GameCore
     /* WSET's payload, both directions; Clamp()ed on load. Append new fields
      * at the end, behind a version check: InVersion is the chunk's (saving
      * writes WORLD_SETTINGS_VERSION). 2: GameMode. */
-    constexpr uint16_t WORLD_SETTINGS_VERSION = 2;
+    constexpr uint8_t  WORLD_DETAIL_USE_GLOBAL = 0xFF;
+    constexpr uint16_t WORLD_SETTINGS_VERSION  = 3;   // 3: DetailMode
     GAMECORE_API void SerializeWorldSettings(EngineCore::Archive& Ar, WorldSettings& InOutSettings, uint16_t InVersion);
 }
 

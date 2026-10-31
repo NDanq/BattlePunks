@@ -29,7 +29,7 @@ namespace
 
     /* The entity table (index, GUID, name), a parent index per entity, the
      * prefab instance table, then the component chunks. */
-    constexpr uint16_t WORLD_CHUNK_VERSION = 2;   // 2: each entity's mobility; 1 is still read
+    constexpr uint16_t WORLD_CHUNK_VERSION = 3;   // 2: each entity's mobility; 3: its detail mode; 1 is still read
 
     /* One prefab instance, as saved: its members by save index. */
     struct SavedInstance
@@ -173,7 +173,8 @@ namespace
 
             std::string Name(Handle.GetName());
             uint8_t     Mobility = uint8_t(Handle.GetAuthoredMobility());
-            Ar << Name << Mobility;
+            uint8_t     Detail   = uint8_t(Handle.GetDetailMode());
+            Ar << Name << Mobility << Detail;
         }
 
         /* Each entity's parent as a save index, in table order -- after the
@@ -301,7 +302,7 @@ namespace
             return false;
         }
 
-        if(Version != WORLD_CHUNK_VERSION && Version != 1)
+        if(Version > WORLD_CHUNK_VERSION || Version < 1)
         {
             /* Refused, unlike an unknown component type: every index refers to
              * the entity table, so a different table invalidates everything. */
@@ -334,13 +335,16 @@ namespace
             EntityGuid  Guid;
             std::string Name;
             uint8_t     Mobility = 0;
+            uint8_t     Detail   = 0;
             Ar << Guid.Hi << Guid.Lo << Name;
             if(Version >= 2) { Ar << Mobility; }
+            if(Version >= 3) { Ar << Detail; }
             if(Ar.HasError()) { Ar.CloseChunk(); return false; }
 
             /* Name and GUID at creation, so OnEntityCreated sees both. */
             const Entity Loaded = InWorld.CreateEntity(Name.c_str(), Guid);
             if(Mobility == uint8_t(EMobility::Static) || Mobility == uint8_t(EMobility::Stationary)) { Loaded.SetMobility(EMobility(Mobility)); }
+            if(Detail > 0 && Detail < DETAIL_MODE_COUNT) { Loaded.SetDetailMode(EDetailMode(Detail)); }
             OutTable.AddForLoading(Loaded);
         }
 

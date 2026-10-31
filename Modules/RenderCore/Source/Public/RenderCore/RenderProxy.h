@@ -171,6 +171,18 @@ namespace RenderCore
         }
         bool IsStatic() const { return bStatic; }
 
+        /* Its owner's scalability bucket is above the world's tier
+         * (GameCore's DetailMode.h), set by extraction. Apart from
+         * SetVisible, which a component's own bVisible rewrites every
+         * extraction. A detail-hidden proxy is culled from every view, shadow
+         * and occluder pass; it keeps its resources, so a tier switch back is
+         * immediate. */
+        void SetDetailHidden(bool bInHidden)
+        {
+            if(bDetailHidden != bInHidden) { bDetailHidden = bInHidden; ++ChangeSerial; }
+        }
+        bool IsDetailHidden() const { return bDetailHidden; }
+
         /* Which custom render pass mesh groups its draws join (CustomRenderPass.h,
          * DrawMeshGroup): RenderComponent::CustomPassGroups' bits, set by its
          * ApplyComponent; RenderScene passes them on while it draws. */
@@ -187,6 +199,8 @@ namespace RenderCore
         const GameCore::AABB&         GetWorldBounds()  const { return WorldBounds; }
         const GameCore::AABB&         GetLocalBounds()  const { return LocalBounds; }
         bool                          IsVisible()       const { return bVisible; }
+        /* What the scene's culling reads: visible, and not bucketed out. */
+        bool                          IsRenderable()    const { return bVisible && !bDetailHidden; }
         GameCore::EntityID            GetOwner()        const { return Owner; }
 
     private:
@@ -206,6 +220,7 @@ namespace RenderCore
 
         bool     bVisible     = true;
         bool     bStatic      = false;
+        bool     bDetailHidden = false;
         uint8_t  CustomPassGroups = 0;
         uint64_t ChangeSerial = 0;
         RenderBakedDraw Baked;

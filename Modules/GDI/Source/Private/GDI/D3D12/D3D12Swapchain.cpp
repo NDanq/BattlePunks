@@ -54,8 +54,11 @@ bool D3D12Swapchain::Initialize(D3D12Device* InDevice, EngineCore::WindowHandle 
     }
 
     /* Signalled while DXGI will take another frame without blocking
-     * (PresentFrame polls it); one frame queued at most. */
-    SwapChain->SetMaximumFrameLatency(1);
+     * (PresentFrame polls it). [Rendering] SwapchainExtraImages frames
+     * queued at most -- 1, or 2 for the PowerMax profile; the buffers stay
+     * kBufferCount, which covers both. */
+    const UINT Extra = GDIGetConfiguredSwapchainExtraImages();
+    SwapChain->SetMaximumFrameLatency(Extra < 1 ? 1u : Extra);
     FrameLatencyWaitable = SwapChain->GetFrameLatencyWaitableObject();
 
     if(!CreateBackBufferViews())        return false;
