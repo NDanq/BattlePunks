@@ -51,6 +51,26 @@ namespace TimeOfDay
      * from 6 to 18, the moon's on the same arc the rest of the night. */
     TIMEOFDAY_API EngineCore::Vector3 SunRotation(float InHour, float InNorthYaw, float InLatitude);
 
+    /* The unit vector toward the sun at InHour -- below the horizon at night,
+     * unlike SunRotation's light. The moon is opposite it. */
+    TIMEOFDAY_API EngineCore::Vector3 SunDirection(float InHour, float InNorthYaw, float InLatitude);
+
+    /* The atmosphere TimeOfDaySky.fsh draws, on the CPU (TimeOfDaySky.cpp):
+     * linear radiance seen along InDir (+Y up) under a sun toward InSun, with
+     * Mie density x InHaze. The same constants as the shader. */
+    struct SkyRGB { float R = 0.0f, G = 0.0f, B = 0.0f; };
+    TIMEOFDAY_API SkyRGB EvaluateSky(const EngineCore::Vector3& InDir, const EngineCore::Vector3& InSun, float InHaze);
+
+    /* What reaches the ground of a sun toward InSun through the air: (0,0,0)
+     * once it has set. */
+    TIMEOFDAY_API SkyRGB SunTransmittance(const EngineCore::Vector3& InSun, float InHaze);
+
+    /* The sky's draw on InWorld's frames (a custom render pass at
+     * ERenderHook::BeforeScene), for its first clock with bDrawSky. What
+     * the plugin's world hook does; Detach before the World goes. */
+    TIMEOFDAY_API void AttachSky(GameCore::World& InWorld);
+    TIMEOFDAY_API void DetachSky(GameCore::World& InWorld);
+
     /* True from 6 to 18. */
     TIMEOFDAY_API bool IsDaytime(float InHour);
 

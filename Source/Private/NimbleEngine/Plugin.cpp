@@ -10,6 +10,7 @@
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CorePack.h"
 #include "Public/Core/CorePlatform.h"
+#include "Public/RenderCore/Renderer.h"
 
 /* The plugin host: Plugin.h says what it does, NimblePlugins.cmake what the
  * build leaves for it to read. */
@@ -45,6 +46,7 @@ namespace NimbleEngine
             std::string                                Version;
             std::string                                SourceDir;
             std::vector<std::string>                   ModuleFiles;
+            bool                                       bShaders = false;
             std::shared_ptr<EngineCore::IFileProvider> Files;     // the plugin folder: descriptor, Config/, Content/
             std::unique_ptr<PluginContext>             Context;
             std::vector<LoadedLibrary>                 Libraries;
@@ -122,6 +124,7 @@ namespace NimbleEngine
                 PluginRecord& Record = Result.back();
                 if(Key == "Version")     { Record.Version = Value; }
                 else if(Key == "Source") { Record.SourceDir = Value; }
+                else if(Key == "Shaders") { Record.bShaders = Value == "true"; }
                 else if(Key == "Modules")
                 {
                     size_t From = 0;
@@ -205,6 +208,51 @@ namespace NimbleEngine
             const std::set<std::string> Known;
             std::mutex                  Mutex;
             std::set<std::string>       Reported;
+        };
+
+        /*
+         * A plugin's shader cache, Shaders/Cache/<Name>.<Platform>.nmsc, and
+         * nothing else of it, unprefixed -- where Renderer::MountShaderCache
+         * looks. From NimbleCook's output in its source folder when that is
+         * there (a cook since the last build is seen without one, as for the
+         * game's: ShaderCook.h), else from what the build staged or packed.
+         */
+        class ShaderCacheLayer : public EngineCore::IFileProvider
+        {
+        public:
+            ShaderCacheLayer(const std::string& InName, std::shared_ptr<EngineCore::IFileProvider> InFiles, const std::string& InSourceDir)
+                : Prefix("Shaders/Cache/" + InName + "."), Files(std::move(InFiles))
+            {
+                const std::string Cooked = JoinPath(InSourceDir, "Saved/Cooked/Shaders/Runtime");
+                if(!InSourceDir.empty() && IsDirectory(Cooked))
+                {
+                    Fresh = std::make_shared<EngineCore::FilesystemProvider>(Cooked);
+                }
+            }
+
+            bool ReadAll(const std::string& InPath, std::vector<uint8_t>& OutBytes) override
+            {
+                return Owns(InPath) && ((Fresh && Fresh->ReadAll(InPath, OutBytes)) || (Files && Files->ReadAll(InPath, OutBytes)));
+            }
+            bool Exists(const std::string& InPath) override
+            {
+                return Owns(InPath) && ((Fresh && Fresh->Exists(InPath)) || (Files && Files->Exists(InPath)));
+            }
+            bool ReadRange(const std::string& InPath, const uint64_t InOffset, const uint64_t InSize, std::vector<uint8_t>& OutBytes) override
+            {
+                return Owns(InPath) && ((Fresh && Fresh->ReadRange(InPath, InOffset, InSize, OutBytes))
+                                        || (Files && Files->ReadRange(InPath, InOffset, InSize, OutBytes)));
+            }
+
+        private:
+            bool Owns(const std::string& InPath) const
+            {
+                return InPath.compare(0, Prefix.size(), Prefix) == 0 && InPath.find('/', Prefix.size()) == std::string::npos;
+            }
+
+            const std::string                          Prefix;
+            std::shared_ptr<EngineCore::IFileProvider> Files;
+            std::shared_ptr<EngineCore::IFileProvider> Fresh;
         };
 
         constexpr const char* GUARD_LAYER = "Plugin:*";
@@ -423,6 +471,14 @@ namespace NimbleEngine
                 {
                     CORE_LOG_ERROR("[Plugins] the asset provider takes no layers: " + Record.Name + "'s content is unreachable")
                 }
+                if(Record.bShaders)
+                {
+                    const std::string ShaderLayer = "PluginShaders:" + Record.Name;
+                    if(InAssets.MountLayer(ShaderLayer, std::make_shared<ShaderCacheLayer>(Record.Name, Record.Files, Record.SourceDir)))
+                    {
+                        State.MountedLayers.push_back(ShaderLayer);
+                    }
+                }
             }
         }
 
@@ -433,6 +489,29 @@ namespace NimbleEngine
                 InAssets.UnmountLayer(Layer);
             }
             Host().MountedLayers.clear();
+        }
+
+        void MountShaderCaches(RenderCore::Renderer& InRenderer)
+        {
+            for(const PluginRecord& Record : Host().Records)
+            {
+                if(Record.bShaders)
+                {
+                    InRenderer.MountShaderCache(Record.Name.c_str());
+                }
+            }
+        }
+
+        void UnmountShaderCaches(RenderCore::Renderer& InRenderer)
+        {
+            const std::vector<PluginRecord>& Records = Host().Records;
+            for(auto It = Records.rbegin(); It != Records.rend(); ++It)
+            {
+                if(It->bShaders)
+                {
+                    InRenderer.UnmountShaderCache(It->Name.c_str());
+                }
+            }
         }
 
         bool LoadModules()

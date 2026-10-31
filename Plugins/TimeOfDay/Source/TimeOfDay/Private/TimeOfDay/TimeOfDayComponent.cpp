@@ -28,6 +28,11 @@ namespace TimeOfDay
         Ar.Field("NorthYaw",         C.NorthYaw);
         Ar.Field("Latitude",         C.Latitude);
         Ar.Field("SunIntensityScale", C.SunIntensityScale);
+        Ar.Flag("DrawSky",            C.bDrawSky);
+        Ar.Field("Haze",              C.Haze);
+        Ar.Field("SkyBrightness",     C.SkyBrightness);
+        Ar.Field("SunDiscSize",       C.SunDiscSize);
+        Ar.Field("StarBrightness",    C.StarBrightness);
         Ar.Field("Preset",           C.Preset);
     }
 
@@ -39,6 +44,9 @@ namespace TimeOfDay
         Bind.Field("NorthYaw",         &TimeOfDayComponent::NorthYaw);
         Bind.Field("Latitude",         &TimeOfDayComponent::Latitude);
         Bind.Field("SunIntensityScale", &TimeOfDayComponent::SunIntensityScale);
+        Bind.Flag("DrawSky",            &TimeOfDayComponent::bDrawSky);
+        Bind.Field("Haze",              &TimeOfDayComponent::Haze);
+        Bind.Field("SkyBrightness",     &TimeOfDayComponent::SkyBrightness);
     }
 
     /* The server's clock is the clock; a client runs its copy between updates. */
@@ -69,6 +77,20 @@ namespace TimeOfDay
         Props.Field("Sun Intensity Scale", &TimeOfDayComponent::SunIntensityScale);
         Props.Range(0.0f, 20.0f);
         Props.Tooltip("Multiplies the preset's sun intensity, for a level exposed for a brighter sun.");
+        Props.Category("Sky");
+        Props.Flag("Draw Sky", &TimeOfDayComponent::bDrawSky);
+        Props.Tooltip("Draws a physical atmosphere, sun, moon and stars behind everything, and takes the light colours from it.");
+        Props.Field("Haze", &TimeOfDayComponent::Haze);
+        Props.Range(0.0f, 10.0f);
+        Props.Tooltip("Aerosol density: more is a whiter sky and wider, redder sunsets.");
+        Props.Field("Sky Brightness", &TimeOfDayComponent::SkyBrightness);
+        Props.Range(0.0f, 10.0f);
+        Props.Field("Sun Disc Size", &TimeOfDayComponent::SunDiscSize);
+        Props.Range(0.0f, 10.0f);
+        Props.Tooltip("The sun disc's radius in degrees (the real one is about 0.27).");
+        Props.Field("Star Brightness", &TimeOfDayComponent::StarBrightness);
+        Props.Range(0.0f, 10.0f);
+        Props.Category("Time Of Day");
         Props.Field("Preset", &TimeOfDayComponent::Preset);
         Props.Tooltip("A .todpreset: TimeOfDay:/Presets/Default.todpreset, or the project's own Content/....");
     }

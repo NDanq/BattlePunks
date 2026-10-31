@@ -27,6 +27,11 @@ level's **Directional Light** and **Sky Light**. Each frame the component:
 | Latitude | the noon sun stands 90 - Latitude degrees up |
 | Sun Intensity Scale | multiplies the preset's sun intensity, for levels exposed for a brighter sun |
 | Preset | `TimeOfDay:/Presets/Default.todpreset`, or the project's own `Content/....todpreset` |
+| Draw Sky | draw the sky (below) and take the light colours from it |
+| Haze | aerosol density: more gives a whiter sky and wider, redder sunsets |
+| Sky Brightness | multiplies the drawn sky |
+| Sun Disc Size | the sun disc's radius in degrees (the real one is about 0.27) |
+| Star Brightness | 0 turns the stars off |
 
 **Hour replicates:** the server's clock is the real clock, and a client runs
 its own copy between updates.
@@ -36,8 +41,38 @@ its own copy between updates.
 `Events.On("TimeOfDayHour", function(hour, clock) ... end)` fires as each
 hour begins.
 
-**Config** (`[TimeOfDay]`): `DayLengthMinutes`, and `Speed`, which scales
-every clock (console: `TimeOfDay.Speed 10`).
+**Config** (`[TimeOfDay]`): `DayLengthMinutes`; `Speed`, which scales every
+clock (console: `TimeOfDay.Speed 10`); and `Hour`, which pins every clock at
+that hour, for previews and screenshots (`-TimeOfDay.Hour=18.5`).
+
+## The sky
+
+With **Draw Sky** on, a render pass draws the sky behind everything
+([`TimeOfDaySky.fsh`](Content/Shaders/TimeOfDaySky.fsh)). Per pixel it
+computes single scattering through a planet's atmosphere:
+
+- Rayleigh scattering gives the blue sky and the red horizons.
+- Mie scattering gives the haze and the glow around the sun.
+- Ozone absorption keeps the blue hour blue.
+
+The sun and the moon (opposite the sun) both light it. On top of that: a
+limb-darkened sun disc, the moon disc, twinkling stars, and a faint airglow
+so that night is deep blue rather than black. Sunsets, the pink band
+opposite the sun and the blue hour all come from the sun's angle; nothing is
+keyed by hand.
+
+The exposure adapts as the zenith dims, up to 8x, so twilight stays readable
+and night stays dark.
+
+The same model runs on the CPU to set the sun's colour by day and the Sky
+Light's sky and ground colours, so the lighting matches what you see. The
+preset still sets every intensity, and the moonlight colour at night.
+
+Cook the sky shader after changing it:
+
+```bash
+NimbleCook shaders -project <game>
+```
 
 ## Presets
 
@@ -60,8 +95,12 @@ WorldsLab's **DayCycle** world is Hills with a two-minute day.
 
 ## Limits
 
-- **No sky background colour.** The Sky Light draws only an HDRI behind the
-  scene, so the sky colour lights surfaces but the background stays dark. A
-  Sky Light that has an HDRI `Environment` lights by the HDRI, which ignores
-  the preset's sky colours.
+- **Reflections don't see the drawn sky.** Surfaces reflect the Sky Light's
+  colours (or its HDRI), not the sky pass. Feeding the pass into a reflection
+  cubemap is renderer work for later.
+- **No clouds yet.**
+- **No sky in the editor viewport while editing.** The pass is registered on
+  the levels a game session loads, so it shows in Play mode only.
+- **The sky draws over a Sky Light's HDRI background.** Turn Draw Sky off to
+  keep the HDRI.
 - **Rotation is applied to the entity**, so make its Mobility Dynamic.

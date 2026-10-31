@@ -24,6 +24,7 @@
 #include "Public/RenderCore/Components/DirectionalLightComponent.h"
 #include "Public/RenderCore/Components/LightShadow.h"
 #include "Public/RenderCore/Components/SkyLightComponent.h"
+#include "Public/RenderCore/CustomRenderPass.h"
 #include "Public/TimeOfDay/TimeOfDay.h"
 #include "Public/TimeOfDay/TimeOfDayComponent.h"
 
@@ -119,7 +120,9 @@ namespace
         TimeOfDay::TimeOfDayComponent Init;
         Init.Hour             = 11.5f;
         Init.DayLengthMinutes = 1.0f;   // an hour every 2.5 s
+        Init.bDrawSky         = 0;      // the preset's colours, not the atmosphere's
         Sun.AddComponent(Init);
+        Expect(RenderCore::GetCustomRenderPassCount(&World) == 1, "the sky's pass is registered on the World");
 
         World.Tick(2.5f);
         const TimeOfDay::TimeOfDayComponent* Clock = Sun.GetComponent<TimeOfDay::TimeOfDayComponent>();
@@ -137,7 +140,18 @@ namespace
         const GameCore::TransformComponent* Transform = Sun.GetComponent<GameCore::TransformComponent>();
         Expect(Transform && RenderCore::LightForward(Transform->Rotation).GetY() < -0.5f, "the noon sun shines down");
 
+        /* With the sky drawn, its colours come from the atmosphere. */
+        Sun.GetComponent<TimeOfDay::TimeOfDayComponent>()->bDrawSky = 1;
+        Sun.GetComponent<TimeOfDay::TimeOfDayComponent>()->Hour     = 17.4f;
+        World.Tick(0.0f);
+        Expect(Light && Light->Color.R > Light->Color.B + 40, "a low sun through the air is warm");
+        Expect(Sky && Sky->SkyColor.B >= Sky->SkyColor.R, "the evening sky's ambient is still blue");
+        Expect(Light && Near(Light->Intensity, TimeOfDay::Evaluate(TimeOfDay::LoadPreset("TimeOfDay:/Presets/Default.todpreset"), 17.4f).SunIntensity),
+               "the preset still sets the intensity");
+        Sun.GetComponent<TimeOfDay::TimeOfDayComponent>()->Hour = 12.5f;
+
         NimbleEngine::Plugins::DetachWorld(World);
+        Expect(RenderCore::GetCustomRenderPassCount(&World) == 0, "detached, the sky's pass is gone");
         World.Tick(2.5f);
         Expect(Clock && Near(Clock->Hour, 12.5f), "detached, the clock stops");
 
@@ -189,6 +203,35 @@ namespace
                "the sun sweeps across the day");
         Expect(Near(TimeOfDay::SunRotation(0.0f, 0.0f, 35.0f).GetX(), Noon), "the moon tops its arc at midnight");
         Expect(TimeOfDay::IsDaytime(12.0f) && !TimeOfDay::IsDaytime(20.0f) && !TimeOfDay::IsDaytime(-1.0f), "day is 6 to 18");
+
+        Expect(TimeOfDay::SunDirection(12.0f, 0.0f, 35.0f).GetY() > 0.8f, "the true sun is high at noon");
+        Expect(TimeOfDay::SunDirection(0.0f, 0.0f, 35.0f).GetY() < -0.8f, "and under the ground at midnight");
+        Expect(std::fabs(TimeOfDay::SunDirection(6.0f, 0.0f, 35.0f).GetY()) < 0.01f, "it rises at 6");
+        const EngineCore::Vector3 Moon = TimeOfDay::SunRotation(0.0f, 0.0f, 35.0f);
+        const EngineCore::Vector3 MoonTravel = RenderCore::LightForward(Moon);
+        const EngineCore::Vector3 SunAtMidnight = TimeOfDay::SunDirection(0.0f, 0.0f, 35.0f);
+        Expect(Near(float(MoonTravel.GetY()), float(SunAtMidnight.GetY()), 0.02f), "the moonlight comes from opposite the sun");
+    }
+
+    void TestAtmosphere()
+    {
+        std::printf("atmosphere\n");
+        const EngineCore::Vector3 Up(0.0f, 1.0f, 0.0f);
+        const EngineCore::Vector3 Noon = TimeOfDay::SunDirection(12.0f, 0.0f, 35.0f);
+        const TimeOfDay::SkyRGB Zenith = TimeOfDay::EvaluateSky(Up, Noon, 1.0f);
+        Expect(Zenith.B > Zenith.G && Zenith.G > Zenith.R && Zenith.R > 0.0f, "the noon zenith is blue");
+
+        const TimeOfDay::SkyRGB HighSun = TimeOfDay::SunTransmittance(Noon, 1.0f);
+        const TimeOfDay::SkyRGB LowSun  = TimeOfDay::SunTransmittance(TimeOfDay::SunDirection(6.3f, 0.0f, 35.0f), 1.0f);
+        Expect(HighSun.R > 0.7f && HighSun.B > 0.5f, "the noon sun comes through nearly white");
+        Expect(LowSun.R > LowSun.B * 3.0f, "a rising sun comes through red");
+        const TimeOfDay::SkyRGB Set = TimeOfDay::SunTransmittance(TimeOfDay::SunDirection(0.0f, 0.0f, 35.0f), 1.0f);
+        Expect(Set.R == 0.0f && Set.G == 0.0f && Set.B == 0.0f, "a set sun comes through not at all");
+
+        const TimeOfDay::SkyRGB Hazy = TimeOfDay::EvaluateSky(Up, Noon, 6.0f);
+        Expect(Hazy.R / Hazy.B > Zenith.R / Zenith.B, "haze whitens the sky");
+        const TimeOfDay::SkyRGB Night = TimeOfDay::EvaluateSky(Up, TimeOfDay::SunDirection(0.0f, 0.0f, 35.0f), 1.0f);
+        Expect(Night.B < Zenith.B * 0.001f, "the sun lights nothing at midnight");
     }
 }
 
@@ -207,6 +250,7 @@ int main()
     NimbleEngine::Plugins::MountContent(Assets);
     TestPresets();
     TestSunPath();
+    TestAtmosphere();
     NimbleEngine::Plugins::UnmountContent(Assets);
     NimbleEngine::Plugins::Close();
 

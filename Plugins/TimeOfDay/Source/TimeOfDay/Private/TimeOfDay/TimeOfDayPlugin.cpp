@@ -23,10 +23,12 @@ namespace
     void AttachWorld(GameCore::World& InWorld, void*)
     {
         InWorld.RegisterSystem("TimeOfDay", GameCore::TP_PostUpdate, &TickClocks, &GSystemOwner);
+        TimeOfDay::AttachSky(InWorld);
     }
 
     void DetachWorld(GameCore::World& InWorld, void*)
     {
+        TimeOfDay::DetachSky(InWorld);
         InWorld.UnregisterAllSystems(&GSystemOwner);
     }
 

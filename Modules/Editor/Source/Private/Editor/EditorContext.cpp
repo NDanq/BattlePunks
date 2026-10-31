@@ -93,6 +93,7 @@ bool EditorContext::InitializeRenderer(const RenderCore::ERenderBackend InBacken
         CORE_LOG_ERROR("[Editor] RenderCore failed to initialize; the viewport will not draw")
         return false;
     }
+    NimbleEngine::Plugins::MountShaderCaches(*Renderer);   // the plugins' custom passes and materials
 
     Renderer->BindWorld(Level->GetEditedWorld());
     Renderer->SetViewMode(RenderCore::RENDER_DEFAULT_SCENE, ViewMode, ViewTarget.toStdString());
@@ -250,6 +251,10 @@ void EditorContext::Shutdown()
      * which needs the World still alive. Null-safe on a failed Initialize. */
     if(Renderer)
     {
+        if(bRendererReady)
+        {
+            NimbleEngine::Plugins::UnmountShaderCaches(*Renderer);
+        }
         Renderer->Shutdown();
         EngineCore::Memory::Dealloc(Renderer);
         Renderer = nullptr;
