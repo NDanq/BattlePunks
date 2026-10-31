@@ -18,6 +18,7 @@
 #include "Private/Editor/PlaySession.h"
 #include "Private/Editor/PlayProcesses.h"
 #include "Public/NimbleEngine/GameModule.h"
+#include "Public/NimbleEngine/Plugin.h"
 #include "Private/Editor/ViewportSDLInput.h"
 
 #include <QColor>
@@ -36,6 +37,7 @@ EditorContext::EditorContext(QObject* InParent)
     /* Before anything asks for an asset -- the Renderer loads its cooked
      * shaders through this on the render thread. */
     EngineCore::SetFileProvider(&LayeredAssets);
+    NimbleEngine::Plugins::MountContent(LayeredAssets);   // "<Name>:/..." (NimbleEngine/Plugin.h)
 
     Level = new EditorDocument(this);
 
@@ -72,6 +74,7 @@ EditorContext::~EditorContext()
     Level = nullptr;
 
     /* Last: the render thread's shader loads read through it until Shutdown. */
+    NimbleEngine::Plugins::UnmountContent(LayeredAssets);
     EngineCore::SetFileProvider(nullptr);
 }
 

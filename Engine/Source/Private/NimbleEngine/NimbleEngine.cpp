@@ -14,6 +14,7 @@
 #include "Public/NimbleEngine/AudioFacade.h"
 #include "Public/NimbleEngine/GameModule.h"
 #include "Public/NimbleEngine/Level.h"
+#include "Public/NimbleEngine/Plugin.h"
 #include "Public/NimbleEngine/ShaderCook.h"
 
 
@@ -461,6 +462,12 @@ namespace NimbleEngine
         /* Run uncooked: the project's raw files over everything, config included. */
         const std::string UncookedRoot = MountUncookedProject();
 
+        /* Plugins (Plugin.h): each one's Config/Default<Name>.ini before the
+         * project's file, which then wins, and its content as "<Name>:/..."
+         * only. Read from each plugin's source folder when running uncooked. */
+        const int PluginCount = Plugins::Discover(ExecutableDir, !UncookedRoot.empty());
+        Plugins::MountContent(LayeredAssets);
+
         ConfigLoadStats Stats;
         const bool bConfigLoaded = LoadConfigFile("Config/DefaultEngine.ini", &Stats);
 
@@ -494,6 +501,15 @@ namespace NimbleEngine
             if(!CookedShaders.empty())
             {
                 CORE_LOG("Shaders from " + CookedShaders + " (NimbleCook's), over the staged ones")
+            }
+            if(PluginCount > 0)
+            {
+                std::string Names;
+                for(size_t Index = 0; Index < Plugins::GetCount(); ++Index)
+                {
+                    Names += (Index ? ", " : "") + Plugins::GetNameAt(Index);
+                }
+                CORE_LOG("Plugins: " + Names)
             }
         }
         if(!bConfigLoaded)
@@ -531,8 +547,14 @@ namespace NimbleEngine
             }
         }
 
-        /* [Modules] edited since this build was configured (GameSession.h). */
+        /* After every config layer, so their vars register onto the final
+         * values; before the game module, which may link them. */
+        Plugins::LoadModules();
+
+        /* [Modules] and [Plugins] edited since this build was configured
+         * (GameSession.h, Plugin.h). */
         WarnModuleConfigMismatch();
+        Plugins::WarnConfigMismatch();
 
         if(Desc.bHeadless)
         {
@@ -906,9 +928,15 @@ namespace NimbleEngine
         /* After the level (its code), before the engine (OnShutdown may log). */
         Game.Unload();
 
+        /* After the game module, which may link them; their libraries stay
+         * open until the engine is done with what they registered. */
+        Plugins::ShutdownModules();
+
         /* Unconditional -- null-safe and idempotent, so a failed Initialize()
          * still shuts SDL down. */
         Shutdown();
+        Plugins::UnmountContent(LayeredAssets);
+        Plugins::Close();
         CloseRunLog();
     }
 
