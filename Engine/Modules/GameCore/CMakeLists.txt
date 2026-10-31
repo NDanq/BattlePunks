@@ -55,6 +55,7 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/TerrainBrush.cpp
         Source/Private/GameCore/World.cpp
         Source/Private/GameCore/WorldSettings.cpp
+        Source/Private/GameCore/Scalability.cpp
         Source/Private/GameCore/ScriptEngine.cpp
         Source/Private/GameCore/GraphText.cpp
         Source/Private/GameCore/ScriptBindings.cpp
@@ -83,6 +84,7 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/TerrainBrush.h
         Source/Public/GameCore/SpatialIndex.h
         Source/Public/GameCore/TickPhase.h
+        Source/Public/GameCore/DetailMode.h
         Source/Public/GameCore/Mobility.h
         Source/Public/GameCore/Delegate.h
         Source/Public/GameCore/EventBus.h
@@ -90,6 +92,7 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/ComponentPool.h
         Source/Public/GameCore/World.h
         Source/Public/GameCore/WorldSettings.h
+        Source/Public/GameCore/Scalability.h
         Source/Public/GameCore/Entity.h
         Source/Public/GameCore/Components.h
         Source/Public/GameCore/Components/TransformComponent.h

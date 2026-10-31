@@ -244,6 +244,7 @@ void DetailsPanel::Rebuild()
     Arrays.clear();
     NameEdit      = nullptr;
     MobilityCombo = nullptr;
+    DetailModeCombo = nullptr;
     ShownEntity = Document.GetSelection();
     ShownTypes  = CollectComponentTypes(ShownEntity);
 
@@ -326,6 +327,28 @@ QWidget* DetailsPanel::BuildEntitySection(const EntityID InEntity)
     });
     Form->addRow(QStringLiteral("Mobility"), MobilityCombo);
 
+    // --- Detail Mode: the scalability bucket, the lowest tier it renders at ----
+    DetailModeCombo = new QComboBox(Content);
+    for(uint8_t Mode = 0; Mode < GameCore::DETAIL_MODE_COUNT; ++Mode)
+    {
+        DetailModeCombo->addItem(QString::fromLatin1(GameCore::DetailModeName(GameCore::EDetailMode(Mode))), int(Mode));
+    }
+    DetailModeCombo->setToolTip(QStringLiteral("The lowest scalability tier this entity renders at. Low renders at every "
+                                               "tier; High only at High and Ultra; Ultra only at Ultra -- for clutter and "
+                                               "dressing a slower machine can do without. Render-only: it still collides, "
+                                               "ticks and plays sound. The viewport's Show > World Detail previews a tier. "
+                                               "Applies to every selected entity."));
+    DetailModeCombo->setFocusPolicy(Qt::StrongFocus);
+    connect(DetailModeCombo, QOverload<int>::of(&QComboBox::activated), this, [this](const int InIndex)
+    {
+        if(DetailModeCombo)
+        {
+            Document.SetEntitiesDetailMode(Document.GetSelectedEntities(),
+                                           GameCore::EDetailMode(DetailModeCombo->itemData(InIndex).toInt()));
+        }
+    });
+    Form->addRow(QStringLiteral("Detail Mode"), DetailModeCombo);
+
     // --- Prefab: what the entity's instance was placed from -------------------
     const GameCore::Entity Shown = Document.GetWorld().GetEntity(InEntity);
     if(Shown.IsInInstance())
@@ -385,6 +408,14 @@ void DetailsPanel::RefreshEntitySection()
         }
         /* Static from its prefab instance's root: changed there, not here. */
         MobilityCombo->setEnabled(E.GetMobility() == E.GetAuthoredMobility());
+    }
+    if(DetailModeCombo)
+    {
+        const int Index = DetailModeCombo->findData(int(E.GetDetailMode()));
+        if(Index >= 0 && DetailModeCombo->currentIndex() != Index)
+        {
+            DetailModeCombo->setCurrentIndex(Index);
+        }
     }
 }
 

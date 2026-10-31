@@ -496,6 +496,52 @@ void EditorDocument::SetEntitiesMobility(const std::vector<EntityID>& InEntities
     }
 }
 
+void EditorDocument::SetEntityDetailMode(const EntityID InEntity, const GameCore::EDetailMode InMode)
+{
+    if(!ActiveWorld || !ActiveWorld->IsAlive(InEntity) || ActiveWorld->GetEntity(InEntity).GetDetailMode() == InMode)
+    {
+        return;
+    }
+    const EditorHistory::EntityMembers Before = EditorHistory::CaptureMembers(*ActiveWorld, InEntity);
+    ActiveWorld->GetEntity(InEntity).SetDetailMode(InMode);
+    QueueEntitiesChanged();
+    RecordMembersChange(InEntity, Before, QStringLiteral("Show %1 at %2 detail").arg(GetDisplayName(InEntity),
+                                                                         QString::fromLatin1(GameCore::DetailModeName(InMode))));
+}
+
+void EditorDocument::SetEntitiesDetailMode(const std::vector<EntityID>& InEntities, const GameCore::EDetailMode InMode)
+{
+    std::vector<EntityID> Changing;
+    for(const EntityID Each : InEntities)
+    {
+        if(ActiveWorld->IsAlive(Each) && ActiveWorld->GetEntity(Each).GetDetailMode() != InMode) { Changing.push_back(Each); }
+    }
+    if(Changing.size() <= 1)
+    {
+        if(!Changing.empty()) { SetEntityDetailMode(Changing.front(), InMode); }
+        return;
+    }
+    const bool bMacro = IsRecording();
+    if(bMacro) { History->beginMacro(QStringLiteral("Show %1 entities at %2 detail").arg(Changing.size()).arg(GameCore::DetailModeName(InMode))); }
+    for(const EntityID Each : Changing)
+    {
+        SetEntityDetailMode(Each, InMode);
+    }
+    if(bMacro)
+    {
+        History->endMacro();
+        LatestRecorded = nullptr;
+        emit HistoryChanged();
+    }
+}
+
+void EditorDocument::SetPreviewDetailMode(const int InMode)
+{
+    if(!ActiveWorld || ActiveWorld->GetPreviewDetailMode() == InMode) { return; }
+    ActiveWorld->SetPreviewDetailMode(InMode);
+    emit DetailPreviewChanged();
+}
+
 // === Outliner folders ========================================================
 
 namespace

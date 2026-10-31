@@ -522,12 +522,15 @@ def component_xml(type_name, version, fields):
     return "".join(lines)
 
 
-def entity_xml(entity_guid, name, components, mobility=None, parent=None):
-    """components: [(type name, xml)] -- written sorted by type name, as SaveWorldPackage does."""
+def entity_xml(entity_guid, name, components, mobility=None, parent=None, detail=None):
+    """components: [(type name, xml)] -- written sorted by type name, as SaveWorldPackage does.
+    detail: the scalability bucket (GameCore's DetailMode.h), "Medium" / "High" / "Ultra"; None is Low."""
     attrs = f" Guid=\"{entity_guid}\" Name=\"{name}\""
     if parent:
         attrs += f" Parent=\"{parent}\""
     if mobility:
         attrs += f" Mobility=\"{mobility}\""
+    if detail:
+        attrs += f" DetailMode=\"{detail}\""
     body = "".join(text for _, text in sorted(components, key=lambda c: c[0]))
     return f"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Entity{attrs}>\n{body}</Entity>\n"

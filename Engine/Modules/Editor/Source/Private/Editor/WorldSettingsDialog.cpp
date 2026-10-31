@@ -15,6 +15,7 @@
 #include <QVBoxLayout>
 
 #include "Public/Editor/EditorDocument.h"
+#include "Public/GameCore/DetailMode.h"
 #include "Public/GameCore/WorldSettings.h"
 #include "Public/NimbleEngine/WorldList.h"
 
@@ -49,6 +50,18 @@ WorldSettingsDialog::WorldSettingsDialog(EditorDocument& InDocument, QWidget* In
     auto* GameGroup = new QGroupBox(QStringLiteral("Game"), this);
     auto* GameForm  = new QFormLayout(GameGroup);
     GameForm->addRow(QStringLiteral("Game mode"), GameMode);
+
+    DetailMode = new QComboBox(this);
+    DetailMode->addItem(QStringLiteral("The player's (Scalability.DetailMode)"), int(GameCore::WORLD_DETAIL_USE_GLOBAL));
+    for(uint8_t Mode = 0; Mode < GameCore::DETAIL_MODE_COUNT; ++Mode)
+    {
+        DetailMode->addItem(QStringLiteral("Always %1").arg(QString::fromLatin1(GameCore::DetailModeName(GameCore::EDetailMode(Mode)))), int(Mode));
+    }
+    DetailMode->setCurrentIndex((std::max)(0, DetailMode->findData(int(Document.GetWorldSettings().DetailMode))));
+    DetailMode->setToolTip(QStringLiteral("Which entities' Detail Mode buckets render in this world: the player's tier, "
+                                          "or one this world is locked to -- a showcase at Ultra, a test level at Low. "
+                                          "The tier's config values still follow the player's"));
+    GameForm->addRow(QStringLiteral("Detail mode"), DetailMode);
 
     const GameCore::WorldLightingSettings& Lighting = Document.GetWorldSettings().Lighting;
 
@@ -130,6 +143,7 @@ void WorldSettingsDialog::Apply()
     GameCore::WorldSettings Settings = Document.GetWorldSettings();
     const QString Mode = GameMode->currentText().trimmed();
     Settings.GameMode = Mode == QLatin1String(NoModeText) ? std::string() : Mode.toStdString();
+    Settings.DetailMode = uint8_t(DetailMode->currentData().toInt());
 
     GameCore::WorldLightingSettings& Lighting = Settings.Lighting;
     Lighting.bBakedLighting  = BakedLighting->isChecked();

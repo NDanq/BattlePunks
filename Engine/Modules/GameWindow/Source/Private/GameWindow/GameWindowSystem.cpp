@@ -386,6 +386,19 @@ GameWindow* GameWindowSystem::WrapNativeWindow(const EngineCore::WindowHandle In
     return Window;
 }
 
+GameWindowSystem::EPowerSource GameWindowSystem::GetPowerSource()
+{
+    int Seconds = -1, Percent = -1;
+    switch(SDL_GetPowerInfo(&Seconds, &Percent))
+    {
+        case SDL_POWERSTATE_NO_BATTERY: return EPowerSource::NoBattery;
+        case SDL_POWERSTATE_CHARGING:
+        case SDL_POWERSTATE_CHARGED:    return EPowerSource::Plugged;
+        case SDL_POWERSTATE_ON_BATTERY: return EPowerSource::OnBattery;
+        default:                        return EPowerSource::Unknown;
+    }
+}
+
 std::string GameWindowSystem::GetClipboardText()
 {
     if(!SDL_HasClipboardText()) return std::string();

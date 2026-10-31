@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <condition_variable>
 #include <deque>
 #include <mutex>
 #include <new>
@@ -89,6 +90,14 @@ struct JobSystem::Impl
     Thread*                  Workers     = nullptr;
     uint32_t                 WorkerCount = 0;
 
+    /* SetActiveWorkerLimit's. A worker at or past the limit waits on ParkWake;
+     * ParkMutex guards nothing but that wait, so parking never contends with
+     * the queue's Mutex. */
+    std::atomic<uint32_t>    ActiveLimit{0};
+    std::atomic<uint32_t>    IdleWaitMs {2};
+    std::mutex               ParkMutex;
+    std::condition_variable  ParkWake;
+
     /* Relaxed throughout: they are counters for a profile, and no decision is
      * made on them. */
     std::atomic<uint64_t>    Dispatched     {0};
@@ -140,6 +149,7 @@ JobSystem::JobSystem(const uint32_t InWorkerCount)
 
     Pimpl->Workers     = new Thread[Count];
     Pimpl->WorkerCount = Count;
+    Pimpl->ActiveLimit.store(Count, std::memory_order_relaxed);
 
     for(uint32_t Index = 0; Index < Count; ++Index)
     {
@@ -148,7 +158,7 @@ JobSystem::JobSystem(const uint32_t InWorkerCount)
         char Name[16];
         std::snprintf(Name, sizeof(Name), "Job/%u", Index);
 
-        if(!Pimpl->Workers[Index].Start(Name, [this] { WorkerMain(); }))
+        if(!Pimpl->Workers[Index].Start(Name, [this, Index] { WorkerMain(Index); }))
         {
             CORE_LOG_ERROR(std::string("Jobs: worker ") + std::to_string(Index) +
                            " failed to start; the pool will run with fewer workers than "
@@ -166,6 +176,12 @@ JobSystem::~JobSystem()
 
     /* Release, paired with the acquire in WorkerMain's loop condition. */
     Pimpl->bShuttingDown.store(true, std::memory_order_release);
+    {
+        /* Under ParkMutex, so a worker between its predicate and its wait
+         * cannot miss this. */
+        std::lock_guard<std::mutex> Lock(Pimpl->ParkMutex);
+    }
+    Pimpl->ParkWake.notify_all();
 
     /* Generously: a worker in TryWaitFor needs a permit or a timeout to notice
      * the flag, and an over-signalled semaphore simply accumulates. */
@@ -651,7 +667,7 @@ bool JobSystem::TryRunOneJob()
     return true;
 }
 
-void JobSystem::WorkerMain()
+void JobSystem::WorkerMain(const uint32_t InIndex)
 {
     GOwningPool = this;
 
@@ -660,6 +676,20 @@ void JobSystem::WorkerMain()
      * during teardown instead. */
     while(!Pimpl->bShuttingDown.load(std::memory_order_acquire))
     {
+        /* Parked past the active limit: a real sleep, woken by a raised limit
+         * or shutdown. Checked between jobs, so a lowered limit lets a running
+         * job finish. */
+        if(InIndex >= Pimpl->ActiveLimit.load(std::memory_order_acquire))
+        {
+            std::unique_lock<std::mutex> Lock(Pimpl->ParkMutex);
+            Pimpl->ParkWake.wait(Lock, [this, InIndex]
+            {
+                return Pimpl->bShuttingDown.load(std::memory_order_acquire)
+                    || InIndex < Pimpl->ActiveLimit.load(std::memory_order_acquire);
+            });
+            continue;
+        }
+
         if(TryRunOneJob())
         {
             continue;
@@ -671,7 +701,7 @@ void JobSystem::WorkerMain()
          * for a worker, so the count and the queue drift apart. The timeout turns
          * that into 2ms of latency rather than a worker asleep on a non-empty
          * queue, and is also how shutdown is noticed. */
-        Pimpl->WorkSignal.TryWaitFor(2);
+        Pimpl->WorkSignal.TryWaitFor(Pimpl->IdleWaitMs.load(std::memory_order_relaxed));
     }
 
     GOwningPool = nullptr;
@@ -900,6 +930,31 @@ bool JobSystem::IsQuiescent() const
 uint32_t JobSystem::GetWorkerCount() const
 {
     return Pimpl->WorkerCount;
+}
+
+void JobSystem::SetActiveWorkerLimit(const uint32_t InLimit)
+{
+    const uint32_t Clamped = InLimit == 0 || InLimit > Pimpl->WorkerCount ? Pimpl->WorkerCount : InLimit;
+    {
+        std::lock_guard<std::mutex> Lock(Pimpl->ParkMutex);
+        Pimpl->ActiveLimit.store(Clamped, std::memory_order_release);
+    }
+    Pimpl->ParkWake.notify_all();
+}
+
+uint32_t JobSystem::GetActiveWorkerCount() const
+{
+    return Pimpl->ActiveLimit.load(std::memory_order_acquire);
+}
+
+void JobSystem::SetIdleWaitMs(const uint32_t InMilliseconds)
+{
+    Pimpl->IdleWaitMs.store(InMilliseconds > 0 ? InMilliseconds : 1, std::memory_order_relaxed);
+}
+
+uint32_t JobSystem::GetIdleWaitMs() const
+{
+    return Pimpl->IdleWaitMs.load(std::memory_order_relaxed);
 }
 
 bool JobSystem::IsWorkerThread() const

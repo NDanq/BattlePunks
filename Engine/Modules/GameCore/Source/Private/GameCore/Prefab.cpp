@@ -42,7 +42,7 @@ namespace
     constexpr uint32_t TAG_PREFAB = EngineCore::MakeArchiveTag('P','R','F','B');
     constexpr uint32_t TAG_DATA   = EngineCore::MakeArchiveTag('D','A','T','A');
 
-    constexpr uint16_t PREFAB_CHUNK_VERSION = 2;   // 2: each entity's mobility
+    constexpr uint16_t PREFAB_CHUNK_VERSION = 3;   // 2: each entity's mobility; 3: its detail mode
 
     /* An EntityID field in a blob: a local id, 0 for unset. Saving looks the
      * id up in ToLocal (absent: stored unset, counted); loading in ToLive. */
@@ -457,6 +457,7 @@ bool CapturePrefab(World& InWorld, const EntityID InRoot, PrefabAsset& InOutAsse
         Data.ParentId = Index == 0 ? PREFAB_NO_LOCAL_ID : ToLocal[E.GetParent().Pack()];
         Data.Name     = E.GetName();
         Data.Mobility = E.GetAuthoredMobility();
+        Data.DetailMode = E.GetDetailMode();
 
         for(ComponentTypeID Type = 0; Type < COMPONENT_TYPE_MAX; ++Type)
         {
@@ -581,7 +582,8 @@ bool SerializePrefab(EngineCore::Archive& Ar, PrefabAsset& InOutAsset)
             std::string EntityName = E.Name;
             uint32_t    ComponentCount = uint32_t(E.Components.size());
             uint8_t     Mobility = uint8_t(E.Mobility);
-            Ar << LocalId << ParentId << EntityName << Mobility << ComponentCount;
+            uint8_t     Detail   = uint8_t(E.DetailMode);
+            Ar << LocalId << ParentId << EntityName << Mobility << Detail << ComponentCount;
             for(const PrefabComponentData& C : E.Components)
             {
                 std::string TypeName = C.TypeName;
@@ -601,7 +603,7 @@ bool SerializePrefab(EngineCore::Archive& Ar, PrefabAsset& InOutAsset)
         Ar.SetError("expected a PRFB chunk");
         return false;
     }
-    if(Version != PREFAB_CHUNK_VERSION && Version != 1)
+    if(Version > PREFAB_CHUNK_VERSION || Version < 1)
     {
         GAMECORE_LOG_WARN("SerializePrefab: the prefab chunk is version " + std::to_string(Version)
                           + "; this build reads " + std::to_string(PREFAB_CHUNK_VERSION))
@@ -632,6 +634,12 @@ bool SerializePrefab(EngineCore::Archive& Ar, PrefabAsset& InOutAsset)
             uint8_t Mobility = 0;
             Ar << Mobility;
             E.Mobility = Mobility <= uint8_t(EMobility::Stationary) ? EMobility(Mobility) : EMobility::Dynamic;
+        }
+        if(Version >= 3)
+        {
+            uint8_t Detail = 0;
+            Ar << Detail;
+            E.DetailMode = Detail < DETAIL_MODE_COUNT ? EDetailMode(Detail) : EDetailMode::Low;
         }
         Ar << ComponentCount;
         for(uint32_t Component = 0; Component < ComponentCount && !Ar.HasError(); ++Component)
@@ -785,6 +793,10 @@ namespace
             {
                 Element.append_attribute("Mobility") = MobilityName(E.Mobility);
             }
+            if(E.DetailMode != EDetailMode::Low)
+            {
+                Element.append_attribute("DetailMode") = DetailModeName(E.DetailMode);
+            }
             if(E.ParentId != PREFAB_NO_LOCAL_ID)
             {
                 Element.append_attribute("Parent") = unsigned(E.ParentId);
@@ -868,6 +880,14 @@ namespace
                 {
                     GAMECORE_LOG_WARN(std::string("LoadPrefabFile: entity ") + std::to_string(E.LocalId) + " has an unknown mobility '"
                                       + Mobility.as_string() + "'; dynamic")
+                }
+            }
+            if(const pugi::xml_attribute Detail = Item.attribute("DetailMode"))
+            {
+                if(!ParseDetailMode(Detail.as_string(), E.DetailMode))
+                {
+                    GAMECORE_LOG_WARN(std::string("LoadPrefabFile: entity ") + std::to_string(E.LocalId) + " has an unknown detail mode '"
+                                      + Detail.as_string() + "'; low")
                 }
             }
             Read.emplace_back(std::move(E), Item);

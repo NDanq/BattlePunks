@@ -112,6 +112,30 @@ namespace GameCore
             return 1;
         }
 
+        /* e:GetDetailMode() -- "Low" / "Medium" / "High" / "Ultra" (DetailMode.h). */
+        int Entity_GetDetailMode(lua_State* InState)
+        {
+            const EntityID E = LuaCheckEntity(InState, 1);
+            World* W = GetBoundWorld(InState);
+            lua_pushstring(InState, DetailModeName(Entity(W, E).GetDetailMode()));
+            return 1;
+        }
+
+        /* e:SetDetailMode("Low" | "Medium" | "High" | "Ultra") -- false for anything else. */
+        int Entity_SetDetailMode(lua_State* InState)
+        {
+            const EntityID E = LuaCheckEntity(InState, 1);
+            EDetailMode Mode;
+            if(!ParseDetailMode(luaL_checkstring(InState, 2), Mode))
+            {
+                lua_pushboolean(InState, 0);
+                return 1;
+            }
+            World* W = GetBoundWorld(InState);
+            lua_pushboolean(InState, Entity(W, E).SetDetailMode(Mode));
+            return 1;
+        }
+
         /* e:SetName(name) -- nil clears. */
         int Entity_SetName(lua_State* InState)
         {
@@ -274,6 +298,8 @@ namespace GameCore
             { "SetName",         Entity_SetName },
             { "GetMobility",     Entity_GetMobility },
             { "SetMobility",     Entity_SetMobility },
+            { "GetDetailMode",   Entity_GetDetailMode },
+            { "SetDetailMode",   Entity_SetDetailMode },
             { "Destroy",         Entity_Destroy },
             { "AddComponent",    Entity_AddComponent },
             { "GetComponent",    Entity_GetComponent },

@@ -43,6 +43,7 @@ Engine/Modules/RenderCore/
 |-- DESIGN.md                       the long-form "why"
 |-- ANIMATION.md                    skeletal meshes, skinning, clips, anim states, sockets
 |-- TEXTURE_STREAMING.md            material textures' mips on the GPU by distance
+|-- SCALABILITY.md                  detail tiers, entity buckets, power profiles
 |-- PROCEDURAL.md                   splines and Procedural Spawners: meshes placed by rules
 |-- Source/
 |   |-- Public/RenderCore/

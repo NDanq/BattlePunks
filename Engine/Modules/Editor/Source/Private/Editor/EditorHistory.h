@@ -13,6 +13,7 @@
 
 #include "Public/GameCore/ComponentType.h"
 #include "Public/GameCore/EntityGuid.h"
+#include "Public/GameCore/DetailMode.h"
 #include "Public/GameCore/Mobility.h"
 #include "Public/GameCore/WorldSettings.h"
 #include "Public/GameCore/TransformMath.h"
@@ -58,6 +59,7 @@ namespace EditorHistory
         GameCore::EntityGuid           ParentGuid;   // unset: a root
         std::string                    Name;
         GameCore::EMobility            Mobility = GameCore::EMobility::Dynamic;
+        GameCore::EDetailMode          DetailMode = GameCore::EDetailMode::Low;
         std::string                    Folder;       // the Outliner's (Entity::GetFolder)
         std::vector<ComponentSnapshot> Components;
         std::vector<EntitySnapshot>    Children;     // in child order
@@ -165,11 +167,12 @@ namespace EditorHistory
     {
         std::string         Name;
         GameCore::EMobility Mobility = GameCore::EMobility::Dynamic;
+        GameCore::EDetailMode DetailMode = GameCore::EDetailMode::Low;
         std::string         Folder;
 
         bool operator==(const EntityMembers& InOther) const
         {
-            return Name == InOther.Name && Mobility == InOther.Mobility && Folder == InOther.Folder;
+            return Name == InOther.Name && Mobility == InOther.Mobility && DetailMode == InOther.DetailMode && Folder == InOther.Folder;
         }
     };
 

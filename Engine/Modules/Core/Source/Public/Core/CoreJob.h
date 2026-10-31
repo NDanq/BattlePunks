@@ -450,6 +450,24 @@ namespace EngineCore
 
         uint32_t GetWorkerCount() const;
 
+        /*
+         * How many workers take jobs; the rest PARK -- asleep on a condition, not
+         * polling -- until the limit rises. 0 is every worker. The pool's threads
+         * are made once and never change, so this is how a power profile trims
+         * occupancy live: parked workers cost nothing, and a raised limit wakes
+         * them at once. Never drops work -- the active workers, and every Wait,
+         * still drain the queue. Clamped to [1, GetWorkerCount()].
+         */
+        void     SetActiveWorkerLimit(uint32_t InLimit);
+        uint32_t GetActiveWorkerCount() const;
+
+        /* How long an idle worker sleeps before it looks at the queue again when
+         * no wake-up reaches it (milliseconds, at least 1; default 2). Longer is
+         * fewer wake-ups on an idle pool -- see WorkerMain for why there is a
+         * timeout at all. */
+        void     SetIdleWaitMs(uint32_t InMilliseconds);
+        uint32_t GetIdleWaitMs() const;
+
         /* True on a thread owned by this pool. Lets a subsystem refuse work it
          * cannot do off the main thread without having to be told where it is
          * running. */
@@ -515,7 +533,7 @@ namespace EngineCore
         // CompleteSlot takes the lock to recycle and a non-recursive mutex makes
         // calling it from a locked region a self-deadlock.
 
-        void     WorkerMain();
+        void     WorkerMain(uint32_t InIndex);
 
         /* Runs one ready job; false if the queue was empty. The ONLY place a job
          * executes -- workers and Wait both come through here. Mutex NOT held. */

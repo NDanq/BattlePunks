@@ -1150,6 +1150,31 @@ static void TestJobParallelFor()
     Expect(true, "ParallelFor over an empty range does nothing");
 }
 
+static void TestJobWorkerLimit()
+{
+    std::printf("[jobs worker limit]\n");
+
+    JobSystem Jobs(4);
+    Expect(Jobs.GetActiveWorkerCount() == 4, "every worker is active by default");
+
+    Jobs.SetActiveWorkerLimit(1);
+    Expect(Jobs.GetActiveWorkerCount() == 1, "the limit parks the rest");
+
+    std::atomic<int> Counter{0};
+    std::atomic<int>* CounterPtr = &Counter;
+    Jobs.ParallelFor(64, 1, [CounterPtr](uint32_t Begin, uint32_t End) { CounterPtr->fetch_add(int(End - Begin)); });
+    Expect(Counter.load() == 64, "work still drains with workers parked");
+
+    Jobs.SetActiveWorkerLimit(0);
+    Expect(Jobs.GetActiveWorkerCount() == 4, "0 is every worker again");
+    Jobs.SetActiveWorkerLimit(99);
+    Expect(Jobs.GetActiveWorkerCount() == 4, "a limit past the pool clamps to it");
+
+    Jobs.SetIdleWaitMs(0);
+    Expect(Jobs.GetIdleWaitMs() == 1, "the idle wait is at least a millisecond");
+    Jobs.SetActiveWorkerLimit(2);   // parked workers must still join on destruction
+}
+
 static void TestJobRefusals()
 {
     std::printf("[jobs refusals]\n");
@@ -1423,6 +1448,7 @@ static void RunJobTests()
     TestJobBasics();
     TestJobNestedWait();
     TestJobParallelFor();
+    TestJobWorkerLimit();
     TestJobRefusals();
     TestJobRingExhaustion();
     TestJobMainThread();
@@ -1731,6 +1757,47 @@ static void TestConfigUser()
     ConfigSetUserFile("");
     GSmokeUserSpeed.ResetToDefault();
     GSmokeUserName.ResetToDefault();
+}
+
+NIMBLE_CONFIG_INT   (GSmokeOverlayRes,  "SmokeOverlay", "Resolution", 2048, nullptr);
+NIMBLE_CONFIG_BOOL  (GSmokeOverlayGI,   "SmokeOverlay", "GI",         true, nullptr);
+
+static void TestConfigOverlay()
+{
+    std::printf("[config overlay]\n");
+    const auto UserText = []() { return ConfigBuildUserText(); };
+
+    LoadConfigText("[SmokeOverlay]\nResolution = 1024\n");
+    Expect(GSmokeOverlayRes.GetInt() == 1024, "the project file sets the baseline");
+
+    Expect(ConfigSetOverlay(EConfigOverlay::Detail, { { "SmokeOverlay.Resolution", "4096" }, { "SmokeOverlay.GI", "false" } }) == 2,
+           "an overlay moves the vars it names");
+    Expect(GSmokeOverlayRes.GetInt() == 4096 && !GSmokeOverlayGI.GetBool(), "to its values");
+    Expect(UserText().find("[SmokeOverlay]") == std::string::npos, "an overlay's values are baseline: the user file stays clean");
+
+    ConfigSetOverlay(EConfigOverlay::Power, { { "SmokeOverlay.Resolution", "512" } });
+    Expect(GSmokeOverlayRes.GetInt() == 4096, "Detail sits above Power");
+
+    GSmokeOverlayGI.SetBool(true);   // the player's choice
+    ConfigSetOverlay(EConfigOverlay::Detail, { { "SmokeOverlay.Resolution", "2048" }, { "SmokeOverlay.GI", "false" } });
+    Expect(GSmokeOverlayGI.GetBool(), "a value the player set survives a preset switch");
+    Expect(GSmokeOverlayRes.GetInt() == 2048, "a value at its baseline follows the switch");
+    Expect(UserText().find("GI=true") != std::string::npos, "and the player's value is what the user file keeps");
+
+    LoadConfigText("[SmokeOverlay]\nResolution = 64\n");
+    Expect(GSmokeOverlayRes.GetInt() == 2048, "a project file loaded later does not move an overlaid var");
+
+    ConfigSetOverlay(EConfigOverlay::Detail, {});
+    Expect(GSmokeOverlayRes.GetInt() == 512, "clearing Detail falls through to Power");
+    ConfigSetOverlay(EConfigOverlay::Power, {});
+    Expect(GSmokeOverlayRes.GetInt() == 64, "and clearing Power to the project file");
+    Expect(ConfigGetOverlay(EConfigOverlay::Power).empty(), "a cleared overlay is empty");
+
+    ConfigSetOverlay(EConfigOverlay::Detail, { { "NoSection", "1" } });
+    Expect(ConfigGetOverlay(EConfigOverlay::Detail).empty(), "a path without a section is refused");
+
+    GSmokeOverlayGI.ResetToDefault();
+    GSmokeOverlayRes.ResetToDefault();
 }
 
 static void TestConfigConsole()
@@ -3021,6 +3088,7 @@ int main()
     TestConfigCallbacks();
     TestConfigFile();
     TestConfigUser();
+    TestConfigOverlay();
     TestConfigConsole();
     RunMemoryTests();
     RunModuleTests();

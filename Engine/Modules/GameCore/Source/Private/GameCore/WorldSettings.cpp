@@ -1,5 +1,7 @@
 #include "Public/GameCore/WorldSettings.h"
 
+#include "Public/GameCore/DetailMode.h"
+
 #include <algorithm>
 
 #include "Public/Core/CoreArchive.h"
@@ -41,8 +43,17 @@ namespace GameCore
         {
             InOutSettings.GameMode.clear();
         }
+        if(InVersion >= 3)
+        {
+            Ar << InOutSettings.DetailMode;
+        }
+        else if(Ar.IsLoading())
+        {
+            InOutSettings.DetailMode = WORLD_DETAIL_USE_GLOBAL;
+        }
         if(Ar.IsLoading())
         {
+            if(InOutSettings.DetailMode >= DETAIL_MODE_COUNT) { InOutSettings.DetailMode = WORLD_DETAIL_USE_GLOBAL; }
             Lighting.bBakedLighting = Baked != 0;
             Lighting.Clamp();
         }

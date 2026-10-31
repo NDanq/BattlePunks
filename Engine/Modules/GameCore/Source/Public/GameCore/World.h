@@ -15,6 +15,7 @@
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/GameCoreAPI.h"
+#include "Public/GameCore/DetailMode.h"
 #include "Public/GameCore/Mobility.h"
 #include "Public/GameCore/PrefabInstanceID.h"
 #include "Public/GameCore/SpatialIndex.h"
@@ -355,6 +356,23 @@ namespace GameCore
         WorldSettings&       GetSettings();
         const WorldSettings& GetSettings() const;
 
+        // === Detail mode (DetailMode.h) =====================================
+
+        /* The tier this world renders at: the editor's preview if set, else
+         * WorldSettings::DetailMode if it is not WORLD_DETAIL_USE_GLOBAL,
+         * else Scalability::GetDetailMode(). */
+        EDetailMode GetEffectiveDetailMode() const;
+        /* Whether InEntity's bucket renders at GetEffectiveDetailMode(). */
+        bool        IsEntityDetailVisible(EntityID InEntity) const;
+        /* An editor viewport's: a tier shown without touching the settings;
+         * -1 clears. Never saved. */
+        void        SetPreviewDetailMode(int InMode);
+        int         GetPreviewDetailMode() const;
+        /* Bumps when an entity's bucket or the preview changes. The global
+         * tier and the settings are not counted -- compare
+         * GetEffectiveDetailMode() as well. */
+        uint32_t    GetDetailSerial() const;
+
     private:
         /* Collision.cpp's state, kept in Impl. */
         std::vector<std::pair<uint64_t, uint64_t>>&       GetOverlapPairs();
@@ -383,6 +401,8 @@ namespace GameCore
         EMobility          GetEntityMobility(EntityID InEntity) const;
         EMobility          GetEntityAuthoredMobility(EntityID InEntity) const;
         bool               SetEntityMobility(EntityID InEntity, EMobility InMobility);
+        EDetailMode        GetEntityDetailMode(EntityID InEntity) const;
+        bool               SetEntityDetailMode(EntityID InEntity, EDetailMode InMode);
 
         /* The hierarchy -- see Entity.h's section for the contract. */
         bool                  SetEntityParent(EntityID InEntity, EntityID InParent, bool bInKeepWorldTransform);
