@@ -728,9 +728,33 @@ strip** (6S x S, the scene-capture face order). It places texels by
 backend.
 
 **The sky block** is rebuilt whenever the sky changes (`SkyHashOf`):
-- the Sky Light's **Environment** HDRI if it has one: an equirectangular RGBE8
+- a module's **Sky passes** if the World has any: custom render passes at
+  `ERenderHook::Sky` (see [Custom render passes](#custom-render-passes)),
+  drawn into a 128-texel cube (`RenderSkyPassesToStrip`: the six faces'
+  views, each face cleared to black, then copied into the strip) -- so a
+  drawn sky, such as the TimeOfDay plugin's atmosphere, is what surfaces
+  reflect and take their diffuse sky light from;
+- else the Sky Light's **Environment** HDRI if it has one: an equirectangular RGBE8
   texture, times Environment Intensity, turned Environment Rotation;
 - otherwise its sky and ground colours (`IBLSky.fsh`).
+
+A Sky pass says when its sky changed through `GetContentVersion` (0: no sky
+now, the Sky Light's is used). The block is captured again when the versions'
+sum changes, but at most once every `[Rendering] SkyCaptureFrames` frames
+(8), and each new capture marks every reflection probe due
+(`[Rendering] ProbesFollowSky`, on), so they recapture one at a time within
+`ProbeFacesPerFrame` and see the new sky too. `[Rendering] SkyPassLighting`
+off ignores Sky passes (an A/B switch). The capture is in "stat frame"'s
+Captures span.
+
+Measured (2026-10-31, Intel Arc B390, Vulkan, RelWithDebInfo editor Play,
+WorldsLab DayCycle with TimeOfDay, medians of 18 half-second samples over three
+interleaved launches, spread about 0.05 ms): a capture of the TimeOfDay sky
+costs about 0.6 ms GPU and 0.3 ms render-thread CPU in the frame it runs
+(Captures 0.64 ms captured every frame, against 0.02 ms between captures). At
+a two-minute day that is about three captures a second: Captures averages
+0.04 ms. The Sky Light's colour sky it replaces was rebuilt every frame,
+since TimeOfDay changes its colours every tick: 0.34 ms.
 
 With Draw Background on, an HDRI is also drawn behind the scene along each view
 ray (`Sky.fsh`).
@@ -1700,6 +1724,13 @@ was drawn):
 | `BeforePostProcess` | before TAA and the tone map | the final linear scene colour |
 | `AfterToneMap` | before the post process stack | the picture in display space; `SetCurrent` replaces it |
 | `AfterPostProcess` | before the UI | the finished picture; `SetCurrent` replaces it |
+| `Sky` | out of frame order: only while image-based lighting captures the sky, once per cube face, when the pass's `GetContentVersion` changes | a cleared linear HDR face (`GetView` is the face); no depth, G-buffer or picture |
+
+A pass at `Sky` provides the sky that Lit surfaces reflect and are lit by
+(see [Image-based lighting](#image-based-lighting)): it draws its sky along
+each pixel's view ray, as it would behind a view, and its `GetContentVersion`
+(render thread) changes when the sky does -- in steps big enough to see, as
+each change costs a capture. `ShouldRun`'s default runs it.
 
 Passes at one hook run by their `Order`, then in registration order. Every
 stage after a hook binds its own targets, and the backend moves a target's

@@ -469,6 +469,15 @@ void AttachSky(GameCore::World& InWorld)
 }
 ```
 
+A hook whose pass should also show while the level is edited sets
+`Hook.bEditorWorlds = true` (TimeOfDay registers its sky on a hook of its
+own, so the clock's system stays off the editor's World).
+
+TimeOfDay registers a second pass of the same class at `ERenderHook::Sky`:
+that one is drawn into the sky light's cube, so metals, glass and the
+diffuse sky light see the drawn sky (RENDERPIPELINE.md, "Image-based
+lighting"). Its `GetContentVersion` changes as the sun moves a degree.
+
 Inside `Execute`, draw it by file name:
 
 ```cpp
@@ -732,7 +741,8 @@ Before committing or sharing a plugin:
 - **No plugin asset kinds.** The Details asset pickers are a fixed list, so a
   plugin's own file types (TimeOfDay's `.todpreset`) are edited as text.
 - **No hot reload** for plugins; restart the game or editor after rebuilding.
-- **No world hooks for the editor's own (non-playing) World.** Plugin systems
-  run in games and in Play mode only, so TimeOfDay's sky doesn't show while
-  editing.
+- **The editor's edited World gets only hooks with `bEditorWorlds`.** Nothing
+  ticks there, so plugin systems run in games and in Play mode only; a hook
+  with `bEditorWorlds` (TimeOfDay's sky) is for what a level should show while
+  it is edited, such as a custom render pass.
 - **Source only.** No binary plugin distribution.

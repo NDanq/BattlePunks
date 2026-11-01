@@ -68,6 +68,7 @@ namespace NimbleEngine
             std::string                  ShadowDir;      // this run's copies, when SetShadowCopyDir asked
             std::vector<PluginRecord>    Records;   // load order
             std::vector<WorldHookRecord> Hooks;     // registration order
+            std::vector<GameCore::World*> EditorWorlds;   // AttachEditorWorld's, until DetachEditorWorld
             std::vector<std::string>     MountedLayers;
         };
 
@@ -372,6 +373,12 @@ namespace NimbleEngine
         void RemoveHooksOf(const std::string& InPlugin)
         {
             std::vector<WorldHookRecord>& Hooks = Host().Hooks;
+            /* Its hooks leave the editor's Worlds first, while its code is still loaded. */
+            for(auto It = Hooks.rbegin(); It != Hooks.rend(); ++It)
+            {
+                if(It->Plugin != InPlugin || !It->Hook.bEditorWorlds || !It->Hook.Detach) { continue; }
+                for(GameCore::World* Each : Host().EditorWorlds) { It->Hook.Detach(*Each, It->Hook.UserData); }
+            }
             Hooks.erase(std::remove_if(Hooks.begin(), Hooks.end(),
                                        [&InPlugin](const WorldHookRecord& InHook) { return InHook.Plugin == InPlugin; }),
                         Hooks.end());
@@ -387,6 +394,10 @@ namespace NimbleEngine
             return;
         }
         Host().Hooks.push_back({ PluginName, InHook });
+        if(InHook.bEditorWorlds && InHook.Attach)
+        {
+            for(GameCore::World* Each : Host().EditorWorlds) { InHook.Attach(*Each, InHook.UserData); }
+        }
     }
 
     bool PluginContext::ReadPluginFile(const std::string& InPath, std::vector<uint8_t>& OutBytes) const
@@ -768,6 +779,42 @@ namespace NimbleEngine
                 if(Each.Hook.Attach)
                 {
                     Each.Hook.Attach(InWorld, Each.Hook.UserData);
+                }
+            }
+        }
+
+        void AttachEditorWorld(GameCore::World& InWorld)
+        {
+            std::vector<GameCore::World*>& Worlds = Host().EditorWorlds;
+            if(std::find(Worlds.begin(), Worlds.end(), &InWorld) != Worlds.end())
+            {
+                return;
+            }
+            Worlds.push_back(&InWorld);
+            for(const WorldHookRecord& Each : Host().Hooks)
+            {
+                if(Each.Hook.bEditorWorlds && Each.Hook.Attach)
+                {
+                    Each.Hook.Attach(InWorld, Each.Hook.UserData);
+                }
+            }
+        }
+
+        void DetachEditorWorld(GameCore::World& InWorld)
+        {
+            std::vector<GameCore::World*>& Worlds = Host().EditorWorlds;
+            const auto Found = std::find(Worlds.begin(), Worlds.end(), &InWorld);
+            if(Found == Worlds.end())
+            {
+                return;
+            }
+            Worlds.erase(Found);
+            const std::vector<WorldHookRecord>& Hooks = Host().Hooks;
+            for(auto It = Hooks.rbegin(); It != Hooks.rend(); ++It)
+            {
+                if(It->Hook.bEditorWorlds && It->Hook.Detach)
+                {
+                    It->Hook.Detach(InWorld, It->Hook.UserData);
                 }
             }
         }

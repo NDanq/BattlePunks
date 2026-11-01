@@ -45,6 +45,13 @@ NIMBLE_CONFIG_INT(GRenderProbeFacesPerFrame, "Rendering", "ProbeFacesPerFrame", 
  * (each six 16 x 16 views of the scene); 0 holds them as they are. */
 NIMBLE_CONFIG_BOOL(GRenderDynamicGI, "Rendering", "DynamicGI", true, nullptr);
 NIMBLE_CONFIG_INT(GRenderGIProbesPerFrame, "Rendering", "GIProbesPerFrame", 1, nullptr);
+/* A sky from custom passes at ERenderHook::Sky (RENDERPIPELINE.md, "Image-based lighting"): at most one
+ * capture of it every SkyCaptureFrames frames, however often its version changes; and whether a new one
+ * has every reflection probe captured again (one at a time, ProbeFacesPerFrame), so they see it too. */
+NIMBLE_CONFIG_INT(GRenderSkyCaptureFrames, "Rendering", "SkyCaptureFrames", 8, nullptr);
+NIMBLE_CONFIG_BOOL(GRenderProbesFollowSky, "Rendering", "ProbesFollowSky", true, nullptr);
+/* Off: the Sky Light's sky lights, whatever Sky passes there are (an A/B switch). */
+NIMBLE_CONFIG_BOOL(GRenderSkyPassLighting, "Rendering", "SkyPassLighting", true, nullptr);
 
 namespace RenderCore
 {
@@ -822,6 +829,8 @@ namespace RenderCore
          */
         IBLResources IBL;
         SceneTargets ProbeStages{"RenderCore.ProbeStages"};
+        SceneTargets SkyStages{"RenderCore.SkyStages"};   // a Sky pass's faces (ERenderHook::Sky)
+        uint32_t     SkyCaptureWait = 0;                  // frames before a Sky pass's sky may be captured again
         struct ProbeSlot { uint64_t Key = 0; bool bValid = false; bool bPending = false; };
         ProbeSlot    Slots[RENDER_REFLECTION_PROBES_MAX];
         int32_t      Capturing = -1;      // the block whose probe is mid-capture, or -1
@@ -909,12 +918,43 @@ namespace RenderCore
                 ApplyImageBasedLighting(InContext);
                 return;
             }
-            const uint64_t Hash = SkyHashOf();
-            if(!bSkyValid || Hash != SkyHash)
+            /* A custom pass's sky (ERenderHook::Sky) in place of the Sky Light's when there is one:
+             * captured again when its version changes, but no more often than SkyCaptureFrames. */
+            uint64_t   SkyVersion = 0;
+            const bool bSkyPass   = GRenderSkyPassLighting.GetBool() && InContext.GetSkyPassVersion(SkyVersion);
+            const uint64_t Hash   = bSkyPass ? (SkyVersion ^ 0x5ca1ab1e0ddba11ull) * 1099511628211ull : SkyHashOf();
+            if(SkyCaptureWait > 0) { --SkyCaptureWait; }
+            if(!bSkyValid || (Hash != SkyHash && (!bSkyPass || SkyCaptureWait == 0)))
             {
-                SCOPED_DRAW_EVENT("SkyLight");
-                bSkyValid = InContext.EnsureIBLResources(IBL, 128) && InContext.RenderSkyToStrip(IBL)
-                         && InContext.PrefilterIBLBlock(IBL, IBL_SKY_BLOCK);
+                const bool bWasValid = bSkyValid;
+                if(bSkyPass)
+                {
+                    SCOPED_DRAW_EVENT("SkyLight (Sky passes)");
+                    constexpr uint32_t Face = 128;
+                    SceneCaptureRequest Cube;
+                    Cube.Mode     = SCM_Omnidirectional;
+                    Cube.Position = Views[0].View.Origin;
+                    Cube.NearClip = 1.0f;
+                    Cube.FarClip  = 1000.0f;
+                    RenderView Faces[6];
+                    bSkyValid = InContext.EnsureIBLResources(IBL, Face) && SkyStages.Allocate(Face, Face)
+                             && BuildCaptureViews(Cube, Views[0].View, Face, Face, Faces) == 6
+                             && InContext.RenderSkyPassesToStrip(IBL, SkyStages, Faces)
+                             && InContext.PrefilterIBLBlock(IBL, IBL_SKY_BLOCK);
+                    InContext.SetView(Views[0].View);
+                    SkyCaptureWait = uint32_t(std::max(0, GRenderSkyCaptureFrames.GetInt()));
+                }
+                else
+                {
+                    SCOPED_DRAW_EVENT("SkyLight");
+                    bSkyValid = InContext.EnsureIBLResources(IBL, 128) && InContext.RenderSkyToStrip(IBL)
+                             && InContext.PrefilterIBLBlock(IBL, IBL_SKY_BLOCK);
+                }
+                /* The probes saw the old sky behind their scene, and were lit by it. */
+                if(bSkyValid && bWasValid && bSkyPass && GRenderProbesFollowSky.GetBool())
+                {
+                    for(ProbeSlot& Slot : Slots) { if(Slot.Key != 0 && Slot.bValid) { Slot.bPending = true; } }
+                }
                 SkyHash = Hash;
                 CapturedFaces = 0;   // the sky took the strip: a capture in progress starts over
             }
@@ -1139,6 +1179,7 @@ namespace RenderCore
          * failure) must still not leak a GPU image. Idempotent. */
         P->ReleaseViews();
         P->ProbeStages.Release();
+        P->SkyStages.Release();
         P->DDGIStages.Release();
         for(GDIRenderTarget** Each : { &P->IBL.Atlas, &P->IBL.Strip, &P->DDGI.Irradiance, &P->DDGI.Distance, &P->DDGI.Strip })
         {
@@ -1664,6 +1705,7 @@ namespace RenderCore
         P->UI.Release();
         P->ReleaseViews();
         P->ProbeStages.Release();
+        P->SkyStages.Release();
         P->DDGIStages.Release();
         InContext.ReleaseIBLResources(P->IBL);
         InContext.ReleaseDDGIResources(P->DDGI);

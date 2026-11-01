@@ -58,13 +58,19 @@ namespace NimbleEngine
 {
     /* Called for every level World a GameSession makes (after the engine's
      * own systems attach, before the level's OnLoad) and, in reverse order,
-     * as it tears one down (before the engine's detach). */
+     * as it tears one down (before the engine's detach).
+     *
+     * bEditorWorlds: also for the editor's edited level World, while it is
+     * edited (Plugins::AttachEditorWorld) -- for what a level should show as
+     * it is edited, such as a custom render pass. Nothing ticks there, so
+     * a system registered on it never runs; keep such a hook to drawing. */
     struct PluginWorldHook
     {
         const char* Name = "";
         void (*Attach)(GameCore::World& InWorld, void* InUserData) = nullptr;
         void (*Detach)(GameCore::World& InWorld, void* InUserData) = nullptr;
         void* UserData = nullptr;
+        bool  bEditorWorlds = false;
     };
 
     /* What a plugin's OnStartup is handed: the host's registries, scoped to
@@ -116,7 +122,7 @@ namespace NimbleEngine
      * revision. A library reporting anything else is refused. */
     enum : uint32_t
     {
-        PLUGIN_ABI_REVISION    = 1,
+        PLUGIN_ABI_REVISION    = 2,   // 2: PluginWorldHook::bEditorWorlds
         PLUGIN_ABI_FLAG_EDITOR = 1u << 20
     };
     constexpr uint32_t NIMBLE_PLUGIN_ABI_VERSION =
@@ -243,6 +249,12 @@ namespace NimbleEngine
         /* GameSession's: every plugin's world hooks on InWorld. */
         NE_API void AttachWorld(GameCore::World& InWorld);
         NE_API void DetachWorld(GameCore::World& InWorld);
+
+        /* The editor's: the hooks with bEditorWorlds on its edited World, from
+         * now until DetachEditorWorld (a hook added later attaches at once; a
+         * plugin shutting down detaches its own first). Twice is once. */
+        NE_API void AttachEditorWorld(GameCore::World& InWorld);
+        NE_API void DetachEditorWorld(GameCore::World& InWorld);
     }
 }
 

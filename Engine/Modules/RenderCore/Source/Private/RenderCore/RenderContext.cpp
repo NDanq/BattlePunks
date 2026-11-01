@@ -6117,6 +6117,62 @@ namespace RenderCore
         return bDrawn;
     }
 
+    bool RenderContext::GetSkyPassVersion(uint64_t& OutVersion) const
+    {
+        OutVersion = 0;
+        if(!P->PassWorld)
+        {
+            return false;
+        }
+        std::vector<CustomPassEntry> Passes;
+        GatherCustomRenderPasses(P->PassWorld, Passes);
+        bool bAny = false;
+        for(const CustomPassEntry& Entry : Passes)
+        {
+            if(Entry.Hook != ERenderHook::Sky || !Entry.Pass) { continue; }
+            const uint64_t Version = Entry.Pass->GetContentVersion();
+            if(Version == 0) { continue; }
+            OutVersion = OutVersion * 1099511628211ull + Version;
+            bAny = true;
+        }
+        return bAny;
+    }
+
+    bool RenderContext::RenderSkyPassesToStrip(IBLResources& InResources, SceneTargets& InStages, const RenderView (&InFaces)[6])
+    {
+        GDIRenderTarget* SceneColor = InStages.SceneColor;
+        if(!SceneColor || !InResources.Strip || InResources.StripFace == 0 || !P->PassWorld)
+        {
+            return false;
+        }
+        /* The Sky passes alone (FramePasses is the stages' list, empty between them), with
+         * nothing of a frame bound: no G-buffer, no post hooks' picture. */
+        P->FramePasses.clear();
+        GatherCustomRenderPasses(P->PassWorld, P->FramePasses);
+        P->FramePasses.erase(std::remove_if(P->FramePasses.begin(), P->FramePasses.end(),
+                                            [](const CustomPassEntry& InEntry)
+                                            { return InEntry.Hook != ERenderHook::Sky || !InEntry.Pass
+                                                     || InEntry.Pass->GetContentVersion() == 0; }),
+                             P->FramePasses.end());
+        const bool bGBuffer = P->bGBufferThisFrame, bVelocity = P->bVelocityThisFrame;
+        P->bGBufferThisFrame = P->bVelocityThisFrame = false;
+        bool bDrawn = !P->FramePasses.empty();
+        for(uint32_t Face = 0; Face < 6 && bDrawn; ++Face)
+        {
+            SCOPED_DRAW_EVENT(GetCubeFaceName(Face));
+            SetView(InFaces[Face]);
+            GDISetRenderTargets(&SceneColor, 1, SceneColor);
+            GDISetViewport(0, 0, InStages.Width, InStages.Height);
+            GDISetColorMask(EColM_RGBA);
+            GDIClear(CM_Color | CM_Depth, EngineCore::Color(0, 0, 0, 255));
+            bDrawn = P->RunHook(ERenderHook::Sky, InStages, false, nullptr) && CopyCaptureToStrip(InStages, InResources, Face);
+        }
+        P->FramePasses.clear();
+        P->bGBufferThisFrame  = bGBuffer;
+        P->bVelocityThisFrame = bVelocity;
+        return bDrawn;
+    }
+
     bool RenderContext::CopyCaptureToStrip(SceneTargets& InStages, IBLResources& InResources, const uint32_t InFace)
     {
         GDITexture2D* Source = InStages.SceneColor ? InStages.SceneColor->ToGDITexture2D() : nullptr;

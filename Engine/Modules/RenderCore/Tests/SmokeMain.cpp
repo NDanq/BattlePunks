@@ -882,8 +882,10 @@ static void TestCustomRenderPasses()
     Rend.WaitForPreviousFrame();
     FlushRenderCommands();
 
+    /* Every hook but Sky, which runs only when image-based lighting captures the sky (not on Null). */
+    Expect(std::string(GetRenderHookName(ERenderHook::Sky)) == "Sky", "the Sky hook has its name");
     std::vector<std::string> Expected;
-    for(int Hook = 0; Hook < int(ERenderHook::Count); ++Hook)
+    for(int Hook = 0; Hook < int(ERenderHook::Sky); ++Hook)
     {
         const std::string Name = GetRenderHookName(ERenderHook(Hook));
         if(ERenderHook(Hook) == ERenderHook::AfterForward) { Expected.push_back("Early@" + Name); }
@@ -897,7 +899,7 @@ static void TestCustomRenderPasses()
         for(const std::string& Each : Ran) { std::printf("    ran: %s\n", Each.c_str()); }
     }
     Expect(Log.Extracts.load() == int(ERenderHook::Count) + 2, "Extract ran once a frame for each of the World's passes");
-    Expect(Log.Targets.load() == int(ERenderHook::Count) + 2, "AcquireTarget made each pass's target once and handed it back");
+    Expect(Log.Targets.load() == int(ERenderHook::Count) + 1, "AcquireTarget made each pass's target once and handed it back");
 
     /* Unregistered: gone from the next frame on. */
     Expect(UnregisterCustomRenderPass(Late), "UnregisterCustomRenderPass finds the pass");
