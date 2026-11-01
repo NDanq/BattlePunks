@@ -771,6 +771,82 @@ one travel value.
 
 Checked by `NimbleEngine.GameFrameworkTests` ("level travel").
 
+### The transition screen
+
+By default a level change is a cut: the old level's last frame, a pause while
+the next one loads, the next one's first frame. Turn on the engine's
+transition and every change becomes:
+
+1. **fade out** to black over `FadeOut` seconds, while the old level still
+   runs (input is held back from here);
+2. **the loading card** goes up and is drawn;
+3. the next `ApplyPendingLevel` **swaps** the levels behind it;
+4. once the new level has ticked and drawn `RevealFrames` frames, the card
+   closes and the screen **fades in** over `FadeIn` seconds; input comes back
+   as the fade in starts.
+
+```ini
+; Config/DefaultGame.ini
+[LevelTransition]
+Enabled=true                 ; every level change; false (default): only travels that ask
+FadeOut=0.4
+FadeIn=0.6
+RevealFrames=2
+Title=Loading                ; the card's text when the travel gives none
+Tip=
+Document=                    ; your own card (a .nmui); empty: the engine's
+```
+
+Per change, a travel decides for itself, and brings the card's text:
+
+```cpp
+NimbleEngine::LevelTravel Travel;
+Travel.Transition = NimbleEngine::TT_Fade;     // TT_Cut: never; TT_Default: [LevelTransition] Enabled
+Travel.Title = "Sublevel 2: Laboratory";
+Travel.Tip   = "Hold Run to sprint past the drones.";
+Session->OpenLevel("Lab", Travel);
+```
+
+```lua
+-- name, entry, state, title, tip
+Game.OpenLevel("Lab", "Airlock", "", "Sublevel 2: Laboratory", "Hold Run to sprint.")
+if Game.IsInTransition() then return end   -- e.g. ignore a second trigger while it runs
+```
+
+A request while one is under way retargets it; the session's
+`IsInTransition()` (Lua `Game.IsInTransition`) is true from the request until
+the fade in ends.
+
+**Your own card.** `Document` names a UI document opened instead of the
+engine's card, as persistent, so it survives the swap. It is drawn over the
+black, so give it a **Layer above 900** (the black's; the engine's card is
+950, a cinematic's bars 1000), and bind its text to the values the session
+sets before opening it:
+
+| Value | What |
+|---|---|
+| `Transition.Title` | the travel's Title, else `[LevelTransition] Title` |
+| `Transition.Tip` | the travel's Tip, else `[LevelTransition] Tip` |
+| `Transition.Level` | the name of the level being loaded |
+| `Transition.Fade` | the black, 0 to 1 (the engine's fade document uses it) |
+
+```xml
+<UI Format="1" ReferenceSize="1920,1080" ScaleMode="FitHeight" InputMode="GameOnly" Layer="960">
+  <Canvas Name="Root">
+    <Border Name="Back" Anchors="0,0,1,1" Background.Tint="#101820FF"/>
+    <Text Name="Title" Anchors="0.05,0.8,0.95,0.88" Text="{Bind:Transition.Title}" FontSize="40" Color="#F2EEE4FF"/>
+    <Text Name="Tip" Anchors="0.05,0.88,0.95,0.95" Text="{Bind:Transition.Tip}" FontSize="22" Wrap="true" Color="#B8B4AAFF"/>
+  </Canvas>
+</UI>
+```
+
+A document that does not open is logged and the engine's card is used. The
+fade and the card are made in code (like the Sequencer's cinematic overlay),
+so the engine's own need no files in a build. The load itself is still one
+blocking frame: the card is what is on screen while it runs.
+
+Checked by `NimbleEngine.GameFrameworkTests` ("level transition").
+
 ---
 
 ## Where should a rule live?

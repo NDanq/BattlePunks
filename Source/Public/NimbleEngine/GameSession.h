@@ -233,6 +233,24 @@ namespace NimbleEngine
         /* GetTravel().Get(InKey, InDefault). */
         const char* GetTravelValue(const char* InKey, const char* InDefault = "") const { return Travel.Get(InKey, InDefault); }
 
+        /*
+         * LEVEL TRAVEL's TRANSITION (GameModeGuide.md, "The transition
+         * screen"): with [LevelTransition] Enabled, or a travel's TT_Fade, a
+         * level change asked for while a level is loaded is not applied at
+         * once. The screen fades to black over FadeOut seconds while the old
+         * level still runs; the loading card opens (a document made in code,
+         * or the game's [LevelTransition] Document, bound to Transition.Title,
+         * Transition.Tip and Transition.Level); the next ApplyPendingLevel
+         * swaps behind it; once the new level has ticked RevealFrames frames
+         * the card closes and the screen fades in over FadeIn. The players'
+         * input is held back until the fade in. Another request while it
+         * runs retargets it.
+         */
+        bool IsInTransition() const { return TransitionStage != 0; }
+
+        /* The transition's black, 0 to 1, as last drawn: a test's view of it. */
+        float GetTransitionFade() const { return TransitionFade; }
+
         /* The game is finished. The host finishes the frame in flight. */
         void RequestQuit() { bQuitRequested = true; }
 
@@ -469,6 +487,21 @@ namespace NimbleEngine
 
         /* LoadLevel's: InTravel.Entry's start for the local players' placed avatars. */
         void PlaceAvatarsAtEntry();
+
+        /* The transition (IsInTransition): its stage (GameSession.cpp's
+         * TS_*), the time and frames in it, and where it is going. */
+        void UpdateTransition(float InDeltaSeconds);
+        void SetTransitionFade(float InAlpha);
+        void OpenTransitionCard();
+        void CloseTransitionCard();
+        void EndTransition();
+        uint8_t     TransitionStage  = 0;
+        float       TransitionTime   = 0.0f;
+        float       TransitionFade   = 0.0f;
+        int32_t     TransitionFrames = 0;
+        ILevel*     TransitionLevel  = nullptr;
+        LevelTravel TransitionTravel;
+        std::string TransitionCard;   // the open card's document path; "" none
 
         /* Armed with PendingLevel by LoadGameFromFile, cleared by the LoadLevel
          * that consumes it. (C4251 on this private member is harmless.) */

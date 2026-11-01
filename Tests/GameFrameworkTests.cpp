@@ -1212,6 +1212,117 @@ namespace
         UnregisterLevel(Lab);
         UnregisterLevel(Exterior);
     }
+
+    /* LEVEL TRANSITION: fade out, the card, the swap behind it, fade in. Driven
+     * as a host does: ApplyPendingLevel, then Tick, each frame. */
+    void TestLevelTransition()
+    {
+        std::printf("[level transition]\n");
+        const std::string FadeDoc = "Engine/Transition/Fade.nmui";
+        const std::string CardDoc = "Engine/Transition/Card.nmui";
+
+        Fixture F;
+        TravelLevel Exterior("TransitionExterior"), Lab("TransitionLab");
+        RegisterLevel(Exterior);
+        RegisterLevel(Lab);
+        F.Session->LoadLevel(Exterior);
+        UI::UISystem& UI = F.Session->GetUI();
+
+        /* Off by default: a straight swap, as ever. */
+        F.Session->RequestLevel(Lab);
+        Expect(!F.Session->IsInTransition() && F.Session->HasPendingLevel(), "without a transition a request swaps next frame");
+        F.Session->ApplyPendingLevel();
+        Expect(F.Session->GetLevel() == &Lab, "and does");
+
+        LevelTravel Travel;
+        Travel.Transition = TT_Fade;
+        Travel.Title      = "The Lab";
+        Travel.Tip        = "Mind the airlock";
+        Travel.Entry      = "FreightLift";
+        Travel.Set("Alarm", "1");
+        Expect(F.Session->OpenLevel("TransitionExterior", Travel), "a travel with TT_Fade is accepted");
+        Expect(F.Session->IsInTransition() && !F.Session->HasPendingLevel(), "it fades out first: nothing pending yet");
+
+        int  Frame = 0, SwapFrame = -1, CardClosedFrame = -1, EndFrame = -1;
+        bool bFadeRose = true, bFadeFell = true, bCardAtSwap = false, bBlackAtSwap = false, bFadeOpenAtSwap = false;
+        float LastFade = 0.0f;
+        for(; Frame < 400 && EndFrame < 0; ++Frame)
+        {
+            F.Session->ApplyPendingLevel();
+            if(SwapFrame < 0 && F.Session->GetLevel() == &Exterior)
+            {
+                SwapFrame       = Frame;
+                bCardAtSwap     = UI.IsOpen(CardDoc);
+                bFadeOpenAtSwap = UI.IsOpen(FadeDoc);
+                bBlackAtSwap    = F.Session->GetTransitionFade() >= 1.0f;
+            }
+            F.Tick(1.0 / 60.0);
+            const float Fade = F.Session->GetTransitionFade();
+            if(SwapFrame < 0 && Fade + 1e-6f < LastFade) { bFadeRose = false; }
+            if(CardClosedFrame >= 0 && Fade > LastFade + 1e-6f) { bFadeFell = false; }
+            if(SwapFrame >= 0 && CardClosedFrame < 0 && !UI.IsOpen(CardDoc)) { CardClosedFrame = Frame; }
+            LastFade = Fade;
+            if(!F.Session->IsInTransition()) { EndFrame = Frame; }
+        }
+        Expect(SwapFrame >= 20 && SwapFrame <= 30, "the swap waits for the 0.4 s fade out (frame " + std::to_string(SwapFrame) + ")");
+        Expect(bFadeRose, "the black only deepens before the swap");
+        Expect(bCardAtSwap && bFadeOpenAtSwap && bBlackAtSwap, "the swap happens behind the card, on black");
+        Expect(CardClosedFrame == SwapFrame + 2, "the card stays while the new level draws two frames (closed at "
+                                                     + std::to_string(CardClosedFrame - SwapFrame) + ")");
+        Expect(bFadeFell, "then the black only lifts");
+        Expect(EndFrame > CardClosedFrame + 30 && EndFrame < CardClosedFrame + 45, "over the 0.6 s fade in");
+        Expect(!UI.IsOpen(FadeDoc) && !UI.IsOpen(CardDoc) && F.Session->GetTransitionFade() == 0.0f, "and closes its documents");
+        const UI::UIValue* Title = UI.GetValue("Transition.Title");
+        const UI::UIValue* Tip   = UI.GetValue("Transition.Tip");
+        const UI::UIValue* Next  = UI.GetValue("Transition.Level");
+        Expect(Title && Title->AsString() == "The Lab" && Tip && Tip->AsString() == "Mind the airlock" && Next
+                   && Next->AsString() == "TransitionExterior",
+               "the card's text came from the travel");
+        Expect(F.Session->GetTravel().Entry == "FreightLift" && std::string(F.Session->GetTravelValue("Alarm")) == "1"
+                   && Near(Exterior.HeroAt(), EngineCore::Vector3(500.0, 20.0, 0.0)),
+               "the travel arrives through a transition too");
+
+        /* On for every change from the config; the card's text from it too. Lua says when. */
+        EngineCore::LoadConfigText("[LevelTransition]\nEnabled = true\nTitle = Please wait\nRevealFrames = 1\n");
+        F.Session->RequestLevel(Lab);
+        Expect(F.Session->IsInTransition(), "[LevelTransition] Enabled fades a plain RequestLevel");
+        Expect(F.Scripts.RunString("assert(Game.IsInTransition() == true)", "transition-1"), "Game.IsInTransition sees it");
+        /* A request mid-fade retargets it. */
+        F.Session->RequestLevel(Exterior);
+        for(Frame = 0; Frame < 400 && F.Session->IsInTransition(); ++Frame)
+        {
+            F.Session->ApplyPendingLevel();
+            F.Tick(1.0 / 60.0);
+        }
+        Title = UI.GetValue("Transition.Title");
+        Expect(F.Session->GetLevel() == &Exterior && F.Session->GetTravel().Previous == "TransitionExterior",
+               "the later request wins");
+        Expect(Title && Title->AsString() == "Please wait", "the config's title when the travel gives none");
+
+        LevelTravel Cut;
+        Cut.Transition = TT_Cut;
+        F.Session->RequestLevel(Lab, Cut);
+        Expect(!F.Session->IsInTransition() && F.Session->HasPendingLevel(), "TT_Cut swaps straight away even when enabled");
+        F.Session->ApplyPendingLevel();
+
+        /* The game's own card document; one that does not open falls back to the engine's. */
+        EngineCore::LoadConfigText("[LevelTransition]\nDocument = UI/NoSuchCard.nmui\n");
+        F.Session->RequestLevel(Exterior);
+        bool bEngineCard = false;
+        for(Frame = 0; Frame < 400 && F.Session->IsInTransition(); ++Frame)
+        {
+            F.Session->ApplyPendingLevel();
+            F.Tick(1.0 / 60.0);
+            bEngineCard = bEngineCard || UI.IsOpen(CardDoc);
+        }
+        Expect(bEngineCard && F.Session->GetLevel() == &Exterior, "a missing card document falls back to the engine's");
+
+        EngineCore::LoadConfigText("[LevelTransition]\nEnabled = false\nTitle = Loading\nRevealFrames = 2\nDocument =\n");
+        Expect(F.Scripts.GetErrorCount() == 0, "no Lua errors");
+        F.Session->UnloadLevel();
+        UnregisterLevel(Lab);
+        UnregisterLevel(Exterior);
+    }
 }
 
 int main()
@@ -1224,6 +1335,7 @@ int main()
     TestStartupScript();
     TestSave();
     TestLevelTravel();
+    TestLevelTransition();
     TestLevelByWorldFile();
     TestWorldList();
     TestModeContext();

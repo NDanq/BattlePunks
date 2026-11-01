@@ -17,6 +17,10 @@
  *   Values   a few key/value strings -- the travel state ("Alarm=1") the new
  *            level's mode and scripts read once it has loaded
  *            (GameSession::GetTravelValue, Game.GetTravelValue in Lua).
+ *   Title,   the transition's loading card (GameSession.h, "LEVEL
+ *   Tip      TRANSITION"); "" the [LevelTransition] Title / Tip.
+ *   Transition  TT_Default follows [LevelTransition] Enabled; TT_Fade and
+ *            TT_Cut turn it on or off for this change.
  *
  * Previous is set by the session: the name of the level travelled from ("" for
  * the first, or a level loaded directly).
@@ -30,10 +34,20 @@
  */
 namespace NimbleEngine
 {
+    enum ETravelTransition : uint8_t
+    {
+        TT_Default = 0,   // [LevelTransition] Enabled decides
+        TT_Fade    = 1,   // fade out, the loading card, fade in
+        TT_Cut     = 2,   // straight swap
+    };
+
     struct LevelTravel
     {
         std::string Entry;
         std::vector<std::pair<std::string, std::string>> Values;
+        std::string Title;
+        std::string Tip;
+        uint8_t     Transition = TT_Default;
         std::string Previous;
 
         /* InKey to InValue, replacing any it had. */

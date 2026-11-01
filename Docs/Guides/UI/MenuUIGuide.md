@@ -223,7 +223,7 @@ Quit, Restart and Settings use actions the engine provides:
 |---|---|
 | `Game.Quit` | Ends the game. |
 | `Game.Pause`, `Game.Resume`, `Game.TogglePause` | `GameSession::SetPaused`. |
-| `Game.OpenLevel('Name', 'Entry', 'Key=Value')` | Loads a registered level (`[World_Name]`); the swap closes every document and unpauses. Entry and travel state are optional (GameModeGuide.md, "Changing level"). |
+| `Game.OpenLevel('Name', 'Entry', 'Key=Value')` | Loads a registered level (`[World_Name]`); the swap closes every document and unpauses. Entry and travel state are optional (GameModeGuide.md, "Changing level"); with `[LevelTransition] Enabled` the change fades through a loading card, which a game can replace with its own document ("The transition screen"). |
 | `UI.Open('path')`, `UI.Close('path')`, `UI.Toggle('path')` | Open, close or toggle a document. `UI.Close` with no path closes its own. |
 | `UI.ShowPage('Switcher', page)` | Shows a Switcher's page, by name or number. |
 | `UI.SetValue('Key', value)` | Sets a data store value. |
