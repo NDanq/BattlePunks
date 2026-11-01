@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="2a4cb8aba0d0392cd517a7b90b9a216d" Name="Dress_VentCover_0">
+  <Component Type="LabGate" Version="1">
+    <OpenOn Value="L3.Alarm" />
+    <OpenHeight Value="160" />
+    <Speed Value="300" />
+    <Invert Value="false" />
+    <Open Value="false" />
+    <Sound Value="Content/Sounds/World/Steam_Vent_Burst.nmsound" />
+  </Component>
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L3_Core/L3_Core_VentCover.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="760.713" Y="0" Z="1631.35" />
+    <Rotation X="0" Y="25" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

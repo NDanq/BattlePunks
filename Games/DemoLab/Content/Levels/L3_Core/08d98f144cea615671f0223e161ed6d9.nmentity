@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="08d98f144cea615671f0223e161ed6d9" Name="Dress_ReactorArcs">
+  <Component Type="Particle System" Version="3">
+    <System Value="Content/Particles/ReactorArcs.nmparticle" />
+    <Emitting Value="true" />
+    <Tint R="255" G="255" B="255" A="255" />
+    <SpawnRateScale Value="1.5" />
+    <TimeScale Value="1" />
+    <Seed Value="0" />
+    <UseBeamTarget Value="false" />
+    <BeamTarget X="0" Y="0" Z="0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="2042" Z="0" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+  <Component Type="LabMotion" Version="1">
+      <Spin X="0" Y="0" Z="0" />
+    <SpinOn Value="" />
+    <AlarmOn Value="" />
+    <AlarmScale Value="1.0" />
+    <Flicker Value="9" />
+    <FlickerDuty Value="0.75" />
+    <RampOn Value="" />
+    <RampSeconds Value="10.0" />
+    <RampParam Value="" />
+    <RampSlot Value="0" />
+    <RampFrom Value="0.0" />
+    <RampTo Value="1.0" />
+    <RampLight Value="0.0" />
+  </Component>
+</Entity>

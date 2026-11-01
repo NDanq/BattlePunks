@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="58b778dcb3b6e666a7480819b4785f88" Name="Dress_Cover_1" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L3_Core/L3_Core_CrateLow.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Rigid Body" Version="1">
+    <Enabled Value="true" />
+    <Motion Value="2" />
+    <Shape Value="1" />
+    <ShapeSource Value="2" />
+    <Friction Value="0.6" />
+    <Layer Value="1" />
+    <Mask Value="-1" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="1050" Y="0" Z="-1150" />
+    <Rotation X="0" Y="-35" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

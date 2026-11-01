@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="dcd0711859c067880f6402c7e808b215" Name="Drum_WallSW_0" Mobility="Static">
   <Component Type="Render" Version="7">
-    <Visible Value="true" />
+    <Visible Value="false" />
     <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
-    <CastShadows Value="true" />
+    <CastShadows Value="false" />
   </Component>
   <Component Type="Rigid Body" Version="1">
     <Enabled Value="true" />

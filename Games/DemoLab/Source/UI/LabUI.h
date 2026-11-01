@@ -39,6 +39,9 @@ namespace LabUI {
     void ToggleTechOverlay(NimbleEngine::GameSession& InSession);
     /* Each frame while it is open: the level's features and stat unit. */
     void UpdateTechOverlay(NimbleEngine::GameSession& InSession, const std::string& InLevel, bool bInAlarm);
+    /* DemoLab.PerfLog > 0: every that many seconds, the frame and each GPU span (stat frame) to the
+     * log -- for timing a level in the launcher, where the stat panels cannot be read back. */
+    void LogPerf(NimbleEngine::GameSession& InSession, const std::string& InLevel, float InSeconds);
 
     /* Each frame: [DemoLab] Subtitles off hides the cinematic overlay's lines. */
     void ApplySubtitleSetting(NimbleEngine::GameSession& InSession);

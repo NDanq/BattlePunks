@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="3abac996c9cf48322519e43f2a438a4e" Name="PumpHall_WallE_0" Mobility="Static">
   <Component Type="Render" Version="7">
-    <Visible Value="true" />
+    <Visible Value="false" />
     <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
-    <CastShadows Value="true" />
+    <CastShadows Value="false" />
   </Component>
   <Component Type="Rigid Body" Version="1">
     <Enabled Value="true" />

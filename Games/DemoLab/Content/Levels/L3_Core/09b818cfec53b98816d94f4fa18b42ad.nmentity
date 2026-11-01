@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="09b818cfec53b98816d94f4fa18b42ad" Name="Shaft_Fence_SW_0" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="false" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <CastShadows Value="false" />
+  </Component>
+  <Component Type="Rigid Body" Version="1">
+    <Enabled Value="true" />
+    <Motion Value="2" />
+    <Shape Value="0" />
+    <ShapeSource Value="0" />
+    <Friction Value="0.6" />
+    <Layer Value="1" />
+    <Mask Value="-1" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-647.003" Y="65" Z="-647.003" />
+      <Rotation X="0" Y="225" Z="0" />
+      <Scale X="758.011" Y="130" Z="10" />
+  </Component>
+</Entity>

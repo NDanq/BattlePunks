@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="5d641cb9870fb4a73b2e2c75b2d98eba" Name="Dress_Probe_2" Mobility="Static">
+  <Component Type="Reflection Probe" Version="1">
+    <Radius Value="620" />
+      <BoxExtent X="600" Y="350" Z="600" />
+    <Intensity Value="1" />
+    <Resolution Value="256" />
+    <Frequency Value="2" />
+    <Interval Value="1" />
+    <NearClip Value="5" />
+    <FarClip Value="8000" />
+    <CaptureShadows Value="true" />
+    <Enabled Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="330" Z="0" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="ae7233faed7009b0676f634324e8ff85" Name="Dress_PitSteam_0">
+  <Component Type="Particle System" Version="3">
+    <System Value="Content/Particles/SteamVent.nmparticle" />
+    <Emitting Value="true" />
+    <Tint R="255" G="255" B="255" A="255" />
+    <SpawnRateScale Value="1.4" />
+    <TimeScale Value="1" />
+    <Seed Value="0" />
+    <UseBeamTarget Value="false" />
+    <BeamTarget X="0" Y="0" Z="0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="382.5" Y="-900" Z="662.509" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="356939a126cac383278d65947d126a99" Name="Dress_BeaconSweep">
+  <Component Type="Spot Light" Version="2">
+    <Color R="255" G="150" B="70" A="255" />
+    <Intensity Value="140" />
+    <Range Value="4000" />
+    <InnerConeAngle Value="6" />
+    <OuterConeAngle Value="12" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="1" />
+    <ShadowBias Value="0.002" />
+    <ShadowNormalBias Value="1.5" />
+    <SourceRadius Value="10" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="1425" Y="330" Z="-5250" />
+    <Rotation X="-8" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L3.BeaconFired" />
+    <ShowWhenOn Value="true" />
+  </Component>
+  <Component Type="LabMotion" Version="1">
+      <Spin X="0" Y="450" Z="0" />
+    <SpinOn Value="" />
+    <AlarmOn Value="" />
+    <AlarmScale Value="1.0" />
+    <Flicker Value="0.0" />
+    <FlickerDuty Value="0.5" />
+    <RampOn Value="" />
+    <RampSeconds Value="10.0" />
+    <RampParam Value="" />
+    <RampSlot Value="0" />
+    <RampFrom Value="0.0" />
+    <RampTo Value="1.0" />
+    <RampLight Value="0.0" />
+  </Component>
+</Entity>

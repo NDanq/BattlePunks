@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="263fd8b1945304c37bd38799b1dfd9b7" Name="Dress_TunnelLight_2">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="238" B="218" A="255" />
+    <Intensity Value="18" />
+    <Radius Value="900" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="45.0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="340" Z="-3800" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L3.Alarm" />
+    <ShowWhenOn Value="false" />
+  </Component>
+</Entity>

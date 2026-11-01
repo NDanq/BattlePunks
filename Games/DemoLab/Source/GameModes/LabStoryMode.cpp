@@ -232,6 +232,7 @@ public:
         if(!IsDedicatedServer())
         {
             LabUI::UpdateTechOverlay(GetSession(), LevelName, bAlarm);
+            LabUI::LogPerf(GetSession(), LevelName + (bAlarm ? " (Alarm)" : ""), Dt);
             LabUI::ApplySubtitleSetting(GetSession());
             UpdateLocalInput();
         }

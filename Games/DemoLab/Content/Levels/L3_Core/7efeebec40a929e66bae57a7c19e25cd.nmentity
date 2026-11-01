@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="7efeebec40a929e66bae57a7c19e25cd" Name="Dress_Arc_0">
+  <Component Type="Particle System" Version="3">
+    <System Value="Content/Particles/L3_Core_Arc.nmparticle" />
+    <Emitting Value="true" />
+    <Tint R="255" G="255" B="255" A="255" />
+    <SpawnRateScale Value="1.0" />
+    <TimeScale Value="1" />
+    <Seed Value="0" />
+    <UseBeamTarget Value="true" />
+    <BeamTarget X="1441.93" Y="1500" Z="832.5" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="173.205" Y="1442" Z="100" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+  <Component Type="LabMotion" Version="1">
+      <Spin X="0" Y="0" Z="0" />
+    <SpinOn Value="" />
+    <AlarmOn Value="" />
+    <AlarmScale Value="1.0" />
+    <Flicker Value="5" />
+    <FlickerDuty Value="0.35" />
+    <RampOn Value="" />
+    <RampSeconds Value="10.0" />
+    <RampParam Value="" />
+    <RampSlot Value="0" />
+    <RampFrom Value="0.0" />
+    <RampTo Value="1.0" />
+    <RampLight Value="0.0" />
+  </Component>
+</Entity>

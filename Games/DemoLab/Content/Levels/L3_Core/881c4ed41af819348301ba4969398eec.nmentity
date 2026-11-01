@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="881c4ed41af819348301ba4969398eec" Name="Dress_Helix_43" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L3_Core/L3_Core_Helix.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="-355.556" Z="0" />
+    <Rotation X="0" Y="253.5" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

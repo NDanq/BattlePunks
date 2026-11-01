@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="62ce280ef9eea0fa6c9f89c52adba18a" Name="Dress_Bridge_0" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L3/Catwalk_Straight.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-1279.86" Y="800" Z="1279.86" />
+    <Rotation X="0" Y="135" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="ea9300818e501012c3103d791be78fde" Name="Dress_WashRed_2">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="52" B="34" A="255" />
+    <Intensity Value="5" />
+    <Radius Value="1100" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="55.0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="1579.83" Y="340" Z="-654.389" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L3.Alarm" />
+    <ShowWhenOn Value="true" />
+  </Component>
+  <Component Type="LabMotion" Version="1">
+      <Spin X="0" Y="0" Z="0" />
+    <SpinOn Value="" />
+    <AlarmOn Value="" />
+    <AlarmScale Value="1.0" />
+    <Flicker Value="1.2" />
+    <FlickerDuty Value="0.8" />
+    <RampOn Value="" />
+    <RampSeconds Value="10.0" />
+    <RampParam Value="" />
+    <RampSlot Value="0" />
+    <RampFrom Value="0.0" />
+    <RampTo Value="1.0" />
+    <RampLight Value="0.0" />
+  </Component>
+</Entity>

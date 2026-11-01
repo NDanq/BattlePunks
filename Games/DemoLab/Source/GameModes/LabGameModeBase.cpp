@@ -20,6 +20,7 @@
 #include "World/LabEncounter.h"
 #include "World/LabInteractable.h"
 #include "World/LabLogic.h"
+#include "World/LabMotion.h"
 #include "World/LabSignals.h"
 
 #include <algorithm>
@@ -225,6 +226,7 @@ void LabGameModeBase::TickWorldPresentation(World& InWorld, const float InSecond
 {
     LabWorld::TickPresentation(InWorld, InSeconds);
     LabLogic::TickPresentation(InWorld);
+    LabMotion::Tick(InWorld, InSeconds);
 }
 
 // === Events =================================================================
