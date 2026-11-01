@@ -162,7 +162,7 @@ UBO_BLOCK_END(ToonInk_Block)
 #if PIXEL_SHADER
 void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
 {
-    float t0 = dot(texture(Material_SceneColor, Inputs.TexCoord), vec4(0.2126, 0.7152, 0.0722, 0.0));
+    float t0 = dot(Material_SceneColorAt(Inputs.TexCoord), vec4(0.2126, 0.7152, 0.0722, 0.0));
     vec4 t1 = vec4(1.0) * vec4(t0);
     float t2 = t0 * Param_Bands;
     float t3 = t2 + 0.5;
@@ -171,7 +171,7 @@ void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
     float t6 = max(t0, 0.001);
     float t7 = t5 / t6;
     float t8 = mix(1.0, t7, Param_BandStrength);
-    vec4 t9 = texture(Material_SceneColor, Inputs.TexCoord) * vec4(t8);
+    vec4 t9 = Material_SceneColorAt(Inputs.TexCoord) * vec4(t8);
     vec4 t10 = mix(t1, t9, Param_Saturation);
     vec4 t11 = max(t10, vec4(0.0));
     float t12 = fwidth(Material_SceneDepthAt(Inputs.FragCoord.xy));

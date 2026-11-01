@@ -328,13 +328,19 @@ namespace RenderCore
         /* SPLITSCREEN (RenderScene::Render): InTarget cleared to black, then
          * each of InCount views' final colours (InSources, null skipped)
          * stretched over its rectangle InRects in it, opaque. Leaves InTarget
-         * bound, for the UI and overlays over the whole window. */
-        void CompositeViews(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewRect* InRects, uint32_t InCount);
+         * bound, for the UI and overlays over the whole window. InDrawn: each
+         * source's drawn area, its top-left (dynamic resolution, SceneTargets);
+         * null for all of it. */
+        void CompositeViews(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewRect* InRects, uint32_t InCount,
+                            const RenderViewRect* InDrawn = nullptr);
 
         /* SPLITSCREEN's dynamic split: InTarget, window-sized, each pixel from
          * the view whose site is nearest (InSites.Count views, each as large
-         * as InTarget), the divider along the cells' edges (ViewSites.fsh). */
-        void CompositeViewSites(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewSites& InSites);
+         * as InTarget), the divider along the cells' edges (ViewSites.fsh).
+         * InDrawnShare: the share of each source drawn this frame (dynamic
+         * resolution: every view's the same), x and y. */
+        void CompositeViewSites(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewSites& InSites,
+                                const float (&InDrawnShare)[2] = { 1.0f, 1.0f });
 
         /* A view appearing in the dynamic split: InFrom's TAA history and
          * exposure copied into InTo (the same size), as if InTo had drawn

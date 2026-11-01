@@ -186,7 +186,7 @@ void main(void)
         Output = vec4(0.0);
         return;
     }
-    vec3 Color = max(texture(LastColor, PrevUV).rgb, vec3(0.0));
+    vec3 Color = max(texture(LastColor, Scene_PrevViewUv(PrevUV)).rgb, vec3(0.0));
 
     // Trust: away from the screen's edges (both ends), smooth enough, not at the ray's end.
     vec2  Edge   = min(HitUV, 1.0 - HitUV);

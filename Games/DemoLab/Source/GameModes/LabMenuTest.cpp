@@ -340,6 +340,7 @@ void LabMenuTest::TickSettings(GameSession& InSession)
         /* One of each kind of control, on every page. */
         const bool bAll = Check(InSession, LabUI::SETTINGS, "Shadows", !SettingsDefaultShadows)
                        && Slide(InSession, LabUI::SETTINGS, "Tier", double(SET_TIER))
+                       && Check(InSession, LabUI::SETTINGS, "DynamicRes", false)   // after the tier, which lays its own
                        && Slide(InSession, LabUI::SETTINGS, "DisplayMode", double(SET_MODE))
                        && Slide(InSession, LabUI::SETTINGS, "Resolution", double(SET_RES))
                        && Slide(InSession, LabUI::SETTINGS, "Master", SET_MASTER)
@@ -357,6 +358,7 @@ void LabMenuTest::TickSettings(GameSession& InSession)
         /* Applied: the config vars, the tier, what the game reads. */
         if((Number("Shadows.Enabled") > 0.5) == SettingsDefaultShadows) { Fail("Shadows did not change"); break; }
         if(int(GameCore::Scalability::GetDetailMode()) != SET_TIER) { Fail("the quality tier did not change"); break; }
+        if(Number("Rendering.DynamicResolution") > 0.5) { Fail("dynamic resolution did not turn off"); break; }
         if(int(Number("Display.WindowMode")) != SET_MODE) { Fail("the display mode did not change"); break; }
         if(int(Number("Display.ResolutionX")) != SET_WIDTH) { Fail("the resolution did not change"); break; }
         if(!Near(Number("Audio.MasterVolume"), SET_MASTER)) { Fail("the master volume did not change"); break; }
@@ -544,6 +546,7 @@ void LabMenuTest::TickLevel(GameSession& InSession, const std::string& InLevel, 
         if(StoreText(InSession, "Tech.Features").empty()) { Fail("the overlay lists no features"); break; }
         Stats = StoreText(InSession, "Tech.Stats");
         if(Stats.find("Frame") == std::string::npos || NumbersIn(Stats).size() < 6) { Fail("the overlay's stat unit reads '" + Stats + "'"); break; }
+        if(Stats.find("Resolution") == std::string::npos) { Fail("the overlay shows no resolution scale: '" + Stats + "'"); break; }
         Phase = P_OverlayLive;
         Clock = 0.f;
         break;

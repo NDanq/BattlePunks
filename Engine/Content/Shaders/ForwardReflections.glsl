@@ -19,7 +19,7 @@ float Forward_ViewDepthOf(vec3 InWorld) { return dot(InWorld, Scene_CameraForwar
 // The opaque surface under InUv, as a world position; false for the sky.
 bool Forward_SurfaceAt(vec2 InUv, out vec3 OutWorld)
 {
-    vec2  Size  = Scene_ForwardReflections[1].zw;
+    vec2  Size  = Scene_ForwardReflections[1].zw;   // its drawn area (dynamic resolution)
     float Depth = texelFetch(Forward_SceneDepth, clamp(ivec2(InUv * Size), ivec2(0), ivec2(Size) - 1), 0).r;
     vec4  World = Scene_InvViewProjection * vec4(TargetUvToNdc(InUv), Depth * 2.0 - 1.0, 1.0);
     OutWorld = World.xyz / World.w;
@@ -76,7 +76,7 @@ vec4 Forward_ScreenReflection(vec3 InPosition, vec3 InNormal, vec3 InView, float
     vec3 Hit;
     if(!Forward_SurfaceAt(HitUv, Hit)) { return vec4(0.0); }
     if(any(lessThan(HitUv, vec2(0.0))) || any(greaterThan(HitUv, vec2(1.0)))) { return vec4(0.0); }
-    vec3 Color = max(textureLod(Forward_SceneColor, HitUv, 0.0).rgb, vec3(0.0));
+    vec3 Color = max(textureLod(Forward_SceneColor, Scene_ViewUv(HitUv), 0.0).rgb, vec3(0.0));
 
     vec2  Edge   = min(HitUv, 1.0 - HitUv);
     float Border = smoothstep(0.0, 0.08, min(Edge.x, Edge.y));

@@ -15,6 +15,6 @@ UBO_BLOCK_END(PP_Block)
 void main(void)
 {
     vec2 UV = Interpolants.TexCoord;
-    vec3 Color = texture(SceneColor, UV).rgb + DecodeBloom(texture(Glow, UV).rgb) * PP_Bloom.rgb * PP_Bloom.a;
+    vec3 Color = texture(SceneColor, Scene_ViewUv(UV)).rgb + DecodeBloom(texture(Glow, Scene_ViewUvHalf(UV)).rgb) * PP_Bloom.rgb * PP_Bloom.a;
     Output = vec4(Color, 1.0);
 }

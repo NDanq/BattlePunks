@@ -17,8 +17,8 @@ cmake --preset editor-relwithdebinfo
 cmake --build Build/editor-relwithdebinfo --target DemoLab -j3     # the game; add NimbleEditor for the editor
 ```
 
-Then run `Binaries/Linux_Debug/DemoLab` (the main menu) or
-`Binaries/Linux_Debug/NimbleEditor` to edit. Useful command lines:
+Then run `Binaries/Linux_RelWithDebInfo/DemoLab` (the main menu) or
+`Binaries/Linux_RelWithDebInfo/NimbleEditor` to edit. Useful command lines:
 
 ```
 DemoLab -Game.StartLevel=L2_Laboratory          # straight into a level (its Calm state)
@@ -42,7 +42,7 @@ build stages Content/). Materials (the characters' and the art kit's) are
 cooked, not built:
 
 ```
-Binaries/Linux_Debug/NimbleCook shaders -project Games/DemoLab -module DemoLabGame -editor   (from the repository root)
+Binaries/Linux_RelWithDebInfo/NimbleCook shaders -project Games/DemoLab -module DemoLabGame -editor   (from the repository root)
 ```
 
 The credits text comes from `Docs/Credits.md`: run `python3 Tools/UI/make_credits.py`

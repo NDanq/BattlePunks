@@ -16,7 +16,7 @@ UBO_BLOCK_END(PP_Block)
 void main(void)
 {
     vec2  UV     = Interpolants.TexCoord;
-    vec3  Colour = texture(Picture, UV).rgb;
+    vec3  Colour = texture(Picture, Scene_ViewUv(UV)).rgb;   // the view's drawn area (dynamic resolution)
     float Edge   = smoothstep(PP_Vignette.y, 1.0, length(UV - 0.5) * 1.41421);
     Output = vec4(Colour * (1.0 - PP_Vignette.x * Edge), 1.0);
 }

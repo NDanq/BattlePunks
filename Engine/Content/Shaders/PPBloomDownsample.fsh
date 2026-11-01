@@ -14,19 +14,20 @@ MATERIAL_SAMPLER2D(5, Emissive)   // GBuffer3, for the first step
 
 UBO_BLOCK_BEGIN(2, PP_Block)
     vec4 PP_Bloom;   // x threshold, y knee, z 1: the first step, w 1: Emissive is this frame's
-    vec4 PP_Sizes;   // xy one SOURCE texel
+    vec4 PP_Sizes;   // xy one SOURCE texel, view UV; zw the largest UV Source may be sampled at (its drawn area)
 UBO_BLOCK_END(PP_Block)
 
 vec3 Tap(vec2 InUV)
 {
-    vec3 Color = texture(Source, InUV).rgb;
+    vec2 At    = min(InUV * Scene_Spare[3].xy, PP_Sizes.zw);   // Scene_ViewUv, with this level's own edge
+    vec3 Color = texture(Source, At).rgb;
     if(PP_Bloom.z < 0.5)
     {
         return DecodeBloom(Color);
     }
     if(PP_Bloom.w > 0.5)
     {
-        Color += max(DecodeGBufferEmissive(texture(Emissive, InUV)) - 1.0, vec3(0.0));
+        Color += max(DecodeGBufferEmissive(texture(Emissive, At)) - 1.0, vec3(0.0));
     }
     return Color;
 }

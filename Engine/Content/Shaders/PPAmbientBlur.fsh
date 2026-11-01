@@ -32,7 +32,7 @@ void main(void)
         {
             vec2  Tap = UV + (vec2(X, Y) + 0.5) * PP_Sizes.xy;
             float W   = 1.0 / (1.0 + abs(DistanceAt(Tap) - Centre) / max(PP_Ao.y * 0.25, 1.0));
-            Sum    += texture(Occlusion, Tap).r * W;
+            Sum    += texture(Occlusion, Scene_ViewUvHalf(Tap)).r * W;
             Weight += W;
         }
     }

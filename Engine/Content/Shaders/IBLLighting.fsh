@@ -33,7 +33,7 @@ MATERIAL_SAMPLER2D(11, ScreenGI)            // rgb: bounced light; a: its rays' 
 float ViewDepthAt(vec2 InNdc, float InDepth) { return dot(PP_WorldAt(InNdc, InDepth), Scene_CameraForward.xyz) - Scene_CameraForward.w; }
 vec4 HalfSizeAt(sampler2D InHalf, ivec2 InTexel, float InDepth)
 {
-    vec2  Half   = vec2(textureSize(InHalf, 0));
+    vec2  Half   = Scene_DrawnSize(vec2(textureSize(InHalf, 0)));   // the drawn area (dynamic resolution)
     vec2  At     = (vec2(InTexel) + 0.5) * 0.5 - 0.5;
     ivec2 Base   = ivec2(floor(At));
     vec2  Frac   = At - vec2(Base);

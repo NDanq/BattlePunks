@@ -76,6 +76,9 @@
             <CheckBox Name="Fog" Class="Setting" Checked="{Bind:Set.Rendering.AllowVolumetricFog}" OnChanged="Native:Lab.SetVar('Rendering.AllowVolumetricFog', $value)">
               <Text Class="SettingLabel" Text="Volumetric fog"/>
             </CheckBox>
+            <CheckBox Name="DynamicRes" Class="Setting" Checked="{Bind:Set.Rendering.DynamicResolution}" OnChanged="Native:Lab.SetVar('Rendering.DynamicResolution', $value)">
+              <Text Class="SettingLabel" Text="Dynamic resolution (holds 60 fps)"/>
+            </CheckBox>
             <Text Class="SliderLabel" Text="Foliage density"/>
             <HorizontalBox>
               <Slider Name="Foliage" Class="SettingSlider" Min="0.25" Max="1.5" Step="0.05"
