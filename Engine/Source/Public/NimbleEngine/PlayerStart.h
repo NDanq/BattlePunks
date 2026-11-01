@@ -19,6 +19,7 @@ namespace NimbleEngine
     class GameSession;
 
     enum : size_t { PLAYER_START_PREFAB_MAX = 128 };   // including the NUL
+    enum : size_t { PLAYER_START_ENTRY_MAX  = 64 };    // including the NUL
 
     /* "PlayerStart": a place (its Transform) an avatar spawns at. */
     struct NE_API PlayerStartComponent
@@ -28,11 +29,25 @@ namespace NimbleEngine
         char    AvatarPrefab[PLAYER_START_PREFAB_MAX] = "";   // what spawns here; "" for the mode's
         uint8_t PlayerSlot = 0;   // 1..4: kept for that player (by join order); 0 any
         uint8_t bEnabled   = 1;
+        char    Entry[PLAYER_START_ENTRY_MAX] = "";   // an entry point level travel names (LevelTravel::Entry); "" none
     };
 
-    /* The start for the InOrdinal'th player (0 first): one kept for its
-     * slot, else the enabled ones in turn. Unset if the level has none. */
+    /* The start for the InOrdinal'th player (0 first). When the level was
+     * travelled to at an entry (GameSession::GetTravel().Entry) and has it,
+     * the entry's (FindEntryPoint). Otherwise one kept for its slot, else the
+     * enabled ones in turn. Unset if the level has none. */
     NE_API GameCore::EntityID FindPlayerStart(GameCore::World& InWorld, uint32_t InOrdinal);
+
+    /* The enabled Player Start whose Entry is InEntry, or, failing any, whose
+     * entity is named InEntry (both case-sensitive); with several, the
+     * InOrdinal'th in turn (one kept for player InOrdinal + 1 first). Unset
+     * for "" or none. */
+    NE_API GameCore::EntityID FindEntryPoint(GameCore::World& InWorld, const char* InEntry, uint32_t InOrdinal = 0);
+
+    /* InAvatar stood at InStart's place, facing its yaw, at rest
+     * (TeleportCharacter for a Character Mover; else its Transform). False if
+     * either is gone. Authority's; replicates. */
+    NE_API bool PlaceAvatarAt(GameCore::World& InWorld, GameCore::EntityID InAvatar, GameCore::EntityID InStart);
 
     /*
      * Authority only. Spawns an avatar for InPlayer at InStart (the origin
