@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="4841e42013a4bc75f99fb026f352882b" Type="Math.Lerp" Version="1" X="-1400" Y="-300" Wildcard="float">
+      <Const Pin="A" Value="0.6" />
+      <Const Pin="B" Value="1" />
+    </Node>
+    <Node Id="67c7974733e21f187d224f3b4594880f" Type="Math.Multiply" Version="1" X="-960" Y="-300" Wildcard="vec3" />
+    <Node Id="7314dfc27fbce02fd2daafc3ac19b24a" Type="Texture.Sample" Version="2" X="140" Y="-600" />
+    <Node Id="76ae98ae8702135284d10734a93911ad" Type="Vector.Make3" Version="1" X="-1180" Y="-300" />
+    <Node Id="798fbd122dcda198a73d5739f6a3c4f2" Type="Texture.NormalMap" Version="1" X="-520" Y="-450">
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+    <Node Id="8d155683ad14c1fd918528f4489288a9" Type="Math.Multiply" Version="1" X="-300" Y="-600" Wildcard="vec2">
+      <Const Pin="B" Value="4 4" />
+    </Node>
+    <Node Id="97fcdd70e4a54a3c515da17c85f45283" Type="Texture.Object" Version="1" X="-80" Y="-600">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Leather_BaseColor.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="9808d4363fb2cf2120f183dcc0f9c297" Type="Texture.Object" Version="1" X="-1400" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Leather_ORM.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="99646b9323c8eda9b3681f6686e914d5" Type="Output.Material" Version="1" X="-1180" Y="-600">
+      <Const Pin="SheenColor" Value="0.32 0.22 0.15" />
+      <Const Pin="SubsurfaceColor" Value="0.45 0.2 0.1" />
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Opaque" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="ShadingModel" Value="Cloth" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+    <Node Id="9ddaa617f4fbaa8a407b0d9f39426a84" Type="Vector.Split" Version="1" X="-740" Y="-600" />
+    <Node Id="ca64f24ccf2a647cf2792c60f3ffaeca" Type="Texture.Object" Version="1" X="-960" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Leather_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="d700a23add79fa160a1bf661d9b77603" Type="Texture.Sample" Version="2" X="-1180" Y="-450" />
+    <Node Id="ddbf493b12b34d1e275c169c9f8b38b9" Type="Input.VertexColor" Version="1" X="-960" Y="-600" />
+    <Node Id="e2f177e5d858e1df331c0135161381ae" Type="Math.Multiply" Version="1" X="140" Y="-450" Wildcard="float" />
+    <Node Id="e5fed06c62a895e96606fd0c0317c87b" Type="Parameter" Version="1" X="-300" Y="-450">
+      <Prop Name="Default" Value="1 1 1" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="f8a153593ba14f73343528fc0cf5c5e9" Type="Input.TexCoord" Version="1" X="-520" Y="-600" />
+    <Node Id="fb1b75ed15378c142d001141cb455837" Type="Texture.Sample" Version="2" X="-740" Y="-450" />
+    <Node Id="fca5558b3ff191e78303287dca7027f2" Type="Math.Multiply" Version="1" X="-80" Y="-450" Wildcard="vec3" />
+  </Nodes>
+  <Links>
+    <Link From="4841e42013a4bc75f99fb026f352882b.Out" To="76ae98ae8702135284d10734a93911ad.X" />
+    <Link From="4841e42013a4bc75f99fb026f352882b.Out" To="76ae98ae8702135284d10734a93911ad.Y" />
+    <Link From="4841e42013a4bc75f99fb026f352882b.Out" To="76ae98ae8702135284d10734a93911ad.Z" />
+    <Link From="67c7974733e21f187d224f3b4594880f.Out" To="99646b9323c8eda9b3681f6686e914d5.BaseColor" />
+    <Link From="7314dfc27fbce02fd2daafc3ac19b24a.RGB" To="fca5558b3ff191e78303287dca7027f2.A" />
+    <Link From="76ae98ae8702135284d10734a93911ad.Out" To="67c7974733e21f187d224f3b4594880f.B" />
+    <Link From="798fbd122dcda198a73d5739f6a3c4f2.Normal" To="99646b9323c8eda9b3681f6686e914d5.Normal" />
+    <Link From="8d155683ad14c1fd918528f4489288a9.Out" To="7314dfc27fbce02fd2daafc3ac19b24a.UV" />
+    <Link From="8d155683ad14c1fd918528f4489288a9.Out" To="798fbd122dcda198a73d5739f6a3c4f2.UV" />
+    <Link From="8d155683ad14c1fd918528f4489288a9.Out" To="d700a23add79fa160a1bf661d9b77603.UV" />
+    <Link From="8d155683ad14c1fd918528f4489288a9.Out" To="fb1b75ed15378c142d001141cb455837.UV" />
+    <Link From="97fcdd70e4a54a3c515da17c85f45283.Texture" To="7314dfc27fbce02fd2daafc3ac19b24a.Texture" />
+    <Link From="9808d4363fb2cf2120f183dcc0f9c297.Texture" To="d700a23add79fa160a1bf661d9b77603.Texture" />
+    <Link From="9ddaa617f4fbaa8a407b0d9f39426a84.X" To="4841e42013a4bc75f99fb026f352882b.T" />
+    <Link From="9ddaa617f4fbaa8a407b0d9f39426a84.X" To="e2f177e5d858e1df331c0135161381ae.B" />
+    <Link From="ca64f24ccf2a647cf2792c60f3ffaeca.Texture" To="fb1b75ed15378c142d001141cb455837.Texture" />
+    <Link From="d700a23add79fa160a1bf661d9b77603.B" To="99646b9323c8eda9b3681f6686e914d5.Metallic" />
+    <Link From="d700a23add79fa160a1bf661d9b77603.G" To="99646b9323c8eda9b3681f6686e914d5.Roughness" />
+    <Link From="d700a23add79fa160a1bf661d9b77603.R" To="e2f177e5d858e1df331c0135161381ae.A" />
+    <Link From="ddbf493b12b34d1e275c169c9f8b38b9.RGB" To="9ddaa617f4fbaa8a407b0d9f39426a84.Vector" />
+    <Link From="e2f177e5d858e1df331c0135161381ae.Out" To="99646b9323c8eda9b3681f6686e914d5.AmbientOcclusion" />
+    <Link From="e5fed06c62a895e96606fd0c0317c87b.Value" To="fca5558b3ff191e78303287dca7027f2.B" />
+    <Link From="f8a153593ba14f73343528fc0cf5c5e9.UV" To="8d155683ad14c1fd918528f4489288a9.A" />
+    <Link From="fb1b75ed15378c142d001141cb455837.RGB" To="798fbd122dcda198a73d5739f6a3c4f2.Color" />
+    <Link From="fca5558b3ff191e78303287dca7027f2.Out" To="67c7974733e21f187d224f3b4594880f.A" />
+  </Links>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "Leather". Do not edit.
+// Opaque, Lit, Cloth. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in Leather.material.
+UBO_BLOCK_BEGIN(2, Leather_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    vec3  Param_Tint;
+UBO_BLOCK_END(Leather_Block)
+
+// Textures, by material texture slot; Leather.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+MATERIAL_SAMPLER2D(6, Material_Texture2)
+MATERIAL_SAMPLER2D(7, Material_Texture3)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec2 t0 = Inputs.TexCoord * vec2(4.0);
+    vec4 t1 = texture(Material_Texture1, t0);
+    vec3 t2 = t1.rgb * Param_Tint;
+    float t3 = vec4(Inputs.Color.rgb, 1.0).x;
+    float t4 = mix(0.6, 1.0, t3);
+    vec3 t5 = vec3(t4, t4, t4);
+    vec3 t6 = t2 * t5;
+    Surface.BaseColor = t6;
+    vec4 t7 = texture(Material_Texture2, t0);
+    Surface.Metallic = t7.b;
+    Surface.Roughness = t7.g;
+    vec4 t8 = texture(Material_Texture3, t0);
+    vec3 t9 = Material_NormalMap(Inputs, t8.rgb, 1.0, t0, -1.0);
+    Surface.Normal = t9;
+    float t10 = t7.r * t3;
+    Surface.AmbientOcclusion = t10;
+    Surface.SheenColor = vec3(0.32, 0.22, 0.15);
+    Surface.SubsurfaceColor = vec3(0.45, 0.2, 0.1);
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "Leather". Do not edit.
+NimbleMaterial 3
+Domain Opaque
+Shading Lit
+ShadingModel Cloth
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 176
+Param Tint vec3 160 1 1 1 0
+Texture 1 Default Default Content/Textures/Kit/Leather_BaseColor.nmtexture
+Texture 2 Default Default Content/Textures/Kit/Leather_ORM.nmtexture
+Texture 3 Default Default Content/Textures/Kit/Leather_Normal.nmtexture
+TextureUV 1 4
+TextureUV 2 4
+TextureUV 3 4
+]]></Output>
+  </gen_code>
+</NodeGraph>

@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="1b4b9141f81baf67ee153a3506befa87" Type="Input.TexCoord" Version="1" X="-520" Y="-600" />
+    <Node Id="30f39827a1fb2dbba7cb5fd60e9eb57c" Type="Vector.Make3" Version="1" X="-1180" Y="-300" />
+    <Node Id="3cdf953d59c67f8dab11225ea8f5f8bb" Type="Math.Multiply" Version="1" X="-960" Y="-300" Wildcard="vec3" />
+    <Node Id="409000e8ec85906c3c2ba4443f494574" Type="Parameter" Version="1" X="-520" Y="-450">
+      <Prop Name="Default" Value="0.85 0.88 0.9" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="518f391ba8fc3808a7adb10f156ebb6d" Type="Math.Multiply" Version="1" X="-740" Y="-300" Wildcard="float">
+      <Const Pin="B" Value="0.3" />
+    </Node>
+    <Node Id="528fabadcd4bf2305f79bec18fde86b9" Type="Texture.Sample" Version="2" X="-960" Y="-450" />
+    <Node Id="61ff01dc964f6451c48cef3973469f11" Type="Math.Multiply" Version="1" X="140" Y="-450" Wildcard="float" />
+    <Node Id="6a5c5acca10179e2233d3213f6090ff8" Type="Math.Add" Version="1" X="-80" Y="-450" Wildcard="float">
+      <Const Pin="B" Value="0.35" />
+    </Node>
+    <Node Id="6cb90ae2e34dfd26b77e8bb215489a5c" Type="Texture.Object" Version="1" X="140" Y="-600">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Glass_ORM.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="70f512673867fee9ff11e2ba62b962be" Type="Texture.Sample" Version="2" X="-80" Y="-600" />
+    <Node Id="7a7c203e2c8f31343fc68bbf49292a4f" Type="Texture.Object" Version="1" X="-1180" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Glass_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="8268e8aa20751cf3f40c0d342e3b58a6" Type="Output.Material" Version="1" X="-1180" Y="-600">
+      <Const Pin="Refraction" Value="1.04" />
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Translucent" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="ShadingModel" Value="Default" />
+      <Prop Name="TranslucencyLighting" Value="Surface" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+    <Node Id="8a4ac3ca1f9c9da39bc05e9324c82e7b" Type="Math.Multiply" Version="1" X="-300" Y="-450" Wildcard="vec3" />
+    <Node Id="9d6d313609fe9a3746a60344a86a555c" Type="Input.VertexColor" Version="1" X="-960" Y="-600" />
+    <Node Id="b04eb0e41d999e7bf4c86017a39c49c2" Type="Texture.Sample" Version="2" X="-1400" Y="-450" />
+    <Node Id="c06d1d754a4c73585361dd495b92a22e" Type="Texture.Object" Version="1" X="-300" Y="-600">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Glass_BaseColor.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="c603fde247f9519093b67754b779717b" Type="Math.Add" Version="1" X="-520" Y="-300" Wildcard="float">
+      <Const Pin="B" Value="0.6" />
+    </Node>
+    <Node Id="d61244764ed819429a289ed0ed06b1db" Type="Texture.NormalMap" Version="1" X="-740" Y="-450">
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+    <Node Id="eddae95fadd5345256b837c2df5121c0" Type="Vector.Split" Version="1" X="-740" Y="-600" />
+    <Node Id="f71fb0e3160485c1de5ac04e9ac9e12c" Type="Math.Lerp" Version="1" X="-1400" Y="-300" Wildcard="float">
+      <Const Pin="A" Value="0.6" />
+      <Const Pin="B" Value="1" />
+    </Node>
+  </Nodes>
+  <Links>
+    <Link From="1b4b9141f81baf67ee153a3506befa87.UV" To="528fabadcd4bf2305f79bec18fde86b9.UV" />
+    <Link From="1b4b9141f81baf67ee153a3506befa87.UV" To="70f512673867fee9ff11e2ba62b962be.UV" />
+    <Link From="1b4b9141f81baf67ee153a3506befa87.UV" To="b04eb0e41d999e7bf4c86017a39c49c2.UV" />
+    <Link From="1b4b9141f81baf67ee153a3506befa87.UV" To="d61244764ed819429a289ed0ed06b1db.UV" />
+    <Link From="30f39827a1fb2dbba7cb5fd60e9eb57c.Out" To="3cdf953d59c67f8dab11225ea8f5f8bb.B" />
+    <Link From="3cdf953d59c67f8dab11225ea8f5f8bb.Out" To="8268e8aa20751cf3f40c0d342e3b58a6.BaseColor" />
+    <Link From="409000e8ec85906c3c2ba4443f494574.Value" To="8a4ac3ca1f9c9da39bc05e9324c82e7b.A" />
+    <Link From="518f391ba8fc3808a7adb10f156ebb6d.Out" To="c603fde247f9519093b67754b779717b.A" />
+    <Link From="528fabadcd4bf2305f79bec18fde86b9.RGB" To="d61244764ed819429a289ed0ed06b1db.Color" />
+    <Link From="61ff01dc964f6451c48cef3973469f11.Out" To="8268e8aa20751cf3f40c0d342e3b58a6.AmbientOcclusion" />
+    <Link From="6a5c5acca10179e2233d3213f6090ff8.Out" To="8268e8aa20751cf3f40c0d342e3b58a6.Roughness" />
+    <Link From="6cb90ae2e34dfd26b77e8bb215489a5c.Texture" To="b04eb0e41d999e7bf4c86017a39c49c2.Texture" />
+    <Link From="70f512673867fee9ff11e2ba62b962be.A" To="518f391ba8fc3808a7adb10f156ebb6d.A" />
+    <Link From="70f512673867fee9ff11e2ba62b962be.RGB" To="8a4ac3ca1f9c9da39bc05e9324c82e7b.B" />
+    <Link From="7a7c203e2c8f31343fc68bbf49292a4f.Texture" To="528fabadcd4bf2305f79bec18fde86b9.Texture" />
+    <Link From="8a4ac3ca1f9c9da39bc05e9324c82e7b.Out" To="3cdf953d59c67f8dab11225ea8f5f8bb.A" />
+    <Link From="9d6d313609fe9a3746a60344a86a555c.RGB" To="eddae95fadd5345256b837c2df5121c0.Vector" />
+    <Link From="b04eb0e41d999e7bf4c86017a39c49c2.B" To="8268e8aa20751cf3f40c0d342e3b58a6.Metallic" />
+    <Link From="b04eb0e41d999e7bf4c86017a39c49c2.G" To="6a5c5acca10179e2233d3213f6090ff8.A" />
+    <Link From="b04eb0e41d999e7bf4c86017a39c49c2.R" To="61ff01dc964f6451c48cef3973469f11.A" />
+    <Link From="c06d1d754a4c73585361dd495b92a22e.Texture" To="70f512673867fee9ff11e2ba62b962be.Texture" />
+    <Link From="c603fde247f9519093b67754b779717b.Out" To="8268e8aa20751cf3f40c0d342e3b58a6.Opacity" />
+    <Link From="d61244764ed819429a289ed0ed06b1db.Normal" To="8268e8aa20751cf3f40c0d342e3b58a6.Normal" />
+    <Link From="eddae95fadd5345256b837c2df5121c0.X" To="61ff01dc964f6451c48cef3973469f11.B" />
+    <Link From="eddae95fadd5345256b837c2df5121c0.X" To="f71fb0e3160485c1de5ac04e9ac9e12c.T" />
+    <Link From="f71fb0e3160485c1de5ac04e9ac9e12c.Out" To="30f39827a1fb2dbba7cb5fd60e9eb57c.X" />
+    <Link From="f71fb0e3160485c1de5ac04e9ac9e12c.Out" To="30f39827a1fb2dbba7cb5fd60e9eb57c.Y" />
+    <Link From="f71fb0e3160485c1de5ac04e9ac9e12c.Out" To="30f39827a1fb2dbba7cb5fd60e9eb57c.Z" />
+  </Links>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "GlassFrosted". Do not edit.
+// Translucent, Lit. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Translucency Lighting Surface: specular over the opacity, premultiplied (MaterialTemplate_PS.glsl).
+#define MATERIAL_TRANSLUCENCY_SURFACE 1
+
+// Refraction: what is seen through it bent, read from this frame's opaque copy (Refraction.glsl).
+#define MATERIAL_REFRACTION 1
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in GlassFrosted.material.
+UBO_BLOCK_BEGIN(2, GlassFrosted_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    vec3  Param_Tint;
+UBO_BLOCK_END(GlassFrosted_Block)
+
+// Textures, by material texture slot; GlassFrosted.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+MATERIAL_SAMPLER2D(6, Material_Texture2)
+MATERIAL_SAMPLER2D(7, Material_Texture3)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec4 t0 = texture(Material_Texture3, Inputs.TexCoord);
+    vec3 t1 = Param_Tint * t0.rgb;
+    float t2 = vec4(Inputs.Color.rgb, 1.0).x;
+    float t3 = mix(0.6, 1.0, t2);
+    vec3 t4 = vec3(t3, t3, t3);
+    vec3 t5 = t1 * t4;
+    Surface.BaseColor = t5;
+    vec4 t6 = texture(Material_Texture1, Inputs.TexCoord);
+    Surface.Metallic = t6.b;
+    float t7 = t6.g + 0.35;
+    Surface.Roughness = t7;
+    float t8 = t0.a * 0.3;
+    float t9 = t8 + 0.6;
+    Surface.Opacity = t9;
+    vec4 t10 = texture(Material_Texture2, Inputs.TexCoord);
+    vec3 t11 = Material_NormalMap(Inputs, t10.rgb, 1.0, Inputs.TexCoord, -1.0);
+    Surface.Normal = t11;
+    float t12 = t6.r * t2;
+    Surface.AmbientOcclusion = t12;
+    Surface.Refraction = 1.04;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "GlassFrosted". Do not edit.
+NimbleMaterial 3
+Domain Translucent
+Shading Lit
+TwoSided 0
+TranslucencyLighting Surface
+Refraction 1
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 176
+Param Tint vec3 160 0.85 0.88 0.9 0
+Texture 1 Default Default Content/Textures/Kit/Glass_ORM.nmtexture
+Texture 2 Default Default Content/Textures/Kit/Glass_Normal.nmtexture
+Texture 3 Default Default Content/Textures/Kit/Glass_BaseColor.nmtexture
+]]></Output>
+  </gen_code>
+</NodeGraph>

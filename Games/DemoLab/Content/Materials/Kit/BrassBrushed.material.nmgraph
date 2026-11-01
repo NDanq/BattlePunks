@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="0c8dc8e6ba297b387db649f4a55926ec" Type="Vector.Make3" Version="1" X="-960" Y="-300" />
+    <Node Id="47b69b8bed9358f58a2cdaddc005fe45" Type="Texture.Object" Version="1" X="-960" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Brass_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="65b3350088b2ab7753a5754e23675c2e" Type="Texture.Sample" Version="2" X="-740" Y="-450" />
+    <Node Id="6becd8309475b1419f75c03ef550f604" Type="Math.Multiply" Version="1" X="-80" Y="-450" Wildcard="vec3" />
+    <Node Id="7110b6381a2301fec3ae899f2e34d582" Type="Input.TexCoord" Version="1" X="-520" Y="-600" />
+    <Node Id="7c7f401f3849d7bc91900f2958a35426" Type="Texture.Object" Version="1" X="-80" Y="-600">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Brass_BaseColor.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="8b74439464be77a698169ffe4cb185ab" Type="Math.Multiply" Version="1" X="140" Y="-450" Wildcard="float">
+      <Const Pin="B" Value="0.85" />
+    </Node>
+    <Node Id="95101bd371ebdf326d361e9a09cb538c" Type="Math.Lerp" Version="1" X="-1180" Y="-300" Wildcard="float">
+      <Const Pin="A" Value="0.6" />
+      <Const Pin="B" Value="1" />
+    </Node>
+    <Node Id="a3c41f2dab312d65182ee03af88371d2" Type="Parameter" Version="1" X="-300" Y="-450">
+      <Prop Name="Default" Value="1 1 1" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="a88387b31f6c6d13c224580c8422ce82" Type="Input.VertexColor" Version="1" X="-960" Y="-600" />
+    <Node Id="af85ed45a630a6505034e16ddeabdbd5" Type="Math.Multiply" Version="1" X="-740" Y="-300" Wildcard="vec3" />
+    <Node Id="ba7f467a8d85529add25141128f63bd1" Type="Vector.Split" Version="1" X="-740" Y="-600" />
+    <Node Id="ba9799e7977c05f34752a8d3c26397e8" Type="Math.Multiply" Version="1" X="-300" Y="-600" Wildcard="vec2">
+      <Const Pin="B" Value="2 2" />
+    </Node>
+    <Node Id="c35efe35d64217a350603f017696992a" Type="Texture.NormalMap" Version="1" X="-520" Y="-450">
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+    <Node Id="c8969a5d5fe9efbd5e07d4140967f4e4" Type="Math.Multiply" Version="1" X="-1400" Y="-300" Wildcard="float" />
+    <Node Id="d35bd8cd636ef5a7efd8d5125ebe5c6a" Type="Texture.Sample" Version="2" X="140" Y="-600" />
+    <Node Id="e10a3da1ce0084e8e2848517891f333a" Type="Texture.Object" Version="1" X="-1400" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Brass_ORM.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="f9705bd1b633bcd8513d56157eea3c5f" Type="Texture.Sample" Version="2" X="-1180" Y="-450" />
+    <Node Id="fa94575c298dd0bcb1bf2df8432eff86" Type="Output.Material" Version="1" X="-1180" Y="-600">
+      <Const Pin="Anisotropy" Value="0.75" />
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Opaque" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="ShadingModel" Value="Anisotropic" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+  </Nodes>
+  <Links>
+    <Link From="0c8dc8e6ba297b387db649f4a55926ec.Out" To="af85ed45a630a6505034e16ddeabdbd5.B" />
+    <Link From="47b69b8bed9358f58a2cdaddc005fe45.Texture" To="65b3350088b2ab7753a5754e23675c2e.Texture" />
+    <Link From="65b3350088b2ab7753a5754e23675c2e.RGB" To="c35efe35d64217a350603f017696992a.Color" />
+    <Link From="6becd8309475b1419f75c03ef550f604.Out" To="af85ed45a630a6505034e16ddeabdbd5.A" />
+    <Link From="7110b6381a2301fec3ae899f2e34d582.UV" To="ba9799e7977c05f34752a8d3c26397e8.A" />
+    <Link From="7c7f401f3849d7bc91900f2958a35426.Texture" To="d35bd8cd636ef5a7efd8d5125ebe5c6a.Texture" />
+    <Link From="8b74439464be77a698169ffe4cb185ab.Out" To="fa94575c298dd0bcb1bf2df8432eff86.Roughness" />
+    <Link From="95101bd371ebdf326d361e9a09cb538c.Out" To="0c8dc8e6ba297b387db649f4a55926ec.X" />
+    <Link From="95101bd371ebdf326d361e9a09cb538c.Out" To="0c8dc8e6ba297b387db649f4a55926ec.Y" />
+    <Link From="95101bd371ebdf326d361e9a09cb538c.Out" To="0c8dc8e6ba297b387db649f4a55926ec.Z" />
+    <Link From="a3c41f2dab312d65182ee03af88371d2.Value" To="6becd8309475b1419f75c03ef550f604.B" />
+    <Link From="a88387b31f6c6d13c224580c8422ce82.RGB" To="ba7f467a8d85529add25141128f63bd1.Vector" />
+    <Link From="af85ed45a630a6505034e16ddeabdbd5.Out" To="fa94575c298dd0bcb1bf2df8432eff86.BaseColor" />
+    <Link From="ba7f467a8d85529add25141128f63bd1.X" To="95101bd371ebdf326d361e9a09cb538c.T" />
+    <Link From="ba7f467a8d85529add25141128f63bd1.X" To="c8969a5d5fe9efbd5e07d4140967f4e4.B" />
+    <Link From="ba9799e7977c05f34752a8d3c26397e8.Out" To="65b3350088b2ab7753a5754e23675c2e.UV" />
+    <Link From="ba9799e7977c05f34752a8d3c26397e8.Out" To="c35efe35d64217a350603f017696992a.UV" />
+    <Link From="ba9799e7977c05f34752a8d3c26397e8.Out" To="d35bd8cd636ef5a7efd8d5125ebe5c6a.UV" />
+    <Link From="ba9799e7977c05f34752a8d3c26397e8.Out" To="f9705bd1b633bcd8513d56157eea3c5f.UV" />
+    <Link From="c35efe35d64217a350603f017696992a.Normal" To="fa94575c298dd0bcb1bf2df8432eff86.Normal" />
+    <Link From="c8969a5d5fe9efbd5e07d4140967f4e4.Out" To="fa94575c298dd0bcb1bf2df8432eff86.AmbientOcclusion" />
+    <Link From="d35bd8cd636ef5a7efd8d5125ebe5c6a.RGB" To="6becd8309475b1419f75c03ef550f604.A" />
+    <Link From="e10a3da1ce0084e8e2848517891f333a.Texture" To="f9705bd1b633bcd8513d56157eea3c5f.Texture" />
+    <Link From="f9705bd1b633bcd8513d56157eea3c5f.B" To="fa94575c298dd0bcb1bf2df8432eff86.Metallic" />
+    <Link From="f9705bd1b633bcd8513d56157eea3c5f.G" To="8b74439464be77a698169ffe4cb185ab.A" />
+    <Link From="f9705bd1b633bcd8513d56157eea3c5f.R" To="c8969a5d5fe9efbd5e07d4140967f4e4.A" />
+  </Links>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "BrassBrushed". Do not edit.
+// Opaque, Lit, Anisotropic. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in BrassBrushed.material.
+UBO_BLOCK_BEGIN(2, BrassBrushed_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    vec3  Param_Tint;
+UBO_BLOCK_END(BrassBrushed_Block)
+
+// Textures, by material texture slot; BrassBrushed.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+MATERIAL_SAMPLER2D(6, Material_Texture2)
+MATERIAL_SAMPLER2D(7, Material_Texture3)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec2 t0 = Inputs.TexCoord * vec2(2.0);
+    vec4 t1 = texture(Material_Texture2, t0);
+    vec3 t2 = t1.rgb * Param_Tint;
+    float t3 = vec4(Inputs.Color.rgb, 1.0).x;
+    float t4 = mix(0.6, 1.0, t3);
+    vec3 t5 = vec3(t4, t4, t4);
+    vec3 t6 = t2 * t5;
+    Surface.BaseColor = t6;
+    vec4 t7 = texture(Material_Texture3, t0);
+    Surface.Metallic = t7.b;
+    float t8 = t7.g * 0.85;
+    Surface.Roughness = t8;
+    vec4 t9 = texture(Material_Texture1, t0);
+    vec3 t10 = Material_NormalMap(Inputs, t9.rgb, 1.0, t0, -1.0);
+    Surface.Normal = t10;
+    float t11 = t7.r * t3;
+    Surface.AmbientOcclusion = t11;
+    Surface.Anisotropy = 0.75;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "BrassBrushed". Do not edit.
+NimbleMaterial 3
+Domain Opaque
+Shading Lit
+ShadingModel Anisotropic
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 176
+Param Tint vec3 160 1 1 1 0
+Texture 1 Default Default Content/Textures/Kit/Brass_Normal.nmtexture
+Texture 2 Default Default Content/Textures/Kit/Brass_BaseColor.nmtexture
+Texture 3 Default Default Content/Textures/Kit/Brass_ORM.nmtexture
+TextureUV 1 2
+TextureUV 2 2
+TextureUV 3 2
+]]></Output>
+  </gen_code>
+</NodeGraph>

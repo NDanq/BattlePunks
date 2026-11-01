@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="003faee3d5764012f77faff0e8d0e9bd" Type="Texture.NormalMap" Version="1" X="-520" Y="-450">
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+    <Node Id="0219aa6876fea3f2f26f1350a6fadc13" Type="Math.Multiply" Version="1" X="-1400" Y="-150" Wildcard="vec3" />
+    <Node Id="0b6bf866a09c5b64f8563baaca7791eb" Type="Texture.Sample" Version="2" X="-1180" Y="-450" />
+    <Node Id="1187e3e9b68a28980489f47ae8b3d507" Type="Math.Multiply" Version="1" X="-300" Y="-300" Wildcard="float" />
+    <Node Id="1b9d371d2f834e3aab9453860408256d" Type="Math.Lerp" Version="1" X="-80" Y="-300" Wildcard="float">
+      <Const Pin="A" Value="0.6" />
+      <Const Pin="B" Value="1" />
+    </Node>
+    <Node Id="21404ad40150994b493a17ddcce41510" Type="Texture.Object" Version="1" X="-960" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/RivetPanel_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="2baf587eeee36895b218c4d74843dab4" Type="Input.VertexColor" Version="1" X="-960" Y="-600" />
+    <Node Id="3131d58148422a6de606dd4b7ec88bce" Type="Output.Material" Version="1" X="-1180" Y="-600">
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Opaque" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="ShadingModel" Value="Default" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+    <Node Id="37abf8267795cfdef6b335d91e09fbd5" Type="Math.Multiply" Version="1" X="-960" Y="-300" Wildcard="vec3" />
+    <Node Id="4f9e0de3387ca386ef6bb6b9750ee1ab" Type="Math.OneMinus" Version="1" X="-520" Y="-300" Wildcard="float" />
+    <Node Id="62e4babaaf8d5f84cbecb9f0299d36df" Type="Input.TexCoord" Version="1" X="-520" Y="-600" />
+    <Node Id="68cfd139e8e5ad1e398aebc3f73911e5" Type="Parameter" Version="1" X="-300" Y="-450">
+      <Prop Name="Default" Value="0.42 0.11 0.07" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="7eec0652d9a2c96ec79ecf6cb4672d42" Type="Texture.Object" Version="1" X="-1400" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/RivetPanel_ORM.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="8f9181c379dbf8102fc4c354452b68f2" Type="Math.Multiply" Version="1" X="-300" Y="-600" Wildcard="vec2">
+      <Const Pin="B" Value="0.5 0.5" />
+    </Node>
+    <Node Id="ad2576ba2a855970c2989899fcb38da7" Type="Vector.Make3" Version="1" X="140" Y="-300" />
+    <Node Id="b97900a6932f8c87af9325a00cc40a54" Type="Math.Multiply" Version="1" X="-1180" Y="-300" Wildcard="float" />
+    <Node Id="cd953f36615777fff158bc0385599bfd" Type="Math.Multiply" Version="1" X="-80" Y="-450" Wildcard="float" />
+    <Node Id="d11998d2d7c8a3120530883c14b59563" Type="Texture.Sample" Version="2" X="140" Y="-600" />
+    <Node Id="d151be81dafd8b32f6ed0459f726ebc4" Type="Texture.Sample" Version="2" X="-740" Y="-450" />
+    <Node Id="e5076dfc21b3f041de3332472d57f56e" Type="Math.Smoothstep" Version="1" X="140" Y="-450" Wildcard="float">
+      <Const Pin="Edge0" Value="0.45" />
+      <Const Pin="Edge1" Value="0.8" />
+    </Node>
+    <Node Id="e5be7f3562082a1b555efca7db1419a5" Type="Math.Lerp" Version="1" X="-740" Y="-300" Wildcard="vec3">
+      <Const Pin="A" Value="0.4 0.39 0.37" />
+    </Node>
+    <Node Id="ec6e213c80ceee1caca2bd878ee9a539" Type="Vector.Split" Version="1" X="-740" Y="-600" />
+    <Node Id="f70fedb8707208be10b21034d142e802" Type="Texture.Object" Version="1" X="-80" Y="-600">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/RivetPanel_BaseColor.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="f9d69fdd892027f6e7184af819937ecf" Type="Math.OneMinus" Version="1" X="-1400" Y="-300" Wildcard="float" />
+  </Nodes>
+  <Links>
+    <Link From="003faee3d5764012f77faff0e8d0e9bd.Normal" To="3131d58148422a6de606dd4b7ec88bce.Normal" />
+    <Link From="0219aa6876fea3f2f26f1350a6fadc13.Out" To="3131d58148422a6de606dd4b7ec88bce.BaseColor" />
+    <Link From="0b6bf866a09c5b64f8563baaca7791eb.G" To="3131d58148422a6de606dd4b7ec88bce.Roughness" />
+    <Link From="0b6bf866a09c5b64f8563baaca7791eb.R" To="1187e3e9b68a28980489f47ae8b3d507.A" />
+    <Link From="0b6bf866a09c5b64f8563baaca7791eb.R" To="cd953f36615777fff158bc0385599bfd.B" />
+    <Link From="1187e3e9b68a28980489f47ae8b3d507.Out" To="3131d58148422a6de606dd4b7ec88bce.AmbientOcclusion" />
+    <Link From="1b9d371d2f834e3aab9453860408256d.Out" To="ad2576ba2a855970c2989899fcb38da7.X" />
+    <Link From="1b9d371d2f834e3aab9453860408256d.Out" To="ad2576ba2a855970c2989899fcb38da7.Y" />
+    <Link From="1b9d371d2f834e3aab9453860408256d.Out" To="ad2576ba2a855970c2989899fcb38da7.Z" />
+    <Link From="21404ad40150994b493a17ddcce41510.Texture" To="d151be81dafd8b32f6ed0459f726ebc4.Texture" />
+    <Link From="2baf587eeee36895b218c4d74843dab4.A" To="cd953f36615777fff158bc0385599bfd.A" />
+    <Link From="2baf587eeee36895b218c4d74843dab4.RGB" To="ec6e213c80ceee1caca2bd878ee9a539.Vector" />
+    <Link From="37abf8267795cfdef6b335d91e09fbd5.Out" To="e5be7f3562082a1b555efca7db1419a5.B" />
+    <Link From="4f9e0de3387ca386ef6bb6b9750ee1ab.Out" To="3131d58148422a6de606dd4b7ec88bce.Metallic" />
+    <Link From="62e4babaaf8d5f84cbecb9f0299d36df.UV" To="8f9181c379dbf8102fc4c354452b68f2.A" />
+    <Link From="68cfd139e8e5ad1e398aebc3f73911e5.Value" To="37abf8267795cfdef6b335d91e09fbd5.B" />
+    <Link From="7eec0652d9a2c96ec79ecf6cb4672d42.Texture" To="0b6bf866a09c5b64f8563baaca7791eb.Texture" />
+    <Link From="8f9181c379dbf8102fc4c354452b68f2.Out" To="003faee3d5764012f77faff0e8d0e9bd.UV" />
+    <Link From="8f9181c379dbf8102fc4c354452b68f2.Out" To="0b6bf866a09c5b64f8563baaca7791eb.UV" />
+    <Link From="8f9181c379dbf8102fc4c354452b68f2.Out" To="d11998d2d7c8a3120530883c14b59563.UV" />
+    <Link From="8f9181c379dbf8102fc4c354452b68f2.Out" To="d151be81dafd8b32f6ed0459f726ebc4.UV" />
+    <Link From="ad2576ba2a855970c2989899fcb38da7.Out" To="0219aa6876fea3f2f26f1350a6fadc13.B" />
+    <Link From="b97900a6932f8c87af9325a00cc40a54.Out" To="4f9e0de3387ca386ef6bb6b9750ee1ab.X" />
+    <Link From="b97900a6932f8c87af9325a00cc40a54.Out" To="e5be7f3562082a1b555efca7db1419a5.T" />
+    <Link From="cd953f36615777fff158bc0385599bfd.Out" To="e5076dfc21b3f041de3332472d57f56e.X" />
+    <Link From="d11998d2d7c8a3120530883c14b59563.A" To="b97900a6932f8c87af9325a00cc40a54.A" />
+    <Link From="d11998d2d7c8a3120530883c14b59563.RGB" To="37abf8267795cfdef6b335d91e09fbd5.A" />
+    <Link From="d151be81dafd8b32f6ed0459f726ebc4.RGB" To="003faee3d5764012f77faff0e8d0e9bd.Color" />
+    <Link From="e5076dfc21b3f041de3332472d57f56e.Out" To="f9d69fdd892027f6e7184af819937ecf.X" />
+    <Link From="e5be7f3562082a1b555efca7db1419a5.Out" To="0219aa6876fea3f2f26f1350a6fadc13.A" />
+    <Link From="ec6e213c80ceee1caca2bd878ee9a539.X" To="1187e3e9b68a28980489f47ae8b3d507.B" />
+    <Link From="ec6e213c80ceee1caca2bd878ee9a539.X" To="1b9d371d2f834e3aab9453860408256d.T" />
+    <Link From="f70fedb8707208be10b21034d142e802.Texture" To="d11998d2d7c8a3120530883c14b59563.Texture" />
+    <Link From="f9d69fdd892027f6e7184af819937ecf.Out" To="b97900a6932f8c87af9325a00cc40a54.B" />
+  </Links>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "PanelRed". Do not edit.
+// Opaque, Lit. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in PanelRed.material.
+UBO_BLOCK_BEGIN(2, PanelRed_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    vec3  Param_Tint;
+UBO_BLOCK_END(PanelRed_Block)
+
+// Textures, by material texture slot; PanelRed.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+MATERIAL_SAMPLER2D(6, Material_Texture2)
+MATERIAL_SAMPLER2D(7, Material_Texture3)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec2 t0 = Inputs.TexCoord * vec2(0.5);
+    vec4 t1 = texture(Material_Texture3, t0);
+    vec3 t2 = t1.rgb * Param_Tint;
+    vec4 t3 = texture(Material_Texture2, t0);
+    float t4 = Inputs.Color.a * t3.r;
+    float t5 = smoothstep(0.45, 0.8, t4);
+    float t6 = 1.0 - t5;
+    float t7 = t1.a * t6;
+    vec3 t8 = mix(vec3(0.4, 0.39, 0.37), t2, vec3(t7));
+    float t9 = vec4(Inputs.Color.rgb, 1.0).x;
+    float t10 = mix(0.6, 1.0, t9);
+    vec3 t11 = vec3(t10, t10, t10);
+    vec3 t12 = t8 * t11;
+    Surface.BaseColor = t12;
+    float t13 = 1.0 - t7;
+    Surface.Metallic = t13;
+    Surface.Roughness = t3.g;
+    vec4 t14 = texture(Material_Texture1, t0);
+    vec3 t15 = Material_NormalMap(Inputs, t14.rgb, 1.0, t0, -1.0);
+    Surface.Normal = t15;
+    float t16 = t3.r * t9;
+    Surface.AmbientOcclusion = t16;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "PanelRed". Do not edit.
+NimbleMaterial 3
+Domain Opaque
+Shading Lit
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 176
+Param Tint vec3 160 0.42 0.11 0.07 0
+Texture 1 Default Default Content/Textures/Kit/RivetPanel_Normal.nmtexture
+Texture 2 Default Default Content/Textures/Kit/RivetPanel_ORM.nmtexture
+Texture 3 Default Default Content/Textures/Kit/RivetPanel_BaseColor.nmtexture
+TextureUV 1 0.5
+TextureUV 2 0.5
+TextureUV 3 0.5
+]]></Output>
+  </gen_code>
+</NodeGraph>
