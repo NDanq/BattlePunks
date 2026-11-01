@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="101902925a4ae40c2e66b089e1e07db9" Type="Vector.Split" Version="1" X="-740" Y="-600" />
+    <Node Id="1384a2a3db2267570e3a59618958634c" Type="Texture.Object" Version="1" X="-80" Y="-600">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Planks_BaseColor.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="223aacecd18c7310c8ff54e2dd63ec63" Type="Math.Multiply" Version="1" X="-300" Y="-600" Wildcard="vec2">
+      <Const Pin="B" Value="0.5 0.5" />
+    </Node>
+    <Node Id="27ce261e392aaedd07fb77fe1a81776c" Type="Texture.Sample" Version="2" X="-1180" Y="-450" />
+    <Node Id="2a163a0d8d1e1541c16a6fe2463905de" Type="Texture.Sample" Version="2" X="-740" Y="-450" />
+    <Node Id="44877fa07b29ba9ea7d8d56dce37f97c" Type="Texture.Sample" Version="2" X="140" Y="-600" />
+    <Node Id="5669068d419ee9ae43dd8a0b5ca31fe8" Type="Parameter" Version="1" X="-300" Y="-450">
+      <Prop Name="Default" Value="1 1 1" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="818c2e827fed1ef927e0bbe174c2fbab" Type="Input.VertexColor" Version="1" X="-960" Y="-600" />
+    <Node Id="8b9ac81fe91f30b8f430f6a65bf4d914" Type="Math.Multiply" Version="1" X="140" Y="-450" Wildcard="float" />
+    <Node Id="9b142bb57cf4c365bf234c71063b4b95" Type="Math.Multiply" Version="1" X="-80" Y="-450" Wildcard="vec3" />
+    <Node Id="c35a75599546bda62bb0dd17e4a8ac60" Type="Input.TexCoord" Version="1" X="-520" Y="-600" />
+    <Node Id="ce4ae2932f556fc59e8c638d34e7d2ca" Type="Texture.Object" Version="1" X="-1400" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Planks_ORM.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="d8895c347c672587dc59562d4fae6fd5" Type="Math.Multiply" Version="1" X="-960" Y="-300" Wildcard="vec3" />
+    <Node Id="d91a61836fc723e84a7bcdee3b2738b7" Type="Texture.Object" Version="1" X="-960" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Planks_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="da0653ffd262186bc473509983ffd6a0" Type="Output.Material" Version="1" X="-1180" Y="-600">
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Opaque" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="ShadingModel" Value="Default" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+    <Node Id="ec1d29eb4baec09c9f2a2cf216a23381" Type="Vector.Make3" Version="1" X="-1180" Y="-300" />
+    <Node Id="ee18950b4dfcfbe8ee690fe15fc80487" Type="Math.Lerp" Version="1" X="-1400" Y="-300" Wildcard="float">
+      <Const Pin="A" Value="0.6" />
+      <Const Pin="B" Value="1" />
+    </Node>
+    <Node Id="f73efdf404b0f0baaaa1399d3d78a3c7" Type="Texture.NormalMap" Version="1" X="-520" Y="-450">
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+  </Nodes>
+  <Links>
+    <Link From="101902925a4ae40c2e66b089e1e07db9.X" To="8b9ac81fe91f30b8f430f6a65bf4d914.B" />
+    <Link From="101902925a4ae40c2e66b089e1e07db9.X" To="ee18950b4dfcfbe8ee690fe15fc80487.T" />
+    <Link From="1384a2a3db2267570e3a59618958634c.Texture" To="44877fa07b29ba9ea7d8d56dce37f97c.Texture" />
+    <Link From="223aacecd18c7310c8ff54e2dd63ec63.Out" To="27ce261e392aaedd07fb77fe1a81776c.UV" />
+    <Link From="223aacecd18c7310c8ff54e2dd63ec63.Out" To="2a163a0d8d1e1541c16a6fe2463905de.UV" />
+    <Link From="223aacecd18c7310c8ff54e2dd63ec63.Out" To="44877fa07b29ba9ea7d8d56dce37f97c.UV" />
+    <Link From="223aacecd18c7310c8ff54e2dd63ec63.Out" To="f73efdf404b0f0baaaa1399d3d78a3c7.UV" />
+    <Link From="27ce261e392aaedd07fb77fe1a81776c.B" To="da0653ffd262186bc473509983ffd6a0.Metallic" />
+    <Link From="27ce261e392aaedd07fb77fe1a81776c.G" To="da0653ffd262186bc473509983ffd6a0.Roughness" />
+    <Link From="27ce261e392aaedd07fb77fe1a81776c.R" To="8b9ac81fe91f30b8f430f6a65bf4d914.A" />
+    <Link From="2a163a0d8d1e1541c16a6fe2463905de.RGB" To="f73efdf404b0f0baaaa1399d3d78a3c7.Color" />
+    <Link From="44877fa07b29ba9ea7d8d56dce37f97c.RGB" To="9b142bb57cf4c365bf234c71063b4b95.A" />
+    <Link From="5669068d419ee9ae43dd8a0b5ca31fe8.Value" To="9b142bb57cf4c365bf234c71063b4b95.B" />
+    <Link From="818c2e827fed1ef927e0bbe174c2fbab.RGB" To="101902925a4ae40c2e66b089e1e07db9.Vector" />
+    <Link From="8b9ac81fe91f30b8f430f6a65bf4d914.Out" To="da0653ffd262186bc473509983ffd6a0.AmbientOcclusion" />
+    <Link From="9b142bb57cf4c365bf234c71063b4b95.Out" To="d8895c347c672587dc59562d4fae6fd5.A" />
+    <Link From="c35a75599546bda62bb0dd17e4a8ac60.UV" To="223aacecd18c7310c8ff54e2dd63ec63.A" />
+    <Link From="ce4ae2932f556fc59e8c638d34e7d2ca.Texture" To="27ce261e392aaedd07fb77fe1a81776c.Texture" />
+    <Link From="d8895c347c672587dc59562d4fae6fd5.Out" To="da0653ffd262186bc473509983ffd6a0.BaseColor" />
+    <Link From="d91a61836fc723e84a7bcdee3b2738b7.Texture" To="2a163a0d8d1e1541c16a6fe2463905de.Texture" />
+    <Link From="ec1d29eb4baec09c9f2a2cf216a23381.Out" To="d8895c347c672587dc59562d4fae6fd5.B" />
+    <Link From="ee18950b4dfcfbe8ee690fe15fc80487.Out" To="ec1d29eb4baec09c9f2a2cf216a23381.X" />
+    <Link From="ee18950b4dfcfbe8ee690fe15fc80487.Out" To="ec1d29eb4baec09c9f2a2cf216a23381.Y" />
+    <Link From="ee18950b4dfcfbe8ee690fe15fc80487.Out" To="ec1d29eb4baec09c9f2a2cf216a23381.Z" />
+    <Link From="f73efdf404b0f0baaaa1399d3d78a3c7.Normal" To="da0653ffd262186bc473509983ffd6a0.Normal" />
+  </Links>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "Planks". Do not edit.
+// Opaque, Lit. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in Planks.material.
+UBO_BLOCK_BEGIN(2, Planks_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    vec3  Param_Tint;
+UBO_BLOCK_END(Planks_Block)
+
+// Textures, by material texture slot; Planks.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+MATERIAL_SAMPLER2D(6, Material_Texture2)
+MATERIAL_SAMPLER2D(7, Material_Texture3)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec2 t0 = Inputs.TexCoord * vec2(0.5);
+    vec4 t1 = texture(Material_Texture1, t0);
+    vec3 t2 = t1.rgb * Param_Tint;
+    float t3 = vec4(Inputs.Color.rgb, 1.0).x;
+    float t4 = mix(0.6, 1.0, t3);
+    vec3 t5 = vec3(t4, t4, t4);
+    vec3 t6 = t2 * t5;
+    Surface.BaseColor = t6;
+    vec4 t7 = texture(Material_Texture2, t0);
+    Surface.Metallic = t7.b;
+    Surface.Roughness = t7.g;
+    vec4 t8 = texture(Material_Texture3, t0);
+    vec3 t9 = Material_NormalMap(Inputs, t8.rgb, 1.0, t0, -1.0);
+    Surface.Normal = t9;
+    float t10 = t7.r * t3;
+    Surface.AmbientOcclusion = t10;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "Planks". Do not edit.
+NimbleMaterial 3
+Domain Opaque
+Shading Lit
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 176
+Param Tint vec3 160 1 1 1 0
+Texture 1 Default Default Content/Textures/Kit/Planks_BaseColor.nmtexture
+Texture 2 Default Default Content/Textures/Kit/Planks_ORM.nmtexture
+Texture 3 Default Default Content/Textures/Kit/Planks_Normal.nmtexture
+TextureUV 1 0.5
+TextureUV 2 0.5
+TextureUV 3 0.5
+]]></Output>
+  </gen_code>
+</NodeGraph>

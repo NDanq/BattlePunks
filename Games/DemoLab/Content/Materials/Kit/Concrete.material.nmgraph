@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="071cdf37eeee615036be6daf1083c18d" Type="Texture.NormalMap" Version="1" X="-520" Y="-450">
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+    <Node Id="49d5e7a9775138fbf43a2477bccf9b68" Type="Input.VertexColor" Version="1" X="-960" Y="-600" />
+    <Node Id="559285f0857f8fb5738e85ad7147de09" Type="Texture.Sample" Version="2" X="-740" Y="-450" />
+    <Node Id="5c9d30e5d1fb9e51282b25f279ead85b" Type="Texture.Object" Version="1" X="-960" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Concrete_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="5f3a381b4edf3dc88b0617466d9ecd72" Type="Parameter" Version="1" X="-300" Y="-450">
+      <Prop Name="Default" Value="1 1 1" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="6d10c6e3ef5b63df0da86dd604a38cda" Type="Texture.Object" Version="1" X="-80" Y="-600">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Concrete_BaseColor.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="6fe1bb77fa83f62bfd4e8621da8b2f61" Type="Texture.Object" Version="1" X="-1400" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Concrete_ORM.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="8520e57b3a58d037a4349ee84f7d450e" Type="Input.TexCoord" Version="1" X="-520" Y="-600" />
+    <Node Id="878604537ebe92e4cd638e19208c7157" Type="Texture.Sample" Version="2" X="140" Y="-600" />
+    <Node Id="9649a60270de12b9a969e10de0563de2" Type="Math.Lerp" Version="1" X="-1400" Y="-300" Wildcard="float">
+      <Const Pin="A" Value="0.6" />
+      <Const Pin="B" Value="1" />
+    </Node>
+    <Node Id="a67b7336865feadf4783401191e3c470" Type="Texture.Sample" Version="2" X="-1180" Y="-450" />
+    <Node Id="a7e824f7938b2f712a266722b3996e0e" Type="Vector.Split" Version="1" X="-740" Y="-600" />
+    <Node Id="b292b48d7a85b8501c59910a594e0614" Type="Output.Material" Version="1" X="-1180" Y="-600">
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Opaque" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="ShadingModel" Value="Default" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+    <Node Id="b91d2182accd54e0a6ece4b5eb195eab" Type="Vector.Make3" Version="1" X="-1180" Y="-300" />
+    <Node Id="cfe3b6db2a06d00bb78fb3513adac213" Type="Math.Multiply" Version="1" X="-80" Y="-450" Wildcard="vec3" />
+    <Node Id="de8e84b4505248d9ab75844ad004ae8c" Type="Math.Multiply" Version="1" X="140" Y="-450" Wildcard="float" />
+    <Node Id="e41cf89ee7ee31344e038c1ab8a2e07a" Type="Math.Multiply" Version="1" X="-300" Y="-600" Wildcard="vec2">
+      <Const Pin="B" Value="0.5 0.5" />
+    </Node>
+    <Node Id="eac51379c770e733bde8137f0587d968" Type="Math.Multiply" Version="1" X="-960" Y="-300" Wildcard="vec3" />
+  </Nodes>
+  <Links>
+    <Link From="071cdf37eeee615036be6daf1083c18d.Normal" To="b292b48d7a85b8501c59910a594e0614.Normal" />
+    <Link From="49d5e7a9775138fbf43a2477bccf9b68.RGB" To="a7e824f7938b2f712a266722b3996e0e.Vector" />
+    <Link From="559285f0857f8fb5738e85ad7147de09.RGB" To="071cdf37eeee615036be6daf1083c18d.Color" />
+    <Link From="5c9d30e5d1fb9e51282b25f279ead85b.Texture" To="559285f0857f8fb5738e85ad7147de09.Texture" />
+    <Link From="5f3a381b4edf3dc88b0617466d9ecd72.Value" To="cfe3b6db2a06d00bb78fb3513adac213.B" />
+    <Link From="6d10c6e3ef5b63df0da86dd604a38cda.Texture" To="878604537ebe92e4cd638e19208c7157.Texture" />
+    <Link From="6fe1bb77fa83f62bfd4e8621da8b2f61.Texture" To="a67b7336865feadf4783401191e3c470.Texture" />
+    <Link From="8520e57b3a58d037a4349ee84f7d450e.UV" To="e41cf89ee7ee31344e038c1ab8a2e07a.A" />
+    <Link From="878604537ebe92e4cd638e19208c7157.RGB" To="cfe3b6db2a06d00bb78fb3513adac213.A" />
+    <Link From="9649a60270de12b9a969e10de0563de2.Out" To="b91d2182accd54e0a6ece4b5eb195eab.X" />
+    <Link From="9649a60270de12b9a969e10de0563de2.Out" To="b91d2182accd54e0a6ece4b5eb195eab.Y" />
+    <Link From="9649a60270de12b9a969e10de0563de2.Out" To="b91d2182accd54e0a6ece4b5eb195eab.Z" />
+    <Link From="a67b7336865feadf4783401191e3c470.B" To="b292b48d7a85b8501c59910a594e0614.Metallic" />
+    <Link From="a67b7336865feadf4783401191e3c470.G" To="b292b48d7a85b8501c59910a594e0614.Roughness" />
+    <Link From="a67b7336865feadf4783401191e3c470.R" To="de8e84b4505248d9ab75844ad004ae8c.A" />
+    <Link From="a7e824f7938b2f712a266722b3996e0e.X" To="9649a60270de12b9a969e10de0563de2.T" />
+    <Link From="a7e824f7938b2f712a266722b3996e0e.X" To="de8e84b4505248d9ab75844ad004ae8c.B" />
+    <Link From="b91d2182accd54e0a6ece4b5eb195eab.Out" To="eac51379c770e733bde8137f0587d968.B" />
+    <Link From="cfe3b6db2a06d00bb78fb3513adac213.Out" To="eac51379c770e733bde8137f0587d968.A" />
+    <Link From="de8e84b4505248d9ab75844ad004ae8c.Out" To="b292b48d7a85b8501c59910a594e0614.AmbientOcclusion" />
+    <Link From="e41cf89ee7ee31344e038c1ab8a2e07a.Out" To="071cdf37eeee615036be6daf1083c18d.UV" />
+    <Link From="e41cf89ee7ee31344e038c1ab8a2e07a.Out" To="559285f0857f8fb5738e85ad7147de09.UV" />
+    <Link From="e41cf89ee7ee31344e038c1ab8a2e07a.Out" To="878604537ebe92e4cd638e19208c7157.UV" />
+    <Link From="e41cf89ee7ee31344e038c1ab8a2e07a.Out" To="a67b7336865feadf4783401191e3c470.UV" />
+    <Link From="eac51379c770e733bde8137f0587d968.Out" To="b292b48d7a85b8501c59910a594e0614.BaseColor" />
+  </Links>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "Concrete". Do not edit.
+// Opaque, Lit. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in Concrete.material.
+UBO_BLOCK_BEGIN(2, Concrete_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    vec3  Param_Tint;
+UBO_BLOCK_END(Concrete_Block)
+
+// Textures, by material texture slot; Concrete.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+MATERIAL_SAMPLER2D(6, Material_Texture2)
+MATERIAL_SAMPLER2D(7, Material_Texture3)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec2 t0 = Inputs.TexCoord * vec2(0.5);
+    vec4 t1 = texture(Material_Texture2, t0);
+    vec3 t2 = t1.rgb * Param_Tint;
+    float t3 = vec4(Inputs.Color.rgb, 1.0).x;
+    float t4 = mix(0.6, 1.0, t3);
+    vec3 t5 = vec3(t4, t4, t4);
+    vec3 t6 = t2 * t5;
+    Surface.BaseColor = t6;
+    vec4 t7 = texture(Material_Texture3, t0);
+    Surface.Metallic = t7.b;
+    Surface.Roughness = t7.g;
+    vec4 t8 = texture(Material_Texture1, t0);
+    vec3 t9 = Material_NormalMap(Inputs, t8.rgb, 1.0, t0, -1.0);
+    Surface.Normal = t9;
+    float t10 = t7.r * t3;
+    Surface.AmbientOcclusion = t10;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "Concrete". Do not edit.
+NimbleMaterial 3
+Domain Opaque
+Shading Lit
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 176
+Param Tint vec3 160 1 1 1 0
+Texture 1 Default Default Content/Textures/Kit/Concrete_Normal.nmtexture
+Texture 2 Default Default Content/Textures/Kit/Concrete_BaseColor.nmtexture
+Texture 3 Default Default Content/Textures/Kit/Concrete_ORM.nmtexture
+TextureUV 1 0.5
+TextureUV 2 0.5
+TextureUV 3 0.5
+]]></Output>
+  </gen_code>
+</NodeGraph>

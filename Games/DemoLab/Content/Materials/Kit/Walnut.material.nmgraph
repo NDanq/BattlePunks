@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="2aae5d1f15069fb2dae9b7d2a1157452" Type="Input.VertexColor" Version="1" X="-960" Y="-600" />
+    <Node Id="2d37602bf69ad5466e6e801cbc4df748" Type="Parameter" Version="1" X="-520" Y="-450">
+      <Prop Name="Default" Value="1 1 1" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="33541410ecb102d2be6d516625736060" Type="Texture.Sample" Version="2" X="-960" Y="-450" />
+    <Node Id="3499d63cd3c876aca56c6a947774f1b4" Type="Texture.Object" Version="1" X="140" Y="-600">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Walnut_ORM.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="3d7626e8f25b5f51418c823c6ff17ddd" Type="Texture.Sample" Version="2" X="-1400" Y="-450" />
+    <Node Id="440beb660ebbaaf588fa6f50cff776d9" Type="Math.Multiply" Version="1" X="-1180" Y="-300" Wildcard="vec3" />
+    <Node Id="46b3d644c7b8481af0f4388ef452a20b" Type="Input.TexCoord" Version="1" X="-520" Y="-600" />
+    <Node Id="596f1f8db6fe3ad4a8d34e99e5b0e347" Type="Math.Lerp" Version="1" X="140" Y="-450" Wildcard="float">
+      <Const Pin="A" Value="0.6" />
+      <Const Pin="B" Value="1" />
+    </Node>
+    <Node Id="6071bed41b77d8fcf9b9c1ce547459b8" Type="Texture.Object" Version="1" X="-300" Y="-600">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Walnut_BaseColor.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="6e73ea031ddc430322475bb746bfeb61" Type="Math.Multiply" Version="1" X="-300" Y="-450" Wildcard="vec3" />
+    <Node Id="9488ed01354ecad85d7949233ef9edb7" Type="Vector.Split" Version="1" X="-740" Y="-600" />
+    <Node Id="9a5ab5cc955e9ca643f7610fd83788ba" Type="Texture.Sample" Version="2" X="-80" Y="-600" />
+    <Node Id="9fb759caf939ccb61f793ef3368fe97d" Type="Vector.Make3" Version="1" X="-1400" Y="-300" />
+    <Node Id="a24c468126624ca979e9d2e6e29111e6" Type="Texture.NormalMap" Version="1" X="-740" Y="-450">
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+    <Node Id="cb31de4174abcad416cfdd99e162eeb3" Type="Texture.Object" Version="1" X="-1180" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Walnut_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="e41206974790a5d2f12609952491f76e" Type="Math.Multiply" Version="1" X="-80" Y="-450" Wildcard="float" />
+    <Node Id="f7be63cb51899ca4b43ef7fbef4b9110" Type="Output.Material" Version="1" X="-1180" Y="-600">
+      <Const Pin="ClearCoat" Value="1" />
+      <Const Pin="ClearCoatRoughness" Value="0.06" />
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Opaque" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="ShadingModel" Value="ClearCoat" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+  </Nodes>
+  <Links>
+    <Link From="2aae5d1f15069fb2dae9b7d2a1157452.RGB" To="9488ed01354ecad85d7949233ef9edb7.Vector" />
+    <Link From="2d37602bf69ad5466e6e801cbc4df748.Value" To="6e73ea031ddc430322475bb746bfeb61.B" />
+    <Link From="33541410ecb102d2be6d516625736060.RGB" To="a24c468126624ca979e9d2e6e29111e6.Color" />
+    <Link From="3499d63cd3c876aca56c6a947774f1b4.Texture" To="3d7626e8f25b5f51418c823c6ff17ddd.Texture" />
+    <Link From="3d7626e8f25b5f51418c823c6ff17ddd.B" To="f7be63cb51899ca4b43ef7fbef4b9110.Metallic" />
+    <Link From="3d7626e8f25b5f51418c823c6ff17ddd.G" To="f7be63cb51899ca4b43ef7fbef4b9110.Roughness" />
+    <Link From="3d7626e8f25b5f51418c823c6ff17ddd.R" To="e41206974790a5d2f12609952491f76e.A" />
+    <Link From="440beb660ebbaaf588fa6f50cff776d9.Out" To="f7be63cb51899ca4b43ef7fbef4b9110.BaseColor" />
+    <Link From="46b3d644c7b8481af0f4388ef452a20b.UV" To="33541410ecb102d2be6d516625736060.UV" />
+    <Link From="46b3d644c7b8481af0f4388ef452a20b.UV" To="3d7626e8f25b5f51418c823c6ff17ddd.UV" />
+    <Link From="46b3d644c7b8481af0f4388ef452a20b.UV" To="9a5ab5cc955e9ca643f7610fd83788ba.UV" />
+    <Link From="46b3d644c7b8481af0f4388ef452a20b.UV" To="a24c468126624ca979e9d2e6e29111e6.UV" />
+    <Link From="596f1f8db6fe3ad4a8d34e99e5b0e347.Out" To="9fb759caf939ccb61f793ef3368fe97d.X" />
+    <Link From="596f1f8db6fe3ad4a8d34e99e5b0e347.Out" To="9fb759caf939ccb61f793ef3368fe97d.Y" />
+    <Link From="596f1f8db6fe3ad4a8d34e99e5b0e347.Out" To="9fb759caf939ccb61f793ef3368fe97d.Z" />
+    <Link From="6071bed41b77d8fcf9b9c1ce547459b8.Texture" To="9a5ab5cc955e9ca643f7610fd83788ba.Texture" />
+    <Link From="6e73ea031ddc430322475bb746bfeb61.Out" To="440beb660ebbaaf588fa6f50cff776d9.A" />
+    <Link From="9488ed01354ecad85d7949233ef9edb7.X" To="596f1f8db6fe3ad4a8d34e99e5b0e347.T" />
+    <Link From="9488ed01354ecad85d7949233ef9edb7.X" To="e41206974790a5d2f12609952491f76e.B" />
+    <Link From="9a5ab5cc955e9ca643f7610fd83788ba.RGB" To="6e73ea031ddc430322475bb746bfeb61.A" />
+    <Link From="9fb759caf939ccb61f793ef3368fe97d.Out" To="440beb660ebbaaf588fa6f50cff776d9.B" />
+    <Link From="a24c468126624ca979e9d2e6e29111e6.Normal" To="f7be63cb51899ca4b43ef7fbef4b9110.Normal" />
+    <Link From="cb31de4174abcad416cfdd99e162eeb3.Texture" To="33541410ecb102d2be6d516625736060.Texture" />
+    <Link From="e41206974790a5d2f12609952491f76e.Out" To="f7be63cb51899ca4b43ef7fbef4b9110.AmbientOcclusion" />
+  </Links>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "Walnut". Do not edit.
+// Opaque, Lit, ClearCoat. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in Walnut.material.
+UBO_BLOCK_BEGIN(2, Walnut_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    vec3  Param_Tint;
+UBO_BLOCK_END(Walnut_Block)
+
+// Textures, by material texture slot; Walnut.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+MATERIAL_SAMPLER2D(6, Material_Texture2)
+MATERIAL_SAMPLER2D(7, Material_Texture3)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec4 t0 = texture(Material_Texture2, Inputs.TexCoord);
+    vec3 t1 = t0.rgb * Param_Tint;
+    float t2 = vec4(Inputs.Color.rgb, 1.0).x;
+    float t3 = mix(0.6, 1.0, t2);
+    vec3 t4 = vec3(t3, t3, t3);
+    vec3 t5 = t1 * t4;
+    Surface.BaseColor = t5;
+    vec4 t6 = texture(Material_Texture1, Inputs.TexCoord);
+    Surface.Metallic = t6.b;
+    Surface.Roughness = t6.g;
+    vec4 t7 = texture(Material_Texture3, Inputs.TexCoord);
+    vec3 t8 = Material_NormalMap(Inputs, t7.rgb, 1.0, Inputs.TexCoord, -1.0);
+    Surface.Normal = t8;
+    float t9 = t6.r * t2;
+    Surface.AmbientOcclusion = t9;
+    Surface.ClearCoatRoughness = 0.06;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "Walnut". Do not edit.
+NimbleMaterial 3
+Domain Opaque
+Shading Lit
+ShadingModel ClearCoat
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 176
+Param Tint vec3 160 1 1 1 0
+Texture 1 Default Default Content/Textures/Kit/Walnut_ORM.nmtexture
+Texture 2 Default Default Content/Textures/Kit/Walnut_BaseColor.nmtexture
+Texture 3 Default Default Content/Textures/Kit/Walnut_Normal.nmtexture
+]]></Output>
+  </gen_code>
+</NodeGraph>

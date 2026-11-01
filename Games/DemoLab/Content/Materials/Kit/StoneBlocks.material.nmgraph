@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="051465d7558f3f7eccdb1456dfda8091" Type="Math.Lerp" Version="1" X="-1400" Y="-300" Wildcard="float">
+      <Const Pin="A" Value="0.6" />
+      <Const Pin="B" Value="1" />
+    </Node>
+    <Node Id="2a481724ec0b66ec0ca2f61baee3a5e4" Type="Math.Multiply" Version="1" X="140" Y="-450" Wildcard="float" />
+    <Node Id="697cb007958dcae4aeae859c40ca0e31" Type="Input.VertexColor" Version="1" X="-960" Y="-600" />
+    <Node Id="6aaf8ca5e45501195c44afb7fb9958ea" Type="Texture.Sample" Version="2" X="-1180" Y="-450" />
+    <Node Id="77be219cefd9f07ce3c52ba3eac45e98" Type="Texture.Object" Version="1" X="-80" Y="-600">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/StoneBlocks_BaseColor.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="829dce8bcfd845748d84a7315030dbbe" Type="Math.Multiply" Version="1" X="-960" Y="-300" Wildcard="vec3" />
+    <Node Id="87013d1254346697f229ed67d9418598" Type="Texture.Object" Version="1" X="-1400" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/StoneBlocks_ORM.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="87dbddf6a9c8c50158f27a44e9c037dc" Type="Vector.Make3" Version="1" X="-1180" Y="-300" />
+    <Node Id="9389f05d938a97a76a0613afd9132985" Type="Texture.Sample" Version="2" X="140" Y="-600" />
+    <Node Id="9802e7ba3adb6b5234f83591683d17d5" Type="Parameter" Version="1" X="-300" Y="-450">
+      <Prop Name="Default" Value="1 1 1" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="aa0c8cbc147913dca0324abaaaf12fc4" Type="Texture.Sample" Version="2" X="-740" Y="-450" />
+    <Node Id="c4e867c73c92fcef3a5907f9cc35bed0" Type="Input.TexCoord" Version="1" X="-520" Y="-600" />
+    <Node Id="c8fa9e412bfbc4a14da005614a8a28e9" Type="Vector.Split" Version="1" X="-740" Y="-600" />
+    <Node Id="cf5db1451546805ccd370e52f5708fb3" Type="Texture.NormalMap" Version="1" X="-520" Y="-450">
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+    <Node Id="d82a321afea639b8d8f0fe8978023f0b" Type="Texture.Object" Version="1" X="-960" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/StoneBlocks_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="daf9f51fbbc1915a3934eae3c938ec59" Type="Math.Multiply" Version="1" X="-300" Y="-600" Wildcard="vec2">
+      <Const Pin="B" Value="0.3333333333333333 0.3333333333333333" />
+    </Node>
+    <Node Id="df73030eb9a954385e84ebe8ddaa35da" Type="Math.Multiply" Version="1" X="-80" Y="-450" Wildcard="vec3" />
+    <Node Id="e3cffd7232639659b84a7b384af5859b" Type="Output.Material" Version="1" X="-1180" Y="-600">
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Opaque" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="ShadingModel" Value="Default" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+  </Nodes>
+  <Links>
+    <Link From="051465d7558f3f7eccdb1456dfda8091.Out" To="87dbddf6a9c8c50158f27a44e9c037dc.X" />
+    <Link From="051465d7558f3f7eccdb1456dfda8091.Out" To="87dbddf6a9c8c50158f27a44e9c037dc.Y" />
+    <Link From="051465d7558f3f7eccdb1456dfda8091.Out" To="87dbddf6a9c8c50158f27a44e9c037dc.Z" />
+    <Link From="2a481724ec0b66ec0ca2f61baee3a5e4.Out" To="e3cffd7232639659b84a7b384af5859b.AmbientOcclusion" />
+    <Link From="697cb007958dcae4aeae859c40ca0e31.RGB" To="c8fa9e412bfbc4a14da005614a8a28e9.Vector" />
+    <Link From="6aaf8ca5e45501195c44afb7fb9958ea.B" To="e3cffd7232639659b84a7b384af5859b.Metallic" />
+    <Link From="6aaf8ca5e45501195c44afb7fb9958ea.G" To="e3cffd7232639659b84a7b384af5859b.Roughness" />
+    <Link From="6aaf8ca5e45501195c44afb7fb9958ea.R" To="2a481724ec0b66ec0ca2f61baee3a5e4.A" />
+    <Link From="77be219cefd9f07ce3c52ba3eac45e98.Texture" To="9389f05d938a97a76a0613afd9132985.Texture" />
+    <Link From="829dce8bcfd845748d84a7315030dbbe.Out" To="e3cffd7232639659b84a7b384af5859b.BaseColor" />
+    <Link From="87013d1254346697f229ed67d9418598.Texture" To="6aaf8ca5e45501195c44afb7fb9958ea.Texture" />
+    <Link From="87dbddf6a9c8c50158f27a44e9c037dc.Out" To="829dce8bcfd845748d84a7315030dbbe.B" />
+    <Link From="9389f05d938a97a76a0613afd9132985.RGB" To="df73030eb9a954385e84ebe8ddaa35da.A" />
+    <Link From="9802e7ba3adb6b5234f83591683d17d5.Value" To="df73030eb9a954385e84ebe8ddaa35da.B" />
+    <Link From="aa0c8cbc147913dca0324abaaaf12fc4.RGB" To="cf5db1451546805ccd370e52f5708fb3.Color" />
+    <Link From="c4e867c73c92fcef3a5907f9cc35bed0.UV" To="daf9f51fbbc1915a3934eae3c938ec59.A" />
+    <Link From="c8fa9e412bfbc4a14da005614a8a28e9.X" To="051465d7558f3f7eccdb1456dfda8091.T" />
+    <Link From="c8fa9e412bfbc4a14da005614a8a28e9.X" To="2a481724ec0b66ec0ca2f61baee3a5e4.B" />
+    <Link From="cf5db1451546805ccd370e52f5708fb3.Normal" To="e3cffd7232639659b84a7b384af5859b.Normal" />
+    <Link From="d82a321afea639b8d8f0fe8978023f0b.Texture" To="aa0c8cbc147913dca0324abaaaf12fc4.Texture" />
+    <Link From="daf9f51fbbc1915a3934eae3c938ec59.Out" To="6aaf8ca5e45501195c44afb7fb9958ea.UV" />
+    <Link From="daf9f51fbbc1915a3934eae3c938ec59.Out" To="9389f05d938a97a76a0613afd9132985.UV" />
+    <Link From="daf9f51fbbc1915a3934eae3c938ec59.Out" To="aa0c8cbc147913dca0324abaaaf12fc4.UV" />
+    <Link From="daf9f51fbbc1915a3934eae3c938ec59.Out" To="cf5db1451546805ccd370e52f5708fb3.UV" />
+    <Link From="df73030eb9a954385e84ebe8ddaa35da.Out" To="829dce8bcfd845748d84a7315030dbbe.A" />
+  </Links>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "StoneBlocks". Do not edit.
+// Opaque, Lit. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in StoneBlocks.material.
+UBO_BLOCK_BEGIN(2, StoneBlocks_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    vec3  Param_Tint;
+UBO_BLOCK_END(StoneBlocks_Block)
+
+// Textures, by material texture slot; StoneBlocks.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+MATERIAL_SAMPLER2D(6, Material_Texture2)
+MATERIAL_SAMPLER2D(7, Material_Texture3)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec2 t0 = Inputs.TexCoord * vec2(0.33333334);
+    vec4 t1 = texture(Material_Texture1, t0);
+    vec3 t2 = t1.rgb * Param_Tint;
+    float t3 = vec4(Inputs.Color.rgb, 1.0).x;
+    float t4 = mix(0.6, 1.0, t3);
+    vec3 t5 = vec3(t4, t4, t4);
+    vec3 t6 = t2 * t5;
+    Surface.BaseColor = t6;
+    vec4 t7 = texture(Material_Texture2, t0);
+    Surface.Metallic = t7.b;
+    Surface.Roughness = t7.g;
+    vec4 t8 = texture(Material_Texture3, t0);
+    vec3 t9 = Material_NormalMap(Inputs, t8.rgb, 1.0, t0, -1.0);
+    Surface.Normal = t9;
+    float t10 = t7.r * t3;
+    Surface.AmbientOcclusion = t10;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "StoneBlocks". Do not edit.
+NimbleMaterial 3
+Domain Opaque
+Shading Lit
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 176
+Param Tint vec3 160 1 1 1 0
+Texture 1 Default Default Content/Textures/Kit/StoneBlocks_BaseColor.nmtexture
+Texture 2 Default Default Content/Textures/Kit/StoneBlocks_ORM.nmtexture
+Texture 3 Default Default Content/Textures/Kit/StoneBlocks_Normal.nmtexture
+TextureUV 1 0.3333333333333333
+TextureUV 2 0.3333333333333333
+TextureUV 3 0.3333333333333333
+]]></Output>
+  </gen_code>
+</NodeGraph>

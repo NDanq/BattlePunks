@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="1451ee0995174062c208e2c75f2db818" Type="Input.VertexColor" Version="1" X="-960" Y="-600" />
+    <Node Id="16776dd4d5f8dcca36f95836571c239a" Type="Texture.Sample" Version="2" X="140" Y="-600" />
+    <Node Id="1801d8c5953363a91675265eea494c08" Type="Math.Lerp" Version="1" X="-1400" Y="-300" Wildcard="float">
+      <Const Pin="A" Value="0.6" />
+      <Const Pin="B" Value="1" />
+    </Node>
+    <Node Id="38003b7ae3eb14b3dd2e52ff7c33ba5a" Type="Vector.Make3" Version="1" X="-1180" Y="-300" />
+    <Node Id="538863f3a8fb84d77ad1e8eb3c69c9eb" Type="Texture.NormalMap" Version="1" X="-520" Y="-450">
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+    <Node Id="549fd1e84c8a52bcd02fc598e5e60a2e" Type="Texture.Object" Version="1" X="-80" Y="-600">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/MarbleFloor_BaseColor.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="5e363b6c2665a52f2dabb40f940d1989" Type="Math.Multiply" Version="1" X="-300" Y="-600" Wildcard="vec2">
+      <Const Pin="B" Value="0.5 0.5" />
+    </Node>
+    <Node Id="60b2bf72c7ba9ce9149f726d87574128" Type="Math.Multiply" Version="1" X="-80" Y="-450" Wildcard="vec3" />
+    <Node Id="801a6f850ce079a653612c02610345f8" Type="Texture.Sample" Version="2" X="-740" Y="-450" />
+    <Node Id="8757954dc80ada4d6cc41979b98c8bd7" Type="Texture.Object" Version="1" X="-960" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/MarbleFloor_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="8e30cce65a7f3d39e17dcdce37f3fb16" Type="Math.Multiply" Version="1" X="-960" Y="-300" Wildcard="vec3" />
+    <Node Id="9bbc0d8bf7d6339915de150fd115b20f" Type="Vector.Split" Version="1" X="-740" Y="-600" />
+    <Node Id="b446b7240f47a9a1f267024d092a5990" Type="Texture.Object" Version="1" X="-1400" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/MarbleFloor_ORM.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="c8796edfa2b11030d063b48ba7894095" Type="Output.Material" Version="1" X="-1180" Y="-600">
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Opaque" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="ShadingModel" Value="Default" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+    <Node Id="eaee07484e28699123b6c486d9e525d6" Type="Parameter" Version="1" X="-300" Y="-450">
+      <Prop Name="Default" Value="1 1 1" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="ec633d8d24d3c21d025ce50bb90b4e59" Type="Texture.Sample" Version="2" X="-1180" Y="-450" />
+    <Node Id="f70bc6e1ed8f676de9abec40f7a5f14b" Type="Math.Multiply" Version="1" X="140" Y="-450" Wildcard="float" />
+    <Node Id="fec82d0ea5c2c05d1c6cb4fceea71206" Type="Input.TexCoord" Version="1" X="-520" Y="-600" />
+  </Nodes>
+  <Links>
+    <Link From="1451ee0995174062c208e2c75f2db818.RGB" To="9bbc0d8bf7d6339915de150fd115b20f.Vector" />
+    <Link From="16776dd4d5f8dcca36f95836571c239a.RGB" To="60b2bf72c7ba9ce9149f726d87574128.A" />
+    <Link From="1801d8c5953363a91675265eea494c08.Out" To="38003b7ae3eb14b3dd2e52ff7c33ba5a.X" />
+    <Link From="1801d8c5953363a91675265eea494c08.Out" To="38003b7ae3eb14b3dd2e52ff7c33ba5a.Y" />
+    <Link From="1801d8c5953363a91675265eea494c08.Out" To="38003b7ae3eb14b3dd2e52ff7c33ba5a.Z" />
+    <Link From="38003b7ae3eb14b3dd2e52ff7c33ba5a.Out" To="8e30cce65a7f3d39e17dcdce37f3fb16.B" />
+    <Link From="538863f3a8fb84d77ad1e8eb3c69c9eb.Normal" To="c8796edfa2b11030d063b48ba7894095.Normal" />
+    <Link From="549fd1e84c8a52bcd02fc598e5e60a2e.Texture" To="16776dd4d5f8dcca36f95836571c239a.Texture" />
+    <Link From="5e363b6c2665a52f2dabb40f940d1989.Out" To="16776dd4d5f8dcca36f95836571c239a.UV" />
+    <Link From="5e363b6c2665a52f2dabb40f940d1989.Out" To="538863f3a8fb84d77ad1e8eb3c69c9eb.UV" />
+    <Link From="5e363b6c2665a52f2dabb40f940d1989.Out" To="801a6f850ce079a653612c02610345f8.UV" />
+    <Link From="5e363b6c2665a52f2dabb40f940d1989.Out" To="ec633d8d24d3c21d025ce50bb90b4e59.UV" />
+    <Link From="60b2bf72c7ba9ce9149f726d87574128.Out" To="8e30cce65a7f3d39e17dcdce37f3fb16.A" />
+    <Link From="801a6f850ce079a653612c02610345f8.RGB" To="538863f3a8fb84d77ad1e8eb3c69c9eb.Color" />
+    <Link From="8757954dc80ada4d6cc41979b98c8bd7.Texture" To="801a6f850ce079a653612c02610345f8.Texture" />
+    <Link From="8e30cce65a7f3d39e17dcdce37f3fb16.Out" To="c8796edfa2b11030d063b48ba7894095.BaseColor" />
+    <Link From="9bbc0d8bf7d6339915de150fd115b20f.X" To="1801d8c5953363a91675265eea494c08.T" />
+    <Link From="9bbc0d8bf7d6339915de150fd115b20f.X" To="f70bc6e1ed8f676de9abec40f7a5f14b.B" />
+    <Link From="b446b7240f47a9a1f267024d092a5990.Texture" To="ec633d8d24d3c21d025ce50bb90b4e59.Texture" />
+    <Link From="eaee07484e28699123b6c486d9e525d6.Value" To="60b2bf72c7ba9ce9149f726d87574128.B" />
+    <Link From="ec633d8d24d3c21d025ce50bb90b4e59.B" To="c8796edfa2b11030d063b48ba7894095.Metallic" />
+    <Link From="ec633d8d24d3c21d025ce50bb90b4e59.G" To="c8796edfa2b11030d063b48ba7894095.Roughness" />
+    <Link From="ec633d8d24d3c21d025ce50bb90b4e59.R" To="f70bc6e1ed8f676de9abec40f7a5f14b.A" />
+    <Link From="f70bc6e1ed8f676de9abec40f7a5f14b.Out" To="c8796edfa2b11030d063b48ba7894095.AmbientOcclusion" />
+    <Link From="fec82d0ea5c2c05d1c6cb4fceea71206.UV" To="5e363b6c2665a52f2dabb40f940d1989.A" />
+  </Links>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "MarbleFloor". Do not edit.
+// Opaque, Lit. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in MarbleFloor.material.
+UBO_BLOCK_BEGIN(2, MarbleFloor_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    vec3  Param_Tint;
+UBO_BLOCK_END(MarbleFloor_Block)
+
+// Textures, by material texture slot; MarbleFloor.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+MATERIAL_SAMPLER2D(6, Material_Texture2)
+MATERIAL_SAMPLER2D(7, Material_Texture3)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec2 t0 = Inputs.TexCoord * vec2(0.5);
+    vec4 t1 = texture(Material_Texture1, t0);
+    vec3 t2 = t1.rgb * Param_Tint;
+    float t3 = vec4(Inputs.Color.rgb, 1.0).x;
+    float t4 = mix(0.6, 1.0, t3);
+    vec3 t5 = vec3(t4, t4, t4);
+    vec3 t6 = t2 * t5;
+    Surface.BaseColor = t6;
+    vec4 t7 = texture(Material_Texture3, t0);
+    Surface.Metallic = t7.b;
+    Surface.Roughness = t7.g;
+    vec4 t8 = texture(Material_Texture2, t0);
+    vec3 t9 = Material_NormalMap(Inputs, t8.rgb, 1.0, t0, -1.0);
+    Surface.Normal = t9;
+    float t10 = t7.r * t3;
+    Surface.AmbientOcclusion = t10;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "MarbleFloor". Do not edit.
+NimbleMaterial 3
+Domain Opaque
+Shading Lit
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 176
+Param Tint vec3 160 1 1 1 0
+Texture 1 Default Default Content/Textures/Kit/MarbleFloor_BaseColor.nmtexture
+Texture 2 Default Default Content/Textures/Kit/MarbleFloor_Normal.nmtexture
+Texture 3 Default Default Content/Textures/Kit/MarbleFloor_ORM.nmtexture
+TextureUV 1 0.5
+TextureUV 2 0.5
+TextureUV 3 0.5
+]]></Output>
+  </gen_code>
+</NodeGraph>
