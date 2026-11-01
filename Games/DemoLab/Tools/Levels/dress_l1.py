@@ -739,7 +739,7 @@ def dress(lv):
              material='Content/Materials/Kit/SteelDark.material.nmgraph')
         patch(lv, f'Gate_Post_{i}', lambda t, z=z: set_transform(t, (gx - 240, gy + 55, z), (0, 0, 0), (22, 110, 22)))
     mesh(lv, 'Crank_Gatehouse_Kit', K + 'Gatehouse_Crank.nmmesh', (0, 0, 0), -90, parent='Handle', static=False)
-    patch(lv, 'Crank_Gatehouse', lambda t: set_field(t, 'Sequence', 'Gate_Barrier'))
+    patch(lv, 'Crank_Gatehouse', lambda t: set_field(set_field(t, 'Sequence', 'Gate_Barrier'), 'Highlight', 'Crank_Gatehouse_Kit'))
     point_light(lv, 'Gatehouse_Light', (gx - 330, gy + 330, gz - 150), LAMP_COLOUR, 8, 900)
     # the gate: an invisible blocker the length of the arm and the shoulders
     gp = p['Gate']

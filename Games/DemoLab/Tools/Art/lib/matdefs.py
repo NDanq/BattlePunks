@@ -102,6 +102,8 @@ mat("Books", tex="Books_BaseColor", unit=True, rough=0.6)
 mat("LampGlow", base=(1.0, 0.9, 0.75), rough=0.3, emissive=((1.0, 0.62, 0.3), 12.0))
 mat("ReactorGlow", base=(0.2, 0.5, 0.6), rough=0.2, emissive=((0.35, 0.8, 1.0), 16.0), pulse=0.8)
 mat("IntelGlow", base=(0.1, 0.3, 0.15), rough=0.1, emissive=((0.35, 1.0, 0.5), 6.0), pulse=1.6)
+# The objective glow shell (custom graph; LabInteractable.cpp lays it over what to use next)
+mat("ObjectiveHighlight", custom="highlight")
 mat("BeaconLight", base=(0.6, 0.15, 0.05), rough=0.25, emissive=((1.0, 0.3, 0.06), 14.0), pulse=3.0)
 
 

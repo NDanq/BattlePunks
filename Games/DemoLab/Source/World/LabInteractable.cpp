@@ -6,10 +6,12 @@
 #include "Public/GameCore/Components/TransformComponent.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/EventBus.h"
+#include "Public/GameCore/TransformMath.h"
 #include "Public/GameCore/World.h"
 #include "Public/NimbleEngine/AudioFacade.h"
 #include "Public/NimbleEngine/Avatar.h"
 #include "Public/NimbleEngine/CharacterMover.h"
+#include "Public/NimbleEngine/NetFacade.h"
 #include "Public/NimbleEngine/NimbleEngine.h"
 #include "Public/NimbleEngine/SequenceFacade.h"
 #include "Public/RenderCore/Components/RenderComponent.h"
@@ -24,6 +26,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
@@ -37,6 +40,10 @@ namespace
 {
     constexpr float RADIUS_SLOP = 120.f;   // the authority's allowance over Radius for a client's press
     constexpr float HEIGHT_BAND = 200.f;   // how far above or below the feet a thing can be used
+
+    constexpr const char* HIGHLIGHT_MATERIAL = "Content/Materials/Kit/ObjectiveHighlight.material.nmgraph";
+    constexpr float HIGHLIGHT_REACH = 1.8f;   // the shell's Glow on the thing Interact would use now
+    constexpr float HIGHLIGHT_FADE  = 3.f;    // Glow per second toward its target
 
     bool IsUpPlayer(World& InWorld, const EntityID InAvatar)
     {
@@ -64,6 +71,57 @@ namespace
         for(EntityID C = InWorld.GetEntity(InRoot).GetFirstChild(); C.IsSet(); C = InWorld.GetEntity(C).GetNextSibling())
         {
             SetVisibleTree(InWorld, C, bInVisible);
+        }
+    }
+
+    /* An objective: it moves the story on (emits, plays or gives a weapon), not an ammo crate. */
+    bool IsObjective(const LabInteractableComponent& InThing)
+    {
+        if(std::strcmp(InThing.Highlight, "none") == 0) { return false; }
+        return InThing.Channel[0] || InThing.Sequence[0] || InThing.WeaponID > 0;
+    }
+
+    /* The glow shell over InOwner's Highlight entity (itself if ""): the same mesh, every
+     * slot ObjectiveHighlight, no shadow, hidden until faded in. Unset when there is no
+     * drawn mesh to copy -- a hidden stand-in with no Highlight named. */
+    EntityID MakeHighlightShell(World& InWorld, const Entity InOwner, const LabInteractableComponent& InThing, EntityID& OutTarget)
+    {
+        const EntityID TargetID = InThing.Highlight[0] ? InWorld.FindEntityByName(InThing.Highlight) : InOwner.GetID();
+        OutTarget = TargetID;
+        const Entity Target = InWorld.GetEntity(TargetID);
+        const RenderCore::RenderComponent* Source = Target.IsAlive() ? Target.GetComponent<RenderCore::RenderComponent>() : nullptr;
+        if(!Source || !Source->Mesh[0] || (!InThing.Highlight[0] && !Source->bVisible))
+        {
+            CORE_LOG(std::string("[DemoLab] highlight: nothing drawn to outline for ") + InOwner.GetName())
+            return EntityID();
+        }
+        Entity Shell = InWorld.CreateEntity((std::string("LabHighlight_") + InOwner.GetName()).c_str());
+        const TransformPose Pose = Target.GetWorldPose();
+        TransformComponent Transform;
+        Transform.Position = Pose.Position;
+        Transform.Rotation = Pose.Rotation;
+        Transform.Scale = Pose.Scale;
+        Shell.AddComponent(Transform);
+        RenderCore::RenderComponent Render;
+        std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", Source->Mesh);
+        for(int32_t Slot = 0; Slot < int32_t(RenderCore::RENDER_MATERIAL_SLOTS); ++Slot) { Render.SetMaterial(Slot, HIGHLIGHT_MATERIAL); }
+        Render.bCastShadows = 0;
+        Render.bVisible = 0;
+        Shell.AddComponent(Render);
+        return Shell.GetID();
+    }
+
+    /* The shell sits where its target is now (a crank's wheel turns). */
+    void FollowTarget(World& InWorld, Entity InShell, const EntityID InTarget)
+    {
+        const Entity Target = InWorld.GetEntity(InTarget);
+        TransformComponent* Transform = InShell.GetComponent<TransformComponent>();
+        if(!Target.IsAlive() || !Transform) { return; }
+        const TransformPose Pose = Target.GetWorldPose();
+        if((Transform->Position - Pose.Position).GetLength() > 1e-3 || (Transform->Rotation - Pose.Rotation).GetLength() > 1e-3)
+        {
+            Transform->Position = Pose.Position;
+            Transform->Rotation = Pose.Rotation;
         }
     }
 
@@ -96,6 +154,7 @@ GAMECORE_DEFINE_COMPONENT_SERIALIZER(LabInteractableComponent, LabVersion::GetCu
     Ar.Flag("HideWhenUsed", C.bHideWhenUsed);
     Ar.Field("HoldSeconds", C.HoldSeconds);
     Ar.Field("Sound", C.Sound);
+    Ar.Field("Highlight", C.Highlight);
     Ar.Flag("Used", C.bUsed);
     Ar.Flag("On", C.bOn);
 }
@@ -123,6 +182,7 @@ GAMECORE_DEFINE_COMPONENT_PROPERTIES(LabInteractableComponent) {
     Props.Flag("HideWhenUsed", &LabInteractableComponent::bHideWhenUsed);
     Props.Field("HoldSeconds", &LabInteractableComponent::HoldSeconds);
     Props.Field("Sound", &LabInteractableComponent::Sound, PF_AssetSound);
+    Props.Field("Highlight", &LabInteractableComponent::Highlight);
     Props.Category("State");
     Props.Flag("Used", &LabInteractableComponent::bUsed);
     Props.Flag("On", &LabInteractableComponent::bOn);
@@ -467,5 +527,45 @@ void LabWorld::TickPresentation(World& InWorld, const float InSeconds)
         const RenderCore::RenderComponent* Render = InWorld.GetEntity(Pair.first).GetComponent<RenderCore::RenderComponent>();
         if(Render && (Render->bVisible != 0) == Pair.second) { continue; }
         SetVisibleTree(InWorld, Pair.first, Pair.second);
+    }
+
+    /* Objectives glow while usable, brighter on the one Interact would use now; the
+     * shells are made the first time they are wanted. A toggle stops once it is on. */
+    if(IsDedicatedServer()) { return; }
+    EntityID Next;
+    InWorld.Each<AvatarHarnessComponent>([&](Entity InEntity, AvatarHarnessComponent& InHarness)
+    {
+        if(!Next.IsSet() && InHarness.IsLocallyControlled()) { Next = FindInteractable(InWorld, InEntity.GetID()); }
+    });
+    std::vector<EntityID> Make;
+    InWorld.Each<LabInteractableComponent>([&](Entity InEntity, LabInteractableComponent& InThing)
+    {
+        if(!IsObjective(InThing)) { return; }
+        const bool bWanted = IsUsable(InWorld, InThing) && !(InThing.bToggle && InThing.bOn);
+        const float Target = !bWanted ? 0.f : (InEntity.GetID() == Next ? HIGHLIGHT_REACH : 1.f);
+        if(bWanted && !InThing.bHighlightTried) { Make.push_back(InEntity.GetID()); return; }
+        const float Step = HIGHLIGHT_FADE * InSeconds;
+        InThing.HighlightGlow = std::fabs(Target - InThing.HighlightGlow) <= Step ? Target
+                              : InThing.HighlightGlow + (Target > InThing.HighlightGlow ? Step : -Step);
+        Entity Shell = InWorld.GetEntity(InThing.HighlightShell);
+        RenderCore::RenderComponent* Render = Shell.IsAlive() ? Shell.GetComponent<RenderCore::RenderComponent>() : nullptr;
+        if(!Render) { return; }
+        Render->bVisible = InThing.HighlightGlow > 0.01f ? 1 : 0;
+        if(!Render->bVisible) { return; }
+        FollowTarget(InWorld, Shell, InThing.HighlightTarget);
+        for(int32_t Slot = 0; Slot < int32_t(RenderCore::RENDER_MATERIAL_SLOTS); ++Slot)
+        {
+            Render->SetMaterialParameter(Slot, "Glow", InThing.HighlightGlow, 0.f, 0.f, 0.f);
+        }
+    });
+    for(const EntityID Owner : Make)
+    {
+        EntityID Target;
+        const EntityID Shell = MakeHighlightShell(InWorld, InWorld.GetEntity(Owner), *InWorld.GetEntity(Owner).GetComponent<LabInteractableComponent>(), Target);
+        LabInteractableComponent* Thing = InWorld.GetEntity(Owner).GetComponent<LabInteractableComponent>();   // CreateEntity may move components
+        if(!Thing) { continue; }
+        Thing->HighlightShell = Shell;
+        Thing->HighlightTarget = Target;
+        Thing->bHighlightTried = 1;
     }
 }

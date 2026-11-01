@@ -17,7 +17,11 @@ namespace GameCore { class World; }
  *   LabInteractable  press Interact within Radius: gives a weapon, emits or
  *                     toggles a signal, starts a cutscene. A child named
  *                     "Handle" swings with a toggle (a lever), or turns while
- *                     a hold (HoldSeconds > 0: a crank) is being held.
+ *                     a hold (HoldSeconds > 0: a crank) is being held. While
+ *                     an objective one (it emits, plays or gives a weapon) is
+ *                     usable, a glow shell (ObjectiveHighlight) lies over
+ *                     its mesh, or over Highlight's when a dressing prop
+ *                     stands in for it.
  *   LabGate          slides open along +Y while OpenOn is true (false, with
  *                     Invert: a shutter). Give it a Kinematic Rigid Body so
  *                     it blocks while shut.
@@ -43,9 +47,15 @@ struct LabInteractableComponent {
     uint8_t bHideWhenUsed = 0;
     float   HoldSeconds = 0.f;       // > 0: Interact must be held this long (a crank)
     char    Sound[96] = "";          // played where it stands when used (Content/Sounds/...)
+    char    Highlight[48] = "";      // the entity whose mesh glows while it is usable: "" itself, "none" never
 
     // This run: how far a hold has got, seconds.
     float   HoldProgress = 0.f;
+    // This run, every process: the glow shell, what it copies, and its fade (0 hidden, 1 shown, more within reach).
+    GameCore::EntityID HighlightShell;
+    GameCore::EntityID HighlightTarget;
+    float   HighlightGlow = 0.f;
+    uint8_t bHighlightTried = 0;
 
     // Replicated state.
     uint8_t bUsed = 0;
@@ -108,7 +118,7 @@ namespace LabWorld {
      * does nothing and holds drain (a cutscene, or just after one). */
     void TickInteractInput(GameCore::World& InWorld, float InSeconds, bool bInHeld = false);
     void TickTriggers(GameCore::World& InWorld, float InSeconds);        // authority
-    void TickPresentation(GameCore::World& InWorld, float InSeconds);    // every process: gates slide, levers swing, used pickups hide
+    void TickPresentation(GameCore::World& InWorld, float InSeconds);    // every process: gates slide, levers swing, used pickups hide, objectives glow
 
     /* The HUD prompt for the local player, "" for none. */
     std::string PromptFor(GameCore::World& InWorld, GameCore::EntityID InAvatar);

@@ -526,7 +526,39 @@ def sea_foam_material(d, tex_dir):
     return g
 
 
-CUSTOM = {"sea": sea_material, "sea_foam": sea_foam_material}
+def highlight_material(d, tex_dir):
+    """ObjectiveHighlight: the glow shell LabWorld lays over whatever the player should use next
+    (LabInteractable.cpp, "Highlight"). Unlit Translucent, pushed Push units out along the
+    normals so it clears the mesh it copies; a Fresnel rim plus a faint fill, breathing at
+    PulseSpeed. Glow (per entity) fades it in and out and brightens it within reach."""
+    g = Graph(d["name"])
+    out = g.node("Output.Material", props={"ClipValue": "0.5", "Domain": "Translucent", "MaxOffset": "4",
+                                           "Shading": "Unlit", "ShadingModel": "Default", "TwoSided": "false"})
+    normal = (g.node("Input.VertexNormal"), "Normal")
+    push = (g.param("Push", "float", "1.5"), "Value")
+    g.link(*g.mul(normal, g.splat3(push), "vec3"), out, "WorldPositionOffset")
+    to_eye = g.node("Vector.Normalize", wildcard="vec3")
+    g.link(*g.math("Subtract", (g.node("Input.CameraPosition"), "Position"), (g.node("Input.WorldPosition"), "Position"),
+                   wildcard="vec3"), to_eye, "V")
+    facing = g.node("Vector.Dot", wildcard="vec3")
+    g.link(to_eye, "Out", facing, "A")
+    nn = g.node("Vector.Normalize", wildcard="vec3")
+    g.link(*normal, nn, "V")
+    g.link(nn, "Out", facing, "B")
+    rim = g.math("Power", g.math("Saturate", g.math("OneMinus", g.math("Abs", (facing, "Out")))), consts={"B": "2.5"})
+    time = (g.node("Input.Time"), "Time")
+    speed = (g.param("PulseSpeed", "float", "3.2"), "Value")
+    pulse = g.addc(g.mulc(g.math("Sin", g.mul(time, speed)), 0.3), 0.7)
+    glow = (g.param("Glow", "float", "1"), "Value")
+    shape = g.mul(g.addc(rim, 0.12), g.mul(pulse, glow))
+    colour = (g.param("Color", "vec3", "1 0.62 0.18"), "Value")
+    inten = (g.param("Intensity", "float", "8"), "Value")
+    g.link(*g.mul(g.mul(colour, g.splat3(shape), "vec3"), g.splat3(inten), "vec3"), out, "Emissive")
+    g.link(*g.math("Saturate", g.mulc(shape, 0.8)), out, "Opacity")
+    return g
+
+
+CUSTOM = {"sea": sea_material, "sea_foam": sea_foam_material, "highlight": highlight_material}
 
 
 def _radial(g):

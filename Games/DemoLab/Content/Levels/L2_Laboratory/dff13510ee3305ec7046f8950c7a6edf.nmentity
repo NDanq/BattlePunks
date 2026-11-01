@@ -13,6 +13,7 @@
     <HideWhenUsed Value="false" />
     <HoldSeconds Value="0.0" />
     <Sound Value="Content/Sounds/World/Steam_Vent_Burst.nmsound" />
+    <Highlight Value="" />
   </Component>
   <Component Type="Render" Version="7">
     <Visible Value="true" />

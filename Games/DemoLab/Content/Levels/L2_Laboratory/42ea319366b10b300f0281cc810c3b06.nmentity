@@ -13,6 +13,7 @@
     <HideWhenUsed Value="false" />
     <HoldSeconds Value="0.0" />
     <Sound Value="Content/Sounds/World/Valve_Squeak_01.nmsound" />
+    <Highlight Value="K_Valve_1_Wheel" />
   </Component>
   <Component Type="Transform" Version="1">
       <Position X="-1000" Y="100" Z="4120" />

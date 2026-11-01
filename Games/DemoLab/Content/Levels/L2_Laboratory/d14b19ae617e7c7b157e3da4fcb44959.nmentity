@@ -13,6 +13,7 @@
     <HideWhenUsed Value="true" />
     <HoldSeconds Value="0.0" />
     <Sound Value="Content/Sounds/UI/UI_Confirm.nmsound" />
+    <Highlight Value="" />
   </Component>
   <Component Type="Render" Version="7">
     <Visible Value="true" />

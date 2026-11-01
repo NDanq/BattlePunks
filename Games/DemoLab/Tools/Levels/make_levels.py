@@ -208,10 +208,11 @@ class Level:
                                   self.transform((p[0], p[1] + 5, p[2]), (0, p[3], 0))])
 
     def interactable(self, name, p, prompt, channel='', enable_on='', sequence='', weapon=0, ammo=0, once=True,
-                     hide=False, hold=0.0, toggle=False, radius=170, mesh=BOX, size=(30, 30, 30), handle=False, sound=''):
+                     hide=False, hold=0.0, toggle=False, radius=170, mesh=BOX, size=(30, 30, 30), handle=False, sound='',
+                     highlight=''):
         comps = [self.fields('LabInteractable', Prompt=prompt, Radius=radius, WeaponID=weapon, Ammo=ammo, Channel=channel,
                              Toggle=toggle, Sequence=sequence, EnableOn=enable_on, Once=once, HideWhenUsed=hide,
-                             HoldSeconds=hold, Sound=sound),
+                             HoldSeconds=hold, Sound=sound, Highlight=highlight),
                  self.transform(p[:3], (0, p[3], 0), (1, 1, 1) if handle else size)]
         if mesh and not handle:
             comps.insert(1, self.render(mesh))

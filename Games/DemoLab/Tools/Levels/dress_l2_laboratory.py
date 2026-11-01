@@ -160,6 +160,10 @@ class Dresser:
                 n += 1
         return n
 
+    def highlight(self, pattern, target):
+        """The prop whose mesh glows while the interactable is usable (it stands in for it)."""
+        return self.edit(pattern, lambda t: re.sub(r'<Highlight Value="[^"]*" />', f'<Highlight Value="{target}" />', t, count=1))
+
     def hide(self, pattern):
         return self.edit(pattern, lambda t: t.replace('    <Visible Value="true" />', '    <Visible Value="false" />', 1))
 
@@ -693,6 +697,8 @@ def dress_turbine_hall(d):
         d.prop(f'K_Valve_{k}_Wheel', KM.format('ValveWheel_Wheel'), (vx, 160, z1 - T - 22), 0)
         gauge(d, f'K_Valve_{k}_Gauge', (vx + 70, 190, z1 - T - 6), 0, 25 + 30 * k)
     d.hide(r'Calm_Valve\d_(Wheel|Spoke)')
+    for k in (1, 2, 3):
+        d.highlight(f'Calm_Valve{k}', f'K_Valve_{k}_Wheel')
     # Pipes from the turbines up the north wall; a header along it.
     pipe_run(d, 'K_Turbine_Header', x0 + 400, x1 - 200, (h - 110, z1 - T - 30), 'x')
     pipe_run(d, 'K_Turbine_Header2', x0 + 400, x1 - 200, (h - 160, z1 - T - 30), 'x')
@@ -800,6 +806,7 @@ def dress_conservatory(d):
 def dress_gameplay(d):
     """Kit looks on the gameplay entities (their Render only)."""
     d.hide(r'Calm_Breaker')
+    d.highlight(r'Calm_Breaker', 'K_BreakerPanel')
     d.restyle(r'Calm_Keycard', material=MAT.format('BrassAged'), scale=(9, 0.8, 6))
     d.restyle(r'Calm_KeycardReader', material=MAT.format('PanelCream'), scale=(18, 26, 8))
     d.restyle(r'Calm_ElevatorPanel', material=MAT.format('PanelGreen'), scale=(45, 70, 14))

@@ -118,6 +118,12 @@ def restyle(lv, name, mesh=None, pos=None, rot=None, scale=(1, 1, 1), hidden=Fal
     edit(lv, lambda n: n == name, fn)
 
 
+def highlight(lv, name, target):
+    """The dressing prop whose mesh glows while the gameplay entity is usable (it stands in for it)."""
+    edit(lv, lambda n: n == name,
+         lambda t: re.sub(r'<Highlight Value="[^"]*" />', f'<Highlight Value="{target}" />', t, count=1))
+
+
 def shift_y(lv, pred, dy):
     def fn(text):
         m = re.search(r'<Position X="([^"]*)" Y="([^"]*)" Z="([^"]*)" />', text)
@@ -425,6 +431,7 @@ def vault(lv):
     mesh(lv, 'Dress_LockerDoorOpen', KIT + 'Locker_Door.nmmesh', (lx + 29, 0, lz - 30), yaw=290,
          extra=[toggle(lv, 'L3.Armed', True)])
     restyle(lv, 'Locker', hidden=True)
+    highlight(lv, 'Locker', 'Dress_Locker')
 
 
 COVER = [   # (mesh, x, z, yaw): the gallery floor (W1), the tunnel, the pump hall (W2)
@@ -554,10 +561,12 @@ def tunnel_and_pumps(lv):
         p = D['points'][name]
         mesh(lv, f'Dress_{name}_Console', OWN + 'L3_Core_Console.nmmesh', (p[0], 0, p[2] - 56), yaw=180, collide='box')
         restyle(lv, name, hidden=True)
+        highlight(lv, name, f'Dress_{name}_Console')
     # the freight lift's platform, open side west to the hall
     fx0, fz0, fx1, fz1 = D['rooms']['FreightLift'][:4]
     mesh(lv, 'Dress_FreightLift', KIT + 'FreightLift.nmmesh', ((fx0 + fx1) / 2, 0, (fz0 + fz1) / 2), yaw=90)
     restyle(lv, 'FreightPanel', hidden=True)
+    highlight(lv, 'FreightPanel', 'Dress_FreightLift')
     # pipe runs along the pump hall's north wall and the gauges on them
     x0, z0, x1, z1 = D['rooms']['PumpHall'][:4]
     for i, x in enumerate(range(int(x0) + 150, int(x1) - 100, 200)):
