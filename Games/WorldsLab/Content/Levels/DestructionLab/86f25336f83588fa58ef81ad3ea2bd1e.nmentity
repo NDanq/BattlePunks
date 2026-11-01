@@ -2,7 +2,7 @@
 <Entity Guid="86f25336f83588fa58ef81ad3ea2bd1e" Name="StonePillar1">
   <Component Type="Render" Version="5">
     <Visible Value="true" />
-    <Material0 Value="Content/Materials/Courtyard/Stone.material.nmgraph" />
+    <Material0 Value="Content/Materials/Shared/Stone.material.nmgraph" />
     <Material1 Value="" />
     <Material2 Value="" />
     <Material3 Value="" />

@@ -12,7 +12,8 @@ namespace NimbleEngine { class GameSession; }
 
 /*
  * RangeMove, the third-person walker (WorldsLabRange.cpp), as the modes that
- * use it see it: the Shooting Range's shooter and Steampunk PvP's fighters.
+ * use it see it: the Shooting Range's shooter (and WorldsLabMoverParity.cpp,
+ * which checks the engine's Character Mover against it).
  *
  * Everything the walker keeps between frames is a component on the avatar,
  * and replicated. Prediction replays a client's unacknowledged input over the

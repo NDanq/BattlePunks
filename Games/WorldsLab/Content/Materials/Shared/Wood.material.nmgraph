@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="03c084986d5f6647f4e0fa642349905d" Type="Texture.Object" Version="1" X="60" Y="-240">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Shared/Wood_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="07fe635839a3be3d7aa7bcf2dd506f19" Type="Texture.Object" Version="1" X="-600" Y="-240">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Shared/Wood_Surface.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="0839beb82f02160bb9e02b9a121c5a3d" Type="Texture.Object" Version="1" X="280" Y="-400">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Shared/Wood_BaseColor.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="08a5978a02894f0633d3bfb597d5735f" Type="Output.Material" Version="1" X="-380" Y="-400">
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Opaque" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+    <Node Id="0ecf32100a94b6de930febbfff9e2954" Type="Texture.Sample" Version="2" X="-380" Y="-240" />
+    <Node Id="25664054c0a6d91ae0f7f6090a4d946d" Type="Texture.Sample" Version="2" X="500" Y="-400" />
+    <Node Id="3e03f3504e6c1ca398159b0d8e93fb6e" Type="Texture.Object" Version="1" X="60" Y="-80">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Shared/Macro_Noise.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="4693984bae5eeacde55fa405d023c5b6" Type="Math.Multiply" Version="1" X="-160" Y="-80" Wildcard="vec2">
+      <Const Pin="B" Value="0.16666666666666666 0.16666666666666666" />
+    </Node>
+    <Node Id="4e915087a1e410fb2ab8bd9d540282a5" Type="Math.Multiply" Version="1" X="-600" Y="-80" Wildcard="vec3" />
+    <Node Id="5c9e88657a3cdacdaad09fc3e23a7093" Type="Texture.Sample" Version="2" X="280" Y="-80" />
+    <Node Id="6684de6870bd199ae6f60d9a4c8d2cb3" Type="Math.Multiply" Version="1" X="60" Y="-400" Wildcard="vec2">
+      <Const Pin="B" Value="0.5 0.5" />
+    </Node>
+    <Node Id="74802fef9b321c96a6fe09007a933ab7" Type="Parameter" Version="1" X="500" Y="-240">
+      <Prop Name="Default" Value="1 1 1" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="81229d0ad2db2bf2eed80fb02c4deb96" Type="Input.TexCoord" Version="1" X="-160" Y="-400" />
+    <Node Id="934f0e244f8f37ed0a4781156ab26cc0" Type="Math.Lerp" Version="1" X="500" Y="-80" Wildcard="float">
+      <Const Pin="A" Value="0.9" />
+      <Const Pin="B" Value="1.1" />
+    </Node>
+    <Node Id="95ae42e4824d3ec9ad6f23bb731ee3e0" Type="Math.Multiply" Version="1" X="-380" Y="80" Wildcard="vec3" />
+    <Node Id="965363ff4e438cdffd6129dd9d338ca0" Type="Input.TexCoord" Version="1" X="-380" Y="-80" />
+    <Node Id="d1bcb9a10499d4fc4762f7ebe9134a50" Type="Texture.Sample" Version="2" X="280" Y="-240" />
+    <Node Id="d5f8c9d28ba5f41d404fbf1cde632e77" Type="Texture.NormalMap" Version="1" X="-160" Y="-240">
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+    <Node Id="f4444773b7e7820f9c70765f504a0439" Type="Vector.Make3" Version="1" X="-600" Y="80" />
+  </Nodes>
+  <Links>
+    <Link From="03c084986d5f6647f4e0fa642349905d.Texture" To="d1bcb9a10499d4fc4762f7ebe9134a50.Texture" />
+    <Link From="07fe635839a3be3d7aa7bcf2dd506f19.Texture" To="0ecf32100a94b6de930febbfff9e2954.Texture" />
+    <Link From="0839beb82f02160bb9e02b9a121c5a3d.Texture" To="25664054c0a6d91ae0f7f6090a4d946d.Texture" />
+    <Link From="0ecf32100a94b6de930febbfff9e2954.B" To="08a5978a02894f0633d3bfb597d5735f.Metallic" />
+    <Link From="0ecf32100a94b6de930febbfff9e2954.G" To="08a5978a02894f0633d3bfb597d5735f.AmbientOcclusion" />
+    <Link From="0ecf32100a94b6de930febbfff9e2954.R" To="08a5978a02894f0633d3bfb597d5735f.Roughness" />
+    <Link From="25664054c0a6d91ae0f7f6090a4d946d.RGB" To="4e915087a1e410fb2ab8bd9d540282a5.A" />
+    <Link From="3e03f3504e6c1ca398159b0d8e93fb6e.Texture" To="5c9e88657a3cdacdaad09fc3e23a7093.Texture" />
+    <Link From="4693984bae5eeacde55fa405d023c5b6.Out" To="5c9e88657a3cdacdaad09fc3e23a7093.UV" />
+    <Link From="4e915087a1e410fb2ab8bd9d540282a5.Out" To="95ae42e4824d3ec9ad6f23bb731ee3e0.A" />
+    <Link From="5c9e88657a3cdacdaad09fc3e23a7093.R" To="934f0e244f8f37ed0a4781156ab26cc0.T" />
+    <Link From="6684de6870bd199ae6f60d9a4c8d2cb3.Out" To="0ecf32100a94b6de930febbfff9e2954.UV" />
+    <Link From="6684de6870bd199ae6f60d9a4c8d2cb3.Out" To="25664054c0a6d91ae0f7f6090a4d946d.UV" />
+    <Link From="6684de6870bd199ae6f60d9a4c8d2cb3.Out" To="d1bcb9a10499d4fc4762f7ebe9134a50.UV" />
+    <Link From="6684de6870bd199ae6f60d9a4c8d2cb3.Out" To="d5f8c9d28ba5f41d404fbf1cde632e77.UV" />
+    <Link From="74802fef9b321c96a6fe09007a933ab7.Value" To="4e915087a1e410fb2ab8bd9d540282a5.B" />
+    <Link From="81229d0ad2db2bf2eed80fb02c4deb96.UV" To="6684de6870bd199ae6f60d9a4c8d2cb3.A" />
+    <Link From="934f0e244f8f37ed0a4781156ab26cc0.Out" To="f4444773b7e7820f9c70765f504a0439.X" />
+    <Link From="934f0e244f8f37ed0a4781156ab26cc0.Out" To="f4444773b7e7820f9c70765f504a0439.Y" />
+    <Link From="934f0e244f8f37ed0a4781156ab26cc0.Out" To="f4444773b7e7820f9c70765f504a0439.Z" />
+    <Link From="95ae42e4824d3ec9ad6f23bb731ee3e0.Out" To="08a5978a02894f0633d3bfb597d5735f.BaseColor" />
+    <Link From="965363ff4e438cdffd6129dd9d338ca0.UV" To="4693984bae5eeacde55fa405d023c5b6.A" />
+    <Link From="d1bcb9a10499d4fc4762f7ebe9134a50.RGB" To="d5f8c9d28ba5f41d404fbf1cde632e77.Color" />
+    <Link From="d5f8c9d28ba5f41d404fbf1cde632e77.Normal" To="08a5978a02894f0633d3bfb597d5735f.Normal" />
+    <Link From="f4444773b7e7820f9c70765f504a0439.Out" To="95ae42e4824d3ec9ad6f23bb731ee3e0.B" />
+  </Links>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "Wood". Do not edit.
+// Opaque, Lit. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in Wood.material.
+UBO_BLOCK_BEGIN(2, Wood_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    vec3  Param_Tint;
+UBO_BLOCK_END(Wood_Block)
+
+// Textures, by material texture slot; Wood.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+MATERIAL_SAMPLER2D(6, Material_Texture2)
+MATERIAL_SAMPLER2D(7, Material_Texture3)
+MATERIAL_SAMPLER2D(8, Material_Texture4)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec2 t0 = Inputs.TexCoord * vec2(0.5);
+    vec4 t1 = texture(Material_Texture3, t0);
+    vec3 t2 = t1.rgb * Param_Tint;
+    vec2 t3 = Inputs.TexCoord * vec2(0.16666667);
+    vec4 t4 = texture(Material_Texture4, t3);
+    float t5 = mix(0.9, 1.1, t4.r);
+    vec3 t6 = vec3(t5, t5, t5);
+    vec3 t7 = t2 * t6;
+    Surface.BaseColor = t7;
+    vec4 t8 = texture(Material_Texture2, t0);
+    Surface.Metallic = t8.b;
+    Surface.Roughness = t8.r;
+    vec4 t9 = texture(Material_Texture1, t0);
+    vec3 t10 = Material_NormalMap(Inputs, t9.rgb, 1.0, t0, -1.0);
+    Surface.Normal = t10;
+    Surface.AmbientOcclusion = t8.g;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "Wood". Do not edit.
+NimbleMaterial 3
+Domain Opaque
+Shading Lit
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 176
+Param Tint vec3 160 1 1 1 0
+Texture 1 Default Default Content/Textures/Shared/Wood_Normal.nmtexture
+Texture 2 Default Default Content/Textures/Shared/Wood_Surface.nmtexture
+Texture 3 Default Default Content/Textures/Shared/Wood_BaseColor.nmtexture
+Texture 4 Default Default Content/Textures/Shared/Macro_Noise.nmtexture
+TextureUV 1 0.5
+TextureUV 2 0.5
+TextureUV 3 0.5
+TextureUV 4 0.16666666666666666
+]]></Output>
+  </gen_code>
+</NodeGraph>

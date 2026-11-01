@@ -29,11 +29,10 @@ import sys
 from pathlib import Path
 
 GAME_DIR = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(GAME_DIR / "Tools" / "Courtyard"))
-import make_courtyard_materials as cy  # noqa: E402
+sys.path.insert(0, str(GAME_DIR / "Tools" / "Shared"))
+import shared_materials as cy  # noqa: E402
 
 MAT_DIR = GAME_DIR / "Content" / "Materials" / "GrassLab"
-TEX     = "Content/Textures/Courtyard"
 TRAIL   = "Content/RenderTargets/GrassTrail.nmrt2d"
 
 # The field the trail covers: lowest world X, Z and its size (cm).
@@ -44,7 +43,7 @@ DROOP = 20.0   # and how far it drops
 
 
 class Graph(cy.Graph):
-    """Courtyard's graph, its node ids from GrassLab's names instead."""
+    """The shared Graph (Tools/Shared/shared_materials.py), its node ids from GrassLab's names instead."""
     def node(self, type_, props=None, consts=None, wildcard=None, version=1):
         self.count += 1
         nid = cy.hashlib.md5(f"GrassLab/{self.name}/{self.count}".encode()).hexdigest()

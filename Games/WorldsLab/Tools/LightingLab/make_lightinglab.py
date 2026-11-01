@@ -29,8 +29,8 @@ import sys
 from pathlib import Path
 
 GAME_DIR = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(GAME_DIR / "Tools" / "Courtyard"))
-import make_courtyard_materials as cy  # noqa: E402
+sys.path.insert(0, str(GAME_DIR / "Tools" / "Shared"))
+import shared_materials as cy  # noqa: E402
 
 MAT_DIR   = GAME_DIR / "Content" / "Materials" / "LightingLab"
 LEVEL_DIR = GAME_DIR / "Content" / "Levels" / "LightingLab"
@@ -40,7 +40,7 @@ SPHERE    = "Engine/Content/Meshes/Sphere.nmmesh"
 
 
 class Graph(cy.Graph):
-    """Courtyard's graph, its node ids from LightingLab's names instead."""
+    """The shared Graph (Tools/Shared/shared_materials.py), its node ids from LightingLab's names instead."""
     def node(self, type_, props=None, consts=None, wildcard=None, version=1):
         self.count += 1
         nid = hashlib.md5(f"LightingLab/{self.name}/{self.count}".encode()).hexdigest()
