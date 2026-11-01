@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <string>
 
 #include "Public/NimbleEngine/Avatar.h"
 #include "Public/NimbleEngine/GameSession.h"
@@ -99,6 +100,51 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(Game)
         NimbleEngine::GameSession* Session = SessionFor(Call);
         Call.PushBool(Session && Session->SetPhase(Phase));
     }, "Phase:string -> Accepted:bool").Tooltip("Ask the game mode to enter Phase; false if its rules refuse");
+
+    // === Level travel (LevelTravel.h) ============================================
+
+    Lib.Function("OpenLevel", [](GameCore::ScriptCall& Call)
+    {
+        const std::string Name = Call.GetString(1);
+        NimbleEngine::LevelTravel Travel;
+        if(Call.HasArg(2)) { Travel.Entry = Call.GetString(2); }
+        if(Call.HasArg(3)) { Travel.SetFromText(Call.GetString(3)); }
+        if(Call.HasError()) { return; }
+        NimbleEngine::GameSession* Session = SessionFor(Call);
+        Call.PushBool(Session && Session->OpenLevel(Name.c_str(), Travel));
+    }, "Name:string, Entry:string, State:string -> Accepted:bool")
+       .Tooltip("Change level at the end of the frame: Name a listed world ([World_Name]), Entry a Player Start's Entry "
+                "or name to come in at (\"\" the usual), State travel values the next level reads (\"Alarm=1;Lift=B\")");
+
+    Lib.Pure("GetEntryPoint", [](GameCore::ScriptCall& Call)
+    {
+        NimbleEngine::GameSession* Session = SessionFor(Call);
+        Call.PushString(Session ? Session->GetTravel().Entry.c_str() : "");
+    }, "-> Entry:string").Tooltip("The entry this level was travelled to at; \"\" for none");
+
+    Lib.Pure("GetPreviousLevel", [](GameCore::ScriptCall& Call)
+    {
+        NimbleEngine::GameSession* Session = SessionFor(Call);
+        Call.PushString(Session ? Session->GetTravel().Previous.c_str() : "");
+    }, "-> Level:string").Tooltip("The level travelled from; \"\" for the first");
+
+    Lib.Pure("GetTravelValue", [](GameCore::ScriptCall& Call)
+    {
+        const std::string Key     = Call.GetString(1);
+        const std::string Default = Call.HasArg(2) ? Call.GetString(2) : "";
+        if(Call.HasError()) { return; }
+        NimbleEngine::GameSession* Session = SessionFor(Call);
+        Call.PushString(Session ? Session->GetTravelValue(Key.c_str(), Default.c_str()) : Default.c_str());
+    }, "Key:string, Default:string -> Value:string").Tooltip("A travel value the level change carried in, or Default");
+
+    Lib.Pure("GetTravelNumber", [](GameCore::ScriptCall& Call)
+    {
+        const std::string Key = Call.GetString(1);
+        const double Default  = Call.HasArg(2) ? Call.GetNumber(2) : 0.0;
+        if(Call.HasError()) { return; }
+        NimbleEngine::GameSession* Session = SessionFor(Call);
+        Call.PushNumber(Session ? Session->GetTravel().GetNumber(Key.c_str(), Default) : Default);
+    }, "Key:string, Default:number -> Value:number").Tooltip("A travel value as a number, or Default when absent or not one");
 
     // === Players ===============================================================
 

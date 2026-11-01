@@ -20,6 +20,7 @@
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/World.h"
+#include "Public/NimbleEngine/Avatar.h"
 #include "Public/NimbleEngine/GameConsole.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameSession.h"
@@ -29,6 +30,7 @@
 #include "Public/NimbleEngine/NetFacade.h"
 #include "Public/NimbleEngine/PhysicsFacade.h"
 #include "Public/NimbleEngine/NimbleEngine.h"
+#include "Public/NimbleEngine/PlayerStart.h"
 #include "Public/NimbleEngine/PlayerState.h"
 #include "Public/NimbleEngine/SaveGame.h"
 #include "Public/NimbleEngine/WorldList.h"
@@ -1061,6 +1063,157 @@ static void TestModeContext()
     Expect(!Level.Mode.HasSession(), "and its session");
 }
 
+/* LEVEL TRAVEL (LevelTravel.h): open a level at a named entry with travel state. */
+namespace
+{
+    class TravelMode : public IGameMode
+    {
+    public:
+        bool OnLoad(GameSession& InSession) override
+        {
+            SeenOnLoad = InSession.GetTravel().ToText() + "@" + InSession.GetTravel().Entry;
+            return true;
+        }
+        void OnTick(const FrameContext&) override {}
+        std::string SeenOnLoad;
+    };
+
+    class TravelLevel : public ILevel
+    {
+    public:
+        explicit TravelLevel(const char* InName) : Name(InName) {}
+        const char* GetName() const override { return Name; }
+        IGameMode*  GetGameMode() override { return &Mode; }
+
+        bool OnLoad(GameSession&) override
+        {
+            GameCore::World& World = GetWorld();
+            /* The usual start, an entry by name and one by its Entry tag. */
+            MakeStart(World, "Start", "", EngineCore::Vector3(0.0, 0.0, 0.0), 0.0);
+            MakeStart(World, "Airlock", "", EngineCore::Vector3(-300.0, 0.0, 40.0), 180.0);
+            MakeStart(World, "LiftStart", "FreightLift", EngineCore::Vector3(500.0, 20.0, 0.0), 90.0);
+            /* A placed avatar for player 1, at the usual start. */
+            GameCore::Entity Hero = World.CreateEntity("Hero");
+            GameCore::TransformComponent T;
+            T.Position = EngineCore::Vector3(0.0, 0.0, 0.0);
+            Hero.AddComponent(T);
+            AvatarHarnessComponent Harness;
+            Harness.AutoPossess = 1;
+            Hero.AddComponent(Harness);
+            HeroId = Hero.GetID();
+            return true;
+        }
+
+        static void MakeStart(GameCore::World& InWorld, const char* InName, const char* InEntry, const EngineCore::Vector3& InAt,
+                              const double InYaw)
+        {
+            GameCore::Entity Start = InWorld.CreateEntity(InName);
+            GameCore::TransformComponent T;
+            T.Position = InAt;
+            T.Rotation = EngineCore::Vector3(0.0, InYaw, 0.0);
+            Start.AddComponent(T);
+            PlayerStartComponent Spawn;
+            std::snprintf(Spawn.Entry, sizeof(Spawn.Entry), "%s", InEntry);
+            Start.AddComponent(Spawn);
+        }
+
+        EngineCore::Vector3 HeroAt() { return GetWorld().GetEntity(HeroId).GetComponent<GameCore::TransformComponent>()->Position; }
+
+        const char*        Name;
+        TravelMode         Mode;
+        GameCore::EntityID HeroId;
+    };
+
+    bool Near(const EngineCore::Vector3& InA, const EngineCore::Vector3& InB)
+    {
+        return std::fabs(InA.GetX() - InB.GetX()) < 0.01 && std::fabs(InA.GetY() - InB.GetY()) < 0.01
+            && std::fabs(InA.GetZ() - InB.GetZ()) < 0.01;
+    }
+
+    void TestLevelTravel()
+    {
+        std::printf("[level travel]\n");
+
+        LevelTravel Parsed;
+        Parsed.SetFromText(" Alarm = 1 ; Lift=B,Visited ;;");
+        Expect(std::string(Parsed.Get("Alarm")) == "1" && std::string(Parsed.Get("Lift")) == "B"
+                   && std::string(Parsed.Get("Visited")) == "1" && Parsed.Values.size() == 3,
+               "SetFromText reads Key=Value pairs; a bare key is 1");
+        Expect(Parsed.GetNumber("Alarm") == 1.0 && Parsed.GetNumber("Lift", -1.0) == -1.0 && !Parsed.Has("Nope")
+                   && std::string(Parsed.Get("Nope", "x")) == "x",
+               "GetNumber and defaults");
+        Parsed.Set("Alarm", "0");
+        Expect(Parsed.ToText() == "Alarm=0;Lift=B;Visited=1", "Set replaces; ToText round-trips");
+
+        Fixture F;
+        TravelLevel Exterior("TravelExterior"), Lab("TravelLab");
+        RegisterLevel(Exterior);
+        RegisterLevel(Lab);
+
+        Expect(F.Session->LoadLevel(Exterior), "the first level loads");
+        Expect(F.Session->GetTravel().Entry.empty() && F.Session->GetTravel().Values.empty()
+                   && F.Session->GetTravel().Previous.empty(),
+               "a level loaded directly has no travel");
+        Expect(Near(Exterior.HeroAt(), EngineCore::Vector3(0.0, 0.0, 0.0)), "without an entry the placed avatar stays put");
+
+        Expect(!F.Session->OpenLevel("NoSuchLevel"), "OpenLevel refuses an unknown name");
+
+        LevelTravel Travel;
+        Travel.Entry = "FreightLift";
+        Travel.Set("Alarm", "1");
+        Expect(F.Session->OpenLevel("TravelLab", Travel), "OpenLevel accepts a registered level");
+        Expect(F.Session->HasPendingLevel(), "and defers it");
+        F.Session->ApplyPendingLevel();
+        Expect(F.Session->GetLevel() == &Lab, "the lab is loaded");
+        Expect(std::string(F.Session->GetTravelValue("Alarm")) == "1" && F.Session->GetTravel().Entry == "FreightLift",
+               "GetTravel carries the entry and the state in");
+        Expect(F.Session->GetTravel().Previous == "TravelExterior", "and the level travelled from");
+        Expect(Lab.Mode.SeenOnLoad == "Alarm=1@FreightLift", "the mode reads it in OnLoad (" + Lab.Mode.SeenOnLoad + ")");
+        Expect(F.Session->GetWorld().GetEntity(FindPlayerStart(F.Session->GetWorld(), 0)).GetName() == std::string("LiftStart"),
+               "FindPlayerStart prefers the entry (by its Entry tag)");
+        Expect(Near(Lab.HeroAt(), EngineCore::Vector3(500.0, 20.0, 0.0)), "the placed avatar is moved to the entry");
+
+        /* Lua: read it, then travel back at an entry named by its entity. */
+        const bool bLua = F.Scripts.RunString(R"(
+            assert(Game.GetTravelValue("Alarm") == "1")
+            assert(Game.GetTravelValue("Missing", "none") == "none")
+            assert(Game.GetTravelNumber("Alarm") == 1)
+            assert(Game.GetTravelNumber("Missing", 7) == 7)
+            assert(Game.GetEntryPoint() == "FreightLift")
+            assert(Game.GetPreviousLevel() == "TravelExterior")
+            assert(Game.OpenLevel("NoSuchLevel") == false)
+            assert(Game.OpenLevel("TravelExterior", "Airlock", "Alarm=0;Visits=2") == true)
+        )", "travel-1");
+        Expect(bLua, "the Game library reads travel and opens a level from Lua");
+        F.Session->ApplyPendingLevel();
+        Expect(F.Session->GetLevel() == &Exterior && F.Session->GetTravel().Entry == "Airlock"
+                   && std::string(F.Session->GetTravelValue("Visits")) == "2" && F.Session->GetTravel().Previous == "TravelLab",
+               "Game.OpenLevel's entry and state arrive");
+        Expect(Near(Exterior.HeroAt(), EngineCore::Vector3(-300.0, 0.0, 40.0)), "an entry by entity name places the avatar");
+
+        /* An entry the level does not have: the usual start, and a warning. */
+        LevelTravel Lost;
+        Lost.Entry = "Nowhere";
+        F.Session->RequestLevel(Lab, Lost);
+        F.Session->ApplyPendingLevel();
+        Expect(Near(Lab.HeroAt(), EngineCore::Vector3(0.0, 0.0, 0.0)), "an unknown entry leaves the avatar where it was placed");
+        Expect(F.Session->GetWorld().GetEntity(FindPlayerStart(F.Session->GetWorld(), 0)).GetName() == std::string("Start"),
+               "and FindPlayerStart falls back to the usual start");
+
+        /* The console's open. */
+        F.Session->GetConsole().Execute("open TravelExterior LiftStart Alarm=1");
+        F.Session->ApplyPendingLevel();
+        Expect(F.Session->GetLevel() == &Exterior && F.Session->GetTravel().Entry == "LiftStart"
+                   && std::string(F.Session->GetTravelValue("Alarm")) == "1",
+               "open <level> <entry> <state> travels too");
+
+        Expect(F.Scripts.GetErrorCount() == 0, "no Lua errors");
+        F.Session->UnloadLevel();
+        UnregisterLevel(Lab);
+        UnregisterLevel(Exterior);
+    }
+}
+
 int main()
 {
     std::printf("NimbleEngineGameFrameworkTests\n");
@@ -1070,6 +1223,7 @@ int main()
     TestScripts();
     TestStartupScript();
     TestSave();
+    TestLevelTravel();
     TestLevelByWorldFile();
     TestWorldList();
     TestModeContext();
