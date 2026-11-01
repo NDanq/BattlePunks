@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="396de6987ccfe8b78b02d13194eee2c1" Name="Dress_VaultWash_1">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="205" B="150" A="255" />
+    <Intensity Value="5" />
+    <Radius Value="450" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="22.5" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="359.21" Y="300" Z="359.21" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L3.Alarm" />
+    <ShowWhenOn Value="false" />
+  </Component>
+</Entity>

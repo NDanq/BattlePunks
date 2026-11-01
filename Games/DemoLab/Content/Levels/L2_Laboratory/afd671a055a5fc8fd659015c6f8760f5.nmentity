@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="afd671a055a5fc8fd659015c6f8760f5" Name="Alarm_CineBackdrop_Sea_01">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L1/Sea_Plane.nmmesh" />
+    <CastShadows Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-29700" Y="-4620" Z="-13000" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

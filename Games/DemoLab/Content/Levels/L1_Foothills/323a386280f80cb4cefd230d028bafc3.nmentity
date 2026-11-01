@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="323a386280f80cb4cefd230d028bafc3" Name="PlazaEdgeBlock_0" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="false" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Rigid Body" Version="1">
+    <Enabled Value="true" />
+    <Motion Value="2" />
+    <Shape Value="0" />
+    <ShapeSource Value="0" />
+    <Friction Value="0.6" />
+    <Layer Value="1" />
+    <Mask Value="-1" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="2815" Y="1255" Z="5470" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1030" Y="110" Z="40" />
+  </Component>
+</Entity>

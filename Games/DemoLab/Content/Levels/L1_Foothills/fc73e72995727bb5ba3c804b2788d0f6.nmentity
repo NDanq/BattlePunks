@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="fc73e72995727bb5ba3c804b2788d0f6" Name="PlazaEdge_10" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L1/Balustrade.nmmesh" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="5100" Y="1200" Z="5650" />
+      <Rotation X="0" Y="270" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

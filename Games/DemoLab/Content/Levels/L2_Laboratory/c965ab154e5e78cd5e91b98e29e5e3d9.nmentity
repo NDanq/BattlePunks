@@ -2,8 +2,8 @@
 <Entity Guid="c965ab154e5e78cd5e91b98e29e5e3d9" Name="Alarm_CineAirship_Lamp" Parent="31c480e2ab788c620aed0b0e59af0be1">
   <Component Type="Point Light" Version="2">
     <Color R="255" G="178" B="105" A="255" />
-    <Intensity Value="40" />
-    <Radius Value="3000" />
+    <Intensity Value="10" />
+    <Radius Value="1600" />
     <Active Value="true" />
     <CastShadows Value="false" />
     <ShadowTechnique Value="0" />

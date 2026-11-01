@@ -123,24 +123,24 @@
   <Binding id="cam6" kind="possess" guid="235c741779b591c9bc82ddaf1819f96f" name="Alarm_CineCam_C6_6">
     <Track type="Transform">
       <Channel name="Position.X">
-        <Key f="540" v="-2500"/>
-        <Key f="659" v="-2400"/>
+        <Key f="540" v="-2200"/>
+        <Key f="659" v="-2000"/>
       </Channel>
       <Channel name="Position.Y">
-        <Key f="540" v="1400"/>
-        <Key f="659" v="1450"/>
+        <Key f="540" v="2700"/>
+        <Key f="659" v="2750"/>
       </Channel>
       <Channel name="Position.Z">
-        <Key f="540" v="-2800"/>
-        <Key f="659" v="-2700"/>
+        <Key f="540" v="-2400"/>
+        <Key f="659" v="-2300"/>
       </Channel>
       <Channel name="Rotation.X">
-        <Key f="540" v="-21.34"/>
-        <Key f="659" v="-17.018"/>
+        <Key f="540" v="8.244"/>
+        <Key f="659" v="-3.626"/>
       </Channel>
       <Channel name="Rotation.Y">
-        <Key f="540" v="48.298"/>
-        <Key f="659" v="62.848"/>
+        <Key f="540" v="49.189"/>
+        <Key f="659" v="63.493"/>
       </Channel>
     </Track>
   </Binding>
@@ -287,7 +287,7 @@
   <Track type="PostProcessSetting" setting="Exposure">
     <Key f="0" v="-1.2" interp="Constant"/>
     <Key f="185" v="0.4" interp="Constant"/>
-    <Key f="400" v="0.6"/>
+    <Key f="400" v="0.2"/>
   </Track>
   <Track type="Audio">
     <Section start="40" end="660" sound="Content/Music/Music_Extraction.nmsound" volume="1.0" blendIn="30"/>

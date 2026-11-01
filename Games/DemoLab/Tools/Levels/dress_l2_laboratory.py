@@ -179,7 +179,7 @@ class Dresser:
 # =============================================================================
 # Architecture
 # =============================================================================
-def wall_run(d, name, centre, yaw, length, doors, sy, detail=None):
+def wall_run(d, name, centre, yaw, length, doors, sy, detail=None, params=()):
     """Kit walls along a wall's inner face: centre (x, z) of the face, yaw as the kit wants it
     (front toward the room), length along its local X, doors as (local offset, width)."""
     ux, uz = math.cos(math.radians(yaw)), -math.sin(math.radians(yaw))
@@ -209,21 +209,30 @@ def wall_run(d, name, centre, yaw, length, doors, sy, detail=None):
             pb = a + span * (i + 1) / n
             mid = (pa + pb) / 2
             d.prop(f'{name}_{k}', KM.format(mesh), (centre[0] + ux * mid, 0, centre[1] + uz * mid), yaw,
-                   ((pb - pa) / 400.0, sy, 1), detail=detail)
+                   ((pb - pa) / 400.0, sy, 1), detail=detail, params=params)
             k += 1
 
 
 def rect_room_kit(d, name, x0, z0, x1, z1, h, doors, ceiling=True, skip=()):
     cx, cz = (x0 + x1) / 2, (z0 + z1) / 2
     sy = h / 500.0
-    wall_run(d, f'K_{name}_WallN', (cx, z1 - T), 0, x1 - x0 - 2 * T, [(x - cx, w) for x, w in doors.get('N', [])], sy)
-    wall_run(d, f'K_{name}_WallS', (cx, z0 + T), 180, x1 - x0 - 2 * T, [(-(x - cx), w) for x, w in doors.get('S', [])], sy)
-    wall_run(d, f'K_{name}_WallE', (x1 - T, cz), 90, z1 - z0 - 2 * T, [(-(z - cz), w) for z, w in doors.get('E', [])], sy)
+    # the workshop's panelling a lighter sage (its paint, slot 0): a gallery, not a corridor
+    pp = [(0, 'Tint', (0.36, 0.52, 0.44))] if name == 'Workshop' else ()
+    wall_run(d, f'K_{name}_WallN', (cx, z1 - T), 0, x1 - x0 - 2 * T, [(x - cx, w) for x, w in doors.get('N', [])], sy,
+             params=pp)
+    wall_run(d, f'K_{name}_WallS', (cx, z0 + T), 180, x1 - x0 - 2 * T, [(-(x - cx), w) for x, w in doors.get('S', [])], sy,
+             params=pp)
+    wall_run(d, f'K_{name}_WallE', (x1 - T, cz), 90, z1 - z0 - 2 * T, [(-(z - cz), w) for z, w in doors.get('E', [])], sy,
+             params=pp)
     if 'W' not in skip:
-        wall_run(d, f'K_{name}_WallW', (x0 + T, cz), 270, z1 - z0 - 2 * T, [((z - cz), w) for z, w in doors.get('W', [])], sy)
+        wall_run(d, f'K_{name}_WallW', (x0 + T, cz), 270, z1 - z0 - 2 * T, [((z - cz), w) for z, w in doors.get('W', [])],
+                 sy, params=pp)
     tiles(d, f'K_{name}_Floor', 'Floor', x0 + T, z0 + T, x1 - T, z1 - T, 0,
           materials=[MAT.format('Concrete')] if name in ('TurbineHall', 'Airlock') else
-          [MAT.format('Planks')] if name == 'Conservatory' else ())
+          [MAT.format('Planks')] if name == 'Conservatory' else
+          # the archive on dark boards: polished marble mirrored the doorway and the emergency
+          # light across the room while it was meant to be dark before the breaker
+          [MAT.format('WoodBeam')] if name == 'Archive' else ())
     if ceiling and not d.review:
         tiles(d, f'K_{name}_Ceiling', 'Ceiling', x0 + T, z0 + T, x1 - T, z1 - T, h, nominal=430.0)
 
@@ -337,6 +346,19 @@ def fixture(d, name, mesh, pos, yaw, channel, light_at, color, intensity, radius
 def pendant(d, name, x, z, h, channel, intensity=55, radius=1150, color=WARM):
     fixture(d, name, KM.format('PendantLamp'), (x, h, z), 0, channel, (x, h - 147, z), color, intensity, radius, slots=3,
             source=9)
+
+
+def sconce(d, name, x, z, yaw, channel, y=300, intensity=9, radius=520):
+    """A caged bulkhead lamp on a wall (x, z on the wall's face, yaw out of the room toward the
+    wall), its light a little out from it; lit / dark with channel, dark on the alarm."""
+    mesh = 'Content/Meshes/L3_Core/L3_Core_Bulkhead.nmmesh'
+    warm = [(1, 'EmissiveColor', (1.0, 0.66, 0.36)), (1, 'EmissiveIntensity', 5)]
+    d.prop(f'Calm_{name}_Lit', mesh, (x, y, z), yaw, params=warm, extra=[d.toggle(channel)], static=False, shadows=False)
+    d.prop(f'Calm_{name}_Dark', mesh, (x, y, z), yaw, params=dark_params(3), extra=[d.toggle(channel, False)],
+           static=False, shadows=False)
+    d.prop(f'Alarm_{name}_Dark', mesh, (x, y, z), yaw, params=dark_params(3), shadows=False)
+    ox, oz = -math.sin(math.radians(yaw)) * 45, -math.cos(math.radians(yaw)) * 45
+    d.point(f'Calm_{name}_Light', (x + ox, y - 10, z + oz), WARM, intensity, radius, channel=channel, source=14)
 
 
 def road_lamp(d, name, ang, r, channel):
@@ -567,6 +589,13 @@ def dress_workshop(d):
         if k % 2 == 0:
             d.point(f'Calm_Workshop_Gallery_{k}', (x + 150, 290, z + 60), (255, 222, 180), 22, 520,
                     channel='L2.Power.Workshop', source=20)
+    # Wall lamps round the room: the strips and spots light the samples, these the walls (caged
+    # bulkheads at head height, a soft pool each on the panelling)
+    for k, (x, z, yaw) in enumerate([(x0 + T, z, 270) for z in (-600, -200, 200, 600)] +
+                                    [(x, z0 + T, 180) for x in (-2950, -2400, -1900, -1450)] +
+                                    [(x, z1 - T, 0) for x in (-2900, -2650, -1700, -1450)] +
+                                    [(x1 - T, z, 90) for z in (-550, 550)]):
+        sconce(d, f'Workshop_Sconce_{k}', x, z, yaw, 'L2.Power.Workshop')
     cc = ceiling_centres(x0, z0, x1, z1)
     pendant(d, 'Workshop_Lamp_0', cc[1][3][0], cc[1][3][1], h, 'L2.Power.Workshop')
     pendant(d, 'Workshop_Lamp_1', cc[3][3][0], cc[3][3][1], h, 'L2.Power.Workshop')
@@ -612,6 +641,12 @@ def dress_archive(d):
         d.prop(f'K_Archive_Rod_{k}', DM.format('L2_CurtainRod'), (x1 - T - 12, h - 70, z), 90)
         for j, o in enumerate((-115, 115)):
             d.prop(f'K_Archive_Curtain_{k}_{j}', DM.format('L2_Curtain'), (x1 - T - 6, h - 70, z + o), 90 + (8 if j else -8))
+    # a velvet runner down the aisle between the doors
+    d.prop('K_Archive_Runner', BOX, (-2200, 0.6, (z0 + z1) / 2), 0, (170, 1.2, z1 - z0 - 2 * T - 60),
+           materials=[MAT.format('Velvet')], params=[(0, 'Tint', (0.5, 0.36, 0.42))], shadows=False)
+    for z in (z0 + T + 34, z1 - T - 34):
+        d.prop('K_Archive_RunnerRod', BOX, (-2200, 1.5, z), 0, (180, 3, 4), materials=[MAT.format('BrassAged')],
+               shadows=False)
     d.prop('K_Archive_Table', KM.format('Workbench'), (-1560, 0, 1750), 270)
     d.blocker('K_Archive_TableBlock', (-1560, 50, 1750), (125, 100, 200))
     fixture(d, 'Archive_TableLamp', DM.format('L2_HandLamp'), (-1560, 95, 1680), 0, 'L2.Pwr.Archive', (-1560, 122, 1680),

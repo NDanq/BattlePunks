@@ -4,6 +4,19 @@
     <Visible Value="true" />
     <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
     <Material0 Value="Content/Materials/Kit/LampGlow.material.nmgraph" />
+    <ParameterCount Value="2" />
+    <Parameter0Name Value="EmissiveColor" />
+    <Parameter0Slot Value="0" />
+    <Parameter0X Value="0.35" />
+    <Parameter0Y Value="0.7" />
+    <Parameter0Z Value="1.0" />
+    <Parameter0W Value="0" />
+    <Parameter1Name Value="EmissiveIntensity" />
+    <Parameter1Slot Value="0" />
+    <Parameter1X Value="0.6" />
+    <Parameter1Y Value="0" />
+    <Parameter1Z Value="0" />
+    <Parameter1W Value="0" />
     <CastShadows Value="false" />
   </Component>
   <Component Type="Transform" Version="1">

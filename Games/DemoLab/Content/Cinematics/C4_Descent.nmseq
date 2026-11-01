@@ -188,6 +188,10 @@
     <Key f="405" v="0"/>
     <Key f="450" v="1"/>
   </Track>
+  <Track type="PostProcessSetting" setting="Exposure">
+    <Key f="0" v="-1.5" interp="Constant"/>
+    <Key f="330" v="-2.3" interp="Constant"/>
+  </Track>
   <Track type="Audio">
     <Section start="100" end="170" sound="Content/Sounds/World/Lift_Start.nmsound" volume="1.0"/>
     <Section start="130" end="450" sound="Content/Sounds/World/Lift_Run_Loop.nmsound" volume="1.0" blendIn="20"/>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="ff640785efa7e20293d7f8965a40844c" Name="Flank_Rock_7" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L1/Cliff_B.nmmesh" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-2867.67" Y="1502.38" Z="12895.8" />
+      <Rotation X="0" Y="107.96" Z="0" />
+      <Scale X="1.22396" Y="1.22396" Z="1.22396" />
+  </Component>
+</Entity>

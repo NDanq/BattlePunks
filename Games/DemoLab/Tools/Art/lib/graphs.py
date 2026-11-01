@@ -295,6 +295,23 @@ def kit_material(d, tex_dir):
             g.link(g.node("Input.VertexNormal"), "Normal", ndv, "B")
             facing = g.math("Saturate", g.math("Abs", (ndv, "Out")))
             op = g.mulc(g.mul(facing, facing), d.get("opacity", 0.4))
+            if "wisp" in d:
+                # Wisps: the grime mask's clouds in world space (metres), two scales rising at
+                # different speeds, eat the puffs away to curls; it thins out toward the top
+                # (World Y over the mesh's pivot is not known here: the noise's own fade does it).
+                metres, rise = d["wisp"]
+                wsp = g.split((g.node("Input.WorldPosition"), "Position"))
+                time = (g.node("Input.Time"), "Time")
+
+                def cloud(k, speed, drift):
+                    uvn = g.node("Vector.Make2")
+                    g.link(*g.add(g.mulc((wsp, "X"), 0.01 / (metres * k)), g.mulc((wsp, "Z"), 0.007 / (metres * k))),
+                           uvn, "X")
+                    g.link(*g.add(g.mulc((wsp, "Y"), 0.01 / (metres * k)), g.mulc(time, -speed)), uvn, "Y")
+                    uvd = g.add((uvn, "Out"), g.mulc(g.splat2(time), (drift, 0.0), "vec2"), "vec2")
+                    return (g.texture(f"{tex_dir}/Grime_Mask.nmtexture", uvd), "R")
+                n = g.mul(cloud(1.0, rise, 0.013), g.addc(g.mulc(cloud(0.37, rise * 1.9, -0.031), 1.2), 0.2))
+                op = g.mul(op, g.smooth(n, 0.06, 0.5))
             g.link(*op, out, "Opacity")
         elif "set" in d:
             # Smudges and dust (BaseColor A) are less clear.
