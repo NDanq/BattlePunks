@@ -264,6 +264,10 @@ Player { Instance, State (Stopped|Playing|Paused|Finished), Frame (double),
    so it shows the frame it starts on.
 5. After all players, `ApplyToHost()`.
 
+A second system, `Sequencer.Blend` in **TP_PostUpdate**, runs `TickBlend`: it
+advances a blend in or out and poses the blend camera (see "Blending the view"
+below). Its own `bFresh` keeps the first frame of a blend at its start.
+
 ### Advance
 
 `To = From + dt * FrameRate * max(0, PlayRate)`. At the end: if looping, evaluate
@@ -293,9 +297,13 @@ place the rules for several simultaneous sequences live:
 
 - **View:** among players with a valid shot, the one with the greatest
   `StartOrder` wins. When none has one, the view returns to what it was
-  (`ViewBefore`, saved when the SequenceWorld first took it).
+  (`ViewBefore`, saved when the SequenceWorld first took it) -- by a cut, or
+  by a blend out (below).
 - **Fade:** the darkest any player asks for.
-- **Cinematic:** on while any cinematic player is Playing or Paused.
+- **Cinematic:** on while any cinematic player is Playing or Paused, unless
+  it has released control early (`HasReleasedControl`: `SCR_BeforeEnd` within
+  `ReleaseBeforeEnd` of the end), and through a blend out whose player asked
+  for `SCR_AfterBlend`.
 - **Post process:** every player's stacks and settings, earlier-started first,
   so a later one's settings win; pushed through `PushPostProcess` to
   RenderCore's per-World `PostProcessOverride`. Cleared when nothing plays.
@@ -305,6 +313,31 @@ place the rules for several simultaneous sequences live:
 
 Each result is compared with what the host was last told (`AppliedCamera`,
 `AppliedFade`, ...) and sent only on change.
+
+### Blending the view
+
+`AppliedCamera` is always the *sequence's* camera wanted; while blending the
+host is shown `BlendCamera` instead, an entity the SequenceWorld makes and
+destroys. One `ViewBlend` at a time: a side to blend from (`FromEntity`,
+tracked, or `FromView`, fixed), `ToEntity` (tracked), seconds, elapsed, ease.
+
+- **In.** `ApplyToHost` sees the view go from none to a shot. If that
+  player's `BlendIn` covers its current time, it blends from `ViewBefore`
+  (tracked) -- or, during a blend out, from the blend camera's current view
+  (fixed) -- to the sequence camera. `EndBlend(true)` hands the host
+  `AppliedCamera`.
+- **Out.** The shot is destroyed by `Release`, so `Finish` records a
+  `PendingBlendOut` first (what was shown -- the blend camera's view if a blend
+  in was still running -- seconds, ease, whether to hold control) when the
+  finishing player's shot is the one seen. `Skip` reads the shown view
+  *before* jumping to the end and passes it in, with half the time. The next
+  `ApplyToHost`, seeing the view go from that shot to none, starts the blend
+  to `ViewBefore`, or, if it died, to `ProbeDefaultView()` (the host told
+  "unset" for a moment and asked what it shows). `EndBlend(true)` gives the
+  view back as a cut would. `PendingOut` is cleared after every
+  `ApplyToHost`, so a pending blend never outlives the frame it was for.
+- Anything else that changes the view (Stop, another player's shot) cuts and
+  `EndBlend(false)`s.
 
 ## 6. The host: what the game provides
 
@@ -333,7 +366,7 @@ puts the mix back to 1 and the view back.
 ## 7. Scripting and C++ entry points
 
 - **Component:** `SequencePlayerComponent` ("Sequence Player"). It registers a
-  serializer (version 1), script field bindings, replication and editor
+  serializer (version 2: the hand-over fields), script field bindings, replication and editor
   properties (`PF_AssetSequence` gives the picker an Edit button). To add a
   field, add it in all four places.
 - **`Sequence` script library** (same file, `GAMECORE_DEFINE_SCRIPT_LIBRARY`):
@@ -357,8 +390,10 @@ editor does).
 There is no network clock. A server's `Player` writes its playback into the
 component through `Publish`: `NetState` (the `ESequencePlayState`), `NetSerial`
 (bumped by every start, seek and skip) and `NetSeconds` (the playhead at the
-last change). Those, with `Sequence`, `PlayRate`, `Loop` and `Cinematic`, are
-the component's replicated fields.
+last change). Those, with `Sequence`, `PlayRate`, `Loop`, `Cinematic` and the
+hand-over fields (`BlendIn`, `BlendOut`, `BlendEase`, `ReleaseControl`,
+`ReleaseBeforeEnd`), are the component's replicated fields. The view and the
+input hold are each machine's own, so a client blends its own view.
 
 A client's copy (`SequenceHost::IsReplica` true) never auto plays. `Follow`
 compares the replicated fields with `SeenSerial` and `SeenState`: a new serial

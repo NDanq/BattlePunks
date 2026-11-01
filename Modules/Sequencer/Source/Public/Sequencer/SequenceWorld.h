@@ -17,6 +17,8 @@ namespace GameCore { class World; }
 
 namespace Sequencer
 {
+    struct SequencePlayerComponent;
+
     /* Where a player is. */
     enum class ESequencePlayState : uint8_t
     {
@@ -83,6 +85,18 @@ namespace Sequencer
      * (RenderCore's PostProcessOverride for this World). Bus gains: every
      * player's multiplied. The subtitle: the started-last player's that has
      * a line, unless subtitles are off.
+     *
+     * BLENDS (the component's BlendIn, BlendOut, ReleaseControl). A player
+     * whose first shot takes the view from the game (or from a blend out)
+     * with BlendIn eases into it from that view, which is tracked as it
+     * moves. One that finishes or is skipped while its shot is seen, with
+     * BlendOut, eases from what was shown back to the view it gives back
+     * (half the time for a skip), tracking that camera too. The host is
+     * shown a camera of this system's ("Sequence Blend Camera") meanwhile,
+     * written in TP_PostUpdate so it sees cameras moved earlier in the
+     * frame. A Cinematic player holds input and the letterbox through its
+     * blend out (SCR_AfterBlend), up to its end (SCR_BlendStart), or until
+     * ReleaseBeforeEnd seconds before it (SCR_BeforeEnd). Stop cuts.
      *
      * NETWORKING. A server's player writes its playback into the component
      * (NetState, NetSerial, NetSeconds), which replicates. A client's copy
@@ -153,6 +167,11 @@ namespace Sequencer
         const SequencePostProcess& GetPostProcess() const { return AppliedPostProcess; }
         const std::vector<SequenceBusGain>& GetBusGains() const { return AppliedBusGains; }
         const SequenceSubtitle&    GetSubtitle() const    { return AppliedSubtitle; }
+        /* The camera the host is shown while blending in or out; unset when
+         * not blending. */
+        GameCore::EntityID GetBlendCamera() const;
+        bool               IsBlending() const     { return Blend.bActive; }
+        bool               IsBlendingOut() const  { return Blend.bActive && Blend.bOut; }
 
         /* Every player advanced by InDeltaSeconds; the system calls it. */
         void Tick(float InDeltaSeconds);
@@ -164,6 +183,7 @@ namespace Sequencer
         SequenceWorld& operator=(const SequenceWorld&) = delete;
 
         static void TickSystem(GameCore::World& InWorld, float InDeltaSeconds, void* InUserData);
+        static void BlendSystem(GameCore::World& InWorld, float InDeltaSeconds, void* InUserData);
 
         struct Player
         {
@@ -191,7 +211,8 @@ namespace Sequencer
          * changed or there is none; false if it cannot be loaded. */
         bool Prepare(GameCore::EntityID InPlayer, Player& InOutPlayer);
         void Advance(GameCore::EntityID InPlayer, Player& InOutPlayer, float InDeltaSeconds);
-        void Finish(GameCore::EntityID InPlayer, Player& InOutPlayer);
+        /* InSkippedFrom: what was seen before a skip jumped (null: what is seen now). */
+        void Finish(GameCore::EntityID InPlayer, Player& InOutPlayer, const SequenceShot* InSkippedFrom = nullptr);
         /* Restored if it asked (else its saves forgotten), everything it
          * made or holds let go, instance kept. */
         void Release(Player& InOutPlayer);
@@ -203,6 +224,48 @@ namespace Sequencer
         bool IsReplica(GameCore::EntityID InPlayer) const;
         /* Tells the host what the players now want of the screen. */
         void ApplyToHost();
+
+        /* The view the host is shown now: the blend camera's while blending,
+         * else the sequence camera's. False if neither shows anything. */
+        bool ReadShownView(SequenceShot& OutShot);
+        /* Whether a cinematic player has let go of input and letterbox early. */
+        bool HasReleasedControl(const Player& InPlayerState, const SequencePlayerComponent& InComponent) const;
+        /* Shows the host the blend camera, posed at the blend's start. */
+        void StartBlend();
+        /* The blend camera posed for Blend.Elapsed; false if a side is gone. */
+        bool PoseBlend();
+        /* The blend has run: the view handed on (bInHandOver), the camera gone. */
+        void EndBlend(bool bInHandOver);
+        /* What the host shows with no view target of ours (GameSession: the
+         * avatar's camera). Asks it by letting go for a moment. */
+        GameCore::EntityID ProbeDefaultView();
+        void TickBlend(float InDeltaSeconds);
+
+        struct ViewBlend
+        {
+            bool  bActive      = false;
+            bool  bOut         = false;   // back to the game, else into a shot
+            bool  bFresh       = false;   // started this frame: no time passes on its first tick
+            bool  bHoldControl = false;   // a blend out that keeps cinematic mode on
+            bool  bToDefault   = false;   // a blend out to the host's default view: given back unset
+            GameCore::EntityID FromEntity;   // tracked; unset: FromView, fixed
+            SequenceShot       FromView;
+            GameCore::EntityID ToEntity;     // in: the sequence camera; out: the view given back
+            float   Seconds = 0.0f;
+            float   Elapsed = 0.0f;
+            uint8_t Ease    = 0;
+        };
+        /* Recorded by Finish for ApplyToHost to start: the player's shot is
+         * gone by then. */
+        struct PendingBlendOut
+        {
+            bool               bValid = false;
+            GameCore::EntityID Camera;       // the sequence camera it was seen through
+            SequenceShot       View;
+            float              Seconds = 0.0f;
+            uint8_t            Ease    = 0;
+            bool               bHoldControl = false;
+        };
 
         GameCore::World& World;
         int32_t          Attachments = 0;
@@ -218,6 +281,9 @@ namespace Sequencer
         SequencePostProcess AppliedPostProcess;
         std::vector<SequenceBusGain> AppliedBusGains;   // only those not 1
         SequenceSubtitle    AppliedSubtitle;
+        ViewBlend           Blend;
+        PendingBlendOut     PendingOut;
+        GameCore::EntityID  BlendCamera;
     };
 }
 
