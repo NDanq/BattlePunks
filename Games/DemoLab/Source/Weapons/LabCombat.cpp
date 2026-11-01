@@ -54,6 +54,7 @@ namespace
     constexpr float  MAX_ORIGIN_SLOP = 350.f;   // a client's shot origin may sit this far from its boom pivot
     constexpr double HEAD_FROM       = 150.0;   // capsule height above the feet that counts as the head
     constexpr float  PI_F            = 3.14159265f;
+    constexpr float  HIT_REACT_GAP   = 0.3f;     // seconds: a light hit starts a HitReact at most this often
 
     const char* const FX_MUZZLE = "Content/Particles/MuzzleFlash.nmparticle";
     const char* const FX_DUST   = "Content/Particles/Dust.nmparticle";
@@ -236,11 +237,28 @@ namespace
         if(Anim && HasAnimParam(InWorld, InAvatar, InTrigger)) { Anim->SetTrigger(InTrigger); }
     }
 
+    /* The HitReact layer's direction for a hit travelling along InDir: 0 front,
+     * 1 back, 2 left, 3 right -- the side of the body it came from. */
+    float HitDirection(World& InWorld, const EntityID InAvatar, const Vector3& InDir)
+    {
+        const CharacterMoverComponent* Mover = InWorld.GetEntity(InAvatar).GetComponent<CharacterMoverComponent>();
+        if(!Mover || InDir.GetLength() < 1e-3) { return 0.f; }
+        constexpr double RAD = 3.14159265358979 / 180.0;
+        const double Yaw = double(Mover->BodyYaw) * RAD;
+        const Vector3 Facing(std::sin(Yaw), 0, std::cos(Yaw));
+        const Vector3 FacingRight(std::cos(Yaw), 0, -std::sin(Yaw));
+        const double Toward  = -InDir.Dot(Facing);        // > 0: it came from in front
+        const double FromLeft = InDir.Dot(FacingRight);   // > 0: travelling to the right, so from the left
+        if(std::fabs(Toward) >= std::fabs(FromLeft)) { return Toward >= 0.0 ? 0.f : 1.f; }
+        return FromLeft > 0.0 ? 2.f : 3.f;
+    }
+
     /* The owner's immediate feedback for an attack it just asked for. */
     void PredictAttack(World& InWorld, const EntityID InAvatar, const LabWeaponComponent& InWeapon,
                        const Vector3& InOrigin, const Vector3& InDir)
     {
         TriggerAnim(InWorld, InAvatar, "Attack");
+        if(LabWeapons::TypeOf(InWeapon) != LabWeapons::EWeaponType::EWT_Melee) { TriggerAnim(InWorld, InAvatar, "Fire"); }   // the Recoil layer
         if(LabWeapons::TypeOf(InWeapon) == LabWeapons::EWeaponType::EWT_Melee)
         {
             PlayAt(InWorld, SND_SWING, InWorld.GetEntity(InAvatar).GetWorldPose().Position, InAvatar);
@@ -1518,11 +1536,30 @@ void LabCombat::TickPresentation(World& InWorld, const float InSeconds, Presente
                 SetAnimFloat(InWorld, Avatar, *Anim, "Combo", float(Combat->ComboIndex));
                 if(P.bSeenInit)
                 {
-                    if(Combat->AttackSeq != P.SeenAttackSeq && !bOwner) { TriggerAnim(InWorld, Avatar, "Attack"); }
+                    if(Combat->AttackSeq != P.SeenAttackSeq && !bOwner)
+                    {
+                        TriggerAnim(InWorld, Avatar, "Attack");
+                        const LabWeaponComponent* Shooting = EquippedData(InWorld, Avatar);
+                        if(Shooting && LabWeapons::TypeOf(*Shooting) != LabWeapons::EWeaponType::EWT_Melee) { TriggerAnim(InWorld, Avatar, "Fire"); }
+                        Self = InWorld.GetEntity(Avatar);
+                        Combat = Self.GetComponent<LabCombatComponent>();
+                        Anim = Self.GetComponent<RenderCore::AnimationComponent>();
+                    }
                     if(Combat->ReloadSeq != P.SeenReloadSeq) { TriggerAnim(InWorld, Avatar, "Reload"); }
+                    /* The HitReact layer: from the side the hit came, harder for a heavy
+                     * hit or the head. Automatic fire lands a hit every few frames, so a
+                     * light hit starts a reaction at most every HIT_REACT_GAP; a heavy one
+                     * always does. */
                     if(Combat->HitSeq != P.SeenHitSeq)
                     {
-                        TriggerAnim(InWorld, Avatar, "Hit");
+                        const bool bHard = Combat->LastHitHeavy || Combat->LastHitPart == uint8_t(EHitPart::EHP_Head);
+                        if(P.HitReactTimer <= 0.f || Combat->LastHitHeavy)
+                        {
+                            SetAnimFloat(InWorld, Avatar, *Anim, "HitDir", HitDirection(InWorld, Avatar, Combat->LastHitDir));
+                            SetAnimFloat(InWorld, Avatar, *Anim, "HitWeight", bHard ? 1.f : 0.6f);
+                            TriggerAnim(InWorld, Avatar, "Hit");
+                            P.HitReactTimer = HIT_REACT_GAP;
+                        }
                         if(Combat->LastHitHeavy) { P.StaggerTimer = 0.6f; }
                     }
                 }
@@ -1534,7 +1571,8 @@ void LabCombat::TickPresentation(World& InWorld, const float InSeconds, Presente
                 P.SeenReloadSeq = Combat->ReloadSeq;
                 P.SeenHitSeq    = Combat->HitSeq;
             }
-            P.StaggerTimer = std::max(0.f, P.StaggerTimer - InSeconds);
+            P.StaggerTimer  = std::max(0.f, P.StaggerTimer - InSeconds);
+            P.HitReactTimer = std::max(0.f, P.HitReactTimer - InSeconds);
             SetAnimBool(InWorld, Avatar, *Anim, "Stagger", P.StaggerTimer > 0.f);
             SetAnimBool(InWorld, Avatar, *Anim, "Downed", Health && Health->bDown);
         }

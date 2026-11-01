@@ -157,6 +157,7 @@ return {
         self.Mag = self.Mag - 1
         self.Gun:SetShots(self.Gun:GetShots() + 1)
         self.Cooldown = FIRE_DELAY
+        self.Animation:SetTrigger("Fire")   -- the anim state's Recoil layer kicks the gun hand
 
         -- Through the crosshair: from the camera, along its view, a little spread.
         local cx, cy, cz = self.Camera:GetWorldPosition()

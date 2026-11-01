@@ -138,6 +138,7 @@ namespace LabCombat {
         uint8_t bSeenInit = 0;
         uint8_t bShownDead = 0;
         float   StaggerTimer = 0.f;
+        float   HitReactTimer = 0.f;  // seconds before a light hit may start another HitReact
 
         // The weapon hand (AimHand IK, TDD §5.7 done procedurally).
         uint8_t IKAttackSeq = 0, IKHitSeq = 0, IKThrowSeq = 0;
