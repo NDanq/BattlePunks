@@ -113,8 +113,8 @@ Forward span, ms (all on, and each cost: the span with it, less without):
   is blurred by its own offset anyway) -- the reflections read it at the
   hit, so they would keep full size.
 - **Not covered:** other resolutions and GPUs, OpenGL (the game cannot start
-  on it here) and Metal; Courtyard (none of its materials refract; it pays
-  the copy with its reflections).
+  on it here) and Metal; Courtyard (none of its materials refracted; it paid
+  the copy with its reflections; since removed from WorldsLab).
 
 ## The plume, frame by frame
 
@@ -174,5 +174,5 @@ Phase 5 the smoke Volume, glass casting the panes cast).
 - Other resolutions (the forward costs scale with translucent pixels), other
   GPUs, OpenGL (the game cannot start on it here) and Metal; Shipping builds.
 - The CPU: the render thread's time issuing these draws and the opacity pass.
-- Courtyard and the other shipped levels: only TranslucencyLab was timed;
-  Courtyard's glass and water now pay forward shadows and reflections.
+- The other levels: only TranslucencyLab was timed. (Courtyard, whose glass
+  and water paid forward shadows and reflections, has since been removed.)
