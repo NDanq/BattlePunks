@@ -44,6 +44,7 @@ MATERIAL_SAMPLER2D(19, TranslucentOpacity)  // engine slot 15: translucent caste
 #define LIGHTING_CONTACT_SHADOWS 1
 #define LIGHTING_SCENE_DEPTH SceneDepth
 #include <Lighting.glsl>
+#include <Wetness.glsl>
 
 OUTPUT(0, vec4, Output)
 OUTPUT(1, vec4, Subsurface)   // a Skin pixel's diffuse light before its albedo, a 1 (PPSubsurface.fsh blurs it); else 0
@@ -80,8 +81,13 @@ void main(void)
 
     // The surface, by its shading model. Ambient Occlusion -- the material's
     // times the screen's -- takes away ambient light only (ShadeSurfaceSplit).
-    int Model = DecodeShadingModel(Gb2.a);
-    LightingSurface S = MakeLightingSurface(Model, ToLinear(Gb0.rgb), Gb2.r, Gb2.g, Gb2.b, DecodeGBufferNormal(Gb1),
+    // The weather's wetness (Wetness.glsl): darker, glossier where it faces the sky.
+    int   Model     = DecodeShadingModel(Gb2.a);
+    vec3  Normal    = DecodeGBufferNormal(Gb1);
+    vec3  Albedo    = ToLinear(Gb0.rgb);
+    float Roughness = Gb2.g;
+    ApplyWetness(WetAmount(Model, Normal), Gb2.r, Albedo, Roughness);
+    LightingSurface S = MakeLightingSurface(Model, Albedo, Gb2.r, Roughness, Gb2.b, Normal,
                                             normalize(Scene_CameraPosition.xyz - WorldPosition));
     if(Model != SHADING_MODEL_DEFAULT)
     {

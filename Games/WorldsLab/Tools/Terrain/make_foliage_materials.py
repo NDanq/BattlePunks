@@ -53,9 +53,10 @@ def output(g, domain, model, two_sided, max_offset, consts=None):
 
 
 def wind(g, out, colour, bend, flutter=0.0, flutter_weight=None):
-    """World Position Offset: the plant leans and sways along the wind, bend world units
-    at vertex colour A = 1 (more in gusts, never back past upright by much); its tips
-    flutter up and down, flutter units at flutter_weight = 1 (a (node, pin), 0-1)."""
+    """World Position Offset: the plant leans and sways along the wind (the Wind node:
+    the Weather plugin's direction, times its strength), bend world units at vertex
+    colour A = 1 and Strength 1 (more in gusts, never back past upright by much); its
+    tips flutter up and down, flutter units at flutter_weight = 1 (a (node, pin), 0-1)."""
     split = g.node("Vector.Split")
     g.link(g.node("Input.WorldPosition"), "Position", split, "Vector")
     time = (g.node("Input.Time"), "Time")
@@ -68,19 +69,26 @@ def wind(g, out, colour, bend, flutter=0.0, flutter_weight=None):
     phase = added(scaled(x, 0.0007), scaled(z, 0.0009))
     gust = plus(added(scaled(sine(added(scaled(time, 0.9), phase)), 0.55),
                       scaled(sine(added(scaled(time, 2.1), scaled(phase, 1.7))), 0.2)), 0.45)
+    # The world's wind (the Weather plugin's; a breeze of 1 toward (0.8, 0, 0.6) without one):
+    # the plants lean its way, as far as its strength.
+    wind_node = g.node("Input.Wind")
+    wind_dir = g.node("Vector.Split")
+    g.link(wind_node, "Direction", wind_dir, "Vector")
+    strength = (wind_node, "Strength")
+    times = lambda a, b: (g.math("Multiply", a, b), "Out")
     lean = (g.math("Multiply", gust, (colour, "A")), "Out")
-    lean = scaled(lean, bend)
+    lean = times(scaled(lean, bend), strength)
     offset = g.node("Vector.Make3")
     if flutter and flutter_weight is not None:
         leaf = added(added(scaled(x, 0.021), scaled(z, 0.017)), scaled(y, 0.013))
         bob = sine(added(scaled(time, 3.3), leaf))
-        bob = (g.math("Multiply", scaled(bob, flutter), flutter_weight), "Out")
-        g.link(*added(scaled(lean, 0.8), scaled(bob, 0.3)), offset, "X")
+        bob = times((g.math("Multiply", scaled(bob, flutter), flutter_weight), "Out"), strength)
+        g.link(*added(times(lean, (wind_dir, "X")), scaled(bob, 0.3)), offset, "X")
         g.link(*bob, offset, "Y")
-        g.link(*added(scaled(lean, 0.6), scaled(bob, 0.2)), offset, "Z")
+        g.link(*added(times(lean, (wind_dir, "Z")), scaled(bob, 0.2)), offset, "Z")
     else:
-        g.link(*scaled(lean, 0.8), offset, "X")
-        g.link(*scaled(lean, 0.6), offset, "Z")
+        g.link(*times(lean, (wind_dir, "X")), offset, "X")
+        g.link(*times(lean, (wind_dir, "Z")), offset, "Z")
     g.link(offset, "Out", out, "WorldPositionOffset")
 
 

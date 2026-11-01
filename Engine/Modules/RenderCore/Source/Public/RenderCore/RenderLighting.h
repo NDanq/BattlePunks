@@ -168,6 +168,12 @@ namespace RenderCore
         uint8_t              bBakedDirectional = 0;   // its lightmaps carry the light's direction
         uint32_t             BakedAtlasCount = 0;
         char                 BakedAtlases[RENDER_BAKED_ATLASES_MAX][128] = {};   // RENDER_MATERIAL_PATH_MAX
+
+        /* The World's weather (RenderWeather.h), as the scene block carries
+         * it: Scene_Wind (xyz toward which it blows, unit; w strength) and
+         * Scene_Weather (x wetness, y rain). */
+        float                Wind[4]    = { 0.8f, 0.0f, 0.6f, 1.0f };
+        float                Weather[4] = {};
     };
 
     /* The frame's post processing: every Post Process volume the camera is
