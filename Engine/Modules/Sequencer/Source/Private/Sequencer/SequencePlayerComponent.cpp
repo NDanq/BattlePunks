@@ -9,7 +9,10 @@
 #include "Public/GameCore/ScriptLibrary.h"
 #include "Public/GameCore/World.h"
 
+#include "Public/Sequencer/SequenceAsset.h"
 #include "Public/Sequencer/SequenceWorld.h"
+
+#include <algorithm>
 
 /* SequencePlayerComponent: registration, saves, the editor's fields, and the
  * "Sequence" script library that drives players from Lua and script graphs. */
@@ -18,7 +21,24 @@ namespace Sequencer
 {
     GAMECORE_DEFINE_COMPONENT(SequencePlayerComponent, "Sequence Player")
 
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(SequencePlayerComponent, 1)
+    float SequenceBlendEase(const uint8_t InEase, const float InT)
+    {
+        const float T = std::clamp(InT, 0.0f, 1.0f);
+        switch(InEase)
+        {
+            case SBE_Linear:     return T;
+            case SBE_QuadIn:     return Ease(ESequenceInterp::QuadIn, T);
+            case SBE_QuadOut:    return Ease(ESequenceInterp::QuadOut, T);
+            case SBE_QuadInOut:  return Ease(ESequenceInterp::QuadInOut, T);
+            case SBE_CubicIn:    return Ease(ESequenceInterp::CubicIn, T);
+            case SBE_CubicOut:   return Ease(ESequenceInterp::CubicOut, T);
+            case SBE_CubicInOut: return Ease(ESequenceInterp::CubicInOut, T);
+            default:             return T * T * (3.0f - 2.0f * T);
+        }
+    }
+
+    /* 2: the hand-over -- blends in and out, and when control comes back. */
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(SequencePlayerComponent, 2)
     {
         Ar.Field("Sequence",            C.Sequence);
         Ar.Field("PlayRate",            C.PlayRate);
@@ -28,6 +48,14 @@ namespace Sequencer
         Ar.Flag("DestroyWhenFinished",  C.bDestroyWhenFinished);
         Ar.Flag("Cinematic",            C.bCinematic);
         Ar.Flag("Skippable",            C.bSkippable);
+        if(Ar.GetVersion() >= 2)
+        {
+            Ar.Field("BlendIn",          C.BlendIn);
+            Ar.Field("BlendOut",         C.BlendOut);
+            Ar.Field("BlendEase",        C.BlendEase);
+            Ar.Field("ReleaseControl",   C.ReleaseControl);
+            Ar.Field("ReleaseBeforeEnd", C.ReleaseBeforeEnd);
+        }
     }
 
     /* The fields; playing goes through the Sequence library (below), which
@@ -41,6 +69,11 @@ namespace Sequencer
         Bind.Flag("RestoreState",  &SequencePlayerComponent::bRestoreState);
         Bind.Flag("Cinematic",     &SequencePlayerComponent::bCinematic);
         Bind.Flag("Skippable",     &SequencePlayerComponent::bSkippable);
+        Bind.Field("BlendIn",          &SequencePlayerComponent::BlendIn);
+        Bind.Field("BlendOut",         &SequencePlayerComponent::BlendOut);
+        Bind.Field("BlendEase",        &SequencePlayerComponent::BlendEase);
+        Bind.Field("ReleaseControl",   &SequencePlayerComponent::ReleaseControl);
+        Bind.Field("ReleaseBeforeEnd", &SequencePlayerComponent::ReleaseBeforeEnd);
     }
 
     /* What a client's copy needs to follow the server's (SequenceWorld.h,
@@ -51,6 +84,12 @@ namespace Sequencer
         Rep.Field("PlayRate",   &SequencePlayerComponent::PlayRate);
         Rep.Flag("Loop",        &SequencePlayerComponent::bLoop);
         Rep.Flag("Cinematic",   &SequencePlayerComponent::bCinematic);
+        /* The view and input are each machine's own: a client blends too. */
+        Rep.Field("BlendIn",          &SequencePlayerComponent::BlendIn);
+        Rep.Field("BlendOut",         &SequencePlayerComponent::BlendOut);
+        Rep.Field("BlendEase",        &SequencePlayerComponent::BlendEase);
+        Rep.Field("ReleaseControl",   &SequencePlayerComponent::ReleaseControl);
+        Rep.Field("ReleaseBeforeEnd", &SequencePlayerComponent::ReleaseBeforeEnd);
         Rep.Field("NetState",   &SequencePlayerComponent::NetState);
         Rep.Field("NetSerial",  &SequencePlayerComponent::NetSerial);
         Rep.Field("NetSeconds", &SequencePlayerComponent::NetSeconds);
@@ -69,6 +108,22 @@ namespace Sequencer
         Props.Flag("Destroy When Finished",  &SequencePlayerComponent::bDestroyWhenFinished);
         Props.Flag("Cinematic",              &SequencePlayerComponent::bCinematic);
         Props.Flag("Skippable",              &SequencePlayerComponent::bSkippable);
+        Props.Category("Hand Over");
+        Props.Field("Blend In",              &SequencePlayerComponent::BlendIn);
+        Props.Range(0.0f, 30.0f);
+        Props.Tooltip("Seconds the view eases from the gameplay camera into the first shot; 0 cuts");
+        Props.Field("Blend Out",             &SequencePlayerComponent::BlendOut);
+        Props.Range(0.0f, 30.0f);
+        Props.Tooltip("Seconds the view eases from the last shot back to the gameplay camera as the sequence finishes; a skip takes half; 0 cuts");
+        Props.Choice("Blend Ease",           &SequencePlayerComponent::BlendEase,
+                     "Smooth|Linear|Quad In|Quad Out|Quad In Out|Cubic In|Cubic Out|Cubic In Out");
+        Props.Tooltip("The curve of both blends");
+        Props.Choice("Release Control",      &SequencePlayerComponent::ReleaseControl,
+                     "After Blend|Blend Start|Before End");
+        Props.Tooltip("When a Cinematic player gives input back and removes the letterbox");
+        Props.Field("Release Before End",    &SequencePlayerComponent::ReleaseBeforeEnd);
+        Props.Range(0.0f, 60.0f);
+        Props.Tooltip("Release Control Before End: seconds of the sequence before its end");
     }
 #endif // WITH_EDITOR
 }
