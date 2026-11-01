@@ -109,12 +109,20 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(Game)
         NimbleEngine::LevelTravel Travel;
         if(Call.HasArg(2)) { Travel.Entry = Call.GetString(2); }
         if(Call.HasArg(3)) { Travel.SetFromText(Call.GetString(3)); }
+        if(Call.HasArg(4)) { Travel.Title = Call.GetString(4); }
+        if(Call.HasArg(5)) { Travel.Tip = Call.GetString(5); }
         if(Call.HasError()) { return; }
         NimbleEngine::GameSession* Session = SessionFor(Call);
         Call.PushBool(Session && Session->OpenLevel(Name.c_str(), Travel));
-    }, "Name:string, Entry:string, State:string -> Accepted:bool")
-       .Tooltip("Change level at the end of the frame: Name a listed world ([World_Name]), Entry a Player Start's Entry "
-                "or name to come in at (\"\" the usual), State travel values the next level reads (\"Alarm=1;Lift=B\")");
+    }, "Name:string, Entry:string, State:string, Title:string, Tip:string -> Accepted:bool")
+       .Tooltip("Change level: a listed world, at a Player Start's Entry (\"\" usual), with travel state \"Alarm=1\"; "
+                "Title/Tip: the loading card");
+
+    Lib.Pure("IsInTransition", [](GameCore::ScriptCall& Call)
+    {
+        NimbleEngine::GameSession* Session = SessionFor(Call);
+        Call.PushBool(Session && Session->IsInTransition());
+    }, "-> Transitioning:bool").Tooltip("A level transition is fading out, loading or fading in");
 
     Lib.Pure("GetEntryPoint", [](GameCore::ScriptCall& Call)
     {

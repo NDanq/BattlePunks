@@ -61,7 +61,11 @@ the console's `open` and `Game.OpenLevel` use the same names.
 `GameSession::OpenLevel(Name, LevelTravel)` changes level at a named entry
 (a Player Start's **Entry**) carrying key/value travel state the next level
 reads with `GetTravel()` / `Game.GetTravelValue` (LevelTravel.h;
-Engine/Docs/Guides/GameModeGuide.md, "Changing level").
+Engine/Docs/Guides/GameModeGuide.md, "Changing level"). With `[LevelTransition]
+Enabled` (or a travel's `TT_Fade`) the change fades out, shows a loading card
+(the engine's, or the game's `[LevelTransition] Document`), loads behind it and
+fades in once the new level has drawn a frame or two
+(`GameSession::IsInTransition`).
 
 ## The mode is the level's context
 
