@@ -433,6 +433,7 @@ namespace RenderCore
         OutStats.ParallelPasses              = P->Context.GetParallelPassCount();
         GetStaticDrawStats(OutStats.StaticProxiesDrawn, OutStats.StaticListBuilds);
         GetOcclusionStats(OutStats.ProxiesOccludedLastFrame, OutStats.OcclusionQueriesLastFrame);
+        GetCaptureStats(OutStats.GIProbesUnlit, OutStats.GIProbesTotal, OutStats.bCapturesBusy);
         OutStats.TextureStreaming = P->Context.GetTextureStreamingStats();
     }
 
@@ -508,6 +509,25 @@ namespace RenderCore
     {
         OutOccluded = GOccluded.load(std::memory_order_relaxed);
         OutQueries  = GOcclusionQueries.load(std::memory_order_relaxed);
+    }
+
+    namespace
+    {
+        std::atomic<uint64_t> GCaptureStats{0};   // unlit probes, total probes, busy: one word, read whole
+    }
+
+    void SetCaptureStats(const uint32_t InUnlit, const uint32_t InTotal, const bool bInBusy)
+    {
+        const uint64_t Packed = (uint64_t(InUnlit & 0x7fffffffu) << 32) | (uint64_t(InTotal & 0x7fffffffu) << 1) | (bInBusy ? 1u : 0u);
+        GCaptureStats.store(Packed, std::memory_order_relaxed);
+    }
+
+    void GetCaptureStats(uint32_t& OutUnlit, uint32_t& OutTotal, bool& bOutBusy)
+    {
+        const uint64_t Packed = GCaptureStats.load(std::memory_order_relaxed);
+        OutUnlit = uint32_t(Packed >> 32);
+        OutTotal = uint32_t((Packed >> 1) & 0x7fffffffu);
+        bOutBusy = (Packed & 1u) != 0;
     }
 
     namespace

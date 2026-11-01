@@ -397,6 +397,24 @@ budget fills the next one wanting faces, so a room is ready (and relightable)
 before the camera gets there. Four volumes' states are kept, the least
 recently used dropped, so going back to a room costs nothing.
 
+**Capture warm-up** (`[Rendering] CaptureWarmup`, off; `CaptureWarmupBudgetMs`,
+50; GameSession's `[LevelTransition] WarmupSeconds`, 15). A volume lights only
+once every probe has been drawn, so a level would show its first room unlit
+for the length of a raster round. While `CaptureWarmup` is on, the captures
+spend `CaptureWarmupBudgetMs` a frame instead of `CaptureBudgetMs`. After a
+level transition's `RevealFrames` the loading card stays up until the
+renderer has drawn three frames of the new level (its stats are then the new
+level's); if the nearest volume still has probes to draw or any capture wants
+work -- the volume's second round, the background volumes', the reflection
+probes' -- the transition turns `CaptureWarmup` on and holds the World still
+(neither it, the mode nor the input filters tick) until they are done or
+`WarmupSeconds` have passed, and logs `[Level] warm-up settled after N s` (or
+`timed out`). A level with nothing to fill only keeps the card those few
+frames longer; a renderer that is not running passes straight
+through; `WarmupSeconds` 0 turns it off. `RenderStats::GIProbesUnlit`,
+`GIProbesTotal` and `bCapturesBusy` report the captures' state to anything
+else that wants to wait on them.
+
 **`[Rendering] CaptureLog`** logs, about once a second, what the captures did
 (faces, relit probes, the unit costs, the active volume's progress), and when
 a volume converges, how long after its last change.
@@ -407,10 +425,13 @@ a volume converges, how long after its last change.
 - The minimum progress of one face a frame exceeds the budget where one face
   costs more than it (a 256 x 256 reflection probe face in a dense level).
 - A GI Volume's first fill is still a raster round: in L2's dense rooms a
-  face is 150-600 draws, 1.5-3 ms of render-thread time, so 264 probes take
-  about 50 s at 2 ms a frame (the volume lights only once it is done; the
-  reflection probes light meanwhile). The background fill hides it for the
-  rooms after the first.
+  face is 150-600 draws and 0.4-2 ms of GPU, so at the 2 ms budget a volume
+  takes long to light (measured cold, RelWithDebInfo, Arc B390, 2560 x 1440:
+  L2's 264-probe core 88 s, L1's 1125-probe plaza volume 120 s, 50 s at
+  300 probes). At the warm-up budget (50 ms) the same volumes light in
+  10.4 s, 11.4 s and 4.1 s, which is what the loading card waits. A level
+  started without a transition (`-Game.StartLevel`) still fills in view; the
+  background fill hides it for the rooms after the first.
 - Relighting is Lambert diffuse with the default model's specular, no ambient
   occlusion or wetness; dynamic geometry is in neither the raster captures
   nor the relight (GICaptureStaticOnly).

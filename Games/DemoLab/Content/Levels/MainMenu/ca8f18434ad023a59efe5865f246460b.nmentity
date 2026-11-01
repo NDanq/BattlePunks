@@ -2,7 +2,7 @@
 <Entity Guid="ca8f18434ad023a59efe5865f246460b" Name="GI_Volume">
   <Component Type="GI Volume" Version="1">
       <Extent X="2200" Y="600" Z="1300" />
-    <ProbeSpacing Value="300" />
+    <ProbeSpacing Value="450" />
     <Intensity Value="1" />
     <Enabled Value="true" />
   </Component>

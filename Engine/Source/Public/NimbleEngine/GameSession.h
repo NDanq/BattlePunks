@@ -495,10 +495,18 @@ namespace NimbleEngine
         void OpenTransitionCard();
         void CloseTransitionCard();
         void EndTransition();
+        /* The reveal's warm-up ([LevelTransition] WarmupSeconds): the card held, the World still,
+         * while the renderer's captures fill at their warm-up budget; false when it is over. */
+        bool UpdateTransitionWarmup(float InDeltaSeconds);
+        void SetCaptureWarmup(bool bInOn);
         uint8_t     TransitionStage  = 0;
         float       TransitionTime   = 0.0f;
         float       TransitionFade   = 0.0f;
         int32_t     TransitionFrames = 0;
+        bool        bTransitionWarming    = false;
+        float       TransitionWarmupTime  = 0.0f;
+        int32_t     TransitionWarmupFrames = 0;
+        uint64_t    TransitionWarmupStart  = 0;   // the renderer's FramesRendered when the level loaded
         ILevel*     TransitionLevel  = nullptr;
         LevelTravel TransitionTravel;
         std::string TransitionCard;   // the open card's document path; "" none

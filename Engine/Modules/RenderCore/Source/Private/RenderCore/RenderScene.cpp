@@ -70,6 +70,18 @@ NIMBLE_CONFIG_FLOAT(GRenderGICaptureSpacings, "Rendering", "GICaptureSpacings", 
 NIMBLE_CONFIG_BOOL(GRenderStaticCaptures, "Rendering", "StaticCaptures", true, nullptr);
 NIMBLE_CONFIG_FLOAT(GRenderCaptureSunStep, "Rendering", "CaptureSunStepDegrees", 1.0f, nullptr);
 NIMBLE_CONFIG_INT(GRenderGIConvergeRounds, "Rendering", "GIConvergeRounds", 2, nullptr);
+/* CAPTURE WARM-UP (GLOBAL_ILLUMINATION.md, "Capture warm-up"): while CaptureWarmup is on -- a loading
+ * screen up, nothing of the scene on screen (GameSession's [LevelTransition] WarmupSeconds sets it) --
+ * the captures may spend CaptureWarmupBudgetMs a frame instead, so the GI Volumes' first rounds and the
+ * reflection probes are done before the level shows. */
+/* RESOLUTION SCALE (RENDERPIPELINE.md, "Resolution scale"): each view's scene drawn at this fraction of
+ * its viewport, each axis (0.5 to 1), then upscaled into the window's composite (Catmull-Rom,
+ * ViewTarget.fsh) before the UI, which stays sharp. 1 draws at the viewport's size, as before. */
+/* Local lights' shadow views cull their casters by their frustum's planes (off: by its bounding box, as before). */
+NIMBLE_CONFIG_BOOL(GRenderShadowFrustumCulling, "Rendering", "ShadowFrustumCulling", true, nullptr);
+NIMBLE_CONFIG_FLOAT(GRenderResolutionScale, "Rendering", "ResolutionScale", 1.0f, nullptr);
+NIMBLE_CONFIG_BOOL(GRenderCaptureWarmup, "Rendering", "CaptureWarmup", false, nullptr);
+NIMBLE_CONFIG_FLOAT(GRenderCaptureWarmupBudgetMs, "Rendering", "CaptureWarmupBudgetMs", 50.0f, nullptr);
 /* RELIGHTING (GLOBAL_ILLUMINATION.md, "Relighting"): a GI Volume keeps what its probes' faces saw, and
  * once every probe's is kept and its static geometry has not changed since, a lighting change lights the
  * probes again from it (DDGIRelight.fsh) -- many a frame -- instead of drawing the scene again. */
@@ -673,6 +685,12 @@ namespace RenderCore
                         {
                             continue;
                         }
+                        /* A local light's face or cone: its frustum, not the box round it (a point light's
+                         * six faces each saw about half the casters in its reach). */
+                        if(!bSunView && GRenderShadowFrustumCulling.GetBool() && !InContext.ShadowViewSees(ViewIndex, Bounds))
+                        {
+                            continue;
+                        }
                     }
                     DrawCaster(Proxy, ViewIndex);
                 }
@@ -1202,7 +1220,9 @@ namespace RenderCore
          */
         void UpdateCaptures(RenderContext& InContext)
         {
-            const float BudgetMs = GRenderCaptureBudgetMs.GetFloat();
+            const float NormalMs = GRenderCaptureBudgetMs.GetFloat();
+            const float BudgetMs = NormalMs > 0.0f && GRenderCaptureWarmup.GetBool()
+                                 ? std::max(NormalMs, GRenderCaptureWarmupBudgetMs.GetFloat()) : NormalMs;
             bBudgeted            = BudgetMs > 0.0f;
             FrameAllowance       = bBudgeted ? Budget.GetAllowance(BudgetMs) : 0.0f;
             FrameUnits           = 0.0f;
@@ -1260,6 +1280,11 @@ namespace RenderCore
                 else if(FrameRelit > 0)     { RelightBudget.MeasuredCpu(float(FrameRelit), float(FrameCaptureCpuMs)); }
             }
             if(GRenderCaptureLog.GetBool()) { LogCaptures(); }
+            if(bReportsStats)
+            {
+                const uint32_t Unlit = GIActive && !GIActive->bReady ? GITotal - std::min(GIActive->Updated, GITotal) : 0u;
+                SetCaptureStats(Unlit, GIActive ? GITotal : 0u, bGIWanted || GIBackground != nullptr || Probe >= 0);
+            }
         }
 
         /* The sky block when the sky changed, then which block holds each probe in view and which
@@ -2097,17 +2122,22 @@ namespace RenderCore
         /* Created on first use and resized with the viewport -- see Impl's
          * own comment on why a scene owns these at all. Early-outs on every
          * frame whose viewport has not changed, which is nearly all of them. */
+        /* [Rendering] ResolutionScale: the views' targets that much smaller, the composite at full size. */
+        const double Scale  = std::clamp(double(GRenderResolutionScale.GetFloat()), 0.5, 1.0);
+        const bool   bScaled = Scale < 0.999;
         for(uint32_t Index = 0; Index < ViewCount; ++Index)
         {
             SceneViewState& View = P->Views[Index];
             if(View.View.ViewportPixels.Width > 0 && View.View.ViewportPixels.Height > 0)
             {
-                View.Targets.Allocate(uint(View.View.ViewportPixels.Width), uint(View.View.ViewportPixels.Height));
+                View.Targets.Allocate(uint(std::max<long>(1, std::lround(View.View.ViewportPixels.Width * Scale))),
+                                      uint(std::max<long>(1, std::lround(View.View.ViewportPixels.Height * Scale))));
             }
         }
-        if(bSplit && P->WindowPixels.Width > 0 && P->WindowPixels.Height > 0)
+        const EngineCore::Size CompositePixels = bSplit ? P->WindowPixels : Main.View.ViewportPixels;
+        if((bSplit || bScaled) && CompositePixels.Width > 0 && CompositePixels.Height > 0)
         {
-            const uint Width = uint(P->WindowPixels.Width), Height = uint(P->WindowPixels.Height);
+            const uint Width = uint(CompositePixels.Width), Height = uint(CompositePixels.Height);
             if(!P->Composite)
             {
                 P->Composite = GDICreateRenderTarget("RenderCore.Scene.Composite", Width, Height);
@@ -2322,6 +2352,15 @@ namespace RenderCore
             {
                 InContext.CompositeViews(P->Composite, Sources, Rects, ViewCount);
             }
+            Output       = P->Composite;
+            OutputWidth  = P->Composite->GetWidth();
+            OutputHeight = P->Composite->GetHeight();
+        }
+        else if(bScaled && P->Composite && Output)
+        {
+            /* One view drawn smaller: upscaled to the viewport, the UI drawn over that at full size. */
+            const RenderViewRect Rect = { 0, 0, Main.View.ViewportPixels.Width, Main.View.ViewportPixels.Height };
+            InContext.CompositeViews(P->Composite, &Output, &Rect, 1);
             Output       = P->Composite;
             OutputWidth  = P->Composite->GetWidth();
             OutputHeight = P->Composite->GetHeight();

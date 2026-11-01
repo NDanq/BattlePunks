@@ -532,6 +532,9 @@ namespace RenderCore
         const GameCore::AABB& GetShadowViewBounds(uint32_t InView) const;
         int32_t               GetShadowViewInset(uint32_t InView) const;
         bool                  IsSunShadowView(uint32_t InView) const;
+        /* Whether InBounds is inside shadow view InView's frustum (its six planes; a point light's
+         * cube face sees far less than its bounding box); true for an unknown view. */
+        bool                  ShadowViewSees(uint32_t InView, const GameCore::AABB& InBounds) const;
         void                  SetShadowCasterView(int32_t InView);
         /* InClearBottom: the background is a gradient, InClearColor at the
          * top to it at the bottom (ClearGradient.fsh), under everything.

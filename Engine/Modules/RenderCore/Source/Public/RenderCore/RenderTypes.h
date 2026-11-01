@@ -338,6 +338,15 @@ namespace RenderCore
         uint64_t ParallelPasses              = 0;
 
         TextureStreamingStats TextureStreaming;
+
+        /* The captures (GLOBAL_ILLUMINATION.md, "Capture warm-up"), as the reporting scene's last
+         * frame left them: the probes of the nearest GI Volume (GIProbesTotal) it has still to draw
+         * before it lights at all (0 once it does, or without a volume), and whether any capture --
+         * that volume's faces or relights, a background volume's fill, a reflection probe -- still
+         * wanted work. A loading screen can hold until it settles (GameSession's warm-up). */
+        uint32_t GIProbesUnlit = 0;
+        uint32_t GIProbesTotal = 0;
+        bool     bCapturesBusy = false;
     };
 }
 

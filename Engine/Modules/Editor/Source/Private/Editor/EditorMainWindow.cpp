@@ -1694,6 +1694,37 @@ void EditorMainWindow::RegisterConsoleCommands()
         Camera.AddYawPitch(InArgs.value(3).toFloat(), InArgs.value(4).toFloat());
     });
 
+    /* A fixed render size for a scripted measurement (--command "after N viewport 2560 1440"):
+     * the viewport is pinned to that many pixels and the window grows round it. Under
+     * QT_QPA_PLATFORM=offscreen nothing appears on the desktop, whatever the size. */
+    Console.Register(QStringLiteral("viewport"), QStringLiteral("[<width> <height> | free]"),
+                     QStringLiteral("Pin the viewport to a render size in pixels, or free it; with nothing, print its size"),
+                     [this](const QStringList& InArgs)
+    {
+        const qreal Ratio = Viewport->devicePixelRatioF();
+        if(InArgs.size() == 1 && InArgs.front().compare(QStringLiteral("free"), Qt::CaseInsensitive) == 0)
+        {
+            Viewport->setMinimumSize(0, 0);
+            Viewport->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+        }
+        else if(InArgs.size() >= 2)
+        {
+            const int Width  = InArgs[0].toInt();
+            const int Height = InArgs[1].toInt();
+            if(Width < 16 || Height < 16)
+            {
+                Console.PrintError(QStringLiteral("Usage: viewport [<width> <height> | free]"));
+                return;
+            }
+            Viewport->setFixedSize(int(std::lround(Width / Ratio)), int(std::lround(Height / Ratio)));
+            resize(size().expandedTo(minimumSizeHint()));
+        }
+        const QString Line = QStringLiteral("viewport %1x%2").arg(int(std::lround(Viewport->width() * Ratio)))
+                                                              .arg(int(std::lround(Viewport->height() * Ratio)));
+        Console.Print(Line);
+        CORE_LOG("[Editor] " + Line.toStdString())
+    });
+
     Console.Register(QStringLiteral("frame"), QStringLiteral("[all]"),
                      QStringLiteral("Frame the selection in the viewport, or the whole scene"),
                      [this](const QStringList& InArgs)
@@ -3063,13 +3094,33 @@ void EditorMainWindow::RegisterConsoleCommands()
             Console.PrintError(QStringLiteral("The renderer is not running"));
             return;
         }
-        Console.Print(QStringLiteral("%1: %2 frames rendered, %3 proxies live; frame %4 ms, game %5 ms, render %6 ms")
-                      .arg(QString::fromLatin1(BackendName(Backend)))
-                      .arg(Stats.FramesRendered)
-                      .arg(Stats.ProxiesLive)
-                      .arg(double(Stats.FrameMs), 0, 'f', 2)
-                      .arg(double(Stats.GameThreadMs), 0, 'f', 2)
-                      .arg(double(Stats.RenderThreadMs), 0, 'f', 2));
+        const QString Counters = QStringLiteral("%1: %2 frames rendered, %3 proxies live; frame %4 ms, game %5 ms, render %6 ms, "
+                                                "wait %7 ms, present %8 ms, idle %9 ms")
+                                 .arg(QString::fromLatin1(BackendName(Backend)))
+                                 .arg(Stats.FramesRendered)
+                                 .arg(Stats.ProxiesLive)
+                                 .arg(double(Stats.FrameMs), 0, 'f', 2)
+                                 .arg(double(Stats.GameThreadMs), 0, 'f', 2)
+                                 .arg(double(Stats.RenderThreadMs), 0, 'f', 2)
+                                 .arg(double(Stats.WaitMs), 0, 'f', 2)
+                                 .arg(double(Stats.PresentMs), 0, 'f', 2)
+                                 .arg(double(Stats.IdleMs), 0, 'f', 2);
+        Console.Print(Counters);
+        CORE_LOG("[Editor] stats " + Counters.toStdString())
+        /* The render thread's side of each span, and its draws. */
+        QStringList Cpu;
+        for(uint32_t Timer = 0; Timer < RenderCore::RGT_Count; ++Timer)
+        {
+            if(Stats.CpuMs[Timer] < 0.0f) { continue; }
+            Cpu << QStringLiteral("%1 %2/%3").arg(QString::fromLatin1(RenderCore::GetRenderGpuTimerName(RenderCore::ERenderGpuTimer(Timer))))
+                                              .arg(double(Stats.CpuMs[Timer]), 0, 'f', 3).arg(Stats.StageDraws[Timer]);
+        }
+        if(!Cpu.isEmpty())
+        {
+            const QString Line = QStringLiteral("CPU ms/draws: Queue %1, ").arg(double(Stats.QueueCpuMs), 0, 'f', 3) + Cpu.join(QStringLiteral(", "));
+            Console.Print(Line);
+            CORE_LOG("[Editor] stats " + Line.toStdString())
+        }
         /* With "stat frame" on: each span's GPU time, also written to the run log so a
          * scripted session (--command) can measure a change. */
         QStringList Spans;
