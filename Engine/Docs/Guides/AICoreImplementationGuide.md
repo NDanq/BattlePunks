@@ -461,10 +461,12 @@ There is nothing AI-specific to replicate.
   AI Debugger has nothing to show ("This Play has no AI here"). Debug from a
   listen server or a standalone Play.
 
-The Steampunk PvP retrofit (`WorldsLabPvP.cpp`) is the networked example.
-Bots on a dedicated server, `PvpBots=3`, run `PvpBot.nmbt`. Its `AiBotFilter`
-falls back to the old waypoint bots when no brain runs, which is the case on
-a build without AICore.
+The networked example was the Steampunk PvP retrofit, removed from WorldsLab
+with its world when Demo Lab replaced it (`git show
+61af1eec:Games/WorldsLab/WorldsLabPvP.cpp`): bots on a dedicated server ran
+`PvpBot.nmbt`, and its `AiBotFilter` fell back to waypoint bots when no brain
+ran. Demo Lab's Watchmen and Brutes (`Games/DemoLab/Source/AI`) are the
+single-player example in the tree.
 
 ---
 

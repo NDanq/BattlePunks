@@ -781,7 +781,8 @@ off ignores Sky passes (an A/B switch). The capture is in "stat frame"'s
 Captures span.
 
 Measured (2026-10-31, Intel Arc B390, Vulkan, RelWithDebInfo editor Play,
-WorldsLab DayCycle with TimeOfDay, medians of 18 half-second samples over three
+WorldsLab's DayCycle world with TimeOfDay -- since removed; Demo Lab's L1 and
+main menu use the same sky -- medians of 18 half-second samples over three
 interleaved launches, spread about 0.05 ms): a capture of the TimeOfDay sky
 costs about 0.6 ms GPU and 0.3 ms render-thread CPU in the frame it runs
 (Captures 0.64 ms captured every frame, against 0.02 ms between captures). At

@@ -237,8 +237,9 @@ so editor previews animate), and the last frame's length.
 plugin sets it): Direction (unit, the way it blows), Strength (1 the breeze
 foliage is authored for, 0 calm) and Vector (the two multiplied). A World with
 no weather gets a breeze of 1 toward (0.8, 0, 0.6), so a material that sways
-along Wind looks the same with or without the plugin. WorldsLab's foliage
-(`Tools/Terrain/make_foliage_materials.py`) and GrassLab's grass use it.
+along Wind looks the same with or without the plugin. Demo Lab's L1 foliage
+(`Games/DemoLab/Tools/Art/l1_foliage/make_l1_foliage_materials.py`) and
+WorldsLab's GrassLab grass use it.
 
 ## World Position Offset
 

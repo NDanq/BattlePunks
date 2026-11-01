@@ -47,8 +47,7 @@
  *
  * The shooter moves by RangeMove, an avatar simulation: a third-person walker
  * on the world's physics, made of raycasts (Jolt has no character controller
- * here). Steampunk PvP's fighters walk with it too (WorldsLabPvP.cpp); what
- * it keeps between frames is the avatar's RangeMover component
+ * here). What it keeps between frames is the avatar's RangeMover component
  * (WorldsLabWalker.h), so it predicts and replays over the network --
  *
  *   ground   rays down round the feet find the highest walkable surface
@@ -97,7 +96,6 @@ NIMBLE_DEFINE_INPUT_MAP(Range)
     Map.Action("Reload",  "R, Gamepad.West");
     Map.Action("Holster", "H, 1, Gamepad.North");
     Map.Action("Pause",   "Escape, Gamepad.Start");
-    Map.Action("Scores",  "Tab, Gamepad.Back");   // Steampunk PvP's scoreboard, held
 
     Map.Axis("MoveForward", "W, Up, -S, -Down, -Gamepad.LeftY");
     Map.Axis("MoveRight",   "D, Right, -A, -Left, Gamepad.LeftX");
@@ -175,7 +173,7 @@ namespace
     struct Vec { double X, Y, Z; };
 
     /* What the walker stands on and slides along: every layer but 4, where
-     * Steampunk PvP's fighters fall as ragdolls. A ragdoll is simulated only
+     * ragdolls go. A ragdoll is simulated only
      * on a process that draws it -- not on a dedicated server -- so a client
      * walking into one would step where the server does not, and prediction
      * would part from it. */
@@ -467,9 +465,9 @@ GAMECORE_DEFINE_COMPONENT_SERIALIZER(RangeMoverComponent, 1)
 
 /* Quantized (ComponentReplication.h); the avatar system snaps them after
  * every step on both ends, so prediction stays exact. The view and the
- * velocity are Smooth() for everyone else: another fighter's spine pitch and
- * stride (Steampunk PvP's anim state follows them) blend between updates as
- * its Transform does. */
+ * velocity are Smooth() for everyone else: another player's spine pitch and
+ * stride (the anim state follows them) blend between updates as its
+ * Transform does. */
 GAMECORE_DEFINE_COMPONENT_REPLICATION(RangeMoverComponent)
 {
     Rep.Field("BodyYaw",   &RangeMoverComponent::BodyYaw).Angles().Smooth();
