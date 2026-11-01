@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="b7297735a8227c09285097b3a4437bb1" Name="CineShaft_Lamp_3">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="196" B="128" A="255" />
+    <Intensity Value="14" />
+    <Radius Value="650" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="6" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="2260" Y="-1120" Z="1610" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

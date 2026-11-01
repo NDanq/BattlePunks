@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="520c2cc64f779ee63ba0e8b05131510b" Name="Calm_CineCam_C3_2">
+  <Component Type="Camera" Version="1">
+    <ZNear Value="5" />
+    <ZFar Value="80000" />
+    <Active Value="false" />
+    <Projection Value="1" />
+    <FovY Value="40" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-765" Y="150" Z="-1895" />
+      <Rotation X="22.6891" Y="-43.768" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

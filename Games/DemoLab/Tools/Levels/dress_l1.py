@@ -573,12 +573,16 @@ def airship(lv):
     """The airship that brought the player, hanging off the pier's end, nose to the island (+X), its
     propellers turning; C1's real flight comes later. Returns its parts' names for the ambient track."""
     x0, z0, x1, z1 = D['pier']
-    hull = mesh(lv, 'Airship', AIRSHIP + 'Airship_Hull.nmmesh', (x0 - 1400, 1500, (z0 + z1) / 2 - 300), 0, static=False)
+    # C1 flies the rig in (Tools/Cinematics); the ambient loop bobs the hull on it.
+    lv.entity('Airship_Flight', [lv.transform((x0 - 1400, 0, (z0 + z1) / 2 - 300))])
+    hull = mesh(lv, 'Airship', AIRSHIP + 'Airship_Hull.nmmesh', (0, 1500, 0), 0, parent='Airship_Flight', static=False)
     mesh(lv, 'Airship_Envelope', AIRSHIP + 'Airship_Envelope.nmmesh', (0, 0, 0), parent=hull, static=False)
     props = {}
     for part, off in (('PropLeft', (-195, 220, -400)), ('PropRight', (-195, 220, 400)), ('PropTail', (-1860, 900, 0))):
         props[part] = mesh(lv, f'Airship_{part}', AIRSHIP + f'Airship_{part}.nmmesh', off, parent=hull, static=False)
     point_light(lv, 'Airship_Lamp', (x0 - 1400, 1450, (z0 + z1) / 2 - 300), LAMP_COLOUR, 10, 1500, source=10)
+    patch(lv, 'Airship_Lamp', lambda t: set_transform(t.replace('<Entity ', f'<Entity Parent="{lv.guid("Airship_Flight")}" ', 1),
+                                                      (0, 1450, 0), (0, 0, 0), (1, 1, 1)))
     return hull, props
 
 
@@ -691,14 +695,8 @@ def dress(lv):
     # --- The plaza, the facade, the door, the cliff --------------------------------------------
     parts, (bx, by, fz) = facade(lv)
     patch(lv, 'BlastDoor', lambda t: set_field(t, 'Visible', 'false'))
-    # C2: the cog turns once (frames 20-58), then the leaves part (60-130), the cog riding with the left one.
-    add_to_sequence('C2_BlastDoor', binding('cog', lv.guid(parts['Cog']), parts['Cog'],
-                                            [channel('Rotation.Z', [(0, 0), (20, 0), (58, 360)]),
-                                             channel('Position.X', [(0, bx), (60, bx), (130, bx - 210)])])
-                    + binding('leafl', lv.guid(parts['LeafL']), parts['LeafL'],
-                              [channel('Position.X', [(0, bx), (60, bx), (130, bx - 210)])])
-                    + binding('leafr', lv.guid(parts['LeafR']), parts['LeafR'],
-                              [channel('Position.X', [(0, bx), (60, bx), (130, bx + 210)])]))
+    # C2 turns the cog once, then parts the leaves, the cog riding with the left one (Tools/Cinematics).
+    assert parts == {'LeafL': 'BlastDoor_LeafL', 'LeafR': 'BlastDoor_LeafR', 'Cog': 'BlastDoor_Cog'}
     plaza_props(lv, toggle='L1.Plaza')
     cliff_pieces(lv)
 

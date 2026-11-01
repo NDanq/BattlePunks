@@ -2,7 +2,8 @@
 """
 Writes Demo Lab's grey-box worlds -- Content/Levels/{MainMenu,L1_Foothills,
 L2_Laboratory,L3_Core}.nmworld, each with its folder of .nmentity files -- and
-the placeholder cinematics, Content/Cinematics/*.nmseq.
+the cinematics, Content/Cinematics/*.nmseq (the Sequence Players here; the
+sequences themselves from Tools/Cinematics/make_cinematics.py).
 
     python3 Tools/Levels/make_levels.py        (from Games/DemoLab)
 
@@ -20,6 +21,8 @@ import hashlib, math, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import layout as L  # noqa: E402
 import dress_l1  # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'Cinematics'))
+import make_cinematics  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 LEVELS = os.path.join(ROOT, 'Content', 'Levels')
@@ -530,6 +533,7 @@ def make_l1():
                  subtitles=[(15, 120, 'Pilot', 'Steam pressure is up. That door has not opened in years.')],
                  events=[(60, 'Lab.Signal', 'L1.BlastDoor', 'true'), (149, 'Lab.Signal', 'L1.Done', 'true')])
     dress_l1.dress(lv)
+    make_cinematics.build(lv)   # the cutscenes and their cameras (Tools/Cinematics/make_cinematics.py)
     lv.write()
 
 
@@ -676,6 +680,7 @@ def make_l2():
     lv.routes({k: v for k, v in d['routes'].items() if not k.startswith('L2A_')}, prefix='Calm_')
     lv.routes({k: v for k, v in d['routes'].items() if k.startswith('L2A_')}, prefix='Alarm_')
     __import__('dress_l2_laboratory').dress(lv, sys.modules[__name__])   # the art pass (Tools/Levels/dress_l2_laboratory.py)
+    make_cinematics.build(lv)   # the cutscenes and their cameras (Tools/Cinematics/make_cinematics.py)
     lv.write()
 
 
@@ -760,6 +765,7 @@ def make_l3():
     lv.nav_volume((1200, 300, -2300), (3200, 400, 4300))
     lv.routes(d['routes'])
     __import__('dress_l3').dress(lv)   # M5: the shaft, the reactor, the alarm (Tools/Levels/dress_l3.py)
+    make_cinematics.build(lv)   # the cutscenes and their cameras (Tools/Cinematics/make_cinematics.py)
     lv.write()
 
 
