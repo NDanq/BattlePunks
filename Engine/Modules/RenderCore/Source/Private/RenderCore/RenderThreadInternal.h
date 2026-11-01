@@ -55,6 +55,10 @@ namespace RenderCore
     void SetOcclusionStats(uint64_t InOccluded, uint64_t InQueries);
     void GetOcclusionStats(uint64_t& OutOccluded, uint64_t& OutQueries);
 
+    /* The reporting scene's captures (RenderStats::GIProbesUnlit, GIProbesTotal, bCapturesBusy). */
+    void SetCaptureStats(uint32_t InUnlit, uint32_t InTotal, bool bInBusy);
+    void GetCaptureStats(uint32_t& OutUnlit, uint32_t& OutTotal, bool& bOutBusy);
+
     /* "stat unit": Renderer::EndFrame publishes the averaged times and
      * whether to show them (Stats.Unit); RenderScene::Render draws them and
      * RenderThread::GetStats copies them into RenderStats. */

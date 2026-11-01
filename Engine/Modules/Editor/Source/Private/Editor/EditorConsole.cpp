@@ -8,6 +8,7 @@
 #include <QProcess>
 
 #include "Public/Core/CoreConfig.h"
+#include "Public/Core/CoreLog.h"
 #include "Public/Editor/EditorLog.h"
 
 namespace
@@ -63,8 +64,14 @@ EditorConsole::EditorConsole()
         Print(Lines.join(QLatin1Char('\n')));
     });
 
+    /* Also into the run log, so a scripted session (--command) can mark where it is between "stats" lines. */
     Register(QStringLiteral("echo"), QStringLiteral("<text>"), QStringLiteral("Print the text"),
-             [this](const QStringList& InArgs) { Print(InArgs.join(QLatin1Char(' '))); });
+             [this](const QStringList& InArgs)
+    {
+        const QString Text = InArgs.join(QLatin1Char(' '));
+        Print(Text);
+        CORE_LOG("[Editor] echo " + Text.toStdString())
+    });
 
     Register(QStringLiteral("clear"), QString(), QStringLiteral("Empty the console"),
              [](const QStringList&)
