@@ -216,7 +216,7 @@ def build_terrain():
     # Paint.
     gzr, gxr = np.gradient(h, SP)
     slope = np.hypot(gxr, gzr)
-    rock = np.maximum(ss(0.55, 0.95, slope), np.clip(tc * 1.4, 0, 1))
+    rock = np.maximum(ss(0.8, 1.2, slope), np.clip(tc * (1 - ss(0.3, 0.6, 1 - amp_c)) * 1.4, 0, 1))
     rock = np.maximum(rock, ss(150, 420, talus) * 0.85)
     sand = (1 - ss(40, 120, h - SEA - 120)) * (1 - rock)
     patchy = ss(0.25, 0.6, fbm(wx / 900.0 + 3, wz / 900.0 + 9, 4, 21))
@@ -480,8 +480,9 @@ def facade(lv, door_parts=True):
     return parts, (bx, by, fz)
 
 
-def cliff_pieces(lv, x_range=(-300, 7700), skip=(1900, 5500)):
-    """Kit cliff pieces along the cliff line, two rows, sunk into the terrain."""
+def cliff_pieces(lv, x_range=(-3400, 9400), skip=(1900, 5500)):
+    """Kit cliff pieces along the cliff line, sunk into the terrain: as many rows as the face is tall
+    there (it fades out east and west), so no stretched terrain face shows."""
     rng = np.random.default_rng(5)
     x = x_range[0]
     i = 0
@@ -489,12 +490,16 @@ def cliff_pieces(lv, x_range=(-300, 7700), skip=(1900, 5500)):
         if not (skip[0] < x < skip[1]):
             zc = float(cliff_line(np.array([x]))[0])
             base = height_at(x, zc - 150)
-            for row, (m, dy) in enumerate((('Cliff_A', -150), ('Cliff_B', 700), ('Cliff_C', 1350))):
-                if row == 2 and rng.random() < 0.4:
+            tall = height_at(x, zc + 350) - base
+            for row, (m, dy) in enumerate((('Cliff_A', -150), ('Cliff_B', 700), ('Cliff_C', 1350), ('Cliff_B', 1900))):
+                if tall < 250 or dy > tall - 300 and row > 0:
                     continue
                 pick = m if rng.random() < 0.6 else ('Cliff_A', 'Cliff_B', 'Cliff_C')[int(rng.integers(0, 3))]
                 yaw = float(rng.uniform(-18, 18))
-                mesh(lv, f'Cliff_{i}', K + pick + '.nmmesh', (x + rng.uniform(-150, 150), base + dy, zc + 40 + row * 60),
+                px = x + float(rng.uniform(-150, 150))
+                if row > 0 and base + dy > min(height_at(px - 300, zc + 450), height_at(px + 300, zc + 450)) - 250:
+                    continue
+                mesh(lv, f'Cliff_{i}', K + pick + '.nmmesh', (px, base + dy, zc + 40 + row * 60),
                      yaw, scale=float(rng.uniform(0.9, 1.25)))
                 i += 1
         x += float(rng.uniform(650, 850))
@@ -515,22 +520,80 @@ def plaza_props(lv, toggle=None):
         point_light(lv, f'PlazaLamp_{i}_Light', (lx, top + 385, z), LAMP_COLOUR, 14, 1300, source=6)
     for i, dx in enumerate((-900, 900)):
         spot_light(lv, f'Flood_{i}', (bx + dx * 2.2, top + 900, bz - 1500), (bx + dx * 0.25, top + 350, bz),
-                   (255, 205, 150), 60, 4000, 16, 32, toggle=toggle)
+                   (255, 205, 150), 60, 4000, 16, 32, toggle=toggle, shadows=False)
     point_light(lv, 'Door_Glow', (bx, top + 560, bz - 200), (255, 150, 80), 10, 700, toggle=toggle)
     for i, (x, z) in enumerate(((px0 - 300, pz1 - 200), (px1 + 350, pz1 - 300), (px0 + 200, pz1 + 50), (px1 - 100, pz1 + 80))):
         mesh(lv, f'PlazaRock_{i}', K + ('Rock_E' if i < 2 else 'Rock_C') + '.nmmesh', (x, height_at(x, z) - 15, z), i * 67.0,
              collide=True)
 
 
+def paving(lv):
+    """The plaza paved: the L2 kit's 4 m floor slab in StoneBlocks, laid by a Box spawner (one
+    instanced draw, no collision needed: it lies on the flat terrain)."""
+    px0, pz0, px1, pz1, top = D['plaza']
+    cx, cz = (px0 + px1) / 2, (pz0 + pz1 + 400) / 2
+    pave = spawner_comp(lv, {'Source': 2, 'Project': 0, 'Spacing': 400, 'Jitter': 0, 'RandomYaw': False,
+                             'ScaleMin': 1, 'ScaleMax': 1, 'ColorVariation': 0.12, 'CellSize': 4000, 'LOD1Density': 1,
+                             'LOD2Density': 1, 'Seed': 2},
+                        [('Content/Meshes/L2/Floor.nmmesh', 1, 1, '')], box=((px1 - px0) / 2, 5, (pz1 + 400 - pz0) / 2))
+    pave = [re.sub(r'<Mesh0Material Value="" />', '<Mesh0Material Value="Content/Materials/Kit/StoneBlocks.material.nmgraph" />', line)
+            for line in pave]
+    lv.entity('Plaza_Paving', [pave, lv.transform((cx, top + 1, cz))])
+
+
+def rail_blockers(lv):
+    """Spawned instances have no collision: invisible walls along the guard rails' lines (both sides,
+    where the rails spawner puts rails) and a post at each lamp."""
+    hp = [D['road'][6], D['road'][10], D['road'][17]]
+    skip = lambda x, z: (inside(x, z, ZONES['Zone_Lowland']) or inside(x, z, ZONES['Zone_Plaza'])
+                         or inside(x, z, ZONES['Zone_Gate']) or any(math.hypot(x - a, z - c) < 650 for a, _, c in hp))
+    n = 0
+    for side in (1, -1):
+        pts = road_samples(400, side * (D['road_width'] / 2 + 40))
+        for (x0, z0, _, _), (x1, z1, _, _) in zip(pts, pts[1:]):
+            mx, mz = (x0 + x1) / 2, (z0 + z1) / 2
+            if skip(mx, mz):
+                continue
+            length = math.hypot(x1 - x0, z1 - z0)
+            yaw = math.degrees(math.atan2(x1 - x0, z1 - z0))
+            y = height_at(mx, mz)
+            lv.box(f'RailBlock_{n}', (mx, y + 60, mz), (20, 160, length + 10), yaw, visible=False)
+            n += 1
+    for i, (x, z, hx, hz) in enumerate(road_samples(1700, D['road_width'] / 2 + 110)):
+        if inside(x, z, ZONES['Zone_Plaza']) or inside(x, z, ZONES['Zone_Gate']):
+            continue
+        lv.box(f'LampBlock_{i}', (x, height_at(x, z) + 150, z), (40, 300, 40), visible=False)
+    return n
+
+
+AIRSHIP = 'Content/Meshes/Airship/'
+
+
+def airship(lv):
+    """The airship that brought the player, hanging off the pier's end, nose to the island (+X), its
+    propellers turning; C1's real flight comes later. Returns its parts' names for the ambient track."""
+    x0, z0, x1, z1 = D['pier']
+    hull = mesh(lv, 'Airship', AIRSHIP + 'Airship_Hull.nmmesh', (x0 - 1400, 1500, (z0 + z1) / 2 - 300), 0, static=False)
+    mesh(lv, 'Airship_Envelope', AIRSHIP + 'Airship_Envelope.nmmesh', (0, 0, 0), parent=hull, static=False)
+    props = {}
+    for part, off in (('PropLeft', (-195, 220, -400)), ('PropRight', (-195, 220, 400)), ('PropTail', (-1860, 900, 0))):
+        props[part] = mesh(lv, f'Airship_{part}', AIRSHIP + f'Airship_{part}.nmmesh', off, parent=hull, static=False)
+    point_light(lv, 'Airship_Lamp', (x0 - 1400, 1450, (z0 + z1) / 2 - 300), LAMP_COLOUR, 10, 1500, source=10)
+    return hull, props
+
+
 def post(lv, stack, gi_centre, gi_extent, probes):
     lv.entity('PostProcess', [lv.fields('Post Process', version=2, Stack=stack, Priority=0, Enabled=True,
                                         BlendDistance=0), lv.transform((0, 0, 0))])
-    lv.entity('GI_Volume', [lv.fields('GI Volume', Extent=gi_extent, ProbeSpacing=400, Intensity=1, Enabled=True),
+    # DDGI over the plaza and the road below it only (the open hillside takes the sky and SSGI).
+    lv.entity('GI_Volume', [lv.fields('GI Volume', Extent=gi_extent, ProbeSpacing=300, Intensity=1, Enabled=True),
                             lv.transform(gi_centre)])
+    # Probes captured once, on demand (Manual + Capture Now): the light does not move.
     for i, (p, r) in enumerate(probes):
         lv.entity(f'ReflectionProbe_{i}', [lv.fields('Reflection Probe', Radius=r, BoxExtent=(0, 0, 0), Intensity=1,
-                                                     Resolution=256, Frequency=2, Interval=1, NearClip=5, FarClip=40000,
-                                                     CaptureShadows=True, Enabled=True), lv.transform(p)])
+                                                     Resolution=256, Frequency=3, Interval=1, NearClip=5, FarClip=40000,
+                                                     CaptureShadows=True, CaptureNow=True, Enabled=True),
+                                           lv.transform(p)])
 
 
 # =============================================================================
@@ -661,9 +724,16 @@ def dress(lv):
     mesh(lv, 'SignalMast', K + 'SignalMast.nmmesh', (mx, my - 10, mz), 20, collide=True)
     anem = mesh(lv, 'SignalMast_Anemometer', K + 'SignalMast_Anemometer.nmmesh', (mx, my - 10 + 1320, mz), static=False)
     point_light(lv, 'SignalMast_Beacon', (mx, my + 1150, mz), (255, 60, 40), 12, 1500, source=10)
+    hull, props = airship(lv)
+    hy, hz = 1500, (D['pier'][1] + D['pier'][3]) / 2 - 300
     sequence_player(lv, 'L1_Ambient', 'Content/Cinematics/Ambient/L1_Ambient.nmseq', autoplay=True, loop=True)
-    write_sequence('Ambient/L1_Ambient', 60, binding('anem', lv.guid(anem), anem,
-                                             [channel('Rotation.Y', [(0, 0), (60, 360)], 'Linear')]))
+    # 8 s, looped: the anemometer a turn every 2 s, the propellers 8 a second, the airship bobbing.
+    body = binding('anem', lv.guid(anem), anem, [channel('Rotation.Y', [(0, 0), (240, 1440)], 'Linear')])
+    for k, (part, n) in enumerate(props.items()):
+        body += binding(f'prop{k}', lv.guid(n), n, [channel('Rotation.X', [(0, 0), (240, 23040)], 'Linear')])
+    body += binding('ship', lv.guid(hull), hull, [channel('Position.Y', [(0, hy), (120, hy + 45), (240, hy)]),
+                                                  channel('Rotation.Z', [(0, 0), (120, 1.5), (240, 0)])])
+    write_sequence('Ambient/L1_Ambient', 240, body)
     rng = np.random.default_rng(17)
     for i, (x, z) in enumerate(((-700, -1700), (-200, -1000), (200, -1650), (900, -500), (2300, 400), (4200, -200),
                                 (300, 1100), (-100, 2300), (4700, 1800), (5600, 2600), (5800, 4800), (1500, 4300),
@@ -672,14 +742,17 @@ def dress(lv):
         mesh(lv, f'Rock_{i}', K + m + '.nmmesh', (x, height_at(x, z) - 20, z), float(rng.uniform(0, 360)),
              collide=True, scale=float(rng.uniform(0.9, 1.4)))
 
-    # --- Plants ------------------------------------------------------------------------------
+    # --- Plants, the plaza's paving, the rails' blockers ----------------------------------------
     foliage(lv)
+    paving(lv)
+    blockers = rail_blockers(lv)
 
     # --- Light and air -----------------------------------------------------------------------
-    post(lv, 'Content/PostProcess/L1_Foothills.pp.nmgraph', (2000, 900, 2500), (6000, 1100, 6000),
+    post(lv, 'Content/PostProcess/L1_Foothills.pp.nmgraph', (3800, 1250, 5000), (2200, 600, 2100),
          [((-2400, 300, -1500), 4000), ((1800, 800, 1200), 4500), ((3700, 1500, 6000), 3500)])
     patch(lv, 'Weather', lambda t: set_field(set_field(t, 'MistDensity', 0.45), 'MistHeight', -60))
-    print(f'  {TERRAIN_FILE}: {RES}x{RES}, heights {lo:.0f}..{hi:.0f} cm; {len(shore)} foam strips')
+    print(f'  {TERRAIN_FILE}: {RES}x{RES}, heights {lo:.0f}..{hi:.0f} cm; {len(shore)} foam strips, '
+          f'{blockers} rail blockers')
 
 
 ZONES = {
@@ -702,24 +775,25 @@ def foliage(lv, menu=False):
     """The spruce forest, the meadow, the scree. Every spawner is named Foliage_* (the game scales
     their Density by the Foliage density setting)."""
     spruce = [(FOL + 'L1_Spruce.nmmesh', 1, 1, FOL + 'L1_Spruce_LOD1.nmmesh')]
-    forest = spawner_comp(lv, {'Source': 2, 'Project': 1, 'Spacing': 420, 'NoiseScale': 3800, 'NoiseThreshold': 0.32,
+    forest = spawner_comp(lv, {'Source': 2, 'Project': 1, 'Spacing': 520, 'NoiseScale': 3800, 'NoiseThreshold': 0.32,
                                'MaxSlope': 33, 'MinHeight': 120,
                                'ScaleMin': 0.75, 'ScaleMax': 1.5, 'Sink': 0.04, 'ColorVariation': 0.25,
-                               'CellSize': 4000, 'LODDistance': 3500, 'LOD1Density': 1, 'LOD2Density': 0.7,
+                               'CellSize': 1500, 'LODDistance': 1200, 'LOD1Density': 1, 'LOD2Density': 0.7,
                                'CullDistance': 30000, 'Seed': 5},
                           spruce, exclusions=['RoadClear', 'Zone_Plaza', 'Zone_Gate'], box=(4200, 4000, 2600))
     lv.entity('Foliage_Forest', [forest, lv.transform((-2300, 1000, 5400), (0, 12, 0))])
     far = spawner_comp(lv, {'Source': 2, 'Project': 1, 'Spacing': 700, 'Density': 0.8, 'NoiseScale': 6000,
                             'NoiseThreshold': 0.35, 'MaxSlope': 30, 'MinHeight': 200, 'ScaleMin': 0.9, 'ScaleMax': 1.6,
                             'Sink': 0.04, 'ColorVariation': 0.3, 'CellSize': 6000, 'LODDistance': 4000,
-                            'LOD1Density': 0.8, 'LOD2Density': 0.5, 'Seed': 8},
+                            'LOD1Density': 0.8, 'LOD2Density': 0.5, 'CastShadows': False, 'Seed': 8},
                        [(FOL + 'L1_Spruce_LOD1.nmmesh', 1, 1, FOL + 'L1_Spruce_LOD2.nmmesh')],
                        exclusions=['RoadClear', 'Zone_Plaza'], box=(8000, 5000, 7000))
     lv.entity('Foliage_FarWoods', [far, lv.transform((11000, 1500, 6000), (0, -10, 0))])
     high = spawner_comp(lv, {'Source': 2, 'Project': 1, 'Spacing': 650, 'Density': 0.85, 'NoiseScale': 5000,
-                             'NoiseThreshold': 0.3, 'MaxSlope': 32, 'MinHeight': 3000, 'ScaleMin': 0.9,
+                             'NoiseThreshold': 0.3, 'MaxSlope': 38, 'MinHeight': 1500, 'ScaleMin': 0.9,
                              'ScaleMax': 1.5, 'Sink': 0.04, 'ColorVariation': 0.3, 'CellSize': 6000,
-                             'LODDistance': 4000, 'LOD1Density': 0.8, 'LOD2Density': 0.5, 'Seed': 12},
+                             'LODDistance': 4000, 'LOD1Density': 0.8, 'LOD2Density': 0.5, 'CastShadows': False,
+                             'Seed': 12},
                         [(FOL + 'L1_Spruce_LOD1.nmmesh', 1, 1, FOL + 'L1_Spruce_LOD2.nmmesh')],
                         box=(10000, 5000, 4500))
     lv.entity('Foliage_Highland', [high, lv.transform((3500, 4000, 12500))])
@@ -799,12 +873,13 @@ def dress_menu(lv):
     ground(lv)
     facade(lv, door_parts=True)
     plaza_props(lv)
+    paving(lv)
     cliff_pieces(lv)
     exclusion_zones(lv)
     foliage(lv, menu=True)
     for i, (x, z) in enumerate(((2400, 4500), (5000, 4600))):
         point_light(lv, f'Menu_Fill_{i}', (x, height_at(x, z) + 600, z), (120, 140, 190), 4, 3000)
-    post(lv, 'Content/PostProcess/L1_Menu.pp.nmgraph', (3700, 1600, 6000), (3000, 800, 2500),
+    post(lv, 'Content/PostProcess/L1_Menu.pp.nmgraph', (3700, 1500, 6100), (2200, 600, 1300),
          [((3700, 1500, 6000), 3500)])
     patch(lv, 'Sun', lambda t: set_field(t, 'Hour', 18.2))
     lv.weather(mist=0.5, mist_height=1100, wind=1.0, wetness=0.2)

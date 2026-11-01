@@ -2,12 +2,12 @@
 <Entity Guid="e7ee57552f91021b046aa733621a1c31" Name="Cliff_13" Mobility="Static">
   <Component Type="Render" Version="7">
     <Visible Value="true" />
-    <Mesh Value="Content/Meshes/L1/Cliff_A.nmmesh" />
+    <Mesh Value="Content/Meshes/L1/Cliff_C.nmmesh" />
     <CastShadows Value="true" />
   </Component>
   <Component Type="Transform" Version="1">
-      <Position X="6550.26" Y="2487.89" Z="7123.38" />
-      <Rotation X="0" Y="-3.94348" Z="0" />
-      <Scale X="1.03317" Y="1.03317" Z="1.03317" />
+      <Position X="5839.73" Y="1547.9" Z="7510.6" />
+      <Rotation X="0" Y="15.876" Z="0" />
+      <Scale X="1.15329" Y="1.15329" Z="1.15329" />
   </Component>
 </Entity>

@@ -6,8 +6,8 @@
     <CastShadows Value="true" />
   </Component>
   <Component Type="Transform" Version="1">
-      <Position X="6608.39" Y="3137.89" Z="7183.38" />
-      <Rotation X="0" Y="15.876" Z="0" />
-      <Scale X="1.15329" Y="1.15329" Z="1.15329" />
+      <Position X="5796.51" Y="2397.9" Z="7570.6" />
+      <Rotation X="0" Y="7.66405" Z="0" />
+      <Scale X="1.04043" Y="1.04043" Z="1.04043" />
   </Component>
 </Entity>

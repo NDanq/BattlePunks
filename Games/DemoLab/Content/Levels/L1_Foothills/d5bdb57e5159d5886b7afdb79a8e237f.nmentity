@@ -15,8 +15,8 @@
     <Density Value="0.85" />
     <NoiseScale Value="5000" />
     <NoiseThreshold Value="0.3" />
-    <MaxSlope Value="32" />
-    <MinHeight Value="3000" />
+    <MaxSlope Value="38" />
+    <MinHeight Value="1500" />
     <MaxHeight Value="1000000" />
     <LayerThreshold Value="0.5" />
     <ScaleMin Value="0.9" />
@@ -26,7 +26,7 @@
     <ColorVariation Value="0.3" />
     <RandomYaw Value="true" />
     <AlignToPath Value="false" />
-    <CastShadows Value="true" />
+    <CastShadows Value="false" />
     <CellSize Value="6000" />
     <LODDistance Value="4000" />
     <LOD1Density Value="0.8" />

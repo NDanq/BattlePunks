@@ -7,7 +7,7 @@
     <InnerConeAngle Value="16" />
     <OuterConeAngle Value="32" />
     <Active Value="true" />
-    <CastShadows Value="true" />
+    <CastShadows Value="false" />
     <ShadowTechnique Value="0" />
       <ShadowTint R="20" G="22" B="28" A="255" />
     <ShadowBias Value="0.002" />

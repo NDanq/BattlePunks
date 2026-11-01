@@ -7,7 +7,7 @@
     <TerrainLayer Value="0" />
     <Seed Value="5" />
       <BoxExtent X="4200" Y="4000" Z="2600" />
-    <Spacing Value="420" />
+    <Spacing Value="520" />
     <Jitter Value="1" />
     <ProjectRange Value="5000" />
     <PathOffset Value="0" />
@@ -27,8 +27,8 @@
     <RandomYaw Value="true" />
     <AlignToPath Value="false" />
     <CastShadows Value="true" />
-    <CellSize Value="4000" />
-    <LODDistance Value="3500" />
+    <CellSize Value="1500" />
+    <LODDistance Value="1200" />
     <LOD1Density Value="1" />
     <LOD2Density Value="0.7" />
     <CullDistance Value="30000" />
