@@ -4650,6 +4650,200 @@ static void TestStaticDrawListsOnGpu()
 }
 
 /*
+ * The shadow cache on the GPU (RENDERPIPELINE.md, "Shadow cache"): a point
+ * light over a static floor and box and a dynamic box. With [Rendering]
+ * ShadowCache on, every frame is pixel for pixel the one drawn with it off --
+ * after the dynamic box moves through the light, the static box is moved by a
+ * tool, hidden, or the light's colour changes or it is switched off and on --
+ * and only the first, the tool's move and the hide fill the cache again.
+ */
+static void TestShadowCacheOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[shadow cache on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[shadow cache on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    ConfigVar* Cache = ConfigFindVarByPath("Rendering.ShadowCache");
+    Expect(Cache != nullptr, "[Rendering] ShadowCache is a config var");
+
+    Renderer Rend;
+    const bool bInit = Cache && Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = RenderView::MakePerspective(Viewport, Vector3(0.0, 700.0, -600.0), Vector3(0.0, -700.0, 600.0),
+                                                            50.0f, 10.0f, 5000.0f);
+        Rend.SetViewOverride(&View);
+        GameCore::World World;
+        Rend.BindWorld(World);
+        const auto Placed = [&World](const char* InName, const Vector3& InPosition, const Vector3& InScale)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InPosition;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            return Each;
+        };
+        const auto Mesh = [](const char* InPath)
+        {
+            RenderComponent Render;
+            std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", InPath);
+            return Render;
+        };
+        const GameCore::Entity Floor = Placed("Floor", Vector3(), Vector3(3000.0, 1.0, 3000.0));
+        Floor.AddComponent(Mesh("Engine/Content/Meshes/Plane.nmmesh"));
+        const GameCore::Entity Box = Placed("StaticBox", Vector3(-150.0, 90.0, 0.0), Vector3(120.0, 120.0, 120.0));
+        Box.AddComponent(Mesh("Engine/Content/Meshes/Box.nmmesh"));
+        const GameCore::Entity Mover = Placed("DynamicBox", Vector3(150.0, 60.0, -100.0), Vector3(80.0, 80.0, 80.0));
+        Mover.AddComponent(Mesh("Engine/Content/Meshes/Box.nmmesh"));
+        Placed("Sky", Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(SkyLightComponent());
+        PointLightComponent PointInit;
+        PointInit.Intensity    = 30.0f;
+        PointInit.Radius       = 1500.0f;
+        PointInit.bCastShadows = 1;
+        const GameCore::Entity Point = Placed("Point", Vector3(0.0, 450.0, -60.0), Vector3(1.0, 1.0, 1.0));
+        Point.AddComponent(PointInit);
+        /* A cascaded sun too, dim, so its cascades go through the sun cache ([Rendering] SunShadowCache). */
+        DirectionalLightComponent SunInit;
+        SunInit.ShadowTechnique = LST_Cascaded;
+        SunInit.ShadowDistance  = 3000.0f;
+        SunInit.Intensity       = 0.8f;
+        const GameCore::Entity Sun = World.CreateEntity("Sun");
+        GameCore::TransformComponent SunAt;
+        SunAt.Rotation = Vector3(55.0, 60.0, 0.0);
+        Sun.AddComponent(SunAt);
+        Sun.AddComponent(SunInit);
+        Floor.SetMobility(GameCore::EMobility::Static);
+        Box.SetMobility(GameCore::EMobility::Static);
+
+        uint64_t Frame = 1;
+        uint32_t Filled = 0;
+        const auto Capture = [&](EngineCore::Image& OutPixels)
+        {
+            Filled = 0;
+            RenderStats Stats;
+            for(int Each = 0; Each < 4; ++Each)
+            {
+                Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+                Rend.WaitForPreviousFrame();
+                Rend.GetStats(Stats);
+                Filled += Stats.ShadowCacheFilled;
+            }
+            const uint64_t Request = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 2; ++Each)
+            {
+                Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+                Rend.WaitForPreviousFrame();
+                Rend.GetStats(Stats);
+                Filled += Stats.ShadowCacheFilled;
+            }
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto Differing = [](const EngineCore::Image& InA, const EngineCore::Image& InB)
+        {
+            int Count = 0;
+            for(int Y = 0; Y < 256; ++Y)
+            {
+                const uint8_t* A = InA.GetData() + InA.GetStride() * Y;
+                const uint8_t* B = InB.GetData() + InB.GetStride() * Y;
+                for(int X = 0; X < 256 * 4; X += 4)
+                {
+                    Count += (A[X] != B[X] || A[X + 1] != B[X + 1] || A[X + 2] != B[X + 2]) ? 1 : 0;
+                }
+            }
+            return Count;
+        };
+        /* InName's frame with the cache on (how many lights it filled meanwhile) against it off. */
+        const auto Check = [&](const char* InName, uint32_t& OutFilled)
+        {
+            EngineCore::Image On, Off;
+            Cache->SetFromString("true");
+            const bool bOn = Capture(On);
+            OutFilled = Filled;
+            RenderStats Stats;
+            Rend.GetStats(Stats);
+            const uint32_t Lights   = Stats.ShadowCacheLights;
+            const uint32_t Cascades = Stats.ShadowCacheSunCascades;
+            Cache->SetFromString("false");
+            const bool bOff = Capture(Off);
+            Cache->SetFromString("true");
+            const int Changed = bOn && bOff ? Differing(On, Off) : -1;
+            std::printf("    %s: %d pixels differ from the cache off; %u light(s) and %u cascade(s) cached, %u light fill(s)\n", InName, Changed,
+                        Lights, Cascades, OutFilled);
+            Expect(bOn && bOff && Lights == 1, (std::string(InName) + ": the point light draws from the cache").c_str());
+            Expect(Cascades >= 1, (std::string(InName) + ": and the sun's cascades").c_str());
+            Expect(Changed == 0, (std::string(InName) + ": pixel for pixel the frame without the cache").c_str());
+            return On;
+        };
+
+        uint32_t Fills = 0;
+        const EngineCore::Image First = Check("first", Fills);
+        Expect(Fills >= 1, "the first frames fill the cache");
+
+        /* Off drops the cache, so after each Check the first frames on fill it again (Prime). */
+        EngineCore::Image Steady;
+        const auto Prime = [&]()
+        {
+            Cache->SetFromString("true");
+            Capture(Steady);
+            Capture(Steady);
+        };
+        Prime();
+        Expect(Filled == 0, "a still scene draws from the cache without filling it");
+
+        Mover.GetComponent<GameCore::TransformComponent>()->Position = Vector3(-20.0, 60.0, -150.0);
+        EngineCore::Image MovedOn;
+        Capture(MovedOn);
+        Expect(Filled == 0, "a dynamic caster moving through the light fills nothing");
+        Expect(Differing(Steady, MovedOn) > 100, "and its shadow moves");
+        Check("dynamic box moved", Fills);
+
+        Prime();
+        Box.GetComponent<GameCore::TransformComponent>()->Position = Vector3(-250.0, 90.0, 100.0);
+        Capture(MovedOn);
+        Expect(Filled >= 1, "a static caster moved by a tool fills the light again");
+        Check("static box moved", Fills);
+
+        Prime();
+        Box.GetComponent<RenderComponent>()->bVisible = 0;
+        Capture(MovedOn);
+        Expect(Filled >= 1, "a static caster hidden fills the light again");
+        Check("static box hidden", Fills);
+        Box.GetComponent<RenderComponent>()->bVisible = 1;
+
+        Prime();
+        Point.GetComponent<PointLightComponent>()->Color = EngineCore::Color(255, 120, 60);
+        Capture(MovedOn);
+        Expect(Filled == 0, "the light's colour changed fills nothing");
+        Point.GetComponent<PointLightComponent>()->bActive = 0;
+        Capture(MovedOn);
+        Point.GetComponent<PointLightComponent>()->bActive = 1;
+        Capture(MovedOn);
+        Expect(Filled == 0, "nor the light switched off and on");
+        Check("light recoloured, off and on", Fills);
+
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    if(Cache) { Cache->ResetToDefault(); }
+    SetFileProvider(PreviousProvider);
+}
+
+/*
  * The background gradient (Renderer::SetClearGradient): top colour at the top
  * of the view, bottom at the bottom, under what is drawn; SetClearColor back
  * to one colour.
@@ -7727,6 +7921,7 @@ int main()
     TestParticlesOnGpu();
     TestStatFrameOnGpu();
     TestStaticDrawListsOnGpu();
+    TestShadowCacheOnGpu();
     TestOcclusionCulling();
     TestOcclusionCullingOnGpu();
     TestClearGradientOnGpu();
