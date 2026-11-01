@@ -1671,6 +1671,45 @@ void EditorMainWindow::RegisterConsoleCommands()
         Console.Print(QStringLiteral("Destroyed %1").arg(Name));
     });
 
+    /* A scripted session's (--command) gizmo drag: what tests of moving things use. */
+    Console.Register(QStringLiteral("move"), QStringLiteral("<name | #index> <x> <y> <z> [yaw]"),
+                     QStringLiteral("Put an entity at a world position (and turn it yaw degrees about Y), as a gizmo drag would"),
+                     [this, Resolve](const QStringList& InArgs)
+    {
+        bool bOk = InArgs.size() >= 4;
+        double Values[4] = {};
+        for(int Index = 1; bOk && Index < std::min<int>(int(InArgs.size()), 5); ++Index)
+        {
+            Values[Index - 1] = InArgs[Index].toDouble(&bOk);
+        }
+        if(!bOk)
+        {
+            Console.PrintError(QStringLiteral("Usage: move <name | #index> <x> <y> <z> [yaw]"));
+            return;
+        }
+        GameCore::World& World = Level.GetWorld();
+        const EntityID Target = Resolve(InArgs.front());
+        if(!Target.IsSet() || !World.IsAlive(Target))
+        {
+            Console.PrintError(QStringLiteral("No entity '%1'").arg(InArgs.front()));
+            return;
+        }
+        GameCore::TransformPose Pose = World.GetEntity(Target).GetWorldPose();
+        Pose.Position = EngineCore::Vector3(Values[0], Values[1], Values[2]);
+        if(InArgs.size() >= 5)
+        {
+            Pose.Rotation = EngineCore::Vector3(Pose.Rotation.GetX(), Values[3], Pose.Rotation.GetZ());
+        }
+        if(!World.GetEntity(Target).SetWorldPose(Pose))
+        {
+            Console.PrintError(QStringLiteral("'%1' has no Transform").arg(InArgs.front()));
+            return;
+        }
+        World.RefreshEntityBounds(Target);
+        Level.NotifyPropertyEdited(Target, GameCore::TransformComponent::StaticType().ID);
+        Console.Print(QStringLiteral("Moved %1").arg(Level.GetDisplayName(Target)));
+    });
+
     Console.Register(QStringLiteral("camera"), QStringLiteral("[<x> <y> <z> [yaw] [pitch]]"),
                      QStringLiteral("Put the viewport's camera at a position, turned yaw degrees about Y and pitched up; "
                                     "with nothing, print where it is"),
@@ -3133,6 +3172,17 @@ void EditorMainWindow::RegisterConsoleCommands()
         if(!Spans.isEmpty())
         {
             const QString Line = QStringLiteral("GPU ms: ") + Spans.join(QStringLiteral(", "));
+            Console.Print(Line);
+            CORE_LOG("[Editor] stats " + Line.toStdString())
+        }
+        /* The shadow cache (RenderCore's RENDERPIPELINE.md, "Shadow cache"), when it has an atlas. */
+        if(Stats.ShadowCacheBytes > 0 || Stats.ShadowCacheSunBytes > 0)
+        {
+            const QString Line = QStringLiteral("Shadow cache: %1 lights cached, %2 filled, %3 MB; sun %4 cascades cached, %5 filled, %6 MB")
+                                 .arg(Stats.ShadowCacheLights).arg(Stats.ShadowCacheFilled)
+                                 .arg(double(Stats.ShadowCacheBytes) / (1024.0 * 1024.0), 0, 'f', 1)
+                                 .arg(Stats.ShadowCacheSunCascades).arg(Stats.ShadowCacheSunFilled)
+                                 .arg(double(Stats.ShadowCacheSunBytes) / (1024.0 * 1024.0), 0, 'f', 1);
             Console.Print(Line);
             CORE_LOG("[Editor] stats " + Line.toStdString())
         }

@@ -434,6 +434,7 @@ namespace RenderCore
         OutStats.ParallelPasses              = P->Context.GetParallelPassCount();
         GetStaticDrawStats(OutStats.StaticProxiesDrawn, OutStats.StaticListBuilds);
         GetOcclusionStats(OutStats.ProxiesOccludedLastFrame, OutStats.OcclusionQueriesLastFrame);
+        GetShadowCacheStats(OutStats);
         GetCaptureStats(OutStats.GIProbesUnlit, OutStats.GIProbesTotal, OutStats.bCapturesBusy);
         GetResolutionStats(OutStats.ResolutionScale, OutStats.bDynamicResolution, OutStats.DynamicResolutionTargetMs);
         OutStats.TextureStreaming = P->Context.GetTextureStreamingStats();
@@ -493,6 +494,37 @@ namespace RenderCore
     {
         OutDrawn  = GStaticDrawn.load(std::memory_order_relaxed);
         OutBuilds = GStaticBuilds.load(std::memory_order_relaxed);
+    }
+
+    namespace
+    {
+        std::atomic<uint32_t> GShadowCacheLights{0};
+        std::atomic<uint32_t> GShadowCacheFilled{0};
+        std::atomic<uint64_t> GShadowCacheBytes{0};
+        std::atomic<uint32_t> GShadowCacheSunCascades{0};
+        std::atomic<uint32_t> GShadowCacheSunFilled{0};
+        std::atomic<uint64_t> GShadowCacheSunBytes{0};
+    }
+
+    void SetShadowCacheStats(const uint32_t InLights, const uint32_t InFilled, const uint64_t InBytes, const uint32_t InSunCascades,
+                             const uint32_t InSunFilled, const uint64_t InSunBytes)
+    {
+        GShadowCacheLights.store(InLights, std::memory_order_relaxed);
+        GShadowCacheFilled.store(InFilled, std::memory_order_relaxed);
+        GShadowCacheBytes.store(InBytes, std::memory_order_relaxed);
+        GShadowCacheSunCascades.store(InSunCascades, std::memory_order_relaxed);
+        GShadowCacheSunFilled.store(InSunFilled, std::memory_order_relaxed);
+        GShadowCacheSunBytes.store(InSunBytes, std::memory_order_relaxed);
+    }
+
+    void GetShadowCacheStats(RenderStats& OutStats)
+    {
+        OutStats.ShadowCacheLights      = GShadowCacheLights.load(std::memory_order_relaxed);
+        OutStats.ShadowCacheFilled      = GShadowCacheFilled.load(std::memory_order_relaxed);
+        OutStats.ShadowCacheBytes       = GShadowCacheBytes.load(std::memory_order_relaxed);
+        OutStats.ShadowCacheSunCascades = GShadowCacheSunCascades.load(std::memory_order_relaxed);
+        OutStats.ShadowCacheSunFilled   = GShadowCacheSunFilled.load(std::memory_order_relaxed);
+        OutStats.ShadowCacheSunBytes    = GShadowCacheSunBytes.load(std::memory_order_relaxed);
     }
 
     namespace

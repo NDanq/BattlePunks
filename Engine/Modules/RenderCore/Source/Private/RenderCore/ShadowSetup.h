@@ -34,6 +34,7 @@ namespace RenderCore
         SHADOW_LOCAL_ATLAS_ROWS    = 4,
         SHADOW_POINT_FACES         = 6,
         SHADOW_VIEW_MAX            = RENDER_CASCADE_MAX + SHADOW_LOCAL_ATLAS_COLUMNS * SHADOW_LOCAL_ATLAS_ROWS,
+        SHADOW_CACHE_FILL_MAX      = RENDER_CASCADE_MAX + SHADOW_LOCAL_ATLAS_COLUMNS * SHADOW_LOCAL_ATLAS_ROWS,   // a frame's shadow cache fills, at most
     };
 
     enum EShadowAtlas : uint8_t
@@ -67,8 +68,14 @@ namespace RenderCore
     /* A frame's shadow views and what the lights index into. */
     struct ShadowFrame
     {
-        ShadowView Views[SHADOW_VIEW_MAX];
+        ShadowView Views[SHADOW_VIEW_MAX + SHADOW_CACHE_FILL_MAX];
         uint32_t   ViewCount = 0;
+
+        /* The shadow cache's fills this frame (RENDERPIPELINE.md, "Shadow cache"): views
+         * [ViewCount, ViewCount + CacheFillCount), each a copy of a local light's view whose
+         * tile is in the cache atlas (Atlas still SA_Local). Nothing that walks the frame's
+         * views to ViewCount sees them; the Shadows stage draws them first. */
+        uint32_t   CacheFillCount = 0;
 
         uint32_t   AtlasSize = 0;            // both atlases' side, texels; 0: no shadows this frame
 

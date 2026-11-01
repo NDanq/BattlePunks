@@ -512,7 +512,40 @@ namespace RenderCore
          * InReceivers: the box round everything the view draws, if known --
          * where an inset's shadow can land, so how much screen it covers. */
         uint32_t              PrepareShadows(const InsetShadowCaster* InCasters = nullptr, uint32_t InCasterCount = 0,
-                                             const GameCore::AABB* InReceivers = nullptr);
+                                             const GameCore::AABB* InReceivers = nullptr, uint64_t InCacheOwner = 0);
+
+        /*
+         * SHADOW CACHE (RENDERPIPELINE.md, "Shadow cache"; [Rendering] ShadowCache): a shadowed
+         * point or spot light's static casters are drawn once into a cache atlas and copied
+         * into its tiles each frame; only its movable casters are drawn on top. PrepareShadows
+         * plans it for InCacheOwner (a RenderScene's id; 0: no cache, everything drawn as
+         * before) -- after it:
+         *
+         *   ShadowViewCachesStatics  a light view whose cacheable casters come from the cache:
+         *                            queue only the others into it
+         *   GetShadowCacheFillViews  how many cache views follow the frame's views (at
+         *                            PrepareShadows' return value onwards): each wants only the
+         *                            cacheable casters, once, to fill its light's cache tile.
+         *                            GetShadowViewBounds, ShadowViewSees and SetShadowCasterView
+         *                            take their indices as any view's
+         *   InvalidateShadowCache    before PrepareShadows: InOwner's cached lights whose reach
+         *                            touches any of InBoxes (or all of them, bInAll) are drawn
+         *                            again -- a static caster there was added, removed, moved,
+         *                            changed or shown or hidden
+         *   ReleaseShadowCache       InOwner's cached lights forgotten (its scene is going)
+         */
+        bool     ShadowViewCachesStatics(uint32_t InView) const;
+        uint32_t GetShadowCacheFillViews() const;
+        void     InvalidateShadowCache(uint64_t InOwner, const GameCore::AABB* InBoxes, uint32_t InCount, bool bInAll);
+        void     ReleaseShadowCache(uint64_t InOwner);
+        /* Whether any of InDraws (a static proxy's captured shadow list) is a translucent caster,
+         * which the cache cannot hold (its opacity map is drawn every frame). */
+        static bool HasTranslucentShadowCaster(const std::vector<StagedDraw>& InDraws);
+        /* This frame's lights drawn from the cache, how many of them were (re)filled, and the
+         * cache atlas's size in bytes (depth and colour). */
+        void GetShadowCacheStats(uint32_t& OutLights, uint32_t& OutFilled, uint64_t& OutBytes) const;
+        /* Likewise the sun's cascades drawn from the sun cache ([Rendering] SunShadowCache), filled, and its atlas's bytes. */
+        void GetSunShadowCacheStats(uint32_t& OutCascades, uint32_t& OutFilled, uint64_t& OutBytes) const;
         /*
          * CAPTURE SHADOWS (GLOBAL_ILLUMINATION.md, "Capture budget"): one set of shadow maps
          * every capture view of a frame samples, instead of each view drawing its own.
