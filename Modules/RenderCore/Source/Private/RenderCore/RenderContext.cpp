@@ -301,6 +301,8 @@ namespace RenderCore
             float ContactLocal[4]       = {};                           // 1: shadowed point and spot lights' too
             float RevealParams[4]       = {};                           // the reveal: points, aspect, kept in the middle, depth margin
             float Reveal[4][4]          = {};                           // each point: NDC xy, radius (NDC y), view depth
+            float Wind[4]               = { 0.8f, 0.0f, 0.6f, 1.0f };  // toward which it blows (unit), strength (RenderWeather.h)
+            float Weather[4]            = {};                           // wetness, rain
         };
         static_assert(offsetof(SceneUniforms, Time) == 16 && offsetof(SceneUniforms, LightDirection) == 32
                       && offsetof(SceneUniforms, GroundColor) == 80 && offsetof(SceneUniforms, InvViewProjection) == 96,
@@ -321,7 +323,9 @@ namespace RenderCore
         static_assert(offsetof(SceneUniforms, ContactLocal) == 3936, "Scene_ContactLocal comes after Scene_ContactShadow");
         static_assert(offsetof(SceneUniforms, RevealParams) == 3952 && offsetof(SceneUniforms, Reveal) == 3968,
                       "Scene_RevealParams and Scene_Reveal come last");
-        static_assert(sizeof(SceneUniforms) == 4032 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
+        static_assert(offsetof(SceneUniforms, Wind) == 4032 && offsetof(SceneUniforms, Weather) == 4048,
+                      "Scene_Wind and Scene_Weather come last");
+        static_assert(sizeof(SceneUniforms) == 4064 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
                       "SceneUniforms must match Scene_Block (SceneUniforms.glsl) and fit the scene block");
 
         /* Row-major InMatrix into a GLSL mat4's column-major floats. */
@@ -1927,6 +1931,8 @@ namespace RenderCore
             Scene.Baked[0] = Lighting.bBaked ? 1.0f : 0.0f;
             Scene.Baked[1] = Lighting.bBaked && Lighting.bBakedSky ? 1.0f : 0.0f;
             Scene.Baked[2] = Lighting.bBaked && Lighting.bBakedDirectional ? 1.0f : 0.0f;
+            std::memcpy(Scene.Wind, Lighting.Wind, sizeof(Scene.Wind));
+            std::memcpy(Scene.Weather, Lighting.Weather, sizeof(Scene.Weather));
 
             /* Clip back to world, for the Lighting stage: the inverse of
              * Projection * View, column-major as GDI uploads a mat4. */

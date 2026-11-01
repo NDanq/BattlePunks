@@ -223,7 +223,7 @@ about them generically. Enforced:
 | Texture Coordinate, Vertex Color, Vertex Normal | yes | yes |
 | World Position (before the offset in the vertex stage) | yes | yes |
 | Camera Position (the view's eye: with World Position, the direction to the camera for Fresnel) | yes | yes |
-| Parameter, Instance Tint, Viewport Size, Mouse, Time | yes | yes |
+| Parameter, Instance Tint, Viewport Size, Mouse, Time, Wind | yes | yes |
 | Math, Vector, Logic | yes | yes |
 | Pixel Coordinate, Pixel Depth, Clip Position | no | yes |
 | Scene Texture (PostProcess only) | no | yes |
@@ -232,6 +232,13 @@ about them generically. Enforced:
 
 **Time** reads `Scene_Time`: seconds since the renderer started (real time,
 so editor previews animate), and the last frame's length.
+
+**Wind** reads `Scene_Wind`, the World's wind (`RenderWeather.h`; the Weather
+plugin sets it): Direction (unit, the way it blows), Strength (1 the breeze
+foliage is authored for, 0 calm) and Vector (the two multiplied). A World with
+no weather gets a breeze of 1 toward (0.8, 0, 0.6), so a material that sways
+along Wind looks the same with or without the plugin. WorldsLab's foliage
+(`Tools/Terrain/make_foliage_materials.py`) and GrassLab's grass use it.
 
 ## World Position Offset
 
