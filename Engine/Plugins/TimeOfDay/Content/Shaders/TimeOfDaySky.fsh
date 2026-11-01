@@ -7,7 +7,8 @@
 // twilight sky blue) -- lit by the sun and the moon, plus both discs and,
 // as the sky darkens, stars over a faint airglow. Linear HDR out, times an
 // exposure the CPU adapts to the zenith's brightness (SkyPass::Extract);
-// the frame's tone map does the rest. TimeOfDaySky.cpp's EvaluateSky is the same model
+// the frame's tone map does the rest. The same pass draws the sky that
+// image-based lighting captures (ERenderHook::Sky) and reflection probes see. TimeOfDaySky.cpp's EvaluateSky is the same model
 // on the CPU, for the lights' colours.
 
 #include <PostProcessCommon.glsl>
@@ -17,7 +18,7 @@ UBO_BLOCK_BEGIN(2, PP_Block)
                     // [1] xyz toward the moon, w its intensity
                     // [2] x haze (Mie x), y cos of the sun disc's radius, z stars, w exposure (adapted)
                     // [3] xyz ground albedo, w the eye's height above sea level (m)
-    vec4 TOD_Unused0;
+    vec4 TOD_Bounce;   // rgb: the ground's own radiance, lit by the sun, the moon and the sky (before the exposure)
     vec4 TOD_Unused1;
 UBO_BLOCK_END(PP_Block)
 
@@ -186,6 +187,9 @@ void main(void)
     float Night   = clamp(1.0 - SkyLuma * 6.0, 0.0, 1.0);
     Sky += Transmit * Stars(SkyDir, Scene_Time.x) * StarsI * Night;
 
-    vec3 Ground = Sky * Albedo * 0.5;
+    // The ground below the horizon: the horizon's colour darkened, plus the light
+    // the sunlit ground sends back -- what a reflection or the sky light sees
+    // under the horizon, where no terrain covers it.
+    vec3 Ground = Sky * Albedo * 0.5 + TOD_Bounce.rgb * Exposure;
     Output = vec4(mix(Sky, Ground, Below), 1.0);
 }

@@ -1,7 +1,9 @@
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <map>
 #include <memory>
+#include <utility>
 
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
@@ -40,6 +42,9 @@ namespace TimeOfDay
         constexpr float AdaptTarget      = 0.12f;
         constexpr float AdaptMax         = 8.0f;
         constexpr float EyeHeight        = 200.0f;   // m above the sea, for the atmosphere only
+        /* How much of the sunlit ground's light the sky below the horizon shows (TOD_Bounce):
+         * set by eye on DayCycle so a mirror ball's lower half sits just under its upper. */
+        constexpr float GroundBounce     = 0.3f;
 
         struct V3
         {
@@ -114,27 +119,65 @@ namespace TimeOfDay
             return (std::min)(AdaptMax, (std::max)(1.0f, AdaptTarget / (Zenith + 1e-4f)));
         }
 
-        /* The pass: the first clock's sky, extracted on the game thread. */
+        /* The pass: the first clock's sky, extracted on the game thread, and its version for
+         * image-based lighting (CustomRenderPass::GetContentVersion): 0 with no sky drawn, else
+         * a hash of what the sky looks like, the sun's place in steps of about a degree. */
         struct SkyState
         {
-            bool                         bDraw = false;
+            bool                         bDraw   = false;
+            uint64_t                     Version = 0;
             RenderCore::RenderPassParams Params;
         };
 
+        uint64_t VersionOf(const TimeOfDayComponent& InClock)
+        {
+            uint64_t Hash = 1469598103934665603ull;
+            const auto Mix = [&Hash](const int64_t InValue)
+            {
+                for(int Byte = 0; Byte < 8; ++Byte) { Hash = (Hash ^ uint64_t((InValue >> (Byte * 8)) & 0xff)) * 1099511628211ull; }
+            };
+            const auto Step = [](const float InValue, const float InPerUnit) { return int64_t(std::floor(InValue * InPerUnit)); };
+            float Hour = std::fmod(InClock.Hour, 24.0f);
+            if(Hour < 0.0f) { Hour += 24.0f; }
+            Mix(Step(Hour, 15.0f));   // the sun crosses 180 degrees in 12 hours: a step a degree
+            Mix(Step(InClock.NorthYaw, 1.0f));
+            Mix(Step(InClock.Latitude, 1.0f));
+            Mix(Step(InClock.Haze, 50.0f));
+            Mix(Step(InClock.SkyBrightness, 50.0f));
+            return Hash == 0 ? 1 : Hash;
+        }
+
+        /* Both registrations share one: the BeforeScene pass extracts, the Sky pass reads. */
+        struct SkyShared
+        {
+            GameCore::World*                        World = nullptr;
+            RenderCore::RenderPassMailbox<SkyState> Mailbox;
+        };
+
+        /* The sky drawn by TimeOfDaySky.fsh -- behind the main view (BeforeScene), behind scene
+         * captures and reflection probes (they reflect it), and as the sky image-based lighting
+         * lights with (ERenderHook::Sky). The last two leave out the discs and the stars: a
+         * cube of 128-texel faces would alias them, and the Directional Light is the sun's
+         * highlight already. */
         class SkyPass final : public RenderCore::CustomRenderPass
         {
         public:
-            explicit SkyPass(GameCore::World& InWorld) : World(&InWorld) {}
+            SkyPass(std::shared_ptr<SkyShared> InShared, const bool bInExtracts) : Shared(std::move(InShared)), bExtracts(bInExtracts) {}
 
-            const char* GetName() const override { return "TimeOfDaySky"; }
+            const char* GetName() const override { return bExtracts ? "TimeOfDaySky" : "TimeOfDaySkyLight"; }
 
             void Extract() override
             {
+                if(!bExtracts)
+                {
+                    return;
+                }
                 SkyState State;
-                World->Each<TimeOfDayComponent>([&State](GameCore::Entity, TimeOfDayComponent& InClock)
+                Shared->World->Each<TimeOfDayComponent>([&State](GameCore::Entity, TimeOfDayComponent& InClock)
                 {
                     if(State.bDraw || !InClock.bDrawSky) { return; }
-                    State.bDraw = true;
+                    State.bDraw   = true;
+                    State.Version = VersionOf(InClock);
                     const V3 Sun = From(SunDirection(InClock.Hour, InClock.NorthYaw, InClock.Latitude));
                     float* M = State.Params.Matrix;   // column-major: TOD_Sky[n] is M[4n..4n+3]
                     M[0]  = Sun.X;  M[1]  = Sun.Y;  M[2]  = Sun.Z;  M[3]  = SkySunIntensity;
@@ -144,30 +187,62 @@ namespace TimeOfDay
                     M[10] = (std::max)(InClock.StarBrightness, 0.0f);
                     M[11] = SkyExposure * Adaptation(Sun, M[8]) * (std::max)(InClock.SkyBrightness, 0.0f);
                     M[12] = 0.3f;   M[13] = 0.28f;  M[14] = 0.25f;  M[15] = EyeHeight;
+                    /* The ground's radiance (Lambert, before the exposure): the sun and the
+                     * moon through the air, at their height, and the sky overhead. */
+                    const EngineCore::Vector3 Up(0.0f, 1.0f, 0.0f);
+                    const EngineCore::Vector3 SunV(Sun.X, Sun.Y, Sun.Z), MoonV(-Sun.X, -Sun.Y, -Sun.Z);
+                    const SkyRGB SunT  = SunTransmittance(SunV, M[8]);
+                    const SkyRGB MoonT = SunTransmittance(MoonV, M[8]);
+                    const SkyRGB Above = EvaluateSky(Up, SunV, M[8]);
+                    const float  SunH  = GroundBounce * SkySunIntensity * (std::max)(Sun.Y, 0.0f) / Pi;
+                    const float  MoonH = GroundBounce * SkyMoonIntensity * (std::max)(-Sun.Y, 0.0f) / Pi;
+                    State.Params.A[0] = M[12] * (SunT.R * SunH + MoonT.R * MoonH + Above.R);
+                    State.Params.A[1] = M[13] * (SunT.G * SunH + MoonT.G * MoonH + Above.G);
+                    State.Params.A[2] = M[14] * (SunT.B * SunH + MoonT.B * MoonH + Above.B);
                 });
-                Mailbox.Put(State);
+                Shared->Mailbox.Put(State);
+            }
+
+            bool ShouldRun(const RenderCore::RenderPassContext&) const override
+            {
+                return true;   // every view: the main one, scene captures and probes, and the sky light's cube
+            }
+
+            uint64_t GetContentVersion() const override
+            {
+                return bExtracts ? 0 : Shared->Mailbox.Get().Version;
             }
 
             void Execute(RenderCore::RenderPassContext& InContext) override
             {
-                const SkyState State = Mailbox.Get();
+                SkyState State = Shared->Mailbox.Get();
                 if(!State.bDraw)
                 {
                     return;
+                }
+                if(!InContext.IsMainView())
+                {
+                    State.Params.Matrix[9]  = 2.0f;   // past any cosine: no sun disc, nor the moon's (TimeOfDaySky.fsh)
+                    State.Params.Matrix[10] = 0.0f;   // no stars
                 }
                 InContext.DrawFullscreen("TimeOfDaySky.fsh", RenderCore::RenderPassTarget{}, {}, State.Params,
                                          RenderCore::ERenderPassBlend::Opaque);
             }
 
         private:
-            GameCore::World*                         World = nullptr;
-            RenderCore::RenderPassMailbox<SkyState>  Mailbox;
+            std::shared_ptr<SkyShared> Shared;
+            bool                       bExtracts = true;
         };
 
-        /* Game thread only, as World hooks are. */
-        std::map<const GameCore::World*, RenderCore::RenderPassHandle>& SkyPasses()
+        /* Game thread only, as World hooks are: each World's two registrations. */
+        struct SkyHandles
         {
-            static std::map<const GameCore::World*, RenderCore::RenderPassHandle> Passes;
+            RenderCore::RenderPassHandle Background = 0;
+            RenderCore::RenderPassHandle Light      = 0;
+        };
+        std::map<const GameCore::World*, SkyHandles>& SkyPasses()
+        {
+            static std::map<const GameCore::World*, SkyHandles> Passes;
             return Passes;
         }
     }
@@ -252,12 +327,19 @@ namespace TimeOfDay
         {
             return;
         }
-        /* First thing after the background: every surface draws over it. */
-        const RenderCore::RenderPassHandle Handle =
-            RenderCore::RegisterCustomRenderPass(&InWorld, std::make_shared<SkyPass>(InWorld), RenderCore::ERenderHook::BeforeScene, -100);
-        if(Handle != 0)
+        auto Shared   = std::make_shared<SkyShared>();
+        Shared->World = &InWorld;
+        /* First thing after the background: every surface draws over it. And the same sky as
+         * the one image-based lighting reflects and lights with (RENDERPIPELINE.md, "Image-based
+         * lighting"): captured again as its version changes. */
+        SkyHandles Handles;
+        Handles.Background = RenderCore::RegisterCustomRenderPass(&InWorld, std::make_shared<SkyPass>(Shared, true),
+                                                                  RenderCore::ERenderHook::BeforeScene, -100);
+        Handles.Light      = RenderCore::RegisterCustomRenderPass(&InWorld, std::make_shared<SkyPass>(Shared, false),
+                                                                  RenderCore::ERenderHook::Sky);
+        if(Handles.Background != 0 || Handles.Light != 0)
         {
-            SkyPasses()[&InWorld] = Handle;
+            SkyPasses()[&InWorld] = Handles;
         }
     }
 
@@ -268,7 +350,8 @@ namespace TimeOfDay
         {
             return;
         }
-        RenderCore::UnregisterCustomRenderPass(Found->second);
+        if(Found->second.Background != 0) { RenderCore::UnregisterCustomRenderPass(Found->second.Background); }
+        if(Found->second.Light != 0)      { RenderCore::UnregisterCustomRenderPass(Found->second.Light); }
         SkyPasses().erase(Found);
     }
 
