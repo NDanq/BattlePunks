@@ -708,6 +708,37 @@ above on at once -- auto exposure, TAA, reflections (32 steps), fog (24
 steps, 11 local lights) and point and spot contact shadows: about 2.4 ms
 more GPU a frame (4.0 to 6.4), fog the most (about 1.2).
 
+### Weather
+
+A World's weather reaches the renderer as values, not a system
+(`RenderWeather.h`): `SetRenderWeather(World, ...)`, keyed by the World's
+address like `SetPostProcessOverride`, cleared with `ClearRenderWeather`. The
+Weather plugin (`Engine/Plugins/Weather`) sets it from its component each
+frame; nothing in RenderCore simulates weather.
+
+- **Wind:** the scene block's `Scene_Wind` (xyz the unit direction it blows,
+  w strength), read by the material graph's **Wind** node (MATERIALS.md). With
+  no weather: a breeze of 1 toward (0.8, 0, 0.6).
+- **Wetness:** `Scene_Weather.x`. `Wetness.glsl` applies it to what the
+  G-buffer holds, in the Lighting stage, image-based lighting and
+  screen-space reflections alike, so a surface's light and both kinds of
+  reflection agree: where the normal faces up (fading out from about 80 to 45
+  degrees off vertical) a wet dielectric darkens by its roughness (porosity),
+  to 0.35 of its linear albedo when soaked, and every wet surface's roughness
+  falls to half (no smoother than 0.2). Default, Clear Coat and Anisotropic
+  pixels only: foliage cards (Subsurface), skin, cloth and volumes keep their
+  look. No material authoring.
+  Limits: forward-lit surfaces (Translucent Lit, the forward path) are not
+  wetted; nothing knows what is under a roof, so a floor indoors gets wet
+  too (keep interiors in their own World, or set Wetness 0 there); no
+  puddles or ripples.
+- **Rain:** `Scene_Weather.y`, for materials and passes that want it.
+- **Mist:** with `bMist`, `WorldBridge::BuildBlendedPostProcess` turns on
+  Volumetric Fog at the weather's density, base height and height falloff,
+  after the Post Process volumes blend and before a sequence's override, so a
+  cinematic still wins. The fog's other settings are the volumes' (or the
+  node's defaults), and its scalability cap still applies.
+
 ### Image-based lighting
 
 In an HDR scene, Lit surfaces take their ambient light and reflections from

@@ -72,4 +72,10 @@ UBO_BLOCK_BEGIN(3, Scene_Block)
     // NDC y, w its view depth.
     vec4 Scene_RevealParams;
     vec4 Scene_Reveal[4];
+
+    // The World's weather (RenderCore's RenderWeather.h; RENDERPIPELINE.md, "Weather"): the
+    // material graph's Wind node, and Wetness.glsl. With no weather set, the calm default:
+    // a breeze of 1 toward (0.8, 0, 0.6), dry.
+    vec4 Scene_Wind;             // xyz: unit, the way it blows; w: strength (1 the breeze foliage was made for)
+    vec4 Scene_Weather;          // x: wetness 0-1; y: rain 0-1
 UBO_BLOCK_END(Scene_Block)

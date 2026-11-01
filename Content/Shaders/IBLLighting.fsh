@@ -10,6 +10,7 @@
 #include <DDGI.glsl>
 #include <ShadingModels.glsl>
 #include <IBLShading.glsl>
+#include <Wetness.glsl>
 
 UBO_BLOCK_BEGIN(2, PP_Block)
     vec4 PP_Settings;   // x: 1 if Subsurface (output 1) is bound: a Skin pixel's diffuse goes there;
@@ -68,9 +69,14 @@ void main(void)
     vec4 World    = Scene_InvViewProjection * vec4(Interpolants.Position.xy, Depth * 2.0 - 1.0, 1.0);
     vec3 Position = World.xyz / World.w;
 
-    int Model = DecodeShadingModel(Gb2.a);
-    LightingSurface S = MakeLightingSurface(Model, SrgbToLinear(Gb0.rgb), Gb2.r, Gb2.g, Gb2.b,
-                                            DecodeGBufferNormal(Gb1), normalize(Scene_CameraPosition.xyz - Position));
+    // Wet as the Lighting stage made it (Wetness.glsl).
+    int   Model     = DecodeShadingModel(Gb2.a);
+    vec3  Normal    = DecodeGBufferNormal(Gb1);
+    vec3  Albedo    = SrgbToLinear(Gb0.rgb);
+    float Roughness = Gb2.g;
+    ApplyWetness(WetAmount(Model, Normal), Gb2.r, Albedo, Roughness);
+    LightingSurface S = MakeLightingSurface(Model, Albedo, Gb2.r, Roughness, Gb2.b,
+                                            Normal, normalize(Scene_CameraPosition.xyz - Position));
     if(Model != SHADING_MODEL_DEFAULT)
     {
         DecodeGBufferCustom(S, texelFetch(GBuffer4, Texel, 0));
