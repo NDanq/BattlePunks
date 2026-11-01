@@ -8,6 +8,8 @@
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/World.h"
+#include "Public/GameCore/Components/TransformComponent.h"
+#include "Public/RenderCore/Components/CameraComponent.h"
 #include "Public/Sequencer/SequencePlayerComponent.h"
 
 /* SequenceWorld: the players that drive instances through time. README.md
@@ -30,6 +32,7 @@ namespace Sequencer
         {
             System = new SequenceWorld(InWorld);
             InWorld.RegisterSystem("Sequencer.Players", GameCore::TP_PostPhysics, &SequenceWorld::TickSystem, System);
+            InWorld.RegisterSystem("Sequencer.Blend", GameCore::TP_PostUpdate, &SequenceWorld::BlendSystem, System);
         }
         ++System->Attachments;
         return System;
@@ -43,6 +46,7 @@ namespace Sequencer
         SequenceWorld* System = Found->second;
         if(--System->Attachments > 0) { return; }
         InWorld.UnregisterSystem(&SequenceWorld::TickSystem, System);
+        InWorld.UnregisterSystem(&SequenceWorld::BlendSystem, System);
         Map.erase(Found);
         delete System;
     }
@@ -77,6 +81,7 @@ namespace Sequencer
     SequenceWorld::~SequenceWorld()
     {
         if(!AppliedPostProcess.IsEmpty()) { PushPostProcess(World, SequencePostProcess()); }
+        if(BlendCamera.IsSet() && World.IsAlive(BlendCamera)) { World.DestroyEntity(BlendCamera); }
         if(Host.SetBusGain)
         {
             for(const SequenceBusGain& Gain : AppliedBusGains) { Host.SetBusGain(Gain.Bus.c_str(), 1.0f, Host.UserData); }
@@ -92,6 +97,12 @@ namespace Sequencer
     {
         (void)InWorld;
         static_cast<SequenceWorld*>(InUserData)->Tick(InDeltaSeconds);
+    }
+
+    void SequenceWorld::BlendSystem(GameCore::World& InWorld, const float InDeltaSeconds, void* InUserData)
+    {
+        (void)InWorld;
+        static_cast<SequenceWorld*>(InUserData)->TickBlend(InDeltaSeconds);
     }
 
     SequenceWorld::Player* SequenceWorld::FindPlayer(const GameCore::EntityID InPlayer)
@@ -315,6 +326,10 @@ namespace Sequencer
         const double End   = double(Instance->GetAsset().Length);
         const double From  = P->Frame;
         const bool   bIncl = P->bIncludeFrame;
+        /* A blend out starts from what was seen, not the jump's last frame. */
+        SequenceShot Shown;
+        const GameCore::EntityID ShotBefore = Instance->GetCameraEntity();
+        const bool bShown = ShotBefore.IsSet() && ShotBefore == AppliedCamera && ReadShownView(Shown);
         P->Frame         = End;
         P->bIncludeFrame = false;
         Instance->Evaluate(End);
@@ -325,7 +340,7 @@ namespace Sequencer
         if(P && P->Instance.get() == Instance && P->State != ESequencePlayState::Stopped)
         {
             Publish(InPlayer, *P, true);
-            Finish(InPlayer, *P);
+            Finish(InPlayer, *P, bShown ? &Shown : nullptr);
         }
         ApplyToHost();
         return true;
@@ -377,14 +392,32 @@ namespace Sequencer
         return P && P->Instance ? P->Instance->GetAsset().GetDurationSeconds() : 0.0;
     }
 
-    void SequenceWorld::Finish(const GameCore::EntityID InPlayer, Player& InOutPlayer)
+    void SequenceWorld::Finish(const GameCore::EntityID InPlayer, Player& InOutPlayer, const SequenceShot* InSkippedFrom)
     {
+        const SequencePlayerComponent* Component = World.IsAlive(InPlayer)
+            ? World.GetEntity(InPlayer).GetComponent<SequencePlayerComponent>() : nullptr;
+
+        /* Its shot goes with Release: what it showed is kept for the blend
+         * out, which ApplyToHost starts once no other player has a shot. */
+        const GameCore::EntityID Shot = InOutPlayer.Instance ? InOutPlayer.Instance->GetCameraEntity() : GameCore::EntityID();
+        if(Component && Component->BlendOut > 0.0f && Shot.IsSet() && Shot == AppliedCamera)
+        {
+            SequenceShot View;
+            if(InSkippedFrom) { View = *InSkippedFrom; }
+            if(InSkippedFrom || ReadShownView(View))
+            {
+                PendingOut.bValid       = true;
+                PendingOut.Camera       = Shot;
+                PendingOut.View         = View;
+                PendingOut.Seconds      = InSkippedFrom ? Component->BlendOut * 0.5f : Component->BlendOut;
+                PendingOut.Ease         = Component->BlendEase;
+                PendingOut.bHoldControl = Component->bCinematic && Component->ReleaseControl == SCR_AfterBlend;
+            }
+        }
+
         InOutPlayer.State = ESequencePlayState::Finished;
         Release(InOutPlayer);
         Publish(InPlayer, InOutPlayer, false);
-
-        const SequencePlayerComponent* Component = World.IsAlive(InPlayer)
-            ? World.GetEntity(InPlayer).GetComponent<SequencePlayerComponent>() : nullptr;
         const bool bDestroy = Component && Component->bDestroyWhenFinished && !IsReplica(InPlayer);
 
         Emit("SequenceFinished", InPlayer, InOutPlayer);
@@ -483,6 +516,8 @@ namespace Sequencer
     {
         /* The shot of the player started last; the darkest fade; any cinematic. */
         GameCore::EntityID Camera;
+        const Player*                  Shown          = nullptr;
+        const SequencePlayerComponent* ShownComponent = nullptr;
         uint64_t Latest   = 0;
         float    Fade     = -1.0f;
         bool     bCinema  = false;
@@ -490,23 +525,25 @@ namespace Sequencer
         {
             const Player& P = Entry.second;
             if(!P.Instance || (P.State != ESequencePlayState::Playing && P.State != ESequencePlayState::Paused)) { continue; }
+            const GameCore::EntityID Id = GameCore::EntityID::Unpack(Entry.first);
+            const SequencePlayerComponent* Component = World.IsAlive(Id)
+                ? World.GetEntity(Id).GetComponent<SequencePlayerComponent>() : nullptr;
             const GameCore::EntityID Shot = P.Instance->GetCameraEntity();
             if(Shot.IsSet() && P.StartOrder >= Latest)
             {
-                Camera = Shot;
-                Latest = P.StartOrder;
+                Camera         = Shot;
+                Latest         = P.StartOrder;
+                Shown          = &P;
+                ShownComponent = Component;
             }
             Fade = std::max(Fade, P.Instance->GetFade());
-            const GameCore::EntityID Id = GameCore::EntityID::Unpack(Entry.first);
-            if(World.IsAlive(Id))
-            {
-                const SequencePlayerComponent* Component = World.GetEntity(Id).GetComponent<SequencePlayerComponent>();
-                bCinema = bCinema || (Component && Component->bCinematic);
-            }
+            bCinema = bCinema || (Component && Component->bCinematic && !HasReleasedControl(P, *Component));
         }
 
         if(Camera != AppliedCamera)
         {
+            const GameCore::EntityID Previous = AppliedCamera;
+            AppliedCamera = Camera;   // first: a blend in hands over to it
             if(Camera.IsSet())
             {
                 if(!bViewTaken)
@@ -514,17 +551,71 @@ namespace Sequencer
                     ViewBefore = Host.GetViewTarget ? Host.GetViewTarget(Host.UserData) : GameCore::EntityID();
                     bViewTaken = true;
                 }
-                if(Host.SetViewTarget) { Host.SetViewTarget(Camera, Host.UserData); }
+                /* Into the first shot, from the game's view (or a blend out
+                 * back to it), while the sequence is still in its BlendIn. */
+                const float  In   = ShownComponent ? ShownComponent->BlendIn : 0.0f;
+                const double Into = Shown->Instance->GetAsset().FramesToSeconds(Shown->Frame);
+                bool bBlending = false;
+                if(In > 0.0f && Into < double(In) && !Previous.IsSet())
+                {
+                    ViewBlend Next;
+                    if(Blend.bActive) { bBlending = ReadShownView(Next.FromView); }
+                    else if(ViewBefore.IsSet() && World.IsAlive(ViewBefore))
+                    {
+                        Next.FromEntity = ViewBefore;
+                        bBlending = ReadCameraView(World, ViewBefore, Next.FromView);
+                    }
+                    if(bBlending)
+                    {
+                        Next.bActive  = true;
+                        Next.ToEntity = Camera;
+                        Next.Seconds  = In;
+                        Next.Elapsed  = float(Into);
+                        Next.Ease     = ShownComponent->BlendEase;
+                        Blend = Next;
+                        StartBlend();
+                    }
+                }
+                if(!bBlending)
+                {
+                    if(Host.SetViewTarget) { Host.SetViewTarget(Camera, Host.UserData); }
+                    EndBlend(false);
+                }
+            }
+            else if(PendingOut.bValid && PendingOut.Camera == Previous && PendingOut.Seconds > 0.0f)
+            {
+                /* Out of the last shot, back to the view it took. */
+                ViewBlend Next;
+                Next.bActive      = true;
+                Next.bOut         = true;
+                Next.bHoldControl = PendingOut.bHoldControl;
+                Next.FromView     = PendingOut.View;
+                Next.Seconds      = PendingOut.Seconds;
+                Next.Ease         = PendingOut.Ease;
+                if(ViewBefore.IsSet() && World.IsAlive(ViewBefore)) { Next.ToEntity = ViewBefore; }
+                else
+                {
+                    Next.ToEntity   = ProbeDefaultView();
+                    Next.bToDefault = true;
+                }
+                Blend = Next;
+                SequenceShot Probe;
+                if(ReadCameraView(World, Blend.ToEntity, Probe)) { StartBlend(); }
+                else                                              { EndBlend(true); }   // nothing to ease to: given back now
             }
             else
             {
                 const GameCore::EntityID Back = ViewBefore.IsSet() && World.IsAlive(ViewBefore) ? ViewBefore : GameCore::EntityID();
                 if(Host.SetViewTarget) { Host.SetViewTarget(Back, Host.UserData); }
+                EndBlend(false);
                 bViewTaken = false;
                 ViewBefore = GameCore::EntityID();
             }
-            AppliedCamera = Camera;
         }
+        PendingOut = PendingBlendOut();
+
+        /* A blend out keeps its player's hold until it has run (SCR_AfterBlend). */
+        bCinema = bCinema || (Blend.bActive && Blend.bOut && Blend.bHoldControl);
         if(Fade != AppliedFade)
         {
             AppliedFade = Fade;
@@ -591,6 +682,122 @@ namespace Sequencer
         {
             bAppliedCinematic = bCinema;
             if(Host.SetCinematic) { Host.SetCinematic(bCinema, Host.UserData); }
+        }
+    }
+
+    // --- Blending in and out ------------------------------------------------------
+
+    GameCore::EntityID SequenceWorld::GetBlendCamera() const
+    {
+        return Blend.bActive && BlendCamera.IsSet() && World.IsAlive(BlendCamera) ? BlendCamera : GameCore::EntityID();
+    }
+
+    bool SequenceWorld::HasReleasedControl(const Player& InPlayerState, const SequencePlayerComponent& InComponent) const
+    {
+        if(InComponent.ReleaseControl != SCR_BeforeEnd || !InPlayerState.Instance || InComponent.bLoop) { return false; }
+        const SequenceAsset& Asset = InPlayerState.Instance->GetAsset();
+        const double Left = Asset.FramesToSeconds(double(Asset.Length) - InPlayerState.Frame);
+        return Left <= double(InComponent.ReleaseBeforeEnd);
+    }
+
+    bool SequenceWorld::ReadShownView(SequenceShot& OutShot)
+    {
+        if(Blend.bActive && BlendCamera.IsSet() && ReadCameraView(World, BlendCamera, OutShot)) { return true; }
+        return AppliedCamera.IsSet() && ReadCameraView(World, AppliedCamera, OutShot);
+    }
+
+    GameCore::EntityID SequenceWorld::ProbeDefaultView()
+    {
+        if(!Host.SetViewTarget || !Host.GetViewTarget) { return GameCore::EntityID(); }
+        Host.SetViewTarget(GameCore::EntityID(), Host.UserData);
+        const GameCore::EntityID Default = Host.GetViewTarget(Host.UserData);
+        if(Blend.bActive && BlendCamera.IsSet() && World.IsAlive(BlendCamera)) { Host.SetViewTarget(BlendCamera, Host.UserData); }
+        return Default;
+    }
+
+    void SequenceWorld::StartBlend()
+    {
+        if(!BlendCamera.IsSet() || !World.IsAlive(BlendCamera))
+        {
+            GameCore::Entity Made = World.CreateEntity("Sequence Blend Camera");
+            Made.AddComponent(GameCore::TransformComponent());
+            RenderCore::CameraComponent Camera;
+            Camera.Projection = RenderCore::CP_Perspective;
+            Made.AddComponent(Camera);
+            BlendCamera = Made.GetID();
+        }
+        Blend.bFresh = true;
+        if(!PoseBlend())
+        {
+            EndBlend(true);
+            return;
+        }
+        if(Host.SetViewTarget) { Host.SetViewTarget(BlendCamera, Host.UserData); }
+    }
+
+    bool SequenceWorld::PoseBlend()
+    {
+        SequenceShot From = Blend.FromView;
+        if(Blend.FromEntity.IsSet() && !ReadCameraView(World, Blend.FromEntity, From)) { return false; }
+        SequenceShot To;
+        if(!ReadCameraView(World, Blend.ToEntity, To))
+        {
+            /* The view to give back went (an avatar respawned): the host's default now. */
+            if(!Blend.bOut) { return false; }
+            Blend.ToEntity   = ProbeDefaultView();
+            Blend.bToDefault = true;
+            if(!ReadCameraView(World, Blend.ToEntity, To)) { return false; }
+        }
+        const float T = Blend.Seconds > 0.0f ? SequenceBlendEase(Blend.Ease, Blend.Elapsed / Blend.Seconds) : 1.0f;
+        const SequenceShot View = BlendShots(From, To, T);
+        GameCore::Entity Camera = World.GetEntity(BlendCamera);
+        Camera.SetWorldPose(View.Pose);
+        if(RenderCore::CameraComponent* Component = Camera.GetComponent<RenderCore::CameraComponent>())
+        {
+            Component->FovY  = View.FovY;
+            Component->ZNear = View.ZNear;
+            Component->ZFar  = View.ZFar;
+        }
+        return true;
+    }
+
+    void SequenceWorld::EndBlend(const bool bInHandOver)
+    {
+        const ViewBlend Ended = Blend;
+        Blend = ViewBlend();
+        if(bInHandOver && Ended.bActive && Host.SetViewTarget)
+        {
+            if(Ended.bOut)
+            {
+                /* As a cut gives back: what it took, or the host's default. */
+                const GameCore::EntityID Back = !Ended.bToDefault && Ended.ToEntity.IsSet() && World.IsAlive(Ended.ToEntity)
+                    ? Ended.ToEntity : GameCore::EntityID();
+                Host.SetViewTarget(Back, Host.UserData);
+                bViewTaken = false;
+                ViewBefore = GameCore::EntityID();
+            }
+            else
+            {
+                Host.SetViewTarget(AppliedCamera, Host.UserData);
+            }
+        }
+        if(BlendCamera.IsSet())
+        {
+            if(World.IsAlive(BlendCamera)) { World.DestroyEntity(BlendCamera); }
+            BlendCamera = GameCore::EntityID();
+        }
+    }
+
+    void SequenceWorld::TickBlend(const float InDeltaSeconds)
+    {
+        if(!Blend.bActive) { return; }
+        if(!Blend.bFresh) { Blend.Elapsed += InDeltaSeconds; }
+        Blend.bFresh = false;
+        const bool bHeld = Blend.bOut && Blend.bHoldControl;
+        if(Blend.Elapsed >= Blend.Seconds || !PoseBlend())
+        {
+            EndBlend(true);
+            if(bHeld) { ApplyToHost(); }   // cinematic mode may end with it
         }
     }
 

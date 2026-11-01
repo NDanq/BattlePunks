@@ -10,10 +10,16 @@
 #include <string>
 #include <vector>
 
+#include "Public/Core/CoreArchive.h"
+#include "Public/GameCore/ComponentSerializer.h"
+#if WITH_EDITOR
+#include "Public/GameCore/ComponentProperties.h"
+#endif
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/World.h"
+#include "Public/GameCore/WorldSerializer.h"
 #include "Public/RenderCore/AnimClipAsset.h"
 #include "Public/RenderCore/AnimInstance.h"
 #include "Public/RenderCore/AnimMath.h"
@@ -842,6 +848,193 @@ static void TestHost()
     SequenceWorld::Detach(World);
 }
 
+namespace
+{
+    float FovOf(GameCore::World& InWorld, const GameCore::EntityID InCamera)
+    {
+        const RenderCore::CameraComponent* Lens = InWorld.IsAlive(InCamera) ? InWorld.GetEntity(InCamera).GetComponent<RenderCore::CameraComponent>() : nullptr;
+        return Lens ? Lens->FovY : -1.0f;
+    }
+
+    EngineCore::Vector3 PositionOf(GameCore::World& InWorld, const GameCore::EntityID InEntity)
+    {
+        return InWorld.GetEntity(InEntity).GetWorldPose().Position;
+    }
+}
+
+/* Handing the view back: blend out on finish and on skip, tracking the
+ * gameplay camera; input held through the blend or released early. */
+static void TestBlendOut()
+{
+    std::printf("Blend out\n");
+    SequenceAssetCache::Set("Test/Shot.nmseq", ShotAsset());
+    GameCore::World World;
+    MakeCamera(World, "CamA", EngineCore::Vector3(0.0, 0.0, 0.0), 0.0f, 40.0f);
+    MakeCamera(World, "CamB", EngineCore::Vector3(10.0, 0.0, 0.0), 90.0f, 80.0f);
+    const GameCore::EntityID Gameplay = MakeCamera(World, "PlayerCam", EngineCore::Vector3(0.0, 5.0, 0.0), 0.0f, 70.0f);
+
+    FakeHost Fake;
+    Fake.Before = Gameplay;
+    SequenceWorld* Players = SequenceWorld::Attach(World);
+    Players->SetHost(MakeHost(Fake));
+    const GameCore::EntityID Player = MakePlayer(World, "Test/Shot.nmseq", true);
+    SequencePlayerComponent* Component = World.GetEntity(Player).GetComponent<SequencePlayerComponent>();
+    Component->bCinematic = 1;
+    Component->BlendOut   = 1.0f;
+    Component->BlendEase  = SBE_Linear;
+
+    World.Tick(0.0f);
+    World.Tick(1.0f);
+    World.Tick(1.0f);   // the end: CamB's shot, then the blend out starts
+    const GameCore::EntityID Blend = Players->GetBlendCamera();
+    Expect(Players->GetState(Player) == ESequencePlayState::Finished, "finished");
+    Expect(Players->IsBlendingOut() && Blend.IsSet() && Fake.View == Blend, "the host is shown the blend camera");
+    Expect(Fake.bCinematic, "After Blend: input and letterbox held through the blend");
+    Expect(Near(PositionOf(World, Blend).GetX(), 10.0, 1e-3) && Near(FovOf(World, Blend), 80.0, 1e-3),
+           "it starts on the last shot: x " + Num(PositionOf(World, Blend).GetX()) + ", fov " + Num(FovOf(World, Blend)));
+
+    /* The gameplay camera moves during the blend: tracked. */
+    World.GetEntity(Gameplay).GetComponent<GameCore::TransformComponent>()->Position = EngineCore::Vector3(0.0, 5.0, 4.0);
+    World.Tick(0.5f);
+    const EngineCore::Vector3 Mid = PositionOf(World, Blend);
+    Expect(Near(Mid.GetX(), 5.0, 1e-3) && Near(Mid.GetY(), 2.5, 1e-3) && Near(Mid.GetZ(), 2.0, 1e-3),
+           "half way to where the gameplay camera is now: " + Num(Mid.GetX()) + " " + Num(Mid.GetY()) + " " + Num(Mid.GetZ()));
+    Expect(Near(FovOf(World, Blend), 75.0, 1e-3), "the field of view eases too: " + Num(FovOf(World, Blend)));
+    Expect(Fake.View == Blend && Fake.bCinematic, "still blending, still held");
+
+    World.Tick(0.5f);
+    Expect(!Players->IsBlending() && Fake.View == Gameplay, "blended: the view given back");
+    Expect(!Fake.bCinematic, "and the input with it");
+    World.Tick(0.0f);
+    Expect(!World.IsAlive(Blend), "the blend camera is gone");
+
+    /* A skip blends from what was seen, over half the time; Blend Start
+     * releases control at once. */
+    Component->ReleaseControl = SCR_BlendStart;
+    Players->Play(Player);
+    World.Tick(0.0f);
+    World.Tick(0.5f);   // frame 5: CamA's shot, at the origin
+    Expect(Players->SkipCinematics() == 1, "skipped");
+    const GameCore::EntityID SkipBlend = Players->GetBlendCamera();
+    Expect(Players->IsBlendingOut() && Fake.View == SkipBlend, "a skip blends too");
+    Expect(!Fake.bCinematic, "Blend Start: input back as the blend starts");
+    World.Tick(0.0f);
+    Expect(Near(FovOf(World, SkipBlend), 40.0, 1e-3) && Near(PositionOf(World, SkipBlend).GetX(), 0.0, 1e-3),
+           "from the shot that was seen, not the last one: fov " + Num(FovOf(World, SkipBlend)));
+    World.Tick(0.25f);
+    Expect(Near(FovOf(World, SkipBlend), 55.0, 1e-3), "half way after a quarter second (half of Blend Out): " + Num(FovOf(World, SkipBlend)));
+    World.Tick(0.25f);
+    Expect(!Players->IsBlending() && Fake.View == Gameplay, "the skip's blend is done in half the time");
+
+    /* Before End: control comes back while the sequence still plays. */
+    Component->ReleaseControl   = SCR_BeforeEnd;
+    Component->ReleaseBeforeEnd = 0.5f;
+    Component->BlendOut         = 0.0f;
+    Players->Play(Player);
+    World.Tick(0.0f);
+    World.Tick(1.0f);
+    Expect(Fake.bCinematic, "held with a second left");
+    World.Tick(0.6f);
+    Expect(Players->IsPlaying(Player) && !Fake.bCinematic, "released half a second before the end, still playing");
+    Expect(Fake.View == Players->FindInstance(Player)->GetCameraEntity(), "the shot is still seen");
+    World.Tick(1.0f);
+    Expect(Fake.View == Gameplay && !Players->IsBlending(), "no Blend Out: cut back as before");
+
+    /* Stop cuts, whatever Blend Out says. */
+    Component->BlendOut = 1.0f;
+    Players->Play(Player);
+    World.Tick(0.0f);
+    Players->Stop(Player);
+    Expect(Fake.View == Gameplay && !Players->IsBlending(), "Stop cuts back");
+    SequenceWorld::Detach(World);
+}
+
+/* Into the first shot from the gameplay camera, then the sequence's own. */
+static void TestBlendIn()
+{
+    std::printf("Blend in\n");
+    SequenceAssetCache::Set("Test/Shot.nmseq", ShotAsset());
+    GameCore::World World;
+    MakeCamera(World, "CamA", EngineCore::Vector3(0.0, 0.0, 0.0), 0.0f, 40.0f);
+    MakeCamera(World, "CamB", EngineCore::Vector3(10.0, 0.0, 0.0), 90.0f, 80.0f);
+    const GameCore::EntityID Gameplay = MakeCamera(World, "PlayerCam", EngineCore::Vector3(0.0, 4.0, 0.0), 0.0f, 70.0f);
+
+    FakeHost Fake;
+    Fake.Before = Gameplay;
+    SequenceWorld* Players = SequenceWorld::Attach(World);
+    Players->SetHost(MakeHost(Fake));
+    const GameCore::EntityID Player = MakePlayer(World, "Test/Shot.nmseq", true);
+    SequencePlayerComponent* Component = World.GetEntity(Player).GetComponent<SequencePlayerComponent>();
+    Component->BlendIn   = 1.0f;
+    Component->BlendEase = SBE_Linear;
+
+    World.Tick(0.0f);
+    const GameCore::EntityID Blend = Players->GetBlendCamera();
+    Expect(Players->IsBlending() && !Players->IsBlendingOut() && Fake.View == Blend, "the first shot is blended into");
+    Expect(Near(FovOf(World, Blend), 70.0, 1e-3) && Near(PositionOf(World, Blend).GetY(), 4.0, 1e-3), "from the gameplay camera");
+    World.Tick(0.5f);
+    Expect(Near(FovOf(World, Blend), 55.0, 1e-3) && Near(PositionOf(World, Blend).GetY(), 2.0, 1e-3),
+           "half way to the shot: fov " + Num(FovOf(World, Blend)));
+    World.Tick(0.5f);
+    Expect(!Players->IsBlending() && Fake.View == Players->FindInstance(Player)->GetCameraEntity(), "then the sequence's camera");
+
+    /* Blend Out from a blend in: from the blend camera's view. */
+    Component->BlendOut = 1.0f;
+    Players->Stop(Player);
+    Players->Play(Player);
+    World.Tick(0.0f);
+    World.Tick(0.5f);
+    Players->Skip(Player);
+    Expect(Players->IsBlendingOut() && Near(FovOf(World, Players->GetBlendCamera()), 55.0, 1e-3),
+           "a skip mid blend in eases out from where the blend was: " + Num(FovOf(World, Players->GetBlendCamera())));
+    World.Tick(0.0f);
+    World.Tick(0.5f);
+    Expect(Fake.View == Gameplay && !Players->IsBlending(), "and back");
+    SequenceWorld::Detach(World);
+}
+
+/* The new fields save (component serializer v2) and are offered to tools. */
+static void TestHandOverFields()
+{
+    std::printf("Hand-over fields\n");
+    std::vector<uint8_t> Saved;
+    {
+        GameCore::World World;
+        const GameCore::EntityID Player = MakePlayer(World, "Test/Shot.nmseq", false);
+        SequencePlayerComponent* Component = World.GetEntity(Player).GetComponent<SequencePlayerComponent>();
+        Component->BlendIn = 0.75f; Component->BlendOut = 2.5f; Component->BlendEase = SBE_CubicOut;
+        Component->ReleaseControl = SCR_BeforeEnd; Component->ReleaseBeforeEnd = 1.25f;
+        EngineCore::Archive Out = EngineCore::Archive::ForWriting();
+        Expect(GameCore::SerializeWorld(Out, World), "saved");
+        Saved = Out.GetBytes();
+    }
+    GameCore::World Loaded;
+    EngineCore::Archive In = EngineCore::Archive::ForReading(Saved);
+    Expect(GameCore::SerializeWorld(In, Loaded), "loaded");
+    const GameCore::EntityID Player = Loaded.FindEntityByName("Player");
+    const SequencePlayerComponent* Component = Player.IsSet() ? Loaded.GetEntity(Player).GetComponent<SequencePlayerComponent>() : nullptr;
+    Expect(Component && Near(Component->BlendIn, 0.75) && Near(Component->BlendOut, 2.5) && Component->BlendEase == SBE_CubicOut
+           && Component->ReleaseControl == SCR_BeforeEnd && Near(Component->ReleaseBeforeEnd, 1.25), "the hand-over fields round trip");
+    const GameCore::ComponentSerializerInfo* Serializer = GameCore::FindComponentSerializer(SequencePlayerComponent::StaticType().ID);
+    Expect(Serializer && Serializer->Version == 2, "the component saves as version 2");
+
+    Expect(Near(SequenceBlendEase(SBE_Smooth, 0.5f), 0.5) && Near(SequenceBlendEase(SBE_Linear, 0.25f), 0.25)
+           && SequenceBlendEase(SBE_CubicIn, 0.5f) < 0.5f && Near(SequenceBlendEase(SBE_CubicOut, 2.0f), 1.0), "the eases");
+
+#if WITH_EDITOR
+    size_t Count = 0;
+    const GameCore::ComponentPropertyEntry* Props = GameCore::FindComponentProperties(SequencePlayerComponent::StaticType().ID, Count);
+    int Found = 0;
+    for(size_t Index = 0; Props && Index < Count; ++Index)
+    {
+        const std::string Name = Props[Index].Name;
+        if(Name == "Blend In" || Name == "Blend Out" || Name == "Release Before End") { ++Found; }
+        if((Name == "Blend Ease" || Name == "Release Control") && Props[Index].IsChoice()) { ++Found; }
+    }
+    Expect(Found == 5, "the editor shows them: " + std::to_string(Found));
+#endif
+}
+
 static void TestReplica()
 {
     std::printf("Replicas\n");
@@ -1236,6 +1429,9 @@ int main()
     TestSounds();
     TestHeldValues();
     TestHost();
+    TestBlendOut();
+    TestBlendIn();
+    TestHandOverFields();
     TestReplica();
 #if WITH_EDITOR
     TestAnimationTrack();
