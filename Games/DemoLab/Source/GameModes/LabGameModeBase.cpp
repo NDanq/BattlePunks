@@ -9,6 +9,7 @@
 #include "Public/NimbleEngine/GameConsole.h"
 #include "Public/NimbleEngine/Input.h"
 #include "Public/NimbleEngine/PlayerState.h"
+#include "Public/NimbleEngine/SequenceFacade.h"
 #include "Public/RenderCore/Components/ProceduralSpawnerComponent.h"
 
 #include "AI/LabBots.h"
@@ -350,6 +351,10 @@ void LabGameModeBase::OnSequenceStarted(const EventArgs& InArgs)
        && std::strncmp(InArgs.Args[1].String, AMBIENT, sizeof(AMBIENT) - 1) == 0) { return; }
     for(const uint64_t Playing : PlayingSequences) { if(Playing == InArgs.Args[0].Entity) { return; } }
     PlayingSequences.push_back(InArgs.Args[0].Entity);
+    /* A cutscene's "player" binding is the local player's character
+     * (Tools/Cinematics: it walks, rides and is winched up in them). */
+    const EntityID Local = GetLocalAvatar(GetWorld(), 0);
+    if(Local.IsSet()) { BindSequence(GetWorld(), EntityID::Unpack(InArgs.Args[0].Entity), "player", Local); }
     OnCutsceneStarted(EntityID::Unpack(InArgs.Args[0].Entity), InArgs.Count > 1 && InArgs.Args[1].Type == EventArg::ET_String ? InArgs.Args[1].String : "");
     CORE_LOG(std::string("[DemoLab] cutscene started: ") + (InArgs.Count > 1 && InArgs.Args[1].Type == EventArg::ET_String ? InArgs.Args[1].String : "?"))
 }
