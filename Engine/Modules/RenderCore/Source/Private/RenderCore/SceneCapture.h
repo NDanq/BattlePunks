@@ -22,6 +22,7 @@ namespace RenderCore
         RENDER_CAPTURES_MAX         = 8,    // probes captured in one frame; the rest wait
         RENDER_CAPTURE_EXCLUDED_MAX = 32,   // entities a probe leaves out (its owner's subtree)
         RENDER_REFLECTION_PROBES_MAX = 16,  // reflection probes lighting a view at once (IBLCommon.glsl's IBL_PROBES_MAX)
+        RENDER_GI_BACKGROUND_MAX     = 3,   // GI Volumes after the nearest whose probes may fill in the background
     };
 
     /* A Reflection Probe lighting this view: where, its influence, and whether
@@ -39,6 +40,8 @@ namespace RenderCore
         uint32_t            Resolution = 128;        // a face's side
         uint8_t             bDue      = 0;
         uint8_t             bShadows  = 1;
+        uint8_t             bForce        = 0;       // Capture Now: captured whatever StaticCaptures says
+        uint8_t             bFollowsLight = 1;       // not Manual: StaticCaptures captures it again when the lighting changes
     };
 
     /* The GI Volume lighting this view (GLOBAL_ILLUMINATION.md, Phase 6): its
@@ -62,6 +65,11 @@ namespace RenderCore
         float               NearClip = 5.0f;
         float               FarClip  = 5000.0f;
         uint8_t             bShadows = 0;            // draw shadow maps for each view (the probe's CaptureShadows)
+        /* RenderScene's own captures (GLOBAL_ILLUMINATION.md, "Capture budget"): leave out proxies
+         * whose bounds' radius over their distance from Position is under CullRatio, and, with
+         * bStaticOnly, those that are not static. A Scene Capture Probe's are 0: everything. */
+        float               CullRatio   = 0.0f;
+        uint8_t             bStaticOnly = 0;
         uint32_t            ExcludedCount = 0;
         GameCore::EntityID  Excluded[RENDER_CAPTURE_EXCLUDED_MAX];
     };
@@ -75,9 +83,12 @@ namespace RenderCore
         uint32_t               ProbeCount = 0;
         ReflectionProbeRequest Probes[RENDER_REFLECTION_PROBES_MAX];
 
-        /* The GI Volume nearest the camera, if any. */
+        /* The GI Volume nearest the camera, if any; and the next nearest, nearest first, whose probes
+         * RenderScene fills while the nearest's want nothing (GLOBAL_ILLUMINATION.md, "Capture budget"). */
         uint8_t                bGIVolume = 0;
         GIVolumeRequest        GIVolume;
+        uint8_t                GIOtherCount = 0;
+        GIVolumeRequest        GIOthers[RENDER_GI_BACKGROUND_MAX];
     };
 
     /* A cube face's forward and up, +X -X +Y -Y +Z -Z -- the order of a

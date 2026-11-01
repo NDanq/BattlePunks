@@ -92,7 +92,8 @@ Two rules decide which value applies:
 | `Rendering.StochasticReflections` | off | off | on | on |
 | `Rendering.SubsurfaceScattering` | off | on | on | on |
 | `Rendering.DynamicGI` | off | on | on | on |
-| `Rendering.GIProbesPerFrame` | 1 | 1 | 1 | 2 |
+| `Rendering.GIProbesPerFrame` (only with `CaptureBudgetMs` 0) | 1 | 1 | 1 | 2 |
+| `Rendering.CaptureBudgetMs` (GI Volume and reflection probe captures a frame; GLOBAL_ILLUMINATION.md, Phase 7) | 0.5 | 1 | 2 | 3 |
 | `Rendering.TextureStreamingPoolMB` | 256 | 384 | 512 | 1024 |
 | `Rendering.TextureStreamingMipBias` | 1 | 0 | 0 | 0 |
 | `Rendering.Anisotropy` (applies at the next start) | 2 | 4 | 8 | 16 |

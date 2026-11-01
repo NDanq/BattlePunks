@@ -35,6 +35,13 @@ What the Details panel shows. The C++ members are public fields of `ReflectionPr
 | `Capture Now` | uint8_t (flag) | false |  |
 | `Enabled` | uint8_t (flag) | true |  |
 
+## Capturing (GLOBAL_ILLUMINATION.md, Phase 7)
+
+- A capture is six faces, rendered within the frame's capture budget (`[Rendering] CaptureBudgetMs`, shared with the GI Volumes, 2 ms on High): a few faces a frame, the probe's old capture lighting until the sixth is in.
+- With `[Rendering] StaticCaptures` (on), Every Frame and Interval probes capture again only when what they would see has changed: a static mesh edited, a dynamic one moved within Far Clip, the lighting changed (the sun by `CaptureSunStepDegrees`, 1 degree; a light's colour, intensity or place; the sky). Every probe but a Manual one also captures again when the lighting changes. Capture Now always captures.
+- Capture Shadows uses the frame's shared capture shadow maps (one set for every capture view, kept from frame to frame while nothing changes), covering the probe's influence and half as much again round it.
+- With `[Rendering] SimpleCaptures` (on) the faces leave out translucent surfaces, particles and custom passes, and anything under `CaptureCullPixels` (2) pixels of the face.
+
 ## C++ API
 
 ```cpp

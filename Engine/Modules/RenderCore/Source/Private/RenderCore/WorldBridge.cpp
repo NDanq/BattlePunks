@@ -1160,14 +1160,18 @@ namespace RenderCore
 
     void WorldBridge::BuildGIVolume(const RenderView& InView, SceneCaptureList& OutList)
     {
-        OutList.bGIVolume = 0;
+        OutList.bGIVolume    = 0;
+        OutList.GIOtherCount = 0;
         ComponentPool* Pool = BoundWorld ? BoundWorld->FindPool(GIVolumeComponent::StaticType().ID) : nullptr;
         if(!Pool)
         {
             return;
         }
-        /* The enabled volume nearest the camera. */
-        double Nearest = 0.0;
+        /* The enabled volumes nearest the camera: the first lights, the next few fill in the background. */
+        constexpr uint32_t Kept = 1 + RENDER_GI_BACKGROUND_MAX;
+        GIVolumeRequest Nearest[Kept];
+        double          Distances[Kept] = {};
+        uint32_t        Count = 0;
         auto* Volumes = static_cast<GIVolumeComponent*>(Pool->GetDenseData());
         for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
         {
@@ -1178,11 +1182,11 @@ namespace RenderCore
             }
             const GameCore::TransformPose Pose = PoseOf(Volume.Owner);
             const double Distance = (Pose.Position - InView.Origin).GetLength();
-            if(OutList.bGIVolume && Distance >= Nearest)
+            if(Count == Kept && Distance >= Distances[Kept - 1])
             {
                 continue;
             }
-            GIVolumeRequest& Request = OutList.GIVolume;
+            GIVolumeRequest Request;
             Request.Key       = Volume.Owner.GetEntity().GetID().Pack();
             Request.Position  = Pose.Position;
             Request.Extent[0] = float(std::max(double(Volume.Extent.GetX()), 1.0));
@@ -1190,8 +1194,28 @@ namespace RenderCore
             Request.Extent[2] = float(std::max(double(Volume.Extent.GetZ()), 1.0));
             Request.Spacing   = std::max(Volume.ProbeSpacing, 10.0f);
             Request.Intensity = Volume.Intensity;
-            OutList.bGIVolume = 1;
-            Nearest = Distance;
+
+            /* In by distance (the first nearer wins a tie, as before). */
+            uint32_t At = std::min(Count, Kept - 1);
+            while(At > 0 && Distances[At - 1] > Distance)
+            {
+                Nearest[At]   = Nearest[At - 1];
+                Distances[At] = Distances[At - 1];
+                --At;
+            }
+            Nearest[At]   = Request;
+            Distances[At] = Distance;
+            Count = std::min(Count + 1, Kept);
+        }
+        if(Count == 0)
+        {
+            return;
+        }
+        OutList.bGIVolume = 1;
+        OutList.GIVolume  = Nearest[0];
+        for(uint32_t Index = 1; Index < Count; ++Index)
+        {
+            OutList.GIOthers[OutList.GIOtherCount++] = Nearest[Index];
         }
     }
 
@@ -1247,7 +1271,9 @@ namespace RenderCore
                 case SCF_Once:       bDue = bDue || !State.bCaptured; break;
                 default:             break;
             }
-            Request.bDue = bDue ? 1 : 0;
+            Request.bDue          = bDue ? 1 : 0;
+            Request.bForce        = Probe.bCaptureNow != 0 ? 1 : 0;
+            Request.bFollowsLight = Probe.Frequency != SCF_Manual ? 1 : 0;
             Found.push_back({ &Probe, Request, (Pose.Position - InView.Origin).GetLength() });
         }
         /* Indices are sorted, not the candidates: a ReflectionProbeRequest's

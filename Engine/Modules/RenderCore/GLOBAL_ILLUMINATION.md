@@ -250,9 +250,10 @@ updated by rasterising rather than ray tracing:
   probes, at least 2 and at most 32 x 8 x 32, spaced to fill the box exactly.
   One lights the scene: the enabled volume nearest the camera
   (`WorldBridge::BuildGIVolume`).
-- **Updates** (`RenderScene::UpdateGlobalIllumination`, in the Captures
-  timer): `[Rendering] GIProbesPerFrame` probes a frame (1 by default), round
-  the grid, each six 16 x 16 views through the scene-capture path -- shadows
+- **Updates** (`RenderScene::UpdateCaptures`, in the Captures timer; since
+  Phase 7 within the frame's capture budget, face by face, stopping once
+  converged): round the grid, each probe six 16 x 16 views through the
+  scene-capture path -- shadows
   on, lit by the live lights, the sky behind and, once every probe has been
   seen, the volume itself, so light bounces again with each round.
   `DDGICopy.fsh` writes each face into a strip with each texel's distance from
@@ -267,7 +268,8 @@ updated by rasterising rather than ray tracing:
 - **Deviation:** no hysteresis. DDGI blends each update into the old because
   a few rays are noisy; a rasterised update sees the whole sphere, so it
   replaces the tiles outright. Light changes reach a probe when its turn
-  comes (324 probes at one a frame: about five seconds at 60 Hz).
+  comes (324 probes at one a frame: about five seconds at 60 Hz) -- since
+  Phase 7, by relighting from the probes' cache, a few frames.
 - **Lookup** (`DDGI.glsl`, in the IBL pass): the eight probes round the point
   (offset 0.3 of the least spacing along the normal and the view, after
   Majercik 2021), weighted trilinearly, by a wrapped cosine toward the probe,
@@ -291,6 +293,130 @@ updated by rasterising rather than ray tracing:
 - Not yet: an editor gizmo for the box; probe relocation and classification (Majercik
   2021) -- a probe inside a wall sees black and is only down-weighted by its
   distances; a rotated volume.
+
+## Phase 7: capture budget (landed)
+
+Demo Lab, a 60 fps showcase on an Intel Arc B390, spent more on captures than
+on its whole frame: the Captures span was 40-110 ms a frame in L1 (one GI
+Volume, three reflection probes), far past its 16.6 ms budget.
+
+**What a capture cost.** A GI Volume probe update was six 16 x 16 views, each
+a complete pass of the scene-capture path: the frame's shadow maps drawn again
+for that view (the sun's cascades fitted to a 90-degree face out to 20000
+units, and six faces for every shadowed point light), every proxy within
+20000 units queued (dynamic ones, particles and translucency too), the
+custom passes, then G-buffer, Lighting and IBL at 16 x 16. The pixels cost
+nothing; the draws were everything. Per probe (six faces, 1 a frame) in
+Demo Lab's L1, medians of interleaved runs: **43 ms**, of which the per-view
+shadow maps were about 21 ms and the rest -- every proxy out to 20000, over
+100 a face, foliage, custom passes, translucency -- about 22 ms
+(GLOBAL_ILLUMINATION_PERF.md, "Captures (Phase 7)"). A reflection probe face
+was the same at 256 x 256, with the whole level (Far Clip 40000) in view.
+
+**The budget.** `[Rendering] CaptureBudgetMs` (2 on High; Low 0.5, Medium 1,
+Ultra 3; SCALABILITY.md) is the frame's time for GI Volume and reflection
+probe faces, shared. Work is counted in units, a cube face of side S being
+1 + S^2 / 65536 (`CaptureScheduler.h`); `CaptureBudget` learns a unit's cost
+from the Captures span's GPU time, read back frames in flight later and
+matched to the frame by the GDI block's serial (the span is timed whenever
+there is a budget, `stat frame` or not), and from the render thread's time
+recording the faces, taking the dearer, and hands each frame the units that
+fit. A cost each frame pays once, the capture shadow maps, folds into the
+unit's, which settles where the whole span fills the budget. The frame's
+first face always renders, so captures move however dear a face is. Faces
+are the slice: a reflection probe or a GI probe advances face by face across
+frames (the GI probe's strip is per volume, so a probe left half done waits).
+When both want faces they take turns going first, the first to half the
+budget. `CaptureBudgetMs` 0 is the old behaviour: `ProbeFacesPerFrame` faces
+of one reflection probe and `GIProbesPerFrame` whole GI probes a frame.
+
+**Capture shadow maps** (`[Rendering] SharedCaptureShadows`, on;
+`BuildCaptureShadowFrame`, `RenderContext::BeginCaptureShadows`): one set of
+shadow maps for every capture view of a frame -- the sun as one view over the
+whole directional atlas holding the region the captures need (the GI Volume
+a spacing round it, each listed reflection probe's influence half as much
+again round it; no cascades, its split out of every view depth's reach), and
+the shadowed local lights that reach it -- drawn once, with casters smaller
+than a texel left out. They have atlases of their own (swapped in for the
+scene's while the captures render), so they are kept from frame to frame:
+the next frame draws them again only when their key changes (the lighting's
+signature, the region, the casters' -- static ones by serial, Dynamic ones
+by place, and those only while a reflection probe is capturing).
+
+**Simple capture views** (`[Rendering] SimpleCaptures`, on;
+`RenderContext::SetCaptureRendering`): no custom passes, no Translucent
+stage (glass, smoke, particles), no subsurface, no contact shadows; nothing
+smaller than `CaptureCullPixels` (2) pixels of the face (bounds radius over
+distance against pixels over face size), and a GI Volume's probes see its
+static geometry alone (`GICaptureStaticOnly`, on: what moves does not bake
+into the irradiance) out to `GICaptureSpacings` (8) probe spacings -- at
+least 2500 units, at most 20000 and twice the volume's diagonal -- so a probe
+costs the same however large the level, the sky standing behind. Terrain and
+Procedural Spawner LODs are chosen as if `CaptureLodScale` (4) times farther
+(`RenderContext::SetLodDistanceScale`).
+
+**Static captures** (`[Rendering] StaticCaptures`, on): captures converge and
+stop. What a capture sees is hashed: the lighting (`CaptureLightingSignature`:
+the sun's direction in steps of `CaptureSunStepDegrees`, 1, so a TimeOfDay
+sun recaptures once a degree; its colour, intensity and shadow; the sky's
+colours and HDRI; every local light, order-free; whether shadows are on) and
+the scene within the capture's reach (`SceneSignature`: each renderable
+proxy it would draw, a static one by its change serial, a dynamic one --
+extracted every frame -- by its bounds and transform; and the content
+generation). A GI Volume stops `GIConvergeRounds` (2) rounds after its
+signature last changed: the first round lights with the new light, the
+second adds a bounce. An Every Frame or Interval reflection probe that is
+due captures only when its signature changed since its last capture; any
+probe but a Manual one captures again when the lighting does (this replaces
+`ProbesFollowSky`, which recaptured on every sky-pass version). Capture Now
+always captures.
+
+**Relighting** (`[Rendering] GIRelight`, on; `DDGIStore.fsh`,
+`DDGIRelight.fsh`): a GI Volume keeps what its probes' faces saw -- after each
+face, its diffuse albedo, distance, emissive and normal (an Unlit surface's
+colour as its emissive; the sky as -1) go into the volume's cache, probe i's
+six faces side by side in its row (RGBA16F and RGBA32F, with the RGBA16F
+radiance atlas 32 bytes a texel, 1024 probes a column: about 13 MB for 264
+probes, 55 MB for 1125; volumes over `GIRelightMaxProbes`, 2048, are not
+cached and converge by raster rounds). Once every probe's faces are in
+and its static geometry is unchanged since, a lighting change does not draw
+the scene again: `DDGIRelight.fsh` lights the cached texels -- the sun with
+the capture shadow maps, every local light (the light list's tiles are a
+view's; this walks them all), the reflection probes and sky, and the
+volume's last irradiance for the bounce -- into a radiance atlas laid out the
+same, and `DDGIUpdate.fsh`, batched, turns a range of probes' rows into their
+irradiance tiles in one pass (the distance tiles stand: geometry did not
+move). A relit probe costs about 0.01-0.02 ms of GPU, so a whole room
+re-converges in a few frames within the budget. A geometry change (a static
+mesh edited, a door that is static) starts the raster rounds again.
+
+**Background fill.** `WorldBridge::BuildGIVolume` sends the nearest volume and
+the next three (`GIOthers`); while the nearest wants nothing the frame's
+budget fills the next one wanting faces, so a room is ready (and relightable)
+before the camera gets there. Four volumes' states are kept, the least
+recently used dropped, so going back to a room costs nothing.
+
+**`[Rendering] CaptureLog`** logs, about once a second, what the captures did
+(faces, relit probes, the unit costs, the active volume's progress), and when
+a volume converges, how long after its last change.
+
+**Measured**: GLOBAL_ILLUMINATION_PERF.md, "Captures (Phase 7)".
+
+**Limits.**
+- The minimum progress of one face a frame exceeds the budget where one face
+  costs more than it (a 256 x 256 reflection probe face in a dense level).
+- A GI Volume's first fill is still a raster round: in L2's dense rooms a
+  face is 150-600 draws, 1.5-3 ms of render-thread time, so 264 probes take
+  about 50 s at 2 ms a frame (the volume lights only once it is done; the
+  reflection probes light meanwhile). The background fill hides it for the
+  rooms after the first.
+- Relighting is Lambert diffuse with the default model's specular, no ambient
+  occlusion or wetness; dynamic geometry is in neither the raster captures
+  nor the relight (GICaptureStaticOnly).
+- Lights flickering or moving every frame keep their volumes and probes
+  updating (within the budget).
+- Capture shadow maps cover the region round the captures: what a reflection
+  probe sees beyond its influence is lit unshadowed.
 
 ## Checking
 

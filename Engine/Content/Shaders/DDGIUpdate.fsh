@@ -7,6 +7,11 @@
 // alpha and alpha squared over a cos^50 lobe, divided by the longest distance.
 // A rasterised update is the whole sphere at once, not a few noisy rays, so it
 // replaces the tile outright rather than blending into it.
+//
+// Batched (PP_Settings.x < 0; GLOBAL_ILLUMINATION.md, "Relighting"): every
+// probe from PP_Sizes.y, PP_Sizes.z of them, at once -- each tile's probe from
+// its place, its strip the probe's row of the radiance atlas DDGIRelight.fsh
+// wrote (six faces side by side, PP_Sizes.w probes a column).
 
 #include <PostProcessCommon.glsl>
 #include <IBLCommon.glsl>
@@ -14,9 +19,11 @@
 MATERIAL_SAMPLER2D(4, Strip)   // 6S x S: rgb radiance, a distance
 
 UBO_BLOCK_BEGIN(2, PP_Block)
-    vec4 PP_Settings;   // x: the probe; y: the tile's side (8 irradiance, 16 distance); z: 1 for distance; w: tiles a row
-    vec4 PP_Sizes;      // x: the volume's longest distance, world units
+    vec4 PP_Settings;   // x: the probe, or -1 batched; y: the tile's side (8 irradiance, 16 distance); z: 1 for distance; w: tiles a row
+    vec4 PP_Sizes;      // x: the volume's longest distance, world units; batched: y the first probe, z how many, w probes a column
 UBO_BLOCK_END(PP_Block)
+
+vec2 GStripOrigin = vec2(0.0);   // the probe's strip's corner, texels (batched: its row of the radiance atlas)
 
 vec4 SampleStrip(vec3 InDirection)
 {
@@ -29,10 +36,11 @@ vec4 SampleStrip(vec3 InDirection)
     IBL_FaceBasis(Face, Forward, Right, Up);
     float Depth = max(dot(InDirection, Forward), 1e-6);
     vec2  Ndc   = vec2(dot(InDirection, Right), dot(InDirection, Up)) / Depth;
-    float Size  = float(textureSize(Strip, 0).y);
+    vec2  Atlas = vec2(textureSize(Strip, 0));
+    float Size  = PP_Settings.x < 0.0 ? 16.0 : Atlas.y;   // a face's side
     float Inset = 0.5 / Size;
     vec2  Uv    = clamp(NdcToTargetUv(Ndc), vec2(Inset), vec2(1.0 - Inset));
-    return textureLod(Strip, vec2((float(Face) + Uv.x) / 6.0, Uv.y), 0.0);
+    return textureLod(Strip, (GStripOrigin + vec2(float(Face) + Uv.x, Uv.y) * Size) / Atlas, 0.0);
 }
 
 vec2 Hammersley(int InIndex, int InCount)
@@ -51,6 +59,14 @@ void main(void)
     int   Probe  = int(PP_Settings.x);
     float Side   = PP_Settings.y;
     int   PerRow = int(PP_Settings.w);
+    if(PP_Settings.x < 0.0)
+    {
+        ivec2 Tile = ivec2(gl_FragCoord.xy / Side);
+        Probe = Tile.y * PerRow + Tile.x;
+        if(Tile.x >= PerRow || Probe < int(PP_Sizes.y) || Probe >= int(PP_Sizes.y + PP_Sizes.z)) { discard; }
+        int PerColumn = max(int(PP_Sizes.w), 1);
+        GStripOrigin = vec2(float(Probe / PerColumn) * 96.0, float(Probe % PerColumn) * 16.0);
+    }
     vec2  Local  = gl_FragCoord.xy - vec2(float(Probe % PerRow), float(Probe / PerRow)) * Side;
     if(any(lessThan(Local, vec2(0.0))) || Local.x >= Side || Local.y >= Side) { discard; }
 

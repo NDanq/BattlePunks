@@ -54,7 +54,16 @@ namespace RenderCore
         GDIRenderTarget* Distance   = nullptr;
         GDIRenderTarget* Strip      = nullptr;
         uint32_t         Rows       = 0;
+
+        /* RELIGHTING (GLOBAL_ILLUMINATION.md, "Relighting"; EnsureDDGICache): what each probe's
+         * faces saw (DDGIStore.fsh: Cache[0] albedo and distance, RGBA16F; Cache[1] emissive and
+         * normal, RGBA32F) and their radiance lit again from it (DDGIRelight.fsh, RGBA16F) --
+         * probe i's six faces side by side in its row, CachePerColumn probes a column. */
+        GDIRenderTarget* Cache[2]       = {};
+        GDIRenderTarget* Radiance       = nullptr;
+        uint32_t         CachePerColumn = 0;
     };
+    constexpr uint32_t DDGI_CACHE_PER_COLUMN = 1024;   // a column of the cache: 16384 texels high
 
     struct SceneTargets
     {
