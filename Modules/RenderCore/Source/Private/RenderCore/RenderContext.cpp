@@ -4579,6 +4579,32 @@ namespace RenderCore
         return InView < P->Shadows.ViewCount && P->Shadows.IsSunView(InView);
     }
 
+    bool RenderContext::ShadowViewSees(const uint32_t InView, const GameCore::AABB& InBounds) const
+    {
+        if(InView >= P->Shadows.ViewCount || InBounds.IsEmpty())
+        {
+            return true;
+        }
+        /* Clip = M * p (GL clip space): the planes are the last row plus or minus each other row
+         * (Gribb and Hartmann); a box is outside when its corner farthest along a plane's normal is behind it. */
+        const ShadowView& View = P->Shadows.Views[InView];
+        const EngineCore::Matrix4x4 M = View.Projection * View.View;
+        const double Min[3] = { InBounds.Min.GetX(), InBounds.Min.GetY(), InBounds.Min.GetZ() };
+        const double Max[3] = { InBounds.Max.GetX(), InBounds.Max.GetY(), InBounds.Max.GetZ() };
+        for(int Row = 0; Row < 3; ++Row)
+        {
+            for(const double Sign : { 1.0, -1.0 })
+            {
+                double Plane[4];
+                for(int Col = 0; Col < 4; ++Col) { Plane[Col] = double(M.Data[3][Col]) + Sign * double(M.Data[Row][Col]); }
+                double Far = Plane[3];
+                for(int Axis = 0; Axis < 3; ++Axis) { Far += Plane[Axis] * (Plane[Axis] >= 0.0 ? Max[Axis] : Min[Axis]); }
+                if(Far < 0.0) { return false; }
+            }
+        }
+        return true;
+    }
+
     const GameCore::AABB& RenderContext::GetShadowViewBounds(const uint32_t InView) const
     {
         static const GameCore::AABB None;

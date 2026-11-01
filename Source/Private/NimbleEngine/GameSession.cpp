@@ -746,6 +746,11 @@ namespace NimbleEngine
         {
             TransitionStage  = TS_Reveal;
             TransitionFrames = 0;
+            /* The warm-up's clock and the renderer's frame count at the load (UpdateTransitionWarmup). */
+            RenderCore::RenderStats Stats;
+            Rendering.GetStats(Stats);
+            TransitionWarmupStart = Stats.FramesRendered;
+            TransitionWarmupTime  = 0.0f;
         }
     }
 
@@ -909,27 +914,31 @@ namespace NimbleEngine
         const float Most = (std::max)(0.0f, GTransitionWarmupSeconds.GetFloat());
         RenderCore::RenderStats Stats;
         Rendering.GetStats(Stats);
-        if(!bTransitionWarming)
+        /* Nothing drawn (a renderer not running) or no warm-up wanted: nothing to wait for. */
+        if(Most <= 0.0f || !LevelWorld || Stats.FramesRendered == 0)
         {
-            /* Nothing drawn yet (a renderer not running): nothing to warm. */
-            if(Most <= 0.0f || !LevelWorld || Stats.FramesRendered == 0) { return false; }
-            SetCaptureWarmup(true);
-            TransitionWarmupTime   = 0.0f;
-            TransitionWarmupFrames = 0;
-            TransitionWarmupStart  = Stats.FramesRendered;
+            if(bTransitionWarming) { SetCaptureWarmup(false); }
+            return false;
         }
         /* Real time, not the fades' clamped step: the cap is the player's wait. */
         TransitionWarmupTime += (std::max)(InDeltaSeconds, 0.0f);
-        ++TransitionWarmupFrames;
         /* The captures' state is the last drawn frame's: trusted once three frames of the new level are
-         * drawn since the warm-up began (the render thread runs a frame behind; before, the last level's). */
+         * drawn since it loaded (the render thread runs a frame behind; before, the last level's). Until
+         * then the card stays and the World runs on, as through RevealFrames. */
         constexpr uint64_t TRUSTED_AFTER = 3;
-        const bool bSettled = Stats.FramesRendered >= TransitionWarmupStart + TRUSTED_AFTER && Stats.GIProbesUnlit == 0
-                           && !Stats.bCapturesBusy;
-        if(!bSettled && TransitionWarmupTime < Most) { return true; }
+        const bool bPending = Stats.GIProbesUnlit > 0 || Stats.bCapturesBusy;
+        if(!bTransitionWarming)
+        {
+            if(Stats.FramesRendered < TransitionWarmupStart + TRUSTED_AFTER) { return TransitionWarmupTime < Most; }
+            if(!bPending) { return false; }   // nothing to fill: the World never held
+            SetCaptureWarmup(true);
+            TransitionWarmupFrames = 0;
+        }
+        ++TransitionWarmupFrames;
+        if(bPending && TransitionWarmupTime < Most) { return true; }
         char Line[192];
         std::snprintf(Line, sizeof(Line), "[Level] warm-up %s after %.2f s, %d frames (GI Volume %u of %u probes unlit)",
-                      bSettled ? "settled" : "timed out", double(TransitionWarmupTime), int(TransitionWarmupFrames),
+                      bPending ? "timed out" : "settled", double(TransitionWarmupTime), int(TransitionWarmupFrames),
                       unsigned(Stats.GIProbesUnlit), unsigned(Stats.GIProbesTotal));
         CORE_LOG(Line)
         SetCaptureWarmup(false);
@@ -1297,10 +1306,12 @@ namespace NimbleEngine
             SetScriptInputHost(nullptr);
             SetScriptInputState(nullptr);
         }
-        else if(LevelWorld)
+        else if(LevelWorld && !bTransitionWarming)
         {
             /* Paused: the components still follow the input, so what the pause
-             * menu consumed is not waiting for the game when it resumes. */
+             * menu consumed is not waiting for the game when it resumes. (Not while a
+             * transition warms up: nothing reaches the World then, not even the input
+             * filters -- a mode's filter would run on with the load's long frame.) */
             ResolveInputComponents(*LevelWorld, FilteredInput);
             if(Avatars) { Avatars->Update(0.0f, false); }
         }
