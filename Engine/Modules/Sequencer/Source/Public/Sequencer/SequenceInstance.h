@@ -89,6 +89,17 @@ namespace Sequencer
         float                   ZFar  = 1000.0f;
     };
 
+    /* InA's view to InB's at InT (0..1): position and scale lerped, rotation
+     * slerped, FovY and the clip planes lerped (an automatic near plane --
+     * ZNear <= 0 on either -- takes InB's). Only Pose, FovY, ZNear and ZFar
+     * are written. */
+    SEQUENCER_API SequenceShot BlendShots(const SequenceShot& InA, const SequenceShot& InB, float InT);
+
+    /* What InCamera shows -- its own Camera, else its first descendant's
+     * that has one (as GameSession resolves a view target) -- into OutShot's
+     * Pose, FovY and clip planes. False, OutShot untouched, if there is none. */
+    SEQUENCER_API bool ReadCameraView(GameCore::World& InWorld, GameCore::EntityID InCamera, SequenceShot& OutShot);
+
     /*
      * One sequence applied to one World: its bindings resolved to entities,
      * its tracks written to them at a frame, its sounds kept in step, its
