@@ -122,7 +122,8 @@ namespace
         Init.DayLengthMinutes = 1.0f;   // an hour every 2.5 s
         Init.bDrawSky         = 0;      // the preset's colours, not the atmosphere's
         Sun.AddComponent(Init);
-        Expect(RenderCore::GetCustomRenderPassCount(&World) == 1, "the sky's pass is registered on the World");
+        Expect(RenderCore::GetCustomRenderPassCount(&World) == 2,
+               "the sky's passes are registered on the World: the background and the sky image-based lighting sees");
 
         World.Tick(2.5f);
         const TimeOfDay::TimeOfDayComponent* Clock = Sun.GetComponent<TimeOfDay::TimeOfDayComponent>();
@@ -150,8 +151,25 @@ namespace
                "the preset still sets the intensity");
         Sun.GetComponent<TimeOfDay::TimeOfDayComponent>()->Hour = 12.5f;
 
+        /* The editor's edited World: the sky, not the clock (nothing ticks there). */
+        {
+            GameCore::World Edited;
+            NimbleEngine::Plugins::AttachEditorWorld(Edited);
+            NimbleEngine::Plugins::AttachEditorWorld(Edited);
+            Expect(RenderCore::GetCustomRenderPassCount(&Edited) == 2, "an edited World gets the sky's passes, once");
+            GameCore::Entity EditedSun = Edited.CreateEntity("Sun");
+            EditedSun.AddComponent<GameCore::TransformComponent>();
+            TimeOfDay::TimeOfDayComponent Still;
+            Still.Hour = 9.0f;
+            EditedSun.AddComponent(Still);
+            Edited.Tick(2.5f);
+            Expect(Near(EditedSun.GetComponent<TimeOfDay::TimeOfDayComponent>()->Hour, 9.0f), "and no clock: its Hour stays");
+            NimbleEngine::Plugins::DetachEditorWorld(Edited);
+            Expect(RenderCore::GetCustomRenderPassCount(&Edited) == 0, "detached, the edited World's passes are gone");
+        }
+
         NimbleEngine::Plugins::DetachWorld(World);
-        Expect(RenderCore::GetCustomRenderPassCount(&World) == 0, "detached, the sky's pass is gone");
+        Expect(RenderCore::GetCustomRenderPassCount(&World) == 0, "detached, the sky's passes are gone");
         World.Tick(2.5f);
         Expect(Clock && Near(Clock->Hour, 12.5f), "detached, the clock stops");
 

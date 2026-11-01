@@ -182,6 +182,12 @@ of the view's pixels, up to 73 of 255).
   probe -- **which the plan had capturing whole; it is sliced too**, refreshing
   every six frames -- cannot starve the rest. The sky taking the strip
   restarts a capture in progress.
+- **A drawn sky** (later): custom render passes at `ERenderHook::Sky` give
+  the sky block its sky in place of the Sky Light's (RENDERPIPELINE.md,
+  "Image-based lighting") -- the TimeOfDay plugin's atmosphere, recaptured
+  as the sun moves (`[Rendering] SkyCaptureFrames`), each recapture marking
+  the probes due so they follow it. Screen-space reflections' misses and
+  forward reflections fall back to that sky.
 - **Rough screen-space reflections** [Stachowiak 2015] (`[Rendering]
   StochasticReflections`, on): each pixel's ray is reflected off a microfacet
   normal drawn from GGX's distribution of visible normals [Heitz 2018], a new

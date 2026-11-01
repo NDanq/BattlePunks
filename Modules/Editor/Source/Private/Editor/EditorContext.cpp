@@ -40,6 +40,7 @@ EditorContext::EditorContext(QObject* InParent)
     NimbleEngine::Plugins::MountContent(LayeredAssets);   // "<Name>:/..." (NimbleEngine/Plugin.h)
 
     Level = new EditorDocument(this);
+    NimbleEngine::Plugins::AttachEditorWorld(Level->GetEditedWorld());   // what plugins draw while it is edited
 
     FrameTimer.setTimerType(Qt::PreciseTimer);
     FrameTimer.setInterval(16);
@@ -50,6 +51,7 @@ EditorContext::EditorContext(QObject* InParent)
      * and the Renderer is the game's. */
     connect(Level, &EditorDocument::EditedWorldAboutToBeDestroyed, this, [this]()
     {
+        NimbleEngine::Plugins::DetachEditorWorld(Level->GetEditedWorld());
         if(Renderer && !Play)
         {
             Renderer->UnbindWorld();
@@ -57,6 +59,7 @@ EditorContext::EditorContext(QObject* InParent)
     });
     connect(Level, &EditorDocument::EditedWorldCreated, this, [this]()
     {
+        NimbleEngine::Plugins::AttachEditorWorld(Level->GetEditedWorld());
         if(bRendererReady && !Play)
         {
             Renderer->BindWorld(Level->GetEditedWorld());

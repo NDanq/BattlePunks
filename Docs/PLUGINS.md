@@ -121,6 +121,9 @@ libraries register for the life of the process.
   the host. For now that means `AddWorldHook`, an attach/detach pair that runs
   on every level World a GameSession creates. It runs after the engine's own
   systems and before the level's `OnLoad`, and Play-in-Editor gets it too.
+  With `bEditorWorlds` it also attaches to the editor's edited level World
+  (`Plugins::AttachEditorWorld`), where nothing ticks: for drawing, such as
+  TimeOfDay's sky (plugin ABI revision 2).
 
 ```cpp
 class TimeOfDayPlugin : public NimbleEngine::IPlugin
