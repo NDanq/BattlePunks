@@ -167,7 +167,7 @@ for i, x in enumerate((330, 560)):
 
 # Stone pillars, structural.
 for i, x in enumerate((820, 980)):
-    entity(f"StonePillar{i + 1}", render(BOX, M + "Courtyard/Stone.material.nmgraph") + body(2) + destructible("Stone", True, 20, 300 + i)
+    entity(f"StonePillar{i + 1}", render(BOX, M + "Shared/Stone.material.nmgraph") + body(2) + destructible("Stone", True, 20, 300 + i)
            + transform((x, 160, 420), scale=(80, 320, 80)))
 
 with open(os.path.join(root, "Content", "Levels", "DestructionLab.nmworld"), "w", newline="\n") as f:

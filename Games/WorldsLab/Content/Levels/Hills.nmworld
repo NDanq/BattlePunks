@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<World Format="1">
-  <Settings GameMode="WorldsLabExplore" />
-  <Entity Guid="c3e4feae6192ba213748913707609f24" />
-  <Entity Guid="79213c42de998daead6ff59a9a74e19c" />
-  <Entity Guid="d5e34d4d7940cc284910245573930ea8" />
-  <Entity Guid="091391021da58b3c402e7f37f4428ebb" />
-  <Entity Guid="75932fb61cc6d651ae6d8995cb5bf17e" />
-</World>

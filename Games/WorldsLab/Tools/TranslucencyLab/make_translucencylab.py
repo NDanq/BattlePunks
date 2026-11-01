@@ -37,8 +37,8 @@ import sys
 from pathlib import Path
 
 GAME_DIR = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(GAME_DIR / "Tools" / "Courtyard"))
-import make_courtyard_materials as cy  # noqa: E402
+sys.path.insert(0, str(GAME_DIR / "Tools" / "Shared"))
+import shared_materials as cy  # noqa: E402
 
 MAT_DIR      = GAME_DIR / "Content" / "Materials" / "TranslucencyLab"
 PARTICLE_DIR = GAME_DIR / "Content" / "Particles" / "TranslucencyLab"
@@ -49,7 +49,7 @@ BOX          = "Engine/Content/Meshes/Box.nmmesh"
 
 
 class Graph(cy.Graph):
-    """Courtyard's graph, its node ids from TranslucencyLab's names instead."""
+    """The shared Graph (Tools/Shared/shared_materials.py), its node ids from TranslucencyLab's names instead."""
     def node(self, type_, props=None, consts=None, wildcard=None, version=1):
         self.count += 1
         nid = hashlib.md5(f"TranslucencyLab/{self.name}/{self.count}".encode()).hexdigest()
@@ -159,10 +159,73 @@ def setting(block, key, value):
     return out
 
 
+# The sparks: a fire's embers, retuned below.
+EMBERS = """Emitter Embers
+    Enabled true
+    Type Sprite
+    Modules Shape Velocity Forces
+    Mesh
+    Material Content/Materials/Shared/ParticleStreak.material.nmgraph
+    Offset 0,0,0
+    Billboard VelocityAligned
+    VelocityStretch 0.03
+    MeshOrientation RandomSpin
+    RandomRotation false
+    RotationRate 0
+    SpawnMode Continuous
+    MaxParticles 48
+    Shape Box
+    ShapeSurface false
+    BoxSize 20,2,70
+    ConeAngle 25
+    RingWidth 0
+    ShapeSpeed 0
+    SpawnRate 5
+    BurstCount 0
+    BurstInterval 0
+    BurstCycles 1
+    Lifetime 1.6
+    LifetimeVariance 0.5
+    EmitterRadius 0
+    Seed 11
+    CullDistance 0
+    PauseOffscreen true
+    Velocity 0,105,0
+    VelocitySpread 45
+    Acceleration 0,25,0
+    Drag 0.8
+    Turbulence 90
+    CollisionResponse None
+    CollisionHeight 0
+    Bounce 0.4
+    Friction 0.2
+    FlipbookColumns 1
+    FlipbookRows 1
+    FlipbookFrames 0
+    FlipbookRate 0
+    FlipbookCycles 1
+    FlipbookRandomStart false
+    BeamEnd 0,200,0
+    BeamSegments 16
+    BeamNoise 0
+    BeamNoiseSpeed 4
+    SizeMode Curve
+    StartSize 10
+    EndSize 10
+    SizeKeys 0:1.6 0.5:1.2 1:0.5
+    ColorMode Gradient
+    StartColor 255,255,255,255
+    EndColor 255,255,255,0
+    ColorCurve 1
+    FadeIn 0
+    FadeOut 0
+    ColorKeys 0:255,240,190,255 0.3:255,170,70,255 0.8:255,90,25,200 1:180,40,10,0
+"""
+
+
 def particles():
     PARTICLE_DIR.mkdir(parents=True, exist_ok=True)
     chimney = (GAME_DIR / "Content" / "Particles" / "Steampunk" / "ChimneySmoke.nmparticle").read_text()
-    hearth = (GAME_DIR / "Content" / "Particles" / "Courtyard" / "Hearth.nmparticle").read_text()
 
     plume = emitter_block(chimney, re.search(r"(?m)^Emitter (\S+)", chimney).group(1))
     plume = re.sub(r"(?m)^Emitter \S+", "Emitter Plume", plume, count=1)
@@ -173,7 +236,7 @@ def particles():
                        ("Acceleration", "6,20,3"), ("Drag", "0.1"), ("StartSize", "60")):
         plume = setting(plume, key, value)
     plume += "    CastShadows true\n    ShadowDensity 1\n"   # into the sun's and the spot's opacity shadow maps (Phase 7)
-    sparks = emitter_block(hearth, "Embers")
+    sparks = EMBERS
     sparks = re.sub(r"(?m)^Emitter \S+", "Emitter Sparks", sparks, count=1)
     for key, value in (("Seed", "23"), ("PauseOffscreen", "false"), ("SpawnRate", "14"), ("Velocity", "0,160,0"),
                        ("BoxSize", "60,2,60")):

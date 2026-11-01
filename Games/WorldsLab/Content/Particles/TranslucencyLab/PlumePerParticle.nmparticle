@@ -68,7 +68,7 @@ Emitter Sparks
     Type Sprite
     Modules Shape Velocity Forces
     Mesh
-    Material Content/Materials/Courtyard/ParticleStreak.material.nmgraph
+    Material Content/Materials/Shared/ParticleStreak.material.nmgraph
     Offset 0,0,0
     Billboard VelocityAligned
     VelocityStretch 0.03

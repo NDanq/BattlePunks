@@ -40,13 +40,6 @@
  *
  * [WorldsLab] HoldCamera=1 leaves the Player where the world put it, input
  * ignored: what captures of a world set.
- *
- * WorldsLabCourtyard is the same mode for the Courtyard world
- * (Tools/Courtyard/make_courtyard_level.py, brought over from LightLab): its
- * hearth's light, the entity named Fire, flickers (WorldsLab.Flicker), and
- * while it runs it shadows all four point and spot lights the renderer can
- * (Shadows.MaxShadowedLights) and turns on the sun's contact shadows
- * (Shadows.ContactShadows), giving the project's settings back when it goes.
  */
 
 NIMBLE_CONFIG_FLOAT(GWorldsLabWalkSpeed,       "WorldsLab", "WalkSpeed",       180.0f, nullptr);
@@ -319,44 +312,6 @@ namespace
         Transform->Position = Position;
         Transform->Rotation = EngineCore::Vector3(Context.Pitch, Context.Yaw, 0.0);
     }
-
-    /* What WorldsLab.Flicker keeps (the Courtyard mode's): a fire's light, its
-     * intensity and place as the world set them. */
-    struct FlickerContext
-    {
-        GameCore::EntityID  Light;
-        EngineCore::Vector3 Center;
-        float               Intensity      = 0.0f;
-        double              ElapsedSeconds = 0.0;
-    };
-
-    /* PrePhysics: a fire's light. Three sines out of step give the flicker --
-     * 60-100% of its intensity, never quite repeating -- and the light wanders
-     * a few units round its place, so the shadows the flames would throw shift
-     * with it. */
-    void StepFlicker(GameCore::World& InWorld, const float InDeltaSeconds, FlickerContext& Context)
-    {
-        /* Under [Rendering] FixedStep a frame is that long for the fire too, so a capture's
-         * frame N has the same light every run. */
-        static EngineCore::ConfigVar* const FixedStep = EngineCore::ConfigFindVarByPath("Rendering.FixedStep");
-        const float Fixed = FixedStep ? FixedStep->GetFloat() : 0.0f;
-        Context.ElapsedSeconds += Fixed > 0.0f ? double(Fixed) : double(InDeltaSeconds);
-        GameCore::Entity Fire = InWorld.GetEntity(Context.Light);
-        /* A point light, or a spot aimed out of a fireplace (so none of it reaches through the wall behind). */
-        RenderCore::PointLightComponent* Point = Fire.GetComponent<RenderCore::PointLightComponent>();
-        RenderCore::SpotLightComponent*  Spot  = Fire.GetComponent<RenderCore::SpotLightComponent>();
-        GameCore::TransformComponent* Transform = Fire.GetComponent<GameCore::TransformComponent>();
-        float* Intensity = Point ? &Point->Intensity : (Spot ? &Spot->Intensity : nullptr);
-        if(!Intensity || !Transform)
-        {
-            return;
-        }
-        const double T = Context.ElapsedSeconds;
-        const double Flicker = 0.8 + 0.1 * std::sin(T * 7.3) + 0.06 * std::sin(T * 13.1 + 1.3) + 0.04 * std::sin(T * 23.7 + 0.4);
-        *Intensity = Context.Intensity * float(Flicker);
-        Transform->Position = Context.Center + EngineCore::Vector3(2.0 * std::sin(T * 5.1), 3.0 * std::sin(T * 6.7 + 0.8),
-                                                                   3.0 * std::sin(T * 4.3 + 2.1));
-    }
 }
 
 class WorldsLabExploreMode : public NimbleEngine::IGameMode
@@ -496,68 +451,4 @@ private:
     ExploreContext Context;
 };
 
-/* The Courtyard world's mode: explore, with the hearth flickering and every
- * lantern and chandelier shadowed (an unshadowed point light shines through a
- * wall onto the floor behind it). */
-class WorldsLabCourtyardMode : public WorldsLabExploreMode
-{
-public:
-    /* The shadow atlas holds four point lights. */
-    static constexpr int32_t ShadowedLights = 4;
-
-    bool OnLoad(NimbleEngine::GameSession& InSession) override
-    {
-        if(EngineCore::ConfigVar* MaxShadowed = EngineCore::ConfigFindVarByPath("Shadows.MaxShadowedLights"))
-        {
-            PreviousShadowedLights = MaxShadowed->GetInt();
-            MaxShadowed->SetInt(ShadowedLights);
-        }
-        /* Where things meet the ground, between roof tiles: what the maps are too coarse for. */
-        if(EngineCore::ConfigVar* Contact = EngineCore::ConfigFindVarByPath("Shadows.ContactShadows"))
-        {
-            PreviousContactShadows = Contact->GetBool() ? 1 : 0;
-            Contact->SetBool(true);
-        }
-
-        GameCore::World& World = InSession.GetWorld();
-        Flicker.Light = World.FindEntityByName("Fire");
-        const GameCore::Entity Fire = World.GetEntity(Flicker.Light);
-        const RenderCore::PointLightComponent* FirePoint = Fire.GetComponent<RenderCore::PointLightComponent>();
-        const RenderCore::SpotLightComponent*  FireSpot  = Fire.GetComponent<RenderCore::SpotLightComponent>();
-        const GameCore::TransformComponent* FirePlace = Fire.GetComponent<GameCore::TransformComponent>();
-        if((FirePoint || FireSpot) && FirePlace)
-        {
-            Flicker.Intensity = FirePoint ? FirePoint->Intensity : FireSpot->Intensity;
-            Flicker.Center    = FirePlace->Position;
-            AddSystem<&WorldsLabCourtyardMode::StepFire>("WorldsLab.Flicker", GameCore::TP_PrePhysics);
-        }
-        return WorldsLabExploreMode::OnLoad(InSession);
-    }
-
-    void OnUnload() override
-    {
-        /* Looked up again: a config var is not held across a module's life (CoreConfig.h). */
-        EngineCore::ConfigVar* MaxShadowed = EngineCore::ConfigFindVarByPath("Shadows.MaxShadowedLights");
-        if(MaxShadowed && PreviousShadowedLights >= 0)
-        {
-            MaxShadowed->SetInt(PreviousShadowedLights);
-        }
-        PreviousShadowedLights = -1;
-        EngineCore::ConfigVar* Contact = EngineCore::ConfigFindVarByPath("Shadows.ContactShadows");
-        if(Contact && PreviousContactShadows >= 0)
-        {
-            Contact->SetBool(PreviousContactShadows != 0);
-        }
-        PreviousContactShadows = -1;
-    }
-
-private:
-    void StepFire(GameCore::World& InWorld, const float InDeltaSeconds) { StepFlicker(InWorld, InDeltaSeconds, Flicker); }
-
-    int32_t        PreviousShadowedLights = -1;
-    int32_t        PreviousContactShadows = -1;   // -1: not changed
-    FlickerContext Flicker;
-};
-
 NIMBLE_REGISTER_GAME_MODE(WorldsLabExploreMode, "WorldsLabExplore")
-NIMBLE_REGISTER_GAME_MODE(WorldsLabCourtyardMode, "WorldsLabCourtyard")
