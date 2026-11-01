@@ -383,6 +383,14 @@ while their fit holds (below).
   for the sun (`ShadowCacheSunCascades`, `ShadowCacheSunFilled`,
   `ShadowCacheSunBytes`); the editor's `stats` prints them.
 
+Measured (Demo Lab, RelWithDebInfo editor offscreen at 2560 x 1440 High,
+fixed cameras, interleaved on/off, medians of 6 samples a view; Intel Arc B390,
+its clock 700-2000 MHz): L2's draws a frame fell from 6,800-8,800 to 2,800-3,150
+(shadow casters 3,900-6,500 to 290-780), the Shadows span's GPU time from 1.7-3.5
+ms to 0.6-1.2 ms, and the render thread by 2-6 ms; L1's shadow draws by about
+half (its terrain and Procedural Spawner foliage are never static), the span from
+3.3-6.4 ms to 1.5-4.5 ms; L3 (one shadowed spot light) 138 to 46.
+
 Verified: `RenderCore.Smoke` with `NIMBLE_SMOKE_GPU=Vulkan` draws a point light
 and a cascaded sun over static and dynamic boxes pixel for pixel the same with
 the cache on and off -- after the dynamic box moves through the light (no fill), the static box
