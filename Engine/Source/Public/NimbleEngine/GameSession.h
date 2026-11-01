@@ -506,7 +506,7 @@ namespace NimbleEngine
         bool        bTransitionWarming    = false;
         float       TransitionWarmupTime  = 0.0f;
         int32_t     TransitionWarmupFrames = 0;
-        uint64_t    TransitionWarmupStart  = 0;   // the renderer's FramesRendered when it began
+        uint64_t    TransitionWarmupStart  = 0;   // the renderer's FramesRendered when the level loaded
         ILevel*     TransitionLevel  = nullptr;
         LevelTravel TransitionTravel;
         std::string TransitionCard;   // the open card's document path; "" none

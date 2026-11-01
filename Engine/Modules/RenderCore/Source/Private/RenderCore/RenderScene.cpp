@@ -77,6 +77,8 @@ NIMBLE_CONFIG_INT(GRenderGIConvergeRounds, "Rendering", "GIConvergeRounds", 2, n
 /* RESOLUTION SCALE (RENDERPIPELINE.md, "Resolution scale"): each view's scene drawn at this fraction of
  * its viewport, each axis (0.5 to 1), then upscaled into the window's composite (Catmull-Rom,
  * ViewTarget.fsh) before the UI, which stays sharp. 1 draws at the viewport's size, as before. */
+/* Local lights' shadow views cull their casters by their frustum's planes (off: by its bounding box, as before). */
+NIMBLE_CONFIG_BOOL(GRenderShadowFrustumCulling, "Rendering", "ShadowFrustumCulling", true, nullptr);
 NIMBLE_CONFIG_FLOAT(GRenderResolutionScale, "Rendering", "ResolutionScale", 1.0f, nullptr);
 NIMBLE_CONFIG_BOOL(GRenderCaptureWarmup, "Rendering", "CaptureWarmup", false, nullptr);
 NIMBLE_CONFIG_FLOAT(GRenderCaptureWarmupBudgetMs, "Rendering", "CaptureWarmupBudgetMs", 50.0f, nullptr);
@@ -680,6 +682,12 @@ namespace RenderCore
                         const EngineCore::Vector3 Pad(Padding, Padding, Padding);
                         Bounds = GameCore::AABB(Bounds.Min - Pad, Bounds.Max + Pad);
                         if(!Bounds.Overlaps(ViewBounds))
+                        {
+                            continue;
+                        }
+                        /* A local light's face or cone: its frustum, not the box round it (a point light's
+                         * six faces each saw about half the casters in its reach). */
+                        if(!bSunView && GRenderShadowFrustumCulling.GetBool() && !InContext.ShadowViewSees(ViewIndex, Bounds))
                         {
                             continue;
                         }

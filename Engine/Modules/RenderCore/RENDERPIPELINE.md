@@ -241,6 +241,12 @@ Shadows edits it and applies it at once): Enabled, Resolution,
 Filter, MaxShadowedLights, DistanceScale, MaxInsetShadows and InsetFilter,
 and the sun's [contact shadows](#contact-shadows).
 
+A local light's shadow views (a spot's cone, a point light's six cube faces)
+draw only the casters inside their frustum's six planes
+(`RenderContext::ShadowViewSees`; `[Rendering] ShadowFrustumCulling`, on). Off,
+a caster was kept when it touched the box round the frustum, so each cube face
+drew about half of what the light reaches.
+
 | Technique | Lights | What it draws |
 |---|---|---|
 | **Standard** | all | the shadow takes away that light's own contribution |

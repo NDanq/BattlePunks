@@ -401,15 +401,19 @@ recently used dropped, so going back to a room costs nothing.
 50; GameSession's `[LevelTransition] WarmupSeconds`, 15). A volume lights only
 once every probe has been drawn, so a level would show its first room unlit
 for the length of a raster round. While `CaptureWarmup` is on, the captures
-spend `CaptureWarmupBudgetMs` a frame instead of `CaptureBudgetMs`. A level
-transition turns it on after its `RevealFrames`: the loading card stays up and
-the World holds still (neither it nor the mode ticks) until the nearest volume
-has drawn every probe and no capture wants work -- the volume's second round,
-the background volumes', the reflection probes' -- or `WarmupSeconds` have
-passed, and logs `[Level] warm-up settled after N s` (or `timed out`). A level
-with no volume or probe passes straight through; `WarmupSeconds` 0 turns it
-off. `RenderStats::GIProbesUnlit`, `GIProbesTotal` and `bCapturesBusy` report
-the captures' state to anything else that wants to wait on them.
+spend `CaptureWarmupBudgetMs` a frame instead of `CaptureBudgetMs`. After a
+level transition's `RevealFrames` the loading card stays up until the
+renderer has drawn three frames of the new level (its stats are then the new
+level's); if the nearest volume still has probes to draw or any capture wants
+work -- the volume's second round, the background volumes', the reflection
+probes' -- the transition turns `CaptureWarmup` on and holds the World still
+(neither it, the mode nor the input filters tick) until they are done or
+`WarmupSeconds` have passed, and logs `[Level] warm-up settled after N s` (or
+`timed out`). A level with nothing to fill only keeps the card those few
+frames longer; a renderer that is not running passes straight
+through; `WarmupSeconds` 0 turns it off. `RenderStats::GIProbesUnlit`,
+`GIProbesTotal` and `bCapturesBusy` report the captures' state to anything
+else that wants to wait on them.
 
 **`[Rendering] CaptureLog`** logs, about once a second, what the captures did
 (faces, relit probes, the unit costs, the active volume's progress), and when
