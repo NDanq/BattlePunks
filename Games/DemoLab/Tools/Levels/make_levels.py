@@ -29,6 +29,8 @@ SPH = 'Engine/Content/Meshes/Sphere.nmmesh'
 SND = 'Content/Sounds/'
 MUSIC = 'Content/Music/'
 T = L.WALL_THICKNESS
+# DEMOLAB_REVIEW=1: no ceilings, worlds written as Review_<name> (overhead screenshots only; not staged or committed)
+REVIEW = os.environ.get('DEMOLAB_REVIEW') == '1'
 
 
 def f(x):
@@ -50,7 +52,7 @@ class Level:
     """One world being written: entities, then the manifest."""
 
     def __init__(self, name, mode):
-        self.name, self.mode = name, mode
+        self.name, self.mode = ('Review_' + name if REVIEW else name), mode
         self.entities = []
         self.names = set()
         self.counter = 0
@@ -142,7 +144,7 @@ class Level:
         cx, cz = (x0 + x1) / 2, (z0 + z1) / 2
         n = prefix + name
         self.box(f'{n}_Floor', (cx, -10, cz), (x1 - x0, 20, z1 - z0))
-        if ceiling:
+        if ceiling and not REVIEW:
             self.box(f'{n}_Ceiling', (cx, height + 10, cz), (x1 - x0, 20, z1 - z0))
         self.wall(f'{n}_WallN', cx, z1 - T / 2, x1 - x0, 0, height, [(x - cx, w) for x, w in doors.get('N', [])])
         self.wall(f'{n}_WallS', cx, z0 + T / 2, x1 - x0, 0, height, [(x - cx, w) for x, w in doors.get('S', [])])
@@ -155,7 +157,8 @@ class Level:
             c, s = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
             return cx + lx * c + lz * s, cz - lx * s + lz * c
         self.box(f'{name}_Floor', (cx, -10, cz), (w, 20, d), yaw)
-        self.box(f'{name}_Ceiling', (cx, height + 10, cz), (w, 20, d), yaw)
+        if not REVIEW:
+            self.box(f'{name}_Ceiling', (cx, height + 10, cz), (w, 20, d), yaw)
         for side, (lx, lz), length, wyaw, sign in (('N', (0, d / 2 - T / 2), w, 0, 1), ('S', (0, -d / 2 + T / 2), w, 0, 1),
                                                    ('E', (w / 2 - T / 2, 0), d - 2 * T, 90, -1),
                                                    ('W', (-w / 2 + T / 2, 0), d - 2 * T, 90, -1)):
@@ -167,7 +170,7 @@ class Level:
     def octagon(self, name, centre, apothem, height, doors, glass=(), ceiling=True):
         cx, cz = centre
         self.box(f'{name}_Floor', (cx, -11, cz), (apothem * 2 + 2 * T, 20, apothem * 2 + 2 * T))
-        if ceiling:
+        if ceiling and not REVIEW:
             self.box(f'{name}_Ceiling', (cx, height + 11, cz), (apothem * 2 + 2 * T, 20, apothem * 2 + 2 * T))
         side = 2 * (apothem + T) * math.tan(math.radians(22.5))
         for label, a in self.COMPASS.items():
@@ -398,6 +401,8 @@ def camera_track(bid, guid, cam, shots):
 
 
 def write_seq(name, length, body):
+    if REVIEW:
+        return   # the review worlds are for screenshots: the real cinematics stay as they are
     os.makedirs(CINE, exist_ok=True)
     text = ['<?xml version="1.0"?>', f'<Sequence version="1" fps="30" length="{length}">'] + body + ['</Sequence>']
     with open(os.path.join(CINE, name + '.nmseq'), 'w') as out:
