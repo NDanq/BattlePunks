@@ -2,8 +2,8 @@
 <Entity Guid="e2d1b0f54e6f32d0ee73a62491efc07e" Name="Calm_Elevator_Lamp_1_Light">
   <Component Type="Point Light" Version="2">
     <Color R="255" G="196" B="128" A="255" />
-    <Intensity Value="40" />
-    <Radius Value="1100" />
+    <Intensity Value="55" />
+    <Radius Value="1150" />
     <Active Value="true" />
     <CastShadows Value="false" />
     <ShadowTechnique Value="0" />

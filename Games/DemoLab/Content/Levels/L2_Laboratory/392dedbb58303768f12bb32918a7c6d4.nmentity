@@ -2,7 +2,7 @@
 <Entity Guid="392dedbb58303768f12bb32918a7c6d4" Name="Calm_Emergency_Turbine_31">
   <Component Type="Point Light" Version="2">
     <Color R="150" G="175" B="255" A="255" />
-    <Intensity Value="2.5" />
+    <Intensity Value="1" />
     <Radius Value="1200" />
     <Active Value="true" />
     <CastShadows Value="false" />

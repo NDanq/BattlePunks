@@ -2,7 +2,7 @@
 <Entity Guid="dc25f6d089ded95dd3847445de24b238" Name="Calm_Workshop_Strip_1_Area">
   <Component Type="Rect Light" Version="1">
     <Color R="255" G="222" B="180" A="255" />
-    <Intensity Value="7" />
+    <Intensity Value="16" />
     <Width Value="290" />
     <Height Value="14" />
     <Range Value="1200" />
@@ -14,7 +14,7 @@
   </Component>
   <Component Type="Transform" Version="1">
       <Position X="-1950" Y="456" Z="-470" />
-      <Rotation X="90" Y="0" Z="0" />
+      <Rotation X="-90" Y="0" Z="0" />
       <Scale X="1" Y="1" Z="1" />
   </Component>
 </Entity>

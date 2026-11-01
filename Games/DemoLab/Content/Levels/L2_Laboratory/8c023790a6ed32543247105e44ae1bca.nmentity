@@ -24,12 +24,12 @@
     <DrawBackground Value="true" />
   </Component>
   <Component Type="Time Of Day" Version="1">
-    <Hour Value="15.2" />
+    <Hour Value="16.8" />
     <DayLengthMinutes Value="20" />
     <Running Value="false" />
     <NorthYaw Value="35" />
     <Latitude Value="35" />
-    <SunIntensityScale Value="2.5" />
+    <SunIntensityScale Value="1.2" />
     <Preset Value="TimeOfDay:/Presets/Default.todpreset" />
   </Component>
   <Component Type="Transform" Version="1">

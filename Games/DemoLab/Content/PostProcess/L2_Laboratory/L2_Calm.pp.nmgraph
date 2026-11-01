@@ -4,8 +4,8 @@
     <Node Id="0d4206dde0ea9c0d70ddb07d44e9e6c2" Type="Effect.AutoExposure" Version="1" X="-1400" Y="-450">
       <Prop Name="Centre Weight" Value="0.5" />
       <Prop Name="Key" Value="0.15" />
-      <Prop Name="Max EV" Value="1" />
-      <Prop Name="Min EV" Value="-6" />
+      <Prop Name="Max EV" Value="0.3" />
+      <Prop Name="Min EV" Value="-1.5" />
       <Prop Name="Speed Down" Value="1.2" />
       <Prop Name="Speed Up" Value="2.5" />
     </Node>
@@ -26,11 +26,11 @@
       <Prop Name="Max Distance" Value="5000" />
       <Prop Name="Shadows" Value="true" />
       <Prop Name="Sky Scattering" Value="0.15" />
-      <Prop Name="Steps" Value="24" />
+      <Prop Name="Steps" Value="16" />
       <Prop Name="Sun Scattering" Value="4" />
     </Node>
     <Node Id="51e85161bd53b56d33952857c0fa1302" Type="Effect.ToneMapping" Version="1" X="140" Y="-600">
-      <Prop Name="Exposure" Value="0.3" />
+      <Prop Name="Exposure" Value="-1.5" />
       <Prop Name="Tone Mapper" Value="ACES" />
     </Node>
     <Node Id="86c6b2ad745ba841ded2604340fc391a" Type="Effect.Antialiasing" Version="1" X="-520" Y="-600">
@@ -41,14 +41,14 @@
     </Node>
     <Node Id="e01ec11ee5a771b506c5323c51602ffb" Type="Effect.ScreenSpaceGI" Version="1" X="-960" Y="-600">
       <Prop Name="Intensity" Value="1" />
-      <Prop Name="Radius" Value="450" />
-      <Prop Name="Rays" Value="4" />
+      <Prop Name="Radius" Value="400" />
+      <Prop Name="Rays" Value="2" />
     </Node>
     <Node Id="e9c1f0a6950568cbafd6865f4da0f476" Type="Effect.ScreenSpaceReflections" Version="1" X="-740" Y="-600">
       <Prop Name="Intensity" Value="1" />
       <Prop Name="Max Distance" Value="2500" />
       <Prop Name="Max Roughness" Value="0.6" />
-      <Prop Name="Steps" Value="32" />
+      <Prop Name="Steps" Value="24" />
       <Prop Name="Thickness" Value="25" />
     </Node>
     <Node Id="f55d41fef6287924cbd0468ecf2b85df" Type="Effect.Bloom" Version="1" X="-80" Y="-600">
@@ -65,12 +65,12 @@
   <gen_code>
     <Output Extension=".ppstack"><![CDATA[# Post process stack L2_Calm
 Effect AmbientOcclusion Intensity=1 Radius=60 Samples=12 Power=1.5 Blur=true
-Effect ScreenSpaceReflections Intensity=1 MaxRoughness=0.6 MaxDistance=2500 Thickness=25 Steps=32
-Effect ScreenSpaceGI Intensity=1 Rays=4 Radius=450
-Effect VolumetricFog Density=7e-05 HeightFalloff=0 BaseHeight=0 MaxDistance=5000 Anisotropy=0.7 SunScattering=4 SkyScattering=0.15 LightScattering=0.5 Albedo=1,0.97,0.93 Steps=24 Shadows=true
+Effect ScreenSpaceReflections Intensity=1 MaxRoughness=0.6 MaxDistance=2500 Thickness=25 Steps=24
+Effect ScreenSpaceGI Intensity=1 Rays=2 Radius=400
+Effect VolumetricFog Density=7e-05 HeightFalloff=0 BaseHeight=0 MaxDistance=5000 Anisotropy=0.7 SunScattering=4 SkyScattering=0.15 LightScattering=0.5 Albedo=1,0.97,0.93 Steps=16 Shadows=true
 Effect Bloom Threshold=0.9 Intensity=0.5 Radius=0.8 Levels=6 Tint=1,0.95,0.88
-Effect ToneMapping Exposure=0.3 ToneMapper=ACES
-Effect AutoExposure Key=0.15 MinEV=-6 MaxEV=1 SpeedUp=2.5 SpeedDown=1.2 CentreWeight=0.5
+Effect ToneMapping Exposure=-1.5 ToneMapper=ACES
+Effect AutoExposure Key=0.15 MinEV=-1.5 MaxEV=0.3 SpeedUp=2.5 SpeedDown=1.2 CentreWeight=0.5
 Effect Antialiasing EdgeThreshold=0.125 Sharpness=0.35 Method=TAA Quality=High
 ]]></Output>
   </gen_code>

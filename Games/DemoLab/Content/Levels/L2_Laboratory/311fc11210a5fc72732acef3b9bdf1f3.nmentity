@@ -2,8 +2,8 @@
 <Entity Guid="311fc11210a5fc72732acef3b9bdf1f3" Name="Calm_Archive_Lamp_0_Light">
   <Component Type="Point Light" Version="2">
     <Color R="255" G="196" B="128" A="255" />
-    <Intensity Value="34" />
-    <Radius Value="1100" />
+    <Intensity Value="48" />
+    <Radius Value="1150" />
     <Active Value="true" />
     <CastShadows Value="false" />
     <ShadowTechnique Value="0" />

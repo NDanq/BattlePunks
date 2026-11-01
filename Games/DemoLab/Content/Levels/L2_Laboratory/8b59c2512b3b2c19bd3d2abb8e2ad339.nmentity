@@ -4,14 +4,14 @@
     <System Value="Content/Particles/DustMotes.nmparticle" />
     <Emitting Value="true" />
     <Tint R="255" G="255" B="255" A="255" />
-    <SpawnRateScale Value="0.7" />
+    <SpawnRateScale Value="1" />
     <TimeScale Value="1" />
     <Seed Value="0" />
     <UseBeamTarget Value="false" />
     <BeamTarget X="0" Y="0" Z="0" />
   </Component>
   <Component Type="Transform" Version="1">
-      <Position X="-300" Y="650" Z="250" />
+      <Position X="-150" Y="700" Z="100" />
       <Rotation X="0" Y="0" Z="0" />
       <Scale X="1" Y="1" Z="1" />
   </Component>

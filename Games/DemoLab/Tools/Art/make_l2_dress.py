@@ -516,8 +516,8 @@ def pp_stack(name, comment, effects):
 def make_stacks():
     common = [
         ("AmbientOcclusion", {"Blur": "true", "Intensity": "1", "Power": "1.5", "Radius": "60", "Samples": "12"}),
-        ("ScreenSpaceGI", {"Intensity": "1", "Rays": "4", "Radius": "450"}),
-        ("ScreenSpaceReflections", {"Intensity": "1", "Max Distance": "2500", "Max Roughness": "0.6", "Steps": "32",
+        ("ScreenSpaceGI", {"Intensity": "1", "Rays": "2", "Radius": "400"}),
+        ("ScreenSpaceReflections", {"Intensity": "1", "Max Distance": "2500", "Max Roughness": "0.6", "Steps": "24",
                                     "Thickness": "25"}),
         ("Antialiasing", {"Edge Threshold": "0.125", "Method": "TAA", "Quality": "High", "Sharpness": "0.35"}),
     ]
@@ -526,20 +526,20 @@ def make_stacks():
                     "unpowered lab stays dark, ACES, TAA.", common + [
         ("VolumetricFog", {"Albedo": "1 0.97 0.93", "Anisotropy": "0.7", "Base Height": "0", "Density": "0.00007",
                            "Height Falloff": "0", "Light Scattering": "0.5", "Max Distance": "5000", "Shadows": "true",
-                           "Sky Scattering": "0.15", "Steps": "24", "Sun Scattering": "4"}),
+                           "Sky Scattering": "0.15", "Steps": "16", "Sun Scattering": "4"}),
         ("Bloom", {"Intensity": "0.5", "Levels": "6", "Radius": "0.8", "Threshold": "0.9", "Tint": "1 0.95 0.88"}),
-        ("ToneMapping", {"Exposure": "0.3", "Tone Mapper": "ACES"}),
-        ("AutoExposure", {"Centre Weight": "0.5", "Key": "0.15", "Max EV": "1", "Min EV": "-6", "Speed Down": "1.2",
+        ("ToneMapping", {"Exposure": "-1.5", "Tone Mapper": "ACES"}),
+        ("AutoExposure", {"Centre Weight": "0.5", "Key": "0.15", "Max EV": "0.3", "Min EV": "-1.5", "Speed Down": "1.2",
                           "Speed Up": "2.5"}),
     ])
     alarm = pp_stack("L2_Alarm", "Level 2 on alarm: thicker smoky haze the red beacons sweep through, hotter bloom, "
                      "a little darker exposure.", common + [
         ("VolumetricFog", {"Albedo": "0.9 0.86 0.82", "Anisotropy": "0.55", "Base Height": "0", "Density": "0.0001",
                            "Height Falloff": "0", "Light Scattering": "0.6", "Max Distance": "5000", "Shadows": "true",
-                           "Sky Scattering": "0.2", "Steps": "24", "Sun Scattering": "1.5"}),
+                           "Sky Scattering": "0.2", "Steps": "16", "Sun Scattering": "1.5"}),
         ("Bloom", {"Intensity": "0.75", "Levels": "6", "Radius": "0.85", "Threshold": "0.85", "Tint": "1 0.85 0.8"}),
-        ("ToneMapping", {"Exposure": "0.1", "Tone Mapper": "ACES"}),
-        ("AutoExposure", {"Centre Weight": "0.5", "Key": "0.13", "Max EV": "2", "Min EV": "-6", "Speed Down": "1",
+        ("ToneMapping", {"Exposure": "-1.2", "Tone Mapper": "ACES"}),
+        ("AutoExposure", {"Centre Weight": "0.5", "Key": "0.13", "Max EV": "0.5", "Min EV": "-1.5", "Speed Down": "1",
                           "Speed Up": "2.5"}),
     ])
     return [calm, alarm]

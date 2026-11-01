@@ -2,8 +2,8 @@
 <Entity Guid="4bf4416a2d964fe0b58afa9a869d68cd" Name="Alarm_Turbine_2_Inner">
   <Component Type="Point Light" Version="2">
     <Color R="255" G="90" B="50" A="255" />
-    <Intensity Value="3" />
-    <Radius Value="300" />
+    <Intensity Value="6" />
+    <Radius Value="350" />
     <Active Value="true" />
     <CastShadows Value="false" />
     <ShadowTechnique Value="0" />

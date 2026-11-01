@@ -2,8 +2,8 @@
 <Entity Guid="016e339408dcdec13cd19a29c3e79546" Name="Alarm_Beacon_Atrium_1_Spot" Parent="f448ae35d2eed5e01276054a1d77f0f0">
   <Component Type="Spot Light" Version="2">
     <Color R="255" G="32" B="18" A="255" />
-    <Intensity Value="22" />
-    <Range Value="1800" />
+    <Intensity Value="45" />
+    <Range Value="1900" />
     <InnerConeAngle Value="14" />
     <OuterConeAngle Value="26" />
     <Active Value="true" />

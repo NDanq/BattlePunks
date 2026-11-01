@@ -2,8 +2,8 @@
 <Entity Guid="ce6af52bf415f18ce72eca12e285838a" Name="Calm_Atrium_Post_2_Light">
   <Component Type="Point Light" Version="2">
     <Color R="255" G="196" B="128" A="255" />
-    <Intensity Value="30" />
-    <Radius Value="1300" />
+    <Intensity Value="22" />
+    <Radius Value="1200" />
     <Active Value="true" />
     <CastShadows Value="false" />
     <ShadowTechnique Value="0" />

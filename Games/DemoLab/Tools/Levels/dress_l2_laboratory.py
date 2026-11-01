@@ -323,17 +323,18 @@ def dark_params(slots=8):
 
 
 def fixture(d, name, mesh, pos, yaw, channel, light_at, color, intensity, radius, slots=5, scale=1, source=10,
-            shadows=False, alarm_red=None):
+            shadows=False, alarm_red=None, glow=None):
     """A lamp that comes on with channel: lit and dark meshes swapped by LabSignalToggle, its
     light; on the alarm it hangs dark (alarm_red: a dim red glow in it instead)."""
-    d.prop(f'Calm_{name}_Lit', mesh, pos, yaw, scale, extra=[d.toggle(channel)], static=False)
+    lit = [(s, 'EmissiveIntensity', glow) for s in range(slots)] if glow is not None else ()
+    d.prop(f'Calm_{name}_Lit', mesh, pos, yaw, scale, params=lit, extra=[d.toggle(channel)], static=False)
     d.prop(f'Calm_{name}_Dark', mesh, pos, yaw, scale, params=dark_params(slots), extra=[d.toggle(channel, False)],
            static=False)
     d.point(f'Calm_{name}_Light', light_at, color, intensity, radius, channel=channel, source=source, shadows=shadows)
     d.prop(f'Alarm_{name}_Dark', mesh, pos, yaw, scale, params=dark_params(slots))
 
 
-def pendant(d, name, x, z, h, channel, intensity=40, radius=1100, color=WARM):
+def pendant(d, name, x, z, h, channel, intensity=55, radius=1150, color=WARM):
     fixture(d, name, KM.format('PendantLamp'), (x, h, z), 0, channel, (x, h - 147, z), color, intensity, radius, slots=3,
             source=9)
 
@@ -341,7 +342,8 @@ def pendant(d, name, x, z, h, channel, intensity=40, radius=1100, color=WARM):
 def road_lamp(d, name, ang, r, channel):
     x, z = r * math.sin(math.radians(ang)), r * math.cos(math.radians(ang))
     lx, lz = x - 60 * math.sin(math.radians(ang)), z - 60 * math.cos(math.radians(ang))
-    fixture(d, name, K1.format('RoadLamp'), (x, 0, z), ang, channel, (lx, 385, lz), WARM, 30, 1300, slots=4, source=12)
+    fixture(d, name, K1.format('RoadLamp'), (x, 0, z), ang, channel, (lx, 385, lz), WARM, 22, 1200, slots=4, source=12,
+            glow=5)
     d.blocker(f'K_{name}_Block', (x, 200, z), (30, 400, 30))
 
 
@@ -351,8 +353,8 @@ def light_strip(d, name, x, z, y, yaw, channel, intensity=6, width=290, height=1
     d.prop(f'Calm_{name}_Lit', mesh, (x, y, z), yaw, extra=[d.toggle(channel)], static=False)
     d.prop(f'Calm_{name}_Dark', mesh, (x, y, z), yaw, params=dark_params(3), extra=[d.toggle(channel, False)], static=False)
     d.prop(f'Alarm_{name}_Dark', mesh, (x, y, z), yaw, params=dark_params(3))
-    # Rect Light: Width along +X, Height along +Y, facing +Z: pitched 90 it faces down.
-    d.rect(f'Calm_{name}_Area', (x, y - 14, z), (90, yaw, 0), (255, 222, 180), intensity, width, height, rng, channel=channel)
+    # Rect Light: Width along +X, Height along +Y, facing +Z: pitched -90 it faces down.
+    d.rect(f'Calm_{name}_Area', (x, y - 14, z), (-90, yaw, 0), (255, 222, 180), intensity, width, height, rng, channel=channel)
 
 
 def beacon(d, name, x, y, z, speed=280):
@@ -362,11 +364,11 @@ def beacon(d, name, x, y, z, speed=280):
     d.prop(f'Alarm_{name}_Reflector', DM.format('L2_BeaconReflector'), (0, 0, 0), 0, parent=spin, shadows=False,
            static=False)
     for yaw in (0, 180):
-        d.spot(f'Alarm_{name}_Spot', (0, 16, 0), (-22, yaw, 0), RED, 22, 1800, 14, 26, parent=spin)
-    d.point(f'Alarm_{name}_Glow', (x, y - 30, z), RED, 3, 400, source=12)
+        d.spot(f'Alarm_{name}_Spot', (0, 16, 0), (-22, yaw, 0), RED, 45, 1900, 14, 26, parent=spin)
+    d.point(f'Alarm_{name}_Glow', (x, y - 30, z), RED, 5, 450, source=12)
 
 
-def probe(d, name, centre, extent, interval=3.0):
+def probe(d, name, centre, extent, interval=8.0):
     d.add(name, [['  <Component Type="Reflection Probe" Version="1">',
                   f'    <Radius Value="{max(extent) * 1.6:g}" />',
                   f'    <BoxExtent X="{extent[0]:g}" Y="{extent[1]:g}" Z="{extent[2]:g}" />',
@@ -390,7 +392,7 @@ def sun(d, prefix, hour, sky_intensity):
         lv.fields('Sky Light', version=2, SkyColor=(150, 160, 190), GroundColor=(60, 52, 44), Intensity=sky_intensity,
                   Active=True, Environment='', EnvironmentIntensity=1, EnvironmentRotation=0, DrawBackground=True),
         lv.fields('Time Of Day', Hour=hour, DayLengthMinutes=20, Running=False, NorthYaw=35, Latitude=35,
-                  SunIntensityScale=2.5, Preset='TimeOfDay:/Presets/Default.todpreset'),
+                  SunIntensityScale=1.2, Preset='TimeOfDay:/Presets/Default.todpreset'),
         lv.transform((0, 8000, 0), (32, 215, 0))])
 
 
@@ -463,7 +465,7 @@ def dress_foyer_airlock(d):
     probe(d, 'K_Probe_Airlock', (0, ah / 2, -2700), (300, ah / 2, 300))
     # Alarm: red fill, a beacon, a steam leak from the pipe.
     beacon(d, 'Beacon_Foyer', 0, h - 4, -1800)
-    d.point('Alarm_Red_Foyer', (0, 300, -1800), RED, 1, 1100)
+    d.point('Alarm_Red_Foyer', (0, 300, -1800), RED, 3, 1100)
     d.particles('Alarm_Foyer_SteamJet', PART.format('SteamJet'), (x0 + 300, h - 70, z1 - T - 25), rot=(90, 0, 0))
 
 
@@ -471,9 +473,14 @@ def dress_atrium(d):
     a = L.L2['atrium']
     h = a['height']
     # The orrery: plinth, a gimbal of three rings (Outer > Middle > Inner) and the planets.
-    d.prop('Calm_Orrery', KM.format('Orrery'), (0, 0, 0), 0)
+    # The caged sun's glow kept low: at the kit's 12 it floods the white floor through SSGI and DDGI
+    # (the point light inside does the lighting). Dark until the atrium's power comes on.
+    d.prop('Calm_Orrery', KM.format('Orrery'), (0, 0, 0), 0, params=[(s, 'EmissiveIntensity', 2.5) for s in range(7)],
+           extra=[d.toggle('L2.Power.Atrium')], static=False)
+    d.prop('Calm_OrreryDark', KM.format('Orrery'), (0, 0, 0), 0, params=dark_params(7),
+           extra=[d.toggle('L2.Power.Atrium', False)], static=False)
     d.prop('Alarm_Orrery', KM.format('Orrery'), (0, 0, 0), 0,
-           params=[(s, 'EmissiveColor', (1.0, 0.12, 0.05)) for s in range(7)] + [(6, 'EmissiveIntensity', 4)])
+           params=[(s, 'EmissiveColor', (1.0, 0.12, 0.05)) for s in range(7)] + [(6, 'EmissiveIntensity', 2)])
     for prefix, channel in (('Calm_', 'L2.Power.Atrium'), ('Alarm_', '')):
         outer = d.prop(f'{prefix}Orrery_RingOuter', KM.format('Orrery_RingOuter'), (0, 400, 0), 0,
                        extra=[d.spinner(channel, 0, 7, 4)], static=False)
@@ -500,13 +507,15 @@ def dress_atrium(d):
                    ang * 3 + j * 50, (0.8, 0.8, 0.8), shadows=True)
         d.blocker(f'K_Atrium_PlanterBlock_{k}', (x, 40, z), (250, 80, 70), ang)
     # Dust in the dome's light; it is lit by the sun, so it shows in the shaft.
-    d.particles('K_Atrium_Dust', PART.format('DustMotes'), (0, 420, 0), rate=1.0, detail='Medium')
-    d.particles('K_Atrium_Dust2', PART.format('DustMotes'), (-300, 650, 250), rate=0.7, detail='High')
-    probe(d, 'K_Probe_Atrium', (0, 400, 0), (1200, 500, 1200), interval=2.0)
+    # (the sun comes in low from the west through the dome: the shaft crosses toward the east side)
+    d.particles('K_Atrium_Dust', PART.format('DustMotes'), (350, 300, 0), rate=1.2, detail='Medium')
+    d.particles('K_Atrium_Dust2', PART.format('DustMotes'), (-150, 700, 100), rate=1.0, detail='High')
+    d.particles('K_Atrium_Dust3', PART.format('DustMotes'), (-650, 1050, 200), rate=0.8, detail='High')
+    probe(d, 'K_Probe_Atrium', (0, 400, 0), (1200, 500, 1200), interval=5.0)
     # Alarm: beacons on the ring, red, smoke rising into the dome, sparks from a lamp post's junction box.
     for k, ang in enumerate((45, 225)):
         beacon(d, f'Beacon_Atrium_{k}', 1150 * math.sin(math.radians(ang)), h - 10, 1150 * math.cos(math.radians(ang)))
-    d.point('Alarm_Red_Atrium', (0, 500, 0), RED, 2, 1700)
+    d.point('Alarm_Red_Atrium', (0, 500, 0), RED, 4, 1700)
     d.particles('Alarm_Atrium_Smoke', 'Content/Particles/L2_Laboratory/L2_Smoke.nmparticle', (-800, 20, 700), rate=1.0)
     d.particles('Alarm_Atrium_Sparks', PART.format('SparksLoop'), (1000 * math.sin(math.radians(140)), 300,
                                                                     1000 * math.cos(math.radians(140))))
@@ -552,14 +561,19 @@ def dress_workshop(d):
                static=False)
     # Gallery lights over the rows, pendants over the benches.
     for k, (z, xs) in enumerate(rows):
-        light_strip(d, f'Workshop_Strip_{k}', sum(xs) / len(xs), z, h - 120, 0, 'L2.Power.Workshop', intensity=7)
+        light_strip(d, f'Workshop_Strip_{k}', sum(xs) / len(xs), z, h - 120, 0, 'L2.Power.Workshop', intensity=16)
+    # Gallery spots: a warm pool on each pair of plinths.
+    for k, (x, z) in enumerate(spots):
+        if k % 2 == 0:
+            d.point(f'Calm_Workshop_Gallery_{k}', (x + 150, 290, z + 60), (255, 222, 180), 22, 520,
+                    channel='L2.Power.Workshop', source=20)
     cc = ceiling_centres(x0, z0, x1, z1)
     pendant(d, 'Workshop_Lamp_0', cc[1][3][0], cc[1][3][1], h, 'L2.Power.Workshop')
     pendant(d, 'Workshop_Lamp_1', cc[3][3][0], cc[3][3][1], h, 'L2.Power.Workshop')
     pipe_run(d, 'K_Workshop_PipeW', z0 + 60, z1 - 60, (h - 70, x0 + T + 25), 'z')
     for k, z in enumerate((-500, 300)):
         gauge(d, f'K_Workshop_Gauge_{k}', (x0 + T + 26, h - 100, z), 270, 35 + 30 * k)
-    d.point('Calm_Emergency_Workshop', (-2200, h - 40, 0), COOL, 2, 800, channel='L2.Power.All', show_when_on=False)
+    d.point('Calm_Emergency_Workshop', (-2200, h - 40, 0), COOL, 0.8, 800, channel='L2.Power.All', show_when_on=False)
     probe(d, 'K_Probe_Workshop', (-2200, h / 2, 0), (1000, h / 2, 900))
     # Alarm: sprinklers, a beacon, red, sparks from a junction box.
     for k, (x, z) in enumerate(((-2800, -400), (-1700, -400), (-2800, 450), (-1700, 450))):
@@ -568,7 +582,7 @@ def dress_workshop(d):
         d.prop(f'Alarm_Workshop_SprinklerHead_{k}', KM.format('Pipe_Tee'), (x, h - 10, z), rot=(180, 0, 0), scale=0.35,
                shadows=False)
     beacon(d, 'Beacon_Workshop', -2200, h - 4, 0)
-    d.point('Alarm_Red_Workshop', (-2200, 300, 0), RED, 1, 1200)
+    d.point('Alarm_Red_Workshop', (-2200, 300, 0), RED, 7, 1500)
     d.particles('Alarm_Workshop_Sparks', PART.format('SparksLoop'), (x0 + T + 20, h - 100, -500))
 
 
@@ -604,8 +618,8 @@ def dress_archive(d):
             (255, 175, 95), 5, 450, slots=2, source=5)
     cc = ceiling_centres(x0, z0, x1, z1)
     for k, (i, j) in enumerate(((1, 1), (3, 1), (1, 3), (3, 3))):
-        pendant(d, f'Archive_Lamp_{k}', cc[i][j][0], cc[i][j][1], h, 'L2.Pwr.Archive', intensity=34)
-    d.point('Calm_Emergency_Archive', (-2200, h - 40, 1750), COOL, 2, 800, channel='L2.Power.All', show_when_on=False)
+        pendant(d, f'Archive_Lamp_{k}', cc[i][j][0], cc[i][j][1], h, 'L2.Pwr.Archive', intensity=48)
+    d.point('Calm_Emergency_Archive', (-2200, h - 40, 1750), COOL, 0.8, 800, channel='L2.Power.All', show_when_on=False)
     probe(d, 'K_Probe_Archive', (-2200, h / 2, 1750), (1000, h / 2, 850))
     # Alarm: sprinklers, a toppled shelf and spilled books, red, a beacon.
     for k, (x, z) in enumerate(((-2600, 1200), (-1800, 1200), (-2600, 2300), (-1800, 2300))):
@@ -618,7 +632,7 @@ def dress_archive(d):
     d.prop('Alarm_Archive_Rubble', DM.format('L2_Rubble'), (-1550, 0, 2300), 140)
     d.blocker('Alarm_Archive_RubbleBlock', (-1550, 15, 2300), (130, 30, 100), 140)
     beacon(d, 'Beacon_Archive', -2200, h - 4, 1750)
-    d.point('Alarm_Red_Archive', (-2200, 300, 1750), RED, 1, 1200)
+    d.point('Alarm_Red_Archive', (-2200, 300, 1750), RED, 7, 1500)
 
 
 def dress_turbine_hall(d):
@@ -631,10 +645,12 @@ def dress_turbine_hall(d):
                    extra=[d.spinner(channel, 0, 420, 5)], static=False)
             d.prop(f'{prefix}Turbine_{i}_Governor', KM.format('Turbine_Governor'), (x + 155, 289, z + 35), 0,
                    extra=[d.spinner(channel, 1, 105, 5)], static=False)
+        d.point(f'Calm_Turbine_{i}_Fill', (x, 560, z - 250), (255, 214, 170), 40, 1100, channel=f'L2.Pwr.Turbine{i + 1}',
+                source=30)
         # Light inside the casing's window, and over the flywheel.
         d.point(f'Calm_Turbine_{i}_Inner', (x - 10, 170, z - 40), (255, 190, 120), 4, 300, channel=f'L2.Pwr.Turbine{i + 1}',
                 source=20)
-        d.point(f'Alarm_Turbine_{i}_Inner', (x - 10, 170, z - 40), (255, 90, 50), 3, 300, source=20)
+        d.point(f'Alarm_Turbine_{i}_Inner', (x - 10, 170, z - 40), (255, 90, 50), 6, 350, source=20)
     # Valves at the north wall, under the interactables.
     for k in (1, 2, 3):
         vx = p[f'Valve{k}'][0]
@@ -650,7 +666,7 @@ def dress_turbine_hall(d):
     # Area-light bars down the hall.
     for k, x in enumerate((-2200, -900, 400, 1700)):
         light_strip(d, f'Turbine_Strip_{k}', x, 3400, h - 140, 0, f'L2.Pwr.Turbine{min(3, k + 1) if k < 3 else 3}',
-                    intensity=14, rng=1600)
+                    intensity=30, rng=1700)
     # Riser pipes from each turbine's inlet to the header, gauge boards and lockers on the south wall.
     for i, (x, z) in enumerate(L.L2['turbines']):
         for k, dx in enumerate((-120, 120)):
@@ -667,13 +683,13 @@ def dress_turbine_hall(d):
         d.prop(f'K_Turbine_Locker_{k}', K3.format('Locker'), (x, 0, z0 + T + 2), 180)
         d.prop(f'K_Turbine_Locker_{k}_Door', K3.format('Locker_Door'), (x + 29, 0, z0 + T + 2), 180)
         d.blocker(f'K_Turbine_LockerBlock_{k}', (x, 95, z0 + T + 25), (60, 190, 50))
-    d.point('Calm_Emergency_Turbine', (-200, h - 40, 3400), COOL, 2.5, 1200, channel='L2.Power.All', show_when_on=False)
+    d.point('Calm_Emergency_Turbine', (-200, h - 40, 3400), COOL, 1, 1200, channel='L2.Power.All', show_when_on=False)
     for k, (cx, ex) in enumerate(((-2200, 1000), (0, 1200), (2000, 800))):
         probe(d, f'K_Probe_Turbine_{k}', (cx, h / 2, 3400), (ex, h / 2, 800))
     # Alarm: beacons, red, steam jets from the header, smoke, sparks, a fallen ceiling panel.
     for k, x in enumerate((-2200, -200, 1800)):
         beacon(d, f'Beacon_Turbine_{k}', x, h - 4, 3000)
-        d.point(f'Alarm_Red_Turbine_{k}', (x, 350, 3400), RED, 2, 1300)
+        d.point(f'Alarm_Red_Turbine_{k}', (x, 350, 3400), RED, 14, 1700)
     for k, x in enumerate((-1500, 300, 1400)):
         d.particles(f'Alarm_Turbine_SteamJet_{k}', PART.format('SteamJet'), (x, h - 110, z1 - T - 30), rot=(90, 0, 0))
     d.particles('Alarm_Turbine_Smoke', 'Content/Particles/L2_Laboratory/L2_Smoke.nmparticle', (2400, 20, 2900), rate=1.2)
@@ -687,16 +703,20 @@ def dress_turbine_hall(d):
 
 def dress_elevator(d):
     x0, z0, x1, z1, h, _ = L.L2['rooms']['Elevator']
-    d.prop('K_ElevatorCage', KM.format('ElevatorCage'), (2450, 0, 1800), 90)
-    d.prop('K_ElevatorCage_Gate', KM.format('ElevatorCage_Gate'), (2450 - 127, 0, 1800), 90)
+    # The cage C4 rides down (Calm_; bound by the sequence), its gate on it; parked on the alarm.
+    for prefix in ('Calm_', 'Alarm_'):
+        cage = d.prop(f'{prefix}ElevatorCage', KM.format('ElevatorCage'), (2450, 0, 1800), 90, static=False)
+        d.prop(f'{prefix}ElevatorCage_Gate', KM.format('ElevatorCage_Gate'), (0, 0, -127), 0, parent=cage, static=False)
+        d.point(f'{prefix}ElevatorCage_Lamp', (2450, 300, 1800), (255, 200, 140) if prefix == 'Calm_' else RED, 6, 450,
+                channel='L2.Pwr.Elevator' if prefix == 'Calm_' else None, source=8)
     d.blocker('K_ElevatorCageBlock', (2450, 175, 1800), (262, 350, 262))
     cc = ceiling_centres(x0, z0, x1, z1)
     pendant(d, 'Elevator_Lamp_0', cc[1][1][0], cc[1][1][1], h, 'L2.Pwr.Elevator')
     pendant(d, 'Elevator_Lamp_1', cc[1][2][0], cc[1][2][1], h, 'L2.Pwr.Elevator')
     pipe_run(d, 'K_Elevator_Pipe', z0 + 60, z1 - 60, (h - 70, x0 + T + 25), 'z')
-    d.point('Calm_Emergency_Elevator', (2000, h - 40, 1800), COOL, 2, 700, channel='L2.Power.All', show_when_on=False)
+    d.point('Calm_Emergency_Elevator', (2000, h - 40, 1800), COOL, 0.8, 700, channel='L2.Power.All', show_when_on=False)
     probe(d, 'K_Probe_Elevator', (2000, h / 2, 1800), (800, h / 2, 800))
-    d.point('Alarm_Red_Elevator', (2000, 300, 1800), RED, 1, 1000)
+    d.point('Alarm_Red_Elevator', (2000, 300, 1800), RED, 3, 1000)
 
 
 def dress_conservatory(d):
@@ -731,7 +751,7 @@ def dress_conservatory(d):
     d.particles('K_Conservatory_Steam', PART.format('SteamVent'), (3050, 30, 750), rate=0.6, detail='Medium')
     d.point('Calm_Conservatory_Grow_0', (1900, h - 120, 0), (255, 214, 170), 30, 1300, channel='L2.Pwr.Conservatory')
     d.point('Calm_Conservatory_Grow_1', (2800, h - 120, 0), (220, 255, 200), 24, 1200, channel='L2.Pwr.Conservatory')
-    d.point('Alarm_Red_Conservatory', (2200, 300, 0), RED, 1, 1000)
+    d.point('Alarm_Red_Conservatory', (2200, 300, 0), RED, 2, 1000)
     probe(d, 'K_Probe_Conservatory', (2200, h / 2, 0), (1000, h / 2, 1000))
     # Its west wall is the atrium's window: kit wall only beyond the glass.
     d.drop(r'Conservatory_WallW_\d+')
@@ -768,6 +788,31 @@ CASCADE = [(36, 'L2.Power.Foyer'), (46, 'L2.Pwr.Foyer2'), (80, 'L2.Power.Atrium'
            (96, 'L2.Pwr.Atrium3'), (104, 'L2.Pwr.Conservatory'), (112, 'L2.Power.Workshop'), (122, 'L2.Pwr.Archive'),
            (130, 'L2.Pwr.Turbine1'), (136, 'L2.Pwr.Turbine2'), (142, 'L2.Pwr.Turbine3'), (148, 'L2.Pwr.Elevator'),
            (152, 'L2.Power.All')]
+
+
+def rewrite_c4(d):
+    """C4: the cage from the panel, then from above as it drops into the shaft; fade out."""
+    ml, lv = d.ml, d.lv
+    shots_a = [(0, (1650, 230, 1350), (2450, 170, 1800)), (75, (1820, 260, 1520), (2450, 160, 1800))]
+    shots_b = [(76, (2250, 420, 1620), (2450, -150, 1820)), (150, (2300, 380, 1650), (2450, -700, 1820))]
+    body = ml.camera_track('cam0', lv.guid('Calm_CineCam_C4_Descent_A'), 'Calm_CineCam_C4_Descent_A', shots_a)
+    body += ml.camera_track('cam1', lv.guid('Calm_CineCam_C4_Descent_B'), 'Calm_CineCam_C4_Descent_B', shots_b)
+    body += [f'  <Binding id="cage" kind="possess" guid="{lv.guid("Calm_ElevatorCage")}" name="Calm_ElevatorCage">',
+             '    <Track type="Transform">']
+    body += ml.channel_keys('Position.X', [(0, 2450), (150, 2450)])
+    body += ml.channel_keys('Position.Y', [(0, 0), (40, 0), (150, -700)])
+    body += ml.channel_keys('Position.Z', [(0, 1800), (150, 1800)])
+    body += ['    </Track>', '  </Binding>']
+    body += ['  <Track type="CameraCut" name="Shots">', '    <Section start="0" end="76" camera="cam0"/>',
+             '    <Section start="76" end="150" camera="cam1"/>', '  </Track>']
+    body += ['  <Track type="Fade">', '    <Key f="0" v="0"/>', '    <Key f="135" v="0"/>', '    <Key f="150" v="1"/>',
+             '  </Track>']
+    body += ['  <Track type="Subtitle">',
+             '    <Section start="10" end="120" speaker="Pilot" text="Going down. The core is under the turbine hall."/>',
+             '  </Track>']
+    body += ['  <Track type="Audio">', f'    <Section start="0" end="150" sound="{ml.SND}World/Lift_Run_Loop.nmsound" volume="1"/>',
+             '  </Track>']
+    ml.write_seq('C4_Descent', 150, body)
 
 
 def rewrite_c3(d):
@@ -824,7 +869,7 @@ def dress(lv, ml):
     dress_conservatory(d)
 
     # Light and air: the sun (mid-afternoon calm, dusk on the alarm), the GI volumes, the stacks.
-    sun(d, 'Calm_', 15.2, 0.2)
+    sun(d, 'Calm_', 16.8, 0.2)
     sun(d, 'Alarm_', 19.3, 0.25)
     gi_volume(d, 'K_GI_Core', (0, 420, -600), (1250, 420, 1880), 350)
     gi_volume(d, 'K_GI_Workshop', (-2200, 295, 0), (985, 295, 885), 300)
@@ -837,3 +882,4 @@ def dress(lv, ml):
     post(d, 'Alarm_PostProcess', 'Content/PostProcess/L2_Laboratory/L2_Alarm.pp.nmgraph')
 
     rewrite_c3(d)
+    rewrite_c4(d)

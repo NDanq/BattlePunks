@@ -3,53 +3,65 @@
   <Binding id="cam0" kind="possess" guid="53bec2fcb364cb198ede4de393f57d68" name="Calm_CineCam_C4_Descent_A">
     <Track type="Transform">
       <Channel name="Position.X">
-        <Key f="0" v="1500" interp="CubicInOut"/>
-        <Key f="75" v="1600" interp="CubicInOut"/>
-        <Key f="76" v="2300" interp="CubicInOut"/>
+        <Key f="0" v="1650" interp="CubicInOut"/>
+        <Key f="75" v="1820" interp="CubicInOut"/>
       </Channel>
       <Channel name="Position.Y">
-        <Key f="0" v="300" interp="CubicInOut"/>
-        <Key f="75" v="250" interp="CubicInOut"/>
-        <Key f="76" v="120" interp="CubicInOut"/>
+        <Key f="0" v="230" interp="CubicInOut"/>
+        <Key f="75" v="260" interp="CubicInOut"/>
       </Channel>
       <Channel name="Position.Z">
-        <Key f="0" v="1500" interp="CubicInOut"/>
-        <Key f="75" v="1300" interp="CubicInOut"/>
-        <Key f="76" v="2100" interp="CubicInOut"/>
+        <Key f="0" v="1350" interp="CubicInOut"/>
+        <Key f="75" v="1520" interp="CubicInOut"/>
       </Channel>
       <Channel name="Rotation.X">
-        <Key f="0" v="16.699" interp="CubicInOut"/>
-        <Key f="75" v="3.017" interp="CubicInOut"/>
-        <Key f="76" v="61.477" interp="CubicInOut"/>
+        <Key f="0" v="3.74" interp="CubicInOut"/>
+        <Key f="75" v="8.253" interp="CubicInOut"/>
       </Channel>
       <Channel name="Rotation.Y">
-        <Key f="0" v="53.13" interp="CubicInOut"/>
-        <Key f="75" v="18.435" interp="CubicInOut"/>
-        <Key f="76" v="-126.87" interp="CubicInOut"/>
+        <Key f="0" v="60.642" interp="CubicInOut"/>
+        <Key f="75" v="66.038" interp="CubicInOut"/>
       </Channel>
     </Track>
   </Binding>
   <Binding id="cam1" kind="possess" guid="933ed67727bd96d944a0115803b40df7" name="Calm_CineCam_C4_Descent_B">
     <Track type="Transform">
       <Channel name="Position.X">
-        <Key f="76" v="2300" interp="CubicInOut"/>
-        <Key f="150" v="2200" interp="CubicInOut"/>
+        <Key f="76" v="2250" interp="CubicInOut"/>
+        <Key f="150" v="2300" interp="CubicInOut"/>
       </Channel>
       <Channel name="Position.Y">
-        <Key f="76" v="120" interp="CubicInOut"/>
-        <Key f="150" v="-400" interp="CubicInOut"/>
+        <Key f="76" v="420" interp="CubicInOut"/>
+        <Key f="150" v="380" interp="CubicInOut"/>
       </Channel>
       <Channel name="Position.Z">
-        <Key f="76" v="2100" interp="CubicInOut"/>
-        <Key f="150" v="2000" interp="CubicInOut"/>
+        <Key f="76" v="1620" interp="CubicInOut"/>
+        <Key f="150" v="1650" interp="CubicInOut"/>
       </Channel>
       <Channel name="Rotation.X">
-        <Key f="76" v="61.477" interp="CubicInOut"/>
-        <Key f="150" v="77.301" interp="CubicInOut"/>
+        <Key f="76" v="63.609" interp="CubicInOut"/>
+        <Key f="150" v="78.145" interp="CubicInOut"/>
       </Channel>
       <Channel name="Rotation.Y">
-        <Key f="76" v="-126.87" interp="CubicInOut"/>
-        <Key f="150" v="-123.69" interp="CubicInOut"/>
+        <Key f="76" v="45" interp="CubicInOut"/>
+        <Key f="150" v="41.424" interp="CubicInOut"/>
+      </Channel>
+    </Track>
+  </Binding>
+  <Binding id="cage" kind="possess" guid="867ff97f1423769e38d4420388c07db3" name="Calm_ElevatorCage">
+    <Track type="Transform">
+      <Channel name="Position.X">
+        <Key f="0" v="2450" interp="CubicInOut"/>
+        <Key f="150" v="2450" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Position.Y">
+        <Key f="0" v="0" interp="CubicInOut"/>
+        <Key f="40" v="0" interp="CubicInOut"/>
+        <Key f="150" v="-700" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Position.Z">
+        <Key f="0" v="1800" interp="CubicInOut"/>
+        <Key f="150" v="1800" interp="CubicInOut"/>
       </Channel>
     </Track>
   </Binding>
@@ -66,6 +78,6 @@
     <Section start="10" end="120" speaker="Pilot" text="Going down. The core is under the turbine hall."/>
   </Track>
   <Track type="Audio">
-    <Section start="0" end="150" sound="Content/Sounds/World/Lift_Run_Loop.nmsound" volume="1.0"/>
+    <Section start="0" end="150" sound="Content/Sounds/World/Lift_Run_Loop.nmsound" volume="1"/>
   </Track>
 </Sequence>

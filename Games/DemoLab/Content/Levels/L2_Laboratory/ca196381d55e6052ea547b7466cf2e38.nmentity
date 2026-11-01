@@ -2,8 +2,8 @@
 <Entity Guid="ca196381d55e6052ea547b7466cf2e38" Name="Alarm_Beacon_Workshop_Spot" Parent="098dc3d349617a96aa97c3cdda65c186">
   <Component Type="Spot Light" Version="2">
     <Color R="255" G="32" B="18" A="255" />
-    <Intensity Value="22" />
-    <Range Value="1800" />
+    <Intensity Value="45" />
+    <Range Value="1900" />
     <InnerConeAngle Value="14" />
     <OuterConeAngle Value="26" />
     <Active Value="true" />

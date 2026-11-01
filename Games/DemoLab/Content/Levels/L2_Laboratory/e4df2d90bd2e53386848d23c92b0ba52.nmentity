@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="e4df2d90bd2e53386848d23c92b0ba52" Name="Calm_Turbine_0_Fill">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="214" B="170" A="255" />
+    <Intensity Value="40" />
+    <Radius Value="1100" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="30" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L2.Pwr.Turbine1" />
+    <ShowWhenOn Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-600" Y="560" Z="2900" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

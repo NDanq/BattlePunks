@@ -6,7 +6,7 @@
     <Intensity Value="1" />
     <Resolution Value="128" />
     <Frequency Value="1" />
-    <Interval Value="2" />
+    <Interval Value="5" />
     <NearClip Value="5" />
     <FarClip Value="12000" />
     <CaptureShadows Value="true" />
