@@ -88,6 +88,7 @@ Two rules decide which value applies:
 | `Shadows.DistanceScale` | 0.5 | 0.75 | 1 | 1.5 |
 | `Shadows.ContactShadows` | off | off | off | on |
 | `Shadows.TranslucentShadows` | off | on | on | on |
+| `Rendering.ShadowCacheBudgetMB` (the static shadow cache's atlas, MB; lights it cannot hold draw every frame; RENDERPIPELINE.md, "Shadow cache") | 8 | 16 | 32 | 96 |
 | `Rendering.ResolutionScale` (the scene drawn at this fraction of the viewport each axis, then upscaled under the UI; RENDERPIPELINE.md, "Resolution scale") | 0.5 | 0.75 | 1 | 1 |
 | `Rendering.ScreenSpaceGI` | off | off | on | on |
 | `Rendering.StochasticReflections` | off | off | on | on |

@@ -52,6 +52,11 @@ namespace RenderCore
 
     /* The reporting scene's occlusion culling (RenderStats::ProxiesOccludedLastFrame
      * and OcclusionQueriesLastFrame). */
+    /* The reporting scene's shadow cache (RenderStats::ShadowCacheLights, ShadowCacheFilled, ShadowCacheBytes). */
+    void SetShadowCacheStats(uint32_t InLights, uint32_t InFilled, uint64_t InBytes, uint32_t InSunCascades, uint32_t InSunFilled,
+                             uint64_t InSunBytes);
+    void GetShadowCacheStats(RenderStats& OutStats);
+
     void SetOcclusionStats(uint64_t InOccluded, uint64_t InQueries);
     void GetOcclusionStats(uint64_t& OutOccluded, uint64_t& OutQueries);
 

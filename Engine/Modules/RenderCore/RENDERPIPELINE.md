@@ -295,6 +295,108 @@ Shadows cast into opacity shadow maps that everything receives
 depth target, draws no shadows (warned once). A material preview never draws
 shadows.
 
+### Shadow cache
+
+Every shadow view redraws every caster it sees every frame, though nearly all
+of them are level geometry that never moves. In Demo Lab's L2 about 5,300 of a
+frame's 7,700 draws were shadow casters: some 5,100 of them its sun's four
+cascades over the whole lab, the rest one point light's six faces. With
+`[Rendering] ShadowCache` (on by default) each shadowed point or spot light's
+**static casters** are drawn once into a cache atlas, and each frame its tiles
+are copied from there into the local atlas before its **movable casters** are
+drawn over them; with `[Rendering] SunShadowCache` (on) the sun's cascades too,
+while their fit holds (below).
+
+- **Static or movable.** The rule is the entity's existing mobility
+  (GameCore's `Mobility.h`) and nothing guessed per frame: a caster is cached
+  when its proxy is static (`RenderProxy::IsStatic`: Static mobility, and a
+  proxy type that keeps static draw lists, so never a skinned mesh, particles,
+  terrain or a Procedural Spawner), visible, with no World Position Offset
+  padding (wind and swell move with time), and with no Translucent shadow
+  caster among its sections. Everything else is movable and drawn every frame:
+  Dynamic entities (characters, physics bodies, movers, debris, Calm/Alarm
+  groups that toggle), skinned meshes, particle shadows (their opacity atlas is
+  drawn every frame as before). An entity that moves in play must be Dynamic;
+  a Static one moved anyway (the editor, a tool) is still right, just redrawn.
+- **The cache atlas** (`RenderCore.ShadowLocalCache`) has the local atlas's
+  tile size, six tiles across and as many rows as `[Rendering]
+  ShadowCacheBudgetMB` allows (at most 8; depth D32 plus the render target's
+  RGBA8 colour, 8 bytes a texel). At High (2048 atlas, 341-texel tiles) a row
+  -- one point light, or six spot lights -- is 5.6 MB, so the default 32 MB
+  holds five rows (27.9 MB). The tier rows: Low 8, Medium 16, High 32, Ultra 96
+  MB (Ultra's 4096 atlas: 22.3 MB a row, four rows). A light the budget cannot
+  hold is drawn every frame, as before; with a budget under one row there is
+  no cache at all.
+- **A light's key** is what its depth depends on: its kind, position, range,
+  and for a spot its direction and outer cone, plus its shadow technique and
+  biases (`SameShadowKey`). Its colour and intensity are not in it, so
+  dimming, recolouring, or switching a light off and on again (`bActive`; a
+  breaker powering a room, an alarm swap) keeps its tiles: a light seen again
+  after an enable draws from them if nothing static in its reach changed
+  meanwhile, and fills them once if it did or has none. A light that moves
+  gets a new key, so is drawn into a new slot; when no tile is free a light
+  takes the least recently used slot only once its key has held for two
+  frames, so a light moving every frame never pushes the steady ones out.
+- **Invalidation.** Once a frame, before any view, `RenderScene::TrackShadowCasters`
+  compares every cacheable caster with last frame's record (its change serial
+  and world box). One added, removed (`RemoveProxy`), moved, edited (a static
+  entity's changed record bumps its serial: transform, mesh, materials,
+  visibility, a tier's detail bucket) or no longer cacheable sends its old and
+  new boxes to `RenderContext::InvalidateShadowCache`, and every cached light
+  whose reach (a sphere of its range) touches one is filled again that frame.
+  A scene's first frame (a world loaded) invalidates all its lights; a content
+  generation change (a mesh or material reloaded) all of them; a new shadow
+  resolution or budget starts the atlas empty; `ReleaseAll` drops a scene's.
+- **The sun's cascades** (`[Rendering] SunShadowCache`, with ShadowCache) have
+  a cache atlas of the directional atlas's size (32 MB at High's 2048), each
+  cascade at its own quarter. A cascade is fitted to the camera's slice every
+  frame and texel-snapped across the light, so its static casters can be kept
+  only while that fit holds: `HoldSunCascades` keeps the cascade's last fit
+  (puts its matrices back in the frame's view, before the scene block takes
+  them) while the new one is within a texel of it, as large to a part in a
+  thousand, along the same sun -- TAA's jitter moves the slice a hair every
+  frame, enough to flip the snap a texel. A new fit is drawn as before the
+  frame it appears and cached from the next, so a still camera (or one moving
+  less than a texel of a cascade) draws its cascades from the cache, and a
+  moving one costs what it did. `[Rendering] SunShadowCacheHoldFrames` (0, off)
+  keeps the far half of the cascades on a cached fit that many frames whatever
+  the camera does, at the price of their coverage lagging the camera by that
+  many frames at the slice's edge. A cascade is filled again when its fit
+  changes, or a static caster changes inside the box it sees; casters with Cast
+  Inset Shadow are drawn every frame (their inset is chosen per frame).
+- **Per frame.** `PrepareShadows` plans the cache for the view
+  (`PlanShadowCache`): a cached light's views take only movable casters
+  (`ShadowViewCachesStatics`), and a light whose tiles need filling gets fill
+  views after the frame's views (`GetShadowCacheFillViews`) that take only the
+  cacheable casters. The Shadows sub-stage, after clearing the atlases, draws
+  the fills into the cache atlas (each tile first set to the far plane), then
+  copies every cached view's tile into the local atlas (`ShadowCacheCopy.fsh`,
+  a full-tile quad writing `gl_FragDepth` from the cache's depth with the depth
+  test always passing), then draws the remaining casters as before. Scene
+  captures, the capture shadow maps and inset views are never cached.
+- **Backends.** The copy is a shader pass over GDI's existing calls, so it
+  needs nothing per backend: Vulkan and OpenGL are built and run on Linux;
+  D3D12 takes the same cooked shader (SPIR-V Cross's `SV_Depth`) but is not
+  compiled or run here; Metal draws no shadows at all.
+- **Stats.** `RenderStats::ShadowCacheLights` (cached lights last frame),
+  `ShadowCacheFilled` (of those, filled) and `ShadowCacheBytes`, and the same
+  for the sun (`ShadowCacheSunCascades`, `ShadowCacheSunFilled`,
+  `ShadowCacheSunBytes`); the editor's `stats` prints them.
+
+Measured (Demo Lab, RelWithDebInfo editor offscreen at 2560 x 1440 High,
+fixed cameras, interleaved on/off, medians of 6 samples a view; Intel Arc B390,
+its clock 700-2000 MHz): L2's draws a frame fell from 6,800-8,800 to 2,800-3,150
+(shadow casters 3,900-6,500 to 290-780), the Shadows span's GPU time from 1.7-3.5
+ms to 0.6-1.2 ms, and the render thread by 2-6 ms; L1's shadow draws by about
+half (its terrain and Procedural Spawner foliage are never static), the span from
+3.3-6.4 ms to 1.5-4.5 ms; L3 (one shadowed spot light) 138 to 46.
+
+Verified: `RenderCore.Smoke` with `NIMBLE_SMOKE_GPU=Vulkan` draws a point light
+and a cascaded sun over static and dynamic boxes pixel for pixel the same with
+the cache on and off -- after the dynamic box moves through the light (no fill), the static box
+is moved or hidden (one fill each), and the light is recoloured or switched off
+and on (no fill).
+
 ### Contact shadows
 
 The shadow maps hold a texel of several world units at best, so the shadow
