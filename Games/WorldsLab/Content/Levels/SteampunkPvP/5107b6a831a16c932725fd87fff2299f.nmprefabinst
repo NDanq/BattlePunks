@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Instance Guid="5107b6a831a16c932725fd87fff2299f" Name="GasLamp_FarN21" Prefab="Content/Prefabs/Steampunk/GasLamp.nmprefab">
-  <Entity Id="1">
-    <Component Type="Transform" Version="1">
-      <Position X="-1350" Y="15" Z="1925" />
-      <Rotation X="0" Y="57" Z="0" />
-    </Component>
-  </Entity>
-</Instance>

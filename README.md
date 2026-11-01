@@ -105,6 +105,16 @@ players as `PlayerState` components, all reachable from Lua and script graphs
 (`Engine/Source/GAMEFRAMEWORK.md`). `[Game] StartLevel=Sandbox` runs the older
 demo level instead.
 
+### Demo Lab
+
+`Games/DemoLab` is the sample project: a 15-minute third-person slice that
+shows the renderer (dynamic GI, procedural foliage, shading models, the
+TimeOfDay and Weather plugins), the Sequencer, AICore and the UI module.
+`Games/DemoLab/Docs/Guide.md` says how to build and run it, what each level
+shows, how to regenerate its content and how to test and measure it.
+`Games/WorldsLab` is the older test bed it replaced, trimmed to the worlds
+the engine's docs and tests use.
+
 ### LightLab
 
 `Games/LightLab` is a second game, laid out as File > New Project lays one out: a fly-around scene
@@ -265,7 +275,7 @@ A game launcher from an Editor-target build records itself with
 `-record=<file.mp4>`:
 
 ```
-WorldsLab -Game.StartLevel=SteampunkPvP -record=match.mp4 -Record.Seconds=30 -Record.StartSeconds=5
+DemoLab -Game.StartLevel=L1_Foothills -record=foothills.mp4 -Record.Seconds=30 -Record.StartSeconds=5
 ```
 
 Each frame is the finished picture with the UI over it, but without the

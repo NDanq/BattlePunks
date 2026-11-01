@@ -242,11 +242,11 @@ def write_sequence():
     lines.append(f'    <Key f="{LENGTH - 30}" v="0" interp="QuadIn"/>')
     lines.append(f'    <Key f="{LENGTH}" v="1"/>')
     lines.append('  </Track>')
-    # Post process: the orbit graded with the Courtyard's stack, faded in and out;
+    # Post process: the orbit graded with FlyoverGrade.pp.nmgraph (a dusk grade, edited in the editor), faded in and out;
     # the street shot focused on the airship (depth of field), the street near
     # the lens soft. Max blur 0 before the cut keeps the other shots sharp.
     lines.append('  <Track type="PostProcess" name="Orbit grade">')
-    lines.append(f'    <Section start="{orbit[0]}" end="{orbit[1] + 1}" stack="Content/PostProcess/Courtyard/Courtyard.pp.nmgraph" blendIn="60" blendOut="60"/>')
+    lines.append(f'    <Section start="{orbit[0]}" end="{orbit[1] + 1}" stack="Content/PostProcess/Steampunk/FlyoverGrade.pp.nmgraph" blendIn="60" blendOut="60"/>')
     lines.append('  </Track>')
     lines.append('  <Track type="PostProcessSetting" setting="DofMaxBlur">')
     lines.append(f'    <Key f="0" v="0" interp="Constant"/>')

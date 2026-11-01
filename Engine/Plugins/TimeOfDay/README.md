@@ -108,7 +108,15 @@ SkyIntensity=0.65
 
 ## Example
 
-WorldsLab's **DayCycle** world is Hills with a two-minute day.
+Demo Lab (`Games/DemoLab`) uses it in the menu, L1 and L2, the clocks stopped: the
+main menu's facade at dusk (Hour 18.2), L1 Foothills at golden hour (17.5),
+L2's lab at mid-afternoon (Calm, 16.8) and at dusk on the alarm (19.3); the
+Sun entities are written by `Tools/Levels/make_levels.py` and the dress
+scripts. Preview another hour with `-TimeOfDay.Hour`:
+
+```
+DemoLab -Game.StartLevel=L1_Foothills -TimeOfDay.Hour=12
+```
 
 ## Limits
 

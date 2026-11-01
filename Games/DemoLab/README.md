@@ -1,10 +1,12 @@
 # Demo Lab
 
-NimbleEngine's showcase game: a 15-minute, single-player, third-person
-vertical slice in a steampunk laboratory. [Docs/Design.md](Docs/Design.md) is
-the spec. This is the grey-box build (milestones M1 and M2): the whole game
-plays, start to finish, in boxes and cylinders; the art pass dresses the same
-layouts later.
+NimbleEngine's showcase game and its sample project (WorldsLab's successor):
+a 15-minute, single-player, third-person vertical slice in a steampunk
+laboratory. [Docs/Design.md](Docs/Design.md) is the spec;
+**[Docs/Guide.md](Docs/Guide.md) is the guide**: how to run it, which engine
+feature each level and cinematic shows, how to regenerate the art, levels and
+cinematics, how to watch one cinematic, the tests, and how to measure it at
+1440p.
 
 ## Build, run, test
 
@@ -32,7 +34,7 @@ cd Build/editor-debug && ctest -R DemoLab.AutoPlay --output-on-failure
 `DemoLab.AutoPlay` presses New Game, plays L1, L2, L3 and L2 on alarm with the
 input driver (`Source/GameModes/LabAutoPlay.cpp`), falls once on purpose after
 W1 to check the checkpoint reload, watches the credits and passes when the
-main menu is back (about 8 minutes).
+main menu is back (about 11 minutes).
 
 Levels are generated: after editing `Tools/Levels/layout.py` or
 `make_levels.py`, run `python3 Tools/Levels/make_levels.py` and rebuild (the
@@ -57,7 +59,7 @@ right mouse aim, R reload, Escape pause, F1 the engine-features overlay.
 |---|---|---|---|
 | `MainMenu` | | the lab's facade at dusk, a looping camera dolly; Continue, New Game, Chapter Select, Settings, Credits, Quit | Time Of Day sky, Sequencer, the UI module |
 | `L1_Foothills` | | C1 arrival -> dock -> switchback road -> gatehouse crank (hold E) -> plaza -> C2 blast door | Time Of Day golden hour, the Character Mover on terraced road, signals and holds |
-| `L2_Laboratory` | Calm | airlock -> dark foyer, C3 breaker lights the lab room by room -> atrium -> workshop (keycard) -> archive -> turbine hall (three valves in order) -> C4 elevator | DDGI/SSGI as the lights come on, the workshop's material samples (art pass) |
+| `L2_Laboratory` | Calm | airlock -> dark foyer, C3 breaker lights the lab room by room -> atrium -> workshop (keycard) -> archive -> turbine hall (three valves in order) -> C4 elevator | DDGI/SSGI as the lights come on, the workshop's material samples |
 | `L3_Core` | | ring gallery -> vault, C5 theft and alarm -> sidearm from the locker -> W1 -> tunnel -> pump hall: W2 while the beacon charges (40 s) -> fire the beacon -> freight lift | AICore navmesh, behavior trees and perception, combat, ragdolls, checkpoints |
 | `L2_Laboratory` | Alarm | arrive at the freight lift, red light, shutters reroute -> W3 turbine hall -> archive stragglers -> W4 atrium, 60 s hold -> orrery gantry -> roof hatch, C6 -> credits -> menu | one world, two states (the `Calm_*` / `Alarm_*` groups) |
 
@@ -96,11 +98,7 @@ and `LabGate`), the pistol, impacts and robots (alert, hurt, death) play from
 code, and the cinematics carry Audio tracks (the airship, the power-up, the
 lift, the shutters, the extraction cue).
 
-## Stubbed in the grey-box
+## Not done yet
 
-- The levels are boxes with the engine's default material; dressing them with
-  the art kit (`Tools/Art/assets.json`) is the next milestone. The characters
-  already wear the PBR SteamDummy (`SteamDummy_PBR.nmmesh` with the Player,
-  Watchman and Brute materials).
 - Footsteps by surface are not wired (they want anim-clip notifies).
 - Watchmen do not take cover or flank yet: they keep their range and investigate noise.

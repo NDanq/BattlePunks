@@ -72,9 +72,10 @@ GAMECORE_DEFINE_NATIVE_PREFAB(Camera, "WorldsLab.Camera", &BuildCamera)
 GAMECORE_DEFINE_NATIVE_PREFAB(Player, "WorldsLab.Player", &BuildPlayer)
 
 /* The other modes register themselves (NIMBLE_REGISTER_GAME_MODE):
- * WorldsLabExplore.cpp (the visual-style worlds' walk and fly, and the
- * Courtyard's), WorldsLabRange.cpp (the Shooting Range), WorldsLabPvP.cpp
- * (Steampunk PvP) and WorldsLabArena.cpp (the Toon Arena, AICore's demo). */
+ * WorldsLabExplore.cpp (the visual-style worlds' walk and fly),
+ * WorldsLabRange.cpp (the Shooting Range), the labs' (WorldsLabGrassLab.cpp,
+ * WorldsLabDestruction.cpp, WorldsLabTranslucencyLab.cpp) and
+ * WorldsLabArena.cpp (the Toon Arena, AICore's demo). */
 
 // === State ==================================================================
 

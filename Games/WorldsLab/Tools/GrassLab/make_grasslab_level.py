@@ -37,12 +37,8 @@ import numpy as np
 
 GAME_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(GAME_DIR / "Tools" / "Steampunk"))
-sys.path.insert(0, str(GAME_DIR / "Tools" / "Terrain"))
-sys.path.insert(0, str(GAME_DIR / "Tools" / "Procedural"))
 sys.path.insert(0, str(GAME_DIR / "Tools" / "GrassLab"))
 import nmformats as nm  # noqa: E402
-import make_hills_level as hills  # noqa: E402
-import make_meadow_level as meadow  # noqa: E402
 import make_grasslab_materials as mats  # noqa: E402
 
 LEVELS  = GAME_DIR / "Content" / "Levels"
@@ -94,6 +90,57 @@ def make_weights(h):
     return np.clip(q, 0, 255).astype(np.uint8)
 
 
+def write_terrain(h, w):
+    """Terrain.h's .nmterrain: NTRN { THDR (resolution, spacing, lowest, highest), HGHT (16-bit heights),
+    SPLT (four paint weights a sample), LAYR (the layers' names) }."""
+    lo, hi = float(h.min()), float(h.max())
+    span = hi - lo if hi > lo else 1.0
+    samples = np.clip(np.rint((h - lo) * 65535.0 / span), 0, 65535).astype("<u2")
+    header = struct.pack("<Ifff", RES, SPACING, lo, hi)
+    names = b"".join(nm.string(s) for s in ("Grass", "Earth", "Rock", "Snow"))
+    body = (nm.chunk("THDR", header) + nm.chunk("HGHT", samples.tobytes())
+            + nm.chunk("SPLT", w.astype(np.uint8).tobytes()) + nm.chunk("LAYR", names))
+    TERRAIN.parent.mkdir(parents=True, exist_ok=True)
+    TERRAIN.write_bytes(nm.chunk("NTRN", body))
+    return lo, hi
+
+
+def vector_xml(name, v):
+    return f"    <{name} X=\"{nm.num(v[0])}\" Y=\"{nm.num(v[1])}\" Z=\"{nm.num(v[2])}\" />\n"
+
+
+def spawner_xml(fields, meshes, exclusions=(), box=(1000, 500, 1000)):
+    """A Procedural Spawner component. fields: overrides of the defaults below; meshes: [(mesh, weight, scale, far mesh)]."""
+    values = {
+        "Visible": True, "Source": 2, "Project": 3, "TerrainLayer": 0, "Seed": 1, "Spacing": 200, "Jitter": 1,
+        "ProjectRange": 5000, "PathOffset": 0, "BothSides": False, "Density": 1, "NoiseScale": 0, "NoiseThreshold": 0.5,
+        "MaxSlope": 90, "MinHeight": -1000000, "MaxHeight": 1000000, "LayerThreshold": 0.5, "ScaleMin": 0.8,
+        "ScaleMax": 1.2, "AlignToNormal": 0, "Sink": 0, "ColorVariation": 0.1, "RandomYaw": True,
+        "AlignToPath": False, "CastShadows": True, "CellSize": 4000, "LODDistance": 0, "LOD1Density": 0.5,
+        "LOD2Density": 0.25, "CullDistance": 0, "MaxInstances": 200000,
+    }
+    values.update(fields)
+    lines = ["  <Component Type=\"Procedural Spawner\" Version=\"1\">\n"]
+    for name, value in values.items():
+        if name == "Seed":
+            lines.append(f"    <Seed Value=\"{int(value)}\" />\n")
+            lines.append(vector_xml("BoxExtent", box))
+            continue
+        if isinstance(value, bool):
+            lines.append(f"    <{name} Value=\"{'true' if value else 'false'}\" />\n")
+        else:
+            lines.append(f"    <{name} Value=\"{nm.num(value)}\" />\n")
+    lines.append(f"    <MeshCount Value=\"{len(meshes)}\" />\n")
+    for i, (mesh, weight, scale, far) in enumerate(meshes):
+        lines += [f"    <Mesh{i}Path Value=\"{mesh}\" />\n", f"    <Mesh{i}Far Value=\"{far}\" />\n",
+                  f"    <Mesh{i}Material Value=\"\" />\n", f"    <Mesh{i}Weight Value=\"{nm.num(weight)}\" />\n",
+                  f"    <Mesh{i}Scale Value=\"{nm.num(scale)}\" />\n"]
+    lines.append(f"    <ExclusionCount Value=\"{len(exclusions)}\" />\n")
+    lines += [f"    <Exclusion{i} Value=\"{name}\" />\n" for i, name in enumerate(exclusions)]
+    lines.append("  </Component>\n")
+    return "".join(lines)
+
+
 def write_trail_target():
     """RenderTargetAsset.h: NRTA v1 { RTHD v1: kind, width, height, filter, wrap, clear colour }."""
     # Kind Tex2D (0), Filter Linear (1), Wrap Clamp (1) -- ETextureFilter/ETextureWrap's
@@ -129,8 +176,7 @@ def render_xml(mesh, materials=(), groups=0, cast_shadows=True):
 def main():
     h = make_heights()
     w = make_weights(h)
-    hills.RES, hills.SPACING, hills.TERRAIN = RES, SPACING, TERRAIN
-    lo, hi = hills.write_terrain(h, w)
+    lo, hi = write_terrain(h, w)
     write_trail_target()
 
     entities = []
@@ -147,7 +193,7 @@ def main():
 
     # The field: dense tufts over the trail's square, a little inside its edge.
     half = mats.FIELD[2] / 2 - 60.0
-    field = meadow.spawner_xml({"Source": 2, "Project": 1, "Spacing": 19, "Jitter": 1, "ProjectRange": 3000,
+    field = spawner_xml({"Source": 2, "Project": 1, "Spacing": 19, "Jitter": 1, "ProjectRange": 3000,
                                 "ScaleMin": 0.75, "ScaleMax": 1.2, "ColorVariation": 0.18, "AlignToNormal": 0.4,
                                 "CastShadows": False, "CellSize": 400, "LODDistance": 900, "LOD1Density": 0.8,
                                 "LOD2Density": 0.55, "Seed": 17},
