@@ -63,7 +63,7 @@ from individual file URLs.
 
 ### Fully synthesised (no recordings)
 
-`Step_MetalGrate_*`, `Pistol_Shot`, `Watchman_*`, `Brute_*` (servos, alert,
+`Step_MetalGrate_*`, `Step_Tile_*`, `Step_Water_*`, `Pistol_Shot`, `Watchman_*`, `Brute_*` (servos, alert,
 hurt, swing, hit), `Robot_Death`, `Shutter_Slam`, `BlastDoor_Open`,
 `Steam_Vent_Burst`, `Steam_Vent_Loop`, `Gears_Loop`, `Breaker_Throw`,
 `Power_Up_Sweep`, `Power_Hum_Loop`, `Valve_Squeak_*`, `Turbine_SpinUp`,

@@ -129,6 +129,10 @@ private:
     void ApplyFoliageDensity();
 
     std::vector<uint64_t> PlayingSequences;   // packed Sequence Player entities
+    static constexpr float INTERACT_GRACE_SECONDS = 2.0f;    // a cutscene's blend out (1.5 s) holds input too; then half a second
+    float InteractGrace = 0.f;                // seconds Interact stays held after a cutscene
+    bool  bInteractNeedsRelease = false;      // ... and then until it is let go
+    bool  bWasCutscene = false;
     std::vector<std::pair<uint64_t, float>> FoliageSpacing;   // each Foliage_* spawner's own Spacing
     float AppliedFoliage = -1.f;
     float                 FrameSeconds = 1.f / 60.f;

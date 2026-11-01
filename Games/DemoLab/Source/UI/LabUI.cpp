@@ -49,6 +49,7 @@ namespace
         "DemoLab.FoliageDensity",
         "Display.VSync",
         "Display.FrameRateLimit",
+        "Display.WindowMode",
         "Audio.MasterVolume",
         "Audio.MusicVolume",
         "Audio.SFXVolume",
@@ -65,6 +66,14 @@ namespace
         { 1280, 720, "1280 x 720" }, { 1920, 1080, "1920 x 1080" }, { 2560, 1440, "2560 x 1440" }, { 3840, 2160, "3840 x 2160" },
     };
     const char* const TIERS[] = { "Low", "Medium", "High", "Ultra" };
+    /* [Display] WindowMode: 0..2. */
+    const char* const DISPLAY_MODES[] = { "Windowed", "Borderless", "Fullscreen" };
+
+    int CurrentDisplayMode()
+    {
+        const EngineCore::ConfigVar* Mode = EngineCore::ConfigFindVarByPath("Display.WindowMode");
+        return std::clamp(Mode ? int(Mode->GetInt()) : 0, 0, 2);
+    }
 
     std::vector<std::string> SplitPaths(const std::string& InPaths)
     {
@@ -258,9 +267,13 @@ void LabUI::RefreshSettings(GameSession& InSession)
     const int Tier = int(GameCore::Scalability::GetDetailMode());
     UI.SetValue("Set.Tier", UI::UIValue::Number(double(Tier)));
     UI.SetValue("Set.TierName", UI::UIValue::String(TIERS[std::clamp(Tier, 0, 3)]));
+    const int Mode = CurrentDisplayMode();
+    UI.SetValue("Set.DisplayMode", UI::UIValue::Number(double(Mode)));
+    UI.SetValue("Set.DisplayModeName", UI::UIValue::String(DISPLAY_MODES[Mode]));
     const int Res = CurrentResolution();
     UI.SetValue("Set.Resolution", UI::UIValue::Number(double(Res)));
-    UI.SetValue("Set.ResolutionName", UI::UIValue::String(std::string(RESOLUTIONS[Res].Name) + "  (next launch)"));
+    /* Fullscreen and borderless take the desktop's size; the resolution is the window's. */
+    UI.SetValue("Set.ResolutionName", UI::UIValue::String(std::string(RESOLUTIONS[Res].Name) + (Mode == 0 ? "" : "  (windowed)")));
 }
 
 // === Actions ================================================================
@@ -329,7 +342,14 @@ UI_DEFINE_ACTIONS(Lab)
         if(EngineCore::ConfigVar* X = EngineCore::ConfigFindVarByPath("Display.ResolutionX")) { X->SetInt(RESOLUTIONS[Index].X); }
         if(EngineCore::ConfigVar* Y = EngineCore::ConfigFindVarByPath("Display.ResolutionY")) { Y->SetInt(RESOLUTIONS[Index].Y); }
         if(GameSession* Session = SessionOf(InContext)) { LabUI::RefreshSettings(*Session); }
-    }, "Sets the window resolution, applied at the next launch");
+    }, "Sets the window's size (in windowed mode), at once");
+
+    Actions.Add("SetDisplayMode", [](const UI::UIActionContext& InContext)
+    {
+        const int Mode = std::clamp(int(NumberArg(InContext, 0, 0.0) + 0.5), 0, 2);
+        if(EngineCore::ConfigVar* Var = EngineCore::ConfigFindVarByPath("Display.WindowMode")) { Var->SetInt(Mode); }
+        if(GameSession* Session = SessionOf(InContext)) { LabUI::RefreshSettings(*Session); }
+    }, "Windowed (0), borderless fullscreen (1) or fullscreen (2), at once");
 
     Actions.Add("RefreshSettings", [](const UI::UIActionContext& InContext)
     {

@@ -9,6 +9,7 @@
 #include "Flow/LabFlow.h"
 #include "Flow/LabTravel.h"
 #include "GameModes/LabAutoPlay.h"
+#include "GameModes/LabMenuTest.h"
 #include "UI/LabUI.h"
 
 #include <string>
@@ -46,6 +47,7 @@ public:
         }
         Session.GetUI().Open(LabUI::MAIN_MENU);
         Session.SetMouseCaptured(false);
+        GetLabMenuTest().OnMenuStarted(Session);
     }
 
     void OnTick(const FrameContext& InFrame) override
@@ -53,6 +55,7 @@ public:
         if(IsDedicatedServer()) { return; }
         const float Dt = float(InFrame.DeltaSeconds);
         LabUI::UpdateTechOverlay(GetSession(), LabFlow::MENU_WORLD, false);
+        GetLabMenuTest().TickMenu(GetSession(), Dt);
         if(LabIsAutoPlay())
         {
             LabAutoPlay& Auto = GetLabAutoPlay();

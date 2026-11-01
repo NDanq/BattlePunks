@@ -371,6 +371,54 @@
   "lufs": -28.8,
   "kb": 23
  },
+ "Step_Tile_01": {
+  "path": "Content/Sounds/Footsteps/Step_Tile_01.nmsound",
+  "seconds": 0.6,
+  "lufs": -24.1,
+  "kb": 85
+ },
+ "Step_Tile_02": {
+  "path": "Content/Sounds/Footsteps/Step_Tile_02.nmsound",
+  "seconds": 0.6,
+  "lufs": -24.6,
+  "kb": 84
+ },
+ "Step_Tile_03": {
+  "path": "Content/Sounds/Footsteps/Step_Tile_03.nmsound",
+  "seconds": 0.6,
+  "lufs": -26.2,
+  "kb": 83
+ },
+ "Step_Tile_04": {
+  "path": "Content/Sounds/Footsteps/Step_Tile_04.nmsound",
+  "seconds": 0.6,
+  "lufs": -23.8,
+  "kb": 85
+ },
+ "Step_Water_01": {
+  "path": "Content/Sounds/Footsteps/Step_Water_01.nmsound",
+  "seconds": 0.6,
+  "lufs": -22.0,
+  "kb": 87
+ },
+ "Step_Water_02": {
+  "path": "Content/Sounds/Footsteps/Step_Water_02.nmsound",
+  "seconds": 0.6,
+  "lufs": -22.0,
+  "kb": 87
+ },
+ "Step_Water_03": {
+  "path": "Content/Sounds/Footsteps/Step_Water_03.nmsound",
+  "seconds": 0.6,
+  "lufs": -22.0,
+  "kb": 88
+ },
+ "Step_Water_04": {
+  "path": "Content/Sounds/Footsteps/Step_Water_04.nmsound",
+  "seconds": 0.6,
+  "lufs": -22.0,
+  "kb": 87
+ },
  "Step_Wood_01": {
   "path": "Content/Sounds/Footsteps/Step_Wood_01.nmsound",
   "seconds": 0.29,

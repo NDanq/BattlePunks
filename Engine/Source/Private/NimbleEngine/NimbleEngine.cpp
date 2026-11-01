@@ -50,8 +50,22 @@ extern "C" __declspec(dllimport) unsigned int __stdcall timeEndPeriod(unsigned i
 extern "C" __declspec(dllimport) int __stdcall SetConsoleCtrlHandler(int (__stdcall* InHandler)(unsigned long), int bInAdd);
 #endif
 
-NIMBLE_CONFIG_INT(GResolutionX, "Display", "ResolutionX", 1280, nullptr);
-NIMBLE_CONFIG_INT(GResolutionY, "Display", "ResolutionY", 720, nullptr);
+/* A set of the window's size or mode -- a game's Display settings, the console
+ * -- from any thread; the game loop applies it at its next frame
+ * (ApplyDisplaySettings), on the thread that pumps the window. */
+namespace
+{
+    std::atomic<bool> GDisplayChanged{false};
+    void OnDisplayChanged(const EngineCore::ConfigVar&) { GDisplayChanged.store(true); }
+}
+
+/* The window's size in windowed mode. Applies live. */
+NIMBLE_CONFIG_INT(GResolutionX, "Display", "ResolutionX", 1280, &OnDisplayChanged);
+NIMBLE_CONFIG_INT(GResolutionY, "Display", "ResolutionY", 720, &OnDisplayChanged);
+/* 0 a window, 1 borderless fullscreen at the desktop's mode, 2 fullscreen
+ * (GameWindow's exclusive mode; for now the same as 1 on every platform).
+ * Applies live. */
+NIMBLE_CONFIG_INT(GWindowMode, "Display", "WindowMode", 0, &OnDisplayChanged);
 NIMBLE_CONFIG_STRING(GTitle,    "Application", "Title", "NimbleEngine", nullptr);
 
 /* RenderCore::ERenderBackend::Null draws nothing and needs no GPU, which
@@ -97,6 +111,17 @@ using namespace EngineCore;
 
 namespace
 {
+    /* [Display] WindowMode as the window's mode. */
+    EWindowMode WindowModeFromConfig()
+    {
+        switch(GWindowMode.GetInt())
+        {
+            case 1:  return WM_FullscreenDesktop;
+            case 2:  return WM_FullscreenExclusive;
+            default: return WM_Windowed;
+        }
+    }
+
     /*
      * Raises the OS timer resolution, lazily, so an unlimited run never pays
      * for it. Lowered again when this leaves scope.
@@ -570,6 +595,7 @@ namespace NimbleEngine
             WinDesc.Height = GResolutionY.GetInt();
             WinDesc.Title = GTitle.GetString();
             WinDesc.Flags = WF_Resizable | WF_HighDPI;
+            WinDesc.Mode = WindowModeFromConfig();
 
             Window = GameWindowSystem::CreateGameWindow(WinDesc);
             if(!Window)
@@ -663,6 +689,26 @@ namespace NimbleEngine
         return *Session;
     }
 
+    /* [Display] WindowMode, ResolutionX and ResolutionY onto the window (the
+     * size only while windowed). On the pump thread. */
+    static void ApplyDisplaySettings(GameWindow* Window)
+    {
+        if(!Window) { return; }
+        const EWindowMode Mode = WindowModeFromConfig();
+        if(Window->GetWindowMode() != Mode) { Window->SetWindowMode(Mode); }
+        if(Mode == WM_Windowed)
+        {
+            const int Width = std::max(320, int(GResolutionX.GetInt()));
+            const int Height = std::max(200, int(GResolutionY.GetInt()));
+            const Size Now = Window->GetLogicalSize();
+            if(Now.Width != Width || Now.Height != Height)
+            {
+                Window->SetSize(Width, Height);
+                Window->Center();
+            }
+        }
+    }
+
     void Application::SetFrameRateLimit(uint32_t InFramesPerSecond)
     {
         FrameRateLimit = InFramesPerSecond;
@@ -742,6 +788,9 @@ namespace NimbleEngine
 
             /* What arrived in the pump becomes this frame's input. */
             Router->Latch(FrameNumber);
+
+            /* [Display] WindowMode / Resolution set since the last frame. */
+            if(GDisplayChanged.exchange(false)) { ApplyDisplaySettings(Window); }
         }
 
         /* Connections, spawns, state and RPCs, before the World sees the frame. */

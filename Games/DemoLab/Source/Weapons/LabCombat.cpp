@@ -29,6 +29,7 @@
 #include "Public/GameCore/ComponentProperties.h"
 #endif
 
+#include "AI/LabArmour.h"
 #include "Core/LabHealth.h"
 #include "Core/LabPlayer.h"
 #include "Weapons/LabProjectile.h"
@@ -1579,6 +1580,7 @@ void LabCombat::ClearTransients(World& InWorld, PresentedMap& InOutPresented)
         else if(std::strcmp(InEntity.GetName(), "LabWeaponDefinition") == 0) { Doomed.push_back(InEntity.GetID()); }
     });
     InWorld.Each<LabLifetimeComponent>([&](Entity InEntity, LabLifetimeComponent&) { Doomed.push_back(InEntity.GetID()); });
+    InWorld.Each<LabDebrisComponent>([&](Entity InEntity, LabDebrisComponent&) { Doomed.push_back(InEntity.GetID()); });
     InWorld.Each<LabProjectileComponent>([&](Entity InEntity, LabProjectileComponent&) { Doomed.push_back(InEntity.GetID()); });
     /* The arc preview's dots, by name: they carry no component of their own. */
     struct Named { World* W; std::vector<EntityID>* Out; };
@@ -1587,6 +1589,7 @@ void LabCombat::ClearTransients(World& InWorld, PresentedMap& InOutPresented)
     {
         Named& C = *static_cast<Named*>(InUserData);
         if(std::strcmp(C.W->GetEntity(InEntity).GetName(), "LabArcDot") == 0) { C.Out->push_back(InEntity); }
+        else if(LabArmour::IsTransient(*C.W, InEntity)) { C.Out->push_back(InEntity); }   // a saved Brute's plates
     }, &Ctx);
     for(const EntityID E : Doomed) { DestroyWeaponInstance(InWorld, E); }
     GArcDots.erase(&InWorld);

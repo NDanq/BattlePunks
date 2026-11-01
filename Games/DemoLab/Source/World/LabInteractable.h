@@ -104,7 +104,9 @@ namespace LabWorld {
     void OnSignal(GameCore::World& InWorld, const char* InChannel, bool bInValue);
 
     /* Systems. */
-    void TickInteractInput(GameCore::World& InWorld, float InSeconds);   // every process: locally controlled avatars press Interact
+    /* Every process: locally controlled avatars press Interact. bInHeld: a press
+     * does nothing and holds drain (a cutscene, or just after one). */
+    void TickInteractInput(GameCore::World& InWorld, float InSeconds, bool bInHeld = false);
     void TickTriggers(GameCore::World& InWorld, float InSeconds);        // authority
     void TickPresentation(GameCore::World& InWorld, float InSeconds);    // every process: gates slide, levers swing, used pickups hide
 
