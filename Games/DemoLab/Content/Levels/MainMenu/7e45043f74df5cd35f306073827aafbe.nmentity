@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="7e45043f74df5cd35f306073827aafbe" Name="Menu_Fill_1">
+  <Component Type="Point Light" Version="2">
+    <Color R="120" G="140" B="190" A="255" />
+    <Intensity Value="4" />
+    <Radius Value="3000" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+      <ShadowTint R="40" G="50" B="80" A="255" />
+    <ShadowBias Value="0.004" />
+    <ShadowNormalBias Value="2" />
+    <SourceRadius Value="8" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="5000" Y="1567.05" Z="4600" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

@@ -22,59 +22,75 @@ WALL_THICKNESS = 30
 DOOR_HEIGHT = 330
 
 # =============================================================================
-# MainMenu: the lab's facade at dusk, set into the cliff above the plaza.
+# MainMenu: the lab's facade at dusk, seen from the plaza. The menu world is
+# L1's own ground (its terrain, plaza, facade and cliff, dressed by
+# dress_l1.dress_menu), so its coordinates are L1's: the blast door at
+# (3700, 1200, 6985). 'ground' and 'facade' are the grey-box stand-ins.
 # =============================================================================
 MENU = {
-    'ground': (-6000, -4000, 6000, 8000),
+    'ground': (1000, 4500, 6500, 8000),
     'facade': [   # (name, centre, size)
-        ('Facade_Cliff',   (0, 1500, 3200), (9000, 3000, 600)),
-        ('Facade_Front',   (0, 700, 2850), (3200, 1400, 100)),
-        ('Facade_Door',    (0, 300, 2790), (600, 600, 40)),
-        ('Facade_TowerW',  (-1900, 1100, 2700), (500, 2200, 500)),
-        ('Facade_TowerE',  (1900, 1100, 2700), (500, 2200, 500)),
-        ('Facade_Dome',    (0, 1700, 2600), (1400, 500, 1000)),
-        ('Facade_Stack1',  (-1200, 2000, 3000), (160, 1600, 160)),
-        ('Facade_Stack2',  (1200, 2200, 3000), (160, 2000, 160)),
-        ('Plaza',          (0, -10, 1200), (5000, 20, 3200)),
+        ('Facade_Cliff',   (3700, 2700, 7400), (9000, 3000, 600)),
+        ('Facade_Front',   (3700, 1900, 7000), (3200, 1400, 100)),
+        ('Facade_Door',    (3700, 1500, 6960), (600, 600, 40)),
+        ('Plaza',          (3700, 1190, 6200), (5000, 20, 3200)),
     ],
-    # the camera's slow dolly: (frame, position, target)
-    'dolly': [(0, (-1800, 260, -1400), (0, 700, 2800)),
-              (600, (0, 200, -900), (0, 800, 2800)),
-              (1200, (1800, 260, -1400), (0, 700, 2800))],
+    # the camera's slow dolly across the plaza: (frame, position, target)
+    'dolly': [(0, (2300, 1420, 5050), (3700, 1700, 6985)),
+              (600, (3700, 1330, 5350), (3700, 1800, 6985)),
+              (1200, (5100, 1420, 5050), (3700, 1700, 6985))],
 }
 
 # =============================================================================
 # L1 Foothills: the dock (south-west), the beach, the switchback road climbing
-# north-east, the gatehouse on the landing, the overlook, the plaza and the
-# blast door in the cliff.
+# north-east (three hairpins: the second is the overlook over the sea and the
+# forest), the gatehouse barrier across the road, the meadow and the signal
+# mast east, the plaza under the cliff and the blast door in it. The ground is
+# a terrain (dress_l1.py); 'road' is the one Spline the road, its lamps, rails
+# and fence posts come from: (x, y, z) control points, the road's surface
+# height at each (the terrain is cut and filled to it).
 # =============================================================================
 L1 = {
     'ground': (-1200, -2500, 6500, 8000),
     'sea': (-9000, -6000, -1200, 4000),
-    'pier': (-2800, -1700, -1200, -1300),
-    # the road's first leg: terraces 30 cm high, north from the beach
+    'sea_level': -120,
+    'pier': (-4400, -1650, -1200, -1350),               # deck top y = 0
+    'road': [(-1150, 5, -1490), (-500, 25, -1330), (500, 55, -1120), (1700, 110, -760), (2900, 200, -150),
+             (3650, 270, 380), (3800, 300, 800), (3400, 330, 1150), (2300, 390, 1330), (1200, 450, 1480),
+             (550, 495, 1800), (750, 530, 2280), (1700, 590, 2560), (2700, 640, 2650), (3400, 660, 2660),
+             (4300, 690, 2720), (5000, 760, 3100), (5200, 850, 3650), (4800, 950, 4200), (4100, 1060, 4750),
+             (3750, 1150, 5250), (3700, 1200, 5700)],
+    'road_width': 600,
+    # the grey box's road terraces (kept for make_levels' stand-ins; the dressing removes them)
     'leg1': {'x0': 1200, 'x1': 1800, 'z0': -600, 'z1': 2400, 'steps': 10, 'y0': 0, 'y1': 300},
     'landing': (200, 2400, 4000, 3000, 300),            # x0, z0, x1, z1, top
     'leg2': {'x0': 3400, 'x1': 4000, 'z0': 3000, 'z1': 5400, 'steps': 8, 'y0': 300, 'y1': 600},
-    'plaza': (2400, 5400, 5000, 7000, 600),
-    'cliff': (1000, 7000, 6500, 7600, 2600),             # x0, z0, x1, z1, height
-    'gatehouse': (2950, 3000, 3350, 3350, 700),
-    'forest': (-1000, 3500, 800, 6500),                  # spruce stand-ins
-    'mast': (5800, 3500),
+    'plaza': (2300, 5450, 5100, 6950, 1200),             # x0, z0, x1, z1, top
+    'cliff': (1000, 7000, 6500, 7600, 2600),             # x0, z0, x1, z1, height (stand-in)
+    'gatehouse': (3060, 2890, 3625, 3310, 575),          # the kit's footprint (yaw 0, centre 3300, 3100)
+    'gatehouse_centre': (3300, 3100),
+    'overlook': (250, 1850),
+    'forest': (-1000, 3500, 800, 6500),                  # grey-box spruce stand-ins
+    'mast': (6300, 3700),
     'points': {
         'Entry_Dock':      (-2600, 0, -1500, 90),
-        'Crank_Gatehouse': (3200, 400, 2930, 0),
-        'Gate':            (3700, 300, 3150, 0),
-        'BlastDoor':       (3700, 600, 6985, 0),
-        'Trigger_AtGate':  (3000, 300, 2700, 0),
-        'Trigger_Overlook': (600, 300, 2700, 0),
-        'Trigger_Plaza':   (3700, 600, 5700, 0),
-        'Trigger_BlastDoor': (3700, 600, 6500, 0),
+        'Crank_Gatehouse': (3055, 810, 3100, 90),        # the kit's crank wheel on the gatehouse's west wall
+        'Gate':            (3060, 650, 2650, 90),        # the barrier across the road (yaw 90: along Z)
+        'BlastDoor':       (3700, 1200, 6985, 0),
+        'Trigger_AtGate':  (2500, 700, 2620, 0),
+        'Trigger_Overlook': (450, 600, 1850, 0),
+        'Trigger_Plaza':   (3700, 1300, 5800, 0),
+        'Trigger_BlastDoor': (3700, 1300, 6500, 0),
     },
     'routes': {
-        'L1_Road1': [(-1800, -1500), (-500, -1250), (1000, -900), (1500, -800), (1500, 800), (1500, 2200),
-                     (1500, 2700), (2600, 2720), (3050, 2780)],
-        'L1_Road2': [(3700, 2800), (3700, 3400), (3700, 5000), (3700, 5700), (3700, 6450)],
+        'L1_Road1': [(-1800, -1500), (-1150, -1490), (-710, -1380), (-270, -1280), (170, -1200), (610, -1090), (1040, -980),
+                     (1470, -850), (1890, -680), (2290, -490), (2690, -270), (3080, -40), (3460, 200), (3750, 540),
+                     (3710, 950), (3330, 1180), (2890, 1270), (2440, 1310), (1990, 1370), (1540, 1410), (1110, 1510),
+                     (690, 1670), (580, 2050), (890, 2370), (1320, 2490), (1760, 2570), (2210, 2620), (2660, 2650),
+                     (2850, 2700), (2960, 3000)],
+        'L1_Road2': [(2850, 2700), (3110, 2660), (3560, 2660), (4010, 2670), (4450, 2770), (4850, 2970), (5130, 3310),
+                     (5170, 3740), (4900, 4100), (4560, 4390), (4200, 4660), (3900, 4990), (3720, 5400), (3700, 5700),
+                     (3700, 6450)],
     },
 }
 

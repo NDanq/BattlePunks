@@ -4,8 +4,8 @@
     <Rain Value="0" />
     <RainMist Value="0.2" />
     <RainParticles Value="false" />
-    <MistDensity Value="0.3" />
-    <MistHeight Value="-100" />
+    <MistDensity Value="0.45" />
+    <MistHeight Value="-60" />
     <MistFalloff Value="600" />
     <Wetness Value="0.15" />
     <WetnessFollowsRain Value="false" />

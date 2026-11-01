@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="5fee7a01a368149b8304489bd01432e1" Name="Road">
+  <Component Type="Spline" Version="1">
+    <Closed Value="false" />
+    <Type Value="0" />
+    <Width Value="600" />
+    <PointCount Value="22" />
+      <Point0 X="-1150" Y="5" Z="-1490" />
+      <Point1 X="-500" Y="25" Z="-1330" />
+      <Point2 X="500" Y="55" Z="-1120" />
+      <Point3 X="1700" Y="110" Z="-760" />
+      <Point4 X="2900" Y="200" Z="-150" />
+      <Point5 X="3650" Y="270" Z="380" />
+      <Point6 X="3800" Y="300" Z="800" />
+      <Point7 X="3400" Y="330" Z="1150" />
+      <Point8 X="2300" Y="390" Z="1330" />
+      <Point9 X="1200" Y="450" Z="1480" />
+      <Point10 X="550" Y="495" Z="1800" />
+      <Point11 X="750" Y="530" Z="2280" />
+      <Point12 X="1700" Y="590" Z="2560" />
+      <Point13 X="2700" Y="640" Z="2650" />
+      <Point14 X="3400" Y="660" Z="2660" />
+      <Point15 X="4300" Y="690" Z="2720" />
+      <Point16 X="5000" Y="760" Z="3100" />
+      <Point17 X="5200" Y="850" Z="3650" />
+      <Point18 X="4800" Y="950" Z="4200" />
+      <Point19 X="4100" Y="1060" Z="4750" />
+      <Point20 X="3750" Y="1150" Z="5250" />
+      <Point21 X="3700" Y="1200" Z="5700" />
+  </Component>
+  <Component Type="Procedural Spawner" Version="1">
+    <Visible Value="true" />
+    <Source Value="0" />
+    <Project Value="1" />
+    <TerrainLayer Value="0" />
+    <Seed Value="3" />
+      <BoxExtent X="1000" Y="500" Z="1000" />
+    <Spacing Value="1700" />
+    <Jitter Value="0" />
+    <ProjectRange Value="3000" />
+    <PathOffset Value="410.0" />
+    <BothSides Value="false" />
+    <Density Value="1" />
+    <NoiseScale Value="0" />
+    <NoiseThreshold Value="0.5" />
+    <MaxSlope Value="90" />
+    <MinHeight Value="-1000000" />
+    <MaxHeight Value="1000000" />
+    <LayerThreshold Value="0.5" />
+    <ScaleMin Value="1" />
+    <ScaleMax Value="1" />
+    <AlignToNormal Value="0" />
+    <Sink Value="0" />
+    <ColorVariation Value="0" />
+    <RandomYaw Value="false" />
+    <AlignToPath Value="true" />
+    <CastShadows Value="true" />
+    <CellSize Value="3000" />
+    <LODDistance Value="0" />
+    <LOD1Density Value="0.5" />
+    <LOD2Density Value="0.25" />
+    <CullDistance Value="0" />
+    <MaxInstances Value="200000" />
+    <MeshCount Value="1" />
+    <Mesh0Path Value="Content/Meshes/L1/L1_RoadLamp_X.nmmesh" />
+    <Mesh0Far Value="" />
+    <Mesh0Material Value="" />
+    <Mesh0Weight Value="1" />
+    <Mesh0Scale Value="1" />
+    <ExclusionCount Value="2" />
+    <Exclusion0 Value="Zone_Plaza" />
+    <Exclusion1 Value="Zone_Gate" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

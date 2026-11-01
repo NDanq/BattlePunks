@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<Sequence version="1" fps="30" length="60">
+  <Binding id="anem" kind="possess" guid="8e0af034ab3cbbdb987bb883adfd0cb8" name="SignalMast_Anemometer">
+    <Track type="Transform">
+      <Channel name="Rotation.Y">
+        <Key f="0" v="0" interp="Linear"/>
+        <Key f="60" v="360" interp="Linear"/>
+      </Channel>
+    </Track>
+  </Binding>
+</Sequence>

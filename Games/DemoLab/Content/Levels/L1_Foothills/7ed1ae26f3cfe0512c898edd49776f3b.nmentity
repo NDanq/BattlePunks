@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="7ed1ae26f3cfe0512c898edd49776f3b" Name="Foliage_FarWoods">
+  <Component Type="Procedural Spawner" Version="1">
+    <Visible Value="true" />
+    <Source Value="2" />
+    <Project Value="1" />
+    <TerrainLayer Value="0" />
+    <Seed Value="8" />
+      <BoxExtent X="8000" Y="5000" Z="7000" />
+    <Spacing Value="700" />
+    <Jitter Value="1" />
+    <ProjectRange Value="5000" />
+    <PathOffset Value="0" />
+    <BothSides Value="false" />
+    <Density Value="0.8" />
+    <NoiseScale Value="6000" />
+    <NoiseThreshold Value="0.35" />
+    <MaxSlope Value="30" />
+    <MinHeight Value="200" />
+    <MaxHeight Value="1000000" />
+    <LayerThreshold Value="0.5" />
+    <ScaleMin Value="0.9" />
+    <ScaleMax Value="1.6" />
+    <AlignToNormal Value="0" />
+    <Sink Value="0.04" />
+    <ColorVariation Value="0.3" />
+    <RandomYaw Value="true" />
+    <AlignToPath Value="false" />
+    <CastShadows Value="true" />
+    <CellSize Value="6000" />
+    <LODDistance Value="4000" />
+    <LOD1Density Value="0.8" />
+    <LOD2Density Value="0.5" />
+    <CullDistance Value="0" />
+    <MaxInstances Value="200000" />
+    <MeshCount Value="1" />
+    <Mesh0Path Value="Content/Meshes/Foliage/L1_Spruce_LOD1.nmmesh" />
+    <Mesh0Far Value="Content/Meshes/Foliage/L1_Spruce_LOD2.nmmesh" />
+    <Mesh0Material Value="" />
+    <Mesh0Weight Value="1" />
+    <Mesh0Scale Value="1" />
+    <ExclusionCount Value="2" />
+    <Exclusion0 Value="RoadClear" />
+    <Exclusion1 Value="Zone_Plaza" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="11000" Y="1500" Z="6000" />
+      <Rotation X="0" Y="-10" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

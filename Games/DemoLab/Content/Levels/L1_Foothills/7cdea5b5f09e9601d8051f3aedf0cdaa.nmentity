@@ -19,7 +19,7 @@
     <RebuildOnChange Value="true" />
   </Component>
   <Component Type="Transform" Version="1">
-      <Position X="3700" Y="600" Z="6200" />
+      <Position X="3700" Y="1200" Z="6200" />
       <Rotation X="0" Y="0" Z="0" />
       <Scale X="1" Y="1" Z="1" />
   </Component>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="2b5ce06e1c782f055f182a534bd67593" Name="AP_L1_Road1_9">
+  <Component Type="Transform" Version="1">
+      <Position X="2290" Y="0" Z="-490" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

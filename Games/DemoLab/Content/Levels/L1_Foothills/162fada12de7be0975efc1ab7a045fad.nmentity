@@ -2,7 +2,7 @@
 <Entity Guid="162fada12de7be0975efc1ab7a045fad" Name="Gatehouse" Mobility="Static">
   <Component Type="Render" Version="7">
     <Visible Value="true" />
-    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <Mesh Value="Content/Meshes/L1/Gatehouse.nmmesh" />
     <CastShadows Value="true" />
   </Component>
   <Component Type="Rigid Body" Version="1">
@@ -15,8 +15,8 @@
     <Mask Value="-1" />
   </Component>
   <Component Type="Transform" Version="1">
-      <Position X="3150" Y="350" Z="3175" />
+      <Position X="3300" Y="650" Z="3100" />
       <Rotation X="0" Y="0" Z="0" />
-      <Scale X="400" Y="700" Z="350" />
+      <Scale X="1" Y="1" Z="1" />
   </Component>
 </Entity>

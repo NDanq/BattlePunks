@@ -11,6 +11,7 @@
 #include "Weapons/LabCombat.h"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 /*
@@ -122,8 +123,14 @@ private:
     void UpdateSelfBot();
     void FilterInput(GameCore::World& InWorld, GameCore::EntityID InAvatar, NimbleEngine::InputSnapshot& InOutInput);
     void UpdateMouseCapture();
+    /* The Foliage density setting on every Procedural Spawner named
+     * Foliage_*: its Spacing over the setting's square root (fewer or more
+     * plants for the same area), when the setting changes. */
+    void ApplyFoliageDensity();
 
     std::vector<uint64_t> PlayingSequences;   // packed Sequence Player entities
+    std::vector<std::pair<uint64_t, float>> FoliageSpacing;   // each Foliage_* spawner's own Spacing
+    float AppliedFoliage = -1.f;
     float                 FrameSeconds = 1.f / 60.f;
     struct FeedLine { std::string Text; float Seconds; };
     std::vector<FeedLine> FeedLines;

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="0c129d3e5598d9a506be44079c059eb6" Name="Zone_Plaza">
+  <Component Type="Spline" Version="1">
+    <Closed Value="true" />
+    <Type Value="1" />
+    <Width Value="0.0" />
+    <PointCount Value="4" />
+      <Point0 X="2000" Y="0" Z="5250" />
+      <Point1 X="5400" Y="0" Z="5250" />
+      <Point2 X="5400" Y="0" Z="7600" />
+      <Point3 X="2000" Y="0" Z="7600" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

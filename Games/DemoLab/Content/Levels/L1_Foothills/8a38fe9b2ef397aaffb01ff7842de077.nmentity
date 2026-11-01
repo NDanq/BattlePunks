@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="8a38fe9b2ef397aaffb01ff7842de077" Name="CliffWall_0" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L1/Cliff_Wall_A.nmmesh" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="2650" Y="1120" Z="7280" />
+      <Rotation X="0" Y="3" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

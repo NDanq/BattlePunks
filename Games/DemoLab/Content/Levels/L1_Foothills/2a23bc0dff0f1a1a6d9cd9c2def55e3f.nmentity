@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="2a23bc0dff0f1a1a6d9cd9c2def55e3f" Name="Rock_7" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L1/Rock_D.nmmesh" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Rigid Body" Version="1">
+    <Enabled Value="true" />
+    <Motion Value="2" />
+    <Shape Value="0" />
+    <ShapeSource Value="0" />
+    <Friction Value="0.6" />
+    <Layer Value="1" />
+    <Mask Value="-1" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-100" Y="529.379" Z="2300" />
+      <Rotation X="0" Y="299.645" Z="0" />
+      <Scale X="0.918389" Y="0.918389" Z="0.918389" />
+  </Component>
+</Entity>

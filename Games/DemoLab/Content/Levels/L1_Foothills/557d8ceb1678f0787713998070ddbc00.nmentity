@@ -7,7 +7,7 @@
     <Ammo Value="0" />
     <Channel Value="L1.GateOpen" />
     <Toggle Value="false" />
-    <Sequence Value="" />
+    <Sequence Value="Gate_Barrier" />
     <EnableOn Value="" />
     <Once Value="true" />
     <HideWhenUsed Value="false" />
@@ -15,8 +15,8 @@
     <Sound Value="Content/Sounds/World/Valve_Squeak_01.nmsound" />
   </Component>
   <Component Type="Transform" Version="1">
-      <Position X="3200" Y="400" Z="2930" />
-      <Rotation X="0" Y="0" Z="0" />
+      <Position X="3055" Y="810" Z="3100" />
+      <Rotation X="0" Y="90" Z="0" />
       <Scale X="1" Y="1" Z="1" />
   </Component>
 </Entity>

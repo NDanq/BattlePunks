@@ -8,8 +8,8 @@
     <FovY Value="50" />
   </Component>
   <Component Type="Transform" Version="1">
-      <Position X="-1800" Y="260" Z="-1400" />
-      <Rotation X="-5.50013" Y="23.1986" Z="0" />
+      <Position X="2300" Y="1420" Z="5050" />
+      <Rotation X="-6.68659" Y="35.8863" Z="0" />
       <Scale X="1" Y="1" Z="1" />
   </Component>
 </Entity>

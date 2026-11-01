@@ -9,10 +9,12 @@
 #include "Public/NimbleEngine/GameConsole.h"
 #include "Public/NimbleEngine/Input.h"
 #include "Public/NimbleEngine/PlayerState.h"
+#include "Public/RenderCore/Components/ProceduralSpawnerComponent.h"
 
 #include "AI/LabBots.h"
 #include "GameModes/LabInputDriver.h"
 #include "Core/LabPlayer.h"
+#include "UI/LabUI.h"
 #include "Weapons/LabProjectile.h"
 #include "Weapons/LabWeapon.h"
 #include "World/LabEncounter.h"
@@ -21,8 +23,10 @@
 #include "World/LabSignals.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 
 using namespace GameCore;
@@ -86,6 +90,7 @@ void LabGameModeBase::OnTick(const FrameContext& InFrame)
     HudStory.Feed.clear();
     for(const FeedLine& Line : FeedLines) { HudStory.Feed.push_back(Line.Text); }
     UpdateMouseCapture();
+    ApplyFoliageDensity();
     HudStory.bCinematic = IsSequencePlaying();
     LabHUD::Update(GetSession(), HudStory);
 }
@@ -136,6 +141,29 @@ void LabGameModeBase::Respawn(const EntityID InAvatar, const TransformPose* InAt
 
 /* Escape frees the mouse (to reach the editor, or a menu later); a click
  * takes it back. */
+void LabGameModeBase::ApplyFoliageDensity()
+{
+    const float Density = LabUI::FoliageDensity();
+    if(Density == AppliedFoliage) { return; }
+    World& W = GetWorld();
+    if(AppliedFoliage < 0.f)
+    {
+        FoliageSpacing.clear();
+        W.Each<RenderCore::ProceduralSpawnerComponent>([&](Entity InEntity, RenderCore::ProceduralSpawnerComponent& InSpawner)
+        {
+            if(std::strncmp(InEntity.GetName(), "Foliage_", 8) == 0) { FoliageSpacing.emplace_back(InEntity.GetID().Pack(), InSpawner.Spacing); }
+        });
+    }
+    AppliedFoliage = Density;
+    const float Scale = 1.f / std::sqrt(Density);
+    for(const auto& Each : FoliageSpacing)
+    {
+        RenderCore::ProceduralSpawnerComponent* Spawner =
+            W.GetEntity(EntityID::Unpack(Each.first)).GetComponent<RenderCore::ProceduralSpawnerComponent>();
+        if(Spawner) { Spawner->Spacing = Each.second * Scale; }
+    }
+}
+
 void LabGameModeBase::UpdateMouseCapture()
 {
     if(!WantsMouseCapture()) { return; }
@@ -312,6 +340,11 @@ void LabGameModeBase::OnDamagedEvent(const EventArgs& InArgs)
 void LabGameModeBase::OnSequenceStarted(const EventArgs& InArgs)
 {
     if(InArgs.Count < 1 || InArgs.Args[0].Type != EventArg::ET_Entity) { return; }
+    /* Content/Cinematics/Ambient/ holds a level's set dressing in motion (a
+     * spinning anemometer, a barrier arm lifting): never a cutscene. */
+    static constexpr char AMBIENT[] = "Content/Cinematics/Ambient/";
+    if(InArgs.Count > 1 && InArgs.Args[1].Type == EventArg::ET_String
+       && std::strncmp(InArgs.Args[1].String, AMBIENT, sizeof(AMBIENT) - 1) == 0) { return; }
     for(const uint64_t Playing : PlayingSequences) { if(Playing == InArgs.Args[0].Entity) { return; } }
     PlayingSequences.push_back(InArgs.Args[0].Entity);
     OnCutsceneStarted(EntityID::Unpack(InArgs.Args[0].Entity), InArgs.Count > 1 && InArgs.Args[1].Type == EventArg::ET_String ? InArgs.Args[1].String : "");
