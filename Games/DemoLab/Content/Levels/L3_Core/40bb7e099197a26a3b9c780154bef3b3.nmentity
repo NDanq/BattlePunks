@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="40bb7e099197a26a3b9c780154bef3b3" Name="Dress_Klaxon_1">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L3_Core/L3_Core_Klaxon.nmmesh" />
+    <ParameterCount Value="2" />
+    <Parameter0Name Value="EmissiveColor" />
+    <Parameter0Slot Value="2" />
+    <Parameter0X Value="1" />
+    <Parameter0Y Value="0.08" />
+    <Parameter0Z Value="0.03" />
+    <Parameter0W Value="0" />
+    <Parameter1Name Value="EmissiveIntensity" />
+    <Parameter1Slot Value="2" />
+    <Parameter1X Value="0.3" />
+    <Parameter1Y Value="0" />
+    <Parameter1Z Value="0" />
+    <Parameter1W Value="0" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="1800" Y="520" Z="1.10218e-13" />
+    <Rotation X="0" Y="90" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L3.Alarm" />
+    <ShowWhenOn Value="false" />
+  </Component>
+</Entity>

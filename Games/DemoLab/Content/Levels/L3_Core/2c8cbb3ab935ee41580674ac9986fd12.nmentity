@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="2c8cbb3ab935ee41580674ac9986fd12" Name="Dress_SouthBridge_-75" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L3/Catwalk_Straight.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-75" Y="0" Z="-910" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="0.725" />
+  </Component>
+</Entity>

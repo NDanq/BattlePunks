@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="c078a4c901728e9d40b602cd0a8b9a9e" Name="Dress_PumpFan_0">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L3/CoolantPump_Fan.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="638" Y="120" Z="-5900" />
+    <Rotation X="0" Y="180" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+  <Component Type="LabMotion" Version="1">
+      <Spin X="420" Y="0" Z="0" />
+    <SpinOn Value="" />
+    <AlarmOn Value="L3.BeaconCharging" />
+    <AlarmScale Value="1.8" />
+    <Flicker Value="0.0" />
+    <FlickerDuty Value="0.5" />
+    <RampOn Value="" />
+    <RampSeconds Value="10.0" />
+    <RampParam Value="" />
+    <RampSlot Value="0" />
+    <RampFrom Value="0.0" />
+    <RampTo Value="1.0" />
+    <RampLight Value="0.0" />
+  </Component>
+</Entity>

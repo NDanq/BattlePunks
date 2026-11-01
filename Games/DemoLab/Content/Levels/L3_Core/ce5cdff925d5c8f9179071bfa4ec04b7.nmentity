@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="ce5cdff925d5c8f9179071bfa4ec04b7" Name="NavMeshVolume">
   <Component Type="Nav Mesh Volume" Version="1">
-      <HalfExtents X="3200" Y="400" Z="4300" />
+      <HalfExtents X="3200" Y="700" Z="4300" />
     <CellSize Value="20" />
     <CellHeight Value="10" />
     <AgentHeight Value="180" />
@@ -19,7 +19,7 @@
     <RebuildOnChange Value="true" />
   </Component>
   <Component Type="Transform" Version="1">
-      <Position X="1200" Y="300" Z="-2300" />
+      <Position X="1200" Y="500" Z="-2300" />
       <Rotation X="0" Y="0" Z="0" />
       <Scale X="1" Y="1" Z="1" />
   </Component>

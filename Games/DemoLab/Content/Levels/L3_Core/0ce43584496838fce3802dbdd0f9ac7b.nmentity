@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="0ce43584496838fce3802dbdd0f9ac7b" Name="Spawn_Enc_W1_0" Parent="2ca627a1a1ee6e406ec3fb18bdd686f8">
   <Component Type="Transform" Version="1">
-      <Position X="1300" Y="0" Z="500" />
+      <Position X="655" Y="0" Z="1405" />
       <Rotation X="0" Y="180" Z="0" />
       <Scale X="1" Y="1" Z="1" />
   </Component>

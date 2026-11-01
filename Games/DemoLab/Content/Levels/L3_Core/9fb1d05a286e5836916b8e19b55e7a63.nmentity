@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="9fb1d05a286e5836916b8e19b55e7a63" Name="Dress_FloodBeam_1">
+  <Component Type="Spot Light" Version="2">
+    <Color R="215" G="230" B="255" A="255" />
+    <Intensity Value="90" />
+    <Range Value="3400" />
+    <InnerConeAngle Value="10" />
+    <OuterConeAngle Value="22" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="1" />
+    <ShadowBias Value="0.002" />
+    <ShadowNormalBias Value="1.5" />
+    <SourceRadius Value="10" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="883.883" Y="2700" Z="-883.883" />
+    <Rotation X="90" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L3.Alarm" />
+    <ShowWhenOn Value="false" />
+  </Component>
+</Entity>

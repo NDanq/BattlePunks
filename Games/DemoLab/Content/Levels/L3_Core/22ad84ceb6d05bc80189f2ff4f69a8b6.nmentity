@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="22ad84ceb6d05bc80189f2ff4f69a8b6" Name="Dress_Pit" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L3_Core/L3_Core_Pit.nmmesh" />
+    <ParameterCount Value="1" />
+    <Parameter0Name Value="Tint" />
+    <Parameter0Slot Value="0" />
+    <Parameter0X Value="0.5" />
+    <Parameter0Y Value="0.5" />
+    <Parameter0Z Value="0.52" />
+    <Parameter0W Value="0" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="0" Z="0" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

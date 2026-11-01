@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="2977090d333b2c4a7622dcd8f8f1f26b" Name="Dress_Reactor_Alarm">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L3/ReactorCore.nmmesh" />
+    <ParameterCount Value="3" />
+    <Parameter0Name Value="EmissiveColor" />
+    <Parameter0Slot Value="7" />
+    <Parameter0X Value="1" />
+    <Parameter0Y Value="0.1" />
+    <Parameter0Z Value="0.04" />
+    <Parameter0W Value="0" />
+    <Parameter1Name Value="PulseSpeed" />
+    <Parameter1Slot Value="7" />
+    <Parameter1X Value="3.5" />
+    <Parameter1Y Value="0" />
+    <Parameter1Z Value="0" />
+    <Parameter1W Value="0" />
+    <Parameter2Name Value="EmissiveIntensity" />
+    <Parameter2Slot Value="7" />
+    <Parameter2X Value="26" />
+    <Parameter2Y Value="0" />
+    <Parameter2Z Value="0" />
+    <Parameter2W Value="0" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="742" Z="0" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L3.Alarm" />
+    <ShowWhenOn Value="true" />
+  </Component>
+</Entity>

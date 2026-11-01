@@ -146,7 +146,13 @@ L2 = {
 # coolant pump hall (south-east) and the freight lift east of it.
 # =============================================================================
 L3 = {
-    'ring': {'centre': (0, 0), 'apothem': 1800, 'height': 700, 'doors': {'NW': 300, 'S': 300}},
+    'ring': {'centre': (0, 0), 'apothem': 1800, 'height': 2800, 'doors': {'NW': 300, 'S': 300}},
+    # the shaft (dress_l3.py): the elevator arrives high on the NW wall; a bridge runs in to the
+    # helix catwalk round the reactor, which spirals clockwise down to the south bridge over the
+    # pit (between the drum and the gallery floor) and into the vault
+    'arrival_y': 800,
+    'pit': {'apothem': 900, 'depth': 1500, 'bridge': 300},
+    'spiral': {'r_in': 700, 'r_out': 850, 'start': 321, 'walk': 9, 'drop': 800 / 9},
     'drum': {'centre': (0, 0), 'apothem': 600, 'height': 700, 'doors': {'S': 240}},
     'elevator': {'distance': 2215, 'angle': 315, 'size': (800, 800), 'height': 450, 'doors': {'S': [(0, 300)]}},
     'rooms': {
@@ -155,9 +161,10 @@ L3 = {
         'FreightLift': (3400, -5800, 4200, -5000, 500, {'W': [(-5400, 300)]}),
     },
     'pumps': [(800, -5900), (1700, -5900), (2600, -5900)],
+    'vents': [25, 335, 65, 295],   # compass angles of the W1 vents in the shaft wall
     'points': {
-        'Entry_Elevator':  (-1566, 0, 1566, 135),
-        'Intel':           (0, 110, 0, 0),
+        'Entry_Elevator':  (-1566, 800, 1566, 135),
+        'Intel':           (0, 120, 0, 0),
         'Locker':          (-600, 120, -1500, 180),
         'AmmoCrate_Ring':  (600, 30, -1500, 0),
         'AmmoCrate_Pump':  (-200, 30, -6200, 0),
@@ -167,12 +174,12 @@ L3 = {
         'Trigger_PumpHall': (0, 0, -4700, 0),
     },
     'spawns': {
-        'W1': [(1300, 500), (-1300, 600), (900, 1250), (-900, 1300)],
-        'W2': [(3000, -6000), (2900, -4800), (200, -6100), (1500, -6200)],
+        'W1': [(655, 1405), (-655, 1405), (1405, 655), (-1405, 655)],   # in front of the vents (C5 blows them open)
+        'W2': [(3100, -6050), (2900, -4800), (200, -6100), (1250, -6250)],
     },
     'routes': {
-        'L3_Vault':   [(-1450, 1450), (-1150, 1150), (-1300, -100), (-850, -850), (0, -1150), (0, -750), (0, -300)],
-        'L3_Locker':  [(0, -750), (-300, -1200), (-550, -1380)],
+        'L3_Vault':   [(-1450, 1450), (-1150, 1150), (-560, 560), (-361, 686), (-71, 772), (230, 740), (496, 596), (686, 361), (772, 71), (740, -230), (596, -496), (361, -686), (150, -780), (0, -760), (0, -300)],   # the bridge, the helix down round the reactor, the south bridge
+        'L3_Locker':  [(0, -750), (0, -1000), (-300, -1200), (-550, -1380)],
         'L3_Fight1':  [(0, -1200)],
         'L3_Tunnel':  [(0, -1300), (0, -2000), (0, -3500), (0, -4650), (900, -4650)],
         'L3_Fight2':  [(1400, -5000)],

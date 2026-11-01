@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="66ea39e316e1a1debc55e21cc57b341f" Name="Dress_PumpLamp_1">
+  <Component Type="Point Light" Version="2">
+    <Color R="235" G="238" B="245" A="255" />
+    <Intensity Value="22" />
+    <Radius Value="1100" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="55.0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="1700" Y="620" Z="-5700" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

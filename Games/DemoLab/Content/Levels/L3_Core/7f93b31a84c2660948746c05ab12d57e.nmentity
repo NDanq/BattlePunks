@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="7f93b31a84c2660948746c05ab12d57e" Name="Dress_ElevatorCage" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L2/ElevatorCage.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-1566.24" Y="800" Z="1566.24" />
+    <Rotation X="0" Y="315" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

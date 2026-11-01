@@ -6,7 +6,9 @@
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
 #include "Public/NimbleEngine/NimbleEngine.h"
+#include "Public/RenderCore/Components/ParticleSystemComponent.h"
 #include "Public/RenderCore/Components/PointLightComponent.h"
+#include "Public/RenderCore/Components/PostProcessComponent.h"
 #include "Public/RenderCore/Components/RectLightComponent.h"
 #include "Public/RenderCore/Components/RenderComponent.h"
 #include "Public/RenderCore/Components/SpotLightComponent.h"
@@ -181,6 +183,9 @@ void LabLogic::TickPresentation(World& InWorld)
         if(RenderCore::PointLightComponent* Light = E.GetComponent<RenderCore::PointLightComponent>()) { if(Light->bActive != Value) { Light->bActive = Value; } }
         if(RenderCore::SpotLightComponent* Light = E.GetComponent<RenderCore::SpotLightComponent>()) { if(Light->bActive != Value) { Light->bActive = Value; } }
         if(RenderCore::RectLightComponent* Light = E.GetComponent<RenderCore::RectLightComponent>()) { if(Light->bActive != Value) { Light->bActive = Value; } }
+        /* A grade or an effect for one state: a post process volume, steam from the vents. */
+        if(RenderCore::PostProcessComponent* Post = E.GetComponent<RenderCore::PostProcessComponent>()) { if(Post->bEnabled != Value) { Post->bEnabled = Value; } }
+        if(RenderCore::ParticleSystemComponent* Fx = E.GetComponent<RenderCore::ParticleSystemComponent>()) { if(Fx->bEmitting != Value) { Fx->bEmitting = Value; } }
         /* A sound (music, a klaxon): plays while shown, stops while hidden. */
         if(AudioSourceComponent* Audio = E.GetComponent<AudioSourceComponent>())
         {

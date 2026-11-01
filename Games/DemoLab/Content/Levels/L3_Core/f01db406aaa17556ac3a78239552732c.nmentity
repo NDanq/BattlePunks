@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="f01db406aaa17556ac3a78239552732c" Name="Dress_PostAlarm">
+  <Component Type="Post Process" Version="2">
+    <Stack Value="Content/PostProcess/L3_Core_Alarm.pp.nmgraph" />
+    <Priority Value="1" />
+    <Enabled Value="false" />
+    <BlendDistance Value="0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="0" Z="0" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L3.Alarm" />
+    <ShowWhenOn Value="true" />
+  </Component>
+</Entity>

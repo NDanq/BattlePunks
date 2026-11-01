@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="360cfc34f14c1046d7e976eb69a0f64a" Name="Dress_VaultCeiling">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="226" B="180" A="255" />
+    <Intensity Value="16" />
+    <Radius Value="900" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="45.0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="640" Z="0" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L3.Alarm" />
+    <ShowWhenOn Value="false" />
+  </Component>
+</Entity>

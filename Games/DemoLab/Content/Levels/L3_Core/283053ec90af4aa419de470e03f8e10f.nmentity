@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="283053ec90af4aa419de470e03f8e10f" Name="Dress_TunnelLampRed_1">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L3_Core/L3_Core_Bulkhead.nmmesh" />
+    <ParameterCount Value="1" />
+    <Parameter0Name Value="EmissiveColor" />
+    <Parameter0Slot Value="1" />
+    <Parameter0X Value="1" />
+    <Parameter0Y Value="0.1" />
+    <Parameter0Z Value="0.05" />
+    <Parameter0W Value="0" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="395" Z="-3000" />
+    <Rotation X="-90" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L3.Alarm" />
+    <ShowWhenOn Value="true" />
+  </Component>
+</Entity>

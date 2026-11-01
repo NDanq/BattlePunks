@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="1865e48235f6c99e7684fc71b89af356" Name="Tunnel_Floor" Mobility="Static">
   <Component Type="Render" Version="7">
-    <Visible Value="true" />
+    <Visible Value="false" />
     <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
-    <CastShadows Value="true" />
+    <CastShadows Value="false" />
   </Component>
   <Component Type="Rigid Body" Version="1">
     <Enabled Value="true" />

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="71c75d173b4d47bfa92209b1637e9555" Name="Shaft_BridgeRailW" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="false" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="false" />
+  </Component>
+  <Component Type="Rigid Body" Version="1">
+    <Enabled Value="true" />
+    <Motion Value="2" />
+    <Shape Value="0" />
+    <ShapeSource Value="0" />
+    <Friction Value="0.6" />
+    <Layer Value="1" />
+    <Mask Value="-1" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-158" Y="65" Z="-765" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="10" Y="130" Z="270" />
+  </Component>
+</Entity>

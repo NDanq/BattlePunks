@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="b39b23176a51a7fa1a7079544d65e705" Name="ElevatorRoom_WallS_2" Mobility="Static">
   <Component Type="Render" Version="7">
-    <Visible Value="true" />
+    <Visible Value="false" />
     <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
-    <CastShadows Value="true" />
+    <CastShadows Value="false" />
   </Component>
   <Component Type="Rigid Body" Version="1">
     <Enabled Value="true" />
@@ -15,7 +15,7 @@
     <Mask Value="-1" />
   </Component>
   <Component Type="Transform" Version="1">
-      <Position X="-1099.55" Y="225" Z="1488.46" />
+      <Position X="-1099.55" Y="1025" Z="1488.46" />
       <Rotation X="0" Y="315" Z="0" />
       <Scale X="250" Y="450" Z="30" />
   </Component>

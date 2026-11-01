@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="770a9ee858c8c49af4eef615ce1f0fd1" Name="Dress_FreightLight">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="220" B="170" A="255" />
+    <Intensity Value="30" />
+    <Radius Value="1400" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="60" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="3800" Y="900" Z="-5400" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

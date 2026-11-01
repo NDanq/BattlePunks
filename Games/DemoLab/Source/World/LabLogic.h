@@ -12,8 +12,8 @@ namespace GameCore { class World; }
  * Level logic Demo Lab adds to BattlePunks' pieces (LabInteractable.h), all
  * wired by signal name (LabSignals.h) like those:
  *
- *   LabSignalToggle  shows or hides the entity (its Render, and any light on
- *                    it) by a signal, and plays or stops its Audio Source:
+ *   LabSignalToggle  shows or hides the entity (its Render, any light on it,
+ *                    its Post Process, its particles' emitting) by a signal, and plays or stops its Audio Source:
  *                    the lights C3 turns on room by room, the reactor's red
  *                    and the klaxon and combat music when C5 trips the alarm.
  *   LabTimer         counts Seconds from StartOn, then emits DoneChannel; the

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="cee632af2a0e0405a3d0fbd0533ed332" Name="AP_L3_Vault_9">
+  <Component Type="Transform" Version="1">
+      <Position X="740" Y="0" Z="-230" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

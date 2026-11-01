@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="f51da30e167dde743bb7378cf970cb6e" Name="Dress_BridgeRail_0_-1" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L3/Railing_Straight.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-1226.83" Y="800" Z="1332.9" />
+    <Rotation X="0" Y="135" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

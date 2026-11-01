@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="a4279d9aa81efc81e5917fc8ac7c5c45" Name="Dress_ArcFlash_1">
+  <Component Type="Point Light" Version="2">
+    <Color R="170" G="210" B="255" A="255" />
+    <Intensity Value="30" />
+    <Radius Value="900" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="45.0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="807.525" Y="1900" Z="-1398.67" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+  <Component Type="LabMotion" Version="1">
+      <Spin X="0" Y="0" Z="0" />
+    <SpinOn Value="" />
+    <AlarmOn Value="" />
+    <AlarmScale Value="1.0" />
+    <Flicker Value="6" />
+    <FlickerDuty Value="0.35" />
+    <RampOn Value="" />
+    <RampSeconds Value="10.0" />
+    <RampParam Value="" />
+    <RampSlot Value="0" />
+    <RampFrom Value="0.0" />
+    <RampTo Value="1.0" />
+    <RampLight Value="0.0" />
+  </Component>
+</Entity>

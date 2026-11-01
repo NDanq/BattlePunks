@@ -754,6 +754,7 @@ def make_l3():
                  events=[(60, 'Lab.Signal', 'L3.Alarm', 'true'), (179, 'Lab.Signal', 'Checkpoint.Theft', 'true')])
     lv.nav_volume((1200, 300, -2300), (3200, 400, 4300))
     lv.routes(d['routes'])
+    __import__('dress_l3').dress(lv)   # M5: the shaft, the reactor, the alarm (Tools/Levels/dress_l3.py)
     lv.write()
 
 

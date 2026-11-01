@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="e870a7ca47acd2fc13e5fbd234958807" Name="Dress_HallLight_1">
+  <Component Type="Point Light" Version="2">
+    <Color R="230" G="236" B="248" A="255" />
+    <Intensity Value="20" />
+    <Radius Value="1500" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="60" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="1700" Y="640" Z="-4900" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

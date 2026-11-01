@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="8ac0cdc5abe48f339493b908c59cbcec" Name="Dress_HallPipeLo_17" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L2/Pipe_Straight.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="3150" Y="470" Z="-4460" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>
