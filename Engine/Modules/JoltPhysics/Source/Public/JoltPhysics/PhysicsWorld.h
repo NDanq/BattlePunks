@@ -161,7 +161,8 @@ namespace JoltPhysics
 
         /* The nearest body along InDirection (any length) within InMaxDistance
          * world units whose Layer is in InMask; sensors are skipped, and so is
-         * every body of InIgnore when set (its Rigid Body, its ragdoll's parts). */
+         * every body of InIgnore when set (its Rigid Body, its ragdoll's parts)
+         * and of every entity under it. */
         bool Raycast(const EngineCore::Vector3& InOrigin, const EngineCore::Vector3& InDirection,
                      float InMaxDistance, PhysicsHit& OutHit, int32_t InMask = -1,
                      GameCore::EntityID InIgnore = GameCore::EntityID()) const;
