@@ -61,8 +61,26 @@ namespace LabBots {
      * up, so the dead and the downed are not seen. */
     void TickStimuli(GameCore::World& InWorld);
 
-    /* Authority: a bot that was hurt turns on whoever hurt it. */
+    /* Authority: a bot that was hurt turns on whoever hurt it, and feels under fire
+     * (its tree's TakeCover branch). */
     void OnDamaged(GameCore::World& InWorld, GameCore::EntityID InVictim, GameCore::EntityID InInstigator);
+
+    /*
+     * Authority, each frame: the Watchmen's squad tactics (Docs/Design.md: cover,
+     * flank in pairs). The Watchmen engaging the same target pair off; in each
+     * pair one holds and shoots while the other flanks -- it is given a point
+     * on the navmesh 70-100 degrees round the target from its partner, on the
+     * side it already stands, written to its brain's FlankPos with Flanking
+     * true (Content/AI/Watchman.nmbt runs there). A flank ends when it
+     * arrives, after FLANK_SECONDS, or when the target is lost; then the pair
+     * waits FLANK_COOLDOWN and the roles swap.
+     */
+    void TickTactics(GameCore::World& InWorld, float InSeconds);
+    constexpr float FLANK_SECONDS  = 7.f;
+    constexpr float FLANK_COOLDOWN = 8.f;
+
+    /* Flanks begun in this level so far (the tests read it). */
+    int FlanksStarted();
 }
 
 /* On a bot's avatar (server-side; not saved with a level). */
@@ -83,6 +101,15 @@ struct LabBotComponent {
     float   ThrowClock = 0.f;
     float   ThrowHold = 0.f;
     uint32_t Seed = 1;
+
+    // Tactics (LabBots::TickTactics).
+    float   UnderFire = 0.f;            // 1 when just hit, fading: the tree's TakeCover input
+    float   FlankClock = 0.f;           // seconds into a flank
+    float   FlankCooldown = 0.f;        // seconds before its pair flanks again
+    uint8_t bFlanking = 0;
+    uint8_t bHeard = 0;                 // it has called out the noise it is investigating
+    uint8_t bFlankedLast = 0;           // it went round last time: its partner goes next
+    EngineCore::Vector3 FlankPos;
 };
 
 #endif //DEMOLAB_LABBOTS_H

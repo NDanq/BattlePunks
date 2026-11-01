@@ -205,6 +205,42 @@ def step_grate(i):
     return fade(room(out, 0.5, 0.12)[:n_of(0.6)], 0, 0.05)
 
 
+@asset("Step_Tile", "Footsteps", "Footstep on marble or tile (L2 atrium, foyer and halls)", target=-22, mind=100,
+       maxd=1600, variants=4)
+def step_tile(i):
+    """A hard heel click and the tile's short, bright ring, then the toe; a hall's tail."""
+    d = 0.45
+    out = silence(d)
+    heel = bp(noise(0.012), 1800, 9000) * env_ad(n_of(0.012), 0.0003, 0.0025) * 1.6
+    place(out, heel, 0.0)
+    place(out, lp(noise(0.02), 700) * env_ad(n_of(0.02), 0.0005, 0.005), 0.0, 0.8)   # the weight landing
+    f0 = U(1700, 2500)
+    place(out, modal(0.12, [(f0, 0.018, 1.0), (f0 * U(1.45, 1.6), 0.012, 0.5), (f0 * U(2.3, 2.6), 0.008, 0.3)]),
+          0.0, 0.35)
+    toe = U(0.07, 0.1)
+    place(out, bp(noise(0.01), 2500, 10000) * env_ad(n_of(0.01), 0.0003, 0.002), toe, 0.7)
+    place(out, modal(0.08, [(f0 * U(1.05, 1.15), 0.012, 1.0)]), toe, 0.2)
+    return fade(room(out, 0.9, 0.16, bright=9000)[:n_of(0.6)], 0, 0.06)
+
+
+@asset("Step_Water", "Footsteps", "Footstep in a puddle or on a flooded floor (L2 sprinklers, shallows)",
+       target=-22, mind=100, maxd=1500, variants=4)
+def step_water(i):
+    """A slap into shallow water, the splash, and a few drops and bubbles after."""
+    d = 0.6
+    out = silence(d)
+    place(out, lp(noise(0.05), 450) * env_ad(n_of(0.05), 0.001, 0.012) * 1.2, 0.0)                    # the foot's slap
+    splash = bp(noise(0.25), 600, 5500) * env_ad(n_of(0.25), 0.004, U(0.05, 0.08))
+    place(out, splash, 0.003, 0.9)
+    place(out, hp(noise(0.18), 3500) * env_ad(n_of(0.18), 0.01, 0.04), U(0.03, 0.05), 0.35)          # spray
+    for _ in range(int(U(4, 8))):                                                                     # drops and bubbles
+        at, dur = U(0.04, 0.4), U(0.015, 0.04)
+        f = U(900, 2600)
+        bubble = osc(glide(dur, [(0, f), (dur, f * U(1.3, 1.8))]), dur) * env_ad(n_of(dur), 0.001, dur * 0.35)
+        place(out, bubble, at, U(0.08, 0.2))
+    return fade(room(out, 0.4, 0.1)[:n_of(d)], 0, 0.08)
+
+
 # =============================================================================
 # Pipe pistol
 # =============================================================================
@@ -1071,7 +1107,8 @@ def write_readme(results):
         "  decoded as it plays (beds, music).",
         "- Loudness is normalised (BS.1770): one-shots by their loudest 400 ms, loops/beds/music integrated;",
         "  the LUFS column is the result, so relative levels are already balanced. Bus volumes do the rest.",
-        "- Footsteps can be animation-clip notifies naming the sound (Audio README, \"Footsteps\").",
+        "- **Footsteps** are wired by surface: `Source/Core/LabFootsteps.h` plays a variant each stride by what is",
+        "  under the foot (metal, tile, stone, wood, grass/dirt, water).",
         "",
     ]
     order = ["Footsteps", "Weapons", "Impacts", "Robots", "World", "UI", "Ambience", "Music"]

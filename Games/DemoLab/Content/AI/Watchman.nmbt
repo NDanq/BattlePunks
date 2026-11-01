@@ -1,9 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Demo Lab Watchman: ranged security; keeps about seven metres off its target and shoots, investigates noise.
+  Demo Lab Watchman: ranged security. It keeps about seven metres off its target
+  and shoots, takes cover when it is hit or hurt (and to reload), flanks when
+  its pair sends it round, and investigates noise.
   The brain only plans where to go; LabBots::Drive (Source/AI/LabBots.cpp)
-  steers the character there through its input, aims and presses fire. Perception
-  writes the Target* keys; the driver writes Health and Ammo (0..1).
+  steers the character there through its input, aims and presses fire -- from
+  cover and on the move too, whenever it sees its target. Perception writes the
+  Target* keys and the noise; the driver writes Health, Ammo and UnderFire
+  (0..1: hit lately, or below half health); LabBots::TickTactics writes
+  Flanking and FlankPos (one of each engaged pair goes round while the other
+  holds).
 -->
 <BehaviorTree Format="1" Name="Watchman">
   <Blackboard>
@@ -15,8 +21,28 @@
     <Key Name="NoisePos" Type="Vector" />
     <Key Name="Ammo" Type="Float" Default="1" />
     <Key Name="Health" Type="Float" Default="1" />
+    <Key Name="UnderFire" Type="Float" Default="0" />
+    <Key Name="CoverPos" Type="Vector" />
+    <Key Name="Flanking" Type="Bool" Default="false" />
+    <Key Name="FlankPos" Type="Vector" />
   </Blackboard>
   <UtilitySelector Interval="0.3" Hysteresis="0.2">
+    <Sequence Name="Flank" Weight="1.4">
+      <Consideration Input="Flanking" Curve="Step" XShift="0.5" />
+      <Decorator Type="BlackboardCondition" Key="Flanking" Op="Equals" Value="1" Abort="Self" />
+      <Decorator Type="TimeLimit" Seconds="8" />
+      <Task Type="MoveTo" Key="FlankPos" AcceptanceRadius="110" />
+      <Wait Seconds="0.8" />
+    </Sequence>
+    <Sequence Name="TakeCover" Weight="1.2">
+      <Consideration Input="UnderFire" Curve="Linear" />
+      <Decorator Type="BlackboardCondition" Key="TargetActor" Op="IsSet" />
+      <Decorator Type="Cooldown" Seconds="6" />
+      <Decorator Type="TimeLimit" Seconds="6" />
+      <Task Type="FindCover" Threat="TargetActor" Out="CoverPos" Radius="900" MinDistance="450" Samples="18" />
+      <Task Type="MoveTo" Key="CoverPos" AcceptanceRadius="70" />
+      <Wait Seconds="1.6" RandomDeviation="0.6" />
+    </Sequence>
     <Sequence Name="Engage">
       <Consideration Input="TargetVisible" Curve="Step" XShift="0.5" />
       <Consideration Input="Ammo" Curve="Step" XShift="0.01" />
@@ -28,7 +54,14 @@
     </Sequence>
     <Sequence Name="Reload">
       <Consideration Input="Ammo" Curve="InverseLinear" />
-      <Task Type="MoveToRandom" Radius="400" AcceptanceRadius="80" />
+      <Selector>
+        <Sequence>
+          <Decorator Type="BlackboardCondition" Key="TargetActor" Op="IsSet" />
+          <Task Type="FindCover" Threat="TargetActor" Out="CoverPos" Radius="700" MinDistance="400" Samples="12" />
+          <Task Type="MoveTo" Key="CoverPos" AcceptanceRadius="80" />
+        </Sequence>
+        <Task Type="MoveToRandom" Radius="400" AcceptanceRadius="80" />
+      </Selector>
       <Wait Seconds="1.2" />
     </Sequence>
     <Sequence Name="Investigate" Weight="0.7">

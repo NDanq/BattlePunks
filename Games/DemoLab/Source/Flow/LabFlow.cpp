@@ -19,7 +19,7 @@ namespace
         { "1  Foothills Approach",       "L1_Foothills",  "Entry_Dock",        "" },
         { "2  The Laboratory",           "L2_Laboratory", "Entry_Airlock",     "" },
         { "3  The Core",                 "L3_Core",       "Entry_Elevator",    "" },
-        { "4  The Laboratory: Alarm",    "L2_Laboratory", "Entry_FreightLift", "Alarm=1" },
+        { "4  The Laboratory: Alarm",    "L2_Laboratory", "Entry_FreightLift", "Alarm=1,Armed=1" },   // armed, as the freight lift brings you
     };
 }
 

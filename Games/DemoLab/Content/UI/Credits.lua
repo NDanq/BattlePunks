@@ -37,7 +37,8 @@ LabCredits.Text = table.concat({
     "Interface Sounds, by Kenney (CC0)",
     "",
     "SYNTHESISED IN THIS REPOSITORY",
-    "Robots, weapons, machinery, doors, alarms, the beacon, the lab and reactor ambiences (Tools/Audio)",
+    "Robots, weapons, machinery, doors, alarms, the beacon, the lab and reactor ambiences,",
+    "footsteps on metal, tile and water (Tools/Audio)",
     "",
     "Thank you for playing.",
 }, "\n")

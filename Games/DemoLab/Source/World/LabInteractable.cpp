@@ -307,13 +307,13 @@ void LabCombatComponent::ServerInteract(const RpcContext& InContext, const Entit
     if(InContext.OwningWorld) { LabWorld::Interact(*InContext.OwningWorld, InContext.Entity, InTarget); }
 }
 
-void LabWorld::TickInteractInput(World& InWorld, const float InSeconds)
+void LabWorld::TickInteractInput(World& InWorld, const float InSeconds, const bool bInHeld)
 {
     std::vector<EntityID> Pressed;
     std::vector<EntityID> Holding;
     InWorld.Each<AvatarHarnessComponent>([&](Entity InEntity, AvatarHarnessComponent& InHarness)
     {
-        if(!InHarness.bEnabled || !InHarness.IsLocallyControlled()) { return; }
+        if(bInHeld || !InHarness.bEnabled || !InHarness.IsLocallyControlled()) { return; }
         if(InHarness.WasPressed("Interact")) { Pressed.push_back(InEntity.GetID()); }
         if(InHarness.IsDown("Interact")) { Holding.push_back(InEntity.GetID()); }
     });
