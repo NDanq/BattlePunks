@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="c4303815bf7c6ececbc9422bcb8c0063" Name="Door_Glow">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="150" B="80" A="255" />
+    <Intensity Value="10" />
+    <Radius Value="700" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+      <ShadowTint R="40" G="50" B="80" A="255" />
+    <ShadowBias Value="0.004" />
+    <ShadowNormalBias Value="2" />
+    <SourceRadius Value="8" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L1.Plaza" />
+    <ShowWhenOn Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="3700" Y="1760" Z="6785" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

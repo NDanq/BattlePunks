@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<Sequence version="1" fps="30" length="240">
+  <Binding id="anem" kind="possess" guid="8e0af034ab3cbbdb987bb883adfd0cb8" name="SignalMast_Anemometer">
+    <Track type="Transform">
+      <Channel name="Rotation.Y">
+        <Key f="0" v="0" interp="Linear"/>
+        <Key f="240" v="1440" interp="Linear"/>
+      </Channel>
+    </Track>
+  </Binding>
+  <Binding id="prop0" kind="possess" guid="260836ad296b12efc30e46aa8a8fff5f" name="Airship_PropLeft">
+    <Track type="Transform">
+      <Channel name="Rotation.X">
+        <Key f="0" v="0" interp="Linear"/>
+        <Key f="240" v="23040" interp="Linear"/>
+      </Channel>
+    </Track>
+  </Binding>
+  <Binding id="prop1" kind="possess" guid="ab06e90ccf612a0811d46991e57d21f8" name="Airship_PropRight">
+    <Track type="Transform">
+      <Channel name="Rotation.X">
+        <Key f="0" v="0" interp="Linear"/>
+        <Key f="240" v="23040" interp="Linear"/>
+      </Channel>
+    </Track>
+  </Binding>
+  <Binding id="prop2" kind="possess" guid="d826a3af299f169364245fd8948595dc" name="Airship_PropTail">
+    <Track type="Transform">
+      <Channel name="Rotation.X">
+        <Key f="0" v="0" interp="Linear"/>
+        <Key f="240" v="23040" interp="Linear"/>
+      </Channel>
+    </Track>
+  </Binding>
+  <Binding id="ship" kind="possess" guid="46665d26587d10ab22f31dbfaf38c994" name="Airship">
+    <Track type="Transform">
+      <Channel name="Position.Y">
+        <Key f="0" v="1500" interp="CubicInOut"/>
+        <Key f="120" v="1545" interp="CubicInOut"/>
+        <Key f="240" v="1500" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Rotation.Z">
+        <Key f="0" v="0" interp="CubicInOut"/>
+        <Key f="120" v="1.5" interp="CubicInOut"/>
+        <Key f="240" v="0" interp="CubicInOut"/>
+      </Channel>
+    </Track>
+  </Binding>
+</Sequence>

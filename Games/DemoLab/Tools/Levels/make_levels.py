@@ -19,6 +19,7 @@ import hashlib, math, os, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import layout as L  # noqa: E402
+import dress_l1  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 LEVELS = os.path.join(ROOT, 'Content', 'Levels')
@@ -431,6 +432,7 @@ def make_menu():
                                       Cinematic=False, Skippable=False),
                             lv.transform((0, 0, 0))])
     write_seq('MenuDolly', m['dolly'][-1][0], camera_track('cam', lv.guid('MenuCamera'), 'MenuCamera', m['dolly']))
+    dress_l1.dress_menu(lv)
     lv.write()
 
 
@@ -486,7 +488,8 @@ def make_l1():
     lv.player_start('Entry_Dock', p['Entry_Dock'])
     # the gatehouse gate and its crank (held)
     gx, gy, gz, _ = p['Gate']
-    lv.gate('GatehouseGate', (gx, gy + 37 + 180, gz), (600, 360, 40), 'L1.GateOpen', sound=SND + 'World/Lift_Start.nmsound')
+    lv.gate('GatehouseGate', (gx, gy + 37 + 180, gz), (600, 360, 40), 'L1.GateOpen', yaw=p['Gate'][3],
+            sound=SND + 'World/Lift_Start.nmsound')
     lv.interactable('Crank_Gatehouse', p['Crank_Gatehouse'], 'Turn the crank', channel='L1.GateOpen', hold=2.5,
                     handle=True, sound=SND + 'World/Valve_Squeak_01.nmsound')
     lv.box('Crank_Post', (p['Crank_Gatehouse'][0], 300 + 45, p['Crank_Gatehouse'][2] + 25), (30, 90, 30))
@@ -508,24 +511,25 @@ def make_l1():
     lv.sound('Amb_Forest', SND + 'Ambience/Amb_L1_Forest.nmsound', toggle='L1.AtGate')
     lv.sound('Music_Explore', MUSIC + 'Music_Explore.nmsound', volume=0.5)
     lv.sound('Plaza_Gears', SND + 'World/Gears_Loop.nmsound', (bx, 900, bz - 200), spatial=True, min_d=200, max_d=2500)
-    lv.nav_volume((3700, 600, 6200), (1400, 300, 900))
+    lv.nav_volume((3700, 1200, 6200), (1400, 300, 900))
     lv.routes(d['routes'])
 
     lv.cinematic('C1_Arrival', 'C1_Arrival', [(0, (-6000, 1800, -5000), (-1500, 0, -1500)),
                                               (90, (-3500, 700, -2600), (-2400, 0, -1500)),
-                                              (91, (2500, 1400, 1000), (3700, 600, 6500)),
+                                              (91, (2200, 2000, 1500), (3700, 1300, 6500)),
                                               (180, (-2000, 300, -2200), (-2600, 120, -1500))],
                  180, autoplay=True, blend_out=1.5, audio=[(0, 180, 'World/Airship_Engine_Loop.nmsound', 0.8)],
                  subtitles=[(15, 85, 'Pilot', 'There is the island. I will set you down at the old dock.'),
                             (95, 170, 'Pilot', 'The road climbs to the lab. Signal when you have what we came for.')],
                  events=[(175, 'Story.Banner', 'FOOTHILLS APPROACH', 3)])
-    lv.cinematic('C2_BlastDoor', 'C2_BlastDoor', [(0, (3000, 900, 5600), (3700, 800, 7000)),
-                                                  (75, (3300, 800, 6100), (3700, 800, 7000)),
-                                                  (76, (4600, 700, 6300), (3700, 700, 7000)),
-                                                  (150, (4100, 750, 6600), (3700, 800, 7000))],
+    lv.cinematic('C2_BlastDoor', 'C2_BlastDoor', [(0, (3000, 1500, 5600), (3700, 1400, 7000)),
+                                                  (75, (3300, 1400, 6100), (3700, 1400, 7000)),
+                                                  (76, (4600, 1300, 6300), (3700, 1300, 7000)),
+                                                  (150, (4100, 1350, 6600), (3700, 1400, 7000))],
                  150, fade_out=True, audio=[(30, 100, 'World/Steam_Vent_Burst.nmsound', 1.0)],
                  subtitles=[(15, 120, 'Pilot', 'Steam pressure is up. That door has not opened in years.')],
                  events=[(60, 'Lab.Signal', 'L1.BlastDoor', 'true'), (149, 'Lab.Signal', 'L1.Done', 'true')])
+    dress_l1.dress(lv)
     lv.write()
 
 

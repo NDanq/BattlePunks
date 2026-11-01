@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="a5430aae771c9bc293ec3a5f0b594888" Name="Weather">
+  <Component Type="Weather" Version="1">
+    <Rain Value="0" />
+    <RainMist Value="0.2" />
+    <RainParticles Value="false" />
+    <MistDensity Value="0.5" />
+    <MistHeight Value="1100" />
+    <MistFalloff Value="600" />
+    <Wetness Value="0.2" />
+    <WetnessFollowsRain Value="false" />
+    <WetSeconds Value="60" />
+    <DrySeconds Value="240" />
+    <WindYaw Value="60" />
+    <WindStrength Value="1.0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

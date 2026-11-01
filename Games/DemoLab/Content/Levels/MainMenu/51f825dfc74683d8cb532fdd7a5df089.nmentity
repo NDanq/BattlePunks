@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="51f825dfc74683d8cb532fdd7a5df089" Name="PlazaLamp_1_Light">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="178" B="105" A="255" />
+    <Intensity Value="14" />
+    <Radius Value="1300" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+      <ShadowTint R="40" G="50" B="80" A="255" />
+    <ShadowBias Value="0.004" />
+    <ShadowNormalBias Value="2" />
+    <SourceRadius Value="6" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="4890" Y="1585" Z="5650" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

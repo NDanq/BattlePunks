@@ -56,9 +56,9 @@ namespace
 
     const RawStep L1_STEPS[] = {
         LAB_STEP(Wait,       "",               "",               3.f),
-        LAB_STEP(Route,      "L1_Road1",       "",               90.f),
+        LAB_STEP(Route,      "L1_Road1",       "",               150.f),   // the switchbacks: ~175 m
         LAB_STEP(Hold,       "Crank_Gatehouse", "L1.GateOpen",   20.f),
-        LAB_STEP(Route,      "L1_Road2",       "",               90.f),
+        LAB_STEP(Route,      "L1_Road2",       "",               120.f),
         LAB_STEP(WaitSignal, "",               "L1.Done",        30.f),
         LAB_STEP(WaitTravel, "",               "",               30.f),
     };

@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="PostProcess">
+  <Nodes>
+    <Node Id="1115b0159381079a2bc09bec41cfe5c7" Type="Effect.ScreenSpaceGI" Version="1" X="-300" Y="-600">
+      <Prop Name="Intensity" Value="1" />
+      <Prop Name="Radius" Value="400" />
+      <Prop Name="Rays" Value="4" />
+    </Node>
+    <Node Id="2f24b91aad428ab135c496ae8e046238" Type="Effect.Bloom" Version="1" X="140" Y="-600">
+      <Prop Name="Intensity" Value="0.5" />
+      <Prop Name="Levels" Value="5" />
+      <Prop Name="Radius" Value="0.7" />
+      <Prop Name="Threshold" Value="0.85" />
+      <Prop Name="Tint" Value="1 0.92 0.8" />
+    </Node>
+    <Node Id="30ef6a0927d37d906267d991efc0111f" Type="Effect.Material" Version="1" X="-1180" Y="-450">
+      <Prop Name="Material" Value="Content/Materials/Kit/L1_Grade.material.nmgraph" />
+      <Prop Name="Order" Value="0" />
+      <Prop Name="Stage" Value="After Effects" />
+    </Node>
+    <Node Id="6728f94a46263f652b4e574fbb713412" Type="Effect.VolumetricFog" Version="1" X="-1400" Y="-450">
+      <Prop Name="Albedo" Value="1 0.95 0.88" />
+      <Prop Name="Anisotropy" Value="0.72" />
+      <Prop Name="Base Height" Value="-100" />
+      <Prop Name="Density" Value="6e-05" />
+      <Prop Name="Height Falloff" Value="0.0009" />
+      <Prop Name="Light Scattering" Value="1.5" />
+      <Prop Name="Max Distance" Value="16000" />
+      <Prop Name="Shadows" Value="true" />
+      <Prop Name="Sky Scattering" Value="0.7" />
+      <Prop Name="Steps" Value="24" />
+      <Prop Name="Sun Scattering" Value="2.2" />
+    </Node>
+    <Node Id="684f27f683596b682a77ef43db1b21f6" Type="Effect.Antialiasing" Version="1" X="-80" Y="-600">
+      <Prop Name="Edge Threshold" Value="0.125" />
+      <Prop Name="Method" Value="TAA" />
+      <Prop Name="Quality" Value="Medium" />
+      <Prop Name="Sharpness" Value="0.35" />
+    </Node>
+    <Node Id="766b426d0fbcaa96e09a64612de93d92" Type="Effect.AmbientOcclusion" Version="1" X="-740" Y="-600">
+      <Prop Name="Blur" Value="true" />
+      <Prop Name="Intensity" Value="1.6" />
+      <Prop Name="Power" Value="1.4" />
+      <Prop Name="Radius" Value="80" />
+      <Prop Name="Samples" Value="12" />
+    </Node>
+    <Node Id="82c9ab249819c029f81a3a30604cf3f8" Type="Effect.ScreenSpaceReflections" Version="1" X="-520" Y="-600">
+      <Prop Name="Intensity" Value="1" />
+      <Prop Name="Max Distance" Value="6000" />
+      <Prop Name="Max Roughness" Value="0.45" />
+      <Prop Name="Steps" Value="32" />
+      <Prop Name="Thickness" Value="60" />
+    </Node>
+    <Node Id="df9957810858c22e68eec0e902ff3cc3" Type="Effect.AutoExposure" Version="1" X="-960" Y="-600">
+      <Prop Name="Centre Weight" Value="0.5" />
+      <Prop Name="Key" Value="0.14" />
+      <Prop Name="Max EV" Value="3" />
+      <Prop Name="Min EV" Value="-2" />
+      <Prop Name="Speed Down" Value="1" />
+      <Prop Name="Speed Up" Value="2.5" />
+    </Node>
+    <Node Id="eaedf05eda3bc0e7ea6c21bb90b6a346" Type="Effect.ToneMapping" Version="1" X="-1180" Y="-600">
+      <Prop Name="Exposure" Value="0.3" />
+      <Prop Name="Tone Mapper" Value="ACES" />
+    </Node>
+  </Nodes>
+  <gen_code>
+    <Output Extension=".ppstack"><![CDATA[# Post process stack L1_Foothills
+Effect AmbientOcclusion Intensity=1.6 Radius=80 Samples=12 Power=1.4 Blur=true
+Effect ScreenSpaceReflections Intensity=1 MaxRoughness=0.45 MaxDistance=6000 Thickness=60 Steps=32
+Effect ScreenSpaceGI Intensity=1 Rays=4 Radius=400
+Effect VolumetricFog Density=6e-05 HeightFalloff=9e-04 BaseHeight=-100 MaxDistance=16000 Anisotropy=0.72 SunScattering=2.2 SkyScattering=0.7 LightScattering=1.5 Albedo=1,0.95,0.88 Steps=24 Shadows=true
+Effect Bloom Threshold=0.85 Intensity=0.5 Radius=0.7 Levels=5 Tint=1,0.92,0.8
+Effect ToneMapping Exposure=0.3 ToneMapper=ACES
+Effect AutoExposure Key=0.14 MinEV=-2 MaxEV=3 SpeedUp=2.5 SpeedDown=1 CentreWeight=0.5
+Effect Antialiasing EdgeThreshold=0.125 Sharpness=0.35 Method=TAA Quality=Medium
+Material Stage=After Order=0 Path=Content/Materials/Kit/L1_Grade.material.nmgraph
+]]></Output>
+  </gen_code>
+</NodeGraph>

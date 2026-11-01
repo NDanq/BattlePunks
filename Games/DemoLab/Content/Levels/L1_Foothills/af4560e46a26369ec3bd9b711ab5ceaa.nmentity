@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="af4560e46a26369ec3bd9b711ab5ceaa" Name="RailBlock_12" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="false" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Rigid Body" Version="1">
+    <Enabled Value="true" />
+    <Motion Value="2" />
+    <Shape Value="0" />
+    <ShapeSource Value="0" />
+    <Friction Value="0.6" />
+    <Layer Value="1" />
+    <Mask Value="-1" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="2363.86" Y="708.714" Z="2290.35" />
+      <Rotation X="0" Y="86.4248" Z="0" />
+      <Scale X="20" Y="160" Z="398.3" />
+  </Component>
+</Entity>

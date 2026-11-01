@@ -8,9 +8,9 @@
         <Key f="76" v="4600" interp="CubicInOut"/>
       </Channel>
       <Channel name="Position.Y">
-        <Key f="0" v="900" interp="CubicInOut"/>
-        <Key f="75" v="800" interp="CubicInOut"/>
-        <Key f="76" v="700" interp="CubicInOut"/>
+        <Key f="0" v="1500" interp="CubicInOut"/>
+        <Key f="75" v="1400" interp="CubicInOut"/>
+        <Key f="76" v="1300" interp="CubicInOut"/>
       </Channel>
       <Channel name="Position.Z">
         <Key f="0" v="5600" interp="CubicInOut"/>
@@ -36,8 +36,8 @@
         <Key f="150" v="4100" interp="CubicInOut"/>
       </Channel>
       <Channel name="Position.Y">
-        <Key f="76" v="700" interp="CubicInOut"/>
-        <Key f="150" v="750" interp="CubicInOut"/>
+        <Key f="76" v="1300" interp="CubicInOut"/>
+        <Key f="150" v="1350" interp="CubicInOut"/>
       </Channel>
       <Channel name="Position.Z">
         <Key f="76" v="6300" interp="CubicInOut"/>
@@ -73,4 +73,36 @@
     <Key f="60" event="Lab.Signal" arg0="L1.BlastDoor" arg1="true" fireOnSkip="true"/>
     <Key f="149" event="Lab.Signal" arg0="L1.Done" arg1="true" fireOnSkip="true"/>
   </Track>
+  <Binding id="cog" kind="possess" guid="cf620279121f095a06aabd5b41ad9906" name="BlastDoor_Cog">
+    <Track type="Transform">
+      <Channel name="Rotation.Z">
+        <Key f="0" v="0" interp="CubicInOut"/>
+        <Key f="20" v="0" interp="CubicInOut"/>
+        <Key f="58" v="360" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Position.X">
+        <Key f="0" v="3700" interp="CubicInOut"/>
+        <Key f="60" v="3700" interp="CubicInOut"/>
+        <Key f="130" v="3490" interp="CubicInOut"/>
+      </Channel>
+    </Track>
+  </Binding>
+  <Binding id="leafl" kind="possess" guid="f332faa0c4713eed25a01c9f0f2def9e" name="BlastDoor_LeafL">
+    <Track type="Transform">
+      <Channel name="Position.X">
+        <Key f="0" v="3700" interp="CubicInOut"/>
+        <Key f="60" v="3700" interp="CubicInOut"/>
+        <Key f="130" v="3490" interp="CubicInOut"/>
+      </Channel>
+    </Track>
+  </Binding>
+  <Binding id="leafr" kind="possess" guid="ea034ee46beeaa8ed60d4baf44657353" name="BlastDoor_LeafR">
+    <Track type="Transform">
+      <Channel name="Position.X">
+        <Key f="0" v="3700" interp="CubicInOut"/>
+        <Key f="60" v="3700" interp="CubicInOut"/>
+        <Key f="130" v="3910" interp="CubicInOut"/>
+      </Channel>
+    </Track>
+  </Binding>
 </Sequence>

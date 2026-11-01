@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="d5bdb57e5159d5886b7afdb79a8e237f" Name="Foliage_Highland">
+  <Component Type="Procedural Spawner" Version="1">
+    <Visible Value="true" />
+    <Source Value="2" />
+    <Project Value="1" />
+    <TerrainLayer Value="0" />
+    <Seed Value="12" />
+      <BoxExtent X="10000" Y="5000" Z="4500" />
+    <Spacing Value="650" />
+    <Jitter Value="1" />
+    <ProjectRange Value="5000" />
+    <PathOffset Value="0" />
+    <BothSides Value="false" />
+    <Density Value="0.85" />
+    <NoiseScale Value="5000" />
+    <NoiseThreshold Value="0.3" />
+    <MaxSlope Value="38" />
+    <MinHeight Value="1500" />
+    <MaxHeight Value="1000000" />
+    <LayerThreshold Value="0.5" />
+    <ScaleMin Value="0.9" />
+    <ScaleMax Value="1.5" />
+    <AlignToNormal Value="0" />
+    <Sink Value="0.04" />
+    <ColorVariation Value="0.3" />
+    <RandomYaw Value="true" />
+    <AlignToPath Value="false" />
+    <CastShadows Value="false" />
+    <CellSize Value="6000" />
+    <LODDistance Value="4000" />
+    <LOD1Density Value="0.8" />
+    <LOD2Density Value="0.5" />
+    <CullDistance Value="0" />
+    <MaxInstances Value="200000" />
+    <MeshCount Value="1" />
+    <Mesh0Path Value="Content/Meshes/Foliage/L1_Spruce_LOD1.nmmesh" />
+    <Mesh0Far Value="Content/Meshes/Foliage/L1_Spruce_LOD2.nmmesh" />
+    <Mesh0Material Value="" />
+    <Mesh0Weight Value="1" />
+    <Mesh0Scale Value="1" />
+    <ExclusionCount Value="0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="3500" Y="4000" Z="12500" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="b101650d20adaa54698b32037287a281" Name="RoadClear">
+  <Component Type="Spline" Version="1">
+    <Closed Value="false" />
+    <Type Value="0" />
+    <Width Value="1300" />
+    <PointCount Value="22" />
+      <Point0 X="-1150" Y="5" Z="-1490" />
+      <Point1 X="-500" Y="25" Z="-1330" />
+      <Point2 X="500" Y="55" Z="-1120" />
+      <Point3 X="1700" Y="110" Z="-760" />
+      <Point4 X="2900" Y="200" Z="-150" />
+      <Point5 X="3650" Y="270" Z="380" />
+      <Point6 X="3800" Y="300" Z="800" />
+      <Point7 X="3400" Y="330" Z="1150" />
+      <Point8 X="2300" Y="390" Z="1330" />
+      <Point9 X="1200" Y="450" Z="1480" />
+      <Point10 X="550" Y="495" Z="1800" />
+      <Point11 X="750" Y="530" Z="2280" />
+      <Point12 X="1700" Y="590" Z="2560" />
+      <Point13 X="2700" Y="640" Z="2650" />
+      <Point14 X="3400" Y="660" Z="2660" />
+      <Point15 X="4300" Y="690" Z="2720" />
+      <Point16 X="5000" Y="760" Z="3100" />
+      <Point17 X="5200" Y="850" Z="3650" />
+      <Point18 X="4800" Y="950" Z="4200" />
+      <Point19 X="4100" Y="1060" Z="4750" />
+      <Point20 X="3750" Y="1150" Z="5250" />
+      <Point21 X="3700" Y="1200" Z="5700" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

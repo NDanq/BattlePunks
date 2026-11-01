@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="fa0db02a3c2b73a39d26e5999a090e5a" Name="SeaFoam_5" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L1/Sea_FoamStrip.nmmesh" />
+    <CastShadows Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-5886.25" Y="-120" Z="5021.75" />
+      <Rotation X="0" Y="-121.945" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

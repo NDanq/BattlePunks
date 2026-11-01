@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="c1e5eaafda53b88f31c632b032062ece" Name="Cliff_15" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L1/Cliff_C.nmmesh" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="5829.78" Y="3047.9" Z="7630.6" />
+      <Rotation X="0" Y="-0.738441" Z="0" />
+      <Scale X="1.01105" Y="1.01105" Z="1.01105" />
+  </Component>
+</Entity>

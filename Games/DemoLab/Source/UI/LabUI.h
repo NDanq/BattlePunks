@@ -49,6 +49,10 @@ namespace LabUI {
     /* [DemoLab] LookSensitivity and InvertY, for the look axes. */
     float LookScale();
     bool  InvertLook();
+
+    /* [DemoLab] FoliageDensity (0.25-1.5): L1's Foliage_* spawners' spacing
+     * is divided by its square root (LabGameModeBase::ApplyFoliageDensity). */
+    float FoliageDensity();
 }
 
 #endif //DEMOLAB_LABUI_H

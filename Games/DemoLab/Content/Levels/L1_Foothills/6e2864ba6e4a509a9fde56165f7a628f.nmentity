@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="6e2864ba6e4a509a9fde56165f7a628f" Name="RoadLamp_1_Light">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="178" B="105" A="255" />
+    <Intensity Value="10" />
+    <Radius Value="1300" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+      <ShadowTint R="40" G="50" B="80" A="255" />
+    <ShadowBias Value="0.004" />
+    <ShadowNormalBias Value="2" />
+    <SourceRadius Value="6" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="593.916" Y="432.869" Z="-1457.26" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

@@ -9,7 +9,7 @@
     <Sound Value="Content/Sounds/World/BlastDoor_Open.nmsound" />
   </Component>
   <Component Type="Render" Version="7">
-    <Visible Value="true" />
+    <Visible Value="false" />
     <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
     <CastShadows Value="true" />
   </Component>
@@ -23,7 +23,7 @@
     <Mask Value="-1" />
   </Component>
   <Component Type="Transform" Version="1">
-      <Position X="3700" Y="850" Z="6985" />
+      <Position X="3700" Y="1450" Z="6985" />
       <Rotation X="0" Y="0" Z="0" />
       <Scale X="600" Y="500" Z="60" />
   </Component>

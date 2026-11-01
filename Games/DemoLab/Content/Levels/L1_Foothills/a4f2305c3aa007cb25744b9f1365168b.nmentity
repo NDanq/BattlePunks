@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="a4f2305c3aa007cb25744b9f1365168b" Name="SignalMast_Beacon">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="60" B="40" A="255" />
+    <Intensity Value="12" />
+    <Radius Value="1500" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+      <ShadowTint R="40" G="50" B="80" A="255" />
+    <ShadowBias Value="0.004" />
+    <ShadowNormalBias Value="2" />
+    <SourceRadius Value="10" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="6300" Y="2378.99" Z="3700" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

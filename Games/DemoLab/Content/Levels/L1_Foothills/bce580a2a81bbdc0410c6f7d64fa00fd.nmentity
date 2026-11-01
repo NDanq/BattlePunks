@@ -9,7 +9,7 @@
     <Checkpoint Value="false" />
   </Component>
   <Component Type="Transform" Version="1">
-      <Position X="600" Y="300" Z="2700" />
+      <Position X="450" Y="600" Z="1850" />
       <Rotation X="0" Y="0" Z="0" />
       <Scale X="1" Y="1" Z="1" />
   </Component>

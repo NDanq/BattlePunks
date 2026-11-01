@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="6715ee1309f9955b0a0c418a289cff0b" Name="L1_Ambient">
+  <Component Type="Sequence Player" Version="2">
+    <Sequence Value="Content/Cinematics/Ambient/L1_Ambient.nmseq" />
+    <PlayRate Value="1" />
+    <AutoPlay Value="true" />
+    <Loop Value="true" />
+    <RestoreState Value="false" />
+    <DestroyWhenFinished Value="false" />
+    <Cinematic Value="false" />
+    <Skippable Value="false" />
+    <BlendIn Value="0" />
+    <BlendOut Value="0" />
+    <BlendEase Value="0" />
+    <ReleaseControl Value="0" />
+    <ReleaseBeforeEnd Value="0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="e7c02ff0ab968fd6774a494ac7d34885" Name="Plaza_Paving">
+  <Component Type="Procedural Spawner" Version="1">
+    <Visible Value="true" />
+    <Source Value="2" />
+    <Project Value="0" />
+    <TerrainLayer Value="0" />
+    <Seed Value="2" />
+      <BoxExtent X="1400" Y="5" Z="950" />
+    <Spacing Value="400" />
+    <Jitter Value="0" />
+    <ProjectRange Value="5000" />
+    <PathOffset Value="0" />
+    <BothSides Value="false" />
+    <Density Value="1" />
+    <NoiseScale Value="0" />
+    <NoiseThreshold Value="0.5" />
+    <MaxSlope Value="90" />
+    <MinHeight Value="-1000000" />
+    <MaxHeight Value="1000000" />
+    <LayerThreshold Value="0.5" />
+    <ScaleMin Value="1" />
+    <ScaleMax Value="1" />
+    <AlignToNormal Value="0" />
+    <Sink Value="0" />
+    <ColorVariation Value="0.12" />
+    <RandomYaw Value="false" />
+    <AlignToPath Value="false" />
+    <CastShadows Value="true" />
+    <CellSize Value="4000" />
+    <LODDistance Value="0" />
+    <LOD1Density Value="1" />
+    <LOD2Density Value="1" />
+    <CullDistance Value="0" />
+    <MaxInstances Value="200000" />
+    <MeshCount Value="1" />
+    <Mesh0Path Value="Content/Meshes/L2/Floor.nmmesh" />
+    <Mesh0Far Value="" />
+    <Mesh0Material Value="Content/Materials/Kit/StoneBlocks.material.nmgraph" />
+    <Mesh0Weight Value="1" />
+    <Mesh0Scale Value="1" />
+    <ExclusionCount Value="0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="3700" Y="1201" Z="6400" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

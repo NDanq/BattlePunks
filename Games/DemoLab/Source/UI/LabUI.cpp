@@ -29,8 +29,8 @@ NIMBLE_GAME_CONFIG_FLOAT(GLabLookSensitivity, "DemoLab", "LookSensitivity", 1.0f
 NIMBLE_GAME_CONFIG_BOOL(GLabInvertY, "DemoLab", "InvertY", false, nullptr);
 /* Accessibility: the cinematics' subtitle lines. */
 NIMBLE_GAME_CONFIG_BOOL(GLabSubtitles, "DemoLab", "Subtitles", true, nullptr);
-/* Graphics: foliage density for L1's spawners (read by the art pass's
- * Procedural Spawners; the grey-box levels have no foliage yet). */
+/* Graphics: foliage density for L1's Procedural Spawners (the Foliage_*
+ * entities: LabGameModeBase::ApplyFoliageDensity). */
 NIMBLE_GAME_CONFIG_FLOAT(GLabFoliageDensity, "DemoLab", "FoliageDensity", 1.0f, nullptr);
 
 namespace
@@ -208,6 +208,7 @@ void LabUI::ApplySubtitleSetting(GameSession& InSession)
 }
 
 float LabUI::LookScale() { return std::max(0.05f, GLabLookSensitivity.GetFloat()); }
+float LabUI::FoliageDensity() { return std::clamp(GLabFoliageDensity.GetFloat(), 0.1f, 2.f); }
 bool  LabUI::InvertLook() { return GLabInvertY.GetBool(); }
 
 // === Settings ===============================================================

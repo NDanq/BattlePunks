@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<Sequence version="1" fps="30" length="75">
+  <Binding id="arm" kind="possess" guid="740c734d13432f1b0cc2188283d91e45" name="Gate_BarrierArm">
+    <Track type="Transform">
+      <Channel name="Rotation.X">
+        <Key f="0" v="0" interp="CubicInOut"/>
+        <Key f="20" v="-4" interp="CubicInOut"/>
+        <Key f="75" v="80" interp="CubicInOut"/>
+      </Channel>
+    </Track>
+  </Binding>
+</Sequence>
