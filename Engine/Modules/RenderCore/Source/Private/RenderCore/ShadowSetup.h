@@ -133,6 +133,12 @@ namespace RenderCore
     RENDERCORE_API void InsetScreenNdc(const InsetShadowCaster& InCaster, const EngineCore::Vector3& InDirection, double InPad,
                                        const RenderView& InCamera, float (&OutNdc)[4], const GameCore::AABB* InReceivers = nullptr);
 
+    /* The shadow views the frame's captures share (GLOBAL_ILLUMINATION.md, "Capture budget"): the
+     * sun's as one view over the whole directional atlas holding InRegion (no cascades: every view
+     * depth lands in it), then the shadowed local lights whose reach overlaps InRegion, as
+     * BuildShadowFrame places them. No insets. Drawn once, then sampled by every capture view. */
+    RENDERCORE_API void BuildCaptureShadowFrame(const RenderLighting& InLighting, const GameCore::AABB& InRegion, ShadowFrame& OutFrame);
+
     RENDERCORE_API void ComputeCascadeSplits(float InNear, float InFar, uint32_t InCount, float InLambda, float* OutSplits);
 
     /* The [Shadows] config section (ShadowSettings.cpp). GAME THREAD: the

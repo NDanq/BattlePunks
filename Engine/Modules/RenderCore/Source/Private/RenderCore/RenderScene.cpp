@@ -16,6 +16,7 @@
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Public/RenderCore/RenderProxy.h"
 #include "Public/RenderCore/TextureAsset.h"
+#include "Private/RenderCore/CaptureScheduler.h"
 #include "Private/RenderCore/DrawPolicy.h"
 #include "Private/RenderCore/MaterialPreview.h"
 #include "Private/RenderCore/SceneCapture.h"
@@ -52,6 +53,31 @@ NIMBLE_CONFIG_INT(GRenderSkyCaptureFrames, "Rendering", "SkyCaptureFrames", 8, n
 NIMBLE_CONFIG_BOOL(GRenderProbesFollowSky, "Rendering", "ProbesFollowSky", true, nullptr);
 /* Off: the Sky Light's sky lights, whatever Sky passes there are (an A/B switch). */
 NIMBLE_CONFIG_BOOL(GRenderSkyPassLighting, "Rendering", "SkyPassLighting", true, nullptr);
+/* THE CAPTURE BUDGET (GLOBAL_ILLUMINATION.md, "Capture budget"): the GPU milliseconds a frame's
+ * reflection probe and GI Volume faces may take, shared, face by face (0: ProbeFacesPerFrame and
+ * GIProbesPerFrame, as before); one set of shadow maps for all of a frame's capture views; capture
+ * views drawn simply (no custom passes or translucency, nothing under CaptureCullPixels pixels, a GI
+ * Volume's static geometry alone out to twice its diagonal); and captures that stop once converged,
+ * starting again when what they see changes -- the lighting (the sun by CaptureSunStepDegrees) or the
+ * scene -- a GI Volume after GIConvergeRounds rounds. Scalability tiers set the budget. */
+NIMBLE_CONFIG_FLOAT(GRenderCaptureBudgetMs, "Rendering", "CaptureBudgetMs", 2.0f, nullptr);
+NIMBLE_CONFIG_BOOL(GRenderSharedCaptureShadows, "Rendering", "SharedCaptureShadows", true, nullptr);
+NIMBLE_CONFIG_BOOL(GRenderSimpleCaptures, "Rendering", "SimpleCaptures", true, nullptr);
+NIMBLE_CONFIG_FLOAT(GRenderCaptureCullPixels, "Rendering", "CaptureCullPixels", 2.0f, nullptr);
+NIMBLE_CONFIG_FLOAT(GRenderCaptureLodScale, "Rendering", "CaptureLodScale", 4.0f, nullptr);
+NIMBLE_CONFIG_BOOL(GRenderGICaptureStaticOnly, "Rendering", "GICaptureStaticOnly", true, nullptr);
+NIMBLE_CONFIG_FLOAT(GRenderGICaptureSpacings, "Rendering", "GICaptureSpacings", 8.0f, nullptr);
+NIMBLE_CONFIG_BOOL(GRenderStaticCaptures, "Rendering", "StaticCaptures", true, nullptr);
+NIMBLE_CONFIG_FLOAT(GRenderCaptureSunStep, "Rendering", "CaptureSunStepDegrees", 1.0f, nullptr);
+NIMBLE_CONFIG_INT(GRenderGIConvergeRounds, "Rendering", "GIConvergeRounds", 2, nullptr);
+/* RELIGHTING (GLOBAL_ILLUMINATION.md, "Relighting"): a GI Volume keeps what its probes' faces saw, and
+ * once every probe's is kept and its static geometry has not changed since, a lighting change lights the
+ * probes again from it (DDGIRelight.fsh) -- many a frame -- instead of drawing the scene again. */
+NIMBLE_CONFIG_BOOL(GRenderGIRelight, "Rendering", "GIRelight", true, nullptr);
+/* Volumes of more probes than this are not cached (32 bytes a texel: about 50 MB for 1024 probes). */
+NIMBLE_CONFIG_INT(GRenderGIRelightMaxProbes, "Rendering", "GIRelightMaxProbes", 2048, nullptr);
+/* Log, about once a second, what the captures did: faces, the budget's unit costs, a GI Volume's progress. */
+NIMBLE_CONFIG_BOOL(GRenderCaptureLog, "Rendering", "CaptureLog", false, nullptr);
 
 namespace RenderCore
 {
@@ -444,6 +470,14 @@ namespace RenderCore
                 {
                     continue;
                 }
+                /* A capture's own culls (SimpleCaptures): static geometry alone, nothing too small to see. */
+                if(InCapture && ((InCapture->bStaticOnly && !Proxy->IsStatic())
+                                 || (InCapture->CullRatio > 0.0f && SizeFrom(*Proxy, InCapture->Position) >= 0.0
+                                     && SizeFrom(*Proxy, InCapture->Position) < double(InCapture->CullRatio))))
+                {
+                    ++CulledCount;
+                    continue;
+                }
                 if(!Proxy->IsStatic() && !StaticLists.empty())
                 {
                     StaticLists.erase(Proxy);   // it was static: its list is stale for good
@@ -831,7 +865,18 @@ namespace RenderCore
         SceneTargets ProbeStages{"RenderCore.ProbeStages"};
         SceneTargets SkyStages{"RenderCore.SkyStages"};   // a Sky pass's faces (ERenderHook::Sky)
         uint32_t     SkyCaptureWait = 0;                  // frames before a Sky pass's sky may be captured again
-        struct ProbeSlot { uint64_t Key = 0; bool bValid = false; bool bPending = false; };
+        /* A block's probe; whether its capture is in and whether another is wanted; and, with
+         * [Rendering] StaticCaptures, what its last capture saw (the lighting's and the scene's
+         * signatures as the capture began), so a due probe that would see the same is skipped. */
+        struct ProbeSlot
+        {
+            uint64_t Key = 0;
+            bool     bValid = false;
+            bool     bPending = false;
+            bool     bSigned = false;
+            uint64_t LightSignature = 0;
+            uint64_t SceneSignature = 0;
+        };
         ProbeSlot    Slots[RENDER_REFLECTION_PROBES_MAX];
         int32_t      Capturing = -1;      // the block whose probe is mid-capture, or -1
         uint32_t     CapturedFaces = 0;   // its faces in the strip
@@ -840,6 +885,67 @@ namespace RenderCore
         uint64_t     SkyHash   = 0;
         float        ProbeData[RENDER_REFLECTION_PROBES_MAX * 3][4] = {};
         uint32_t     ProbeDataCount = 0;
+
+        /*
+         * THE CAPTURE BUDGET (GLOBAL_ILLUMINATION.md, "Capture budget"; CaptureScheduler.h): the
+         * units this frame's reflection probe and GI Volume faces may spend, [Rendering]
+         * CaptureBudgetMs over what a unit costs; what they have spent; the lighting's signature;
+         * the region the frame's capture shadow maps cover and whether they are drawn (each frame's
+         * captures share one set, [Rendering] SharedCaptureShadows). BudgetSerial: this frame's GDI
+         * block, whose Captures span comes back frames in flight later.
+         */
+        CaptureBudget  Budget;
+        bool           bBudgeted        = false;
+        float          FrameAllowance   = 0.0f;
+        float          FrameUnits       = 0.0f;
+        uint32_t       FrameRelit       = 0;      // GI probes relit this frame (RelightBudget's units)
+        double         FrameCaptureCpuMs = 0.0;
+        uint64_t       BudgetSerial     = 0;
+        uint64_t       FrameLighting    = 0;
+        GameCore::AABB CaptureRegion;
+        bool           bCaptureShadowsTried = false;
+        bool           bCaptureShadowsDrawn = false;
+        bool           bCaptureShadowsRedrawn = false;   // drawn this frame, not kept from an earlier one
+        bool           bCaptureDynamicCasters = false;
+        /* [Rendering] CaptureLog's counts since its last line. */
+        struct CaptureLogCounts
+        {
+            int64_t  StartNs = 0;
+            uint32_t Frames = 0, ProbeFaces = 0, GIFaces = 0, ShadowPasses = 0, GIProbes = 0, Faces = 0, Relit = 0;
+            uint64_t Visible = 0;
+            float    Units = 0.0f;
+            double   CpuMs = 0.0;
+        } CaptureCounts;
+
+        void LogCaptures()
+        {
+            CaptureLogCounts& C = CaptureCounts;
+            ++C.Frames;
+            C.Units += FrameUnits;
+            C.Relit += FrameRelit;
+            C.CpuMs += FrameCaptureCpuMs;
+            C.ShadowPasses += bCaptureShadowsRedrawn ? 1u : 0u;
+            const int64_t Now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            if(C.StartNs == 0) { C.StartNs = Now; }
+            if(Now - C.StartNs < 1'000'000'000) { return; }
+            const double Frames = double(std::max(C.Frames, 1u));
+            char Line[512];
+            std::snprintf(Line, sizeof(Line),
+                          "captures: %u frames, a frame %.1f units of %.1f allowed (unit %.3f ms GPU, %.3f ms CPU; CPU %.2f ms), "
+                          "%.1f probe faces, %.1f GI faces (%.0f proxies a face), %.1f GI probes relit (%.4f ms each), %.2f shadow passes; "
+                          "GI volume %s %u/%u probes (%u kept), %llu since change, %s",
+                          C.Frames, double(C.Units) / Frames, double(FrameAllowance), double(Budget.GetUnitMs()), double(Budget.GetUnitCpuMs()),
+                          C.CpuMs / Frames, double(C.ProbeFaces) / Frames, double(C.GIFaces) / Frames,
+                          double(C.Visible) / double(std::max(C.Faces, 1u)), double(C.Relit) / Frames, double(RelightBudget.GetUnitMs()),
+                          double(C.ShadowPasses) / Frames,
+                          GIActive ? (GIActive->bReady ? "ready" : "filling") : "none", GIActive ? GIActive->Updated : 0u, GITotal,
+                          GIActive ? GIActive->Stored : 0u,
+                          static_cast<unsigned long long>(GIActive ? (GIActive->Relit.bKnown ? GIActive->Relit.SinceChange : GIActive->Convergence.SinceChange) : 0),
+                          bGIWanted ? (bGIRelight ? "relighting" : "updating") : "idle");
+            RENDERCORE_LOG(Line);
+            C = CaptureLogCounts();
+            C.StartNs = Now;
+        }
 
         void ApplyImageBasedLighting(RenderContext& InContext) const
         {
@@ -870,6 +976,176 @@ namespace RenderCore
             return Hash;
         }
 
+        /* What capture views multiply their LOD distances by (SimpleCaptures). */
+        static float CaptureLodScale()
+        {
+            return GRenderSimpleCaptures.GetBool() ? std::max(GRenderCaptureLodScale.GetFloat(), 1.0f) : 1.0f;
+        }
+
+        /* A proxy's size against its distance from InEye (radius over distance), or -1 without bounds. */
+        static double SizeFrom(const RenderProxy& InProxy, const EngineCore::Vector3& InEye)
+        {
+            const GameCore::AABB& Bounds = InProxy.GetWorldBounds();
+            if(Bounds.IsEmpty()) { return -1.0; }
+            const double Radius   = (Bounds.Max - Bounds.Min).GetLength() * 0.5;
+            const double Distance = (((Bounds.Min + Bounds.Max) * 0.5) - InEye).GetLength();
+            return Radius / std::max(Distance, 1.0);
+        }
+
+        /* What a capture from InEye sees of the scene, as a hash: each renderable proxy within InReach
+         * of it (static ones alone, with bInStaticOnly) not too small to draw (InCullRatio, as
+         * QueueDraws culls a capture's), by its change serial (a dynamic one by its bounds and transform: it is extracted every frame), summed so their order does not count;
+         * and the content generation (materials and meshes reloaded). */
+        uint64_t SceneSignature(RenderContext& InContext, const EngineCore::Vector3& InEye, const double InReach, const double InCullRatio,
+                                const bool bInStaticOnly) const
+        {
+            const EngineCore::Vector3 Half(InReach, InReach, InReach);
+            const GameCore::AABB Reach(InEye - Half, InEye + Half);
+            uint64_t Sum = 0, Count = 0;
+            for(const RenderProxy* Proxy : Proxies)
+            {
+                if(!Proxy->IsRenderable() || (bInStaticOnly && !Proxy->IsStatic())) { continue; }
+                const GameCore::AABB& Bounds = Proxy->GetWorldBounds();
+                if(!Bounds.IsEmpty() && (!Bounds.Overlaps(Reach) || SizeFrom(*Proxy, InEye) < InCullRatio)) { continue; }
+                /* A static proxy's serial moves only when it is edited; a dynamic one is extracted every
+                 * frame, so where it is and how big stand for it instead. */
+                uint64_t State = Proxy->GetChangeSerial();
+                if(!Proxy->IsStatic())
+                {
+                    State = 1469598103934665603ull;
+                    const double Box[6] = { Bounds.Min.GetX(), Bounds.Min.GetY(), Bounds.Min.GetZ(), Bounds.Max.GetX(), Bounds.Max.GetY(), Bounds.Max.GetZ() };
+                    for(const double Value : Box) { State = (State ^ uint64_t(int64_t(std::llround(Value * 16.0)))) * 1099511628211ull; }
+                    const EngineCore::Matrix4x4& World = Proxy->GetLocalToWorld();
+                    for(int Row = 0; Row < 3; ++Row)
+                    {
+                        for(int Col = 0; Col < 4; ++Col) { State = (State ^ uint64_t(int64_t(std::llround(double(World.Data[Row][Col]) * 1024.0)))) * 1099511628211ull; }
+                    }
+                }
+                uint64_t Each = (uint64_t(reinterpret_cast<uintptr_t>(Proxy)) ^ (State * 0x9E3779B97F4A7C15ull)) * 1099511628211ull;
+                Each ^= Each >> 29;
+                Sum += Each;
+                ++Count;
+            }
+            return (Sum ^ (Count * 0xC2B2AE3D27D4EB4Full)) + InContext.GetContentGeneration() * 0x165667B19E3779F9ull;
+        }
+
+        /* What a unit (a face) and a relit GI probe are taken to cost, the dearer of GPU and CPU. */
+        float FaceUnitMs() const { return std::max(Budget.GetUnitMs(), Budget.GetUnitCpuMs()); }
+        float RelitProbeMs() const { return std::max(RelightBudget.GetUnitMs(), RelightBudget.GetUnitCpuMs()); }
+
+        /* The milliseconds this frame's captures have spent so far, as those costs reckon them. */
+        float FrameSpentMs() const { return FrameUnits * FaceUnitMs() + float(FrameRelit) * RelitProbeMs(); }
+
+        /* Whether InUnits more of faces fit InShareMs of the frame ([Rendering] CaptureBudgetMs) after
+         * what it has spent; the frame's first work always does, so captures move however dear. */
+        bool FaceFits(const float InUnits, const float InShareMs, const float InPending = 0.0f) const
+        {
+            if(!bBudgeted || (FrameUnits <= 0.0f && FrameRelit == 0 && InPending <= 0.0f)) { return true; }
+            return FrameSpentMs() + (InPending + InUnits) * FaceUnitMs() <= InShareMs + 1e-4f;
+        }
+
+        /* The frame's capture shadow maps (RenderContext::BeginCaptureShadows), drawn the first time
+         * a capture face wants shadows: CaptureRegion's casters, those smaller than a texel left out;
+         * Dynamic ones only when a reflection probe captures (a GI Volume sees static ones alone). */
+        void EnsureCaptureShadows(RenderContext& InContext)
+        {
+            if(bCaptureShadowsTried || !GRenderSharedCaptureShadows.GetBool())
+            {
+                return;
+            }
+            bCaptureShadowsTried = true;
+            if(CaptureRegion.IsEmpty())
+            {
+                return;
+            }
+            /* What the maps would hold: the lighting, the region, its casters (as SceneSignature sees
+             * them); the same as the kept maps', they are used again. */
+            const EngineCore::Vector3 Centre = (CaptureRegion.Min + CaptureRegion.Max) * 0.5;
+            const double HalfDiagonal = (CaptureRegion.Max - CaptureRegion.Min).GetLength() * 0.5;
+            uint64_t Key = FrameLighting * 0x9E3779B97F4A7C15ull + SceneSignature(InContext, Centre, HalfDiagonal * 2.0, 0.0, !bCaptureDynamicCasters);
+            const double Box[6] = { CaptureRegion.Min.GetX(), CaptureRegion.Min.GetY(), CaptureRegion.Min.GetZ(),
+                                    CaptureRegion.Max.GetX(), CaptureRegion.Max.GetY(), CaptureRegion.Max.GetZ() };
+            for(const double Each : Box) { Key = (Key ^ uint64_t(int64_t(std::llround(Each)))) * 1099511628211ull; }
+            Key = Key == 0 ? 1 : Key;
+
+            InContext.SetView(Views[0].View);
+            InContext.BeginSceneDraws();
+            const uint32_t ShadowViews = InContext.BeginCaptureShadows(CaptureRegion, Key);
+            bCaptureShadowsRedrawn = ShadowViews > 0;
+            InContext.SetLodDistanceScale(CaptureLodScale());
+            const uint64_t Generation  = InContext.GetContentGeneration();
+            const double   Texel       = (CaptureRegion.Max - CaptureRegion.Min).GetLength()
+                                       / double(std::max(Views[0].Lighting.Shadows.Resolution, 256));
+            for(uint32_t ViewIndex = 0; ViewIndex < ShadowViews; ++ViewIndex)
+            {
+                const GameCore::AABB& ViewBounds = InContext.GetShadowViewBounds(ViewIndex);
+                InContext.SetShadowCasterView(int32_t(ViewIndex));
+                const bool bSun = InContext.IsSunShadowView(ViewIndex);
+                for(RenderProxy* Proxy : Proxies)
+                {
+                    if(!Proxy->IsRenderable() || (!bCaptureDynamicCasters && !Proxy->IsStatic())) { continue; }
+                    GameCore::AABB Bounds = Proxy->GetWorldBounds();
+                    if(!Bounds.IsEmpty())
+                    {
+                        /* Smaller than half a texel of the sun's map: no shadow worth drawing. */
+                        if(bSun && (Bounds.Max - Bounds.Min).GetLength() < Texel) { continue; }
+                        if(!ViewBounds.IsEmpty())
+                        {
+                            const float Padding = Proxy->IsStatic() ? 0.0f : Proxy->GetBoundsPadding(InContext);
+                            const EngineCore::Vector3 Pad(Padding, Padding, Padding);
+                            Bounds = GameCore::AABB(Bounds.Min - Pad, Bounds.Max + Pad);
+                            if(!Bounds.Overlaps(ViewBounds)) { continue; }
+                        }
+                    }
+                    if(Proxy->IsStatic())
+                    {
+                        StaticDrawList& List = ListFor(Proxy, Generation);
+                        if(!List.bShadows)
+                        {
+                            InContext.BeginCapture(&List.Shadows);
+                            Proxy->DrawShadow(InContext);
+                            InContext.EndCapture();
+                            List.bShadows = true;
+                            ++StaticBuilds;
+                        }
+                        InContext.SubmitCaptured(List.Shadows, int32_t(ViewIndex));
+                    }
+                    else
+                    {
+                        Proxy->DrawShadow(InContext);
+                    }
+                }
+            }
+            InContext.SetShadowCasterView(-1);
+            InContext.SetLodDistanceScale(1.0f);
+            bCaptureShadowsDrawn = InContext.DrawCaptureShadows();
+        }
+
+        /* One cube face of InCube (InFace of Views, at InCube's capture settings) into InStages:
+         * the frame's capture shadow maps when it wants shadows and they are shared. */
+        void RenderCaptureFace(RenderContext& InContext, const SceneCaptureRequest& InCube, const RenderView& InView, SceneTargets& InStages)
+        {
+            const bool bShadows = InCube.bShadows != 0;
+            if(bShadows) { EnsureCaptureShadows(InContext); }
+            SceneCaptureRequest Face = InCube;
+            if(bShadows && bCaptureShadowsDrawn)
+            {
+                Face.bShadows = 1;   // PrepareShadows hands it the shared maps: nothing to queue
+            }
+            const auto Start = std::chrono::steady_clock::now();
+            InContext.SetView(InView);
+            InContext.SetLodDistanceScale(CaptureLodScale());
+            uint64_t Visible = 0, Culled = 0, Static = 0;
+            QueueDraws(InContext, InView, this->Views[0].Lighting, &Face, Visible, Culled, Static);
+            InContext.SetLodDistanceScale(1.0f);
+            CaptureCounts.Visible += Visible;
+            ++CaptureCounts.Faces;
+            InContext.SetCaptureRendering(GRenderSimpleCaptures.GetBool());
+            InContext.RenderSceneStages(InStages, ClearColor);
+            InContext.SetCaptureRendering(false);
+            FrameCaptureCpuMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - Start).count();
+        }
+
         /* A reflection probe's faces InFirst to InFirst + InCount - 1, HDR, into the strip; after its
          * sixth, the strip prefiltered into atlas block InBlock. False if one failed. */
         bool CaptureReflectionProbe(RenderContext& InContext, const ReflectionProbeRequest& InProbe, const uint32_t InBlock,
@@ -886,6 +1162,10 @@ namespace RenderCore
             Cube.NearClip = InProbe.NearClip;
             Cube.FarClip  = InProbe.FarClip;
             Cube.bShadows = InProbe.bShadows;
+            if(GRenderSimpleCaptures.GetBool())
+            {
+                Cube.CullRatio = float(std::max(GRenderCaptureCullPixels.GetFloat(), 0.0f) / float(std::max(Face, 1u)));
+            }
             RenderView Views[6];
             const uint32_t ViewCount = BuildCaptureViews(Cube, this->Views[0].View, Face, Face, Views);
 
@@ -896,28 +1176,105 @@ namespace RenderCore
             for(uint32_t Index = InFirst; Index < std::min(InFirst + InCount, ViewCount); ++Index)
             {
                 SCOPED_DRAW_EVENT(GetCubeFaceName(Index));
-                InContext.SetView(Views[Index]);
-                uint64_t Visible = 0, Culled = 0, Static = 0;
-                QueueDraws(InContext, Views[Index], this->Views[0].Lighting, &Cube, Visible, Culled, Static);
-                InContext.RenderSceneStages(ProbeStages, ClearColor);
+                RenderCaptureFace(InContext, Cube, Views[Index], ProbeStages);
                 bCopied = InContext.CopyCaptureToStrip(ProbeStages, IBL, Index) && bCopied;
             }
             InContext.SetSkyBackground(false);
             return bCopied && (InFirst + InCount < 6 || InContext.PrefilterIBLBlock(IBL, InBlock));
         }
 
-        /* The sky block when the sky changed, then the probes in view: a block each, captured when due
-         * or new to it -- one at a time, ProbeFacesPerFrame faces a frame, the probe's old capture (if any)
-         * lighting until its last face is in. Leaves the context on the main view. */
-        void UpdateImageBasedLighting(RenderContext& InContext)
+        /* A probe's reach for the capture shadow maps: its influence, half as much again round it
+         * (what its reflections show beyond is left unshadowed). */
+        static GameCore::AABB ProbeShadowRegion(const ReflectionProbeRequest& InProbe)
         {
-            ProbeDataCount = 0;
+            const bool bBox = InProbe.Extent[0] > 0.0f && InProbe.Extent[1] > 0.0f && InProbe.Extent[2] > 0.0f;
+            const EngineCore::Vector3 Reach = bBox ? EngineCore::Vector3(InProbe.Extent[0], InProbe.Extent[1], InProbe.Extent[2]) * 1.5
+                                                   : EngineCore::Vector3(InProbe.Radius, InProbe.Radius, InProbe.Radius) * 1.5;
+            return GameCore::AABB(InProbe.Position - Reach, InProbe.Position + Reach);
+        }
+
+        /*
+         * The frame's captures, inside the Captures span: the sky block when the sky changed; then
+         * the probes in view and the GI Volume nearest the camera, their faces within this frame's
+         * share of [Rendering] CaptureBudgetMs (or, at 0, ProbeFacesPerFrame faces of one probe and
+         * GIProbesPerFrame whole GI probes, as before the budget). Leaves the context on the main
+         * view, lit by the probes and the volume.
+         */
+        void UpdateCaptures(RenderContext& InContext)
+        {
+            const float BudgetMs = GRenderCaptureBudgetMs.GetFloat();
+            bBudgeted            = BudgetMs > 0.0f;
+            FrameAllowance       = bBudgeted ? Budget.GetAllowance(BudgetMs) : 0.0f;
+            FrameUnits           = 0.0f;
+            FrameRelit           = 0;
+            FrameCaptureCpuMs    = 0.0;
+            FrameLighting        = CaptureLightingSignature(Views[0].Lighting, GRenderCaptureSunStep.GetFloat());
+            CaptureRegion        = GameCore::AABB();
+            bCaptureShadowsTried = false;
+            bCaptureShadowsDrawn = false;
+            bCaptureShadowsRedrawn = false;
+            bCaptureDynamicCasters = false;
+
+            const int32_t Probe = PlanImageBasedLighting(InContext);
+            const bool    bGI   = PlanGlobalIllumination(InContext);
+
+            /* The order: a GI Volume's relights first (cheap, and a lighting change shows fastest
+             * so); else, both wanting faces, turn about frame by frame, the first to half the budget.
+             * The second takes what is left. A GI Volume's faces are lit by this frame's probes when
+             * they come second, by the last frame's when first. */
+            const bool  bGIFirst = bBudgeted && bGI && (bGIRelight || Probe < 0 || (GIFrame & 1u) != 0);
+            const float FirstMs  = bGI && Probe >= 0 && !bGIRelight ? BudgetMs * 0.5f : BudgetMs;
+            if(bGIFirst)
+            {
+                CaptureGlobalIllumination(InContext, FirstMs);
+                CaptureProbes(InContext, Probe, BudgetMs);
+                FinishImageBasedLighting(InContext);
+            }
+            else
+            {
+                CaptureProbes(InContext, Probe, bGI ? FirstMs : BudgetMs);
+                FinishImageBasedLighting(InContext);
+                CaptureGlobalIllumination(InContext, BudgetMs);
+            }
+            /* The views light by the active volume (CaptureGlobalIllumination set it; the probes' captures may not have). */
+            if(GIActive && GIActive->bReady)
+            {
+                float Header[4][4];
+                MakeHeader(GIActiveGrid, GIActive->Resources, true, Header);
+                InContext.SetDDGI(&GIActive->Resources, Header);
+            }
+            else
+            {
+                InContext.SetDDGI(nullptr, nullptr);
+            }
+
+            InContext.EndCaptureShadows();
+            InContext.SetCaptureRendering(false);
+            InContext.SetView(Views[0].View);
+            if(bBudgeted)
+            {
+                /* A frame of relights alone teaches RelightBudget; one of faces, Budget. */
+                Budget.Record(BudgetSerial, FrameUnits);
+                RelightBudget.Record(BudgetSerial, FrameUnits < 0.5f ? float(FrameRelit) : 0.0f);
+                if(FrameUnits >= 0.5f)      { Budget.MeasuredCpu(FrameUnits, float(FrameCaptureCpuMs)); }
+                else if(FrameRelit > 0)     { RelightBudget.MeasuredCpu(float(FrameRelit), float(FrameCaptureCpuMs)); }
+            }
+            if(GRenderCaptureLog.GetBool()) { LogCaptures(); }
+        }
+
+        /* The sky block when the sky changed, then which block holds each probe in view and which
+         * want a capture: due, or new to it -- with StaticCaptures, a due probe only if what it
+         * would see changed since its last, and any probe (but a Manual one) whose lighting did.
+         * Returns the probe (CaptureList index) to capture now, or -1. */
+        int32_t PlanImageBasedLighting(RenderContext& InContext)
+        {
             if(!InContext.CanImageBasedLight())
             {
                 bSkyValid = false;
-                ApplyImageBasedLighting(InContext);
-                return;
+                return -1;
             }
+            const bool bStatic = GRenderStaticCaptures.GetBool();
+
             /* A custom pass's sky (ERenderHook::Sky) in place of the Sky Light's when there is one:
              * captured again when its version changes, but no more often than SkyCaptureFrames. */
             uint64_t   SkyVersion = 0;
@@ -950,8 +1307,9 @@ namespace RenderCore
                     bSkyValid = InContext.EnsureIBLResources(IBL, 128) && InContext.RenderSkyToStrip(IBL)
                              && InContext.PrefilterIBLBlock(IBL, IBL_SKY_BLOCK);
                 }
-                /* The probes saw the old sky behind their scene, and were lit by it. */
-                if(bSkyValid && bWasValid && bSkyPass && GRenderProbesFollowSky.GetBool())
+                /* The probes saw the old sky behind their scene, and were lit by it -- with
+                 * StaticCaptures, only those whose lighting moved since (below). */
+                if(bSkyValid && bWasValid && bSkyPass && GRenderProbesFollowSky.GetBool() && !bStatic)
                 {
                     for(ProbeSlot& Slot : Slots) { if(Slot.Key != 0 && Slot.bValid) { Slot.bPending = true; } }
                 }
@@ -965,7 +1323,6 @@ namespace RenderCore
                 for(uint32_t Index = 0; Index < Count; ++Index) { if(CaptureList.Probes[Index].Key == InKey) { return true; } }
                 return false;
             };
-            int32_t BlockOf[RENDER_REFLECTION_PROBES_MAX];
             for(uint32_t Index = 0; Index < Count; ++Index)
             {
                 const ReflectionProbeRequest& Probe = CaptureList.Probes[Index];
@@ -981,16 +1338,34 @@ namespace RenderCore
                         if(Slots[Block].Key == 0 || !Listed(Slots[Block].Key))
                         {
                             if(Capturing == int32_t(Block)) { Capturing = -1; }
-                            Slots[Block] = ProbeSlot{ Probe.Key, false, true };
+                            Slots[Block] = ProbeSlot{};
+                            Slots[Block].Key = Probe.Key;
+                            Slots[Block].bPending = true;
                             BlockOf[Index] = int32_t(Block);
                             break;
                         }
                     }
                 }
-                if(BlockOf[Index] >= 0 && Probe.bDue) { Slots[BlockOf[Index]].bPending = true; }
+                if(BlockOf[Index] < 0) { continue; }
+                ProbeSlot& Slot = Slots[BlockOf[Index]];
+                if(!bStatic || Probe.bForce || !Slot.bValid || !Slot.bSigned)
+                {
+                    if(Probe.bDue) { Slot.bPending = true; }
+                    continue;
+                }
+                /* StaticCaptures: the lighting moved (a sky pass's sky with it), or, due, what it sees did. */
+                if(Probe.bFollowsLight && Slot.LightSignature != FrameLighting)
+                {
+                    Slot.bPending = true;
+                }
+                else if(Probe.bDue && !Slot.bPending
+                        && Slot.SceneSignature != SceneSignature(InContext, Probe.Position, Probe.FarClip, ProbeCullRatio(Probe), false))
+                {
+                    Slot.bPending = true;
+                }
             }
 
-            /* The capture in progress, else the nearest probe wanting one. */
+            /* The capture in progress, else the next probe wanting one. */
             int32_t Current = -1;
             for(uint32_t Index = 0; Index < Count; ++Index)
             {
@@ -999,41 +1374,108 @@ namespace RenderCore
             if(Current < 0)
             {
                 Capturing = -1;
-                for(uint32_t Step = 0; Step < Count; ++Step)
+                Current   = NextProbe(Count);
+            }
+            /* The shadow maps' region: every listed probe that captures shadows (the same from frame
+             * to frame while the view's probes are, so the maps are kept); Dynamic casters too while
+             * one of them is capturing. */
+            bool bAnyWanted = Current >= 0;
+            for(uint32_t Index = 0; Index < Count; ++Index)
+            {
+                if(BlockOf[Index] < 0 || !CaptureList.Probes[Index].bShadows) { continue; }
+                const ProbeSlot& Slot = Slots[BlockOf[Index]];
+                CaptureRegion = GameCore::AABB::Union(CaptureRegion, ProbeShadowRegion(CaptureList.Probes[Index]));
+                bAnyWanted = bAnyWanted || Slot.bPending || !Slot.bValid;
+            }
+            bCaptureDynamicCasters = bAnyWanted && !CaptureRegion.IsEmpty();
+            return Current;
+        }
+
+        int32_t BlockOf[RENDER_REFLECTION_PROBES_MAX] = {};   // PlanImageBasedLighting's: each listed probe's block, or -1
+
+        /* A probe's smallest drawn size, radius over distance (QueueDraws' capture cull). */
+        static double ProbeCullRatio(const ReflectionProbeRequest& InProbe)
+        {
+            return GRenderSimpleCaptures.GetBool()
+                 ? double(std::max(GRenderCaptureCullPixels.GetFloat(), 0.0f)) / double(std::max(InProbe.Resolution, 1u)) : 0.0;
+        }
+
+        /* The next listed probe wanting a capture, round the list from SearchFrom; starts it. */
+        int32_t NextProbe(const uint32_t InCount)
+        {
+            for(uint32_t Step = 0; Step < InCount; ++Step)
+            {
+                const uint32_t Index = (SearchFrom + Step) % InCount;
+                if(BlockOf[Index] < 0) { continue; }
+                const ProbeSlot& Slot = Slots[BlockOf[Index]];
+                if(Slot.bPending || !Slot.bValid)
                 {
-                    const uint32_t Index = (SearchFrom + Step) % Count;
-                    if(BlockOf[Index] < 0) { continue; }
-                    const ProbeSlot& Slot = Slots[BlockOf[Index]];
-                    if(Slot.bPending || !Slot.bValid)
-                    {
-                        Current       = int32_t(Index);
-                        Capturing     = BlockOf[Index];
-                        CapturedFaces = 0;
-                        SearchFrom    = Index + 1;
-                        break;
-                    }
+                    Capturing     = BlockOf[Index];
+                    CapturedFaces = 0;
+                    SearchFrom    = Index + 1;
+                    return int32_t(Index);
                 }
             }
-            if(Current >= 0)
+            return -1;
+        }
+
+        /* Probe InCurrent's faces, then (budgeted) the next probe's, while InShare lasts: one at a
+         * time, the probe's old capture (if any) lighting until its last face is in. */
+        void CaptureProbes(RenderContext& InContext, int32_t InCurrent, const float InShareMs)
+        {
+            const uint32_t Count = std::min<uint32_t>(CaptureList.ProbeCount, RENDER_REFLECTION_PROBES_MAX);
+            while(InCurrent >= 0)
             {
+                const ReflectionProbeRequest& Probe = CaptureList.Probes[InCurrent];
+                const float Units = CaptureFaceUnits(Probe.Resolution);
+                if(!FaceFits(Units, InShareMs)) { break; }
+
                 SCOPED_DRAW_EVENT("ReflectionProbe " + std::to_string(Capturing));
                 ProbeSlot& Slot = Slots[Capturing];
-                Slot.bPending = false;   // a request while it captures starts the next
-                const uint32_t Faces = uint32_t(std::clamp<int>(GRenderProbeFacesPerFrame.GetInt(), 1, 6));
-                const uint32_t Now   = std::min(Faces, 6u - CapturedFaces);
-                if(!CaptureReflectionProbe(InContext, CaptureList.Probes[Current], uint32_t(Capturing), CapturedFaces, Now))
+                if(CapturedFaces == 0)
+                {
+                    /* What it sees as it starts: a change after this captures it again. */
+                    Slot.bPending       = false;   // a request while it captures starts the next
+                    Slot.LightSignature = FrameLighting;
+                    Slot.SceneSignature = GRenderStaticCaptures.GetBool()
+                                        ? SceneSignature(InContext, Probe.Position, Probe.FarClip, ProbeCullRatio(Probe), false) : 0;
+                    Slot.bSigned        = true;
+                }
+                uint32_t Now = uint32_t(std::clamp<int>(GRenderProbeFacesPerFrame.GetInt(), 1, 6));
+                if(bBudgeted)
+                {
+                    Now = 1;
+                    while(Now < 6u - CapturedFaces && FaceFits(Units, InShareMs, Units * float(Now))) { ++Now; }
+                }
+                Now = std::min(Now, 6u - CapturedFaces);
+                const bool bOk = CaptureReflectionProbe(InContext, Probe, uint32_t(Capturing), CapturedFaces, Now);
+                FrameUnits += Units * float(Now);
+                CaptureCounts.ProbeFaces += Now;
+                bool bFinished = false;
+                if(!bOk)
                 {
                     Slot.bValid = false;
                     Capturing   = -1;
+                    bFinished   = true;
                 }
                 else if((CapturedFaces += Now) >= 6)
                 {
                     Slot.bValid = true;
                     Capturing   = -1;
+                    bFinished   = true;
                 }
-                InContext.SetView(Views[0].View);
+                /* Budgeted, the next probe wanting one may start in what is left; else one a frame. */
+                InCurrent = bFinished && bBudgeted && bOk ? NextProbe(Count) : (bFinished ? -1 : InCurrent);
+                if(!bBudgeted) { break; }
             }
+            InContext.SetView(Views[0].View);
+        }
 
+        /* The probes' data for the views (LightList_Probes), then handed to the context. */
+        void FinishImageBasedLighting(RenderContext& InContext)
+        {
+            const uint32_t Count = InContext.CanImageBasedLight() ? std::min<uint32_t>(CaptureList.ProbeCount, RENDER_REFLECTION_PROBES_MAX) : 0;
+            ProbeDataCount = 0;
             for(uint32_t Index = 0; Index < Count; ++Index)
             {
                 if(BlockOf[Index] < 0 || !Slots[BlockOf[Index]].bValid) { continue; }
@@ -1049,106 +1491,403 @@ namespace RenderCore
         }
 
         /*
-         * DYNAMIC GI (GLOBAL_ILLUMINATION.md, Phase 6): the GI Volume's probes
-         * and the stage targets their faces render through; which volume they
-         * are for (a hash of its grid: a change starts them over), the next
-         * probe to update, how many have since that start, and whether all
-         * have -- the volume lights only then, a probe never seen being black.
+         * DYNAMIC GI (GLOBAL_ILLUMINATION.md, Phase 6): the GI Volumes' probes and the stage targets
+         * their faces render through. A few volumes are kept (DDGI_VOLUMES_KEPT, the least recently
+         * lit dropped), so going back to one needs no new round; each has its grid (a hash: a change
+         * starts it over), the next probe and face to update, how many probes have updated, whether
+         * every one has -- it lights only then, a probe never seen being black -- and how many since
+         * what it sees last changed (StaticCaptures: GIConvergeRounds rounds after, it stops).
          */
-        DDGIResources DDGI;
-        SceneTargets  DDGIStages{"RenderCore.DDGIStages"};
-        uint64_t      DDGIGrid    = 0;
-        uint32_t      DDGICursor  = 0;
-        uint32_t      DDGIUpdated = 0;
-        bool          bDDGIReady  = false;
-
-        /* The volume's probes, GIProbesPerFrame a frame round the grid, each six views lit by the
-         * live lights, the sky and (once every probe has been seen) the volume itself, so light
-         * bounces again each round. Leaves the context on the main view, lit by the volume. */
-        void UpdateGlobalIllumination(RenderContext& InContext)
+        static constexpr uint32_t DDGI_VOLUMES_KEPT = 4;
+        struct GIVolumeState
         {
-            if(!CaptureList.bGIVolume || !GRenderDynamicGI.GetBool() || !InContext.CanImageBasedLight())
-            {
-                InContext.SetDDGI(nullptr, nullptr);
-                return;
-            }
-            const GIVolumeRequest& Volume = CaptureList.GIVolume;
+            uint64_t           Grid    = 0;
+            DDGIResources      Resources;
+            uint32_t           Cursor  = 0;
+            uint32_t           Face    = 0;
+            uint32_t           Updated = 0;
+            bool               bReady  = false;
+            uint64_t           LastLit = 0;
+            CaptureConvergence Convergence;
+            int64_t            ChangedNs   = 0;       // CaptureLog: when what it sees last changed
+            bool               bLoggedDone = false;   // and whether its convergence since is logged
+
+            /* Relighting: the static geometry's signature its cache holds, how many probes' six faces
+             * are in the cache since that last changed, whether it has a cache at all, the next probe
+             * to light again, and the lighting's convergence by relit probes. */
+            uint64_t           Geometry      = 0;
+            bool               bGeometry     = false;
+            uint32_t           Stored        = 0;
+            bool               bCache        = false;
+            uint32_t           RelightCursor = 0;
+            CaptureConvergence Relit;
+        };
+        GIVolumeState GIVolumes[DDGI_VOLUMES_KEPT];
+        SceneTargets  DDGIStages{"RenderCore.DDGIStages"};
+        uint64_t      GIFrame = 0;
+
+        /* A volume's grid: probes along each axis, their spacing, the first one's place, how many,
+         * the longest distance a probe keeps, how far its faces see, and a hash of it all (a change
+         * starts the volume over); its box and intensity, from the request. */
+        struct GIGrid
+        {
+            uint32_t            Count[3]   = {};
+            float               Spacing[3] = {};
+            float               First[3]   = {};
+            uint32_t            Total      = 0;
+            float               Longest    = 0.0f;
+            float               FarClip    = 20000.0f;
+            float               Diagonal   = 0.0f;
+            uint64_t            Hash       = 0;
+            float               Intensity  = 1.0f;
+            EngineCore::Vector3 Position;
+            float               Extent[3]  = {};
+        };
+
+        static GIGrid MakeGrid(const GIVolumeRequest& InVolume)
+        {
+            GIGrid Out;
             const uint32_t Most[3] = { 32, 8, 32 };
-            uint32_t Count[3];
-            float    Spacing[3];
             for(int Axis = 0; Axis < 3; ++Axis)
             {
-                Count[Axis]   = std::clamp<uint32_t>(uint32_t(2.0f * Volume.Extent[Axis] / Volume.Spacing) + 1u, 2u, Most[Axis]);
-                Spacing[Axis] = 2.0f * Volume.Extent[Axis] / float(Count[Axis] - 1);
+                Out.Count[Axis]   = std::clamp<uint32_t>(uint32_t(2.0f * InVolume.Extent[Axis] / InVolume.Spacing) + 1u, 2u, Most[Axis]);
+                Out.Spacing[Axis] = 2.0f * InVolume.Extent[Axis] / float(Out.Count[Axis] - 1);
+                Out.Extent[Axis]  = InVolume.Extent[Axis];
             }
-            const float First[3] = { float(Volume.Position.GetX()) - Volume.Extent[0], float(Volume.Position.GetY()) - Volume.Extent[1],
-                                     float(Volume.Position.GetZ()) - Volume.Extent[2] };
-            const uint32_t Total   = Count[0] * Count[1] * Count[2];
-            const float    Longest = 1.5f * std::sqrt(Spacing[0] * Spacing[0] + Spacing[1] * Spacing[1] + Spacing[2] * Spacing[2]);
+            Out.First[0]  = float(InVolume.Position.GetX()) - InVolume.Extent[0];
+            Out.First[1]  = float(InVolume.Position.GetY()) - InVolume.Extent[1];
+            Out.First[2]  = float(InVolume.Position.GetZ()) - InVolume.Extent[2];
+            Out.Total     = Out.Count[0] * Out.Count[1] * Out.Count[2];
+            Out.Longest   = 1.5f * std::sqrt(Out.Spacing[0] * Out.Spacing[0] + Out.Spacing[1] * Out.Spacing[1] + Out.Spacing[2] * Out.Spacing[2]);
+            Out.Intensity = InVolume.Intensity;
+            Out.Position  = InVolume.Position;
 
-            uint64_t Grid = 1469598103934665603ull;
-            const auto Mix = [&Grid](const void* InData, const size_t InSize)
+            uint64_t Hash = 1469598103934665603ull;
+            const auto Mix = [&Hash](const void* InData, const size_t InSize)
             {
                 const auto* Bytes = static_cast<const uint8_t*>(InData);
-                for(size_t Index = 0; Index < InSize; ++Index) { Grid = (Grid ^ Bytes[Index]) * 1099511628211ull; }
+                for(size_t Index = 0; Index < InSize; ++Index) { Hash = (Hash ^ Bytes[Index]) * 1099511628211ull; }
             };
-            Mix(First, sizeof(First)); Mix(Spacing, sizeof(Spacing)); Mix(Count, sizeof(Count));
-            if(Grid != DDGIGrid)
+            Mix(Out.First, sizeof(Out.First)); Mix(Out.Spacing, sizeof(Out.Spacing)); Mix(Out.Count, sizeof(Out.Count));
+            Out.Hash = Hash;
+
+            /* A probe sees the scene out to GICaptureSpacings probe spacings (at least 2500, at most
+             * 20000 and twice the volume's diagonal): its neighbourhood, so a probe costs the same
+             * however large the level; the sky stands behind. */
+            Out.Diagonal = 2.0f * std::sqrt(InVolume.Extent[0] * InVolume.Extent[0] + InVolume.Extent[1] * InVolume.Extent[1]
+                                            + InVolume.Extent[2] * InVolume.Extent[2]);
+            const float Reach = std::max(GRenderGICaptureSpacings.GetFloat(), 1.0f) * std::max({ Out.Spacing[0], Out.Spacing[1], Out.Spacing[2] });
+            Out.FarClip = GRenderSimpleCaptures.GetBool() ? std::clamp(std::min(Reach, 2.0f * Out.Diagonal), 2500.0f, 20000.0f) : 20000.0f;
+            return Out;
+        }
+
+        /* The volume's header for the light block (LightList_DDGI): lit only once ready. */
+        static void MakeHeader(const GIGrid& InGrid, const DDGIResources& InResources, const bool bInReady, float (&OutHeader)[4][4])
+        {
+            const float Header[4][4] = {
+                { InGrid.First[0], InGrid.First[1], InGrid.First[2], bInReady ? InGrid.Intensity : 0.0f },
+                { InGrid.Spacing[0], InGrid.Spacing[1], InGrid.Spacing[2], InGrid.Longest },
+                { float(InGrid.Count[0]), float(InGrid.Count[1]), float(InGrid.Count[2]), float(DDGI_TILES_PER_ROW) },
+                { float(InResources.Irradiance->GetWidth()), float(InResources.Irradiance->GetHeight()),
+                  float(InResources.Distance->GetWidth()), float(InResources.Distance->GetHeight()) } };
+            std::memcpy(OutHeader, Header, sizeof(Header));
+        }
+
+        /* PlanGlobalIllumination's: the volume lighting this frame and its grid, and what it wants
+         * (faces, relights, or nothing); and the volume after it whose probes fill in the background
+         * meanwhile (BACKGROUND FILL: the next nearest, so it is ready when the camera gets there). */
+        GIVolumeState* GIActive     = nullptr;
+        GIGrid         GIActiveGrid;
+        GIVolumeState* GIBackground = nullptr;
+        GIGrid         GIBackgroundGrid;
+        bool           bGIWanted    = false;
+        bool           bGIRelight   = false;   // this frame's updates are relights, not draws
+        CaptureBudget  RelightBudget;          // its units: probes relit
+        uint32_t       GITotal      = 0;       // the active volume's probes (CaptureLog)
+
+        void ReleaseGIVolumes(RenderContext& InContext)
+        {
+            for(GIVolumeState& Each : GIVolumes)
             {
-                DDGIGrid = Grid; DDGICursor = 0; DDGIUpdated = 0; bDDGIReady = false;
+                InContext.ReleaseDDGIResources(Each.Resources);
+                Each = GIVolumeState();
             }
-            if(!InContext.EnsureDDGIResources(DDGI, Total) || !DDGIStages.Allocate(DDGI_FACE, DDGI_FACE))
+            GIActive     = nullptr;
+            GIBackground = nullptr;
+        }
+
+        /* InGrid's kept state, else a new one in the least recently used's place -- never one of
+         * InKeep's (this frame's). Null if its targets cannot be made. */
+        GIVolumeState* StateFor(RenderContext& InContext, const GIGrid& InGrid, const GIVolumeState* InKeep, const uint64_t InUse)
+        {
+            GIVolumeState* State = nullptr;
+            for(GIVolumeState& Each : GIVolumes) { if(Each.Grid == InGrid.Hash && Each.Grid != 0) { State = &Each; break; } }
+            if(!State)
+            {
+                for(GIVolumeState& Each : GIVolumes)
+                {
+                    if(&Each == InKeep) { continue; }
+                    if(!State || Each.LastLit < State->LastLit) { State = &Each; }
+                }
+                if(!State) { return nullptr; }
+                DDGIResources Kept = State->Resources;   // reused, resized for this grid
+                *State = GIVolumeState();
+                State->Resources = Kept;
+                State->Grid      = InGrid.Hash;
+            }
+            if(!InContext.EnsureDDGIResources(State->Resources, InGrid.Total))
+            {
+                return nullptr;
+            }
+            State->LastLit = std::max(State->LastLit, InUse);
+            return State;
+        }
+
+        enum class EGIWork : uint8_t { None, Faces, Relight };
+
+        /* What volume InState (InGrid) wants this frame: faces until every probe has been drawn
+         * (and, with StaticCaptures, until it converges or its cache is full), then relights
+         * while its lighting's rounds are not all in, else nothing. */
+        EGIWork PlanVolume(RenderContext& InContext, GIVolumeState& InState, const GIGrid& InGrid, const bool bInLog)
+        {
+            const uint32_t PerFrame = uint32_t(std::clamp<int>(GRenderGIProbesPerFrame.GetInt(), 0, 64));
+            if(!bBudgeted && PerFrame == 0)
+            {
+                return EGIWork::None;
+            }
+            if(!GRenderStaticCaptures.GetBool())
+            {
+                return EGIWork::Faces;
+            }
+            const uint64_t Geometry  = SceneSignature(InContext, InGrid.Position, double(InGrid.FarClip) + double(InGrid.Diagonal) * 0.5,
+                                                      GICullRatio(), GRenderGICaptureStaticOnly.GetBool());
+            const uint64_t Signature = FrameLighting * 31u + Geometry;
+            const int64_t  Now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            if(InState.Convergence.Observe(Signature))
+            {
+                InState.ChangedNs   = Now;
+                InState.bLoggedDone = false;
+            }
+            const uint32_t Rounds = uint32_t(std::max(GRenderGIConvergeRounds.GetInt(), 1));
+
+            /* Relighting: the geometry the cache holds; once every probe's faces are in it, the
+             * lighting's rounds are relights. */
+            const bool bRelight = GRenderGIRelight.GetBool() && GRenderSimpleCaptures.GetBool() && GRenderGICaptureStaticOnly.GetBool()
+                               && InGrid.Total <= uint32_t(std::max(GRenderGIRelightMaxProbes.GetInt(), 0));
+            InState.bCache = bRelight && InContext.EnsureDDGICache(InState.Resources, InGrid.Total);
+            if(!InState.bGeometry || InState.Geometry != Geometry)
+            {
+                InState.Geometry  = Geometry;
+                InState.bGeometry = true;
+                InState.Stored    = 0;
+            }
+            if(InState.bCache && InState.bReady && InState.Stored >= InGrid.Total)
+            {
+                if(!InState.Relit.bKnown)
+                {
+                    InState.Relit.Observe(FrameLighting);
+                    InState.Relit.Updated(InGrid.Total);   // the round that filled the cache lit them once
+                }
+                else if(InState.Relit.Observe(FrameLighting))
+                {
+                    InState.ChangedNs   = Now;
+                    InState.bLoggedDone = false;
+                }
+                if(!InState.Relit.IsConverged(InGrid.Total, Rounds))
+                {
+                    return EGIWork::Relight;
+                }
+                if(bInLog && !InState.bLoggedDone && GRenderCaptureLog.GetBool())
+                {
+                    RENDERCORE_LOG("captures: GI volume of " + std::to_string(InGrid.Total) + " probes relit, converged "
+                                   + std::to_string(double(Now - InState.ChangedNs) * 1e-9) + " s after its lighting last changed");
+                }
+                InState.bLoggedDone = bInLog || InState.bLoggedDone;
+                return EGIWork::None;
+            }
+            InState.Relit.Reset();
+            if(InState.bReady && InState.Convergence.IsConverged(InGrid.Total, Rounds)
+               && (!InState.bCache || InState.Stored >= InGrid.Total))
+            {
+                if(bInLog && !InState.bLoggedDone && GRenderCaptureLog.GetBool())
+                {
+                    RENDERCORE_LOG("captures: GI volume of " + std::to_string(InGrid.Total) + " probes converged "
+                                   + std::to_string(double(Now - InState.ChangedNs) * 1e-9) + " s after what it sees last changed");
+                }
+                InState.bLoggedDone = bInLog || InState.bLoggedDone;
+                return EGIWork::None;
+            }
+            return EGIWork::Faces;
+        }
+
+        /* The volume nearest the camera: its grid and kept state, and what it wants; when it wants
+         * nothing, the next volume that wants faces fills in the background. False if nothing does. */
+        bool PlanGlobalIllumination(RenderContext& InContext)
+        {
+            GIActive     = nullptr;
+            GIBackground = nullptr;
+            bGIWanted    = false;
+            bGIRelight   = false;
+            GITotal      = 0;
+            ++GIFrame;
+            if(!CaptureList.bGIVolume || !GRenderDynamicGI.GetBool() || !InContext.CanImageBasedLight()
+               || !DDGIStages.Allocate(DDGI_FACE, DDGI_FACE))
+            {
+                return false;
+            }
+            GIActiveGrid = MakeGrid(CaptureList.GIVolume);
+            GIActive     = StateFor(InContext, GIActiveGrid, nullptr, GIFrame);
+            if(!GIActive)
+            {
+                return false;
+            }
+            GITotal = GIActiveGrid.Total;
+            const auto AddRegion = [this](const GIGrid& InGrid)
+            {
+                /* The capture shadow maps hold the volume, a spacing round it. */
+                const EngineCore::Vector3 Half(InGrid.Extent[0] + InGrid.Spacing[0], InGrid.Extent[1] + InGrid.Spacing[1],
+                                               InGrid.Extent[2] + InGrid.Spacing[2]);
+                CaptureRegion = GameCore::AABB::Union(CaptureRegion, GameCore::AABB(InGrid.Position - Half, InGrid.Position + Half));
+            };
+            AddRegion(GIActiveGrid);
+
+            const EGIWork Work = PlanVolume(InContext, *GIActive, GIActiveGrid, true);
+            bGIWanted  = Work != EGIWork::None;
+            bGIRelight = Work == EGIWork::Relight;
+            if(bGIWanted || !bBudgeted || !GRenderStaticCaptures.GetBool())
+            {
+                return bGIWanted;
+            }
+
+            /* Nothing to do here: the next volume wanting faces, in the background. */
+            for(uint32_t Index = 0; Index < CaptureList.GIOtherCount && Index < RENDER_GI_BACKGROUND_MAX; ++Index)
+            {
+                const GIGrid Grid = MakeGrid(CaptureList.GIOthers[Index]);
+                GIVolumeState* State = StateFor(InContext, Grid, GIActive, GIFrame - 1);
+                if(State && PlanVolume(InContext, *State, Grid, false) == EGIWork::Faces)
+                {
+                    GIBackground     = State;
+                    GIBackgroundGrid = Grid;
+                    AddRegion(Grid);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /* A GI probe face's smallest drawn size, radius over distance. */
+        static double GICullRatio()
+        {
+            return GRenderSimpleCaptures.GetBool() ? double(std::max(GRenderCaptureCullPixels.GetFloat(), 0.0f)) / double(DDGI_FACE) : 0.0;
+        }
+
+        /* Volume InState's probes, round the grid -- face by face within InShare (budgeted), else
+         * GIProbesPerFrame whole probes -- each face lit by the live lights, the sky and (once every
+         * probe has been seen) the volume itself, so light bounces again each round. */
+        void CaptureVolumeFaces(RenderContext& InContext, GIVolumeState& InState, const GIGrid& InGrid, const float InShareMs)
+        {
+            DDGIResources& DDGI = InState.Resources;
+            float Header[4][4];
+            MakeHeader(InGrid, DDGI, InState.bReady, Header);
+            ApplyImageBasedLighting(InContext);
+            InContext.SetDDGI(InState.bReady ? &DDGI : nullptr, Header);
+            InContext.SetSkyBackground(true);
+            const float    Units      = CaptureFaceUnits(DDGI_FACE);
+            const uint32_t PerFrame   = uint32_t(std::clamp<int>(GRenderGIProbesPerFrame.GetInt(), 0, 64));
+            const uint32_t FaceBudget = bBudgeted ? 6u * InGrid.Total : std::min(PerFrame, InGrid.Total) * 6u;
+            for(uint32_t Done = 0; Done < FaceBudget; ++Done)
+            {
+                if(bBudgeted && !FaceFits(Units, InShareMs)) { break; }
+                const uint32_t Probe = InState.Cursor;
+                const uint32_t Cell[3] = { Probe % InGrid.Count[0], (Probe / InGrid.Count[0]) % InGrid.Count[1],
+                                           Probe / (InGrid.Count[0] * InGrid.Count[1]) };
+                SceneCaptureRequest Cube;
+                Cube.Mode        = SCM_Omnidirectional;
+                Cube.Position    = EngineCore::Vector3(InGrid.First[0] + float(Cell[0]) * InGrid.Spacing[0],
+                                                       InGrid.First[1] + float(Cell[1]) * InGrid.Spacing[1],
+                                                       InGrid.First[2] + float(Cell[2]) * InGrid.Spacing[2]);
+                Cube.NearClip    = 1.0f;
+                Cube.FarClip     = InGrid.FarClip;
+                Cube.bShadows    = 1;
+                Cube.CullRatio   = float(GICullRatio());
+                Cube.bStaticOnly = GRenderSimpleCaptures.GetBool() && GRenderGICaptureStaticOnly.GetBool() ? 1 : 0;
+                RenderView Faces[6];
+                if(BuildCaptureViews(Cube, Views[0].View, DDGI_FACE, DDGI_FACE, Faces) != 6)
+                {
+                    break;
+                }
+                const uint32_t Face = InState.Face;
+                SCOPED_DRAW_EVENT(GetCubeFaceName(Face));
+                RenderCaptureFace(InContext, Cube, Faces[Face], DDGIStages);
+                InContext.CopyDDGIFace(DDGIStages, DDGI, Face, InGrid.Longest);
+                if(InState.bCache) { InContext.StoreDDGIFace(DDGIStages, DDGI, Probe, Face); }
+                FrameUnits += Units;
+                ++CaptureCounts.GIFaces;
+                if(++InState.Face < 6) { continue; }
+
+                /* Its sixth face: the strip into its tiles, and on round the grid. */
+                InState.Face = 0;
+                InContext.UpdateDDGIProbe(DDGI, Probe, InGrid.Longest);
+                InState.Cursor = (InState.Cursor + 1) % InGrid.Total;
+                InState.Convergence.Updated();
+                if(InState.bCache) { InState.Stored = std::min(InState.Stored + 1, InGrid.Total); }
+                if(++InState.Updated >= InGrid.Total) { InState.bReady = true; }
+            }
+            InContext.SetSkyBackground(false);
+            InContext.SetView(Views[0].View);
+        }
+
+        /* The active volume's updates -- faces, or relights from its cache -- or the background
+         * volume's faces; then the active volume lights the views. Leaves the context on the main view. */
+        void CaptureGlobalIllumination(RenderContext& InContext, const float InShareMs)
+        {
+            if(!GIActive)
             {
                 InContext.SetDDGI(nullptr, nullptr);
                 return;
             }
+            GIVolumeState& State = *GIActive;
+            DDGIResources& DDGI  = State.Resources;
+            const GIGrid&  Grid  = GIActiveGrid;
+            float Header[4][4];
 
-            float Header[4][4] = {
-                { First[0], First[1], First[2], Volume.Intensity },
-                { Spacing[0], Spacing[1], Spacing[2], Longest },
-                { float(Count[0]), float(Count[1]), float(Count[2]), float(DDGI_TILES_PER_ROW) },
-                { float(DDGI.Irradiance->GetWidth()), float(DDGI.Irradiance->GetHeight()),
-                  float(DDGI.Distance->GetWidth()), float(DDGI.Distance->GetHeight()) } };
-            if(!bDDGIReady) { Header[0][3] = 0.0f; }
-
-            const uint32_t PerFrame = uint32_t(std::clamp<int>(GRenderGIProbesPerFrame.GetInt(), 0, 64));
-            if(PerFrame > 0)
+            if(bGIWanted && bGIRelight)
             {
+                /* Relit from the cache: as many probes as fit, round the grid, one column of the cache at a time. */
                 SCOPED_DRAW_EVENT("GIVolume");
+                EnsureCaptureShadows(InContext);
+                InContext.SetView(Views[0].View);
                 ApplyImageBasedLighting(InContext);
-                InContext.SetDDGI(bDDGIReady ? &DDGI : nullptr, Header);
-                InContext.SetSkyBackground(true);
-                for(uint32_t Each = 0; Each < std::min(PerFrame, Total); ++Each)
+                MakeHeader(Grid, DDGI, true, Header);
+                InContext.SetDDGI(&DDGI, Header);
+                /* What is left of the frame's milliseconds after its faces, at what a relit probe costs. */
+                const float    Left   = bBudgeted ? std::max(InShareMs - FrameSpentMs(), 0.0f) : 0.0f;
+                uint32_t       Count  = bBudgeted ? uint32_t(RelightBudget.GetAllowance(Left, 1.0f)) : Grid.Total;
+                const uint32_t PerCol = std::max(DDGI.CachePerColumn, 1u);
+                Count = std::min({ Count, Grid.Total - State.RelightCursor, PerCol - State.RelightCursor % PerCol });
+                Count = std::max(Count, 1u);
+                const auto Start = std::chrono::steady_clock::now();
+                if(InContext.RelightDDGI(DDGI, State.RelightCursor, Count, Grid.Longest))
                 {
-                    const uint32_t Probe = DDGICursor;
-                    const uint32_t Cell[3] = { Probe % Count[0], (Probe / Count[0]) % Count[1], Probe / (Count[0] * Count[1]) };
-                    SceneCaptureRequest Cube;
-                    Cube.Mode     = SCM_Omnidirectional;
-                    Cube.Position = EngineCore::Vector3(First[0] + float(Cell[0]) * Spacing[0], First[1] + float(Cell[1]) * Spacing[1],
-                                                        First[2] + float(Cell[2]) * Spacing[2]);
-                    Cube.NearClip = 1.0f;
-                    Cube.FarClip  = 20000.0f;
-                    Cube.bShadows = 1;
-                    RenderView Faces[6];
-                    const uint32_t FaceCount = BuildCaptureViews(Cube, Views[0].View, DDGI_FACE, DDGI_FACE, Faces);
-                    bool bDone = FaceCount == 6;
-                    for(uint32_t Face = 0; Face < FaceCount; ++Face)
-                    {
-                        InContext.SetView(Faces[Face]);
-                        uint64_t Visible = 0, Culled = 0, Static = 0;
-                        QueueDraws(InContext, Faces[Face], Views[0].Lighting, &Cube, Visible, Culled, Static);
-                        InContext.RenderSceneStages(DDGIStages, ClearColor);
-                        bDone = InContext.CopyDDGIFace(DDGIStages, DDGI, Face, Longest) && bDone;
-                    }
-                    if(bDone) { InContext.UpdateDDGIProbe(DDGI, Probe, Longest); }
-                    DDGICursor = (DDGICursor + 1) % Total;
-                    if(++DDGIUpdated >= Total) { bDDGIReady = true; }
+                    State.Relit.Updated(Count);
+                    FrameRelit += Count;
                 }
-                InContext.SetSkyBackground(false);
+                FrameCaptureCpuMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - Start).count();
+                State.RelightCursor = (State.RelightCursor + Count) % Grid.Total;
                 InContext.SetView(Views[0].View);
             }
-            Header[0][3] = bDDGIReady ? Volume.Intensity : 0.0f;
-            InContext.SetDDGI(bDDGIReady ? &DDGI : nullptr, Header);
+            else if(bGIWanted)
+            {
+                SCOPED_DRAW_EVENT("GIVolume");
+                CaptureVolumeFaces(InContext, State, Grid, InShareMs);
+            }
+            else if(GIBackground)
+            {
+                SCOPED_DRAW_EVENT("GIVolume (background)");
+                CaptureVolumeFaces(InContext, *GIBackground, GIBackgroundGrid, InShareMs);
+            }
+            MakeHeader(Grid, DDGI, State.bReady, Header);
+            InContext.SetDDGI(State.bReady ? &DDGI : nullptr, Header);
         }
 
         /* Targets.Final as of the last Render(), for PresentToWindow on the UI
@@ -1181,9 +1920,17 @@ namespace RenderCore
         P->ProbeStages.Release();
         P->SkyStages.Release();
         P->DDGIStages.Release();
-        for(GDIRenderTarget** Each : { &P->IBL.Atlas, &P->IBL.Strip, &P->DDGI.Irradiance, &P->DDGI.Distance, &P->DDGI.Strip })
+        for(GDIRenderTarget** Each : { &P->IBL.Atlas, &P->IBL.Strip })
         {
             if(*Each) { GDIReleaseRenderTarget(*Each); delete *Each; *Each = nullptr; }
+        }
+        for(Impl::GIVolumeState& Volume : P->GIVolumes)
+        {
+            for(GDIRenderTarget** Each : { &Volume.Resources.Irradiance, &Volume.Resources.Distance, &Volume.Resources.Strip,
+                                           &Volume.Resources.Cache[0], &Volume.Resources.Cache[1], &Volume.Resources.Radiance })
+            {
+                if(*Each) { GDIReleaseRenderTarget(*Each); delete *Each; *Each = nullptr; }
+            }
         }
 
         delete P;
@@ -1382,11 +2129,18 @@ namespace RenderCore
          * and this block's own, if shown. */
         const StatUnitSnapshot Stats = GetStatUnit();
         {
+            /* Timed whenever there is a capture budget, whose Captures span it learns from. */
             float GpuMs[RGT_Count];
-            const void* Owner = InContext.BeginTimedBlock(this, Stats.bShowFrame, GpuMs);
+            uint64_t Serials[2] = {};
+            const bool bBudget = GRenderCaptureBudgetMs.GetFloat() > 0.0f;
+            const void* Owner = InContext.BeginTimedBlock(this, Stats.bShowFrame || bBudget, GpuMs, Serials);
+            P->BudgetSerial = Serials[0];
             for(RenderScene* Each : GLiveScenes)
             {
-                if(Each == Owner) { Each->P->AddGpuTimes(GpuMs); }
+                if(Each != Owner) { continue; }
+                if(Stats.bShowFrame) { Each->P->AddGpuTimes(GpuMs); }
+                Each->P->Budget.Measured(Serials[1], GpuMs[RGT_SceneCapture]);
+                Each->P->RelightBudget.Measured(Serials[1], GpuMs[RGT_SceneCapture]);
             }
             if(!Stats.bShowFrame && P->GpuWindowStartNs != 0)
             {
@@ -1489,8 +2243,7 @@ namespace RenderCore
          * as a Scene Capture Probe's, and a probe left capturing every frame should show in "stat frame". */
         {
             SCOPED_DRAW_EVENT("ImageBasedLighting");
-            P->UpdateImageBasedLighting(InContext);
-            P->UpdateGlobalIllumination(InContext);
+            P->UpdateCaptures(InContext);
         }
         InContext.WriteGpuTimestamp(RGT_SceneCapture, true);
 
@@ -1708,9 +2461,7 @@ namespace RenderCore
         P->SkyStages.Release();
         P->DDGIStages.Release();
         InContext.ReleaseIBLResources(P->IBL);
-        InContext.ReleaseDDGIResources(P->DDGI);
-        P->DDGIGrid = 0;
-        P->bDDGIReady = false;
+        P->ReleaseGIVolumes(InContext);
         P->bSkyValid = false;
         for(Impl::ProbeSlot& Each : P->Slots) { Each = Impl::ProbeSlot(); }
     }

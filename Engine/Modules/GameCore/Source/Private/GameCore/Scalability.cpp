@@ -70,6 +70,7 @@ namespace
         { "Rendering.SubsurfaceScattering",    { "false", "true",  "true",  "true" } },
         { "Rendering.DynamicGI",               { "false", "true",  "true",  "true" } },
         { "Rendering.GIProbesPerFrame",        { "1",     "1",     "1",     "2" } },
+        { "Rendering.CaptureBudgetMs",         { "0.5",   "1",     "2",     "3" } },
         { "Rendering.TextureStreamingPoolMB",  { "256",   "384",   "512",   "1024" } },
         { "Rendering.TextureStreamingMipBias", { "1",     "0",     "0",     "0" } },
         { "Rendering.Anisotropy",              { "2",     "4",     "8",     "16" } },

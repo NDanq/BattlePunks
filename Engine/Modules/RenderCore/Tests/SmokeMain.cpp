@@ -65,6 +65,7 @@
 #include "Private/RenderCore/RenderThreadInternal.h"
 #include "Private/RenderCore/ParticleSimulation.h"
 #include "Private/RenderCore/ShadowSetup.h"
+#include "Private/RenderCore/CaptureScheduler.h"
 #include "Private/RenderCore/TextureStreaming.h"
 
 using namespace RenderCore;
@@ -6749,6 +6750,99 @@ static void TestPostProcessStack()
  * ShadowSetup.h: where each shadow map looks from, and its atlas tile. Pure
  * math -- no GPU.
  */
+/* The capture budget (GLOBAL_ILLUMINATION.md, "Capture budget"): the shared capture shadow
+ * maps' views, the budget's controller, convergence and the lighting signature. */
+static void TestCaptureScheduler()
+{
+    std::printf("[capture scheduler]\n");
+    using EngineCore::Vector3;
+
+    /* The capture shadow maps: one sun view over the whole atlas holding the region, no cascade split
+     * any view depth reaches; local lights only where they reach the region. */
+    RenderLighting Lighting;
+    Lighting.LightDirection    = Vector3(0.3, -1.0, 0.2);
+    Lighting.bLightCastShadows = 1;
+    Lighting.LightShadowTechnique = LST_Cascaded;
+    Lighting.LightCascadeCount = 4;
+    Lighting.Shadows.bEnabled   = 1;
+    Lighting.Shadows.Resolution = 2048;
+    RenderLocalLight Near;
+    Near.Type = RLL_Point; Near.Position = Vector3(100.0, 50.0, 0.0); Near.Range = 400.0f; Near.bCastShadows = 1;
+    RenderLocalLight Far = Near;
+    Far.Position = Vector3(20000.0, 0.0, 0.0);
+    Lighting.Locals[0] = Far; Lighting.Locals[1] = Near;
+    Lighting.LocalCount = 2;
+    const GameCore::AABB Region(Vector3(-1000.0, -200.0, -1000.0), Vector3(1000.0, 400.0, 1000.0));
+    ShadowFrame Frame;
+    BuildCaptureShadowFrame(Lighting, Region, Frame);
+    Expect(Frame.CascadeCount == 1 && Frame.DirectionalFirstView == 0 && Frame.Views[0].TileSize == 2048
+               && Frame.CascadeSplits[0] > 1.0e20f, "a capture's sun is one view over the whole atlas, its split out of reach");
+    Expect(Frame.LocalFirstView[0] == -1 && Frame.LocalFirstView[1] == 1 && Frame.ViewCount == 1 + SHADOW_POINT_FACES,
+           "only the local light reaching the region gets capture shadow views");
+    bool bHolds = true;
+    for(int Corner = 0; Corner < 8; ++Corner)
+    {
+        const Vector3 Point((Corner & 1) ? Region.Max.GetX() : Region.Min.GetX(), (Corner & 2) ? Region.Max.GetY() : Region.Min.GetY(),
+                            (Corner & 4) ? Region.Max.GetZ() : Region.Min.GetZ());
+        const EngineCore::Vector4 Clip = Frame.Views[0].WorldToAtlas * EngineCore::Vector4(Point.GetX(), Point.GetY(), Point.GetZ(), 1.0);
+        const double U = Clip.GetX() / Clip.GetW(), V = Clip.GetY() / Clip.GetW(), D = Clip.GetZ() / Clip.GetW();
+        bHolds = bHolds && U >= 0.0 && U <= 1.0 && V >= 0.0 && V <= 1.0 && D > 0.0 && D < 1.0;
+    }
+    Expect(bHolds, "the capture sun view holds every corner of the region");
+    ShadowFrame None;
+    Lighting.Shadows.bEnabled = 0;
+    BuildCaptureShadowFrame(Lighting, Region, None);
+    Expect(None.ViewCount == 0 && None.AtlasSize == 0, "no capture shadow views while [Shadows] is off");
+    Lighting.Shadows.bEnabled = 1;
+
+    /* The budget: a unit's cost learned from the span of the frame that spent them, matched by
+     * serial; the allowance then fills the budget; never below one face. */
+    Expect(std::abs(CaptureFaceUnits(16) - 1.0039f) < 1e-3f && std::abs(CaptureFaceUnits(256) - 2.0f) < 1e-3f, "face units: 1 + pixels / 65536");
+    CaptureBudget Budget;
+    Expect(std::abs(Budget.GetAllowance(2.0f) - 2.0f / CaptureBudget::DEFAULT_UNIT_MS) < 1e-3f, "unmeasured, a unit is taken at the default cost");
+    Budget.Record(10, 20.0f);
+    Budget.Record(11, 0.0f);
+    Budget.Measured(9, 50.0f);    // a frame it never recorded
+    Budget.Measured(11, 50.0f);   // one that spent nothing
+    Expect(!Budget.HasMeasured(), "a span is learned from only for a recorded frame that spent units");
+    Budget.Measured(10, 4.0f);
+    Expect(Budget.HasMeasured() && std::abs(Budget.GetUnitMs() - 0.2f) < 1e-4f, "the first measured frame sets a unit's cost");
+    Expect(std::abs(Budget.GetAllowance(2.0f) - 10.0f) < 1e-3f, "the allowance is the budget over a unit's cost");
+    Budget.Measured(10, 40.0f);
+    Expect(std::abs(Budget.GetUnitMs() - 0.2f) < 1e-4f, "a frame's span is learned from once");
+    Budget.Record(12, 10.0f);
+    Budget.Measured(12, 4.0f);   // 0.4 a unit: a quarter of the way there
+    Expect(std::abs(Budget.GetUnitMs() - 0.25f) < 1e-4f, "later frames are smoothed in");
+    Expect(Budget.GetAllowance(0.01f) == 1.0f, "never under one face");
+    Budget.MeasuredCpu(4.0f, 4.0f);
+    Expect(std::abs(Budget.GetAllowance(2.0f) - 2.0f) < 1e-3f, "a dearer render thread sets the allowance");
+
+    /* Convergence: rounds of updates since the signature last changed. */
+    CaptureConvergence Converge;
+    Expect(Converge.Observe(7) && !Converge.IsConverged(10, 2), "the first signature is a change");
+    Converge.Updated(19);
+    Expect(!Converge.Observe(7) && !Converge.IsConverged(10, 2), "19 updates are not two rounds of 10");
+    Converge.Updated();
+    Expect(Converge.IsConverged(10, 2), "two rounds in: converged");
+    Expect(Converge.Observe(8) && !Converge.IsConverged(10, 2), "a new signature starts the rounds over");
+
+    /* The lighting's signature: the sun in whole steps, local lights in any order. */
+    Lighting.LightDirection = Vector3(std::cos(0.30), -0.5, std::sin(0.30));
+    const uint64_t Base = CaptureLightingSignature(Lighting, 1.0f);
+    RenderLighting Nudged = Lighting;
+    Nudged.LightDirection = Vector3(std::cos(0.3001), -0.5, std::sin(0.3001));   // well under a degree
+    RenderLighting Moved = Lighting;
+    Moved.LightDirection = Vector3(std::cos(0.36), -0.5, std::sin(0.36));        // over three degrees
+    RenderLighting Swapped = Lighting;
+    Swapped.Locals[0] = Lighting.Locals[1]; Swapped.Locals[1] = Lighting.Locals[0];
+    RenderLighting Brighter = Lighting;
+    Brighter.Locals[1].Intensity *= 2.0f;
+    Expect(CaptureLightingSignature(Nudged, 1.0f) == Base, "a sun moving under a step changes nothing");
+    Expect(CaptureLightingSignature(Moved, 1.0f) != Base, "a sun moving several steps changes the signature");
+    Expect(CaptureLightingSignature(Swapped, 1.0f) == Base, "the local lights' order does not count");
+    Expect(CaptureLightingSignature(Brighter, 1.0f) != Base, "a local light turned up changes the signature");
+}
+
 static void TestShadowSetup()
 {
     std::printf("[shadow setup]\n");
@@ -7612,6 +7706,7 @@ int main()
     TestStatUnit();
     TestStaticDrawLists();
     TestShadowSetup();
+    TestCaptureScheduler();
     TestLightComponents();
     TestParticleSystem();
     TestParticleSystemAsset();
