@@ -79,6 +79,8 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/Components/RectLightComponent.cpp
         Source/Private/RenderCore/ShadowSetup.h
         Source/Private/RenderCore/ShadowSetup.cpp
+        Source/Private/RenderCore/CaptureScheduler.h
+        Source/Private/RenderCore/CaptureScheduler.cpp
         Source/Private/RenderCore/ShadowSettings.cpp
         Source/Private/RenderCore/PostProcessStack.cpp
         Source/Private/RenderCore/RenderWeather.cpp

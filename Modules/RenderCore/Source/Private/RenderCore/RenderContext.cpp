@@ -181,7 +181,7 @@ namespace RenderCore
             PP_IBLSky, PP_IBLPrefilter, PP_IBLLighting, PP_Sky, PP_ViewTarget, PP_UI,
             PP_Luminance, PP_LuminanceReduce, PP_AdaptExposure, PP_TemporalAA, PP_ScreenReflections, PP_Copy,
             PP_VolumetricFog, PP_FogComposite, PP_ViewSites, PP_AmbientApply, PP_Subsurface, PP_LTCDecode,
-            PP_ReflectionResolve, PP_ScreenGI, PP_DDGICopy, PP_DDGIUpdate, PP_DepthHalf, PP_PassCount
+            PP_ReflectionResolve, PP_ScreenGI, PP_DDGICopy, PP_DDGIUpdate, PP_DepthHalf, PP_DDGIStore, PP_DDGIRelight, PP_PassCount
         };
         const char* const POST_PASS_SHADERS[PP_PassCount] = {
             "PPDofPrepare.fsh", "PPDofBlur.fsh", "PPDofComposite.fsh", "PPMotionBlur.fsh",
@@ -191,6 +191,7 @@ namespace RenderCore
             "PPLuminance.fsh", "PPLuminanceReduce.fsh", "PPAdaptExposure.fsh", "PPTemporalAA.fsh", "PPScreenReflections.fsh",
             "PPCopy.fsh", "PPVolumetricFog.fsh", "PPFogComposite.fsh", "ViewSites.fsh", "PPAmbientApply.fsh", "PPSubsurface.fsh", "LTCDecode.fsh",
             "PPReflectionResolve.fsh", "PPScreenGI.fsh", "DDGICopy.fsh", "DDGIUpdate.fsh", "PPDepthHalf.fsh",
+            "DDGIStore.fsh", "DDGIRelight.fsh",
         };
         /* Each pass's draw event (DrawPost). */
         const char* const POST_PASS_NAMES[PP_PassCount] = {
@@ -201,6 +202,7 @@ namespace RenderCore
             "Luminance", "LuminanceReduce", "AdaptExposure", "TemporalAA", "ScreenReflections", "Copy",
             "VolumetricFog", "FogComposite", "ViewSites", "AmbientApply", "Subsurface", "LTCDecode",
             "ReflectionResolve", "ScreenGI", "DDGICopy", "DDGIUpdate", "DepthHalf",
+            "DDGIStore", "DDGIRelight",
         };
 
         /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
@@ -2032,6 +2034,18 @@ namespace RenderCore
 
         void ReleaseShadowAtlases()
         {
+            BindCaptureAtlases(false);
+            for(GDIRenderTarget*& Atlas : CaptureAtlas)
+            {
+                if(Atlas)
+                {
+                    GDIReleaseRenderTarget(Atlas);
+                    delete Atlas;
+                    Atlas = nullptr;
+                }
+            }
+            CaptureAtlasSize    = 0;
+            bCaptureShadowsKept = false;
             for(GDIRenderTarget*& Atlas : ShadowAtlas)
             {
                 if(Atlas)
@@ -2055,6 +2069,47 @@ namespace RenderCore
         void PrepareShadows(const InsetShadowCaster* InCasters, const uint32_t InCasterCount, const GameCore::AABB* InReceivers)
         {
             BuildShadowFrame(Lighting, View, Shadows, InCasters, InCasterCount, InReceivers);
+            ApplyShadowFrame();
+        }
+
+        /* CAPTURE SHADOWS (BeginCaptureShadows): the frame's capture views' shared shadow maps, and
+         * whether they are drawn (every capture view then samples them); a capture view's stages. */
+        ShadowFrame CaptureShadows;
+        bool        bCaptureShadowsReady = false;
+        bool        bCaptureRendering    = false;
+        float       LodDistanceScale     = 1.0f;   // SetLodDistanceScale
+
+        /* The capture shadow maps' own atlases, swapped in for ShadowAtlas while captures render
+         * (BindCaptureAtlases), so they outlive the frame: what they hold (CaptureShadows, drawn
+         * for CaptureShadowKey) is used again while the key stays the same. */
+        GDIRenderTarget* CaptureAtlas[SA_Count] = {};
+        uint32_t         CaptureAtlasSize       = 0;
+        bool             bCaptureAtlasesBound   = false;
+        uint64_t         CaptureShadowKey       = 0;
+        uint64_t         PendingShadowKey       = 0;
+        bool             bCaptureShadowsKept    = false;
+
+        void BindCaptureAtlases(const bool bInBound)
+        {
+            if(bInBound == bCaptureAtlasesBound) { return; }
+            for(uint32_t Atlas = 0; Atlas < SA_Count; ++Atlas) { std::swap(ShadowAtlas[Atlas], CaptureAtlas[Atlas]); }
+            std::swap(ShadowAtlasSize, CaptureAtlasSize);
+            bCaptureAtlasesBound = bInBound;
+        }
+
+        /* The captures' shadow maps for the current view: their views, then the scene block's
+         * matrices, with no contact shadows (a capture's faces are too small to march). */
+        void RestoreCaptureShadows()
+        {
+            Shadows = CaptureShadows;
+            ApplyShadowFrame();
+            Scene.ContactShadow[0] = 0.0f;
+            Scene.ContactLocal[0]  = 0.0f;
+        }
+
+        /* Shadows' views into the scene block, the atlases made for them. */
+        void ApplyShadowFrame()
+        {
             if(Shadows.ViewCount == 0)
             {
                 return;
@@ -2484,6 +2539,23 @@ namespace RenderCore
             StageDrawCounts[size_t(ERenderStage::Shadows)] = uint32_t(Policy.Num());
             if(Shadows.ViewCount == 0)
             {
+                return;
+            }
+            /* A capture view samples the captures' shadow maps, drawn once (DrawCaptureShadows). */
+            if(bCaptureShadowsReady)
+            {
+                for(uint32_t Atlas = 0; Atlas < SA_Count; ++Atlas)
+                {
+                    GDITexture2D* Map = Shadows.UsesAtlas(EShadowAtlas(Atlas)) && ShadowAtlas[Atlas] ? ShadowAtlas[Atlas]->ToDepthTexture2D() : nullptr;
+                    ForwardShadowAtlas[Atlas] = Map ? Map->Resource : nullptr;
+                }
+                for(uint32_t Index = 0; Index < RENDER_SCENE_LOCAL_LIGHT_MAX; ++Index)
+                {
+                    Scene.Locals[Index * SCENE_LOCAL_VEC4S + 5][2] = 0.0f;
+                    Scene.Locals[Index * SCENE_LOCAL_VEC4S + 5][3] = 0.0f;
+                }
+                std::memset(Scene.Spare, 0, sizeof(float) * 12);
+                ForwardOpacityAtlas = nullptr;
                 return;
             }
 
@@ -4436,8 +4508,59 @@ namespace RenderCore
     uint32_t RenderContext::PrepareShadows(const InsetShadowCaster* InCasters, const uint32_t InCasterCount,
                                            const GameCore::AABB* InReceivers)
     {
+        if(P->bCaptureShadowsReady)
+        {
+            P->RestoreCaptureShadows();
+            return 0;   // drawn already: no casters to queue
+        }
         P->PrepareShadows(InCasters, InCasterCount, InReceivers);
         return P->Shadows.ViewCount;
+    }
+
+    uint32_t RenderContext::BeginCaptureShadows(const GameCore::AABB& InRegion, const uint64_t InKey)
+    {
+        P->BindCaptureAtlases(true);
+        P->PendingShadowKey = InKey;
+        if(InKey != 0 && P->bCaptureShadowsKept && InKey == P->CaptureShadowKey && P->CaptureShadows.ViewCount > 0)
+        {
+            P->bCaptureShadowsReady = true;   // what the atlases hold still stands
+            return 0;
+        }
+        P->bCaptureShadowsReady = false;
+        P->bCaptureShadowsKept  = false;
+        BuildCaptureShadowFrame(P->Lighting, InRegion, P->Shadows);
+        P->ApplyShadowFrame();
+        return P->Shadows.ViewCount;
+    }
+
+    bool RenderContext::DrawCaptureShadows()
+    {
+        bool bDrawn = P->bCaptureShadowsReady;   // kept from an earlier frame
+        if(!bDrawn && P->Shadows.ViewCount > 0)
+        {
+            SCOPED_DRAW_EVENT("CaptureShadows");
+            P->IssueShadows();
+            P->CaptureShadows       = P->Shadows;   // as ApplyShadowFrame left it (no atlas: no views)
+            P->bCaptureShadowsReady = P->CaptureShadows.ViewCount > 0;
+            P->bCaptureShadowsKept  = P->bCaptureShadowsReady && P->PendingShadowKey != 0;
+            P->CaptureShadowKey     = P->PendingShadowKey;
+            bDrawn = P->bCaptureShadowsReady;
+        }
+        for(DrawPolicy& Policy : P->Policies) { Policy.Clear(); }
+        for(std::vector<DrawCommand>& Group : P->GroupDraws) { Group.clear(); }
+        P->CasterView = -1;
+        return bDrawn;
+    }
+
+    void RenderContext::EndCaptureShadows()
+    {
+        P->bCaptureShadowsReady = false;
+        P->BindCaptureAtlases(false);
+    }
+
+    void RenderContext::SetCaptureRendering(const bool bInCapture)
+    {
+        P->bCaptureRendering = bInCapture;
     }
 
     int32_t RenderContext::GetShadowViewInset(const uint32_t InView) const
@@ -4724,6 +4847,16 @@ namespace RenderCore
         P->DrawPixelsPerWorld = InPixelsPerWorldUnit;
     }
 
+    void RenderContext::SetLodDistanceScale(const float InScale)
+    {
+        P->LodDistanceScale = std::max(InScale, 1e-3f);
+    }
+
+    float RenderContext::GetLodDistanceScale() const
+    {
+        return P->LodDistanceScale;
+    }
+
     void RenderContext::SetDrawReveal(const bool bInReveal)
     {
         P->bDrawReveal = bInReveal;
@@ -4790,6 +4923,10 @@ namespace RenderCore
                                       GDIRenderTarget** InOutCurrent)
     {
         bool bRan = false;
+        if(bCaptureRendering)
+        {
+            return false;   // a capture view runs no custom passes (SetCaptureRendering)
+        }
         for(const CustomPassEntry& Entry : FramePasses)
         {
             if(Entry.Hook != InHook || !Entry.Pass)
@@ -5191,7 +5328,7 @@ namespace RenderCore
         return P->Backend != ERenderBackend::Null && GDISupportsGPUTimestamps();
     }
 
-    const void* RenderContext::BeginTimedBlock(const void* InOwner, const bool bInTime, float (&OutGpuMs)[RGT_Count])
+    const void* RenderContext::BeginTimedBlock(const void* InOwner, const bool bInTime, float (&OutGpuMs)[RGT_Count], uint64_t* OutSerials)
     {
         /* The times GDI hands back are the block FramesInFlight back's (its
          * frame slot, just reused): that block's owner, if one timed it. */
@@ -5204,6 +5341,7 @@ namespace RenderCore
         P->TimedBlocks[Serial % 4] = { Serial, P->TimedOwner, 1 };
         P->TimedViews = 0;
         for(float& Each : OutGpuMs) { Each = -1.0f; }
+        if(OutSerials) { OutSerials[0] = Serial; OutSerials[1] = 0; }
         if(!Previous)
         {
             return nullptr;
@@ -5243,6 +5381,7 @@ namespace RenderCore
             double Ms = 0.0;
             OutGpuMs[RGT_Total] = Span(uint32_t(RGT_Total) * 2, Impl::VIEWS_END_TIMESTAMP, Ms) ? float(Ms) : -1.0f;
         }
+        if(OutSerials && Written) { OutSerials[1] = Serial - Behind; }
         return Written ? Previous : nullptr;
     }
 
@@ -5698,7 +5837,7 @@ namespace RenderCore
             /* Skin (SHADING_MODELS.md): where a Skin material drew and the scene is HDR, its
              * diffuse goes to its own target, cleared first, for PPSubsurface to blur. */
             GDIRenderTarget* Subsurface = nullptr;
-            if(GRenderSubsurfaceScattering.GetBool() && InTargets.bHDR && P->BasePassHasModel(EMaterialShadingModel::Skin))
+            if(GRenderSubsurfaceScattering.GetBool() && InTargets.bHDR && !P->bCaptureRendering && P->BasePassHasModel(EMaterialShadingModel::Skin))
             {
                 Subsurface = InTargets.EnsureFullHalfFloat(InTargets.Subsurface, "Subsurface");
                 if(Subsurface)
@@ -5922,7 +6061,14 @@ namespace RenderCore
 
         BindTargets(&SceneColor, 1, SceneColor);
         P->IssueStage(ERenderStage::Unlit);
-        P->IssueStage(ERenderStage::Translucent);
+        if(!P->bCaptureRendering)   // a capture view leaves out glass, smoke and particles
+        {
+            P->IssueStage(ERenderStage::Translucent);
+        }
+        else
+        {
+            P->StageDrawCounts[size_t(ERenderStage::Translucent)] = uint32_t(P->PolicyFor(ERenderStage::Translucent).Num());
+        }
         for(GDITextureResource*& Each : P->ForwardReflectionTextures) { Each = nullptr; }
         P->Scene.ForwardReflections[1][1] = 0.0f;
         P->Scene.Spare[2][1] = 0.0f;
@@ -6258,7 +6404,8 @@ namespace RenderCore
     void RenderContext::ReleaseDDGIResources(DDGIResources& InOut)
     {
         if(P->DDGI == &InOut) { P->DDGI = nullptr; }
-        for(GDIRenderTarget** Each : { &InOut.Irradiance, &InOut.Distance, &InOut.Strip })
+        InOut.CachePerColumn = 0;
+        for(GDIRenderTarget** Each : { &InOut.Irradiance, &InOut.Distance, &InOut.Strip, &InOut.Cache[0], &InOut.Cache[1], &InOut.Radiance })
         {
             if(*Each)
             {
@@ -6307,6 +6454,137 @@ namespace RenderCore
         bDrawn = P->DrawPost(PP_DDGIUpdate, InResources.Distance, InResources.Distance->GetWidth(), InResources.Distance->GetHeight(),
                              { Strip->Resource }, Block) && bDrawn;
         GDISetMaterialTexture(0, nullptr);
+        return bDrawn;
+    }
+
+    bool RenderContext::EnsureDDGICache(DDGIResources& InOut, const uint32_t InProbes)
+    {
+        if(!CanImageBasedLight() || InProbes == 0 || !GDISupportsRenderTargetFormat(GDI_RTF_RGBA32F))
+        {
+            return false;
+        }
+        const uint32_t PerColumn = std::min<uint32_t>(InProbes, DDGI_CACHE_PER_COLUMN);
+        const uint32_t Columns   = (InProbes + PerColumn - 1) / PerColumn;
+        const uint32_t Width = Columns * DDGI_FACE * 6, Height = PerColumn * DDGI_FACE;
+        const auto Make = [Width, Height](GDIRenderTarget*& InOutTarget, const char* InName, const EGDIRenderTargetFormat InFormat)
+        {
+            if(!InOutTarget)
+            {
+                InOutTarget = GDICreateRenderTargetFormat(InName, Width, Height, InFormat);
+            }
+            else if(InOutTarget->GetWidth() != Width || InOutTarget->GetHeight() != Height)
+            {
+                InOutTarget->Resize(Width, Height);
+            }
+            return InOutTarget && InOutTarget->IsValid();
+        };
+        const bool bMade = Make(InOut.Cache[0], "RenderCore.DDGICache0", GDI_RTF_RGBA16F)
+                        && Make(InOut.Cache[1], "RenderCore.DDGICache1", GDI_RTF_RGBA32F)
+                        && Make(InOut.Radiance, "RenderCore.DDGIRadiance", GDI_RTF_RGBA16F);
+        InOut.CachePerColumn = bMade ? PerColumn : 0;
+        return bMade;
+    }
+
+    bool RenderContext::StoreDDGIFace(SceneTargets& InStages, DDGIResources& InResources, const uint32_t InProbe, const uint32_t InFace)
+    {
+        if(!InResources.Cache[0] || !InResources.Cache[1] || InResources.CachePerColumn == 0 || InFace >= 6 || !InStages.SceneColor)
+        {
+            return false;
+        }
+        const auto Texture = [](GDIRenderTarget* InTarget) -> GDITextureResource*
+        {
+            GDITexture2D* Each = InTarget ? InTarget->ToGDITexture2D() : nullptr;
+            return Each ? Each->Resource : nullptr;
+        };
+        GDITexture2D* Depth = InStages.SceneColor->ToDepthTexture2D();
+        GDITextureResource* Inputs[6] = { Texture(InStages.GBuffer[0]), Texture(InStages.GBuffer[1]), Texture(InStages.GBuffer[2]),
+                                          Texture(InStages.GBuffer[3]), Depth ? Depth->Resource : nullptr, Texture(InStages.SceneColor) };
+        for(GDITextureResource* Each : Inputs) { if(!Each) { return false; } }
+        const uint X = (InProbe / InResources.CachePerColumn) * DDGI_FACE * 6 + InFace * DDGI_FACE;
+        const uint Y = (InProbe % InResources.CachePerColumn) * DDGI_FACE;
+        PostBlock Block;
+        Block.A[0] = float(X);
+        Block.A[1] = float(Y);
+        const bool bDrawn = P->DrawFullscreenShader(P->GetPostShader(PP_DDGIStore), POST_PASS_NAMES[PP_DDGIStore], InResources.Cache[0],
+                                                    DDGI_FACE, DDGI_FACE, Inputs, 6, Block.A, uint(sizeof(Block) - sizeof(Block.Matrix)),
+                                                    Impl::EFullscreenBlend::Opaque, X, Y, InResources.Cache[1]);
+        return bDrawn;
+    }
+
+    bool RenderContext::RelightDDGI(DDGIResources& InResources, const uint32_t InFirst, const uint32_t InCount, const float InLongest)
+    {
+        const uint32_t PerColumn = InResources.CachePerColumn;
+        if(PerColumn == 0 || InCount == 0 || !InResources.Radiance || !InResources.Irradiance || !P->DDGI
+           || InFirst / PerColumn != (InFirst + InCount - 1) / PerColumn)
+        {
+            return false;
+        }
+        const auto Texture = [](GDIRenderTarget* InTarget) -> GDITextureResource*
+        {
+            GDITexture2D* Each = InTarget ? InTarget->ToGDITexture2D() : nullptr;
+            return Each ? Each->Resource : nullptr;
+        };
+        SCOPED_DRAW_EVENT("GIRelight");
+
+        /* What the Lighting and IBL passes would light by: the scene block (HDR, the capture shadow
+         * maps), the light block (every light; its tiles a view's, unused here), the atlases. */
+        if(P->bCaptureShadowsReady) { P->RestoreCaptureShadows(); }
+        P->Scene.Output[0] = 1.0f;
+        P->Scene.Output[1] = 1.0f;
+        P->Scene.Output[2] = 0.0f;
+        const bool bIBL = P->IBL && P->IBL->Atlas && P->IBLAtlasTexture();
+        P->Scene.IBL[0] = bIBL ? 1.0f : 0.0f;
+        P->Scene.IBL[1] = bIBL ? float(P->IBLProbeCount) : 0.0f;
+        P->Scene.IBL[2] = bIBL && P->bIBLSky ? 1.0f : 0.0f;
+        P->EnsureLTC();
+        P->BuildLightList(DDGI_FACE, DDGI_FACE);
+        std::memcpy(P->LightList.Probes, P->IBLProbes, sizeof(P->LightList.Probes));
+        std::memcpy(P->LightList.DDGI, P->DDGIHeader, sizeof(P->LightList.DDGI));
+        GDISetUniformBlock(GDI_LIGHT_BLOCK_BINDING, &P->LightList, uint(sizeof(P->LightList)));
+
+        GDITextureResource* Maps[SA_Count] = {};
+        for(uint32_t Atlas = 0; Atlas < SA_Count; ++Atlas)
+        {
+            GDITexture2D* Map = P->Shadows.ViewCount > 0 && P->ShadowAtlas[Atlas] ? P->ShadowAtlas[Atlas]->ToDepthTexture2D() : nullptr;
+            Maps[Atlas] = Map ? Map->Resource : nullptr;
+        }
+        GDITextureResource* Inputs[8] = { Texture(InResources.Cache[0]), Texture(InResources.Cache[1]), bIBL ? P->IBLAtlasTexture() : nullptr,
+                                          nullptr, nullptr, nullptr, Maps[SA_Directional], Maps[SA_Local] };
+        GDISetMaterialTexture(LIGHTING_LTC_SLOT, P->LTCTable);
+        GDISetMaterialTexture(FORWARD_DDGI_SLOT, Texture(P->DDGI->Irradiance));
+        GDISetMaterialTexture(FORWARD_DDGI_SLOT + 1, Texture(P->DDGI->Distance));
+        PostBlock Block;
+        Block.A[1] = InLongest;
+        Block.A[2] = float(PerColumn);
+        const uint X = (InFirst / PerColumn) * DDGI_FACE * 6;
+        const uint Y = (InFirst % PerColumn) * DDGI_FACE;
+        bool bDrawn = P->DrawFullscreenShader(P->GetPostShader(PP_DDGIRelight), POST_PASS_NAMES[PP_DDGIRelight], InResources.Radiance,
+                                              DDGI_FACE * 6, InCount * DDGI_FACE, Inputs, 8, Block.A, uint(sizeof(Block) - sizeof(Block.Matrix)),
+                                              Impl::EFullscreenBlend::Opaque, X, Y);
+        GDISetMaterialTexture(LIGHTING_LTC_SLOT, nullptr);
+        GDISetMaterialTexture(FORWARD_DDGI_SLOT, nullptr);
+        GDISetMaterialTexture(FORWARD_DDGI_SLOT + 1, nullptr);
+
+        /* Their irradiance tiles, all at once: the rows of tiles they are in (DDGIUpdate.fsh, batched). */
+        GDITexture2D* Radiance = InResources.Radiance->ToGDITexture2D();
+        if(bDrawn && Radiance)
+        {
+            const uint32_t RowFirst = InFirst / DDGI_TILES_PER_ROW, RowLast = (InFirst + InCount - 1) / DDGI_TILES_PER_ROW;
+            PostBlock Update;
+            Update.A[0]     = -1.0f;
+            Update.A[1]     = float(DDGI_IRRADIANCE_TILE);
+            Update.A[2]     = 0.0f;
+            Update.A[3]     = float(DDGI_TILES_PER_ROW);
+            Update.Sizes[0] = InLongest;
+            Update.Sizes[1] = float(InFirst);
+            Update.Sizes[2] = float(InCount);
+            Update.Sizes[3] = float(PerColumn);
+            GDITextureResource* Strip[1] = { Radiance->Resource };
+            bDrawn = P->DrawFullscreenShader(P->GetPostShader(PP_DDGIUpdate), POST_PASS_NAMES[PP_DDGIUpdate], InResources.Irradiance,
+                                             InResources.Irradiance->GetWidth(), (RowLast - RowFirst + 1) * DDGI_IRRADIANCE_TILE, Strip, 1,
+                                             Update.A, uint(sizeof(Update) - sizeof(Update.Matrix)), Impl::EFullscreenBlend::Opaque,
+                                             0, RowFirst * DDGI_IRRADIANCE_TILE);
+        }
         return bDrawn;
     }
 

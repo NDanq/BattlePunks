@@ -774,7 +774,9 @@ now, the Sky Light's is used). The block is captured again when the versions'
 sum changes, but at most once every `[Rendering] SkyCaptureFrames` frames
 (8), and each new capture marks every reflection probe due
 (`[Rendering] ProbesFollowSky`, on), so they recapture one at a time within
-`ProbeFacesPerFrame` and see the new sky too. `[Rendering] SkyPassLighting`
+the capture budget and see the new sky too -- with `[Rendering] StaticCaptures`
+(on), only those whose lighting moved since their last capture (the sun by
+`CaptureSunStepDegrees`). `[Rendering] SkyPassLighting`
 off ignores Sky passes (an A/B switch). The capture is in "stat frame"'s
 Captures span.
 
@@ -798,19 +800,27 @@ ray (`Sky.fsh`).
   probe that is due, or new to a block, one at a time, taking turns round the
   list. A capture is six 90-degree HDR views, shadows included unless Capture
   Shadows is off, lit by the sky alone so no probe sees another. The sky is
-  drawn behind. `[Rendering] ProbeFacesPerFrame` of them render a frame (1 by
-  default), each one's linear scene colour copied into the strip; after the
-  sixth the strip is prefiltered into the probe's block, its old capture
-  lighting until then.
+  drawn behind. The faces render within the frame's capture budget
+  (`[Rendering] CaptureBudgetMs`, shared with the GI Volume; at 0,
+  `ProbeFacesPerFrame` a frame, 1 by default), each one's linear scene colour
+  copied into the strip; after the sixth the strip is prefiltered into the
+  probe's block, its old capture lighting until then. With `StaticCaptures`, a
+  due probe whose view has not changed (its static meshes' serials, its
+  dynamic ones' places, the lighting) is skipped. GLOBAL_ILLUMINATION.md,
+  Phase 7, has the budget, the shared capture shadow maps and the simple
+  capture views.
 - **Their data** (centre, radius, box, intensity, block) is in the light block
   (`LightList_Probes`), the scene block having room for only four.
 
 **GI Volumes** (GLOBAL_ILLUMINATION.md, Phase 6; `DDGI.glsl`): inside one, the
 IBL pass takes non-baked pixels' diffuse ambient from a grid of irradiance
-probes in place of the reflection probes'. `RenderScene` renders a few probes
-a frame (`[Rendering] GIProbesPerFrame`) in six 16 x 16 views, lit by the
-volume too, into an octahedral irradiance tile and a distance-moments tile
-each; the lookup weights the eight probes round a point by visibility.
+probes in place of the reflection probes'. `RenderScene` renders its probes'
+16 x 16 cube faces within the frame's capture budget (GLOBAL_ILLUMINATION.md,
+Phase 7), lit by the volume too, into an octahedral irradiance tile and a
+distance-moments tile each; the lookup weights the eight probes round a point
+by visibility. A converged volume stops; a lighting change relights its
+probes from what their faces saw (`DDGIRelight.fsh`), without drawing the
+scene.
 
 **Lighting** (`IBL_Light`):
 - **`IBLLighting.fsh` pass:** added (one, one) over the Lighting stage, from

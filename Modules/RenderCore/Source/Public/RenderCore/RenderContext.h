@@ -286,6 +286,13 @@ namespace RenderCore
         void                  FlushTextureStreaming();
         TextureStreamingStats GetTextureStreamingStats() const;
 
+        /* LOD DISTANCE: what a proxy choosing its detail by distance from the
+         * view (Terrain chunks and foliage, Procedural Spawner cells) multiplies
+         * that distance by: 1 for a scene's views, more for a capture's (its
+         * faces a few pixels wide; [Rendering] CaptureLodScale). */
+        void  SetLodDistanceScale(float InScale);
+        float GetLodDistanceScale() const;
+
     private:
         friend class RenderThread;
         friend class RenderScene;
@@ -464,6 +471,22 @@ namespace RenderCore
         bool CopyDDGIFace(SceneTargets& InStages, DDGIResources& InResources, uint32_t InFace, float InLongest);
         bool UpdateDDGIProbe(DDGIResources& InResources, uint32_t InProbe, float InLongest);
         void SetDDGI(const DDGIResources* InResources, const float (*InHeader)[4]);
+
+        /*
+         * RELIGHTING (GLOBAL_ILLUMINATION.md, "Relighting"): a GI Volume's probes lit again from what
+         * their faces saw, without drawing the scene.
+         *
+         *   EnsureDDGICache  the cache and the radiance atlas for InProbes probes; false where the
+         *                    backend has no RGBA32F target (the volume is only ever drawn)
+         *   StoreDDGIFace    a face InStages rendered (its G-buffer, depth and lit colour) into the
+         *                    cache, at probe InProbe's face InFace
+         *   RelightDDGI      probes InFirst to InFirst + InCount - 1 (one column of the cache) lit from
+         *                    the cache by the current lighting -- the capture shadow maps, the image-based
+         *                    lighting and the volume SetDDGI set -- and their irradiance updated
+         */
+        bool EnsureDDGICache(DDGIResources& InOut, uint32_t InProbes);
+        bool StoreDDGIFace(SceneTargets& InStages, DDGIResources& InResources, uint32_t InProbe, uint32_t InFace);
+        bool RelightDDGI(DDGIResources& InResources, uint32_t InFirst, uint32_t InCount, float InLongest);
         void          FinishTargetFace(const char* InPath, uint32_t InFace);
         bool          ReadRenderTarget(const char* InPath, EngineCore::Image& OutPixels);
 
@@ -484,6 +507,28 @@ namespace RenderCore
          * where an inset's shadow can land, so how much screen it covers. */
         uint32_t              PrepareShadows(const InsetShadowCaster* InCasters = nullptr, uint32_t InCasterCount = 0,
                                              const GameCore::AABB* InReceivers = nullptr);
+        /*
+         * CAPTURE SHADOWS (GLOBAL_ILLUMINATION.md, "Capture budget"): one set of shadow maps
+         * every capture view of a frame samples, instead of each view drawing its own.
+         *
+         *   BeginCaptureShadows  after BeginSceneDraws: the views (BuildCaptureShadowFrame) for
+         *                        InRegion, from the current lighting. RenderScene queues each
+         *                        one's casters as PrepareShadows' callers do; returns how many.
+         *                        They have atlases of their own, kept from frame to frame: with
+         *                        InKey (nonzero) the same as the last drawn's, those are used
+         *                        again and it returns 0 (nothing to queue)
+         *   DrawCaptureShadows   draws them into the atlases and drops the queued draws; until
+         *                        EndCaptureShadows, PrepareShadows hands every view these
+         *                        (returning 0: nothing to queue) and the Shadows stage draws none
+         *   EndCaptureShadows    back to each view's own (before the frame's main views)
+         *   SetCaptureRendering  a capture view's stages: no custom passes, no Translucent
+         *                        stage, no subsurface; the capture shadows have no contact shadows
+         */
+        uint32_t BeginCaptureShadows(const GameCore::AABB& InRegion, uint64_t InKey = 0);
+        bool     DrawCaptureShadows();
+        void     EndCaptureShadows();
+        void     SetCaptureRendering(bool bInCapture);
+
         const GameCore::AABB& GetShadowViewBounds(uint32_t InView) const;
         int32_t               GetShadowViewInset(uint32_t InView) const;
         bool                  IsSunShadowView(uint32_t InView) const;
@@ -501,8 +546,10 @@ namespace RenderCore
          * stage times (ms per ERenderGpuTimer, -1 where not timed) of the GDI
          * block GDIGetFramesInFlight() back -- the latest the GPU has surely
          * finished -- and the scene that wrote them, null if none did; and
-         * notes InOwner as this block's, if bInTime and the backend can time. */
-        const void* BeginTimedBlock(const void* InOwner, bool bInTime, float (&OutGpuMs)[RGT_Count]);
+         * notes InOwner as this block's, if bInTime and the backend can time.
+         * OutSerials, if given: this block's GDI serial, then the one whose
+         * times these are (0: none). */
+        const void* BeginTimedBlock(const void* InOwner, bool bInTime, float (&OutGpuMs)[RGT_Count], uint64_t* OutSerials = nullptr);
 
         /* SPLITSCREEN: after the last of a frame's timed views, so "stat
          * frame"'s Total spans them all (RenderScene::Render). */
