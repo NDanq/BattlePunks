@@ -425,10 +425,13 @@ a volume converges, how long after its last change.
 - The minimum progress of one face a frame exceeds the budget where one face
   costs more than it (a 256 x 256 reflection probe face in a dense level).
 - A GI Volume's first fill is still a raster round: in L2's dense rooms a
-  face is 150-600 draws, 1.5-3 ms of render-thread time, so 264 probes take
-  about 50 s at 2 ms a frame (the volume lights only once it is done; the
-  reflection probes light meanwhile). The background fill hides it for the
-  rooms after the first.
+  face is 150-600 draws and 0.4-2 ms of GPU, so at the 2 ms budget a volume
+  takes long to light (measured cold, RelWithDebInfo, Arc B390, 2560 x 1440:
+  L2's 264-probe core 88 s, L1's 1125-probe plaza volume 120 s, 50 s at
+  300 probes). At the warm-up budget (50 ms) the same volumes light in
+  10.4 s, 11.4 s and 4.1 s, which is what the loading card waits. A level
+  started without a transition (`-Game.StartLevel`) still fills in view; the
+  background fill hides it for the rooms after the first.
 - Relighting is Lambert diffuse with the default model's specular, no ambient
   occlusion or wetness; dynamic geometry is in neither the raster captures
   nor the relight (GICaptureStaticOnly).
