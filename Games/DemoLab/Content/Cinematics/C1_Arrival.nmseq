@@ -65,6 +65,9 @@
     <Section start="15" end="85" speaker="Pilot" text="There is the island. I will set you down at the old dock."/>
     <Section start="95" end="170" speaker="Pilot" text="The road climbs to the lab. Signal when you have what we came for."/>
   </Track>
+  <Track type="Audio">
+    <Section start="0" end="180" sound="Content/Sounds/World/Airship_Engine_Loop.nmsound" volume="0.8"/>
+  </Track>
   <Track type="Event">
     <Key f="175" event="Story.Banner" arg0="FOOTHILLS APPROACH" arg1="3" fireOnSkip="true"/>
   </Track>

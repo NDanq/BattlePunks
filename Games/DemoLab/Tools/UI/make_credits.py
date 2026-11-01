@@ -39,6 +39,22 @@ def plain(text):
     return text.replace('**', '').replace('`', '').replace('*', '').strip()
 
 
+def entry(columns, cells):
+    """One credits line from a table row: title, author and licence when the
+    table has them (music, recordings), else the pack (Kenney's)."""
+    row = dict(zip([c.lower() for c in columns], cells))
+    if row.get('title'):
+        line = row['title']
+        if row.get('author'):
+            line += ', by ' + row['author']
+        if row.get('licence'):
+            line += ' (' + row['licence'] + ')'
+        return line
+    if row.get('pack'):
+        return f"{row['pack']}, by Kenney (CC0)"
+    return ''
+
+
 def read_credits():
     lines = []
     if not os.path.exists(SOURCE):
@@ -50,18 +66,22 @@ def read_credits():
         if line.startswith('#'):
             heading = plain(line.lstrip('#'))
             columns = []
+            if heading.lower().startswith('fully synthesised'):
+                lines += ['', 'SYNTHESISED IN THIS REPOSITORY',
+                          'Robots, weapons, machinery, doors, alarms, the beacon, the lab and reactor ambiences (Tools/Audio)']
             continue
-        if not line.startswith('|'):
+        if not line.startswith('|') or (heading and 'checksum' in heading.lower()):
             continue
         cells = [plain(c) for c in line.strip().strip('|').split('|')]
         if all(set(c) <= set('-: ') for c in cells):
             continue
         if not columns:
             columns = cells
-            if heading and heading.lower() not in ('demo lab credits', 'credits'):
-                lines += ['', heading.upper()]
+            lines += ['', (heading or 'Credits').upper()]
             continue
-        lines.append('   '.join(c for c in cells if c))
+        text = entry(columns, cells)
+        if text and text not in lines:
+            lines.append(text)
     return lines
 
 

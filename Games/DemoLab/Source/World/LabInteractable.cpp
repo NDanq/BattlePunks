@@ -7,6 +7,7 @@
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/World.h"
+#include "Public/NimbleEngine/AudioFacade.h"
 #include "Public/NimbleEngine/Avatar.h"
 #include "Public/NimbleEngine/CharacterMover.h"
 #include "Public/NimbleEngine/NimbleEngine.h"
@@ -94,6 +95,7 @@ GAMECORE_DEFINE_COMPONENT_SERIALIZER(LabInteractableComponent, LabVersion::GetCu
     Ar.Flag("Once", C.bOnce);
     Ar.Flag("HideWhenUsed", C.bHideWhenUsed);
     Ar.Field("HoldSeconds", C.HoldSeconds);
+    Ar.Field("Sound", C.Sound);
     Ar.Flag("Used", C.bUsed);
     Ar.Flag("On", C.bOn);
 }
@@ -120,6 +122,7 @@ GAMECORE_DEFINE_COMPONENT_PROPERTIES(LabInteractableComponent) {
     Props.Flag("Once", &LabInteractableComponent::bOnce);
     Props.Flag("HideWhenUsed", &LabInteractableComponent::bHideWhenUsed);
     Props.Field("HoldSeconds", &LabInteractableComponent::HoldSeconds);
+    Props.Field("Sound", &LabInteractableComponent::Sound, PF_AssetSound);
     Props.Category("State");
     Props.Flag("Used", &LabInteractableComponent::bUsed);
     Props.Flag("On", &LabInteractableComponent::bOn);
@@ -133,6 +136,7 @@ GAMECORE_DEFINE_COMPONENT_SERIALIZER(LabGateComponent, LabVersion::GetCurrentVer
     Ar.Field("OpenHeight", C.OpenHeight);
     Ar.Field("Speed", C.Speed);
     Ar.Flag("Invert", C.bInvert);
+    Ar.Field("Sound", C.Sound);
     Ar.Flag("Open", C.bOpen);
 }
 
@@ -149,6 +153,7 @@ GAMECORE_DEFINE_COMPONENT_PROPERTIES(LabGateComponent) {
     Props.Field("OpenHeight", &LabGateComponent::OpenHeight);
     Props.Field("Speed", &LabGateComponent::Speed);
     Props.Flag("Invert", &LabGateComponent::bInvert);
+    Props.Field("Sound", &LabGateComponent::Sound, PF_AssetSound);
     Props.Flag("Open", &LabGateComponent::bOpen);
 }
 #endif
@@ -284,6 +289,7 @@ void LabWorld::Interact(World& InWorld, const EntityID InUser, const EntityID In
     if(Data.bToggle) { Thing->bOn = Thing->bOn ? 0 : 1; }
     const bool bState = Data.bToggle ? (Thing->bOn != 0) : true;
 
+    if(Data.Sound[0]) { PlaySoundAt(InWorld, Data.Sound, InWorld.GetEntity(InTarget).GetWorldPose().Position); }
     if(Data.WeaponID) { LabCombat::GiveWeapon(InWorld, InUser, Data.WeaponID, true); }
     if(Data.Ammo > 0) { LabCombat::GiveAmmo(InWorld, InUser, 0, Data.Ammo); }
 
@@ -352,10 +358,15 @@ void LabWorld::TickInteractInput(World& InWorld, const float InSeconds)
 void LabWorld::OnSignal(World& InWorld, const char* InChannel, const bool bInValue)
 {
     if(!HasAuthority() || !InChannel) { return; }
-    InWorld.Each<LabGateComponent>([&](Entity, LabGateComponent& InGate)
+    std::vector<std::pair<std::string, Vector3>> Sounds;
+    InWorld.Each<LabGateComponent>([&](Entity InEntity, LabGateComponent& InGate)
     {
-        if(InGate.OpenOn[0] && std::strcmp(InGate.OpenOn, InChannel) == 0) { InGate.bOpen = (bInValue != (InGate.bInvert != 0)) ? 1 : 0; }
+        if(!InGate.OpenOn[0] || std::strcmp(InGate.OpenOn, InChannel) != 0) { return; }
+        const uint8_t Open = (bInValue != (InGate.bInvert != 0)) ? 1 : 0;
+        if(Open != InGate.bOpen && InGate.Sound[0]) { Sounds.emplace_back(InGate.Sound, InEntity.GetWorldPose().Position); }
+        InGate.bOpen = Open;
     });
+    for(const auto& Sound : Sounds) { PlaySoundAt(InWorld, Sound.first.c_str(), Sound.second); }
 }
 
 void LabWorld::TickTriggers(World& InWorld, float)

@@ -42,6 +42,7 @@ struct LabInteractableComponent {
     uint8_t bOnce = 1;
     uint8_t bHideWhenUsed = 0;
     float   HoldSeconds = 0.f;       // > 0: Interact must be held this long (a crank)
+    char    Sound[96] = "";          // played where it stands when used (Content/Sounds/...)
 
     // This run: how far a hold has got, seconds.
     float   HoldProgress = 0.f;
@@ -57,6 +58,7 @@ struct LabGateComponent {
     float   OpenHeight = 320.f;      // how far it rises
     float   Speed = 220.f;           // units per second
     uint8_t bInvert = 0;             // open while OpenOn is false: a shutter that slams on a signal
+    char    Sound[96] = "";          // played where it stands as it opens or shuts
     uint8_t bOpen = 0;               // replicated
 
     // This run, every process.

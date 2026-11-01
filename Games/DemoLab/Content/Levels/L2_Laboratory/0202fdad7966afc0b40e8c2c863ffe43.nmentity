@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="0202fdad7966afc0b40e8c2c863ffe43" Name="Calm_Music_Explore">
+  <Component Type="Audio Source" Version="2">
+    <Sound Value="Content/Music/Music_Explore.nmsound" />
+    <Volume Value="0.5" />
+    <Pitch Value="1" />
+    <AutoPlay Value="false" />
+    <Override Value="false" />
+    <Loop Value="false" />
+    <Spatial Value="false" />
+    <Bus Value="0" />
+    <MinDistance Value="300" />
+    <MaxDistance Value="5000" />
+    <Rolloff Value="1" />
+    <DopplerFactor Value="0" />
+    <ForceBus Value="0" />
+    <ForceSpatial Value="1" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L2.Powered" />
+    <ShowWhenOn Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

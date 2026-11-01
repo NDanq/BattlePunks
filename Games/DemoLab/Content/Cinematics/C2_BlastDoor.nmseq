@@ -66,6 +66,9 @@
   <Track type="Subtitle">
     <Section start="15" end="120" speaker="Pilot" text="Steam pressure is up. That door has not opened in years."/>
   </Track>
+  <Track type="Audio">
+    <Section start="30" end="100" sound="Content/Sounds/World/Steam_Vent_Burst.nmsound" volume="1.0"/>
+  </Track>
   <Track type="Event">
     <Key f="60" event="Lab.Signal" arg0="L1.BlastDoor" arg1="true" fireOnSkip="true"/>
     <Key f="149" event="Lab.Signal" arg0="L1.Done" arg1="true" fireOnSkip="true"/>

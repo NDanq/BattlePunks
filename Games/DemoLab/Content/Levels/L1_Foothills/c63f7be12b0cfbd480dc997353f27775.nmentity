@@ -6,6 +6,7 @@
     <Speed Value="240" />
     <Invert Value="false" />
     <Open Value="false" />
+    <Sound Value="Content/Sounds/World/Lift_Start.nmsound" />
   </Component>
   <Component Type="Render" Version="7">
     <Visible Value="true" />

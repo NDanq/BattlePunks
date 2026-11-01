@@ -63,6 +63,9 @@
   <Track type="Subtitle">
     <Section start="10" end="90" speaker="Pilot" text="Power is back. Look at that place light up."/>
   </Track>
+  <Track type="Audio">
+    <Section start="20" end="180" sound="Content/Sounds/World/Power_Up_Sweep.nmsound" volume="1.0"/>
+  </Track>
   <Track type="Event">
     <Key f="40" event="Lab.Signal" arg0="L2.Power.Foyer" arg1="true" fireOnSkip="true"/>
     <Key f="90" event="Lab.Signal" arg0="L2.Power.Atrium" arg1="true" fireOnSkip="true"/>

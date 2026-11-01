@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="f51bb7ce075f7a55cb0428fdff2b3346" Name="Music_Explore">
+  <Component Type="Audio Source" Version="2">
+    <Sound Value="Content/Music/Music_Explore.nmsound" />
+    <Volume Value="0.5" />
+    <Pitch Value="1" />
+    <AutoPlay Value="true" />
+    <Override Value="false" />
+    <Loop Value="false" />
+    <Spatial Value="false" />
+    <Bus Value="0" />
+    <MinDistance Value="300" />
+    <MaxDistance Value="5000" />
+    <Rolloff Value="1" />
+    <DopplerFactor Value="0" />
+    <ForceBus Value="0" />
+    <ForceSpatial Value="1" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

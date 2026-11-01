@@ -4,9 +4,9 @@
 #include <cstdint>
 
 /* Physics layers (bits). Level geometry is LAYER_WORLD; ragdoll hit boxes sit
- * on LAYER_BODIES, out of the Character Mover's mask: the mover's rays do not
- * skip their own avatar's bodies, and ragdolls are not the same on every
- * process (CharacterMoverGuide.md, "Mask"). Shots see both. */
+ * on LAYER_BODIES, so the game's line-of-sight rays (the bots' and the
+ * AutoPlay driver's, WORLD_MASK) see walls but not the bodies they look at.
+ * Shots see both. (The Character Mover ignores its own bodies by itself.) */
 #define LAB_LAYER_WORLD  (1)
 #define LAB_LAYER_BODIES (2)
 #define LAB_WORLD_MASK   (LAB_LAYER_WORLD)

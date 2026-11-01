@@ -4,6 +4,7 @@
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
+#include "Public/NimbleEngine/AudioFacade.h"
 #include "Public/NimbleEngine/Avatar.h"
 #include "Public/NimbleEngine/CharacterMover.h"
 #include "Public/NimbleEngine/GameState.h"
@@ -118,12 +119,11 @@ public:
         if(!LabGameModeBase::OnLoad(InSession)) { return false; }
         LevelName = InSession.GetLevel() && InSession.GetLevel()->GetName() ? InSession.GetLevel()->GetName() : "";
 
-        /* Started here without travelling (a test's -Game.StartLevel, the
-         * editor's Play): this world's state, no entry. */
-        if(LabTravel::Current().World != LevelName) { LabTravel::ResetFor(LevelName.c_str()); }
+        /* The travel state the level came in with (Flow/LabTravel.h); the
+         * engine has already placed the avatar's entry. */
+        LabTravel::Arrive(InSession, LevelName.c_str());
         bAlarm = LabTravel::GetFlag("Alarm");
         const int Dropped = LabLogic::ApplyStateGroups(InSession.GetWorld(), bAlarm);
-        LabTravel::ApplyEntry(InSession.GetWorld());
         CORE_LOG("[DemoLab] " + LevelName + (bAlarm ? " (Alarm)" : "") + ": " + std::to_string(Dropped) + " state-group entities dropped")
 
         Subscribe<&LabStoryMode::OnObjectiveSet>("Objective.Set");
@@ -157,7 +157,7 @@ public:
         if(HasSession() && !IsDedicatedServer())
         {
             UI::UISystem& UI = GetSession().GetUI();
-            for(const char* Doc : { LabUI::PAUSE_MENU, LabUI::SETTINGS, LabUI::CREDITS, LabTravel::LOADING_DOCUMENT })
+            for(const char* Doc : { LabUI::PAUSE_MENU, LabUI::SETTINGS, LabUI::CREDITS })
             {
                 UI.Close(std::string(Doc));
             }
@@ -231,7 +231,6 @@ public:
         }
         if(!IsDedicatedServer())
         {
-            LabTravel::TickLoadingCard(GetSession(), Dt);
             LabUI::UpdateTechOverlay(GetSession(), LevelName, bAlarm);
             LabUI::ApplySubtitleSetting(GetSession());
             UpdateLocalInput();
@@ -307,6 +306,7 @@ public:
         if(!Victim.GetComponent<AvatarHarnessComponent>() || Victim.GetComponent<LabBotComponent>())
         {
             CORE_LOG(std::string("[DemoLab] downed ") + LabName(GetWorld(), InVictim) + " with weapon " + std::to_string(int(InWeaponID)))
+            PlaySoundAt(GetWorld(), "Content/Sounds/Robots/Robot_Death.nmsound", Victim.GetWorldPose().Position);
             return;
         }
         Fallen = InVictim;
@@ -382,6 +382,7 @@ private:
     void TickRegen(const float InSeconds)
     {
         SinceHurt += InSeconds;
+        HurtSoundClock = std::max(0.f, HurtSoundClock - InSeconds);
         if(!HasAuthority() || SinceHurt < GLabRegenDelay.GetFloat() || IsSequencePlaying()) { return; }
         const EntityID Local = GetLocalAvatar(GetWorld(), 0);
         const LabHealthComponent* Health = Local.IsSet() ? GetWorld().GetEntity(Local).GetComponent<LabHealthComponent>() : nullptr;
@@ -396,7 +397,17 @@ private:
     void OnDamaged(const EventArgs& InArgs)
     {
         if(InArgs.Count < 1 || InArgs.Args[0].Type != EventArg::ET_Entity) { return; }
-        if(EntityID::Unpack(InArgs.Args[0].Entity) == GetLocalAvatar(GetWorld(), 0)) { SinceHurt = 0.f; }
+        const EntityID Victim = EntityID::Unpack(InArgs.Args[0].Entity);
+        if(Victim == GetLocalAvatar(GetWorld(), 0)) { SinceHurt = 0.f; return; }
+        /* A robot hurt: its squeal (Brute or Watchman), at most every half second. */
+        const Entity Robot = GetWorld().GetEntity(Victim);
+        const LabBotComponent* Bot = Robot.IsAlive() ? Robot.GetComponent<LabBotComponent>() : nullptr;
+        const LabHealthComponent* Health = Robot.IsAlive() ? Robot.GetComponent<LabHealthComponent>() : nullptr;
+        if(!Bot || !Health || Health->bDead || HurtSoundClock > 0.f) { return; }
+        HurtSoundClock = 0.5f;
+        PlaySoundAt(GetWorld(), Bot->Archetype == LabBots::BA_Brute ? "Content/Sounds/Robots/Brute_Hurt.nmsound"
+                                                                     : "Content/Sounds/Robots/Watchman_Hurt.nmsound",
+                    Robot.GetWorldPose().Position);
     }
 
     void TickTravel(const float InSeconds)
@@ -543,6 +554,7 @@ private:
 
     float         QuitIn = 3.f;
     float         SinceHurt = 100.f;
+    float         HurtSoundClock = 0.f;
 };
 
 NIMBLE_REGISTER_GAME_MODE(LabStoryMode, "LabStory")

@@ -13,8 +13,9 @@ namespace GameCore { class World; }
  * wired by signal name (LabSignals.h) like those:
  *
  *   LabSignalToggle  shows or hides the entity (its Render, and any light on
- *                    it) by a signal: the lights C3 turns on room by room,
- *                    the reactor's red when C5 trips the alarm.
+ *                    it) by a signal, and plays or stops its Audio Source:
+ *                    the lights C3 turns on room by room, the reactor's red
+ *                    and the klaxon and combat music when C5 trips the alarm.
  *   LabTimer         counts Seconds from StartOn, then emits DoneChannel; the
  *                    HUD shows "Label  0:42" while it runs (beacon charge,
  *                    the atrium hold).

@@ -65,4 +65,7 @@
   <Track type="Subtitle">
     <Section start="10" end="120" speaker="Pilot" text="Going down. The core is under the turbine hall."/>
   </Track>
+  <Track type="Audio">
+    <Section start="0" end="150" sound="Content/Sounds/World/Lift_Run_Loop.nmsound" volume="1.0"/>
+  </Track>
 </Sequence>

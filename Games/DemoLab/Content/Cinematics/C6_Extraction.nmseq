@@ -66,6 +66,10 @@
     <Section start="10" end="90" speaker="Pilot" text="Line is down. Clip on, we are leaving!"/>
     <Section start="100" end="170" speaker="Pilot" text="Intel aboard. Taking us home over the island."/>
   </Track>
+  <Track type="Audio">
+    <Section start="0" end="180" sound="Content/Sounds/World/Airship_Engine_Loop.nmsound" volume="1.0"/>
+    <Section start="60" end="180" sound="Content/Music/Music_Extraction.nmsound" volume="1.0"/>
+  </Track>
   <Track type="Event">
     <Key f="179" event="Lab.Signal" arg0="Game.Complete" arg1="true" fireOnSkip="true"/>
   </Track>

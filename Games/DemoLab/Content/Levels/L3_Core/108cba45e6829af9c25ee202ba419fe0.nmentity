@@ -6,6 +6,7 @@
     <Speed Value="240" />
     <Invert Value="true" />
     <Open Value="true" />
+    <Sound Value="Content/Sounds/World/Shutter_Slam.nmsound" />
   </Component>
   <Component Type="Render" Version="7">
     <Visible Value="true" />

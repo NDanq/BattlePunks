@@ -5,6 +5,7 @@
 #include "Public/GameCore/DetailMode.h"
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/Scalability.h"
+#include "Public/NimbleEngine/AudioFacade.h"
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/RenderCore/Renderer.h"
 #include "Public/RenderCore/RenderTypes.h"
@@ -96,6 +97,14 @@ namespace
     }
 
     GameSession* SessionOf(const UI::UIActionContext& InContext) { return static_cast<GameSession*>(InContext.HostData); }
+
+    /* A menu's click (the UI bus): Confirm for what starts play, Back for what closes. */
+    void Click(GameSession& InSession, const char* InSound)
+    {
+        if(InSession.HasWorld()) { PlaySound2D(InSession.GetWorld(), InSound); }
+    }
+    constexpr const char* SND_CONFIRM = "Content/Sounds/UI/UI_Confirm.nmsound";
+    constexpr const char* SND_BACK    = "Content/Sounds/UI/UI_Back.nmsound";
 
     int CurrentResolution()
     {
@@ -234,22 +243,26 @@ UI_DEFINE_ACTIONS(Lab)
 {
     Actions.Add("Continue", [](const UI::UIActionContext& InContext)
     {
-        if(GameSession* Session = SessionOf(InContext)) { LabFlow::Continue(*Session); }
+        if(GameSession* Session = SessionOf(InContext)) { Click(*Session, SND_CONFIRM); LabFlow::Continue(*Session); }
     }, "Loads the last checkpoint");
 
     Actions.Add("NewGame", [](const UI::UIActionContext& InContext)
     {
-        if(GameSession* Session = SessionOf(InContext)) { LabFlow::NewGame(*Session); }
+        if(GameSession* Session = SessionOf(InContext)) { Click(*Session, SND_CONFIRM); LabFlow::NewGame(*Session); }
     }, "Starts the story at Level 1");
 
     Actions.Add("Chapter", [](const UI::UIActionContext& InContext)
     {
-        if(GameSession* Session = SessionOf(InContext)) { LabFlow::StartChapter(*Session, int(NumberArg(InContext, 0, 0.0))); }
+        if(GameSession* Session = SessionOf(InContext))
+        {
+            Click(*Session, SND_CONFIRM);
+            LabFlow::StartChapter(*Session, int(NumberArg(InContext, 0, 0.0)));
+        }
     }, "Starts a chapter (0..3) of the flow table");
 
     Actions.Add("Resume", [](const UI::UIActionContext& InContext)
     {
-        if(GameSession* Session = SessionOf(InContext)) { LabUI::ClosePauseMenu(*Session); }
+        if(GameSession* Session = SessionOf(InContext)) { Click(*Session, SND_BACK); LabUI::ClosePauseMenu(*Session); }
     }, "Closes the pause menu and resumes");
 
     Actions.Add("RestartCheckpoint", [](const UI::UIActionContext& InContext)

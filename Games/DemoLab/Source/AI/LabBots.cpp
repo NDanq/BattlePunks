@@ -8,6 +8,7 @@
 #include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/World.h"
 #include "Public/NimbleEngine/AIFacade.h"
+#include "Public/NimbleEngine/AudioFacade.h"
 #include "Public/NimbleEngine/Avatar.h"
 #include "Public/NimbleEngine/CharacterMover.h"
 #include "Public/NimbleEngine/Input.h"
@@ -164,10 +165,11 @@ EntityID LabBots::SpawnBot(World& InWorld, const Spawn& InSpawn)
     }
     LabApplyCharacter(InWorld, Avatar, true);
 
-    /* The look: red CRT eyes (the SteamDummy material's EyeColor, slot 0), and
-     * the Brute scaled up about its feet. */
+    /* The look: its livery in material slot 0, red CRT eyes (the material's
+     * EyeColor), and the Brute scaled up about its feet. */
     if(RenderCore::RenderComponent* Render = InWorld.GetEntity(Avatar).GetComponent<RenderCore::RenderComponent>())
     {
+        Render->SetMaterial(0, InSpawn.Archetype == BA_Brute ? LAB_BRUTE_MATERIAL : LAB_WATCHMAN_MATERIAL);
         Render->SetMaterialParameter(0, "EyeColor", 1.0f, 0.06f, 0.03f, 0.0f);
     }
     if(InSpawn.Archetype == BA_Brute)
@@ -293,7 +295,18 @@ void LabBots::Drive(World& InWorld, const EntityID InAvatar, InputSnapshot& InOu
     const int32_t Mag = Inventory && Inventory->Equipped < LabWeapons::SLOTS ? Inventory->MagAt(Inventory->Equipped) : 0;
 
     /* A new target: a beat before it reacts. */
-    if(Target != Bot->LastTarget) { Bot->LastTarget = Target; Bot->Reaction = Bot->ReactionSeconds; }
+    if(Target != Bot->LastTarget)
+    {
+        Bot->LastTarget = Target;
+        Bot->Reaction = Bot->ReactionSeconds;
+        /* It has seen someone: its alert call. */
+        if(Target.IsSet() && HasAuthority())
+        {
+            PlaySoundAt(InWorld, Bot->Archetype == LabBots::BA_Brute ? "Content/Sounds/Robots/Brute_Alert.nmsound"
+                                                                     : "Content/Sounds/Robots/Watchman_Alert.nmsound", Feet);
+            Bot = InWorld.GetEntity(InAvatar).GetComponent<LabBotComponent>();
+        }
+    }
     if(bSees) { Bot->Reaction = std::max(0.f, Bot->Reaction - Dt); }
     else { Bot->Reaction = Bot->ReactionSeconds; }
     const bool bEngage = bSees && Bot->Reaction <= 0.f;

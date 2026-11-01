@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="efecf81d7bf7b5201f6db794d7d47417" Name="C5_Theft">
-  <Component Type="Sequence Player" Version="1">
+  <Component Type="Sequence Player" Version="2">
     <Sequence Value="Content/Cinematics/C5_Theft.nmseq" />
     <PlayRate Value="1" />
     <AutoPlay Value="false" />
@@ -9,6 +9,11 @@
     <DestroyWhenFinished Value="false" />
     <Cinematic Value="true" />
     <Skippable Value="true" />
+    <BlendIn Value="0" />
+    <BlendOut Value="1.5" />
+    <BlendEase Value="0" />
+    <ReleaseControl Value="1" />
+    <ReleaseBeforeEnd Value="0" />
   </Component>
   <Component Type="Transform" Version="1">
       <Position X="0" Y="0" Z="0" />

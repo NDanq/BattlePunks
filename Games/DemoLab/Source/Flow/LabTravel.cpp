@@ -5,6 +5,7 @@
 #include "Public/GameCore/World.h"
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/Level.h"
+#include "Public/NimbleEngine/LevelTravel.h"
 #include "Public/NimbleEngine/PlayerStart.h"
 #include "Public/NimbleEngine/SaveGame.h"
 #include "Public/UI/UISystem.h"
@@ -18,7 +19,6 @@ using namespace NimbleEngine;
 namespace
 {
     LabTravel::State GState;
-    float            GCardSeconds = 0.f;
 
     /* Fields of a saved state, one per line: World, Entry, Flags. */
     std::string Field(const std::string& InText, const size_t InIndex)
@@ -38,8 +38,7 @@ namespace
 bool LabTravel::Travel(GameSession& InSession, const char* InWorld, const char* InEntry, const char* InFlags,
                        const char* InLoadingTitle)
 {
-    ILevel* Level = InWorld ? FindLevelByName(InWorld) : nullptr;
-    if(!Level)
+    if(!InWorld || !FindLevelByName(InWorld))
     {
         CORE_LOG_ERROR(std::string("[DemoLab] travel: no level '") + (InWorld ? InWorld : "") + "' ([World_*] in DefaultEngine.ini)")
         return false;
@@ -48,12 +47,42 @@ bool LabTravel::Travel(GameSession& InSession, const char* InWorld, const char* 
     GState.Entry        = InEntry ? InEntry : "";
     GState.Flags        = InFlags ? InFlags : "";
     GState.LoadingTitle = InLoadingTitle ? InLoadingTitle : "";
-    GState.bCardPending = !GState.LoadingTitle.empty();
     CORE_LOG("[DemoLab] travel to " + GState.World + (GState.Entry.empty() ? std::string() : " at " + GState.Entry)
              + (GState.Flags.empty() ? std::string() : " (" + GState.Flags + ")"))
+
+    /* The engine's level travel: the entry places the avatar, the values are
+     * the new level's GetTravel(), and the transition shows the loading card
+     * ([LevelTransition] in DefaultGame.ini, Content/UI/Loading.nmui). */
+    LevelTravel Travel;
+    Travel.Entry = GState.Entry;
+    Travel.SetFromText(GState.Flags.c_str());
+    Travel.Title = GState.LoadingTitle;
+    Travel.Tip   = TipFor(GState.World);
+    Travel.Transition = GState.LoadingTitle.empty() ? TT_Default : TT_Fade;
     InSession.SetPaused(false);
-    InSession.RequestLevel(*Level);
-    return true;
+    return InSession.OpenLevel(InWorld, Travel);
+}
+
+void LabTravel::Arrive(GameSession& InSession, const char* InWorld)
+{
+    const LevelTravel& Came = InSession.GetTravel();
+    if(!Came.Previous.empty() || !Came.Entry.empty() || !Came.Values.empty())
+    {
+        /* Came by travel (ours, or Lua's Game.OpenLevel): what it carried. */
+        GState.World = InWorld ? InWorld : "";
+        GState.Entry = Came.Entry;
+        GState.Flags = Came.ToText();
+        return;
+    }
+    if(GState.World != (InWorld ? InWorld : "")) { ResetFor(InWorld); }
+}
+
+const char* LabTravel::TipFor(const std::string& InWorld)
+{
+    if(InWorld == "L1_Foothills")  { return "Hold E on a crank to turn it. F1 shows the engine features on screen."; }
+    if(InWorld == "L2_Laboratory") { return "The breaker is in the foyer. Watch the light come back room by room."; }
+    if(InWorld == "L3_Core")       { return "The vault is at the bottom of the ring. Checkpoints save as you go."; }
+    return "";
 }
 
 const LabTravel::State& LabTravel::Current() { return GState; }
@@ -61,7 +90,9 @@ const LabTravel::State& LabTravel::Current() { return GState; }
 std::string LabTravel::GetValue(const char* InKey)
 {
     if(!InKey) { return std::string(); }
-    const std::string Flags = "," + GState.Flags + ",";
+    std::string Flags = "," + GState.Flags + ",";
+    for(char& C : Flags) { if(C == ';') { C = ','; } }   // the engine's ToText separates with ';'
+    for(size_t At = Flags.find(" "); At != std::string::npos; At = Flags.find(" ")) { Flags.erase(At, 1); }
     const std::string Key = "," + std::string(InKey) + "=";
     const size_t At = Flags.find(Key);
     if(At == std::string::npos) { return std::string(); }
@@ -86,7 +117,6 @@ void LabTravel::Restore(const std::string& InSaved)
     GState.Entry = Field(InSaved, 1);
     GState.Flags = Field(InSaved, 2);
     GState.LoadingTitle.clear();
-    GState.bCardPending = false;
 }
 
 void LabTravel::ResetFor(const char* InWorld)
@@ -95,35 +125,3 @@ void LabTravel::ResetFor(const char* InWorld)
     GState.World = InWorld ? InWorld : "";
 }
 
-bool LabTravel::ApplyEntry(World& InWorld)
-{
-    if(GState.Entry.empty()) { return false; }
-    const EntityID Entry = InWorld.FindEntityByName(GState.Entry.c_str());
-    if(!Entry.IsSet() || !InWorld.GetEntity(Entry).GetComponent<PlayerStartComponent>())
-    {
-        CORE_LOG_WARN("[DemoLab] travel: no Player Start named '" + GState.Entry + "'; using the level's first")
-        return false;
-    }
-    InWorld.Each<PlayerStartComponent>([&](Entity InEntity, PlayerStartComponent& InStart)
-    {
-        InStart.bEnabled = InEntity.GetID() == Entry ? 1 : 0;
-    });
-    return true;
-}
-
-void LabTravel::TickLoadingCard(GameSession& InSession, const float InSeconds)
-{
-    UI::UISystem& UI = InSession.GetUI();
-    if(GState.bCardPending)
-    {
-        GState.bCardPending = false;
-        GCardSeconds = 2.0f;
-        UI.SetValue("Loading.Title", UI::UIValue::String(GState.LoadingTitle));
-        if(!UI.IsOpen(LOADING_DOCUMENT)) { UI.Open(LOADING_DOCUMENT); }
-        return;
-    }
-    if(GCardSeconds <= 0.f) { return; }
-    GCardSeconds -= InSeconds;
-    UI.SetValue("Loading.Opacity", UI::UIValue::Number(GCardSeconds > 1.f ? 1.0 : double(GCardSeconds > 0.f ? GCardSeconds : 0.f)));
-    if(GCardSeconds <= 0.f) { UI.Close(std::string(LOADING_DOCUMENT)); }
-}

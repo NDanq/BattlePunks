@@ -56,11 +56,11 @@ namespace
     const char* const FX_MUZZLE = "Content/Particles/MuzzleFlash.nmparticle";
     const char* const FX_DUST   = "Content/Particles/Dust.nmparticle";
     const char* const FX_SPARKS = "Content/Particles/Sparks.nmparticle";
-    const char* const SND_SHOT  = "Content/Sounds/Gunshot.nmsound";
-    const char* const SND_HIT   = "Content/Sounds/SteelHit.nmsound";
-    const char* const SND_DRY   = "Content/Sounds/DryFire.nmsound";
-    const char* const SND_RELOAD = "Content/Sounds/Reload.nmsound";
-    const char* const SND_SWING = "Content/Sounds/Impact.nmsound";
+    const char* const SND_SHOT  = "Content/Sounds/Weapons/Pistol_Shot.nmsound";
+    const char* const SND_HIT   = "Content/Sounds/Robots/Brute_Hit.nmsound";
+    const char* const SND_DRY   = "Content/Sounds/Weapons/Pistol_DryFire.nmsound";
+    const char* const SND_RELOAD = "Content/Sounds/Weapons/Pistol_Reload.nmsound";
+    const char* const SND_SWING = "Content/Sounds/Robots/Brute_Swing_01.nmsound";
 
     /* A punch when nothing is in hand, or the Melee action with a gun. */
     LabWeaponComponent MakeFists()
@@ -189,8 +189,23 @@ namespace
         const Vector3 Muzzle = MuzzleOf(InWorld, InShooter);
         SpawnFx(InWorld, FX_MUZZLE, Muzzle, 0.6f);
         PlayAt(InWorld, Weapon && Weapon->FireSound[0] ? Weapon->FireSound : SND_SHOT, Muzzle, InShooter);
-        if(InSurface == PS_World) { SpawnFx(InWorld, Weapon && Weapon->ImpactFx[0] ? Weapon->ImpactFx : FX_DUST, InImpact, 1.0f); }
-        else if(InSurface == PS_Lab) { SpawnFx(InWorld, FX_SPARKS, InImpact, 1.0f); }
+        /* The impact: grit off the walls, a hollow clank off a robot (variants in turn). */
+        static int Variant = 0;
+        Variant = (Variant + 1) % 3;
+        static const char* const STONE[] = { "Content/Sounds/Impacts/Impact_Stone_01.nmsound", "Content/Sounds/Impacts/Impact_Stone_02.nmsound",
+                                             "Content/Sounds/Impacts/Impact_Stone_03.nmsound" };
+        static const char* const ROBOT[] = { "Content/Sounds/Impacts/Impact_Robot_01.nmsound", "Content/Sounds/Impacts/Impact_Robot_02.nmsound",
+                                             "Content/Sounds/Impacts/Impact_Robot_03.nmsound" };
+        if(InSurface == PS_World)
+        {
+            SpawnFx(InWorld, Weapon && Weapon->ImpactFx[0] ? Weapon->ImpactFx : FX_DUST, InImpact, 1.0f);
+            PlayAt(InWorld, STONE[Variant], InImpact, EntityID());
+        }
+        else if(InSurface == PS_Lab)
+        {
+            SpawnFx(InWorld, FX_SPARKS, InImpact, 1.0f);
+            PlayAt(InWorld, ROBOT[Variant], InImpact, EntityID());
+        }
     }
 
     /* Whether InAvatar's anim state declares InParam. The TDD §5.7 contract

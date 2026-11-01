@@ -24,7 +24,7 @@
     <DrawBackground Value="true" />
   </Component>
   <Component Type="Time Of Day" Version="1">
-    <Hour Value="17.6" />
+    <Hour Value="17.5" />
     <DayLengthMinutes Value="20" />
     <Running Value="false" />
     <NorthYaw Value="35" />

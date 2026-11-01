@@ -166,7 +166,6 @@ static void BuildLabPlayer(PrefabBuilder& Builder)
 
     CharacterMoverComponent Mover;
     Mover.bFaceView = 0;   // faces where it walks, and the view while aiming
-    Mover.Mask = LAB_LAYER_WORLD;
     Root.Add(Mover);
 
     RenderCore::RenderComponent Render;

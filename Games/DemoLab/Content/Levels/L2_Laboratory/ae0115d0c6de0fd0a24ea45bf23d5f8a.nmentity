@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="ae0115d0c6de0fd0a24ea45bf23d5f8a" Name="Alarm_C6_Extraction">
-  <Component Type="Sequence Player" Version="1">
+  <Component Type="Sequence Player" Version="2">
     <Sequence Value="Content/Cinematics/C6_Extraction.nmseq" />
     <PlayRate Value="1" />
     <AutoPlay Value="false" />
@@ -9,6 +9,11 @@
     <DestroyWhenFinished Value="false" />
     <Cinematic Value="true" />
     <Skippable Value="true" />
+    <BlendIn Value="0" />
+    <BlendOut Value="0.0" />
+    <BlendEase Value="0" />
+    <ReleaseControl Value="0" />
+    <ReleaseBeforeEnd Value="0" />
   </Component>
   <Component Type="Transform" Version="1">
       <Position X="0" Y="0" Z="0" />

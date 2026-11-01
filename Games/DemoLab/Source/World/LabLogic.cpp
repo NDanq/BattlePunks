@@ -2,6 +2,7 @@
 
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/ComponentSerializer.h"
+#include "Public/GameCore/Components/AudioSourceComponent.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
 #include "Public/NimbleEngine/NimbleEngine.h"
@@ -180,6 +181,12 @@ void LabLogic::TickPresentation(World& InWorld)
         if(RenderCore::PointLightComponent* Light = E.GetComponent<RenderCore::PointLightComponent>()) { if(Light->bActive != Value) { Light->bActive = Value; } }
         if(RenderCore::SpotLightComponent* Light = E.GetComponent<RenderCore::SpotLightComponent>()) { if(Light->bActive != Value) { Light->bActive = Value; } }
         if(RenderCore::RectLightComponent* Light = E.GetComponent<RenderCore::RectLightComponent>()) { if(Light->bActive != Value) { Light->bActive = Value; } }
+        /* A sound (music, a klaxon): plays while shown, stops while hidden. */
+        if(AudioSourceComponent* Audio = E.GetComponent<AudioSourceComponent>())
+        {
+            if(Value && !Audio->IsPlaying() && !Audio->bPendingPlay) { Audio->Play(); }
+            else if(!Value && (Audio->IsPlaying() || Audio->bPendingPlay) && !Audio->bPendingStop) { Audio->Stop(); }
+        }
     }
 }
 

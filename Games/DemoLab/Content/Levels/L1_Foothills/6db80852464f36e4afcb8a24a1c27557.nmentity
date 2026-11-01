@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="6db80852464f36e4afcb8a24a1c27557" Name="C1_Arrival">
-  <Component Type="Sequence Player" Version="1">
+  <Component Type="Sequence Player" Version="2">
     <Sequence Value="Content/Cinematics/C1_Arrival.nmseq" />
     <PlayRate Value="1" />
     <AutoPlay Value="true" />
@@ -9,6 +9,11 @@
     <DestroyWhenFinished Value="false" />
     <Cinematic Value="true" />
     <Skippable Value="true" />
+    <BlendIn Value="0" />
+    <BlendOut Value="1.5" />
+    <BlendEase Value="0" />
+    <ReleaseControl Value="1" />
+    <ReleaseBeforeEnd Value="0" />
   </Component>
   <Component Type="Transform" Version="1">
       <Position X="0" Y="0" Z="0" />

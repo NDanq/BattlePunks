@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="c32c1a71f6176ea9ec37d329925d6b94" Name="Alarm_Music_Combat">
+  <Component Type="Audio Source" Version="2">
+    <Sound Value="Content/Music/Music_Combat.nmsound" />
+    <Volume Value="0.7" />
+    <Pitch Value="1" />
+    <AutoPlay Value="false" />
+    <Override Value="false" />
+    <Loop Value="false" />
+    <Spatial Value="false" />
+    <Bus Value="0" />
+    <MinDistance Value="300" />
+    <MaxDistance Value="5000" />
+    <Rolloff Value="1" />
+    <DopplerFactor Value="0" />
+    <ForceBus Value="0" />
+    <ForceSpatial Value="1" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L2A.HoldDone" />
+    <ShowWhenOn Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

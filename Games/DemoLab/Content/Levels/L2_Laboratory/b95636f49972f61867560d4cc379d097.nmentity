@@ -11,6 +11,7 @@
     <EnableOn Value="State.Alarm" />
     <Once Value="false" />
     <HideWhenUsed Value="false" />
+    <Sound Value="Content/Sounds/Weapons/Pistol_Reload.nmsound" />
   </Component>
   <Component Type="Render" Version="7">
     <Visible Value="true" />

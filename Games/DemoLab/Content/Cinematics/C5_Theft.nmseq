@@ -64,6 +64,10 @@
     <Section start="10" end="70" speaker="Pilot" text="You have it. Now get out of there."/>
     <Section start="80" end="170" speaker="Pilot" text="Alarm! There is a locker by the bridge. Arm yourself."/>
   </Track>
+  <Track type="Audio">
+    <Section start="60" end="140" sound="Content/Sounds/World/Shutter_Slam.nmsound" volume="1.0"/>
+    <Section start="66" end="140" sound="Content/Sounds/World/Steam_Vent_Burst.nmsound" volume="0.9"/>
+  </Track>
   <Track type="Event">
     <Key f="60" event="Lab.Signal" arg0="L3.Alarm" arg1="true" fireOnSkip="true"/>
     <Key f="179" event="Lab.Signal" arg0="Checkpoint.Theft" arg1="true" fireOnSkip="true"/>

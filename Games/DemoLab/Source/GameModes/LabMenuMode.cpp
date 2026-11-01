@@ -52,7 +52,6 @@ public:
     {
         if(IsDedicatedServer()) { return; }
         const float Dt = float(InFrame.DeltaSeconds);
-        LabTravel::TickLoadingCard(GetSession(), Dt);
         LabUI::UpdateTechOverlay(GetSession(), LabFlow::MENU_WORLD, false);
         if(LabIsAutoPlay())
         {

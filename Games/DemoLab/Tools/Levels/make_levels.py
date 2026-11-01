@@ -26,6 +26,8 @@ CINE = os.path.join(ROOT, 'Content', 'Cinematics')
 BOX = 'Engine/Content/Meshes/Box.nmmesh'
 CYL = 'Engine/Content/Meshes/Cylinder.nmmesh'
 SPH = 'Engine/Content/Meshes/Sphere.nmmesh'
+SND = 'Content/Sounds/'
+MUSIC = 'Content/Music/'
 T = L.WALL_THICKNESS
 
 
@@ -199,10 +201,10 @@ class Level:
                                   self.transform((p[0], p[1] + 5, p[2]), (0, p[3], 0))])
 
     def interactable(self, name, p, prompt, channel='', enable_on='', sequence='', weapon=0, ammo=0, once=True,
-                     hide=False, hold=0.0, toggle=False, radius=170, mesh=BOX, size=(30, 30, 30), handle=False):
+                     hide=False, hold=0.0, toggle=False, radius=170, mesh=BOX, size=(30, 30, 30), handle=False, sound=''):
         comps = [self.fields('LabInteractable', Prompt=prompt, Radius=radius, WeaponID=weapon, Ammo=ammo, Channel=channel,
                              Toggle=toggle, Sequence=sequence, EnableOn=enable_on, Once=once, HideWhenUsed=hide,
-                             HoldSeconds=hold),
+                             HoldSeconds=hold, Sound=sound),
                  self.transform(p[:3], (0, p[3], 0), (1, 1, 1) if handle else size)]
         if mesh and not handle:
             comps.insert(1, self.render(mesh))
@@ -216,12 +218,15 @@ class Level:
     def ammo_crate(self, name, p, enable_on):
         return self.entity(name, [
             self.fields('LabInteractable', Prompt='Grab ammunition', Radius=170, WeaponID=0, Ammo=24, Channel='', Toggle=False,
-                        Sequence='', EnableOn=enable_on, Once=False, HideWhenUsed=False),
+                        Sequence='', EnableOn=enable_on, Once=False, HideWhenUsed=False, Sound=SND + 'Weapons/Pistol_Reload.nmsound'),
             self.render(BOX), self.body(2), self.transform(p[:3], (0, p[3], 0), (90, 60, 60))], static=True)
 
-    def gate(self, name, centre, size, open_on, invert=False, yaw=0.0, height=None):
+    def gate(self, name, centre, size, open_on, invert=False, yaw=0.0, height=None, sound=None):
+        if sound is None:
+            sound = SND + 'World/Shutter_Slam.nmsound'
         return self.entity(name, [
-            self.fields('LabGate', OpenOn=open_on, OpenHeight=height or size[1] + 20, Speed=240, Invert=invert, Open=invert),
+            self.fields('LabGate', OpenOn=open_on, OpenHeight=height or size[1] + 20, Speed=240, Invert=invert, Open=invert,
+                        Sound=sound),
             self.render(BOX), self.body(1), self.transform(centre, (0, yaw, 0), size)])
 
     def trigger(self, name, p, extent, channel='', sequence='', enable_on='', checkpoint=False):
@@ -264,6 +269,25 @@ class Level:
             comps.insert(1, self.fields('LabSignalToggle', Channel=toggle, ShowWhenOn=show_when_on))
         return self.entity(name, comps)
 
+    def sound(self, name, path, pos=(0, 0, 0), autoplay=True, spatial=False, volume=1.0, toggle=None, show_when_on=True,
+              min_d=300, max_d=5000):
+        """An Audio Source: a 2D bed (ambience, music) or a 3D emitter; with
+        toggle, a LabSignalToggle plays and stops it by a signal."""
+        comps = [self.fields('Audio Source', version=2, Sound=path, Volume=volume, Pitch=1, AutoPlay=autoplay and not toggle,
+                             Override=False, Loop=False, Spatial=spatial, Bus=0, MinDistance=min_d, MaxDistance=max_d,
+                             Rolloff=1, DopplerFactor=0, ForceBus=0, ForceSpatial=2 if spatial else 1),
+                 self.transform(pos)]
+        if toggle:
+            comps.insert(1, self.fields('LabSignalToggle', Channel=toggle, ShowWhenOn=show_when_on))
+        return self.entity(name, comps)
+
+    def weather(self, mist, mist_height, wind, wetness):
+        return self.entity('Weather', [self.fields('Weather', Rain=0, RainMist=0.2, RainParticles=False, MistDensity=mist,
+                                                   MistHeight=mist_height, MistFalloff=600, Wetness=wetness,
+                                                   WetnessFollowsRain=False, WetSeconds=60, DrySeconds=240, WindYaw=60,
+                                                   WindStrength=wind),
+                                       self.transform((0, 0, 0))])
+
     def sun(self, hour, intensity=6, time_of_day=True):
         comps = [self.fields('Directional Light', version=3, Color=(255, 220, 180), Intensity=intensity, Active=True,
                              CastShadows=True, ShadowTechnique=2, ShadowBias=0.0012, ShadowNormalBias=2,
@@ -297,7 +321,7 @@ class Level:
 
     # --- cinematics ---------------------------------------------------------
     def cinematic(self, player, seq_name, shots, length, autoplay=False, subtitles=(), events=(), fade_in=True,
-                  fade_out=False, prefix=''):
+                  fade_out=False, prefix='', blend_out=0.0, audio=()):
         """A placeholder cutscene: two cameras, a cut between them, a fade,
         subtitles and Event keys. shots: [(frame, position, target)], the cut
         at the middle shot."""
@@ -308,8 +332,12 @@ class Level:
             self.entity(cam, [self.fields('Camera', ZNear=5, ZFar=60000, Active=False, Projection=1, FovY=50),
                               self.transform(group[0][1], look(group[0][1], group[0][2]))])
         self.entity(prefix + player, [
-            self.fields('Sequence Player', Sequence=f'Content/Cinematics/{seq_name}.nmseq', PlayRate=1, AutoPlay=autoplay,
-                        Loop=False, RestoreState=False, DestroyWhenFinished=False, Cinematic=True, Skippable=True),
+            # Hand Over: a cinematic that gives control back blends its last shot
+            # into the player's camera (BlendOut), releasing input as the blend starts.
+            self.fields('Sequence Player', version=2, Sequence=f'Content/Cinematics/{seq_name}.nmseq', PlayRate=1,
+                        AutoPlay=autoplay, Loop=False, RestoreState=False, DestroyWhenFinished=False, Cinematic=True,
+                        Skippable=True, BlendIn=0, BlendOut=blend_out, BlendEase=0,
+                        ReleaseControl=1 if blend_out > 0 else 0, ReleaseBeforeEnd=0),
             self.transform((0, 0, 0))])
         body = []
         for i, (cam, group) in enumerate(zip(cams, groups)):
@@ -324,6 +352,11 @@ class Level:
         if subtitles:
             body += ['  <Track type="Subtitle">'] + [f'    <Section start="{a}" end="{b}" speaker="{s}" text="{t}"/>'
                                                      for a, b, s, t in subtitles] + ['  </Track>']
+        if audio:
+            body.append('  <Track type="Audio">')
+            body += [f'    <Section start="{a}" end="{b}" sound="{MUSIC + snd[6:] if snd.startswith("MUSIC:") else SND + snd}" volume="{v}"/>'
+                     for a, b, snd, v in audio]
+            body.append('  </Track>')
         if events:
             body.append('  <Track type="Event">')
             for fr, ev, a0, a1 in events:
@@ -383,7 +416,8 @@ def make_menu():
         lv.box(name, centre, size)
     for i, x in enumerate((-1400, -700, 700, 1400)):
         lv.light(f'FacadeLamp_{i}', (x, 400, 2600), (255, 190, 120), 30, 900)
-    lv.sun(19.2)
+    lv.sun(17.5)
+    lv.sound('Music_Menu', MUSIC + 'Music_Menu.nmsound', volume=0.8)
     first = m['dolly'][0]
     lv.entity('MenuCamera', [lv.fields('Camera', ZNear=5, ZFar=60000, Active=True, Projection=1, FovY=50),
                              lv.transform(first[1], look(first[1], first[2]))])
@@ -447,12 +481,13 @@ def make_l1():
     lv.player_start('Entry_Dock', p['Entry_Dock'])
     # the gatehouse gate and its crank (held)
     gx, gy, gz, _ = p['Gate']
-    lv.gate('GatehouseGate', (gx, gy + 37 + 180, gz), (600, 360, 40), 'L1.GateOpen')
+    lv.gate('GatehouseGate', (gx, gy + 37 + 180, gz), (600, 360, 40), 'L1.GateOpen', sound=SND + 'World/Lift_Start.nmsound')
     lv.interactable('Crank_Gatehouse', p['Crank_Gatehouse'], 'Turn the crank', channel='L1.GateOpen', hold=2.5,
-                    handle=True)
+                    handle=True, sound=SND + 'World/Valve_Squeak_01.nmsound')
     lv.box('Crank_Post', (p['Crank_Gatehouse'][0], 300 + 45, p['Crank_Gatehouse'][2] + 25), (30, 90, 30))
     bx, by, bz, _ = p['BlastDoor']
-    lv.gate('BlastDoor', (bx, by + 250, bz), (600, 500, 60), 'L1.BlastDoor', height=520)
+    lv.gate('BlastDoor', (bx, by + 250, bz), (600, 500, 60), 'L1.BlastDoor', height=520,
+            sound=SND + 'World/BlastDoor_Open.nmsound')
     lv.trigger('Trigger_AtGate', p['Trigger_AtGate'], (500, 200, 300), channel='L1.AtGate')
     lv.trigger('Trigger_Overlook', p['Trigger_Overlook'], (400, 200, 300), channel='L1.Overlook')
     lv.trigger('Trigger_Plaza', p['Trigger_Plaza'], (1200, 200, 300), channel='L1.Plaza')
@@ -462,7 +497,12 @@ def make_l1():
                        ('L1.AtGate', 'Turn the gatehouse crank'),
                        ('L1.GateOpen', 'Climb the road to the plaza'),
                        ('L1.Plaza', 'Approach the blast door')])
-    lv.sun(17.6)
+    lv.sun(17.5)
+    lv.weather(mist=0.3, mist_height=-100, wind=1.5, wetness=0.15)   # sea mist low over the water, a damp coast
+    lv.sound('Amb_Coast', SND + 'Ambience/Amb_L1_Coast.nmsound', toggle='L1.AtGate', show_when_on=False)
+    lv.sound('Amb_Forest', SND + 'Ambience/Amb_L1_Forest.nmsound', toggle='L1.AtGate')
+    lv.sound('Music_Explore', MUSIC + 'Music_Explore.nmsound', volume=0.5)
+    lv.sound('Plaza_Gears', SND + 'World/Gears_Loop.nmsound', (bx, 900, bz - 200), spatial=True, min_d=200, max_d=2500)
     lv.nav_volume((3700, 600, 6200), (1400, 300, 900))
     lv.routes(d['routes'])
 
@@ -470,7 +510,7 @@ def make_l1():
                                               (90, (-3500, 700, -2600), (-2400, 0, -1500)),
                                               (91, (2500, 1400, 1000), (3700, 600, 6500)),
                                               (180, (-2000, 300, -2200), (-2600, 120, -1500))],
-                 180, autoplay=True,
+                 180, autoplay=True, blend_out=1.5, audio=[(0, 180, 'World/Airship_Engine_Loop.nmsound', 0.8)],
                  subtitles=[(15, 85, 'Pilot', 'There is the island. I will set you down at the old dock.'),
                             (95, 170, 'Pilot', 'The road climbs to the lab. Signal when you have what we came for.')],
                  events=[(175, 'Story.Banner', 'FOOTHILLS APPROACH', 3)])
@@ -478,7 +518,7 @@ def make_l1():
                                                   (75, (3300, 800, 6100), (3700, 800, 7000)),
                                                   (76, (4600, 700, 6300), (3700, 700, 7000)),
                                                   (150, (4100, 750, 6600), (3700, 800, 7000))],
-                 150, fade_out=True,
+                 150, fade_out=True, audio=[(30, 100, 'World/Steam_Vent_Burst.nmsound', 1.0)],
                  subtitles=[(15, 120, 'Pilot', 'Steam pressure is up. That door has not opened in years.')],
                  events=[(60, 'Lab.Signal', 'L1.BlastDoor', 'true'), (149, 'Lab.Signal', 'L1.Done', 'true')])
     lv.write()
@@ -523,18 +563,27 @@ def make_l2():
 
     # --- Calm: power, keycard, valves, the elevator ---------------------------
     lv.interactable('Calm_Breaker', p['Breaker'], 'Throw the breaker', channel='L2.Breaker', sequence='Calm_C3_Breaker',
-                    size=(20, 60, 40))
-    lv.gate('Calm_FoyerDoor', (0, 165, -1215), (300, 330, 30), 'L2.Powered')
-    lv.interactable('Calm_Keycard', p['Keycard'], 'Take the keycard', channel='L2.Keycard', hide=True)
+                    size=(20, 60, 40), sound=SND + 'World/Breaker_Throw.nmsound')
+    lv.gate('Calm_FoyerDoor', (0, 165, -1215), (300, 330, 30), 'L2.Powered', sound=SND + 'World/Lift_Stop.nmsound')
+    lv.interactable('Calm_Keycard', p['Keycard'], 'Take the keycard', channel='L2.Keycard', hide=True,
+                    sound=SND + 'UI/UI_Confirm.nmsound')
     lv.interactable('Calm_KeycardReader', p['KeycardReader'], 'Swipe the keycard', channel='L2.ArchiveOpen',
-                    enable_on='L2.Keycard')
-    lv.gate('Calm_KeycardDoor', (-2200, 165, 900), (240, 330, 40), 'L2.ArchiveOpen')
-    lv.interactable('Calm_Valve1', p['Valve1'], 'Open valve 1', channel='L2.Valve1', handle=True)
-    lv.interactable('Calm_Valve2', p['Valve2'], 'Open valve 2', channel='L2.Valve2', enable_on='L2.Valve1', handle=True)
+                    enable_on='L2.Keycard', sound=SND + 'World/Keycard_Accept.nmsound')
+    lv.gate('Calm_KeycardDoor', (-2200, 165, 900), (240, 330, 40), 'L2.ArchiveOpen', sound=SND + 'World/Lift_Stop.nmsound')
+    lv.interactable('Calm_Valve1', p['Valve1'], 'Open valve 1', channel='L2.Valve1', handle=True,
+                    sound=SND + 'World/Valve_Squeak_01.nmsound')
+    lv.interactable('Calm_Valve2', p['Valve2'], 'Open valve 2', channel='L2.Valve2', enable_on='L2.Valve1', handle=True,
+                    sound=SND + 'World/Valve_Squeak_02.nmsound')
     lv.interactable('Calm_Valve3', p['Valve3'], 'Open valve 3', channel='L2.ValvesDone', enable_on='L2.Valve2',
-                    handle=True)
+                    handle=True, sound=SND + 'World/Valve_Squeak_01.nmsound')
     lv.interactable('Calm_ElevatorPanel', p['ElevatorPanel'], 'Call the elevator', channel='L2.Elevator',
-                    enable_on='L2.ValvesDone', sequence='Calm_C4_Descent')
+                    enable_on='L2.ValvesDone', sequence='Calm_C4_Descent', sound=SND + 'World/Lift_Start.nmsound')
+    lv.sound('Calm_Amb', SND + 'Ambience/Amb_L2_Calm.nmsound')
+    lv.sound('Calm_Music_Explore', MUSIC + 'Music_Explore.nmsound', volume=0.5, toggle='L2.Powered')
+    lv.sound('Calm_PowerHum', SND + 'World/Power_Hum_Loop.nmsound', p['Breaker'][:3], spatial=True, min_d=100,
+             max_d=1500, toggle='L2.Powered')
+    lv.sound('Calm_Turbine', SND + 'World/Turbine_Loop.nmsound', (0, 300, 3150), spatial=True, min_d=300, max_d=4000,
+             toggle='L2.ValvesDone')
     lv.trigger('Calm_Trigger_Atrium', (0, 0, -500), (900, 200, 500), channel='L2.Atrium', enable_on='L2.Powered')
     lv.trigger('Calm_Trigger_Turbine', (-2200, 0, 3100), (500, 200, 300), channel='L2.TurbineHall')
     lv.travel('Calm_Travel_L3', 'L2.Elevator', 'L3_Core', 'Entry_Elevator', '', 'The Core')
@@ -557,7 +606,8 @@ def make_l2():
                                               (60, (-400, 260, -2000), (-850, 150, -1800)),
                                               (61, (0, 700, -1000), (0, 300, 600)),
                                               (180, (500, 800, 400), (-500, 200, -400))],
-                 180, fade_in=False, prefix='Calm_',
+                 180, fade_in=False, prefix='Calm_', blend_out=1.5,
+                 audio=[(20, 180, 'World/Power_Up_Sweep.nmsound', 1.0)],
                  subtitles=[(10, 90, 'Pilot', 'Power is back. Look at that place light up.')],
                  events=[(40, 'Lab.Signal', 'L2.Power.Foyer', 'true'), (90, 'Lab.Signal', 'L2.Power.Atrium', 'true'),
                          (120, 'Lab.Signal', 'L2.Power.Workshop', 'true'), (150, 'Lab.Signal', 'L2.Power.All', 'true'),
@@ -567,6 +617,7 @@ def make_l2():
                                               (76, (2300, 120, 2100), (1900, -800, 1800)),
                                               (150, (2200, -400, 2000), (1900, -2000, 1800))],
                  150, fade_in=False, fade_out=True, prefix='Calm_',
+                 audio=[(0, 150, 'World/Lift_Run_Loop.nmsound', 1.0)],
                  subtitles=[(10, 120, 'Pilot', 'Going down. The core is under the turbine hall.')])
 
     # --- Alarm: red light, shutters, W3, stragglers, the W4 hold, the roof ----
@@ -585,7 +636,15 @@ def make_l2():
     for name in ('AmmoCrate_Turbine', 'AmmoCrate_Archive', 'AmmoCrate_Atrium'):
         lv.ammo_crate(f'Alarm_{name}', p[name], 'State.Alarm')
     lv.interactable('Alarm_RoofHatch', p['RoofHatch'], 'Open the roof hatch', channel='L2A.Hatch',
-                    enable_on='L2A.HoldDone', sequence='Alarm_C6_Extraction', size=(160, 20, 160))
+                    enable_on='L2A.HoldDone', sequence='Alarm_C6_Extraction', size=(160, 20, 160),
+                    sound=SND + 'World/Steam_Vent_Burst.nmsound')
+    lv.sound('Alarm_Amb', SND + 'Ambience/Amb_L2_Alarm.nmsound')
+    lv.sound('Alarm_Music_Combat', MUSIC + 'Music_Combat.nmsound', volume=0.7, toggle='L2A.HoldDone', show_when_on=False)
+    lv.sound('Alarm_Turbine', SND + 'World/Turbine_Loop.nmsound', (0, 300, 3150), spatial=True, min_d=300, max_d=4000)
+    lv.sound('Alarm_Sprinklers', SND + 'World/Sprinklers_Loop.nmsound', (-2200, 400, 1000), spatial=True, min_d=400,
+             max_d=2500)
+    lv.sound('Alarm_Klaxon', SND + 'World/Alarm_Klaxon_Loop.nmsound', (0, 800, 0), spatial=True, min_d=500, max_d=6000,
+             volume=0.6)
     lv.objectives('Alarm_', [('', 'Alarm! Hold out in the turbine hall'),
                              ('L2A.W3Done', 'Fall back through the archive'),
                              ('L2A.Archive', 'Clear the stragglers'),
@@ -599,6 +658,7 @@ def make_l2():
                                                     (91, (-3000, 3000, -3000), (0, 1200, 0)),
                                                     (180, (-5000, 4000, -6000), (0, 1500, 0))],
                  180, fade_in=False, fade_out=True, prefix='Alarm_',
+                 audio=[(0, 180, 'World/Airship_Engine_Loop.nmsound', 1.0), (60, 180, 'MUSIC:Music_Extraction.nmsound', 1.0)],
                  subtitles=[(10, 90, 'Pilot', 'Line is down. Clip on, we are leaving!'),
                             (100, 170, 'Pilot', 'Intel aboard. Taking us home over the island.')],
                  events=[(179, 'Lab.Signal', 'Game.Complete', 'true')])
@@ -635,8 +695,15 @@ def make_l3():
     p = d['points']
     lv.player_start('Entry_Elevator', p['Entry_Elevator'])
     lv.ambient(0.2)
-    lv.interactable('Intel', p['Intel'], 'Take the intel', channel='L3.Intel', sequence='C5_Theft', hide=True)
-    lv.interactable('Locker', p['Locker'], 'Take the pipe pistol', channel='L3.Armed', enable_on='L3.Alarm', weapon=2)
+    lv.interactable('Intel', p['Intel'], 'Take the intel', channel='L3.Intel', sequence='C5_Theft', hide=True,
+                    sound=SND + 'UI/UI_Confirm.nmsound')
+    lv.interactable('Locker', p['Locker'], 'Take the pipe pistol', channel='L3.Armed', enable_on='L3.Alarm', weapon=2,
+                    sound=SND + 'Weapons/Pistol_Reload.nmsound')
+    lv.sound('Amb_Reactor', SND + 'Ambience/Amb_L3_Reactor.nmsound')
+    lv.sound('Music_Explore', MUSIC + 'Music_Explore.nmsound', volume=0.4, toggle='L3.Alarm', show_when_on=False)
+    lv.sound('Music_Combat', MUSIC + 'Music_Combat.nmsound', volume=0.7, toggle='L3.Alarm')
+    lv.sound('Klaxon', SND + 'World/Alarm_Klaxon_Loop.nmsound', (0, 650, 0), spatial=True, min_d=500, max_d=6000,
+             volume=0.6, toggle='L3.Alarm')
     lv.ammo_crate('AmmoCrate_Ring', p['AmmoCrate_Ring'], 'L3.Armed')
     lv.ammo_crate('AmmoCrate_Pump', p['AmmoCrate_Pump'], 'L3.Armed')
     # the elevator's door slams when the alarm goes; the tunnel opens after W1
@@ -647,11 +714,11 @@ def make_l3():
     lv.gate('FreightGate', (3400 - T, 165, -5400), (40, 330, 300), 'L3.BeaconFired')
     lv.trigger('Trigger_PumpHall', p['Trigger_PumpHall'], (300, 200, 200), channel='L3.PumpHall', checkpoint=True)
     lv.interactable('Beacon_Start', p['Beacon_Start'], 'Start charging the beacon', channel='L3.BeaconCharging',
-                    enable_on='L3.PumpHall')
+                    enable_on='L3.PumpHall', sound=SND + 'World/Beacon_Charge.nmsound')
     lv.interactable('Beacon_Fire', p['Beacon_Fire'], 'Fire the beacon', channel='L3.BeaconFired',
-                    enable_on='L3.BeaconReady')
+                    enable_on='L3.BeaconReady', sound=SND + 'World/Beacon_Fire.nmsound')
     lv.interactable('FreightPanel', p['FreightPanel'], 'Ride the freight lift up', channel='L3.FreightLift',
-                    enable_on='L3.BeaconFired')
+                    enable_on='L3.BeaconFired', sound=SND + 'World/Lift_Start.nmsound')
     s = d['spawns']
     lv.encounter('Enc_W1', 'W1', 'L3.Armed', 'L3.W1Done', 'Watchman:4', s['W1'])
     lv.encounter('Enc_W2', 'W2', 'L3.BeaconCharging', 'L3.W2Done', 'Watchman:3|Watchman:2,Brute:1', s['W2'])
@@ -675,7 +742,8 @@ def make_l3():
                                           (70, (150, 160, -150), (0, 110, 0)),
                                           (71, (-1200, 600, -1500), (0, 300, 0)),
                                           (180, (-900, 250, -1900), (-600, 120, -1500))],
-                 180, fade_in=False,
+                 180, fade_in=False, blend_out=1.5,
+                 audio=[(60, 140, 'World/Shutter_Slam.nmsound', 1.0), (66, 140, 'World/Steam_Vent_Burst.nmsound', 0.9)],
                  subtitles=[(10, 70, 'Pilot', 'You have it. Now get out of there.'),
                             (80, 170, 'Pilot', 'Alarm! There is a locker by the bridge. Arm yourself.')],
                  events=[(60, 'Lab.Signal', 'L3.Alarm', 'true'), (179, 'Lab.Signal', 'Checkpoint.Theft', 'true')])
