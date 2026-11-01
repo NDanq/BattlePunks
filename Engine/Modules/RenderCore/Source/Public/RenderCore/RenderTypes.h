@@ -295,6 +295,17 @@ namespace RenderCore
         uint64_t ProxiesOccludedLastFrame  = 0;
         uint64_t OcclusionQueriesLastFrame = 0;
 
+        /* Shadow cache (RENDERPIPELINE.md, "Shadow cache"): shadowed point and spot lights whose
+         * static casters came from the cache last frame, how many of those were (re)drawn into it,
+         * and the cache atlas's size in bytes (depth and colour; 0 with none). */
+        uint32_t ShadowCacheLights = 0;
+        uint32_t ShadowCacheFilled = 0;
+        uint64_t ShadowCacheBytes  = 0;
+        /* The same for the sun's cascades ([Rendering] SunShadowCache): drawn from its cache, filled, its atlas's bytes. */
+        uint32_t ShadowCacheSunCascades = 0;
+        uint32_t ShadowCacheSunFilled   = 0;
+        uint64_t ShadowCacheSunBytes    = 0;
+
         /* "stat unit": each averaged over the last half second (0 until the
          * first half second has passed). Frame is the game thread's time
          * from one EndFrame to the next; Game Thread is that less the time it

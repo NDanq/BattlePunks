@@ -286,11 +286,97 @@ namespace RenderCore
             bool                    bShadows   = false;
             bool                    bPadding   = false;
             float                   Padding    = 0.0f;
+            bool                    bTranslucentShadow = false;   // Shadows holds a translucent caster (the shadow cache cannot)
             std::vector<StagedDraw> Draws;
             std::vector<StagedDraw> Shadows;
         };
         std::unordered_map<const RenderProxy*, StaticDrawList> StaticLists;
         uint64_t                                               StaticBuilds = 0;   // lifetime captures
+
+        /*
+         * SHADOW CACHE (RENDERPIPELINE.md, "Shadow cache"). This scene's id there, and the casters
+         * the cache may hold -- static proxies, renderable, whose materials move nothing (no
+         * World Position Offset padding) -- each as it was last frame: its change serial and
+         * world box. TrackShadowCasters compares them once a frame and has every cached light
+         * reaching a box that changed drawn again; RemoveProxy adds a removed one's box.
+         */
+        struct ShadowCasterRecord
+        {
+            uint64_t       Serial = 0;
+            GameCore::AABB Bounds;
+        };
+        uint64_t                                                   ShadowCacheId = 0;
+        std::unordered_map<const RenderProxy*, ShadowCasterRecord> ShadowCasters;
+        std::vector<GameCore::AABB>                                ShadowRemoved;
+        bool                                                       bShadowCasterTracked = false;
+
+        /* A static proxy's cull padding, from its list (asked once per list). */
+        float StaticPadding(RenderProxy* InProxy, RenderContext& InContext, const uint64_t InGeneration)
+        {
+            StaticDrawList& List = ListFor(InProxy, InGeneration);
+            if(!List.bPadding)
+            {
+                List.Padding  = InProxy->GetBoundsPadding(InContext);
+                List.bPadding = true;
+            }
+            return List.Padding;
+        }
+
+        /* Whether the shadow cache may hold InProxy's shadow: static, drawn, its geometry where
+         * its transform puts it (no World Position Offset, which may move with time). */
+        bool IsCacheableCaster(RenderProxy* InProxy, RenderContext& InContext, const uint64_t InGeneration)
+        {
+            return InProxy->IsStatic() && InProxy->IsRenderable() && StaticPadding(InProxy, InContext, InGeneration) <= 0.0f;
+        }
+
+        static bool SameBox(const GameCore::AABB& InA, const GameCore::AABB& InB)
+        {
+            return InA.Min.GetX() == InB.Min.GetX() && InA.Min.GetY() == InB.Min.GetY() && InA.Min.GetZ() == InB.Min.GetZ()
+                && InA.Max.GetX() == InB.Max.GetX() && InA.Max.GetY() == InB.Max.GetY() && InA.Max.GetZ() == InB.Max.GetZ();
+        }
+
+        /* Once a frame, before any view: every cacheable caster added, removed, moved, changed or
+         * shown or hidden since last frame invalidates the cached lights reaching its old and new
+         * boxes; the first frame, all of this scene's. */
+        void TrackShadowCasters(RenderContext& InContext)
+        {
+            const uint64_t Generation = InContext.GetContentGeneration();
+            std::vector<GameCore::AABB> Dirty;
+            Dirty.swap(ShadowRemoved);
+            for(RenderProxy* Proxy : Proxies)
+            {
+                const bool bCaster = IsCacheableCaster(Proxy, InContext, Generation);
+                const auto Found   = ShadowCasters.find(Proxy);
+                if(!bCaster)
+                {
+                    if(Found != ShadowCasters.end())
+                    {
+                        Dirty.push_back(Found->second.Bounds);
+                        ShadowCasters.erase(Found);
+                    }
+                    continue;
+                }
+                const uint64_t        Serial = Proxy->GetChangeSerial();
+                const GameCore::AABB& Bounds = Proxy->GetWorldBounds();
+                if(Found == ShadowCasters.end())
+                {
+                    ShadowCasters.emplace(Proxy, ShadowCasterRecord{ Serial, Bounds });
+                    Dirty.push_back(Bounds);
+                }
+                else if(Found->second.Serial != Serial || !SameBox(Found->second.Bounds, Bounds))
+                {
+                    Dirty.push_back(Found->second.Bounds);
+                    Dirty.push_back(Bounds);
+                    Found->second = ShadowCasterRecord{ Serial, Bounds };
+                }
+            }
+            const bool bAll = !bShadowCasterTracked;
+            bShadowCasterTracked = true;
+            if(bAll || !Dirty.empty())
+            {
+                InContext.InvalidateShadowCache(ShadowCacheId, Dirty.data(), uint32_t(Dirty.size()), bAll);
+            }
+        }
 
         /* The views (SceneViewState): ViewCount of them this frame, [0] the
          * main one -- what captures, image based lighting and the editor
@@ -336,6 +422,21 @@ namespace RenderCore
             Out.Centre = EngineCore::Vector3(World.GetX(), World.GetY(), World.GetZ());
             Out.Radius = float(((Local.Max - Local.Min) * 0.5).GetLength() * Largest);
             return Out;
+        }
+
+        /* InList's shadow casters, captured the first time they are wanted (a caster view must be set). */
+        void EnsureShadowList(RenderProxy* InProxy, StaticDrawList& InList, RenderContext& InContext)
+        {
+            if(InList.bShadows)
+            {
+                return;
+            }
+            InContext.BeginCapture(&InList.Shadows);
+            InProxy->DrawShadow(InContext);
+            InContext.EndCapture();
+            InList.bShadows           = true;
+            InList.bTranslucentShadow = RenderContext::HasTranslucentShadowCaster(InList.Shadows);
+            ++StaticBuilds;
         }
 
         StaticDrawList& ListFor(const RenderProxy* InProxy, const uint64_t InGeneration)
@@ -411,17 +512,7 @@ namespace RenderCore
             const uint64_t Generation = InContext.GetContentGeneration();
             const auto PaddingOf = [&](RenderProxy* InProxy)
             {
-                if(!InProxy->IsStatic())
-                {
-                    return InProxy->GetBoundsPadding(InContext);
-                }
-                StaticDrawList& List = ListFor(InProxy, Generation);
-                if(!List.bPadding)
-                {
-                    List.Padding  = InProxy->GetBoundsPadding(InContext);
-                    List.bPadding = true;
-                }
-                return List.Padding;
+                return InProxy->IsStatic() ? StaticPadding(InProxy, InContext, Generation) : InProxy->GetBoundsPadding(InContext);
             };
             uint64_t StaticCount = 0;
 
@@ -616,7 +707,10 @@ namespace RenderCore
              */
             const bool     bShadows    = !InCapture || InCapture->bShadows;
             const uint32_t ShadowViews = bShadows ? InContext.PrepareShadows(InsetCasters, uint32_t(InsetCandidates.size()),
-                                                                             bReceiversKnown ? &Receivers : nullptr) : 0;
+                                                                             bReceiversKnown ? &Receivers : nullptr,
+                                                                             InCapture ? 0 : ShadowCacheId) : 0;
+            /* The shadow cache's fill views follow (RENDERPIPELINE.md, "Shadow cache"): its static casters alone. */
+            const uint32_t FillViews = ShadowViews > 0 ? InContext.GetShadowCacheFillViews() : 0;
 
             /* The casters that got an inset view: theirs replaces the sun's. */
             std::vector<const RenderProxy*> Inset;
@@ -636,14 +730,7 @@ namespace RenderCore
                 if(InProxy->IsStatic())
                 {
                     StaticDrawList& List = ListFor(InProxy, Generation);
-                    if(!List.bShadows)
-                    {
-                        InContext.BeginCapture(&List.Shadows);
-                        InProxy->DrawShadow(InContext);
-                        InContext.EndCapture();
-                        List.bShadows = true;
-                        ++StaticBuilds;
-                    }
+                    EnsureShadowList(InProxy, List, InContext);
                     InContext.SubmitCaptured(List.Shadows, int32_t(InViewIndex));
                 }
                 else
@@ -651,11 +738,25 @@ namespace RenderCore
                     InProxy->DrawShadow(InContext);
                 }
             };
+            /* Whether the shadow cache holds InProxy's shadow for a view whose statics it supplies. */
+            const auto CachedCaster = [&](RenderProxy* InProxy)
+            {
+                if(!InProxy->IsStatic() || InProxy->CastsInsetShadow() || PaddingOf(InProxy) > 0.0f)
+                {
+                    return false;   // movable; or its sun shadow may be its own inset's, chosen each frame
+                }
+                StaticDrawList& List = ListFor(InProxy, Generation);
+                EnsureShadowList(InProxy, List, InContext);
+                return !List.bTranslucentShadow;
+            };
 
-            for(uint32_t ViewIndex = 0; ViewIndex < ShadowViews; ++ViewIndex)
+            for(uint32_t ViewIndex = 0; ViewIndex < ShadowViews + FillViews; ++ViewIndex)
             {
                 const GameCore::AABB& ViewBounds = InContext.GetShadowViewBounds(ViewIndex);
                 InContext.SetShadowCasterView(int32_t(ViewIndex));
+                /* A cache fill view takes the cacheable casters alone; a view the cache supplies, the rest. */
+                const bool bFillView   = ViewIndex >= ShadowViews;
+                const bool bCachedView = !bFillView && InContext.ShadowViewCachesStatics(ViewIndex);
 
                 /* An inset view draws its own caster and nothing else. */
                 const int32_t InsetCaster = InContext.GetShadowViewInset(ViewIndex);
@@ -672,6 +773,10 @@ namespace RenderCore
                 for(RenderProxy* Proxy : Proxies)
                 {
                     if(!Proxy->IsRenderable() || Excluded(Proxy) || (bSunView && !Inset.empty() && HasInset(Proxy)))
+                    {
+                        continue;
+                    }
+                    if((bFillView || bCachedView) && CachedCaster(Proxy) != bFillView)
                     {
                         continue;
                     }
@@ -1118,14 +1223,7 @@ namespace RenderCore
                     if(Proxy->IsStatic())
                     {
                         StaticDrawList& List = ListFor(Proxy, Generation);
-                        if(!List.bShadows)
-                        {
-                            InContext.BeginCapture(&List.Shadows);
-                            Proxy->DrawShadow(InContext);
-                            InContext.EndCapture();
-                            List.bShadows = true;
-                            ++StaticBuilds;
-                        }
+                        EnsureShadowList(Proxy, List, InContext);
                         InContext.SubmitCaptured(List.Shadows, int32_t(ViewIndex));
                     }
                     else
@@ -1927,7 +2025,10 @@ namespace RenderCore
     RenderScene::RenderScene() : P(new Impl())
     {
         GLiveScenes.push_back(this);
+        static std::atomic<uint64_t> GNextShadowCacheId{ 1 };
+        P->ShadowCacheId = GNextShadowCacheId.fetch_add(1, std::memory_order_relaxed);
     }
+
 
     RenderScene::~RenderScene()
     {
@@ -1983,6 +2084,12 @@ namespace RenderCore
 
         InProxy->ReleaseRenderResources(InContext);
         P->StaticLists.erase(InProxy);
+        const auto Caster = P->ShadowCasters.find(InProxy);
+        if(Caster != P->ShadowCasters.end())
+        {
+            P->ShadowRemoved.push_back(Caster->second.Bounds);   // the shadow cache's lights there draw it again
+            P->ShadowCasters.erase(Caster);
+        }
 
         const size_t Index    = size_t(InProxy->SceneIndex);
         const size_t LastSlot = P->Proxies.size() - 1;
@@ -2190,6 +2297,9 @@ namespace RenderCore
             }
             InContext.WriteGpuTimestamp(RGT_Particles, true);
         }
+
+        /* The shadow cache's lights that a static caster's change reaches, drawn again this frame. */
+        P->TrackShadowCasters(InContext);
 
 #if WITH_EDITOR
         /* Previews FIRST, before the scene's own stages, so the scene's final
@@ -2402,6 +2512,13 @@ namespace RenderCore
             SetSceneStats(uint64_t(P->Proxies.size()), CulledCount);
             SetStaticDrawStats(StaticCount, P->StaticBuilds);
             SetOcclusionStats(Occluded, Queries);
+            uint32_t CacheLights = 0, CacheFilled = 0;
+            uint64_t CacheBytes = 0;
+            InContext.GetShadowCacheStats(CacheLights, CacheFilled, CacheBytes);
+            uint32_t SunCascades = 0, SunFilled = 0;
+            uint64_t SunBytes = 0;
+            InContext.GetSunShadowCacheStats(SunCascades, SunFilled, SunBytes);
+            SetShadowCacheStats(CacheLights, CacheFilled, CacheBytes, SunCascades, SunFilled, SunBytes);
         }
 
 #if WITH_EDITOR
@@ -2501,6 +2618,10 @@ namespace RenderCore
         P->DDGIStages.Release();
         InContext.ReleaseIBLResources(P->IBL);
         P->ReleaseGIVolumes(InContext);
+        InContext.ReleaseShadowCache(P->ShadowCacheId);
+        P->ShadowCasters.clear();
+        P->ShadowRemoved.clear();
+        P->bShadowCasterTracked = false;
         P->bSkyValid = false;
         for(Impl::ProbeSlot& Each : P->Slots) { Each = Impl::ProbeSlot(); }
     }

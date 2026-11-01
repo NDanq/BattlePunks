@@ -429,6 +429,7 @@ namespace RenderCore
                           const InsetShadowCaster* InCasters, const uint32_t InCasterCount, const GameCore::AABB* InReceivers)
     {
         OutFrame.ViewCount            = 0;
+        OutFrame.CacheFillCount       = 0;
         OutFrame.InsetFirstView       = -1;
         OutFrame.InsetCount           = 0;
         OutFrame.AtlasSize            = 0;
@@ -539,6 +540,7 @@ namespace RenderCore
     void BuildCaptureShadowFrame(const RenderLighting& InLighting, const GameCore::AABB& InRegion, ShadowFrame& OutFrame)
     {
         OutFrame.ViewCount            = 0;
+        OutFrame.CacheFillCount       = 0;
         OutFrame.InsetFirstView       = -1;
         OutFrame.InsetCount           = 0;
         OutFrame.AtlasSize            = 0;
