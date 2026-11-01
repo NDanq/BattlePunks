@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "Public/NimbleEngine/Avatar.h"
+#include "Public/NimbleEngine/CharacterMover.h"
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/NetFacade.h"
 
@@ -28,8 +29,57 @@ NIMBLE_CONFIG_INT(GAvatarLocalPlayers, "Avatar", "LocalPlayers", 1, nullptr);
 
 namespace NimbleEngine
 {
+GameCore::EntityID FindEntryPoint(GameCore::World& InWorld, const char* InEntry, const uint32_t InOrdinal)
+{
+    if(!InEntry || InEntry[0] == '\0') { return GameCore::EntityID(); }
+    const std::string Entry = InEntry;
+    std::vector<GameCore::EntityID> Tagged, Named;
+    GameCore::EntityID Kept;
+    InWorld.Each<PlayerStartComponent>([&](GameCore::Entity InEntity, PlayerStartComponent& InStart)
+    {
+        if(!InStart.bEnabled) { return; }
+        if(Entry == InStart.Entry)
+        {
+            if(InStart.PlayerSlot != 0 && uint32_t(InStart.PlayerSlot) == InOrdinal + 1 && !Kept.IsSet()) { Kept = InEntity.GetID(); }
+            Tagged.push_back(InEntity.GetID());
+        }
+        else if(Entry == InEntity.GetName())
+        {
+            Named.push_back(InEntity.GetID());
+        }
+    });
+    if(Kept.IsSet())     { return Kept; }
+    if(!Tagged.empty())  { return Tagged[InOrdinal % Tagged.size()]; }
+    if(!Named.empty())   { return Named[InOrdinal % Named.size()]; }
+    return GameCore::EntityID();
+}
+
+bool PlaceAvatarAt(GameCore::World& InWorld, const GameCore::EntityID InAvatar, const GameCore::EntityID InStart)
+{
+    if(!InWorld.IsAlive(InAvatar) || !InWorld.IsAlive(InStart)) { return false; }
+    const GameCore::TransformPose Pose = InWorld.GetEntity(InStart).GetWorldPose();
+    GameCore::Entity Avatar = InWorld.GetEntity(InAvatar);
+    if(Avatar.HasComponent<CharacterMoverComponent>())
+    {
+        TeleportCharacter(InWorld, InAvatar, Pose.Position, float(Pose.Rotation.GetY()));
+        return true;
+    }
+    GameCore::TransformComponent* Transform = Avatar.GetComponent<GameCore::TransformComponent>();
+    if(!Transform) { return false; }
+    Transform->Position = Pose.Position;
+    Transform->Rotation = Pose.Rotation;
+    return true;
+}
+
 GameCore::EntityID FindPlayerStart(GameCore::World& InWorld, const uint32_t InOrdinal)
 {
+    /* Travelled to at an entry: its start, if the level has it (GameSession warns if not). */
+    if(const GameSession* Session = FindGameSession(InWorld))
+    {
+        const GameCore::EntityID Entry = FindEntryPoint(InWorld, Session->GetTravel().Entry.c_str(), InOrdinal);
+        if(Entry.IsSet()) { return Entry; }
+    }
+
     std::vector<GameCore::EntityID> Enabled;
     GameCore::EntityID Kept;
     InWorld.Each<PlayerStartComponent>([&](GameCore::Entity InEntity, PlayerStartComponent& InStart)
@@ -194,11 +244,12 @@ using NimbleEngine::PlayerStartComponent;
 
 GAMECORE_DEFINE_COMPONENT(PlayerStartComponent, "PlayerStart")
 
-GAMECORE_DEFINE_COMPONENT_SERIALIZER(PlayerStartComponent, 1)
+GAMECORE_DEFINE_COMPONENT_SERIALIZER(PlayerStartComponent, 2)
 {
     Ar.Field("AvatarPrefab", C.AvatarPrefab);
     Ar.Field("PlayerSlot",   C.PlayerSlot);
     Ar.Flag("Enabled",       C.bEnabled);
+    if(Ar.GetVersion() >= 2) { Ar.Field("Entry", C.Entry); }   // 2: level travel's entry points
 }
 
 GAMECORE_DEFINE_COMPONENT_SCRIPT(PlayerStartComponent)
@@ -206,6 +257,7 @@ GAMECORE_DEFINE_COMPONENT_SCRIPT(PlayerStartComponent)
     Bind.Field("AvatarPrefab", &PlayerStartComponent::AvatarPrefab);
     Bind.Field("PlayerSlot",   &PlayerStartComponent::PlayerSlot);
     Bind.Flag("Enabled",       &PlayerStartComponent::bEnabled);
+    Bind.Field("Entry",        &PlayerStartComponent::Entry);
 }
 
 #if WITH_EDITOR
@@ -215,5 +267,6 @@ GAMECORE_DEFINE_COMPONENT_PROPERTIES(PlayerStartComponent)
     Props.Field("AvatarPrefab", &PlayerStartComponent::AvatarPrefab, GameCore::PF_AssetPrefab);
     Props.Choice("PlayerSlot",  &PlayerStartComponent::PlayerSlot, "Any|Player 1|Player 2|Player 3|Player 4");
     Props.Flag("Enabled",       &PlayerStartComponent::bEnabled);
+    Props.Field("Entry",        &PlayerStartComponent::Entry);
 }
 #endif

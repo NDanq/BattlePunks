@@ -18,6 +18,7 @@
 #include "Public/NimbleEngine/GameState.h"
 #include "Public/NimbleEngine/Level.h"
 #include "Public/NimbleEngine/PlayerState.h"
+#include "Public/NimbleEngine/SaveGame.h"
 
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
@@ -258,8 +259,16 @@ namespace NimbleEngine
 
     bool GameSession::LoadLevel(ILevel& InLevel)
     {
+        return LoadLevel(InLevel, LevelTravel());
+    }
+
+    bool GameSession::LoadLevel(ILevel& InLevel, const LevelTravel& InTravel)
+    {
         CheckGameThread("LoadLevel");
         CORE_CHECK(LevelWorld == nullptr, "GameSession::LoadLevel called with a level already loaded")
+
+        /* Readable from OnLoad on (GetTravel). */
+        Travel = InTravel;
 
         /* Bound before OnLoad, or scripts and WorldBridge would miss the
          * level's first entities. */
@@ -370,7 +379,9 @@ namespace NimbleEngine
          * An authority's only: a client follows the server's. */
         AIDetail::AttachLevelAI(*LevelWorld);
 
-        CORE_LOG("[Level] loading '" + std::string(InLevel.GetName()) + "'")
+        CORE_LOG("[Level] loading '" + std::string(InLevel.GetName()) + "'"
+                 + (Travel.Entry.empty() ? std::string() : " at '" + Travel.Entry + "'")
+                 + (Travel.Values.empty() ? std::string() : " (" + Travel.ToText() + ")"))
 
         if(!InLevel.OnLoad(*this))
         {
@@ -463,6 +474,15 @@ namespace NimbleEngine
         /* Avatars placed for local players are theirs before the mode starts,
          * so OnStart sees who already has one. */
         ApplyAutoPossess(*LevelWorld);
+        if(!Travel.Entry.empty())
+        {
+            if(!FindEntryPoint(*LevelWorld, Travel.Entry.c_str()).IsSet())
+            {
+                CORE_LOG_WARN("[Level] '" + std::string(InLevel.GetName()) + "' has no enabled Player Start for the entry '"
+                              + Travel.Entry + "' (its Entry, or its entity's name): the usual start")
+            }
+            PlaceAvatarsAtEntry();
+        }
 
         if(Mode)
         {
@@ -668,16 +688,45 @@ namespace NimbleEngine
 
         ILevel* Next = PendingLevel;
         PendingLevel = nullptr;
+        LevelTravel NextTravel = PendingTravel;
+        NextTravel.Previous    = ActiveLevel ? ActiveLevel->GetName() : "";
+        PendingTravel          = LevelTravel();
 
         /* Fully down before the next comes up; the two never coexist. */
         UnloadLevel();
 
-        if(!LoadLevel(*Next))
+        if(!LoadLevel(*Next, NextTravel))
         {
             CORE_LOG_ERROR("Requested level failed to load; ending the session")
             UnloadLevel();
             bQuitRequested = true;
         }
+    }
+
+    void GameSession::PlaceAvatarsAtEntry()
+    {
+        /* Placed avatars (AutoPossess) of the local players; a mode's spawns
+         * come later and ask FindPlayerStart, which prefers the entry. */
+        for(uint8_t Local = 0; Local < INPUT_PLAYERS_MAX; ++Local)
+        {
+            const GameCore::EntityID Player = FindLocalPlayer(*LevelWorld, Local);
+            const GameCore::EntityID Avatar = Player.IsSet() ? GetAvatar(*LevelWorld, Player) : GameCore::EntityID();
+            const GameCore::EntityID Start  = Avatar.IsSet() ? FindEntryPoint(*LevelWorld, Travel.Entry.c_str(), Local) : GameCore::EntityID();
+            if(Start.IsSet()) { PlaceAvatarAt(*LevelWorld, Avatar, Start); }
+        }
+    }
+
+    bool GameSession::OpenLevel(const char* InLevelName, const LevelTravel& InTravel)
+    {
+        CheckGameThread("OpenLevel");
+        ILevel* Level = FindLevelByName(InLevelName ? InLevelName : "");
+        if(!Level)
+        {
+            CORE_LOG_WARN(std::string("[Level] OpenLevel: no level named '") + (InLevelName ? InLevelName : "") + "'")
+            return false;
+        }
+        RequestLevel(*Level, InTravel);
+        return true;
     }
 
     void GameSession::RouteInputThroughUI()
@@ -1370,12 +1419,18 @@ namespace NimbleEngine
 
     void GameSession::RequestLevel(ILevel& InLevel)
     {
+        RequestLevel(InLevel, LevelTravel());
+    }
+
+    void GameSession::RequestLevel(ILevel& InLevel, const LevelTravel& InTravel)
+    {
         if(PendingLevel)
         {
             CORE_LOG_WARN("GameSession::RequestLevel called twice before the first took effect; "
                           "the later request wins")
         }
-        PendingLevel = &InLevel;
+        PendingLevel  = &InLevel;
+        PendingTravel = InTravel;
     }
 
     GameState* GameSession::GetGameState()

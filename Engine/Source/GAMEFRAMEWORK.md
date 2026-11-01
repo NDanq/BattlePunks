@@ -58,6 +58,10 @@ world file, creates the mode, then runs `IGameMode::OnLoad`, where the mode
 registers its systems and places anything the world does not hold. `[Game]
 StartLevel` names the world the game starts in (else the first listed); saves,
 the console's `open` and `Game.OpenLevel` use the same names.
+`GameSession::OpenLevel(Name, LevelTravel)` changes level at a named entry
+(a Player Start's **Entry**) carrying key/value travel state the next level
+reads with `GetTravel()` / `Game.GetTravelValue` (LevelTravel.h;
+Engine/Docs/Guides/GameModeGuide.md, "Changing level").
 
 ## The mode is the level's context
 

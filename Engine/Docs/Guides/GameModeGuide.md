@@ -295,7 +295,9 @@ Cook=true
 The host makes one level per `[World_*]` section, named by the section, and
 creates a fresh mode -- the one its world names -- each time the level loads.
 A `GameMode=` key in a `[World_*]` section is no longer read; the log says so. `[Game] StartLevel`, the
-console's `open CoinRush` and saved games use the same name.
+console's `open CoinRush` and saved games use the same name. To change level
+at a particular entrance, or carry state into the next level, see "Changing
+level" below.
 
 ---
 
@@ -695,6 +697,79 @@ over" rule still holds, even for a life added by a graph.
 The graph's own `OnStart` registers its listeners, so a `Director` placed in
 the level hears only phases changed after its first tick. Seed it from **Get
 Phase** in an **On Start** if it must know the starting phase.
+
+---
+
+## Changing level: entry points and travel state
+
+A level change is always deferred: it is asked for during a frame and applied
+at the top of the next (`GameSession::ApplyPendingLevel`), where the old
+World is unloaded completely before the new one loads. Nothing of the old
+level survives except what the change carries with it: a **level travel**
+(`Public/NimbleEngine/LevelTravel.h`).
+
+| Field | What it is |
+|---|---|
+| `Entry` | where the players come in: the enabled **Player Start** whose **Entry** is this, or failing one, whose entity is named this. `""` is the usual start. |
+| `Values` | a few key/value strings, the *travel state* (`Alarm=1`), read by the new level's mode and scripts once it has loaded. |
+| `Previous` | filled in by the session: the level travelled from. |
+
+From C++, by the level's registered name (its `[World_Name]` section):
+
+```cpp
+NimbleEngine::LevelTravel Travel;
+Travel.Entry = "FreightLift";            // a Player Start's Entry, or its entity's name
+Travel.Set("Alarm", "1");                // or Travel.SetFromText("Alarm=1;Lift=B")
+Session->OpenLevel("Lab", Travel);       // false (logged) for an unknown name
+```
+
+`RequestLevel(ILevel&, const LevelTravel&)` does the same with a level in
+hand. The new level reads it from `ILevel::OnLoad` on, all level long:
+
+```cpp
+bool LabMode::OnLoad(NimbleEngine::GameSession& InSession)
+{
+    bAlarm = InSession.GetTravel().GetNumber("Alarm") != 0.0;   // or GetTravelValue("Alarm", "0")
+    return true;
+}
+```
+
+From Lua (and script graphs, the same names in the **Game** library):
+
+```lua
+Game.OpenLevel("Lab", "FreightLift", "Alarm=1")    -- name, entry ("" usual), state; -> accepted
+
+if Game.GetTravelNumber("Alarm", 0) == 1 then StartAlarm() end
+local value = Game.GetTravelValue("Lift", "A")     -- a string, with a default
+local entry = Game.GetEntryPoint()                 -- "FreightLift"
+local from  = Game.GetPreviousLevel()              -- "Exterior"
+```
+
+A menu document's action `Game.OpenLevel('Lab', 'Airlock', 'Alarm=0')` and
+the console's `open Lab FreightLift Alarm=1` take the same three arguments.
+
+**Where the players appear.** Give each way into a level a Player Start and
+set its **Entry** (Details panel) to the name the travel uses, or just name
+the entity. Then:
+
+- `FindPlayerStart` prefers the entry's start, so `NetGameMode` spawns
+  avatars there with no code;
+- avatars placed in the level for local players (**Auto Possess**) are moved
+  to it before `IGameMode::OnStart` (`PlaceAvatarAt`: a Character Mover is
+  teleported, facing the start's yaw);
+- a mode that spawns its own calls `FindPlayerStart(World, PlayerOrdinal)` or
+  `FindEntryPoint(World, "Airlock")`.
+
+An entry the level does not have is logged and the usual start is used.
+
+**Lasting state.** The travel lives until the next level change. It is not in
+a save: a mode that must remember it after a load copies it into its
+`GameState` in `OnLoad` (and a save restores that). Several entries into one
+level -- the Demo Lab's lab, entered once at the airlock and later at the
+freight lift with the alarm on -- are one world with two Player Starts and
+one travel value.
+
+Checked by `NimbleEngine.GameFrameworkTests` ("level travel").
 
 ---
 

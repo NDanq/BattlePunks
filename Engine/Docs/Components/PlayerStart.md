@@ -7,7 +7,7 @@ Reference for the **PlayerStart** component: its C++ class and its Lua API. Writ
 | Name | `PlayerStart` (what `GetComponent` / `AddComponent` take in Lua, and what a save stores) |
 | C++ class | `NimbleEngine::PlayerStartComponent` |
 | Header | `#include "Public/NimbleEngine/PlayerStart.h"` |
-| Size | 152 bytes |
+| Size | 216 bytes |
 | Add Component | yes |
 
 ## Properties
@@ -19,6 +19,7 @@ What the Details panel shows. The C++ members are public fields of `PlayerStartC
 | `AvatarPrefab` | string | (empty) | asset: prefab (.nmprefab) |
 | `PlayerSlot` | uint8_t | 0 | choice: Any, Player 1, Player 2, Player 3, Player 4 |
 | `Enabled` | uint8_t (flag) | true |  |
+| `Entry` | string | (empty) | an entry point a level change names (`LevelTravel::Entry`, `Game.OpenLevel(level, entry)`); the entity's name works too. GameModeGuide.md, "Changing level". |
 
 ## C++ API
 
@@ -52,5 +53,6 @@ entity:RemoveComponent("PlayerStart")
 | `c:GetAvatarPrefab()` -> string<br>`c:SetAvatarPrefab(string)` | Property. |
 | `c:GetPlayerSlot()` -> integer<br>`c:SetPlayerSlot(integer)` | Property. |
 | `c:GetEnabled()` -> boolean<br>`c:SetEnabled(boolean)` | Property. |
+| `c:GetEntry()` -> string<br>`c:SetEntry(string)` | Property. |
 
 Types: `Vector3` is three numbers, `Color` four integers 0..255, `Entity` an entity value.

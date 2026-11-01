@@ -8,6 +8,7 @@
 #include "Public/NimbleEngine/NimbleEngineAPI.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/Input.h"
+#include "Public/NimbleEngine/LevelTravel.h"
 #include "Public/NimbleEngine/SplitCamera.h"
 #include "Public/GameCore/ComponentType.h"   // ComponentTypeID
 #include "Public/GameCore/Delegate.h"        // DelegateHandle
@@ -183,6 +184,10 @@ namespace NimbleEngine
          */
         bool LoadLevel(ILevel& InLevel);
 
+        /* LoadLevel, carrying InTravel in (GetTravel; its Entry places the
+         * players' avatars, PlayerStart.h). */
+        bool LoadLevel(ILevel& InLevel, const LevelTravel& InTravel);
+
         /* Mode OnUnload, level OnUnload, unbind scripts and renderer, destroy
          * the World. Idempotent. */
         void UnloadLevel();
@@ -205,6 +210,28 @@ namespace NimbleEngine
          * ApplyPendingLevel(): a World cannot be destroyed inside its own Tick.
          * The outgoing level unloads first. The last request in a frame wins. */
         void RequestLevel(ILevel& InLevel);
+
+        /*
+         * LEVEL TRAVEL (LevelTravel.h; GameModeGuide.md, "Changing level"):
+         * RequestLevel with an entry point and travel state for the next
+         * level. Its avatars come in at InTravel.Entry's Player Start
+         * (FindPlayerStart prefers it; placed, auto-possessed avatars are
+         * moved there before IGameMode::OnStart), and GetTravel() returns
+         * InTravel from the start of the next ILevel::OnLoad until the level
+         * after it loads. Also Game.OpenLevel in Lua.
+         */
+        void RequestLevel(ILevel& InLevel, const LevelTravel& InTravel);
+
+        /* RequestLevel by registered name ([World_Name], as [Game] StartLevel
+         * and the console's `open`). False (logged) if no level has that name. */
+        bool OpenLevel(const char* InLevelName, const LevelTravel& InTravel = LevelTravel());
+
+        /* What the loaded level came in with: its entry, its travel state and
+         * the level before it. Empty for a level loaded without one. */
+        const LevelTravel& GetTravel() const { return Travel; }
+
+        /* GetTravel().Get(InKey, InDefault). */
+        const char* GetTravelValue(const char* InKey, const char* InDefault = "") const { return Travel.Get(InKey, InDefault); }
 
         /* The game is finished. The host finishes the frame in flight. */
         void RequestQuit() { bQuitRequested = true; }
@@ -434,6 +461,14 @@ namespace NimbleEngine
 
         /* Set by RequestLevel, consumed by the next ApplyPendingLevel. */
         ILevel*           PendingLevel = nullptr;
+
+        /* The travel PendingLevel will load with, and the loaded level's.
+         * (C4251 on these private members is harmless.) */
+        LevelTravel       PendingTravel;
+        LevelTravel       Travel;
+
+        /* LoadLevel's: InTravel.Entry's start for the local players' placed avatars. */
+        void PlaceAvatarsAtEntry();
 
         /* Armed with PendingLevel by LoadGameFromFile, cleared by the LoadLevel
          * that consumes it. (C4251 on this private member is harmless.) */

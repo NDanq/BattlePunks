@@ -762,11 +762,11 @@ NIMBLE_CONSOLE_COMMAND(reset, "<Section.Name>", "Put a config var back to its co
     Console.Print(Var->GetQualifiedName() + " = " + Var->ToString());
 }
 
-NIMBLE_CONSOLE_COMMAND(open, "<level>", "Load a level by its registered name, as [Game] StartLevel")
+NIMBLE_CONSOLE_COMMAND(open, "<level> [entry] [Key=Value;...]", "Load a level by its registered name, as [Game] StartLevel, optionally at an entry with travel state")
 {
-    if(Console.Args.size() != 1)
+    if(Console.Args.empty() || Console.Args.size() > 3)
     {
-        Console.PrintError("Usage: open <level>");
+        Console.PrintError("Usage: open <level> [entry] [Key=Value;...]");
         return;
     }
     NimbleEngine::ILevel* Level = NimbleEngine::FindLevelByName(Console.Args.front().c_str());
@@ -775,8 +775,11 @@ NIMBLE_CONSOLE_COMMAND(open, "<level>", "Load a level by its registered name, as
         Console.PrintError("No level named '" + Console.Args.front() + "'");
         return;
     }
-    Console.Print("Opening " + Console.Args.front());
-    Console.Session.RequestLevel(*Level);
+    NimbleEngine::LevelTravel Travel;
+    if(Console.Args.size() >= 2 && Console.Args[1] != "-") { Travel.Entry = Console.Args[1]; }
+    if(Console.Args.size() >= 3) { Travel.SetFromText(Console.Args[2].c_str()); }
+    Console.Print("Opening " + Console.Args.front() + (Travel.Entry.empty() ? std::string() : " at " + Travel.Entry));
+    Console.Session.RequestLevel(*Level, Travel);
 }
 
 /* As the editor's console spells it: "stat unit" toggles [Stats] Unit, "stat
