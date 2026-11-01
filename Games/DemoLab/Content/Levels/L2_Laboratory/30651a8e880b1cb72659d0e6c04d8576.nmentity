@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="30651a8e880b1cb72659d0e6c04d8576" Name="Alarm_CineCam_C6_2">
+  <Component Type="Camera" Version="1">
+    <ZNear Value="5" />
+    <ZFar Value="80000" />
+    <Active Value="false" />
+    <Projection Value="1" />
+    <FovY Value="60" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-300" Y="150" Z="-500" />
+      <Rotation X="-67.3806" Y="39.0893" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

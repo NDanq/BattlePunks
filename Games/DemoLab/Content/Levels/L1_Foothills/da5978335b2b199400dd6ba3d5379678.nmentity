@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="da5978335b2b199400dd6ba3d5379678" Name="CineCam_C2_3">
+  <Component Type="Camera" Version="1">
+    <ZNear Value="5" />
+    <ZFar Value="80000" />
+    <Active Value="false" />
+    <Projection Value="1" />
+    <FovY Value="50" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="4600" Y="1380" Z="5485" />
+      <Rotation X="-5.55072" Y="-30.9638" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

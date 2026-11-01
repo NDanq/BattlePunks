@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="33b3fe0f3ca7a26eac818adf36822913" Name="CineMark_C2">
+  <Component Type="Transform" Version="1">
+      <Position X="3700" Y="1205" Z="6335" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

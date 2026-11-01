@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="b519ea98e820ce895ebb471e4a76cc3b" Name="Airship_Lamp">
+<Entity Parent="dee171926afb8ff746c836bd1af9f5c9" Guid="b519ea98e820ce895ebb471e4a76cc3b" Name="Airship_Lamp">
   <Component Type="Point Light" Version="2">
     <Color R="255" G="178" B="105" A="255" />
     <Intensity Value="10" />
@@ -13,7 +13,7 @@
     <SourceRadius Value="10" />
   </Component>
   <Component Type="Transform" Version="1">
-      <Position X="-5800" Y="1450" Z="-1800" />
+      <Position X="0" Y="1450" Z="0" />
       <Rotation X="0" Y="0" Z="0" />
       <Scale X="1" Y="1" Z="1" />
   </Component>

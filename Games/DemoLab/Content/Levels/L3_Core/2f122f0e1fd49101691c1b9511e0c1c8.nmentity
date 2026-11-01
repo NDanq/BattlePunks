@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="2f122f0e1fd49101691c1b9511e0c1c8" Name="CineMark_C5_End">
+  <Component Type="Transform" Version="1">
+      <Position X="-560" Y="0" Z="-1395" />
+      <Rotation X="0" Y="180" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

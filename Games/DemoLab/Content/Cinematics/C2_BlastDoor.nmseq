@@ -1,108 +1,182 @@
 <?xml version="1.0"?>
-<Sequence version="1" fps="30" length="150">
-  <Binding id="cam0" kind="possess" guid="0b663ad9fd4fc2af2b08fd2cfad572af" name="CineCam_C2_BlastDoor_A">
+<Sequence version="1" fps="30" length="480">
+  <Binding id="cam1" kind="possess" guid="0558a20156345ec8e4caccf38f371ad4" name="CineCam_C2_1">
     <Track type="Transform">
       <Channel name="Position.X">
-        <Key f="0" v="3000" interp="CubicInOut"/>
-        <Key f="75" v="3300" interp="CubicInOut"/>
-        <Key f="76" v="4600" interp="CubicInOut"/>
+        <Key f="0" v="3850"/>
+        <Key f="109" v="3800"/>
       </Channel>
       <Channel name="Position.Y">
-        <Key f="0" v="1500" interp="CubicInOut"/>
-        <Key f="75" v="1400" interp="CubicInOut"/>
-        <Key f="76" v="1300" interp="CubicInOut"/>
+        <Key f="0" v="1620"/>
+        <Key f="109" v="1580"/>
       </Channel>
       <Channel name="Position.Z">
-        <Key f="0" v="5600" interp="CubicInOut"/>
-        <Key f="75" v="6100" interp="CubicInOut"/>
-        <Key f="76" v="6300" interp="CubicInOut"/>
+        <Key f="0" v="4285"/>
+        <Key f="109" v="4635"/>
       </Channel>
       <Channel name="Rotation.X">
-        <Key f="0" v="3.656" interp="CubicInOut"/>
-        <Key f="75" v="-0" interp="CubicInOut"/>
-        <Key f="76" v="-0" interp="CubicInOut"/>
+        <Key f="0" v="-1.695"/>
+        <Key f="109" v="-2.434"/>
       </Channel>
       <Channel name="Rotation.Y">
-        <Key f="0" v="26.565" interp="CubicInOut"/>
-        <Key f="75" v="23.962" interp="CubicInOut"/>
-        <Key f="76" v="-52.125" interp="CubicInOut"/>
+        <Key f="0" v="-3.18"/>
+        <Key f="109" v="-2.437"/>
       </Channel>
     </Track>
   </Binding>
-  <Binding id="cam1" kind="possess" guid="ef1593530747098849484c13e99f7116" name="CineCam_C2_BlastDoor_B">
+  <Binding id="cam2" kind="possess" guid="796c381ed1bccb4986acb414efb21925" name="CineCam_C2_2">
     <Track type="Transform">
       <Channel name="Position.X">
-        <Key f="76" v="4600" interp="CubicInOut"/>
-        <Key f="150" v="4100" interp="CubicInOut"/>
+        <Key f="110" v="4120"/>
+        <Key f="199" v="4000"/>
       </Channel>
       <Channel name="Position.Y">
-        <Key f="76" v="1300" interp="CubicInOut"/>
-        <Key f="150" v="1350" interp="CubicInOut"/>
+        <Key f="110" v="1530"/>
+        <Key f="199" v="1500"/>
       </Channel>
       <Channel name="Position.Z">
-        <Key f="76" v="6300" interp="CubicInOut"/>
-        <Key f="150" v="6600" interp="CubicInOut"/>
+        <Key f="110" v="6430"/>
+        <Key f="199" v="6520"/>
       </Channel>
       <Channel name="Rotation.X">
-        <Key f="76" v="-0" interp="CubicInOut"/>
-        <Key f="150" v="-5.051" interp="CubicInOut"/>
+        <Key f="110" v="5.992"/>
+        <Key f="199" v="4.376"/>
       </Channel>
       <Channel name="Rotation.Y">
-        <Key f="76" v="-52.125" interp="CubicInOut"/>
-        <Key f="150" v="-45" interp="CubicInOut"/>
+        <Key f="110" v="-39.036"/>
+        <Key f="199" v="-35.028"/>
       </Channel>
     </Track>
   </Binding>
-  <Track type="CameraCut" name="Shots">
-    <Section start="0" end="76" camera="cam0"/>
-    <Section start="76" end="150" camera="cam1"/>
-  </Track>
-  <Track type="Fade">
-    <Key f="0" v="1"/>
-    <Key f="15" v="0"/>
-    <Key f="135" v="0"/>
-    <Key f="150" v="1"/>
-  </Track>
-  <Track type="Subtitle">
-    <Section start="15" end="120" speaker="Pilot" text="Steam pressure is up. That door has not opened in years."/>
-  </Track>
-  <Track type="Audio">
-    <Section start="30" end="100" sound="Content/Sounds/World/Steam_Vent_Burst.nmsound" volume="1.0"/>
-  </Track>
-  <Track type="Event">
-    <Key f="60" event="Lab.Signal" arg0="L1.BlastDoor" arg1="true" fireOnSkip="true"/>
-    <Key f="149" event="Lab.Signal" arg0="L1.Done" arg1="true" fireOnSkip="true"/>
-  </Track>
+  <Binding id="cam3" kind="possess" guid="da5978335b2b199400dd6ba3d5379678" name="CineCam_C2_3">
+    <Track type="Transform">
+      <Channel name="Position.X">
+        <Key f="200" v="4600"/>
+        <Key f="329" v="4200"/>
+      </Channel>
+      <Channel name="Position.Y">
+        <Key f="200" v="1380"/>
+        <Key f="329" v="1460"/>
+      </Channel>
+      <Channel name="Position.Z">
+        <Key f="200" v="5485"/>
+        <Key f="329" v="5735"/>
+      </Channel>
+      <Channel name="Rotation.X">
+        <Key f="200" v="-5.551"/>
+        <Key f="329" v="-2.976"/>
+      </Channel>
+      <Channel name="Rotation.Y">
+        <Key f="200" v="-30.964"/>
+        <Key f="329" v="-21.801"/>
+      </Channel>
+    </Track>
+  </Binding>
+  <Binding id="cam4" kind="possess" guid="a794d48a1b4ab903d16543591f8dca59" name="CineCam_C2_4">
+    <Track type="Transform">
+      <Channel name="Position.X">
+        <Key f="330" v="3820"/>
+        <Key f="479" v="3760"/>
+      </Channel>
+      <Channel name="Position.Y">
+        <Key f="330" v="1430"/>
+        <Key f="479" v="1400"/>
+      </Channel>
+      <Channel name="Position.Z">
+        <Key f="330" v="5835"/>
+        <Key f="479" v="6565"/>
+      </Channel>
+      <Channel name="Rotation.X">
+        <Key f="330" v="-0.788"/>
+        <Key f="479" v="1.122"/>
+      </Channel>
+      <Channel name="Rotation.Y">
+        <Key f="330" v="-4.731"/>
+        <Key f="479" v="-2.246"/>
+      </Channel>
+    </Track>
+  </Binding>
   <Binding id="cog" kind="possess" guid="cf620279121f095a06aabd5b41ad9906" name="BlastDoor_Cog">
     <Track type="Transform">
-      <Channel name="Rotation.Z">
-        <Key f="0" v="0" interp="CubicInOut"/>
-        <Key f="20" v="0" interp="CubicInOut"/>
-        <Key f="58" v="360" interp="CubicInOut"/>
-      </Channel>
       <Channel name="Position.X">
-        <Key f="0" v="3700" interp="CubicInOut"/>
-        <Key f="60" v="3700" interp="CubicInOut"/>
-        <Key f="130" v="3490" interp="CubicInOut"/>
+        <Key f="0" v="3700"/>
+        <Key f="205" v="3700" interp="CubicInOut"/>
+        <Key f="300" v="3490"/>
+      </Channel>
+      <Channel name="Rotation.Z">
+        <Key f="0" v="0"/>
+        <Key f="120" v="0" interp="CubicInOut"/>
+        <Key f="198" v="360"/>
       </Channel>
     </Track>
   </Binding>
   <Binding id="leafl" kind="possess" guid="f332faa0c4713eed25a01c9f0f2def9e" name="BlastDoor_LeafL">
     <Track type="Transform">
       <Channel name="Position.X">
-        <Key f="0" v="3700" interp="CubicInOut"/>
-        <Key f="60" v="3700" interp="CubicInOut"/>
-        <Key f="130" v="3490" interp="CubicInOut"/>
+        <Key f="0" v="3700"/>
+        <Key f="205" v="3700" interp="CubicInOut"/>
+        <Key f="300" v="3490"/>
       </Channel>
     </Track>
   </Binding>
   <Binding id="leafr" kind="possess" guid="ea034ee46beeaa8ed60d4baf44657353" name="BlastDoor_LeafR">
     <Track type="Transform">
       <Channel name="Position.X">
-        <Key f="0" v="3700" interp="CubicInOut"/>
-        <Key f="60" v="3700" interp="CubicInOut"/>
-        <Key f="130" v="3910" interp="CubicInOut"/>
+        <Key f="0" v="3700"/>
+        <Key f="205" v="3700" interp="CubicInOut"/>
+        <Key f="300" v="3910"/>
       </Channel>
     </Track>
   </Binding>
+  <Binding id="player" kind="possess" guid="0e93f5c5c1a84803888190d450de73d4" name="CinePlayer">
+    <Track type="Transform">
+      <Channel name="Position.X">
+        <Key f="0" v="3700"/>
+        <Key f="480" v="3700"/>
+      </Channel>
+      <Channel name="Position.Z">
+        <Key f="0" v="6335"/>
+        <Key f="335" v="6335" interp="Linear"/>
+        <Key f="470" v="6755"/>
+      </Channel>
+      <Channel name="Rotation.Y">
+        <Key f="0" v="180"/>
+        <Key f="480" v="180"/>
+      </Channel>
+    </Track>
+    <Track type="Animation">
+      <Section start="0" end="340" clip="Engine/Content/Characters/CrashDummy/CrashDummy_FB_Idle.nmanim" loop="true"/>
+      <Section start="335" end="480" clip="Engine/Content/Characters/CrashDummy/CrashDummy_FB_Walk.nmanim" loop="true" blendIn="8"/>
+    </Track>
+  </Binding>
+  <Track type="CameraCut" name="Shots">
+    <Section start="0" end="110" camera="cam1"/>
+    <Section start="110" end="200" camera="cam2"/>
+    <Section start="200" end="330" camera="cam3"/>
+    <Section start="330" end="480" camera="cam4"/>
+  </Track>
+  <Track type="Fade">
+    <Key f="0" v="1"/>
+    <Key f="15" v="0"/>
+    <Key f="440" v="0"/>
+    <Key f="480" v="1"/>
+  </Track>
+  <Track type="Audio">
+    <Section start="20" end="95" sound="Content/Sounds/World/Steam_Vent_Burst.nmsound" volume="0.9"/>
+    <Section start="110" end="300" sound="Content/Sounds/World/Gears_Loop.nmsound" volume="1.0" blendIn="10" blendOut="20"/>
+    <Section start="196" end="268" sound="Content/Sounds/World/Steam_Vent_Burst.nmsound" volume="1.0"/>
+  </Track>
+  <Track type="BusVolume" bus="Music">
+    <Key f="0" v="1"/>
+    <Key f="300" v="1"/>
+    <Key f="470" v="0.2"/>
+  </Track>
+  <Track type="Subtitle">
+    <Section start="20" end="105" speaker="Pilot" text="Steam pressure is up. That door has not opened in years."/>
+    <Section start="345" end="430" speaker="Pilot" text="You are in. Keep your head down."/>
+  </Track>
+  <Track type="Event">
+    <Key f="200" event="Lab.Signal" arg0="L1.BlastDoor" arg1="true" fireOnSkip="true"/>
+    <Key f="479" event="Lab.Signal" arg0="L1.Done" arg1="true" fireOnSkip="true"/>
+  </Track>
 </Sequence>

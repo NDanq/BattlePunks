@@ -782,66 +782,12 @@ def dress_gameplay(d):
 
 
 # =============================================================================
-# C3: the power-up, rewritten with the light cascade and the lever
+# C3: the light cascade -- the power signals in order (Tools/Cinematics/make_cinematics.py keys them)
 # =============================================================================
 CASCADE = [(36, 'L2.Power.Foyer'), (46, 'L2.Pwr.Foyer2'), (80, 'L2.Power.Atrium'), (88, 'L2.Pwr.Atrium2'),
            (96, 'L2.Pwr.Atrium3'), (104, 'L2.Pwr.Conservatory'), (112, 'L2.Power.Workshop'), (122, 'L2.Pwr.Archive'),
            (130, 'L2.Pwr.Turbine1'), (136, 'L2.Pwr.Turbine2'), (142, 'L2.Pwr.Turbine3'), (148, 'L2.Pwr.Elevator'),
            (152, 'L2.Power.All')]
-
-
-def rewrite_c4(d):
-    """C4: the cage from the panel, then from above as it drops into the shaft; fade out."""
-    ml, lv = d.ml, d.lv
-    shots_a = [(0, (1650, 230, 1350), (2450, 170, 1800)), (75, (1820, 260, 1520), (2450, 160, 1800))]
-    shots_b = [(76, (2250, 420, 1620), (2450, -150, 1820)), (150, (2300, 380, 1650), (2450, -700, 1820))]
-    body = ml.camera_track('cam0', lv.guid('Calm_CineCam_C4_Descent_A'), 'Calm_CineCam_C4_Descent_A', shots_a)
-    body += ml.camera_track('cam1', lv.guid('Calm_CineCam_C4_Descent_B'), 'Calm_CineCam_C4_Descent_B', shots_b)
-    body += [f'  <Binding id="cage" kind="possess" guid="{lv.guid("Calm_ElevatorCage")}" name="Calm_ElevatorCage">',
-             '    <Track type="Transform">']
-    body += ml.channel_keys('Position.X', [(0, 2450), (150, 2450)])
-    body += ml.channel_keys('Position.Y', [(0, 0), (40, 0), (150, -700)])
-    body += ml.channel_keys('Position.Z', [(0, 1800), (150, 1800)])
-    body += ['    </Track>', '  </Binding>']
-    body += ['  <Track type="CameraCut" name="Shots">', '    <Section start="0" end="76" camera="cam0"/>',
-             '    <Section start="76" end="150" camera="cam1"/>', '  </Track>']
-    body += ['  <Track type="Fade">', '    <Key f="0" v="0"/>', '    <Key f="135" v="0"/>', '    <Key f="150" v="1"/>',
-             '  </Track>']
-    body += ['  <Track type="Subtitle">',
-             '    <Section start="10" end="120" speaker="Pilot" text="Going down. The core is under the turbine hall."/>',
-             '  </Track>']
-    body += ['  <Track type="Audio">', f'    <Section start="0" end="150" sound="{ml.SND}World/Lift_Run_Loop.nmsound" volume="1"/>',
-             '  </Track>']
-    ml.write_seq('C4_Descent', 150, body)
-
-
-def rewrite_c3(d):
-    ml, lv = d.ml, d.lv
-    shots_a = [(0, (-430, 210, -1560), (-870, 140, -1800)), (40, (-470, 220, -1620), (-870, 150, -1800)),
-               (76, (-300, 300, -1450), (-700, 260, -2000))]
-    shots_b = [(76, (900, 330, -950), (0, 380, 200)), (130, (500, 520, -1050), (-500, 330, 150)),
-               (180, (-150, 620, -1000), (-600, 300, 300))]
-    body = ml.camera_track('cam0', lv.guid('Calm_CineCam_C3_Breaker_A'), 'Calm_CineCam_C3_Breaker_A', shots_a)
-    body += ml.camera_track('cam1', lv.guid('Calm_CineCam_C3_Breaker_B'), 'Calm_CineCam_C3_Breaker_B', shots_b)
-    body += [f'  <Binding id="lever" kind="possess" guid="{lv.guid("Calm_BreakerLever")}" name="Calm_BreakerLever">',
-             '    <Track type="Transform">']
-    for axis in ('X', 'Y', 'Z'):
-        body += ml.channel_keys(f'Position.{axis}', [(0, 0), (180, 0)])
-    body += ml.channel_keys('Rotation.X', [(0, -35), (26, -35), (34, 35)])
-    body += ['    </Track>', '  </Binding>']
-    body += ['  <Track type="CameraCut" name="Shots">', '    <Section start="0" end="76" camera="cam0"/>',
-             '    <Section start="76" end="180" camera="cam1"/>', '  </Track>']
-    body += ['  <Track type="Fade">', '    <Key f="0" v="0"/>', '  </Track>']
-    body += ['  <Track type="Subtitle">',
-             '    <Section start="10" end="90" speaker="Pilot" text="Power is back. Look at that place light up."/>',
-             '  </Track>']
-    body += ['  <Track type="Audio">', f'    <Section start="20" end="180" sound="{ml.SND}World/Power_Up_Sweep.nmsound" volume="1"/>',
-             '  </Track>']
-    body.append('  <Track type="Event">')
-    for fr, ch in CASCADE + [(178, 'L2.Powered'), (179, 'Checkpoint.Powered')]:
-        body.append(f'    <Key f="{fr}" event="Lab.Signal" arg0="{ch}" arg1="true" fireOnSkip="true"/>')
-    body.append('  </Track>')
-    ml.write_seq('C3_Breaker', 180, body)
 
 
 # =============================================================================
@@ -881,5 +827,3 @@ def dress(lv, ml):
     post(d, 'Calm_PostProcess', 'Content/PostProcess/L2_Laboratory/L2_Calm.pp.nmgraph')
     post(d, 'Alarm_PostProcess', 'Content/PostProcess/L2_Laboratory/L2_Alarm.pp.nmgraph')
 
-    rewrite_c3(d)
-    rewrite_c4(d)

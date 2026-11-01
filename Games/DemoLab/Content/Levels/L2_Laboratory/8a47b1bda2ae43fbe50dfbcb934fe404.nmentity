@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="8a47b1bda2ae43fbe50dfbcb934fe404" Name="Alarm_CineMark_C6">
+  <Component Type="Transform" Version="1">
+      <Position X="450" Y="450" Z="600" />
+      <Rotation X="0" Y="90" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

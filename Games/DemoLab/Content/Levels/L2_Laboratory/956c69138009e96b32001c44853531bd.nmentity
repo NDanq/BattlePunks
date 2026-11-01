@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="956c69138009e96b32001c44853531bd" Name="Alarm_CineShaft_Rim_0">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Content/Meshes/L2/Floor.nmmesh" />
+    <CastShadows Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="2117.5" Y="0" Z="1800" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="0.5875" Y="1" Z="1.925" />
+  </Component>
+</Entity>

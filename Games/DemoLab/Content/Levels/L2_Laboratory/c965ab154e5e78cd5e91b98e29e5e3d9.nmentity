@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="c965ab154e5e78cd5e91b98e29e5e3d9" Name="Alarm_CineAirship_Lamp" Parent="31c480e2ab788c620aed0b0e59af0be1">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="178" B="105" A="255" />
+    <Intensity Value="40" />
+    <Radius Value="3000" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="40" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="-60" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

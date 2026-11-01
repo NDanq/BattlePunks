@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="f040a82fdf50421e5bc17fb1409c37f5" Name="CineIntel_Glow" Parent="a95d3bd0376a3e73ce90116610b01cf7">
+  <Component Type="Point Light" Version="2">
+    <Color R="90" G="255" B="140" A="255" />
+    <Intensity Value="6" />
+    <Radius Value="300" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="10" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L3.Alarm" />
+    <ShowWhenOn Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="40" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

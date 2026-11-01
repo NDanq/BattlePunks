@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="d63f7f4a324641752098f70ee761378a" Name="CineShaft_Trim_2">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <Material0 Value="Content/Materials/Kit/BrassAged.material.nmgraph" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="2450" Y="-2" Z="1575" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="436" Y="6" Z="26" />
+  </Component>
+</Entity>

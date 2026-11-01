@@ -50,6 +50,50 @@ NIMBLE_GAME_CONFIG_FLOAT(GLabCreditsSeconds, "DemoLab", "CreditsSeconds", 14.0f,
 bool LabIsAutoPlay() { return GLabAutoPlay.GetBool(); }
 
 /*
+ * Watching one cinematic (Tools/Cinematics/README.md): -DemoLab.Cinematic=C3
+ * plays C3 in its level -- travelling to it, setting the signals the story
+ * would have set by then, standing the player on its "CineMark_C3" -- and
+ * quits a few seconds after it ends. With -record=<file.mp4>, its video.
+ */
+NIMBLE_GAME_CONFIG_STRING(GLabCinematic, "DemoLab", "Cinematic", "", nullptr);
+
+namespace
+{
+    struct LabCinematicTest
+    {
+        const char* Id;
+        const char* Level;
+        bool        bAlarm;
+        const char* Entry;      // where a travel to the level arrives
+        const char* Player;     // the Sequence Player that plays it
+        const char* Before;     // comma-separated signals set first; ">Name" plays and skips that player
+    };
+
+    const LabCinematicTest LAB_CINEMATICS[] = {
+        { "C1", "L1_Foothills",  false, nullptr,             "C1_Arrival",          "" },
+        { "C2", "L1_Foothills",  false, nullptr,             "C2_BlastDoor",        "L1.AtGate,L1.GateOpen,L1.Plaza" },
+        { "C3", "L2_Laboratory", false, nullptr,             "Calm_C3_Breaker",     "" },
+        { "C4", "L2_Laboratory", false, nullptr,             "Calm_C4_Descent",
+          ">Calm_C3_Breaker,L2.Keycard,L2.ArchiveOpen,L2.TurbineHall,L2.Valve1,L2.Valve2,L2.ValvesDone" },
+        { "C5", "L3_Core",       false, nullptr,             "C5_Theft",            "" },
+        { "C6", "L2_Laboratory", true,  "Entry_FreightLift", "Alarm_C6_Extraction", "L2A.W3Done,L2A.StragglersDone,L2A.HoldDone" },
+    };
+
+    bool GLabCinematicPlayed = false;   // it has played: a level travelled to after it only quits
+
+    const LabCinematicTest* FindCinematicTest()
+    {
+        const char* Id = GLabCinematic.GetString();
+        if(!Id || !Id[0]) { return nullptr; }
+        for(const LabCinematicTest& Test : LAB_CINEMATICS)
+        {
+            if(std::strcmp(Test.Id, Id) == 0) { return &Test; }
+        }
+        return nullptr;
+    }
+}
+
+/*
  * What a checkpoint keeps beyond the World: the objective, the latched
  * signals (LabSignals.h), where the character stands back up, and the travel
  * state (Flow/LabTravel.h) -- so Continue lands in the Alarm state it left.
@@ -132,6 +176,7 @@ public:
         Subscribe<&LabStoryMode::OnInteracted>("Lab.Interacted");
         Subscribe<&LabStoryMode::OnEncounterDone>("Encounter.Done");
         Subscribe<&LabStoryMode::OnDamaged>("Lab.Damaged");
+        Subscribe<&LabStoryMode::OnPlacePlayer>("Lab.PlacePlayer");
         return true;
     }
 
@@ -140,6 +185,7 @@ public:
         LabGameModeBase::OnStart();
         if(bAlarm) { LabSignals::Emit(GetWorld(), "State.Alarm", true); }
         GetLabAutoPlay().OnLevelStarted(LevelName, bAlarm, bRestored);
+        StartCinematicTest();
         if(bRestored)
         {
             HudStory = LabHUD::Story();
@@ -264,6 +310,7 @@ public:
             }
         }
         TickRegen(Dt);
+        TickCinematicTest(Dt);
         TickTravel(Dt);
         LabGameModeBase::OnTick(InFrame);
     }
@@ -291,6 +338,14 @@ public:
      * it stops as it starts. */
     void OnCutsceneStarted(const EntityID InPlayer, const char* InPath) override
     {
+        /* Watching another cinematic: this one (the level's opening) is passed. */
+        const LabCinematicTest* Test = FindCinematicTest();
+        if(Test && InPath && !std::strstr(InPath, (std::string("/") + Test->Id + "_").c_str()) && GetWorld().IsAlive(InPlayer))
+        {
+            SkipSequence(GetWorld(), InPlayer);
+            return;
+        }
+        if(Test) { bCineStarted = true; GLabCinematicPlayed = true; }
         const bool bOpening = InPath && (std::strstr(InPath, "C1_") || std::strstr(InPath, "Opening"));
         if(bRestored && bOpening && GetWorld().IsAlive(InPlayer))
         {
@@ -377,6 +432,78 @@ private:
         const EntityID Local = GetLocalAvatar(W, 0);
         const AvatarHarnessComponent* Harness = Local.IsSet() ? W.GetEntity(Local).GetComponent<AvatarHarnessComponent>() : nullptr;
         if(Harness && Harness->WasPressed("TechOverlay")) { LabUI::ToggleTechOverlay(GetSession()); }
+    }
+
+    /* -DemoLab.Cinematic: to the cinematic's level and state, or its stage set. */
+    void StartCinematicTest()
+    {
+        const LabCinematicTest* Test = FindCinematicTest();
+        if(!Test) { return; }
+        if(GLabCinematicPlayed) { GetSession().RequestQuit(); return; }
+        if(LevelName != Test->Level || bAlarm != Test->bAlarm)
+        {
+            CORE_LOG(std::string("[DemoLab] cinematic test ") + Test->Id + ": travelling to " + Test->Level)
+            bTravelling = true;
+            LabTravel::Travel(GetSession(), Test->Level, Test->Entry, Test->bAlarm ? "Alarm=1" : "", "");
+            return;
+        }
+        CineClock = 1.5f;   // the level settles (and an opening cutscene is passed) first
+    }
+
+    void TickCinematicTest(const float InSeconds)
+    {
+        const LabCinematicTest* Test = FindCinematicTest();
+        if(!Test || bTravelling) { return; }
+        World& W = GetWorld();
+        if(CineClock > 0.f)
+        {
+            CineClock -= InSeconds;
+            if(CineClock > 0.f) { return; }
+            CineClock = -1.f;
+            std::string Before = Test->Before;
+            while(!Before.empty())
+            {
+                const size_t Comma = Before.find(',');
+                const std::string Item = Before.substr(0, Comma);
+                Before = Comma == std::string::npos ? std::string() : Before.substr(Comma + 1);
+                if(Item.empty()) { continue; }
+                if(Item[0] == '>')
+                {
+                    const EntityID Earlier = W.FindEntityByName(Item.c_str() + 1);
+                    if(Earlier.IsSet()) { StartSequence(W, Earlier); SkipSequence(W, Earlier); }
+                }
+                else { LabSignals::Emit(W, Item.c_str(), true); }
+            }
+            if(std::strcmp(Test->Id, "C1") != 0)   // C1 opens its level by itself
+            {
+                PlacePlayer((std::string("CineMark_") + Test->Id).c_str());
+                LabWorld::PlaySequence(W, Test->Player);
+            }
+            CORE_LOG(std::string("[DemoLab] cinematic test ") + Test->Id + ": playing " + Test->Player)
+            return;
+        }
+        if(CineClock < 0.f && bCineStarted && !IsSequencePlaying())
+        {
+            CineQuitIn -= InSeconds;
+            if(CineQuitIn <= 0.f && CineQuitIn > -1000.f) { CineQuitIn = -2000.f; GetSession().RequestQuit(); }
+        }
+    }
+
+    /* Stands the local player on a marker entity, facing its yaw (a cutscene's Event key
+     * "Lab.PlacePlayer", arg0 the marker's name): where the hand-over finds them. */
+    void PlacePlayer(const char* InMarker)
+    {
+        World& W = GetWorld();
+        const EntityID Mark = W.FindEntityByName(InMarker);
+        const EntityID Local = GetLocalAvatar(W, 0);
+        if(!Mark.IsSet() || !Local.IsSet() || !HasAuthority()) { return; }
+        const TransformPose Pose = W.GetEntity(Mark).GetWorldPose();
+        TeleportCharacter(W, Local, Pose.Position, float(Pose.Rotation.GetY()));
+    }
+
+    void OnPlacePlayer(const EventArgs& InArgs)
+    {
+        if(InArgs.Count >= 1 && InArgs.Args[0].Type == EventArg::ET_String) { PlacePlayer(InArgs.Args[0].String); }
     }
 
     /* The player heals slowly out of a fight. */
@@ -554,6 +681,9 @@ private:
     float         CreditsFor = 0.f;
 
     float         QuitIn = 3.f;
+    float         CineClock = 0.f;     // -DemoLab.Cinematic: until it plays (> 0), played (< 0)
+    float         CineQuitIn = 3.f;
+    bool          bCineStarted = false;
     float         SinceHurt = 100.f;
     float         HurtSoundClock = 0.f;
 };
