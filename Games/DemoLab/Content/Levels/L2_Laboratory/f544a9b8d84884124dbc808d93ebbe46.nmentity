@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="f544a9b8d84884124dbc808d93ebbe46" Name="Alarm_Sun">
   <Component Type="Directional Light" Version="3">
-    <Color R="255" G="226" B="190" A="255" />
+    <Color R="255" G="238" B="215" A="255" />
     <Intensity Value="6" />
     <Active Value="true" />
     <CastShadows Value="true" />
@@ -24,12 +24,12 @@
     <DrawBackground Value="true" />
   </Component>
   <Component Type="Time Of Day" Version="1">
-    <Hour Value="18.55" />
+    <Hour Value="19.3" />
     <DayLengthMinutes Value="20" />
     <Running Value="false" />
     <NorthYaw Value="35" />
     <Latitude Value="35" />
-    <SunIntensityScale Value="4" />
+    <SunIntensityScale Value="2.5" />
     <Preset Value="TimeOfDay:/Presets/Default.todpreset" />
   </Component>
   <Component Type="Transform" Version="1">

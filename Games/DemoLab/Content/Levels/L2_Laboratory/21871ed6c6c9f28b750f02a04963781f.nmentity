@@ -2,8 +2,8 @@
 <Entity Guid="21871ed6c6c9f28b750f02a04963781f" Name="Alarm_Beacon_Archive_Glow">
   <Component Type="Point Light" Version="2">
     <Color R="255" G="32" B="18" A="255" />
-    <Intensity Value="6" />
-    <Radius Value="500" />
+    <Intensity Value="3" />
+    <Radius Value="400" />
     <Active Value="true" />
     <CastShadows Value="false" />
     <ShadowTechnique Value="0" />

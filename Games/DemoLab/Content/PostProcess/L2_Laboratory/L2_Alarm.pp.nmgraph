@@ -5,7 +5,7 @@
       <Prop Name="Centre Weight" Value="0.5" />
       <Prop Name="Key" Value="0.13" />
       <Prop Name="Max EV" Value="2" />
-      <Prop Name="Min EV" Value="-3" />
+      <Prop Name="Min EV" Value="-6" />
       <Prop Name="Speed Down" Value="1" />
       <Prop Name="Speed Up" Value="2.5" />
     </Node>
@@ -37,9 +37,9 @@
       <Prop Name="Albedo" Value="0.9 0.86 0.82" />
       <Prop Name="Anisotropy" Value="0.55" />
       <Prop Name="Base Height" Value="0" />
-      <Prop Name="Density" Value="0.00016" />
+      <Prop Name="Density" Value="0.0001" />
       <Prop Name="Height Falloff" Value="0" />
-      <Prop Name="Light Scattering" Value="1.2" />
+      <Prop Name="Light Scattering" Value="0.6" />
       <Prop Name="Max Distance" Value="5000" />
       <Prop Name="Shadows" Value="true" />
       <Prop Name="Sky Scattering" Value="0.2" />
@@ -56,7 +56,7 @@
       <Prop Name="Levels" Value="6" />
       <Prop Name="Radius" Value="0.85" />
       <Prop Name="Threshold" Value="0.85" />
-      <Prop Name="Tint" Value="1 0.75 0.65" />
+      <Prop Name="Tint" Value="1 0.85 0.8" />
     </Node>
   </Nodes>
   <Comments>
@@ -67,10 +67,10 @@
 Effect AmbientOcclusion Intensity=1 Radius=60 Samples=12 Power=1.5 Blur=true
 Effect ScreenSpaceReflections Intensity=1 MaxRoughness=0.6 MaxDistance=2500 Thickness=25 Steps=32
 Effect ScreenSpaceGI Intensity=1 Rays=4 Radius=450
-Effect VolumetricFog Density=0.00016 HeightFalloff=0 BaseHeight=0 MaxDistance=5000 Anisotropy=0.55 SunScattering=1.5 SkyScattering=0.2 LightScattering=1.2 Albedo=0.9,0.86,0.82 Steps=24 Shadows=true
-Effect Bloom Threshold=0.85 Intensity=0.75 Radius=0.85 Levels=6 Tint=1,0.75,0.65
+Effect VolumetricFog Density=1e-04 HeightFalloff=0 BaseHeight=0 MaxDistance=5000 Anisotropy=0.55 SunScattering=1.5 SkyScattering=0.2 LightScattering=0.6 Albedo=0.9,0.86,0.82 Steps=24 Shadows=true
+Effect Bloom Threshold=0.85 Intensity=0.75 Radius=0.85 Levels=6 Tint=1,0.85,0.8
 Effect ToneMapping Exposure=0.1 ToneMapper=ACES
-Effect AutoExposure Key=0.13 MinEV=-3 MaxEV=2 SpeedUp=2.5 SpeedDown=1 CentreWeight=0.5
+Effect AutoExposure Key=0.13 MinEV=-6 MaxEV=2 SpeedUp=2.5 SpeedDown=1 CentreWeight=0.5
 Effect Antialiasing EdgeThreshold=0.125 Sharpness=0.35 Method=TAA Quality=High
 ]]></Output>
   </gen_code>

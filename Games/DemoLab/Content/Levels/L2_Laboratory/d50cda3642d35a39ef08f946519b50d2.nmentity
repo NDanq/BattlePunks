@@ -2,7 +2,7 @@
 <Entity Guid="d50cda3642d35a39ef08f946519b50d2" Name="K_Conservatory_Floor_3_0" Mobility="Static">
   <Component Type="Render" Version="7">
     <Visible Value="true" />
-    <Material0 Value="" />
+    <Material0 Value="Content/Materials/Kit/Planks.material.nmgraph" />
     <Material1 Value="" />
     <Material2 Value="" />
     <Material3 Value="" />

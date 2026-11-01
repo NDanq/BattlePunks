@@ -2,7 +2,7 @@
 <Entity Guid="02283b576bd2fe2d19190a90f47caa80" Name="Alarm_Red_Foyer_7">
   <Component Type="Point Light" Version="2">
     <Color R="255" G="32" B="18" A="255" />
-    <Intensity Value="5" />
+    <Intensity Value="1" />
     <Radius Value="1100" />
     <Active Value="true" />
     <CastShadows Value="false" />

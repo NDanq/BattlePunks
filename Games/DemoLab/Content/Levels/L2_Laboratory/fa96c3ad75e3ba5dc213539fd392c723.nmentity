@@ -2,7 +2,7 @@
 <Entity Guid="fa96c3ad75e3ba5dc213539fd392c723" Name="Calm_Orrery_Sun">
   <Component Type="Point Light" Version="2">
     <Color R="255" G="186" B="110" A="255" />
-    <Intensity Value="30" />
+    <Intensity Value="18" />
     <Radius Value="1400" />
     <Active Value="true" />
     <CastShadows Value="true" />

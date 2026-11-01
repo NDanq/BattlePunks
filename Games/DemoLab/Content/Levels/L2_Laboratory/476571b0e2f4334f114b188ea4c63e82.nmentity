@@ -21,6 +21,6 @@
   <Component Type="Transform" Version="1">
       <Position X="2580" Y="64" Z="650" />
       <Rotation X="0" Y="367" Z="0" />
-      <Scale X="0.9" Y="0.9" Z="0.9" />
+      <Scale X="1.3" Y="1.3" Z="1.3" />
   </Component>
 </Entity>

@@ -2,8 +2,8 @@
 <Entity Guid="ee4bbe7e3d8a93fc6b3fc40dd510052a" Name="Alarm_Beacon_Atrium_0_Glow">
   <Component Type="Point Light" Version="2">
     <Color R="255" G="32" B="18" A="255" />
-    <Intensity Value="6" />
-    <Radius Value="500" />
+    <Intensity Value="3" />
+    <Radius Value="400" />
     <Active Value="true" />
     <CastShadows Value="false" />
     <ShadowTechnique Value="0" />

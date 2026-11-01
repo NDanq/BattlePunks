@@ -2,7 +2,7 @@
 <Entity Guid="39fb5c0c3c07b8dd2a7f3694cf023830" Name="K_TurbineHall_Floor_8_1" Mobility="Static">
   <Component Type="Render" Version="7">
     <Visible Value="true" />
-    <Material0 Value="" />
+    <Material0 Value="Content/Materials/Kit/Concrete.material.nmgraph" />
     <Material1 Value="" />
     <Material2 Value="" />
     <Material3 Value="" />

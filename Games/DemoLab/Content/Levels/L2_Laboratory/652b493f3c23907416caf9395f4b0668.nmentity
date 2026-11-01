@@ -2,8 +2,8 @@
 <Entity Guid="652b493f3c23907416caf9395f4b0668" Name="Calm_Conservatory_Grow_0">
   <Component Type="Point Light" Version="2">
     <Color R="255" G="214" B="170" A="255" />
-    <Intensity Value="14" />
-    <Radius Value="1100" />
+    <Intensity Value="30" />
+    <Radius Value="1300" />
     <Active Value="true" />
     <CastShadows Value="false" />
     <ShadowTechnique Value="0" />

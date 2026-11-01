@@ -2,8 +2,8 @@
 <Entity Guid="30ab44c06cbfe8ea1b8686194957cf0e" Name="Calm_Foyer_Lamp_1_Light">
   <Component Type="Point Light" Version="2">
     <Color R="255" G="196" B="128" A="255" />
-    <Intensity Value="22" />
-    <Radius Value="900" />
+    <Intensity Value="40" />
+    <Radius Value="1100" />
     <Active Value="true" />
     <CastShadows Value="false" />
     <ShadowTechnique Value="0" />

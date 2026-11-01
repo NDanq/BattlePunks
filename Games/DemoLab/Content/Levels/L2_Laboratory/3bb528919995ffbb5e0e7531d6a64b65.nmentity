@@ -2,7 +2,7 @@
 <Entity Guid="3bb528919995ffbb5e0e7531d6a64b65" Name="Alarm_Beacon_Turbine_1_Spot_33" Parent="819cf536c359d89efe4fd606e61db2f1">
   <Component Type="Spot Light" Version="2">
     <Color R="255" G="32" B="18" A="255" />
-    <Intensity Value="40" />
+    <Intensity Value="22" />
     <Range Value="1800" />
     <InnerConeAngle Value="14" />
     <OuterConeAngle Value="26" />

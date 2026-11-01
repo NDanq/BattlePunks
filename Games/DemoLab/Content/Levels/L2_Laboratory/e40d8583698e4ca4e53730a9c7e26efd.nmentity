@@ -2,7 +2,7 @@
 <Entity Guid="e40d8583698e4ca4e53730a9c7e26efd" Name="Alarm_Red_Workshop_27">
   <Component Type="Point Light" Version="2">
     <Color R="255" G="32" B="18" A="255" />
-    <Intensity Value="5" />
+    <Intensity Value="1" />
     <Radius Value="1200" />
     <Active Value="true" />
     <CastShadows Value="false" />

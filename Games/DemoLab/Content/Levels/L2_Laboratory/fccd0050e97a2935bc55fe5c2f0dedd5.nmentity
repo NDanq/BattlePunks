@@ -2,7 +2,7 @@
 <Entity Guid="fccd0050e97a2935bc55fe5c2f0dedd5" Name="K_Atrium_Dome_5" Mobility="Static">
   <Component Type="Render" Version="7">
     <Visible Value="true" />
-    <Material0 Value="" />
+    <Material0 Value="Content/Materials/L2_Laboratory/L2_DomeGlass.material.nmgraph" />
     <Material1 Value="" />
     <Material2 Value="" />
     <Material3 Value="" />

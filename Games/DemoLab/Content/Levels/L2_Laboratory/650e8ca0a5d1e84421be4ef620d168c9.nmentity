@@ -2,10 +2,10 @@
 <Entity Guid="650e8ca0a5d1e84421be4ef620d168c9" Name="Calm_Turbine_Strip_1_Area">
   <Component Type="Rect Light" Version="1">
     <Color R="255" G="222" B="180" A="255" />
-    <Intensity Value="9" />
+    <Intensity Value="14" />
     <Width Value="290" />
     <Height Value="14" />
-    <Range Value="1500" />
+    <Range Value="1600" />
     <Active Value="true" />
   </Component>
   <Component Type="LabSignalToggle" Version="1">

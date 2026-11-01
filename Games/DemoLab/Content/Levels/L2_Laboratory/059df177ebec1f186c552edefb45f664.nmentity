@@ -2,7 +2,7 @@
 <Entity Guid="059df177ebec1f186c552edefb45f664" Name="Alarm_Red_Elevator_36">
   <Component Type="Point Light" Version="2">
     <Color R="255" G="32" B="18" A="255" />
-    <Intensity Value="4" />
+    <Intensity Value="1" />
     <Radius Value="1000" />
     <Active Value="true" />
     <CastShadows Value="false" />

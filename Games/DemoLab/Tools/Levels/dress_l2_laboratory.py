@@ -221,19 +221,21 @@ def rect_room_kit(d, name, x0, z0, x1, z1, h, doors, ceiling=True, skip=()):
     wall_run(d, f'K_{name}_WallE', (x1 - T, cz), 90, z1 - z0 - 2 * T, [(-(z - cz), w) for z, w in doors.get('E', [])], sy)
     if 'W' not in skip:
         wall_run(d, f'K_{name}_WallW', (x0 + T, cz), 270, z1 - z0 - 2 * T, [((z - cz), w) for z, w in doors.get('W', [])], sy)
-    tiles(d, f'K_{name}_Floor', 'Floor', x0 + T, z0 + T, x1 - T, z1 - T, 0)
+    tiles(d, f'K_{name}_Floor', 'Floor', x0 + T, z0 + T, x1 - T, z1 - T, 0,
+          materials=[MAT.format('Concrete')] if name in ('TurbineHall', 'Airlock') else
+          [MAT.format('Planks')] if name == 'Conservatory' else ())
     if ceiling and not d.review:
         tiles(d, f'K_{name}_Ceiling', 'Ceiling', x0 + T, z0 + T, x1 - T, z1 - T, h, nominal=430.0)
 
 
-def tiles(d, name, mesh, x0, z0, x1, z1, y, nominal=400.0):
+def tiles(d, name, mesh, x0, z0, x1, z1, y, nominal=400.0, materials=()):
     nx, nz = max(1, math.ceil((x1 - x0) / 400.0 - 0.05)), max(1, math.ceil((z1 - z0) / 400.0 - 0.05))
     sx, sz = (x1 - x0) / nx / 400.0, (z1 - z0) / nz / 400.0
     centres = []
     for i in range(nx):
         for j in range(nz):
             x, z = x0 + (i + 0.5) * (x1 - x0) / nx, z0 + (j + 0.5) * (z1 - z0) / nz
-            d.prop(f'{name}_{i}_{j}', KM.format(mesh), (x, y, z), 0, (sx, 1, sz), shadows=(mesh != 'Floor'))
+            d.prop(f'{name}_{i}_{j}', KM.format(mesh), (x, y, z), 0, (sx, 1, sz), shadows=(mesh != 'Floor'), materials=materials)
             centres.append((x, z))
     return centres
 
@@ -275,7 +277,8 @@ def atrium_kit(d):
         return
     d.prop('K_Atrium_Ring', DM.format('L2_AtriumRing'), (cx, h, cz), 0)
     for k in range(8):
-        d.prop(f'K_Atrium_Dome_{k}', KM.format('DomeSegment'), (cx, h + 44, cz), k * 45.0, (2.0, 1.7, 2.0), shadows=True)
+        d.prop(f'K_Atrium_Dome_{k}', KM.format('DomeSegment'), (cx, h + 44, cz), k * 45.0, (2.0, 1.7, 2.0), shadows=True,
+               materials=['Content/Materials/L2_Laboratory/L2_DomeGlass.material.nmgraph'])
 
 
 def gantry_kit(d):
@@ -359,8 +362,8 @@ def beacon(d, name, x, y, z, speed=280):
     d.prop(f'Alarm_{name}_Reflector', DM.format('L2_BeaconReflector'), (0, 0, 0), 0, parent=spin, shadows=False,
            static=False)
     for yaw in (0, 180):
-        d.spot(f'Alarm_{name}_Spot', (0, 16, 0), (-22, yaw, 0), RED, 40, 1800, 14, 26, parent=spin)
-    d.point(f'Alarm_{name}_Glow', (x, y - 30, z), RED, 6, 500, source=12)
+        d.spot(f'Alarm_{name}_Spot', (0, 16, 0), (-22, yaw, 0), RED, 22, 1800, 14, 26, parent=spin)
+    d.point(f'Alarm_{name}_Glow', (x, y - 30, z), RED, 3, 400, source=12)
 
 
 def probe(d, name, centre, extent, interval=3.0):
@@ -381,13 +384,13 @@ def gi_volume(d, name, centre, extent, spacing):
 def sun(d, prefix, hour, sky_intensity):
     lv = d.lv
     d.add(prefix + 'Sun', [
-        lv.fields('Directional Light', version=3, Color=(255, 226, 190), Intensity=6, Active=True, CastShadows=True,
+        lv.fields('Directional Light', version=3, Color=(255, 238, 215), Intensity=6, Active=True, CastShadows=True,
                   ShadowTechnique=2, ShadowBias=0.0012, ShadowNormalBias=2, ShadowDistance=6000, CascadeCount=4,
                   CascadeSplitLambda=0.8, SourceAngle=0.6),
         lv.fields('Sky Light', version=2, SkyColor=(150, 160, 190), GroundColor=(60, 52, 44), Intensity=sky_intensity,
                   Active=True, Environment='', EnvironmentIntensity=1, EnvironmentRotation=0, DrawBackground=True),
         lv.fields('Time Of Day', Hour=hour, DayLengthMinutes=20, Running=False, NorthYaw=35, Latitude=35,
-                  SunIntensityScale=4, Preset='TimeOfDay:/Presets/Default.todpreset'),
+                  SunIntensityScale=2.5, Preset='TimeOfDay:/Presets/Default.todpreset'),
         lv.transform((0, 8000, 0), (32, 215, 0))])
 
 
@@ -454,13 +457,13 @@ def dress_foyer_airlock(d):
         d.particles(f'K_Airlock_Steam_{k}', PART.format('SteamVent'), (x, 30, z), rate=0.5, detail='Medium')
     pipe_run(d, 'K_Airlock_Pipe', az0 + 40, az1 - 40, (ah - 60, ax0 + T + 25), 'z')
     # Emergency light before the power.
-    d.point('Calm_Emergency_Foyer', (0, h - 40, -1300), COOL, 3, 900, channel='L2.Power.All', show_when_on=False)
+    d.point('Calm_Emergency_Foyer', (0, h - 40, -1300), COOL, 1.2, 900, channel='L2.Power.All', show_when_on=False)
     d.point('Calm_Emergency_Airlock', (0, ah - 40, -2700), COOL, 2.5, 600, channel='L2.Power.All', show_when_on=False)
     probe(d, 'K_Probe_Foyer', (0, h / 2, (z0 + z1) / 2), ((x1 - x0) / 2, h / 2, (z1 - z0) / 2))
     probe(d, 'K_Probe_Airlock', (0, ah / 2, -2700), (300, ah / 2, 300))
     # Alarm: red fill, a beacon, a steam leak from the pipe.
     beacon(d, 'Beacon_Foyer', 0, h - 4, -1800)
-    d.point('Alarm_Red_Foyer', (0, 300, -1800), RED, 5, 1100)
+    d.point('Alarm_Red_Foyer', (0, 300, -1800), RED, 1, 1100)
     d.particles('Alarm_Foyer_SteamJet', PART.format('SteamJet'), (x0 + 300, h - 70, z1 - T - 25), rot=(90, 0, 0))
 
 
@@ -468,7 +471,9 @@ def dress_atrium(d):
     a = L.L2['atrium']
     h = a['height']
     # The orrery: plinth, a gimbal of three rings (Outer > Middle > Inner) and the planets.
-    d.prop('K_Orrery', KM.format('Orrery'), (0, 0, 0), 0)
+    d.prop('Calm_Orrery', KM.format('Orrery'), (0, 0, 0), 0)
+    d.prop('Alarm_Orrery', KM.format('Orrery'), (0, 0, 0), 0,
+           params=[(s, 'EmissiveColor', (1.0, 0.12, 0.05)) for s in range(7)] + [(6, 'EmissiveIntensity', 4)])
     for prefix, channel in (('Calm_', 'L2.Power.Atrium'), ('Alarm_', '')):
         outer = d.prop(f'{prefix}Orrery_RingOuter', KM.format('Orrery_RingOuter'), (0, 400, 0), 0,
                        extra=[d.spinner(channel, 0, 7, 4)], static=False)
@@ -478,7 +483,7 @@ def dress_atrium(d):
                extra=[d.spinner(channel, 1, 17, 4)], static=False)
         d.prop(f'{prefix}Orrery_Planets', KM.format('Orrery_Planets'), (0, 400, 0), 0,
                extra=[d.spinner(channel, 1, 5, 4)], static=False)
-    d.point('Calm_Orrery_Sun', (0, 400, 0), (255, 186, 110), 30, 1400, channel='L2.Power.Atrium', source=22, shadows=True)
+    d.point('Calm_Orrery_Sun', (0, 400, 0), (255, 186, 110), 18, 1400, channel='L2.Power.Atrium', source=22, shadows=True)
     d.point('Alarm_Orrery_Sun', (0, 400, 0), (255, 120, 70), 10, 900, source=22)
     gantry_kit(d)
     # Lamp posts round the floor, each its own beat.
@@ -501,7 +506,7 @@ def dress_atrium(d):
     # Alarm: beacons on the ring, red, smoke rising into the dome, sparks from a lamp post's junction box.
     for k, ang in enumerate((45, 225)):
         beacon(d, f'Beacon_Atrium_{k}', 1150 * math.sin(math.radians(ang)), h - 10, 1150 * math.cos(math.radians(ang)))
-    d.point('Alarm_Red_Atrium', (0, 500, 0), RED, 8, 1700)
+    d.point('Alarm_Red_Atrium', (0, 500, 0), RED, 2, 1700)
     d.particles('Alarm_Atrium_Smoke', 'Content/Particles/L2_Laboratory/L2_Smoke.nmparticle', (-800, 20, 700), rate=1.0)
     d.particles('Alarm_Atrium_Sparks', PART.format('SparksLoop'), (1000 * math.sin(math.radians(140)), 300,
                                                                     1000 * math.cos(math.radians(140))))
@@ -535,8 +540,6 @@ def dress_workshop(d):
                                                Health=0, DebrisLifetime=0)]
         d.prop(f'K_Sample_{i}', KM.format(sample), (x, 92, z), 180 + (20 if sample == 'Sample_Enamel' else 0), extra=extra,
                static=not extra)
-        if sample == 'Sample_Steam':
-            d.particles('K_Sample_SteamPuff', PART.format('SteamVent'), (x, 100, z), rate=0.15, detail='Medium')
         if sample == 'Sample_LeafPanel':
             d.point('Calm_Sample_LeafBacklight', (x, 120, z + 12), (255, 220, 160), 3, 120, channel='L2.Power.Workshop',
                     source=4)
@@ -565,7 +568,7 @@ def dress_workshop(d):
         d.prop(f'Alarm_Workshop_SprinklerHead_{k}', KM.format('Pipe_Tee'), (x, h - 10, z), rot=(180, 0, 0), scale=0.35,
                shadows=False)
     beacon(d, 'Beacon_Workshop', -2200, h - 4, 0)
-    d.point('Alarm_Red_Workshop', (-2200, 300, 0), RED, 5, 1200)
+    d.point('Alarm_Red_Workshop', (-2200, 300, 0), RED, 1, 1200)
     d.particles('Alarm_Workshop_Sparks', PART.format('SparksLoop'), (x0 + T + 20, h - 100, -500))
 
 
@@ -615,7 +618,7 @@ def dress_archive(d):
     d.prop('Alarm_Archive_Rubble', DM.format('L2_Rubble'), (-1550, 0, 2300), 140)
     d.blocker('Alarm_Archive_RubbleBlock', (-1550, 15, 2300), (130, 30, 100), 140)
     beacon(d, 'Beacon_Archive', -2200, h - 4, 1750)
-    d.point('Alarm_Red_Archive', (-2200, 300, 1750), RED, 5, 1200)
+    d.point('Alarm_Red_Archive', (-2200, 300, 1750), RED, 1, 1200)
 
 
 def dress_turbine_hall(d):
@@ -670,7 +673,7 @@ def dress_turbine_hall(d):
     # Alarm: beacons, red, steam jets from the header, smoke, sparks, a fallen ceiling panel.
     for k, x in enumerate((-2200, -200, 1800)):
         beacon(d, f'Beacon_Turbine_{k}', x, h - 4, 3000)
-        d.point(f'Alarm_Red_Turbine_{k}', (x, 350, 3400), RED, 6, 1300)
+        d.point(f'Alarm_Red_Turbine_{k}', (x, 350, 3400), RED, 2, 1300)
     for k, x in enumerate((-1500, 300, 1400)):
         d.particles(f'Alarm_Turbine_SteamJet_{k}', PART.format('SteamJet'), (x, h - 110, z1 - T - 30), rot=(90, 0, 0))
     d.particles('Alarm_Turbine_Smoke', 'Content/Particles/L2_Laboratory/L2_Smoke.nmparticle', (2400, 20, 2900), rate=1.2)
@@ -693,7 +696,7 @@ def dress_elevator(d):
     pipe_run(d, 'K_Elevator_Pipe', z0 + 60, z1 - 60, (h - 70, x0 + T + 25), 'z')
     d.point('Calm_Emergency_Elevator', (2000, h - 40, 1800), COOL, 2, 700, channel='L2.Power.All', show_when_on=False)
     probe(d, 'K_Probe_Elevator', (2000, h / 2, 1800), (800, h / 2, 800))
-    d.point('Alarm_Red_Elevator', (2000, 300, 1800), RED, 4, 1000)
+    d.point('Alarm_Red_Elevator', (2000, 300, 1800), RED, 1, 1000)
 
 
 def dress_conservatory(d):
@@ -718,17 +721,17 @@ def dress_conservatory(d):
             ux, uz = math.cos(math.radians(yaw)), -math.sin(math.radians(yaw))
             mesh = DM.format('L2_Fern' if (j + k) % 2 else 'L2_Palm')
             d.prop(f'K_Conservatory_Plant_{k}_{j}', mesh, (x + ux * o, 64, z + uz * o), k * 47 + j * 113,
-                   0.75 if 'Palm' in mesh else 0.9)
+                   1.15 if 'Palm' in mesh else 1.3)
     for k, (x, z) in enumerate(((1500, 0), (2200, 300), (2200, -300))):
-        d.prop(f'K_Conservatory_Pot_{k}', DM.format('L2_Fern'), (x, 0, z), k * 80, 1.1)
+        d.prop(f'K_Conservatory_Pot_{k}', DM.format('L2_Palm'), (x, 0, z), k * 80, 1.4)
     d.prop('K_Conservatory_Tank', DM.format('L2_Tank'), (2500, 0, 0), 270)
     d.particles('K_Conservatory_Bubbles', DPART.format('L2_Bubbles'), (2500, 84, 0), rot=(0, 90, 0), detail='High')
     d.particles('K_Conservatory_Mist', DPART.format('L2_Mist'), ((x0 + x1) / 2, 20, (z0 + z1) / 2), detail='Medium')
     d.prop('K_Conservatory_Vent', K1.format('SteamVent'), (3050, 0, 750), 0)
     d.particles('K_Conservatory_Steam', PART.format('SteamVent'), (3050, 30, 750), rate=0.6, detail='Medium')
-    d.point('Calm_Conservatory_Grow_0', (1900, h - 120, 0), (255, 214, 170), 14, 1100, channel='L2.Pwr.Conservatory')
-    d.point('Calm_Conservatory_Grow_1', (2800, h - 120, 0), (220, 255, 200), 10, 1000, channel='L2.Pwr.Conservatory')
-    d.point('Alarm_Red_Conservatory', (2200, 300, 0), RED, 3, 1000)
+    d.point('Calm_Conservatory_Grow_0', (1900, h - 120, 0), (255, 214, 170), 30, 1300, channel='L2.Pwr.Conservatory')
+    d.point('Calm_Conservatory_Grow_1', (2800, h - 120, 0), (220, 255, 200), 24, 1200, channel='L2.Pwr.Conservatory')
+    d.point('Alarm_Red_Conservatory', (2200, 300, 0), RED, 1, 1000)
     probe(d, 'K_Probe_Conservatory', (2200, h / 2, 0), (1000, h / 2, 1000))
     # Its west wall is the atrium's window: kit wall only beyond the glass.
     d.drop(r'Conservatory_WallW_\d+')
@@ -821,8 +824,8 @@ def dress(lv, ml):
     dress_conservatory(d)
 
     # Light and air: the sun (mid-afternoon calm, dusk on the alarm), the GI volumes, the stacks.
-    sun(d, 'Calm_', 15.2, 0.35)
-    sun(d, 'Alarm_', 18.55, 0.25)
+    sun(d, 'Calm_', 15.2, 0.2)
+    sun(d, 'Alarm_', 19.3, 0.25)
     gi_volume(d, 'K_GI_Core', (0, 420, -600), (1250, 420, 1880), 350)
     gi_volume(d, 'K_GI_Workshop', (-2200, 295, 0), (985, 295, 885), 300)
     gi_volume(d, 'K_GI_Archive', (-2200, 295, 1750), (985, 295, 835), 300)

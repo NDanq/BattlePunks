@@ -2,7 +2,7 @@
 <Entity Guid="93e835ec7df87e0bf0ad76fd9a6a3baa" Name="K_Airlock_Floor_0_1" Mobility="Static">
   <Component Type="Render" Version="7">
     <Visible Value="true" />
-    <Material0 Value="" />
+    <Material0 Value="Content/Materials/Kit/Concrete.material.nmgraph" />
     <Material1 Value="" />
     <Material2 Value="" />
     <Material3 Value="" />

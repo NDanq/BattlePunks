@@ -5,7 +5,7 @@ the art kit, every one named L2_*:
 
     Content/Textures/L2_Laboratory/   L2_Plaques_BaseColor (the sample plaques, an atlas),
                                       L2_Leaf_{BaseColor,Normal,ORM}
-    Content/Materials/L2_Laboratory/  L2_Plaque, L2_Leaf, L2_Water, L2_AlarmLens, L2_StripGlow,
+    Content/Materials/L2_Laboratory/  L2_Plaque, L2_Leaf, L2_DomeGlass, L2_Water, L2_AlarmLens, L2_StripGlow,
                                       L2_Soil, L2_Plaster
     Content/Meshes/L2_Laboratory/     L2_Plaque_<Model> (one per sample), L2_Curtain, L2_CurtainRod,
                                       L2_Fern, L2_Palm, L2_Planter, L2_Tank, L2_Beacon,
@@ -146,6 +146,7 @@ MATDEFS = [
     dict(name="L2_Plaque", tex="L2_Plaques_BaseColor", unit=True, rough=0.32, metal=0.85),
     dict(name="L2_Leaf", set="L2_Leaf", metres=1.0, model="Subsurface", sss=(0.9, 1.3, 0.45), thickness=0.15,
          domain="Masked", two_sided=True),
+    dict(name="L2_DomeGlass", base=(0.75, 0.8, 0.8), rough=0.04, domain="Translucent", opacity=0.05, refraction=1.0),
     dict(name="L2_Water", base=(0.08, 0.28, 0.25), rough=0.04, domain="Translucent", opacity=0.3, refraction=1.06),
     dict(name="L2_AlarmLens", base=(0.5, 0.03, 0.02), rough=0.25, emissive=((1.0, 0.07, 0.02), 24.0)),
     dict(name="L2_StripGlow", base=(1.0, 0.95, 0.88), rough=0.3, emissive=((1.0, 0.86, 0.66), 10.0)),
@@ -188,7 +189,7 @@ def make_plaque_meshes():
         z = -1.6
         # Seen from -Z, +X is to the viewer's left... the front faces -Z, so the viewer's right is -X.
         m.polygon(MAT.format("L2_Plaque"), [(hw, hh, z), (-hw, hh, z), (-hw, -hh, z), (hw, -hh, z)],
-                  normal=(0, 0, -1), uvs=[(u0, v0), (u1, v0), (u1, v1), (u0, v1)])
+                  normal=(0, 0, -1), uvs=[(u1, v0), (u0, v0), (u0, v1), (u1, v1)])
         m.box(KIT.format("BrassAged"), (-hw - 0.8, -hh - 0.8, -1.5), (hw + 0.8, hh + 0.8, 0.0), skip=("-z",))
         m.polygon(KIT.format("BrassAged"), [(hw + 0.8, hh + 0.8, -1.5), (-hw - 0.8, hh + 0.8, -1.5),
                                             (-hw - 0.8, hh, -1.5), (hw + 0.8, hh, -1.5)], normal=(0, 0, -1))
@@ -523,20 +524,20 @@ def make_stacks():
     calm = pp_stack("L2_Calm", "Level 2, calm: SSGI over the DDGI volumes (the C3 bounce arrives live), AO, SSR on brass and "
                     "marble, the dome's sun shafting through a dusty haze, warm bloom, eye adaptation held so the "
                     "unpowered lab stays dark, ACES, TAA.", common + [
-        ("VolumetricFog", {"Albedo": "1 0.95 0.86", "Anisotropy": "0.7", "Base Height": "0", "Density": "0.00007",
+        ("VolumetricFog", {"Albedo": "1 0.97 0.93", "Anisotropy": "0.7", "Base Height": "0", "Density": "0.00007",
                            "Height Falloff": "0", "Light Scattering": "0.5", "Max Distance": "5000", "Shadows": "true",
                            "Sky Scattering": "0.15", "Steps": "24", "Sun Scattering": "4"}),
-        ("Bloom", {"Intensity": "0.5", "Levels": "6", "Radius": "0.8", "Threshold": "0.9", "Tint": "1 0.9 0.76"}),
+        ("Bloom", {"Intensity": "0.5", "Levels": "6", "Radius": "0.8", "Threshold": "0.9", "Tint": "1 0.95 0.88"}),
         ("ToneMapping", {"Exposure": "0.3", "Tone Mapper": "ACES"}),
-        ("AutoExposure", {"Centre Weight": "0.5", "Key": "0.15", "Max EV": "2.5", "Min EV": "-6", "Speed Down": "1.2",
+        ("AutoExposure", {"Centre Weight": "0.5", "Key": "0.15", "Max EV": "1", "Min EV": "-6", "Speed Down": "1.2",
                           "Speed Up": "2.5"}),
     ])
     alarm = pp_stack("L2_Alarm", "Level 2 on alarm: thicker smoky haze the red beacons sweep through, hotter bloom, "
                      "a little darker exposure.", common + [
-        ("VolumetricFog", {"Albedo": "0.9 0.86 0.82", "Anisotropy": "0.55", "Base Height": "0", "Density": "0.00016",
-                           "Height Falloff": "0", "Light Scattering": "1.2", "Max Distance": "5000", "Shadows": "true",
+        ("VolumetricFog", {"Albedo": "0.9 0.86 0.82", "Anisotropy": "0.55", "Base Height": "0", "Density": "0.0001",
+                           "Height Falloff": "0", "Light Scattering": "0.6", "Max Distance": "5000", "Shadows": "true",
                            "Sky Scattering": "0.2", "Steps": "24", "Sun Scattering": "1.5"}),
-        ("Bloom", {"Intensity": "0.75", "Levels": "6", "Radius": "0.85", "Threshold": "0.85", "Tint": "1 0.75 0.65"}),
+        ("Bloom", {"Intensity": "0.75", "Levels": "6", "Radius": "0.85", "Threshold": "0.85", "Tint": "1 0.85 0.8"}),
         ("ToneMapping", {"Exposure": "0.1", "Tone Mapper": "ACES"}),
         ("AutoExposure", {"Centre Weight": "0.5", "Key": "0.13", "Max EV": "2", "Min EV": "-6", "Speed Down": "1",
                           "Speed Up": "2.5"}),
