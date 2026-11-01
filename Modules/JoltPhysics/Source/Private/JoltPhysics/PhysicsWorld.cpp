@@ -1825,7 +1825,8 @@ namespace JoltPhysics
         const JPH::RRayCast Ray(Convert::ToRVec3(InOrigin, M), Direction * float(InMaxDistance * M));
         JPH::RayCastResult Hit;
         const Layers::QueryMask Mask(InMask);
-        /* Sensors skipped; and InIgnore's bodies -- its own, its ragdoll's parts. */
+        /* Sensors skipped; and InIgnore's bodies -- its own, its ragdoll's parts,
+         * and those of every entity under it (a hit box on its mesh child). */
         class SkipSensorsAndIgnored final : public JPH::BodyFilter
         {
         public:
@@ -1834,13 +1835,28 @@ namespace JoltPhysics
             {
                 if(InBody.IsSensor()) { return false; }
                 if(!Ignore.IsSet()) { return true; }
-                if(Owner.EntityOf(InBody.GetID()) == Ignore) { return false; }
+                GameCore::EntityID Entity = Owner.EntityOf(InBody.GetID());
                 const auto Part = Owner.RagdollParts.find(InBody.GetID().GetIndexAndSequenceNumber());
-                if(Part == Owner.RagdollParts.end()) { return true; }
-                const Impl::RagdollRecord* Ragdoll = Owner.FindRagdoll(Part->second.Ragdoll);
-                return !Ragdoll || Ragdoll->Owner != Ignore;
+                if(Part != Owner.RagdollParts.end())
+                {
+                    const Impl::RagdollRecord* Ragdoll = Owner.FindRagdoll(Part->second.Ragdoll);
+                    Entity = Ragdoll ? Ragdoll->Owner : GameCore::EntityID();
+                }
+                return !IsUnderIgnored(Entity);
             }
         private:
+            /* InEntity is Ignore or below it. */
+            bool IsUnderIgnored(GameCore::EntityID InEntity) const
+            {
+                for(int Depth = 0; InEntity.IsSet() && Depth < 64; ++Depth)
+                {
+                    if(InEntity == Ignore) { return true; }
+                    if(!Owner.World) { return false; }
+                    InEntity = Owner.World->GetEntity(InEntity).GetParent();
+                }
+                return false;
+            }
+
             const Impl&        Owner;
             GameCore::EntityID Ignore;
         };

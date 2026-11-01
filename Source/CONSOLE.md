@@ -43,7 +43,7 @@ level change.
 | `cvars [filter]` | Lists config vars and their values. `*` marks one changed from its default. |
 | `reset <Section.Name>` | Puts a config var back to its compiled default |
 | `scalability [detail <tier>] [power <profile>]` | Shows the detail tier (low, medium, high, ultra) and the power profile (auto, saver, max), with every value each one sets. With arguments, switches either one live. See RenderCore's [SCALABILITY.md](../Modules/RenderCore/SCALABILITY.md). |
-| `open <level>` | Loads a level by its registered name (`GameSession::RequestLevel`) |
+| `open <level> [entry] [Key=Value;...]` | Loads a level by its registered name (`GameSession::RequestLevel`), optionally at an entry (a Player Start's Entry or name; `-` for none) with travel state (LevelTravel.h) |
 | `pause` | Pauses or resumes the World |
 | `stat <unit\|frame\|physics\|none>` | Toggles a stats panel over the game: thread times (`[Stats] Unit`), each render stage's GPU time (`[Stats] Frame`), the level's physics simulation (`[Stats] Physics`). `none` hides them all. |
 | `quit` | Ends the game |

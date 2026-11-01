@@ -41,7 +41,7 @@ What the Details panel shows. The C++ members are public fields of `RagdollCompo
 
 | Property | Type | Default | Notes |
 |---|---|---|---|
-| `Layer` | int32_t | 1 |  |
+| `Layer` | int32_t | 1 | Its own Character Mover passes through it on any layer (the mover's rays ignore the avatar's own bodies and its children's), so the hit boxes can share the level's layer. |
 | `Mask` | int32_t | -1 |  |
 
 ### State

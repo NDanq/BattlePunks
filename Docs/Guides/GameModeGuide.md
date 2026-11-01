@@ -295,7 +295,9 @@ Cook=true
 The host makes one level per `[World_*]` section, named by the section, and
 creates a fresh mode -- the one its world names -- each time the level loads.
 A `GameMode=` key in a `[World_*]` section is no longer read; the log says so. `[Game] StartLevel`, the
-console's `open CoinRush` and saved games use the same name.
+console's `open CoinRush` and saved games use the same name. To change level
+at a particular entrance, or carry state into the next level, see "Changing
+level" below.
 
 ---
 
@@ -695,6 +697,155 @@ over" rule still holds, even for a life added by a graph.
 The graph's own `OnStart` registers its listeners, so a `Director` placed in
 the level hears only phases changed after its first tick. Seed it from **Get
 Phase** in an **On Start** if it must know the starting phase.
+
+---
+
+## Changing level: entry points and travel state
+
+A level change is always deferred: it is asked for during a frame and applied
+at the top of the next (`GameSession::ApplyPendingLevel`), where the old
+World is unloaded completely before the new one loads. Nothing of the old
+level survives except what the change carries with it: a **level travel**
+(`Public/NimbleEngine/LevelTravel.h`).
+
+| Field | What it is |
+|---|---|
+| `Entry` | where the players come in: the enabled **Player Start** whose **Entry** is this, or failing one, whose entity is named this. `""` is the usual start. |
+| `Values` | a few key/value strings, the *travel state* (`Alarm=1`), read by the new level's mode and scripts once it has loaded. |
+| `Previous` | filled in by the session: the level travelled from. |
+
+From C++, by the level's registered name (its `[World_Name]` section):
+
+```cpp
+NimbleEngine::LevelTravel Travel;
+Travel.Entry = "FreightLift";            // a Player Start's Entry, or its entity's name
+Travel.Set("Alarm", "1");                // or Travel.SetFromText("Alarm=1;Lift=B")
+Session->OpenLevel("Lab", Travel);       // false (logged) for an unknown name
+```
+
+`RequestLevel(ILevel&, const LevelTravel&)` does the same with a level in
+hand. The new level reads it from `ILevel::OnLoad` on, all level long:
+
+```cpp
+bool LabMode::OnLoad(NimbleEngine::GameSession& InSession)
+{
+    bAlarm = InSession.GetTravel().GetNumber("Alarm") != 0.0;   // or GetTravelValue("Alarm", "0")
+    return true;
+}
+```
+
+From Lua (and script graphs, the same names in the **Game** library):
+
+```lua
+Game.OpenLevel("Lab", "FreightLift", "Alarm=1")    -- name, entry ("" usual), state; -> accepted
+
+if Game.GetTravelNumber("Alarm", 0) == 1 then StartAlarm() end
+local value = Game.GetTravelValue("Lift", "A")     -- a string, with a default
+local entry = Game.GetEntryPoint()                 -- "FreightLift"
+local from  = Game.GetPreviousLevel()              -- "Exterior"
+```
+
+A menu document's action `Game.OpenLevel('Lab', 'Airlock', 'Alarm=0')` and
+the console's `open Lab FreightLift Alarm=1` take the same three arguments.
+
+**Where the players appear.** Give each way into a level a Player Start and
+set its **Entry** (Details panel) to the name the travel uses, or just name
+the entity. Then:
+
+- `FindPlayerStart` prefers the entry's start, so `NetGameMode` spawns
+  avatars there with no code;
+- avatars placed in the level for local players (**Auto Possess**) are moved
+  to it before `IGameMode::OnStart` (`PlaceAvatarAt`: a Character Mover is
+  teleported, facing the start's yaw);
+- a mode that spawns its own calls `FindPlayerStart(World, PlayerOrdinal)` or
+  `FindEntryPoint(World, "Airlock")`.
+
+An entry the level does not have is logged and the usual start is used.
+
+**Lasting state.** The travel lives until the next level change. It is not in
+a save: a mode that must remember it after a load copies it into its
+`GameState` in `OnLoad` (and a save restores that). Several entries into one
+level -- the Demo Lab's lab, entered once at the airlock and later at the
+freight lift with the alarm on -- are one world with two Player Starts and
+one travel value.
+
+Checked by `NimbleEngine.GameFrameworkTests` ("level travel").
+
+### The transition screen
+
+By default a level change is a cut: the old level's last frame, a pause while
+the next one loads, the next one's first frame. Turn on the engine's
+transition and every change becomes:
+
+1. **fade out** to black over `FadeOut` seconds, while the old level still
+   runs (input is held back from here);
+2. **the loading card** goes up and is drawn;
+3. the next `ApplyPendingLevel` **swaps** the levels behind it;
+4. once the new level has ticked and drawn `RevealFrames` frames, the card
+   closes and the screen **fades in** over `FadeIn` seconds; input comes back
+   as the fade in starts.
+
+```ini
+; Config/DefaultGame.ini
+[LevelTransition]
+Enabled=true                 ; every level change; false (default): only travels that ask
+FadeOut=0.4
+FadeIn=0.6
+RevealFrames=2
+Title=Loading                ; the card's text when the travel gives none
+Tip=
+Document=                    ; your own card (a .nmui); empty: the engine's
+```
+
+Per change, a travel decides for itself, and brings the card's text:
+
+```cpp
+NimbleEngine::LevelTravel Travel;
+Travel.Transition = NimbleEngine::TT_Fade;     // TT_Cut: never; TT_Default: [LevelTransition] Enabled
+Travel.Title = "Sublevel 2: Laboratory";
+Travel.Tip   = "Hold Run to sprint past the drones.";
+Session->OpenLevel("Lab", Travel);
+```
+
+```lua
+-- name, entry, state, title, tip
+Game.OpenLevel("Lab", "Airlock", "", "Sublevel 2: Laboratory", "Hold Run to sprint.")
+if Game.IsInTransition() then return end   -- e.g. ignore a second trigger while it runs
+```
+
+A request while one is under way retargets it; the session's
+`IsInTransition()` (Lua `Game.IsInTransition`) is true from the request until
+the fade in ends.
+
+**Your own card.** `Document` names a UI document opened instead of the
+engine's card, as persistent, so it survives the swap. It is drawn over the
+black, so give it a **Layer above 900** (the black's; the engine's card is
+950, a cinematic's bars 1000), and bind its text to the values the session
+sets before opening it:
+
+| Value | What |
+|---|---|
+| `Transition.Title` | the travel's Title, else `[LevelTransition] Title` |
+| `Transition.Tip` | the travel's Tip, else `[LevelTransition] Tip` |
+| `Transition.Level` | the name of the level being loaded |
+| `Transition.Fade` | the black, 0 to 1 (the engine's fade document uses it) |
+
+```xml
+<UI Format="1" ReferenceSize="1920,1080" ScaleMode="FitHeight" InputMode="GameOnly" Layer="960">
+  <Canvas Name="Root">
+    <Border Name="Back" Anchors="0,0,1,1" Background.Tint="#101820FF"/>
+    <Text Name="Title" Anchors="0.05,0.8,0.95,0.88" Text="{Bind:Transition.Title}" FontSize="40" Color="#F2EEE4FF"/>
+    <Text Name="Tip" Anchors="0.05,0.88,0.95,0.95" Text="{Bind:Transition.Tip}" FontSize="22" Wrap="true" Color="#B8B4AAFF"/>
+  </Canvas>
+</UI>
+```
+
+A document that does not open is logged and the engine's card is used. The
+fade and the card are made in code (like the Sequencer's cinematic overlay),
+so the engine's own need no files in a build. The load itself is still one
+blocking frame: the card is what is on screen while it runs.
+
+Checked by `NimbleEngine.GameFrameworkTests` ("level transition").
 
 ---
 

@@ -9,6 +9,7 @@
  * binaries folder, where Engine/Content/Meshes is staged.
  */
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <memory>
@@ -20,12 +21,22 @@
 #include "Public/GameCore/Terrain.h"
 #include "Public/GameCore/World.h"
 #include "Public/JoltPhysics/PhysicsWorld.h"
+#include "Public/NimbleEngine/Avatar.h"
+#include "Public/NimbleEngine/CharacterMover.h"
 #include "Public/NimbleEngine/GameSession.h"
+#include "Public/NimbleEngine/Input.h"
 #include "Public/NimbleEngine/PhysicsFacade.h"
 #include "Public/NimbleEngine/TerrainFacade.h"
 #include "Public/RenderCore/RenderComponents.h"
 
 using namespace GameCore;
+
+/* The Character Mover's walk axes, for the own-hit-box test. */
+NIMBLE_DEFINE_INPUT_MAP(PhysicsMoverTest)
+{
+    Map.Axis("MoveForward", "W, -S");
+    Map.Axis("MoveRight",   "D, -A");
+}
 
 static int GChecks   = 0;
 static int GFailures = 0;
@@ -498,6 +509,65 @@ namespace
         Expect(!NimbleEngine::PhysicsRaycast(W, EngineCore::Vector3(10.0, 1000.0, 0.0), EngineCore::Vector3(0.0, -1.0, 0.0), 5000.0f, Hit, 2),
                "masked out: no hit");
     }
+
+    /* The Character Mover's rays pass through its own bodies -- a hit box on a
+     * child, on the layer it walks on -- yet still meet another's. */
+    void TestCharacterMoverIgnoresOwnBodies()
+    {
+        std::printf("[character mover: own bodies]\n");
+        World W;
+        JoltPhysics::PhysicsWorld Physics;
+        Physics.Attach(W, TestSettings());
+        MakeFloor(W);
+
+        Entity Walker = W.CreateEntity("Walker");
+        Walker.AddComponent<TransformComponent>();
+        NimbleEngine::AvatarHarnessComponent Harness;
+        std::snprintf(Harness.InputMap, sizeof(Harness.InputMap), "%s", "PhysicsMoverTest");
+        Walker.AddComponent(Harness);
+        Walker.AddComponent<NimbleEngine::CharacterMoverComponent>();   // Mask -1: every layer, the hit box's too
+        NimbleEngine::TeleportCharacter(W, Walker.GetID(), EngineCore::Vector3(0.0, 0.0, 0.0), 0.0f);
+
+        /* A hit box round the legs and chest, on a mesh child, as a ragdoll's would be. */
+        Entity Mesh = W.CreateEntity("Mesh");
+        Mesh.AddComponent<TransformComponent>();
+        Mesh.SetParent(Walker.GetID());
+        Entity HitBox = MakeBoxed(W, "HitBox", EngineCore::Vector3(0.0, 80.0, 0.0), EngineCore::Vector3(25.0, 75.0, 25.0));
+        HitBox.SetParent(Mesh.GetID());
+        HitBox.AddComponent(Body(RBM_Kinematic));
+
+        /* And someone else's, ahead. */
+        Entity Other = MakeBoxed(W, "Other", EngineCore::Vector3(0.0, 80.0, 400.0), EngineCore::Vector3(25.0, 75.0, 25.0));
+        Other.AddComponent(Body(RBM_Static));
+        W.Tick(Frame);
+
+        NimbleEngine::PhysicsRaycastHit Hit;
+        Expect(NimbleEngine::PhysicsRaycast(W, EngineCore::Vector3(0.0, 500.0, 0.0), EngineCore::Vector3(0.0, -1.0, 0.0), 1000.0f, Hit)
+                   && Hit.Entity == HitBox.GetID(),
+               "a plain ray meets the hit box");
+        Expect(NimbleEngine::PhysicsRaycast(W, EngineCore::Vector3(0.0, 500.0, 0.0), EngineCore::Vector3(0.0, -1.0, 0.0), 1000.0f, Hit, -1,
+                                            Walker.GetID())
+                   && Hit.Entity != HitBox.GetID() && std::fabs(Hit.Point.GetY()) < 0.5f,
+               "ignoring the walker passes through its grandchild's body to the floor");
+
+        NimbleEngine::AvatarInputFrame Input;
+        Input.Seconds = Frame;
+        const int Forward = NimbleEngine::FindInputAxis("PhysicsMoverTest", "MoveForward");
+        Expect(Forward >= 0, "the test map has MoveForward");
+        if(Forward >= 0) { Input.Axes[Forward] = 1.0f; }
+        double HighestFeet = 0.0;
+        for(int I = 0; I < 120; ++I)
+        {
+            NimbleEngine::StepCharacter(W, Walker.GetID(), Input);
+            W.Tick(Frame);
+            HighestFeet = (std::max)(HighestFeet, double(Walker.GetComponent<TransformComponent>()->Position.GetY()));
+        }
+        const TransformComponent& Placed = *Walker.GetComponent<TransformComponent>();
+        const NimbleEngine::CharacterMoverComponent& Mover = *Walker.GetComponent<NimbleEngine::CharacterMoverComponent>();
+        Expect(HighestFeet < 1.0 && Mover.bGrounded != 0, "it stands on the floor, not on its own hit box (" + Num(HighestFeet) + ")");
+        Expect(Placed.Position.GetZ() > 250.0, "it walks out of its own hit box (" + Num(Placed.Position.GetZ()) + ")");
+        Expect(Placed.Position.GetZ() < 400.0 - 25.0 - 25.0, "but another's stops it (" + Num(Placed.Position.GetZ()) + ")");
+    }
 }
 
 namespace
@@ -706,6 +776,7 @@ int main()
     TestLayers();
     TestEvents();
     TestRaycast();
+    TestCharacterMoverIgnoresOwnBodies();
     TestHeightField();
     TestVehicle();
     TestVehicleOverBump();
