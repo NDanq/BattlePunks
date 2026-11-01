@@ -105,9 +105,9 @@ UBO_BLOCK_END(L1_Grade_Block)
 #if PIXEL_SHADER
 void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
 {
-    float t0 = dot(texture(Material_SceneColor, Inputs.TexCoord), vec4(0.2126, 0.7152, 0.0722, 0.0));
+    float t0 = dot(Material_SceneColorAt(Inputs.TexCoord), vec4(0.2126, 0.7152, 0.0722, 0.0));
     vec4 t1 = vec4(t0, t0, t0, t0);
-    vec4 t2 = mix(t1, texture(Material_SceneColor, Inputs.TexCoord), Param_Saturation);
+    vec4 t2 = mix(t1, Material_SceneColorAt(Inputs.TexCoord), Param_Saturation);
     vec4 t3 = t2 * Param_Tint;
     vec4 t4 = t3 - vec4(0.18, 0.18, 0.18, 0.0);
     vec4 t5 = t4 * Param_Contrast;

@@ -11,10 +11,10 @@ MATERIAL_SAMPLER2D(5, Level)    // this level's downsample (EncodeBloom)
 
 UBO_BLOCK_BEGIN(2, PP_Block)
     vec4 PP_Bloom;   // x radius (the weight added)
-    vec4 PP_Sizes;   // xy one SOURCE texel
+    vec4 PP_Sizes;   // xy one SOURCE texel, view UV; zw the largest UV Source may be sampled at (its drawn area)
 UBO_BLOCK_END(PP_Block)
 
-vec3 Tap(vec2 InUV) { return DecodeBloom(texture(Source, InUV).rgb); }
+vec3 Tap(vec2 InUV) { return DecodeBloom(texture(Source, min(InUV * Scene_Spare[3].xy, PP_Sizes.zw)).rgb); }
 
 void main(void)
 {
@@ -23,6 +23,6 @@ void main(void)
     vec3 Wide = Tap(UV) * 4.0
               + (Tap(UV + vec2(T.x, 0.0)) + Tap(UV - vec2(T.x, 0.0)) + Tap(UV + vec2(0.0, T.y)) + Tap(UV - vec2(0.0, T.y))) * 2.0
               + Tap(UV + T) + Tap(UV - T) + Tap(UV + vec2(T.x, -T.y)) + Tap(UV + vec2(-T.x, T.y));
-    vec3 Color = DecodeBloom(texture(Level, UV).rgb) + Wide / 16.0 * PP_Bloom.x;
+    vec3 Color = DecodeBloom(texture(Level, UV * Scene_Spare[3].xy).rgb) + Wide / 16.0 * PP_Bloom.x;
     Output = vec4(EncodeBloom(Color), 1.0);
 }

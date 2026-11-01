@@ -108,7 +108,7 @@ void main(void)
         float A = InFront(DepthC, DepthY) * Cone(Distance, RadiusY)
                 + Behind(DepthC, DepthY) * Cone(Distance, RadiusC)
                 + Cylinder(Distance, RadiusY) * Cylinder(Distance, RadiusC) * 2.0;
-        Sum    += A * texture(SceneColor, (vec2(Pixel) + 0.5 + Offset) * PP_Sizes.xy).rgb;   // filtered: no grain from rounding
+        Sum    += A * texture(SceneColor, Scene_ViewUv((vec2(Pixel) + 0.5 + Offset) * PP_Sizes.xy)).rgb;   // filtered: no grain from rounding
         Weight += A;
     }
     Output = vec4(Sum / Weight, 1.0);

@@ -22,7 +22,7 @@ const vec2 Disc[16] = vec2[16](
 void main(void)
 {
     vec2  UV     = Interpolants.TexCoord;
-    vec4  Centre = texture(Prepared, UV);
+    vec4  Centre = texture(Prepared, Scene_ViewUvHalf(UV));
     float Coc    = abs(Centre.a * 2.0 - 1.0);
     float Radius = Coc * PP_Focus.z * 0.5;   // half-resolution pixels
 
@@ -31,7 +31,7 @@ void main(void)
     for(int Index = 0; Index < 16; ++Index)
     {
         vec2  Offset  = Disc[Index] * Radius;
-        vec4  Tap     = texture(Prepared, UV + Offset * PP_Sizes.xy);
+        vec4  Tap     = texture(Prepared, Scene_ViewUvHalf(UV + Offset * PP_Sizes.xy));
         float TapCoc  = abs(Tap.a * 2.0 - 1.0) * PP_Focus.z * 0.5;
         float Reaches = clamp(TapCoc - length(Offset) + 1.0, 0.0, 1.0);
         float W       = Index == 0 ? 1.0 : Reaches;

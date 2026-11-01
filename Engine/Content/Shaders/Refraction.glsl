@@ -47,7 +47,7 @@ bool Refraction_Behind(vec3 InPosition, vec3 InNormal, float InIndex, out vec3 O
     vec3  There;
     if(Trust > 0.0 && Forward_SurfaceAt(Bent, There) && Forward_ViewDepthOf(There) < Depth) { Trust = 0.0; }
 
-    OutColor = max(textureLod(Forward_SceneColor, mix(Straight, Bent, Trust), 0.0).rgb, vec3(0.0));
+    OutColor = max(textureLod(Forward_SceneColor, Scene_ViewUv(mix(Straight, Bent, Trust)), 0.0).rgb, vec3(0.0));
     return true;
 }
 

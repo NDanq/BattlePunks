@@ -29,7 +29,7 @@ void main(void)
 {
     vec2 UV  = Interpolants.TexCoord;
     vec2 Off = PP_Sizes.xy * 0.5;
-    vec3 Color = (texture(SceneColor, UV + vec2(-Off.x, -Off.y)).rgb + texture(SceneColor, UV + vec2(Off.x, -Off.y)).rgb
-                + texture(SceneColor, UV + vec2(-Off.x,  Off.y)).rgb + texture(SceneColor, UV + vec2(Off.x,  Off.y)).rgb) * 0.25;
+    vec3 Color = (texture(SceneColor, Scene_ViewUv(UV + vec2(-Off.x, -Off.y))).rgb + texture(SceneColor, Scene_ViewUv(UV + vec2(Off.x, -Off.y))).rgb
+                + texture(SceneColor, Scene_ViewUv(UV + vec2(-Off.x,  Off.y))).rgb + texture(SceneColor, Scene_ViewUv(UV + vec2(Off.x,  Off.y))).rgb) * 0.25;
     Output = vec4(Color, CircleOfConfusion(UV) * 0.5 + 0.5);
 }

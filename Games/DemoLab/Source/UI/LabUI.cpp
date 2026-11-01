@@ -46,6 +46,7 @@ namespace
         "Shadows.Enabled",
         "Rendering.AllowScreenSpaceReflections|Rendering.StochasticReflections",
         "Rendering.AllowVolumetricFog",
+        "Rendering.DynamicResolution",
         "DemoLab.FoliageDensity",
         "Display.VSync",
         "Display.FrameRateLimit",
@@ -198,9 +199,20 @@ void LabUI::UpdateTechOverlay(GameSession& InSession, const std::string& InLevel
     InSession.GetRenderer().GetStats(Stats);
     char Line[256];
     const double Fps = Stats.FrameMs > 0.f ? 1000.0 / double(Stats.FrameMs) : 0.0;
-    std::snprintf(Line, sizeof(Line), "Frame %.2f ms (%.0f fps)\nGame %.2f ms   Render %.2f ms\nWait %.2f ms   Present %.2f ms",
+    /* The resolution the scene draws at (RenderCore's RENDERPIPELINE.md, "Resolution scale"). */
+    char Res[96];
+    if(Stats.bDynamicResolution)
+    {
+        std::snprintf(Res, sizeof(Res), "Resolution %.0f %% (dynamic, aiming at %.1f ms)", double(Stats.ResolutionScale * 100.f),
+                      double(Stats.DynamicResolutionTargetMs));
+    }
+    else
+    {
+        std::snprintf(Res, sizeof(Res), "Resolution %.0f %%", double(Stats.ResolutionScale * 100.f));
+    }
+    std::snprintf(Line, sizeof(Line), "Frame %.2f ms (%.0f fps)\nGame %.2f ms   Render %.2f ms\nWait %.2f ms   Present %.2f ms\n%s",
                   double(Stats.FrameMs), Fps, double(Stats.GameThreadMs), double(Stats.RenderThreadMs),
-                  double(Stats.WaitMs), double(Stats.PresentMs));
+                  double(Stats.WaitMs), double(Stats.PresentMs), Res);
     UI.SetValue("Tech.Stats", UI::UIValue::String(Line));
     UI.SetValue("Tech.Level", UI::UIValue::String(InLevel + (bInAlarm ? "  (Alarm)" : "")));
     UI.SetValue("Tech.Features", UI::UIValue::String(FeaturesFor(InLevel, bInAlarm)));
@@ -218,8 +230,8 @@ void LabUI::LogPerf(GameSession& InSession, const std::string& InLevel, const fl
     InSession.GetRenderer().GetStats(Stats);
     std::string Line = "[DemoLab] Perf " + InLevel;
     char Part[96];
-    std::snprintf(Part, sizeof(Part), " frame %.2f game %.2f render %.2f | GPU", double(Stats.FrameMs), double(Stats.GameThreadMs),
-                  double(Stats.RenderThreadMs));
+    std::snprintf(Part, sizeof(Part), " frame %.2f game %.2f render %.2f scale %.3f%s | GPU", double(Stats.FrameMs), double(Stats.GameThreadMs),
+                  double(Stats.RenderThreadMs), double(Stats.ResolutionScale), Stats.bDynamicResolution ? " dynamic" : "");
     Line += Part;
     for(int I = 0; I < RenderCore::RGT_Count; ++I)
     {

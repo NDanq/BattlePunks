@@ -9,8 +9,8 @@
 
 UBO_BLOCK_BEGIN(2, PP_Block)
     vec4 PP_View;    // x: 0 a colour target as it is; 1 a depth target, grey (a shadow atlas); 2 the scene's depth, as distance;
-                     //    3 a colour target upscaled, Catmull-Rom
-    vec4 PP_Sizes;   // xy: the source's size, texels (mode 3)
+                     //    3 a colour target upscaled, Catmull-Rom; yz: the largest UV a tap may take (mode 3)
+    vec4 PP_Sizes;   // xy: the source's size, texels (mode 3); zw: the share of it drawn (dynamic resolution; 1, 1 all of it)
 UBO_BLOCK_END(PP_Block)
 
 MATERIAL_SAMPLER2D(4, Source)
@@ -31,6 +31,9 @@ vec3 CatmullRom(vec2 InUV, vec2 InSize)
     vec2 T3  = (Centre + 2.0) / InSize;
     vec2 T12 = (Centre + W2 / W12) / InSize;
     vec3 Sum = vec3(0.0);
+    // Kept inside the drawn area: past it are texels a larger scale left.
+    vec2 E = PP_View.yz;
+    T0 = min(T0, E); T3 = min(T3, E); T12 = min(T12, E);
     Sum += textureLod(Source, vec2(T0.x,  T0.y), 0.0).rgb  * W0.x  * W0.y;
     Sum += textureLod(Source, vec2(T12.x, T0.y), 0.0).rgb  * W12.x * W0.y;
     Sum += textureLod(Source, vec2(T3.x,  T0.y), 0.0).rgb  * W3.x  * W0.y;
@@ -47,7 +50,7 @@ void main(void)
 {
     if(PP_View.x > 2.5)
     {
-        Output = vec4(CatmullRom(Interpolants.TexCoord, max(PP_Sizes.xy, vec2(1.0))), 1.0);
+        Output = vec4(CatmullRom(Interpolants.TexCoord * PP_Sizes.zw, max(PP_Sizes.xy, vec2(1.0))), 1.0);
         return;
     }
     vec4 Texel = texture(Source, Interpolants.TexCoord);

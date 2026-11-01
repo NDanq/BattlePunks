@@ -1137,6 +1137,62 @@ frame costs roughly half as much; texture streaming still picks mips for the ful
 viewport. Splitscreen views are scaled the same way and the composite
 stretches them.
 
+**Dynamic resolution.** `[Rendering] DynamicResolution` (off; on at the Low
+and Medium tiers) picks the scale each frame instead, to keep the scene's GPU
+time near `DynamicResolutionTargetMs` (15: 60 fps with room for the UI and the
+present), between `DynamicResolutionMin` and `DynamicResolutionMax` (0.5 and
+1). `ResolutionScale` is where it starts.
+
+- **The targets keep their size.** With it on, a view's targets are allocated
+  at the viewport's size once (`SceneTargets::AllocWidth`, `AllocHeight`) and
+  the scene draws in their top-left `Width` x `Height`, in steps of 8 pixels
+  so the half-size and smaller targets line up. A change of scale moves the
+  viewport of every stage and reallocates nothing. Every stage counts pixels
+  in `Width` x `Height` as before.
+- **View UV.** A full-screen pass still gets 0 to 1 across what it draws
+  (`Interpolants.TexCoord`), and turns that into a scene target's UV with
+  `Scene_ViewUv` (`SceneUniforms.glsl`; `Scene_ViewUvHalf` for the half-size
+  targets). These scale by the drawn share of the target and clamp to its
+  drawn area, so no tap reaches the texels past its edge, which a larger
+  scale left behind. `Scene_PrevViewUv` does the same for last frame's
+  targets (TAA's history, the reflections' and screen GI's history,
+  `LastColor`), drawn at last frame's scale. The scene block carries both
+  frames' shares (`Scene_Spare[3]` to `[5]`), all 1 when unscaled.
+  `texelFetch` at `gl_FragCoord` needs nothing: the drawn area starts at the
+  target's top-left. Bloom passes each level its own edge (`PP_Sizes.zw`).
+- **History across a change.** TAA reprojects into last frame's drawn area
+  and resamples it (Catmull-Rom) at this frame's, so a scale change does not
+  restart the history and the picture does not pop. The same goes for the
+  reflections' and screen GI's resolves.
+- **The controller** (`RenderScene::Impl::UpdateDynamicResolution`). It reads
+  stat frame's GPU times of the frame the GPU finished last, a few frames
+  behind, and matches them with the scale that frame drew at. `Total` is
+  taken as what scales with the pixels, `Captures` and `Particles` as what
+  does not. It smooths the full-size cost (`Total / scale^2`) and works out
+  the scale that would land on the target. It steps down after two frames
+  over the target (or one 15 % over), by up to 8 % a step. It steps up only
+  after half a second with room to spare, by 2 % a step and short of the
+  ideal, so a GPU whose clock swings (an integrated one throttling) does not
+  make it hunt. Its choice draws the next frame: the targets are sized before
+  this frame's times are known.
+- **Seeing it.** `stat unit` adds a `Res` line, and `RenderStats` has
+  `ResolutionScale`, `bDynamicResolution` and `DynamicResolutionTargetMs`.
+  `Rendering.DynamicResolutionLog` logs a line a second: the scale, the
+  measured frames' median and worst GPU time, and how many went over the
+  target. It also runs with dynamic resolution off, for an A/B.
+- **Custom passes and materials.** A custom pass's targets sized from the
+  view (`RenderPassTargetDesc` with no `Width`) are allocated like the scene's
+  and drawn in the same share (`RenderContext::Impl::PassDrawnSize`). A pass
+  shader that samples a scene texture or such a target with
+  `Interpolants.TexCoord` should go through `Scene_ViewUv`
+  (`CustomRenderPassGuide.md`). A PostProcess material's Scene Texture node
+  generates `Material_SceneColorAt`, which does; graphs saved before it
+  need regenerating (`NodeGraphGenerate`).
+- **Limits.** It holds the GPU time only. A frame bound by the render thread
+  (draw calls) is as slow at any scale. Below the minimum, the frame simply
+  runs over. The Render Target view mode shows a scene target whole,
+  undrawn margin included.
+
 ### Views
 
 A scene draws one view by default: one camera, the whole viewport. For

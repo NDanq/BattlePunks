@@ -80,6 +80,17 @@ NIMBLE_CONFIG_INT(GRenderGIConvergeRounds, "Rendering", "GIConvergeRounds", 2, n
 /* Local lights' shadow views cull their casters by their frustum's planes (off: by its bounding box, as before). */
 NIMBLE_CONFIG_BOOL(GRenderShadowFrustumCulling, "Rendering", "ShadowFrustumCulling", true, nullptr);
 NIMBLE_CONFIG_FLOAT(GRenderResolutionScale, "Rendering", "ResolutionScale", 1.0f, nullptr);
+/* DYNAMIC RESOLUTION (RENDERPIPELINE.md, "Resolution scale"): the scale chosen each frame to keep the
+ * scene's GPU time (stat frame's Total, Captures and Particles) near DynamicResolutionTargetMs, between
+ * DynamicResolutionMin and DynamicResolutionMax; ResolutionScale is where it starts. The targets keep
+ * the viewport's size and the scene draws in their top-left (SceneTargets), so a change reallocates
+ * nothing and TAA carries on across it. */
+NIMBLE_CONFIG_BOOL(GRenderDynamicResolution, "Rendering", "DynamicResolution", false, nullptr);
+NIMBLE_CONFIG_FLOAT(GRenderDynamicResolutionTargetMs, "Rendering", "DynamicResolutionTargetMs", 15.0f, nullptr);
+NIMBLE_CONFIG_FLOAT(GRenderDynamicResolutionMin, "Rendering", "DynamicResolutionMin", 0.5f, nullptr);
+NIMBLE_CONFIG_FLOAT(GRenderDynamicResolutionMax, "Rendering", "DynamicResolutionMax", 1.0f, nullptr);
+/* A line a second: the scale, the measured frames' GPU time (median, worst) and how many were over the target. */
+NIMBLE_CONFIG_BOOL(GRenderDynamicResolutionLog, "Rendering", "DynamicResolutionLog", false, nullptr);
 NIMBLE_CONFIG_BOOL(GRenderCaptureWarmup, "Rendering", "CaptureWarmup", false, nullptr);
 NIMBLE_CONFIG_FLOAT(GRenderCaptureWarmupBudgetMs, "Rendering", "CaptureWarmupBudgetMs", 50.0f, nullptr);
 /* RELIGHTING (GLOBAL_ILLUMINATION.md, "Relighting"): a GI Volume keeps what its probes' faces saw, and
@@ -902,6 +913,122 @@ namespace RenderCore
             for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer) { GpuSums[Timer] = 0.0; GpuSamples[Timer] = 0; GpuMs[Timer] = -1.0f; }
             GpuWindowStartNs = 0;
             if(bReportsStats) { SetReportedGpuTimes(GpuMs); }
+        }
+
+        /*
+         * DYNAMIC RESOLUTION ([Rendering] DynamicResolution): the scale the views draw at, worked
+         * out from the frames the GPU has finished -- a few behind this one, so each measurement
+         * is matched with the scale its own frame drew at (Serials, Scales). Total (stat frame's)
+         * is taken as the time that scales with the pixels, the captures' and particles' as the
+         * time that does not; Total's cost at full size (Total / scale^2) and the rest are
+         * smoothed, and the scale that would land the frame on the target worked out from them.
+         * The scale goes there a step at a time: down after two frames over the target (or one
+         * well over), up only after half a second with room to spare and by less, and short of
+         * the ideal -- so a GPU whose clock swings (an integrated one, throttling) does not make
+         * it hunt. What it chooses draws the frame after: the targets are sized before the GPU's
+         * times for this frame are known.
+         */
+        struct DynamicResolutionState
+        {
+            bool     bActive    = false;
+            float    Scale      = 1.0f;
+            float    FullCostMs = -1.0f;   // Total at scale 1, smoothed
+            float    FixedMs    = 0.0f;    // the captures and particles, smoothed
+            uint32_t Over       = 0;       // measurements in a row over the target
+            uint32_t Under      = 0;       // ... with room to scale up
+            uint64_t Serials[8] = {};      // the GDI block each recent frame drew in, and its scale
+            float    Scales[8]  = {};
+            std::vector<float> LogMs;      // DynamicResolutionLog: this second's measured frames
+            int64_t  LogStartNs = 0;
+        } Dynamic;
+
+        /* The scale this frame's views draw at: [Rendering] ResolutionScale, or the controller's. */
+        float ResolutionScaleForFrame()
+        {
+            if(!GRenderDynamicResolution.GetBool())
+            {
+                Dynamic.bActive = false;   // the frames' scales and the log carry on
+                return std::clamp(GRenderResolutionScale.GetFloat(), 0.5f, 1.0f);
+            }
+            const float Min = std::clamp(GRenderDynamicResolutionMin.GetFloat(), 0.25f, 1.0f);
+            const float Max = std::clamp(GRenderDynamicResolutionMax.GetFloat(), Min, 1.0f);
+            if(!Dynamic.bActive)
+            {
+                Dynamic.bActive    = true;
+                Dynamic.Scale      = std::clamp(GRenderResolutionScale.GetFloat(), Min, Max);
+                Dynamic.FullCostMs = -1.0f;
+                Dynamic.FixedMs    = 0.0f;
+                Dynamic.Over       = 0;
+                Dynamic.Under      = 0;
+            }
+            Dynamic.Scale = std::clamp(Dynamic.Scale, Min, Max);
+            return Dynamic.Scale;
+        }
+
+        /* After BeginTimedBlock: InScale is what this frame (GDI block InSerials[0]) draws at;
+         * InGpuMs the times of block InSerials[1], this scene's (stat frame's, ms; -1 untimed). */
+        void UpdateDynamicResolution(const float InScale, const float (&InGpuMs)[RGT_Count], const uint64_t (&InSerials)[2])
+        {
+            DynamicResolutionState& D = Dynamic;
+            float Measured = -1.0f;
+            for(uint32_t Index = 0; Index < 8; ++Index)
+            {
+                if(InSerials[1] != 0 && D.Serials[Index] == InSerials[1]) { Measured = D.Scales[Index]; }
+            }
+            D.Serials[InSerials[0] % 8] = InSerials[0];
+            D.Scales[InSerials[0] % 8]  = InScale;
+
+            /* Off, the scale is [Rendering] ResolutionScale's and only the log (for an A/B) runs. */
+            const float Total = InGpuMs[RGT_Total];
+            if(Measured <= 0.0f || Total <= 0.0f) { return; }
+            const float Min    = std::clamp(GRenderDynamicResolutionMin.GetFloat(), 0.25f, 1.0f);
+            const float Max    = std::clamp(GRenderDynamicResolutionMax.GetFloat(), Min, 1.0f);
+            const float Target = std::max(GRenderDynamicResolutionTargetMs.GetFloat(), 1.0f);
+            const float Fixed  = std::max(InGpuMs[RGT_SceneCapture], 0.0f) + std::max(InGpuMs[RGT_Particles], 0.0f);
+            const float Full   = Total / (Measured * Measured);
+            constexpr float SMOOTHING = 0.15f;
+            D.FullCostMs = D.FullCostMs < 0.0f ? Full : D.FullCostMs + (Full - D.FullCostMs) * SMOOTHING;
+            D.FixedMs   += (Fixed - D.FixedMs) * SMOOTHING;
+            const float Budget = std::max(Target - D.FixedMs, Target * 0.25f);
+            const float Ideal  = std::clamp(std::sqrt(Budget / std::max(D.FullCostMs, 0.01f)), Min, Max);
+            const float Frame  = Total + Fixed;
+            if(GRenderDynamicResolutionLog.GetBool())
+            {
+                const int64_t Now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                        std::chrono::steady_clock::now().time_since_epoch()).count();
+                if(D.LogStartNs == 0) { D.LogStartNs = Now; }
+                D.LogMs.push_back(Frame);
+                if(Now - D.LogStartNs >= 1'000'000'000 && !D.LogMs.empty())
+                {
+                    std::vector<float> Sorted = D.LogMs;
+                    std::sort(Sorted.begin(), Sorted.end());
+                    const auto Above = [&Sorted](const float InMs)
+                    {
+                        return size_t(std::count_if(Sorted.begin(), Sorted.end(), [InMs](const float InEach) { return InEach > InMs; }));
+                    };
+                    char Line[240];
+                    std::snprintf(Line, sizeof(Line), "[Rendering] dynamic resolution: scale %.3f, %zu frames, GPU median %.2f ms, worst %.2f, over %.1f ms: %zu, over 16.7 ms: %zu",
+                                  double(InScale), Sorted.size(), double(Sorted[Sorted.size() / 2]), double(Sorted.back()), double(Target),
+                                  Above(Target), Above(1000.0f / 60.0f));
+                    RENDERCORE_LOG(Line);
+                    D.LogMs.clear();
+                    D.LogStartNs = Now;
+                }
+            }
+            if(!D.bActive) { return; }
+            D.Over  = Frame > Target ? D.Over + 1 : 0;
+            D.Under = Ideal > D.Scale + 0.03f ? D.Under + 1 : 0;
+            if(Ideal < D.Scale && (D.Over >= 2 || Frame > Target * 1.15f))
+            {
+                D.Scale = std::max(Ideal, D.Scale - 0.08f);
+                D.Under = 0;
+            }
+            else if(D.Under >= 30)
+            {
+                D.Scale = std::min(Ideal - 0.02f, D.Scale + 0.02f);
+                D.Under = 0;
+            }
+            D.Scale = std::clamp(D.Scale, Min, Max);
         }
         /*
          * One view's pass (SceneViewState), after the frame's captures and
@@ -2229,16 +2356,34 @@ namespace RenderCore
         /* Created on first use and resized with the viewport -- see Impl's
          * own comment on why a scene owns these at all. Early-outs on every
          * frame whose viewport has not changed, which is nearly all of them. */
-        /* [Rendering] ResolutionScale: the views' targets that much smaller, the composite at full size. */
-        const double Scale  = std::clamp(double(GRenderResolutionScale.GetFloat()), 0.5, 1.0);
-        const bool   bScaled = Scale < 0.999;
+        /* [Rendering] ResolutionScale: the views' targets that much smaller, the composite at full size.
+         * DynamicResolution: the targets at the viewport's size, the scene drawn in the part of them the
+         * controller's scale gives -- in steps of 8 pixels, so the half-size and smaller targets line up. */
+        const bool  bDynamic = GRenderDynamicResolution.GetBool();
+        const float Scale    = P->ResolutionScaleForFrame();
+        bool bScaled = false;
         for(uint32_t Index = 0; Index < ViewCount; ++Index)
         {
             SceneViewState& View = P->Views[Index];
-            if(View.View.ViewportPixels.Width > 0 && View.View.ViewportPixels.Height > 0)
+            const int32_t ViewW = View.View.ViewportPixels.Width, ViewH = View.View.ViewportPixels.Height;
+            if(ViewW > 0 && ViewH > 0)
             {
-                View.Targets.Allocate(uint(std::max<long>(1, std::lround(View.View.ViewportPixels.Width * Scale))),
-                                      uint(std::max<long>(1, std::lround(View.View.ViewportPixels.Height * Scale))));
+                const auto Drawn = [Scale](const int32_t InSize)
+                {
+                    if(Scale >= 0.999f) { return uint(InSize); }
+                    return uint(std::clamp<long>(std::lround(double(InSize) * double(Scale) / 8.0) * 8, 8, InSize));
+                };
+                if(bDynamic)
+                {
+                    View.Targets.Allocate(uint(ViewW), uint(ViewH), Drawn(ViewW), Drawn(ViewH));
+                }
+                else
+                {
+                    const uint Width  = uint(std::max<long>(1, std::lround(ViewW * double(Scale))));
+                    const uint Height = uint(std::max<long>(1, std::lround(ViewH * double(Scale))));
+                    View.Targets.Allocate(Width, Height);
+                }
+                bScaled = bScaled || View.Targets.Width != uint(ViewW) || View.Targets.Height != uint(ViewH);
             }
         }
         const EngineCore::Size CompositePixels = bSplit ? P->WindowPixels : Main.View.ViewportPixels;
@@ -2270,7 +2415,8 @@ namespace RenderCore
             float GpuMs[RGT_Count];
             uint64_t Serials[2] = {};
             const bool bBudget = GRenderCaptureBudgetMs.GetFloat() > 0.0f;
-            const void* Owner = InContext.BeginTimedBlock(this, Stats.bShowFrame || bBudget, GpuMs, Serials);
+            const void* Owner = InContext.BeginTimedBlock(this, Stats.bShowFrame || bBudget || bDynamic || GRenderDynamicResolutionLog.GetBool(),
+                                                          GpuMs, Serials);
             P->BudgetSerial = Serials[0];
             for(RenderScene* Each : GLiveScenes)
             {
@@ -2279,6 +2425,11 @@ namespace RenderCore
                 Each->P->Budget.Measured(Serials[1], GpuMs[RGT_SceneCapture]);
                 Each->P->RelightBudget.Measured(Serials[1], GpuMs[RGT_SceneCapture]);
             }
+            /* This frame's scale against its block, and the times of the block they are for. */
+            const float NoTimes[RGT_Count] = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+            const float Drew = Main.View.ViewportPixels.Width > 0 ? float(Main.Targets.Width) / float(Main.View.ViewportPixels.Width) : Scale;
+            P->UpdateDynamicResolution(Drew, Owner == this ? GpuMs : NoTimes, Serials);
+            if(P->bReportsStats) { SetResolutionStats(Drew, bDynamic, GRenderDynamicResolutionTargetMs.GetFloat()); }
             if(!Stats.bShowFrame && P->GpuWindowStartNs != 0)
             {
                 P->ClearGpuTimes();
@@ -2448,19 +2599,24 @@ namespace RenderCore
         {
             GDIRenderTarget* Sources[RENDER_VIEWS_MAX] = {};
             RenderViewRect   Rects[RENDER_VIEWS_MAX];
+            RenderViewRect   Drawn[RENDER_VIEWS_MAX];
             for(uint32_t Index = 0; Index < ViewCount; ++Index)
             {
-                const RenderView& View = P->Views[Index].View;
-                Sources[Index] = P->Views[Index].Targets.Final;
+                const RenderView&   View    = P->Views[Index].View;
+                const SceneTargets& Targets = P->Views[Index].Targets;
+                Sources[Index] = Targets.Final;
                 Rects[Index]   = { View.ViewportX, View.ViewportY, View.ViewportPixels.Width, View.ViewportPixels.Height };
+                Drawn[Index]   = { 0, 0, int32_t(Targets.Width), int32_t(Targets.Height) };
             }
             if(P->Sites.Count >= 2)
             {
-                InContext.CompositeViewSites(P->Composite, Sources, P->Sites);
+                const float Share[2] = { Main.Targets.AllocWidth > 0 ? float(Main.Targets.Width) / float(Main.Targets.AllocWidth) : 1.0f,
+                                         Main.Targets.AllocHeight > 0 ? float(Main.Targets.Height) / float(Main.Targets.AllocHeight) : 1.0f };
+                InContext.CompositeViewSites(P->Composite, Sources, P->Sites, Share);
             }
             else
             {
-                InContext.CompositeViews(P->Composite, Sources, Rects, ViewCount);
+                InContext.CompositeViews(P->Composite, Sources, Rects, ViewCount, Drawn);
             }
             Output       = P->Composite;
             OutputWidth  = P->Composite->GetWidth();
@@ -2469,8 +2625,9 @@ namespace RenderCore
         else if(bScaled && P->Composite && Output)
         {
             /* One view drawn smaller: upscaled to the viewport, the UI drawn over that at full size. */
-            const RenderViewRect Rect = { 0, 0, Main.View.ViewportPixels.Width, Main.View.ViewportPixels.Height };
-            InContext.CompositeViews(P->Composite, &Output, &Rect, 1);
+            const RenderViewRect Rect  = { 0, 0, Main.View.ViewportPixels.Width, Main.View.ViewportPixels.Height };
+            const RenderViewRect Drawn = { 0, 0, int32_t(Main.Targets.Width), int32_t(Main.Targets.Height) };
+            InContext.CompositeViews(P->Composite, &Output, &Rect, 1, &Drawn);
             Output       = P->Composite;
             OutputWidth  = P->Composite->GetWidth();
             OutputHeight = P->Composite->GetHeight();

@@ -2088,7 +2088,7 @@ namespace
                        "a breeze of 1 toward (0.8, 0, 0.6).";
         {
             NodeDefinition& Def = Pure("Input.SceneTexture", "Scene Texture", "Inputs",
-                                       { Out("Color", "vec4", "texture(Material_SceneColor, Inputs.TexCoord)") }, {},
+                                       { Out("Color", "vec4", "Material_SceneColorAt(Inputs.TexCoord)") }, {},
                                        "scene color screen post process");
             Def.Op = MOP_SceneTexture;
             PixelOnly(Def, "PostProcess only: the scene drawn so far, at this pixel.");

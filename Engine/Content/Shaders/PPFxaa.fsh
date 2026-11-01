@@ -13,13 +13,13 @@ UBO_BLOCK_BEGIN(2, PP_Block)
     vec4 PP_Sizes;   // xy one texel
 UBO_BLOCK_END(PP_Block)
 
-float LumaAt(vec2 InUV) { return PP_Luma(textureLod(SceneColor, InUV, 0.0).rgb); }
+float LumaAt(vec2 InUV) { return PP_Luma(textureLod(SceneColor, Scene_ViewUv(InUV), 0.0).rgb); }
 
 void main(void)
 {
     vec2  UV = Interpolants.TexCoord;
     vec2  T  = PP_Sizes.xy;
-    vec3  Centre = texture(SceneColor, UV).rgb;
+    vec3  Centre = texture(SceneColor, Scene_ViewUv(UV)).rgb;
     float M  = PP_Luma(Centre);
     float N  = LumaAt(UV + vec2(0.0,  T.y)), S = LumaAt(UV + vec2(0.0, -T.y));
     float E  = LumaAt(UV + vec2( T.x, 0.0)), W = LumaAt(UV + vec2(-T.x, 0.0));
@@ -81,5 +81,5 @@ void main(void)
     Offset = max(Offset, Subpixel * Subpixel * PP_Fxaa.z);
 
     vec2 Final = UV + (bHorizontal ? vec2(0.0, Offset * Step) : vec2(Offset * Step, 0.0));
-    Output = vec4(texture(SceneColor, Final).rgb, 1.0);
+    Output = vec4(texture(SceneColor, Scene_ViewUv(Final)).rgb, 1.0);
 }

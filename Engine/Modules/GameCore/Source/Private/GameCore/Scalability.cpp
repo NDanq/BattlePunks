@@ -67,6 +67,7 @@ namespace
         { "Shadows.TranslucentShadows",        { "false", "true",  "true",  "true" } },
         { "Rendering.ShadowCacheBudgetMB",     { "8",     "16",    "32",    "96" } },
         { "Rendering.ResolutionScale",         { "0.5",   "0.75",  "1",     "1" } },
+        { "Rendering.DynamicResolution",       { "true",  "true",  "false", "false" } },   // ResolutionScale is where it starts
         { "Rendering.ScreenSpaceGI",           { "false", "false", "true",  "true" } },
         { "Rendering.StochasticReflections",   { "false", "false", "true",  "true" } },
         { "Rendering.SubsurfaceScattering",    { "false", "true",  "true",  "true" } },

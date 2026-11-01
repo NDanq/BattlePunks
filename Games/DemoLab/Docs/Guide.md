@@ -23,16 +23,16 @@ cmake --build Build/editor-relwithdebinfo --target DemoLab NimbleEditor -j4
 ```
 
 The first build compiles the engine as well. Everything lands in
-`Binaries/Linux_Debug/`, and the build copies `Config/`, `Scripts/` and
+`Binaries/Linux_RelWithDebInfo/`, and the build copies `Config/`, `Scripts/` and
 `Content/` there. Materials are cooked, not built: after a material changes,
 cook the shaders (from the repository root):
 
 ```
-Games/DemoLab/Binaries/Linux_Debug/NimbleCook shaders -project Games/DemoLab -module DemoLabGame -editor
+Games/DemoLab/Binaries/Linux_RelWithDebInfo/NimbleCook shaders -project Games/DemoLab -module DemoLabGame -editor
 ```
 
-Run the game from its binaries folder: `Binaries/Linux_Debug/DemoLab` starts
-at the main menu, and `Binaries/Linux_Debug/NimbleEditor` opens L1 in the
+Run the game from its binaries folder: `Binaries/Linux_RelWithDebInfo/DemoLab` starts
+at the main menu, and `Binaries/Linux_RelWithDebInfo/NimbleEditor` opens L1 in the
 editor (`[Editor] StartupWorld`). Some useful command lines:
 
 | Command line | What it does |
@@ -166,7 +166,7 @@ in `Docs/Credits.md`.
 ## 4. Watching one cinematic
 
 ```
-Binaries/Linux_Debug/DemoLab -DemoLab.Cinematic=C3
+Binaries/Linux_RelWithDebInfo/DemoLab -DemoLab.Cinematic=C3
 ```
 
 travels to the cinematic's level (L2's Alarm state for C6), sets the
@@ -293,8 +293,30 @@ build, interleaved, medians of many samples.
 
 Settings that matter here (M7): `[Scalability_High] Rendering.ResolutionScale=0.67`
 in `Config/DefaultEngine.ini` (the scene at two thirds of the window, upscaled
-under the UI; pass `-Rendering.ResolutionScale=1` for native), and the
-engine's `Rendering.HalfResReflections`, `Rendering.FogLightCulling`,
+under the UI; pass `-Rendering.ResolutionScale=1` for native) with
+`Rendering.DynamicResolution=true` beside it: the scale starts at 0.67 and moves
+between `Rendering.DynamicResolutionMin` and `Max` (0.5 and 1.0) to hold
+`Rendering.DynamicResolutionTargetMs` (15) of GPU time. Pass
+`-Rendering.DynamicResolution=false` (or untick Graphics > Dynamic resolution)
+for the fixed 0.67; `Rendering.DynamicResolutionLog=true` logs the scale, the
+GPU median and worst, and the frames over 16.7 ms once a second, and the F1
+overlay and `stat unit` show the scale. Measured on the Arc B390 at 2560 x 1440
+High (RelWithDebInfo, offscreen editor, two interleaved rounds; GPU median /
+frames over 16.7 ms, fixed 0.67 against dynamic):
+
+| Level | Fixed 0.67 | Dynamic | Scale |
+|---|---|---|---|
+| L1 | 19.1 ms / 90 % | 19.2 ms / 87 % | 0.50 |
+| L2 Calm | 29.5 ms / 100 % | 20.2 ms / 95 % | 0.50 |
+| L2 Alarm | 30.8 ms / 91 % | 21.3 ms / 72 % | 0.50 |
+| L3 | 19.5 ms / 88 % | 16.3 ms / 30 % | 0.50 |
+| L3 Alarm | 19.2 ms / 94 % | 16.4 ms / 7 % | 0.50 |
+
+Every level sits at the 0.5 floor on this GPU: L3 mostly holds 60 fps; L2 drops
+by a third but its fixed costs (captures, particles, the GI volume) keep it over;
+L1's cost barely follows the pixel count. Lowering the floor below 0.5 is not
+worth it (the picture goes soft); the remaining L1 and L2 costs are per-scene
+work, not pixels. The engine's own `Rendering.HalfResReflections`, `Rendering.FogLightCulling`,
 `Rendering.ShadowFrustumCulling` and `TimeOfDay.SkyDepthTest` (all on; each
 off is the M6 behaviour, for A/B). `Rendering.ShadowCache` (on) keeps each
 shadowed point and spot light's static casters in a cache atlas and draws only

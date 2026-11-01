@@ -358,6 +358,13 @@ namespace RenderCore
         uint32_t GIProbesUnlit = 0;
         uint32_t GIProbesTotal = 0;
         bool     bCapturesBusy = false;
+
+        /* The resolution scale (RENDERPIPELINE.md, "Resolution scale"), as the reporting scene's last
+         * frame drew: the main view's share of its viewport across (0-1; 1 unscaled), whether
+         * [Rendering] DynamicResolution chose it, and the GPU time the controller aims at, ms. */
+        float ResolutionScale           = 1.0f;
+        bool  bDynamicResolution        = false;
+        float DynamicResolutionTargetMs = 0.0f;
     };
 }
 

@@ -76,7 +76,7 @@ float ContactShadowWithin(vec3 InWorldPosition, vec3 InNormal, vec3 InL, float I
     if(Length <= 0.0 || dot(InNormal, InL) <= 0.0) { return 1.0; }
 
     int   Steps    = int(clamp(Scene_ContactShadow.z, 4.0, 32.0));
-    vec2  Size     = vec2(textureSize(LIGHTING_SCENE_DEPTH, 0));
+    vec2  Size     = Scene_DrawnSize(vec2(textureSize(LIGHTING_SCENE_DEPTH, 0)));   // the drawn area (dynamic resolution)
     vec3  Forward  = Scene_CameraForward.xyz;
     float Distance = dot(InWorldPosition, Forward) - Scene_CameraForward.w;
     // Off the surface first, further where the depth buffer is coarser; jittered per

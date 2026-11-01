@@ -25,7 +25,7 @@ void main(void)
         for(int X = 0; X < 4; ++X)
         {
             vec2  UV = Centre + (vec2(float(X), float(Y)) - 1.5) * (1.0 / 256.0);   // a quarter of the cell apart
-            vec3  C  = max(texture(Source, UV).rgb, vec3(0.0));
+            vec3  C  = max(texture(Source, Scene_ViewUv(UV)).rgb, vec3(0.0));
             float L  = dot(C, vec3(0.2126, 0.7152, 0.0722));
             Sum += log2(max(L, 1e-4));
         }

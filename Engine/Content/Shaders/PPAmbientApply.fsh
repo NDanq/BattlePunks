@@ -12,5 +12,5 @@ MATERIAL_SAMPLER2D(4, Occlusion)   // PPAmbientOcclusion's (or PPAmbientBlur's),
 
 void main(void)
 {
-    Output = vec4(1.0, 1.0, 1.0, texture(Occlusion, Interpolants.TexCoord).r);
+    Output = vec4(1.0, 1.0, 1.0, texture(Occlusion, Scene_ViewUvHalf(Interpolants.TexCoord)).r);
 }
