@@ -13,8 +13,8 @@ cinematics, how to watch one cinematic, the tests, and how to measure it at
 From this directory (`Games/DemoLab`):
 
 ```
-cmake --preset editor-debug
-cmake --build Build/editor-debug --target DemoLab -j3     # the game; add NimbleEditor for the editor
+cmake --preset editor-relwithdebinfo
+cmake --build Build/editor-relwithdebinfo --target DemoLab -j3     # the game; add NimbleEditor for the editor
 ```
 
 Then run `Binaries/Linux_Debug/DemoLab` (the main menu) or
@@ -28,7 +28,7 @@ DemoLab -DemoLab.AutoPlay=1                     # the game plays itself, menu to
 The test plays the whole flow headless, through the same input a player gives:
 
 ```
-cd Build/editor-debug && ctest -R DemoLab.AutoPlay --output-on-failure
+cd Build/editor-relwithdebinfo && ctest -R DemoLab.AutoPlay --output-on-failure
 ```
 
 `DemoLab.AutoPlay` presses New Game, plays L1, L2, L3 and L2 on alarm with the
