@@ -94,13 +94,13 @@ command line can override:
 
 **Wind.** Before this plugin, WorldsLab's foliage hard-coded its wind into
 its materials: a sway along (0.8, 0, 0.6) built from `Input.Time` and world
-position (`Tools/Terrain/make_foliage_materials.py`,
-`Tools/GrassLab/make_grasslab_materials.py`). The material graph now has a
-**Wind** node (`Input.Wind`: Direction, Strength, Vector) that reads
-`Scene_Wind`. Those generators lean the plants along Direction and scale the
-sway and flutter by Strength. The material looks the same without a Weather,
-because a World with no weather gets that same breeze of 1. Courtyard's
-plants (`make_courtyard_materials.py`) still have their own fixed wind.
+position. The material graph now has a **Wind** node (`Input.Wind`:
+Direction, Strength, Vector) that reads `Scene_Wind`. The foliage generators
+(`Games/DemoLab/Tools/Art/l1_foliage/make_l1_foliage_materials.py`,
+`Games/WorldsLab/Tools/GrassLab/make_grasslab_materials.py`) lean the plants
+along Direction and scale the sway and flutter by Strength. The material looks
+the same without a Weather, because a World with no weather gets that same
+breeze of 1.
 
 **Wetness.** This uses no per-material authoring. `Engine/Content/Shaders/Wetness.glsl`
 is applied to the G-buffer's values where they are read: in the Lighting
@@ -147,13 +147,19 @@ Particles need a backend with compute shaders (Vulkan).
 
 ## Previewing
 
-The test world `Tests/WeatherLab.nmworld` is WorldsLab's Hills at 17:36 on a
-stopped Time Of Day. Its Weather is set to Rain 0.6, Mist 0.15, Wetness 1 and
-Wind Strength 1.5. It uses WorldsLab's content, so it isn't in WorldsLab's
-world list. To play it, list it in Project Settings > Worlds, or add
-`[World_WeatherLab] File=<path>` to the staged config, then Play.
+Demo Lab (`Games/DemoLab`) enables the plugin. Its L1 Foothills has a
+Weather entity (`Weather`: sea mist, Mist Density 0.45, a breeze; no rain),
+written by `Tools/Levels/make_levels.py` and `dress_l1.py`. To see rain there,
+override it from the command line:
 
-The three shots below were taken from the same ejected camera: raining, then
+```
+DemoLab -Game.StartLevel=L1_Foothills -Weather.Rain=0.6 -Weather.Wetness=1
+```
+
+or play L1 in the editor and type `Weather.Rain 0.6` in the console.
+
+The three shots below were taken in an earlier test world (WorldsLab's Hills
+terrain at 17:36, since removed) from the same ejected camera: raining, then
 `Weather.Rain 0` (wet, no rain, still misty), then also `Weather.Wetness 0`
 (dry). Each shot ran `NimbleEditor --play <world> --command "after 3000
 eject" ... --command "after 12000 windowshot <png>"`.
@@ -168,8 +174,8 @@ eject" ... --command "after 12000 windowshot <png>"`.
   Wetness 0 while inside.
 - **Puddles, ripples, drips, wet-surface normal changes.** Forward-lit
   surfaces (Translucent Lit) don't get wet, and neither does foliage.
-- **Materials:** Courtyard's plants still have a fixed wind. Other projects'
-  materials pick up wind only once they use the Wind node.
+- **Materials:** a project's materials pick up wind only once they use the
+  Wind node.
 - **The edit world:** plugins hook only the Worlds a GameSession makes. In the
   editor, the weather therefore shows in Play-in-Editor, not while editing.
   When editing, foliage sways with the default breeze.

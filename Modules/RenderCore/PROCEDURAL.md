@@ -9,8 +9,8 @@ hill, moss on top of a boulder. Two components do it:
 | **Spline** | GameCore `Components/SplineComponent.h`, curve math `Spline.h` | A curve through up to 64 points in its entity's space; open or closed, Catmull-Rom or linear, with a Width. Drawn and edited in the editor; sampled by games. |
 | **Procedural Spawner** | RenderCore `Components/ProceduralSpawnerComponent.h` | Rules: where candidate points come from, what they are dropped onto, which survive, what each becomes. Its instances are made from the rules, never saved, and drawn as instanced meshes. |
 
-`Engine/Docs/Guides/ProceduralGuide.md` is the walkthrough (the Meadow
-level, with pictures). This page is the reference.
+`Engine/Docs/Guides/ProceduralGuide.md` is the walkthrough (Demo Lab's L1
+Foothills, with pictures). This page is the reference.
 
 ```
  game thread, once a frame (WorldBridge)                  worker thread
@@ -62,7 +62,7 @@ local length = road:GetLength()
 local x, y, z = road:GetLocationAtDistance(length * 0.5)     -- a Vector3 is three numbers
 local dx, dy, dz = road:GetDirectionAtDistance(length * 0.5) -- unit length
 local along = road:FindDistanceClosestTo(px, py, pz)         -- distance along the curve
-local inside = World.FindEntity("Meadow"):GetComponent("Spline"):IsInside(px, py, pz)   -- closed splines
+local inside = World.FindEntity("Foliage_Meadow"):GetComponent("Spline"):IsInside(px, py, pz)   -- closed splines
 ```
 
 ## The spawner's rules
@@ -169,8 +169,8 @@ of a generation's inputs (`std::allocate_shared` with the same allocator).
 So it shows in Core's pool stats and leak report; `pcg stats` and each
 spawner's first log line print its size. The generator's scratch
 (candidates, the mesh grid) is freed before it returns and stays on the
-plain heap. The Meadow level holds 3.65 MB there: its ~47,000 instances at
-80 bytes each.
+plain heap. A meadow of ~47,000 instances holds 3.65 MB there, 80 bytes
+each (measured on WorldsLab's former Meadow level).
 
 The handle is a `std::shared_ptr`, **not a `TRef`**. A result is shared by
 the worker that builds it, the game thread that publishes it and the render
@@ -236,8 +236,11 @@ Console, for scripts and tests (points in world space):
 
 ## Numbers
 
-Linux, Vulkan, RelWithDebInfo, the WorldsLab Meadow level (257² terrain,
-`Games/WorldsLab/Tools/Procedural/make_meadow_level.py`):
+Linux, Vulkan, RelWithDebInfo, WorldsLab's Meadow level (257² terrain). The
+level was removed when Demo Lab replaced WorldsLab (its generator is in git
+history: `Games/WorldsLab/Tools/Procedural/make_meadow_level.py` at 61af1eec);
+Demo Lab's L1 (`Games/DemoLab/Tools/Levels/dress_l1.py`) has the same kinds
+of spawner and has not been timed here yet:
 
 | Spawner | Instances | Generation (worker thread) |
 |---|---|---|

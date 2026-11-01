@@ -8,7 +8,7 @@ pass). For how the plugin system works inside, read
 
 **2** example plugins · **1** descriptor · **4** module types · **1** manifest · source only
 
-![TimeOfDay, an engine plugin, drawing DayCycle's sky from dawn to night](Images/Plugins/sky_timeline.jpg)
+![TimeOfDay, an engine plugin, drawing its sky from dawn to night](Images/Plugins/sky_timeline.jpg)
 
 ## Contents
 
@@ -513,54 +513,61 @@ Enabled plugins' components appear in **Add Component**, grouped by the
 any engine component. Entities save them by the component's name
 (`<Component Type="Time Of Day" Version="1">`).
 
-![DayCycle in the editor: the Sun's Time Of Day component in Details](Images/Plugins/editor_daycycle.jpg)
+Demo Lab (`Games/DemoLab`) enables both engine plugins in its
+`Config/DefaultEngine.ini` (`[Plugins] TimeOfDay=true`, `Weather=true`) and
+uses them only this way, as components its level scripts write
+(`Tools/Levels/make_levels.py`, `dress_l1.py`): L1 Foothills' `Sun` entity has
+a Time Of Day component stopped at golden hour (Hour 17.5), and its `Weather`
+entity a Weather component for the sea mist. Open L1 in the editor and select
+them:
+
+![Demo Lab's L1 in the editor: the Sun's Time Of Day component in Details](Images/Plugins/editor_l1_timeofday.jpg)
 
 ![The Time Of Day component's fields, grouped Time Of Day and Sky](Images/Plugins/details_timeofday.jpg)
+
+![L1's Weather: no rain, a low sea mist (Mist Density 0.45, Mist Height -60), a damp coast (Wetness 0.15)](Images/Plugins/details_weather.jpg)
 
 ### From Lua and script graphs
 
 Each script library is a Lua global named for the plugin, and a category in
-the script graph palette. DayCycle's startup script,
-[`Scripts/DayCycle.lua`](../../../Games/WorldsLab/Scripts/DayCycle.lua),
-uses both plugins:
+the script graph palette: `TimeOfDay` (`GetHour`, `SetHour`, `SetRunning`,
+`IsDaytime`), `Weather` (`GetRain`, `SetRain`, `GetWetness`, `SetWetness`,
+`SetMist`, `SetWind`) and the guide's `Spinner` (`SetSpeed`). A level's
+startup script can use them together; for example, a storm that rolls in at
+dusk:
 
 ```lua
--- Spinner: add its component at run time and drive it through its library.
-local pillar = World.FindEntity("Pillar")
-if pillar then
-    pillar:AddComponent("Spinner")
-    Spinner.SetSpeed(pillar, 20)
-end
-
--- TimeOfDay: react to the clock. The pillar spins faster at night.
+-- TimeOfDay: start the clock, and react to it.
+TimeOfDay.SetRunning(true)
 Events.On("TimeOfDayHour", function(hour, clock)
-    print(string.format("[DayCycle] %02d:00, %s", hour, TimeOfDay.IsDaytime() and "day" or "night"))
-    if pillar then
-        Spinner.SetSpeed(pillar, TimeOfDay.IsDaytime() and 20 or 90)
+    print(string.format("%02d:00, %s", hour, TimeOfDay.IsDaytime() and "day" or "night"))
+    if hour == 19 then
+        Weather.SetRain(0.6)        -- Weather: the World's (first) Weather component
+        Weather.SetWind(90, 2.5)    -- yaw degrees, strength
     end
 end)
+
+-- Spinner: add its component at run time and drive it through its library
+-- (nil where the project does not enable the plugin).
+local mast = World.FindEntity("SignalMast")
+if mast and Spinner then
+    mast:AddComponent("Spinner")
+    Spinner.SetSpeed(mast, 20)
+end
 ```
 
-It's hooked up in `Config/DefaultEngine.ini`:
+Hook a script to a world in `Config/DefaultEngine.ini` (Project Settings >
+Worlds):
 
 ```ini
-[World_DayCycle]
-File=Content/Levels/DayCycle.nmworld
-StartupScript=Scripts/DayCycle.lua
+[World_L1_Foothills]
+File=Content/Levels/L1_Foothills.nmworld
+StartupScript=Scripts/Storm.lua
 ```
 
-Run headless at 30x speed, the log shows:
-
-```
-[LOG] Plugins: Spinner, TimeOfDay
-[GameCore] [Lua] [DayCycle] 07:00, day
-[GameCore] [Lua] [DayCycle] 08:00, day
-```
-
-In Play mode the Outliner shows the component the script added, and Details
-shows the night speed it set:
-
-![Play in Editor: Pillar has the Spinner component DayCycle.lua added, at its night speed](Images/Plugins/details_spinner_play.jpg)
+A plugin's library exists only in a project that enables the plugin: Demo
+Lab does not enable Spinner (WorldsLab does), hence the check. In Play mode the Outliner shows a component a script
+added, and Details its fields.
 
 ### From the game's C++
 
@@ -608,8 +615,10 @@ Plugin config vars work on the command line like any other. TimeOfDay adds
 taking screenshots:
 
 ```bash
-Binaries/Linux_Debug/WorldsLab -Game.StartLevel=DayCycle -TimeOfDay.Hour=18.2
+Binaries/Linux_Debug/DemoLab -Game.StartLevel=L1_Foothills -TimeOfDay.Hour=18.2
 ```
+
+Weather has the same for rain and wetness: `-Weather.Rain=0.6 -Weather.Wetness=1`.
 
 ![The night sky, pinned at midnight: stars over the airglow](Images/Plugins/sky_night_stars.jpg)
 

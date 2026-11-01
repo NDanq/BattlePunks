@@ -129,8 +129,9 @@ Mark buildings, walls and roofs **Reveal Players** in their Render component.
 Where one hides a player from their camera, it is dithered away in a circle
 around them. This works for every view, merged or split, and for single-player
 too. Keys: `[Rendering] RevealPlayers`, `RevealRadius`, `RevealHeight`.
-RENDERPIPELINE.md, "Revealing players", has the details. WorldsLab's
-SteampunkPvP has its buildings marked.
+RENDERPIPELINE.md, "Revealing players", has the details. (WorldsLab's
+former SteampunkPvP world marked its buildings; it is in git history at
+61af1eec.)
 
 ## Rendering
 
