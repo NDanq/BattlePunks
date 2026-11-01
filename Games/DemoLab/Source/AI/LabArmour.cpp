@@ -33,7 +33,7 @@ namespace
 {
     constexpr const char* PLATE_PREFIX  = "LabPlate_";
     constexpr const char* DEBRIS_NAME   = "LabPlateDebris";
-    constexpr const char* ARMOUR_DIR    = "Content/Characters/SteamDummy/Armour/";
+    constexpr const char* ARMOUR_MESH   = "Content/Characters/SteamDummy/Armour/Brute_";   // + the plate name: Tools/Art/assets.json Brute_Armour_*
     constexpr const char* MAT_PLATE     = "Content/Materials/Kit/PlateSteel.material.nmgraph";
     constexpr const char* MAT_DARK      = "Content/Materials/Kit/SteelDark.material.nmgraph";
     constexpr const char* FX_SPARKS     = "Content/Particles/Sparks.nmparticle";
@@ -173,7 +173,7 @@ void LabArmour::Equip(World& InWorld, const EntityID InBrute)
         Entity Plate = InWorld.CreateEntity((std::string(PLATE_PREFIX) + Def.Name).c_str());
         Plate.AddComponent<TransformComponent>();
         RenderCore::RenderComponent Render;
-        std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s%s.nmmesh", ARMOUR_DIR, Def.Name);
+        std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s%s.nmmesh", ARMOUR_MESH, Def.Name);
         Render.SetMaterial(0, MAT_PLATE);
         if(Def.bTwoSlots) { Render.SetMaterial(1, MAT_DARK); }
         Plate.AddComponent(Render);

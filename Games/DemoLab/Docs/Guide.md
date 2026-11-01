@@ -18,8 +18,8 @@ template's general guide to a project's files.
 From `Games/DemoLab`, on Linux with Clang (the presets use Ninja):
 
 ```
-cmake --preset editor-debug
-cmake --build Build/editor-debug --target DemoLab NimbleEditor -j4
+cmake --preset editor-relwithdebinfo
+cmake --build Build/editor-relwithdebinfo --target DemoLab NimbleEditor -j4
 ```
 
 The first build compiles the engine as well. Everything lands in
@@ -188,7 +188,7 @@ The recorder takes pictures only, no sound.
 ## 5. Tests
 
 ```
-cd Build/editor-debug && PULSE_SERVER=unix:/nonexistent ctest -R DemoLab.AutoPlay --output-on-failure
+cd Build/editor-relwithdebinfo && PULSE_SERVER=unix:/nonexistent ctest -R DemoLab.AutoPlay --output-on-failure
 ```
 
 `DemoLab.AutoPlay` runs the game headless with `-DemoLab.AutoPlay=1` and
@@ -206,7 +206,7 @@ Three short tests sit beside it (each well under a minute, headless and
 silent):
 
 ```
-cd Build/editor-debug && PULSE_SERVER=unix:/nonexistent ctest -R 'DemoLab\.(MenuTest|SettingsPersist|C5Handover)'
+cd Build/editor-relwithdebinfo && PULSE_SERVER=unix:/nonexistent ctest -R 'DemoLab\.(MenuTest|SettingsPersist|C5Handover)'
 ```
 
 - `DemoLab.MenuTest` (`-DemoLab.MenuTest=1`, `Source/GameModes/LabMenuTest.h`)

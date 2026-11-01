@@ -121,6 +121,9 @@ namespace
     };
 
     constexpr float TIMEOUT_SECONDS = 1200.f;
+    constexpr float STUCK_RADIUS = 30.f;       // cm: less headway than this ...
+    constexpr float STUCK_SECONDS = 2.f;       // ... for this long, and Steer sidesteps
+    constexpr float SIDESTEP_SECONDS = 0.8f;
     constexpr double RAD = 3.14159265358979 / 180.0;
 
     /* By name, or with the state group's prefix (Level 2's "Calm_" / "Alarm_"). */
@@ -200,6 +203,8 @@ void LabAutoPlay::TickClock(const float InSeconds)
 {
     if(!Result.empty()) { return; }
     Elapsed += InSeconds;
+    StuckClock += InSeconds;
+    SideClock = std::max(0.f, SideClock - InSeconds);
     if(Elapsed > TIMEOUT_SECONDS) { Fail("timed out in " + Level + " at step " + std::to_string(StepIndex)); }
 }
 
@@ -284,7 +289,22 @@ void LabAutoPlay::NoteFall()
 
 bool LabAutoPlay::Steer(World& InWorld, const EntityID InAvatar, InputSnapshot& InOut, const Vector3& InTarget, const float InStop)
 {
-    return LabDrive::WalkTo(InWorld, InAvatar, InOut, InTarget, InStop);
+    const bool bThere = LabDrive::WalkTo(InWorld, InAvatar, InOut, InTarget, InStop);
+    const Vector3 Feet = InWorld.GetEntity(InAvatar).GetWorldPose().Position;
+    if(bThere || (Feet - StuckAt).GetLength() > STUCK_RADIUS)
+    {
+        StuckAt = Feet;
+        StuckClock = 0.f;
+    }
+    else if(StuckClock > STUCK_SECONDS && SideClock <= 0.f)
+    {
+        CORE_LOG("[DemoLab] AutoPlay: no headway, sidestepping")
+        SideClock = SIDESTEP_SECONDS;
+        SideSign = -SideSign;
+        StuckClock = 0.f;
+    }
+    if(SideClock > 0.f) { LabDrive::SetAxis(InOut, "MoveRight", SideSign); }
+    return bThere;
 }
 
 void LabAutoPlay::Trace(World& InWorld, const EntityID InAvatar)

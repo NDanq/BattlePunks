@@ -10,8 +10,8 @@ it from there. `Games/Sandbox` is the full example of everything below.
 From this folder:
 
 ```
-cmake --preset editor-debug
-cmake --build --preset editor-debug
+cmake --preset editor-relwithdebinfo
+cmake --build --preset editor-relwithdebinfo
 ```
 
 The first build compiles the engine too; later ones only what changed. The

@@ -68,6 +68,12 @@ private:
     float       FireClock = 0.f;
     float       TraceClock = 0.f;
     float       MenuClock = 0.f;
+    /* Steer's way round a body or debris in the path: no headway for a
+     * while, then a sidestep, alternating sides. */
+    EngineCore::Vector3 StuckAt;
+    float       StuckClock = 0.f;
+    float       SideClock = 0.f;
+    float       SideSign = 1.f;
     bool        bStartedGame = false;
     bool        bFinished = false;  // the credits rolled; the menu passes the run
     bool        bKilled = false;
