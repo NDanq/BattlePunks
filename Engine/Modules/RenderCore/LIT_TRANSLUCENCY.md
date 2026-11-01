@@ -5,6 +5,14 @@ refraction (Phases 9-12) is planned below them;
 each records what was built, where it departed from the plan, and its
 validation.
 
+**Courtyard**, the regression level many phases below were checked against,
+was a WorldsLab world; it was removed when Demo Lab replaced WorldsLab as the
+sample project (Demo Lab M7). Its results below are kept as records; the
+world, its materials and `Tools/Courtyard/` are in git history at 61af1eec.
+TranslucencyLab, LightingLab and ShootingRange remain, and Demo Lab's L2
+(frosted glass, steam, the conservatory's glass) is lit translucency's
+showcase now.
+
 ## Where it starts
 
 - **Translucent Lit exists** (RENDERPIPELINE.md, "Stages"): forward-shaded
@@ -519,7 +527,7 @@ colour before the translucent stage: Phase 4 reprojects the last frame's.
   behind it; at 1.0 it does not; an opaque block in front of the pane does
   not bleed into the pixels beside it.
 - **TranslucencyLab:** water at 1.33 and the panes at 1.03, before and after;
-  Courtyard and LightingLab for regressions.
+  LightingLab (and, while it existed, Courtyard) for regressions.
 - **Cost** (the perf-testing skill, RelWithDebInfo, interleaved, both
   backends): refraction and the copy each against off.
 - **As landed:**
@@ -581,6 +589,8 @@ colour before the translucent stage: Phase 4 reprojects the last frame's.
   its glass Two Sided.
 
 ## Courtyard's fountain water (landed)
+
+(A record: Courtyard has since been removed; see the note at the top.)
 
 - Courtyard's `Water` (`Tools/Courtyard/make_courtyard_materials.py`) was a
   Legacy translucent metal: Metallic 1 and an opacity from a Fresnel term
@@ -664,7 +674,7 @@ permutations only), and dumps PPMs under `NIMBLE_SMOKE_DUMP`.
   within 1 dB of the floor; inside them, the change is in the expected
   direction (darker under shadow, brighter reflections).
 - **Existing levels** -- LightLab yard (its sparks, flare smoke, explosion),
-  LightingLab, Courtyard, ShootingRange -- unchanged by Phases 1-8 except
+  LightingLab, Courtyard (since removed), ShootingRange -- unchanged by Phases 1-8 except
   where content opts in. Phase 3's Surface default is the one expected
   change on old Lit translucent content: those materials get Legacy in the
   same commit, and the levels must then match.

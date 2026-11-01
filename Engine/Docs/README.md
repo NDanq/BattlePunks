@@ -4,6 +4,7 @@ The editor's Help > Documentation shows only this folder.
 
 ## Guides
 
+- [Demo Lab](../../Games/DemoLab/Docs/Guide.md): the sample game -- running it, what each level and cinematic shows, regenerating its content, its tests and its perf recipe
 - [Game modes: a usage guide](Guides/GameModeGuide.md)
 - [The Character Mover](Guides/CharacterMoverGuide.md): the engine's predicted third-person walker, for players and bots
 - UI, built on the Shooting Range: [a menu](Guides/UI/MenuUIGuide.md), [a HUD](Guides/UI/HudGuide.md), [settings that control the game's .ini](Guides/UI/SettingsUIGuide.md)
@@ -11,9 +12,9 @@ The editor's Help > Documentation shows only this folder.
 - [AICore implementation guide](Guides/AICoreImplementationGuide.md): navigation, crowds, behavior trees, utility, perception
 - [Crash dummy animation guide](Guides/CrashDummyAnimationGuide.md)
 - [Retargeting](Guides/RetargetGuide.md): a clip pack made for another rig, played on your character, then baked
-- [Procedural content: splines and Procedural Spawners](Guides/ProceduralGuide.md)
+- [Procedural content: splines and Procedural Spawners](Guides/ProceduralGuide.md), built on Demo Lab's L1 Foothills
 - [Custom render passes](Guides/CustomRenderPassGuide.md): your own GPU work at hooks in the frame, built on WorldsLab's GrassLab
-- [Plugins](Guides/PluginGuide.md): drop-in modules a project enables in one line; a worked example (Spinner) and TimeOfDay
+- [Plugins](Guides/PluginGuide.md): drop-in modules a project enables in one line; a worked example (Spinner), and TimeOfDay and Weather as Demo Lab uses them
 
 ## Component reference
 
