@@ -58,6 +58,9 @@ namespace RenderCore
     /* The reporting scene's captures (RenderStats::GIProbesUnlit, GIProbesTotal, bCapturesBusy). */
     void SetCaptureStats(uint32_t InUnlit, uint32_t InTotal, bool bInBusy);
     void GetCaptureStats(uint32_t& OutUnlit, uint32_t& OutTotal, bool& bOutBusy);
+    /* The reporting scene's resolution scale (RenderStats' ResolutionScale and the two after it). */
+    void SetResolutionStats(float InScale, bool bInDynamic, float InTargetMs);
+    void GetResolutionStats(float& OutScale, bool& bOutDynamic, float& OutTargetMs);
 
     /* "stat unit": Renderer::EndFrame publishes the averaged times and
      * whether to show them (Stats.Unit); RenderScene::Render draws them and

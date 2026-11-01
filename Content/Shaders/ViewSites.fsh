@@ -12,7 +12,7 @@ UBO_BLOCK_BEGIN(2, PP_Block)
     vec4 PP_SitesB;     // views 2 (xy) and 3 (zw)
     vec4 PP_Params;     // x: how many views (2-4); y: the divider's width in pixels; z: its alpha
     vec4 PP_Color;      // the divider's colour
-    vec4 PP_Sizes;      // xy: the window in pixels
+    vec4 PP_Sizes;      // xy: the window in pixels; zw: the share of each view's target drawn (dynamic resolution)
 UBO_BLOCK_END(PP_Block)
 
 MATERIAL_SAMPLER2D(4, View0)
@@ -54,10 +54,11 @@ void main(void)
         Edge = min(Edge, (dot(ToOther, ToOther) - dot(ToOwn, ToOwn)) / (2.0 * Apart));
     }
 
-    vec3 Color = Nearest == 0 ? textureLod(View0, Uv, 0.0).rgb
-               : Nearest == 1 ? textureLod(View1, Uv, 0.0).rgb
-               : Nearest == 2 ? textureLod(View2, Uv, 0.0).rgb
-               :                textureLod(View3, Uv, 0.0).rgb;
+    vec2 At    = Uv * PP_Sizes.zw;
+    vec3 Color = Nearest == 0 ? textureLod(View0, At, 0.0).rgb
+               : Nearest == 1 ? textureLod(View1, At, 0.0).rgb
+               : Nearest == 2 ? textureLod(View2, At, 0.0).rgb
+               :                textureLod(View3, At, 0.0).rgb;
 
     // The divider, half its width either side of the edge, a pixel of antialiasing.
     float Line = clamp(PP_Params.y * 0.5 + 0.5 - Edge, 0.0, 1.0) * PP_Params.z;

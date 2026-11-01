@@ -101,7 +101,7 @@ void main(void)
             if(any(lessThan(PrevUV, vec2(0.0))) || any(greaterThan(PrevUV, vec2(1.0)))) { break; }
             // Fades toward the radius, so where the march gives up the probes take over smoothly.
             float Weight = 1.0 - smoothstep(0.7, 1.0, F);
-            Sum  += max(textureLod(LastColor, PrevUV, 0.0).rgb, vec3(0.0)) * Weight;
+            Sum  += max(textureLod(LastColor, Scene_PrevViewUv(PrevUV), 0.0).rgb, vec3(0.0)) * Weight;
             Hits += Weight;
             break;
         }

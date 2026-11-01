@@ -35,7 +35,7 @@ float ViewDepthAt(vec2 InUV)
 void main(void)
 {
     vec2 UV     = Interpolants.TexCoord;
-    vec4 Centre = texture(Diffuse, UV);
+    vec4 Centre = texture(Diffuse, Scene_ViewUv(UV));
     bool bComposite = PP_Params.z > 0.5;
     if(Centre.a < 0.5)
     {
@@ -55,7 +55,7 @@ void main(void)
     {
         if(Index >= Taps) { break; }
         vec2 Tap   = UV + PP_Kernel[Index].a * Step;
-        vec4 Light = texture(Diffuse, Tap);
+        vec4 Light = texture(Diffuse, Scene_ViewUv(Tap));
         // Follow the surface (Jimenez's SSSS_FOLLOW_SURFACE): toward the centre the
         // further the tap's depth is from it, and wholly where the tap is not skin.
         float Away = clamp(0.0432 * PP_Scale.y * abs(Depth - ViewDepthAt(Tap)) / max(PP_Scale.x, 1e-4), 0.0, 1.0);

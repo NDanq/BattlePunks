@@ -301,7 +301,7 @@ namespace RenderCore
             float IBL[4]                = {};                           // on, probes, sky block weight (IBLCommon.glsl)
             float PrevViewProjection[16] = {};                          // forward reflections' (Phase 4): the last frame's view
             float ForwardReflections[2][4] = {};                        // their settings; [1][1] 1 while on
-            float Spare[6][4]           = {};
+            float Spare[6][4]           = { {}, {}, {}, { 1.0f, 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f } };   // [3]-[5] the drawn area: Scene_ViewUv
             float Baked[4]              = {};                           // drawing with a bake, it has the sky (BakedLighting.glsl)
             float View[4]               = {};                           // 1: Unlit (ERenderViewMode)
             float ViewProjection[16]    = {};                           // world to clip: contact shadows' march (Lighting.glsl)
@@ -1455,6 +1455,7 @@ namespace RenderCore
         {
             GDIRenderTarget*  Target = nullptr;
             ERenderPassFormat Format = ERenderPassFormat::RGBA8;
+            float             SceneScale = 0.0f;   // > 0: the view's size times this (drawn like the scene's); 0: a fixed size
         };
         struct PassResources
         {
@@ -1466,6 +1467,31 @@ namespace RenderCore
         std::unordered_map<RenderPassHandle, PassResources>& PassPoolsOfView()
         {
             return PassPools[std::min<uint32_t>(View.ViewIndex, RENDER_VIEWS_MAX - 1)];
+        }
+        /* What a custom pass draws of InTarget (dynamic resolution, SceneTargets): the drawn
+         * area of the scene's own targets and of a pass target sized from the view; all of
+         * any other. */
+        void PassDrawnSize(const SceneTargets& InTargets, GDIRenderTarget* InTarget, uint& OutWidth, uint& OutHeight)
+        {
+            OutWidth  = InTarget ? InTarget->GetWidth() : 0;
+            OutHeight = InTarget ? InTarget->GetHeight() : 0;
+            if(!InTarget || InTargets.AllocWidth == 0) { return; }
+            if(InTarget->GetWidth() == InTargets.AllocWidth && InTarget->GetHeight() == InTargets.AllocHeight)
+            {
+                OutWidth  = InTargets.Width;
+                OutHeight = InTargets.Height;
+                return;
+            }
+            for(const auto& Pool : PassPoolsOfView())
+            {
+                for(const auto& Each : Pool.second.Targets)
+                {
+                    if(Each.second.Target != InTarget || Each.second.SceneScale <= 0.0f) { continue; }
+                    OutWidth  = std::clamp<uint>(uint(float(InTargets.Width) * Each.second.SceneScale + 0.5f), 1u, InTarget->GetWidth());
+                    OutHeight = std::clamp<uint>(uint(float(InTargets.Height) * Each.second.SceneScale + 0.5f), 1u, InTarget->GetHeight());
+                    return;
+                }
+            }
         }
         std::unordered_map<std::string, GDIShader*>         PassShaders;
 
@@ -3838,9 +3864,19 @@ namespace RenderCore
             bool bChain = true;
             GDIRenderTarget* From = Source;
             uint FromW = Width, FromH = Height;
+            /* Each level's own edge (PPBloomDownsample.fsh's PP_Sizes.zw): the largest UV its drawn
+             * area may be sampled at, which the shared scale alone would round past at the small levels. */
+            const auto Edge = [&InTargets](PostBlock& OutBlock, const uint32_t InLevel)
+            {
+                const uint DrawnW = SceneTargets::HalfSize(InTargets.Width, InLevel), DrawnH = SceneTargets::HalfSize(InTargets.Height, InLevel);
+                const uint AllocW = SceneTargets::HalfSize(InTargets.AllocWidth, InLevel), AllocH = SceneTargets::HalfSize(InTargets.AllocHeight, InLevel);
+                OutBlock.Sizes[2] = DrawnW >= AllocW ? 1.0f : (float(DrawnW) - 0.5f) / float(AllocW);
+                OutBlock.Sizes[3] = DrawnH >= AllocH ? 1.0f : (float(DrawnH) - 0.5f) / float(AllocH);
+            };
             for(uint32_t Level = 0; Level < Levels && bChain; ++Level)
             {
                 Sizes(Block, FromW, FromH);
+                Edge(Block, Level);
                 const uint W = SceneTargets::HalfSize(Width, Level + 1), H = SceneTargets::HalfSize(Height, Level + 1);
                 bChain = DrawPost(PP_BloomDownsample, InTargets.Bloom[Level], W, H,
                                   { Texture(From), Level == 0 && Emissive ? Emissive->Resource : nullptr }, Block);
@@ -3856,6 +3892,7 @@ namespace RenderCore
             for(uint32_t Level = Levels - 1; Level > 0 && bChain; --Level)
             {
                 Sizes(Block, SceneTargets::HalfSize(Width, Level + 1), SceneTargets::HalfSize(Height, Level + 1));
+                Edge(Block, Level + 1);
                 bChain = DrawPost(PP_BloomUpsample, InTargets.BloomUp[Level - 1], SceneTargets::HalfSize(Width, Level),
                                   SceneTargets::HalfSize(Height, Level), { Texture(Summed), Texture(InTargets.Bloom[Level - 1]) }, Block);
                 Summed = InTargets.BloomUp[Level - 1];
@@ -5061,9 +5098,11 @@ namespace RenderCore
             return Out;
         }
         const SceneTargets& Targets = *F->Targets;
+        /* From the view: allocated as the scene's targets are, at their full size, and drawn in
+         * the part this frame's resolution scale draws (PassDrawnSize). */
         const float    Scale  = InDesc.Scale > 0.0f ? InDesc.Scale : 1.0f;
-        const uint32_t Width  = InDesc.Width  > 0 ? InDesc.Width  : std::max<uint32_t>(1u, uint32_t(float(Targets.Width) * Scale + 0.5f));
-        const uint32_t Height = InDesc.Height > 0 ? InDesc.Height : std::max<uint32_t>(1u, uint32_t(float(Targets.Height) * Scale + 0.5f));
+        const uint32_t Width  = InDesc.Width  > 0 ? InDesc.Width  : std::max<uint32_t>(1u, uint32_t(float(Targets.AllocWidth) * Scale + 0.5f));
+        const uint32_t Height = InDesc.Height > 0 ? InDesc.Height : std::max<uint32_t>(1u, uint32_t(float(Targets.AllocHeight) * Scale + 0.5f));
         if(Width == 0 || Height == 0 || Width > RENDER_TARGET_MAX_SIZE || Height > RENDER_TARGET_MAX_SIZE)
         {
             return Out;
@@ -5111,6 +5150,7 @@ namespace RenderCore
         {
             Entry.Target->Resize(Width, Height);
         }
+        Entry.SceneScale = InDesc.Width > 0 || InDesc.Height > 0 ? 0.0f : Scale;
         if(Entry.Target && Entry.Target->IsValid())
         {
             Out.Handle = Entry.Target;
@@ -5167,7 +5207,9 @@ namespace RenderCore
             return false;
         }
         GDISetRenderTargets(&Target, 1, bInDepth ? Target : nullptr);
-        GDISetViewport(0, 0, Target->GetWidth(), Target->GetHeight());
+        uint Width = 0, Height = 0;
+        F->P->PassDrawnSize(*F->Targets, Target, Width, Height);
+        GDISetViewport(0, 0, Width, Height);
         GDISetColorMask(EColM_RGBA);
         GDIClear(bInDepth ? (CM_Color | CM_Depth) : CM_Color, ClearColorOf(InColor));
         return true;
@@ -5201,7 +5243,9 @@ namespace RenderCore
         const Blends Blend = InBlend == ERenderPassBlend::Additive   ? Blends::Additive
                            : InBlend == ERenderPassBlend::AlphaBlend ? Blends::AlphaBlend : Blends::Opaque;
         GDIShader* Pixel = F->P->GetPassShader(InPixelShader, ST_Pixel, F->PassName());
-        return F->P->DrawFullscreenShader(Pixel, InPixelShader, Target, Target->GetWidth(), Target->GetHeight(), Textures,
+        uint Width = 0, Height = 0;
+        F->P->PassDrawnSize(*F->Targets, Target, Width, Height);
+        return F->P->DrawFullscreenShader(Pixel, InPixelShader, Target, Width, Height, Textures,
                                           GDI_MATERIAL_TEXTURE_SLOTS, &InParams, uint(sizeof(InParams)), Blend);
     }
 
@@ -5236,7 +5280,9 @@ namespace RenderCore
 
         SCOPED_DRAW_EVENT("MeshGroup" + std::to_string(InGroup));
         GDISetRenderTargets(&Target, 1, DepthFrom);
-        GDISetViewport(0, 0, Target->GetWidth(), Target->GetHeight());
+        uint Width = 0, Height = 0;
+        P.PassDrawnSize(*F->Targets, Target, Width, Height);
+        GDISetViewport(0, 0, Width, Height);
         GDISetColorMask(EColM_RGBA);
         if(bInClear)
         {
@@ -5530,7 +5576,7 @@ namespace RenderCore
     }
 
     void RenderContext::CompositeViews(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewRect* InRects,
-                                       const uint32_t InCount)
+                                       const uint32_t InCount, const RenderViewRect* InDrawn)
     {
         if(!InTarget)
         {
@@ -5557,19 +5603,28 @@ namespace RenderCore
             }
             const uint ClippedWidth  = std::min(uint(Rect.Width), Width - uint(X));
             const uint ClippedHeight = std::min(uint(Rect.Height), Height - uint(Y));
-            /* A view drawn smaller than its rectangle ([Rendering] ResolutionScale): Catmull-Rom up to it
-             * (PP_View.x 3), sharper than the sampler's bilinear; the same size, as it is. */
-            const bool bUpscale = Source->GetWidth() < uint(Rect.Width) || Source->GetHeight() < uint(Rect.Height);
+            /* A view drawn smaller than its rectangle ([Rendering] ResolutionScale, DynamicResolution):
+             * its drawn area Catmull-Rom up to it (PP_View.x 3), sharper than the sampler's bilinear,
+             * the taps kept inside that area; the same size, as it is. */
+            const uint DrawnW = InDrawn ? uint(std::clamp<int32_t>(InDrawn[Index].Width, 1, int32_t(Source->GetWidth()))) : Source->GetWidth();
+            const uint DrawnH = InDrawn ? uint(std::clamp<int32_t>(InDrawn[Index].Height, 1, int32_t(Source->GetHeight()))) : Source->GetHeight();
+            const bool bUpscale = DrawnW < uint(Rect.Width) || DrawnH < uint(Rect.Height)
+                               || DrawnW < Source->GetWidth() || DrawnH < Source->GetHeight();
             Block.A[0]     = bUpscale ? 3.0f : 0.0f;
+            Block.A[1]     = (float(DrawnW) - 0.5f) / float(Source->GetWidth());
+            Block.A[2]     = (float(DrawnH) - 0.5f) / float(Source->GetHeight());
             Block.Sizes[0] = float(Source->GetWidth());
             Block.Sizes[1] = float(Source->GetHeight());
+            Block.Sizes[2] = float(DrawnW) / float(Source->GetWidth());
+            Block.Sizes[3] = float(DrawnH) / float(Source->GetHeight());
             P->DrawFullscreenShader(P->GetPostShader(PP_ViewTarget), "View", InTarget, ClippedWidth, ClippedHeight,
                                     &Texture->Resource, 1, Block.A, uint(sizeof(Block) - sizeof(Block.Matrix)),
                                     Impl::EFullscreenBlend::Opaque, uint(X), uint(Y));
         }
     }
 
-    void RenderContext::CompositeViewSites(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewSites& InSites)
+    void RenderContext::CompositeViewSites(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewSites& InSites,
+                                           const float (&InDrawnShare)[2])
     {
         const uint32_t Count = std::min<uint32_t>(InSites.Count, RENDER_VIEWS_MAX);
         if(!InTarget || Count < 2)
@@ -5601,6 +5656,8 @@ namespace RenderCore
         Block.Color[3]  = 1.0f;
         Block.Sizes[0]  = float(InTarget->GetWidth());
         Block.Sizes[1]  = float(InTarget->GetHeight());
+        Block.Sizes[2]  = InDrawnShare[0];
+        Block.Sizes[3]  = InDrawnShare[1];
 
         /* A view not drawn this frame shows view 0 (never expected: each site is a drawn view). */
         GDITextureResource* Textures[RENDER_VIEWS_MAX] = {};
@@ -5724,6 +5781,26 @@ namespace RenderCore
 
         const uint Width  = InTargets.Width;
         const uint Height = InTargets.Height;
+
+        /* The drawn area of the targets, this frame's and last frame's (SceneTargets; Scene_ViewUv,
+         * SceneUniforms.glsl): their share of the targets, and the largest UV a tap may take in a
+         * full-size and a half-size one. All 1 while the whole of the targets is drawn. */
+        {
+            const auto Share = [](const uint InDrawn, const uint InAlloc) { return InAlloc > 0 ? float(InDrawn) / float(InAlloc) : 1.0f; };
+            const auto Edge  = [](const uint InDrawn, const uint InAlloc)
+            {
+                return InDrawn >= InAlloc || InAlloc == 0 ? 1.0f : (float(InDrawn) - 0.5f) / float(InAlloc);
+            };
+            const uint AllocW = InTargets.AllocWidth, AllocH = InTargets.AllocHeight;
+            const uint HalfAW = SceneTargets::HalfSize(AllocW, 1), HalfAH = SceneTargets::HalfSize(AllocH, 1);
+            const uint PrevW  = InTargets.PrevWidth > 0 ? InTargets.PrevWidth : Width;
+            const uint PrevH  = InTargets.PrevHeight > 0 ? InTargets.PrevHeight : Height;
+            const float Area[3][4] = {
+                { Share(Width, AllocW), Share(Height, AllocH), Share(PrevW, AllocW), Share(PrevH, AllocH) },
+                { Edge(Width, AllocW), Edge(Height, AllocH), Edge(SceneTargets::HalfSize(Width, 1), HalfAW), Edge(SceneTargets::HalfSize(Height, 1), HalfAH) },
+                { Edge(PrevW, AllocW), Edge(PrevH, AllocH), Edge(SceneTargets::HalfSize(PrevW, 1), HalfAW), Edge(SceneTargets::HalfSize(PrevH, 1), HalfAH) } };
+            std::memcpy(P->Scene.Spare[3], Area, sizeof(Area));
+        }
 
         /* This view's light list (LightList.glsl), for the Lighting stage and forward Lit draws. */
         P->EnsureLTC();
@@ -5921,7 +5998,8 @@ namespace RenderCore
                     GDIRenderTarget** History = bHalf ? InTargets.ReflectionHistoryHalf : InTargets.ReflectionHistory;
                     if(GDIRenderTarget* Reflections = Ensure(InTargets.Reflections, InTargets.ReflectionsHalf, "Reflections"))
                     {
-                        const uint MarchW = Reflections->GetWidth(), MarchH = Reflections->GetHeight();
+                        const uint MarchW = bHalf ? SceneTargets::HalfSize(Width, 1) : Width;   // the drawn area (SceneTargets)
+                        const uint MarchH = bHalf ? SceneTargets::HalfSize(Height, 1) : Height;
                         PostBlock Ssr;
                         PutMatrix(Ssr.Matrix, P->PrevViewProjection);
                         Ssr.A[0]     = std::clamp(Stack.SsrIntensity, 0.0f, 1.0f);
@@ -5984,7 +6062,7 @@ namespace RenderCore
                    && InTargets.EnsureHalfHalfFloat(InTargets.GIHistory[0], "GIHistory0")
                    && InTargets.EnsureHalfHalfFloat(InTargets.GIHistory[1], "GIHistory1"))
                 {
-                    const uint HalfW = InTargets.GI->GetWidth(), HalfH = InTargets.GI->GetHeight();
+                    const uint HalfW = SceneTargets::HalfSize(Width, 1), HalfH = SceneTargets::HalfSize(Height, 1);   // the drawn area
                     PostBlock Gi;
                     PutMatrix(Gi.Matrix, P->PrevViewProjection);
                     Gi.A[0]     = std::clamp(Stack.GiIntensity, 0.0f, 1.0f);
@@ -6144,7 +6222,7 @@ namespace RenderCore
                 std::memcpy(March.Matrix, Settings, sizeof(Settings));   // PPVolumetricFog.fsh's four vec4s, in the matrix's place
                 March.Sizes[2] = float(Width);
                 March.Sizes[3] = float(Height);
-                const uint HalfW = Fog->GetWidth(), HalfH = Fog->GetHeight();
+                const uint HalfW = SceneTargets::HalfSize(Width, 1), HalfH = SceneTargets::HalfSize(Height, 1);   // the drawn area
                 GDISetMaterialTexture(OPACITY_SHADOW_SLOT, P->ForwardOpacityAtlas);   // shafts through the casting plumes (TranslucentShadows.glsl)
                 const bool bMarched = P->DrawPost(PP_VolumetricFog, Fog, HalfW, HalfH, { Depth->Resource, Sun ? Sun->Resource : nullptr }, March);
                 GDISetMaterialTexture(0, nullptr);

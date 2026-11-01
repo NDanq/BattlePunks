@@ -46,7 +46,7 @@ void main(void)
     }
 
     // Where this pixel's surface was last frame.
-    ivec2 FullSize = textureSize(SceneDepth, 0);
+    ivec2 FullSize = ivec2(Scene_DrawnSize(vec2(textureSize(SceneDepth, 0))));   // what this frame drew of it
     ivec2 Full     = clamp(ivec2(Interpolants.TexCoord * vec2(FullSize)), ivec2(0), FullSize - 1);
     float Depth    = texelFetch(SceneDepth, Full, 0).r;
     if(Depth >= 1.0)
@@ -63,6 +63,7 @@ void main(void)
         Output = Now;
         return;
     }
-    vec4 Past = clamp(texture(History, PrevUV), Low, High);
+    bool bHalf = textureSize(History, 0).x * 2 <= textureSize(SceneDepth, 0).x + 1;   // the half-size resolves
+    vec4 Past  = clamp(texture(History, bHalf ? Scene_PrevViewUvHalf(PrevUV) : Scene_PrevViewUv(PrevUV)), Low, High);
     Output = mix(Now, Past, PP_Resolve.y);
 }

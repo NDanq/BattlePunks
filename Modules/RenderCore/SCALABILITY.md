@@ -89,6 +89,7 @@ Two rules decide which value applies:
 | `Shadows.ContactShadows` | off | off | off | on |
 | `Shadows.TranslucentShadows` | off | on | on | on |
 | `Rendering.ResolutionScale` (the scene drawn at this fraction of the viewport each axis, then upscaled under the UI; RENDERPIPELINE.md, "Resolution scale") | 0.5 | 0.75 | 1 | 1 |
+| `Rendering.DynamicResolution` (the scale chosen each frame to hold `DynamicResolutionTargetMs`, starting at `ResolutionScale`; same section) | on | on | off | off |
 | `Rendering.ScreenSpaceGI` | off | off | on | on |
 | `Rendering.StochasticReflections` | off | off | on | on |
 | `Rendering.SubsurfaceScattering` | off | on | on | on |

@@ -1,6 +1,7 @@
 #include "Public/RenderCore/RenderThread.h"
 #include "Public/RenderCore/ParallelRecording.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -434,6 +435,7 @@ namespace RenderCore
         GetStaticDrawStats(OutStats.StaticProxiesDrawn, OutStats.StaticListBuilds);
         GetOcclusionStats(OutStats.ProxiesOccludedLastFrame, OutStats.OcclusionQueriesLastFrame);
         GetCaptureStats(OutStats.GIProbesUnlit, OutStats.GIProbesTotal, OutStats.bCapturesBusy);
+        GetResolutionStats(OutStats.ResolutionScale, OutStats.bDynamicResolution, OutStats.DynamicResolutionTargetMs);
         OutStats.TextureStreaming = P->Context.GetTextureStreamingStats();
     }
 
@@ -532,6 +534,27 @@ namespace RenderCore
 
     namespace
     {
+        /* Scale in thousandths, the target in hundredths of a ms, dynamic: one word, read whole. */
+        std::atomic<uint64_t> GResolutionStats{uint64_t(1000) << 32};
+    }
+
+    void SetResolutionStats(const float InScale, const bool bInDynamic, const float InTargetMs)
+    {
+        const uint64_t Scale  = uint64_t(std::clamp(InScale, 0.0f, 4.0f) * 1000.0f + 0.5f);
+        const uint64_t Target = uint64_t(std::clamp(InTargetMs, 0.0f, 1000.0f) * 100.0f + 0.5f);
+        GResolutionStats.store((Scale << 32) | (Target << 1) | (bInDynamic ? 1u : 0u), std::memory_order_relaxed);
+    }
+
+    void GetResolutionStats(float& OutScale, bool& bOutDynamic, float& OutTargetMs)
+    {
+        const uint64_t Packed = GResolutionStats.load(std::memory_order_relaxed);
+        OutScale    = float(Packed >> 32) / 1000.0f;
+        OutTargetMs = float((Packed >> 1) & 0x7fffffffu) / 100.0f;
+        bOutDynamic = (Packed & 1u) != 0;
+    }
+
+    namespace
+    {
         std::mutex       GStatUnitLock;   // written twice a second, read once a frame per scene
         StatUnitSnapshot GStatUnit;
     }
@@ -586,6 +609,17 @@ namespace RenderCore
                       "Idle:    %7.2f ms\nFPS:     %7.1f",
                       double(InSnapshot.FrameMs), double(InSnapshot.GameThreadMs), double(InSnapshot.RenderThreadMs),
                       double(InSnapshot.WaitMs), double(InSnapshot.PresentMs), double(InSnapshot.IdleMs), double(Fps));
+        /* The resolution scale, while there is one (RENDERPIPELINE.md, "Resolution scale"). */
+        float Scale = 1.0f, TargetMs = 0.0f;
+        bool  bDynamic = false;
+        GetResolutionStats(Scale, bDynamic, TargetMs);
+        if(bDynamic || Scale < 0.999f)
+        {
+            char Line[64];
+            if(bDynamic) { std::snprintf(Line, sizeof(Line), "\nRes:     %5.1f %% (dynamic, %.1f ms)", double(Scale * 100.0f), double(TargetMs)); }
+            else         { std::snprintf(Line, sizeof(Line), "\nRes:     %5.1f %%", double(Scale * 100.0f)); }
+            return std::string(Text) + Line;
+        }
         return Text;
     }
 

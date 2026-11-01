@@ -9,5 +9,5 @@ MATERIAL_SAMPLER2D(4, Fog)   // rgb: scattered light; a: transmittance (PPVolume
 
 void main(void)
 {
-    Output = texture(Fog, Interpolants.TexCoord);
+    Output = texture(Fog, Scene_ViewUvHalf(Interpolants.TexCoord));
 }
