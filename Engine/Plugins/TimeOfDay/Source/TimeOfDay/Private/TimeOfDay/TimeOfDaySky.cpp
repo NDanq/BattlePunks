@@ -17,8 +17,8 @@
  * that draws it with TimeOfDaySky.fsh. The constants match the shader's. */
 
 
-/* The background sky marches only where the scene's depth is the far plane (README, "the background
- * pass"); off, every pixel of the screen, as when it was drawn under everything (an A/B switch). */
+/* The background sky marches only where the scene's depth is the far plane (README); off, it marches
+ * every pixel of the screen, as when it was drawn under everything, and keeps the sky's (an A/B switch). */
 NIMBLE_CONFIG_BOOL(GTimeOfDaySkyDepthTest, "TimeOfDay", "SkyDepthTest", true, nullptr);
 
 namespace TimeOfDay
@@ -234,6 +234,7 @@ namespace TimeOfDay
                 /* The background (after the Lighting stage): only the pixels nothing drew, by the scene's
                  * depth. The sky light's cube faces have no depth: all of them. */
                 State.Params.B[0] = bExtracts && GTimeOfDaySkyDepthTest.GetBool() ? 1.0f : 0.0f;
+                State.Params.B[1] = bExtracts ? 1.0f : 0.0f;   // off: marched everywhere, kept only on the sky (A/B)
                 InContext.DrawFullscreen("TimeOfDaySky.fsh", RenderCore::RenderPassTarget{}, {}, State.Params,
                                          RenderCore::ERenderPassBlend::Opaque);
             }

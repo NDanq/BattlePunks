@@ -21,7 +21,8 @@ UBO_BLOCK_BEGIN(2, PP_Block)
                     // [2] x haze (Mie x), y cos of the sun disc's radius, z stars, w exposure (adapted)
                     // [3] xyz ground albedo, w the eye's height above sea level (m)
     vec4 TOD_Bounce;   // rgb: the ground's own radiance, lit by the sun, the moon and the sky (before the exposure)
-    vec4 TOD_Flags;    // x: 1 to draw only where the scene depth is the far plane (the main view, AfterLighting)
+    vec4 TOD_Flags;    // x: 1 to skip, before the march, every pixel where the scene depth is nearer than the far plane;
+                       // y: 1 to keep only the far plane's pixels after it (the background pass with x off: the A/B switch)
 UBO_BLOCK_END(PP_Block)
 
 MATERIAL_SAMPLER2D(11, TOD_SceneDepth)   // a custom pass's slot 7: the scene's depth, window depth (1 far)
@@ -196,5 +197,6 @@ void main(void)
     // the sunlit ground sends back -- what a reflection or the sky light sees
     // under the horizon, where no terrain covers it.
     vec3 Ground = Sky * Albedo * 0.5 + TOD_Bounce.rgb * Exposure;
+    if(TOD_Flags.y > 0.5 && texelFetch(TOD_SceneDepth, ivec2(gl_FragCoord.xy), 0).r < 1.0) { discard; }
     Output = vec4(mix(Sky, Ground, Below), 1.0);
 }
