@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Settings, over the main menu or the pause menu. Every control binds two-way to
+  a "Set.<var path>" key and runs Native:Lab.SetVar (Source/UI/LabUI.cpp) on a
+  change; Lab.RefreshSettings fills the keys as it opens and closing saves the
+  player's User.ini. Graphics go through GameCore Scalability (the tier) and the
+  renderer's config vars.
+-->
+<UI Format="1" ReferenceSize="1920,1080" ScaleMode="FitHeight" InputMode="UIOnly" Layer="12" OnOpen="Native:Lab.RefreshSettings" OnClose="Native:Lab.SaveSettings" OnBack="Native:UI.Close">
+  <Styles>
+    <Style Name="MenuButton" Type="Button" Padding="32,14" Margin="0,7" Size="560,0"
+           Normal.Tint="#1A120AE0" Normal.OutlineColor="#C9822E50" Normal.OutlineThickness="1"
+           Hovered.Tint="#C9822EF2" Hovered.OutlineColor="#FFE2A8E6" Hovered.OutlineThickness="2"
+           Pressed.Tint="#8A561CF2" Disabled.Tint="#1A120A80"/>
+    <Style Name="MenuLabel" Type="Text" FontSize="30" Color="#F4EBDDFF" HAlign="Center" VAlign="Center"/>
+    <Style Name="TabButton" Type="Button" Padding="20,10" Margin="0,0,10,0"
+           Normal.Tint="#1A120AE0" Normal.OutlineColor="#C9822E50" Normal.OutlineThickness="1"
+           Hovered.Tint="#C9822EF2" Pressed.Tint="#8A561CF2"/>
+    <Style Name="TabLabel" Type="Text" FontSize="24" Color="#F4EBDDFF" HAlign="Center" VAlign="Center"/>
+    <Style Name="Heading" Type="Text" FontSize="64" Color="#F4EBDDFF" HAlign="Center" Margin="0,0,0,20"
+           ShadowOffset="0,3" ShadowColor="#000000A0"/>
+    <Style Name="Sub" Type="Text" FontSize="24" Color="#C9BBA0FF" HAlign="Center" Margin="0,0,0,24"/>
+    <Style Name="Setting" Type="CheckBox" Margin="0,8" BoxSize="30" Spacing="16"
+           Box.Tint="#0A0806E6" Box.OutlineColor="#FFFFFF4D" Box.OutlineThickness="2"
+           BoxHovered.Tint="#1A120AF2" BoxHovered.OutlineColor="#C9822EFF" BoxHovered.OutlineThickness="2"
+           Check.Tint="#E8A33AFF"/>
+    <Style Name="SettingLabel" Type="Text" FontSize="26" Color="#F4EBDDFF" VAlign="Center"/>
+    <Style Name="SliderLabel" Type="Text" FontSize="26" Color="#F4EBDDFF" Margin="0,12,0,4"/>
+    <Style Name="SliderValue" Type="Text" FontSize="24" Color="#FFFFFFB3" VAlign="Center" Margin="20,0,0,0"/>
+    <Style Name="SettingSlider" Type="Slider" Size="440,36" ThumbSize="20,36" TrackHeight="8"
+           Track.Tint="#0A0806E6" Track.OutlineColor="#FFFFFF33" Track.OutlineThickness="1"
+           FillBrush.Tint="#E8A33AF2" Thumb.Tint="#F4EBDDFF"
+           ThumbHovered.Tint="#FFD66AFF" ThumbHovered.OutlineColor="#FFFFFFFF" ThumbHovered.OutlineThickness="2"/>
+  </Styles>
+  <Canvas Name="Root">
+    <Border Name="Dim" Anchors="0,0,1,1" Background.Tint="#05040280"/>
+    <Border Name="Panel" Anchors="0.5,0.5,0.5,0.5" Pivot="0.5,0.5" Size="1100,900" Padding="56,40" Background.Tint="#0E0A06F0" Background.OutlineColor="#C9822E55" Background.OutlineThickness="1">
+      <VerticalBox Name="Content">
+        <Text Class="Heading" Text="Settings"/>
+        <HorizontalBox Name="Tabs" Margin="0,0,0,20">
+          <Button Name="TabGraphics" Class="TabButton" OnClick="Native:UI.ShowPage('Pages', 0)">
+            <Text Class="TabLabel" Text="Graphics"/>
+          </Button>
+          <Button Name="TabDisplay" Class="TabButton" OnClick="Native:UI.ShowPage('Pages', 1)">
+            <Text Class="TabLabel" Text="Display"/>
+          </Button>
+          <Button Name="TabAudio" Class="TabButton" OnClick="Native:UI.ShowPage('Pages', 2)">
+            <Text Class="TabLabel" Text="Audio"/>
+          </Button>
+          <Button Name="TabControls" Class="TabButton" OnClick="Native:UI.ShowPage('Pages', 3)">
+            <Text Class="TabLabel" Text="Controls"/>
+          </Button>
+          <Button Name="TabAccessibility" Class="TabButton" OnClick="Native:UI.ShowPage('Pages', 4)">
+            <Text Class="TabLabel" Text="Accessibility"/>
+          </Button>
+        </HorizontalBox>
+        <Switcher Name="Pages" Size="980,560">
+          <VerticalBox Name="Graphics">
+            <Text Class="SliderLabel" Text="Quality tier"/>
+            <HorizontalBox>
+              <Slider Name="Tier" Class="SettingSlider" Min="0" Max="3" Step="1" InitialFocus="true"
+                      Value="{Bind:Set.Tier}" OnChanged="Native:Lab.SetTier($value)"/>
+              <Text Class="SliderValue" Text="{Bind:Set.TierName}"/>
+            </HorizontalBox>
+            <CheckBox Name="GI" Class="Setting" Checked="{Bind:Set.Rendering.DynamicGI}" OnChanged="Native:Lab.SetVar('Rendering.DynamicGI|Rendering.ScreenSpaceGI', $value)">
+              <Text Class="SettingLabel" Text="Global illumination (DDGI + SSGI)"/>
+            </CheckBox>
+            <CheckBox Name="Shadows" Class="Setting" Checked="{Bind:Set.Shadows.Enabled}" OnChanged="Native:Lab.SetVar('Shadows.Enabled', $value)">
+              <Text Class="SettingLabel" Text="Shadows"/>
+            </CheckBox>
+            <CheckBox Name="Reflections" Class="Setting" Checked="{Bind:Set.Rendering.AllowScreenSpaceReflections}" OnChanged="Native:Lab.SetVar('Rendering.AllowScreenSpaceReflections|Rendering.StochasticReflections', $value)">
+              <Text Class="SettingLabel" Text="Reflections"/>
+            </CheckBox>
+            <CheckBox Name="Fog" Class="Setting" Checked="{Bind:Set.Rendering.AllowVolumetricFog}" OnChanged="Native:Lab.SetVar('Rendering.AllowVolumetricFog', $value)">
+              <Text Class="SettingLabel" Text="Volumetric fog"/>
+            </CheckBox>
+            <Text Class="SliderLabel" Text="Foliage density"/>
+            <HorizontalBox>
+              <Slider Name="Foliage" Class="SettingSlider" Min="0.25" Max="1.5" Step="0.05"
+                      Value="{Bind:Set.DemoLab.FoliageDensity}" OnChanged="Native:Lab.SetVar('DemoLab.FoliageDensity', $value)"/>
+              <Text Class="SliderValue" Text="{Bind:Set.DemoLab.FoliageDensity}"/>
+            </HorizontalBox>
+            <CheckBox Name="VSync" Class="Setting" Checked="{Bind:Set.Display.VSync}" OnChanged="Native:Lab.SetVar('Display.VSync', $value)">
+              <Text Class="SettingLabel" Text="VSync"/>
+            </CheckBox>
+            <Text Class="SliderLabel" Text="Frame rate limit (0: none)"/>
+            <HorizontalBox>
+              <Slider Name="FrameLimit" Class="SettingSlider" Min="0" Max="240" Step="30"
+                      Value="{Bind:Set.Display.FrameRateLimit}" OnChanged="Native:Lab.SetVar('Display.FrameRateLimit', $value)"/>
+              <Text Class="SliderValue" Text="{Bind:Set.Display.FrameRateLimit}"/>
+            </HorizontalBox>
+          </VerticalBox>
+          <VerticalBox Name="Display">
+            <Text Class="SliderLabel" Text="Resolution"/>
+            <HorizontalBox>
+              <Slider Name="Resolution" Class="SettingSlider" Min="0" Max="3" Step="1"
+                      Value="{Bind:Set.Resolution}" OnChanged="Native:Lab.SetResolution($value)"/>
+              <Text Class="SliderValue" Text="{Bind:Set.ResolutionName}"/>
+            </HorizontalBox>
+            <CheckBox Name="VSync2" Class="Setting" Checked="{Bind:Set.Display.VSync}" OnChanged="Native:Lab.SetVar('Display.VSync', $value)">
+              <Text Class="SettingLabel" Text="VSync"/>
+            </CheckBox>
+            <Text Class="SliderLabel" Text="Frame rate limit (0: none)"/>
+            <HorizontalBox>
+              <Slider Name="FrameLimit2" Class="SettingSlider" Min="0" Max="240" Step="30"
+                      Value="{Bind:Set.Display.FrameRateLimit}" OnChanged="Native:Lab.SetVar('Display.FrameRateLimit', $value)"/>
+              <Text Class="SliderValue" Text="{Bind:Set.Display.FrameRateLimit}"/>
+            </HorizontalBox>
+          </VerticalBox>
+          <VerticalBox Name="Audio">
+            <Text Class="SliderLabel" Text="Master"/>
+            <HorizontalBox>
+              <Slider Name="Master" Class="SettingSlider" Min="0" Max="1" Step="0.05"
+                      Value="{Bind:Set.Audio.MasterVolume}" OnChanged="Native:Lab.SetVar('Audio.MasterVolume', $value)"/>
+              <Text Class="SliderValue" Text="{Bind:Set.Audio.MasterVolume}"/>
+            </HorizontalBox>
+            <Text Class="SliderLabel" Text="Music"/>
+            <HorizontalBox>
+              <Slider Name="Music" Class="SettingSlider" Min="0" Max="1" Step="0.05"
+                      Value="{Bind:Set.Audio.MusicVolume}" OnChanged="Native:Lab.SetVar('Audio.MusicVolume', $value)"/>
+              <Text Class="SliderValue" Text="{Bind:Set.Audio.MusicVolume}"/>
+            </HorizontalBox>
+            <Text Class="SliderLabel" Text="Effects"/>
+            <HorizontalBox>
+              <Slider Name="Effects" Class="SettingSlider" Min="0" Max="1" Step="0.05"
+                      Value="{Bind:Set.Audio.SFXVolume}" OnChanged="Native:Lab.SetVar('Audio.SFXVolume', $value)"/>
+              <Text Class="SliderValue" Text="{Bind:Set.Audio.SFXVolume}"/>
+            </HorizontalBox>
+            <Text Class="SliderLabel" Text="Voice"/>
+            <HorizontalBox>
+              <Slider Name="Voice" Class="SettingSlider" Min="0" Max="1" Step="0.05"
+                      Value="{Bind:Set.Audio.VoiceVolume}" OnChanged="Native:Lab.SetVar('Audio.VoiceVolume', $value)"/>
+              <Text Class="SliderValue" Text="{Bind:Set.Audio.VoiceVolume}"/>
+            </HorizontalBox>
+            <Text Class="SliderLabel" Text="Ambience"/>
+            <HorizontalBox>
+              <Slider Name="Ambient" Class="SettingSlider" Min="0" Max="1" Step="0.05"
+                      Value="{Bind:Set.Audio.AmbientVolume}" OnChanged="Native:Lab.SetVar('Audio.AmbientVolume', $value)"/>
+              <Text Class="SliderValue" Text="{Bind:Set.Audio.AmbientVolume}"/>
+            </HorizontalBox>
+            <Text Class="SliderLabel" Text="Interface"/>
+            <HorizontalBox>
+              <Slider Name="Interface" Class="SettingSlider" Min="0" Max="1" Step="0.05"
+                      Value="{Bind:Set.Audio.UIVolume}" OnChanged="Native:Lab.SetVar('Audio.UIVolume', $value)"/>
+              <Text Class="SliderValue" Text="{Bind:Set.Audio.UIVolume}"/>
+            </HorizontalBox>
+          </VerticalBox>
+          <VerticalBox Name="Controls">
+            <Text Class="SliderLabel" Text="Look sensitivity"/>
+            <HorizontalBox>
+              <Slider Name="Look" Class="SettingSlider" Min="0.25" Max="3" Step="0.05"
+                      Value="{Bind:Set.DemoLab.LookSensitivity}" OnChanged="Native:Lab.SetVar('DemoLab.LookSensitivity', $value)"/>
+              <Text Class="SliderValue" Text="{Bind:Set.DemoLab.LookSensitivity}"/>
+            </HorizontalBox>
+            <CheckBox Name="Invert" Class="Setting" Checked="{Bind:Set.DemoLab.InvertY}" OnChanged="Native:Lab.SetVar('DemoLab.InvertY', $value)">
+              <Text Class="SettingLabel" Text="Invert look up/down"/>
+            </CheckBox>
+          </VerticalBox>
+          <VerticalBox Name="Accessibility">
+            <CheckBox Name="Subtitles" Class="Setting" Checked="{Bind:Set.DemoLab.Subtitles}" OnChanged="Native:Lab.SetVar('DemoLab.Subtitles', $value)">
+              <Text Class="SettingLabel" Text="Subtitles in cinematics"/>
+            </CheckBox>
+          </VerticalBox>
+        </Switcher>
+        <Button Name="Back" Class="MenuButton" OnClick="Native:UI.Close">
+          <Text Class="MenuLabel" Text="Back"/>
+        </Button>
+      </VerticalBox>
+    </Border>
+  </Canvas>
+</UI>

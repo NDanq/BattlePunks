@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="22d3632d24d61848c07298d79872f6b2" Name="Scree_1">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="2780" Y="625" Z="6790" />
+      <Rotation X="0" Y="23" Z="0" />
+      <Scale X="90" Y="50" Z="70" />
+  </Component>
+</Entity>

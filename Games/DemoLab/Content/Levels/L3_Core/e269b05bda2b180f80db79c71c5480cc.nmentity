@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="e269b05bda2b180f80db79c71c5480cc" Name="Beacon_Ready">
+  <Component Type="LabAllOf" Version="1">
+    <Inputs Value="L3.W2Done,L3.BeaconCharged" />
+    <Output Value="L3.BeaconReady" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

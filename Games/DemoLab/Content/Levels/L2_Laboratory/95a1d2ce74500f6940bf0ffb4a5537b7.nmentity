@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="95a1d2ce74500f6940bf0ffb4a5537b7" Name="Spawn_Alarm_Enc_Stragglers_0" Parent="b5c1f5ce0edbd6aa0d58bcd00cb288f8">
+  <Component Type="Transform" Version="1">
+      <Position X="-2800" Y="0" Z="-500" />
+      <Rotation X="0" Y="180" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

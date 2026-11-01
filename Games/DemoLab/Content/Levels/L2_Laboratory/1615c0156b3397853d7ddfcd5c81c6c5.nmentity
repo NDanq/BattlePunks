@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="1615c0156b3397853d7ddfcd5c81c6c5" Name="Alarm_Red_Atrium">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="40" B="25" A="255" />
+    <Intensity Value="30" />
+    <Radius Value="1500" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="750.0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="700" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

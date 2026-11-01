@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="923b874312b410ba45d363c7ca357660" Name="FreightLift_Platform">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-2950" Y="5" Z="3400" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="400" Y="10" Z="600" />
+  </Component>
+</Entity>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="0d25f7bc49b23724113d8233a65f0eac" Name="Objective_2">
+  <Component Type="LabObjective" Version="1">
+    <OnSignal Value="L1.GateOpen" />
+    <Text Value="Climb the road to the plaza" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

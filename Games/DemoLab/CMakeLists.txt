@@ -71,6 +71,46 @@ endif()
 # Play-in-Editor, never linked. Add new sources here.
 nimble_add_hot_module(${GAME_MODULE}
         SOURCES      DemoLabGame.cpp
+                    Source/LabVersion.h
+                    Source/Core/LabTypes.h
+                    Source/Core/LabHealth.h
+                    Source/Core/LabHealth.cpp
+                    Source/Core/LabPlayer.h
+                    Source/Core/LabPlayer.cpp
+                    Source/Core/LabInput.cpp
+                    Source/Core/LabMove.cpp
+                    Source/Weapons/LabWeapon.h
+                    Source/Weapons/LabWeapon.cpp
+                    Source/Weapons/LabCombat.h
+                    Source/Weapons/LabCombat.cpp
+                    Source/Weapons/LabProjectile.h
+                    Source/Weapons/LabProjectile.cpp
+                    Source/AI/LabBots.h
+                    Source/AI/LabBots.cpp
+                    Source/World/LabSignals.h
+                    Source/World/LabSignals.cpp
+                    Source/World/LabInteractable.h
+                    Source/World/LabInteractable.cpp
+                    Source/World/LabEncounter.h
+                    Source/World/LabEncounter.cpp
+                    Source/World/LabLogic.h
+                    Source/World/LabLogic.cpp
+                    Source/Flow/LabTravel.h
+                    Source/Flow/LabTravel.cpp
+                    Source/Flow/LabFlow.h
+                    Source/Flow/LabFlow.cpp
+                    Source/UI/LabHUD.h
+                    Source/UI/LabHUD.cpp
+                    Source/UI/LabUI.h
+                    Source/UI/LabUI.cpp
+                    Source/GameModes/LabGameModeBase.h
+                    Source/GameModes/LabGameModeBase.cpp
+                    Source/GameModes/LabStoryMode.cpp
+                    Source/GameModes/LabMenuMode.cpp
+                    Source/GameModes/LabAutoPlay.h
+                    Source/GameModes/LabAutoPlay.cpp
+                    Source/GameModes/LabInputDriver.h
+                    Source/GameModes/LabInputDriver.cpp
         PRIVATE_DEPS NimbleEngine::NimbleEngine)
 set_target_properties(${GAME_MODULE} PROPERTIES FOLDER "Games")
 
@@ -297,3 +337,21 @@ endif()
 
 # === IDE ====================================================================
 set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT ${GAME_NAME})
+
+# === Tests ==================================================================
+# DemoLab.AutoPlay: the whole game played by itself, headless
+# (Source/GameModes/LabAutoPlay.h) -- the main menu's New Game, L1 (the crank),
+# L2 (breaker, keycard, valves, elevator), L3 (the theft, W1, a deliberate fall
+# and the checkpoint reload, W2 with the beacon, the freight lift), L2 on alarm
+# (W3, stragglers, the W4 hold, the roof hatch), the credits and back to the
+# menu. Passes on its log line; a step it cannot finish fails it.
+if(NIMBLE_BUILD_TESTS AND NOT CMAKE_BUILD_TYPE STREQUAL "Shipping")
+    enable_testing()
+    add_test(NAME DemoLab.AutoPlay
+             COMMAND ${GAME_NAME} -headless -DemoLab.AutoPlay=1 -DemoLab.StoryDamageScale=0.15 -Game.StartLevel=MainMenu
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:${GAME_NAME}>")
+    set_tests_properties(DemoLab.AutoPlay PROPERTIES TIMEOUT 1500 LABELS "smoke"
+                         ENVIRONMENT "PULSE_SERVER=unix:/nonexistent"
+                         PASS_REGULAR_EXPRESSION "\\[DemoLab\\] AutoPlay PASS"
+                         FAIL_REGULAR_EXPRESSION "\\[DemoLab\\] AutoPlay FAIL")
+endif()

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="fbb03e32c30dfd3ee1e708d59034069d" Name="Spruce_16">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Engine/Content/Meshes/Cylinder.nmmesh" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="200" Y="400" Z="4500" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="120" Y="800" Z="120" />
+  </Component>
+</Entity>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="a98e4f55f0f737f19cbb29089da32304" Name="Calm_Objective_3">
+  <Component Type="LabObjective" Version="1">
+    <OnSignal Value="L2.ArchiveOpen" />
+    <Text Value="Go through the archive to the turbine hall" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

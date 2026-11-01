@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Demo Lab HUD, opened by LabGameModeBase (Source/GameModes) and fed each
+  frame by Source/UI/LabHUD.cpp through the UI data store: Lab.* for the
+  player, Story.* for the objective, banner, wave, timer and intel marker.
+  Visibility binds take EUIVisibility's index (3 HitTestInvisible, 1 Hidden).
+  Nothing here takes input.
+-->
+<UI Format="1" ReferenceSize="1920,1080" ScaleMode="FitHeight" InputMode="GameOnly">
+  <Styles>
+    <Style Name="Label" Type="Text" FontSize="20" Color="#C9BBA0FF" ShadowOffset="0,2" ShadowColor="#000000C0"/>
+    <Style Name="Value" Type="Text" FontSize="38" Color="#F4EBDDFF" ShadowOffset="0,2" ShadowColor="#000000C0"/>
+    <Style Name="Hair" Type="Image" Brush.Tint="#F4EBDDE6"/>
+    <Style Name="Hit" Type="Image" Brush.Tint="#E8562AFF"/>
+  </Styles>
+  <Canvas Name="Root" Visibility="{Bind:Lab.HudVis}">
+    <!-- Objective, top left: the wave and the timer under it. -->
+    <Border Name="Objective" Position="36,36" AutoSize="true" Padding="22,12" Visibility="HitTestInvisible"
+            Background.Tint="#140E08B8" Background.OutlineColor="#C9822E55" Background.OutlineThickness="1">
+      <VerticalBox Spacing="4">
+        <Text Class="Label" Text="OBJECTIVE"/>
+        <Text Name="ObjectiveText" Class="Value" FontSize="30" Text="{Bind:Story.Objective}"/>
+        <Text Name="Encounter" Class="Label" Color="#E8A33AFF" Text="{Bind:Story.Encounter}"/>
+        <Text Name="Timer" Class="Label" Color="#7FC8FFFF" Text="{Bind:Story.Timer}"/>
+      </VerticalBox>
+    </Border>
+
+    <!-- The intel marker, top right, once the intel is held. -->
+    <Border Name="Intel" Anchors="1,0,1,0" Pivot="1,0" Position="-36,36" AutoSize="true" Padding="16,8"
+            Visibility="{Bind:Story.IntelVis}" Background.Tint="#140E08B8" Background.OutlineColor="#E8A33AFF"
+            Background.OutlineThickness="1">
+      <Text Class="Label" Color="#E8A33AFF" Text="INTEL SECURED"/>
+    </Border>
+
+    <!-- Health, bottom left. -->
+    <Border Name="Health" Anchors="0,1,0,1" Pivot="0,1" Position="36,-36" Size="320,110" Padding="22,12"
+            Visibility="HitTestInvisible" Background.Tint="#140E08B8" Background.OutlineColor="#C9822E55"
+            Background.OutlineThickness="1">
+      <Canvas>
+        <Text Class="Label" Position="0,0" AutoSize="true" Text="HEALTH"/>
+        <Text Name="HealthValue" Class="Value" Position="0,22" AutoSize="true" FontSize="44" Text="{Bind:Lab.Health}"/>
+        <ProgressBar Name="HealthBar" Anchors="0,1,1,1" Pivot="0,1" Position="0,0" Size="0,6" Value="{Bind:Lab.HealthFill}"
+                     Background.Tint="#FFFFFF22" FillBrush.Tint="#D9542BFF"/>
+      </Canvas>
+    </Border>
+
+    <!-- Weapon and ammo, bottom right: only once armed (the sidearm after C5). -->
+    <Border Name="Weapon" Anchors="1,1,1,1" Pivot="1,1" Position="-36,-36" Size="340,110" Padding="22,12"
+            Visibility="{Bind:Lab.WeaponVis}" Background.Tint="#140E08B8" Background.OutlineColor="#C9822E55"
+            Background.OutlineThickness="1">
+      <Canvas>
+        <Text Name="WeaponName" Class="Label" Position="0,0" AutoSize="true" Text="{Bind:Lab.Weapon}"/>
+        <Text Name="Ammo" Class="Value" Position="0,22" AutoSize="true" FontSize="44" Text="{Bind:Lab.Ammo}"/>
+      </Canvas>
+    </Border>
+
+    <!-- Crosshair while a gun is in hand; the hit marker over it. -->
+    <Canvas Name="Crosshair" Anchors="0.5,0.5,0.5,0.5" Size="60,60" Pivot="0.5,0.5" Visibility="{Bind:Lab.CrossVis}">
+      <Image Class="Hair" Anchors="0.5,0.5,0.5,0.5" Pivot="0.5,0.5" Position="0,-14" Size="2,10"/>
+      <Image Class="Hair" Anchors="0.5,0.5,0.5,0.5" Pivot="0.5,0.5" Position="0,14" Size="2,10"/>
+      <Image Class="Hair" Anchors="0.5,0.5,0.5,0.5" Pivot="0.5,0.5" Position="-14,0" Size="10,2"/>
+      <Image Class="Hair" Anchors="0.5,0.5,0.5,0.5" Pivot="0.5,0.5" Position="14,0" Size="10,2"/>
+      <Image Class="Hair" Anchors="0.5,0.5,0.5,0.5" Pivot="0.5,0.5" Size="3,3"/>
+    </Canvas>
+    <Canvas Name="HitMarker" Anchors="0.5,0.5,0.5,0.5" Size="60,60" Pivot="0.5,0.5" Visibility="{Bind:Lab.HitVis}">
+      <Image Class="Hit" Anchors="0.5,0.5,0.5,0.5" Pivot="0.5,0.5" Position="-11,-11" Size="10,3"/>
+      <Image Class="Hit" Anchors="0.5,0.5,0.5,0.5" Pivot="0.5,0.5" Position="11,-11" Size="10,3"/>
+      <Image Class="Hit" Anchors="0.5,0.5,0.5,0.5" Pivot="0.5,0.5" Position="-11,11" Size="10,3"/>
+      <Image Class="Hit" Anchors="0.5,0.5,0.5,0.5" Pivot="0.5,0.5" Position="11,11" Size="10,3"/>
+    </Canvas>
+
+    <!-- The interaction prompt under the crosshair, with a hold's progress. -->
+    <Border Name="Prompt" Anchors="0.5,0.5,0.5,0.5" Pivot="0.5,0" Position="0,90" AutoSize="true" Padding="18,8"
+            Visibility="{Bind:Lab.PromptVis}" Background.Tint="#140E08D0" Background.OutlineColor="#E8A33AFF"
+            Background.OutlineThickness="1">
+      <VerticalBox Spacing="6">
+        <Text Name="PromptText" Class="Value" FontSize="28" Text="{Bind:Lab.Prompt}"/>
+        <ProgressBar Name="HoldBar" Size="0,6" Value="{Bind:Lab.HoldFill}" Visibility="{Bind:Lab.HoldVis}"
+                     Background.Tint="#FFFFFF22" FillBrush.Tint="#E8A33AFF"/>
+      </VerticalBox>
+    </Border>
+
+    <!-- A banner, upper middle: pickups, checkpoints, a cleared area. -->
+    <Text Name="Banner" Class="Value" Anchors="0.5,0.25,0.5,0.25" Pivot="0.5,0.5" AutoSize="true" FontSize="46"
+          Color="#E8A33AFF" Visibility="{Bind:Story.BannerVis}" Text="{Bind:Story.Banner}"/>
+
+    <!-- The feed, right side: who went down. -->
+    <VerticalBox Name="Feed" Anchors="1,0,1,0" Pivot="1,0" Position="-36,110" AutoSize="true" Spacing="4"
+                 Visibility="HitTestInvisible">
+      <Text Class="Label" FontSize="22" HAlign="Right" Text="{Bind:Feed.Line0}"/>
+      <Text Class="Label" FontSize="22" HAlign="Right" Text="{Bind:Feed.Line1}"/>
+      <Text Class="Label" FontSize="22" HAlign="Right" Text="{Bind:Feed.Line2}"/>
+      <Text Class="Label" FontSize="22" HAlign="Right" Color="#F4EBDDFF" Text="{Bind:Feed.Line3}"/>
+    </VerticalBox>
+
+    <!-- The controls, bottom centre. -->
+    <Text Name="Help" Class="Label" Anchors="0.5,1,0.5,1" Pivot="0.5,1" Position="0,-30" AutoSize="true"
+          Visibility="HitTestInvisible" FontSize="18" Color="#C9BBA0B0"
+          Text="WASD move   SHIFT sprint   C crouch   E use (hold for cranks)   LMB fire   RMB aim   R reload   ESC pause   F1 tech"/>
+  </Canvas>
+</UI>

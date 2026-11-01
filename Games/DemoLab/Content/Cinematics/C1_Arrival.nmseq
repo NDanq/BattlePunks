@@ -1,0 +1,71 @@
+<?xml version="1.0"?>
+<Sequence version="1" fps="30" length="180">
+  <Binding id="cam0" kind="possess" guid="03ad19d94a390cf0fbc5ce81552dbbd0" name="CineCam_C1_Arrival_A">
+    <Track type="Transform">
+      <Channel name="Position.X">
+        <Key f="0" v="-6000" interp="CubicInOut"/>
+        <Key f="90" v="-3500" interp="CubicInOut"/>
+        <Key f="91" v="2500" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Position.Y">
+        <Key f="0" v="1800" interp="CubicInOut"/>
+        <Key f="90" v="700" interp="CubicInOut"/>
+        <Key f="91" v="1400" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Position.Z">
+        <Key f="0" v="-5000" interp="CubicInOut"/>
+        <Key f="90" v="-2600" interp="CubicInOut"/>
+        <Key f="91" v="1000" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Rotation.X">
+        <Key f="0" v="17.523" interp="CubicInOut"/>
+        <Key f="90" v="24.227" interp="CubicInOut"/>
+        <Key f="91" v="8.088" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Rotation.Y">
+        <Key f="0" v="52.125" interp="CubicInOut"/>
+        <Key f="90" v="45" interp="CubicInOut"/>
+        <Key f="91" v="12.308" interp="CubicInOut"/>
+      </Channel>
+    </Track>
+  </Binding>
+  <Binding id="cam1" kind="possess" guid="c219243f5b94c217eaf11c0be3a70b19" name="CineCam_C1_Arrival_B">
+    <Track type="Transform">
+      <Channel name="Position.X">
+        <Key f="91" v="2500" interp="CubicInOut"/>
+        <Key f="180" v="-2000" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Position.Y">
+        <Key f="91" v="1400" interp="CubicInOut"/>
+        <Key f="180" v="300" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Position.Z">
+        <Key f="91" v="1000" interp="CubicInOut"/>
+        <Key f="180" v="-2200" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Rotation.X">
+        <Key f="91" v="8.088" interp="CubicInOut"/>
+        <Key f="180" v="11.047" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Rotation.Y">
+        <Key f="91" v="12.308" interp="CubicInOut"/>
+        <Key f="180" v="-40.601" interp="CubicInOut"/>
+      </Channel>
+    </Track>
+  </Binding>
+  <Track type="CameraCut" name="Shots">
+    <Section start="0" end="91" camera="cam0"/>
+    <Section start="91" end="180" camera="cam1"/>
+  </Track>
+  <Track type="Fade">
+    <Key f="0" v="1"/>
+    <Key f="15" v="0"/>
+  </Track>
+  <Track type="Subtitle">
+    <Section start="15" end="85" speaker="Pilot" text="There is the island. I will set you down at the old dock."/>
+    <Section start="95" end="170" speaker="Pilot" text="The road climbs to the lab. Signal when you have what we came for."/>
+  </Track>
+  <Track type="Event">
+    <Key f="175" event="Story.Banner" arg0="FOOTHILLS APPROACH" arg1="3" fireOnSkip="true"/>
+  </Track>
+</Sequence>

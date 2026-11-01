@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="0c71456eb27d54c8f6ede432ee0956f3" Name="Alarm_Timer_Hold">
+  <Component Type="LabTimer" Version="1">
+    <StartOn Value="L2A.W4" />
+    <Seconds Value="60" />
+    <DoneChannel Value="L2A.HoldDone" />
+    <Label Value="Airship inbound" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

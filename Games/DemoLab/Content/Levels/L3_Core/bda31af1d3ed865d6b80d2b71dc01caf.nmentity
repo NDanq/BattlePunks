@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="bda31af1d3ed865d6b80d2b71dc01caf" Name="Objective_7">
+  <Component Type="LabObjective" Version="1">
+    <OnSignal Value="L3.BeaconFired" />
+    <Text Value="Ride the freight lift up" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

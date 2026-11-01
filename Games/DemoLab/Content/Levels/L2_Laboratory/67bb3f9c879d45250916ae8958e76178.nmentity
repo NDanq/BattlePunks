@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="67bb3f9c879d45250916ae8958e76178" Name="Alarm_Objective_0">
+  <Component Type="LabObjective" Version="1">
+    <OnSignal Value="" />
+    <Text Value="Alarm! Hold out in the turbine hall" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

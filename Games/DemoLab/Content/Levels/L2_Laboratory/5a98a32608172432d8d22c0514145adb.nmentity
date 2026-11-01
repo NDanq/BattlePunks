@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="5a98a32608172432d8d22c0514145adb" Name="Calm_AP_L2_Elevator_2">
+  <Component Type="Transform" Version="1">
+      <Position X="1900" Y="0" Z="2300" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

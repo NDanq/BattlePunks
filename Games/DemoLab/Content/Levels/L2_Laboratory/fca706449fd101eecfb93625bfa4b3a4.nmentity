@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="fca706449fd101eecfb93625bfa4b3a4" Name="Calm_Emergency_Airlock">
+  <Component Type="Point Light" Version="2">
+    <Color R="90" G="120" B="255" A="255" />
+    <Intensity Value="4" />
+    <Radius Value="700" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="350.0" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L2.Power.All" />
+    <ShowWhenOn Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="200" Z="-2700" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="b11d3693319aeb1dd27332a2e4717b6c" Name="Plant_2">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Engine/Content/Meshes/Cylinder.nmmesh" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="2600" Y="150" Z="-500" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="240" Y="300" Z="240" />
+  </Component>
+</Entity>

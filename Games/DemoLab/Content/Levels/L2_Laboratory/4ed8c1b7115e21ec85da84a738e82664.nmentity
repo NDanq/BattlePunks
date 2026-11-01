@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="4ed8c1b7115e21ec85da84a738e82664" Name="Alarm_AP_L2A_Atrium_3">
+  <Component Type="Transform" Version="1">
+      <Position X="-1450" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

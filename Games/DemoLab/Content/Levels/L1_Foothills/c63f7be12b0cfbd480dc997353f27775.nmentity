@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="c63f7be12b0cfbd480dc997353f27775" Name="GatehouseGate">
+  <Component Type="LabGate" Version="1">
+    <OpenOn Value="L1.GateOpen" />
+    <OpenHeight Value="380" />
+    <Speed Value="240" />
+    <Invert Value="false" />
+    <Open Value="false" />
+  </Component>
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Rigid Body" Version="1">
+    <Enabled Value="true" />
+    <Motion Value="1" />
+    <Shape Value="0" />
+    <ShapeSource Value="0" />
+    <Friction Value="0.6" />
+    <Layer Value="1" />
+    <Mask Value="-1" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="3700" Y="517" Z="3150" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="600" Y="360" Z="40" />
+  </Component>
+</Entity>

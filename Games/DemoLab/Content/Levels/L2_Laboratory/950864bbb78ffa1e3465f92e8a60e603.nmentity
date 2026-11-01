@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="950864bbb78ffa1e3465f92e8a60e603" Name="Calm_CineCam_C3_Breaker_B">
+  <Component Type="Camera" Version="1">
+    <ZNear Value="5" />
+    <ZFar Value="60000" />
+    <Active Value="false" />
+    <Projection Value="1" />
+    <FovY Value="50" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="700" Z="-1000" />
+      <Rotation X="14.0362" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

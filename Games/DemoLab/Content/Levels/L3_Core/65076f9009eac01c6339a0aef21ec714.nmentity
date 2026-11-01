@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="65076f9009eac01c6339a0aef21ec714" Name="Trigger_PumpHall">
+  <Component Type="LabTrigger" Version="1">
+      <Extent X="300" Y="200" Z="200" />
+    <Channel Value="L3.PumpHall" />
+    <Sequence Value="" />
+    <EnableOn Value="" />
+    <Once Value="true" />
+    <Checkpoint Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="-4700" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

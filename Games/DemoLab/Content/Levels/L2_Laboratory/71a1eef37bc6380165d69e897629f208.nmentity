@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="71a1eef37bc6380165d69e897629f208" Name="Calm_Valve3">
+  <Component Type="LabInteractable" Version="1">
+    <Prompt Value="Open valve 3" />
+    <Radius Value="170" />
+    <WeaponID Value="0" />
+    <Ammo Value="0" />
+    <Channel Value="L2.ValvesDone" />
+    <Toggle Value="false" />
+    <Sequence Value="" />
+    <EnableOn Value="L2.Valve2" />
+    <Once Value="true" />
+    <HideWhenUsed Value="false" />
+    <HoldSeconds Value="0.0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="1000" Y="100" Z="4120" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="b44975614805e0bebc472f33f92bbb69" Name="Entry_Dock">
+  <Component Type="PlayerStart" Version="1">
+    <AvatarPrefab Value="" />
+    <PlayerSlot Value="0" />
+    <Enabled Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-2600" Y="5" Z="-1500" />
+      <Rotation X="0" Y="90" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="8d0ab590623e9ce80c01677cc7cf5071" Name="AP_L3_Fight2_0">
+  <Component Type="Transform" Version="1">
+      <Position X="1400" Y="0" Z="-5000" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

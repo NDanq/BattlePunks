@@ -1,0 +1,68 @@
+<?xml version="1.0"?>
+<Sequence version="1" fps="30" length="150">
+  <Binding id="cam0" kind="possess" guid="53bec2fcb364cb198ede4de393f57d68" name="Calm_CineCam_C4_Descent_A">
+    <Track type="Transform">
+      <Channel name="Position.X">
+        <Key f="0" v="1500" interp="CubicInOut"/>
+        <Key f="75" v="1600" interp="CubicInOut"/>
+        <Key f="76" v="2300" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Position.Y">
+        <Key f="0" v="300" interp="CubicInOut"/>
+        <Key f="75" v="250" interp="CubicInOut"/>
+        <Key f="76" v="120" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Position.Z">
+        <Key f="0" v="1500" interp="CubicInOut"/>
+        <Key f="75" v="1300" interp="CubicInOut"/>
+        <Key f="76" v="2100" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Rotation.X">
+        <Key f="0" v="16.699" interp="CubicInOut"/>
+        <Key f="75" v="3.017" interp="CubicInOut"/>
+        <Key f="76" v="61.477" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Rotation.Y">
+        <Key f="0" v="53.13" interp="CubicInOut"/>
+        <Key f="75" v="18.435" interp="CubicInOut"/>
+        <Key f="76" v="-126.87" interp="CubicInOut"/>
+      </Channel>
+    </Track>
+  </Binding>
+  <Binding id="cam1" kind="possess" guid="933ed67727bd96d944a0115803b40df7" name="Calm_CineCam_C4_Descent_B">
+    <Track type="Transform">
+      <Channel name="Position.X">
+        <Key f="76" v="2300" interp="CubicInOut"/>
+        <Key f="150" v="2200" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Position.Y">
+        <Key f="76" v="120" interp="CubicInOut"/>
+        <Key f="150" v="-400" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Position.Z">
+        <Key f="76" v="2100" interp="CubicInOut"/>
+        <Key f="150" v="2000" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Rotation.X">
+        <Key f="76" v="61.477" interp="CubicInOut"/>
+        <Key f="150" v="77.301" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Rotation.Y">
+        <Key f="76" v="-126.87" interp="CubicInOut"/>
+        <Key f="150" v="-123.69" interp="CubicInOut"/>
+      </Channel>
+    </Track>
+  </Binding>
+  <Track type="CameraCut" name="Shots">
+    <Section start="0" end="76" camera="cam0"/>
+    <Section start="76" end="150" camera="cam1"/>
+  </Track>
+  <Track type="Fade">
+    <Key f="0" v="0"/>
+    <Key f="135" v="0"/>
+    <Key f="150" v="1"/>
+  </Track>
+  <Track type="Subtitle">
+    <Section start="10" end="120" speaker="Pilot" text="Going down. The core is under the turbine hall."/>
+  </Track>
+</Sequence>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="89fcb32611e8b7d617e6f1db649a965a" Name="Travel_L2">
+  <Component Type="LabTravel" Version="1">
+    <OnSignal Value="L1.Done" />
+    <World Value="L2_Laboratory" />
+    <Entry Value="Entry_Airlock" />
+    <Flags Value="" />
+    <Title Value="The Laboratory" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

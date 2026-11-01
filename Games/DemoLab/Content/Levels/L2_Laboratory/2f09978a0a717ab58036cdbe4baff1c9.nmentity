@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="2f09978a0a717ab58036cdbe4baff1c9" Name="Sample_Translucent">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-1870" Y="120" Z="-500" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="50" Y="50" Z="50" />
+  </Component>
+</Entity>

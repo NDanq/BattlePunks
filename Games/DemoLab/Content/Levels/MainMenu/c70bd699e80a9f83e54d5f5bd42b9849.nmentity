@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="c70bd699e80a9f83e54d5f5bd42b9849" Name="FacadeLamp_2">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="190" B="120" A="255" />
+    <Intensity Value="30" />
+    <Radius Value="900" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="450.0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="700" Y="400" Z="2600" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<World Format="1">
+  <Settings GameMode="LabMenu" />
+  <Entity Guid="a18942e323c376b2dafbcb3959348bba" />
+  <Entity Guid="ff289d474bab4365ca9baa69dd56e354" />
+  <Entity Guid="e9f79071ef7805084255b1259ca15360" />
+  <Entity Guid="91d506d4d358dfc99fb8fb32657677e3" />
+  <Entity Guid="aea62fea4b995af90a960b208251be60" />
+  <Entity Guid="d4ec72c34bfb3582d5913f1103457bb2" />
+  <Entity Guid="ae60d26c15d436f9a400908b975cafa7" />
+  <Entity Guid="a9e7fda3641bfb7b0b1feadc68a79c0e" />
+  <Entity Guid="76e177f1fb1a89e28920ed8b026c4524" />
+  <Entity Guid="1f9f91152bee4c4883e0ba8d4f931c2e" />
+  <Entity Guid="36f4ec8d3257e0679fe93ccefc3b93bd" />
+  <Entity Guid="b743621b936be4d6d2afa504b004c667" />
+  <Entity Guid="c70bd699e80a9f83e54d5f5bd42b9849" />
+  <Entity Guid="6fc6fcc2ea101427b41605857d291568" />
+  <Entity Guid="035cf3d06ce062e6d7a3555bde508d12" />
+  <Entity Guid="f4232afdf1e3920ceb11253a340a1d7f" />
+  <Entity Guid="b234c6743c8913ae14d428d0ad5b0134" />
+</World>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="b796e5f06bf7154b204a7f6b3497e5e4" Name="CineCam_C5_Theft_B">
+  <Component Type="Camera" Version="1">
+    <ZNear Value="5" />
+    <ZFar Value="60000" />
+    <Active Value="false" />
+    <Projection Value="1" />
+    <FovY Value="50" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-1200" Y="600" Z="-1500" />
+      <Rotation X="8.8764" Y="38.6598" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

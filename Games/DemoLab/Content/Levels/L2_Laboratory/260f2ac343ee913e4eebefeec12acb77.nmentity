@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="260f2ac343ee913e4eebefeec12acb77" Name="Calm_C4_Descent">
+  <Component Type="Sequence Player" Version="1">
+    <Sequence Value="Content/Cinematics/C4_Descent.nmseq" />
+    <PlayRate Value="1" />
+    <AutoPlay Value="false" />
+    <Loop Value="false" />
+    <RestoreState Value="false" />
+    <DestroyWhenFinished Value="false" />
+    <Cinematic Value="true" />
+    <Skippable Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

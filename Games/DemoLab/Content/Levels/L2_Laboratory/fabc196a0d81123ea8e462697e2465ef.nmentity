@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="fabc196a0d81123ea8e462697e2465ef" Name="Calm_Trigger_Atrium">
+  <Component Type="LabTrigger" Version="1">
+      <Extent X="900" Y="200" Z="500" />
+    <Channel Value="L2.Atrium" />
+    <Sequence Value="" />
+    <EnableOn Value="L2.Powered" />
+    <Once Value="true" />
+    <Checkpoint Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="-500" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

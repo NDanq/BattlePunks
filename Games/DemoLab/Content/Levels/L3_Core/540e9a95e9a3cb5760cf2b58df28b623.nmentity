@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="540e9a95e9a3cb5760cf2b58df28b623" Name="Ambient">
+  <Component Type="Sky Light" Version="2">
+    <SkyColor R="120" G="130" B="150" A="255" />
+    <GroundColor R="60" G="55" B="50" A="255" />
+    <Intensity Value="0.2" />
+    <Active Value="true" />
+    <Environment Value="" />
+    <EnvironmentIntensity Value="1" />
+    <EnvironmentRotation Value="0" />
+    <DrawBackground Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="1000" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

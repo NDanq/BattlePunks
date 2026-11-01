@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="271e6f6f673bd37b4c1b4aabc4e6455a" Name="Objective_3">
+  <Component Type="LabObjective" Version="1">
+    <OnSignal Value="L1.Plaza" />
+    <Text Value="Approach the blast door" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

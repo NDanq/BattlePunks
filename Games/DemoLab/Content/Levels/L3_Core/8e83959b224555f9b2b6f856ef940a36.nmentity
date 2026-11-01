@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="8e83959b224555f9b2b6f856ef940a36" Name="AP_L3_Freight_0">
+  <Component Type="Transform" Version="1">
+      <Position X="2000" Y="0" Z="-5000" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Demo Lab Brute: slow melee; closes in and swings its wrench.
+  The brain only plans where to go; LabBots::Drive (Source/AI/LabBots.cpp)
+  steers the character there through its input, aims and presses fire. Perception
+  writes the Target* keys; the driver writes Health and Ammo (0..1).
+-->
+<BehaviorTree Format="1" Name="Brute">
+  <Blackboard>
+    <Key Name="TargetActor" Type="Entity" />
+    <Key Name="TargetVisible" Type="Bool" Default="false" />
+    <Key Name="TargetDistance" Type="Float" Default="5000" />
+    <Key Name="LastKnownPos" Type="Vector" />
+    <Key Name="HeardNoise" Type="Bool" Default="false" />
+    <Key Name="NoisePos" Type="Vector" />
+    <Key Name="Ammo" Type="Float" Default="1" />
+    <Key Name="Health" Type="Float" Default="1" />
+  </Blackboard>
+  <UtilitySelector Interval="0.3" Hysteresis="0.2">
+    <Sequence Name="Engage">
+      <Consideration Input="TargetVisible" Curve="Step" XShift="0.5" />
+      <Consideration Input="TargetDistance" Max="4500" Curve="InverseLinear" />
+      <Decorator Type="BlackboardCondition" Key="TargetActor" Op="IsSet" Abort="Self" />
+      <Decorator Type="Loop" Count="0" />
+      <Task Type="MoveTo" Key="TargetActor" AcceptanceRadius="70" RepathDistance="150" />
+      <Task Type="MoveToRandom" Radius="250" AcceptanceRadius="60" />
+    </Sequence>
+    <Sequence Name="Investigate" Weight="0.7">
+      <Consideration Input="TargetVisible" Curve="InverseLinear" />
+      <Consideration Input="HeardNoise" Curve="Step" XShift="0.5" />
+      <Decorator Type="Cooldown" Seconds="3" />
+      <Selector>
+        <Task Type="MoveTo" Key="LastKnownPos" AcceptanceRadius="200">
+          <Decorator Type="BlackboardCondition" Key="TargetActor" Op="IsSet" />
+        </Task>
+        <Task Type="MoveTo" Key="NoisePos" AcceptanceRadius="200" />
+      </Selector>
+    </Sequence>
+    <Sequence Name="Patrol">
+      <Consideration Curve="Constant" YShift="0.15" />
+      <Task Type="MoveToRandom" Radius="700" AcceptanceRadius="150" />
+      <Wait Seconds="1.0" RandomDeviation="0.6" />
+    </Sequence>
+  </UtilitySelector>
+</BehaviorTree>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="2c83fbae31ed7338f3701fdc500fd7d9" Name="SpruceCrown_13">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-925" Y="900" Z="6375" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="380" Y="600" Z="380" />
+  </Component>
+</Entity>

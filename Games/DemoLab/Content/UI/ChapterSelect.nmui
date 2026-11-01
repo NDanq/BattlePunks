@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Chapter Select: the four rows of the design's flow table (Flow/LabFlow.cpp
+  names them; LabMenu fills Chapter.Title0..3). A chapter starts a new run there.
+-->
+<UI Format="1" ReferenceSize="1920,1080" ScaleMode="FitHeight" InputMode="UIOnly" Layer="11" OnBack="Native:UI.Close">
+  <Styles>
+    <Style Name="MenuButton" Type="Button" Padding="32,14" Margin="0,7" Size="560,0"
+           Normal.Tint="#1A120AE0" Normal.OutlineColor="#C9822E50" Normal.OutlineThickness="1"
+           Hovered.Tint="#C9822EF2" Hovered.OutlineColor="#FFE2A8E6" Hovered.OutlineThickness="2"
+           Pressed.Tint="#8A561CF2" Disabled.Tint="#1A120A80"/>
+    <Style Name="MenuLabel" Type="Text" FontSize="30" Color="#F4EBDDFF" HAlign="Center" VAlign="Center"/>
+    <Style Name="TabButton" Type="Button" Padding="20,10" Margin="0,0,10,0"
+           Normal.Tint="#1A120AE0" Normal.OutlineColor="#C9822E50" Normal.OutlineThickness="1"
+           Hovered.Tint="#C9822EF2" Pressed.Tint="#8A561CF2"/>
+    <Style Name="TabLabel" Type="Text" FontSize="24" Color="#F4EBDDFF" HAlign="Center" VAlign="Center"/>
+    <Style Name="Heading" Type="Text" FontSize="64" Color="#F4EBDDFF" HAlign="Center" Margin="0,0,0,20"
+           ShadowOffset="0,3" ShadowColor="#000000A0"/>
+    <Style Name="Sub" Type="Text" FontSize="24" Color="#C9BBA0FF" HAlign="Center" Margin="0,0,0,24"/>
+    <Style Name="Setting" Type="CheckBox" Margin="0,8" BoxSize="30" Spacing="16"
+           Box.Tint="#0A0806E6" Box.OutlineColor="#FFFFFF4D" Box.OutlineThickness="2"
+           BoxHovered.Tint="#1A120AF2" BoxHovered.OutlineColor="#C9822EFF" BoxHovered.OutlineThickness="2"
+           Check.Tint="#E8A33AFF"/>
+    <Style Name="SettingLabel" Type="Text" FontSize="26" Color="#F4EBDDFF" VAlign="Center"/>
+    <Style Name="SliderLabel" Type="Text" FontSize="26" Color="#F4EBDDFF" Margin="0,12,0,4"/>
+    <Style Name="SliderValue" Type="Text" FontSize="24" Color="#FFFFFFB3" VAlign="Center" Margin="20,0,0,0"/>
+    <Style Name="SettingSlider" Type="Slider" Size="440,36" ThumbSize="20,36" TrackHeight="8"
+           Track.Tint="#0A0806E6" Track.OutlineColor="#FFFFFF33" Track.OutlineThickness="1"
+           FillBrush.Tint="#E8A33AF2" Thumb.Tint="#F4EBDDFF"
+           ThumbHovered.Tint="#FFD66AFF" ThumbHovered.OutlineColor="#FFFFFFFF" ThumbHovered.OutlineThickness="2"/>
+  </Styles>
+  <Canvas Name="Root">
+    <Border Name="Dim" Anchors="0,0,1,1" Background.Tint="#05040280"/>
+    <Border Name="Panel" Anchors="0.5,0.5,0.5,0.5" Pivot="0.5,0.5" AutoSize="true" Padding="64,48" Background.Tint="#0E0A06F0" Background.OutlineColor="#C9822E55" Background.OutlineThickness="1">
+      <VerticalBox Name="Content">
+        <Text Class="Heading" Text="Chapter Select"/>
+        <Button Name="Chapter0" Class="MenuButton" OnClick="Native:Lab.Chapter(0)" InitialFocus="true">
+          <Text Class="MenuLabel" Text="{Bind:Chapter.Title0}"/>
+        </Button>
+        <Button Name="Chapter1" Class="MenuButton" OnClick="Native:Lab.Chapter(1)">
+          <Text Class="MenuLabel" Text="{Bind:Chapter.Title1}"/>
+        </Button>
+        <Button Name="Chapter2" Class="MenuButton" OnClick="Native:Lab.Chapter(2)">
+          <Text Class="MenuLabel" Text="{Bind:Chapter.Title2}"/>
+        </Button>
+        <Button Name="Chapter3" Class="MenuButton" OnClick="Native:Lab.Chapter(3)">
+          <Text Class="MenuLabel" Text="{Bind:Chapter.Title3}"/>
+        </Button>
+        <Button Name="Back" Class="MenuButton" OnClick="Native:UI.Close">
+          <Text Class="MenuLabel" Text="Back"/>
+        </Button>
+      </VerticalBox>
+    </Border>
+  </Canvas>
+</UI>

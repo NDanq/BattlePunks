@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="6f134a967369148e21820ecc6f908d22" Name="Alarm_AP_L2A_Gantry_3">
+  <Component Type="Transform" Version="1">
+      <Position X="450" Y="0" Z="600" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

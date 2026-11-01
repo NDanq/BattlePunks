@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="2ca627a1a1ee6e406ec3fb18bdd686f8" Name="Enc_W1">
+  <Component Type="LabEncounter" Version="1">
+    <Id Value="W1" />
+    <StartOn Value="L3.Armed" />
+    <DoneChannel Value="L3.W1Done" />
+    <SpawnPrefab Value="" />
+    <Waves Value="Watchman:4" />
+    <WaveDelay Value="3.0" />
+    <LockChannel Value="" />
+    <StopOn Value="" />
+    <SpawnTeam Value="2" />
+    <EnemyHealth Value="60" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

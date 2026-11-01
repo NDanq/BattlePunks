@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="3640fd22e672319e5336956b935a085d" Name="Crank_Gatehouse_Wheel" Parent="10c4a714e771367369b49de43ce226f7">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Mesh Value="Engine/Content/Meshes/Cylinder.nmmesh" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="-10" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="60" Y="60" Z="8" />
+  </Component>
+</Entity>

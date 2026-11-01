@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="fdf6dc910c3bef77c47c832a814c3b5a" Name="Calm_Objective_0">
+  <Component Type="LabObjective" Version="1">
+    <OnSignal Value="" />
+    <Text Value="Find power: the breaker panel in the foyer" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

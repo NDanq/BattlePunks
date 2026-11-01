@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The loading card between levels (Flow/LabTravel.cpp shows it as a level
+  starts, then fades it): the destination's title.
+-->
+<UI Format="1" ReferenceSize="1920,1080" ScaleMode="FitHeight" InputMode="GameOnly" Layer="900">
+  <Styles>
+    <Style Name="MenuButton" Type="Button" Padding="32,14" Margin="0,7" Size="560,0"
+           Normal.Tint="#1A120AE0" Normal.OutlineColor="#C9822E50" Normal.OutlineThickness="1"
+           Hovered.Tint="#C9822EF2" Hovered.OutlineColor="#FFE2A8E6" Hovered.OutlineThickness="2"
+           Pressed.Tint="#8A561CF2" Disabled.Tint="#1A120A80"/>
+    <Style Name="MenuLabel" Type="Text" FontSize="30" Color="#F4EBDDFF" HAlign="Center" VAlign="Center"/>
+    <Style Name="TabButton" Type="Button" Padding="20,10" Margin="0,0,10,0"
+           Normal.Tint="#1A120AE0" Normal.OutlineColor="#C9822E50" Normal.OutlineThickness="1"
+           Hovered.Tint="#C9822EF2" Pressed.Tint="#8A561CF2"/>
+    <Style Name="TabLabel" Type="Text" FontSize="24" Color="#F4EBDDFF" HAlign="Center" VAlign="Center"/>
+    <Style Name="Heading" Type="Text" FontSize="64" Color="#F4EBDDFF" HAlign="Center" Margin="0,0,0,20"
+           ShadowOffset="0,3" ShadowColor="#000000A0"/>
+    <Style Name="Sub" Type="Text" FontSize="24" Color="#C9BBA0FF" HAlign="Center" Margin="0,0,0,24"/>
+    <Style Name="Setting" Type="CheckBox" Margin="0,8" BoxSize="30" Spacing="16"
+           Box.Tint="#0A0806E6" Box.OutlineColor="#FFFFFF4D" Box.OutlineThickness="2"
+           BoxHovered.Tint="#1A120AF2" BoxHovered.OutlineColor="#C9822EFF" BoxHovered.OutlineThickness="2"
+           Check.Tint="#E8A33AFF"/>
+    <Style Name="SettingLabel" Type="Text" FontSize="26" Color="#F4EBDDFF" VAlign="Center"/>
+    <Style Name="SliderLabel" Type="Text" FontSize="26" Color="#F4EBDDFF" Margin="0,12,0,4"/>
+    <Style Name="SliderValue" Type="Text" FontSize="24" Color="#FFFFFFB3" VAlign="Center" Margin="20,0,0,0"/>
+    <Style Name="SettingSlider" Type="Slider" Size="440,36" ThumbSize="20,36" TrackHeight="8"
+           Track.Tint="#0A0806E6" Track.OutlineColor="#FFFFFF33" Track.OutlineThickness="1"
+           FillBrush.Tint="#E8A33AF2" Thumb.Tint="#F4EBDDFF"
+           ThumbHovered.Tint="#FFD66AFF" ThumbHovered.OutlineColor="#FFFFFFFF" ThumbHovered.OutlineThickness="2"/>
+  </Styles>
+  <Canvas Name="Root" Opacity="{Bind:Loading.Opacity}">
+    <Border Name="Black" Anchors="0,0,1,1" Background.Tint="#050302FF"/>
+    <Text Name="Title" Anchors="0.5,0.45,0.5,0.45" Pivot="0.5,0.5" AutoSize="true" FontSize="72" Color="#E8A33AFF"
+          Text="{Bind:Loading.Title}"/>
+    <Text Name="Rule" Anchors="0.5,0.53,0.5,0.53" Pivot="0.5,0.5" AutoSize="true" FontSize="24" Color="#C9BBA0FF"
+          Text="DEMO LAB"/>
+  </Canvas>
+</UI>

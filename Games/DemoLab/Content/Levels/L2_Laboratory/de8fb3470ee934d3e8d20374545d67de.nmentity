@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="de8fb3470ee934d3e8d20374545d67de" Name="Alarm_Trigger_W3">
+  <Component Type="LabTrigger" Version="1">
+      <Extent X="500" Y="200" Z="600" />
+    <Channel Value="L2A.W3" />
+    <Sequence Value="" />
+    <EnableOn Value="" />
+    <Once Value="true" />
+    <Checkpoint Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-2900" Y="0" Z="3400" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

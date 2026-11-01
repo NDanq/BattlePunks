@@ -1,0 +1,71 @@
+<?xml version="1.0"?>
+<Sequence version="1" fps="30" length="180">
+  <Binding id="cam0" kind="possess" guid="c9bb0166621577258b3c94f58cbb0fe7" name="CineCam_C5_Theft_A">
+    <Track type="Transform">
+      <Channel name="Position.X">
+        <Key f="0" v="250" interp="CubicInOut"/>
+        <Key f="70" v="150" interp="CubicInOut"/>
+        <Key f="71" v="-1200" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Position.Y">
+        <Key f="0" v="200" interp="CubicInOut"/>
+        <Key f="70" v="160" interp="CubicInOut"/>
+        <Key f="71" v="600" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Position.Z">
+        <Key f="0" v="-250" interp="CubicInOut"/>
+        <Key f="70" v="-150" interp="CubicInOut"/>
+        <Key f="71" v="-1500" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Rotation.X">
+        <Key f="0" v="14.282" interp="CubicInOut"/>
+        <Key f="70" v="13.263" interp="CubicInOut"/>
+        <Key f="71" v="8.876" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Rotation.Y">
+        <Key f="0" v="-45" interp="CubicInOut"/>
+        <Key f="70" v="-45" interp="CubicInOut"/>
+        <Key f="71" v="38.66" interp="CubicInOut"/>
+      </Channel>
+    </Track>
+  </Binding>
+  <Binding id="cam1" kind="possess" guid="b796e5f06bf7154b204a7f6b3497e5e4" name="CineCam_C5_Theft_B">
+    <Track type="Transform">
+      <Channel name="Position.X">
+        <Key f="71" v="-1200" interp="CubicInOut"/>
+        <Key f="180" v="-900" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Position.Y">
+        <Key f="71" v="600" interp="CubicInOut"/>
+        <Key f="180" v="250" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Position.Z">
+        <Key f="71" v="-1500" interp="CubicInOut"/>
+        <Key f="180" v="-1900" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Rotation.X">
+        <Key f="71" v="8.876" interp="CubicInOut"/>
+        <Key f="180" v="14.574" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Rotation.Y">
+        <Key f="71" v="38.66" interp="CubicInOut"/>
+        <Key f="180" v="36.87" interp="CubicInOut"/>
+      </Channel>
+    </Track>
+  </Binding>
+  <Track type="CameraCut" name="Shots">
+    <Section start="0" end="71" camera="cam0"/>
+    <Section start="71" end="180" camera="cam1"/>
+  </Track>
+  <Track type="Fade">
+    <Key f="0" v="0"/>
+  </Track>
+  <Track type="Subtitle">
+    <Section start="10" end="70" speaker="Pilot" text="You have it. Now get out of there."/>
+    <Section start="80" end="170" speaker="Pilot" text="Alarm! There is a locker by the bridge. Arm yourself."/>
+  </Track>
+  <Track type="Event">
+    <Key f="60" event="Lab.Signal" arg0="L3.Alarm" arg1="true" fireOnSkip="true"/>
+    <Key f="179" event="Lab.Signal" arg0="Checkpoint.Theft" arg1="true" fireOnSkip="true"/>
+  </Track>
+</Sequence>

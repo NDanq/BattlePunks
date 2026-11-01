@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="efecf81d7bf7b5201f6db794d7d47417" Name="C5_Theft">
+  <Component Type="Sequence Player" Version="1">
+    <Sequence Value="Content/Cinematics/C5_Theft.nmseq" />
+    <PlayRate Value="1" />
+    <AutoPlay Value="false" />
+    <Loop Value="false" />
+    <RestoreState Value="false" />
+    <DestroyWhenFinished Value="false" />
+    <Cinematic Value="true" />
+    <Skippable Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

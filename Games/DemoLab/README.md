@@ -1,36 +1,86 @@
-# DemoLab
+# Demo Lab
 
-A NimbleEngine game, made by the editor's **File > New Project** (or
-`Engine/Binaries/NewProject.sh` / `.bat`) from `Engine/Templates/Game`. `Games/Sandbox` is the full example to follow.
+NimbleEngine's showcase game: a 15-minute, single-player, third-person
+vertical slice in a steampunk laboratory. [Docs/Design.md](Docs/Design.md) is
+the spec. This is the grey-box build (milestones M1 and M2): the whole game
+plays, start to finish, in boxes and cylinders; the art pass dresses the same
+layouts later.
 
-New here? Start with [Docs/GettingStarted.md](Docs/GettingStarted.md).
+## Build, run, test
 
-## Build and run
+From this directory (`Games/DemoLab`):
 
 ```
 cmake --preset editor-debug
-cmake --build --preset editor-debug
+cmake --build Build/editor-debug --target DemoLab -j3     # the game; add NimbleEditor for the editor
 ```
 
-Then run `Binaries/<Platform>_Debug/NimbleEditor` to edit the game, or
-`Binaries/<Platform>_Debug/DemoLab` to play it. `client-*` presets build
-the game alone, without the editor.
+Then run `Binaries/Linux_Debug/DemoLab` (the main menu) or
+`Binaries/Linux_Debug/NimbleEditor` to edit. Useful command lines:
+
+```
+DemoLab -Game.StartLevel=L2_Laboratory          # straight into a level (its Calm state)
+DemoLab -DemoLab.AutoPlay=1                     # the game plays itself, menu to credits
+```
+
+The test plays the whole flow headless, through the same input a player gives:
+
+```
+cd Build/editor-debug && ctest -R DemoLab.AutoPlay --output-on-failure
+```
+
+`DemoLab.AutoPlay` presses New Game, plays L1, L2, L3 and L2 on alarm with the
+input driver (`Source/GameModes/LabAutoPlay.cpp`), falls once on purpose after
+W1 to check the checkpoint reload, watches the credits and passes when the
+main menu is back (about 8 minutes).
+
+Levels are generated: after editing `Tools/Levels/layout.py` or
+`make_levels.py`, run `python3 Tools/Levels/make_levels.py` and rebuild (the
+build stages Content/).
+
+## Controls
+
+WASD move, Shift sprint, C crouch, E use (hold it on cranks), left mouse fire,
+right mouse aim, R reload, Escape pause, F1 the engine-features overlay.
+
+## The levels
+
+| World | State | What happens | What it shows |
+|---|---|---|---|
+| `MainMenu` | | the lab's facade at dusk, a looping camera dolly; Continue, New Game, Chapter Select, Settings, Credits, Quit | Time Of Day sky, Sequencer, the UI module |
+| `L1_Foothills` | | C1 arrival -> dock -> switchback road -> gatehouse crank (hold E) -> plaza -> C2 blast door | Time Of Day golden hour, the Character Mover on terraced road, signals and holds |
+| `L2_Laboratory` | Calm | airlock -> dark foyer, C3 breaker lights the lab room by room -> atrium -> workshop (keycard) -> archive -> turbine hall (three valves in order) -> C4 elevator | DDGI/SSGI as the lights come on, the workshop's material samples (art pass) |
+| `L3_Core` | | ring gallery -> vault, C5 theft and alarm -> sidearm from the locker -> W1 -> tunnel -> pump hall: W2 while the beacon charges (40 s) -> fire the beacon -> freight lift | AICore navmesh, behavior trees and perception, combat, ragdolls, checkpoints |
+| `L2_Laboratory` | Alarm | arrive at the freight lift, red light, shutters reroute -> W3 turbine hall -> archive stragglers -> W4 atrium, 60 s hold -> orrery gantry -> roof hatch, C6 -> credits -> menu | one world, two states (the `Calm_*` / `Alarm_*` groups) |
+
+Checkpoints (`Saved/DemoLab/Checkpoint.nmsave`) are written at each level's
+start, after C3, after C5, at the pump hall, at the alarm entry and after every
+cleared fight; falling reloads the last one, and Continue loads it.
 
 ## Layout
 
 | Path | What |
-|------|------|
-| `DemoLabGame.cpp` | The game module: level, game mode, game state, native prefabs |
-| `Config/DefaultEngine.ini` | Settings; `[Game]` names the module and start level |
-| `Scripts/` | Lua and script graphs; `Main.lua` runs on every level load |
-| `Content/Materials/` | Material graphs (`File > New Material Graph`) |
-| `Content/Prefabs/` | Prefabs (`File > New Prefab`) |
-| `Content/Levels/` | Worlds saved from the editor |
-| `Content/Meshes/`, `Content/Textures/` | Imported assets |
-| `Docs/` | This project's guides |
+|---|---|
+| `DemoLabGame.cpp` | The module |
+| `Source/Core` | The player (`native:DemoLab.Player`: the SteamDummy with CrashDummy's anim state), health, teams, input map, move simulation |
+| `Source/Weapons` | Inventory, hitscan and melee combat, projectiles; the pipe pistol and the Brute's wrench (`Content/Prefabs/Weapons`) |
+| `Source/AI` | The Watchman (ranged, red eyes) and the Brute (melee, 1.25x); brains in `Content/AI/*.nmbt` |
+| `Source/World` | Signals, interactables (and holds), gates (and shutters), triggers, objectives, encounters (waves), timers, AllOf gates, travel points |
+| `Source/Flow` | `LabTravel::Travel` (every level change) and `LabFlow` (chapters, New Game, Continue) |
+| `Source/UI` | The HUD and the menus' native actions (`Lab.*`) |
+| `Source/GameModes` | `LabMenu`, `LabStory` (every level) and the AutoPlay test driver |
+| `Content/UI` | The HUD, main menu, chapter select, settings, pause menu, credits, F1 overlay, loading card |
+| `Content/Levels`, `Content/Cinematics` | Generated by `Tools/Levels` |
+| `Tools/Levels` | `layout.py` (rooms, spawns, interactable spots, AutoPlay routes) and `make_levels.py` |
 
-Everything in `Config/`, `Scripts/` and `Content/` is staged into `Binaries/`
-by the build at the same relative path, which is how the runtime names it
-(`Content/Prefabs/Door.nmprefab`). A new C++ file goes in `CMakeLists.txt`'s
-`nimble_add_hot_module` list. The `DemoLab` executable is the engine's
-launcher (`nimble_add_game_launcher`); there is no `main()` to maintain.
+The gameplay is BattlePunks' (Dev-BattlePunks), ported with a `Lab` prefix:
+single player, no arena or multiplayer modes.
+
+## Stubbed in the grey-box
+
+- The cinematics are placeholders: two camera shots, a fade, subtitles and the
+  Event keys that drive the flow.
+- No art: engine default material on boxes; the SteamDummy's material keeps its
+  path (`Content/Materials/Characters/SteamDummy.material.nmgraph`) for the PBR pass.
+- Foliage density is a setting with nothing to thin yet (no spawners in L1).
+- Watchmen do not take cover or flank yet: they keep their range and investigate noise.

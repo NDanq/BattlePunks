@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="03ad19d94a390cf0fbc5ce81552dbbd0" Name="CineCam_C1_Arrival_A">
+  <Component Type="Camera" Version="1">
+    <ZNear Value="5" />
+    <ZFar Value="60000" />
+    <Active Value="false" />
+    <Projection Value="1" />
+    <FovY Value="50" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-6000" Y="1800" Z="-5000" />
+      <Rotation X="17.523" Y="52.125" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

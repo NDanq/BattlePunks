@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="ae3944112ece116b5ebaeb9164649977" Name="Alarm_Objective_4">
+  <Component Type="LabObjective" Version="1">
+    <OnSignal Value="L2A.W4" />
+    <Text Value="Hold the atrium until the airship arrives" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>
