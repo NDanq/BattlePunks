@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="fb8a13261cdf09b68ab32e6dc8e57af0" Name="Calm_Workshop_Sconce_8_Light">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="196" B="128" A="255" />
+    <Intensity Value="9" />
+    <Radius Value="520" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="14" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L2.Power.Workshop" />
+    <ShowWhenOn Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-2900" Y="290" Z="825" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

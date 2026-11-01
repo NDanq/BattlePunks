@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="5c5ee24984e8bcac8f44589a9104d831" Name="Alarm_CineAirship_Fill" Parent="31c480e2ab788c620aed0b0e59af0be1">
+  <Component Type="Spot Light" Version="2">
+    <Color R="150" G="165" B="230" A="255" />
+    <Intensity Value="9" />
+    <Range Value="9000" />
+    <InnerConeAngle Value="40" />
+    <OuterConeAngle Value="60" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="1" />
+    <ShadowBias Value="0.002" />
+    <ShadowNormalBias Value="1.5" />
+    <SourceRadius Value="200" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-600" Y="5200" Z="-1200" />
+      <Rotation X="74.2998" Y="18.4349" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

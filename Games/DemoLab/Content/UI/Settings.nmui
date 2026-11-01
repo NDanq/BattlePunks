@@ -4,7 +4,9 @@
   a "Set.<var path>" key and runs Native:Lab.SetVar (Source/UI/LabUI.cpp) on a
   change; Lab.RefreshSettings fills the keys as it opens and closing saves the
   player's User.ini. Graphics go through GameCore Scalability (the tier) and the
-  renderer's config vars.
+  renderer's config vars. Display: the window mode (windowed, borderless,
+  fullscreen) and the windowed resolution, applied at once ([Display]
+  WindowMode, ResolutionX/Y).
 -->
 <UI Format="1" ReferenceSize="1920,1080" ScaleMode="FitHeight" InputMode="UIOnly" Layer="12" OnOpen="Native:Lab.RefreshSettings" OnClose="Native:Lab.SaveSettings" OnBack="Native:UI.Close">
   <Styles>
@@ -91,6 +93,12 @@
             </HorizontalBox>
           </VerticalBox>
           <VerticalBox Name="Display">
+            <Text Class="SliderLabel" Text="Display mode"/>
+            <HorizontalBox>
+              <Slider Name="DisplayMode" Class="SettingSlider" Min="0" Max="2" Step="1"
+                      Value="{Bind:Set.DisplayMode}" OnChanged="Native:Lab.SetDisplayMode($value)"/>
+              <Text Class="SliderValue" Text="{Bind:Set.DisplayModeName}"/>
+            </HorizontalBox>
             <Text Class="SliderLabel" Text="Resolution"/>
             <HorizontalBox>
               <Slider Name="Resolution" Class="SettingSlider" Min="0" Max="3" Step="1"

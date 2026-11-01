@@ -68,7 +68,8 @@ def read_credits():
             columns = []
             if heading.lower().startswith('fully synthesised'):
                 lines += ['', 'SYNTHESISED IN THIS REPOSITORY',
-                          'Robots, weapons, machinery, doors, alarms, the beacon, the lab and reactor ambiences (Tools/Audio)']
+                          'Robots, weapons, machinery, doors, alarms, the beacon, the lab and reactor ambiences,',
+                          'footsteps on metal, tile and water (Tools/Audio)']
             continue
         if not line.startswith('|') or (heading and 'checksum' in heading.lower()):
             continue

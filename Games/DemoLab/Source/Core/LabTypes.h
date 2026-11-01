@@ -9,6 +9,7 @@
  * Shots see both. (The Character Mover ignores its own bodies by itself.) */
 #define LAB_LAYER_WORLD  (1)
 #define LAB_LAYER_BODIES (2)
+#define LAB_LAYER_DEBRIS (4)   /* broken-off armour plates: they collide with the level only */
 #define LAB_WORLD_MASK   (LAB_LAYER_WORLD)
 #define LAB_SHOT_MASK    (-1)
 

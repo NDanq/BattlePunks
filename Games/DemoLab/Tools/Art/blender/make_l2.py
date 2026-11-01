@@ -483,13 +483,22 @@ def samples():
     save("Sample_FrostedGlass", j, "Translucent Lit: a frosted bell jar")
     rnd = random.Random(4)
     puff = []
-    for k in range(5):
-        p = K.sphere("Puff", 0.08 + 0.05 * rnd.random(), (rnd.uniform(-0.05, 0.05), rnd.uniform(-0.05, 0.05),
-                                                           0.1 + 0.07 * k), "Steam", seg=16, rings=8)
+    # A plume: small dense puffs at the nozzle swelling and leaning as they rise, overlapping (the
+    # Steam material's world-space clouds eat them into wisps, so no ball keeps its outline)
+    x = y = 0.0
+    for k in range(11):
+        t = k / 10.0
+        x += rnd.uniform(-0.012, 0.03)
+        y += rnd.uniform(-0.02, 0.02)
+        r = 0.035 + 0.11 * t ** 1.3 + 0.015 * rnd.random()
+        p = K.sphere("Puff", r, (x, y, 0.09 + 0.62 * t ** 1.15), "Steam", seg=20, rings=10,
+                     squash=1.15 + 0.3 * rnd.random())
         puff.append(p)
-    puff.append(K.lathe("Vent", [(0, 0), (0.06, 0), (0.06, 0.05), (0.04, 0.06), (0, 0.06)], mat="SteelDark", seg=16))
-    save("Sample_Steam", puff, "Volume (Translucent): a few steam puffs over a vent; better as particles with the "
-                               "Steam material")
+    puff.append(K.lathe("Vent", [(0, 0), (0.07, 0), (0.07, 0.03), (0.035, 0.05), (0.025, 0.08), (0.02, 0.08), (0, 0.075)],
+                        mat="SteelDark", seg=24))
+    puff.append(K.place(K.torus("Collar", 0.03, 0.008, mat="BrassAged", seg=24, rseg=6), (0, 0, 0.065)))
+    save("Sample_Steam", puff, "Volume (Translucent): a plume of steam over a nozzle; the Steam material's clouds "
+                               "break it into wisps")
 
 
 def breaker_panel():

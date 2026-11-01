@@ -11,7 +11,13 @@
     <Material6 Value="" />
     <Material7 Value="" />
     <Mesh Value="Content/Meshes/L2/Wall.nmmesh" />
-    <ParameterCount Value="0" />
+    <ParameterCount Value="1" />
+    <Parameter0Name Value="Tint" />
+    <Parameter0Slot Value="0" />
+    <Parameter0X Value="0.36" />
+    <Parameter0Y Value="0.52" />
+    <Parameter0Z Value="0.44" />
+    <Parameter0W Value="0" />
     <CastShadows Value="true" />
     <CastInsetShadow Value="false" />
     <Occluder Value="false" />

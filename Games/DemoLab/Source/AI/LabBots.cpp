@@ -22,6 +22,7 @@
 #include "Public/GameCore/ComponentProperties.h"
 #endif
 
+#include "AI/LabArmour.h"
 #include "Core/LabHealth.h"
 #include "Core/LabPlayer.h"
 #include "GameModes/LabInputDriver.h"
@@ -178,6 +179,8 @@ EntityID LabBots::SpawnBot(World& InWorld, const Spawn& InSpawn)
         {
             Transform->Scale = EngineCore::Vector3(1.25, 1.25, 1.25);
         }
+        /* Its riveted plates, on its bones (AI/LabArmour.h). */
+        LabArmour::Equip(InWorld, Avatar);
     }
 
     const EntityID Player = CreateBotPlayer(InWorld, InSpawn.bScoreboard, InSpawn.Name);
@@ -387,16 +390,33 @@ void LabBots::Drive(World& InWorld, const EntityID InAvatar, InputSnapshot& InOu
     if(!bMelee && MagSize > 0 && Mag == 0 && Combat && !Combat->bReloading) { LabDrive::Press(InOut, "Reload"); }
 
     /* What the brain should know, five times a second. */
+    Bot->UnderFire = std::max(0.f, Bot->UnderFire - Dt * 0.3f);
     Bot->KeyClock -= Dt;
     if(Bot->KeyClock <= 0.f)
     {
         Bot->KeyClock = 0.2f;
         const LabHealthComponent* Health = Self.GetComponent<LabHealthComponent>();
+        const double HealthShare = Health && Health->MaxHealth > 0.f ? double(Health->Health / Health->MaxHealth) : 1.0;
+        const double Threat = std::min(1.0, std::max(double(Bot->UnderFire), HealthShare < 0.5 ? 0.6 : 0.0));
         char Text[16];
-        std::snprintf(Text, sizeof(Text), "%.2f", Health && Health->MaxHealth > 0.f ? double(Health->Health / Health->MaxHealth) : 1.0);
+        std::snprintf(Text, sizeof(Text), "%.2f", HealthShare);
         SetAIKey(InWorld, InAvatar, "Health", Text);
         std::snprintf(Text, sizeof(Text), "%.2f", MagSize > 0 ? double(Mag) / double(MagSize) : 1.0);
         SetAIKey(InWorld, InAvatar, "Ammo", Text);
+        /* Under fire: hit lately, or badly hurt -- the tree's TakeCover. */
+        std::snprintf(Text, sizeof(Text), "%.2f", Threat);
+        SetAIKey(InWorld, InAvatar, "UnderFire", Text);
+
+        /* A noise it goes to look at, with nobody in sight: it says so, once. */
+        const bool bHeardNow = bBrain && !bSees && GetAIKeyNumber(InWorld, InAvatar, "HeardNoise") > 0.5;
+        Bot = InWorld.GetEntity(InAvatar).GetComponent<LabBotComponent>();
+        if(bHeardNow && !Bot->bHeard)
+        {
+            Bot->bHeard = 1;
+            PlaySoundAt(InWorld, Bot->Archetype == LabBots::BA_Brute ? "Content/Sounds/Robots/Brute_Servo_01.nmsound"
+                                                                     : "Content/Sounds/Robots/Watchman_Investigate.nmsound", Feet);
+        }
+        else if(!bHeardNow) { Bot->bHeard = 0; }
     }
 }
 
@@ -421,4 +441,150 @@ void LabBots::OnDamaged(World& InWorld, const EntityID InVictim, const EntityID 
     if(!InWorld.IsAlive(InVictim) || !InWorld.GetEntity(InVictim).GetComponent<LabBotComponent>()) { return; }
     if(!LabTeams::AreHostile(LabTeams::TeamOf(InWorld, InVictim), LabTeams::TeamOf(InWorld, InInstigator))) { return; }
     SetAIKeyEntity(InWorld, InVictim, "TargetActor", InInstigator);
+    if(LabBotComponent* Bot = InWorld.GetEntity(InVictim).GetComponent<LabBotComponent>())
+    {
+        Bot->UnderFire = std::min(1.f, Bot->UnderFire + 0.7f);
+    }
+}
+
+// === Squad tactics ==========================================================
+
+namespace
+{
+    struct TacticsState
+    {
+        const World* Owner = nullptr;
+        float Clock = 0.f;
+        int   Flanks = 0;
+    };
+    TacticsState GTactics;
+
+    constexpr float TACTICS_INTERVAL = 0.5f;
+
+    void SetVectorKey(World& InWorld, const EntityID InBot, const char* InKey, const Vector3& InValue)
+    {
+        char Text[96];
+        std::snprintf(Text, sizeof(Text), "%.1f, %.1f, %.1f", InValue.GetX(), InValue.GetY(), InValue.GetZ());
+        SetAIKey(InWorld, InBot, InKey, Text);
+    }
+
+    void EndFlank(World& InWorld, const EntityID InBot, const char* InWhy)
+    {
+        LabBotComponent* Bot = InWorld.GetEntity(InBot).GetComponent<LabBotComponent>();
+        if(!Bot || !Bot->bFlanking) { return; }
+        Bot->bFlanking = 0;
+        Bot->FlankClock = 0.f;
+        Bot->FlankCooldown = LabBots::FLANK_COOLDOWN;
+        SetAIKey(InWorld, InBot, "Flanking", "false");
+        CORE_LOG(std::string("[DemoLab] AI: ") + InWorld.GetEntity(InBot).GetName() + " flank over (" + InWhy + ")")
+    }
+
+    /* A navmesh point InDegrees round InTarget from InAnchor's bearing, on the
+     * side InFlanker already stands, InRange out, that InFlanker can walk to. */
+    bool FlankPoint(World& InWorld, const Vector3& InTarget, const Vector3& InAnchor, const Vector3& InFlanker,
+                    const double InRange, Vector3& OutPoint)
+    {
+        Vector3 Bearing(InAnchor.GetX() - InTarget.GetX(), 0, InAnchor.GetZ() - InTarget.GetZ());
+        if(Bearing.GetLength() < 1.0) { Bearing = Vector3(InFlanker.GetX() - InTarget.GetX(), 0, InFlanker.GetZ() - InTarget.GetZ()); }
+        if(Bearing.GetLength() < 1.0) { return false; }
+        Bearing = Bearing.GetNormalize();
+        /* The flanker's own side, so it does not cross its partner's line of fire. */
+        const double FX = InFlanker.GetX() - InTarget.GetX(), FZ = InFlanker.GetZ() - InTarget.GetZ();
+        const double Side = Bearing.GetX() * FZ - Bearing.GetZ() * FX >= 0.0 ? 1.0 : -1.0;
+        for(const double Degrees : { 85.0, 100.0, 70.0 })
+        {
+            const double A = Side * Degrees * 3.14159265358979 / 180.0;
+            const Vector3 Dir(Bearing.GetX() * std::cos(A) - Bearing.GetZ() * std::sin(A), 0,
+                              Bearing.GetX() * std::sin(A) + Bearing.GetZ() * std::cos(A));
+            Vector3 Point;
+            if(!RandomNavPoint(InWorld, InTarget + Dir * InRange, 180.f, Point)) { continue; }
+            const float Path = NavPathLength(InWorld, InFlanker, Point);
+            if(Path < 0.f || Path > 2600.f) { continue; }
+            OutPoint = Point;
+            return true;
+        }
+        return false;
+    }
+}
+
+int LabBots::FlanksStarted() { return GTactics.Owner ? GTactics.Flanks : 0; }
+
+void LabBots::TickTactics(World& InWorld, const float InSeconds)
+{
+    if(!HasAuthority() || !IsAIAvailable()) { return; }
+    if(GTactics.Owner != &InWorld) { GTactics = TacticsState(); GTactics.Owner = &InWorld; }
+
+    /* Every Watchman: its flank's clock, and the end of one. */
+    struct Member { EntityID Bot; EntityID Target; Vector3 Feet; bool bSees; };
+    std::vector<Member> Engaged;
+    std::vector<std::pair<EntityID, const char*>> Ends;
+    InWorld.Each<LabBotComponent>([&](Entity InEntity, LabBotComponent& InBot)
+    {
+        InBot.FlankCooldown = std::max(0.f, InBot.FlankCooldown - InSeconds);
+        if(InBot.bFlanking) { InBot.FlankClock += InSeconds; }
+        if(InBot.Archetype != BA_Watchman) { return; }
+        const EntityID Self = InEntity.GetID();
+        const bool bUp = IsUp(InWorld, Self);
+        const EntityID Target = bUp ? GetAIKeyEntity(InWorld, Self, "TargetActor") : EntityID();
+        const bool bTarget = Target.IsSet() && IsUp(InWorld, Target);
+        const Vector3 Feet = InEntity.GetWorldPose().Position;
+        if(InBot.bFlanking)
+        {
+            const double Left = Vector3(InBot.FlankPos.GetX() - Feet.GetX(), 0, InBot.FlankPos.GetZ() - Feet.GetZ()).GetLength();
+            if(!bUp || !bTarget) { Ends.emplace_back(Self, "target lost"); }
+            else if(Left < 140.0) { Ends.emplace_back(Self, "in position"); }
+            else if(InBot.FlankClock > FLANK_SECONDS) { Ends.emplace_back(Self, "took too long"); }
+        }
+        if(bTarget) { Engaged.push_back({ Self, Target, Feet, GetAIKeyNumber(InWorld, Self, "TargetVisible") > 0.5 }); }
+    });
+    for(const auto& End : Ends) { EndFlank(InWorld, End.first, End.second); }
+
+    GTactics.Clock -= InSeconds;
+    if(GTactics.Clock > 0.f) { return; }
+    GTactics.Clock = TACTICS_INTERVAL;
+
+    /* Pairs, in a steady order: the engaged Watchmen by target, then by id. */
+    std::sort(Engaged.begin(), Engaged.end(), [](const Member& A, const Member& B)
+    {
+        return A.Target.Pack() != B.Target.Pack() ? A.Target.Pack() < B.Target.Pack() : A.Bot.Pack() < B.Bot.Pack();
+    });
+    size_t I = 0;
+    while(I + 1 < Engaged.size())
+    {
+        const Member A = Engaged[I];
+        const Member B = Engaged[I + 1];
+        if(A.Target != B.Target) { I += 1; continue; }   // A has no partner on its target
+        I += 2;
+        const LabBotComponent* BotA = InWorld.GetEntity(A.Bot).GetComponent<LabBotComponent>();
+        const LabBotComponent* BotB = InWorld.GetEntity(B.Bot).GetComponent<LabBotComponent>();
+        if(!BotA || !BotB || BotA->bFlanking || BotB->bFlanking) { continue; }
+        if(BotA->FlankCooldown > 0.f || BotB->FlankCooldown > 0.f) { continue; }
+
+        /* The one that sees the target holds and shoots; the other goes round.
+         * Both see it, or neither: the roles swap from one flank to the next. */
+        const bool bAFlanks = (A.bSees != B.bSees) ? !A.bSees : BotA->bFlankedLast == 0;
+        const Member& Flanker = bAFlanks ? A : B;
+        const Member& Anchor  = bAFlanks ? B : A;
+        const Vector3 TargetAt = InWorld.GetEntity(Flanker.Target).GetWorldPose().Position;
+        const double Range = std::clamp((Flanker.Feet - TargetAt).GetLength(), 500.0, 850.0);
+        Vector3 Point;
+        if(!FlankPoint(InWorld, TargetAt, Anchor.Feet, Flanker.Feet, Range, Point))
+        {
+            if(LabBotComponent* Later = InWorld.GetEntity(Flanker.Bot).GetComponent<LabBotComponent>()) { Later->FlankCooldown = 2.f; }
+            continue;
+        }
+        if(LabBotComponent* Bot = InWorld.GetEntity(Flanker.Bot).GetComponent<LabBotComponent>())
+        {
+            Bot->bFlanking = 1;
+            Bot->FlankClock = 0.f;
+            Bot->FlankPos = Point;
+            Bot->bFlankedLast = 1;
+        }
+        if(LabBotComponent* Other = InWorld.GetEntity(Anchor.Bot).GetComponent<LabBotComponent>()) { Other->bFlankedLast = 0; }
+        SetVectorKey(InWorld, Flanker.Bot, "FlankPos", Point);
+        SetAIKey(InWorld, Flanker.Bot, "Flanking", "true");
+        ++GTactics.Flanks;
+        CORE_LOG(std::string("[DemoLab] AI: ") + InWorld.GetEntity(Flanker.Bot).GetName() + " flanks while "
+                 + InWorld.GetEntity(Anchor.Bot).GetName() + " holds")
+    }
 }

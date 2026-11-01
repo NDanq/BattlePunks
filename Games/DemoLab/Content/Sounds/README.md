@@ -13,7 +13,8 @@ rebuild). Sources and licences: `Docs/Credits.md`. Paths below are relative to t
   decoded as it plays (beds, music).
 - Loudness is normalised (BS.1770): one-shots by their loudest 400 ms, loops/beds/music integrated;
   the LUFS column is the result, so relative levels are already balanced. Bus volumes do the rest.
-- Footsteps can be animation-clip notifies naming the sound (Audio README, "Footsteps").
+- **Footsteps** are wired by surface: `Source/Core/LabFootsteps.h` plays a variant each stride by what is
+  under the foot (metal, tile, stone, wood, grass/dirt, water).
 
 ## Footsteps
 
@@ -23,6 +24,8 @@ rebuild). Sources and licences: `Docs/Credits.md`. Paths below are relative to t
 | `Content/Sounds/Footsteps/Step_Wood_01..04.nmsound` | Footstep on wood (L1 pier, L2 archive floor) | SFX | 3D (100-1500) | one-shot | Decompressed | 0.29 s | -24.0 |
 | `Content/Sounds/Footsteps/Step_Grass_01..04.nmsound` | Footstep on grass/earth (L1 meadow, forest edge, beach path) | SFX | 3D (100-1200) | one-shot | Decompressed | 0.79 s | -28.0 |
 | `Content/Sounds/Footsteps/Step_MetalGrate_01..04.nmsound` | Footstep on a steel grate or catwalk (L3 ring gallery, gantries) | SFX | 3D (100-1800) | one-shot | Decompressed | 0.6 s | -22.0 |
+| `Content/Sounds/Footsteps/Step_Tile_01..04.nmsound` | Footstep on marble or tile (L2 atrium, foyer and halls) | SFX | 3D (100-1600) | one-shot | Decompressed | 0.6 s | -24.1 |
+| `Content/Sounds/Footsteps/Step_Water_01..04.nmsound` | Footstep in a puddle or on a flooded floor (L2 sprinklers, shallows) | SFX | 3D (100-1500) | one-shot | Decompressed | 0.6 s | -22.0 |
 
 ## Weapons
 

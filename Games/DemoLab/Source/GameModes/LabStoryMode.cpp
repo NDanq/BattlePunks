@@ -19,6 +19,7 @@
 #include "Flow/LabTravel.h"
 #include "GameModes/LabAutoPlay.h"
 #include "GameModes/LabInputDriver.h"
+#include "GameModes/LabMenuTest.h"
 #include "UI/LabUI.h"
 #include "Weapons/LabWeapon.h"
 #include "World/LabEncounter.h"
@@ -56,6 +57,11 @@ bool LabIsAutoPlay() { return GLabAutoPlay.GetBool(); }
  * quits a few seconds after it ends. With -record=<file.mp4>, its video.
  */
 NIMBLE_GAME_CONFIG_STRING(GLabCinematic, "DemoLab", "Cinematic", "", nullptr);
+/* With -DemoLab.Cinematic: Interact is pressed every other frame through the
+ * cutscene and the hand-over's grace (a player mashing E to skip it); the run
+ * fails if anything is used ("[DemoLab] cinematic test Cn: hand-over PASS"). The
+ * DemoLab.C5Handover test: C5 ends with the player at the sidearm locker. */
+NIMBLE_GAME_CONFIG_BOOL(GLabCineMash, "DemoLab", "CineMashInteract", false, nullptr);
 
 namespace
 {
@@ -185,6 +191,7 @@ public:
         LabGameModeBase::OnStart();
         if(bAlarm) { LabSignals::Emit(GetWorld(), "State.Alarm", true); }
         GetLabAutoPlay().OnLevelStarted(LevelName, bAlarm, bRestored);
+        GetLabMenuTest().OnLevelStarted(GetSession(), LevelName, bAlarm, bRestored);
         StartCinematicTest();
         if(bRestored)
         {
@@ -313,13 +320,19 @@ public:
         TickCinematicTest(Dt);
         TickTravel(Dt);
         LabGameModeBase::OnTick(InFrame);
+        /* After the base: a pause it opened this frame is up for the test to see. */
+        GetLabMenuTest().TickStory(GetSession(), LevelName, IsSequencePlaying(), Dt);
     }
 
-    bool WantsMouseCapture() const override { return !GLabAutoPlay.GetBool(); }
+    /* The tests never grab the desktop's pointer; nor does a cinematic being filmed. */
+    bool WantsMouseCapture() const override
+    {
+        return !GLabAutoPlay.GetBool() && !GetLabMenuTest().IsActive() && !FindCinematicTest();
+    }
 
     void OnPausePressed() override
     {
-        if(GLabAutoPlay.GetBool() || bTravelling || bCredits) { return; }
+        if(GLabAutoPlay.GetBool() || FindCinematicTest() || bTravelling || bCredits) { return; }
         LabUI::OpenPauseMenu(GetSession());
     }
 
@@ -419,6 +432,16 @@ private:
             GetLabAutoPlay().Drive(InWorld, InAvatar, InOutInput, GetFrameSeconds(), IsSequencePlaying());
             return;
         }
+        if(GetLabMenuTest().IsActive()) { GetLabMenuTest().Drive(InOutInput); return; }
+        /* A cinematic being watched or filmed plays alone: no keys from a desktop
+         * the window took focus from -- unless the test mashes Interact on purpose. */
+        if(FindCinematicTest())
+        {
+            InOutInput = InputSnapshot();
+            const bool bMashing = GLabCineMash.GetBool() && CineClock < 0.f && (IsSequencePlaying() || CineHandoverClock < 1.8f);
+            if(bMashing && (++CineMashFrame % 2) == 0) { LabDrive::Press(InOutInput, "Interact"); }
+            return;
+        }
         const int LookX = FindInputAxis(LabDrive::MAP, "LookX"), LookY = FindInputAxis(LabDrive::MAP, "LookY");
         const float Scale = LabUI::LookScale();
         if(LookX >= 0 && LookX < int(INPUT_AXES_MAX)) { InOutInput.Axes[LookX] *= Scale; }
@@ -484,6 +507,18 @@ private:
         }
         if(CineClock < 0.f && bCineStarted && !IsSequencePlaying())
         {
+            CineHandoverClock += InSeconds;
+            /* Nothing was used by the presses through the cutscene and the hand-over. */
+            if(GLabCineMash.GetBool() && CineQuitIn > 0.f && CineQuitIn - InSeconds <= 0.f)
+            {
+                bool bUsed = false;
+                W.Each<LabInteractableComponent>([&](Entity InThing, LabInteractableComponent& InData)
+                {
+                    if(InData.bUsed && InData.WeaponID) { bUsed = true; CORE_LOG_ERROR(std::string("[DemoLab] used during the hand-over: ") + InThing.GetName()) }
+                });
+                if(bUsed) { CORE_LOG_ERROR(std::string("[DemoLab] cinematic test ") + Test->Id + ": hand-over FAIL") }
+                else { CORE_LOG(std::string("[DemoLab] cinematic test ") + Test->Id + ": hand-over PASS") }
+            }
             CineQuitIn -= InSeconds;
             if(CineQuitIn <= 0.f && CineQuitIn > -1000.f) { CineQuitIn = -2000.f; GetSession().RequestQuit(); }
         }
@@ -683,6 +718,8 @@ private:
     float         QuitIn = 3.f;
     float         CineClock = 0.f;     // -DemoLab.Cinematic: until it plays (> 0), played (< 0)
     float         CineQuitIn = 3.f;
+    float         CineHandoverClock = 0.f;   // seconds since the watched cutscene ended
+    uint32_t      CineMashFrame = 0;
     bool          bCineStarted = false;
     float         SinceHurt = 100.f;
     float         HurtSoundClock = 0.f;

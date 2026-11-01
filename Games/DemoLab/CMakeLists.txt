@@ -79,6 +79,8 @@ nimble_add_hot_module(${GAME_MODULE}
                     Source/Core/LabPlayer.cpp
                     Source/Core/LabInput.cpp
                     Source/Core/LabMove.cpp
+                    Source/Core/LabFootsteps.h
+                    Source/Core/LabFootsteps.cpp
                     Source/Weapons/LabWeapon.h
                     Source/Weapons/LabWeapon.cpp
                     Source/Weapons/LabCombat.h
@@ -87,6 +89,8 @@ nimble_add_hot_module(${GAME_MODULE}
                     Source/Weapons/LabProjectile.cpp
                     Source/AI/LabBots.h
                     Source/AI/LabBots.cpp
+                    Source/AI/LabArmour.h
+                    Source/AI/LabArmour.cpp
                     Source/World/LabSignals.h
                     Source/World/LabSignals.cpp
                     Source/World/LabInteractable.h
@@ -111,6 +115,8 @@ nimble_add_hot_module(${GAME_MODULE}
                     Source/GameModes/LabMenuMode.cpp
                     Source/GameModes/LabAutoPlay.h
                     Source/GameModes/LabAutoPlay.cpp
+                    Source/GameModes/LabMenuTest.h
+                    Source/GameModes/LabMenuTest.cpp
                     Source/GameModes/LabInputDriver.h
                     Source/GameModes/LabInputDriver.cpp
         PRIVATE_DEPS NimbleEngine::NimbleEngine)
@@ -356,4 +362,38 @@ if(NIMBLE_BUILD_TESTS AND NOT CMAKE_BUILD_TYPE STREQUAL "Shipping")
                          ENVIRONMENT "PULSE_SERVER=unix:/nonexistent"
                          PASS_REGULAR_EXPRESSION "\\[DemoLab\\] AutoPlay PASS"
                          FAIL_REGULAR_EXPRESSION "\\[DemoLab\\] AutoPlay FAIL")
+
+    # DemoLab.MenuTest: the menus driven through their documents
+    # (Source/GameModes/LabMenuTest.h) -- Settings (values apply, and closing
+    # saves them), each Chapter Select row (level, state, entry, sidearm,
+    # checkpoint), F1's overlay (toggles, live stat unit), Pause (Resume,
+    # Restart checkpoint, Main menu). DemoLab.SettingsPersist: a second process
+    # reads back the settings the first saved (Saved/DemoLabTest/User.ini, never
+    # the player's own).
+    add_test(NAME DemoLab.MenuTest
+             COMMAND ${GAME_NAME} -headless -DemoLab.MenuTest=1 -Game.StartLevel=MainMenu
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:${GAME_NAME}>")
+    set_tests_properties(DemoLab.MenuTest PROPERTIES TIMEOUT 900 LABELS "smoke"
+                         ENVIRONMENT "PULSE_SERVER=unix:/nonexistent"
+                         FIXTURES_SETUP DemoLabUserSettings
+                         PASS_REGULAR_EXPRESSION "\\[DemoLab\\] MenuTest PASS"
+                         FAIL_REGULAR_EXPRESSION "\\[DemoLab\\] MenuTest FAIL")
+    add_test(NAME DemoLab.SettingsPersist
+             COMMAND ${GAME_NAME} -headless -DemoLab.MenuTest=2 -Game.StartLevel=MainMenu
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:${GAME_NAME}>")
+    set_tests_properties(DemoLab.SettingsPersist PROPERTIES TIMEOUT 300 LABELS "smoke"
+                         ENVIRONMENT "PULSE_SERVER=unix:/nonexistent"
+                         FIXTURES_REQUIRED DemoLabUserSettings
+                         PASS_REGULAR_EXPRESSION "\\[DemoLab\\] MenuTest PASS"
+                         FAIL_REGULAR_EXPRESSION "\\[DemoLab\\] MenuTest FAIL")
+
+    # DemoLab.C5Handover: C5 alone (-DemoLab.Cinematic), Interact mashed through
+    # it and the hand-over at the sidearm locker; nothing may be picked up.
+    add_test(NAME DemoLab.C5Handover
+             COMMAND ${GAME_NAME} -headless -DemoLab.Cinematic=C5 -DemoLab.CineMashInteract=1 -Game.StartLevel=L3_Core
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:${GAME_NAME}>")
+    set_tests_properties(DemoLab.C5Handover PROPERTIES TIMEOUT 400 LABELS "smoke"
+                         ENVIRONMENT "PULSE_SERVER=unix:/nonexistent"
+                         PASS_REGULAR_EXPRESSION "\\[DemoLab\\] cinematic test C5: hand-over PASS"
+                         FAIL_REGULAR_EXPRESSION "hand-over FAIL")
 endif()

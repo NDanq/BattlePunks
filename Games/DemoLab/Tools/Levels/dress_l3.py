@@ -31,6 +31,7 @@ OWN = 'Content/Meshes/L3_Core/'
 PART = 'Content/Particles/'
 PP = 'Content/PostProcess/'
 BOX = 'Engine/Content/Meshes/Box.nmmesh'
+MAT = 'Content/Materials/Kit/'
 SND = 'Content/Sounds/'
 
 D = L.L3
@@ -398,6 +399,24 @@ def vault(lv):
     light(lv, 'Dress_VaultCeiling', (0, 680, 0), (255, 222, 175), 70, 900, channel='L3.Alarm', show_when_on=False,
           rot=(90, 0, 0), spot_cone=(14, 38), rng=900)
     light(lv, 'Dress_VaultRed', (0, 600, 0), RED, 9, 900, channel='L3.Alarm', flick=(1.4, 0.6))
+    # the theft room dressed: deposit-box banks, columns, coffers, the clamp crown (make_l3_core.py
+    # vault_dress), a lamp strip under each bank's cornice washing the brass fronts
+    mesh(lv, 'Dress_VaultDress', OWN + 'L3_Core_VaultDress.nmmesh', (0, 0, 0))
+    Ai = D['drum']['apothem'] - 2
+    side = 2 * Ai * math.tan(math.radians(22.5))
+    for i, (label, a) in enumerate(lv.COMPASS.items()):
+        if label == 'S':
+            continue
+        sx, sz = compass(a, Ai - 37)
+        for state, show, colour, glow in (('Calm', False, (1.0, 0.7, 0.42), 3.0), ('Alarm', True, (1.0, 0.1, 0.05), 2.0)):
+            mesh(lv, f'Dress_VaultStrip_{state}_{i}', BOX, (sx, 316, sz), yaw=a, scale=(side - 60, 3, 4), shadows=False,
+                 material=MAT + 'LampGlow.material.nmgraph',
+                 params=(('EmissiveColor', 0, colour), ('EmissiveIntensity', 0, (glow,))),
+                 extra=[toggle(lv, 'L3.Alarm', show)])
+        lx, lz = compass(a, Ai - 90)
+        light(lv, f'Dress_VaultWash_{i}', (lx, 300, lz), (255, 205, 150), 5, 450, channel='L3.Alarm', show_when_on=False)
+        if i % 2:
+            light(lv, f'Dress_VaultWashRed_{i}', (lx, 300, lz), RED, 3, 450, channel='L3.Alarm')
     # the locker (the sidearm), facing the gallery; its door opens once the pistol is taken
     lx, _, lz, _ = D['points']['Locker']
     mesh(lv, 'Dress_Locker', KIT + 'Locker.nmmesh', (lx, 0, lz - 30), yaw=180, collide='box')
@@ -441,6 +460,7 @@ def alarm(lv):
                   Sound=SND + 'World/Shutter_Slam.nmsound'),
         render(OWN + 'L3_Core_Shutter.nmmesh'), body(1, 2, motion=1),
         xform((hx, 170, hz), (0, a - 90, 0), (0.62, 1.05, 1))])
+    shutter_frame(lv, 'Dress_HelixShutterFrame', (hx, hz), a - 90, 0.93, 170 + 380 + 175)
     restyle(lv, 'TunnelGate', mesh=OWN + 'L3_Core_Shutter.nmmesh', rot=(0, 0, 0), box_shape=True)
     restyle(lv, 'FreightGate', mesh=OWN + 'L3_Core_Shutter.nmmesh', rot=(0, 90, 0), box_shape=True)
     # the vents: covers that slide up on the alarm, steam out, the Watchmen's spawns in front
@@ -468,6 +488,48 @@ def alarm(lv):
             continue
         lv.entity(f'Dress_KlaxonBeam_{i}', [spot(lv, RED, 40, 2600, 8, 16), xform((lx, y, lz), (12, a, 0)),
                                             toggle(lv, 'L3.Alarm'), motion(lv, spin=(0, 200, 0), spin_on='L3.Alarm')])
+
+
+def shutter_frame(lv, name, centre, yaw, half, top):
+    """A free-standing shutter's housing: channel posts either side (half: the shutter's half width,
+    metres), a roller box over the raised shutter up to top (cm), a sill, hazard paint, a warning
+    lamp that turns red on the alarm. Box primitives in the shutter's frame (local X across)."""
+    steel, brass = MAT + 'SteelDark.material.nmgraph', MAT + 'BrassAged.material.nmgraph'
+    ux, uz = math.cos(math.radians(yaw)), -math.sin(math.radians(yaw))
+    fx, fz = math.sin(math.radians(yaw)), math.cos(math.radians(yaw))
+    w = half * 100.0
+
+    def at(u, y, v=0.0):
+        return (centre[0] + ux * u + fx * v, y, centre[1] + uz * u + fz * v)
+    box_top = top + 20
+    for side in (-1, 1):
+        u = side * (w + 9)
+        mesh(lv, f'{name}_Post_{side + 1}', BOX, at(u, box_top / 2), yaw=yaw, scale=(16, box_top, 34), material=steel)
+        mesh(lv, f'{name}_PostLip_{side + 1}', BOX, at(u - side * 9, box_top / 2, 13), yaw=yaw, scale=(4, box_top, 6),
+             material=brass)
+        mesh(lv, f'{name}_PostLip2_{side + 1}', BOX, at(u - side * 9, box_top / 2, -13), yaw=yaw, scale=(4, box_top, 6),
+             material=brass)
+        for k in range(5):     # hazard bands on the posts, waist high
+            mesh(lv, f'{name}_Hazard_{side + 1}_{k}', BOX, at(u, 20 + k * 24, 0), yaw=yaw, scale=(17, 12, 35),
+                 material=MAT + ('PaintRed' if k % 2 else 'PaintBlack') + '.material.nmgraph', shadows=False)
+        mesh(lv, f'{name}_Foot_{side + 1}', BOX, at(u, 6, 0), yaw=yaw, scale=(40, 12, 60), material=steel)
+    # the roller box: the shutter rolls up into it (its lower edge over the closed shutter's top)
+    lo = 170 + 175 + 10
+    mesh(lv, f'{name}_Box', BOX, at(0, (lo + box_top) / 2, 0), yaw=yaw, scale=(2 * w + 52, box_top - lo, 46),
+         material=steel)
+    for y in (lo + 6, box_top - 6):
+        mesh(lv, f'{name}_Band_{y:g}', BOX, at(0, y, 0), yaw=yaw, scale=(2 * w + 58, 8, 50), material=brass)
+    mesh(lv, f'{name}_Sill', BOX, at(0, 2, 0), yaw=yaw, scale=(2 * w + 20, 4, 30), material=brass, shadows=False)
+    # the warning lamp on the box's face, both sides
+    for v, ly in ((-26, 180), (26, 0)):
+        lamp = at(w * 0.6, lo + 40, v)
+        mesh(lv, f'{name}_Lamp_{v + 26}', OWN + 'L3_Core_Bulkhead.nmmesh', lamp, yaw=yaw + ly,
+             params=(('EmissiveColor', 1, (1.0, 0.55, 0.15)), ('EmissiveIntensity', 1, (6,))),
+             extra=[toggle(lv, 'L3.Alarm', False)])
+        mesh(lv, f'{name}_LampRed_{v + 26}', OWN + 'L3_Core_Bulkhead.nmmesh', lamp, yaw=yaw + ly,
+             params=(('EmissiveColor', 1, (1.0, 0.08, 0.03)), ('EmissiveIntensity', 1, (30,)), ('PulseSpeed', 1, (4,))),
+             extra=[toggle(lv, 'L3.Alarm', True)])
+    light(lv, f'{name}_Glow', at(w * 0.6, lo + 20, -60), RED, 6, 500, channel='L3.Alarm', flick=(2.0, 0.5))
 
 
 def tunnel_and_pumps(lv):

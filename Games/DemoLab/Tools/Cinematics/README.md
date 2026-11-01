@@ -15,7 +15,8 @@ level's cinematic entities and writes its `Content/Cinematics/C*.nmseq`:
 | `CineMark_*` | where the player is stood: `Lab.PlacePlayer` keys (the hand-over pose) and `-DemoLab.Cinematic` |
 | `Airship_Flight` (L1, `dress_l1.airship`) | the rig C1 flies; the ambient loop bobs the hull on it |
 | `CineShaft_*`, `Calm_CineCage_Under` (L2) | the well under the elevator cage that C4 drops into |
-| `Alarm_CineAirship*` (L2) | C6's airship, propellers, lamps and winch line; parked below the world until C6 |
+| `Alarm_CineAirship*` (L2) | C6's airship, propellers, lamps, dusk key / fill / rim spots and winch line; parked below the world until C6 |
+| `Alarm_CineBackdrop_*` (L2) | L1's terrain and sea under the lab (`L2_ON_L1`): the island C6 shows from the roof |
 | `CineIntel` (L3) | the canister C5 lifts (the interactable hides the real one when it is used) |
 
 `seq.py` writes the XML: cameras aimed at targets, cuts with blends, Animation sections
@@ -51,4 +52,6 @@ Tools/Cinematics/record.sh C3 <folder>        (from Games/DemoLab, an Editor-tar
 
 runs the game in a window with `-DemoLab.Cinematic=C3` (the level, the signals the story would
 have set, the player on `CineMark_C3`, the cutscene, quit) and `-record`, then writes
-`<folder>/C3.mp4` and a sheet of a frame a second. The recorder takes pictures only, no sound.
+`<folder>/C3.mp4` and a sheet of a frame a second. The video starts at the cutscene: the level load
+and the settling before it are cut (the run log's times; `KEEP_LEAD=1` keeps them). The recorder
+takes pictures only, no sound.

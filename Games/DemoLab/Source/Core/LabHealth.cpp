@@ -15,6 +15,7 @@
 #include "Public/GameCore/ComponentProperties.h"
 #endif
 
+#include "AI/LabArmour.h"
 #include "Weapons/LabCombat.h"
 #include "GameModes/LabGameModeBase.h"
 
@@ -52,6 +53,8 @@ float LabDamage::Apply(World& InWorld, const LabDamageEvent& InEvent)
     float Amount = InEvent.Amount;
     if(Mode) { Amount = Mode->ModifyDamage(InEvent, Amount); }
     if(Amount <= 0.f) { return 0.f; }
+    /* A Brute's plates blunt what lands on them, and break off (AI/LabArmour.h). */
+    if(!bHeal) { Amount = LabArmour::Absorb(InWorld, InEvent, Amount); }
 
     /* The mode's hook may have spawned or destroyed; fetch the component again. */
     Health = InWorld.GetEntity(InEvent.Victim).GetComponent<LabHealthComponent>();
@@ -125,6 +128,8 @@ void LabDamage::Kill(World& InWorld, EntityID InVictim, const LabDamageEvent& In
     EngineCore::Vector3 Dir = InEvent.Dir;
     if(Dir.GetLength() < 1e-4) { Dir = EngineCore::Vector3(0, 0, 1); }
     GAMECORE_RPC(LabHealthComponent, MulticastKilled)(Victim, Dir.GetNormalize() * double(InEvent.Impulse), InEvent.Point);
+    /* A Brute that falls sheds what armour it has left. */
+    LabArmour::ShedAll(InWorld, InVictim, Dir.GetNormalize() * 300.0);
 
     EventArgs Args;
     Args.Args[Args.Count++] = EventArg::Make(InVictim);

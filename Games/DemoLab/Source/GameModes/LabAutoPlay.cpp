@@ -435,7 +435,10 @@ void LabAutoPlay::Drive(World& InWorld, const EntityID InAvatar, InputSnapshot& 
         if(bSignal) { Next((std::string("used ") + Raw.Name).c_str()); break; }
         const EntityID Thing = FindNamed(InWorld, Raw.Name);
         if(!Thing.IsSet()) { Fail(std::string("no entity ") + Raw.Name); break; }
-        if(!Steer(InWorld, InAvatar, InOut, InWorld.GetEntity(Thing).GetWorldPose().Position, 100.f)) { break; }
+        /* Close enough once there, or once the prompt is already this thing's (a
+         * body or a fallen plate in the way can keep the last step out of reach). */
+        const bool bThere = Steer(InWorld, InAvatar, InOut, InWorld.GetEntity(Thing).GetWorldPose().Position, 100.f);
+        if(!bThere && LabWorld::FindInteractable(InWorld, InAvatar) != Thing) { break; }
         if(Raw.Kind == LabAutoPlayStepKind::Hold) { LabDrive::Press(InOut, "Interact", true); }
         else if(PressClock <= 0.f) { LabDrive::Press(InOut, "Interact"); PressClock = 0.6f; }
         break;

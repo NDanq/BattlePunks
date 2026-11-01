@@ -12,7 +12,9 @@
 #include "Public/NimbleEngine/SequenceFacade.h"
 #include "Public/RenderCore/Components/ProceduralSpawnerComponent.h"
 
+#include "AI/LabArmour.h"
 #include "AI/LabBots.h"
+#include "Core/LabFootsteps.h"
 #include "GameModes/LabInputDriver.h"
 #include "Core/LabPlayer.h"
 #include "UI/LabUI.h"
@@ -47,6 +49,7 @@ bool LabGameModeBase::OnLoad(GameSession& InSession)
 
     LabWeapons::ResetCache();
     LabSignals::Reset(InSession.GetWorld());
+    LabFootsteps::Reset();
 
     AddSystem<&LabGameModeBase::TickCombatInput>("Lab.Combat", TP_PrePhysics);
     AddSystem<&LabGameModeBase::TickInteractInput>("Lab.Interact", TP_PrePhysics);
@@ -81,6 +84,19 @@ void LabGameModeBase::OnTick(const FrameContext& InFrame)
     FrameSeconds = InFrame.DeltaSeconds;
     LabSignals::Flush(GetWorld());
     LabBots::TickStimuli(GetWorld());
+    LabBots::TickTactics(GetWorld(), float(FrameSeconds));
+    LabFootsteps::Tick(GetWorld(), float(FrameSeconds));
+    LabArmour::Tick(GetWorld(), float(FrameSeconds));
+
+    /* Interact's grace after a cutscene (TickInteractInput). */
+    InteractGrace = std::max(0.f, InteractGrace - float(FrameSeconds));
+    if(IsSequencePlaying()) { bWasCutscene = true; }
+    else if(bWasCutscene)
+    {
+        bWasCutscene = false;
+        InteractGrace = INTERACT_GRACE_SECONDS;
+        bInteractNeedsRelease = true;
+    }
     UpdateSelfBot();
     if(IsDedicatedServer()) { return; }
 
@@ -168,13 +184,12 @@ void LabGameModeBase::ApplyFoliageDensity()
 
 void LabGameModeBase::UpdateMouseCapture()
 {
-    if(!WantsMouseCapture()) { return; }
     World& W = GetWorld();
     const EntityID Local = GetLocalAvatar(W, 0);
     const AvatarHarnessComponent* Harness = Local.IsSet() ? W.GetEntity(Local).GetComponent<AvatarHarnessComponent>() : nullptr;
     if(!Harness) { return; }
     if(Harness->WasPressed("Pause")) { OnPausePressed(); }
-    else if(!GetSession().IsMouseCaptured() && (Harness->WasPressed("Fire") || Harness->WasPressed("Aim")))
+    else if(WantsMouseCapture() && !GetSession().IsMouseCaptured() && (Harness->WasPressed("Fire") || Harness->WasPressed("Aim")))
     {
         GetSession().SetMouseCaptured(true);
     }
@@ -196,7 +211,19 @@ void LabGameModeBase::TickCombatInput(World& InWorld, const float InSeconds)
 
 void LabGameModeBase::TickInteractInput(World& InWorld, const float InSeconds)
 {
-    LabWorld::TickInteractInput(InWorld, InSeconds);
+    /* A cutscene holds Interact, and so do the moments after one: the hand-over
+     * stands the player beside the next thing to use (C5 ends at the sidearm
+     * locker), and a press buffered or held through the cutscene -- an E
+     * mashed to skip it, a key still down as control comes back -- must not
+     * use it. After the grace, Interact must be let go before it counts. */
+    if(InteractGrace <= 0.f && bInteractNeedsRelease)
+    {
+        const EntityID Local = GetLocalAvatar(InWorld, 0);
+        const AvatarHarnessComponent* Harness = Local.IsSet() ? InWorld.GetEntity(Local).GetComponent<AvatarHarnessComponent>() : nullptr;
+        if(!Harness || !Harness->IsDown("Interact")) { bInteractNeedsRelease = false; }
+    }
+    const bool bHeld = IsSequencePlaying() || InteractGrace > 0.f || bInteractNeedsRelease;
+    LabWorld::TickInteractInput(InWorld, InSeconds, bHeld);
 }
 
 void LabGameModeBase::TickCombatServer(World& InWorld, const float InSeconds)

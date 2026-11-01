@@ -202,6 +202,37 @@ cannot finish. It takes about 11 minutes; enemy damage is scaled down
 (`-DemoLab.StoryDamageScale=0.15`) so a run does not die by chance.
 `PULSE_SERVER=unix:/nonexistent` keeps it silent.
 
+Three short tests sit beside it (each well under a minute, headless and
+silent):
+
+```
+cd Build/editor-debug && PULSE_SERVER=unix:/nonexistent ctest -R 'DemoLab\.(MenuTest|SettingsPersist|C5Handover)'
+```
+
+- `DemoLab.MenuTest` (`-DemoLab.MenuTest=1`, `Source/GameModes/LabMenuTest.h`)
+  drives the menus through their documents -- it clicks the named buttons,
+  moves the sliders and ticks the boxes in the open `.nmui`, so each
+  control's own action runs. Settings: a check box, the tier, display mode,
+  resolution, volume, look sensitivity and subtitles apply (the config vars,
+  the tier, what the game reads) and Back writes them to the user file.
+  Chapter Select: each of the four rows starts its level in its state (Calm
+  or Alarm, armed only for row 4) at its entry, with a checkpoint. F1: the
+  overlay opens, names the level, shows stat unit numbers that change, and
+  closes. Pause (Escape): it pauses; Resume; Restart checkpoint reloads the
+  checkpoint; Main menu goes back.
+- `DemoLab.SettingsPersist` (`-DemoLab.MenuTest=2`, run after MenuTest as a
+  CTest fixture) is a new process that loads the user file the first left
+  and finds every value, on the config vars and on the Settings page, then
+  deletes it. Both use `Saved/DemoLabTest/User.ini` beside the executable,
+  never the player's own settings.
+- `DemoLab.C5Handover` (`-DemoLab.Cinematic=C5 -DemoLab.CineMashInteract=1`)
+  plays C5 alone and presses Interact every other frame through it and the
+  hand-over at the sidearm locker; nothing may be picked up (the pistol once
+  was, from a press that arrived as control came back).
+
+Each passes on `[DemoLab] MenuTest PASS` (or `cinematic test C5: hand-over
+PASS`) and fails on a `FAIL` line naming the step.
+
 The same build tree also registers the engine's own tests (`ctest -N` lists
 them). Run the ones for the modules you changed.
 

@@ -2,8 +2,8 @@
 <Entity Guid="ac5f8edf5666f3281eb2b68c59997cff" Name="Alarm_CineAirship_Belly" Parent="31c480e2ab788c620aed0b0e59af0be1">
   <Component Type="Point Light" Version="2">
     <Color R="255" G="196" B="140" A="255" />
-    <Intensity Value="30" />
-    <Radius Value="2600" />
+    <Intensity Value="6" />
+    <Radius Value="1400" />
     <Active Value="true" />
     <CastShadows Value="false" />
     <ShadowTechnique Value="0" />

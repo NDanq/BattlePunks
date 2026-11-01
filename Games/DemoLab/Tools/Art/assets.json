@@ -1219,6 +1219,35 @@
    "pivot": "bottom centre; emit steam particles from (0, 30, 0) cm upward"
   },
   {
+   "name": "Balustrade",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/Balustrade.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/StoneBlocks.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph"
+   ],
+   "size_m": [
+    4.05,
+    4.41,
+    0.9
+   ],
+   "bounds_cm": [
+    [
+     -205.0,
+     -300.0,
+     -35.0
+    ],
+    [
+     200.0,
+     141.0,
+     55.0
+    ]
+   ],
+   "triangles": 4192,
+   "vertices": 3804,
+   "pivot": "the coping's top at its centre line's -Z edge (y = 0 is the plaza's surface); 4 m along X, the plaza on +Z; the retaining wall runs 3 m down; chain every 400 cm"
+  },
+  {
    "name": "Wall",
    "kit": "L2",
    "mesh": "Content/Meshes/L2/Wall.nmmesh",
@@ -1936,29 +1965,30 @@
    "mesh": "Content/Meshes/L2/Sample_Steam.nmmesh",
    "materials": [
     "Content/Materials/Kit/Steam.material.nmgraph",
-    "Content/Materials/Kit/SteelDark.material.nmgraph"
+    "Content/Materials/Kit/SteelDark.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph"
    ],
    "size_m": [
-    0.287,
-    0.469,
-    0.27
+    0.349,
+    0.907,
+    0.308
    ],
    "bounds_cm": [
     [
-     -13.1,
+     -7.0,
      0.0,
-     -11.7
+     -19.9
     ],
     [
-     15.6,
-     46.9,
-     15.2
+     27.9,
+     90.7,
+     10.9
     ]
    ],
-   "triangles": 1216,
-   "vertices": 887,
+   "triangles": 4488,
+   "vertices": 3090,
    "pivot": "bottom centre (sits on a SamplePedestal at y = 92 cm or a bench)",
-   "notes": "Volume (Translucent): a few steam puffs over a vent; better as particles with the Steam material"
+   "notes": "Volume (Translucent): a plume of steam over a nozzle; the Steam material's clouds break it into wisps"
   },
   {
    "name": "BreakerPanel",
