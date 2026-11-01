@@ -104,10 +104,13 @@ and dedicated server: what the windows and the server run. These are the
 targets `nimble_add_game_launcher` / `nimble_add_server_launcher` recorded for
 the editor. **Editor Settings > Build** turns that off.
 
-`Games/WorldsLab`'s **Steampunk PvP** (`WorldsLabPvP.cpp`) is the full sample:
-a deathmatch with predicted movement, server-side hits, Multicast and Client
-RPCs for feedback, a replicated match state, and bots that play through the
-same input path. Its README section runs a match unattended.
+`Games/WorldsLab`'s **Shooting Range** (`WorldsLabRange.cpp`) is the sample
+in the tree: a `NetGameMode` that spawns the player's avatar at the Player
+Start and walks it with a predicted, replicated `RangeMover`
+(`WorldsLabWalker.h`). The fuller deathmatch sample, Steampunk PvP (server-side
+hits, Multicast and Client RPCs for feedback, a replicated match state, bots
+on the same input path), was removed from WorldsLab when Demo Lab replaced it;
+it is in git history: `git show 61af1eec:Games/WorldsLab/WorldsLabPvP.cpp`.
 
 The launchers' command line is config overrides (`ParseLaunchArgs`,
 `NimbleEngine.h`): `-Section.Key=Value` for anything, plus `-connect`,
@@ -241,8 +244,8 @@ GAMECORE_RPC(ShipComponent, ServerFire)(Ship, Aim);
   and nothing is resent. It may be lost, or arrive before or after other
   calls; one that reaches a client before its entity's spawn is dropped. It
   runs locally exactly as a reliable one does. Rate limits apply the same.
-  `[Net] SimulatedLossPercent` drops it as it drops state. Steampunk PvP
-  sends shots and hit markers this way, and kills reliably.
+  `[Net] SimulatedLossPercent` drops it as it drops state. The former
+  Steampunk PvP sample sent shots and hit markers this way, and kills reliably.
 
 ### RPC limits
 
@@ -484,8 +487,8 @@ Keep compensated entities out of the world mask, by giving any body they
 have a layer of its own. Otherwise their current place is hit first.
 
 There is no allowance past one second, and the rewind moves only the
-capsules, not physics bodies. Steampunk PvP uses it for every shot, and
-`[WorldsLab] PvpLagCompensation=0` judges shots against now to compare.
+capsules, not physics bodies. The former Steampunk PvP sample (git history,
+above) used it for every shot.
 
 ### Connection stats
 
@@ -499,7 +502,7 @@ on a server, its link to `Client` (an RPC's `SenderClient`, say). It gives:
 - each direction's rate over the last whole second
 
 `NetSession::GetServerStats` / `GetClientStats` are the same, inside NetCore.
-Steampunk PvP shows a client's ping with it.
+The former Steampunk PvP sample showed a client's ping with it.
 
 ### Timeouts
 

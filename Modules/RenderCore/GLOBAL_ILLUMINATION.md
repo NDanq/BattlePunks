@@ -81,8 +81,9 @@ measured with the old curve; rebake to match exactly.
 
 Checked: RenderCore.Smoke on the GPU, 743 checks, none failing on Vulkan or
 D3D12 -- the clear-colour check now allows one step (display to linear in the
-half-float scene colour and back read 119 for 120 on one row); Courtyard and
-ShadingModelLab look as before, a shade richer in the darks.
+half-float scene colour and back read 119 for 120 on one row); Courtyard (a
+WorldsLab world, since removed; git history at 61af1eec) and ShadingModelLab
+look as before, a shade richer in the darks.
 
 ## Phase 2: many lights (landed)
 
@@ -432,6 +433,48 @@ a volume converges, how long after its last change.
 - Capture shadow maps cover the region round the captures: what a reflection
   probe sees beyond its influence is lit unshadowed.
 
+## Seeing it: Demo Lab's L2
+
+Demo Lab's laboratory (`Games/DemoLab`, L2_Laboratory; `Docs/Guide.md`) is
+where the dynamic GI is meant to be watched: C3, the breaker cutscene, turns
+the lab on room by room, and the bounce light arrives live.
+
+- **The volumes** (`Tools/Levels/dress_l2_laboratory.py`, `dress`): seven GI
+  Volumes, `K_GI_Core` over the airlock, foyer and atrium (264 probes at 350
+  apart, so C3's bounce lands in one volume) and one for each other room
+  (`K_GI_Workshop`, `K_GI_Archive`, three along the turbine hall,
+  `K_GI_Elevator`). A Reflection Probe a room, on an 8 s Interval
+  (5 s in the atrium), capturing with shadows.
+- **SSGI over them:** the Calm stack (`Content/PostProcess/L2_Laboratory/L2_Calm.pp.nmgraph`,
+  written by `Tools/Art/make_l2_dress.py`) runs Screen Space GI (2 rays,
+  radius 400) with AO, SSR and volumetric fog, and narrows its eye adaptation, so the
+  dark foyer reads dark before the breaker (auto exposure would equalise it).
+- **The relight (C3):** the cutscene's Event keys raise 13 power signals over
+  about 6 s (`dress_l2_laboratory.CASCADE`, keyed by
+  `Tools/Cinematics/make_cinematics.py`); each switches a group of fixtures --
+  a lit and a dark mesh and a light. The fixture meshes are not Static, and a
+  volume's probes see static geometry only (`GICaptureStaticOnly`), so only
+  the lighting signature changes: with `GIRelight` the volume relights from its
+  probes' cache within the frame's capture budget: L2's core room re-converges
+  in about 0.13 s (GLOBAL_ILLUMINATION_PERF.md, "Captures (Phase 7)"), and
+  SSGI adds the near-field bounce in the same frame.
+- **The capture budget:** before C3 can relight, the volume must have been
+  filled once by raster rounds, about 50 s for the core room at 2 ms a frame
+  (the limit above); the background fill then takes the next volumes while
+  the camera is elsewhere.
+
+Watch it, and log what the captures do:
+
+```
+DemoLab -DemoLab.Cinematic=C3 -Rendering.CaptureLog=1
+```
+
+For comparison: `-Rendering.GIRelight=false` (each change redrawn by raster
+rounds), `-Rendering.CaptureBudgetMs=0` (the old fixed rate),
+`-Rendering.DynamicGI=false` (no volumes; SSGI and the probes alone),
+`-Rendering.ScreenSpaceGI=false`. Time anything only on a RelWithDebInfo
+build (`Docs/Guide.md`, "Measuring performance at 1440p").
+
 ## Checking
 
 Every phase: NodeGraph.Tests and RenderCore.Smoke (Null; GPU on Vulkan and
@@ -520,8 +563,8 @@ that time.
 |---|---|---|---|---|---|---|---|---|---|
 | 0 (baseline) | ShadingModelLab | Vulkan | 0.140 | -- | 0.048 | 0.363 | 0.010 | 0.026 | 0.665 |
 | 0 (baseline) | ShadingModelLab | D3D12 | 0.081 | -- | 0.026 | 0.281 | 0.004 | 0.018 | 0.470 |
-| 0 (baseline) | Courtyard | Vulkan | 0.508 | 0.260 | 0.203 | 0.758 | 0.527 | 0.371 | 2.756 |
-| 0 (baseline) | Courtyard | D3D12 | 0.513 | 0.208 | 0.296 | 0.789 | 0.673 | 0.357 | 2.941 |
+| 0 (baseline) | Courtyard (removed; git history at 61af1eec) | Vulkan | 0.508 | 0.260 | 0.203 | 0.758 | 0.527 | 0.371 | 2.756 |
+| 0 (baseline) | Courtyard (removed) | D3D12 | 0.513 | 0.208 | 0.296 | 0.789 | 0.673 | 0.357 | 2.941 |
 
 ## References
 

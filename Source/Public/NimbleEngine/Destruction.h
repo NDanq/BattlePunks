@@ -115,7 +115,7 @@ namespace NimbleEngine
      * Stone, Metal. Any field can be set in config, which also adds new ones:
      *
      *     [Destruction_Wood]
-     *     InteriorMaterial=Content/Materials/Courtyard/Wood.material.nmgraph
+     *     InteriorMaterial=Content/Materials/Shared/Wood.material.nmgraph
      *     BreakParticles=Content/Particles/ShootingRange/Dust.nmparticle
      *     Strength=4000
      *

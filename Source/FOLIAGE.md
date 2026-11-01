@@ -134,11 +134,12 @@ falloff are the shared Brush settings below the tabs (<kbd>[</kbd>
   card's polygon close to its texture's alpha (a frond-shaped strip rather
   than a rectangle); its shadow is then the frond's shape.
 
-`Games/WorldsLab/Tools/Terrain/` builds WorldsLab's terrain foliage this way:
-`make_foliage_textures.py` (a spruce frond, bark, grass), `make_foliage_materials.py`
-(Subsurface needles, grass and shrub cards, bark, with wind) and
-`make_foliage_meshes.py` (a grass tuft, a bush, a spruce with two LOD meshes,
-and a rock).
+`Games/DemoLab/Tools/Art/l1_foliage/` builds Demo Lab's L1 foliage this way:
+`make_l1_foliage_textures.py` (a spruce frond, bark, grass, wildflowers),
+`make_l1_foliage_materials.py` (Subsurface needles, grass and wildflower
+cards, bark, swaying along the Wind node) and `make_l1_foliage_meshes.py` (a
+grass tuft, wildflowers, a spruce with two LOD meshes). L1 places them with
+Procedural Spawners rather than paint (`Engine/Docs/Guides/ProceduralGuide.md`).
 
 ## Console
 
@@ -157,8 +158,9 @@ Foliage` (or `FoliagePaint`, `FoliageErase`) opens the tab.
 
 ## Numbers
 
-Measured on this Linux/Vulkan machine, in the editor, on the 257² Hills test
-level: about 12,800 instances of grass, bushes, rocks and pines with shadows,
+Measured on this Linux/Vulkan machine, in the editor, on WorldsLab's former
+257² Hills test level (removed in Demo Lab M7; git history at 61af1eec):
+about 12,800 instances of grass, bushes, rocks and pines with shadows,
 seen from inside the woods: the editor viewport reports 63 fps. Grass
 spacing 110 over a 120 m radius paints in a few seconds.
 

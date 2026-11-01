@@ -19,7 +19,7 @@
  * -headless runs it with no window, input or renderer -- a client a bot
  * drives, for an unattended network test:
  *
- *     WorldsLab -headless -connect=127.0.0.1 -WorldsLab.PvpBot=1
+ *     MyGame -headless -connect=127.0.0.1 -MyGame.Bot=1
  *
  * No log handler, deliberately: without one a Fatal aborts instead of
  * continuing.
