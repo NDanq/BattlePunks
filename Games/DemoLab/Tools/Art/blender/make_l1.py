@@ -373,9 +373,33 @@ def steam_vent():
              pivot_note="bottom centre; emit steam particles from (0, 30, 0) cm upward")
 
 
+def balustrade():
+    """The plaza's edge: a 4 m run of stone balustrade over a retaining wall's coping -- a
+    plinth, eight turned balusters, a moulded rail, a pier at the run's start (chain every
+    400 cm; the next run's pier closes it) -- and the retaining wall face below, 3 m of
+    rusticated stone with a weathered batter, to sit into the slope under the edge."""
+    o = [K.box_minmax("Wall", (-2.0, -0.05, -3.0), (2.0, 0.55, 0.0), "StoneBlocks", bevel=0.02)]
+    o.append(K.box_minmax("Batter", (-2.0, -0.35, -3.0), (2.0, 0.0, -2.2), "StoneBlocks", bevel=0.04))
+    o.append(K.box_minmax("Coping", (-2.0, -0.12, 0.0), (2.0, 0.55, 0.12), "StoneBlocks", bevel=0.02))
+    o.append(K.box_minmax("Plinth", (-2.0, -0.02, 0.12), (2.0, 0.34, 0.27), "StoneBlocks", bevel=0.02))
+    prof = [(0.0, 0.0), (0.075, 0.0), (0.075, 0.04), (0.05, 0.07), (0.045, 0.16), (0.085, 0.3), (0.09, 0.36),
+            (0.06, 0.45), (0.04, 0.5), (0.04, 0.53), (0.07, 0.56), (0.07, 0.6), (0.0, 0.6)]
+    for k in range(8):
+        x = -1.5 + k * 0.43
+        o.append(K.lathe("Baluster", prof, (x, 0.16, 0.27), "StoneBlocks", seg=14))
+    o.append(K.box_minmax("Rail", (-2.0, -0.04, 0.87), (2.0, 0.36, 0.97), "StoneBlocks", bevel=0.02))
+    o.append(K.box_minmax("RailCap", (-2.0, -0.07, 0.97), (2.0, 0.39, 1.04), "StoneBlocks", bevel=0.025))
+    o.append(K.box_minmax("Pier", (-2.0, -0.08, 0.12), (-1.6, 0.4, 1.12), "StoneBlocks", bevel=0.02))
+    o.append(K.box_minmax("PierCap", (-2.05, -0.13, 1.12), (-1.55, 0.45, 1.2), "StoneBlocks", bevel=0.02))
+    o.append(K.place(K.sphere("Finial", 0.11, mat="BrassAged", seg=16, rings=8), (-1.8, 0.16, 1.3)))
+    K.export("Balustrade", o, D + "Balustrade.nmmesh", ground=False, kit=KIT, ao_dist=0.6,
+             pivot_note="the coping's top at its centre line's -Z edge (y = 0 is the plaza's surface); 4 m along X, "
+                        "the plaza on +Z; the retaining wall runs 3 m down; chain every 400 cm")
+
+
 def main():
     K.run_kit(KIT, [facade_wall, facade_arch, blast_door, dock, gatehouse, road_lamp, guard_rail, fence_post,
-                    signal_mast, rocks, cliffs, sea, steam_vent])
+                    signal_mast, rocks, cliffs, sea, steam_vent, balustrade])
 
 
 main()

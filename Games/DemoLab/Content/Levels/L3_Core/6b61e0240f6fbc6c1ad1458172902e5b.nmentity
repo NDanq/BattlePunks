@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="6b61e0240f6fbc6c1ad1458172902e5b" Name="Dress_HelixShutterFrame_Post_0" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/Kit/SteelDark.material.nmgraph" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="235.69" Y="372.5" Z="-630.38" />
+    <Rotation X="0" Y="69.5" Z="0" />
+    <Scale X="16" Y="745" Z="34" />
+  </Component>
+</Entity>

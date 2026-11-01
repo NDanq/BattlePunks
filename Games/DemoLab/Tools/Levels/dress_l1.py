@@ -527,6 +527,62 @@ def plaza_props(lv, toggle=None):
              collide=True)
 
 
+def plaza_edge(lv):
+    """The plaza's open edges (west, east, south either side of the road): runs of stone
+    balustrade on a retaining wall that goes down into the slope, so the paving ends at a built
+    edge instead of dirt. Collision keeps the player on the plaza."""
+    px0, pz0, px1, pz1, top = D['plaza']
+    rx0, rx1 = 3330, 4120                          # the road's way in at the south edge
+    runs = []                                      # (start x, start z, along x, along z, length, yaw)
+    runs.append((px0, pz0, 1, 0, rx0 - px0, 0))    # south, west of the road: the plaza on +Z
+    runs.append((rx1, pz0, 1, 0, px1 - rx1, 0))
+    runs.append((px0, pz1 - 250, 0, -1, pz1 - 250 - pz0, 90))     # west: the plaza on +X (east)
+    runs.append((px1, pz0, 0, 1, pz1 - 250 - pz0, 270))          # east: the plaza on -X (west)
+    n = 0
+    for j, (x0, z0, ux, uz, length, yaw) in enumerate(runs):
+        k = max(1, int(math.ceil(length / 400.0 - 0.05)))
+        for i in range(k):
+            c = min(200 + i * 400, length - 200)   # the last run overlaps to end flush
+            x, z = x0 + ux * c, z0 + uz * c
+            mesh(lv, f'PlazaEdge_{n}', K + 'Balustrade.nmmesh', (x, top, z), yaw)
+            n += 1
+        # one collider along the run, a metre tall
+        mx, mz = x0 + ux * length / 2, z0 + uz * length / 2
+        ox, oz = math.sin(math.radians(yaw)) * 20, math.cos(math.radians(yaw)) * 20
+        lv.box(f'PlazaEdgeBlock_{j}', (mx + ox, top + 55, mz + oz),
+               (40, 110, length) if ux == 0 else (length, 110, 40), 0, visible=False)
+    return n
+
+
+def west_flank(lv):
+    """The highland's west flank, a long bare slope from the meadow up to the highland seen from
+    the dock and the road: rock outcrops along it (cliff pieces sunk into the slope, facing west,
+    two bands up it) and spruce on its gentler foot and shoulder."""
+    rng = np.random.default_rng(23)
+    n = 0
+    for band, (level, pick, sink) in enumerate(((1700, ('Cliff_B', 'Cliff_A'), 220), (2700, ('Cliff_C', 'Cliff_B'), 260))):
+        z = 6900.0 + band * 350
+        while z < 13200:
+            x = -6000.0
+            while x < 1500 and height_at(x, z) < level:
+                x += 50.0
+            if x < 1500:
+                y = height_at(x, z)
+                m = pick[int(rng.integers(0, 2))]
+                mesh(lv, f'Flank_Rock_{n}', K + m + '.nmmesh', (x + float(rng.uniform(-120, 120)), y - sink, z),
+                     90.0 + float(rng.uniform(-25, 25)), scale=float(rng.uniform(1.0, 1.45)))
+                n += 1
+            z += float(rng.uniform(650, 950))
+    trees = spawner_comp(lv, {'Source': 2, 'Project': 1, 'Spacing': 560, 'NoiseScale': 3000, 'NoiseThreshold': 0.3,
+                              'MaxSlope': 38, 'MinHeight': 250, 'ScaleMin': 0.8, 'ScaleMax': 1.5, 'Sink': 0.04,
+                              'ColorVariation': 0.3, 'CellSize': 3000, 'LODDistance': 2500, 'LOD1Density': 0.9,
+                              'LOD2Density': 0.6, 'CastShadows': False, 'CullDistance': 30000, 'Seed': 27},
+                         [(FOL + 'L1_Spruce_LOD1.nmmesh', 1, 1, FOL + 'L1_Spruce_LOD2.nmmesh')],
+                         exclusions=['RoadClear', 'Zone_Plaza'], box=(3200, 3000, 3600))
+    lv.entity('Foliage_WestFlank', [trees, lv.transform((-2600, 2000, 9800))])
+    return n
+
+
 def paving(lv):
     """The plaza paved: the L2 kit's 4 m floor slab in StoneBlocks, laid by a Box spawner (one
     instanced draw, no collision needed: it lies on the flat terrain)."""
@@ -743,6 +799,8 @@ def dress(lv):
     # --- Plants, the plaza's paving, the rails' blockers ----------------------------------------
     foliage(lv)
     paving(lv)
+    edge = plaza_edge(lv)
+    flank = west_flank(lv)
     blockers = rail_blockers(lv)
 
     # --- Light and air -----------------------------------------------------------------------
@@ -750,7 +808,7 @@ def dress(lv):
          [((-2400, 300, -1500), 4000), ((1800, 800, 1200), 4500), ((3700, 1500, 6000), 3500)])
     patch(lv, 'Weather', lambda t: set_field(set_field(t, 'MistDensity', 0.45), 'MistHeight', -60))
     print(f'  {TERRAIN_FILE}: {RES}x{RES}, heights {lo:.0f}..{hi:.0f} cm; {len(shore)} foam strips, '
-          f'{blockers} rail blockers')
+          f'{blockers} rail blockers, {edge} balustrade runs, {flank} flank rocks')
 
 
 ZONES = {

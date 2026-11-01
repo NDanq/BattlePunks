@@ -60,9 +60,19 @@ def add_mark(lv, name, pos, yaw):
 
 
 def mesh(lv, name, path, pos, rot=(0, 0, 0), scale=(1, 1, 1), parent=None, material=None, shadows=True, visible=True,
-         extra=()):
-    return lv.entity(name, [lv.render(path, visible, shadows, material), lv.transform(pos, rot, scale)] + list(extra),
-                     parent)
+         extra=(), params=()):
+    """params: (name, slot, value tuple) material parameter overrides on the Render."""
+    r = lv.render(path, visible, shadows, material)
+    if params:
+        lines = [f'    <ParameterCount Value="{len(params)}" />']
+        for i, (pname, slot, v) in enumerate(params):
+            v = tuple(v) + (0,) * (4 - len(v))
+            lines += [f'    <Parameter{i}Name Value="{pname}" />', f'    <Parameter{i}Slot Value="{slot}" />',
+                      f'    <Parameter{i}X Value="{v[0]}" />', f'    <Parameter{i}Y Value="{v[1]}" />',
+                      f'    <Parameter{i}Z Value="{v[2]}" />', f'    <Parameter{i}W Value="{v[3]}" />']
+        r = [x for x in r if 'ParameterCount' not in x]
+        r = r[:-2] + lines + r[-2:]
+    return lv.entity(name, [r, lv.transform(pos, rot, scale)] + list(extra), parent)
 
 
 def point(lv, name, pos, color, intensity, radius, parent=None, source=10, toggle=None, show_when_on=True):
@@ -299,6 +309,31 @@ def dress_l2(lv):
     add_mark(lv, 'Alarm_CineMark_C6', (450, L.L2['gantry']['steps'] * L.L2['gantry']['rise'], 600), 90)
     shaft(lv)
     airship_l2(lv)
+    backdrop_l2(lv)
+
+
+# Where L2 stands on L1's island: L2's origin is L1's (3700, 4500, 11000) -- the highland behind
+# the cliff the blast door is cut into, the lab's floor just over its highest ground.
+L2_ON_L1 = (3700, 4500, 11000)
+
+
+def backdrop_l2(lv):
+    """The island and the sea round the lab, for C6 on the roof (the alarm state only): L1's own
+    terrain (its heightfield and Island material, no collision, no shadows) and its far sea,
+    moved so the lab sits on the highland: south over the cliff to the plaza and the road, the
+    hills north-east, the sea all round. Drawn, not walked."""
+    import dress_l1
+    ox, oy, oz = L2_ON_L1
+    lv.entity('Alarm_CineBackdrop_Island', [
+        lv.fields('Terrain', version=3, Terrain=dress_l1.TERRAIN_FILE, Material=dress_l1.ISLAND, Visible=True,
+                  CastShadows=False, Occluder=False, Walkable=False, UVTileSize=100, LODDistance=0, Foliage='',
+                  FoliageVisible=False),
+        lv.transform((dress_l1.OX - ox, -oy, dress_l1.OZ - oz))], static=True)
+    mesh(lv, 'Alarm_CineBackdrop_Sea', 'Content/Meshes/L1/Sea_Far.nmmesh', (-ox, dress_l1.SEA - oy, -oz), shadows=False)
+    for i in (-1, 0, 1):
+        for j in (-1, 0, 1):
+            mesh(lv, f'Alarm_CineBackdrop_Sea_{i + 1}{j + 1}', 'Content/Meshes/L1/Sea_Plane.nmmesh',
+                 (-6000 + i * 20000 - ox, dress_l1.SEA - oy, -2000 + j * 20000 - oz), shadows=False)
 
 
 # =============================================================================
@@ -332,10 +367,17 @@ def shaft(lv):
         for j, y in enumerate(range(-250, -SHAFT_DEPTH, -300)):
             mesh(lv, f'CineShaft_Band_{k}_{j}', BOX, (x, y, z), scale=(sx + 4, 14, sz + 4), material=MAT.format('BrassAged'),
                  shadows=False)
+    # Lamp bands: a caged bulkhead on the west wall each 3 m, its light out from the wall (soft, dim:
+    # C4's last shot looks down past them, and close lamps blow the walls out)
     for j, y in enumerate(range(-250, -SHAFT_DEPTH, -300)):
-        point(lv, f'CineShaft_Lamp_{j}', (cx - 190, y + 30, cz - 190), (255, 196, 128), 14, 650, source=6)
-    mesh(lv, 'CineShaft_Glow', BOX, (cx, -SHAFT_DEPTH - 5, cz), scale=(w, 10, w), material=MAT.format('LampGlow'), shadows=False)
-    point(lv, 'CineShaft_Core', (cx, -SHAFT_DEPTH + 150, cz), (120, 190, 255), 40, 1400, source=60)
+        z = cz - 120 if j % 2 else cz + 120
+        mesh(lv, f'CineShaft_LampFixture_{j}', 'Content/Meshes/L3_Core/L3_Core_Bulkhead.nmmesh', (hole[0], y + 40, z),
+             rot=(0, 270, 0), shadows=False)
+        point(lv, f'CineShaft_Lamp_{j}', (hole[0] + 45, y + 40, z), (255, 196, 128), 4, 520, source=25)
+    # the core's glow under the well: blue and held low (at the kit's 12 it filled C4's last shot)
+    mesh(lv, 'CineShaft_Glow', BOX, (cx, -SHAFT_DEPTH - 5, cz), scale=(w, 10, w), material=MAT.format('LampGlow'), shadows=False,
+         params=(('EmissiveColor', 0, (0.35, 0.7, 1.0)), ('EmissiveIntensity', 0, (0.6,))))
+    point(lv, 'CineShaft_Core', (cx, -SHAFT_DEPTH + 150, cz), (120, 190, 255), 9, 1400, source=60)
     point(lv, 'Calm_CineCage_Under', (cx, -40, cz), (255, 190, 120), 8, 500, source=20)
 
 
@@ -372,6 +414,8 @@ def c4(lv):
     s.anim(me, [(0, 100, 'FB_Walk', {'loop': True}), (92, 450, 'FB_Idle', {'loop': True, 'blendIn': 10})])
 
     s.fade([(0, 0), (405, 0), (450, 1)])
+    # the last shot looks down past the lamp bands into the glow: the stack's -1.5 held lower there
+    s.pp('Exposure', [(0, -1.5, 'Constant'), (330, -2.3, 'Constant')])
     s.audio(100, 170, 'World/Lift_Start.nmsound', volume=1.0)
     s.audio(130, 450, 'World/Lift_Run_Loop.nmsound', volume=1.0, blendIn=20)
     s.audio(250, 450, 'Ambience/Amb_L3_Reactor.nmsound', volume=0.8, blendIn=90)
@@ -391,16 +435,22 @@ LOCKER_STAND = (-560, 0, -1395)
 def c5(lv):
     s = Seq('C5_Theft', 540)
     sh = Shots(lv, s, 'C5')
-    # 1: across the plinth: the intel lifts off its cradle into the player's reach
-    sh.shot(0, 70, [(0, (110, 150, 120), (0, 140, -60)), (69, (90, 160, 100), (0, 150, -70))], fov=40)
-    # 2: the shaft from the gallery's south side: the reactor drops to red, klaxons sweep, the vents blow
-    sh.shot(70, 175, [(70, (300, 260, -1650), (0, 1100, 600)), (174, (250, 240, -1600), (0, 1000, 600))], fov=60)
-    # 3: a vent beside, steam jetting in the red
+    # 1: the vault from inside its door, the deposit banks round it; in on the plinth as the intel
+    # lifts off its cradle into the player's reach
+    sh.shot(0, 70, [(0, (-330, 250, -480), (0, 150, 0)), (69, (-150, 185, -250), (0, 150, -20))], fov=50)
+    # 2: the helix's foot from the south landing, square on to its shutter: it drops in its housing
+    # (L3.Alarm at 72, down in ~1.3 s) across the way back up, the reactor going red over it
+    hsx, hsz = 271, -726
+    sh.shot(70, 140, [(70, (-430, 250, -1090), (hsx + 30, 360, hsz + 40)), (139, (-400, 235, -1060), (hsx + 30, 330, hsz + 40))],
+            fov=60)
+    # 3: the shaft wide from the gallery's south side: the reactor red, klaxons sweeping, the vents blow
+    sh.shot(140, 200, [(140, (300, 260, -1650), (0, 1100, 600)), (199, (250, 240, -1600), (0, 1000, 600))], fov=65)
+    # 4: a vent beside, steam jetting in the red
     vx, vz = 1800 * math.sin(math.radians(65)), 1800 * math.cos(math.radians(65))
-    sh.shot(175, 260, [(175, (vx - 700, 160, vz - 650), (vx, 90, vz)), (259, (vx - 600, 150, vz - 560), (vx, 80, vz))], fov=50)
+    sh.shot(200, 260, [(200, (vx - 700, 160, vz - 650), (vx, 90, vz)), (259, (vx - 600, 150, vz - 560), (vx, 80, vz))], fov=50)
     # 4: the player runs out of the vault and over the bridge
     sh.shot(260, 400, [(260, (300, 220, -1250), (0, 120, -300)), (399, (-150, 230, -1750), (-520, 110, -1420))], fov=50)
-    # 5: over the shoulder at the locker (Blend Out into the game)
+    # 6: over the shoulder at the locker (Blend Out into the game)
     lx, _, lz = LOCKER_STAND
     sh.shot(400, 540, [(400, (lx + 230, 210, lz + 300), (lx, 120, lz - 150)), (539, (lx + 40, 200, lz + 330), (lx, 130, lz - 300))],
             fov=50)
@@ -424,7 +474,7 @@ def c5(lv):
     s.audio(0, 40, 'UI/UI_Confirm.nmsound', volume=0.6)
     s.audio(68, 150, 'World/Shutter_Slam.nmsound', volume=1.0)
     s.audio(74, 150, 'World/Steam_Vent_Burst.nmsound', volume=0.9)
-    s.audio(176, 250, 'World/Steam_Vent_Burst.nmsound', volume=0.8)
+    s.audio(200, 270, 'World/Steam_Vent_Burst.nmsound', volume=0.8)
     s.audio(70, 200, 'Robots/Robot_Death.nmsound', volume=0.5, rate=0.6)
     s.subtitle(8, 66, 'You have it. Now get out of there.')
     s.subtitle(180, 255, 'They know. Security is on its way down.')
@@ -473,9 +523,23 @@ def airship_l2(lv):
     mesh(lv, 'Alarm_CineAirship_Envelope', AIRSHIP + 'Airship_Envelope.nmmesh', (0, 0, 0), parent=hull)
     for part, off in (('PropLeft', (-195, 220, -400)), ('PropRight', (-195, 220, 400)), ('PropTail', (-1860, 900, 0))):
         mesh(lv, f'Alarm_CineAirship_{part}', AIRSHIP + f'Airship_{part}.nmmesh', off, parent=hull)
-    point(lv, 'Alarm_CineAirship_Lamp', (0, -60, 0), (255, 178, 105), 40, 3000, parent=hull, source=40)
-    point(lv, 'Alarm_CineAirship_Belly', (300, 280, 0), (255, 196, 140), 30, 2600, parent=hull, source=60)
-    point(lv, 'Alarm_CineAirship_Nose', (1300, 900, 0), (255, 170, 110), 25, 2200, parent=hull, source=60)
+    # Its own lamps glow, no more (they lit the whole envelope before, a lantern in the dusk); the
+    # dusk does the lighting: a warm rose key from low in the west-south-west (where the cameras
+    # stand), a cool sky fill from overhead and an orange rim from the afterglow behind it, all
+    # riding on the hull.
+    point(lv, 'Alarm_CineAirship_Lamp', (0, -60, 0), (255, 178, 105), 10, 1600, parent=hull, source=40)
+    point(lv, 'Alarm_CineAirship_Belly', (300, 280, 0), (255, 196, 140), 6, 1400, parent=hull, source=60)
+    point(lv, 'Alarm_CineAirship_Nose', (1300, 900, 0), (255, 170, 110), 4, 1200, parent=hull, source=60)
+    # (kept soft: the alarm's volumetric fog draws a spot's cone, and the envelope's canvas takes light easily)
+    for name, pos, color, intensity, cone in (('Key', (-2600, -1400, -4200), (255, 176, 140), 14, (28, 42)),
+                                              ('Fill', (-600, 5200, -1200), (150, 165, 230), 9, (40, 60)),
+                                              ('Rim', (2800, 2200, 4400), (255, 140, 70), 26, (24, 38))):
+        p, y = look(pos, (-200, 700, 0))
+        lv.entity(f'Alarm_CineAirship_{name}', [
+            lv.fields('Spot Light', version=2, Color=color, Intensity=intensity, Range=9000, InnerConeAngle=cone[0],
+                      OuterConeAngle=cone[1], Active=True, CastShadows=False, ShadowTechnique=1, ShadowBias=0.002,
+                      ShadowNormalBias=1.5, SourceRadius=200),
+            lv.transform(pos, (p, y, 0))], hull)
     point(lv, 'Alarm_CineAirship_Winch', (LINE[0], LINE[1] - 40, 0), (255, 200, 150), 6, 600, parent=hull)
     mesh(lv, 'Alarm_CineAirship_Line', CYL, (LINE[0], LINE[1], 0), scale=(3, 1, 3), parent=hull,
          material=MAT.format('Leather'), shadows=False)
@@ -500,7 +564,9 @@ def c6(lv):
     # 5: from the dome's crown: the airship turns away, climbing into the dusk
     sh.shot(400, 540, [(400, (-200, 1330, -300), ship_c6(400)), (539, (-150, 1330, -250), ship_c6(539))], fov=55)
     # 6: wide and low: away over the island; the music swells; fade to the credits
-    sh.shot(540, 660, [(540, (-2500, 1400, -2800), ship_c6(540)), (659, (-2400, 1450, -2700), ship_c6(659))], fov=45)
+    # (high over the lab's west side, looking east over the highland to the sea: L2's island backdrop)
+    sh.shot(540, 660, [(540, (-2200, 2700, -2400), add(ship_c6(540), (0, -2300, 0))),
+                       (659, (-2000, 2750, -2300), add(ship_c6(659), (0, -2600, 0)))], fov=45)
 
     rig = s.bind('ship', lv.guid('Alarm_CineAirship'), 'Alarm_CineAirship')
     s.transform(rig, SHIP_C6)
@@ -524,7 +590,7 @@ def c6(lv):
     s.bool(me, 'Render', 'Visible', [(0, True), (392, False)])
 
     s.fade([(0, 0), (615, 0), (660, 1)])
-    s.pp('Exposure', [(0, -1.2, 'Constant'), (185, 0.4, 'Constant'), (400, 0.6)])     # the stack's, then the sky's
+    s.pp('Exposure', [(0, -1.2, 'Constant'), (185, 0.4, 'Constant'), (400, 0.2)])     # the stack's, then the sky's
     s.audio(40, 660, MUSIC + 'Music_Extraction.nmsound', volume=1.0, blendIn=30)
     s.audio(0, 70, 'World/Steam_Vent_Burst.nmsound', volume=0.7)
     s.audio(175, 260, 'World/Lift_Start.nmsound', volume=0.8)

@@ -301,6 +301,106 @@ def drum():
     export("L3_Core_Drum", o, ao_dist=1.0)
 
 
+def vault_dress():
+    """The vault's furniture, in level space inside the drum: banks of safe-deposit boxes round
+    seven walls under a walnut cornice, brass gear medallions over them, fluted corner columns,
+    a coffered ceiling with the clamp crown over the plinth, brass inlay in the floor."""
+    dr = L3['drum']
+    Ai = dr['apothem'] / 100.0 - 0.02            # the lining's face
+    H = dr['height'] / 100.0
+    side = 2 * Ai * TAN
+    rnd = __import__('random').Random(31)
+    o = []
+    for label, a in K_COMPASS.items():
+        rot = (0, 0, -a)
+        nx, nz = compass(a, 1.0)
+        tx, tz = math.cos(math.radians(a)), -math.sin(math.radians(a))
+
+        def at(u, d, y):
+            """u along the wall (clockwise), d out from it into the room, y up."""
+            return B(nx * (Ai - d) + tx * u, nz * (Ai - d) + tz * u, y)
+        if label != 'S':
+            # the bank: a walnut carcass, 10 x 8 brass drawer fronts with keyhole plates
+            w, y0, y1 = side - 0.8, 0.12, 3.12
+            o.append(K.box("Carcass", (w + 0.08, 0.3, y1 - y0 + 0.08), at(0, 0.15, (y0 + y1) / 2), "Walnut", 0.01,
+                           rot=rot))
+            o.append(K.box("Plinth", (w + 0.12, 0.34, 0.12), at(0, 0.17, 0.06), "PaintBlack", 0.005, rot=rot))
+            cols, rows = 10, 8
+            cw, rh = w / cols, (y1 - y0) / rows
+            for i in range(cols):
+                for j in range(rows):
+                    u, y = -w / 2 + (i + 0.5) * cw, y0 + (j + 0.5) * rh
+                    big = j < 2 and i % 2 == 0     # the bottom rows: double-width boxes
+                    if j < 2 and i % 2 == 1:
+                        continue
+                    fw = (2 * cw if big else cw) - 0.035
+                    fu = u + (cw / 2 if big else 0)
+                    out = 0.3 + (0.06 if rnd.random() < 0.04 else 0.0)
+                    m = "BrassAged" if rnd.random() < 0.85 else "BrassBrushed"
+                    o.append(K.box("Drawer", (fw, 0.025, rh - 0.035), at(fu, out + 0.012, y), m, 0.004, rot=rot,
+                                   segments=1))
+                    o.append(K.box("Keyhole", (0.05, 0.008, 0.07), at(fu, out + 0.028, y + 0.03), "PaintBlack", 0.0,
+                                   rot=rot))
+                    o.append(K.box("Label", (0.09, 0.006, 0.03), at(fu, out + 0.027, y - 0.08), "PanelCream", 0.0,
+                                   rot=rot))
+            # the cornice over it, a brass rail along its front
+            o.append(K.box("Cornice", (side - 0.05, 0.42, 0.14), at(0, 0.21, y1 + 0.13), "Walnut", 0.02, rot=rot))
+            o.append(K.box("CorniceRail", (side - 0.05, 0.04, 0.04), at(0, 0.43, y1 + 0.13), "BrassAged", 0.01, rot=rot))
+            # a gear medallion on the wall above
+            r = 0.95 if label == 'N' else 0.7
+            g = K.gear("Medallion", r, 36 if label == 'N' else 28, 0.08, mat="BrassAged", spokes=6 if label == 'N' else 5,
+                       hub_r=r * 0.22, bevel=0.0)
+            o.append(K.place(g, at(0, 0.06, 5.0), rot))
+            o.append(K.place(K.cyl("Boss", r * 0.12, 0.12, mat="BrassBrushed", seg=24), at(0, 0.12, 5.0),
+                             (90, 0, -a)))
+        else:
+            # the door wall: a brass architrave round the doorway inside
+            door = dr['doors']['S'] / 100.0
+            for du in (-door / 2 - 0.12, door / 2 + 0.12):
+                o.append(K.box("Architrave", (0.24, 0.08, DOOR_H + 0.24), at(du, 0.04, (DOOR_H + 0.24) / 2), "BrassAged",
+                               0.01, rot=rot))
+            o.append(K.box("ArchHead", (door + 0.48, 0.08, 0.24), at(0, 0.04, DOOR_H + 0.12), "BrassAged", 0.01,
+                           rot=rot))
+            o.append(K.box("Cornice", (side - 0.05, 0.42, 0.14), at(0, 0.21, 3.25), "Walnut", 0.02, rot=rot))
+        # a fluted column at the corner clockwise of this side
+        R = Ai / math.cos(math.radians(22.5)) - 0.12
+        cx, cz = compass(a + 22.5, R)
+        o.append(K.cyl("Column", 0.13, H - 0.5, loc=B(cx, cz, (H - 0.5) / 2 + 0.25), mat="BrassAged", seg=24))
+        for k in range(8):
+            fa = math.radians(45 * k + 22.5)
+            o.append(K.cyl("Flute", 0.02, H - 1.0, loc=B(cx + 0.125 * math.cos(fa), cz + 0.125 * math.sin(fa),
+                                                          (H - 1.0) / 2 + 0.5), mat="Walnut", seg=6))
+        o.append(K.box("Base", (0.36, 0.36, 0.25), B(cx, cz, 0.125), "BrassAged", 0.02, rot=(0, 0, -(a + 22.5))))
+        o.append(K.box("Capital", (0.38, 0.38, 0.25), B(cx, cz, H - 0.125), "BrassAged", 0.02, rot=(0, 0, -(a + 22.5))))
+        # the ceiling's radial beam toward this corner
+        bx, bz = compass(a + 22.5, (2.3 + R) / 2)
+        o.append(K.box("Beam", (0.22, R - 2.3, 0.3), B(bx, bz, H - 0.15), "Walnut", 0.02, rot=(0, 0, -(a + 22.5))))
+        # floor inlay: a spoke between the rings
+        fx, fz = compass(a, 2.2)
+        o.append(K.box("Inlay", (0.05, 1.4, 0.012), B(fx, fz, 0.016), "BrassBrushed", 0.002, rot=(0, 0, -a), segments=1))
+    # coffers: octagonal rings under the ceiling
+    for a_in, a_out in ((2.0, 2.3), (3.9, 4.2)):
+        o.append(oct_ring("Coffer", a_in, a_out, H - 0.01, 0.3, "Walnut"))
+        o.append(oct_ring("CofferTrim", a_out - 0.02, a_out + 0.03, H - 0.3, 0.04, "BrassAged"))
+    for a_in, a_out in ((1.45, 1.53), (2.92, 3.0)):
+        o.append(oct_ring("FloorRing", a_in, a_out, 0.022, 0.012, "BrassBrushed"))
+    # the clamp crown over the plinth: a horizontal gear on rods, four claws reaching down
+    crown_y = H - 1.0
+    o.append(K.place(K.gear("Crown", 0.9, 40, 0.1, mat="BrassBrushed", spokes=8, hub_r=0.25, bevel=0.0), B(0, 0, crown_y),
+                     (90, 0, 0)))
+    for k in range(4):
+        ka = 45 + 90 * k
+        x0, z0 = compass(ka, 0.75)
+        x1, z1 = compass(ka, 2.05)
+        o.append(K.sweep("Rod", [B(x0, z0, crown_y), B(x1, z1, H - 0.3)], 0.025, "SteelDark", seg=8))
+        c0x, c0z = compass(ka, 0.55)
+        c1x, c1z = compass(ka, 0.32)
+        o.append(K.sweep("Claw", [B(c0x, c0z, crown_y - 0.05), B(c0x, c0z, crown_y - 1.2), B(c1x, c1z, crown_y - 1.9)],
+                         0.03, "SteelDark", seg=8))
+        o.append(K.place(K.sphere("Knuckle", 0.06, mat="BrassAged", seg=12, rings=6), B(c0x, c0z, crown_y - 1.2)))
+    export("L3_Core_VaultDress", o, ao_dist=0.8)
+
+
 # ==============================================================================================
 # The helix: one 22.5-degree piece of the catwalk that spirals round the reactor (deck, both
 # railings, stringers, the hangers to the lap above); placed by yaw and height. And the
@@ -637,8 +737,12 @@ def props():
 
 
 def main():
+    """All the meshes, or the functions named after "--" (blender ... --python make_l3_core.py -- vault_dress)."""
+    argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     K.reset()
-    for fn in (shaft, pit, drum, helix_piece, helix_collider, rooms, props):
+    for fn in (shaft, pit, drum, vault_dress, helix_piece, helix_collider, rooms, props):
+        if argv and fn.__name__ not in argv:
+            continue
         K.clear()
         fn()
     print("L3_Core meshes done")

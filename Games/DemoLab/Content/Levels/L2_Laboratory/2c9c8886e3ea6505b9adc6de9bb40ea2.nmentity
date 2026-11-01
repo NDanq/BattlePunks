@@ -2,8 +2,8 @@
 <Entity Guid="2c9c8886e3ea6505b9adc6de9bb40ea2" Name="Alarm_CineAirship_Nose" Parent="31c480e2ab788c620aed0b0e59af0be1">
   <Component Type="Point Light" Version="2">
     <Color R="255" G="170" B="110" A="255" />
-    <Intensity Value="25" />
-    <Radius Value="2200" />
+    <Intensity Value="4" />
+    <Radius Value="1200" />
     <Active Value="true" />
     <CastShadows Value="false" />
     <ShadowTechnique Value="0" />

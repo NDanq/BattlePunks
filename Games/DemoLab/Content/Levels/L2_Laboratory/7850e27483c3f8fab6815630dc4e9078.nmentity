@@ -2,7 +2,7 @@
 <Entity Guid="7850e27483c3f8fab6815630dc4e9078" Name="K_Archive_Floor_0_0" Mobility="Static">
   <Component Type="Render" Version="7">
     <Visible Value="true" />
-    <Material0 Value="" />
+    <Material0 Value="Content/Materials/Kit/WoodBeam.material.nmgraph" />
     <Material1 Value="" />
     <Material2 Value="" />
     <Material3 Value="" />

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="35198c0bf3166063874794bf214926ff" Name="Dress_HelixShutterFrame_PostLip2_0" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/Kit/BrassAged.material.nmgraph" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="226.665" Y="372.5" Z="-643.363" />
+    <Rotation X="0" Y="69.5" Z="0" />
+    <Scale X="4" Y="745" Z="6" />
+  </Component>
+</Entity>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="468aad4039f8d3d664f246cf7029dbff" Name="Calm_Emergency_Elevator_36">
+  <Component Type="Point Light" Version="2">
+    <Color R="150" G="175" B="255" A="255" />
+    <Intensity Value="0.8" />
+    <Radius Value="700" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="8" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L2.Power.All" />
+    <ShowWhenOn Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="2000" Y="550" Z="1800" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

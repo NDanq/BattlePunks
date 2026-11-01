@@ -86,7 +86,7 @@ mat("GlassFrosted", set="Glass", metres=1.0, base=(0.85, 0.88, 0.9), domain="Tra
     refraction=1.04, rough_add=0.35)
 mat("GlassClear", set="Glass", metres=1.0, base=(0.6, 0.65, 0.66), domain="Translucent", opacity=0.12,
     refraction=1.02, rough_mul=0.3)
-mat("Steam", base=(0.92, 0.93, 0.95), domain="Translucent", model="Volume", opacity=0.35, phase=0.3)
+mat("Steam", base=(0.92, 0.93, 0.95), domain="Translucent", model="Volume", opacity=0.7, phase=0.45, wisp=(0.35, 0.09))
 mat("Rubber", base=(0.035, 0.035, 0.035), rough=0.78)
 mat("PaintRed", base=(0.55, 0.05, 0.03), rough=0.38, metal=0.0)
 mat("PaintBlack", base=(0.03, 0.03, 0.03), rough=0.35, metal=0.0)

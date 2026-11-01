@@ -5,11 +5,11 @@
     <ZFar Value="80000" />
     <Active Value="false" />
     <Projection Value="1" />
-    <FovY Value="50" />
+    <FovY Value="65" />
   </Component>
   <Component Type="Transform" Version="1">
-      <Position X="931.354" Y="160" Z="110.713" />
-      <Rotation X="4.19111" Y="47.1211" Z="0" />
+      <Position X="300" Y="260" Z="-1650" />
+      <Rotation X="-20.3074" Y="-7.59464" Z="0" />
       <Scale X="1" Y="1" Z="1" />
   </Component>
 </Entity>
