@@ -103,6 +103,11 @@ NIMBLE_GAME_CONFIG_BOOL(GTransitionEnabled, "LevelTransition", "Enabled", false,
 NIMBLE_GAME_CONFIG_FLOAT(GTransitionFadeOut, "LevelTransition", "FadeOut", 0.4f, nullptr);
 NIMBLE_GAME_CONFIG_FLOAT(GTransitionFadeIn, "LevelTransition", "FadeIn", 0.6f, nullptr);
 NIMBLE_GAME_CONFIG_INT(GTransitionRevealFrames, "LevelTransition", "RevealFrames", 2, nullptr);
+/* THE WARM-UP (GLOBAL_ILLUMINATION.md, "Capture warm-up"): after RevealFrames, the card stays up and the
+ * World holds still -- at most WarmupSeconds -- while the renderer's captures run at [Rendering]
+ * CaptureWarmupBudgetMs: until the nearest GI Volume has drawn every probe (it lights only then) and no
+ * capture wants work. A level without GI Volumes or probes passes straight through; 0 turns it off. */
+NIMBLE_GAME_CONFIG_FLOAT(GTransitionWarmupSeconds, "LevelTransition", "WarmupSeconds", 15.0f, nullptr);
 NIMBLE_GAME_CONFIG_STRING(GTransitionDocument, "LevelTransition", "Document", "", nullptr);
 NIMBLE_GAME_CONFIG_STRING(GTransitionTitle, "LevelTransition", "Title", "Loading", nullptr);
 NIMBLE_GAME_CONFIG_STRING(GTransitionTip, "LevelTransition", "Tip", "", nullptr);
@@ -823,14 +828,18 @@ namespace NimbleEngine
         case TS_Loading:
             break;   // ApplyPendingLevel moves it on
         case TS_Reveal:
-            /* Ticked before each frame is drawn: past RevealFrames, that many have been. */
-            if(++TransitionFrames > (std::max)(0, GTransitionRevealFrames.GetInt()))
+        {
+            /* Ticked before each frame is drawn: past RevealFrames, that many have been; then the warm-up. */
+            const int32_t Reveal = (std::max)(0, GTransitionRevealFrames.GetInt());
+            if(TransitionFrames <= Reveal) { ++TransitionFrames; }
+            if(TransitionFrames > Reveal && !UpdateTransitionWarmup(InDeltaSeconds))
             {
                 CloseTransitionCard();
                 TransitionStage = TS_FadeIn;
                 TransitionTime  = 0.0f;
             }
             break;
+        }
         case TS_FadeIn:
         {
             TransitionTime += Dt;
@@ -889,8 +898,47 @@ namespace NimbleEngine
         TransitionCard.clear();
     }
 
+    void GameSession::SetCaptureWarmup(const bool bInOn)
+    {
+        bTransitionWarming = bInOn;
+        if(EngineCore::ConfigVar* Var = EngineCore::ConfigFindVar("Rendering", "CaptureWarmup")) { Var->SetBool(bInOn); }
+    }
+
+    bool GameSession::UpdateTransitionWarmup(const float InDeltaSeconds)
+    {
+        const float Most = (std::max)(0.0f, GTransitionWarmupSeconds.GetFloat());
+        RenderCore::RenderStats Stats;
+        Rendering.GetStats(Stats);
+        if(!bTransitionWarming)
+        {
+            /* Nothing drawn yet (a renderer not running): nothing to warm. */
+            if(Most <= 0.0f || !LevelWorld || Stats.FramesRendered == 0) { return false; }
+            SetCaptureWarmup(true);
+            TransitionWarmupTime   = 0.0f;
+            TransitionWarmupFrames = 0;
+            TransitionWarmupStart  = Stats.FramesRendered;
+        }
+        /* Real time, not the fades' clamped step: the cap is the player's wait. */
+        TransitionWarmupTime += (std::max)(InDeltaSeconds, 0.0f);
+        ++TransitionWarmupFrames;
+        /* The captures' state is the last drawn frame's: trusted once three frames of the new level are
+         * drawn since the warm-up began (the render thread runs a frame behind; before, the last level's). */
+        constexpr uint64_t TRUSTED_AFTER = 3;
+        const bool bSettled = Stats.FramesRendered >= TransitionWarmupStart + TRUSTED_AFTER && Stats.GIProbesUnlit == 0
+                           && !Stats.bCapturesBusy;
+        if(!bSettled && TransitionWarmupTime < Most) { return true; }
+        char Line[192];
+        std::snprintf(Line, sizeof(Line), "[Level] warm-up %s after %.2f s, %d frames (GI Volume %u of %u probes unlit)",
+                      bSettled ? "settled" : "timed out", double(TransitionWarmupTime), int(TransitionWarmupFrames),
+                      unsigned(Stats.GIProbesUnlit), unsigned(Stats.GIProbesTotal));
+        CORE_LOG(Line)
+        SetCaptureWarmup(false);
+        return false;
+    }
+
     void GameSession::EndTransition()
     {
+        if(bTransitionWarming) { SetCaptureWarmup(false); }
         CloseTransitionCard();
         if(Interface->IsOpen(TRANSITION_FADE_DOCUMENT)) { Interface->Close(std::string(TRANSITION_FADE_DOCUMENT)); }
         TransitionStage  = TS_None;
@@ -1227,7 +1275,7 @@ namespace NimbleEngine
         UpdateDropIn();
 
         /* Re-read: a level swap may have replaced the mode. */
-        if(ActiveLevel && !bPaused)
+        if(ActiveLevel && !bPaused && !bTransitionWarming)
         {
             if(GameState* State = ActiveLevel->GetGameState())
             {
@@ -1241,7 +1289,7 @@ namespace NimbleEngine
         }
 
         /* WorldBridge reads the World later, in the host's Renderer::EndFrame. */
-        if(LevelWorld && !bPaused)
+        if(LevelWorld && !bPaused && !bTransitionWarming)
         {
             SetScriptInputState(&FilteredInput);
             SetScriptInputHost(&Host);

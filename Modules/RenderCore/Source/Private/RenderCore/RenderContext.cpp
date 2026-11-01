@@ -5525,6 +5525,12 @@ namespace RenderCore
             }
             const uint ClippedWidth  = std::min(uint(Rect.Width), Width - uint(X));
             const uint ClippedHeight = std::min(uint(Rect.Height), Height - uint(Y));
+            /* A view drawn smaller than its rectangle ([Rendering] ResolutionScale): Catmull-Rom up to it
+             * (PP_View.x 3), sharper than the sampler's bilinear; the same size, as it is. */
+            const bool bUpscale = Source->GetWidth() < uint(Rect.Width) || Source->GetHeight() < uint(Rect.Height);
+            Block.A[0]     = bUpscale ? 3.0f : 0.0f;
+            Block.Sizes[0] = float(Source->GetWidth());
+            Block.Sizes[1] = float(Source->GetHeight());
             P->DrawFullscreenShader(P->GetPostShader(PP_ViewTarget), "View", InTarget, ClippedWidth, ClippedHeight,
                                     &Texture->Resource, 1, Block.A, uint(sizeof(Block) - sizeof(Block.Matrix)),
                                     Impl::EFullscreenBlend::Opaque, uint(X), uint(Y));

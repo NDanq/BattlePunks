@@ -396,6 +396,20 @@ budget fills the next one wanting faces, so a room is ready (and relightable)
 before the camera gets there. Four volumes' states are kept, the least
 recently used dropped, so going back to a room costs nothing.
 
+**Capture warm-up** (`[Rendering] CaptureWarmup`, off; `CaptureWarmupBudgetMs`,
+50; GameSession's `[LevelTransition] WarmupSeconds`, 15). A volume lights only
+once every probe has been drawn, so a level would show its first room unlit
+for the length of a raster round. While `CaptureWarmup` is on, the captures
+spend `CaptureWarmupBudgetMs` a frame instead of `CaptureBudgetMs`. A level
+transition turns it on after its `RevealFrames`: the loading card stays up and
+the World holds still (neither it nor the mode ticks) until the nearest volume
+has drawn every probe and no capture wants work -- the volume's second round,
+the background volumes', the reflection probes' -- or `WarmupSeconds` have
+passed, and logs `[Level] warm-up settled after N s` (or `timed out`). A level
+with no volume or probe passes straight through; `WarmupSeconds` 0 turns it
+off. `RenderStats::GIProbesUnlit`, `GIProbesTotal` and `bCapturesBusy` report
+the captures' state to anything else that wants to wait on them.
+
 **`[Rendering] CaptureLog`** logs, about once a second, what the captures did
 (faces, relit probes, the unit costs, the active volume's progress), and when
 a volume converges, how long after its last change.
