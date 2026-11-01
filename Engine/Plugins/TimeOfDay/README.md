@@ -64,6 +64,12 @@ keyed by hand.
 The exposure adapts as the zenith dims, up to 8x, so twilight stays readable
 and night stays dark.
 
+The background pass runs at `ERenderHook::AfterLighting` and discards every
+pixel whose scene depth is nearer than the far plane before it marches, so
+it costs only the sky that shows (it was drawn under everything at
+`BeforeScene`, the whole screen marched: 3-6 ms at 2560 x 1440 on an Arc
+B390 in Demo Lab's L1).
+
 **Reflections and sky light see it.** A second pass of the sky is
 registered at `ERenderHook::Sky`, so image-based lighting captures the drawn
 sky into its sky cube in place of the Sky Light's colours

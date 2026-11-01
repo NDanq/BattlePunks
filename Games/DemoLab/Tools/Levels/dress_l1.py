@@ -589,8 +589,9 @@ def airship(lv):
 def post(lv, stack, gi_centre, gi_extent, probes):
     lv.entity('PostProcess', [lv.fields('Post Process', version=2, Stack=stack, Priority=0, Enabled=True,
                                         BlendDistance=0), lv.transform((0, 0, 0))])
-    # DDGI over the plaza and the road below it only (the open hillside takes the sky and SSGI).
-    lv.entity('GI_Volume', [lv.fields('GI Volume', Extent=gi_extent, ProbeSpacing=300, Intensity=1, Enabled=True),
+    # DDGI over the plaza and the road below it only (the open hillside takes the sky and SSGI). Probes 4.5 m
+    # apart outdoors: 300 probes for L1 (1125 at 3 m), so the first fill is done behind the loading card.
+    lv.entity('GI_Volume', [lv.fields('GI Volume', Extent=gi_extent, ProbeSpacing=450, Intensity=1, Enabled=True),
                             lv.transform(gi_centre)])
     # Probes captured once, on demand (Manual + Capture Now): the light does not move.
     for i, (p, r) in enumerate(probes):

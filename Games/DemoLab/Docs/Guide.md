@@ -250,6 +250,25 @@ build, interleaved, medians of many samples.
 5. To find what a feature costs, run with it on and off (`-Rendering.DynamicGI=false`,
    `-Rendering.ScreenSpaceGI=false`, `-Shadows.Enabled=false`, ...) in the
    same build, interleaved, at least two launches each, and compare medians.
+6. Fixed views without a game window (nothing grabs the mouse): the
+   RelWithDebInfo editor under `QT_QPA_PLATFORM=offscreen` (a screen config
+   at least 2600 x 1500), with `--command "after 2000 viewport 2560 1440"`
+   (pins the viewport's render size), `stat frame`, then per view `camera
+   x y z yaw pitch` and a few `echo VIEW <name>` + `stats` pairs: the run log
+   gets the frame, render-thread and wait times, each span's GPU time and the
+   render thread's time and draws per span. The editor does not run the
+   game's logic, so resolve the Calm/Alarm groups into a copy of the world
+   first (drop `Alarm_*` or `Calm_*` and the signal toggles that would be off).
+
+Settings that matter here (M7): `[Scalability_High] Rendering.ResolutionScale=0.67`
+in `Config/DefaultEngine.ini` (the scene at two thirds of the window, upscaled
+under the UI; pass `-Rendering.ResolutionScale=1` for native), and the
+engine's `Rendering.HalfResReflections` and `Rendering.FogLightCulling` (both
+on). A level change holds the loading card until the first GI Volume has
+filled (`[LevelTransition] WarmupSeconds`, 15; the log says `[Level] warm-up
+settled after N s`), so the first room is lit when the card lifts; a level
+started straight from the command line (`-Game.StartLevel`) has no card and
+still fills in the first seconds.
 
 Write the numbers up with the build type, resolution, tier, level and view.
 
