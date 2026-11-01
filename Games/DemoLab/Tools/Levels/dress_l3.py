@@ -547,11 +547,14 @@ def lighting(lv):
                                            Enabled=True, BlendDistance=0), xform((0, 0, 0))])
     lv.entity('Dress_PostAlarm', [lv.fields('Post Process', version=2, Stack=PP + 'L3_Core_Alarm.pp.nmgraph', Priority=1,
                                             Enabled=False, BlendDistance=0), xform((0, 0, 0)), toggle(lv, 'L3.Alarm')])
-    # GI: one volume over the shaft, one over the pump hall (the nearest lights)
+    # GI: one DDGI volume over the shaft, one over the pump hall (the nearest lights). Off by default:
+    # each probe update draws the whole level six times (Captures ~29 ms GPU on the Arc B390); the
+    # stacks run SSGI instead. DEMOLAB_L3_DDGI=1 turns them on.
+    ddgi = os.environ.get('DEMOLAB_L3_DDGI') == '1'
     lv.entity('Dress_GIShaft', [lv.fields('GI Volume', Extent=(1850, 1300, 1850), ProbeSpacing=460, Intensity=1,
-                                          Enabled=True), xform((0, 1100, 0))])
+                                          Enabled=ddgi), xform((0, 1100, 0))])
     lv.entity('Dress_GIPumpHall', [lv.fields('GI Volume', Extent=(1950, 380, 1050), ProbeSpacing=330, Intensity=1,
-                                             Enabled=True), xform((1500, 350, -5400))])
+                                             Enabled=ddgi), xform((1500, 350, -5400))])
     for i, (pos, radius, box) in enumerate((((0, 300, -1300), 1900, (0, 0, 0)), ((0, 1300, 1100), 2400, (0, 0, 0)),
                                             ((0, 330, 0), 620, (600, 350, 600)), ((1500, 300, -5400), 2200, (0, 0, 0)))):
         lv.entity(f'Dress_Probe_{i}', [lv.fields('Reflection Probe', Radius=radius, BoxExtent=box, Intensity=1,
