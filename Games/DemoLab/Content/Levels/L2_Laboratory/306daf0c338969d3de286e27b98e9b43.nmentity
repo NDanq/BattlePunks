@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="306daf0c338969d3de286e27b98e9b43" Name="K_GI_Core">
+  <Component Type="GI Volume" Version="1">
+      <Extent X="1250" Y="420" Z="1880" />
+    <ProbeSpacing Value="350" />
+    <Intensity Value="1" />
+    <Enabled Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="420" Z="-600" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

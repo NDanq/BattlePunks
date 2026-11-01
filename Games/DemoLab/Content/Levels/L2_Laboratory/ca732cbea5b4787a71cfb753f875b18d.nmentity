@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="ca732cbea5b4787a71cfb753f875b18d" Name="Archive_Ceiling" Mobility="Static">
   <Component Type="Render" Version="7">
-    <Visible Value="true" />
+    <Visible Value="false" />
     <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
     <CastShadows Value="true" />
   </Component>
@@ -15,7 +15,7 @@
     <Mask Value="-1" />
   </Component>
   <Component Type="Transform" Version="1">
-      <Position X="-2200" Y="460" Z="1750" />
+      <Position X="-2200" Y="600" Z="1750" />
       <Rotation X="0" Y="0" Z="0" />
       <Scale X="2000" Y="20" Z="1700" />
   </Component>

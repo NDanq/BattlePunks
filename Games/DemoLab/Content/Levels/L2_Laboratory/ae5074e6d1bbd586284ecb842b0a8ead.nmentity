@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="ae5074e6d1bbd586284ecb842b0a8ead" Name="Foyer_WallE_0" Mobility="Static">
   <Component Type="Render" Version="7">
-    <Visible Value="true" />
+    <Visible Value="false" />
     <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
     <CastShadows Value="true" />
   </Component>
@@ -15,8 +15,8 @@
     <Mask Value="-1" />
   </Component>
   <Component Type="Transform" Version="1">
-      <Position X="885" Y="225" Z="-1800" />
+      <Position X="885" Y="295" Z="-1800" />
       <Rotation X="0" Y="90" Z="0" />
-      <Scale X="1140" Y="450" Z="30" />
+      <Scale X="1140" Y="590" Z="30" />
   </Component>
 </Entity>

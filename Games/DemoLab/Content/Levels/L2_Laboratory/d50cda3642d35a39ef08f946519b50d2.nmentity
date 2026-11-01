@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="d50cda3642d35a39ef08f946519b50d2" Name="K_Conservatory_Floor_3_0" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/Kit/Planks.material.nmgraph" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Content/Meshes/L2/Floor.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="false" />
+    <CastInsetShadow Value="false" />
+    <Occluder Value="false" />
+    <CustomPassGroups Value="0" />
+    <RevealPlayers Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="2588" Y="0" Z="-776" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="0.97" Y="1" Z="0.97" />
+  </Component>
+</Entity>

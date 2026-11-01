@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="4d218b903c7a354f39749b9fcaae6bd6" Name="Alarm_Turbine_1_Governor">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Material0 Value="" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Content/Meshes/L2/Turbine_Governor.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
+    <Occluder Value="false" />
+    <CustomPassGroups Value="0" />
+    <RevealPlayers Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="555" Y="289" Z="3185" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+  <Component Type="LabSpinner" Version="1">
+    <Channel Value="" />
+    <Axis Value="1" />
+    <Speed Value="105" />
+    <SpinUp Value="5" />
+  </Component>
+</Entity>

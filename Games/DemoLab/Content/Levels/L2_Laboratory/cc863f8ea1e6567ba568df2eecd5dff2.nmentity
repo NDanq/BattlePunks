@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="cc863f8ea1e6567ba568df2eecd5dff2" Name="Alarm_Beacon_Atrium_0_Spot_22" Parent="187c63913b86e8a291bbe8586770bc4c">
+  <Component Type="Spot Light" Version="2">
+    <Color R="255" G="32" B="18" A="255" />
+    <Intensity Value="45" />
+    <Range Value="1900" />
+    <InnerConeAngle Value="14" />
+    <OuterConeAngle Value="26" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="1" />
+    <ShadowTint R="20" G="22" B="28" A="255" />
+    <ShadowBias Value="0.002" />
+    <ShadowNormalBias Value="1.5" />
+    <SourceRadius Value="6" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="16" Z="0" />
+      <Rotation X="-22" Y="180" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

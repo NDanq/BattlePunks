@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="598ccb4ccee7a2b2651ec2d250d90a13" Name="Alarm_Beacon_Workshop_Glow">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="32" B="18" A="255" />
+    <Intensity Value="5" />
+    <Radius Value="450" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="12" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-2200" Y="556" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

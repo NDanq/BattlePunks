@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="b31253ff5d830da9f6ffc6462b7dd5c2" Name="Calm_Sample_LeafBacklight">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="220" B="160" A="255" />
+    <Intensity Value="3" />
+    <Radius Value="120" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="4" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L2.Power.Workshop" />
+    <ShowWhenOn Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-1950" Y="120" Z="-458" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

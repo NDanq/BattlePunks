@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="97b3b3f5b57c2c0a5508b3e77d04c1b1" Name="K_TurbineHall_Floor_11_0" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/Kit/Concrete.material.nmgraph" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Content/Meshes/L2/Floor.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="false" />
+    <CastInsetShadow Value="false" />
+    <Occluder Value="false" />
+    <CustomPassGroups Value="0" />
+    <RevealPlayers Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="1384" Y="0" Z="2822.5" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="0.99" Y="1" Z="0.9625" />
+  </Component>
+</Entity>

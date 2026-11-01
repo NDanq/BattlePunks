@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="2abe40355e6c8b855c9abcb5ca6a7a3f" Name="Archive_WallN_2" Mobility="Static">
   <Component Type="Render" Version="7">
-    <Visible Value="true" />
+    <Visible Value="false" />
     <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
     <CastShadows Value="true" />
   </Component>
@@ -15,8 +15,8 @@
     <Mask Value="-1" />
   </Component>
   <Component Type="Transform" Version="1">
-      <Position X="-1625" Y="225" Z="2585" />
+      <Position X="-1625" Y="295" Z="2585" />
       <Rotation X="0" Y="0" Z="0" />
-      <Scale X="850" Y="450" Z="30" />
+      <Scale X="850" Y="590" Z="30" />
   </Component>
 </Entity>

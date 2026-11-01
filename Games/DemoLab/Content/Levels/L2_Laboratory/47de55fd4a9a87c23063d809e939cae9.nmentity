@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="47de55fd4a9a87c23063d809e939cae9" Name="Turbine_2" Mobility="Static">
   <Component Type="Render" Version="7">
-    <Visible Value="true" />
+    <Visible Value="false" />
     <Mesh Value="Engine/Content/Meshes/Cylinder.nmmesh" />
     <CastShadows Value="true" />
   </Component>

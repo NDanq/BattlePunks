@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="d2c38e578295e2e15e19468bb7afbb62" Name="Alarm_Orrery_Sun">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="120" B="70" A="255" />
+    <Intensity Value="10" />
+    <Radius Value="900" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="22" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="400" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

@@ -3,59 +3,85 @@
   <Binding id="cam0" kind="possess" guid="9d46acd60888c77979f5ea3f678eca98" name="Calm_CineCam_C3_Breaker_A">
     <Track type="Transform">
       <Channel name="Position.X">
-        <Key f="0" v="-500" interp="CubicInOut"/>
-        <Key f="60" v="-400" interp="CubicInOut"/>
-        <Key f="61" v="0" interp="CubicInOut"/>
+        <Key f="0" v="-430" interp="CubicInOut"/>
+        <Key f="40" v="-470" interp="CubicInOut"/>
+        <Key f="76" v="-300" interp="CubicInOut"/>
       </Channel>
       <Channel name="Position.Y">
-        <Key f="0" v="250" interp="CubicInOut"/>
-        <Key f="60" v="260" interp="CubicInOut"/>
-        <Key f="61" v="700" interp="CubicInOut"/>
+        <Key f="0" v="210" interp="CubicInOut"/>
+        <Key f="40" v="220" interp="CubicInOut"/>
+        <Key f="76" v="300" interp="CubicInOut"/>
       </Channel>
       <Channel name="Position.Z">
-        <Key f="0" v="-1600" interp="CubicInOut"/>
-        <Key f="60" v="-2000" interp="CubicInOut"/>
-        <Key f="61" v="-1000" interp="CubicInOut"/>
+        <Key f="0" v="-1560" interp="CubicInOut"/>
+        <Key f="40" v="-1620" interp="CubicInOut"/>
+        <Key f="76" v="-1450" interp="CubicInOut"/>
       </Channel>
       <Channel name="Rotation.X">
-        <Key f="0" v="13.932" interp="CubicInOut"/>
-        <Key f="60" v="12.592" interp="CubicInOut"/>
-        <Key f="61" v="14.036" interp="CubicInOut"/>
+        <Key f="0" v="7.951" interp="CubicInOut"/>
+        <Key f="40" v="9.067" interp="CubicInOut"/>
+        <Key f="76" v="3.366" interp="CubicInOut"/>
       </Channel>
       <Channel name="Rotation.Y">
-        <Key f="0" v="-119.745" interp="CubicInOut"/>
-        <Key f="60" v="-66.038" interp="CubicInOut"/>
-        <Key f="61" v="0" interp="CubicInOut"/>
+        <Key f="0" v="-118.61" interp="CubicInOut"/>
+        <Key f="40" v="-114.228" interp="CubicInOut"/>
+        <Key f="76" v="-143.973" interp="CubicInOut"/>
       </Channel>
     </Track>
   </Binding>
   <Binding id="cam1" kind="possess" guid="950864bbb78ffa1e3465f92e8a60e603" name="Calm_CineCam_C3_Breaker_B">
     <Track type="Transform">
       <Channel name="Position.X">
-        <Key f="61" v="0" interp="CubicInOut"/>
-        <Key f="180" v="500" interp="CubicInOut"/>
+        <Key f="76" v="900" interp="CubicInOut"/>
+        <Key f="130" v="500" interp="CubicInOut"/>
+        <Key f="180" v="-150" interp="CubicInOut"/>
       </Channel>
       <Channel name="Position.Y">
-        <Key f="61" v="700" interp="CubicInOut"/>
-        <Key f="180" v="800" interp="CubicInOut"/>
+        <Key f="76" v="330" interp="CubicInOut"/>
+        <Key f="130" v="520" interp="CubicInOut"/>
+        <Key f="180" v="620" interp="CubicInOut"/>
       </Channel>
       <Channel name="Position.Z">
-        <Key f="61" v="-1000" interp="CubicInOut"/>
-        <Key f="180" v="400" interp="CubicInOut"/>
+        <Key f="76" v="-950" interp="CubicInOut"/>
+        <Key f="130" v="-1050" interp="CubicInOut"/>
+        <Key f="180" v="-1000" interp="CubicInOut"/>
       </Channel>
       <Channel name="Rotation.X">
-        <Key f="61" v="14.036" interp="CubicInOut"/>
-        <Key f="180" v="25.104" interp="CubicInOut"/>
+        <Key f="76" v="-1.961" interp="CubicInOut"/>
+        <Key f="130" v="6.935" interp="CubicInOut"/>
+        <Key f="180" v="13.095" interp="CubicInOut"/>
       </Channel>
       <Channel name="Rotation.Y">
-        <Key f="61" v="0" interp="CubicInOut"/>
-        <Key f="180" v="-128.66" interp="CubicInOut"/>
+        <Key f="76" v="-38.047" interp="CubicInOut"/>
+        <Key f="130" v="-39.806" interp="CubicInOut"/>
+        <Key f="180" v="-19.093" interp="CubicInOut"/>
+      </Channel>
+    </Track>
+  </Binding>
+  <Binding id="lever" kind="possess" guid="dc6ec9f6d7eb035ff6ef6fc7d5f8a15c" name="Calm_BreakerLever">
+    <Track type="Transform">
+      <Channel name="Position.X">
+        <Key f="0" v="0" interp="CubicInOut"/>
+        <Key f="180" v="0" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Position.Y">
+        <Key f="0" v="0" interp="CubicInOut"/>
+        <Key f="180" v="0" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Position.Z">
+        <Key f="0" v="0" interp="CubicInOut"/>
+        <Key f="180" v="0" interp="CubicInOut"/>
+      </Channel>
+      <Channel name="Rotation.X">
+        <Key f="0" v="-35" interp="CubicInOut"/>
+        <Key f="26" v="-35" interp="CubicInOut"/>
+        <Key f="34" v="35" interp="CubicInOut"/>
       </Channel>
     </Track>
   </Binding>
   <Track type="CameraCut" name="Shots">
-    <Section start="0" end="61" camera="cam0"/>
-    <Section start="61" end="180" camera="cam1"/>
+    <Section start="0" end="76" camera="cam0"/>
+    <Section start="76" end="180" camera="cam1"/>
   </Track>
   <Track type="Fade">
     <Key f="0" v="0"/>
@@ -64,13 +90,22 @@
     <Section start="10" end="90" speaker="Pilot" text="Power is back. Look at that place light up."/>
   </Track>
   <Track type="Audio">
-    <Section start="20" end="180" sound="Content/Sounds/World/Power_Up_Sweep.nmsound" volume="1.0"/>
+    <Section start="20" end="180" sound="Content/Sounds/World/Power_Up_Sweep.nmsound" volume="1"/>
   </Track>
   <Track type="Event">
-    <Key f="40" event="Lab.Signal" arg0="L2.Power.Foyer" arg1="true" fireOnSkip="true"/>
-    <Key f="90" event="Lab.Signal" arg0="L2.Power.Atrium" arg1="true" fireOnSkip="true"/>
-    <Key f="120" event="Lab.Signal" arg0="L2.Power.Workshop" arg1="true" fireOnSkip="true"/>
-    <Key f="150" event="Lab.Signal" arg0="L2.Power.All" arg1="true" fireOnSkip="true"/>
+    <Key f="36" event="Lab.Signal" arg0="L2.Power.Foyer" arg1="true" fireOnSkip="true"/>
+    <Key f="46" event="Lab.Signal" arg0="L2.Pwr.Foyer2" arg1="true" fireOnSkip="true"/>
+    <Key f="80" event="Lab.Signal" arg0="L2.Power.Atrium" arg1="true" fireOnSkip="true"/>
+    <Key f="88" event="Lab.Signal" arg0="L2.Pwr.Atrium2" arg1="true" fireOnSkip="true"/>
+    <Key f="96" event="Lab.Signal" arg0="L2.Pwr.Atrium3" arg1="true" fireOnSkip="true"/>
+    <Key f="104" event="Lab.Signal" arg0="L2.Pwr.Conservatory" arg1="true" fireOnSkip="true"/>
+    <Key f="112" event="Lab.Signal" arg0="L2.Power.Workshop" arg1="true" fireOnSkip="true"/>
+    <Key f="122" event="Lab.Signal" arg0="L2.Pwr.Archive" arg1="true" fireOnSkip="true"/>
+    <Key f="130" event="Lab.Signal" arg0="L2.Pwr.Turbine1" arg1="true" fireOnSkip="true"/>
+    <Key f="136" event="Lab.Signal" arg0="L2.Pwr.Turbine2" arg1="true" fireOnSkip="true"/>
+    <Key f="142" event="Lab.Signal" arg0="L2.Pwr.Turbine3" arg1="true" fireOnSkip="true"/>
+    <Key f="148" event="Lab.Signal" arg0="L2.Pwr.Elevator" arg1="true" fireOnSkip="true"/>
+    <Key f="152" event="Lab.Signal" arg0="L2.Power.All" arg1="true" fireOnSkip="true"/>
     <Key f="178" event="Lab.Signal" arg0="L2.Powered" arg1="true" fireOnSkip="true"/>
     <Key f="179" event="Lab.Signal" arg0="Checkpoint.Powered" arg1="true" fireOnSkip="true"/>
   </Track>

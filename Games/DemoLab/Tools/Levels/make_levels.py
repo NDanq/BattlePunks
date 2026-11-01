@@ -675,6 +675,7 @@ def make_l2():
     lv.nav_volume((0, 300, 600), (3300, 400, 3700))
     lv.routes({k: v for k, v in d['routes'].items() if not k.startswith('L2A_')}, prefix='Calm_')
     lv.routes({k: v for k, v in d['routes'].items() if k.startswith('L2A_')}, prefix='Alarm_')
+    __import__('dress_l2_laboratory').dress(lv, sys.modules[__name__])   # the art pass (Tools/Levels/dress_l2_laboratory.py)
     lv.write()
 
 

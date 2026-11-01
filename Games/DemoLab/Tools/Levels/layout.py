@@ -101,22 +101,24 @@ L1 = {
 # end) and the elevator north-east.
 # =============================================================================
 L2 = {
+    # Heights: 590 is the kit wall (500) scaled so its doorway clears the 330 door gaps; the
+    # atrium's walls stop there too and the glass dome sits on them (dress_l2_laboratory.py).
     'rooms': {   # name: (x0, z0, x1, z1, height, doors)
-        'Airlock':      (-300, -3000, 300, -2400, 400, {'N': [(0, 240)]}),
-        'Foyer':        (-900, -2400, 900, -1200, 450, {'S': [(0, 240)], 'N': [(0, 300)]}),
-        'Workshop':     (-3200, -900, -1200, 900, 450, {'E': [(0, 300)], 'N': [(-2200, 240)]}),
-        'Archive':      (-3200, 900, -1200, 2600, 450, {'S': [(-2200, 240)], 'N': [(-2200, 300)]}),
+        'Airlock':      (-300, -3000, 300, -2400, 590, {'N': [(0, 240)]}),
+        'Foyer':        (-900, -2400, 900, -1200, 590, {'S': [(0, 240)], 'N': [(0, 300)]}),
+        'Workshop':     (-3200, -900, -1200, 900, 590, {'E': [(0, 300)], 'N': [(-2200, 240)]}),
+        'Archive':      (-3200, 900, -1200, 2600, 590, {'S': [(-2200, 240)], 'N': [(-2200, 300)]}),
         'TurbineHall':  (-3200, 2600, 2800, 4200, 700, {'S': [(-2200, 300), (1900, 300)]}),
-        'Elevator':     (1200, 1000, 2800, 2600, 450, {'N': [(1900, 300)]}),
-        'Conservatory': (1200, -1000, 3200, 1000, 600, {}),
+        'Elevator':     (1200, 1000, 2800, 2600, 590, {'N': [(1900, 300)]}),
+        'Conservatory': (1200, -1000, 3200, 1000, 590, {}),
     },
-    'atrium': {'centre': (0, 0), 'apothem': 1200, 'height': 900, 'doors': {'S': 300, 'W': 300}, 'glass': ['E']},
+    'atrium': {'centre': (0, 0), 'apothem': 1200, 'height': 590, 'doors': {'S': 300, 'W': 300}, 'glass': ['E']},
     'orrery': (0, 0, 250, 300),                          # centre x, z, radius, height
     # the gantry: steps up the orrery's west side to a platform under the dome
     'gantry': {'x0': -1000, 'z0': 450, 'z1': 750, 'steps': 15, 'run': 80, 'rise': 30,
                'platform': (200, 400, 700, 800)},
     'turbines': [(-600, 3150), (400, 3150), (1100, 3150)],
-    'benches': [(-2600, 500), (-2600, -500), (-1800, -500)],   # workshop benches (centres)
+    'benches': [(-2600, 500), (-2600, -760), (-1800, -760)],   # workshop benches (centres); 1 and 2 against the south wall
     'samples': ['Anisotropic', 'ClearCoat', 'Cloth', 'Subsurface', 'Translucent', 'Volume'],
     'points': {
         'Entry_Airlock':     (0, 0, -2800, 0),

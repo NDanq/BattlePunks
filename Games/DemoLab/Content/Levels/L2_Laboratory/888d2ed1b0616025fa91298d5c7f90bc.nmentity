@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="888d2ed1b0616025fa91298d5c7f90bc" Name="Calm_ElevatorCage_Lamp">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="200" B="140" A="255" />
+    <Intensity Value="6" />
+    <Radius Value="450" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="8" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L2.Pwr.Elevator" />
+    <ShowWhenOn Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="2450" Y="300" Z="1800" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

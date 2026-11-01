@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="0c8748cd08e77860f5586de0eae05a2c" Name="Calm_BreakerLeverPivot">
+  <Component Type="Transform" Version="1">
+      <Position X="-856" Y="92" Z="-1800" />
+      <Rotation X="0" Y="270" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

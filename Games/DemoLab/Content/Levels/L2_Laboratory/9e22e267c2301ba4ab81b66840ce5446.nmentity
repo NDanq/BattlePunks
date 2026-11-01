@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="9e22e267c2301ba4ab81b66840ce5446" Name="K_GI_Elevator">
+  <Component Type="GI Volume" Version="1">
+      <Extent X="785" Y="295" Z="785" />
+    <ProbeSpacing Value="300" />
+    <Intensity Value="1" />
+    <Enabled Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="2000" Y="295" Z="1800" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

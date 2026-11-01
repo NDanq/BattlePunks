@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="3a0829034cbbd42bcbc45574c0a71118" Name="K_Probe_Conservatory">
+  <Component Type="Reflection Probe" Version="1">
+    <Radius Value="1600" />
+    <BoxExtent X="1000" Y="295" Z="1000" />
+    <Intensity Value="1" />
+    <Resolution Value="128" />
+    <Frequency Value="1" />
+    <Interval Value="8" />
+    <NearClip Value="5" />
+    <FarClip Value="12000" />
+    <CaptureShadows Value="true" />
+    <Enabled Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="2200" Y="295" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

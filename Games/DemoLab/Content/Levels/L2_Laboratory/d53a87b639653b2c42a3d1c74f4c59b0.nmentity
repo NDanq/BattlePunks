@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="d53a87b639653b2c42a3d1c74f4c59b0" Name="Orrery_Base" Mobility="Static">
   <Component Type="Render" Version="7">
-    <Visible Value="true" />
+    <Visible Value="false" />
     <Mesh Value="Engine/Content/Meshes/Cylinder.nmmesh" />
     <CastShadows Value="true" />
   </Component>

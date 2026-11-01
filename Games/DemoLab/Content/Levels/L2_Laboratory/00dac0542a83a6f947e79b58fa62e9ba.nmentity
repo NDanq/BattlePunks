@@ -15,8 +15,8 @@
     <Mask Value="-1" />
   </Component>
   <Component Type="Transform" Version="1">
-      <Position X="1215" Y="500" Z="7.43973e-14" />
+      <Position X="1215" Y="345" Z="7.43973e-14" />
       <Rotation X="0" Y="90" Z="0" />
-      <Scale X="1018.97" Y="800" Z="10" />
+      <Scale X="1018.97" Y="490" Z="10" />
   </Component>
 </Entity>

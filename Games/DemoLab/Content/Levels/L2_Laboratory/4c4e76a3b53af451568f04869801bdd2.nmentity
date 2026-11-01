@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="4c4e76a3b53af451568f04869801bdd2" Name="K_Sample_1">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Material0 Value="" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Content/Meshes/L2/Sample_Walnut.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
+    <Occluder Value="false" />
+    <CustomPassGroups Value="0" />
+    <RevealPlayers Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-2700" Y="92" Z="-230" />
+      <Rotation X="0" Y="180" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+  <Component Type="Rigid Body" Version="1">
+    <Enabled Value="true" />
+    <Motion Value="2" />
+    <Shape Value="0" />
+    <ShapeSource Value="0" />
+    <Friction Value="0.6" />
+    <Layer Value="1" />
+    <Mask Value="-1" />
+  </Component>
+  <Component Type="Destructible" Version="1">
+    <Enabled Value="true" />
+    <Mode Value="0" />
+    <Structural Value="false" />
+    <Anchored Value="true" />
+    <Material Value="Wood" />
+    <Fracture Value="" />
+    <Pieces Value="0" />
+    <Seed Value="301" />
+    <Strength Value="0" />
+    <Health Value="0" />
+    <DebrisLifetime Value="0" />
+  </Component>
+</Entity>

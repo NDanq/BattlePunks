@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="4a25ab8e4d48a957c2af1c7a0b0183eb" Name="Alarm_Red_Turbine_0">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="32" B="18" A="255" />
+    <Intensity Value="14" />
+    <Radius Value="1700" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="8" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-2200" Y="350" Z="3400" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

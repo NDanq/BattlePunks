@@ -11,6 +11,7 @@
 #include "Public/NimbleEngine/AudioFacade.h"
 #include "Public/NimbleEngine/Avatar.h"
 #include "Public/NimbleEngine/CharacterMover.h"
+#include "Public/NimbleEngine/Destruction.h"
 #include "Public/NimbleEngine/LagCompensation.h"
 #include "Public/NimbleEngine/NimbleEngine.h"
 #include "Public/NimbleEngine/PhysicsFacade.h"
@@ -544,7 +545,18 @@ void LabCombat::Fire(World& InWorld, const EntityID InAvatar, const RpcContext* 
 
         LastImpact = Hit.Point - ShotDir * 3.0;
         const EntityID Victim = HealthOwner(InWorld, Hit.Entity);
-        if(!Victim.IsSet() || Victim == InAvatar) { LastSurface = PS_World; continue; }
+        if(!Victim.IsSet() || Victim == InAvatar)
+        {
+            LastSurface = PS_World;
+            /* Glass cases and samples (Level 2's workshop) shatter when shot. */
+            const Entity Struck = InWorld.GetEntity(Hit.Entity);
+            NimbleEngine::DestructibleComponent* Breakable = Struck.IsAlive() ? Struck.GetComponent<NimbleEngine::DestructibleComponent>() : nullptr;
+            if(Breakable && Breakable->bEnabled && !Breakable->IsBroken())
+            {
+                Breakable->Break(Hit.Point, ShotDir * double(std::max(Weapon.Impulse, 1.f) * 60.f));
+            }
+            continue;
+        }
         LastSurface = PS_Lab;
 
         bool bHeadHit = Hit.bCompensated && double(Hit.Height) >= HEAD_FROM;

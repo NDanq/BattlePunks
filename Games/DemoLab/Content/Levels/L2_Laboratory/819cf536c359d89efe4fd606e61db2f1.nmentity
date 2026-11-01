@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="819cf536c359d89efe4fd606e61db2f1" Name="Alarm_Beacon_Turbine_1_Spin" Parent="980f51d7aee422ee002ed5e11346dde9">
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+  <Component Type="LabSpinner" Version="1">
+    <Channel Value="" />
+    <Axis Value="1" />
+    <Speed Value="280" />
+    <SpinUp Value="0.5" />
+  </Component>
+</Entity>

@@ -227,6 +227,7 @@ void LabGameModeBase::TickWorldPresentation(World& InWorld, const float InSecond
     LabWorld::TickPresentation(InWorld, InSeconds);
     LabLogic::TickPresentation(InWorld);
     LabMotion::Tick(InWorld, InSeconds);
+    LabLogic::TickSpinners(InWorld, InSeconds);
 }
 
 // === Events =================================================================

@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="39295e5eb83e29c0ec828ba20af0721b" Name="Alarm_Orrery" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Material0 Value="" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Content/Meshes/L2/Orrery.nmmesh" />
+    <ParameterCount Value="8" />
+    <Parameter0Name Value="EmissiveColor" />
+    <Parameter0Slot Value="0" />
+    <Parameter0X Value="1" />
+    <Parameter0Y Value="0.12" />
+    <Parameter0Z Value="0.05" />
+    <Parameter0W Value="0" />
+    <Parameter1Name Value="EmissiveColor" />
+    <Parameter1Slot Value="1" />
+    <Parameter1X Value="1" />
+    <Parameter1Y Value="0.12" />
+    <Parameter1Z Value="0.05" />
+    <Parameter1W Value="0" />
+    <Parameter2Name Value="EmissiveColor" />
+    <Parameter2Slot Value="2" />
+    <Parameter2X Value="1" />
+    <Parameter2Y Value="0.12" />
+    <Parameter2Z Value="0.05" />
+    <Parameter2W Value="0" />
+    <Parameter3Name Value="EmissiveColor" />
+    <Parameter3Slot Value="3" />
+    <Parameter3X Value="1" />
+    <Parameter3Y Value="0.12" />
+    <Parameter3Z Value="0.05" />
+    <Parameter3W Value="0" />
+    <Parameter4Name Value="EmissiveColor" />
+    <Parameter4Slot Value="4" />
+    <Parameter4X Value="1" />
+    <Parameter4Y Value="0.12" />
+    <Parameter4Z Value="0.05" />
+    <Parameter4W Value="0" />
+    <Parameter5Name Value="EmissiveColor" />
+    <Parameter5Slot Value="5" />
+    <Parameter5X Value="1" />
+    <Parameter5Y Value="0.12" />
+    <Parameter5Z Value="0.05" />
+    <Parameter5W Value="0" />
+    <Parameter6Name Value="EmissiveColor" />
+    <Parameter6Slot Value="6" />
+    <Parameter6X Value="1" />
+    <Parameter6Y Value="0.12" />
+    <Parameter6Z Value="0.05" />
+    <Parameter6W Value="0" />
+    <Parameter7Name Value="EmissiveIntensity" />
+    <Parameter7Slot Value="6" />
+    <Parameter7X Value="2" />
+    <Parameter7Y Value="0" />
+    <Parameter7Z Value="0" />
+    <Parameter7W Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
+    <Occluder Value="false" />
+    <CustomPassGroups Value="0" />
+    <RevealPlayers Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

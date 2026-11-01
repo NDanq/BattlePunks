@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="2550f7b123a05197d664e4b98cb847bc" Name="Calm_Atrium_Post_4_Light">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="196" B="128" A="255" />
+    <Intensity Value="22" />
+    <Radius Value="1200" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="12" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L2.Pwr.Atrium3" />
+    <ShowWhenOn Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-470" Y="385" Z="814.064" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

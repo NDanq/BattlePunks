@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="0f830c1c8ac3c5e86e84a91e0c774a05" Type="Texture.Sample" Version="2" X="-960" Y="-450" />
+    <Node Id="1b2a76612314908f727c6c8196b31d0c" Type="Math.Multiply" Version="1" X="-80" Y="-450" Wildcard="float" />
+    <Node Id="1ece36e193c45a3601e50b72116fca51" Type="Texture.Object" Version="1" X="-300" Y="-600">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/L2_Laboratory/L2_Leaf_BaseColor.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="49fa84a7bb8b063db0b36a8d98ab219e" Type="Math.Lerp" Version="1" X="140" Y="-450" Wildcard="float">
+      <Const Pin="A" Value="0.6" />
+      <Const Pin="B" Value="1" />
+    </Node>
+    <Node Id="5588418ef10a3ebcc98cc6042c8f6241" Type="Vector.Make3" Version="1" X="-1400" Y="-300" />
+    <Node Id="565632c1dd4d01d57247d1bcb0927af1" Type="Texture.Sample" Version="2" X="-80" Y="-600" />
+    <Node Id="58b7f51da7f391ffac25569869f02e8b" Type="Math.Multiply" Version="1" X="-300" Y="-450" Wildcard="vec3" />
+    <Node Id="5e43d2af5ff63c14676f21e3dc9f5312" Type="Texture.Object" Version="1" X="140" Y="-600">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/L2_Laboratory/L2_Leaf_ORM.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="6c2b3f5b80431d397ff52e65256837d6" Type="Constant" Version="1" X="-960" Y="-300" Wildcard="vec3">
+      <Const Pin="Value" Value="0.9 1.3 0.45" />
+    </Node>
+    <Node Id="73131c4e60940b51e684b53501bad23d" Type="Output.Material" Version="1" X="-1180" Y="-600">
+      <Const Pin="Thickness" Value="0.15" />
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Masked" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="ShadingModel" Value="Subsurface" />
+      <Prop Name="TwoSided" Value="true" />
+    </Node>
+    <Node Id="863f0777549049c5a77b8867257a9aca" Type="Math.Multiply" Version="1" X="-740" Y="-300" Wildcard="vec3" />
+    <Node Id="86bff6e461c52d10d3d811b88f3ce180" Type="Texture.Sample" Version="2" X="-1400" Y="-450" />
+    <Node Id="931c54820cc265648084bd5e62f540ee" Type="Input.TexCoord" Version="1" X="-520" Y="-600" />
+    <Node Id="a148925d0a4a6c2a2287830e28b7ffe2" Type="Input.VertexColor" Version="1" X="-960" Y="-600" />
+    <Node Id="accea1126422943309331d4ffdf0722f" Type="Math.Multiply" Version="1" X="-1180" Y="-300" Wildcard="vec3" />
+    <Node Id="d0b5551a563996d2281735c6fbae390a" Type="Parameter" Version="1" X="-520" Y="-450">
+      <Prop Name="Default" Value="1 1 1" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="d0d237c43b2a8a9313530113bed5aa55" Type="Vector.Split" Version="1" X="-740" Y="-600" />
+    <Node Id="fdc04855c497de360417d330ec578428" Type="Texture.Object" Version="1" X="-1180" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/L2_Laboratory/L2_Leaf_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="fe93c5d780fe652d182b7bab3ad7d23e" Type="Texture.NormalMap" Version="1" X="-740" Y="-450">
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+  </Nodes>
+  <Links>
+    <Link From="0f830c1c8ac3c5e86e84a91e0c774a05.RGB" To="fe93c5d780fe652d182b7bab3ad7d23e.Color" />
+    <Link From="1b2a76612314908f727c6c8196b31d0c.Out" To="73131c4e60940b51e684b53501bad23d.AmbientOcclusion" />
+    <Link From="1ece36e193c45a3601e50b72116fca51.Texture" To="565632c1dd4d01d57247d1bcb0927af1.Texture" />
+    <Link From="49fa84a7bb8b063db0b36a8d98ab219e.Out" To="5588418ef10a3ebcc98cc6042c8f6241.X" />
+    <Link From="49fa84a7bb8b063db0b36a8d98ab219e.Out" To="5588418ef10a3ebcc98cc6042c8f6241.Y" />
+    <Link From="49fa84a7bb8b063db0b36a8d98ab219e.Out" To="5588418ef10a3ebcc98cc6042c8f6241.Z" />
+    <Link From="5588418ef10a3ebcc98cc6042c8f6241.Out" To="accea1126422943309331d4ffdf0722f.B" />
+    <Link From="565632c1dd4d01d57247d1bcb0927af1.A" To="73131c4e60940b51e684b53501bad23d.OpacityMask" />
+    <Link From="565632c1dd4d01d57247d1bcb0927af1.RGB" To="58b7f51da7f391ffac25569869f02e8b.A" />
+    <Link From="58b7f51da7f391ffac25569869f02e8b.Out" To="accea1126422943309331d4ffdf0722f.A" />
+    <Link From="5e43d2af5ff63c14676f21e3dc9f5312.Texture" To="86bff6e461c52d10d3d811b88f3ce180.Texture" />
+    <Link From="6c2b3f5b80431d397ff52e65256837d6.Out" To="863f0777549049c5a77b8867257a9aca.B" />
+    <Link From="863f0777549049c5a77b8867257a9aca.Out" To="73131c4e60940b51e684b53501bad23d.SubsurfaceColor" />
+    <Link From="86bff6e461c52d10d3d811b88f3ce180.B" To="73131c4e60940b51e684b53501bad23d.Metallic" />
+    <Link From="86bff6e461c52d10d3d811b88f3ce180.G" To="73131c4e60940b51e684b53501bad23d.Roughness" />
+    <Link From="86bff6e461c52d10d3d811b88f3ce180.R" To="1b2a76612314908f727c6c8196b31d0c.A" />
+    <Link From="931c54820cc265648084bd5e62f540ee.UV" To="0f830c1c8ac3c5e86e84a91e0c774a05.UV" />
+    <Link From="931c54820cc265648084bd5e62f540ee.UV" To="565632c1dd4d01d57247d1bcb0927af1.UV" />
+    <Link From="931c54820cc265648084bd5e62f540ee.UV" To="86bff6e461c52d10d3d811b88f3ce180.UV" />
+    <Link From="931c54820cc265648084bd5e62f540ee.UV" To="fe93c5d780fe652d182b7bab3ad7d23e.UV" />
+    <Link From="a148925d0a4a6c2a2287830e28b7ffe2.RGB" To="d0d237c43b2a8a9313530113bed5aa55.Vector" />
+    <Link From="accea1126422943309331d4ffdf0722f.Out" To="73131c4e60940b51e684b53501bad23d.BaseColor" />
+    <Link From="accea1126422943309331d4ffdf0722f.Out" To="863f0777549049c5a77b8867257a9aca.A" />
+    <Link From="d0b5551a563996d2281735c6fbae390a.Value" To="58b7f51da7f391ffac25569869f02e8b.B" />
+    <Link From="d0d237c43b2a8a9313530113bed5aa55.X" To="1b2a76612314908f727c6c8196b31d0c.B" />
+    <Link From="d0d237c43b2a8a9313530113bed5aa55.X" To="49fa84a7bb8b063db0b36a8d98ab219e.T" />
+    <Link From="fdc04855c497de360417d330ec578428.Texture" To="0f830c1c8ac3c5e86e84a91e0c774a05.Texture" />
+    <Link From="fe93c5d780fe652d182b7bab3ad7d23e.Normal" To="73131c4e60940b51e684b53501bad23d.Normal" />
+  </Links>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "L2_Leaf". Do not edit.
+// Masked, Lit, Subsurface. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in L2_Leaf.material.
+UBO_BLOCK_BEGIN(2, L2_Leaf_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    vec3  Param_Tint;
+UBO_BLOCK_END(L2_Leaf_Block)
+
+// Textures, by material texture slot; L2_Leaf.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+MATERIAL_SAMPLER2D(6, Material_Texture2)
+MATERIAL_SAMPLER2D(7, Material_Texture3)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec4 t0 = texture(Material_Texture1, Inputs.TexCoord);
+    vec3 t1 = t0.rgb * Param_Tint;
+    float t2 = vec4(Inputs.Color.rgb, 1.0).x;
+    float t3 = mix(0.6, 1.0, t2);
+    vec3 t4 = vec3(t3, t3, t3);
+    vec3 t5 = t1 * t4;
+    Surface.BaseColor = t5;
+    vec4 t6 = texture(Material_Texture2, Inputs.TexCoord);
+    Surface.Metallic = t6.b;
+    Surface.Roughness = t6.g;
+    Surface.OpacityMask = t0.a;
+    vec4 t7 = texture(Material_Texture3, Inputs.TexCoord);
+    vec3 t8 = Material_NormalMap(Inputs, t7.rgb, 1.0, Inputs.TexCoord, -1.0);
+    Surface.Normal = t8;
+    float t9 = t6.r * t2;
+    Surface.AmbientOcclusion = t9;
+    vec3 t10 = t5 * vec3(0.9, 1.3, 0.45);
+    Surface.SubsurfaceColor = t10;
+    Surface.Thickness = 0.15;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "L2_Leaf". Do not edit.
+NimbleMaterial 3
+Domain Masked
+Shading Lit
+ShadingModel Subsurface
+TwoSided 1
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 176
+Param Tint vec3 160 1 1 1 0
+Texture 1 Default Default Content/Textures/L2_Laboratory/L2_Leaf_BaseColor.nmtexture
+Texture 2 Default Default Content/Textures/L2_Laboratory/L2_Leaf_ORM.nmtexture
+Texture 3 Default Default Content/Textures/L2_Laboratory/L2_Leaf_Normal.nmtexture
+]]></Output>
+  </gen_code>
+</NodeGraph>

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="e084e957b720e06467b9affc1b4d9812" Name="Alarm_ElevatorCage_Lamp">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="32" B="18" A="255" />
+    <Intensity Value="6" />
+    <Radius Value="450" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="8" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="2450" Y="300" Z="1800" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

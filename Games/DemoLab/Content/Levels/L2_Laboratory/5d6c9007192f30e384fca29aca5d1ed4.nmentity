@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="5d6c9007192f30e384fca29aca5d1ed4" Name="Alarm_Turbine_RubbleBlock" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="false" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Rigid Body" Version="1">
+    <Enabled Value="true" />
+    <Motion Value="2" />
+    <Shape Value="0" />
+    <ShapeSource Value="0" />
+    <Friction Value="0.6" />
+    <Layer Value="1" />
+    <Mask Value="-1" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-1700" Y="15" Z="2800" />
+      <Rotation X="0" Y="20" Z="0" />
+      <Scale X="130" Y="30" Z="100" />
+  </Component>
+</Entity>
