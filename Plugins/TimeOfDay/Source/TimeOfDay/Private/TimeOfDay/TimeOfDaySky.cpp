@@ -9,11 +9,17 @@
 #include "Public/GameCore/World.h"
 #include "Public/RenderCore/Components/LightShadow.h"
 #include "Public/RenderCore/CustomRenderPass.h"
+#include "Public/Core/CoreConfig.h"
 #include "Public/TimeOfDay/TimeOfDay.h"
 #include "Public/TimeOfDay/TimeOfDayComponent.h"
 
 /* The sky: the atmosphere on the CPU (for the lights' colours) and the pass
  * that draws it with TimeOfDaySky.fsh. The constants match the shader's. */
+
+
+/* The background sky marches only where the scene's depth is the far plane (README, "the background
+ * pass"); off, every pixel of the screen, as when it was drawn under everything (an A/B switch). */
+NIMBLE_CONFIG_BOOL(GTimeOfDaySkyDepthTest, "TimeOfDay", "SkyDepthTest", true, nullptr);
 
 namespace TimeOfDay
 {
@@ -225,6 +231,9 @@ namespace TimeOfDay
                     State.Params.Matrix[9]  = 2.0f;   // past any cosine: no sun disc, nor the moon's (TimeOfDaySky.fsh)
                     State.Params.Matrix[10] = 0.0f;   // no stars
                 }
+                /* The background (after the Lighting stage): only the pixels nothing drew, by the scene's
+                 * depth. The sky light's cube faces have no depth: all of them. */
+                State.Params.B[0] = bExtracts && GTimeOfDaySkyDepthTest.GetBool() ? 1.0f : 0.0f;
                 InContext.DrawFullscreen("TimeOfDaySky.fsh", RenderCore::RenderPassTarget{}, {}, State.Params,
                                          RenderCore::ERenderPassBlend::Opaque);
             }
@@ -329,12 +338,14 @@ namespace TimeOfDay
         }
         auto Shared   = std::make_shared<SkyShared>();
         Shared->World = &InWorld;
-        /* First thing after the background: every surface draws over it. And the same sky as
-         * the one image-based lighting reflects and lights with (RENDERPIPELINE.md, "Image-based
-         * lighting"): captured again as its version changes. */
+        /* The background, first thing after the Lighting stage (which writes lit pixels only),
+         * where the depth is the far plane: before the translucent stages and the fog, as when it
+         * was drawn under everything, but the march runs only where the sky shows. And the same
+         * sky as the one image-based lighting reflects and lights with (RENDERPIPELINE.md,
+         * "Image-based lighting"): captured again as its version changes. */
         SkyHandles Handles;
         Handles.Background = RenderCore::RegisterCustomRenderPass(&InWorld, std::make_shared<SkyPass>(Shared, true),
-                                                                  RenderCore::ERenderHook::BeforeScene, -100);
+                                                                  RenderCore::ERenderHook::AfterLighting, -100);
         Handles.Light      = RenderCore::RegisterCustomRenderPass(&InWorld, std::make_shared<SkyPass>(Shared, false),
                                                                   RenderCore::ERenderHook::Sky);
         if(Handles.Background != 0 || Handles.Light != 0)

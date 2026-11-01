@@ -96,6 +96,12 @@ NIMBLE_CONFIG_BOOL(GRenderForwardReflections, "Rendering", "ForwardReflections",
 NIMBLE_CONFIG_BOOL(GRenderRefraction, "Rendering", "Refraction", true, nullptr);
 /* Screen-space GI where a stack has it (GLOBAL_ILLUMINATION.md, Phase 5); off, the stack's node is ignored. */
 NIMBLE_CONFIG_BOOL(GRenderScreenGI, "Rendering", "ScreenSpaceGI", true, nullptr);
+/* Volumetric fog walks, at each step, only the point and spot lights whose reach its ray crosses
+ * (found once a pixel); off, every light at every step, as before. The picture is the same. */
+NIMBLE_CONFIG_BOOL(GRenderFogLightCulling, "Rendering", "FogLightCulling", true, nullptr);
+/* Screen-space reflections marched at half size each way and upsampled by depth in the image-based
+ * lighting pass (RENDERPIPELINE.md, "Screen-space reflections"); off, at full size as before. */
+NIMBLE_CONFIG_BOOL(GRenderHalfResReflections, "Rendering", "HalfResReflections", true, nullptr);
 /* Seconds the render clock advances a frame -- particles, material Time, exposure --
  * whatever the wall clock did; 0 follows the wall clock. For captures that must be
  * the same frame every run (LIT_TRANSLUCENCY.md, "Validation"). */
@@ -5878,8 +5884,18 @@ namespace RenderCore
                 GDITexture2D* Motion = InTargets.Velocity ? InTargets.Velocity->ToGDITexture2D() : nullptr;
                 if(Stack.bScreenReflections && InTargets.LastColor && P->bHasPrevViewProjection && Depth && Motion)
                 {
-                    if(GDIRenderTarget* Reflections = InTargets.EnsureFullHalfFloat(InTargets.Reflections, "Reflections"))
+                    /* Half size ([Rendering] HalfResReflections): its own targets, a quarter of the rays. */
+                    const bool bHalf = GRenderHalfResReflections.GetBool();
+                    if(bHalf != InTargets.bReflectionHalf) { InTargets.bReflectionValid = false; InTargets.bReflectionHalf = bHalf; }
+                    const auto Ensure = [&InTargets, bHalf](GDIRenderTarget*& InFull, GDIRenderTarget*& InHalf, const char* InName)
                     {
+                        return bHalf ? InTargets.EnsureHalfHalfFloat(InHalf, (std::string(InName) + "Half").c_str())
+                                     : InTargets.EnsureFullHalfFloat(InFull, InName);
+                    };
+                    GDIRenderTarget** History = bHalf ? InTargets.ReflectionHistoryHalf : InTargets.ReflectionHistory;
+                    if(GDIRenderTarget* Reflections = Ensure(InTargets.Reflections, InTargets.ReflectionsHalf, "Reflections"))
+                    {
+                        const uint MarchW = Reflections->GetWidth(), MarchH = Reflections->GetHeight();
                         PostBlock Ssr;
                         PutMatrix(Ssr.Matrix, P->PrevViewProjection);
                         Ssr.A[0]     = std::clamp(Stack.SsrIntensity, 0.0f, 1.0f);
@@ -5888,12 +5904,12 @@ namespace RenderCore
                         Ssr.A[3]     = std::max(Stack.SsrThickness, 0.1f);
                         Ssr.Sizes[0] = std::max(Stack.SsrMaxDistance, 10.0f);
                         const bool bStochastic = GRenderStochasticReflections.GetBool()
-                                              && InTargets.EnsureFullHalfFloat(InTargets.ReflectionHistory[0], "ReflectionHistory0")
-                                              && InTargets.EnsureFullHalfFloat(InTargets.ReflectionHistory[1], "ReflectionHistory1");
+                                              && Ensure(InTargets.ReflectionHistory[0], InTargets.ReflectionHistoryHalf[0], "ReflectionHistory0")
+                                              && Ensure(InTargets.ReflectionHistory[1], InTargets.ReflectionHistoryHalf[1], "ReflectionHistory1");
                         Ssr.Sizes[1] = bStochastic ? 2.0f : 1.0f;
                         Ssr.Sizes[2] = float(Width);
                         Ssr.Sizes[3] = float(Height);
-                        if(P->DrawPost(PP_ScreenReflections, Reflections, Width, Height,
+                        if(P->DrawPost(PP_ScreenReflections, Reflections, MarchW, MarchH,
                                        { Texture(InTargets.GBuffer[1]), Texture(InTargets.GBuffer[2]), Depth->Resource,
                                          Texture(InTargets.LastColor), Motion->Resource, Texture(InTargets.GBuffer[4]) }, Ssr))
                         {
@@ -5909,17 +5925,17 @@ namespace RenderCore
                             PutMatrix(Resolve.Matrix, P->PrevViewProjection);
                             Resolve.A[0]     = InTargets.bReflectionValid ? 1.0f : 0.0f;
                             Resolve.A[1]     = 0.9f;   // about ten frames' rays
-                            Resolve.Sizes[2] = float(Width);
-                            Resolve.Sizes[3] = float(Height);
-                            const bool bResolved = P->DrawPost(PP_ReflectionResolve, InTargets.ReflectionHistory[Write], Width, Height,
-                                                               { Screen, Texture(InTargets.ReflectionHistory[InTargets.ReflectionCurrent]),
+                            Resolve.Sizes[2] = float(MarchW);
+                            Resolve.Sizes[3] = float(MarchH);
+                            const bool bResolved = P->DrawPost(PP_ReflectionResolve, History[Write], MarchW, MarchH,
+                                                               { Screen, Texture(History[InTargets.ReflectionCurrent]),
                                                                  Depth->Resource, Motion->Resource }, Resolve);
                             for(uint32_t Slot = 0; Slot < 4; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
                             InTargets.bReflectionValid = bResolved;
                             if(bResolved)
                             {
                                 InTargets.ReflectionCurrent = Write;
-                                Screen = Texture(InTargets.ReflectionHistory[Write]);
+                                Screen = Texture(History[Write]);
                             }
                         }
                         else
@@ -5989,6 +6005,7 @@ namespace RenderCore
                 Block.A[0] = Subsurface ? 1.0f : 0.0f;
                 Block.A[1] = Screen ? 1.0f : 0.0f;
                 Block.A[2] = Bounce ? 1.0f : 0.0f;
+                Block.A[3] = Screen && InTargets.bReflectionHalf ? 1.0f : 0.0f;   // the reflections at half size: upsampled by depth
                 GDITextureResource* IBLTextures[] = { Texture(InTargets.GBuffer[0]), Texture(InTargets.GBuffer[1]), Texture(InTargets.GBuffer[2]),
                                                       Texture(InTargets.GBuffer[4]), Depth ? Depth->Resource : nullptr,
                                                       P->IBLAtlasTexture(), Screen, Bounce };
@@ -6097,7 +6114,7 @@ namespace RenderCore
                     FogStack.FogDensity, FogStack.FogHeightFalloff, FogStack.FogBaseHeight, std::max(FogStack.FogMaxDistance, 10.0f),
                     std::clamp(FogStack.FogAnisotropy, 0.0f, 0.95f), FogStack.FogSun, FogStack.FogSky, FogStack.FogLights,
                     FogStack.FogAlbedo[0], FogStack.FogAlbedo[1], FogStack.FogAlbedo[2], FogStack.bFogShadows && Sun ? 1.0f : 0.0f,
-                    std::clamp(FogStack.FogSteps, 4.0f, 64.0f), 0.0f, 0.0f, 0.0f };
+                    std::clamp(FogStack.FogSteps, 4.0f, 64.0f), GRenderFogLightCulling.GetBool() ? 1.0f : 0.0f, 0.0f, 0.0f };
                 std::memcpy(March.Matrix, Settings, sizeof(Settings));   // PPVolumetricFog.fsh's four vec4s, in the matrix's place
                 March.Sizes[2] = float(Width);
                 March.Sizes[3] = float(Height);

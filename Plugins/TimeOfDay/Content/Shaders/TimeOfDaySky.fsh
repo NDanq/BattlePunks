@@ -1,7 +1,9 @@
 #version 450 core
 // TimeOfDaySky.fsh -- the TimeOfDay plugin's sky (SkyPass, TimeOfDaySky.cpp):
-// drawn over the background at ERenderHook::BeforeScene, so every surface
-// draws over it. Per pixel, the view ray's single scattering through a
+// drawn over the background after the Lighting stage (ERenderHook::AfterLighting),
+// only where the scene's depth is the far plane -- every other pixel is
+// discarded before the march, so a view mostly of ground and walls pays for
+// the sky it shows, not the whole screen. Per pixel, the view ray's single scattering through a
 // planet's atmosphere -- Rayleigh (the blue, the reds at the horizon), Mie
 // (the haze, the glow round the sun) and ozone's absorption (what keeps a
 // twilight sky blue) -- lit by the sun and the moon, plus both discs and,
@@ -19,8 +21,10 @@ UBO_BLOCK_BEGIN(2, PP_Block)
                     // [2] x haze (Mie x), y cos of the sun disc's radius, z stars, w exposure (adapted)
                     // [3] xyz ground albedo, w the eye's height above sea level (m)
     vec4 TOD_Bounce;   // rgb: the ground's own radiance, lit by the sun, the moon and the sky (before the exposure)
-    vec4 TOD_Unused1;
+    vec4 TOD_Flags;    // x: 1 to draw only where the scene depth is the far plane (the main view, AfterLighting)
 UBO_BLOCK_END(PP_Block)
+
+MATERIAL_SAMPLER2D(11, TOD_SceneDepth)   // a custom pass's slot 7: the scene's depth, window depth (1 far)
 
 const float PI            = 3.14159265;
 const float PlanetRadius  = 6360e3;
@@ -142,6 +146,7 @@ vec3 Stars(vec3 InDir, float InTime)
 
 void main(void)
 {
+    if(TOD_Flags.x > 0.5 && texelFetch(TOD_SceneDepth, ivec2(gl_FragCoord.xy), 0).r < 1.0) { discard; }
     vec3 Eye = Scene_CameraPosition.xyz;
     vec3 Dir = normalize(PP_WorldAt(TargetUvToNdc(Interpolants.TexCoord), 0.5) - Eye);
 

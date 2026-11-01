@@ -665,6 +665,13 @@ reflect what is on screen, over the probes' specular.
   their pixel shader against a copy of the opaque depth
   (`ForwardReflections.glsl`; LIT_TRANSLUCENCY.md, Phase 4), with the
   node's settings; `[Rendering] ForwardReflections` turns that off alone.
+- **Half size** (`[Rendering] HalfResReflections`, on): the march and its
+  history run at half size each way (`ReflectionsHalf`,
+  `ReflectionHistoryHalf`; the G-buffer is read at the full-size texel under
+  each pixel), and the IBL pass upsamples them by depth as it does the
+  screen-space GI. A quarter of the rays: at 2560 x 1440 on the Arc B390 the
+  pass fell from about 4 ms to 0.8-1.6 ms (Demo Lab's L3 tunnel and L2
+  workshop). Off: full size, as before.
 - **Limits:** what is off screen or hidden reflects the probes; a forward
   surface's reflection is one ray, not accumulated, so it bands a little
   where the G-buffer's would be smoothed.
@@ -700,8 +707,12 @@ that the lights shine through.
   becomes scene x transmittance + scattered light, translucent surfaces
   included.
 - **Volumes:** from off, the density rises from 0.
-- **Cost:** the march's grain is smoothed by TAA; the point and spot lights
-  are each sampled at every step, so Steps and the light count set it.
+- **Cost:** the march's grain is smoothed by TAA. The point and spot lights
+  (the scene block's first 16) are tested once a pixel against its ray --
+  `[Rendering] FogLightCulling`, on: a light whose sphere of reach the ray
+  misses is skipped at every step, the picture unchanged -- so Steps times
+  the lights each ray actually crosses sets it. In Demo Lab's L3 tunnel
+  (2560 x 1440, Arc B390) that took the fog from about 4.3 ms to 2.7.
 
 Measured on LightLab's Courtyard (1280 x 720, Arc B390, Vulkan), all of the
 above on at once -- auto exposure, TAA, reflections (32 steps), fog (24
@@ -1003,6 +1014,20 @@ editor's Show > View Mode):
   and every render target asset captured.
 
 The screenshot (`Renderer::RequestSceneCapture`) reads what the mode shows.
+
+### Resolution scale
+
+`[Rendering] ResolutionScale` (1; 0.5 to 1, a detail-tier row in
+SCALABILITY.md) draws each view's scene -- every stage, the post process stack
+included -- at that fraction of its viewport on each axis. The scene's
+targets are allocated that size and TAA's jitter is a pixel of them. The final
+colour is then upscaled into the scene's composite at the viewport's size
+(`RenderContext::CompositeViews`, `ViewTarget.fsh` mode 3: a nine-tap
+Catmull-Rom), and the UI, the editor's lines and `stat` panels draw over that
+at full size. At 0.67 a frame costs about 45 % of the pixels, so a GPU-bound
+frame costs roughly half as much; texture streaming still picks mips for the full
+viewport. Splitscreen views are scaled the same way and the composite
+stretches them.
 
 ### Views
 

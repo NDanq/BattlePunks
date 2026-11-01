@@ -27,6 +27,7 @@ UBO_BLOCK_BEGIN(2, PP_Block)
     mat4 PP_PrevViewProjection;   // the last frame's view, unjittered, GL clip space
     vec4 PP_Ssr;                  // x: intensity; y: most roughness reflected; z: steps; w: thickness, world units
     vec4 PP_Sizes;                // x: longest ray, world units; y: 1 if LastColor holds the last frame's; zw: full resolution
+                                  // (the G-buffer's; this target may be half that)
 UBO_BLOCK_END(PP_Block)
 
 float ViewDepthOf(vec3 InWorld) { return dot(InWorld, Scene_CameraForward.xyz) - Scene_CameraForward.w; }
@@ -62,7 +63,8 @@ bool SurfaceAt(vec2 InUV, vec2 InSize, out vec3 OutWorld, out ivec2 OutTexel)
 void main(void)
 {
     vec2  Size  = PP_Sizes.zw;
-    ivec2 Texel = ivec2(gl_FragCoord.xy);
+    // The full-size texel under this pixel: the march may be drawn at half size ([Rendering] HalfResReflections).
+    ivec2 Texel = clamp(ivec2(Interpolants.TexCoord * Size), ivec2(0), ivec2(Size) - 1);
     vec4  Gb1   = texelFetch(GBuffer1, Texel, 0);
     vec4  Gb2   = texelFetch(GBuffer2, Texel, 0);
     vec3  N = DecodeGBufferNormal(Gb1);

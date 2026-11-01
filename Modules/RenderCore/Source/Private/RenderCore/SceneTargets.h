@@ -108,6 +108,10 @@ namespace RenderCore
         GDIRenderTarget* ReflectionHistory[2] = {};
         uint32_t         ReflectionCurrent = 0;
         bool             bReflectionValid  = false;
+        /* The same at half size ([Rendering] HalfResReflections): the march, and its history. */
+        GDIRenderTarget* ReflectionsHalf = nullptr;
+        GDIRenderTarget* ReflectionHistoryHalf[2] = {};
+        bool             bReflectionHalf = false;   // which set the history in bReflectionValid is
         /* Screen-space GI (PPScreenGI.fsh; GLOBAL_ILLUMINATION.md, Phase 5): this frame's bounce
          * and its history, half size, half float; the resolve ping-pongs GIHistory likewise. */
         GDIRenderTarget* GI = nullptr;
@@ -186,6 +190,10 @@ namespace RenderCore
                     if(Each) { Each->Resize(InWidth, InHeight); }
                 }
                 bReflectionValid = false;
+                for(GDIRenderTarget* Each : { ReflectionsHalf, ReflectionHistoryHalf[0], ReflectionHistoryHalf[1] })
+                {
+                    if(Each) { Each->Resize(HalfSize(InWidth, 1), HalfSize(InHeight, 1)); }
+                }
                 for(GDIRenderTarget* Each : { GI, GIHistory[0], GIHistory[1] })
                 {
                     if(Each) { Each->Resize(HalfSize(InWidth, 1), HalfSize(InHeight, 1)); }
@@ -328,7 +336,7 @@ namespace RenderCore
             return InOutTarget && InOutTarget->IsValid() ? InOutTarget : nullptr;
         }
 
-        /* A half-size half-float target, made on first use: GI, GIHistory. */
+        /* A half-size half-float target, made on first use: GI, GIHistory, ReflectionsHalf, ReflectionHistoryHalf. */
         GDIRenderTarget* EnsureHalfHalfFloat(GDIRenderTarget*& InOutTarget, const char* InName)
         {
             if(!InOutTarget && Width > 0 && Height > 0 && GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
@@ -410,7 +418,8 @@ namespace RenderCore
                                            &Half[0], &Half[1], &Bloom[0], &Bloom[1], &Bloom[2], &Bloom[3], &Bloom[4], &Bloom[5],
                                            &BloomUp[0], &BloomUp[1], &BloomUp[2], &BloomUp[3], &BloomUp[4],
                                            &Luminance[0], &Luminance[1], &Luminance[2], &Exposure[0], &Exposure[1],
-                                           &History[0], &History[1], &Reflections, &ReflectionHistory[0], &ReflectionHistory[1], &GI, &GIHistory[0], &GIHistory[1], &LastCopy, &Fog, &DepthCopy, &OpaqueCopy, &Subsurface, &SubsurfaceBlur })
+                                           &History[0], &History[1], &Reflections, &ReflectionHistory[0], &ReflectionHistory[1],
+                                           &ReflectionsHalf, &ReflectionHistoryHalf[0], &ReflectionHistoryHalf[1], &GI, &GIHistory[0], &GIHistory[1], &LastCopy, &Fog, &DepthCopy, &OpaqueCopy, &Subsurface, &SubsurfaceBlur })
             {
                 if(*Each)
                 {

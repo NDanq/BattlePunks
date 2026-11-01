@@ -236,16 +236,24 @@ Console, for scripts and tests (points in world space):
 
 ## Numbers
 
-Linux, Vulkan, RelWithDebInfo, WorldsLab's Meadow level (257² terrain). The
-level was removed when Demo Lab replaced WorldsLab (its generator is in git
-history: `Games/WorldsLab/Tools/Procedural/make_meadow_level.py` at 61af1eec);
-Demo Lab's L1 (`Games/DemoLab/Tools/Levels/dress_l1.py`) has the same kinds
-of spawner and has not been timed here yet:
+Linux, Vulkan, RelWithDebInfo editor (2026-11-01), Intel Arc B390, Demo Lab's
+L1 Foothills (`Games/DemoLab/Tools/Levels/dress_l1.py`; the spawners at the
+Foliage density setting's default, 1): the generation time each spawner logs
+(`[RenderCore] Procedural Spawner '...'`), on its worker thread, at load. Two
+launches; where they differ, both are given.
 
-| Spawner | Instances | Generation (worker thread) |
-|---|---|---|
-| Meadow (Spline Area, 55-unit grass, terrain + layer + noise + exclusion) | 45,700 from 70,800 points | 57 ms |
-| Woods, Rocks, Road lamps, Boulder moss | 30 – 600 each | under 1 ms each |
+| Spawner | Source and filters | Instances | Generation |
+|---|---|---|---|
+| Foliage_Meadow | Spline Area, terrain layer, noise, exclusions (grass) | 7,944 from 14,700 points | 69.5 / 71.2 ms |
+| Foliage_Flowers | Spline Area, terrain layer, noise, exclusions | 1,153 from 4,371 points | 7.8 / 8.5 ms |
+| Foliage_FarWoods | Box, slope and height, noise, exclusions | 242 from 457 points | 1.3 ms |
+| Foliage_Highland | Box, slope and height, noise | 204 from 419 points | 0.6 / 0.8 ms |
+| Foliage_Forest | Box, slope and height, noise, exclusions | 108 from 160 points | 0.5 ms |
+| Foliage_Scree | Box, terrain layer, slope | 119 from 749 points | 0.6 / 0.7 ms |
+| Road, Road_Rails, Road_Fence | the road Spline (Path) | 9 to 56 each | 0.2 / 0.3 ms |
+| Plaza_Paving | a small Box grid | 32 | under 0.1 ms |
+
+The procedural pool held 0.77-0.81 MB with all of them in.
 
 ## Files
 
