@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="6e02cd421c07a2d3db00fde4e95c21b7" Name="Alarm_Beacon_Foyer_Spot_6" Parent="3ee73c5aa64a718e129a8be2ad8e8a74">
+  <Component Type="Spot Light" Version="2">
+    <Color R="255" G="32" B="18" A="255" />
+    <Intensity Value="40" />
+    <Range Value="1800" />
+    <InnerConeAngle Value="14" />
+    <OuterConeAngle Value="26" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="1" />
+    <ShadowTint R="20" G="22" B="28" A="255" />
+    <ShadowBias Value="0.002" />
+    <ShadowNormalBias Value="1.5" />
+    <SourceRadius Value="6" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="16" Z="0" />
+      <Rotation X="-22" Y="180" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

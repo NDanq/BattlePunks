@@ -22,6 +22,10 @@ namespace GameCore { class World; }
  *   LabAllOf         emits Output once every channel in Inputs is true.
  *   LabTravel        travels (Flow/LabTravel.h) when OnSignal fires, once no
  *                    cinematic is playing: the end of each level.
+ *   LabSpinner       turns its entity about one local axis while a signal is
+ *                    on (or always), easing up to speed and back down: the
+ *                    orrery's rings, the turbines once pressurised, the alarm
+ *                    beacons. Cosmetic, every process.
  *
  * Entities whose names start "Calm_" exist only while the travel state's
  * Alarm flag is off, "Alarm_" only while it is on (LabLogic::ApplyStateGroups).
@@ -60,6 +64,15 @@ struct LabTravelComponent {
     uint8_t bFired = 0;
 };
 
+struct LabSpinnerComponent {
+    GAMECORE_COMPONENT_BODY()
+    char    Channel[32] = "";        // spins while this signal is true; "" spins always
+    uint8_t Axis = 1;                // the Transform rotation it turns: 0 X (pitch), 1 Y (yaw), 2 Z (roll)
+    float   Speed = 90.f;            // degrees per second at full speed (negative turns the other way)
+    float   SpinUp = 1.f;            // seconds from rest to full speed, and back
+    float   Current = 0.f;           // this run: the speed now
+};
+
 namespace LabLogic {
     /* Authority: timers start, AllOf gates fire. */
     void OnSignal(GameCore::World& InWorld, const char* InChannel, bool bInValue);
@@ -67,6 +80,8 @@ namespace LabLogic {
     void Tick(GameCore::World& InWorld, float InSeconds);
     /* Every process: toggles follow their signals. */
     void TickPresentation(GameCore::World& InWorld);
+    /* Every process: spinners turn. */
+    void TickSpinners(GameCore::World& InWorld, float InSeconds);
 
     /* The running timer's HUD line ("Beacon charging  0:42"), "" if none. */
     std::string TimerLine(GameCore::World& InWorld);

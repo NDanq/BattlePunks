@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="17da650f8bb352d00f970d602192499f" Name="Conservatory_Ceiling" Mobility="Static">
   <Component Type="Render" Version="7">
-    <Visible Value="true" />
+    <Visible Value="false" />
     <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
     <CastShadows Value="true" />
   </Component>
@@ -15,7 +15,7 @@
     <Mask Value="-1" />
   </Component>
   <Component Type="Transform" Version="1">
-      <Position X="2200" Y="610" Z="0" />
+      <Position X="2200" Y="600" Z="0" />
       <Rotation X="0" Y="0" Z="0" />
       <Scale X="2000" Y="20" Z="2000" />
   </Component>

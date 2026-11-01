@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="7f06be23d645e82c22edd46ac1e77e73" Name="Calm_Conservatory_Grow_1">
+  <Component Type="Point Light" Version="2">
+    <Color R="220" G="255" B="200" A="255" />
+    <Intensity Value="10" />
+    <Radius Value="1000" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="8" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L2.Pwr.Conservatory" />
+    <ShowWhenOn Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="2800" Y="470" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

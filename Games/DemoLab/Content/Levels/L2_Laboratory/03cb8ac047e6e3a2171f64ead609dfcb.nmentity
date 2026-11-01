@@ -15,6 +15,7 @@
   </Component>
   <Component Type="Render" Version="7">
     <Visible Value="true" />
+    <Material0 Value="Content/Materials/Kit/Planks.material.nmgraph" />
     <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
     <CastShadows Value="true" />
   </Component>

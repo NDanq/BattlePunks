@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="b87105ce543b90403e6691782dcbee66" Name="Airlock_WallN_2" Mobility="Static">
   <Component Type="Render" Version="7">
-    <Visible Value="true" />
+    <Visible Value="false" />
     <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
     <CastShadows Value="true" />
   </Component>
@@ -15,8 +15,8 @@
     <Mask Value="-1" />
   </Component>
   <Component Type="Transform" Version="1">
-      <Position X="210" Y="200" Z="-2415" />
+      <Position X="210" Y="295" Z="-2415" />
       <Rotation X="0" Y="0" Z="0" />
-      <Scale X="180" Y="400" Z="30" />
+      <Scale X="180" Y="590" Z="30" />
   </Component>
 </Entity>

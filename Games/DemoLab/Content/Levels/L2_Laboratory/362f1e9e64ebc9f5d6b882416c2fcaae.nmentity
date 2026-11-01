@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="362f1e9e64ebc9f5d6b882416c2fcaae" Name="K_Conservatory_Plant_3_1" Mobility="Static">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Material0 Value="" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Content/Meshes/L2_Laboratory/L2_Palm.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
+    <Occluder Value="false" />
+    <CustomPassGroups Value="0" />
+    <RevealPlayers Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="2650" Y="64" Z="650" />
+      <Rotation X="0" Y="254" Z="0" />
+      <Scale X="0.75" Y="0.75" Z="0.75" />
+  </Component>
+</Entity>

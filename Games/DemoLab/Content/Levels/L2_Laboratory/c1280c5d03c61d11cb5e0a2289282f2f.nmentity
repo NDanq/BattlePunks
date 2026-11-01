@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="c1280c5d03c61d11cb5e0a2289282f2f" Name="K_Valve_2_Gauge_Needle" Parent="43d76f1788aa48d2980d40c09ca652b8">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Material0 Value="" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Content/Meshes/L2/Gauge_Needle.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="false" />
+    <CastInsetShadow Value="false" />
+    <Occluder Value="false" />
+    <CustomPassGroups Value="0" />
+    <RevealPlayers Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="-4.8" />
+      <Rotation X="0" Y="0" Z="85" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

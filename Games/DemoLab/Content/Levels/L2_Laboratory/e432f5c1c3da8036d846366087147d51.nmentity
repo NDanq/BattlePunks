@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="e432f5c1c3da8036d846366087147d51" Name="Calm_Emergency_Foyer_4">
+  <Component Type="Point Light" Version="2">
+    <Color R="150" G="175" B="255" A="255" />
+    <Intensity Value="3" />
+    <Radius Value="900" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="8" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L2.Power.All" />
+    <ShowWhenOn Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="550" Z="-1300" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

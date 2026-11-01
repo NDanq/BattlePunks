@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="bc68c27537c9e8b789c781a6465d3d51" Name="Calm_Atrium_Post_2_Lit">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Material0 Value="" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Content/Meshes/L1/RoadLamp.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
+    <Occluder Value="false" />
+    <CustomPassGroups Value="0" />
+    <RevealPlayers Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-342.02" Y="0" Z="-939.693" />
+      <Rotation X="0" Y="200" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L2.Pwr.Atrium2" />
+    <ShowWhenOn Value="true" />
+  </Component>
+</Entity>

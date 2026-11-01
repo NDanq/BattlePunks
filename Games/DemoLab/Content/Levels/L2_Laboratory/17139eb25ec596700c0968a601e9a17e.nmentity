@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="17139eb25ec596700c0968a601e9a17e" Name="Calm_Workshop_Strip_0_Area">
+  <Component Type="Rect Light" Version="1">
+    <Color R="255" G="222" B="180" A="255" />
+    <Intensity Value="7" />
+    <Width Value="290" />
+    <Height Value="14" />
+    <Range Value="1200" />
+    <Active Value="true" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L2.Power.Workshop" />
+    <ShowWhenOn Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-2400" Y="456" Z="-230" />
+      <Rotation X="90" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

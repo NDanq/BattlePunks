@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="f544a9b8d84884124dbc808d93ebbe46" Name="Alarm_Sun">
+  <Component Type="Directional Light" Version="3">
+    <Color R="255" G="226" B="190" A="255" />
+    <Intensity Value="6" />
+    <Active Value="true" />
+    <CastShadows Value="true" />
+    <ShadowTechnique Value="2" />
+    <ShadowBias Value="0.0012" />
+    <ShadowNormalBias Value="2" />
+    <ShadowDistance Value="6000" />
+    <CascadeCount Value="4" />
+    <CascadeSplitLambda Value="0.8" />
+    <SourceAngle Value="0.6" />
+  </Component>
+  <Component Type="Sky Light" Version="2">
+    <SkyColor R="150" G="160" B="190" A="255" />
+    <GroundColor R="60" G="52" B="44" A="255" />
+    <Intensity Value="0.25" />
+    <Active Value="true" />
+    <Environment Value="" />
+    <EnvironmentIntensity Value="1" />
+    <EnvironmentRotation Value="0" />
+    <DrawBackground Value="true" />
+  </Component>
+  <Component Type="Time Of Day" Version="1">
+    <Hour Value="18.55" />
+    <DayLengthMinutes Value="20" />
+    <Running Value="false" />
+    <NorthYaw Value="35" />
+    <Latitude Value="35" />
+    <SunIntensityScale Value="4" />
+    <Preset Value="TimeOfDay:/Presets/Default.todpreset" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="8000" Z="0" />
+      <Rotation X="32" Y="215" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

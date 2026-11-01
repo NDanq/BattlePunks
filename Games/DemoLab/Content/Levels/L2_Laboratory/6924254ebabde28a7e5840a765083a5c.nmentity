@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="6924254ebabde28a7e5840a765083a5c" Name="Atrium_WallW_1" Mobility="Static">
   <Component Type="Render" Version="7">
-    <Visible Value="true" />
+    <Visible Value="false" />
     <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
     <CastShadows Value="true" />
   </Component>
@@ -15,8 +15,8 @@
     <Mask Value="-1" />
   </Component>
   <Component Type="Transform" Version="1">
-      <Position X="-1215" Y="615" Z="-2.23192e-13" />
+      <Position X="-1215" Y="460" Z="-2.23192e-13" />
       <Rotation X="0" Y="270" Z="0" />
-      <Scale X="300" Y="570" Z="30" />
+      <Scale X="300" Y="260" Z="30" />
   </Component>
 </Entity>

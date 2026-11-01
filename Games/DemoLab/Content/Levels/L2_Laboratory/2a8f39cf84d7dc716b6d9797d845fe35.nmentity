@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="2a8f39cf84d7dc716b6d9797d845fe35" Name="Calm_Emergency_Archive_28">
+  <Component Type="Point Light" Version="2">
+    <Color R="150" G="175" B="255" A="255" />
+    <Intensity Value="2" />
+    <Radius Value="800" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="8" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L2.Power.All" />
+    <ShowWhenOn Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-2200" Y="550" Z="1750" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="9e971775335545bb7374eeda96de773f" Name="Alarm_Beacon_Turbine_0_Reflector" Parent="ca0e2f6b1985be6584265c27eef227bd">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Material0 Value="" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Content/Meshes/L2_Laboratory/L2_BeaconReflector.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="false" />
+    <CastInsetShadow Value="false" />
+    <Occluder Value="false" />
+    <CustomPassGroups Value="0" />
+    <RevealPlayers Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

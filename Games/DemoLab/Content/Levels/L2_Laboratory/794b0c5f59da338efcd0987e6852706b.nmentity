@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="794b0c5f59da338efcd0987e6852706b" Name="Alarm_Orrery_RingMiddle" Parent="c899d9495034a42750b9717d1fa68b3a">
+  <Component Type="Render" Version="7">
+    <Visible Value="true" />
+    <Material0 Value="" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Content/Meshes/L2/Orrery_RingMiddle.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
+    <Occluder Value="false" />
+    <CustomPassGroups Value="0" />
+    <RevealPlayers Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+  <Component Type="LabSpinner" Version="1">
+    <Channel Value="" />
+    <Axis Value="2" />
+    <Speed Value="-11" />
+    <SpinUp Value="4" />
+  </Component>
+</Entity>

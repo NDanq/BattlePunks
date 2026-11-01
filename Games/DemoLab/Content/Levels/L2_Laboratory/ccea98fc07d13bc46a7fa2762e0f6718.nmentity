@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="ccea98fc07d13bc46a7fa2762e0f6718" Name="Calm_HandLamp_Light">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="170" B="90" A="255" />
+    <Intensity Value="6" />
+    <Radius Value="600" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="6" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L2.Power.All" />
+    <ShowWhenOn Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-800" Y="22" Z="-1730" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

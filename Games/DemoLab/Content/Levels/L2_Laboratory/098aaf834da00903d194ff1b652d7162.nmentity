@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="098aaf834da00903d194ff1b652d7162" Name="Calm_Workshop_Lamp_0_Light">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="196" B="128" A="255" />
+    <Intensity Value="22" />
+    <Radius Value="900" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <SourceRadius Value="9" />
+  </Component>
+  <Component Type="LabSignalToggle" Version="1">
+    <Channel Value="L2.Power.Workshop" />
+    <ShowWhenOn Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="-2588" Y="443" Z="348" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

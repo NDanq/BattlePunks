@@ -3,6 +3,7 @@
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/ComponentSerializer.h"
 #include "Public/GameCore/Components/AudioSourceComponent.h"
+#include "Public/GameCore/Components/TransformComponent.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
 #include "Public/NimbleEngine/NimbleEngine.h"
@@ -18,6 +19,8 @@
 #include "World/LabSignals.h"
 #include "LabVersion.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -100,6 +103,25 @@ GAMECORE_DEFINE_COMPONENT_PROPERTIES(LabTravelComponent) {
     Props.Field("Entry", &LabTravelComponent::Entry);
     Props.Field("Flags", &LabTravelComponent::Flags);
     Props.Field("Title", &LabTravelComponent::Title);
+}
+#endif
+
+GAMECORE_DEFINE_COMPONENT(LabSpinnerComponent, "LabSpinner")
+
+GAMECORE_DEFINE_COMPONENT_SERIALIZER(LabSpinnerComponent, LabVersion::GetCurrentVersion()) {
+    Ar.Field("Channel", C.Channel);
+    Ar.Field("Axis", C.Axis);
+    Ar.Field("Speed", C.Speed);
+    Ar.Field("SpinUp", C.SpinUp);
+}
+
+#if WITH_EDITOR
+GAMECORE_DEFINE_COMPONENT_PROPERTIES(LabSpinnerComponent) {
+    Props.TypeCategory("DemoLab");
+    Props.Field("Channel", &LabSpinnerComponent::Channel);
+    Props.Choice("Axis", &LabSpinnerComponent::Axis, "X|Y|Z");
+    Props.Field("Speed", &LabSpinnerComponent::Speed);
+    Props.Field("SpinUp", &LabSpinnerComponent::SpinUp);
 }
 #endif
 
@@ -188,6 +210,31 @@ void LabLogic::TickPresentation(World& InWorld)
             else if(!Value && (Audio->IsPlaying() || Audio->bPendingPlay) && !Audio->bPendingStop) { Audio->Stop(); }
         }
     }
+}
+
+void LabLogic::TickSpinners(World& InWorld, const float InSeconds)
+{
+    if(InSeconds <= 0.f) { return; }
+    InWorld.Each<LabSpinnerComponent>([&](Entity InEntity, LabSpinnerComponent& InSpin)
+    {
+        TransformComponent* Transform = InEntity.GetComponent<TransformComponent>();
+        if(!Transform) { return; }
+        const bool bOn = InSpin.Channel[0] == '\0' || LabSignals::Get(InWorld, InSpin.Channel);
+        const float Target = bOn ? InSpin.Speed : 0.f;
+        const float Rate = std::fabs(InSpin.Speed) / std::max(InSpin.SpinUp, 0.01f);
+        const float Step = Rate * InSeconds;
+        if(std::fabs(Target - InSpin.Current) <= Step) { InSpin.Current = Target; }
+        else { InSpin.Current += Target > InSpin.Current ? Step : -Step; }
+        if(InSpin.Current == 0.f) { return; }
+        const double Delta = double(InSpin.Current * InSeconds);
+        const auto Wrap = [](const double InAngle) { return std::fmod(InAngle, 360.0); };
+        switch(InSpin.Axis)
+        {
+            case 0:  Transform->Rotation.SetX(Wrap(Transform->Rotation.GetX() + Delta)); break;
+            case 2:  Transform->Rotation.SetZ(Wrap(Transform->Rotation.GetZ() + Delta)); break;
+            default: Transform->Rotation.SetY(Wrap(Transform->Rotation.GetY() + Delta)); break;
+        }
+    });
 }
 
 std::string LabLogic::TimerLine(World& InWorld)

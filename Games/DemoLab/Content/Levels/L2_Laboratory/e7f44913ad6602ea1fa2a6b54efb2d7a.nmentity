@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="e7f44913ad6602ea1fa2a6b54efb2d7a" Name="K_Probe_Foyer">
+  <Component Type="Reflection Probe" Version="1">
+    <Radius Value="1440" />
+    <BoxExtent X="900" Y="295" Z="600" />
+    <Intensity Value="1" />
+    <Resolution Value="128" />
+    <Frequency Value="1" />
+    <Interval Value="3" />
+    <NearClip Value="5" />
+    <FarClip Value="12000" />
+    <CaptureShadows Value="true" />
+    <Enabled Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+      <Position X="0" Y="295" Z="-1800" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>
