@@ -1,0 +1,62 @@
+NimbleParticleSystem 1
+
+Emitter Jet
+    Enabled true
+    Type Sprite
+    Modules Shape Velocity Forces
+    Mesh Engine/Content/Meshes/SpriteOctagon.nmmesh
+    Material Content/Materials/Particles/P_Steam.material.nmgraph
+    Offset 0,0,0
+    Billboard FaceCamera
+    VelocityStretch 0
+    MeshOrientation RandomSpin
+    RandomRotation true
+    RotationRate 0.3
+    SpawnMode Burst
+    MaxParticles 192
+    Shape Cone
+    ShapeSurface false
+    BoxSize 100,100,100
+    ConeAngle 7
+    RingWidth 0
+    ShapeSpeed 950
+    SpawnRate 20
+    BurstCount 60
+    BurstInterval 2.5
+    BurstCycles 0
+    Lifetime 1.3
+    LifetimeVariance 0.4
+    EmitterRadius 2
+    Seed 0
+    CullDistance 8000
+    PauseOffscreen true
+    Velocity 0,0,0
+    VelocitySpread 0
+    Acceleration 0,60,0
+    Drag 2.2
+    Turbulence 40
+    CollisionResponse None
+    CollisionHeight -100000
+    Bounce 0.3
+    Friction 0.2
+    FlipbookColumns 1
+    FlipbookRows 1
+    FlipbookFrames 0
+    FlipbookRate 0
+    FlipbookCycles 1
+    FlipbookRandomStart false
+    BeamEnd 0,200,0
+    BeamSegments 16
+    BeamNoise 0
+    BeamNoiseSpeed 4
+    SizeMode StartEnd
+    StartSize 6
+    EndSize 110
+    SizeKeys
+    ColorMode StartEnd
+    StartColor 240,240,240,120
+    EndColor 220,220,220,0
+    ColorCurve 0.6
+    FadeIn 0.02
+    FadeOut 0.6
+    ColorKeys

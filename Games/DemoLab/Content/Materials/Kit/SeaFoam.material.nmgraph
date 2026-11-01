@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="05216e70f485cd5d63b642dd9964a0cf" Type="Math.Smoothstep" Version="1" X="-1180" Y="-300" Wildcard="float">
+      <Const Pin="Edge0" Value="0" />
+      <Const Pin="Edge1" Value="0.35" />
+    </Node>
+    <Node Id="069dce5f27e9411c9d7dd7834ccc3087" Type="Vector.Make2" Version="1" X="-80" Y="-600" />
+    <Node Id="23854b9ea466704269a178aa56b7ceeb" Type="Math.Add" Version="1" X="-1400" Y="-450" Wildcard="vec2" />
+    <Node Id="2ee6a8b84acb08ef9e68699dab059f93" Type="Math.Multiply" Version="1" X="140" Y="-600" Wildcard="vec2">
+      <Const Pin="B" Value="0.004 0.035" />
+    </Node>
+    <Node Id="3b29c27a044ac0f51a3809edd86063df" Type="Math.Add" Version="1" X="-960" Y="-150" Wildcard="float">
+      <Const Pin="B" Value="0.25" />
+    </Node>
+    <Node Id="40ac1f654eb444b0029f595a8f69bf35" Type="Math.Multiply" Version="1" X="-740" Y="-300" Wildcard="float" />
+    <Node Id="4923b4e595116af45154273f5fdd31e4" Type="Input.Time" Version="1" X="-520" Y="-600" />
+    <Node Id="4e4091c300db7ab1c2debe4dd0c1360c" Type="Math.Add" Version="1" X="-300" Y="-300" Wildcard="float">
+      <Const Pin="B" Value="-0.25" />
+    </Node>
+    <Node Id="62a1e4556508c1e11cbc41c75ae0ebb2" Type="Math.Multiply" Version="1" X="-1180" Y="-150" Wildcard="float">
+      <Const Pin="B" Value="0.6" />
+    </Node>
+    <Node Id="709db2d5f4015d84119374dce111deb7" Type="Math.Add" Version="1" X="-300" Y="-450" Wildcard="float" />
+    <Node Id="7191c4ab8a80e34dde3a88f6a76a4d23" Type="Texture.Sample" Version="2" X="-960" Y="-450" />
+    <Node Id="7a159d6b48e270f853911ad5b40a65c1" Type="Vector.Split" Version="1" X="-740" Y="-600" />
+    <Node Id="7d728959d57876ee9e3171b30ac02ecc" Type="Math.Multiply" Version="1" X="140" Y="-300" Wildcard="float" />
+    <Node Id="829f5a116ba9d81293adf7d977ce2954" Type="Math.Saturate" Version="1" X="-520" Y="-150" Wildcard="float" />
+    <Node Id="8f3d75765cb0ded6205789478cf61983" Type="Math.Multiply" Version="1" X="-740" Y="-150" Wildcard="float" />
+    <Node Id="91008d34c577fb26c6cc0b49f2738032" Type="Math.Add" Version="1" X="-1400" Y="-300" Wildcard="float">
+      <Const Pin="B" Value="0.65" />
+    </Node>
+    <Node Id="9a068d2698d974e9aa245c362f49ba9e" Type="Math.Multiply" Version="1" X="140" Y="-450" Wildcard="float">
+      <Const Pin="B" Value="0.35" />
+    </Node>
+    <Node Id="a980ee7b686275ad2ede5369ce50c3da" Type="Math.Sin" Version="1" X="-80" Y="-450" Wildcard="float" />
+    <Node Id="ad08c458748854f26481a3dbb4964122" Type="Texture.Object" Version="1" X="-1180" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Sea_Foam.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="b569df34f3b5fed6b1f92c70e5e9635b" Type="Math.Multiply" Version="1" X="-520" Y="-300" Wildcard="float">
+      <Const Pin="B" Value="1.6" />
+    </Node>
+    <Node Id="bb40113730b86aaf5091e7be30ab57dd" Type="Input.TexCoord" Version="1" X="-960" Y="-600" />
+    <Node Id="bc7fccdfedf633601f4968e6aa4f7026" Type="Math.Saturate" Version="1" X="-80" Y="-300" Wildcard="float" />
+    <Node Id="c4e31517850674c6bbcc23db45ae755f" Type="Math.Smoothstep" Version="1" X="-960" Y="-300" Wildcard="float">
+      <Const Pin="Edge0" Value="1" />
+      <Const Pin="Edge1" Value="0.9" />
+    </Node>
+    <Node Id="c8fab84445325e9df2f5fa1861521e23" Type="Math.Multiply" Version="1" X="-1400" Y="-150" Wildcard="float" />
+    <Node Id="cafe3f2931cc987fc8629ce687999034" Type="Constant" Version="1" X="-300" Y="-150" Wildcard="float">
+      <Const Pin="Value" Value="0.65" />
+    </Node>
+    <Node Id="d2341d932cce3aff0f5365651e139124" Type="Math.Multiply" Version="1" X="-300" Y="-600" Wildcard="vec2">
+      <Const Pin="B" Value="1.5 1.5" />
+    </Node>
+    <Node Id="e7e9dfb25339d7d146dda8aa86ce2c9a" Type="Constant" Version="1" X="-80" Y="-150" Wildcard="float">
+      <Const Pin="Value" Value="0" />
+    </Node>
+    <Node Id="edaa20428b2d2d766c42c58b1cda3dbe" Type="Math.Multiply" Version="1" X="-740" Y="-450" Wildcard="float">
+      <Const Pin="B" Value="18" />
+    </Node>
+    <Node Id="f760908d620b1ed8aea66c2bd1db76a0" Type="Output.Material" Version="1" X="-1180" Y="-600">
+      <Const Pin="Refraction" Value="1.0" />
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Translucent" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="ShadingModel" Value="Default" />
+      <Prop Name="TranslucencyLighting" Value="Surface" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+    <Node Id="fa8800cb75b3622808091fa18f7d5035" Type="Math.Multiply" Version="1" X="-520" Y="-450" Wildcard="float">
+      <Const Pin="B" Value="-1.4" />
+    </Node>
+  </Nodes>
+  <Links>
+    <Link From="05216e70f485cd5d63b642dd9964a0cf.Out" To="40ac1f654eb444b0029f595a8f69bf35.A" />
+    <Link From="069dce5f27e9411c9d7dd7834ccc3087.Out" To="2ee6a8b84acb08ef9e68699dab059f93.A" />
+    <Link From="23854b9ea466704269a178aa56b7ceeb.Out" To="7191c4ab8a80e34dde3a88f6a76a4d23.UV" />
+    <Link From="2ee6a8b84acb08ef9e68699dab059f93.Out" To="23854b9ea466704269a178aa56b7ceeb.B" />
+    <Link From="3b29c27a044ac0f51a3809edd86063df.Out" To="8f3d75765cb0ded6205789478cf61983.B" />
+    <Link From="40ac1f654eb444b0029f595a8f69bf35.Out" To="7d728959d57876ee9e3171b30ac02ecc.B" />
+    <Link From="4923b4e595116af45154273f5fdd31e4.Time" To="069dce5f27e9411c9d7dd7834ccc3087.X" />
+    <Link From="4923b4e595116af45154273f5fdd31e4.Time" To="069dce5f27e9411c9d7dd7834ccc3087.Y" />
+    <Link From="4923b4e595116af45154273f5fdd31e4.Time" To="fa8800cb75b3622808091fa18f7d5035.A" />
+    <Link From="4e4091c300db7ab1c2debe4dd0c1360c.Out" To="bc7fccdfedf633601f4968e6aa4f7026.X" />
+    <Link From="62a1e4556508c1e11cbc41c75ae0ebb2.Out" To="3b29c27a044ac0f51a3809edd86063df.A" />
+    <Link From="709db2d5f4015d84119374dce111deb7.Out" To="a980ee7b686275ad2ede5369ce50c3da.X" />
+    <Link From="7191c4ab8a80e34dde3a88f6a76a4d23.A" To="b569df34f3b5fed6b1f92c70e5e9635b.A" />
+    <Link From="7191c4ab8a80e34dde3a88f6a76a4d23.RGB" To="f760908d620b1ed8aea66c2bd1db76a0.BaseColor" />
+    <Link From="7a159d6b48e270f853911ad5b40a65c1.Y" To="05216e70f485cd5d63b642dd9964a0cf.X" />
+    <Link From="7a159d6b48e270f853911ad5b40a65c1.Y" To="c4e31517850674c6bbcc23db45ae755f.X" />
+    <Link From="7a159d6b48e270f853911ad5b40a65c1.Y" To="c8fab84445325e9df2f5fa1861521e23.B" />
+    <Link From="7a159d6b48e270f853911ad5b40a65c1.Y" To="edaa20428b2d2d766c42c58b1cda3dbe.A" />
+    <Link From="7d728959d57876ee9e3171b30ac02ecc.Out" To="8f3d75765cb0ded6205789478cf61983.A" />
+    <Link From="829f5a116ba9d81293adf7d977ce2954.Out" To="f760908d620b1ed8aea66c2bd1db76a0.Opacity" />
+    <Link From="8f3d75765cb0ded6205789478cf61983.Out" To="829f5a116ba9d81293adf7d977ce2954.X" />
+    <Link From="91008d34c577fb26c6cc0b49f2738032.Out" To="c8fab84445325e9df2f5fa1861521e23.A" />
+    <Link From="9a068d2698d974e9aa245c362f49ba9e.Out" To="91008d34c577fb26c6cc0b49f2738032.A" />
+    <Link From="a980ee7b686275ad2ede5369ce50c3da.Out" To="9a068d2698d974e9aa245c362f49ba9e.A" />
+    <Link From="ad08c458748854f26481a3dbb4964122.Texture" To="7191c4ab8a80e34dde3a88f6a76a4d23.Texture" />
+    <Link From="b569df34f3b5fed6b1f92c70e5e9635b.Out" To="4e4091c300db7ab1c2debe4dd0c1360c.A" />
+    <Link From="bb40113730b86aaf5091e7be30ab57dd.UV" To="7a159d6b48e270f853911ad5b40a65c1.Vector" />
+    <Link From="bb40113730b86aaf5091e7be30ab57dd.UV" To="d2341d932cce3aff0f5365651e139124.A" />
+    <Link From="bc7fccdfedf633601f4968e6aa4f7026.Out" To="7d728959d57876ee9e3171b30ac02ecc.A" />
+    <Link From="c4e31517850674c6bbcc23db45ae755f.Out" To="40ac1f654eb444b0029f595a8f69bf35.B" />
+    <Link From="c8fab84445325e9df2f5fa1861521e23.Out" To="62a1e4556508c1e11cbc41c75ae0ebb2.A" />
+    <Link From="cafe3f2931cc987fc8629ce687999034.Out" To="f760908d620b1ed8aea66c2bd1db76a0.Roughness" />
+    <Link From="d2341d932cce3aff0f5365651e139124.Out" To="23854b9ea466704269a178aa56b7ceeb.A" />
+    <Link From="e7e9dfb25339d7d146dda8aa86ce2c9a.Out" To="f760908d620b1ed8aea66c2bd1db76a0.Metallic" />
+    <Link From="edaa20428b2d2d766c42c58b1cda3dbe.Out" To="709db2d5f4015d84119374dce111deb7.A" />
+    <Link From="fa8800cb75b3622808091fa18f7d5035.Out" To="709db2d5f4015d84119374dce111deb7.B" />
+  </Links>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "SeaFoam". Do not edit.
+// Translucent, Lit. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Translucency Lighting Surface: specular over the opacity, premultiplied (MaterialTemplate_PS.glsl).
+#define MATERIAL_TRANSLUCENCY_SURFACE 1
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in SeaFoam.material.
+UBO_BLOCK_BEGIN(2, SeaFoam_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+UBO_BLOCK_END(SeaFoam_Block)
+
+// Textures, by material texture slot; SeaFoam.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec2 t0 = Inputs.TexCoord * vec2(1.5);
+    vec2 t1 = vec2(Scene_Time.x, Scene_Time.x);
+    vec2 t2 = t1 * vec2(0.004, 0.035);
+    vec2 t3 = t0 + t2;
+    vec4 t4 = texture(Material_Texture1, t3);
+    Surface.BaseColor = t4.rgb;
+    Surface.Metallic = 0.0;
+    Surface.Roughness = 0.65;
+    float t5 = t4.a * 1.6;
+    float t6 = t5 + -0.25;
+    float t7 = clamp(t6, 0.0, 1.0);
+    float t8 = vec4(Inputs.TexCoord, 0.0, 1.0).y;
+    float t9 = smoothstep(0.0, 0.35, t8);
+    float t10 = smoothstep(1.0, 0.9, t8);
+    float t11 = t9 * t10;
+    float t12 = t7 * t11;
+    float t13 = t8 * 18.0;
+    float t14 = Scene_Time.x * -1.4;
+    float t15 = t13 + t14;
+    float t16 = sin(t15);
+    float t17 = t16 * 0.35;
+    float t18 = t17 + 0.65;
+    float t19 = t18 * t8;
+    float t20 = t19 * 0.6;
+    float t21 = t20 + 0.25;
+    float t22 = t12 * t21;
+    float t23 = clamp(t22, 0.0, 1.0);
+    Surface.Opacity = t23;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "SeaFoam". Do not edit.
+NimbleMaterial 3
+Domain Translucent
+Shading Lit
+TwoSided 0
+TranslucencyLighting Surface
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 160
+Texture 1 Default Default Content/Textures/Kit/Sea_Foam.nmtexture
+]]></Output>
+  </gen_code>
+</NodeGraph>

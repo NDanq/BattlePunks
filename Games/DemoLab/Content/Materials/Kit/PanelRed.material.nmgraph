@@ -1,20 +1,32 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <NodeGraph Version="1" Schema="Material">
   <Nodes>
-    <Node Id="003faee3d5764012f77faff0e8d0e9bd" Type="Texture.NormalMap" Version="1" X="-520" Y="-450">
-      <Prop Name="Format" Value="OpenGL" />
+    <Node Id="003faee3d5764012f77faff0e8d0e9bd" Type="Input.TexCoord" Version="1" X="-520" Y="-450" />
+    <Node Id="0219aa6876fea3f2f26f1350a6fadc13" Type="Parameter" Version="1" X="-1400" Y="-150">
+      <Prop Name="Default" Value="0.42 0.11 0.07" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
     </Node>
-    <Node Id="0219aa6876fea3f2f26f1350a6fadc13" Type="Math.Multiply" Version="1" X="-1400" Y="-150" Wildcard="vec3" />
+    <Node Id="07ab75f9afb4c8f2a47d6bb88547ea9b" Type="Math.Multiply" Version="1" X="-1180" Y="-150" Wildcard="float" />
+    <Node Id="0b1c0c7cb482111398561a1b6fbc2b40" Type="Math.OneMinus" Version="1" X="-80" Y="-150" Wildcard="float" />
     <Node Id="0b6bf866a09c5b64f8563baaca7791eb" Type="Texture.Sample" Version="2" X="-1180" Y="-450" />
-    <Node Id="1187e3e9b68a28980489f47ae8b3d507" Type="Math.Multiply" Version="1" X="-300" Y="-300" Wildcard="float" />
-    <Node Id="1b9d371d2f834e3aab9453860408256d" Type="Math.Lerp" Version="1" X="-80" Y="-300" Wildcard="float">
-      <Const Pin="A" Value="0.6" />
-      <Const Pin="B" Value="1" />
+    <Node Id="1187e3e9b68a28980489f47ae8b3d507" Type="Math.Multiply" Version="1" X="-300" Y="-300" Wildcard="vec2">
+      <Const Pin="B" Value="0.3333333333333333 0.3333333333333333" />
+    </Node>
+    <Node Id="1b9d371d2f834e3aab9453860408256d" Type="Texture.Object" Version="1" X="-80" Y="-300">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Grime_Mask.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
     </Node>
     <Node Id="21404ad40150994b493a17ddcce41510" Type="Texture.Object" Version="1" X="-960" Y="-450">
       <Prop Name="Filter" Value="Default" />
       <Prop Name="Texture" Value="Content/Textures/Kit/RivetPanel_Normal.nmtexture" />
       <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="2a92d9e44a996a82233d91069f2f14ce" Type="Math.Saturate" Version="1" X="-520" Y="450" Wildcard="float" />
+    <Node Id="2b8966b46e0b12a641fee1646c584a80" Type="Math.Lerp" Version="1" X="-80" Y="450" Wildcard="float">
+      <Const Pin="A" Value="0.6" />
+      <Const Pin="B" Value="1" />
     </Node>
     <Node Id="2baf587eeee36895b218c4d74843dab4" Type="Input.VertexColor" Version="1" X="-960" Y="-600" />
     <Node Id="3131d58148422a6de606dd4b7ec88bce" Type="Output.Material" Version="1" X="-1180" Y="-600">
@@ -25,13 +37,41 @@
       <Prop Name="ShadingModel" Value="Default" />
       <Prop Name="TwoSided" Value="false" />
     </Node>
-    <Node Id="37abf8267795cfdef6b335d91e09fbd5" Type="Math.Multiply" Version="1" X="-960" Y="-300" Wildcard="vec3" />
-    <Node Id="4f9e0de3387ca386ef6bb6b9750ee1ab" Type="Math.OneMinus" Version="1" X="-520" Y="-300" Wildcard="float" />
+    <Node Id="375a658b499ff98dc905edeb1352a04e" Type="Math.Add" Version="1" X="-1400" Y="450" Wildcard="float" />
+    <Node Id="37abf8267795cfdef6b335d91e09fbd5" Type="Math.Add" Version="1" X="-960" Y="-300" Wildcard="vec3" />
+    <Node Id="382786d5318bbff85ebaaa836caa63f1" Type="Math.Multiply" Version="1" X="-1180" Y="450" Wildcard="float">
+      <Const Pin="B" Value="0.12" />
+    </Node>
+    <Node Id="395a81093aae74fe012f81f3af237e99" Type="Constant" Version="1" X="-1180" Y="150" Wildcard="vec3">
+      <Const Pin="Value" Value="0.52 0.47 0.42" />
+    </Node>
+    <Node Id="40c3dc1169d07fcaa88e1d4708383f40" Type="Constant" Version="1" X="-1180" Y="300" Wildcard="vec3">
+      <Const Pin="Value" Value="0.38 0.18 0.07" />
+    </Node>
+    <Node Id="4270b8d6f94257ee7626d45bce8c2d81" Type="Math.Saturate" Version="1" X="-1400" Y="300" Wildcard="float" />
+    <Node Id="4f9e0de3387ca386ef6bb6b9750ee1ab" Type="Input.TexCoord" Version="1" X="-520" Y="-300" />
+    <Node Id="5879b87342ea4a22900e8591d7a0ca02" Type="Math.Saturate" Version="1" X="-1400" Y="150" Wildcard="float" />
+    <Node Id="5f0205956125edf7f9fa4348928212b6" Type="Math.Add" Version="1" X="-80" Y="0" Wildcard="float" />
+    <Node Id="601f5f734e676533f25a614df95306cb" Type="Math.Multiply" Version="1" X="-520" Y="-150" Wildcard="float" />
     <Node Id="62e4babaaf8d5f84cbecb9f0299d36df" Type="Input.TexCoord" Version="1" X="-520" Y="-600" />
-    <Node Id="68cfd139e8e5ad1e398aebc3f73911e5" Type="Parameter" Version="1" X="-300" Y="-450">
-      <Prop Name="Default" Value="0.42 0.11 0.07" />
-      <Prop Name="Name" Value="Tint" />
-      <Prop Name="Type" Value="vec3" />
+    <Node Id="6470b8512b564d5b5c892e1c0d90c916" Type="Math.Multiply" Version="1" X="140" Y="0" Wildcard="float">
+      <Const Pin="B" Value="0.55" />
+    </Node>
+    <Node Id="6702223991462a07a830321c32ea6769" Type="Math.OneMinus" Version="1" X="-300" Y="300" Wildcard="float" />
+    <Node Id="68cfd139e8e5ad1e398aebc3f73911e5" Type="Math.Multiply" Version="1" X="-300" Y="-450" Wildcard="vec2">
+      <Const Pin="B" Value="2 2" />
+    </Node>
+    <Node Id="6cae8d3c60316f873439d544decfb99a" Type="Math.Multiply" Version="1" X="-1400" Y="600" Wildcard="vec3" />
+    <Node Id="6f6e4956ece418d9e01bbc0c94ced445" Type="Math.Add" Version="1" X="-740" Y="-150" Wildcard="float">
+      <Const Pin="B" Value="0.3" />
+    </Node>
+    <Node Id="7594b618d9ef1559126a0fc4fc32dfe3" Type="Math.Multiply" Version="1" X="-300" Y="450" Wildcard="float" />
+    <Node Id="7a8c76387bf6c2f46ef9acf26ca7a773" Type="Math.Lerp" Version="1" X="-1180" Y="0" Wildcard="vec3">
+      <Const Pin="A" Value="0.4 0.39 0.37" />
+    </Node>
+    <Node Id="7ce544b371d4ed9eebad41a71740454b" Type="Math.Smoothstep" Version="1" X="-300" Y="-150" Wildcard="float">
+      <Const Pin="Edge0" Value="0.45" />
+      <Const Pin="Edge1" Value="0.8" />
     </Node>
     <Node Id="7eec0652d9a2c96ec79ecf6cb4672d42" Type="Texture.Object" Version="1" X="-1400" Y="-450">
       <Prop Name="Filter" Value="Default" />
@@ -41,61 +81,155 @@
     <Node Id="8f9181c379dbf8102fc4c354452b68f2" Type="Math.Multiply" Version="1" X="-300" Y="-600" Wildcard="vec2">
       <Const Pin="B" Value="0.5 0.5" />
     </Node>
-    <Node Id="ad2576ba2a855970c2989899fcb38da7" Type="Vector.Make3" Version="1" X="140" Y="-300" />
-    <Node Id="b97900a6932f8c87af9325a00cc40a54" Type="Math.Multiply" Version="1" X="-1180" Y="-300" Wildcard="float" />
-    <Node Id="cd953f36615777fff158bc0385599bfd" Type="Math.Multiply" Version="1" X="-80" Y="-450" Wildcard="float" />
+    <Node Id="93e64e1ab63e82e1f882a3f72c0aa09b" Type="Math.Multiply" Version="1" X="-300" Y="0" Wildcard="float">
+      <Const Pin="B" Value="0.8" />
+    </Node>
+    <Node Id="98708a91e35f55e99d33bad687d9abe3" Type="Math.Lerp" Version="1" X="-520" Y="150" Wildcard="vec3" />
+    <Node Id="989f9464bffa4cf9d659f4a674a044a6" Type="Math.OneMinus" Version="1" X="-740" Y="0" Wildcard="float" />
+    <Node Id="a4124f956919804744d5220a9a6a26e5" Type="Math.Multiply" Version="1" X="-1400" Y="0" Wildcard="vec3" />
+    <Node Id="a8a852b4d5e00fe3e82aff0c75110d69" Type="Math.Multiply" Version="1" X="140" Y="300" Wildcard="float">
+      <Const Pin="B" Value="0.3" />
+    </Node>
+    <Node Id="aab75bcbdbc46f4819f601af84bd9e6c" Type="Math.Multiply" Version="1" X="-960" Y="-150" Wildcard="float">
+      <Const Pin="B" Value="1.2" />
+    </Node>
+    <Node Id="ab493bf6172f1e354a3bf8512f669aa2" Type="Math.Multiply" Version="1" X="-960" Y="150" Wildcard="vec3" />
+    <Node Id="ad2576ba2a855970c2989899fcb38da7" Type="Texture.Sample" Version="2" X="140" Y="-300" />
+    <Node Id="b3258118a2aeeac1f31238cc57b134f2" Type="Math.Multiply" Version="1" X="-960" Y="300" Wildcard="float">
+      <Const Pin="B" Value="0.85" />
+    </Node>
+    <Node Id="b755cc30400574b8bd05bd1b5a3ff0cc" Type="Math.Multiply" Version="1" X="140" Y="-150" Wildcard="float" />
+    <Node Id="b97900a6932f8c87af9325a00cc40a54" Type="Math.Add" Version="1" X="-1180" Y="-300" Wildcard="vec3">
+      <Const Pin="B" Value="-0.2 -0.2 0" />
+    </Node>
+    <Node Id="ba69109eae3605e8a5ac83a37663c3fb" Type="Math.Add" Version="1" X="-960" Y="450" Wildcard="float">
+      <Const Pin="B" Value="-0.06" />
+    </Node>
+    <Node Id="bf83a0f6c782c3982e554db59e1ba4d2" Type="Vector.Make3" Version="1" X="-740" Y="300" />
+    <Node Id="c742d59dcfdcd982a42ed559a64b7e09" Type="Math.Multiply" Version="1" X="-520" Y="0" Wildcard="float">
+      <Const Pin="B" Value="1.5" />
+    </Node>
+    <Node Id="cd953f36615777fff158bc0385599bfd" Type="Texture.Object" Version="1" X="-80" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Detail_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
     <Node Id="d11998d2d7c8a3120530883c14b59563" Type="Texture.Sample" Version="2" X="140" Y="-600" />
     <Node Id="d151be81dafd8b32f6ed0459f726ebc4" Type="Texture.Sample" Version="2" X="-740" Y="-450" />
-    <Node Id="e5076dfc21b3f041de3332472d57f56e" Type="Math.Smoothstep" Version="1" X="140" Y="-450" Wildcard="float">
-      <Const Pin="Edge0" Value="0.45" />
-      <Const Pin="Edge1" Value="0.8" />
+    <Node Id="d633feec7a3553467cee79fa92c03e2d" Type="Math.Add" Version="1" X="-80" Y="150" Wildcard="float" />
+    <Node Id="dbe96e8019b68ca1ac5bb2346eccd026" Type="Math.Multiply" Version="1" X="140" Y="150" Wildcard="float">
+      <Const Pin="B" Value="0.55" />
     </Node>
-    <Node Id="e5be7f3562082a1b555efca7db1419a5" Type="Math.Lerp" Version="1" X="-740" Y="-300" Wildcard="vec3">
-      <Const Pin="A" Value="0.4 0.39 0.37" />
+    <Node Id="dd94b3b68e6a046e7e6c275a678cdc3a" Type="Vector.Make3" Version="1" X="-740" Y="150" />
+    <Node Id="e5076dfc21b3f041de3332472d57f56e" Type="Texture.Sample" Version="2" X="140" Y="-450" />
+    <Node Id="e5be7f3562082a1b555efca7db1419a5" Type="Texture.NormalMap" Version="1" X="-740" Y="-300">
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+    <Node Id="e8ea847fa38d525cdc14b6d15c9464db" Type="Math.Multiply" Version="1" X="-300" Y="150" Wildcard="float">
+      <Const Pin="B" Value="0.18" />
     </Node>
     <Node Id="ec6e213c80ceee1caca2bd878ee9a539" Type="Vector.Split" Version="1" X="-740" Y="-600" />
+    <Node Id="ed73c6f25183b9c4185815dd4d7ef5d3" Type="Math.Multiply" Version="1" X="-80" Y="300" Wildcard="float" />
+    <Node Id="f2fff7e4de542c41f7bdda5b9af9569e" Type="Vector.Make3" Version="1" X="140" Y="450" />
+    <Node Id="f64343f2cb50ad90ffb84953e005635c" Type="Math.OneMinus" Version="1" X="-960" Y="0" Wildcard="float" />
     <Node Id="f70fedb8707208be10b21034d142e802" Type="Texture.Object" Version="1" X="-80" Y="-600">
       <Prop Name="Filter" Value="Default" />
       <Prop Name="Texture" Value="Content/Textures/Kit/RivetPanel_BaseColor.nmtexture" />
       <Prop Name="Wrap" Value="Default" />
     </Node>
-    <Node Id="f9d69fdd892027f6e7184af819937ecf" Type="Math.OneMinus" Version="1" X="-1400" Y="-300" Wildcard="float" />
+    <Node Id="f9d69fdd892027f6e7184af819937ecf" Type="Math.Multiply" Version="1" X="-1400" Y="-300" Wildcard="vec3">
+      <Const Pin="B" Value="0.4 0.4 0" />
+    </Node>
+    <Node Id="fbe223077f7c2b4c8bbd301019a6afd4" Type="Math.Lerp" Version="1" X="-520" Y="300" Wildcard="vec3" />
+    <Node Id="fdf66a78c803b8cb3d6a7f27ac47f005" Type="Math.Add" Version="1" X="-740" Y="450" Wildcard="float" />
   </Nodes>
   <Links>
-    <Link From="003faee3d5764012f77faff0e8d0e9bd.Normal" To="3131d58148422a6de606dd4b7ec88bce.Normal" />
-    <Link From="0219aa6876fea3f2f26f1350a6fadc13.Out" To="3131d58148422a6de606dd4b7ec88bce.BaseColor" />
-    <Link From="0b6bf866a09c5b64f8563baaca7791eb.G" To="3131d58148422a6de606dd4b7ec88bce.Roughness" />
-    <Link From="0b6bf866a09c5b64f8563baaca7791eb.R" To="1187e3e9b68a28980489f47ae8b3d507.A" />
-    <Link From="0b6bf866a09c5b64f8563baaca7791eb.R" To="cd953f36615777fff158bc0385599bfd.B" />
-    <Link From="1187e3e9b68a28980489f47ae8b3d507.Out" To="3131d58148422a6de606dd4b7ec88bce.AmbientOcclusion" />
-    <Link From="1b9d371d2f834e3aab9453860408256d.Out" To="ad2576ba2a855970c2989899fcb38da7.X" />
-    <Link From="1b9d371d2f834e3aab9453860408256d.Out" To="ad2576ba2a855970c2989899fcb38da7.Y" />
-    <Link From="1b9d371d2f834e3aab9453860408256d.Out" To="ad2576ba2a855970c2989899fcb38da7.Z" />
+    <Link From="003faee3d5764012f77faff0e8d0e9bd.UV" To="68cfd139e8e5ad1e398aebc3f73911e5.A" />
+    <Link From="0219aa6876fea3f2f26f1350a6fadc13.Value" To="a4124f956919804744d5220a9a6a26e5.B" />
+    <Link From="07ab75f9afb4c8f2a47d6bb88547ea9b.Out" To="601f5f734e676533f25a614df95306cb.A" />
+    <Link From="0b1c0c7cb482111398561a1b6fbc2b40.Out" To="b755cc30400574b8bd05bd1b5a3ff0cc.B" />
+    <Link From="0b6bf866a09c5b64f8563baaca7791eb.G" To="d633feec7a3553467cee79fa92c03e2d.A" />
+    <Link From="0b6bf866a09c5b64f8563baaca7791eb.R" To="07ab75f9afb4c8f2a47d6bb88547ea9b.B" />
+    <Link From="0b6bf866a09c5b64f8563baaca7791eb.R" To="7594b618d9ef1559126a0fc4fc32dfe3.A" />
+    <Link From="1187e3e9b68a28980489f47ae8b3d507.Out" To="ad2576ba2a855970c2989899fcb38da7.UV" />
+    <Link From="1b9d371d2f834e3aab9453860408256d.Texture" To="ad2576ba2a855970c2989899fcb38da7.Texture" />
     <Link From="21404ad40150994b493a17ddcce41510.Texture" To="d151be81dafd8b32f6ed0459f726ebc4.Texture" />
-    <Link From="2baf587eeee36895b218c4d74843dab4.A" To="cd953f36615777fff158bc0385599bfd.A" />
+    <Link From="2a92d9e44a996a82233d91069f2f14ce.Out" To="3131d58148422a6de606dd4b7ec88bce.Roughness" />
+    <Link From="2b8966b46e0b12a641fee1646c584a80.Out" To="f2fff7e4de542c41f7bdda5b9af9569e.X" />
+    <Link From="2b8966b46e0b12a641fee1646c584a80.Out" To="f2fff7e4de542c41f7bdda5b9af9569e.Y" />
+    <Link From="2b8966b46e0b12a641fee1646c584a80.Out" To="f2fff7e4de542c41f7bdda5b9af9569e.Z" />
+    <Link From="2baf587eeee36895b218c4d74843dab4.A" To="07ab75f9afb4c8f2a47d6bb88547ea9b.A" />
     <Link From="2baf587eeee36895b218c4d74843dab4.RGB" To="ec6e213c80ceee1caca2bd878ee9a539.Vector" />
-    <Link From="37abf8267795cfdef6b335d91e09fbd5.Out" To="e5be7f3562082a1b555efca7db1419a5.B" />
-    <Link From="4f9e0de3387ca386ef6bb6b9750ee1ab.Out" To="3131d58148422a6de606dd4b7ec88bce.Metallic" />
+    <Link From="375a658b499ff98dc905edeb1352a04e.Out" To="fdf66a78c803b8cb3d6a7f27ac47f005.A" />
+    <Link From="37abf8267795cfdef6b335d91e09fbd5.Out" To="e5be7f3562082a1b555efca7db1419a5.Color" />
+    <Link From="382786d5318bbff85ebaaa836caa63f1.Out" To="ba69109eae3605e8a5ac83a37663c3fb.A" />
+    <Link From="395a81093aae74fe012f81f3af237e99.Out" To="ab493bf6172f1e354a3bf8512f669aa2.B" />
+    <Link From="40c3dc1169d07fcaa88e1d4708383f40.Out" To="fbe223077f7c2b4c8bbd301019a6afd4.B" />
+    <Link From="4270b8d6f94257ee7626d45bce8c2d81.Out" To="6702223991462a07a830321c32ea6769.X" />
+    <Link From="4270b8d6f94257ee7626d45bce8c2d81.Out" To="a8a852b4d5e00fe3e82aff0c75110d69.A" />
+    <Link From="4270b8d6f94257ee7626d45bce8c2d81.Out" To="b3258118a2aeeac1f31238cc57b134f2.A" />
+    <Link From="4f9e0de3387ca386ef6bb6b9750ee1ab.UV" To="1187e3e9b68a28980489f47ae8b3d507.A" />
+    <Link From="5879b87342ea4a22900e8591d7a0ca02.Out" To="dd94b3b68e6a046e7e6c275a678cdc3a.X" />
+    <Link From="5879b87342ea4a22900e8591d7a0ca02.Out" To="dd94b3b68e6a046e7e6c275a678cdc3a.Y" />
+    <Link From="5879b87342ea4a22900e8591d7a0ca02.Out" To="dd94b3b68e6a046e7e6c275a678cdc3a.Z" />
+    <Link From="5879b87342ea4a22900e8591d7a0ca02.Out" To="e8ea847fa38d525cdc14b6d15c9464db.A" />
+    <Link From="5f0205956125edf7f9fa4348928212b6.Out" To="6470b8512b564d5b5c892e1c0d90c916.A" />
+    <Link From="601f5f734e676533f25a614df95306cb.Out" To="7ce544b371d4ed9eebad41a71740454b.X" />
     <Link From="62e4babaaf8d5f84cbecb9f0299d36df.UV" To="8f9181c379dbf8102fc4c354452b68f2.A" />
-    <Link From="68cfd139e8e5ad1e398aebc3f73911e5.Value" To="37abf8267795cfdef6b335d91e09fbd5.B" />
+    <Link From="6470b8512b564d5b5c892e1c0d90c916.Out" To="5879b87342ea4a22900e8591d7a0ca02.X" />
+    <Link From="6702223991462a07a830321c32ea6769.Out" To="ed73c6f25183b9c4185815dd4d7ef5d3.B" />
+    <Link From="68cfd139e8e5ad1e398aebc3f73911e5.Out" To="e5076dfc21b3f041de3332472d57f56e.UV" />
+    <Link From="6cae8d3c60316f873439d544decfb99a.Out" To="3131d58148422a6de606dd4b7ec88bce.BaseColor" />
+    <Link From="6f6e4956ece418d9e01bbc0c94ced445.Out" To="601f5f734e676533f25a614df95306cb.B" />
+    <Link From="7594b618d9ef1559126a0fc4fc32dfe3.Out" To="3131d58148422a6de606dd4b7ec88bce.AmbientOcclusion" />
+    <Link From="7a8c76387bf6c2f46ef9acf26ca7a773.Out" To="98708a91e35f55e99d33bad687d9abe3.A" />
+    <Link From="7a8c76387bf6c2f46ef9acf26ca7a773.Out" To="ab493bf6172f1e354a3bf8512f669aa2.A" />
+    <Link From="7ce544b371d4ed9eebad41a71740454b.Out" To="0b1c0c7cb482111398561a1b6fbc2b40.X" />
     <Link From="7eec0652d9a2c96ec79ecf6cb4672d42.Texture" To="0b6bf866a09c5b64f8563baaca7791eb.Texture" />
-    <Link From="8f9181c379dbf8102fc4c354452b68f2.Out" To="003faee3d5764012f77faff0e8d0e9bd.UV" />
     <Link From="8f9181c379dbf8102fc4c354452b68f2.Out" To="0b6bf866a09c5b64f8563baaca7791eb.UV" />
     <Link From="8f9181c379dbf8102fc4c354452b68f2.Out" To="d11998d2d7c8a3120530883c14b59563.UV" />
     <Link From="8f9181c379dbf8102fc4c354452b68f2.Out" To="d151be81dafd8b32f6ed0459f726ebc4.UV" />
-    <Link From="ad2576ba2a855970c2989899fcb38da7.Out" To="0219aa6876fea3f2f26f1350a6fadc13.B" />
-    <Link From="b97900a6932f8c87af9325a00cc40a54.Out" To="4f9e0de3387ca386ef6bb6b9750ee1ab.X" />
-    <Link From="b97900a6932f8c87af9325a00cc40a54.Out" To="e5be7f3562082a1b555efca7db1419a5.T" />
-    <Link From="cd953f36615777fff158bc0385599bfd.Out" To="e5076dfc21b3f041de3332472d57f56e.X" />
-    <Link From="d11998d2d7c8a3120530883c14b59563.A" To="b97900a6932f8c87af9325a00cc40a54.A" />
-    <Link From="d11998d2d7c8a3120530883c14b59563.RGB" To="37abf8267795cfdef6b335d91e09fbd5.A" />
-    <Link From="d151be81dafd8b32f6ed0459f726ebc4.RGB" To="003faee3d5764012f77faff0e8d0e9bd.Color" />
-    <Link From="e5076dfc21b3f041de3332472d57f56e.Out" To="f9d69fdd892027f6e7184af819937ecf.X" />
-    <Link From="e5be7f3562082a1b555efca7db1419a5.Out" To="0219aa6876fea3f2f26f1350a6fadc13.A" />
-    <Link From="ec6e213c80ceee1caca2bd878ee9a539.X" To="1187e3e9b68a28980489f47ae8b3d507.B" />
-    <Link From="ec6e213c80ceee1caca2bd878ee9a539.X" To="1b9d371d2f834e3aab9453860408256d.T" />
+    <Link From="8f9181c379dbf8102fc4c354452b68f2.Out" To="e5be7f3562082a1b555efca7db1419a5.UV" />
+    <Link From="93e64e1ab63e82e1f882a3f72c0aa09b.Out" To="5f0205956125edf7f9fa4348928212b6.A" />
+    <Link From="98708a91e35f55e99d33bad687d9abe3.Out" To="fbe223077f7c2b4c8bbd301019a6afd4.A" />
+    <Link From="989f9464bffa4cf9d659f4a674a044a6.Out" To="c742d59dcfdcd982a42ed559a64b7e09.A" />
+    <Link From="a4124f956919804744d5220a9a6a26e5.Out" To="7a8c76387bf6c2f46ef9acf26ca7a773.B" />
+    <Link From="a8a852b4d5e00fe3e82aff0c75110d69.Out" To="375a658b499ff98dc905edeb1352a04e.B" />
+    <Link From="aab75bcbdbc46f4819f601af84bd9e6c.Out" To="6f6e4956ece418d9e01bbc0c94ced445.A" />
+    <Link From="ab493bf6172f1e354a3bf8512f669aa2.Out" To="98708a91e35f55e99d33bad687d9abe3.B" />
+    <Link From="ad2576ba2a855970c2989899fcb38da7.A" To="382786d5318bbff85ebaaa836caa63f1.A" />
+    <Link From="ad2576ba2a855970c2989899fcb38da7.B" To="aab75bcbdbc46f4819f601af84bd9e6c.A" />
+    <Link From="ad2576ba2a855970c2989899fcb38da7.G" To="dbe96e8019b68ca1ac5bb2346eccd026.A" />
+    <Link From="ad2576ba2a855970c2989899fcb38da7.R" To="93e64e1ab63e82e1f882a3f72c0aa09b.A" />
+    <Link From="b3258118a2aeeac1f31238cc57b134f2.Out" To="bf83a0f6c782c3982e554db59e1ba4d2.X" />
+    <Link From="b3258118a2aeeac1f31238cc57b134f2.Out" To="bf83a0f6c782c3982e554db59e1ba4d2.Y" />
+    <Link From="b3258118a2aeeac1f31238cc57b134f2.Out" To="bf83a0f6c782c3982e554db59e1ba4d2.Z" />
+    <Link From="b755cc30400574b8bd05bd1b5a3ff0cc.Out" To="7a8c76387bf6c2f46ef9acf26ca7a773.T" />
+    <Link From="b755cc30400574b8bd05bd1b5a3ff0cc.Out" To="f64343f2cb50ad90ffb84953e005635c.X" />
+    <Link From="b97900a6932f8c87af9325a00cc40a54.Out" To="37abf8267795cfdef6b335d91e09fbd5.B" />
+    <Link From="ba69109eae3605e8a5ac83a37663c3fb.Out" To="fdf66a78c803b8cb3d6a7f27ac47f005.B" />
+    <Link From="bf83a0f6c782c3982e554db59e1ba4d2.Out" To="fbe223077f7c2b4c8bbd301019a6afd4.T" />
+    <Link From="c742d59dcfdcd982a42ed559a64b7e09.Out" To="5f0205956125edf7f9fa4348928212b6.B" />
+    <Link From="cd953f36615777fff158bc0385599bfd.Texture" To="e5076dfc21b3f041de3332472d57f56e.Texture" />
+    <Link From="d11998d2d7c8a3120530883c14b59563.A" To="b755cc30400574b8bd05bd1b5a3ff0cc.A" />
+    <Link From="d11998d2d7c8a3120530883c14b59563.RGB" To="a4124f956919804744d5220a9a6a26e5.A" />
+    <Link From="d151be81dafd8b32f6ed0459f726ebc4.RGB" To="37abf8267795cfdef6b335d91e09fbd5.A" />
+    <Link From="d633feec7a3553467cee79fa92c03e2d.Out" To="375a658b499ff98dc905edeb1352a04e.A" />
+    <Link From="dbe96e8019b68ca1ac5bb2346eccd026.Out" To="4270b8d6f94257ee7626d45bce8c2d81.X" />
+    <Link From="dd94b3b68e6a046e7e6c275a678cdc3a.Out" To="98708a91e35f55e99d33bad687d9abe3.T" />
+    <Link From="e5076dfc21b3f041de3332472d57f56e.RGB" To="f9d69fdd892027f6e7184af819937ecf.A" />
+    <Link From="e5be7f3562082a1b555efca7db1419a5.Normal" To="3131d58148422a6de606dd4b7ec88bce.Normal" />
+    <Link From="e8ea847fa38d525cdc14b6d15c9464db.Out" To="d633feec7a3553467cee79fa92c03e2d.B" />
+    <Link From="ec6e213c80ceee1caca2bd878ee9a539.X" To="2b8966b46e0b12a641fee1646c584a80.T" />
+    <Link From="ec6e213c80ceee1caca2bd878ee9a539.X" To="7594b618d9ef1559126a0fc4fc32dfe3.B" />
+    <Link From="ec6e213c80ceee1caca2bd878ee9a539.X" To="989f9464bffa4cf9d659f4a674a044a6.X" />
+    <Link From="ed73c6f25183b9c4185815dd4d7ef5d3.Out" To="3131d58148422a6de606dd4b7ec88bce.Metallic" />
+    <Link From="f2fff7e4de542c41f7bdda5b9af9569e.Out" To="6cae8d3c60316f873439d544decfb99a.B" />
+    <Link From="f64343f2cb50ad90ffb84953e005635c.Out" To="ed73c6f25183b9c4185815dd4d7ef5d3.A" />
     <Link From="f70fedb8707208be10b21034d142e802.Texture" To="d11998d2d7c8a3120530883c14b59563.Texture" />
-    <Link From="f9d69fdd892027f6e7184af819937ecf.Out" To="b97900a6932f8c87af9325a00cc40a54.B" />
+    <Link From="f9d69fdd892027f6e7184af819937ecf.Out" To="b97900a6932f8c87af9325a00cc40a54.A" />
+    <Link From="fbe223077f7c2b4c8bbd301019a6afd4.Out" To="6cae8d3c60316f873439d544decfb99a.A" />
+    <Link From="fdf66a78c803b8cb3d6a7f27ac47f005.Out" To="2a92d9e44a996a82233d91069f2f14ce.X" />
   </Links>
   <gen_code>
     <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "PanelRed". Do not edit.
@@ -118,32 +252,68 @@ UBO_BLOCK_END(PanelRed_Block)
 MATERIAL_SAMPLER2D(5, Material_Texture1)
 MATERIAL_SAMPLER2D(6, Material_Texture2)
 MATERIAL_SAMPLER2D(7, Material_Texture3)
+MATERIAL_SAMPLER2D(8, Material_Texture4)
+MATERIAL_SAMPLER2D(9, Material_Texture5)
 
 #if PIXEL_SHADER
 void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
 {
     vec2 t0 = Inputs.TexCoord * vec2(0.5);
-    vec4 t1 = texture(Material_Texture3, t0);
+    vec4 t1 = texture(Material_Texture5, t0);
     vec3 t2 = t1.rgb * Param_Tint;
-    vec4 t3 = texture(Material_Texture2, t0);
+    vec4 t3 = texture(Material_Texture3, t0);
     float t4 = Inputs.Color.a * t3.r;
-    float t5 = smoothstep(0.45, 0.8, t4);
-    float t6 = 1.0 - t5;
-    float t7 = t1.a * t6;
-    vec3 t8 = mix(vec3(0.4, 0.39, 0.37), t2, vec3(t7));
-    float t9 = vec4(Inputs.Color.rgb, 1.0).x;
-    float t10 = mix(0.6, 1.0, t9);
-    vec3 t11 = vec3(t10, t10, t10);
-    vec3 t12 = t8 * t11;
-    Surface.BaseColor = t12;
-    float t13 = 1.0 - t7;
-    Surface.Metallic = t13;
-    Surface.Roughness = t3.g;
-    vec4 t14 = texture(Material_Texture1, t0);
-    vec3 t15 = Material_NormalMap(Inputs, t14.rgb, 1.0, t0, -1.0);
-    Surface.Normal = t15;
-    float t16 = t3.r * t9;
-    Surface.AmbientOcclusion = t16;
+    vec2 t5 = Inputs.TexCoord * vec2(0.33333334);
+    vec4 t6 = texture(Material_Texture1, t5);
+    float t7 = t6.b * 1.2;
+    float t8 = t7 + 0.3;
+    float t9 = t4 * t8;
+    float t10 = smoothstep(0.45, 0.8, t9);
+    float t11 = 1.0 - t10;
+    float t12 = t1.a * t11;
+    vec3 t13 = mix(vec3(0.4, 0.39, 0.37), t2, vec3(t12));
+    vec3 t14 = t13 * vec3(0.52, 0.47, 0.42);
+    float t15 = t6.r * 0.8;
+    float t16 = vec4(Inputs.Color.rgb, 1.0).x;
+    float t17 = 1.0 - t16;
+    float t18 = t17 * 1.5;
+    float t19 = t15 + t18;
+    float t20 = t19 * 0.55;
+    float t21 = clamp(t20, 0.0, 1.0);
+    vec3 t22 = vec3(t21, t21, t21);
+    vec3 t23 = mix(t13, t14, t22);
+    float t24 = t6.g * 0.55;
+    float t25 = clamp(t24, 0.0, 1.0);
+    float t26 = t25 * 0.85;
+    vec3 t27 = vec3(t26, t26, t26);
+    vec3 t28 = mix(t23, vec3(0.38, 0.18, 0.07), t27);
+    float t29 = mix(0.6, 1.0, t16);
+    vec3 t30 = vec3(t29, t29, t29);
+    vec3 t31 = t28 * t30;
+    Surface.BaseColor = t31;
+    float t32 = 1.0 - t12;
+    float t33 = 1.0 - t25;
+    float t34 = t32 * t33;
+    Surface.Metallic = t34;
+    float t35 = t21 * 0.18;
+    float t36 = t3.g + t35;
+    float t37 = t25 * 0.3;
+    float t38 = t36 + t37;
+    float t39 = t6.a * 0.12;
+    float t40 = t39 + -0.06;
+    float t41 = t38 + t40;
+    float t42 = clamp(t41, 0.0, 1.0);
+    Surface.Roughness = t42;
+    vec4 t43 = texture(Material_Texture2, t0);
+    vec2 t44 = Inputs.TexCoord * vec2(2.0);
+    vec4 t45 = texture(Material_Texture4, t44);
+    vec3 t46 = t45.rgb * vec3(0.4, 0.4, 0.0);
+    vec3 t47 = t46 + vec3(-0.2, -0.2, 0.0);
+    vec3 t48 = t43.rgb + t47;
+    vec3 t49 = Material_NormalMap(Inputs, t48, 1.0, t0, -1.0);
+    Surface.Normal = t49;
+    float t50 = t3.r * t16;
+    Surface.AmbientOcclusion = t50;
 }
 #endif
 ]]></Output>
@@ -157,12 +327,16 @@ MaxOffset 0
 HasOffset 0
 BlockSize 176
 Param Tint vec3 160 0.42 0.11 0.07 0
-Texture 1 Default Default Content/Textures/Kit/RivetPanel_Normal.nmtexture
-Texture 2 Default Default Content/Textures/Kit/RivetPanel_ORM.nmtexture
-Texture 3 Default Default Content/Textures/Kit/RivetPanel_BaseColor.nmtexture
-TextureUV 1 0.5
+Texture 1 Default Default Content/Textures/Kit/Grime_Mask.nmtexture
+Texture 2 Default Default Content/Textures/Kit/RivetPanel_Normal.nmtexture
+Texture 3 Default Default Content/Textures/Kit/RivetPanel_ORM.nmtexture
+Texture 4 Default Default Content/Textures/Kit/Detail_Normal.nmtexture
+Texture 5 Default Default Content/Textures/Kit/RivetPanel_BaseColor.nmtexture
+TextureUV 1 0.3333333333333333
 TextureUV 2 0.5
 TextureUV 3 0.5
+TextureUV 4 2
+TextureUV 5 0.5
 ]]></Output>
   </gen_code>
 </NodeGraph>
