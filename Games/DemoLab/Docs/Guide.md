@@ -296,7 +296,15 @@ in `Config/DefaultEngine.ini` (the scene at two thirds of the window, upscaled
 under the UI; pass `-Rendering.ResolutionScale=1` for native), and the
 engine's `Rendering.HalfResReflections`, `Rendering.FogLightCulling`,
 `Rendering.ShadowFrustumCulling` and `TimeOfDay.SkyDepthTest` (all on; each
-off is the M6 behaviour, for A/B). A level change holds the loading card until the first GI Volume has
+off is the M6 behaviour, for A/B). `Rendering.ShadowCache` (on) keeps each
+shadowed point and spot light's static casters in a cache atlas and draws only
+the movable ones each frame, and `Rendering.SunShadowCache` (on) does the same
+for the sun's cascades while their fit holds (a still camera, or one moving
+less than a texel): L2's shadow casters are mostly its sun's cascades
+(RenderCore's RENDERPIPELINE.md, "Shadow cache"). `Rendering.ShadowCacheBudgetMB`
+caps the local cache (High 32 MB; the sun's is 32 MB more at High), and the
+editor's `stats` prints lights and cascades cached, fills and sizes. Off draws
+every caster every frame. A level change holds the loading card until the first GI Volume has
 filled (`[LevelTransition] WarmupSeconds`, 15; the log says `[Level] warm-up
 settled after N s`), so the first room is lit when the card lifts; a level
 started straight from the command line (`-Game.StartLevel`) has no card and
