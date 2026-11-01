@@ -528,11 +528,13 @@ static void TestGait()
         std::printf("  %-12s frames %d, foot jump %.1f, knee jump %.1f, knees backward %d, pelvis drop %.1f\n", Each.Name, R.Frames,
                     R.FootJump, R.KneeJump, R.BackKnees, R.MaxDrop);
         /* No pops: a foot or knee moves about as the clip moves it (running: ~19 a frame on the flat), no
-         * knee folds backward, and the pelvis dips a little for a planted foot, not for one in the air. */
+         * knee folds backward, and the pelvis dips a little for a planted foot, not for one in the air.
+         * The walk plants its heel about 35 ahead of the hips, so on the ramp and the steps the lower
+         * planted foot stands ~16 below them: the dip is that, not the 80 of a whole step down. */
         Expect(R.Frames == 240, "the CrashDummy's anim state has IK");
         Expect(R.FootJump < 22.0f && R.KneeJump < 18.0f, "feet and knees move no faster than the clip moves them, give or take");
         Expect(R.BackKnees == 0, "no knee folds backward");
-        Expect(R.MaxDrop < 15.0f, "the pelvis dips a little, not a stride's worth");
+        Expect(R.MaxDrop < 20.0f, "the pelvis dips a little, not a stride's worth");
     }
 }
 
