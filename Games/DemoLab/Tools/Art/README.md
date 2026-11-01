@@ -20,10 +20,11 @@ Then cook the shaders as for any material change:
 |---|---|---|
 | textures | `make_textures.py` (numpy) | `Content/Textures/Kit/*`, `Content/Textures/Terrain/*` |
 | steamdummy | `blender/make_steamdummy.py` | `Content/Characters/SteamDummy/SteamDummy_PBR.nmmesh`, `SteamDummy_{Player,Watchman,Brute}_{BaseColor,Normal,ORM}.nmtexture` |
+| armour | `blender/make_brute_armour.py` | `Content/Characters/SteamDummy/Armour/Brute_*.nmmesh` (the Brute's breakable plates) |
 | l1 | `blender/make_l1.py` | `Content/Meshes/L1/*` (exterior kit) |
 | l2 | `blender/make_l2.py` | `Content/Meshes/L2/*` (laboratory kit) |
 | l3 | `blender/make_l3.py` | `Content/Meshes/L3/*` (core kit), `Content/Meshes/Airship/*` |
-| materials | `make_materials.py`, `make_steamdummy_materials.py` | `Content/Materials/Kit/*`, `Terrain/Island`, `Characters/SteamDummy_*` |
+| materials | `make_materials.py`, `make_steamdummy_materials.py`, `make_particles.py` | `Content/Materials/Kit/*`, `Terrain/Island`, `Characters/SteamDummy_*`, `Materials/Particles/P_*`, `Content/Particles/*.nmparticle` |
 | generate | `NodeGraphGenerate` | fills each graph's `<gen_code>` |
 | manifest | `build_all.py` | `assets.json` |
 
@@ -57,6 +58,42 @@ they move. Frame: the engine's (left-handed, +Y up, centimetres), fronts facing 
   the import's skin (skeleton path, inverse binds, bones and weights copied by vertex
   position), so it plays CrashDummy's clips. Its materials are BattlePunks' graph with the
   eye glow kept as it was (EyeColor, EyeIntensity, BlinkInterval, ...).
+
+## Second pass (detail)
+
+- **Kit helpers** (`kitlib.py`, after `sphere`): bolts and bolt circles, rivets on lathes and
+  along lines (shared prototypes: one mesh, many copies), band rings, spur gears with spoked
+  windows, hanging cables, coils, flanged pipe runs with collars, open shells
+  (`shell_sector`: a casing with a window cut in it), twisted airfoil blades, straps, and
+  `sculpted_rock`. A kit script runs some of its functions with
+  `blender ... --python make_l2.py -- orrery turbine` (the manifest keeps the others).
+- **Hero pieces**: the orrery (fluted column, scrolled struts, riveted yoke and bearings,
+  graduated hoops, caged sun, crown gear and pinion, four planets), the reactor (buttressed
+  riveted foundation, hatches, coil-wound core, riveted frame, flanged conduits, cables,
+  insulator crown and electrode), the turbine (open casing behind a glass window, lit
+  inside, bladed and shrouded rotor, fly-ball governor part) and the airship (gored envelope,
+  framed fins, load belts and rigging, a gondola with portholes, framed cabin windows,
+  barrel roof, bridge, railed decks, lanterns, twisted propellers).
+- **Rocks and cliffs** are sculpted: a block-like convex hull, voxel remeshed, displaced by
+  chipped Voronoi facets, fracture cracks, rills and softened tops; cliffs add bedding (soft
+  beds weathered back, hard beds lipped, dipping, jointed) and use the `Cliff` material
+  (CliffStrata set, 6 m). Box-mapped in metres; `Rock` and `Cliff` grow moss on upward faces
+  (world normal) from the terrain's Grass. `Cliff_Wall_A/B` have a flatter -Z face for the
+  facade.
+- **Weathering** (`graphs.weathering`, matdefs `weather`): every opaque set can take the
+  shared `Grime_Mask` (grime clouds and occluded corners, rust / verdigris / water streaks
+  down V, chipped edge wear or polish on convex edges) and the `Detail_Normal`, 5-6 texture
+  samples a material in all.
+- **The sea** (`Sea`): Translucent Lit, World Position Offset swell (three sine trains, Max
+  Offset 60), two panned `Sea_Normal`s, Fresnel opacity and colour, crest foam; the shore's
+  foam is a strip mesh with its own material (`SeaFoam`), since only post process materials
+  read the scene depth. Meshes `Sea_Plane` (200 m, chainable), `Sea_Far`, `Sea_FoamStrip`.
+- **Particles**: see `make_particles.py` (SteamVent, SteamJet, Sparks, ReactorArcs,
+  SprinklerSpray, DustMotes) and assets.json's `particles`.
+- **Brute armour**: `make_brute_armour.py` cuts eight plates from the body's shell by bone,
+  in each bone's frame, for Anim Socket children (assets.json `Brute_Armour_*`, `bone`).
+- Static meshes have no LODs in the engine and the Demo Lab lights live (DDGI/SSGI), so no
+  lightmap UVs (UV1) are written.
 
 ## Checking
 

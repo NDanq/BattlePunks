@@ -46,7 +46,21 @@ class World:
         (self.dir / f"{g}.nmentity").write_text(
             f'<?xml version="1.0" encoding="UTF-8"?>\n<Entity Guid="{g}" Name="{name}"{mob}>\n{body}</Entity>\n')
 
+    def particles(self, name, system, pos, rot=(0, 0, 0), rate=1.0):
+        if not (ART.parents[1] / system).exists():
+            print(f"  (no {system}: skipped)")
+            return
+        self.entity(name, "  <Component Type=\"Particle System\" Version=\"3\">\n"
+                    f"    <System Value=\"{system}\" />\n    <Emitting Value=\"true\" />\n"
+                    "    <Tint R=\"255\" G=\"255\" B=\"255\" A=\"255\" />\n"
+                    f"    <SpawnRateScale Value=\"{nm.num(rate)}\" />\n    <TimeScale Value=\"1\" />\n"
+                    "    <Seed Value=\"0\" />\n    <UseBeamTarget Value=\"false\" />\n"
+                    "    <BeamTarget X=\"0\" Y=\"200\" Z=\"0\" />\n  </Component>\n" + nm.transform_xml(pos, rot))
+
     def asset(self, name, pos, yaw=0.0, material="", scale=1.0):
+        if name not in ASSETS:
+            print(f"  (no {name} in assets.json: skipped)")
+            return
         a = ASSETS[name]
         self.entity(name, render(a["mesh"], material) + nm.transform_xml(pos, (0, yaw, 0), (scale,) * 3))
         import math
@@ -126,6 +140,41 @@ def main(out):
     w.asset("ReactorCore", (2600, 0, 900))
     w.asset("Locker", (-500, 0, -900))
     w.asset("Workbench", (0, 0, -1000))
+    w.save()
+    # Second pass: the exterior (cliffs behind the facade, rocks, the sea and its foam, steam)
+    # and the hero pieces up close with their effects.
+    w = World("ArtReview_Exterior", out)
+    w.lights((0, 350, -2600), (4, 0, 0), sun_rot=(22, 150, 0))
+    w.asset("Cliff_Wall_A", (-200, -30, 980))
+    w.asset("Cliff_Wall_B", (1350, -30, 1050), 15)
+    w.asset("Cliff_A", (-1900, -40, 900), 200)
+    w.asset("Facade_Wall", (-900, 0, 600))
+    w.asset("Facade_Arch", (-100, 0, 600))
+    w.asset("BlastDoor", (-100, 0, 600))
+    w.asset("Rock_E", (-1300, 0, -300), 40)
+    w.asset("Rock_C", (700, 0, -400), 110)
+    w.asset("Rock_B", (250, 0, -1000), 10)
+    w.asset("Rock_D", (-500, 0, -1300), 60)
+    w.asset("SteamVent", (350, 0, -150))
+    w.particles("VentSteam", "Content/Particles/SteamVent.nmparticle", (350, 30, -150))
+    w.asset("Sea_Plane", (0, -16, -12900))
+    w.asset("Sea_Far", (0, -16, 0))
+    for x in (-2000, 0, 2000):
+        w.asset("Sea_FoamStrip", (x, -14, -3000), 180)
+    w.save()
+    w = World("ArtReview_Heroes", out)
+    w.lights((0, 600, -2400), (8, 0, 0), sun_rot=(35, 135, 0))
+    w.asset("Orrery", (-1400, 0, 200))
+    w.asset("Turbine", (0, 0, -300))
+    w.particles("TurbineLeak", "Content/Particles/SteamJet.nmparticle", (-100, 420, -100), (0, 0, -30))
+    w.asset("ReactorCore", (1500, 0, 700))
+    w.particles("Arcs", "Content/Particles/ReactorArcs.nmparticle", (1500, 1300, 700))
+    w.asset("Airship_Hull", (-300, 1800, 3600), -20)
+    for i, s in enumerate(["BrushedBrass", "Walnut", "Enamel", "Velvet", "Marble"]):
+        w.asset("SamplePedestal", (-500 + i * 110, 0, -1100))
+        w.asset(f"Sample_{s}", (-500 + i * 110, 92, -1100))
+    w.particles("SparksLoop", "Content/Particles/SparksLoop.nmparticle", (700, 60, -900))
+    w.particles("Dust", "Content/Particles/DustMotes.nmparticle", (-400, 200, -900))
     w.save()
 
 

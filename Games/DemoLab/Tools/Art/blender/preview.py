@@ -262,7 +262,7 @@ def render_records(records, out_png, size=320, samples=24, cols=5, title=""):
     from PIL import Image, ImageDraw
     sc, cam, ground = setup_scene(size, samples)
     tiles = []
-    tmp = CACHE / "Sheets" / "tiles"
+    tmp = CACHE / "Sheets" / "tiles" / Path(out_png).stem     # per sheet: runs in parallel do not mix
     tmp.mkdir(parents=True, exist_ok=True)
     for i, rec in enumerate(records):
         obs = []
@@ -274,6 +274,7 @@ def render_records(records, out_png, size=320, samples=24, cols=5, title=""):
             off = entry.get("offset_cm", [0, 0, 0])
             ob.location = (off[0] / 100.0, off[2] / 100.0, off[1] / 100.0)
             obs.append(ob)
+        bpy.context.view_layer.update()      # the parts' matrix_world, before framing on their bounds
         lo, hi = frame(cam, obs, yaw=rec.get("view_yaw", -35.0))
         ground.location = (0, 0, lo.z - 0.001)
         sc.render.filepath = str(tmp / f"{i:03d}.png")
@@ -301,7 +302,7 @@ def render_records(records, out_png, size=320, samples=24, cols=5, title=""):
 def main(argv):
     kit = argv[0]
     out = None
-    size, samples = 320, 24
+    size, samples, only, cols = 320, 24, None, 5
     rest = argv[1:]
     i = 0
     while i < len(rest):
@@ -309,14 +310,21 @@ def main(argv):
             size = int(rest[i + 1]); i += 2
         elif rest[i] == "--samples":
             samples = int(rest[i + 1]); i += 2
+        elif rest[i] == "--only":
+            only = rest[i + 1].split(","); i += 2
+        elif rest[i] == "--cols":
+            cols = int(rest[i + 1]); i += 2
         else:
             out = rest[i]; i += 1
     if kit == "all":
         records = json.loads((ART / "assets.json").read_text())["assets"]
     else:
         records = json.loads((CACHE / f"manifest_{kit}.json").read_text())
+    if only:
+        records = [r for r in records if r["name"] in only]
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    render_records(records, out or str(CACHE / "Sheets" / f"{kit}.png"), size, samples, title=f"Demo Lab kit: {kit}")
+    render_records(records, out or str(CACHE / "Sheets" / f"{kit}.png"), size, samples, cols=cols,
+                   title=f"Demo Lab kit: {kit}")
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ TERRAIN_DIR = GAME_DIR / "Content" / "Materials" / "Terrain"
 def main():
     written = []
     for d in MATS.values():
-        g = graphs.kit_material(d, KIT_TEX)
+        g = graphs.CUSTOM[d["custom"]](d, KIT_TEX) if "custom" in d else graphs.kit_material(d, KIT_TEX)
         path = KIT_DIR / f"{d['name']}.material.nmgraph"
         g.write(path)
         written.append(path)
