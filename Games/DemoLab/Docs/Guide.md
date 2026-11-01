@@ -294,8 +294,9 @@ build, interleaved, medians of many samples.
 Settings that matter here (M7): `[Scalability_High] Rendering.ResolutionScale=0.67`
 in `Config/DefaultEngine.ini` (the scene at two thirds of the window, upscaled
 under the UI; pass `-Rendering.ResolutionScale=1` for native), and the
-engine's `Rendering.HalfResReflections` and `Rendering.FogLightCulling` (both
-on). A level change holds the loading card until the first GI Volume has
+engine's `Rendering.HalfResReflections`, `Rendering.FogLightCulling`,
+`Rendering.ShadowFrustumCulling` and `TimeOfDay.SkyDepthTest` (all on; each
+off is the M6 behaviour, for A/B). A level change holds the loading card until the first GI Volume has
 filled (`[LevelTransition] WarmupSeconds`, 15; the log says `[Level] warm-up
 settled after N s`), so the first room is lit when the card lifts; a level
 started straight from the command line (`-Game.StartLevel`) has no card and

@@ -66,9 +66,11 @@ and night stays dark.
 
 The background pass runs at `ERenderHook::AfterLighting` and discards every
 pixel whose scene depth is nearer than the far plane before it marches, so
-it costs only the sky that shows (it was drawn under everything at
-`BeforeScene`, the whole screen marched: 3-6 ms at 2560 x 1440 on an Arc
-B390 in Demo Lab's L1).
+it costs only the sky that shows. It was drawn under everything at
+`BeforeScene`, the whole screen marched: in Demo Lab's L1 at 2560 x 1440 on
+an Arc B390 the GPU time outside the timed stages (mostly this pass) was
+about 6 ms looking along the dock, 2.4 ms after. `[TimeOfDay] SkyDepthTest`
+false marches every pixel again and keeps only the sky's (an A/B switch).
 
 **Reflections and sky light see it.** A second pass of the sky is
 registered at `ERenderHook::Sky`, so image-based lighting captures the drawn
