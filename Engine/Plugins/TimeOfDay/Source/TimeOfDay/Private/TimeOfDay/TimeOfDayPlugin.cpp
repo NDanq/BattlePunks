@@ -23,14 +23,16 @@ namespace
     void AttachWorld(GameCore::World& InWorld, void*)
     {
         InWorld.RegisterSystem("TimeOfDay", GameCore::TP_PostUpdate, &TickClocks, &GSystemOwner);
-        TimeOfDay::AttachSky(InWorld);
     }
 
     void DetachWorld(GameCore::World& InWorld, void*)
     {
-        TimeOfDay::DetachSky(InWorld);
         InWorld.UnregisterAllSystems(&GSystemOwner);
     }
+
+    /* The sky: a level's, and the editor's edited level too (bEditorWorlds), at its clock's Hour. */
+    void AttachSkyHook(GameCore::World& InWorld, void*) { TimeOfDay::AttachSky(InWorld); }
+    void DetachSkyHook(GameCore::World& InWorld, void*) { TimeOfDay::DetachSky(InWorld); }
 
     class TimeOfDayPlugin : public NimbleEngine::IPlugin
     {
@@ -42,6 +44,13 @@ namespace
             Hook.Attach = &AttachWorld;
             Hook.Detach = &DetachWorld;
             InContext.AddWorldHook(Hook);
+
+            NimbleEngine::PluginWorldHook Sky;
+            Sky.Name          = "TimeOfDaySky";
+            Sky.Attach        = &AttachSkyHook;
+            Sky.Detach        = &DetachSkyHook;
+            Sky.bEditorWorlds = true;
+            InContext.AddWorldHook(Sky);
             GStarted = true;
             return true;
         }

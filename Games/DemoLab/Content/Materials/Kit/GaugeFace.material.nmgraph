@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="0caabadacea8a2635d3833ea61e49b10" Type="Vector.Make3" Version="1" X="-80" Y="-450" />
+    <Node Id="16ed1b987bf3943e48e6aeabffad7096" Type="Texture.Sample" Version="2" X="-80" Y="-600" />
+    <Node Id="1842b78429c768630f4bc20d2bb69d9b" Type="Vector.Split" Version="1" X="-740" Y="-600" />
+    <Node Id="35ce9742fc266921f7e7f793cf91bf25" Type="Constant" Version="1" X="140" Y="-600" Wildcard="float">
+      <Const Pin="Value" Value="0.2" />
+    </Node>
+    <Node Id="40c7b597df118b13f9f40b42a380e729" Type="Texture.Object" Version="1" X="-300" Y="-600">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/GaugeFace_BaseColor.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="44cff5f8e095415335487b39f2f168fc" Type="Output.Material" Version="1" X="-1180" Y="-600">
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Opaque" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="ShadingModel" Value="Default" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+    <Node Id="49398f68ec2adb50af88da5e28a38eeb" Type="Input.VertexColor" Version="1" X="-960" Y="-600" />
+    <Node Id="538c297a8115a59dc95a72d2772501ce" Type="Math.Lerp" Version="1" X="-1180" Y="-450" Wildcard="float">
+      <Const Pin="A" Value="0.6" />
+      <Const Pin="B" Value="1" />
+    </Node>
+    <Node Id="83b7477c9f97d5425346d9202b0aff95" Type="Math.Multiply" Version="1" X="140" Y="-450" Wildcard="vec3" />
+    <Node Id="85ab81a83f184264b248009e943e218d" Type="Vector.Make3" Version="1" X="-960" Y="-450" />
+    <Node Id="8dca468a27fa369af06aefbbc44a1da0" Type="Parameter" Version="1" X="-300" Y="-450">
+      <Prop Name="Default" Value="0.35" />
+      <Prop Name="Name" Value="EmissiveIntensity" />
+      <Prop Name="Type" Value="float" />
+    </Node>
+    <Node Id="956ee96a39fbd6588c189623c77ba0e6" Type="Input.TexCoord" Version="1" X="-520" Y="-600" />
+    <Node Id="a1511da83f420d905d0d9430785123ad" Type="Math.Multiply" Version="1" X="-1400" Y="-300" Wildcard="vec3" />
+    <Node Id="bc54229f70eeee864a1a7e1121ca2351" Type="Parameter" Version="1" X="-520" Y="-450">
+      <Prop Name="Default" Value="1 0.93 0.78" />
+      <Prop Name="Name" Value="EmissiveColor" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="ccc85b8962aeb7ba8bf0b646c5499ebb" Type="Constant" Version="1" X="-1400" Y="-450" Wildcard="float">
+      <Const Pin="Value" Value="0" />
+    </Node>
+    <Node Id="fedd366064b2af070471fd900a8718b3" Type="Math.Multiply" Version="1" X="-740" Y="-450" Wildcard="vec3" />
+  </Nodes>
+  <Links>
+    <Link From="0caabadacea8a2635d3833ea61e49b10.Out" To="83b7477c9f97d5425346d9202b0aff95.B" />
+    <Link From="16ed1b987bf3943e48e6aeabffad7096.RGB" To="fedd366064b2af070471fd900a8718b3.A" />
+    <Link From="1842b78429c768630f4bc20d2bb69d9b.X" To="44cff5f8e095415335487b39f2f168fc.AmbientOcclusion" />
+    <Link From="1842b78429c768630f4bc20d2bb69d9b.X" To="538c297a8115a59dc95a72d2772501ce.T" />
+    <Link From="35ce9742fc266921f7e7f793cf91bf25.Out" To="44cff5f8e095415335487b39f2f168fc.Roughness" />
+    <Link From="40c7b597df118b13f9f40b42a380e729.Texture" To="16ed1b987bf3943e48e6aeabffad7096.Texture" />
+    <Link From="49398f68ec2adb50af88da5e28a38eeb.RGB" To="1842b78429c768630f4bc20d2bb69d9b.Vector" />
+    <Link From="538c297a8115a59dc95a72d2772501ce.Out" To="85ab81a83f184264b248009e943e218d.X" />
+    <Link From="538c297a8115a59dc95a72d2772501ce.Out" To="85ab81a83f184264b248009e943e218d.Y" />
+    <Link From="538c297a8115a59dc95a72d2772501ce.Out" To="85ab81a83f184264b248009e943e218d.Z" />
+    <Link From="83b7477c9f97d5425346d9202b0aff95.Out" To="a1511da83f420d905d0d9430785123ad.A" />
+    <Link From="85ab81a83f184264b248009e943e218d.Out" To="fedd366064b2af070471fd900a8718b3.B" />
+    <Link From="8dca468a27fa369af06aefbbc44a1da0.Value" To="0caabadacea8a2635d3833ea61e49b10.X" />
+    <Link From="8dca468a27fa369af06aefbbc44a1da0.Value" To="0caabadacea8a2635d3833ea61e49b10.Y" />
+    <Link From="8dca468a27fa369af06aefbbc44a1da0.Value" To="0caabadacea8a2635d3833ea61e49b10.Z" />
+    <Link From="956ee96a39fbd6588c189623c77ba0e6.UV" To="16ed1b987bf3943e48e6aeabffad7096.UV" />
+    <Link From="a1511da83f420d905d0d9430785123ad.Out" To="44cff5f8e095415335487b39f2f168fc.Emissive" />
+    <Link From="bc54229f70eeee864a1a7e1121ca2351.Value" To="83b7477c9f97d5425346d9202b0aff95.A" />
+    <Link From="ccc85b8962aeb7ba8bf0b646c5499ebb.Out" To="44cff5f8e095415335487b39f2f168fc.Metallic" />
+    <Link From="fedd366064b2af070471fd900a8718b3.Out" To="44cff5f8e095415335487b39f2f168fc.BaseColor" />
+    <Link From="fedd366064b2af070471fd900a8718b3.Out" To="a1511da83f420d905d0d9430785123ad.B" />
+  </Links>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "GaugeFace". Do not edit.
+// Opaque, Lit. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in GaugeFace.material.
+UBO_BLOCK_BEGIN(2, GaugeFace_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    vec3  Param_EmissiveColor;
+    float Param_EmissiveIntensity;
+UBO_BLOCK_END(GaugeFace_Block)
+
+// Textures, by material texture slot; GaugeFace.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec4 t0 = texture(Material_Texture1, Inputs.TexCoord);
+    float t1 = vec4(Inputs.Color.rgb, 1.0).x;
+    float t2 = mix(0.6, 1.0, t1);
+    vec3 t3 = vec3(t2, t2, t2);
+    vec3 t4 = t0.rgb * t3;
+    Surface.BaseColor = t4;
+    Surface.Metallic = 0.0;
+    Surface.Roughness = 0.2;
+    vec3 t5 = vec3(Param_EmissiveIntensity, Param_EmissiveIntensity, Param_EmissiveIntensity);
+    vec3 t6 = Param_EmissiveColor * t5;
+    vec3 t7 = t6 * t4;
+    Surface.Emissive = t7;
+    Surface.AmbientOcclusion = t1;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "GaugeFace". Do not edit.
+NimbleMaterial 3
+Domain Opaque
+Shading Lit
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 176
+Param EmissiveColor vec3 160 1 0.93 0.78 0
+Param EmissiveIntensity float 172 0.35 0 0 0
+Texture 1 Default Default Content/Textures/Kit/GaugeFace_BaseColor.nmtexture
+]]></Output>
+  </gen_code>
+</NodeGraph>

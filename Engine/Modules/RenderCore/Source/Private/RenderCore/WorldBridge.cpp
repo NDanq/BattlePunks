@@ -18,6 +18,7 @@
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Public/RenderCore/RenderProxy.h"
 #include "Public/RenderCore/PostProcessStack.h"
+#include "Public/RenderCore/RenderWeather.h"
 #include "Public/RenderCore/RenderScene.h"
 #include "Private/RenderCore/ShadowSetup.h"
 #include "Public/RenderCore/RenderTargetAsset.h"
@@ -388,6 +389,17 @@ namespace RenderCore
             return Lighting;
         }
 
+        /* The weather's wind and wetness, or the calm default (RenderWeather.h). */
+        {
+            const RenderWeather Weather = GetRenderWeather(BoundWorld);
+            Lighting.Wind[0]    = Weather.WindDirection[0];
+            Lighting.Wind[1]    = Weather.WindDirection[1];
+            Lighting.Wind[2]    = Weather.WindDirection[2];
+            Lighting.Wind[3]    = Weather.WindStrength;
+            Lighting.Weather[0] = Weather.Wetness;
+            Lighting.Weather[1] = Weather.Rain;
+        }
+
         /* Drawing with a bake: its static lights are in it, so they are left
          * out here -- the sun's default too, if a static one was the only one. */
         const auto Baked = [this](const ComponentOwner& InOwner) { return bBakeActive && InOwner.GetEntity().IsStatic(); };
@@ -665,8 +677,12 @@ namespace RenderCore
         ComponentPool* Pool = BoundWorld ? BoundWorld->FindPool(PostProcessComponent::StaticType().ID) : nullptr;
         if(!Pool)
         {
-            /* No volumes: a sequence's override alone. */
-            if(BoundWorld) { ApplyPostProcessOverride(BoundWorld, Result.Settings); }
+            /* No volumes: the weather's mist, then a sequence's override. */
+            if(BoundWorld)
+            {
+                ApplyRenderWeatherFog(GetRenderWeather(BoundWorld), Result.Settings);
+                ApplyPostProcessOverride(BoundWorld, Result.Settings);
+            }
             return Result;
         }
 
@@ -727,7 +743,9 @@ namespace RenderCore
             }
         }
 
-        /* A sequence's stacks and settings, over the volumes (PostProcessOverride). */
+        /* The weather's mist over the volumes (RenderWeather.h), then a
+         * sequence's stacks and settings over both (PostProcessOverride). */
+        ApplyRenderWeatherFog(GetRenderWeather(BoundWorld), Result.Settings);
         ApplyPostProcessOverride(BoundWorld, Result.Settings);
 
         /* Materials run by stage, then order; volumes' order breaks ties. */

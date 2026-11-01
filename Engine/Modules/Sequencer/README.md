@@ -172,10 +172,11 @@ before the animation system in TP_PostUpdate.
 - **Camera cuts** drive a camera entity the sequence makes (`Sequence
   Camera`). The game is seen through it with `GameSession::SetViewTarget`.
   When several players have a shot, the one started last wins. When none
-  has, the view goes back to what it was.
+  has, the view goes back to what it was: at once, or eased back (Blend
+  Out, below).
 - **The fade** is the darkest any player asks for.
 - **Cinematic mode** (the component's **Cinematic**) is on while a cinematic
-  player plays or is paused:
+  player plays or is paused (or as its **Release Control** says, below):
   - letterbox bars are drawn;
   - the players' input is held back;
   - Back (Escape, gamepad East) skips every **Skippable** one
@@ -191,6 +192,42 @@ before the animation system in TP_PostUpdate.
   device (`AudioDevice::SetBusGain`). They sit under the player's own bus
   volumes, are never saved, and go back to 1 when no player wants them or
   the level unloads.
+
+### Blending in and out
+
+The Sequence Player's **Hand Over** properties ease the view between the
+game and the sequence instead of cutting:
+
+| Property | Default | What it does |
+|---|---|---|
+| **Blend In** | 0 | Seconds the view eases from the view it takes (the gameplay camera) into the first shot. Only when the shot takes the view from the game (or from a blend out) while the sequence is still within its Blend In. |
+| **Blend Out** | 0 | Seconds the view eases from what was seen as the sequence finished back to the view it gives back. A **skip** blends from the shot that was on screen when Back was pressed, over **half** of Blend Out. |
+| **Blend Ease** | Smooth | The curve of both: `Smooth` (a smoothstep, as camera cuts blend), `Linear`, or UIAnimation's `Quad`/`Cubic` `In`/`Out`/`In Out`. |
+| **Release Control** | After Blend | When a **Cinematic** player gives input back and takes the letterbox away: `After Blend` (when the blend out has run), `Blend Start` (as the sequence ends, so the player moves while the view eases in), or `Before End`. |
+| **Release Before End** | 0 | With `Before End`: this many seconds of the sequence's time before its end. The shot stays on screen until the end. |
+
+0 everywhere is the old behaviour: a cut, input held to the end.
+
+- The view the blend heads for is **tracked** while it moves: the player can
+  already walk the gameplay camera during a blend out, and the blend lands
+  on wherever it is. A blend in tracks the gameplay camera it leaves and
+  the sequence's camera it heads for.
+- Meanwhile the host is shown a camera of the SequenceWorld's own, `Sequence
+  Blend Camera`, posed in **TP_PostUpdate** so it sees cameras moved earlier
+  in the frame (avatars, Character Mover). Its first frame shows the start of
+  the blend; no time passes on it.
+- A blend out happens when the player **finishes or is skipped** while its
+  shot is the one seen. **Stop** cuts. So does a CameraCut track whose last
+  section ends before the sequence does, and a later-started player's shot
+  taking over (it cuts in, or blends in if it is a first shot).
+- If the view taken is gone by the end (the avatar respawned during the
+  cutscene), the blend heads for the host's default view (GameSession: the
+  local avatar's camera) and gives the view back unset.
+- `SequenceWorld::GetBlendCamera()`, `IsBlending()` and `IsBlendingOut()`
+  say what is happening; the fields are `BlendIn`, `BlendOut`, `BlendEase`,
+  `ReleaseControl` and `ReleaseBeforeEnd` to Lua (`ESequenceBlendEase` and
+  `ESequenceControlRelease` values), and they replicate, so a client's copy
+  blends its own view too.
 
 ### Post process
 
@@ -281,7 +318,11 @@ else `Validate` finds is logged as a warning.
   sound World, players' gains multiplying to the host and subtitles off;
 - players auto-playing, pausing, seeking, looping, skipping and finishing on
   a bare World ticked by hand;
-- the host (view, fade, cinematic, skip) and a replica following a server.
+- the host (view, fade, cinematic, skip) and a replica following a server;
+- blends out on finish and skip (tracking a moving gameplay camera, half the
+  time for a skip), blends in, control released after the blend, at its
+  start or before the end, Stop cutting, and the hand-over fields saving
+  and showing in the editor.
 
 ```
 ctest -R Sequencer

@@ -1,0 +1,2583 @@
+{
+ "about": "Demo Lab art assets, written by Tools/Art/build_all.py. Engine frame: left-handed, +Y up, the front of an asset faces -Z (as imported characters do); units are centimetres. size_m is the mesh's bounds in metres (x, y, z); bounds_cm its min/max. A part is a separate mesh: place it at the asset's position plus offset_cm (turned with the asset); 'axis' is what it moves along or turns about, in the asset's frame. Every mesh's sections name their materials, so a Render component needs no material slots (except the SteamDummy: pick its look in slot 0).",
+ "grids": {
+  "L2": "400 cm: walls 400 wide x 500 tall, floors and ceilings 400 x 400",
+  "L3": "catwalks 400 cm straight, 22.5-degree arcs of radius 700-850 cm"
+ },
+ "terrain": {
+  "material": "Content/Materials/Terrain/Island.material.nmgraph",
+  "layers": [
+   "Grass",
+   "Dirt (the road)",
+   "Rock",
+   "Sand"
+  ],
+  "uv_tile_size": 100,
+  "note": "paint layer 0-3 = vertex colour R G B A; set the Terrain component's UV Tile Size to 100 (1 m) so each layer repeats at its own size (2, 2, 4, 2 m)"
+ },
+ "assets": [
+  {
+   "name": "SteamDummy_Player",
+   "kit": "Characters",
+   "mesh": "Content/Characters/SteamDummy/SteamDummy_PBR.nmmesh",
+   "materials": [
+    "Content/Materials/Characters/SteamDummy_Player.material.nmgraph"
+   ],
+   "preview_material": "SteamDummy_Player",
+   "skeleton": "Content/Characters/SteamDummy/SteamDummy_Skeleton.nmskel",
+   "size_m": [
+    1.59,
+    2.01,
+    0.35
+   ],
+   "pivot": "between the feet, on the ground; faces -Z",
+   "notes": "Skinned to CrashDummy's 74-bone rig (the import's skeleton); set the material in Render > Material slot 0. Brute: scale the entity 1.25.",
+   "view_yaw": -25.0
+  },
+  {
+   "name": "SteamDummy_Watchman",
+   "kit": "Characters",
+   "mesh": "Content/Characters/SteamDummy/SteamDummy_PBR.nmmesh",
+   "materials": [
+    "Content/Materials/Characters/SteamDummy_Watchman.material.nmgraph"
+   ],
+   "preview_material": "SteamDummy_Watchman",
+   "skeleton": "Content/Characters/SteamDummy/SteamDummy_Skeleton.nmskel",
+   "size_m": [
+    1.59,
+    2.01,
+    0.35
+   ],
+   "pivot": "between the feet, on the ground; faces -Z",
+   "notes": "Skinned to CrashDummy's 74-bone rig (the import's skeleton); set the material in Render > Material slot 0. Brute: scale the entity 1.25.",
+   "view_yaw": -25.0
+  },
+  {
+   "name": "SteamDummy_Brute",
+   "kit": "Characters",
+   "mesh": "Content/Characters/SteamDummy/SteamDummy_PBR.nmmesh",
+   "materials": [
+    "Content/Materials/Characters/SteamDummy_Brute.material.nmgraph"
+   ],
+   "preview_material": "SteamDummy_Brute",
+   "skeleton": "Content/Characters/SteamDummy/SteamDummy_Skeleton.nmskel",
+   "size_m": [
+    1.59,
+    2.01,
+    0.35
+   ],
+   "pivot": "between the feet, on the ground; faces -Z",
+   "notes": "Skinned to CrashDummy's 74-bone rig (the import's skeleton); set the material in Render > Material slot 0. Brute: scale the entity 1.25.",
+   "view_yaw": -25.0
+  },
+  {
+   "name": "Facade_Wall",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/Facade_Wall.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/StoneBlocks.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/GlassFrosted.material.nmgraph",
+    "Content/Materials/Kit/Copper.material.nmgraph",
+    "Content/Materials/Kit/SteelDark.material.nmgraph"
+   ],
+   "size_m": [
+    6.2,
+    8.0,
+    1.65
+   ],
+   "bounds_cm": [
+    [
+     -310.0,
+     0.0,
+     -45.0
+    ],
+    [
+     310.0,
+     800.0,
+     120.0
+    ]
+   ],
+   "triangles": 6328,
+   "vertices": 4778,
+   "pivot": "bottom centre of the front face; the bay is 6 m wide and runs 1.2 m back (+Z) into the rock"
+  },
+  {
+   "name": "Facade_Arch",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/Facade_Arch.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/StoneBlocks.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/LampGlow.material.nmgraph",
+    "Content/Materials/Kit/Copper.material.nmgraph",
+    "Content/Materials/Kit/SteelDark.material.nmgraph"
+   ],
+   "size_m": [
+    8.0,
+    8.0,
+    2.57
+   ],
+   "bounds_cm": [
+    [
+     -400.0,
+     0.0,
+     -97.0
+    ],
+    [
+     400.0,
+     800.0,
+     160.0
+    ]
+   ],
+   "triangles": 2028,
+   "vertices": 1698,
+   "pivot": "bottom centre of the opening's front face; opening 4.2 m wide, 5-6 m tall (round top); BlastDoor fits it at the same pivot"
+  },
+  {
+   "name": "BlastDoor",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/BlastDoor_Frame.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/PanelRed.material.nmgraph",
+    "Content/Materials/Kit/SteelDark.material.nmgraph"
+   ],
+   "size_m": [
+    4.6,
+    5.3,
+    0.728
+   ],
+   "bounds_cm": [
+    [
+     -230.0,
+     0.0,
+     -12.8
+    ],
+    [
+     230.0,
+     530.0,
+     60.0
+    ]
+   ],
+   "triangles": 2480,
+   "vertices": 2995,
+   "pivot": "bottom centre of the opening (as Facade_Arch); leaves closed",
+   "notes": "C2: the cog turns, then the leaves slide apart; part offsets are from the frame's pivot",
+   "parts": [
+    {
+     "name": "LeafL",
+     "mesh": "Content/Meshes/L1/BlastDoor_LeafL.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/PanelRed.material.nmgraph",
+      "Content/Materials/Kit/SteelDark.material.nmgraph",
+      "Content/Materials/Kit/BrassAged.material.nmgraph"
+     ],
+     "offset_cm": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "size_m": [
+      2.1,
+      4.94,
+      0.396
+     ],
+     "moves": "slides -X 2.1 m to open",
+     "axis": [
+      -1,
+      0,
+      0
+     ]
+    },
+    {
+     "name": "LeafR",
+     "mesh": "Content/Meshes/L1/BlastDoor_LeafR.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/PanelRed.material.nmgraph",
+      "Content/Materials/Kit/SteelDark.material.nmgraph",
+      "Content/Materials/Kit/BrassAged.material.nmgraph"
+     ],
+     "offset_cm": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "size_m": [
+      2.05,
+      4.94,
+      0.396
+     ],
+     "moves": "slides +X 2.1 m to open",
+     "axis": [
+      1,
+      0,
+      0
+     ]
+    },
+    {
+     "name": "Cog",
+     "mesh": "Content/Meshes/L1/BlastDoor_Cog.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/BrassBrushed.material.nmgraph",
+      "Content/Materials/Kit/SteelDark.material.nmgraph",
+      "Content/Materials/Kit/BrassAged.material.nmgraph"
+     ],
+     "offset_cm": [
+      0.0,
+      260.0,
+      -2.0
+     ],
+     "size_m": [
+      1.64,
+      1.64,
+      0.3
+     ],
+     "moves": "turns about Z (the door's normal) to unlock: 1 turn, then it rides with LeafL as the leaves part",
+     "axis": [
+      0,
+      0,
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Dock_Deck",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/Dock_Deck.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Planks.material.nmgraph",
+    "Content/Materials/Kit/WoodBeam.material.nmgraph"
+   ],
+   "size_m": [
+    3.1,
+    0.5,
+    4.0
+   ],
+   "bounds_cm": [
+    [
+     -155.0,
+     -50.0,
+     0.0
+    ],
+    [
+     155.0,
+     0.0,
+     400.0
+    ]
+   ],
+   "triangles": 940,
+   "vertices": 744,
+   "pivot": "deck top (y = 0), centre of the near end; 4 m long along +Z, 3 m wide; chain every 400 cm"
+  },
+  {
+   "name": "Dock_Post",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/Dock_Post.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/WoodBeam.material.nmgraph",
+    "Content/Materials/Kit/SteelDark.material.nmgraph",
+    "Content/Materials/Kit/Leather.material.nmgraph"
+   ],
+   "size_m": [
+    0.38,
+    4.54,
+    0.38
+   ],
+   "bounds_cm": [
+    [
+     -19.0,
+     -390.0,
+     -19.0
+    ],
+    [
+     19.0,
+     64.0,
+     19.0
+    ]
+   ],
+   "triangles": 1248,
+   "vertices": 1163,
+   "pivot": "at the deck's top on the pile's axis: 60 cm stand above the deck, 3.9 m below (into the water)"
+  },
+  {
+   "name": "Dock_Bollard",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/Dock_Bollard.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/SteelDark.material.nmgraph"
+   ],
+   "size_m": [
+    0.52,
+    0.5,
+    0.52
+   ],
+   "bounds_cm": [
+    [
+     -26.0,
+     0.0,
+     -26.0
+    ],
+    [
+     26.0,
+     50.0,
+     26.0
+    ]
+   ],
+   "triangles": 576,
+   "vertices": 642,
+   "pivot": "bottom centre"
+  },
+  {
+   "name": "Gatehouse",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/Gatehouse.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/StoneBlocks.material.nmgraph",
+    "Content/Materials/Kit/PanelGreen.material.nmgraph",
+    "Content/Materials/Kit/Planks.material.nmgraph",
+    "Content/Materials/Kit/GlassClear.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/Copper.material.nmgraph",
+    "Content/Materials/Kit/SteelDark.material.nmgraph"
+   ],
+   "size_m": [
+    5.65,
+    5.75,
+    4.2
+   ],
+   "bounds_cm": [
+    [
+     -240.0,
+     0.0,
+     -210.0
+    ],
+    [
+     325.0,
+     575.0,
+     210.0
+    ]
+   ],
+   "triangles": 3420,
+   "vertices": 2784,
+   "pivot": "bottom centre; 4 x 4 m footprint; the road runs along its -X side, the barrier across it toward -Z",
+   "parts": [
+    {
+     "name": "CrankWheel",
+     "mesh": "Content/Meshes/L1/Gatehouse_Crank.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/BrassAged.material.nmgraph",
+      "Content/Materials/Kit/BrassBrushed.material.nmgraph",
+      "Content/Materials/Kit/WoodBeam.material.nmgraph"
+     ],
+     "offset_cm": [
+      -245.0,
+      160.0,
+      0.0
+     ],
+     "size_m": [
+      0.325,
+      1.2,
+      1.2
+     ],
+     "moves": "turns about X (out of the road-side wall): the player cranks it; 3 turns raise the barrier",
+     "axis": [
+      1,
+      0,
+      0
+     ]
+    },
+    {
+     "name": "BarrierArm",
+     "mesh": "Content/Meshes/L1/Gatehouse_Barrier.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/PaintRed.material.nmgraph",
+      "Content/Materials/Kit/PanelCream.material.nmgraph",
+      "Content/Materials/Kit/SteelDark.material.nmgraph"
+     ],
+     "offset_cm": [
+      -240.0,
+      100.0,
+      -200.0
+     ],
+     "size_m": [
+      0.24,
+      0.3,
+      5.5
+     ],
+     "moves": "pivots up 80 degrees about X (the road's crossing axis) to open the road",
+     "axis": [
+      1,
+      0,
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "RoadLamp",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/RoadLamp.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/SteelDark.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/GlassFrosted.material.nmgraph",
+    "Content/Materials/Kit/LampGlow.material.nmgraph"
+   ],
+   "size_m": [
+    0.4,
+    4.13,
+    0.953
+   ],
+   "bounds_cm": [
+    [
+     -20.0,
+     0.0,
+     -77.3
+    ],
+    [
+     20.0,
+     413.0,
+     18.0
+    ]
+   ],
+   "triangles": 488,
+   "vertices": 616,
+   "pivot": "bottom centre of the post; the lantern hangs 60 cm toward -Z at 3.6-4.1 m (a point light at (0, 385, -60) cm)"
+  },
+  {
+   "name": "GuardRail",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/GuardRail.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/SteelDark.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph"
+   ],
+   "size_m": [
+    4.0,
+    0.99,
+    0.185
+   ],
+   "bounds_cm": [
+    [
+     -200.0,
+     0.0,
+     -11.5
+    ],
+    [
+     200.0,
+     99.0,
+     7.0
+    ]
+   ],
+   "triangles": 1272,
+   "vertices": 1068,
+   "pivot": "bottom centre; 4 m along X, the rail on its -Z face; chain every 400 cm (posts shared)"
+  },
+  {
+   "name": "FencePost",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/FencePost.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/WoodBeam.material.nmgraph",
+    "Content/Materials/Kit/SteelDark.material.nmgraph"
+   ],
+   "size_m": [
+    2.5,
+    1.398,
+    0.145
+   ],
+   "bounds_cm": [
+    [
+     -125.0,
+     0.0,
+     -7.5
+    ],
+    [
+     125.0,
+     139.8,
+     7.0
+    ]
+   ],
+   "triangles": 880,
+   "vertices": 794,
+   "pivot": "bottom centre; wire spans 2.5 m along X (chain every 250 cm)"
+  },
+  {
+   "name": "SignalMast",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/SignalMast.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Concrete.material.nmgraph",
+    "Content/Materials/Kit/SteelDark.material.nmgraph",
+    "Content/Materials/Kit/Grating.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/BeaconLight.material.nmgraph"
+   ],
+   "size_m": [
+    2.4,
+    13.2,
+    2.4
+   ],
+   "bounds_cm": [
+    [
+     -120.0,
+     0.0,
+     -120.0
+    ],
+    [
+     120.0,
+     1320.0,
+     120.0
+    ]
+   ],
+   "triangles": 2568,
+   "vertices": 3933,
+   "pivot": "bottom centre of the pad; beacon lens at 11.3-11.75 m (BeaconLight: blink it with EmissiveIntensity, add a red point light at (0, 1150, 0) cm)",
+   "parts": [
+    {
+     "name": "Anemometer",
+     "mesh": "Content/Meshes/L1/SignalMast_Anemometer.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/BrassAged.material.nmgraph",
+      "Content/Materials/Kit/SteelDark.material.nmgraph",
+      "Content/Materials/Kit/Copper.material.nmgraph"
+     ],
+     "offset_cm": [
+      0.0,
+      1320.0,
+      0.0
+     ],
+     "size_m": [
+      0.927,
+      0.22,
+      0.993
+     ],
+     "moves": "spins about Y (up), ~1 turn/s in the wind",
+     "axis": [
+      0,
+      1,
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Rock_A",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/Rock_A.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Rock.material.nmgraph"
+   ],
+   "size_m": [
+    0.87,
+    0.376,
+    0.592
+   ],
+   "bounds_cm": [
+    [
+     -40.9,
+     -3.0,
+     -27.0
+    ],
+    [
+     46.1,
+     34.6,
+     32.2
+    ]
+   ],
+   "triangles": 1280,
+   "vertices": 1213,
+   "pivot": "bottom centre, sunk ~6% into the ground; rotate freely about Y"
+  },
+  {
+   "name": "Rock_B",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/Rock_B.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Rock.material.nmgraph"
+   ],
+   "size_m": [
+    1.738,
+    0.834,
+    1.2
+   ],
+   "bounds_cm": [
+    [
+     -87.5,
+     -5.4,
+     -55.2
+    ],
+    [
+     86.4,
+     78.0,
+     64.9
+    ]
+   ],
+   "triangles": 1280,
+   "vertices": 1168,
+   "pivot": "bottom centre, sunk ~6% into the ground; rotate freely about Y"
+  },
+  {
+   "name": "Rock_C",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/Rock_C.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Rock.material.nmgraph"
+   ],
+   "size_m": [
+    2.823,
+    1.306,
+    1.92
+   ],
+   "bounds_cm": [
+    [
+     -137.6,
+     -8.4,
+     -83.7
+    ],
+    [
+     144.7,
+     122.2,
+     108.3
+    ]
+   ],
+   "triangles": 5120,
+   "vertices": 4704,
+   "pivot": "bottom centre, sunk ~6% into the ground; rotate freely about Y"
+  },
+  {
+   "name": "Rock_D",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/Rock_D.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Rock.material.nmgraph"
+   ],
+   "size_m": [
+    1.002,
+    1.097,
+    0.889
+   ],
+   "bounds_cm": [
+    [
+     -48.6,
+     -7.8,
+     -41.5
+    ],
+    [
+     51.6,
+     101.9,
+     47.4
+    ]
+   ],
+   "triangles": 1280,
+   "vertices": 1084,
+   "pivot": "bottom centre, sunk ~6% into the ground; rotate freely about Y"
+  },
+  {
+   "name": "Rock_E",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/Rock_E.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Rock.material.nmgraph"
+   ],
+   "size_m": [
+    3.694,
+    1.857,
+    2.826
+   ],
+   "bounds_cm": [
+    [
+     -185.9,
+     -13.2,
+     -141.8
+    ],
+    [
+     183.6,
+     172.5,
+     140.8
+    ]
+   ],
+   "triangles": 5120,
+   "vertices": 4886,
+   "pivot": "bottom centre, sunk ~6% into the ground; rotate freely about Y"
+  },
+  {
+   "name": "Cliff_A",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/Cliff_A.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Rock.material.nmgraph"
+   ],
+   "size_m": [
+    9.037,
+    8.915,
+    4.453
+   ],
+   "bounds_cm": [
+    [
+     -496.3,
+     -60.0,
+     -233.9
+    ],
+    [
+     407.4,
+     831.5,
+     211.4
+    ]
+   ],
+   "triangles": 20480,
+   "vertices": 15006,
+   "pivot": "bottom centre; a cliff face piece: overlap them, rotate and sink into the terrain"
+  },
+  {
+   "name": "Cliff_B",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/Cliff_B.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Rock.material.nmgraph"
+   ],
+   "size_m": [
+    7.289,
+    6.102,
+    3.631
+   ],
+   "bounds_cm": [
+    [
+     -376.4,
+     -42.0,
+     -187.2
+    ],
+    [
+     352.5,
+     568.2,
+     175.8
+    ]
+   ],
+   "triangles": 20480,
+   "vertices": 15617,
+   "pivot": "bottom centre; a cliff face piece: overlap them, rotate and sink into the terrain"
+  },
+  {
+   "name": "Cliff_C",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/Cliff_C.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Rock.material.nmgraph"
+   ],
+   "size_m": [
+    12.887,
+    3.984,
+    4.795
+   ],
+   "bounds_cm": [
+    [
+     -573.0,
+     -30.0,
+     -237.3
+    ],
+    [
+     715.7,
+     368.4,
+     242.2
+    ]
+   ],
+   "triangles": 20480,
+   "vertices": 15641,
+   "pivot": "bottom centre; a cliff face piece: overlap them, rotate and sink into the terrain"
+  },
+  {
+   "name": "SteamVent",
+   "kit": "L1",
+   "mesh": "Content/Meshes/L1/SteamVent.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/SteelDark.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/Grating.material.nmgraph"
+   ],
+   "size_m": [
+    0.92,
+    0.34,
+    0.92
+   ],
+   "bounds_cm": [
+    [
+     -46.0,
+     0.0,
+     -46.0
+    ],
+    [
+     46.0,
+     34.0,
+     46.0
+    ]
+   ],
+   "triangles": 2880,
+   "vertices": 2321,
+   "pivot": "bottom centre; emit steam particles from (0, 30, 0) cm upward"
+  },
+  {
+   "name": "Wall",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Wall.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/PanelGreen.material.nmgraph",
+    "Content/Materials/Kit/Walnut.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/PanelCream.material.nmgraph"
+   ],
+   "size_m": [
+    4.36,
+    5.0,
+    0.5
+   ],
+   "bounds_cm": [
+    [
+     -218.0,
+     0.0,
+     -20.0
+    ],
+    [
+     218.0,
+     500.0,
+     30.0
+    ]
+   ],
+   "triangles": 3208,
+   "vertices": 2728,
+   "pivot": "bottom centre of the room-side face (z = 0); 4 m along X, 5 m tall, 30 cm thick behind it (+Z); pilasters straddle the ends (chain every 400 cm)"
+  },
+  {
+   "name": "WallDoor",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/WallDoor.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/PanelGreen.material.nmgraph",
+    "Content/Materials/Kit/Walnut.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/PanelCream.material.nmgraph",
+    "Content/Materials/Kit/SteelDark.material.nmgraph"
+   ],
+   "size_m": [
+    4.3,
+    5.0,
+    0.65
+   ],
+   "bounds_cm": [
+    [
+     -215.0,
+     0.0,
+     -35.0
+    ],
+    [
+     215.0,
+     500.0,
+     30.0
+    ]
+   ],
+   "triangles": 4168,
+   "vertices": 3342,
+   "pivot": "as Wall; the doorway is 1.6 x 2.8 m at its centre",
+   "parts": [
+    {
+     "name": "DoorLeaf",
+     "mesh": "Content/Meshes/L2/WallDoor_Leaf.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/Walnut.material.nmgraph",
+      "Content/Materials/Kit/GlassFrosted.material.nmgraph",
+      "Content/Materials/Kit/BrassAged.material.nmgraph"
+     ],
+     "offset_cm": [
+      -80.0,
+      0.0,
+      13.0
+     ],
+     "size_m": [
+      1.6,
+      2.79,
+      0.155
+     ],
+     "moves": "swings about Y (up) at its hinge (the opening's left jamb), 0 to 100 degrees into the room (-Z)",
+     "axis": [
+      0,
+      1,
+      0
+     ]
+    },
+    {
+     "name": "Shutter",
+     "mesh": "Content/Meshes/L2/WallDoor_Shutter.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/SteelDark.material.nmgraph",
+      "Content/Materials/Kit/PaintRed.material.nmgraph"
+     ],
+     "offset_cm": [
+      0.0,
+      0.0,
+      -28.0
+     ],
+     "size_m": [
+      1.7,
+      2.59,
+      0.07
+     ],
+     "moves": "rolls up +Y 2.9 m into its box (open); down on the Alarm state",
+     "axis": [
+      0,
+      1,
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Floor",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Floor.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/MarbleFloor.material.nmgraph"
+   ],
+   "size_m": [
+    4.0,
+    0.2,
+    4.0
+   ],
+   "bounds_cm": [
+    [
+     -200.0,
+     -20.0,
+     -200.0
+    ],
+    [
+     200.0,
+     0.0,
+     200.0
+    ]
+   ],
+   "triangles": 12,
+   "vertices": 24,
+   "pivot": "top centre (y = 0); 4 x 4 m, 20 cm thick; chain every 400 cm"
+  },
+  {
+   "name": "Ceiling",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Ceiling.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/PanelCream.material.nmgraph",
+    "Content/Materials/Kit/Walnut.material.nmgraph",
+    "Content/Materials/Kit/SteelDark.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph"
+   ],
+   "size_m": [
+    4.3,
+    0.4,
+    4.3
+   ],
+   "bounds_cm": [
+    [
+     -215.0,
+     0.0,
+     -215.0
+    ],
+    [
+     215.0,
+     40.0,
+     215.0
+    ]
+   ],
+   "triangles": 2056,
+   "vertices": 2275,
+   "pivot": "bottom centre of the beams (y = 0): place at 500 cm; 4 x 4 m; a ceiling rose at the centre for PendantLamp"
+  },
+  {
+   "name": "PendantLamp",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/PendantLamp.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/Copper.material.nmgraph",
+    "Content/Materials/Kit/LampGlow.material.nmgraph"
+   ],
+   "size_m": [
+    0.68,
+    1.54,
+    0.68
+   ],
+   "bounds_cm": [
+    [
+     -34.0,
+     -154.0,
+     -34.0
+    ],
+    [
+     34.0,
+     0.0,
+     34.0
+    ]
+   ],
+   "triangles": 476,
+   "vertices": 413,
+   "pivot": "top of the rod (hang it from the ceiling rose); bulb at y = -147 cm (a point light there)"
+  },
+  {
+   "name": "DomeSegment",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/DomeSegment.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/GlassClear.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph"
+   ],
+   "size_m": [
+    5.884,
+    4.203,
+    4.409
+   ],
+   "bounds_cm": [
+    [
+     26.6,
+     -14.3,
+     -6.0
+    ],
+    [
+     615.0,
+     406.0,
+     434.9
+    ]
+   ],
+   "triangles": 1580,
+   "vertices": 1151,
+   "pivot": "the dome's centre at its base ring; 6 m radius, 4 m high; one 45-degree slice starting on +X turning toward +Z; place 8 copies turned 0, 45, ... 315 degrees about Y. The crown (top 4%) is open: the roof hatch goes there"
+  },
+  {
+   "name": "Orrery",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Orrery.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/Walnut.material.nmgraph",
+    "Content/Materials/Kit/BrassBrushed.material.nmgraph",
+    "Content/Materials/Kit/LampGlow.material.nmgraph",
+    "Content/Materials/Kit/SteelDark.material.nmgraph"
+   ],
+   "size_m": [
+    6.48,
+    4.55,
+    3.511
+   ],
+   "bounds_cm": [
+    [
+     -324.0,
+     0.0,
+     -175.5
+    ],
+    [
+     324.0,
+     455.0,
+     175.5
+    ]
+   ],
+   "triangles": 2200,
+   "vertices": 2157,
+   "pivot": "bottom centre of the plinth; the gimbal's centre (every part's pivot) is 400 cm up; the Sun is LampGlow (put a point light at its centre); a ladder on the +X side",
+   "notes": "The ring meshes are exported in their rest pose (already turned); spin each about its pivot. For a true gimbal parent Inner to Middle to Outer",
+   "parts": [
+    {
+     "name": "RingOuter",
+     "mesh": "Content/Meshes/L2/Orrery_RingOuter.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/BrassBrushed.material.nmgraph",
+      "Content/Materials/Kit/Walnut.material.nmgraph",
+      "Content/Materials/Kit/BrassAged.material.nmgraph",
+      "Content/Materials/Kit/SteelDark.material.nmgraph"
+     ],
+     "offset_cm": [
+      0.0,
+      400.0,
+      0.0
+     ],
+     "size_m": [
+      6.49,
+      6.15,
+      0.14
+     ],
+     "moves": "upright in the XY plane; turns about X (its pins)",
+     "axis": [
+      1,
+      0,
+      0
+     ]
+    },
+    {
+     "name": "RingMiddle",
+     "mesh": "Content/Meshes/L2/Orrery_RingMiddle.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/BrassBrushed.material.nmgraph",
+      "Content/Materials/Kit/Walnut.material.nmgraph",
+      "Content/Materials/Kit/BrassAged.material.nmgraph",
+      "Content/Materials/Kit/SteelDark.material.nmgraph"
+     ],
+     "offset_cm": [
+      0.0,
+      400.0,
+      0.0
+     ],
+     "size_m": [
+      0.14,
+      5.15,
+      5.49
+     ],
+     "moves": "upright in the ZY plane; turns about Z (its pins) inside Outer",
+     "axis": [
+      0,
+      0,
+      1
+     ]
+    },
+    {
+     "name": "RingInner",
+     "mesh": "Content/Meshes/L2/Orrery_RingInner.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/BrassBrushed.material.nmgraph",
+      "Content/Materials/Kit/Walnut.material.nmgraph",
+      "Content/Materials/Kit/BrassAged.material.nmgraph",
+      "Content/Materials/Kit/SteelDark.material.nmgraph"
+     ],
+     "offset_cm": [
+      0.0,
+      400.0,
+      0.0
+     ],
+     "size_m": [
+      3.945,
+      3.416,
+      2.955
+     ],
+     "moves": "tilted 55 degrees; spins in its own plane inside Middle",
+     "axis": [
+      0,
+      1,
+      0
+     ]
+    },
+    {
+     "name": "Planets",
+     "mesh": "Content/Meshes/L2/Orrery_Planets.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/BrassAged.material.nmgraph",
+      "Content/Materials/Kit/Copper.material.nmgraph",
+      "Content/Materials/Kit/Marble.material.nmgraph",
+      "Content/Materials/Kit/Enamel.material.nmgraph",
+      "Content/Materials/Kit/BrassBrushed.material.nmgraph"
+     ],
+     "offset_cm": [
+      0.0,
+      400.0,
+      0.0
+     ],
+     "size_m": [
+      2.465,
+      0.975,
+      3.398
+     ],
+     "moves": "spins about Y (up) round the sun, slowly",
+     "axis": [
+      0,
+      1,
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Workbench",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Workbench.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Walnut.material.nmgraph",
+    "Content/Materials/Kit/SteelDark.material.nmgraph",
+    "Content/Materials/Kit/Planks.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/PaintRed.material.nmgraph",
+    "Content/Materials/Kit/Copper.material.nmgraph"
+   ],
+   "size_m": [
+    2.0,
+    1.62,
+    1.25
+   ],
+   "bounds_cm": [
+    [
+     -100.0,
+     0.0,
+     -80.0
+    ],
+    [
+     100.0,
+     162.0,
+     45.0
+    ]
+   ],
+   "triangles": 3604,
+   "vertices": 3099,
+   "pivot": "bottom centre; 2 x 0.9 m, top at 95 cm; the user's side faces -Z; a benchtop sample stands at (x, 95, 0) cm"
+  },
+  {
+   "name": "SamplePedestal",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/SamplePedestal.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Walnut.material.nmgraph",
+    "Content/Materials/Kit/Marble.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph"
+   ],
+   "size_m": [
+    0.6,
+    0.92,
+    0.6
+   ],
+   "bounds_cm": [
+    [
+     -30.0,
+     0.0,
+     -30.0
+    ],
+    [
+     30.0,
+     92.0,
+     30.0
+    ]
+   ],
+   "triangles": 940,
+   "vertices": 776,
+   "pivot": "bottom centre; a sample sits on its top at y = 92 cm; brass label on its -Z face"
+  },
+  {
+   "name": "Sample_BrushedBrass",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Sample_BrushedBrass.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/BrassBrushed.material.nmgraph"
+   ],
+   "size_m": [
+    0.26,
+    0.34,
+    0.26
+   ],
+   "bounds_cm": [
+    [
+     -13.0,
+     0.0,
+     -13.0
+    ],
+    [
+     13.0,
+     34.0,
+     13.0
+    ]
+   ],
+   "triangles": 896,
+   "vertices": 1164,
+   "pivot": "bottom centre (sits on a SamplePedestal at y = 92 cm or a bench)",
+   "notes": "Anisotropic: brushed brass, grain round it"
+  },
+  {
+   "name": "Sample_Walnut",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Sample_Walnut.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Walnut.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph"
+   ],
+   "size_m": [
+    0.33,
+    0.18,
+    0.235
+   ],
+   "bounds_cm": [
+    [
+     -16.5,
+     0.0,
+     -12.0
+    ],
+    [
+     16.5,
+     18.0,
+     11.5
+    ]
+   ],
+   "triangles": 564,
+   "vertices": 449,
+   "pivot": "bottom centre (sits on a SamplePedestal at y = 92 cm or a bench)",
+   "notes": "Clear Coat: lacquered walnut"
+  },
+  {
+   "name": "Sample_Enamel",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Sample_Enamel.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Enamel.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph"
+   ],
+   "size_m": [
+    0.492,
+    0.29,
+    0.26
+   ],
+   "bounds_cm": [
+    [
+     -22.4,
+     0.0,
+     -13.0
+    ],
+    [
+     26.8,
+     29.0,
+     13.0
+    ]
+   ],
+   "triangles": 2852,
+   "vertices": 1899,
+   "pivot": "bottom centre (sits on a SamplePedestal at y = 92 cm or a bench)",
+   "notes": "Clear Coat: car-paint enamel (a kettle), Tint via BaseColor"
+  },
+  {
+   "name": "Sample_Velvet",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Sample_Velvet.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Velvet.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph"
+   ],
+   "size_m": [
+    0.38,
+    0.119,
+    0.38
+   ],
+   "bounds_cm": [
+    [
+     -19.0,
+     1.0,
+     -19.0
+    ],
+    [
+     19.0,
+     13.0,
+     19.0
+    ]
+   ],
+   "triangles": 1068,
+   "vertices": 740,
+   "pivot": "bottom centre (sits on a SamplePedestal at y = 92 cm or a bench)",
+   "notes": "Cloth: crushed velvet cushion, pink sheen"
+  },
+  {
+   "name": "Sample_Leather",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Sample_Leather.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Leather.material.nmgraph",
+    "Content/Materials/Kit/PanelCream.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph"
+   ],
+   "size_m": [
+    0.255,
+    0.074,
+    0.32
+   ],
+   "bounds_cm": [
+    [
+     -12.5,
+     -0.2,
+     -16.0
+    ],
+    [
+     13.0,
+     7.2,
+     16.0
+    ]
+   ],
+   "triangles": 1128,
+   "vertices": 936,
+   "pivot": "bottom centre (sits on a SamplePedestal at y = 92 cm or a bench)",
+   "notes": "Cloth: a leather-bound journal"
+  },
+  {
+   "name": "Sample_Marble",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Sample_Marble.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Marble.material.nmgraph"
+   ],
+   "size_m": [
+    0.18,
+    0.45,
+    0.18
+   ],
+   "bounds_cm": [
+    [
+     -9.0,
+     0.0,
+     -9.0
+    ],
+    [
+     9.0,
+     45.0,
+     9.0
+    ]
+   ],
+   "triangles": 1340,
+   "vertices": 972,
+   "pivot": "bottom centre (sits on a SamplePedestal at y = 92 cm or a bench)",
+   "notes": "Subsurface: white marble (an orb on a column)"
+  },
+  {
+   "name": "Sample_Wax",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Sample_Wax.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/Wax.material.nmgraph",
+    "Content/Materials/Kit/PaintBlack.material.nmgraph"
+   ],
+   "size_m": [
+    0.3,
+    0.262,
+    0.3
+   ],
+   "bounds_cm": [
+    [
+     -15.0,
+     0.0,
+     -15.0
+    ],
+    [
+     15.0,
+     26.2,
+     15.0
+    ]
+   ],
+   "triangles": 804,
+   "vertices": 995,
+   "pivot": "bottom centre (sits on a SamplePedestal at y = 92 cm or a bench)",
+   "notes": "Subsurface: wax candles (light through them)"
+  },
+  {
+   "name": "Sample_LeafPanel",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Sample_LeafPanel.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/LeafPanel.material.nmgraph",
+    "Content/Materials/Kit/LampGlow.material.nmgraph"
+   ],
+   "size_m": [
+    0.404,
+    0.525,
+    0.09
+   ],
+   "bounds_cm": [
+    [
+     -20.2,
+     0.0,
+     -3.0
+    ],
+    [
+     20.2,
+     52.5,
+     6.0
+    ]
+   ],
+   "triangles": 952,
+   "vertices": 832,
+   "pivot": "bottom centre (sits on a SamplePedestal at y = 92 cm or a bench)",
+   "notes": "Subsurface, two-sided: a pressed fern between glass, lit from behind"
+  },
+  {
+   "name": "Sample_FrostedGlass",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Sample_FrostedGlass.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/GlassFrosted.material.nmgraph",
+    "Content/Materials/Kit/Walnut.material.nmgraph"
+   ],
+   "size_m": [
+    0.28,
+    0.345,
+    0.28
+   ],
+   "bounds_cm": [
+    [
+     -14.0,
+     0.0,
+     -14.0
+    ],
+    [
+     14.0,
+     34.5,
+     14.0
+    ]
+   ],
+   "triangles": 608,
+   "vertices": 889,
+   "pivot": "bottom centre (sits on a SamplePedestal at y = 92 cm or a bench)",
+   "notes": "Translucent Lit: a frosted bell jar"
+  },
+  {
+   "name": "Sample_Steam",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Sample_Steam.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Steam.material.nmgraph",
+    "Content/Materials/Kit/SteelDark.material.nmgraph"
+   ],
+   "size_m": [
+    0.287,
+    0.469,
+    0.27
+   ],
+   "bounds_cm": [
+    [
+     -13.1,
+     0.0,
+     -11.7
+    ],
+    [
+     15.6,
+     46.9,
+     15.2
+    ]
+   ],
+   "triangles": 1216,
+   "vertices": 887,
+   "pivot": "bottom centre (sits on a SamplePedestal at y = 92 cm or a bench)",
+   "notes": "Volume (Translucent): a few steam puffs over a vent; better as particles with the Steam material"
+  },
+  {
+   "name": "BreakerPanel",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/BreakerPanel.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/PanelGreen.material.nmgraph",
+    "Content/Materials/Kit/SteelDark.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/GaugeFace.material.nmgraph",
+    "Content/Materials/Kit/PaintRed.material.nmgraph",
+    "Content/Materials/Kit/PaintBlack.material.nmgraph",
+    "Content/Materials/Kit/LampGlow.material.nmgraph",
+    "Content/Materials/Kit/Copper.material.nmgraph"
+   ],
+   "size_m": [
+    1.0,
+    2.4,
+    0.47
+   ],
+   "bounds_cm": [
+    [
+     -50.0,
+     0.0,
+     -12.0
+    ],
+    [
+     50.0,
+     240.0,
+     35.0
+    ]
+   ],
+   "triangles": 3394,
+   "vertices": 2902,
+   "pivot": "bottom centre of its back (against a wall, facing -Z); 1 x 1.8 m, conduit up to 2.4 m",
+   "parts": [
+    {
+     "name": "Lever",
+     "mesh": "Content/Meshes/L2/BreakerPanel_Lever.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/Copper.material.nmgraph",
+      "Content/Materials/Kit/Rubber.material.nmgraph",
+      "Content/Materials/Kit/BrassAged.material.nmgraph"
+     ],
+     "offset_cm": [
+      0.0,
+      92.0,
+      -14.0
+     ],
+     "size_m": [
+      0.184,
+      0.445,
+      0.248
+     ],
+     "moves": "throws about X (the panel's width): -35 degrees (off, tilted toward -Z... down) to +35 (on); C3 throws it",
+     "axis": [
+      1,
+      0,
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Bookshelf",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Bookshelf.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Walnut.material.nmgraph",
+    "Content/Materials/Kit/Books.material.nmgraph"
+   ],
+   "size_m": [
+    2.16,
+    2.5,
+    0.46
+   ],
+   "bounds_cm": [
+    [
+     -108.0,
+     0.0,
+     -10.0
+    ],
+    [
+     108.0,
+     250.0,
+     36.0
+    ]
+   ],
+   "triangles": 4132,
+   "vertices": 5810,
+   "pivot": "bottom centre of its front; 2 m wide, 2.5 m tall, 36 cm deep behind (+Z); books included"
+  },
+  {
+   "name": "Turbine",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Turbine.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/SteelDark.material.nmgraph",
+    "Content/Materials/Kit/PanelGreen.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/Copper.material.nmgraph",
+    "Content/Materials/Kit/GaugeFace.material.nmgraph",
+    "Content/Materials/Kit/BrassBrushed.material.nmgraph"
+   ],
+   "size_m": [
+    4.8,
+    4.45,
+    3.886
+   ],
+   "bounds_cm": [
+    [
+     -240.0,
+     0.0,
+     -188.6
+    ],
+    [
+     240.0,
+     445.0,
+     200.0
+    ]
+   ],
+   "triangles": 12710,
+   "vertices": 9729,
+   "pivot": "bottom centre of the bed; 4.8 x 2.2 m bed, axis along X at 160 cm; inlet up and back (+Z), exhaust down to the floor at -Z",
+   "notes": "The casing is closed: the rotor shows through... only the flywheel at +X; open the casing in the level by hiding it, or treat the rotor as the flywheel's spin",
+   "parts": [
+    {
+     "name": "Rotor",
+     "mesh": "Content/Meshes/L2/Turbine_Rotor.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/SteelBrushed.material.nmgraph",
+      "Content/Materials/Kit/BrassBrushed.material.nmgraph",
+      "Content/Materials/Kit/SteelDark.material.nmgraph"
+     ],
+     "offset_cm": [
+      0.0,
+      160.0,
+      0.0
+     ],
+     "size_m": [
+      5.445,
+      2.192,
+      2.2
+     ],
+     "moves": "spins about X (its shaft); the flywheel outside the casing shows it",
+     "axis": [
+      1,
+      0,
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ValveWheel",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/ValveWheel.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Copper.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/SteelDark.material.nmgraph",
+    "Content/Materials/Kit/SteelBrushed.material.nmgraph"
+   ],
+   "size_m": [
+    2.05,
+    1.575,
+    0.4
+   ],
+   "bounds_cm": [
+    [
+     -102.5,
+     0.0,
+     -20.0
+    ],
+    [
+     102.5,
+     157.5,
+     20.0
+    ]
+   ],
+   "triangles": 1936,
+   "vertices": 1658,
+   "pivot": "bottom centre; a 2 m pipe run along X at 90 cm with the valve; wheel at 160 cm",
+   "parts": [
+    {
+     "name": "Wheel",
+     "mesh": "Content/Meshes/L2/ValveWheel_Wheel.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/PaintRed.material.nmgraph",
+      "Content/Materials/Kit/BrassAged.material.nmgraph"
+     ],
+     "offset_cm": [
+      0.0,
+      160.0,
+      0.0
+     ],
+     "size_m": [
+      0.7,
+      0.08,
+      0.7
+     ],
+     "moves": "turns about Y (up); 2 turns open the valve",
+     "axis": [
+      0,
+      1,
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "ElevatorCage",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/ElevatorCage.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/SteelDark.material.nmgraph",
+    "Content/Materials/Kit/Grating.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/BrassBrushed.material.nmgraph",
+    "Content/Materials/Kit/PanelGreen.material.nmgraph"
+   ],
+   "size_m": [
+    2.62,
+    3.5,
+    2.62
+   ],
+   "bounds_cm": [
+    [
+     -131.0,
+     0.0,
+     -131.0
+    ],
+    [
+     131.0,
+     350.0,
+     131.0
+    ]
+   ],
+   "triangles": 2272,
+   "vertices": 2486,
+   "pivot": "bottom centre of the floor; 2.5 x 2.5 m, 3.5 m with its hook; the whole cage moves on Y (C4); the gate faces -Z",
+   "parts": [
+    {
+     "name": "Gate",
+     "mesh": "Content/Meshes/L2/ElevatorCage_Gate.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/BrassAged.material.nmgraph"
+     ],
+     "offset_cm": [
+      0.0,
+      0.0,
+      -127.0
+     ],
+     "size_m": [
+      2.559,
+      2.49,
+      0.04
+     ],
+     "moves": "a scissor gate on the -Z side: scale X from 1 to 0.15 about its left end (-120 cm) to open",
+     "axis": [
+      1,
+      0,
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Pipe_Straight",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Pipe_Straight.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Copper.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph"
+   ],
+   "size_m": [
+    2.0,
+    0.22,
+    0.22
+   ],
+   "bounds_cm": [
+    [
+     -100.0,
+     -11.0,
+     -11.0
+    ],
+    [
+     100.0,
+     11.0,
+     11.0
+    ]
+   ],
+   "triangles": 540,
+   "vertices": 482,
+   "pivot": "the pipe's axis at its centre; 2 m along X, 15 cm bore; flanged ends (chain every 200 cm)"
+  },
+  {
+   "name": "Pipe_Elbow",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Pipe_Elbow.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Copper.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph"
+   ],
+   "size_m": [
+    0.71,
+    0.71,
+    0.22
+   ],
+   "bounds_cm": [
+    [
+     -60.0,
+     -11.0,
+     -11.0
+    ],
+    [
+     11.0,
+     60.0,
+     11.0
+    ]
+   ],
+   "triangles": 860,
+   "vertices": 652,
+   "pivot": "the bend's corner (the two axes' meeting point); legs to -X 60 cm and +Y 60 cm"
+  },
+  {
+   "name": "Pipe_Tee",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Pipe_Tee.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Copper.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph"
+   ],
+   "size_m": [
+    1.2,
+    0.71,
+    0.22
+   ],
+   "bounds_cm": [
+    [
+     -60.0,
+     -11.0,
+     -11.0
+    ],
+    [
+     60.0,
+     60.0,
+     11.0
+    ]
+   ],
+   "triangles": 1368,
+   "vertices": 1079,
+   "pivot": "the axes' meeting point; run along X (1.2 m), branch up +Y 60 cm"
+  },
+  {
+   "name": "Gauge",
+   "kit": "L2",
+   "mesh": "Content/Meshes/L2/Gauge.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/GaugeFace.material.nmgraph",
+    "Content/Materials/Kit/GlassClear.material.nmgraph"
+   ],
+   "size_m": [
+    0.264,
+    0.382,
+    0.112
+   ],
+   "bounds_cm": [
+    [
+     -13.2,
+     -25.0,
+     -5.7
+    ],
+    [
+     13.2,
+     13.2,
+     5.5
+    ]
+   ],
+   "triangles": 1000,
+   "vertices": 732,
+   "pivot": "the dial's centre; it faces -Z; a stem runs 25 cm down to a pipe; GaugeFace glows (EmissiveIntensity)",
+   "parts": [
+    {
+     "name": "Needle",
+     "mesh": "Content/Meshes/L2/Gauge_Needle.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/PaintRed.material.nmgraph",
+      "Content/Materials/Kit/BrassAged.material.nmgraph"
+     ],
+     "offset_cm": [
+      0.0,
+      0.0,
+      -4.8
+     ],
+     "size_m": [
+      0.02,
+      0.095,
+      0.006
+     ],
+     "moves": "turns about Z (the dial's normal): -135 degrees (0) to +135 (full scale); the face's red zone starts at +81",
+     "axis": [
+      0,
+      0,
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Catwalk_Straight",
+   "kit": "L3",
+   "mesh": "Content/Meshes/L3/Catwalk_Straight.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Grating.material.nmgraph",
+    "Content/Materials/Kit/SteelDark.material.nmgraph"
+   ],
+   "size_m": [
+    1.58,
+    0.2,
+    4.0
+   ],
+   "bounds_cm": [
+    [
+     -79.0,
+     -20.0,
+     0.0
+    ],
+    [
+     79.0,
+     0.0,
+     400.0
+    ]
+   ],
+   "triangles": 616,
+   "vertices": 552,
+   "pivot": "deck top (y = 0), centre of the near end; 4 m along +Z, 1.5 m wide; chain every 400 cm; add Railing_Straight at x = +-75 cm"
+  },
+  {
+   "name": "Railing_Straight",
+   "kit": "L3",
+   "mesh": "Content/Meshes/L3/Railing_Straight.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/SteelDark.material.nmgraph"
+   ],
+   "size_m": [
+    0.05,
+    1.074,
+    4.05
+   ],
+   "bounds_cm": [
+    [
+     -2.5,
+     0.0,
+     -2.5
+    ],
+    [
+     2.5,
+     107.4,
+     402.5
+    ]
+   ],
+   "triangles": 188,
+   "vertices": 236,
+   "pivot": "bottom of its first post; runs 4 m along +Z"
+  },
+  {
+   "name": "Catwalk_Arc",
+   "kit": "L3",
+   "mesh": "Content/Meshes/L3/Catwalk_Arc.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Grating.material.nmgraph",
+    "Content/Materials/Kit/SteelDark.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph"
+   ],
+   "size_m": [
+    2.168,
+    1.274,
+    3.311
+   ],
+   "bounds_cm": [
+    [
+     640.2,
+     -20.0,
+     -3.0
+    ],
+    [
+     857.0,
+     107.4,
+     328.1
+    ]
+   ],
+   "triangles": 1240,
+   "vertices": 1153,
+   "pivot": "the shaft's axis at deck level; 22.5 degrees from +X toward +Z, inner radius 700 cm, outer 850 cm with a railing on the outer edge (the shaft side is open: add Railing_Straight or leave it); 16 make a ring, or step each down for a spiral"
+  },
+  {
+   "name": "ReactorCore",
+   "kit": "L3",
+   "mesh": "Content/Meshes/L3/ReactorCore.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/PanelCream.material.nmgraph",
+    "Content/Materials/Kit/GlassClear.material.nmgraph",
+    "Content/Materials/Kit/ReactorGlow.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/Copper.material.nmgraph"
+   ],
+   "size_m": [
+    6.4,
+    12.2,
+    6.4
+   ],
+   "bounds_cm": [
+    [
+     -320.0,
+     0.0,
+     -320.0
+    ],
+    [
+     320.0,
+     1220.0,
+     320.0
+    ]
+   ],
+   "triangles": 7392,
+   "vertices": 5349,
+   "pivot": "bottom centre; 6.4 m base, 12.2 m tall; the glowing core (ReactorGlow: EmissiveColor to red and PulseSpeed up on the alarm) shows through glass 1.6-10.4 m",
+   "parts": [
+    {
+     "name": "RingA",
+     "mesh": "Content/Meshes/L3/Reactor_RingA.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/BrassBrushed.material.nmgraph",
+      "Content/Materials/Kit/ReactorGlow.material.nmgraph",
+      "Content/Materials/Kit/SteelDark.material.nmgraph"
+     ],
+     "offset_cm": [
+      0.0,
+      360.0,
+      0.0
+     ],
+     "size_m": [
+      5.72,
+      1.127,
+      5.706
+     ],
+     "moves": "spins about its own (tilted 8 degrees) axis, near Y; speed up for the alarm",
+     "axis": [
+      0,
+      1,
+      0
+     ]
+    },
+    {
+     "name": "RingB",
+     "mesh": "Content/Meshes/L3/Reactor_RingB.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/BrassBrushed.material.nmgraph",
+      "Content/Materials/Kit/ReactorGlow.material.nmgraph",
+      "Content/Materials/Kit/SteelDark.material.nmgraph"
+     ],
+     "offset_cm": [
+      0.0,
+      600.0,
+      0.0
+     ],
+     "size_m": [
+      6.32,
+      1.425,
+      6.276
+     ],
+     "moves": "spins about its own (tilted -10 degrees) axis, near Y; speed up for the alarm",
+     "axis": [
+      0,
+      1,
+      0
+     ]
+    },
+    {
+     "name": "RingC",
+     "mesh": "Content/Meshes/L3/Reactor_RingC.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/BrassBrushed.material.nmgraph",
+      "Content/Materials/Kit/ReactorGlow.material.nmgraph",
+      "Content/Materials/Kit/SteelDark.material.nmgraph"
+     ],
+     "offset_cm": [
+      0.0,
+      840.0,
+      0.0
+     ],
+     "size_m": [
+      5.72,
+      1.514,
+      5.657
+     ],
+     "moves": "spins about its own (tilted 12 degrees) axis, near Y; speed up for the alarm",
+     "axis": [
+      0,
+      1,
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "VaultPlinth",
+   "kit": "L3",
+   "mesh": "Content/Meshes/L3/VaultPlinth.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/PanelCream.material.nmgraph",
+    "Content/Materials/Kit/BrassBrushed.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/IntelGlow.material.nmgraph"
+   ],
+   "size_m": [
+    2.402,
+    1.573,
+    2.402
+   ],
+   "bounds_cm": [
+    [
+     -120.1,
+     0.0,
+     -120.1
+    ],
+    [
+     120.1,
+     157.3,
+     120.1
+    ]
+   ],
+   "triangles": 1572,
+   "vertices": 1593,
+   "pivot": "bottom centre; the intel cylinder stands in the cradle at y = 120 cm; IntelGlow lamps round the plinth (drop to red on the alarm)",
+   "parts": [
+    {
+     "name": "Intel",
+     "mesh": "Content/Meshes/L3/Vault_Intel.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/BrassAged.material.nmgraph",
+      "Content/Materials/Kit/GlassClear.material.nmgraph",
+      "Content/Materials/Kit/IntelGlow.material.nmgraph",
+      "Content/Materials/Kit/BrassBrushed.material.nmgraph"
+     ],
+     "offset_cm": [
+      0.0,
+      120.0,
+      0.0
+     ],
+     "size_m": [
+      0.32,
+      0.62,
+      0.32
+     ],
+     "moves": "lifted out (C5): rises +Y, then attaches to the player's hand",
+     "axis": [
+      0,
+      1,
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Locker",
+   "kit": "L3",
+   "mesh": "Content/Meshes/L3/Locker.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/PanelCream.material.nmgraph",
+    "Content/Materials/Kit/SteelDark.material.nmgraph",
+    "Content/Materials/Kit/Walnut.material.nmgraph"
+   ],
+   "size_m": [
+    0.6,
+    1.9,
+    0.5
+   ],
+   "bounds_cm": [
+    [
+     -30.0,
+     0.0,
+     0.0
+    ],
+    [
+     30.0,
+     190.0,
+     50.0
+    ]
+   ],
+   "triangles": 588,
+   "vertices": 485,
+   "pivot": "bottom centre of its front; 60 x 50 cm, 1.9 m tall, opening toward -Z; the sidearm hangs on the rack at (0, 110, 32) cm",
+   "parts": [
+    {
+     "name": "Door",
+     "mesh": "Content/Meshes/L3/Locker_Door.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/PanelCream.material.nmgraph",
+      "Content/Materials/Kit/SteelDark.material.nmgraph",
+      "Content/Materials/Kit/BrassAged.material.nmgraph"
+     ],
+     "offset_cm": [
+      -29.0,
+      0.0,
+      0.0
+     ],
+     "size_m": [
+      0.58,
+      1.78,
+      0.06
+     ],
+     "moves": "swings about Y at its left hinge, 0 to 110 degrees toward -Z",
+     "axis": [
+      0,
+      1,
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "CoolantPump",
+   "kit": "L3",
+   "mesh": "Content/Meshes/L3/CoolantPump.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/SteelDark.material.nmgraph",
+    "Content/Materials/Kit/PanelGreen.material.nmgraph",
+    "Content/Materials/Kit/Copper.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/GaugeFace.material.nmgraph",
+    "Content/Materials/Kit/Grating.material.nmgraph"
+   ],
+   "size_m": [
+    4.8,
+    4.7,
+    4.295
+   ],
+   "bounds_cm": [
+    [
+     -300.0,
+     0.0,
+     -129.5
+    ],
+    [
+     180.0,
+     470.0,
+     300.0
+    ]
+   ],
+   "triangles": 5770,
+   "vertices": 5331,
+   "pivot": "bottom centre of the skid; 3.2 x 2 m; suction pipe out to -X (300 cm), discharge up and back (+Z) at 440 cm",
+   "parts": [
+    {
+     "name": "Fan",
+     "mesh": "Content/Meshes/L3/CoolantPump_Fan.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/BrassBrushed.material.nmgraph"
+     ],
+     "offset_cm": [
+      162.0,
+      120.0,
+      0.0
+     ],
+     "size_m": [
+      0.23,
+      1.211,
+      1.179
+     ],
+     "moves": "spins about X behind its guard",
+     "axis": [
+      1,
+      0,
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Beacon",
+   "kit": "L3",
+   "mesh": "Content/Meshes/L3/Beacon.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/SteelDark.material.nmgraph",
+    "Content/Materials/Kit/Rubber.material.nmgraph",
+    "Content/Materials/Kit/PanelRed.material.nmgraph",
+    "Content/Materials/Kit/BrassBrushed.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/BeaconLight.material.nmgraph",
+    "Content/Materials/Kit/PaintRed.material.nmgraph"
+   ],
+   "size_m": [
+    1.7,
+    4.623,
+    1.932
+   ],
+   "bounds_cm": [
+    [
+     -60.0,
+     -2.3,
+     -96.6
+    ],
+    [
+     110.0,
+     460.0,
+     96.6
+    ]
+   ],
+   "triangles": 1872,
+   "vertices": 1853,
+   "pivot": "bottom centre; a tripod 2 m across, the lamp at 305-345 cm (BeaconLight: raise EmissiveIntensity as it charges); the fire button faces -Z at 120 cm",
+   "parts": [
+    {
+     "name": "Reflector",
+     "mesh": "Content/Meshes/L3/Beacon_Reflector.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/SteelBrushed.material.nmgraph",
+      "Content/Materials/Kit/SteelDark.material.nmgraph"
+     ],
+     "offset_cm": [
+      0.0,
+      325.0,
+      0.0
+     ],
+     "size_m": [
+      0.48,
+      0.48,
+      0.13
+     ],
+     "moves": "spins about Y inside the lens when the beacon fires (sweeping the light)",
+     "axis": [
+      0,
+      1,
+      0
+     ]
+    }
+   ]
+  },
+  {
+   "name": "FreightLift",
+   "kit": "L3",
+   "mesh": "Content/Meshes/L3/FreightLift.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/SteelDark.material.nmgraph",
+    "Content/Materials/Kit/Grating.material.nmgraph",
+    "Content/Materials/Kit/PanelCream.material.nmgraph",
+    "Content/Materials/Kit/PaintBlack.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/PanelGreen.material.nmgraph",
+    "Content/Materials/Kit/BeaconLight.material.nmgraph"
+   ],
+   "size_m": [
+    4.2,
+    1.49,
+    4.0
+   ],
+   "bounds_cm": [
+    [
+     -210.0,
+     -30.0,
+     -200.0
+    ],
+    [
+     210.0,
+     119.0,
+     200.0
+    ]
+   ],
+   "triangles": 1796,
+   "vertices": 1886,
+   "pivot": "deck top centre; 4 x 4 m; open side (hazard striped) toward -Z; the whole platform moves on Y; guides on +-X for the shaft rails; control post at the front right"
+  },
+  {
+   "name": "Airship_Envelope",
+   "kit": "Airship",
+   "mesh": "Content/Meshes/Airship/Airship_Envelope.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Canvas.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph"
+   ],
+   "size_m": [
+    36.0,
+    10.355,
+    10.355
+   ],
+   "bounds_cm": [
+    [
+     -1800.0,
+     382.3,
+     -517.8
+    ],
+    [
+     1800.0,
+     1417.8,
+     517.8
+    ]
+   ],
+   "triangles": 5744,
+   "vertices": 4790,
+   "pivot": "the gondola's pivot (see Airship_Hull): the envelope's axis is 9 m above it, along X; the nose is +X"
+  },
+  {
+   "name": "Airship_Hull",
+   "kit": "Airship",
+   "mesh": "Content/Meshes/Airship/Airship_Hull.nmmesh",
+   "materials": [
+    "Content/Materials/Kit/Planks.material.nmgraph",
+    "Content/Materials/Kit/Walnut.material.nmgraph",
+    "Content/Materials/Kit/Copper.material.nmgraph",
+    "Content/Materials/Kit/GlassClear.material.nmgraph",
+    "Content/Materials/Kit/GlassFrosted.material.nmgraph",
+    "Content/Materials/Kit/BrassAged.material.nmgraph",
+    "Content/Materials/Kit/SteelDark.material.nmgraph",
+    "Content/Materials/Kit/BrassBrushed.material.nmgraph"
+   ],
+   "size_m": [
+    12.0,
+    7.415,
+    8.9
+   ],
+   "bounds_cm": [
+    [
+     -600.0,
+     -300.0,
+     -445.0
+    ],
+    [
+     600.0,
+     441.5,
+     445.0
+    ]
+   ],
+   "triangles": 1514,
+   "vertices": 1841,
+   "pivot": "the gondola's deck centre (its rails at 100 cm); nose toward +X; the envelope above (9 m to its axis); the winch line hangs from (-450, -300, 0) cm for C6",
+   "notes": "Fly it along +X; C1/C6 in the engine at about 1/1 scale (36 m envelope)",
+   "parts": [
+    {
+     "name": "Envelope",
+     "mesh": "Content/Meshes/Airship/Airship_Envelope.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/Canvas.material.nmgraph",
+      "Content/Materials/Kit/BrassAged.material.nmgraph"
+     ],
+     "offset_cm": [
+      0,
+      0,
+      0
+     ],
+     "moves": "rigid with the hull (a gentle bob is fine)"
+    },
+    {
+     "name": "PropLeft",
+     "mesh": "Content/Meshes/Airship/Airship_PropLeft.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/BrassBrushed.material.nmgraph",
+      "Content/Materials/Kit/Walnut.material.nmgraph"
+     ],
+     "offset_cm": [
+      -195.0,
+      220.0,
+      -400.0
+     ],
+     "size_m": [
+      0.624,
+      2.844,
+      2.844
+     ],
+     "moves": "spins about X (forward), ~8 turns/s",
+     "axis": [
+      1,
+      0,
+      0
+     ]
+    },
+    {
+     "name": "PropRight",
+     "mesh": "Content/Meshes/Airship/Airship_PropRight.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/BrassBrushed.material.nmgraph",
+      "Content/Materials/Kit/Walnut.material.nmgraph"
+     ],
+     "offset_cm": [
+      -195.0,
+      220.0,
+      400.0
+     ],
+     "size_m": [
+      0.624,
+      2.844,
+      2.844
+     ],
+     "moves": "spins about X (forward), ~8 turns/s",
+     "axis": [
+      1,
+      0,
+      0
+     ]
+    },
+    {
+     "name": "PropTail",
+     "mesh": "Content/Meshes/Airship/Airship_PropTail.nmmesh",
+     "materials": [
+      "Content/Materials/Kit/BrassBrushed.material.nmgraph",
+      "Content/Materials/Kit/Walnut.material.nmgraph"
+     ],
+     "offset_cm": [
+      -1860.0,
+      900.0,
+      0.0
+     ],
+     "size_m": [
+      0.67,
+      3.429,
+      3.429
+     ],
+     "moves": "spins about X (forward), ~8 turns/s",
+     "axis": [
+      1,
+      0,
+      0
+     ]
+    }
+   ]
+  }
+ ]
+}

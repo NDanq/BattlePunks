@@ -1,0 +1,500 @@
+{
+ "Airship_Engine_Loop": {
+  "path": "Content/Sounds/World/Airship_Engine_Loop.nmsound",
+  "seconds": 8.0,
+  "lufs": -16.1,
+  "kb": 55
+ },
+ "Alarm_Klaxon_Loop": {
+  "path": "Content/Sounds/World/Alarm_Klaxon_Loop.nmsound",
+  "seconds": 3.0,
+  "lufs": -14.0,
+  "kb": 32
+ },
+ "Amb_L1_Coast": {
+  "path": "Content/Sounds/Ambience/Amb_L1_Coast.nmsound",
+  "seconds": 60.0,
+  "lufs": -26.0,
+  "kb": 746
+ },
+ "Amb_L1_Forest": {
+  "path": "Content/Sounds/Ambience/Amb_L1_Forest.nmsound",
+  "seconds": 60.0,
+  "lufs": -26.0,
+  "kb": 772
+ },
+ "Amb_L2_Alarm": {
+  "path": "Content/Sounds/Ambience/Amb_L2_Alarm.nmsound",
+  "seconds": 60.0,
+  "lufs": -23.0,
+  "kb": 711
+ },
+ "Amb_L2_Calm": {
+  "path": "Content/Sounds/Ambience/Amb_L2_Calm.nmsound",
+  "seconds": 60.0,
+  "lufs": -26.0,
+  "kb": 713
+ },
+ "Amb_L3_Reactor": {
+  "path": "Content/Sounds/Ambience/Amb_L3_Reactor.nmsound",
+  "seconds": 60.0,
+  "lufs": -22.0,
+  "kb": 758
+ },
+ "Beacon_Charge": {
+  "path": "Content/Sounds/World/Beacon_Charge.nmsound",
+  "seconds": 8.0,
+  "lufs": -19.4,
+  "kb": 111
+ },
+ "Beacon_Fire": {
+  "path": "Content/Sounds/World/Beacon_Fire.nmsound",
+  "seconds": 4.5,
+  "lufs": -9.0,
+  "kb": 42
+ },
+ "BlastDoor_Open": {
+  "path": "Content/Sounds/World/BlastDoor_Open.nmsound",
+  "seconds": 8.0,
+  "lufs": -12.0,
+  "kb": 67
+ },
+ "Breaker_Throw": {
+  "path": "Content/Sounds/World/Breaker_Throw.nmsound",
+  "seconds": 1.8,
+  "lufs": -15.6,
+  "kb": 234
+ },
+ "Brute_Alert": {
+  "path": "Content/Sounds/Robots/Brute_Alert.nmsound",
+  "seconds": 1.8,
+  "lufs": -13.0,
+  "kb": 242
+ },
+ "Brute_Hit": {
+  "path": "Content/Sounds/Robots/Brute_Hit.nmsound",
+  "seconds": 1.1,
+  "lufs": -11.0,
+  "kb": 134
+ },
+ "Brute_Hurt": {
+  "path": "Content/Sounds/Robots/Brute_Hurt.nmsound",
+  "seconds": 1.0,
+  "lufs": -14.0,
+  "kb": 136
+ },
+ "Brute_Servo_01": {
+  "path": "Content/Sounds/Robots/Brute_Servo_01.nmsound",
+  "seconds": 0.9,
+  "lufs": -18.0,
+  "kb": 132
+ },
+ "Brute_Servo_02": {
+  "path": "Content/Sounds/Robots/Brute_Servo_02.nmsound",
+  "seconds": 1.1,
+  "lufs": -18.0,
+  "kb": 163
+ },
+ "Brute_Servo_03": {
+  "path": "Content/Sounds/Robots/Brute_Servo_03.nmsound",
+  "seconds": 1.0,
+  "lufs": -18.0,
+  "kb": 147
+ },
+ "Brute_Swing_01": {
+  "path": "Content/Sounds/Robots/Brute_Swing_01.nmsound",
+  "seconds": 0.55,
+  "lufs": -17.0,
+  "kb": 85
+ },
+ "Brute_Swing_02": {
+  "path": "Content/Sounds/Robots/Brute_Swing_02.nmsound",
+  "seconds": 0.65,
+  "lufs": -17.0,
+  "kb": 100
+ },
+ "Gears_Loop": {
+  "path": "Content/Sounds/World/Gears_Loop.nmsound",
+  "seconds": 4.0,
+  "lufs": -21.1,
+  "kb": 44
+ },
+ "Glass_Shatter_01": {
+  "path": "Content/Sounds/World/Glass_Shatter_01.nmsound",
+  "seconds": 1.8,
+  "lufs": -17.3,
+  "kb": 236
+ },
+ "Glass_Shatter_02": {
+  "path": "Content/Sounds/World/Glass_Shatter_02.nmsound",
+  "seconds": 1.8,
+  "lufs": -14.8,
+  "kb": 232
+ },
+ "Impact_Metal_01": {
+  "path": "Content/Sounds/Impacts/Impact_Metal_01.nmsound",
+  "seconds": 0.7,
+  "lufs": -15.7,
+  "kb": 91
+ },
+ "Impact_Metal_02": {
+  "path": "Content/Sounds/Impacts/Impact_Metal_02.nmsound",
+  "seconds": 0.7,
+  "lufs": -16.6,
+  "kb": 91
+ },
+ "Impact_Metal_03": {
+  "path": "Content/Sounds/Impacts/Impact_Metal_03.nmsound",
+  "seconds": 0.7,
+  "lufs": -20.5,
+  "kb": 90
+ },
+ "Impact_Robot_01": {
+  "path": "Content/Sounds/Impacts/Impact_Robot_01.nmsound",
+  "seconds": 0.7,
+  "lufs": -23.1,
+  "kb": 92
+ },
+ "Impact_Robot_02": {
+  "path": "Content/Sounds/Impacts/Impact_Robot_02.nmsound",
+  "seconds": 0.7,
+  "lufs": -18.1,
+  "kb": 95
+ },
+ "Impact_Robot_03": {
+  "path": "Content/Sounds/Impacts/Impact_Robot_03.nmsound",
+  "seconds": 0.7,
+  "lufs": -19.5,
+  "kb": 93
+ },
+ "Impact_Stone_01": {
+  "path": "Content/Sounds/Impacts/Impact_Stone_01.nmsound",
+  "seconds": 0.8,
+  "lufs": -23.3,
+  "kb": 111
+ },
+ "Impact_Stone_02": {
+  "path": "Content/Sounds/Impacts/Impact_Stone_02.nmsound",
+  "seconds": 0.8,
+  "lufs": -22.8,
+  "kb": 112
+ },
+ "Impact_Stone_03": {
+  "path": "Content/Sounds/Impacts/Impact_Stone_03.nmsound",
+  "seconds": 0.8,
+  "lufs": -25.8,
+  "kb": 107
+ },
+ "Keycard_Accept": {
+  "path": "Content/Sounds/World/Keycard_Accept.nmsound",
+  "seconds": 0.6,
+  "lufs": -18.0,
+  "kb": 79
+ },
+ "Keycard_Deny": {
+  "path": "Content/Sounds/World/Keycard_Deny.nmsound",
+  "seconds": 0.55,
+  "lufs": -18.0,
+  "kb": 68
+ },
+ "Lift_Run_Loop": {
+  "path": "Content/Sounds/World/Lift_Run_Loop.nmsound",
+  "seconds": 6.0,
+  "lufs": -19.0,
+  "kb": 49
+ },
+ "Lift_Start": {
+  "path": "Content/Sounds/World/Lift_Start.nmsound",
+  "seconds": 2.2,
+  "lufs": -16.0,
+  "kb": 20
+ },
+ "Lift_Stop": {
+  "path": "Content/Sounds/World/Lift_Stop.nmsound",
+  "seconds": 2.6,
+  "lufs": -14.1,
+  "kb": 23
+ },
+ "Music_Combat": {
+  "path": "Content/Music/Music_Combat.nmsound",
+  "seconds": 108.0,
+  "lufs": -18.0,
+  "kb": 1700
+ },
+ "Music_Explore": {
+  "path": "Content/Music/Music_Explore.nmsound",
+  "seconds": 122.95,
+  "lufs": -21.0,
+  "kb": 1329
+ },
+ "Music_Extraction": {
+  "path": "Content/Music/Music_Extraction.nmsound",
+  "seconds": 91.21,
+  "lufs": -18.0,
+  "kb": 1355
+ },
+ "Music_Menu": {
+  "path": "Content/Music/Music_Menu.nmsound",
+  "seconds": 88.01,
+  "lufs": -18.0,
+  "kb": 1213
+ },
+ "Pistol_DryFire": {
+  "path": "Content/Sounds/Weapons/Pistol_DryFire.nmsound",
+  "seconds": 0.35,
+  "lufs": -25.8,
+  "kb": 58
+ },
+ "Pistol_Reload": {
+  "path": "Content/Sounds/Weapons/Pistol_Reload.nmsound",
+  "seconds": 1.5,
+  "lufs": -19.8,
+  "kb": 220
+ },
+ "Pistol_Shot": {
+  "path": "Content/Sounds/Weapons/Pistol_Shot.nmsound",
+  "seconds": 1.6,
+  "lufs": -12.1,
+  "kb": 200
+ },
+ "Power_Hum_Loop": {
+  "path": "Content/Sounds/World/Power_Hum_Loop.nmsound",
+  "seconds": 4.0,
+  "lufs": -24.0,
+  "kb": 36
+ },
+ "Power_Up_Sweep": {
+  "path": "Content/Sounds/World/Power_Up_Sweep.nmsound",
+  "seconds": 5.5,
+  "lufs": -14.0,
+  "kb": 67
+ },
+ "Robot_Death": {
+  "path": "Content/Sounds/Robots/Robot_Death.nmsound",
+  "seconds": 2.6,
+  "lufs": -12.6,
+  "kb": 26
+ },
+ "Shutter_Slam": {
+  "path": "Content/Sounds/World/Shutter_Slam.nmsound",
+  "seconds": 2.6,
+  "lufs": -11.0,
+  "kb": 23
+ },
+ "Sprinklers_Loop": {
+  "path": "Content/Sounds/World/Sprinklers_Loop.nmsound",
+  "seconds": 8.0,
+  "lufs": -22.0,
+  "kb": 125
+ },
+ "Steam_Vent_Burst": {
+  "path": "Content/Sounds/World/Steam_Vent_Burst.nmsound",
+  "seconds": 2.4,
+  "lufs": -14.0,
+  "kb": 24
+ },
+ "Steam_Vent_Loop": {
+  "path": "Content/Sounds/World/Steam_Vent_Loop.nmsound",
+  "seconds": 6.0,
+  "lufs": -22.0,
+  "kb": 55
+ },
+ "Step_Grass_01": {
+  "path": "Content/Sounds/Footsteps/Step_Grass_01.nmsound",
+  "seconds": 0.79,
+  "lufs": -28.0,
+  "kb": 94
+ },
+ "Step_Grass_02": {
+  "path": "Content/Sounds/Footsteps/Step_Grass_02.nmsound",
+  "seconds": 0.69,
+  "lufs": -25.3,
+  "kb": 85
+ },
+ "Step_Grass_03": {
+  "path": "Content/Sounds/Footsteps/Step_Grass_03.nmsound",
+  "seconds": 0.71,
+  "lufs": -26.4,
+  "kb": 87
+ },
+ "Step_Grass_04": {
+  "path": "Content/Sounds/Footsteps/Step_Grass_04.nmsound",
+  "seconds": 0.69,
+  "lufs": -28.8,
+  "kb": 83
+ },
+ "Step_MetalGrate_01": {
+  "path": "Content/Sounds/Footsteps/Step_MetalGrate_01.nmsound",
+  "seconds": 0.6,
+  "lufs": -22.0,
+  "kb": 77
+ },
+ "Step_MetalGrate_02": {
+  "path": "Content/Sounds/Footsteps/Step_MetalGrate_02.nmsound",
+  "seconds": 0.6,
+  "lufs": -22.0,
+  "kb": 77
+ },
+ "Step_MetalGrate_03": {
+  "path": "Content/Sounds/Footsteps/Step_MetalGrate_03.nmsound",
+  "seconds": 0.6,
+  "lufs": -22.2,
+  "kb": 76
+ },
+ "Step_MetalGrate_04": {
+  "path": "Content/Sounds/Footsteps/Step_MetalGrate_04.nmsound",
+  "seconds": 0.6,
+  "lufs": -22.0,
+  "kb": 77
+ },
+ "Step_Stone_01": {
+  "path": "Content/Sounds/Footsteps/Step_Stone_01.nmsound",
+  "seconds": 0.12,
+  "lufs": -28.1,
+  "kb": 22
+ },
+ "Step_Stone_02": {
+  "path": "Content/Sounds/Footsteps/Step_Stone_02.nmsound",
+  "seconds": 0.12,
+  "lufs": -29.8,
+  "kb": 23
+ },
+ "Step_Stone_03": {
+  "path": "Content/Sounds/Footsteps/Step_Stone_03.nmsound",
+  "seconds": 0.13,
+  "lufs": -29.9,
+  "kb": 24
+ },
+ "Step_Stone_04": {
+  "path": "Content/Sounds/Footsteps/Step_Stone_04.nmsound",
+  "seconds": 0.13,
+  "lufs": -28.8,
+  "kb": 23
+ },
+ "Step_Wood_01": {
+  "path": "Content/Sounds/Footsteps/Step_Wood_01.nmsound",
+  "seconds": 0.29,
+  "lufs": -24.0,
+  "kb": 38
+ },
+ "Step_Wood_02": {
+  "path": "Content/Sounds/Footsteps/Step_Wood_02.nmsound",
+  "seconds": 0.27,
+  "lufs": -23.3,
+  "kb": 36
+ },
+ "Step_Wood_03": {
+  "path": "Content/Sounds/Footsteps/Step_Wood_03.nmsound",
+  "seconds": 0.27,
+  "lufs": -22.9,
+  "kb": 36
+ },
+ "Step_Wood_04": {
+  "path": "Content/Sounds/Footsteps/Step_Wood_04.nmsound",
+  "seconds": 0.27,
+  "lufs": -24.6,
+  "kb": 36
+ },
+ "Turbine_Loop": {
+  "path": "Content/Sounds/World/Turbine_Loop.nmsound",
+  "seconds": 8.0,
+  "lufs": -20.0,
+  "kb": 73
+ },
+ "Turbine_SpinUp": {
+  "path": "Content/Sounds/World/Turbine_SpinUp.nmsound",
+  "seconds": 6.0,
+  "lufs": -17.0,
+  "kb": 55
+ },
+ "UI_Back": {
+  "path": "Content/Sounds/UI/UI_Back.nmsound",
+  "seconds": 0.08,
+  "lufs": -26.8,
+  "kb": 19
+ },
+ "UI_Click": {
+  "path": "Content/Sounds/UI/UI_Click.nmsound",
+  "seconds": 0.12,
+  "lufs": -32.2,
+  "kb": 21
+ },
+ "UI_Confirm": {
+  "path": "Content/Sounds/UI/UI_Confirm.nmsound",
+  "seconds": 0.31,
+  "lufs": -19.0,
+  "kb": 43
+ },
+ "UI_Error": {
+  "path": "Content/Sounds/UI/UI_Error.nmsound",
+  "seconds": 0.12,
+  "lufs": -20.7,
+  "kb": 25
+ },
+ "UI_Hover": {
+  "path": "Content/Sounds/UI/UI_Hover.nmsound",
+  "seconds": 0.07,
+  "lufs": -32.1,
+  "kb": 15
+ },
+ "Valve_Squeak_01": {
+  "path": "Content/Sounds/World/Valve_Squeak_01.nmsound",
+  "seconds": 1.5,
+  "lufs": -17.0,
+  "kb": 216
+ },
+ "Valve_Squeak_02": {
+  "path": "Content/Sounds/World/Valve_Squeak_02.nmsound",
+  "seconds": 1.2,
+  "lufs": -17.0,
+  "kb": 173
+ },
+ "Watchman_Alert": {
+  "path": "Content/Sounds/Robots/Watchman_Alert.nmsound",
+  "seconds": 1.05,
+  "lufs": -14.0,
+  "kb": 160
+ },
+ "Watchman_Hurt": {
+  "path": "Content/Sounds/Robots/Watchman_Hurt.nmsound",
+  "seconds": 0.8,
+  "lufs": -15.0,
+  "kb": 117
+ },
+ "Watchman_Idle_01": {
+  "path": "Content/Sounds/Robots/Watchman_Idle_01.nmsound",
+  "seconds": 1.2,
+  "lufs": -20.0,
+  "kb": 164
+ },
+ "Watchman_Idle_02": {
+  "path": "Content/Sounds/Robots/Watchman_Idle_02.nmsound",
+  "seconds": 1.4,
+  "lufs": -20.0,
+  "kb": 193
+ },
+ "Watchman_Investigate": {
+  "path": "Content/Sounds/Robots/Watchman_Investigate.nmsound",
+  "seconds": 1.1,
+  "lufs": -18.0,
+  "kb": 165
+ },
+ "Watchman_Servo_01": {
+  "path": "Content/Sounds/Robots/Watchman_Servo_01.nmsound",
+  "seconds": 0.45,
+  "lufs": -21.0,
+  "kb": 71
+ },
+ "Watchman_Servo_02": {
+  "path": "Content/Sounds/Robots/Watchman_Servo_02.nmsound",
+  "seconds": 0.6,
+  "lufs": -21.0,
+  "kb": 93
+ },
+ "Watchman_Servo_03": {
+  "path": "Content/Sounds/Robots/Watchman_Servo_03.nmsound",
+  "seconds": 0.52,
+  "lufs": -21.0,
+  "kb": 81
+ }
+}

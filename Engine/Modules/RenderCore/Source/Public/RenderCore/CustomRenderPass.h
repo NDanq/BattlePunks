@@ -60,6 +60,12 @@ namespace RenderCore
         BeforePostProcess,   // the final linear scene colour, before TAA and the tone map
         AfterToneMap,        // display space, before the post process stack; SetCurrent replaces it
         AfterPostProcess,    // the finished picture, before the UI; SetCurrent replaces it
+        /* Out of the frame's order: the SKY for image-based lighting. Runs only when RenderCore
+         * captures the sky light's cubemap -- each of six cube faces (GetView is the face, the
+         * scene colour a linear HDR face cleared to black, no depth or G-buffer) -- and only
+         * again once the pass's GetContentVersion changes. What it draws is what Lit surfaces
+         * reflect and take their diffuse sky light from, in place of the Sky Light's. */
+        Sky,
         Count
     };
 
@@ -230,8 +236,15 @@ namespace RenderCore
         /* GAME THREAD, once a frame, before the frame goes to the render thread. */
         virtual void Extract() {}
 
-        /* RENDER THREAD: whether to run for this view. The main view only by default. */
+        /* RENDER THREAD: whether to run for this view. The main view only by default (and at
+         * ERenderHook::Sky, which is never a main view). */
         virtual bool ShouldRun(const RenderPassContext& InContext) const;
+        /* RENDER THREAD, for a pass at ERenderHook::Sky: what its sky depends on, its "version".
+         * RenderCore captures the sky again (and its reflection probes after it) when the sum of
+         * its Sky passes' versions changes; 0 provides no sky (the Sky Light's is used). Make it
+         * change only when the sky changes enough to see: each capture costs a few full-screen
+         * draws of a 128-texel cube and a prefilter. */
+        virtual uint64_t GetContentVersion() const { return 0; }
 
         /* RENDER THREAD. */
         virtual void Execute(RenderPassContext& InContext) = 0;

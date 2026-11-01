@@ -64,18 +64,24 @@ def wind(g, tip2):
     scaled = lambda a, k: (g.math("Multiply", a, consts={"B": cy.vec(k)}), "Out")
     added = lambda a, b: (g.math("Add", a, b), "Out")
     sine = lambda a, op="Sin": (g.math(op, a), "Out")
-    # Gusts travel along the wind (+X +Z): the phase falls with distance downwind.
-    travel = added(scaled(x, -0.0016), scaled(z, -0.0012))
+    # The world's wind (the Weather plugin's; a breeze of 1 toward (0.8, 0, 0.6) without one).
+    wind_node = g.node("Input.Wind")
+    wind_dir = g.node("Vector.Split")
+    g.link(wind_node, "Direction", wind_dir, "Vector")
+    strength = (wind_node, "Strength")
+    times = lambda a, b: (g.math("Multiply", a, b), "Out")
+    # Gusts travel along the wind: the phase falls with distance downwind.
+    travel = scaled(added(times(x, (wind_dir, "X")), times(z, (wind_dir, "Z"))), -0.002)
     gust = added(scaled(sine(added(scaled(time, 0.9), travel)), 0.5), scaled(sine(added(scaled(time, 0.37), scaled(travel, 0.6))), 0.5))
     sway = added(scaled(gust, 7.0), scaled((g.const("1", "float"), "Out"), 3.0))   # leans downwind a little even when calm
     blade_phase = added(scaled(x, 0.21), scaled(z, 0.17))
     flutter = scaled(sine(added(scaled(time, 4.7), blade_phase)), 1.4)
     flutter_z = scaled(sine(added(scaled(time, 5.9), scaled(blade_phase, 1.3)), "Cos"), 1.2)
-    w = tip2
+    w = times(tip2, strength)   # all of it as strong as the wind
     offset = g.node("Vector.Make3")
-    g.link(*(g.math("Multiply", added(scaled(sway, 0.8), flutter), w), "Out"), offset, "X")
+    g.link(*(g.math("Multiply", added(times(sway, (wind_dir, "X")), flutter), w), "Out"), offset, "X")
     g.link(*(g.math("Multiply", scaled(gust, -1.5), w), "Out"), offset, "Y")
-    g.link(*(g.math("Multiply", added(scaled(sway, 0.6), flutter_z), w), "Out"), offset, "Z")
+    g.link(*(g.math("Multiply", added(times(sway, (wind_dir, "Z")), flutter_z), w), "Out"), offset, "Z")
     return (offset, "Out")
 
 

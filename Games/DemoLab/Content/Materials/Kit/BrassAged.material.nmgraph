@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="074fab9f8eac245c45fdd211526c17ed" Type="Math.Multiply" Version="1" X="-80" Y="-450" Wildcard="vec3" />
+    <Node Id="0c363b83d56c315cb5eacc234eae93fa" Type="Texture.Object" Version="1" X="-960" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Brass_Normal.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="0fb1e92d08b2657fb59d23806c49ef3c" Type="Input.VertexColor" Version="1" X="-960" Y="-600" />
+    <Node Id="20ff77dfdf7651fb7289646cde282475" Type="Math.Multiply" Version="1" X="-740" Y="-300" Wildcard="vec3" />
+    <Node Id="2296ee6ba896f444274d7d1d7d08bcba" Type="Texture.NormalMap" Version="1" X="-520" Y="-450">
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
+    <Node Id="3d1c5d57e6ee884ac2dc108180c8727d" Type="Texture.Object" Version="1" X="-80" Y="-600">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Brass_BaseColor.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="50b60ae21819509e4e167b51609573a1" Type="Vector.Make3" Version="1" X="-960" Y="-300" />
+    <Node Id="5cc4006d8e5e175499b3587110549451" Type="Math.Multiply" Version="1" X="-1400" Y="-300" Wildcard="float" />
+    <Node Id="70836fc5eda9190ebe65fcf127c1b73c" Type="Texture.Object" Version="1" X="-1400" Y="-450">
+      <Prop Name="Filter" Value="Default" />
+      <Prop Name="Texture" Value="Content/Textures/Kit/Brass_ORM.nmtexture" />
+      <Prop Name="Wrap" Value="Default" />
+    </Node>
+    <Node Id="79652d808adafe234cfb0955c81222b8" Type="Texture.Sample" Version="2" X="-1180" Y="-450" />
+    <Node Id="8b0a024950a2d3a3bac57f4a64a9c54c" Type="Input.TexCoord" Version="1" X="-520" Y="-600" />
+    <Node Id="95619e53a3650a83d2f700aed05092bf" Type="Vector.Split" Version="1" X="-740" Y="-600" />
+    <Node Id="a9232e3ae4e470db1961687034676241" Type="Texture.Sample" Version="2" X="140" Y="-600" />
+    <Node Id="bfd7c7ad547c1b142d0f43239689b869" Type="Math.Lerp" Version="1" X="-1180" Y="-300" Wildcard="float">
+      <Const Pin="A" Value="0.6" />
+      <Const Pin="B" Value="1" />
+    </Node>
+    <Node Id="ca3692d6f41262dcfacebbe869dad698" Type="Texture.Sample" Version="2" X="-740" Y="-450" />
+    <Node Id="d94a18bc9bc4ba3cc10e28d6cd9d33df" Type="Output.Material" Version="1" X="-1180" Y="-600">
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Opaque" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="ShadingModel" Value="Default" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
+    <Node Id="dd41404ee3b7d7b64c32ca769e16320e" Type="Math.Multiply" Version="1" X="-300" Y="-600" Wildcard="vec2">
+      <Const Pin="B" Value="2 2" />
+    </Node>
+    <Node Id="e06b1fb6666819b65f25bb2bdc660fcb" Type="Parameter" Version="1" X="-300" Y="-450">
+      <Prop Name="Default" Value="1 1 1" />
+      <Prop Name="Name" Value="Tint" />
+      <Prop Name="Type" Value="vec3" />
+    </Node>
+    <Node Id="ee00c0b77e1862b5843363247be37c0e" Type="Math.Multiply" Version="1" X="140" Y="-450" Wildcard="float">
+      <Const Pin="B" Value="1.1" />
+    </Node>
+  </Nodes>
+  <Links>
+    <Link From="074fab9f8eac245c45fdd211526c17ed.Out" To="20ff77dfdf7651fb7289646cde282475.A" />
+    <Link From="0c363b83d56c315cb5eacc234eae93fa.Texture" To="ca3692d6f41262dcfacebbe869dad698.Texture" />
+    <Link From="0fb1e92d08b2657fb59d23806c49ef3c.RGB" To="95619e53a3650a83d2f700aed05092bf.Vector" />
+    <Link From="20ff77dfdf7651fb7289646cde282475.Out" To="d94a18bc9bc4ba3cc10e28d6cd9d33df.BaseColor" />
+    <Link From="2296ee6ba896f444274d7d1d7d08bcba.Normal" To="d94a18bc9bc4ba3cc10e28d6cd9d33df.Normal" />
+    <Link From="3d1c5d57e6ee884ac2dc108180c8727d.Texture" To="a9232e3ae4e470db1961687034676241.Texture" />
+    <Link From="50b60ae21819509e4e167b51609573a1.Out" To="20ff77dfdf7651fb7289646cde282475.B" />
+    <Link From="5cc4006d8e5e175499b3587110549451.Out" To="d94a18bc9bc4ba3cc10e28d6cd9d33df.AmbientOcclusion" />
+    <Link From="70836fc5eda9190ebe65fcf127c1b73c.Texture" To="79652d808adafe234cfb0955c81222b8.Texture" />
+    <Link From="79652d808adafe234cfb0955c81222b8.B" To="d94a18bc9bc4ba3cc10e28d6cd9d33df.Metallic" />
+    <Link From="79652d808adafe234cfb0955c81222b8.G" To="ee00c0b77e1862b5843363247be37c0e.A" />
+    <Link From="79652d808adafe234cfb0955c81222b8.R" To="5cc4006d8e5e175499b3587110549451.A" />
+    <Link From="8b0a024950a2d3a3bac57f4a64a9c54c.UV" To="dd41404ee3b7d7b64c32ca769e16320e.A" />
+    <Link From="95619e53a3650a83d2f700aed05092bf.X" To="5cc4006d8e5e175499b3587110549451.B" />
+    <Link From="95619e53a3650a83d2f700aed05092bf.X" To="bfd7c7ad547c1b142d0f43239689b869.T" />
+    <Link From="a9232e3ae4e470db1961687034676241.RGB" To="074fab9f8eac245c45fdd211526c17ed.A" />
+    <Link From="bfd7c7ad547c1b142d0f43239689b869.Out" To="50b60ae21819509e4e167b51609573a1.X" />
+    <Link From="bfd7c7ad547c1b142d0f43239689b869.Out" To="50b60ae21819509e4e167b51609573a1.Y" />
+    <Link From="bfd7c7ad547c1b142d0f43239689b869.Out" To="50b60ae21819509e4e167b51609573a1.Z" />
+    <Link From="ca3692d6f41262dcfacebbe869dad698.RGB" To="2296ee6ba896f444274d7d1d7d08bcba.Color" />
+    <Link From="dd41404ee3b7d7b64c32ca769e16320e.Out" To="2296ee6ba896f444274d7d1d7d08bcba.UV" />
+    <Link From="dd41404ee3b7d7b64c32ca769e16320e.Out" To="79652d808adafe234cfb0955c81222b8.UV" />
+    <Link From="dd41404ee3b7d7b64c32ca769e16320e.Out" To="a9232e3ae4e470db1961687034676241.UV" />
+    <Link From="dd41404ee3b7d7b64c32ca769e16320e.Out" To="ca3692d6f41262dcfacebbe869dad698.UV" />
+    <Link From="e06b1fb6666819b65f25bb2bdc660fcb.Value" To="074fab9f8eac245c45fdd211526c17ed.B" />
+    <Link From="ee00c0b77e1862b5843363247be37c0e.Out" To="d94a18bc9bc4ba3cc10e28d6cd9d33df.Roughness" />
+  </Links>
+  <gen_code>
+    <Output Extension=".mtl.glsl"><![CDATA[// Generated by NimbleEditor from the material graph "BrassAged". Do not edit.
+// Opaque, Lit. Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.
+
+// Bytes 0-159 are the engine's; the parameters' offsets are in BrassAged.material.
+UBO_BLOCK_BEGIN(2, BrassAged_Block)
+    vec4  Material_Tint;
+    float Material_ClipValue;
+    float Material_TwoSided;
+    float Material_Reserved0;
+    float Material_Reserved1;
+    vec4  Material_LightmapScaleOffset;
+    vec4  Material_BakedLighting;
+    vec4  Material_AmbientCube[6];
+    vec3  Param_Tint;
+UBO_BLOCK_END(BrassAged_Block)
+
+// Textures, by material texture slot; BrassAged.material names each one's file and sampler.
+MATERIAL_SAMPLER2D(5, Material_Texture1)
+MATERIAL_SAMPLER2D(6, Material_Texture2)
+MATERIAL_SAMPLER2D(7, Material_Texture3)
+
+#if PIXEL_SHADER
+void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
+{
+    vec2 t0 = Inputs.TexCoord * vec2(2.0);
+    vec4 t1 = texture(Material_Texture2, t0);
+    vec3 t2 = t1.rgb * Param_Tint;
+    float t3 = vec4(Inputs.Color.rgb, 1.0).x;
+    float t4 = mix(0.6, 1.0, t3);
+    vec3 t5 = vec3(t4, t4, t4);
+    vec3 t6 = t2 * t5;
+    Surface.BaseColor = t6;
+    vec4 t7 = texture(Material_Texture3, t0);
+    Surface.Metallic = t7.b;
+    float t8 = t7.g * 1.1;
+    Surface.Roughness = t8;
+    vec4 t9 = texture(Material_Texture1, t0);
+    vec3 t10 = Material_NormalMap(Inputs, t9.rgb, 1.0, t0, -1.0);
+    Surface.Normal = t10;
+    float t11 = t7.r * t3;
+    Surface.AmbientOcclusion = t11;
+}
+#endif
+]]></Output>
+    <Output Extension=".material"><![CDATA[# Generated by NimbleEditor from the material graph "BrassAged". Do not edit.
+NimbleMaterial 3
+Domain Opaque
+Shading Lit
+TwoSided 0
+ClipValue 0.5
+MaxOffset 0
+HasOffset 0
+BlockSize 176
+Param Tint vec3 160 1 1 1 0
+Texture 1 Default Default Content/Textures/Kit/Brass_Normal.nmtexture
+Texture 2 Default Default Content/Textures/Kit/Brass_BaseColor.nmtexture
+Texture 3 Default Default Content/Textures/Kit/Brass_ORM.nmtexture
+TextureUV 1 2
+TextureUV 2 2
+TextureUV 3 2
+]]></Output>
+  </gen_code>
+</NodeGraph>

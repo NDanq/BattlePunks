@@ -58,17 +58,15 @@ UI_DEFINE_ACTIONS(Game)
 
     Actions.Add("OpenLevel", [](const UI::UIActionContext& InContext)
     {
-        /* By its registered name, as [Game] StartLevel. Deferred (RequestLevel):
-         * the swap closes every document and unpauses. */
+        /* By its registered name, as [Game] StartLevel; then an entry and travel
+         * state (LevelTravel.h). Deferred (RequestLevel): the swap closes every
+         * document and unpauses. */
         NimbleEngine::GameSession* Session = SessionOf(InContext);
         const GameCore::EventArgs& Args = *InContext.Args;
         if(!Session || Args.Count < 1 || Args.Args[0].Type != GameCore::EventArg::ET_String) return;
-        NimbleEngine::ILevel* Level = NimbleEngine::FindLevelByName(Args.Args[0].String);
-        if(!Level)
-        {
-            CORE_LOG_WARN(std::string("[Game] Game.OpenLevel: no level named '") + Args.Args[0].String + "'")
-            return;
-        }
-        Session->RequestLevel(*Level);
-    }, "Loads a level by name: Game.OpenLevel('BakedLighting')");
+        NimbleEngine::LevelTravel Travel;
+        if(Args.Count >= 2 && Args.Args[1].Type == GameCore::EventArg::ET_String) { Travel.Entry = Args.Args[1].String; }
+        if(Args.Count >= 3 && Args.Args[2].Type == GameCore::EventArg::ET_String) { Travel.SetFromText(Args.Args[2].String); }
+        Session->OpenLevel(Args.Args[0].String, Travel);
+    }, "Loads a level by name, optionally at an entry with travel state: Game.OpenLevel('Lab', 'Airlock', 'Alarm=1')");
 }

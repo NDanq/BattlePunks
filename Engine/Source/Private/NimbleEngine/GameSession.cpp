@@ -19,6 +19,7 @@
 #include "Public/NimbleEngine/Level.h"
 #include "Public/NimbleEngine/PlayerState.h"
 #include "Public/NimbleEngine/Plugin.h"
+#include "Public/NimbleEngine/SaveGame.h"
 
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
@@ -91,6 +92,20 @@ NIMBLE_GAME_CONFIG_FLOAT(GSplitscreenDynamicYaw, "Splitscreen", "DynamicYaw", 0.
 NIMBLE_GAME_CONFIG_FLOAT(GSplitscreenDynamicDistance, "Splitscreen", "DynamicDistance", 1500.0f, nullptr);
 NIMBLE_GAME_CONFIG_FLOAT(GSplitscreenDynamicFov, "Splitscreen", "DynamicFov", 50.0f, nullptr);
 NIMBLE_GAME_CONFIG_FLOAT(GSplitscreenDynamicMargin, "Splitscreen", "DynamicMargin", 0.6f, nullptr);
+
+/* LEVEL TRANSITION (GameSession.h, IsInTransition): every level change fades
+ * out, shows the loading card, and fades in once the new level has drawn
+ * RevealFrames frames -- or only those a travel asks for (TT_Fade). Seconds
+ * of each fade; the card document ("" the engine's, made in code: it binds
+ * Transition.Title, Transition.Tip and Transition.Level) and its text when
+ * the travel gives none. The game's settings, so its DefaultGame.ini. */
+NIMBLE_GAME_CONFIG_BOOL(GTransitionEnabled, "LevelTransition", "Enabled", false, nullptr);
+NIMBLE_GAME_CONFIG_FLOAT(GTransitionFadeOut, "LevelTransition", "FadeOut", 0.4f, nullptr);
+NIMBLE_GAME_CONFIG_FLOAT(GTransitionFadeIn, "LevelTransition", "FadeIn", 0.6f, nullptr);
+NIMBLE_GAME_CONFIG_INT(GTransitionRevealFrames, "LevelTransition", "RevealFrames", 2, nullptr);
+NIMBLE_GAME_CONFIG_STRING(GTransitionDocument, "LevelTransition", "Document", "", nullptr);
+NIMBLE_GAME_CONFIG_STRING(GTransitionTitle, "LevelTransition", "Title", "Loading", nullptr);
+NIMBLE_GAME_CONFIG_STRING(GTransitionTip, "LevelTransition", "Tip", "", nullptr);
 
 #if WITH_AUDIO
 namespace
@@ -204,6 +219,16 @@ namespace NimbleEngine
         }
     }
 
+    /* GameSession::TransitionStage. */
+    enum : uint8_t
+    {
+        TS_None    = 0,
+        TS_FadeOut = 1,   // the old level runs on under the black
+        TS_Loading = 2,   // the card is up; the next ApplyPendingLevel swaps
+        TS_Reveal  = 3,   // the new level draws its first frames behind the card
+        TS_FadeIn  = 4,   // the card is gone; the black lifts
+    };
+
     GameSession* FindGameSession(const GameCore::World& InWorld)
     {
         for(const WorldSessionEntry& Entry : WorldSessions())
@@ -259,8 +284,16 @@ namespace NimbleEngine
 
     bool GameSession::LoadLevel(ILevel& InLevel)
     {
+        return LoadLevel(InLevel, LevelTravel());
+    }
+
+    bool GameSession::LoadLevel(ILevel& InLevel, const LevelTravel& InTravel)
+    {
         CheckGameThread("LoadLevel");
         CORE_CHECK(LevelWorld == nullptr, "GameSession::LoadLevel called with a level already loaded")
+
+        /* Readable from OnLoad on (GetTravel). */
+        Travel = InTravel;
 
         /* Bound before OnLoad, or scripts and WorldBridge would miss the
          * level's first entities. */
@@ -375,7 +408,9 @@ namespace NimbleEngine
          * the engine's, before OnLoad, so the level's entities start with them. */
         Plugins::AttachWorld(*LevelWorld);
 
-        CORE_LOG("[Level] loading '" + std::string(InLevel.GetName()) + "'")
+        CORE_LOG("[Level] loading '" + std::string(InLevel.GetName()) + "'"
+                 + (Travel.Entry.empty() ? std::string() : " at '" + Travel.Entry + "'")
+                 + (Travel.Values.empty() ? std::string() : " (" + Travel.ToText() + ")"))
 
         if(!InLevel.OnLoad(*this))
         {
@@ -468,6 +503,15 @@ namespace NimbleEngine
         /* Avatars placed for local players are theirs before the mode starts,
          * so OnStart sees who already has one. */
         ApplyAutoPossess(*LevelWorld);
+        if(!Travel.Entry.empty())
+        {
+            if(!FindEntryPoint(*LevelWorld, Travel.Entry.c_str()).IsSet())
+            {
+                CORE_LOG_WARN("[Level] '" + std::string(InLevel.GetName()) + "' has no enabled Player Start for the entry '"
+                              + Travel.Entry + "' (its Entry, or its entity's name): the usual start")
+            }
+            PlaceAvatarsAtEntry();
+        }
 
         if(Mode)
         {
@@ -676,16 +720,211 @@ namespace NimbleEngine
 
         ILevel* Next = PendingLevel;
         PendingLevel = nullptr;
+        LevelTravel NextTravel = PendingTravel;
+        NextTravel.Previous    = ActiveLevel ? ActiveLevel->GetName() : "";
+        PendingTravel          = LevelTravel();
 
         /* Fully down before the next comes up; the two never coexist. */
         UnloadLevel();
 
-        if(!LoadLevel(*Next))
+        if(!LoadLevel(*Next, NextTravel))
         {
             CORE_LOG_ERROR("Requested level failed to load; ending the session")
             UnloadLevel();
             bQuitRequested = true;
+            EndTransition();
+            return;
         }
+
+        /* Behind the card: it stays up until the new level has drawn a frame or two. */
+        if(TransitionStage == TS_Loading)
+        {
+            TransitionStage  = TS_Reveal;
+            TransitionFrames = 0;
+        }
+    }
+
+    // === Level transition =======================================================
+
+    namespace
+    {
+        constexpr const char* TRANSITION_FADE_DOCUMENT = "Engine/Transition/Fade.nmui";
+        constexpr const char* TRANSITION_CARD_DOCUMENT = "Engine/Transition/Card.nmui";
+
+        /* The two documents, made in code like the cinematic overlay: the black
+         * (Layer 900, over a game's HUD, under a cinematic's bars) and the
+         * loading card over it (950; a game's own card needs a Layer above 900). */
+        std::shared_ptr<UI::UIDocumentAsset> MakeTransitionAsset(const char* InLayer)
+        {
+            auto Asset = std::make_shared<UI::UIDocumentAsset>();
+            Asset->Settings.SetFromText("InputMode", "GameOnly");
+            Asset->Settings.SetFromText("Layer", InLayer);
+            return Asset;
+        }
+
+        void AddWidget(UI::UIDocumentAsset& InAsset, const char* InType, const int32_t InParent,
+                       std::initializer_list<std::pair<const char*, const char*>> InProperties)
+        {
+            UI::UIWidgetDesc Widget;
+            Widget.Type   = InType;
+            Widget.Parent = InParent;
+            for(const auto& Property : InProperties) { Widget.Set(Property.first, Property.second); }
+            InAsset.Widgets.push_back(std::move(Widget));
+        }
+
+        std::shared_ptr<const UI::UIDocumentAsset> MakeTransitionFadeDocument()
+        {
+            std::shared_ptr<UI::UIDocumentAsset> Asset = MakeTransitionAsset("900");
+            AddWidget(*Asset, "Canvas", -1, { { "Name", "Root" } });
+            AddWidget(*Asset, "Border", 0, { { "Name", "Fade" }, { "Anchors", "0,0,1,1" }, { "Background.Tint", "#000000FF" },
+                                             { "Opacity", "{Bind:Transition.Fade}" } });
+            return Asset;
+        }
+
+        std::shared_ptr<const UI::UIDocumentAsset> MakeTransitionCardDocument()
+        {
+            std::shared_ptr<UI::UIDocumentAsset> Asset = MakeTransitionAsset("950");
+            AddWidget(*Asset, "Canvas", -1, { { "Name", "Root" } });
+            AddWidget(*Asset, "Border", 0, { { "Name", "Back" }, { "Anchors", "0,0,1,1" }, { "Background.Tint", "#0A0B0EFF" } });
+            AddWidget(*Asset, "Text", 0, { { "Name", "Title" }, { "Anchors", "0.1,0.42,0.9,0.52" }, { "Text", "{Bind:Transition.Title}" },
+                                           { "FontSize", "48" }, { "Justify", "Center" }, { "Color", "#F2EEE4FF" } });
+            AddWidget(*Asset, "Text", 0, { { "Name", "Tip" }, { "Anchors", "0.15,0.78,0.85,0.9" }, { "Text", "{Bind:Transition.Tip}" },
+                                           { "FontSize", "22" }, { "Justify", "Center" }, { "Wrap", "true" }, { "Color", "#B8B4AAFF" } });
+            return Asset;
+        }
+    }
+
+    void GameSession::UpdateTransition(const float InDeltaSeconds)
+    {
+        if(TransitionStage == TS_None) { return; }
+        /* A frame after a load is as long as the load: the fades run on at most a 30th. */
+        const float Dt = (std::min)((std::max)(InDeltaSeconds, 0.0f), 1.0f / 30.0f);
+        switch(TransitionStage)
+        {
+        case TS_FadeOut:
+        {
+            TransitionTime += Dt;
+            const float Out = (std::max)(0.0f, GTransitionFadeOut.GetFloat());
+            SetTransitionFade(Out > 0.0f ? (std::min)(1.0f, TransitionTime / Out) : 1.0f);
+            if(TransitionFade < 1.0f || !TransitionLevel) { break; }
+            /* Black: the card goes up and is drawn this frame; the next frame's
+             * ApplyPendingLevel swaps behind it. */
+            OpenTransitionCard();
+            if(PendingLevel)
+            {
+                CORE_LOG_WARN("GameSession: a level transition replaces a RequestLevel that had not taken effect")
+            }
+            PendingLevel     = TransitionLevel;
+            PendingTravel    = TransitionTravel;
+            TransitionLevel  = nullptr;
+            TransitionStage  = TS_Loading;
+            break;
+        }
+        case TS_Loading:
+            break;   // ApplyPendingLevel moves it on
+        case TS_Reveal:
+            /* Ticked before each frame is drawn: past RevealFrames, that many have been. */
+            if(++TransitionFrames > (std::max)(0, GTransitionRevealFrames.GetInt()))
+            {
+                CloseTransitionCard();
+                TransitionStage = TS_FadeIn;
+                TransitionTime  = 0.0f;
+            }
+            break;
+        case TS_FadeIn:
+        {
+            TransitionTime += Dt;
+            const float In = (std::max)(0.0f, GTransitionFadeIn.GetFloat());
+            const float Alpha = In > 0.0f ? 1.0f - TransitionTime / In : 0.0f;
+            if(Alpha <= 0.0f) { EndTransition(); }
+            else              { SetTransitionFade(Alpha); }
+            break;
+        }
+        default:
+            EndTransition();
+            break;
+        }
+    }
+
+    void GameSession::SetTransitionFade(const float InAlpha)
+    {
+        TransitionFade = InAlpha;
+        Interface->SetValue("Transition.Fade", UI::UIValue::Number(InAlpha));
+        if(!Interface->IsOpen(TRANSITION_FADE_DOCUMENT))
+        {
+            /* Persistent: it outlives the level change it covers. */
+            static const std::shared_ptr<const UI::UIDocumentAsset> Document = MakeTransitionFadeDocument();
+            Interface->OpenAsset(Document, TRANSITION_FADE_DOCUMENT, true, false);
+        }
+    }
+
+    void GameSession::OpenTransitionCard()
+    {
+        const std::string Title = !TransitionTravel.Title.empty() ? TransitionTravel.Title : GTransitionTitle.GetString();
+        const std::string Tip   = !TransitionTravel.Tip.empty() ? TransitionTravel.Tip : GTransitionTip.GetString();
+        Interface->SetValue("Transition.Title", UI::UIValue::String(Title));
+        Interface->SetValue("Transition.Tip", UI::UIValue::String(Tip));
+        Interface->SetValue("Transition.Level", UI::UIValue::String(TransitionLevel ? TransitionLevel->GetName() : ""));
+
+        CloseTransitionCard();
+        const std::string Custom = GTransitionDocument.GetString();
+        if(!Custom.empty())
+        {
+            if(Interface->Open(Custom, true) != UI::UI_DOCUMENT_INVALID)
+            {
+                TransitionCard = Custom;
+                return;
+            }
+            CORE_LOG_WARN("[LevelTransition] Document '" + Custom + "' did not open; the engine's card instead")
+        }
+        static const std::shared_ptr<const UI::UIDocumentAsset> Document = MakeTransitionCardDocument();
+        Interface->OpenAsset(Document, TRANSITION_CARD_DOCUMENT, true, false);
+        TransitionCard = TRANSITION_CARD_DOCUMENT;
+    }
+
+    void GameSession::CloseTransitionCard()
+    {
+        if(TransitionCard.empty()) { return; }
+        if(Interface->IsOpen(TransitionCard)) { Interface->Close(TransitionCard); }
+        TransitionCard.clear();
+    }
+
+    void GameSession::EndTransition()
+    {
+        CloseTransitionCard();
+        if(Interface->IsOpen(TRANSITION_FADE_DOCUMENT)) { Interface->Close(std::string(TRANSITION_FADE_DOCUMENT)); }
+        TransitionStage  = TS_None;
+        TransitionTime   = 0.0f;
+        TransitionFade   = 0.0f;
+        TransitionFrames = 0;
+        TransitionLevel  = nullptr;
+        TransitionTravel = LevelTravel();
+    }
+
+    void GameSession::PlaceAvatarsAtEntry()
+    {
+        /* Placed avatars (AutoPossess) of the local players; a mode's spawns
+         * come later and ask FindPlayerStart, which prefers the entry. */
+        for(uint8_t Local = 0; Local < INPUT_PLAYERS_MAX; ++Local)
+        {
+            const GameCore::EntityID Player = FindLocalPlayer(*LevelWorld, Local);
+            const GameCore::EntityID Avatar = Player.IsSet() ? GetAvatar(*LevelWorld, Player) : GameCore::EntityID();
+            const GameCore::EntityID Start  = Avatar.IsSet() ? FindEntryPoint(*LevelWorld, Travel.Entry.c_str(), Local) : GameCore::EntityID();
+            if(Start.IsSet()) { PlaceAvatarAt(*LevelWorld, Avatar, Start); }
+        }
+    }
+
+    bool GameSession::OpenLevel(const char* InLevelName, const LevelTravel& InTravel)
+    {
+        CheckGameThread("OpenLevel");
+        ILevel* Level = FindLevelByName(InLevelName ? InLevelName : "");
+        if(!Level)
+        {
+            CORE_LOG_WARN(std::string("[Level] OpenLevel: no level named '") + (InLevelName ? InLevelName : "") + "'")
+            return false;
+        }
+        RequestLevel(*Level, InTravel);
+        return true;
     }
 
     void GameSession::RouteInputThroughUI()
@@ -807,6 +1046,14 @@ namespace NimbleEngine
                     Sequences->SkipCinematics();
                 }
             }
+            FilteredInput.ConsumeMouseButtons();
+            FilteredInput.ConsumeKeyboard();
+            FilteredInput.ConsumeGamepad();
+        }
+
+        /* A level transition holds the players' input back until it fades in. */
+        if(TransitionStage != TS_None && TransitionStage != TS_FadeIn)
+        {
             FilteredInput.ConsumeMouseButtons();
             FilteredInput.ConsumeKeyboard();
             FilteredInput.ConsumeGamepad();
@@ -971,6 +1218,9 @@ namespace NimbleEngine
         CheckGameThread("Tick");
         FrameDelta  = float(InFrame.DeltaSeconds);
         FramePixels = InFrame.ViewportPixels;
+
+        /* First: a fade-out finishing arms the swap for the next ApplyPendingLevel. */
+        UpdateTransition(FrameDelta);
 
         /* The UI sees the input first; the game, what it leaves. */
         RouteInputThroughUI();
@@ -1378,12 +1628,40 @@ namespace NimbleEngine
 
     void GameSession::RequestLevel(ILevel& InLevel)
     {
+        RequestLevel(InLevel, LevelTravel());
+    }
+
+    void GameSession::RequestLevel(ILevel& InLevel, const LevelTravel& InTravel)
+    {
+        /* With a transition, from a loaded level: fade out first (UpdateTransition
+         * arms the swap). Once armed (TS_Loading), a request just retargets it. */
+        const bool bFade = InTravel.Transition == TT_Fade || (InTravel.Transition == TT_Default && GTransitionEnabled.GetBool());
+        if(bFade && LevelWorld && TransitionStage != TS_Loading)
+        {
+            if(TransitionStage != TS_FadeOut)
+            {
+                CloseTransitionCard();
+                /* From a fade-in under way, on from the black it has reached. */
+                const float Out  = (std::max)(0.0f, GTransitionFadeOut.GetFloat());
+                TransitionTime   = TransitionStage == TS_FadeIn ? TransitionFade * Out : 0.0f;
+                TransitionStage  = TS_FadeOut;
+            }
+            TransitionLevel  = &InLevel;
+            TransitionTravel = InTravel;
+            return;
+        }
+        if(!bFade && TransitionStage == TS_FadeOut)
+        {
+            EndTransition();   // a straight swap overrides a fade under way
+        }
+
         if(PendingLevel)
         {
             CORE_LOG_WARN("GameSession::RequestLevel called twice before the first took effect; "
                           "the later request wins")
         }
-        PendingLevel = &InLevel;
+        PendingLevel  = &InLevel;
+        PendingTravel = InTravel;
     }
 
     GameState* GameSession::GetGameState()

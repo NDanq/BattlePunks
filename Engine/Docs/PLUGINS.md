@@ -9,6 +9,13 @@ nothing in `Engine/CMakeLists.txt` names it.
 - Example: [`Engine/Plugins/TimeOfDay`](../Plugins/TimeOfDay)
 - How to write one, step by step: [Guides/PluginGuide.md](Guides/PluginGuide.md)
 
+**Engine plugins** (`Engine/Plugins/`):
+
+| Plugin | What it does |
+|---|---|
+| [TimeOfDay](../Plugins/TimeOfDay/README.md) | A day/night cycle: the sun's path, its light, the Sky Light and a drawn physical sky |
+| [Weather](../Plugins/Weather/README.md) | Rain, mist, wetness and wind from a Weather component: drives Volumetric Fog, the materials' Wind node, wet G-buffer surfaces and a camera-following particle rain (`RenderCore/RenderWeather.h`) |
+
 Plugins are **source only**. Every project compiles its plugins with its own
 toolchain, so the C++ ABI always matches. There are no prebuilt plugin
 binaries.
@@ -121,6 +128,9 @@ libraries register for the life of the process.
   the host. For now that means `AddWorldHook`, an attach/detach pair that runs
   on every level World a GameSession creates. It runs after the engine's own
   systems and before the level's `OnLoad`, and Play-in-Editor gets it too.
+  With `bEditorWorlds` it also attaches to the editor's edited level World
+  (`Plugins::AttachEditorWorld`), where nothing ticks: for drawing, such as
+  TimeOfDay's sky (plugin ABI revision 2).
 
 ```cpp
 class TimeOfDayPlugin : public NimbleEngine::IPlugin
@@ -211,6 +221,8 @@ the project's file, then the user's settings, then the command line. A
 - `Plugin.TimeOfDay.TimeOfDayTests` (ctest): the host end to end on the
   build's real manifest. It covers config layering, strict prefixes, startup,
   world hooks and shutdown, then TimeOfDay itself.
+- `Plugin.Weather.WeatherTests` (ctest): Weather through the host, then its
+  wind, wetness, mist and rain.
 
 ## In the editor
 

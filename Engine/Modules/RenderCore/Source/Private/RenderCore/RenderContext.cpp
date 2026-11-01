@@ -301,6 +301,8 @@ namespace RenderCore
             float ContactLocal[4]       = {};                           // 1: shadowed point and spot lights' too
             float RevealParams[4]       = {};                           // the reveal: points, aspect, kept in the middle, depth margin
             float Reveal[4][4]          = {};                           // each point: NDC xy, radius (NDC y), view depth
+            float Wind[4]               = { 0.8f, 0.0f, 0.6f, 1.0f };  // toward which it blows (unit), strength (RenderWeather.h)
+            float Weather[4]            = {};                           // wetness, rain
         };
         static_assert(offsetof(SceneUniforms, Time) == 16 && offsetof(SceneUniforms, LightDirection) == 32
                       && offsetof(SceneUniforms, GroundColor) == 80 && offsetof(SceneUniforms, InvViewProjection) == 96,
@@ -321,7 +323,9 @@ namespace RenderCore
         static_assert(offsetof(SceneUniforms, ContactLocal) == 3936, "Scene_ContactLocal comes after Scene_ContactShadow");
         static_assert(offsetof(SceneUniforms, RevealParams) == 3952 && offsetof(SceneUniforms, Reveal) == 3968,
                       "Scene_RevealParams and Scene_Reveal come last");
-        static_assert(sizeof(SceneUniforms) == 4032 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
+        static_assert(offsetof(SceneUniforms, Wind) == 4032 && offsetof(SceneUniforms, Weather) == 4048,
+                      "Scene_Wind and Scene_Weather come last");
+        static_assert(sizeof(SceneUniforms) == 4064 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
                       "SceneUniforms must match Scene_Block (SceneUniforms.glsl) and fit the scene block");
 
         /* Row-major InMatrix into a GLSL mat4's column-major floats. */
@@ -1927,6 +1931,8 @@ namespace RenderCore
             Scene.Baked[0] = Lighting.bBaked ? 1.0f : 0.0f;
             Scene.Baked[1] = Lighting.bBaked && Lighting.bBakedSky ? 1.0f : 0.0f;
             Scene.Baked[2] = Lighting.bBaked && Lighting.bBakedDirectional ? 1.0f : 0.0f;
+            std::memcpy(Scene.Wind, Lighting.Wind, sizeof(Scene.Wind));
+            std::memcpy(Scene.Weather, Lighting.Weather, sizeof(Scene.Weather));
 
             /* Clip back to world, for the Lighting stage: the inverse of
              * Projection * View, column-major as GDI uploads a mat4. */
@@ -6114,6 +6120,62 @@ namespace RenderCore
         Block.A[3] = float(InResources.StripFace);
         const bool bDrawn = P->DrawPost(PP_IBLSky, InResources.Strip, InResources.StripFace * 6, InResources.StripFace, { Environment }, Block);
         GDISetMaterialTexture(0, nullptr);
+        return bDrawn;
+    }
+
+    bool RenderContext::GetSkyPassVersion(uint64_t& OutVersion) const
+    {
+        OutVersion = 0;
+        if(!P->PassWorld)
+        {
+            return false;
+        }
+        std::vector<CustomPassEntry> Passes;
+        GatherCustomRenderPasses(P->PassWorld, Passes);
+        bool bAny = false;
+        for(const CustomPassEntry& Entry : Passes)
+        {
+            if(Entry.Hook != ERenderHook::Sky || !Entry.Pass) { continue; }
+            const uint64_t Version = Entry.Pass->GetContentVersion();
+            if(Version == 0) { continue; }
+            OutVersion = OutVersion * 1099511628211ull + Version;
+            bAny = true;
+        }
+        return bAny;
+    }
+
+    bool RenderContext::RenderSkyPassesToStrip(IBLResources& InResources, SceneTargets& InStages, const RenderView (&InFaces)[6])
+    {
+        GDIRenderTarget* SceneColor = InStages.SceneColor;
+        if(!SceneColor || !InResources.Strip || InResources.StripFace == 0 || !P->PassWorld)
+        {
+            return false;
+        }
+        /* The Sky passes alone (FramePasses is the stages' list, empty between them), with
+         * nothing of a frame bound: no G-buffer, no post hooks' picture. */
+        P->FramePasses.clear();
+        GatherCustomRenderPasses(P->PassWorld, P->FramePasses);
+        P->FramePasses.erase(std::remove_if(P->FramePasses.begin(), P->FramePasses.end(),
+                                            [](const CustomPassEntry& InEntry)
+                                            { return InEntry.Hook != ERenderHook::Sky || !InEntry.Pass
+                                                     || InEntry.Pass->GetContentVersion() == 0; }),
+                             P->FramePasses.end());
+        const bool bGBuffer = P->bGBufferThisFrame, bVelocity = P->bVelocityThisFrame;
+        P->bGBufferThisFrame = P->bVelocityThisFrame = false;
+        bool bDrawn = !P->FramePasses.empty();
+        for(uint32_t Face = 0; Face < 6 && bDrawn; ++Face)
+        {
+            SCOPED_DRAW_EVENT(GetCubeFaceName(Face));
+            SetView(InFaces[Face]);
+            GDISetRenderTargets(&SceneColor, 1, SceneColor);
+            GDISetViewport(0, 0, InStages.Width, InStages.Height);
+            GDISetColorMask(EColM_RGBA);
+            GDIClear(CM_Color | CM_Depth, EngineCore::Color(0, 0, 0, 255));
+            bDrawn = P->RunHook(ERenderHook::Sky, InStages, false, nullptr) && CopyCaptureToStrip(InStages, InResources, Face);
+        }
+        P->FramePasses.clear();
+        P->bGBufferThisFrame  = bGBuffer;
+        P->bVelocityThisFrame = bVelocity;
         return bDrawn;
     }
 

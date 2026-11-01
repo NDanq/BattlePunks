@@ -424,6 +424,12 @@ namespace RenderCore
          *
          *   EnsureIBLResources   the atlas, and the strip at InFace a side
          *   RenderSkyToStrip     the current lighting's sky (its HDRI, else its colours)
+         *   GetSkyPassVersion    whether the World set by SetCustomPassWorld has custom passes
+         *                        at ERenderHook::Sky providing a sky (a nonzero
+         *                        GetContentVersion), and their versions summed
+         *   RenderSkyPassesToStrip  those passes, each of InFaces (six cube views) drawn into
+         *                        InStages' scene colour and copied into the strip's face;
+         *                        leaves the context on the last face's view
          *   CopyCaptureToStrip   a cube face InStages rendered (its linear scene colour)
          *   PrefilterIBLBlock    the strip into atlas block InBlock (0-15 probes, 16 the sky)
          *   SetImageBasedLighting  what lights the next RenderSceneStages: InResources'
@@ -436,6 +442,8 @@ namespace RenderCore
         bool EnsureIBLResources(IBLResources& InOut, uint32_t InFace);
         void ReleaseIBLResources(IBLResources& InOut);
         bool RenderSkyToStrip(IBLResources& InResources);
+        bool GetSkyPassVersion(uint64_t& OutVersion) const;
+        bool RenderSkyPassesToStrip(IBLResources& InResources, SceneTargets& InStages, const RenderView (&InFaces)[6]);
         bool CopyCaptureToStrip(SceneTargets& InStages, IBLResources& InResources, uint32_t InFace);
         bool PrefilterIBLBlock(IBLResources& InResources, uint32_t InBlock);
         void SetImageBasedLighting(const IBLResources* InResources, const float (*InProbes)[4], uint32_t InCount, bool bInSky);

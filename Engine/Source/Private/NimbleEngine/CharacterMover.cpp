@@ -162,9 +162,10 @@ namespace
         double Radius, Height, StepHeight, SnapDown, GroundNormalY;
         double ProbeHeights[3];   // the wall probes: above a step, the middle, the head
         int32_t Mask;
+        GameCore::EntityID Self;  // its own bodies (and its children's: ragdoll hit boxes) are passed through
     };
 
-    BodyShape ShapeOf(const CharacterMoverComponent& InMover, const bool bInCrouched)
+    BodyShape ShapeOf(const CharacterMoverComponent& InMover, const bool bInCrouched, const GameCore::EntityID InSelf)
     {
         BodyShape Shape;
         Shape.Radius     = (std::max)(1.0, double(InMover.Radius));
@@ -177,6 +178,7 @@ namespace
         Shape.ProbeHeights[1] = Shape.Height * 88.0 / 180.0;
         Shape.ProbeHeights[2] = (std::max)(Shape.ProbeHeights[1], Shape.Height - 17.0);
         Shape.Mask = InMover.Mask;
+        Shape.Self = InSelf;
         return Shape;
     }
 
@@ -184,7 +186,7 @@ namespace
              PhysicsRaycastHit& OutHit)
     {
         return PhysicsRaycast(InWorld, EngineCore::Vector3(InFrom.X, InFrom.Y, InFrom.Z), EngineCore::Vector3(InDir.X, InDir.Y, InDir.Z),
-                              float(InLength), OutHit, InShape.Mask);
+                              float(InLength), OutHit, InShape.Mask, InShape.Self);
     }
 
     bool HasNormal(const PhysicsRaycastHit& InHit)
@@ -382,11 +384,11 @@ void StepCharacter(GameCore::World& InWorld, const GameCore::EntityID InAvatar, 
 
     // --- Crouching: down at once, up when there is room ------------------------------
     if(Down(B_Crouch)) { S.bCrouched = true; }
-    else if(S.bCrouched && HeadClear(InWorld, ShapeOf(T, false), X, Y, Z, double(T.CrouchHeight), double(T.Height)))
+    else if(S.bCrouched && HeadClear(InWorld, ShapeOf(T, false, InAvatar), X, Y, Z, double(T.CrouchHeight), double(T.Height)))
     {
         S.bCrouched = false;
     }
-    const BodyShape Shape = ShapeOf(T, S.bCrouched);
+    const BodyShape Shape = ShapeOf(T, S.bCrouched, InAvatar);
 
     // --- The view, and the aim ----------------------------------------------------------
     const bool bAiming = Down(B_Aim);
@@ -559,7 +561,7 @@ void UpdateCharacterMovers(GameCore::World& InWorld, const float InSeconds)
         const bool bRemote = Harness && Harness->IsPossessed() && !Harness->IsLocallyControlled();
         if(Length > 1e-4 && !bRemote)
         {
-            const BodyShape Shape = ShapeOf(*Mover, Mover->bCrouched != 0);
+            const BodyShape Shape = ShapeOf(*Mover, Mover->bCrouched != 0, Id);
             PhysicsRaycastHit Hit;
             if(Ray(InWorld, Shape, Pivot, { Off.X / Length, Off.Y / Length, Off.Z / Length }, Length + 15.0, Hit))
             {

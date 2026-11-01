@@ -14,6 +14,7 @@
 // ray and where the history is missing; 0 where the probes must do.
 
 #include <PostProcessCommon.glsl>
+#include <Wetness.glsl>
 
 MATERIAL_SAMPLER2D(4, GBuffer1)     // rg: normal, octahedral; a: lit
 MATERIAL_SAMPLER2D(5, GBuffer2)     // Metallic, Roughness, Specular, shading model
@@ -64,8 +65,8 @@ void main(void)
     ivec2 Texel = ivec2(gl_FragCoord.xy);
     vec4  Gb1   = texelFetch(GBuffer1, Texel, 0);
     vec4  Gb2   = texelFetch(GBuffer2, Texel, 0);
-    float Roughness = Gb2.g;
     vec3  N = DecodeGBufferNormal(Gb1);
+    float Roughness = WetRoughness(WetAmount(DecodeShadingModel(Gb2.a), N), Gb2.g);   // a wet surface reflects sharper (Wetness.glsl)
     // A Clear Coat reflects off its coat (SHADING_MODELS.md): its normal and roughness.
     if(DecodeShadingModel(Gb2.a) == SHADING_MODEL_CLEARCOAT)
     {
