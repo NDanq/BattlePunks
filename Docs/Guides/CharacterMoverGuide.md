@@ -85,7 +85,7 @@ made during Play apply to that run only.*
 | Body | Radius, Height, Crouch Height | 30, 180, 110 | |
 | | Step Height, Snap Down | 45, 35 | the highest ledge walked up; the lowest drop walked down without falling |
 | | Max Slope | 56 | degrees; steeper ground is a wall |
-| | Mask | −1 | physics layers it stands on and slides along. Leave out layers that are not the same on every process, such as ragdolls that are simulated only where they are drawn, or prediction drifts. |
+| | Mask | −1 | physics layers it stands on and slides along. Its own bodies are always passed through, whatever their layer: the avatar's Rigid Body and ragdoll hit boxes, and those of every entity under it (a mesh child's). Leave out layers that are not the same on every process, such as other characters' ragdolls that are simulated only where they are drawn, or prediction drifts. |
 | Camera | Boom Height | 150 | the pivot above the feet (lowered while crouched) |
 | | Camera Back / Right / Up | 230 / 42 / 12 | over the shoulder |
 | | Aim Back / Right / Up | 110 / 58 / 16 | aimed in |
@@ -338,6 +338,9 @@ Read and write: `WalkSpeed`, `RunSpeed`, `CrouchSpeed`, `AimSpeed`,
   run did. It also covers walking, running, turning, jumps and landings,
   ledges, walls and sliding, steps, crouching under a ceiling, aiming,
   teleporting, the aim, the presentation system and every example above.
+- `NimbleEngine.PhysicsTests` ("character mover: own bodies") walks it on Jolt
+  with a hit box on a mesh child, on the layer it stands on: it stays on the
+  floor and walks out of the box, and another entity's box still stops it.
 - `WorldsLab.MoverParity` (Games/WorldsLab) runs it against WorldsLab's
   `RangeMove`, the walker it was generalised from, in the Shooting Range on
   Jolt. RangeMove is driven along the autoplay's walk: across the floor, up
