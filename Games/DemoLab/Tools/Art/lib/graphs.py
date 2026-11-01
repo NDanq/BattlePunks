@@ -50,14 +50,23 @@ class Graph:
     def mul(self, a, b, w="float"):
         return self.math("Multiply", a, b, wildcard=w)
 
+    @staticmethod
+    def _k(k, w):
+        if isinstance(k, str):
+            return k
+        if isinstance(k, (tuple, list)):
+            return vec(*k)
+        n = {"vec2": 2, "vec3": 3, "vec4": 4}.get(w, 1)
+        return vec(*([k] * n))
+
     def mulc(self, a, k, w="float"):
-        return self.math("Multiply", a, consts={"B": k if isinstance(k, str) else vec(k)}, wildcard=w)
+        return self.math("Multiply", a, consts={"B": self._k(k, w)}, wildcard=w)
 
     def add(self, a, b, w="float"):
         return self.math("Add", a, b, wildcard=w)
 
     def addc(self, a, k, w="float"):
-        return self.math("Add", a, consts={"B": vec(k)}, wildcard=w)
+        return self.math("Add", a, consts={"B": self._k(k, w)}, wildcard=w)
 
     def lerp(self, a, b, t, w="float", ca=None, cb=None):
         consts = {}
@@ -82,6 +91,12 @@ class Graph:
         n = self.node("Vector.Split")
         self.link(v[0], v[1], n, "Vector")
         return n
+
+    def splat2(self, f):
+        m = self.node("Vector.Make2")
+        for pin in "XY":
+            self.link(f[0], f[1], m, pin)
+        return (m, "Out")
 
     def splat3(self, f):
         m = self.node("Vector.Make3")
@@ -184,22 +199,36 @@ def kit_material(d, tex_dir):
         uv = g.uv(1.0 if d.get("unit") else 1.0 / d["metres"])
     if "set" in d:
         s = d["set"]
+        w = d.get("weather") if domain == "Opaque" else None
         base = g.texture(f"{tex_dir}/{s}_BaseColor.nmtexture", uv)
         orm = g.texture(f"{tex_dir}/{s}_ORM.nmtexture", uv)
         ntex = g.texture(f"{tex_dir}/{s}_Normal.nmtexture", uv)
-        g.link(*g.normal_map((ntex, "RGB"), uv, d.get("normal", 1.0)), out, "Normal")
+        ncol = (ntex, "RGB")
+        if w and w.get("detail", 0.0) > 0:
+            # Detail normal (0.5 m a repeat on the metre UVs), added in tangent space.
+            k = w["detail"]
+            dn = g.texture(f"{tex_dir}/Detail_Normal.nmtexture", g.uv(1.0 / w.get("detail_metres", 0.5)))
+            ncol = g.add(ncol, g.addc(g.mulc((dn, "RGB"), (k, k, 0), "vec3"), (-0.5 * k, -0.5 * k, 0), "vec3"), "vec3")
+        g.link(*g.normal_map(ncol, uv, d.get("normal", 1.0)), out, "Normal")
+        gm = None
+        if w:
+            gm = g.texture(f"{tex_dir}/Grime_Mask.nmtexture", g.uv(1.0 / w.get("grime_metres", 3.0)))
+        metal = None
         if "base" in d and "set" in d and domain == "Translucent":
             colour = (g.param("Tint", "vec3", vec(*d["base"])), "Value")
             colour = g.mul(colour, (base, "RGB"), "vec3")
         elif "paint" in d:
-            # Paint where BaseColor A says, worn through to steel on convex edges.
+            # Paint where BaseColor A says, chipped through to steel on convex edges (the
+            # grime mask's chips break the wear up when the material weathers).
             tint = (g.param("Tint", "vec3", vec(*d["paint"])), "Value")
-            wear = g.smooth(g.mul(edge, (orm, "R")), 0.45, 0.8)
+            wear_in = g.mul(edge, (orm, "R"))
+            if gm is not None:
+                wear_in = g.mul(wear_in, g.addc(g.mulc((gm, "B"), 1.2), 0.3))
+            wear = g.smooth(wear_in, 0.45, 0.8)
             paint = g.mul((base, "A"), g.math("OneMinus", wear))
             painted = g.mul((base, "RGB"), tint, "vec3")
             colour = g.lerp(None, painted, paint, "vec3", ca=vec(0.40, 0.39, 0.37))
             metal = g.math("OneMinus", paint)
-            g.link(*metal, out, "Metallic")
         else:
             tint = (g.param("Tint", "vec3", vec(*d.get("tint", (1, 1, 1)))), "Value")
             colour = g.mul((base, "RGB"), tint, "vec3")
@@ -208,12 +237,12 @@ def kit_material(d, tex_dir):
             rough = g.mulc(rough, d["rough_mul"])
         if "rough_add" in d:
             rough = g.addc(rough, d["rough_add"])
+        if metal is None:
+            metal = (g.const(vec(d["metal"]), "float"), "Out") if "metal" in d else (orm, "B")
+        if w:
+            colour, rough, metal = weathering(g, w, gm, colour, rough, metal, occl, edge, tex_dir)
         g.link(*rough, out, "Roughness")
-        if "paint" not in d:
-            if "metal" in d:
-                g.link(g.const(vec(d["metal"]), "float"), "Out", out, "Metallic")
-            else:
-                g.link(orm, "B", out, "Metallic")
+        g.link(*metal, out, "Metallic")
         g.link(*g.mul((orm, "R"), occl), out, "AmbientOcclusion")
         if domain == "Masked":
             g.link(base, "A", out, "OpacityMask")
@@ -276,6 +305,60 @@ def kit_material(d, tex_dir):
     return g
 
 
+def weathering(g, w, gm, colour, rough, metal, occl, edge, tex_dir):
+    """The second art pass's surface variation over a set (matdefs.py "weather"), from the
+    shared Grime_Mask (R grime clouds, G streaks down V, B chips, A fine) and the vertex
+    colour (RGB baked occlusion, A convex edges):
+
+        grime   soot and dust in clouds and in occluded corners: darker, rougher
+        streak  (r, g, b, amount): rust or water stains running down (multiplies the
+                colour; a metal's stain is rust, so it is not metal there)
+        edge    "polish" (worn bright metal on convex edges), "wear" (lighter, scuffed
+                wood or stone), or None
+        top     (texture path, metres, amount): moss / grass on upward faces (world
+                normal Y), its own BaseColor sampled at UV0 / metres
+    Returns (colour, roughness, metallic)."""
+    amount = w.get("grime", 0.0)
+    if amount > 0:
+        occ_dirt = g.mulc(g.math("OneMinus", occl), 1.5)
+        t = g.math("Saturate", g.mulc(g.add(g.mulc((gm, "R"), 0.8), occ_dirt), amount))
+        dirt = (g.const(vec(*w.get("grime_tint", (0.52, 0.47, 0.42))), "vec3"), "Out")
+        colour = g.lerp(colour, g.mul(colour, dirt, "vec3"), g.splat3(t), "vec3")
+        rough = g.add(rough, g.mulc(t, 0.18))
+    if w.get("streak"):
+        r, gg, b, k = w["streak"]
+        st = g.math("Saturate", g.mulc((gm, "G"), k))
+        stain = (g.const(vec(r, gg, b), "vec3"), "Out")
+        if w.get("rust", False):
+            colour = g.lerp(colour, stain, g.splat3(g.mulc(st, 0.85)), "vec3")
+            metal = g.mul(metal, g.math("OneMinus", st))
+            rough = g.add(rough, g.mulc(st, 0.3))
+        else:
+            colour = g.lerp(colour, g.mul(colour, stain, "vec3"), g.splat3(st), "vec3")
+            rough = g.add(rough, g.mulc(st, -0.12))
+    mode = w.get("edge")
+    if mode:
+        e = g.smooth(g.mul(edge, g.addc(g.mulc((gm, "B"), 0.9), 0.5)), 0.3, 0.65)
+        if mode == "polish":
+            colour = g.lerp(colour, g.mulc(colour, 1.35, "vec3"), g.splat3(e), "vec3")
+            rough = g.lerp(rough, g.mulc(rough, 0.55), e)
+        else:
+            colour = g.lerp(colour, g.mulc(colour, 1.25, "vec3"), g.splat3(g.mulc(e, 0.7)), "vec3")
+            rough = g.add(rough, g.mulc(e, 0.08))
+    if w.get("top"):
+        path, metres, k = w["top"]
+        moss = g.texture(f"{path}_BaseColor.nmtexture", g.uv(1.0 / metres))
+        ny = g.split((g.node("Input.VertexNormal"), "Normal"))
+        up = g.smooth((ny, "Y"), 0.45, 0.85)
+        brk = g.smooth(g.add((moss, "A"), g.mulc((gm, "R"), 0.6)), 0.35, 0.75)
+        t = g.math("Saturate", g.mulc(g.mul(up, brk), k))
+        colour = g.lerp(colour, g.mulc((moss, "RGB"), 0.8, "vec3"), g.splat3(t), "vec3")
+        rough = g.lerp(rough, None, t, cb="0.92")
+        metal = g.mul(metal, g.math("OneMinus", t))
+    rough = g.math("Saturate", g.add(rough, g.addc(g.mulc((gm, "A"), 0.12), -0.06)))
+    return colour, rough, metal
+
+
 def terrain_material(name, layers, sharpness=8.0):
     """Four layers, blended by the terrain's paint weights (vertex colour R G B A) sharpened
     by each layer's height (its BaseColor A): w_i' = w_i (h_i + 0.25)^sharpness, normalised,
@@ -314,4 +397,174 @@ def terrain_material(name, layers, sharpness=8.0):
     g.link(*rough, out, "Roughness")
     g.link(*ao, out, "AmbientOcclusion")
     g.link(*g.normal_map(normal, None), out, "Normal")
+    return g
+
+
+# ==============================================================================================
+# The sea and the particle materials (second art pass)
+# ==============================================================================================
+
+# Swell: (amplitude m, wavelength m, direction x, direction z); speeds from deep-water
+# dispersion (w = sqrt(g k)).
+SEA_WAVES = [(0.24, 38.0, 0.96, 0.28), (0.12, 17.0, 0.71, -0.71), (0.06, 7.5, 0.2, 0.98)]
+
+
+def _world_xz_m(g):
+    """World X and Z in metres as a vec2."""
+    wp = g.split((g.node("Input.WorldPosition"), "Position"))
+    m = g.node("Vector.Make2")
+    g.link(wp, "X", m, "X")
+    g.link(wp, "Z", m, "Y")
+    return g.mulc((m, "Out"), 0.01, "vec2"), wp
+
+
+def _swell(g, xz, time, scale):
+    """The summed sine swell at xz (metres): (height in metres x scale)."""
+    import math as _m
+    h = None
+    for (amp, length, dx, dz) in SEA_WAVES:
+        k = 2 * _m.pi / length
+        w = _m.sqrt(9.81 * k)
+        dn = _m.hypot(dx, dz)
+        d = g.node("Vector.Dot", consts={"B": vec(dx / dn, dz / dn)}, wildcard="vec2")
+        g.link(xz[0], xz[1], d, "A")
+        phase = g.add(g.mulc((d, "Out"), k), g.mulc(time, w))
+        wave = g.mulc(g.math("Sin", phase), amp)
+        h = wave if h is None else g.add(h, wave)
+    return g.mul(h, scale)
+
+
+def sea_material(d, tex_dir):
+    """Sea: Translucent Lit (Surface) water. The swell is World Position Offset -- three
+    sine trains in world space, metres, deep-water speeds (Max Offset 60 cm); two copies of
+    Sea_Normal pan across it at different scales and directions; a Fresnel term (from the
+    view direction) turns it from see-through blue-green looking down to an opaque mirror at
+    grazing angles; crest foam (Sea_Foam) where the swell peaks. Parameters: SwellScale,
+    DeepColor, ShallowColor, NormalStrength."""
+    g = Graph(d["name"])
+    out = output(g, "Translucent", "Default", False,
+                 {"Refraction": "1.33", "Specular": "0.25", "TransmissionTint": vec(0.62, 0.86, 0.8)},
+                 extra={"MaxOffset": "60"})
+    time = (g.node("Input.Time"), "Time")
+    scale = (g.param("SwellScale", "float", "1"), "Value")
+    xz, wp = _world_xz_m(g)
+    h = _swell(g, xz, time, scale)
+    off = g.node("Vector.Make3", consts={"X": "0", "Z": "0"})
+    g.link(*g.mulc(h, 100.0), off, "Y")
+    g.link(off, "Out", out, "WorldPositionOffset")
+    # Ripples: two pans of the normal field.
+    uva = g.add(g.mulc(xz, 1.0 / 9.0, "vec2"), g.mulc(g.splat2(time), (0.021, 0.008), "vec2"), "vec2")
+    uvb = g.add(g.mulc(xz, 1.0 / 23.0, "vec2"), g.mulc(g.splat2(time), (-0.006, 0.013), "vec2"), "vec2")
+    na = g.texture(f"{tex_dir}/Sea_Normal.nmtexture", uva)
+    nb = g.texture(f"{tex_dir}/Sea_Normal.nmtexture", uvb)
+    ncol = g.addc(g.add((na, "RGB"), (nb, "RGB"), "vec3"), (-0.5, -0.5, 0.0), "vec3")
+    strength = (g.param("NormalStrength", "float", "0.9"), "Value")
+    nm_ = g.node("Texture.NormalMap", props={"Format": "OpenGL"})
+    g.link(*ncol, nm_, "Color")
+    g.link(*strength, nm_, "Strength")
+    g.link(nm_, "Normal", out, "Normal")
+    # Fresnel from the view direction against up.
+    cam = g.node("Input.CameraPosition")
+    view = g.node("Vector.Normalize", wildcard="vec3")
+    g.link(*g.math("Subtract", (cam, "Position"), (g.node("Input.WorldPosition"), "Position"), wildcard="vec3"),
+           view, "V")
+    vy = g.split((view, "Out"))
+    fres = g.math("Power", g.math("OneMinus", g.math("Saturate", (vy, "Y"))), consts={"B": "4"})
+    deep = (g.param("DeepColor", "vec3", vec(0.012, 0.055, 0.07)), "Value")
+    shallow = (g.param("ShallowColor", "vec3", vec(0.035, 0.16, 0.15)), "Value")
+    colour = g.lerp(shallow, deep, g.splat3(g.math("Sqrt", fres)), "vec3")
+    # Crests: lighter where the swell is high, foam on the highest.
+    crest = g.smooth(h, 0.12, 0.38)
+    colour = g.lerp(colour, g.mulc(shallow, 1.6, "vec3"), g.splat3(g.mulc(crest, 0.5)), "vec3")
+    fuv = g.add(g.mulc(xz, 0.25, "vec2"), g.mulc(g.splat2(time), (0.01, 0.004), "vec2"), "vec2")
+    foam_t = g.texture(f"{tex_dir}/Sea_Foam.nmtexture", fuv)
+    foam = g.math("Saturate", g.mul(g.smooth((foam_t, "A"), 0.5, 0.85), g.smooth(h, 0.3, 0.42)))
+    colour = g.lerp(colour, (foam_t, "RGB"), g.splat3(foam), "vec3")
+    g.link(*colour, out, "BaseColor")
+    g.link(*g.addc(g.mulc(foam, 0.6), 0.03), out, "Roughness")
+    g.link(g.const("0", "float"), "Out", out, "Metallic")
+    op = g.math("Saturate", g.add(g.lerp(None, None, fres, ca="0.72", cb="0.97"), foam))
+    g.link(*op, out, "Opacity")
+    return g
+
+
+def sea_foam_material(d, tex_dir):
+    """SeaFoam: the shore strip (Sea_FoamStrip). Its V runs from 1 at the sand to 0 out to
+    sea; bands of Sea_Foam roll in toward the sand and thin out, fading at both edges."""
+    g = Graph(d["name"])
+    out = output(g, "Translucent", "Default", False, {"Refraction": "1.0"})
+    tc = g.node("Input.TexCoord")
+    v = (g.split((tc, "UV")), "Y")
+    time = (g.node("Input.Time"), "Time")
+    uv = g.add(g.mulc((tc, "UV"), 1.5, "vec2"), g.mulc(g.splat2(time), (0.004, 0.035), "vec2"), "vec2")
+    foam = g.texture(f"{tex_dir}/Sea_Foam.nmtexture", uv)
+    bands = g.addc(g.mulc(g.math("Sin", g.add(g.mulc(v, 18.0), g.mulc(time, -1.4))), 0.35), 0.65)
+    edge = g.mul(g.smooth(v, 0.0, 0.35), g.smooth(v, 1.0, 0.9))
+    cover = g.math("Saturate", g.addc(g.mulc((foam, "A"), 1.6), -0.25))
+    op = g.mul(g.mul(cover, edge), g.addc(g.mulc(g.mul(bands, v), 0.6), 0.25))
+    g.link(*g.math("Saturate", op), out, "Opacity")
+    g.link(foam, "RGB", out, "BaseColor")
+    g.link(g.const("0.65", "float"), "Out", out, "Roughness")
+    g.link(g.const("0", "float"), "Out", out, "Metallic")
+    return g
+
+
+CUSTOM = {"sea": sea_material, "sea_foam": sea_foam_material}
+
+
+def _radial(g):
+    """1 at a sprite's centre, 0 at its rim (UV 0-1)."""
+    dist = g.node("Vector.Distance", consts={"B": "0.5 0.5"}, wildcard="vec2")
+    g.link(g.node("Input.TexCoord"), "UV", dist, "A")
+    return g.math("Saturate", g.math("OneMinus", g.mulc((dist, "Out"), 2.0)))
+
+
+def particle_material(name, kind, tex_dir):
+    """Particle materials (Content/Materials/Particles): the particle's colour arrives as the
+    vertex colour (RGB, A its alpha over life).
+
+        Steam   Translucent Lit: the Puff billow, colour x particle colour (lit by the sun
+                and the lamps, so steam in a light shaft glows)
+        Dust    Translucent Lit: a small soft mote (dust in light shafts)
+        Spray   Translucent Lit: a glossy droplet (sprinklers)
+        Spark   Translucent Unlit: a hot point, Emissive = colour x Intensity (blooms)
+        Arc     Translucent Unlit, for beams: a white-hot core across U fading to the
+                colour at the strip's edges, flickering along V (reactor lightning)"""
+    g = Graph(name)
+    vc = g.node("Input.VertexColor")
+    lit = kind in ("Steam", "Dust", "Spray")
+    props = {"ClipValue": "0.5", "Domain": "Translucent", "MaxOffset": "0", "Shading": "Lit" if lit else "Unlit",
+             "ShadingModel": "Default", "TwoSided": "true"}
+    if lit:
+        props["TranslucencyLighting"] = "Legacy"
+    out = g.node("Output.Material", props=props)
+    if kind in ("Steam", "Dust"):
+        puff = g.texture(f"{tex_dir}/Puff.nmtexture", None)
+        dens = (puff, "A") if kind == "Steam" else g.mul(_radial(g), _radial(g))
+        g.link(*g.mul((vc, "RGB"), (puff, "RGB"), "vec3"), out, "BaseColor")
+        g.link(*g.mul(dens, (vc, "A")), out, "Opacity")
+        g.link(g.const("1" if kind == "Steam" else "0.8", "float"), "Out", out, "Roughness")
+    elif kind == "Spray":
+        r = _radial(g)
+        g.link(vc, "RGB", out, "BaseColor")
+        g.link(*g.mul(g.math("Sqrt", r), (vc, "A")), out, "Opacity")
+        g.link(g.const("0.08", "float"), "Out", out, "Roughness")
+    elif kind == "Spark":
+        r = _radial(g)
+        core = g.mul(r, r)
+        inten = (g.param("Intensity", "float", "24"), "Value")
+        g.link(*g.mul(g.mul((vc, "RGB"), g.splat3(core), "vec3"), g.splat3(inten), "vec3"), out, "Emissive")
+        g.link(*g.mul(core, (vc, "A")), out, "Opacity")
+    elif kind == "Arc":
+        tc = g.split((g.node("Input.TexCoord"), "UV"))
+        across = g.math("Saturate", g.math("OneMinus", g.mulc(g.math("Abs", g.addc((tc, "X"), -0.5)), 2.0)))
+        core = g.math("Power", across, consts={"B": "3"})
+        halo = g.mul(across, across)
+        time = (g.node("Input.Time"), "Time")
+        flick = g.addc(g.mulc(g.math("Sin", g.add(g.mulc((tc, "Y"), 23.0), g.mulc(time, 70.0))), 0.35), 0.65)
+        inten = (g.param("Intensity", "float", "40"), "Value")
+        hot = g.lerp((vc, "RGB"), None, g.splat3(core), "vec3", cb="1 1 1")
+        glow = g.mul(g.mul(hot, g.splat3(g.mul(halo, flick)), "vec3"), g.splat3(inten), "vec3")
+        g.link(*glow, out, "Emissive")
+        g.link(*g.mul(halo, (vc, "A")), out, "Opacity")
     return g

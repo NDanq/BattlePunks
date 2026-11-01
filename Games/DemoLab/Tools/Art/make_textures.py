@@ -193,18 +193,35 @@ def wood_grain(n, size, rings, warp, size_v=None):
 
 
 def walnut(size=1024):
+    """1 m: quarter-sawn walnut boards along U -- tight straight grain, open pores drawn
+    out along the grain, a ribbon figure, medullary flecks, 12.5 cm boards each of its own
+    tone and grain, under the material's clear coat."""
     n = Noise(21, size)
-    late, pores = wood_grain(n, size, 24, 0.22)
-    figure = n.fbm(3, 4, cells_v=20)
-    base = lerp(colour(rgb(0.36, 0.20, 0.11), 0.95 + 0.1 * figure), colour(rgb(0.16, 0.08, 0.045), 1.0), late * 0.75)
-    base *= (1.0 - pores * 0.35)[..., None]
-    # Veneer leaves: 25 cm strips along U with a tone each.
-    strip = np.floor(n.v * 4)
-    tone = 0.92 + 0.08 * np.sin(strip * 2.3)
-    base *= tone[..., None]
-    height = 0.5 - late * 0.12 - pores * 0.25
-    rough = 0.42 + 0.15 * late + 0.2 * pores          # under the material's clear coat
-    T.save_set(KIT, "Walnut", base, height, 2.0, rough, np.zeros_like(rough), 1.0 - 0.15 * pores, orm_scale=2)
+    u, v = n.u, n.v
+    board = np.floor(v * 8).astype(int) % 8
+    rng = np.random.default_rng(21)
+    btone = rng.uniform(0.82, 1.12, 8)[board]
+    bshift = rng.uniform(0, 1, 8)[board]
+    wv = (n.fbm(2, 4, cells_v=8) - 0.5) * 0.035 + (n.fbm(6, 3, cells_v=16) - 0.5) * 0.01
+    g = (v + wv + bshift) * 90
+    ring = np.abs((g % 1.0) - 0.5) * 2.0
+    late = smoothstep(0.45, 1.0, ring) ** 2
+    pores = smoothstep(0.62, 0.9, n.value(size // 8, size // 2)) * smoothstep(0.3, 0.7, n.fbm(32, 2))
+    ribbon = 0.5 + 0.5 * np.sin(u * 2 * math.pi * 6 + n.fbm(3, 3) * 4)
+    fleck = smoothstep(0.8, 0.95, n.value(size // 4, size // 64)) * 0.6
+    light = colour(rgb(0.34, 0.19, 0.10), 0.92 + 0.12 * n.fbm(4, 4, cells_v=24))
+    dark = colour(rgb(0.13, 0.065, 0.035), 1.0)
+    base = lerp(light, dark, late * 0.7 + 0.15 * (1 - ribbon) * (0.5 + 0.5 * late))
+    base *= (1.0 - pores * 0.45)[..., None]
+    base = lerp(base, colour(rgb(0.42, 0.26, 0.15), 1.0), fleck * 0.35)
+    base *= btone[..., None]
+    fv = (v * 8) % 1.0
+    joint = smoothstep(0.0, 0.004, fv) * smoothstep(0.0, 0.004, 1.0 - fv)
+    base *= (0.55 + 0.45 * joint)[..., None]
+    height = 0.55 - late * 0.06 - pores * 0.3 - (1 - joint) * 0.4 + 0.02 * ribbon
+    rough = 0.38 + 0.12 * late + 0.3 * pores + 0.2 * (1 - joint)
+    T.save_set(KIT, "Walnut", base, height, 2.5, rough, np.zeros_like(rough), 1.0 - 0.2 * pores - 0.4 * (1 - joint),
+               orm_scale=2)
 
 
 def planks(size=1024):
@@ -587,12 +604,149 @@ def terrain_sand(size=512):
                normal_map=False)
 
 
+# ==============================================================================================
+# Second pass: weathering masks, detail normals, cliff strata, the sea, particle puffs
+# ==============================================================================================
+
+def grime(size=1024):
+    """Grime_Mask (linear, 3 m a repeat on the kit's metre UVs), one mask a channel:
+    R grime -- soot and dust collecting in broad clouds; G streaks -- rust and water stains
+    running down V (down the walls: the kit's side faces map height to V); B chips --
+    blotches that edge wear (vertex colour A) eats into; A fine variation for roughness."""
+    n = Noise(71, size)
+    clouds = n.fbm(3, 6, gain=0.55)
+    clouds = smoothstep(0.35, 0.75, clouds) * (0.75 + 0.25 * n.fbm(24, 3))
+    st = n.fbm(48, 3, cells_v=2) * 0.7 + n.fbm(160, 2, cells_v=4) * 0.3
+    runs = smoothstep(0.45, 0.75, st) * smoothstep(0.15, 0.55, n.fbm(4, 3, cells_v=2))
+    # Drips fade down from their sources (a sawtooth in V per column band).
+    src = (n.v * 3 + n.value(40, 1) * 3) % 1.0
+    runs *= 0.35 + 0.65 * (1.0 - src) ** 1.5
+    chips = smoothstep(0.42, 0.62, n.fbm(20, 5, gain=0.6)) * (0.6 + 0.4 * blur(n.white(), 0.7))
+    fine = n.fbm(64, 3)
+    img = np.stack([clouds, runs, chips, fine], axis=-1)
+    T.write(KIT, "Grime_Mask", img, False)
+    print(f"  Grime_Mask: {size} x {size}")
+
+
+def detail_normal(size=512):
+    """Detail_Normal (linear normal, 0.5 m a repeat): fine pitting, hammer marks and hairline
+    scratches, blended over each set's normal for close-up surface."""
+    n = Noise(72, size)
+    pits = smoothstep(0.75, 0.95, blur(n.white(), 0.9)) * 0.5
+    f1, f2, _ = n.voronoi(18)
+    hammer = smoothstep(0.0, 0.6, f1) * 0.25
+    scratch = smoothstep(0.86, 0.98, n.value(size // 2, 3)) * 0.15 + smoothstep(0.88, 0.99, n.value(4, size // 2)) * 0.1
+    height = 0.6 + 0.2 * n.fbm(32, 4) - pits + hammer - scratch
+    T.write(KIT, "Detail_Normal", normal_from_height(height, 2.5), False, normal_map=True)
+    print(f"  Detail_Normal: {size} x {size}")
+
+
+def cliff_strata(size=1024):
+    """6 m: layered sedimentary rock for the cliffs -- beds 15-80 cm thick in V, sandstone,
+    grey shale and a rusty ironstone band, each weathering differently; vertical joints,
+    spalled patches, water stains down from the joints, lichen on the hard beds."""
+    n = Noise(73, size)
+    rng = np.random.default_rng(73)
+    wu, wv = n.warp(3, 0.05)
+    bounds = [0.0]
+    while bounds[-1] < 1.0:
+        bounds.append(bounds[-1] + rng.uniform(0.025, 0.13))
+    bounds[-1] = 1.0
+    bounds = np.array(bounds)
+    vv = (wv + 0.02 * np.sin(n.u * 2 * math.pi) + 0.035 * (n.fbm(3, 4) - 0.5)) % 1.0
+    bed = np.clip(np.searchsorted(bounds, vv, side="right") - 1, 0, len(bounds) - 2)
+    f = (vv - bounds[bed]) / (bounds[bed + 1] - bounds[bed])
+    kinds = rng.choice(3, len(bounds), p=[0.55, 0.37, 0.08])
+    kind = kinds[bed]
+    pal = np.array([[0.53, 0.47, 0.39], [0.38, 0.365, 0.345], [0.44, 0.36, 0.29]])
+    tone = rng.uniform(0.85, 1.12, len(bounds))[bed]
+    base = pal[kind] * tone[..., None]
+    lam = 0.5 + 0.5 * np.sin(vv * 2 * math.pi * 140 + n.fbm(8, 3) * 3)
+    base *= (0.95 + 0.05 * lam)[..., None]
+    base *= (0.85 + 0.3 * n.fbm(16, 4))[..., None]
+    hard = (kind != 1).astype(float)
+    # Soft shale weathers back from its top; hard beds keep a rounded nose.
+    profile = np.where(hard > 0, 0.75 + 0.2 * np.sin(np.pi * f), 0.35 + 0.15 * f)
+    # Joints: vertical cracks, offset bed by bed (each bed breaks on its own).
+    shift = rng.uniform(0, 1, len(bounds))[bed]
+    jointed = (rng.random(len(bounds)) > 0.35)[bed]
+    f1, f2, cid = n.voronoi(4, 1, u=(wu + shift) % 1.0, v=wv)
+    joint = smoothstep(0.05, 0.0, f2 - f1) * smoothstep(0.3, 0.6, n.fbm(5, 3)) * smoothstep(0.0, 0.08, f) * jointed
+    base *= (0.8 + 0.4 * n.fbm(2, 3))[..., None]
+    spall = smoothstep(0.62, 0.7, n.fbm(6, 4)) * hard
+    height = profile - 0.4 * joint - 0.15 * spall + 0.08 * (n.fbm(24, 4) - 0.5)
+    lip = (smoothstep(0.03, 0.0, f) + smoothstep(0.97, 1.0, f)) * (0.4 + 0.6 * hard)
+    height -= 0.2 * lip
+    stain = smoothstep(0.55, 0.8, n.fbm(40, 3, cells_v=2)) * smoothstep(0.2, 0.6, n.fbm(3, 3))
+    base *= (1.0 - 0.35 * stain - 0.4 * joint - 0.3 * lip)[..., None]
+    lichen = smoothstep(0.6, 0.72, n.fbm(12, 4)) * hard * (1 - joint)
+    base = lerp(base, colour(rgb(0.55, 0.56, 0.42), 0.85 + 0.3 * n.fbm(64, 2)), lichen * 0.5)
+    base = lerp(base, base * np.array([0.9, 0.85, 0.8]), spall[..., None] * 0.5)
+    rough = 0.82 + 0.1 * (1 - hard) - 0.15 * stain
+    ao = cavity_ao(height, 10, 3.0) * (1 - 0.4 * joint)
+    T.save_set(KIT, "CliffStrata", base, height, 10.0, rough, np.zeros_like(rough), ao, orm_scale=2)
+
+
+def sea_normal(size=1024):
+    """Sea_Normal (linear normal): a tiling wave field -- a few dozen wave trains with whole
+    numbers of crests across the tile (so it tiles), steeper toward the wind (+U), plus
+    capillary ripples. The Sea material pans two copies of it."""
+    rng = np.random.default_rng(74)
+    n = Noise(74, size)
+    h = np.zeros((size, size))
+    for _ in range(48):
+        k = rng.uniform(2, 34)
+        ang = rng.normal(0.0, 0.7)
+        kx, ky = int(round(k * math.cos(ang))), int(round(k * math.sin(ang)))
+        if kx == 0 and ky == 0:
+            continue
+        mag = math.hypot(kx, ky)
+        amp = mag ** -1.4
+        ph = rng.uniform(0, 2 * math.pi)
+        x = 2 * math.pi * (kx * n.u + ky * n.v) + ph
+        h += amp * (np.sin(x) - 0.25 * np.cos(2 * x))
+    h = (h - h.min()) / (h.max() - h.min())
+    h += 0.06 * n.fbm(96, 3)
+    T.write(KIT, "Sea_Normal", normal_from_height(h, 18.0), False, normal_map=True)
+    print(f"  Sea_Normal: {size} x {size}")
+
+
+def sea_foam(size=512):
+    """Sea_Foam (sRGB, 4 m a repeat): bubbly foam -- the cell walls of two Voronoi fields
+    and denser patches; A is the foam's coverage (the materials threshold it)."""
+    n = Noise(75, size)
+    f1, f2, _ = n.voronoi(24)
+    walls = smoothstep(0.12, 0.0, f2 - f1)
+    g1, g2, _ = n.voronoi(60)
+    small = smoothstep(0.1, 0.0, g2 - g1)
+    patches = n.fbm(4, 5)
+    cover = np.clip(0.55 * walls + 0.35 * small + 0.9 * (patches - 0.35), 0, 1)
+    base = colour(rgb(0.86, 0.9, 0.9), 0.9 + 0.1 * n.fbm(32, 2))
+    T.write(KIT, "Sea_Foam", base, True, alpha=cover)
+    print(f"  Sea_Foam: {size} x {size}")
+
+
+def puff(size=256):
+    """Puff (sRGB, UV 0-1, clamped): one soft billow for steam and dust sprites -- a round
+    falloff broken up by fbm; A is its density."""
+    n = Noise(76, size)
+    d = np.hypot(n.u - 0.5, n.v - 0.5) * 2.0
+    body = np.clip(1.0 - d, 0, 1) ** 1.3
+    billow = n.fbm(4, 5, gain=0.55)
+    dens = np.clip(body * (0.55 + 0.9 * (billow - 0.3)), 0, 1) * smoothstep(1.0, 0.75, d)
+    base = colour(rgb(1, 1, 1), 0.85 + 0.15 * billow)
+    T.write(KIT, "Puff", base, True, alpha=dens, wrap="clamp")
+    print(f"  Puff: {size} x {size}")
+
+
 SETS = {
     "Brass": brass, "Copper": copper, "Steel": steel, "RivetPanel": rivet_panel, "Grating": grating,
     "Walnut": walnut, "Planks": planks, "StoneBlocks": stone_blocks, "Rock": rock, "Concrete": concrete,
     "Marble": marble, "MarbleFloor": marble_floor, "Leather": leather, "Velvet": velvet, "Canvas": canvas,
     "Glass": glass, "GaugeFace": gauge_face, "Books": books, "LeafPanel": leaf_panel,
     "Grass": terrain_grass, "Dirt": terrain_dirt, "Sand": terrain_sand,
+    "Grime": grime, "Detail": detail_normal, "CliffStrata": cliff_strata, "SeaNormal": sea_normal,
+    "SeaFoam": sea_foam, "Puff": puff,
 }
 
 

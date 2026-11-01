@@ -292,22 +292,72 @@ def signal_mast():
 
 
 def rocks():
-    specs = [("Rock_A", (0.8, 0.6, 0.5), 11), ("Rock_B", (1.6, 1.2, 0.9), 12), ("Rock_C", (2.6, 2.0, 1.4), 13),
-             ("Rock_D", (1.0, 0.9, 1.3), 14), ("Rock_E", (3.5, 2.6, 2.2), 15)]
-    for name, size, seed in specs:
+    """Boulders: sculpted (faceted hull, chipped cells, fracture cracks, rills, softened
+    tops), box-mapped in metres so the Rock material's textures and its moss on the tops
+    line up whatever way they are turned."""
+    specs = [("Rock_A", (0.8, 0.6, 0.5), 11, 3000), ("Rock_B", (1.6, 1.2, 0.9), 12, 5000),
+             ("Rock_C", (2.6, 2.0, 1.4), 13, 7000), ("Rock_D", (1.0, 0.9, 1.3), 14, 4500),
+             ("Rock_E", (3.5, 2.6, 2.2), 15, 9000)]
+    for name, size, seed, tris in specs:
         K.clear()
-        r = K.rock(name, size, seed, detail=5 if size[0] > 2 else 4)
+        r = K.sculpted_rock(name, size, seed, mat="Rock", target_tris=tris)
         K.export(name, [r], D + f"{name}.nmmesh", ground=True, kit=KIT, ao_dist=0.5 * max(size),
                  pivot_note="bottom centre, sunk ~6% into the ground; rotate freely about Y")
 
 
 def cliffs():
-    specs = [("Cliff_A", (9.0, 4.0, 10.0), 21), ("Cliff_B", (7.0, 3.5, 7.0), 22), ("Cliff_C", (12.0, 5.0, 5.0), 23)]
-    for name, size, seed in specs:
+    """Cliff pieces: the same sculpting with bedding -- soft beds weathered back, hard ones
+    lipped, dipping a few degrees, split by joints. The Cliff_Wall pieces have a flat-ish
+    front (-Z) to stand behind the lab facade and along the plaza."""
+    specs = [("Cliff_A", (9.0, 4.0, 10.0), 21, 0.55, 0.8, False, 26000),
+             ("Cliff_B", (7.0, 3.5, 7.0), 22, 0.5, 0.65, False, 20000),
+             ("Cliff_C", (12.0, 5.0, 5.0), 23, 0.45, 0.6, False, 22000),
+             ("Cliff_Wall_A", (16.0, 5.0, 12.0), 24, 0.6, 0.75, True, 36000),
+             ("Cliff_Wall_B", (10.0, 4.5, 14.0), 25, 0.6, 0.9, True, 30000)]
+    for name, size, seed, strata, thick, front, tris in specs:
         K.clear()
-        r = K.rock(name, size, seed, detail=6, sharpness=0.9)
-        K.export(name, [r], D + f"{name}.nmmesh", ground=False, kit=KIT, ao_dist=2.0,
-                 pivot_note="bottom centre; a cliff face piece: overlap them, rotate and sink into the terrain")
+        r = K.sculpted_rock(name, size, seed, mat="Cliff", voxel=min(size) / 40.0, target_tris=tris, facets=30,
+                            fracture=0.7, strata=strata, strata_thick=thick, dip=5.0, flat_front=front,
+                            base_sink=0.03)
+        note = ("bottom centre; a stratified cliff piece: overlap them, rotate and sink into the terrain"
+                if not front else "bottom centre; a cliff wall, its flatter face toward -Z: stand it behind "
+                                  "Facade_Wall / Facade_Arch (their backs run 120-160 cm in) and overlap pieces")
+        K.export(name, [r], D + f"{name}.nmmesh", ground=False, kit=KIT, ao_dist=2.0, pivot_note=note)
+
+
+def sea():
+    """The sea: a 200 m tile, 1.5625 m quads (enough for the Sea material's swell, World
+    Position Offset), chainable; a 4 km far plane for the horizon; and a 20 m foam strip
+    for the shore line (V 0 at the sand, 1 out to sea)."""
+    import bmesh
+    from mathutils import Vector
+
+    def grid(name, half, n, mat, z=0.0):
+        bm = bmesh.new()
+        bmesh.ops.create_grid(bm, x_segments=n, y_segments=n, size=half)
+        for v in bm.verts:
+            v.co.z = z
+        return K.obj_from_bm(name, bm, mat, smooth=False)
+    K.export("Sea_Plane", [grid("Sea", 100.0, 128, "Sea")], D + "Sea_Plane.nmmesh", ao=False, kit=KIT,
+             pivot_note="the water level at the tile's centre; 200 x 200 m, chain every 20000 cm; the Sea "
+                        "material swells it about +-45 cm (Max Offset 60)")
+    K.clear()
+    K.export("Sea_Far", [grid("SeaFar", 2000.0, 16, "Sea", -0.05)], D + "Sea_Far.nmmesh", ao=False, kit=KIT,
+             pivot_note="4 x 4 km, 5 cm under the water level: under and round the Sea_Plane tiles to the horizon")
+    K.clear()
+    bm = bmesh.new()
+    uv = bm.loops.layers.uv.new("UVMap")
+    nx, ny = 20, 6
+    vs = [[bm.verts.new((-10.0 + 20.0 * i / nx, 6.0 * j / ny, 0.02)) for i in range(nx + 1)] for j in range(ny + 1)]
+    for j in range(ny):
+        for i in range(nx):
+            f = bm.faces.new([vs[j][i], vs[j][i + 1], vs[j + 1][i + 1], vs[j + 1][i]])
+            for lp in f.loops:
+                lp[uv].uv = ((lp.vert.co.x + 10.0) / 6.0, lp.vert.co.y / 6.0)
+    strip = K.obj_from_bm("Foam", bm, "SeaFoam", smooth=False, keep_uv=True)
+    K.export("Sea_FoamStrip", [strip], D + "Sea_FoamStrip.nmmesh", ao=False, kit=KIT,
+             pivot_note="the middle of its shore edge, 2 cm over the water; 20 m along X, 6 m out to sea (+Z); "
+                        "lay it along the beach (V runs from the sand out), chain every 2000 cm")
 
 
 def steam_vent():
@@ -324,12 +374,8 @@ def steam_vent():
 
 
 def main():
-    K.reset()
-    for f in (facade_wall, facade_arch, blast_door, dock, gatehouse, road_lamp, guard_rail, fence_post, signal_mast,
-              rocks, cliffs, steam_vent):
-        K.clear()
-        f()
-    K.save_records(KIT)
+    K.run_kit(KIT, [facade_wall, facade_arch, blast_door, dock, gatehouse, road_lamp, guard_rail, fence_post,
+                    signal_mast, rocks, cliffs, sea, steam_vent])
 
 
 main()

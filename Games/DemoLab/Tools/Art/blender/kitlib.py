@@ -698,10 +698,17 @@ def clear():
         bpy.data.meshes.remove(me)
 
 
-def save_records(kit):
+def save_records(kit, merge=False):
+    """Writes this run's records as the kit's manifest; merge: replace only the assets this
+    run wrote (a run of some of the kit's functions), keeping the rest and their order."""
     CACHE.mkdir(parents=True, exist_ok=True)
     path = CACHE / f"manifest_{kit}.json"
-    path.write_text(json.dumps(RECORDS, indent=1))
+    out = RECORDS
+    if merge and path.exists():
+        old = json.loads(path.read_text())
+        mine = {r["name"]: r for r in RECORDS}
+        out = [mine.pop(r["name"], r) for r in old] + list(mine.values())
+    path.write_text(json.dumps(out, indent=1))
     print(f"{kit}: {len(RECORDS)} assets -> {path}")
 
 
@@ -754,3 +761,397 @@ def disc(name, r, loc=(0, 0, 0), mat=None, seg=32, rot=(0, 0, 0)):
 def sphere(name, r, loc=(0, 0, 0), mat=None, seg=32, rings=16, squash=1.0):
     prof = [(r * math.sin(math.pi * i / rings), -r * squash * math.cos(math.pi * i / rings)) for i in range(rings + 1)]
     return lathe(name, prof, loc=loc, mat=mat, seg=seg, sharp=math.radians(80))
+
+
+# ==============================================================================================
+# Detail helpers (second art pass): turned bands, gears, bolts, cables, coils, flanged pipes,
+# open shells, blades and sculpted rock. All metres, Blender frame.
+# ==============================================================================================
+
+def orient(ob, direction, up_axis=(0, 0, 1)):
+    """Turns ob so its local +Z points along direction."""
+    d = Vector(direction).normalized()
+    q = Vector(up_axis).rotation_difference(d)
+    ob.rotation_mode = "QUATERNION"
+    ob.rotation_quaternion = q
+    return ob
+
+
+def group(name, objects, loc=(0, 0, 0), rot=(0, 0, 0)):
+    """Parents objects to a new empty at loc / rot (degrees): their locations become the
+    empty's local frame. Returns the empty."""
+    holder = bpy.data.objects.new(name, None)
+    bpy.context.scene.collection.objects.link(holder)
+    holder.location = loc
+    holder.rotation_euler = [math.radians(a) for a in rot]
+    for ob in objects:
+        ob.parent = holder
+    return holder
+
+
+_PROTO = {}
+
+
+def _proto(key, make):
+    ob = _PROTO.get(key)
+    try:
+        if ob is not None and ob.name in bpy.data.objects:
+            c = dup(ob)
+            c.parent = None
+            c.location = (0, 0, 0)
+            c.rotation_mode = "XYZ"
+            c.rotation_euler = (0, 0, 0)
+            return c
+    except ReferenceError:
+        pass
+    ob = make()
+    _PROTO[key] = ob
+    return ob
+
+
+def bolt(name, head=0.02, mat="SteelDark", washer=True, hex_head=True):
+    """A hex bolt head (with washer) pointing +Z, base at z = 0."""
+    def make():
+        prof = [(0.0, 0.0), (head * 1.25, 0.0), (head * 1.25, head * 0.18)] if washer else [(0.0, 0.0)]
+        prof += [(head, head * 0.2), (head, head * 0.62), (head * 0.82, head * 0.75), (head * 0.4, head * 0.78),
+                 (head * 0.3, head * 1.05), (0.0, head * 1.1)]
+        return lathe(name, prof, mat=mat, seg=6 if hex_head else 10, sharp=math.radians(30))
+    return _proto(("bolt", head, mat, washer, hex_head), make)
+
+
+def rivet(head=0.012, mat="BrassAged"):
+    """A domed rivet head pointing +Z, its base just under z = 0."""
+    return _proto(("rivet", head, mat), lambda: lathe(
+        "Rivet", [(head, -head * 0.2), (head, 0.05 * head), (head * 0.7, head * 0.62), (0.0, head * 0.85)],
+        mat=mat, seg=6, sharp=math.radians(70)))
+
+
+def bolt_circle(name, radius, count, centre=(0, 0, 0), rot=(0, 0, 0), head=0.02, mat="SteelDark", phase=0.0,
+                hex_head=True, washer=True):
+    """count bolts round a circle of radius in a plane (local XY, heads up +Z), the plane
+    placed at centre turned by rot (degrees)."""
+    obs = []
+    for k in range(count):
+        a = 2 * math.pi * (k + phase) / count
+        b = bolt(name, head, mat, washer, hex_head)
+        b.location = (radius * math.cos(a), radius * math.sin(a), 0)
+        b.rotation_euler = (0, 0, a)
+        obs.append(b)
+    group(name + "Ring", obs, centre, rot)
+    return obs
+
+
+def rivets_on_lathe(radius_fn, zs, count, head=0.012, mat="BrassAged", centre=(0, 0, 0), rot=(0, 0, 0), phase=0.0):
+    """Rivets round a surface of revolution about local Z: at each z, count of them at
+    radius_fn(z), pointing out; the frame placed at centre turned by rot (degrees)."""
+    obs = []
+    for z in zs:
+        r = radius_fn(z)
+        for k in range(count):
+            a = 2 * math.pi * (k + phase) / count
+            c = rivet(head, mat)
+            c.location = (r * math.cos(a), r * math.sin(a), z)
+            c.rotation_euler = (0, math.radians(90), a)
+            obs.append(c)
+    group("RivetRing", obs, centre, rot)
+    return obs
+
+
+def rivets_along(points, spacing, normal, head=0.012, mat="BrassAged"):
+    """Rivets every spacing metres along a polyline, all pointing along normal."""
+    pts = [Vector(p) for p in points]
+    obs = []
+    for i in range(len(pts) - 1):
+        a, b = pts[i], pts[i + 1]
+        n = max(1, int((b - a).length / spacing))
+        for k in range(n + (1 if i == len(pts) - 2 else 0)):
+            c = rivet(head, mat)
+            c.location = a.lerp(b, k / n)
+            orient(c, normal)
+            obs.append(c)
+    return obs
+
+
+def band_ring(name, R, width, depth, mat="BrassBrushed", seg=96, lip=0.012, groove=True):
+    """A flat ring about Z (an armillary band): radius R at its middle, width across
+    (radial), depth along Z, rolled lips, a groove round its outer edge."""
+    r0, r1 = R - width / 2, R + width / 2
+    h = depth / 2
+    prof = [(r0, -h + lip), (r0 + lip, -h), (r1 - lip, -h), (r1, -h + lip)]
+    if groove:
+        prof += [(r1, -h * 0.3), (r1 - lip * 0.8, -h * 0.15), (r1 - lip * 0.8, h * 0.15), (r1, h * 0.3)]
+    prof += [(r1, h - lip), (r1 - lip, h), (r0 + lip, h), (r0, h - lip), (r0, -h + lip)]
+    return lathe(name, prof, mat=mat, seg=seg, sharp=math.radians(40))
+
+
+def gear(name, r, teeth, thickness, mat="BrassBrushed", tooth_h=None, hub_r=None, spokes=0, rim=None, bevel=0.003,
+         bore=None):
+    """A spur gear in the XZ plane facing -Y (extruded along +Y from -thickness / 2),
+    centred; spokes > 0 cuts windows between that many spokes inside a rim."""
+    tooth_h = tooth_h or r * 0.12
+    pitch = 2 * math.pi / teeth
+    rr, rt = r - tooth_h * 0.5, r + tooth_h * 0.5
+    outline = []
+    for k in range(teeth):
+        a = k * pitch
+        for (f, rad) in ((0.0, rr), (0.18, rr), (0.32, rt), (0.62, rt), (0.76, rr)):
+            aa = a + f * pitch
+            outline.append((rad * math.cos(aa), rad * math.sin(aa)))
+    holes = []
+    if spokes:
+        rim = rim or r * 0.18
+        hub_r = hub_r or r * 0.22
+        ri, ro = hub_r + 0.02 * r, rr - rim
+        span = 2 * math.pi / spokes
+        sw = 0.22 * span
+        for s in range(spokes):
+            a0, a1 = s * span + sw, (s + 1) * span - sw
+            n = 10
+            hole = [(ri * math.cos(a0 + (a1 - a0) * t / n), ri * math.sin(a0 + (a1 - a0) * t / n)) for t in range(n + 1)]
+            hole += [(ro * math.cos(a1 - (a1 - a0) * t / n), ro * math.sin(a1 - (a1 - a0) * t / n)) for t in range(n + 1)]
+            holes.append(hole)
+    if bore:
+        holes.append([(bore * math.cos(2 * math.pi * t / 16), bore * math.sin(2 * math.pi * t / 16)) for t in range(16)])
+    return prism(name, outline, thickness, (0, 0, 0), mat, bevel=bevel, holes=holes)
+
+
+def cable(name, a, b, sag, r, mat="Rubber", n=16, seg=8):
+    """A cable hanging from a to b, sagging sag metres at its middle."""
+    A, B = Vector(a), Vector(b)
+    pts = [A.lerp(B, t / n) - Vector((0, 0, 4 * sag * (t / n) * (1 - t / n))) for t in range(n + 1)]
+    return sweep(name, pts, r, mat, seg=seg)
+
+
+def helix(name, r, z0, z1, turns, wire, mat="Copper", per_turn=28, seg=8, phase=0.0):
+    """A coil about Z from z0 to z1."""
+    n = max(2, int(turns * per_turn))
+    pts = [(r * math.cos(2 * math.pi * (turns * t / n + phase)), r * math.sin(2 * math.pi * (turns * t / n + phase)),
+            z0 + (z1 - z0) * t / n) for t in range(n + 1)]
+    return sweep(name, pts, wire, mat, seg=seg)
+
+
+def flange(name, r, thick, at, direction, mat="BrassAged", bolts=8, bolt_mat="SteelDark", bolt_head=None):
+    """A pipe flange at at (its face normal along direction) with bolts through it."""
+    head = bolt_head or max(0.01, r * 0.09)
+    obs = [lathe(name, [(0.0, -thick / 2), (r * 0.96, -thick / 2), (r, -thick / 2 + thick * 0.2),
+                        (r, thick / 2 - thick * 0.2), (r * 0.96, thick / 2), (0.0, thick / 2)], mat=mat, seg=32)]
+    for side in (-1, 1):
+        for k in range(bolts):
+            a = 2 * math.pi * (k + 0.5) / bolts
+            bb = bolt(name + "Bolt", head, bolt_mat, washer=False)
+            bb.location = (r * 0.78 * math.cos(a), r * 0.78 * math.sin(a), side * thick / 2)
+            if side < 0:
+                bb.rotation_euler = (math.pi, 0, 0)
+            obs.append(bb)
+    g = group(name + "G", obs, at)
+    orient(g, direction)
+    return obs
+
+
+def pipe_run(name, points, r, mat="Copper", flange_mat="BrassAged", seg=20, flanges=True, joints=True, bolts=8):
+    """A pipe along a polyline, a bolted flange at each end and collars either side of
+    each bend."""
+    obs = [sweep(name, points, r, mat, seg=seg, closed_ends=True)]
+    pts = [Vector(p) for p in points]
+    if flanges:
+        obs += flange(name + "F0", r * 1.45, r * 0.35, pts[0] + (pts[1] - pts[0]).normalized() * r * 0.17,
+                      pts[1] - pts[0], flange_mat, bolts)
+        obs += flange(name + "F1", r * 1.45, r * 0.35, pts[-1] + (pts[-2] - pts[-1]).normalized() * r * 0.17,
+                      pts[-1] - pts[-2], flange_mat, bolts)
+    if joints:
+        for i in range(1, len(pts) - 1):
+            for j in (-1, 1):
+                d = (pts[i + j] - pts[i]).normalized()
+                c = lathe(name + "Collar", [(0.0, -r * 0.18), (r * 1.15, -r * 0.18), (r * 1.2, 0.0),
+                                            (r * 1.15, r * 0.18), (0.0, r * 0.18)], mat=flange_mat, seg=seg)
+                c.location = pts[i] + d * r * 1.6
+                orient(c, d)
+                obs.append(c)
+    return obs
+
+
+def shell_sector(name, profile, a0, a1, thickness, mat=None, seg=48, inner_mat=None):
+    """A thick-walled surface of revolution about Z over angles a0..a1 (degrees): an
+    open casing. profile [(radius, z)] is its outer face; the inner one is thickness in.
+    UV u round it (metres), v along the profile."""
+    bm = bmesh.new()
+    uv = bm.loops.layers.uv.new("UVMap")
+    n = max(2, int(seg * (a1 - a0) / 360.0))
+    angs = [math.radians(a0 + (a1 - a0) * k / n) for k in range(n + 1)]
+    rmax = max(p[0] for p in profile)
+    vs = [0.0]
+    for i in range(1, len(profile)):
+        vs.append(vs[-1] + math.hypot(profile[i][0] - profile[i - 1][0], profile[i][1] - profile[i - 1][1]))
+
+    def grid(off):
+        return [[bm.verts.new(((r - off) * math.cos(a), (r - off) * math.sin(a), z)) for a in angs] for (r, z) in profile]
+    outer, inner = grid(0.0), grid(thickness)
+
+    def face(vs_, uvs):
+        f = bm.faces.new(vs_)
+        for lp, c in zip(f.loops, uvs):
+            lp[uv].uv = c
+    us = [rmax * (a - angs[0]) for a in angs]
+    t = thickness
+    for i in range(len(profile) - 1):
+        for k in range(n):
+            face([outer[i][k], outer[i][k + 1], outer[i + 1][k + 1], outer[i + 1][k]],
+                 [(us[k], vs[i]), (us[k + 1], vs[i]), (us[k + 1], vs[i + 1]), (us[k], vs[i + 1])])
+            face([inner[i][k], inner[i + 1][k], inner[i + 1][k + 1], inner[i][k + 1]],
+                 [(us[k], vs[i]), (us[k], vs[i + 1]), (us[k + 1], vs[i + 1]), (us[k + 1], vs[i])])
+        for k in (0, n):
+            face([outer[i][k], outer[i + 1][k], inner[i + 1][k], inner[i][k]],
+                 [(vs[i], 0), (vs[i + 1], 0), (vs[i + 1], t), (vs[i], t)])
+    for i in (0, len(profile) - 1):
+        for k in range(n):
+            face([outer[i][k], inner[i][k], inner[i][k + 1], outer[i][k + 1]],
+                 [(us[k], 0), (us[k], t), (us[k + 1], t), (us[k + 1], 0)])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    ob = obj_from_bm(name, bm, mat, keep_uv=True, sharp=math.radians(40))
+    if inner_mat:
+        inside = []
+        for p in ob.data.polygons:
+            radial = Vector((p.center.x, p.center.y, 0))
+            if radial.length > 1e-6 and p.normal.dot(radial.normalized()) < -0.5:
+                inside.append(p.index)
+        set_material(ob, inner_mat, inside)
+    return ob
+
+
+def blade(name, length, chord0, chord1, twist0, twist1, thick=0.12, mat="Walnut", n=10, root=0.0, sweep_back=0.0):
+    """A tapered, twisted airfoil blade along +Z from z = root: chord chord0 -> chord1 (along
+    X untwisted), twist degrees about Z, thickness a fraction of the chord, tip rounded."""
+    bm = bmesh.new()
+    m = 12
+    rings = []
+    for i in range(n + 1):
+        t = i / n
+        z = root + length * t
+        c = (chord0 + (chord1 - chord0) * t) * (1.0 - 0.55 * t ** 4)
+        tw = math.radians(twist0 + (twist1 - twist0) * t)
+        ring = []
+        for j in range(m):
+            a = 2 * math.pi * j / m
+            x = 0.5 * c * math.cos(a)
+            y = 0.5 * c * thick * math.sin(a) * (1.0 + 0.35 * math.cos(a))
+            ring.append(bm.verts.new((x * math.cos(tw) - y * math.sin(tw) - sweep_back * t * t,
+                                      x * math.sin(tw) + y * math.cos(tw), z)))
+        rings.append(ring)
+    for i in range(n):
+        for j in range(m):
+            j1 = (j + 1) % m
+            bm.faces.new([rings[i][j], rings[i][j1], rings[i + 1][j1], rings[i + 1][j]])
+    bm.faces.new(rings[0][::-1])
+    bm.faces.new(rings[-1])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    return obj_from_bm(name, bm, mat, sharp=math.radians(60))
+
+
+def strap(name, path, width, thick, mat="BrassAged"):
+    """A flat strap (width x thick) along a polyline."""
+    prof = [(-thick / 2, -width / 2), (thick / 2, -width / 2), (thick / 2, width / 2), (-thick / 2, width / 2)]
+    return sweep(name, path, 0.0, mat, profile=prof)
+
+
+def _mesh_from_eval(ob):
+    dg = bpy.context.evaluated_depsgraph_get()
+    me = bpy.data.meshes.new_from_object(ob.evaluated_get(dg))
+    old = ob.data
+    ob.modifiers.clear()
+    ob.data = me
+    bpy.data.meshes.remove(old)
+    return ob
+
+
+def sculpted_rock(name, size, seed, mat="Rock", voxel=None, target_tris=9000, facets=24, fracture=1.0,
+                  erosion=1.0, strata=0.0, strata_thick=0.7, dip=4.0, flat_front=False, base_sink=0.06):
+    """A sculpted-looking rock: the convex hull of random points pushed toward a block (big
+    planar facets), voxel remeshed, then displaced along its normals: chipped facets (each
+    Voronoi cell a step of its own), fracture cracks between cells, lumps, rills down its
+    sides and softened tops (erosion), and -- strata > 0 -- bedding: soft beds weathered
+    back, hard ones keeping a lip, dipping dip degrees, split by vertical joints.
+    Decimated to about target_tris; pivot bottom centre, sunk base_sink into the ground."""
+    import random
+    from mathutils import noise
+    rnd = random.Random(seed)
+    sx, sy, sz = size
+    bm = bmesh.new()
+    for _ in range(facets * 4):
+        d = Vector((rnd.gauss(0, 1), rnd.gauss(0, 1), rnd.gauss(0, 1)))
+        d.normalize()
+        k = rnd.uniform(0.82, 1.0)
+        d = Vector([math.copysign(abs(c) ** 0.6, c) for c in d])
+        if flat_front:
+            d.y = max(d.y, -0.8)
+        bm.verts.new((d.x * sx / 2 * k, d.y * sy / 2 * k, d.z * sz / 2 * k))
+    res = bmesh.ops.convex_hull(bm, input=list(bm.verts))
+    for g in list(res.get("geom_interior", [])) + list(res.get("geom_unused", [])):
+        if isinstance(g, bmesh.types.BMVert) and g.is_valid:
+            bm.verts.remove(g)
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    ob = bpy.data.objects.new(name, me)
+    bpy.context.scene.collection.objects.link(ob)
+    mod = ob.modifiers.new("Remesh", "REMESH")
+    mod.mode = "VOXEL"
+    mod.voxel_size = voxel or max(min(size) / 28.0, 0.025)
+    _mesh_from_eval(ob)
+    me = ob.data
+    off = Vector((rnd.uniform(-90, 90), rnd.uniform(-90, 90), rnd.uniform(-90, 90)))
+    scale = max(size)
+    cells = [rnd.random() for _ in range(4096)]
+    bed_hard = [rnd.random() for _ in range(256)]
+    tan_dip = math.tan(math.radians(dip))
+    co = [v.co.copy() for v in me.vertices]
+    nrm = [v.normal.copy() for v in me.vertices]
+    for i, (p, n) in enumerate(zip(co, nrm)):
+        q = p / scale * 3.0 + off
+        up = max(0.0, n.z)
+        side = 1.0 - abs(n.z)
+        dist, pts = noise.voronoi(q * 1.6, distance_metric="DISTANCE")
+        cid = int(abs(pts[0].x * 73.1 + pts[0].y * 19.7 + pts[0].z * 41.3) * 10) % 4096
+        chip = (cells[cid] - 0.5) * 0.045 * scale * fracture
+        crack = max(0.0, 1.0 - (dist[1] - dist[0]) / 0.06) * 0.025 * scale * fracture
+        lumps = noise.fractal(q * 0.9, 0.7, 2.0, 4) * 0.05 * scale
+        fine = noise.fractal(q * 6.0, 0.6, 2.1, 3) * 0.008 * scale
+        rill = -abs(noise.noise(Vector((q.x * 3.5, q.y * 3.5, q.z * 0.35)))) * 0.02 * scale * side * erosion
+        d = lumps + chip * (1.0 - 0.6 * up * erosion) - crack + fine * (1.0 - 0.7 * up * erosion) + rill
+        if strata > 0:
+            zt = p.z + p.x * tan_dip + noise.noise(Vector((p.x, p.y, 0)) * 0.15 + off) * 0.6
+            u = zt / strata_thick
+            bed = int(math.floor(u)) % 256
+            f = u - math.floor(u)
+            hard = bed_hard[bed] > 0.45
+            prof = -0.15 * (1.0 - f) ** 3 if hard else 0.35 * math.sin(math.pi * f)
+            jd, _ = noise.voronoi(Vector((p.x * 0.35, p.y * 0.35, bed * 3.7)) + off, distance_metric="DISTANCE")
+            joint = max(0.0, 1.0 - (jd[1] - jd[0]) / 0.08)
+            d += (-prof - joint * 0.4 + (bed_hard[bed] - 0.5) * 0.3) * strata * side
+        me.vertices[i].co = p + n * d
+    zmin = min(v.co.z for v in me.vertices)
+    for v in me.vertices:
+        if v.co.z < zmin + sz * 0.12:
+            v.co.z = zmin + sz * 0.12 + (v.co.z - zmin - sz * 0.12) * 0.3
+    zmin = min(v.co.z for v in me.vertices)
+    for v in me.vertices:
+        v.co.z -= zmin + sz * base_sink
+    me.update()
+    tris = sum(len(p.vertices) - 2 for p in me.polygons)
+    if tris > target_tris:
+        dec = ob.modifiers.new("Decimate", "DECIMATE")
+        dec.decimate_type = "COLLAPSE"
+        dec.ratio = target_tris / tris
+        _mesh_from_eval(ob)
+    return _finish(ob, mat, True, math.radians(55))
+
+
+def run_kit(kit, functions):
+    """Runs a kit script's functions -- all of them, or those named after "--" on the
+    command line (blender ... --python make_l1.py -- rocks sea) -- and saves the manifest."""
+    argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    chosen = [f for f in functions if not argv or f.__name__ in argv]
+    reset()
+    for f in chosen:
+        clear()
+        f()
+    save_records(kit, merge=bool(argv))

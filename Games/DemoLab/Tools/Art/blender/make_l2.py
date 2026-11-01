@@ -168,55 +168,170 @@ def dome_segment():
 
 
 def orrery():
-    """The atrium's brass orrery, 6.5 m tall: a walnut and brass pedestal, a gimbal of
-    three rings (each turns on its own axis), a glowing sun and three planets on arms."""
+    """The atrium's brass orrery, 6.5 m tall: an octagonal walnut plinth with a brass
+    compass rose, a fluted brass column on four scrolled struts, a riveted yoke with bearing
+    housings, a gimbal of three graduated hoops (each turns on its own pins), a glowing sun
+    in a brass cage on a spindle, and four planets on jointed arms driven by a spoked crown
+    gear and a pinion."""
+    import bpy
+    from mathutils import Vector
     C = 4.0     # the gimbal's centre height
-    base = [K.lathe("Pedestal", [(0, 0), (1.6, 0), (1.6, 0.3), (1.3, 0.4), (0.7, 0.6), (0.45, 1.6), (0.6, 1.8),
-                                 (0.25, 2.0), (0.18, 2.6), (0.0, 2.6)], mat="BrassAged", seg=48)]
-    base.append(K.lathe("Plinth", [(0, 0), (1.9, 0), (1.9, 0.25), (0, 0.25)], mat="Walnut", seg=8))
-    base[-1].rotation_euler = (0, 0, math.radians(22.5))
+    base = []
+    plinth = K.lathe("Plinth", [(0, 0), (2.0, 0), (2.0, 0.08), (1.96, 0.1), (1.96, 0.22), (2.0, 0.24), (2.0, 0.28),
+                                (1.9, 0.33), (1.88, 0.35), (0, 0.35)], mat="Walnut", seg=8, sharp=math.radians(30))
+    plinth.rotation_euler = (0, 0, math.radians(22.5))
+    base.append(plinth)
+    kick = K.lathe("Kick", [(2.005, 0.015), (2.012, 0.02), (2.012, 0.075), (2.005, 0.08)], mat="BrassAged", seg=8)
+    kick.rotation_euler = (0, 0, math.radians(22.5))
+    base.append(kick)
+    base.append(K.lathe("Inlay", [(0, 0.35), (1.62, 0.35), (1.62, 0.358), (0, 0.358)], mat="MarbleFloor", seg=48))
+    base.append(K.place(K.torus("InlayRim", 1.63, 0.015, mat="BrassBrushed", seg=96, rseg=6), (0, 0, 0.358)))
+    for k in range(8):                                     # compass rose: long and short points
+        L = 1.55 if k % 2 == 0 else 1.05
+        star = K.prism("Rose", [(-0.09, 0), (0, L), (0.09, 0), (0, -0.05)], 0.008, (0, 0, 0), "BrassBrushed",
+                       bevel=0.0)
+        star.rotation_euler = (math.radians(90), 0, math.radians(45 * k))
+        star.location = (0, 0, 0.362)
+        base.append(star)
+    base += K.rivets_on_lathe(lambda z: 1.99, [0.16], 32, head=0.014, mat="BrassAged")
+    # Fluted column.
+    col = K.lathe("Column", [(0, 0.35), (1.0, 0.35), (1.0, 0.45), (0.92, 0.5), (0.7, 0.58), (0.62, 0.66),
+                             (0.66, 0.7), (0.66, 0.76), (0.5, 0.84), (0.42, 0.95), (0.36, 2.2), (0.42, 2.25),
+                             (0.42, 2.32), (0.55, 2.4), (0.6, 2.48), (0.6, 2.55), (0.3, 2.6), (0, 2.6)],
+                  mat="BrassAged", seg=96, sharp=math.radians(30))
+    for v in col.data.vertices:
+        if 0.97 < v.co.z < 2.18:
+            a = math.atan2(v.co.y, v.co.x)
+            t = min(1.0, (v.co.z - 0.97) / 0.06, (2.18 - v.co.z) / 0.06)
+            flute = max(0.0, math.cos(16 * a)) ** 2
+            s = 1.0 - 0.055 * flute * t
+            v.co.x *= s
+            v.co.y *= s
+    base.append(col)
+    for z, r in ((0.95, 0.43), (2.2, 0.37), (0.66, 0.665)):
+        base.append(K.place(K.torus("Astragal", r, 0.025, mat="BrassBrushed", seg=96, rseg=8), (0, 0, z)))
+    # Four scrolled struts.
     for k in range(4):
         a = math.radians(90 * k + 45)
-        base.append(K.sweep("Strut", [(1.3 * math.cos(a), 1.3 * math.sin(a), 0.4), (0.3 * math.cos(a),
-                                       0.3 * math.sin(a), 2.0)], 0.06, "BrassBrushed", seg=10))
-    # Yoke holding the outer ring on an axis along X.
-    base.append(K.sweep("Yoke", [(-3.15, 0, C), (-3.15, 0, 2.3), (0, 0, 2.3), (3.15, 0, 2.3), (3.15, 0, C)], 0.09,
-                        "BrassBrushed", seg=12))
-    base.append(K.sphere("Sun", 0.55, (0, 0, C), "LampGlow", seg=32, rings=16))
-    # Gantry ladder up the pedestal to the roof hatch (the player climbs it).
-    for z in [0.4 + 0.35 * i for i in range(7)]:
-        base.append(K.sweep("Rung", [(1.0, -0.25, z), (1.0, 0.25, z)], 0.02, "SteelDark", seg=6))
-    for y in (-0.25, 0.25):
-        base.append(K.sweep("Stile", [(1.0, y, 0.3), (1.0, y, 2.9)], 0.03, "SteelDark", seg=6))
+        ca, sa = math.cos(a), math.sin(a)
+        pts = [(1.55 * ca, 1.55 * sa, 0.37), (1.5 * ca, 1.5 * sa, 0.7), (1.05 * ca, 1.05 * sa, 1.25),
+               (0.6 * ca, 0.6 * sa, 1.55), (0.38 * ca, 0.38 * sa, 1.75)]
+        base.append(K.sweep("Strut", pts, 0.05, "BrassBrushed", seg=14))
+        base.append(K.sphere("Finial", 0.08, (1.55 * ca, 1.55 * sa, 0.43), "BrassAged", seg=16, rings=8))
+    # Yoke: a riveted channel carrying the outer ring's pins in bearing housings.
+    yoke = [(-3.15, 0, C - 0.2), (-3.15, 0, 2.5), (-2.8, 0, 2.3), (2.8, 0, 2.3), (3.15, 0, 2.5), (3.15, 0, C - 0.2)]
+    base.append(K.strap("Yoke", yoke, 0.2, 0.09, "BrassBrushed"))
+    for y in (-0.046, 0.046):
+        base += K.rivets_along([(p[0], y, p[2]) for p in yoke[1:-1]], 0.25, (0, math.copysign(1, y), 0), head=0.012)
+    for x in (-3.15, 3.15):
+        hb = K.lathe("Bearing", [(0, -0.14), (0.15, -0.14), (0.17, -0.1), (0.17, 0.1), (0.15, 0.14), (0, 0.14)],
+                     mat="BrassAged", seg=32)
+        hb.rotation_euler = (0, math.radians(90), 0)
+        hb.location = (x, 0, C)
+        base.append(hb)
+        base += K.bolt_circle("BearingBolt", 0.12, 6, (x + math.copysign(0.142, x), 0, C),
+                              (0, math.copysign(90, x), 0), head=0.016)
+        base.append(K.strap("Cheek", [(x, 0, C - 0.25), (x, 0, C - 0.12)], 0.22, 0.12, "BrassBrushed"))
+        sg = math.copysign(1, x)
+        arc = [(x - sg * 0.55 + sg * 0.55 * math.sin(t * math.pi / 8), 0, 2.85 - 0.55 * math.cos(t * math.pi / 8))
+               for t in range(5)]
+        base.append(K.strap("Scroll", arc, 0.07, 0.04, "BrassAged"))
+    base.append(K.lathe("Saddle", [(0, 2.2), (0.48, 2.2), (0.5, 2.25), (0.5, 2.38), (0.46, 2.42), (0, 2.42)],
+                        mat="BrassBrushed", seg=48))
+    # Spindle, sun and its cage.
+    base.append(K.cyl("Spindle", 0.07, 0.95, (0, 0, 3.05), "SteelBrushed", seg=24))
+    base.append(K.sphere("Sun", 0.55, (0, 0, C), "LampGlow", seg=48, rings=24))
+    cage = []
+    for k in range(3):
+        cage.append(K.place(K.torus("Cage", 0.64, 0.014, mat="BrassBrushed", seg=64, rseg=6), (0, 0, C),
+                            (90, 0, 60 * k)))
+    cage.append(K.place(K.torus("Equator", 0.64, 0.02, mat="BrassAged", seg=64, rseg=8), (0, 0, C)))
+    base += cage
+    base.append(K.lathe("SunCup", [(0, C - 0.66), (0.08, C - 0.66), (0.2, C - 0.6), (0.24, C - 0.52),
+                                   (0.22, C - 0.5), (0.0, C - 0.56)], mat="BrassAged", seg=32))
+    # Pinion meshing with the planets' crown gear, on a bracket off the column top.
+    pin = K.gear("Pinion", 0.2, 14, 0.08, "BrassAged", bore=0.03)
+    pin.rotation_euler = (math.radians(90), 0, 0)
+    pin.location = (0.79, 0, C - 0.75)
+    base.append(pin)
+    base.append(K.cyl("PinionShaft", 0.03, 0.85, (0.79, 0, C - 1.15), "SteelBrushed", seg=12))
+    base.append(K.strap("PinionArm", [(0.3, 0, 2.52), (0.79, 0, 2.52)], 0.08, 0.06, "BrassBrushed"))
+    base.append(K.cyl("PinionBoss", 0.06, 0.1, (0.79, 0, 2.52), "BrassAged", seg=16))
+    # Gantry ladder up the plinth to the column (the player climbs it), on stand-offs.
+    for z in [0.45 + 0.3 * i for i in range(9)]:
+        base.append(K.sweep("Rung", [(1.05, -0.24, z), (1.05, 0.24, z)], 0.018, "SteelDark", seg=8))
+    for y in (-0.26, 0.26):
+        base.append(K.sweep("Stile", [(1.05, y, 0.35), (1.05, y, 3.1), (0.95, y, 3.35)], 0.028, "SteelDark", seg=8))
+        for z in (1.0, 2.0, 2.9):
+            base.append(K.sweep("Standoff", [(1.05, y, z), (0.5 if z < 2.5 else 0.62, y * 0.5, z)], 0.02,
+                                "SteelDark", seg=6))
     rings = []
-    import bpy
     for name, R, axis_rot in (("RingOuter", 3.0, (90, 0, 0)), ("RingMiddle", 2.5, (90, 0, 90)),
                               ("RingInner", 2.0, (55, 0, 30))):
-        r = [K.torus(name, R, 0.07, mat="BrassBrushed", seg=96, rseg=12)]
-        r.append(K.torus(name + "Inlay", R, 0.075, mat="Walnut", seg=96, rseg=4))
-        r[-1].scale = (1, 1, 0.35)
-        for k in range(12):
-            a = 2 * math.pi * k / 12
-            r.append(K.box("Tick", (0.05, 0.22, 0.05), (R * math.cos(a), R * math.sin(a), 0.0), "BrassAged", 0.01,
-                           rot=(0, 0, math.degrees(a))))
-        # Pivot pins on the ring's own axis.
+        hoop = K.lathe(name, [(R - 0.035, -0.08), (R - 0.01, -0.085), (R + 0.005, -0.085), (R + 0.014, -0.075),
+                              (R + 0.014, -0.058), (R + 0.004, -0.052), (R + 0.004, 0.052), (R + 0.014, 0.058),
+                              (R + 0.014, 0.075), (R + 0.005, 0.085), (R - 0.01, 0.085), (R - 0.035, 0.08),
+                              (R - 0.035, -0.08)], mat="BrassBrushed", seg=160, sharp=math.radians(40))
+        r = [hoop]
+        r.append(K.lathe(name + "Inlay", [(R + 0.005, -0.022), (R + 0.007, -0.02), (R + 0.007, 0.02),
+                                          (R + 0.005, 0.022)], mat="Walnut", seg=160))
+        for k in range(72):
+            a = 2 * math.pi * k / 72
+            major = k % 6 == 0
+            t = K.box("Tick", (0.006, 0.01, 0.045 if major else 0.022), (0, 0, 0), "BrassAged", 0.0)
+            t.location = ((R + 0.007) * math.cos(a), (R + 0.007) * math.sin(a), 0.026 if major else 0.037)
+            t.rotation_euler = (0, 0, a)
+            r.append(t)
+        for k in range(4):                                  # rivet plates where the hoop was joined
+            a = 2 * math.pi * k / 4 + math.pi / 4
+            pl = K.box("Splice", (0.012, 0.16, 0.15), ((R + 0.012) * math.cos(a), (R + 0.012) * math.sin(a), 0),
+                       "BrassAged", 0.004, rot=(0, 0, math.degrees(a)))
+            r.append(pl)
+            for dz in (-0.045, 0.045):
+                for dt in (-0.05, 0.05):
+                    rv = K.rivet(0.01, "BrassAged")
+                    rv.location = ((R + 0.018) * math.cos(a) - dt * math.sin(a), (R + 0.018) * math.sin(a) + dt * math.cos(a), dz)
+                    rv.rotation_euler = (0, math.radians(90), a)
+                    r.append(rv)
         for s in (-1, 1):
-            r.append(K.place(K.cyl("Pin", 0.06, 0.25, mat="SteelDark", seg=12), (s * (R + 0.12), 0, 0), (0, 90, 0)))
-        # Turned as a whole about the gimbal's centre (an empty parent).
+            r.append(K.place(K.cyl("Pin", 0.055, 0.25, mat="SteelBrushed", seg=16), (s * (R + 0.12), 0, 0), (0, 90, 0)))
+            r.append(K.place(K.cyl("Boss", 0.09, 0.06, mat="BrassAged", seg=24), (s * (R + 0.03), 0, 0), (0, 90, 0)))
         holder = bpy.data.objects.new(name + "Holder", None)
         bpy.context.scene.collection.objects.link(holder)
         holder.location = (0, 0, C)
         holder.rotation_euler = [math.radians(a) for a in axis_rot]
         for ob in r:
-            ob.parent = holder
+            if ob.parent is None:
+                ob.parent = holder
         rings.append((name, r, axis_rot))
     planets = []
-    for k, (rad, size, mat) in enumerate(((1.2, 0.18, "Copper"), (1.6, 0.25, "Marble"), (1.85, 0.16, "Enamel"))):
-        a = math.radians(120 * k)
-        planets.append(K.sweep("Arm", [(0, 0, C - 0.6), (rad * math.cos(a), rad * math.sin(a), C - 0.6),
-                                       (rad * math.cos(a), rad * math.sin(a), C - 0.1)], 0.025, "BrassAged", seg=8))
-        planets.append(K.sphere("Planet", size, (rad * math.cos(a), rad * math.sin(a), C), mat, seg=24, rings=12))
-    planets.append(K.place(K.cyl("Collar", 0.2, 0.25, mat="BrassBrushed", seg=24), (0, 0, C - 0.6)))
+    crown = K.gear("Crown", 0.55, 44, 0.06, "BrassBrushed", spokes=5, hub_r=0.14)
+    crown.rotation_euler = (math.radians(90), 0, 0)
+    crown.location = (0, 0, C - 0.75)
+    planets.append(crown)
+    planets.append(K.lathe("Collar", [(0.075, C - 0.82), (0.2, C - 0.82), (0.22, C - 0.78), (0.22, C - 0.5),
+                                      (0.18, C - 0.46), (0.075, C - 0.46)], mat="BrassAged", seg=32))
+    specs = ((1.05, 0.17, "Copper", 0), (1.4, 0.24, "Marble", 1), (1.72, 0.15, "Enamel", 2), (0.75, 0.1, "SteelBrushed", 3))
+    for rad, size, mat, k in specs:
+        a = math.radians(95 * k + 10)
+        ca, sa = math.cos(a), math.sin(a)
+        zarm = C - 0.55 - 0.06 * k
+        arm = [(0.2 * ca, 0.2 * sa, zarm), (rad * ca, rad * sa, zarm), (rad * ca, rad * sa, C - size - 0.03)]
+        planets.append(K.strap("Arm", arm[:2], 0.05, 0.025, "BrassAged"))
+        planets.append(K.sweep("Post", arm[1:], 0.014, "BrassBrushed", seg=8))
+        planets.append(K.sphere("Knuckle", 0.03, arm[1], "BrassAged", seg=12, rings=6))
+        planets.append(K.sphere("Planet", size, (rad * ca, rad * sa, C), mat, seg=40, rings=20))
+        if k == 1:
+            sat = K.band_ring("Rings", size * 1.65, size * 0.7, 0.008, "BrassBrushed", seg=64, lip=0.002, groove=False)
+            sat.location = (rad * ca, rad * sa, C)
+            sat.rotation_euler = (math.radians(24), math.radians(10), 0)
+            planets.append(sat)
+        if k == 0:
+            planets.append(K.sweep("MoonArm", [(rad * ca, rad * sa, C + size), (rad * ca, rad * sa, C + size + 0.06),
+                                               (rad * ca + 0.3 * sa, rad * sa - 0.3 * ca, C + size + 0.06)], 0.008,
+                                   "BrassBrushed", seg=6))
+            planets.append(K.sphere("Moon", 0.05, (rad * ca + 0.3 * sa, rad * sa - 0.3 * ca, C + size + 0.06),
+                                    "Marble", seg=16, rings=8))
     parts = []
     for (name, r, axis_rot) in rings:
         ax = {"RingOuter": (1, 0, 0), "RingMiddle": (0, 1, 0), "RingInner": (0, 0, 1)}[name]
@@ -225,7 +340,8 @@ def orrery():
                "RingInner": "tilted 55 degrees; spins in its own plane inside Middle"}[name]
         parts.append(K.part(name, r, D + f"Orrery_{name}.nmmesh", (0, 0, C), moves=how, axis=ax, kit=KIT))
     parts.append(K.part("Planets", planets, D + "Orrery_Planets.nmmesh", (0, 0, C),
-                        moves="spins about Y (up) round the sun, slowly", axis=(0, 0, 1), kit=KIT))
+                        moves="spins about Y (up) round the sun, slowly (the crown gear under it turns with it; "
+                              "the pinion on the column is static)", axis=(0, 0, 1), kit=KIT))
     K.export("Orrery", base, D + "Orrery.nmmesh", ground=True, kit=KIT, parts=parts, ao_dist=1.0,
              pivot_note="bottom centre of the plinth; the gimbal's centre (every part's pivot) is 400 cm up; the "
                         "Sun is LampGlow (put a point light at its centre); a ladder on the +X side",
@@ -261,13 +377,44 @@ def workbench():
 
 
 def pedestal():
-    o = [K.box_minmax("Base", (-0.3, -0.3, 0), (0.3, 0.3, 0.1), "Walnut", 0.015)]
-    o.append(K.box_minmax("Shaft", (-0.22, -0.22, 0.1), (0.22, 0.22, 0.85), "Walnut", 0.015))
-    o.append(K.box_minmax("Top", (-0.3, -0.3, 0.85), (0.3, 0.3, 0.92), "Marble", 0.012))
-    o.append(K.box_minmax("Label", (-0.12, -0.232, 0.62), (0.12, -0.22, 0.7), "BrassAged", 0.003))
-    o.append(K.box_minmax("Band", (-0.225, -0.225, 0.12), (0.225, 0.225, 0.16), "BrassAged", 0.004))
+    """A museum exhibit plinth: a stepped walnut base on a brass kick plate, a body with
+    raised and fielded panels and brass corner guards, a moulded cornice, a marble slab and a
+    velvet display mat, and an angled brass label plate on a bracket at the front."""
+    o = [K.box_minmax("KickPlate", (-0.33, -0.33, 0.0), (0.33, 0.33, 0.025), "BrassAged", 0.004)]
+    o.append(K.box_minmax("Base", (-0.32, -0.32, 0.025), (0.32, 0.32, 0.085), "Walnut", 0.012))
+    o.append(K.box_minmax("BaseStep", (-0.29, -0.29, 0.085), (0.29, 0.29, 0.11), "Walnut", 0.008))
+    o.append(K.box_minmax("Body", (-0.25, -0.25, 0.11), (0.25, 0.25, 0.8), "Walnut", 0.006))
+    for (ax, s) in (("y", -1), ("y", 1), ("x", -1), ("x", 1)):
+        if ax == "y":
+            o.append(K.box_minmax("Field", (-0.18, s * 0.25 - 0.012, 0.19), (0.18, s * 0.25 + 0.012, 0.72), "Walnut", 0.01))
+            o.append(K.box_minmax("Bead", (-0.205, s * 0.25 - 0.006, 0.165), (0.205, s * 0.25 + 0.006, 0.745),
+                                  "Walnut", 0.003))
+        else:
+            o.append(K.box_minmax("Field", (s * 0.25 - 0.012, -0.18, 0.19), (s * 0.25 + 0.012, 0.18, 0.72), "Walnut", 0.01))
+            o.append(K.box_minmax("Bead", (s * 0.25 - 0.006, -0.205, 0.165), (s * 0.25 + 0.006, 0.205, 0.745),
+                                  "Walnut", 0.003))
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            o.append(K.box("Guard", (0.035, 0.035, 0.67), (sx * 0.252, sy * 0.252, 0.455), "BrassBrushed", 0.006))
+            o.append(K.sphere("GuardCap", 0.014, (sx * 0.27, sy * 0.27, 0.8), "BrassAged", 12, 6))
+    o.append(K.box_minmax("CorniceCove", (-0.27, -0.27, 0.8), (0.27, 0.27, 0.83), "Walnut", 0.01))
+    o.append(K.box_minmax("Cornice", (-0.305, -0.305, 0.83), (0.305, 0.305, 0.865), "Walnut", 0.012))
+    o.append(K.box_minmax("Slab", (-0.295, -0.295, 0.865), (0.295, 0.295, 0.9), "Marble", 0.008))
+    o.append(K.box_minmax("Mat", (-0.21, -0.21, 0.9), (0.21, 0.21, 0.92), "Velvet", 0.008))
+    o.append(K.box_minmax("MatPiping", (-0.215, -0.215, 0.9), (0.215, 0.215, 0.906), "BrassAged", 0.002))
+    plate = [K.box("Plate", (0.2, 0.008, 0.08), (0, 0, 0), "BrassBrushed", 0.003),
+             K.box("Engraving", (0.16, 0.004, 0.045), (0, -0.005, 0.0), "PaintBlack", 0.0)]
+    for x in (-0.085, 0.085):
+        r = K.rivet(0.005, "BrassAged")
+        r.location = (x, -0.004, 0.028)
+        r.rotation_euler = (math.radians(90), 0, 0)
+        plate.append(r)
+    K.group("PlateG", plate, (0, -0.33, 0.78), (-35, 0, 0))
+    o += plate
+    o.append(K.box_minmax("PlateBracket", (-0.02, -0.33, 0.745), (0.02, -0.25, 0.765), "BrassAged", 0.004))
     K.export("SamplePedestal", o, D + "SamplePedestal.nmmesh", ground=True, kit=KIT,
-             pivot_note="bottom centre; a sample sits on its top at y = 92 cm; brass label on its -Z face")
+             pivot_note="bottom centre; a sample sits on its velvet mat at y = 92 cm; an angled brass label plate "
+                        "on its -Z face at 78 cm")
 
 
 def samples():
@@ -407,54 +554,148 @@ def bookshelf():
 
 
 def turbine():
-    """A steam turbine, 4.6 m long on its axis (X): a riveted casing split at the middle, an
-    open window on the rotor, brass bands, an inlet and exhaust; the rotor is separate."""
+    """A steam turbine, 4.8 m on its axis (X): a riveted green casing between flared inlet
+    and exhaust bells, cut open front-top behind a brass-framed glass window so the rotor
+    (separate: five rows of twisted blades on bolted discs, shrouded, and the flywheel)
+    shows as it spins; bearing pedestals with oil cups, a fly-ball governor on the exhaust
+    bell (separate, it spins), a valved inlet and a gauge."""
+    import bpy
     o = []
     o.append(K.box_minmax("Bed", (-2.4, -1.1, 0), (2.4, 1.1, 0.4), "SteelDark", 0.03))
-    case = K.lathe("Casing", [(0.0, -2.0), (0.6, -2.0), (1.1, -1.6), (1.15, 1.4), (0.8, 1.9), (0.0, 1.9)],
-                   mat="PanelGreen", seg=48)
-    case.rotation_euler = (0, math.radians(90), 0)
-    case.location = (0, 0, 1.6)
-    o.append(case)
-    for x in (-1.5, -0.6, 0.6, 1.3):
-        o.append(K.place(K.torus("Band", 1.17, 0.04, mat="BrassAged", seg=64, rseg=8), (x, 0, 1.6), (0, 90, 0)))
-    o.append(K.box_minmax("Flange", (-1.6, -1.25, 1.55), (1.4, 1.25, 1.65), "SteelDark", 0.02))
-    for x in [-1.4 + 0.2 * i for i in range(14)]:
-        for y in (-1.2, 1.2):
-            o.append(K.cyl("Bolt", 0.03, 0.06, (x, y, 1.68), "BrassAged", seg=8))
-    for x in (-1.6, 1.6):
-        o.append(K.box_minmax("Foot", (x - 0.3, -0.9, 0.4), (x + 0.3, 0.9, 0.9), "SteelDark", 0.02))
-    o.append(K.sweep("Inlet", [(-1.0, 0, 2.7), (-1.0, 0, 3.6), (-1.0, 0.8, 4.2), (-1.0, 2.0, 4.2)], 0.25, "Copper", seg=20))
-    o.append(K.place(K.cyl("InletFlange", 0.36, 0.08, mat="BrassAged", seg=24), (-1.0, 0, 2.72)))
-    o.append(K.sweep("Exhaust", [(1.0, 0, 2.7), (1.0, 0, 3.2), (1.0, -1.5, 3.2), (1.0, -1.5, 0.4)], 0.32, "Copper",
-                     seg=20))
-    o.append(K.place(K.cyl("Gauge", 0.14, 0.08, mat="BrassAged", seg=24), (0.0, -1.18, 2.4), (90, 0, 0)))
-    o.append(K.disc("GaugeFace", 0.12, (0.0, -1.225, 2.4), "GaugeFace", seg=32))
-    # Shaft ends and a flywheel at the +X end.
-    o.append(K.place(K.cyl("Bearing", 0.25, 0.4, mat="BrassBrushed", seg=24), (2.2, 0, 1.6), (0, 90, 0)))
+    o.append(K.box_minmax("BedLip", (-2.46, -1.16, 0), (2.46, 1.16, 0.08), "SteelDark", 0.015))
+    for y in (-1.02, 1.02):
+        for x in [-2.2 + 0.55 * i for i in range(9)]:
+            b = K.bolt("Anchor", 0.03, "SteelDark")
+            b.location = (x, y, 0.4)
+            o.append(b)
+    Z = 1.6
+
+    def about_x(ob):
+        ob.rotation_euler = (0, math.radians(90), 0)
+        ob.location = (0, 0, Z)
+        return ob
+    o.append(about_x(K.lathe("InletBell", [(0.0, -2.0), (0.62, -2.0), (0.68, -1.95), (1.05, -1.7), (1.2, -1.5),
+                                            (1.2, -1.45), (1.15, -1.45)], mat="PanelGreen", seg=64)))
+    o.append(about_x(K.lathe("ExhaustBell", [(1.15, 1.25), (1.2, 1.25), (1.2, 1.32), (1.1, 1.55), (0.85, 1.85),
+                                              (0.8, 1.9), (0.0, 1.9)], mat="PanelGreen", seg=64)))
+    # The open middle: a 250-degree shell; the window faces front and up (-Y, +Z).
+    a0, a1 = 325.0, 575.0          # open 215-325 degrees: the window faces -Y, the pipes stay on top
+    for a in (225.0, 315.0):       # inspection lamps inside the window's edges light the rotor
+        ar = math.radians(a)
+        o.append(K.sweep("InspectionLamp", [(-1.35, 1.0 * math.sin(ar), Z - 1.0 * math.cos(ar)),
+                                             (1.15, 1.0 * math.sin(ar), Z - 1.0 * math.cos(ar))], 0.025, "LampGlow",
+                         seg=8))
+    o.append(about_x(K.shell_sector("Casing", [(1.15, -1.45), (1.15, 1.25)], a0, a1, 0.06, "PanelGreen", seg=72,
+                                    inner_mat="SteelDark")))
+    o.append(about_x(K.shell_sector("Pane", [(1.13, -1.45), (1.13, 1.25)], a1 - 360.0, a0, 0.012, "GlassClear",
+                                    seg=72)))
+    for x in (-1.47, 1.27):                                # rolled bands at the joints
+        o.append(K.place(K.torus("Band", 1.2, 0.05, mat="BrassAged", seg=96, rseg=10), (x, 0, Z), (0, 90, 0)))
+        o += K.rivets_on_lathe(lambda z: 1.21, [0.0], 40, head=0.014, mat="BrassAged",
+                               centre=(x + (0.07 if x < 0 else -0.07), 0, Z), rot=(0, 90, 0))
+    # Window frame: brass rails along the cut edges and two glazing bars across it.
+    for a in (a0, a1):
+        ar = math.radians(a)
+        y, z = math.sin(ar), -math.cos(ar)
+        rail = [(-1.45, 1.19 * y, Z + 1.19 * z), (1.25, 1.19 * y, Z + 1.19 * z)]
+        o.append(K.strap("WindowRail", rail, 0.14, 0.05, "BrassAged"))
+        o += K.rivets_along([(p[0], 1.22 * y, Z + 1.22 * z) for p in rail], 0.16, (0, y, z), head=0.012)
+    for x in (-0.55, 0.35):
+        bar = K.torus("GlazingBar", 1.15, 0.025, mat="BrassBrushed", seg=96, rseg=6, arc=a0 - (a1 - 360.0))
+        bar.rotation_euler = (0, 0, math.radians(a1 - 360.0))
+        K.group("BarG", [bar], (x, 0, Z), (0, 90, 0))
+        o.append(bar)
+    # Riveted straps round the closed side.
+    for x in (-1.0, -0.2, 0.6):
+        ring = [(x, 1.18 * math.sin(math.radians(a)), Z - 1.18 * math.cos(math.radians(a))) for a in range(int(a0), int(a1) + 1, 10)]
+        o.append(K.strap("Strap", ring, 0.12, 0.03, "PanelGreen"))
+    # Bearing pedestals, oil cups.
+    for x, w in ((-2.2, 0.5), (2.2, 0.5)):
+        o.append(K.box_minmax("Pedestal", (x - w / 2, -0.4, 0.4), (x + w / 2, 0.4, Z - 0.2), "PanelGreen", 0.03))
+        cap = K.lathe("BearingCap", [(0, -0.22), (0.3, -0.22), (0.32, -0.18), (0.32, 0.18), (0.3, 0.22), (0, 0.22)],
+                      mat="BrassAged", seg=32)
+        o.append(about_x(cap))
+        cap.location = (x, 0, Z)
+        for y in (-0.33, 0.33):
+            b = K.bolt("CapBolt", 0.028, "SteelDark")
+            b.location = (x, y, Z - 0.2)
+            o.append(b)
+        o.append(K.lathe("OilCup", [(0, 0), (0.03, 0), (0.03, 0.1), (0.07, 0.16), (0.07, 0.24), (0.05, 0.26),
+                                    (0, 0.26)], mat="GlassClear", seg=16))
+        o[-1].location = (x, 0, Z + 0.3)
+        o.append(K.lathe("OilCupLid", [(0, 0), (0.075, 0), (0.06, 0.04), (0.01, 0.06), (0, 0.06)], mat="BrassBrushed",
+                         seg=16))
+        o[-1].location = (x, 0, Z + 0.54)
+    # Inlet with a valve, exhaust down to the floor.
+    o += K.pipe_run("Inlet", [(-1.0, 0, 2.62), (-1.0, 0, 3.6), (-1.0, 0.8, 4.2), (-1.0, 2.0, 4.2)], 0.22, "Copper",
+                    "BrassAged", seg=24, bolts=10)
+    o.append(K.place(K.torus("ValveWheel", 0.32, 0.03, mat="PaintRed", seg=48, rseg=8), (-1.0, 0.0, 3.25)))
+    for k in range(4):
+        o.append(K.box("Spoke", (0.6, 0.03, 0.02), (-1.0, 0, 3.25), "PaintRed", 0.006, rot=(0, 0, 45 * k)))
+    o += K.pipe_run("Exhaust", [(1.0, 0, 2.6), (1.0, 0, 3.2), (1.0, -1.5, 3.2), (1.0, -1.5, 0.4)], 0.28, "Copper",
+                    "BrassAged", seg=24, bolts=10)
+    o.append(K.place(K.cyl("Gauge", 0.14, 0.08, mat="BrassAged", seg=24), (-1.75, -0.95, 2.1), (90, 0, 0)))
+    o.append(K.disc("GaugeFace", 0.12, (-1.75, -0.995, 2.1), "GaugeFace", seg=32))
+    o.append(K.sweep("GaugeStem", [(-1.75, -0.9, 2.1), (-1.75, -0.6, 2.1), (-1.75, -0.6, 2.4)], 0.015, "Copper", seg=6))
+    # Governor stand on the exhaust bell.
+    o.append(K.lathe("GovernorStand", [(0, 0), (0.2, 0), (0.2, 0.05), (0.08, 0.12), (0.06, 0.3), (0.1, 0.34),
+                                       (0, 0.34)], mat="BrassAged", seg=24))
+    o[-1].location = (1.55, 0.35, Z + 0.95)
+    gov = [K.cyl("Spindle", 0.025, 0.7, (0, 0, 0.35), "SteelBrushed", seg=12),
+           K.lathe("Sleeve", [(0, 0.15), (0.06, 0.15), (0.06, 0.25), (0, 0.25)], mat="BrassBrushed", seg=16),
+           K.sphere("Top", 0.05, (0, 0, 0.72), "BrassAged", seg=16, rings=8)]
+    for s in (-1, 1):
+        gov.append(K.sweep("Arm", [(0, 0, 0.66), (s * 0.28, 0, 0.36)], 0.012, "SteelBrushed", seg=6))
+        gov.append(K.sweep("Link", [(s * 0.14, 0, 0.51), (0, 0, 0.22)], 0.009, "SteelBrushed", seg=6))
+        gov.append(K.sphere("Ball", 0.08, (s * 0.31, 0, 0.33), "BrassBrushed", seg=24, rings=12))
+    for g in gov:
+        g.location.x += 1.55
+        g.location.y += 0.35
+        g.location.z += Z + 1.29
+    # Rotor.
     rotor = [K.place(K.cyl("Shaft", 0.1, 5.4, mat="SteelBrushed", seg=24), (0, 0, 0), (0, 90, 0))]
-    for i, x in enumerate([-1.2, -0.6, 0.0, 0.6]):
-        r = 0.55 + 0.12 * i
-        rotor.append(K.place(K.cyl("Disc", r, 0.06, mat="SteelBrushed", seg=48), (x, 0, 0), (0, 90, 0)))
-        for k in range(24):
-            a = 360.0 * k / 24
-            b = K.box("Blade", (0.035, 0.09, 0.22), (x, 0, 0), "BrassBrushed", 0.004, rot=(a, 25, 0))
-            b.location = (x, (r + 0.08) * math.cos(math.radians(a + 90)), (r + 0.08) * math.sin(math.radians(a + 90)))
-            rotor.append(b)
-    fly = K.place(K.torus("Flywheel", 0.75, 0.1, mat="SteelDark", seg=64, rseg=10), (2.65, 0, 0), (0, 90, 0))
-    rotor.append(fly)
+    for i, x in enumerate([-1.2, -0.65, -0.1, 0.45, 0.95]):
+        r = 0.42 + 0.06 * i
+        rotor.append(K.place(K.lathe("Disc", [(0.1, -0.05), (r, -0.03), (r, 0.03), (0.1, 0.05), (0.18, 0.08),
+                                              (0.1, 0.08)], mat="SteelBrushed", seg=48), (x, 0, 0), (0, 90, 0)))
+        bolts = K.bolt_circle("DiscBolt", 0.2, 8, (x - 0.07, 0, 0), (0, -90, 0), head=0.014, washer=False)
+        rotor += bolts
+        n = 28
+        L = 0.2 + 0.03 * i
+        for k in range(n):
+            a = 360.0 * k / n
+            bl = K.blade("Blade", L, 0.11, 0.07, 30, 55, thick=0.18, mat="BrassBrushed", n=4, root=r - 0.02)
+            bl.rotation_euler = (math.radians(a), 0, 0)
+            bl.location = (x, 0, 0)
+            rotor.append(bl)
+        rotor.append(K.place(K.lathe("Shroud", [(r + L - 0.03, -0.06), (r + L + 0.01, -0.06), (r + L + 0.01, 0.06),
+                                                (r + L - 0.03, 0.06)], mat="BrassAged", seg=64), (x, 0, 0), (0, 90, 0)))
+    fly = K.band_ring("Flywheel", 0.72, 0.14, 0.2, "SteelDark", seg=64)
+    rotor.append(K.place(fly, (2.65, 0, 0), (0, 90, 0)))
+    rotor.append(K.place(K.lathe("FlyHub", [(0.08, -0.12), (0.22, -0.12), (0.22, 0.12), (0.08, 0.12)], mat="SteelDark",
+                                 seg=24), (2.65, 0, 0), (0, 90, 0)))
     for k in range(6):
-        rotor.append(K.box("FlySpoke", (0.06, 0.08, 1.4), (2.65, 0, 0), "SteelDark", 0.01, rot=(30 * k, 0, 0)))
-    for r in rotor:
-        r.location.z += 1.6
-    parts = [K.part("Rotor", rotor, D + "Turbine_Rotor.nmmesh", (0, 0, 1.6),
-                    moves="spins about X (its shaft); the flywheel outside the casing shows it", axis=(1, 0, 0),
-                    kit=KIT)]
+        sp = K.sweep("FlySpoke", [(0, 0, 0.2), (0, 0.06, 0.4), (0, 0, 0.64)], 0.035, "SteelDark", seg=8)
+        sp.rotation_euler = (math.radians(60 * k), 0, 0)
+        sp.location = (2.65, 0, 0)
+        rotor.append(sp)
+    for r_ in rotor:
+        if r_.parent is None:
+            r_.location.z += Z
+        else:
+            r_.parent.location.z = Z if abs(r_.parent.location.z) < 1e-6 else r_.parent.location.z
+    parts = [K.part("Rotor", rotor, D + "Turbine_Rotor.nmmesh", (0, 0, Z),
+                    moves="spins about X (its shaft): seen through the casing's window and at the flywheel (+X)",
+                    axis=(1, 0, 0), kit=KIT),
+             K.part("Governor", gov, D + "Turbine_Governor.nmmesh", (1.55, 0.35, Z + 1.29),
+                    moves="spins about Y (up), its balls flung out: turn it with the rotor (about 1/4 its speed)",
+                    axis=(0, 0, 1), kit=KIT)]
     K.export("Turbine", o, D + "Turbine.nmmesh", ground=True, kit=KIT, parts=parts, ao_dist=1.0,
              pivot_note="bottom centre of the bed; 4.8 x 2.2 m bed, axis along X at 160 cm; inlet up and back "
                         "(+Z), exhaust down to the floor at -Z",
-             notes="The casing is closed: the rotor shows through... only the flywheel at +X; open the casing in "
-                   "the level by hiding it, or treat the rotor as the flywheel's spin")
+             notes="The casing is open on its front (-Z) behind glass: a brass-framed window from x -145 to +125 cm, "
+                   "110 degrees of the drum, lit inside by two LampGlow strips; the rotor's five blade rows show "
+                   "as it spins")
 
 
 def valve_wheel():
@@ -555,12 +796,8 @@ def pipes():
 
 
 def main():
-    K.reset()
-    for f in (walls, floor_ceiling, dome_segment, orrery, workbench, pedestal, samples, breaker_panel, bookshelf,
-              turbine, valve_wheel, elevator_cage, pipes):
-        K.clear()
-        f()
-    K.save_records(KIT)
+    K.run_kit(KIT, [walls, floor_ceiling, dome_segment, orrery, workbench, pedestal, samples, breaker_panel,
+                    bookshelf, turbine, valve_wheel, elevator_cage, pipes])
 
 
 main()
