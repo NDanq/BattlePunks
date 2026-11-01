@@ -2,7 +2,7 @@
 <Entity Guid="1cdc9f7443958911a17546ab7fe493bf" Name="Dress_FloodBeam_2">
   <Component Type="Spot Light" Version="2">
     <Color R="215" G="230" B="255" A="255" />
-    <Intensity Value="90" />
+    <Intensity Value="110" />
     <Range Value="3400" />
     <InnerConeAngle Value="10" />
     <OuterConeAngle Value="22" />

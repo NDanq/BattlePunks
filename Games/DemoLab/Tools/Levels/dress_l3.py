@@ -377,7 +377,8 @@ def reactor(lv):
         lv.entity(f'Dress_Arc_{i}', [particles(lv, PART + 'L3_Core_Arc.nmparticle', target=(bx, y, bz)),
                                      xform((cx, y0 + 700 + (i % 3) * 180, cz)),
                                      motion(lv, flicker=5 + i, duty=0.35)])
-        light(lv, f'Dress_ArcFlash_{i}', (bx * 0.97, y, bz * 0.97), (170, 210, 255), 30, 900, flick=(5 + i, 0.35))
+        if i < 2:   # two flash lights; the others are the beams' own glow
+            light(lv, f'Dress_ArcFlash_{i}', (bx * 0.97, y, bz * 0.97), (170, 210, 255), 30, 650, flick=(5 + i, 0.35))
     # coolant steam rising out of the pit round the drum
     for i, a in enumerate((30, 120, 210, 300)):
         x, z = compass(a, (PIT['apothem'] + D['drum']['apothem'] + 30) / 2)
@@ -394,7 +395,8 @@ def vault(lv):
              extra=[toggle(lv, 'L3.Alarm', show)])
     restyle(lv, 'Intel', mesh=KIT + 'Vault_Intel.nmmesh', pos=D['points']['Intel'][:3])
     light(lv, 'Dress_IntelGlow', (0, 175, 0), (90, 255, 140), 10, 450, channel='L3.Intel', show_when_on=False)
-    light(lv, 'Dress_VaultCeiling', (0, 640, 0), (255, 226, 180), 16, 900, channel='L3.Alarm', show_when_on=False)
+    light(lv, 'Dress_VaultCeiling', (0, 680, 0), (255, 222, 175), 70, 900, channel='L3.Alarm', show_when_on=False,
+          rot=(90, 0, 0), spot_cone=(14, 38), rng=900)
     light(lv, 'Dress_VaultRed', (0, 600, 0), RED, 9, 900, channel='L3.Alarm', flick=(1.4, 0.6))
     # the locker (the sidearm), facing the gallery; its door opens once the pistol is taken
     lx, _, lz, _ = D['points']['Locker']
@@ -404,7 +406,6 @@ def vault(lv):
     mesh(lv, 'Dress_LockerDoorOpen', KIT + 'Locker_Door.nmmesh', (lx + 29, 0, lz - 30), yaw=290,
          extra=[toggle(lv, 'L3.Armed', True)])
     restyle(lv, 'Locker', hidden=True)
-    light(lv, 'Dress_LockerLamp', (lx, 260, lz - 60), (255, 210, 150), 8, 400)
 
 
 COVER = [   # (mesh, x, z, yaw): the gallery floor (W1), the tunnel, the pump hall (W2)
@@ -432,6 +433,14 @@ def alarm(lv):
         lv.fields('LabGate', OpenOn='L3.Alarm', OpenHeight=350, Speed=240, Invert=True, Open=True,
                   Sound=SND + 'World/Shutter_Slam.nmsound'),
         render(OWN + 'L3_Core_Shutter.nmmesh'), body(1, 2, motion=1), xform((nx, ARRIVE + 165, nz), (0, 315, 0))])
+    # the way back up: a shutter drops across the helix's foot (and keeps the fight off the catwalk)
+    a = SP['start'] + 22.5 * SP['walk'] - 360 - 4
+    hx, hz = compass(a, (SP['r_in'] + SP['r_out']) / 2)
+    lv.entity('Dress_HelixShutter', [
+        lv.fields('LabGate', OpenOn='L3.Alarm', OpenHeight=380, Speed=300, Invert=True, Open=True,
+                  Sound=SND + 'World/Shutter_Slam.nmsound'),
+        render(OWN + 'L3_Core_Shutter.nmmesh'), body(1, 2, motion=1),
+        xform((hx, 170, hz), (0, a - 90, 0), (0.62, 1.05, 1))])
     restyle(lv, 'TunnelGate', mesh=OWN + 'L3_Core_Shutter.nmmesh', rot=(0, 0, 0), box_shape=True)
     restyle(lv, 'FreightGate', mesh=OWN + 'L3_Core_Shutter.nmmesh', rot=(0, 90, 0), box_shape=True)
     # the vents: covers that slide up on the alarm, steam out, the Watchmen's spawns in front
@@ -455,6 +464,8 @@ def alarm(lv):
              params=(('EmissiveColor', 2, (1.0, 0.08, 0.03)), ('EmissiveIntensity', 2, (40,)), ('PulseSpeed', 2, (6,))),
              extra=[toggle(lv, 'L3.Alarm', True)])
         lx, lz = compass(a, RING['apothem'] - 40)
+        if i >= 4:      # the high klaxons glow; the four on the floor sweep a beam
+            continue
         lv.entity(f'Dress_KlaxonBeam_{i}', [spot(lv, RED, 40, 2600, 8, 16), xform((lx, y, lz), (12, a, 0)),
                                             toggle(lv, 'L3.Alarm'), motion(lv, spin=(0, 200, 0), spin_on='L3.Alarm')])
 
@@ -465,7 +476,6 @@ def tunnel_and_pumps(lv):
         mesh(lv, f'Dress_PumpFan_{i}', KIT + 'CoolantPump_Fan.nmmesh', (x - 162, 120, z), yaw=180, static=False,
              extra=[motion(lv, spin=(420 + 60 * i, 0, 0), alarm_on='L3.BeaconCharging', alarm_scale=1.8)])
         lv.entity(f'Dress_PumpSteam_{i}', [particles(lv, PART + 'SteamJet.nmparticle'), xform((x + 120, 440, z + 150))])
-        light(lv, f'Dress_PumpLamp_{i}', (x, 620, z + 200), (235, 238, 245), 22, 1100)
     # the beacon: tripod behind its two consoles; the lamp charges over the 40 s, the reflector
     # sweeps when it fires
     bx, bz = 1425, -5250
@@ -510,7 +520,8 @@ def lighting(lv):
              params=(('EmissiveColor', 1, (1.0, 0.1, 0.05)), ('EmissiveIntensity', 1, (14,))),
              extra=[toggle(lv, 'L3.Alarm', True)])
         lx, lz = compass(a, A - 90)
-        light(lv, f'Dress_Wash_{i}', (lx, 340, lz), CALM, 20, 1300, channel='L3.Alarm', show_when_on=False)
+        if i % 2 == 0:   # every other lamp lights the floor; the rest are emissive only
+            light(lv, f'Dress_Wash_{i}', (lx, 340, lz), CALM, 24, 1100, channel='L3.Alarm', show_when_on=False)
         if i % 2 == 0:   # emergency light: half the lamps, dim, one flickering
             light(lv, f'Dress_WashRed_{i}', (lx, 340, lz), RED, 5, 1100, channel='L3.Alarm',
                   flick=(1.2, 0.8) if i == 2 else None)
@@ -519,10 +530,10 @@ def lighting(lv):
         x, z = compass(a, 1250)
         mesh(lv, f'Dress_Flood_{i}', OWN + 'L3_Core_Floodlight.nmmesh', (x, RING['height'] - 60, z),
              params=(('EmissiveColor', 1, (0.8, 0.9, 1.0)), ('EmissiveIntensity', 1, (30,))), shadows=False)
-        light(lv, f'Dress_FloodBeam_{i}', (x, RING['height'] - 100, z), (215, 230, 255), 90, 3400, channel='L3.Alarm',
+        if i % 2:
+            continue
+        light(lv, f'Dress_FloodBeam_{i}', (x, RING['height'] - 100, z), (215, 230, 255), 110, 3400, channel='L3.Alarm',
               show_when_on=False, rot=(90, 0, 0), spot_cone=(10, 22), rng=3400, shadows=(i == 0))
-        light(lv, f'Dress_FloodBeamRed_{i}', (x, RING['height'] - 100, z), (255, 150, 95), 30, 3400, channel='L3.Alarm',
-              rot=(90, 0, 0), spot_cone=(10, 22), rng=3400)
     # the reactor's own light: blue, then red
     light(lv, 'Dress_CoreLight', (0, DRUM_TOP + 600, 0), (140, 205, 255), 90, 2400, channel='L3.Alarm',
           show_when_on=False)
@@ -536,9 +547,11 @@ def lighting(lv):
              params=(('EmissiveColor', 1, (0.75, 0.85, 1.0)),), extra=[toggle(lv, 'L3.Alarm', False)])
         mesh(lv, f'Dress_TunnelLampRed_{i}', OWN + 'L3_Core_Bulkhead.nmmesh', (0, 395, z), rot=(-90, 0, 0),
              params=(('EmissiveColor', 1, (1.0, 0.1, 0.05)),), extra=[toggle(lv, 'L3.Alarm', True)])
-        light(lv, f'Dress_TunnelLight_{i}', (0, 340, z), CALM, 14, 700, channel='L3.Alarm', show_when_on=False)
-        light(lv, f'Dress_TunnelRed_{i}', (0, 340, z), RED, 8, 700, channel='L3.Alarm', flick=(1.5, 0.7) if i == 1 else None)
-    for i, x in enumerate((300, 1700, 3000)):
+        if i != 1:
+            light(lv, f'Dress_TunnelLight_{i}', (0, 340, z), CALM, 18, 900, channel='L3.Alarm', show_when_on=False)
+        else:
+            light(lv, f'Dress_TunnelRed_{i}', (0, 340, z), RED, 10, 1200, channel='L3.Alarm', flick=(1.5, 0.7))
+    for i, x in enumerate((700, 2400)):
         light(lv, f'Dress_HallLight_{i}', (x, 640, -4900), (230, 236, 248), 20, 1500)
     light(lv, 'Dress_HallRed', (1500, 600, -5400), RED, 9, 2200, flick=(1.0, 0.7))
     light(lv, 'Dress_FreightLight', (3800, 900, -5400), (255, 220, 170), 30, 1400)
@@ -547,10 +560,10 @@ def lighting(lv):
                                            Enabled=True, BlendDistance=0), xform((0, 0, 0))])
     lv.entity('Dress_PostAlarm', [lv.fields('Post Process', version=2, Stack=PP + 'L3_Core_Alarm.pp.nmgraph', Priority=1,
                                             Enabled=False, BlendDistance=0), xform((0, 0, 0)), toggle(lv, 'L3.Alarm')])
-    # GI: one DDGI volume over the shaft, one over the pump hall (the nearest lights). Off by default:
-    # each probe update draws the whole level six times (Captures ~29 ms GPU on the Arc B390); the
-    # stacks run SSGI instead. DEMOLAB_L3_DDGI=1 turns them on.
-    ddgi = os.environ.get('DEMOLAB_L3_DDGI') == '1'
+    # GI: one DDGI volume over the shaft, one over the pump hall (the nearest lights), with the
+    # stacks' SSGI over it. Each probe update draws the whole level six times (Captures ~29 ms GPU on
+    # the Arc B390 before the engine's capture budget): DEMOLAB_L3_DDGI=0 writes them off.
+    ddgi = os.environ.get('DEMOLAB_L3_DDGI', '1') == '1'
     lv.entity('Dress_GIShaft', [lv.fields('GI Volume', Extent=(1850, 1300, 1850), ProbeSpacing=460, Intensity=1,
                                           Enabled=ddgi), xform((0, 1100, 0))])
     lv.entity('Dress_GIPumpHall', [lv.fields('GI Volume', Extent=(1950, 380, 1050), ProbeSpacing=330, Intensity=1,
@@ -587,6 +600,8 @@ def review_state(lv, state):
             text = text.replace('<Emitting Value="false" />', '<Emitting Value="true" />')
         if state == 'calm' and name_of(text) == 'Shutter_Elevator':     # open until the alarm
             text = text.replace(f'Y="{f(ARRIVE + 165)}"', f'Y="{f(ARRIVE + 515)}"')
+        if state == 'calm' and name_of(text) == 'Dress_HelixShutter':
+            text = text.replace('Y="170"', 'Y="550"')
         if state != 'calm' and 'Dress_VentCover' in name_of(text):
             text = re.sub(r'(<Position X="[^"]*" Y=")0(")', r'\g<1>160\2', text)
         if state == 'beacon' and name_of(text) == 'Dress_Beacon':

@@ -4,7 +4,7 @@
       <Extent X="1950" Y="380" Z="1050" />
     <ProbeSpacing Value="330" />
     <Intensity Value="1" />
-    <Enabled Value="false" />
+    <Enabled Value="true" />
   </Component>
   <Component Type="Transform" Version="1">
     <Position X="1500" Y="350" Z="-5400" />

@@ -29,6 +29,7 @@ NIMBLE_GAME_CONFIG_FLOAT(GLabLookSensitivity, "DemoLab", "LookSensitivity", 1.0f
 NIMBLE_GAME_CONFIG_BOOL(GLabInvertY, "DemoLab", "InvertY", false, nullptr);
 /* Accessibility: the cinematics' subtitle lines. */
 NIMBLE_GAME_CONFIG_BOOL(GLabSubtitles, "DemoLab", "Subtitles", true, nullptr);
+NIMBLE_GAME_CONFIG_FLOAT(GLabPerfLog, "DemoLab", "PerfLog", 0.0f, nullptr);   // seconds between perf lines; 0 off
 /* Graphics: foliage density for L1's spawners (read by the art pass's
  * Procedural Spawners; the grey-box levels have no foliage yet). */
 NIMBLE_GAME_CONFIG_FLOAT(GLabFoliageDensity, "DemoLab", "FoliageDensity", 1.0f, nullptr);
@@ -194,6 +195,30 @@ void LabUI::UpdateTechOverlay(GameSession& InSession, const std::string& InLevel
     UI.SetValue("Tech.Stats", UI::UIValue::String(Line));
     UI.SetValue("Tech.Level", UI::UIValue::String(InLevel + (bInAlarm ? "  (Alarm)" : "")));
     UI.SetValue("Tech.Features", UI::UIValue::String(FeaturesFor(InLevel, bInAlarm)));
+}
+
+void LabUI::LogPerf(GameSession& InSession, const std::string& InLevel, const float InSeconds)
+{
+    static float Clock = 0.f;
+    const float Every = GLabPerfLog.GetFloat();
+    if(Every <= 0.f) { return; }
+    Clock += InSeconds;
+    if(Clock < Every) { return; }
+    Clock = 0.f;
+    RenderCore::RenderStats Stats;
+    InSession.GetRenderer().GetStats(Stats);
+    std::string Line = "[DemoLab] Perf " + InLevel;
+    char Part[96];
+    std::snprintf(Part, sizeof(Part), " frame %.2f game %.2f render %.2f | GPU", double(Stats.FrameMs), double(Stats.GameThreadMs),
+                  double(Stats.RenderThreadMs));
+    Line += Part;
+    for(int I = 0; I < RenderCore::RGT_Count; ++I)
+    {
+        if(Stats.GpuMs[I] < 0.f) { continue; }
+        std::snprintf(Part, sizeof(Part), " %s %.2f", RenderCore::GetRenderGpuTimerName(RenderCore::ERenderGpuTimer(I)), double(Stats.GpuMs[I]));
+        Line += Part;
+    }
+    CORE_LOG(Line)
 }
 
 void LabUI::ApplySubtitleSetting(GameSession& InSession)

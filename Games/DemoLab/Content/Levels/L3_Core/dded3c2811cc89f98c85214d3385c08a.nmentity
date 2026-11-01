@@ -2,12 +2,12 @@
 <Entity Guid="dded3c2811cc89f98c85214d3385c08a" Name="Dress_TunnelLight_0">
   <Component Type="Point Light" Version="2">
     <Color R="255" G="238" B="218" A="255" />
-    <Intensity Value="14" />
-    <Radius Value="700" />
+    <Intensity Value="18" />
+    <Radius Value="900" />
     <Active Value="true" />
     <CastShadows Value="false" />
     <ShadowTechnique Value="0" />
-    <SourceRadius Value="35.0" />
+    <SourceRadius Value="45.0" />
   </Component>
   <Component Type="Transform" Version="1">
     <Position X="0" Y="340" Z="-2200" />

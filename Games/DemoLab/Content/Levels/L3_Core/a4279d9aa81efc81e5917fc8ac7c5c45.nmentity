@@ -3,11 +3,11 @@
   <Component Type="Point Light" Version="2">
     <Color R="170" G="210" B="255" A="255" />
     <Intensity Value="30" />
-    <Radius Value="900" />
+    <Radius Value="650" />
     <Active Value="true" />
     <CastShadows Value="false" />
     <ShadowTechnique Value="0" />
-    <SourceRadius Value="45.0" />
+    <SourceRadius Value="32.5" />
   </Component>
   <Component Type="Transform" Version="1">
     <Position X="807.525" Y="1900" Z="-1398.67" />
