@@ -100,5 +100,5 @@ lift, the shutters, the extraction cue).
 
 ## Not done yet
 
-- Footsteps by surface are not wired (they want anim-clip notifies).
-- Watchmen do not take cover or flank yet: they keep their range and investigate noise.
+- Footsteps are procedural (one per stride, by the surface under the foot:
+  `Source/Core/LabFootsteps.h`), not anim-clip notifies.
