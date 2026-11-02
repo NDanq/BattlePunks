@@ -1,7 +1,10 @@
 /*
  * NimbleEditorProjectTests -- File > New Project's generator (ProjectTemplate.h),
  * from the real Engine/Templates/Game into a temporary folder; and
- * Engine/Binaries/NewProject.cmake, which must make the same project.
+ * Engine/Binaries/NewProject.cmake, which must make the same project. And
+ * example projects: Tests/Data/Examples (the Tiny example, packed by
+ * Engine/Examples/pack_example.py) unpacked and renamed by NewProject.cmake
+ * -DEXAMPLE=, as the wizard runs it.
  */
 
 #include <cstdio>
@@ -296,6 +299,162 @@ static void TestPluginTemplates(const QDir& InRoot)
            && Text.contains(QStringLiteral("Weather=true")), "as [Plugins] Weather=true, the file kept");
 }
 
+/* `cmake <InArgs>`; true if it exits 0. Its output is printed when InExpectSuccess is not met. */
+static bool RunCMake(const QStringList& InArgs, const bool bInExpectSuccess = true)
+{
+    QProcess Process;
+    Process.setProcessChannelMode(QProcess::MergedChannels);
+    Process.start(QStringLiteral(NIMBLEEDITOR_CMAKE_COMMAND), InArgs);
+    const bool bOk = Process.waitForFinished(120000) && Process.exitStatus() == QProcess::NormalExit && Process.exitCode() == 0;
+    if(bOk != bInExpectSuccess) { std::printf("%s\n", Process.readAll().constData()); }
+    return bOk;
+}
+
+static bool CopyTree(const QString& InFrom, const QString& InTo)
+{
+    for(const QString& File : ListFiles(InFrom))
+    {
+        const QString Target = QDir(InTo).filePath(File);
+        QDir().mkpath(QFileInfo(Target).absolutePath());
+        if(!QFile::copy(QDir(InFrom).filePath(File), Target)) { return false; }
+        QFile::setPermissions(Target, QFile::permissions(QDir(InFrom).filePath(File)));
+    }
+    return true;
+}
+
+static void TestExamples(const QDir& InRoot)
+{
+    std::printf("[examples]\n");
+    const QString Fixture = QStringLiteral(NIMBLEEDITOR_EXAMPLES_FIXTURE);
+    const QString Source  = QStringLiteral(NIMBLEEDITOR_EXAMPLE_PROJECT_FIXTURE);
+    const QString Script  = QStringLiteral(NIMBLEEDITOR_NEW_PROJECT_SCRIPT);
+
+    QString Error;
+    const QList<ExampleInfo> Examples = ListExamples(Fixture, &Error);
+    Expect(Error.isEmpty() && Examples.size() == 1, "the fixture index lists one example");
+    if(Examples.size() != 1) { return; }
+    const ExampleInfo& Tiny = Examples.front();
+    Expect(Tiny.Name == QStringLiteral("Tiny") && Tiny.Title == QStringLiteral("Tiny Example") && !Tiny.Description.isEmpty(),
+           "with its name, title and description");
+    Expect(Tiny.Files == ListFiles(Source).size() && Tiny.PackedBytes > 0 && Tiny.UnpackedBytes > 0, "its file count and sizes");
+    Expect(ListExamples(InRoot.filePath(QStringLiteral("NoExamples")), &Error).isEmpty() && !Error.isEmpty(),
+           "a missing index lists nothing, with an error");
+
+    int Index = 0, Count = 0;
+    QString What;
+    Expect(ParseExampleStep(QStringLiteral("-- NewProject: [2/4] Configuring (cmake --preset x)"), Index, Count, What)
+           && Index == 2 && Count == 4 && What == QStringLiteral("Configuring (cmake --preset x)"), "a step line is parsed");
+    Expect(!ParseExampleStep(QStringLiteral("-- Configuring done"), Index, Count, What), "any other line is not");
+    Expect(GetExampleSteps(true).size() == 4 && GetExampleSteps(false) == QStringList{ QStringLiteral("unpack") },
+           "the steps with and without a build");
+
+    /* Under its own name: exactly the project it was packed from. */
+    const QString Parent = InRoot.filePath(QStringLiteral("Examples"));
+    Expect(RunCMake(ExampleScriptArgs(Script, Fixture, QStringLiteral("Tiny"), Parent, QStringLiteral("Tiny"), GetExampleSteps(false))),
+           "NewProject.cmake unpacks the example");
+    const QString Same = QDir(Parent).filePath(QStringLiteral("Tiny"));
+    const QStringList Files = ListFiles(Source);
+    Expect(!Files.isEmpty() && ListFiles(Same) == Files, "the files it was packed from");
+    bool bSame = true;
+    for(const QString& File : Files)
+    {
+        /* Outside Games/, the engine path is the one change. */
+        if(File == QStringLiteral("CMakeLists.txt")) { continue; }
+        if(ReadBytes(QDir(Same).filePath(File)) != ReadBytes(QDir(Source).filePath(File)))
+        {
+            bSame = false;
+            std::printf("  differs: %s\n", qPrintable(File));
+        }
+    }
+    Expect(bSame, "byte for byte");
+#if !defined(_WIN32)
+    Expect(QFileInfo(QDir(Same).filePath(QStringLiteral("Tools/run.sh"))).isExecutable(), "a script stays executable");
+#endif
+
+    /* Renamed: the module, classes, guards and settings, not the assets. */
+    Expect(RunCMake(ExampleScriptArgs(Script, Fixture, QStringLiteral("Tiny"), Parent, QStringLiteral("Hello"), GetExampleSteps(false))),
+           "and unpacks it under another name");
+    const QDir Hello(QDir(Parent).filePath(QStringLiteral("Hello")));
+    Expect(Hello.exists(QStringLiteral("HelloGame.cpp")) && !Hello.exists(QStringLiteral("TinyGame.cpp")), "source files are renamed");
+    Expect(Hello.exists(QStringLiteral("Source/HelloAI/HelloBrain.h")) && !Hello.exists(QStringLiteral("Source/TinyAI")),
+           "and folders, the old ones removed");
+    Expect(Hello.exists(QStringLiteral("Content/Textures/Tiny_BaseColor.nmtexture")) && Hello.exists(QStringLiteral("Content/Levels/Tiny.nmworld")),
+           "assets keep their names");
+    Expect(ReadBytes(Hello.filePath(QStringLiteral("Content/Textures/Tiny_BaseColor.nmtexture")))
+               == ReadBytes(QDir(Source).filePath(QStringLiteral("Content/Textures/Tiny_BaseColor.nmtexture"))),
+           "and a binary asset is untouched");
+    const QString Brain = ReadText(Hello.filePath(QStringLiteral("Source/HelloAI/HelloBrain.h")));
+    Expect(Brain.contains(QStringLiteral("#ifndef HELLO_HELLOBRAIN_H")) && Brain.contains(QStringLiteral("[Hello]")) && !Brain.contains(QStringLiteral("Tiny"))
+           && !Brain.contains(QStringLiteral("TINY")), "the name is replaced in text, capitals too");
+    Expect(ReadText(Hello.filePath(QStringLiteral("Config/DefaultEngine.ini"))).contains(QStringLiteral("Module=HelloGame\n")), "the module setting");
+    Expect(ReadText(Hello.filePath(QStringLiteral("Content/Levels/Tiny.nmworld"))).contains(QStringLiteral("Name=\"Hello\"")), "and text assets");
+#if !defined(_WIN32)
+    Expect(QFileInfo(Hello.filePath(QStringLiteral("Tools/run.sh"))).isExecutable(), "a rewritten script stays executable");
+#endif
+
+    /* Outside Games/, CMakeLists finds the real engine. */
+    const QString Lists = ReadText(Hello.filePath(QStringLiteral("CMakeLists.txt")));
+    const QString Prefix = QStringLiteral("set(GAME_ENGINE_DIR \"");
+    const int     Start  = Lists.indexOf(Prefix) + Prefix.size();
+    QString EngineDir = Lists.mid(Start, Lists.indexOf(QLatin1Char('"'), Start) - Start);
+    EngineDir.replace(QStringLiteral("${CMAKE_CURRENT_SOURCE_DIR}"), Hello.path());
+    Expect(QFileInfo(QDir(EngineDir).filePath(QStringLiteral("CMakeLists.txt"))).canonicalFilePath()
+               == QFileInfo(QDir(GetEngineDir()).filePath(QStringLiteral("CMakeLists.txt"))).canonicalFilePath(),
+           "GAME_ENGINE_DIR is the engine, from an example outside Games/");
+
+    /* Refusals leave nothing behind. */
+    Expect(!RunCMake(ExampleScriptArgs(Script, Fixture, QStringLiteral("Tiny"), Parent, QStringLiteral("Hello"), GetExampleSteps(false)), false),
+           "an existing folder is refused");
+    const QString Damaged = InRoot.filePath(QStringLiteral("Damaged"));
+    Expect(CopyTree(Fixture, Damaged), "the fixture is copied");
+    {
+        QFile Part(QDir(Damaged).filePath(QStringLiteral("Tiny.Content.1.tar.zst")));
+        Expect(Part.open(QIODevice::Append) && Part.write("x") == 1, "an archive is damaged");
+    }
+    Expect(!RunCMake(ExampleScriptArgs(Script, Damaged, QStringLiteral("Tiny"), Parent, QStringLiteral("Other"), GetExampleSteps(false)), false),
+           "a damaged archive is refused");
+    Expect(!RunCMake(ExampleScriptArgs(Script, Fixture, QStringLiteral("Nope"), Parent, QStringLiteral("Other"), GetExampleSteps(false)), false),
+           "an unknown example is refused");
+    Expect(!RunCMake(ExampleScriptArgs(Script, Fixture, QStringLiteral("Tiny"), Parent, QStringLiteral("Other"), { QStringLiteral("cook") }), false),
+           "a step after unpack needs the project");
+    Expect(ListFiles(Parent).size() == 2 * Files.size(), "and none of them writes anything");
+
+    /* The packer: the fixture again, with a build's leftovers, packs to the
+     * very bytes committed -- reproducible, and the leftovers left out. */
+#ifdef NIMBLEEDITOR_PYTHON
+    QProcess Probe;
+    Probe.start(QStringLiteral(NIMBLEEDITOR_PYTHON), { QStringLiteral("-c"), QStringLiteral("import compression.zstd") });
+    if(!Probe.waitForFinished(30000) || Probe.exitCode() != 0)
+    {
+        std::printf("  (packer check skipped: %s has no compression.zstd)\n", NIMBLEEDITOR_PYTHON);
+        return;
+    }
+    const QString Copy = InRoot.filePath(QStringLiteral("PackSource/Tiny"));
+    Expect(CopyTree(Source, Copy), "the fixture project is copied");
+    for(const char* Junk : { "Saved/Logs/run.log", "Build/editor/x.o", "Binaries/Linux/Tiny", "Tools/__pycache__/x.pyc", "CMakeUserPresets.json" })
+    {
+        const QString Path = QDir(Copy).filePath(QString::fromLatin1(Junk));
+        QDir().mkpath(QFileInfo(Path).absolutePath());
+        QFile Out(Path);
+        Expect(Out.open(QIODevice::WriteOnly) && Out.write("junk") == 4, "a leftover is written");
+    }
+    const QString Out = InRoot.filePath(QStringLiteral("Packed"));
+    QProcess Pack;
+    Pack.setProcessChannelMode(QProcess::MergedChannels);
+    Pack.start(QStringLiteral(NIMBLEEDITOR_PYTHON), { QStringLiteral("-I"), QStringLiteral(NIMBLEEDITOR_PACK_SCRIPT), Copy,
+                                                      QStringLiteral("--out"), Out });
+    const bool bPacked = Pack.waitForFinished(120000) && Pack.exitCode() == 0;
+    if(!bPacked) { std::printf("%s\n", Pack.readAll().constData()); }
+    Expect(bPacked, "pack_example.py packs it");
+    for(const char* Part : { "Tiny.Source.tar.zst", "Tiny.Content.1.tar.zst" })
+    {
+        const QByteArray Packed = ReadBytes(QDir(Out).filePath(QString::fromLatin1(Part)));
+        Expect(!Packed.isEmpty() && Packed == ReadBytes(QDir(Fixture).filePath(QString::fromLatin1(Part))),
+               "into the committed archive, byte for byte");
+    }
+#endif
+}
+
 /* Project Settings > Worlds rewrites the [World_*] sections as a list. */
 static void TestWorldSections(const QDir& InRoot)
 {
@@ -352,6 +511,7 @@ int main(int argc, char** argv)
     TestCreate(Root);
     TestScriptMatchesEditor(Root);
     TestPluginTemplates(Root);
+    TestExamples(Root);
     TestWorldSections(Root);
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);

@@ -528,7 +528,7 @@ void EditorMainWindow::BuildMenus()
     QMenu* File = menuBar()->addMenu(QStringLiteral("&File"));
 
     QAction* NewProject = File->addAction(QStringLiteral("New Pro&ject..."));
-    NewProject->setToolTip(QStringLiteral("A new game in Games/, from Engine/Templates/Game"));
+    NewProject->setToolTip(QStringLiteral("A new game in Games/, from Engine/Templates/Game or an example in Engine/Examples"));
     connect(NewProject, &QAction::triggered, this, [this]()
     {
         NewProjectWizard Wizard(this);
