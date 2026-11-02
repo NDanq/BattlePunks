@@ -20,10 +20,15 @@ namespace GameCore { class World; }
 
 /* The SteamDummy: a steampunk mesh skinned to the CrashDummy's rig (same 74
  * bones), so it plays the CrashDummy's clips. Its anim state is the engine's
- * CrashDummy one but for the OffHand IK, weighted by TwoHand rather than
- * Armed: a pistol or a wrench is held in one hand, the off arm left as
- * animated, instead of reaching across the body for it (LabCombat sets
- * TwoHand from the weapon's AnimSet). Imported from BattlePunks (Dev-BattlePunks fad1c7d6);
+ * CrashDummy one but for its hand IK:
+ *   AimHand  the right arm to a Script goal: LabCombat's aim, recoil, reload
+ *            dip, swing and throw (PoseWeaponHand); before OffHand, so the
+ *            off hand reaches where the weapon hand went
+ *   OffHand  weighted by TwoHand rather than Armed: a pistol or a wrench is
+ *            held in one hand, the off arm left as animated, instead of
+ *            reaching across the body for it (LabCombat sets TwoHand from
+ *            the weapon's AnimSet)
+ * Imported from BattlePunks (Dev-BattlePunks fad1c7d6);
  * SteamDummy_PBR is the same skin and skeleton with the art pass's UV atlas
  * (Tools/Art). Every character's look is its material in slot 0 -- the
  * player's, the Watchman's (Clear Coat, red eyes) or the Brute's
