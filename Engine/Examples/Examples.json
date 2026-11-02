@@ -1,0 +1,36 @@
+{
+  "Schema": 1,
+  "Examples": [
+    {
+      "Name": "DemoLab",
+      "Title": "Demo Lab",
+      "Description": "A 15-minute third-person slice in three levels: dynamic GI, procedural foliage, the TimeOfDay and Weather plugins, the Sequencer, AICore and the UI module. Docs/Guide.md and Docs/Tutorial.md walk through it.",
+      "Module": "DemoLabGame",
+      "Parts": [
+        {
+          "File": "DemoLab.Source.tar.zst",
+          "Bytes": 347823,
+          "Sha256": "6e492625ed27f76610151b2b349f5090223d38781f216091ccf18b99189e3563"
+        },
+        {
+          "File": "DemoLab.Content.1.tar.zst",
+          "Bytes": 26114590,
+          "Sha256": "1f63160ee55cf5f382892472ef3dd9d013b7b3a6a310e3995be8020fc5883998"
+        },
+        {
+          "File": "DemoLab.Content.2.tar.zst",
+          "Bytes": 38185632,
+          "Sha256": "3f0400fe6e40d7c9ac2bf68a8c72ffc3534d87201347b76429a2c0b439e40b2e"
+        },
+        {
+          "File": "DemoLab.Content.3.tar.zst",
+          "Bytes": 32449437,
+          "Sha256": "097bf5652dc5969f08f9a6abb936144518b24480df621aa6646922454e860447"
+        }
+      ],
+      "Files": 3008,
+      "UnpackedBytes": 397410647,
+      "EngineVersion": "0.1"
+    }
+  ]
+}
