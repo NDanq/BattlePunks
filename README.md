@@ -107,13 +107,23 @@ demo level instead.
 
 ### Demo Lab
 
-`Games/DemoLab` is the sample project: a 15-minute third-person slice that
-shows the renderer (dynamic GI, procedural foliage, shading models, the
-TimeOfDay and Weather plugins), the Sequencer, AICore and the UI module.
-`Games/DemoLab/Docs/Guide.md` says how to build and run it, what each level
-shows, how to regenerate its content and how to test and measure it.
-`Games/WorldsLab` is the older test bed it replaced, trimmed to the worlds
-the engine's docs and tests use.
+Demo Lab is the sample project: a 15-minute third-person slice that shows
+the renderer (dynamic GI, procedural foliage, shading models, the TimeOfDay
+and Weather plugins), the Sequencer, AICore and the UI module. It ships as
+an example archive in `Engine/Examples`, not as a folder in the repository:
+make it with the editor's **File > New Project > Example: Demo Lab**, or
+
+```bash
+Engine/Binaries/NewProject.sh --example DemoLab --build      # NewProject.bat on Windows
+```
+
+which unpacks it into `Games/DemoLab`, then configures, builds and cooks it.
+Its `Docs/Guide.md` then says how to run it, what each level shows, how to
+regenerate its content and how to test and measure it. **Worlds Lab**
+(`--example WorldsLab`) is the older test bed it replaced, trimmed to the
+worlds the engine's docs and tests use; the tests that read it skip until it
+is unpacked. `Games/` itself is not tracked: what you make or unpack there
+stays yours (`Engine/Examples/README.md` says how to repack an example).
 
 ### LightLab
 

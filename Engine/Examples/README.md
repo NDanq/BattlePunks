@@ -8,6 +8,7 @@ of their assets and none of their builds.
 | Example | What it is |
 |---|---|
 | DemoLab | A 15-minute third-person slice in three levels: dynamic GI, procedural foliage, the TimeOfDay and Weather plugins, the Sequencer, AICore and the UI module. Its `Docs/Guide.md` and `Docs/Tutorial.md` walk through it. |
+| WorldsLab | The engine's test bed: the Steampunk street, the Shooting Range, the shading, lighting, translucency, destruction and grass labs, and AICore's Toon Arena. Engine docs, tests (they skip until it is unpacked) and perf work use its worlds. |
 
 ## Files
 

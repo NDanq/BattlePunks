@@ -31,6 +31,37 @@
       "Files": 3008,
       "UnpackedBytes": 397410647,
       "EngineVersion": "0.1"
+    },
+    {
+      "Name": "WorldsLab",
+      "Title": "Worlds Lab",
+      "Description": "The engine's test bed: the Steampunk street, the Shooting Range, the shading, lighting, translucency, destruction and grass labs, and AICore's Toon Arena. Engine docs, tests and perf work use its worlds.",
+      "Module": "WorldsLabGame",
+      "Parts": [
+        {
+          "File": "WorldsLab.Source.tar.zst",
+          "Bytes": 474689,
+          "Sha256": "b8739233c6b3abece596a17c0b1ae87d3a5dbebb005a1a7e7d2a6696eba6c175"
+        },
+        {
+          "File": "WorldsLab.Content.1.tar.zst",
+          "Bytes": 16930419,
+          "Sha256": "32887b47e0f431ecedace0566aa15bdb2029410d7cfb335d6ff2300c6ef8925b"
+        },
+        {
+          "File": "WorldsLab.Content.2.tar.zst",
+          "Bytes": 16112577,
+          "Sha256": "684aff8887915e0cd627f13e44956484dfc8ab3ca8abf3be8c18c54498f377ce"
+        },
+        {
+          "File": "WorldsLab.Content.3.tar.zst",
+          "Bytes": 3127389,
+          "Sha256": "0f1fc71d330e8c3ed5f6115884d2365588501f11dc8a03b24eb0df1463242d7b"
+        }
+      ],
+      "Files": 1021,
+      "UnpackedBytes": 282411645,
+      "EngineVersion": "0.1"
     }
   ]
 }
