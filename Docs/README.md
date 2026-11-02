@@ -4,7 +4,8 @@ The editor's Help > Documentation shows only this folder.
 
 ## Guides
 
-- [Demo Lab](../../Games/DemoLab/Docs/Guide.md): the sample game -- running it, what each level and cinematic shows, regenerating its content, its tests and its perf recipe
+- [Demo Lab](../../Games/DemoLab/Docs/Guide.md): the sample game -- running it, what each level and cinematic shows, regenerating its content, its tests and its perf recipe. It is an example archive: the link works once File > New Project > Example: Demo Lab (or `NewProject --example DemoLab`) has unpacked it into `Games/DemoLab`
+- Guides built on WorldsLab's worlds (the Shooting Range, GrassLab, the Toon Arena) the same way: unpack it with File > New Project > Example: Worlds Lab (or `NewProject --example WorldsLab`)
 - [Game modes: a usage guide](Guides/GameModeGuide.md)
 - [The Character Mover](Guides/CharacterMoverGuide.md): the engine's predicted third-person walker, for players and bots
 - UI, built on the Shooting Range: [a menu](Guides/UI/MenuUIGuide.md), [a HUD](Guides/UI/HudGuide.md), [settings that control the game's .ini](Guides/UI/SettingsUIGuide.md)

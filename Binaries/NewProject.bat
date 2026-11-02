@@ -8,6 +8,8 @@ rem <folder> defaults to Games\ beside Engine\. --example unpacks an example
 rem project from Engine\Examples instead (its own name unless <Name> is given);
 rem --build then configures, builds and cooks it, --jobs capping the build's jobs. Needs cmake on PATH (or %CMAKE%).
 setlocal
+rem Before the options: shift moves %0 too, so %~dp0 is gone after them.
+set "HERE=%~dp0"
 
 set "EXAMPLE="
 set "BUILD=OFF"
@@ -47,5 +49,5 @@ where "%CMAKE%" >nul 2>nul || if not exist "%CMAKE%" (
     exit /b 1
 )
 
-"%CMAKE%" "-DNAME=%~1" "-DLOCATION=%~2" "-DEXAMPLE=%EXAMPLE%" "-DBUILD=%BUILD%" "-DJOBS=%JOBS%" -P "%~dp0NewProject.cmake"
+"%CMAKE%" "-DNAME=%~1" "-DLOCATION=%~2" "-DEXAMPLE=%EXAMPLE%" "-DBUILD=%BUILD%" "-DJOBS=%JOBS%" -P "%HERE%NewProject.cmake"
 exit /b %ERRORLEVEL%
