@@ -145,6 +145,15 @@ void SourceBuild::Cancel()
     if(Process)
     {
         bCancelled = true;
+#ifdef _WIN32
+        /* The whole tree: killing cmake alone leaves Ninja and the compilers
+         * running, as the New Project wizard's Stop does. */
+        const qint64 Pid = Process->processId();
+        if(Pid > 0)
+        {
+            QProcess::execute(QStringLiteral("taskkill"), { QStringLiteral("/T"), QStringLiteral("/F"), QStringLiteral("/PID"), QString::number(Pid) });
+        }
+#endif
         Process->kill();
     }
 }

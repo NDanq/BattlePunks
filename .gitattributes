@@ -14,3 +14,7 @@ Engine/Modules/NodeGraph/Tests/Data/** text eol=lf
 # The example fixture is compared byte for byte with what its LF archives
 # unpack to, and repacked into them; CRLF on checkout would fail both.
 Engine/Modules/Editor/Tests/Data/ExampleProject/** text=auto eol=lf
+
+# cmd.exe misreads labels and goto in LF batch files.
+Engine/Binaries/*.bat text eol=crlf
+
