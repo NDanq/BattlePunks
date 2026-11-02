@@ -57,6 +57,18 @@ python3 Engine/Examples/pack_example.py Games/DemoLab --parts source   # code on
 Commit the parts that changed together with `Examples.json`. Needs Python
 3.14 (`compression.zstd`) or `zstd` on PATH.
 
+While the project is tracked in git, pack what is committed rather than the
+working tree:
+
+```bash
+python3 Engine/Examples/pack_example.py Games/DemoLab --rev HEAD
+```
+
+`--rev` reads git's own bytes and executable bits and leaves out uncommitted
+edits. **On Windows, always use it**: a checkout there has CRLF line endings
+and no executable bits, so packing the disk gives different archives than
+Linux does (and loses `Tools/*.sh`'s x bit).
+
 - **The packing is reproducible**: files sorted, every entry owned by 0:0,
   with one fixed time and mode 644/755. Packing an unchanged project gives
   the same bytes, so git sees no change in parts you did not touch. (The

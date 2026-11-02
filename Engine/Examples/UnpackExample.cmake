@@ -38,6 +38,10 @@
 # NP_PROJECT_DIR, NP_ENGINE_FOR_CMAKE and np_fail().
 # ===========================================================================
 
+if(CMAKE_VERSION VERSION_LESS 3.19)
+    np_fail("unpacking an example needs CMake 3.19 or newer (string(JSON)); this is ${CMAKE_VERSION}")
+endif()
+
 set(NP_TEXT_EXTENSIONS
     .txt .cmake .json .cpp .h .hpp .inl .ini .lua .py .md .sh .bat .gitignore
     .nmentity .nmworld .nmprefab .nmprefabinst .nmgraph .nmui .nmseq .nmbt .nmparticle)
@@ -152,10 +156,14 @@ if("unpack" IN_LIST STEPS)
                     string(REPLACE "${EXAMPLE}" "${NAME}" NP_TEXT "${NP_TEXT}")
                     string(REPLACE "${NP_EXAMPLE_UPPER}" "${NP_NAME_UPPER}" NP_TEXT "${NP_TEXT}")
                     # LF on every platform, as NewProject.cmake writes a template;
-                    # a script keeps its executable bit.
+                    # a script keeps its executable bit (asked of test(1): if(IS_EXECUTABLE)
+                    # is CMake 3.29+; Windows has no bit to keep).
                     set(NP_EXECUTABLE OFF)
-                    if(IS_EXECUTABLE "${NP_STAGING}/${NP_FILE}")
-                        set(NP_EXECUTABLE ON)
+                    if(NOT CMAKE_HOST_WIN32)
+                        execute_process(COMMAND test -x "${NP_STAGING}/${NP_FILE}" RESULT_VARIABLE NP_TEST_X)
+                        if(NP_TEST_X EQUAL 0)
+                            set(NP_EXECUTABLE ON)
+                        endif()
                     endif()
                     string(FIND "${NP_TEXT}" "\n" NP_NEWLINE)
                     if(NP_NEWLINE EQUAL -1)

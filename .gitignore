@@ -76,6 +76,8 @@
 *.user
 .cache/
 .claude/settings.local.json
+__pycache__/
+*.pyc
 
 # Locally generated MSVC environment. vcvars64.bat cannot always be driven
 # through cmd.exe (some shells get its banner and no variables), so these lift
