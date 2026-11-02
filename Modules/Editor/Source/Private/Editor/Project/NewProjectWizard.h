@@ -30,6 +30,10 @@ class QPushButton;
  *
  * The editor edits the project it was built with, so the new game is opened
  * by building its own tree (its CMakePresets.json), not from here. Modal.
+ *
+ * NimbleLauncher (Source/Private/Launcher) runs this same wizard without the
+ * editor; it needs only Qt Widgets, EngineCore, ProjectTemplate and
+ * SourceBuild's cmake path.
  */
 class NewProjectWizard : public QWizard
 {
@@ -38,6 +42,10 @@ class NewProjectWizard : public QWizard
 public:
     explicit NewProjectWizard(QWidget* InParent);
     ~NewProjectWizard() override;
+
+signals:
+    /* The Creating page started running InSteps (GetExampleSteps() names). */
+    void RunStarted(const QStringList& InSteps);
 
 private:
     enum EPage { Page_Template, Page_Project, Page_Creating, Page_Created };

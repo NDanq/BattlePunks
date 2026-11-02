@@ -900,6 +900,56 @@ endif()
 
 source_group("Editor" FILES ${NIMBLE_EDITOR_SOURCES})
 
+# === NimbleLauncher =============================================================
+# File > New Project as a program of its own (Source/Private/Launcher): the
+# editor's NewProjectWizard and ProjectTemplate, SourceBuild for the cmake path
+# and the engine warm-up, Qt Widgets and EngineCore -- none of the rest of the
+# editor, so a fresh clone makes a game (Blank, or an example from
+# Engine/Examples) after building EngineCore alone. The same source files as
+# the editor's, never copies. Engine/Binaries/NimbleLauncher.bat / .sh build
+# just this target in Engine/Build/launcher and start it.
+option(NIMBLE_BUILD_LAUNCHER "Build NimbleLauncher, File > New Project without the editor (Editor targets with Qt)" ON)
+if(NIMBLE_BUILD_LAUNCHER)
+    add_executable(NimbleLauncher WIN32
+            Source/Private/Launcher/LauncherMain.cpp
+            Source/Private/Launcher/LauncherWindow.cpp
+            Source/Private/Launcher/LauncherWindow.h
+            Source/Private/Editor/Project/NewProjectWizard.cpp
+            Source/Private/Editor/Project/NewProjectWizard.h
+            Source/Private/Editor/SourceBuild.cpp
+            Source/Private/Editor/SourceBuild.h
+            Source/Private/Editor/Project/ProjectTemplate.cpp
+            Source/Private/Editor/Project/ProjectTemplate.h)
+    if(WIN32)
+        target_sources(NimbleLauncher PRIVATE Resources/AppIcon/NimbleEditor.rc)
+    endif()
+    set_target_properties(NimbleLauncher PROPERTIES
+            AUTOMOC ON
+            AUTOUIC OFF
+            AUTORCC OFF
+            FOLDER  "Editor")
+    target_include_directories(NimbleLauncher PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source "${CMAKE_CURRENT_BINARY_DIR}/Generated")
+    target_link_libraries(NimbleLauncher PRIVATE EngineCore::EngineCore Qt6::Core Qt6::Gui Qt6::Widgets)
+    # The warm-up configures with Ninja, as a game's presets do; this tree's
+    # Ninja when it has one.
+    set(NM_LAUNCHER_NINJA "")
+    if(CMAKE_GENERATOR MATCHES "Ninja" AND CMAKE_MAKE_PROGRAM)
+        set(NM_LAUNCHER_NINJA "${CMAKE_MAKE_PROGRAM}")
+    endif()
+    set_property(SOURCE Source/Private/Launcher/LauncherWindow.cpp APPEND PROPERTY
+            COMPILE_DEFINITIONS "NIMBLELAUNCHER_NINJA=\"${NM_LAUNCHER_NINJA}\"")
+    if(WIN32 AND NM_WINDEPLOYQT)
+        add_custom_command(TARGET NimbleLauncher POST_BUILD
+                COMMAND "${NM_WINDEPLOYQT}" --no-translations --no-compiler-runtime
+                        --no-opengl-sw --no-system-d3d-compiler
+                        "$<TARGET_FILE:NimbleLauncher>"
+                COMMENT "NimbleLauncher: deploying Qt beside the executable"
+                VERBATIM)
+    endif()
+    source_group("Launcher" FILES Source/Private/Launcher/LauncherMain.cpp
+            Source/Private/Launcher/LauncherWindow.cpp Source/Private/Launcher/LauncherWindow.h)
+endif()
+
 # The Details, UI Designer, Particle and Sequencer tests compile the editor's sources, so they need
 # its generated headers too (build info, project config); made by
 # NimbleEditor's build, which they depend on.
