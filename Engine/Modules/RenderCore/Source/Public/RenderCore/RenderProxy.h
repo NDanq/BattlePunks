@@ -4,6 +4,7 @@
 #include <cstring>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <type_traits>
 
 #include "Public/Core/CoreLog.h"
@@ -40,6 +41,7 @@
 namespace RenderCore
 {
     class RenderContext;
+    struct RenderInstance;   // RenderContext.h
 
     class RENDERCORE_API RenderProxy
     {
@@ -115,6 +117,23 @@ namespace RenderCore
          * the visible ones to the frame's shadow views; one granted draws
          * into its own view alone, and no longer into the sun's. */
         virtual bool CastsInsetShadow() const { return false; }
+
+        /* AUTO INSTANCING (RENDERPIPELINE.md, "Auto instancing"). Whether this
+         * proxy's draws could be one instance among many: true, with OutKey
+         * what another must match to share its draw (its mesh, materials,
+         * and how it shadows and occludes), if nothing it draws is its own
+         * -- no parameter overrides, skin, baked lighting, inset shadow,
+         * reveal or custom pass groups. None by default. */
+        virtual bool GetInstanceKey(std::string& OutKey) const { (void)OutKey; return false; }
+
+        /* A new proxy drawing this one's mesh InCount times, at InInstances'
+         * transforms (world space: its own is the identity), for RenderScene
+         * to add; null if it cannot. Only asked of one GetInstanceKey took. */
+        virtual RenderProxy* CreateInstanced(RenderContext& InContext, const RenderInstance* InInstances, uint32_t InCount) const
+        {
+            (void)InContext; (void)InInstances; (void)InCount;
+            return nullptr;
+        }
 
         /* Recomputes LocalToWorld = InTransform.ToMatrix() and
          * WorldBounds = AABB::Transformed(LocalBounds, LocalToWorld) --
@@ -199,12 +218,15 @@ namespace RenderCore
         const GameCore::AABB&         GetWorldBounds()  const { return WorldBounds; }
         const GameCore::AABB&         GetLocalBounds()  const { return LocalBounds; }
         bool                          IsVisible()       const { return bVisible; }
-        /* What the scene's culling reads: visible, and not bucketed out. */
-        bool                          IsRenderable()    const { return bVisible && !bDetailHidden; }
+        /* What the scene's culling reads: visible, not bucketed out, and not
+         * drawn by an auto instancing cluster instead. */
+        bool                          IsRenderable()    const { return bVisible && !bDetailHidden && !bInCluster; }
+        bool                          IsInCluster()     const { return bInCluster; }
         GameCore::EntityID            GetOwner()        const { return Owner; }
 
     private:
         friend class RenderScene;
+        friend class InstanceClusters;
 
         GameCore::EntityID     Owner;
         RenderTransform        Transform;
@@ -221,6 +243,7 @@ namespace RenderCore
         bool     bVisible     = true;
         bool     bStatic      = false;
         bool     bDetailHidden = false;
+        bool     bInCluster    = false;   // an auto instancing cluster draws it (InstanceClusters)
         uint8_t  CustomPassGroups = 0;
         uint64_t ChangeSerial = 0;
         RenderBakedDraw Baked;

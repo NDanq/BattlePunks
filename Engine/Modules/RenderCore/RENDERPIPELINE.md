@@ -1402,6 +1402,66 @@ Verified: the GPU smoke check draws a lit, shadowed scene static and dynamic
 pixel for pixel alike, and a static box moved by a tool lands exactly where a
 dynamic one does.
 
+### Auto instancing
+
+Static entities that draw the same mesh with the same materials are drawn
+together: one instanced draw per stage for a group, instead of one each. A
+kit-built level -- hundreds of identical walls, floors, pipes -- is mostly
+such groups (Demo Lab's L2 Laboratory: 1,072 visible mesh entities, 91
+mesh and material pairs).
+
+- **Who:** a proxy whose `RenderProxy::GetInstanceKey` takes it -- for a
+  Render component, a mesh with no material parameter overrides, no skin,
+  no baked lighting, no inset shadow, no player reveal and no custom pass
+  groups -- and which is Static, visible and not detail-hidden. The key is
+  its mesh, its eight material slots, and whether it casts shadows and
+  occludes.
+- **Where:** grouped by key and by the cell of an `[Rendering]
+  AutoInstancingCell` grid (world units, default 2000) its box's centre
+  falls in, so a cluster stays small enough to cull. A cell needs
+  `AutoInstancingMin` members (default 2).
+- **How (`InstanceClusters`, once a frame before any view):** each cell's
+  cluster is a proxy of its own (`RenderProxy::CreateInstanced`): the
+  members' world transforms in an instance buffer, its transform the
+  identity, its box their union, Static. It is then culled, occlusion
+  queried, captured into static draw lists, shadow cached and drawn into
+  scene captures like any proxy. Its members, while it stands, are not
+  renderable (`RenderProxy::IsRenderable`), so no view, shadow, capture or
+  shadow cache pass sees them twice.
+- **Rebuilds:** each frame a cell's members and their change serials make a
+  fingerprint; a cell whose fingerprint moves (one moved, changed, hidden,
+  shown, added or removed) gets its cluster made again, the others keep
+  theirs and their buffers. A cluster made or unmade counts as a static
+  caster change for the shadow cache.
+- **What it costs:** culling is per cluster, so a visible cluster draws all
+  of its members (vertex work for the off-screen ones; their pixels are
+  clipped), and the GPU's same-frame occlusion predicate covers the
+  cluster's box rather than each member's. Translucent members sort as one.
+- **Off by default** for now: a machine hang during a Demo Lab L2 run with it
+  on (2026-11-01) is not yet ruled out. `[Rendering] AutoInstancing=true`
+  turns it on.
+- **Off:** `[Rendering] AutoInstancing=false`, or a backend without
+  instancing (`RenderContext::SupportsInstancing`; Metal so far), draws every
+  entity on its own as before. A scene capture that excludes an entity
+  (`SceneCaptureRequest::Excluded`) still sees it if it is in a cluster.
+- **Log:** `auto instancing: <n> clusters draw <m> static entities` when the
+  counts change.
+
+Measured (Arc B390, 2560 x 1440 High, RelWithDebInfo, the editor offscreen,
+off then on, medians of three samples a view):
+
+| Demo Lab | Clusters (entities) | All draws | Base Pass draws | CPU recording ms | Render thread ms |
+|---|---|---|---|---|---|
+| L2 calm, five views | 105 (719) | 3,070-3,546 -> 1,401-1,677 | 2,307 -> 819 | 7.1-8.4 -> 4.9-5.0 | 12.2-21.4 -> 9.6-18.2 |
+| L2 alarm, five views | 108 (727) | 2,825-3,629 -> 1,315-1,950 | ~2,435 -> ~930 | 6.8-8.0 -> 4.5-5.3 | 13.8-20.6 -> 9.4-19.2 |
+| L3, default camera | 29 (125) | 646 -> 431 | 561 -> 348 | 2.4 -> 1.9 | 9.1 -> 8.5 |
+| L1, default camera | 23 (71) | 263 -> 215 | 36 -> 36 | 1.2 -> 1.1 | 8.1 -> 8.2 |
+
+GPU time moved within this iGPU's throttling noise. The L2 workshop frame is
+pixel for pixel alike (mean difference 1.1 of 255, TAA's noise), and
+`RenderCore.Smoke`'s GPU test (`NIMBLE_SMOKE_GPU=Vulkan`) checks six
+instanced boxes against six separate ones exactly.
+
 ### Terrain
 
 A **Terrain** component (`Components/TerrainComponent.h`; the full guide is

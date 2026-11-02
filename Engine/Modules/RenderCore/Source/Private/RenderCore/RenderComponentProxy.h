@@ -39,6 +39,12 @@ namespace RenderCore
         /* A skinned mesh moves every frame on its own: never a static draw. */
         bool AllowsStaticDraws() const override { return !bSkinned; }
 
+        /* Auto instancing: a mesh with nothing of its own per draw; and a
+         * copy of it drawn at many transforms. */
+        bool GetInstanceKey(std::string& OutKey) const override;
+        RenderProxy* CreateInstanced(RenderContext& InContext, const RenderInstance* InInstances, uint32_t InCount) const override;
+        void ReleaseRenderResources(RenderContext& InContext) override;
+
         /* RENDER THREAD, from WorldBridge after ApplyComponent: its skeleton's
          * pose this frame, model space, one matrix per bone (ANIMATION.md).
          * InCount 0: the mesh's bind pose. */
@@ -72,6 +78,11 @@ namespace RenderCore
         /* The component's parameter overrides; ParameterCount: up to the last in use. */
         RenderMaterialParameter Parameters[8] = {};   // RENDER_MATERIAL_PARAMETERS_MAX
         uint32_t                ParameterCount = 0;
+
+        /* An auto instancing cluster's (CreateInstanced): its members, world
+         * space; null for an entity's own proxy. */
+        RenderInstanceBuffer*   Instances = nullptr;
+        uint32_t                InstanceCount = 0;
 
         /* Bounds are redone only when these change. Null source: the quad. */
         std::string                            MeshPath;
