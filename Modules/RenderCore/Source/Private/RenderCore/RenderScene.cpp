@@ -2434,7 +2434,9 @@ namespace RenderCore
             /* This frame's scale against its block, and the times of the block they are for. */
             const float NoTimes[RGT_Count] = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
             const float Drew = Main.View.ViewportPixels.Width > 0 ? float(Main.Targets.Width) / float(Main.View.ViewportPixels.Width) : Scale;
-            P->UpdateDynamicResolution(Drew, Owner == this ? GpuMs : NoTimes, Serials);
+            /* Not a ?: -- MSVC decays array operands of one to pointers, which do not bind to float(&)[]. */
+            if(Owner == this) { P->UpdateDynamicResolution(Drew, GpuMs, Serials); }
+            else              { P->UpdateDynamicResolution(Drew, NoTimes, Serials); }
             if(P->bReportsStats) { SetResolutionStats(Drew, bDynamic, GRenderDynamicResolutionTargetMs.GetFloat()); }
             if(!Stats.bShowFrame && P->GpuWindowStartNs != 0)
             {
