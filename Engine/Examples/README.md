@@ -25,6 +25,27 @@ folders or Python caches.
 
 ## Unpacking without the editor
 
+**NimbleLauncher** is File > New Project with no editor build: the editor's
+own wizard (the same steps, log, Stop and Retry Step), linked with Qt Widgets
+and EngineCore only.
+
+```bash
+Engine/Binaries/NimbleLauncher.sh     # or NimbleLauncher.bat; [--no-warmup]
+```
+
+It configures `Engine/Build/launcher` once. That also prebuilds the
+third-party libraries into `Engine/Intermediate/ThirdParty`, shared by every
+tree on the toolchain. It then builds the `NimbleLauncher` target and starts
+it. Any editor tree builds the target too (`NIMBLE_BUILD_LAUNCHER`, on by
+default). The wizard's **Build and cook** checkbox runs the same steps as
+`--build` below, so it still compiles the engine and the game's own editor in
+the game's tree. In the background, the launcher builds the engine modules in
+`Engine/Intermediate/LauncherWarmup`, unless that tree is already up to date.
+It pauses while a project builds. A game's tree does not reuse that warm-up
+yet (that needs an engine SDK); only the third-party prebuild carries over.
+
+From the command line:
+
 ```bash
 Engine/Binaries/NewProject.sh --example DemoLab
 Engine/Binaries/NewProject.sh --example DemoLab --build --jobs 6 MyLab

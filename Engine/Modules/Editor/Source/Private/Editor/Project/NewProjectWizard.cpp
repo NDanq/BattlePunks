@@ -437,6 +437,7 @@ void NewProjectWizard::StartRun(const int InFirstStep)
     });
     CORE_LOG("[Project] creating " + ProjectDir.toStdString() + " from the " + Example.toStdString() + " example")
     Run->start(SourceBuild::GetCMakeCommand(), Args);
+    emit RunStarted(Steps.mid(InFirstStep));
 }
 
 void NewProjectWizard::StopRun()

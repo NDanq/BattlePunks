@@ -2,8 +2,8 @@
 // ==========================================================================
 // Generated from this template by the Editor's CMakeLists.txt at configure
 // time. DO NOT EDIT the generated header, and DO NOT commit it -- it lands in
-// the build tree (Generated/EditorBuildTree.h). Only SourceBuild.cpp includes
-// it.
+// the build tree (Generated/EditorBuildTree.h). Only SourceBuild.cpp and
+// NimbleLauncher's LauncherMain.cpp include it.
 //
 // Where this editor was built from, so Build > Compile Source can run the same
 // build again: the CMake that configured the tree, the tree itself, and (MSVC

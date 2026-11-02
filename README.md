@@ -118,6 +118,25 @@ Engine/Binaries/NewProject.sh --example DemoLab --build      # NewProject.bat on
 ```
 
 which unpacks it into `Games/DemoLab`, then configures, builds and cooks it.
+
+On a fresh clone, **NimbleLauncher** gives you the same File > New Project
+window without compiling the editor first. It builds only EngineCore and
+itself:
+
+```bash
+Engine/Binaries/NimbleLauncher.sh      # NimbleLauncher.bat on Windows (finds MSVC itself)
+```
+
+The first run configures `Engine/Build/launcher`. That also prebuilds the
+third-party libraries, which every game's tree on the same toolchain reuses.
+Pick **Example: Demo Lab** there. Unpacking takes seconds. **Build and cook**
+still compiles the engine and Demo Lab's own editor in its tree
+(`editor-relwithdebinfo`), which is the long part. While the launcher is open,
+it also builds the engine modules in a warm-up tree of its own
+(`Engine/Intermediate/LauncherWarmup`, `--no-warmup` to skip). It pauses that
+while a project builds. A game's tree does not reuse those objects yet: that
+would need a prebuilt engine SDK.
+
 Its `Docs/Guide.md` then says how to run it, what each level shows, how to
 regenerate its content and how to test and measure it. **Worlds Lab**
 (`--example WorldsLab`) is the older test bed it replaced, trimmed to the
