@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="1ca0c27a4d716069bf6898881460a993" Name="Alarm_BreakerLeverPivot">
-  <Component Type="Transform" Version="1">
-      <Position X="-856" Y="92" Z="-1800" />
-      <Rotation X="0" Y="270" Z="0" />
-      <Scale X="1" Y="1" Z="1" />
-  </Component>
-</Entity>

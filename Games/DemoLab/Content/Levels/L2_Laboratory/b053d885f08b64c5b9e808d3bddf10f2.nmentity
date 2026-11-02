@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="b053d885f08b64c5b9e808d3bddf10f2" Name="Handle" Parent="42ea319366b10b300f0281cc810c3b06">
-  <Component Type="Transform" Version="1">
-      <Position X="0" Y="0" Z="0" />
-      <Rotation X="0" Y="0" Z="0" />
-      <Scale X="1" Y="1" Z="1" />
-  </Component>
-</Entity>

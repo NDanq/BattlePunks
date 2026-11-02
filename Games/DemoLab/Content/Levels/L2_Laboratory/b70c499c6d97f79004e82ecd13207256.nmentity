@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="b70c499c6d97f79004e82ecd13207256" Name="Alarm_AP_L2A_Fight3_0">
-  <Component Type="Transform" Version="1">
-      <Position X="-2400" Y="0" Z="3400" />
-      <Rotation X="0" Y="0" Z="0" />
-      <Scale X="1" Y="1" Z="1" />
-  </Component>
-</Entity>

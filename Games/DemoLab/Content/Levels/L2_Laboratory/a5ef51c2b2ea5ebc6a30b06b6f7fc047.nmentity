@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="a5ef51c2b2ea5ebc6a30b06b6f7fc047" Name="Calm_CineMark_C3">
-  <Component Type="Transform" Version="1">
-      <Position X="-750" Y="0" Z="-1800" />
-      <Rotation X="0" Y="270" Z="0" />
-      <Scale X="1" Y="1" Z="1" />
-  </Component>
-</Entity>

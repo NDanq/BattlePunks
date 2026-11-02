@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="d53e8a566c00a07d7448483704e9dc8a" Name="Calm_AP_L2_Reader_0">
-  <Component Type="Transform" Version="1">
-      <Position X="-2300" Y="0" Z="600" />
-      <Rotation X="0" Y="0" Z="0" />
-      <Scale X="1" Y="1" Z="1" />
-  </Component>
-</Entity>

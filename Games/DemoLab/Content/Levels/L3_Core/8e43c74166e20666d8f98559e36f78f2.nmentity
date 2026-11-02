@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="8e43c74166e20666d8f98559e36f78f2" Name="AP_L3_Tunnel_3">
-  <Component Type="Transform" Version="1">
-      <Position X="0" Y="0" Z="-4650" />
-      <Rotation X="0" Y="0" Z="0" />
-      <Scale X="1" Y="1" Z="1" />
-  </Component>
-</Entity>

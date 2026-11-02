@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="e5f5c50e95f0a8a21423047df5bdfaa3" Name="Alarm_AP_L2A_Archive_2">
-  <Component Type="Transform" Version="1">
-      <Position X="-2200" Y="0" Z="1500" />
-      <Rotation X="0" Y="0" Z="0" />
-      <Scale X="1" Y="1" Z="1" />
-  </Component>
-</Entity>

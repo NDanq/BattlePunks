@@ -6,6 +6,12 @@
 # engine-level aggregate produces, which no subtree can know about.
 # ===========================================================================
 
+# Games/ holds the projects you make (File > New Project) or unpack from an
+# example archive (Engine/Examples): yours, never tracked. Only the
+# placeholder that keeps the folder is.
+/Games/*
+!/Games/EMPTY.txt
+
 # The flat runtime layout Engine/CMakeLists.txt sets up, and the per-generation
 # shadow copies CoreModuleManager writes underneath it during hot reload.
 #

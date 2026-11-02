@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="3c3222f43cedf1d74379e1545d37d862" Name="Calm_AP_L2_Valve1_1">
-  <Component Type="Transform" Version="1">
-      <Position X="-2200" Y="0" Z="1200" />
-      <Rotation X="0" Y="0" Z="0" />
-      <Scale X="1" Y="1" Z="1" />
-  </Component>
-</Entity>

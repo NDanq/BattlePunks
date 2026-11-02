@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="22da2ebd94f9ba81e86bcee23e9f7ff9" Name="Spawn_Alarm_Enc_W3_2" Parent="52e29b53852db349f6ee975ecd8cdbc3">
-  <Component Type="Transform" Version="1">
-      <Position X="500" Y="0" Z="3900" />
-      <Rotation X="0" Y="180" Z="0" />
-      <Scale X="1" Y="1" Z="1" />
-  </Component>
-</Entity>

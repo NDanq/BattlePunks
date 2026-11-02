@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Instance Guid="a3fe583d423918d506100701c4f7b83d" Name="Paper1" Prefab="Content/Prefabs/ShootingRange/PaperTarget.nmprefab">
-  <Entity Id="1">
-    <Component Type="Transform" Version="1">
-      <Position X="-300" Y="0" Z="1100" />
-      <Rotation X="0" Y="0" Z="0" />
-    </Component>
-  </Entity>
-</Instance>

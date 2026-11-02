@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Instance Guid="4857f07a4b1b963a3d3c85d3455b6268" Name="Calm_ValveControl" Prefab="Content/Prefabs/Lab/ValveControl.nmprefab">
-  <Entity Id="1" Name="Calm_ValveControl">
-    <Component Type="Transform" Version="1">
-        <Position X="0" Y="0" Z="0" />
-        <Rotation X="0" Y="0" Z="0" />
-    </Component>
-  </Entity>
-</Instance>

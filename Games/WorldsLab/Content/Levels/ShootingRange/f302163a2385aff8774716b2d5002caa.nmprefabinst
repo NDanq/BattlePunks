@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Instance Guid="f302163a2385aff8774716b2d5002caa" Name="Steel0" Prefab="Content/Prefabs/ShootingRange/SteelPlate.nmprefab">
-  <Entity Id="1">
-    <Component Type="Transform" Version="1">
-      <Position X="-500" Y="0" Z="700" />
-      <Rotation X="0" Y="0" Z="0" />
-    </Component>
-  </Entity>
-</Instance>

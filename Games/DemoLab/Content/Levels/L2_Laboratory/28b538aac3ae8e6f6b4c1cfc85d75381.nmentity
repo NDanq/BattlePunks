@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="28b538aac3ae8e6f6b4c1cfc85d75381" Name="Calm_AP_L2_Workshop_3">
-  <Component Type="Transform" Version="1">
-      <Position X="-600" Y="0" Z="-200" />
-      <Rotation X="0" Y="0" Z="0" />
-      <Scale X="1" Y="1" Z="1" />
-  </Component>
-</Entity>
