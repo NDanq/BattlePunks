@@ -4650,6 +4650,136 @@ static void TestStaticDrawListsOnGpu()
 }
 
 /*
+ * Auto instancing on the GPU (RENDERPIPELINE.md, "Auto instancing"): six
+ * static boxes in one cell, scaled unevenly and turned, over a static floor under a
+ * shadowing sun draw as one cluster -- two static proxies drawn, not seven --
+ * and the frame is pixel for pixel the one drawn with [Rendering]
+ * AutoInstancing off; one box made dynamic leaves the cluster.
+ */
+static void TestAutoInstancingOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[auto instancing on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[auto instancing on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    ConfigVar* Auto = ConfigFindVarByPath("Rendering.AutoInstancing");
+    Expect(Auto != nullptr, "[Rendering] AutoInstancing is a config var");
+
+    Renderer Rend;
+    const bool bInit = Auto && Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = RenderView::MakePerspective(Viewport, Vector3(0.0, 700.0, -600.0), Vector3(0.0, -700.0, 600.0),
+                                                            50.0f, 10.0f, 5000.0f);
+        Rend.SetViewOverride(&View);
+        GameCore::World World;
+        Rend.BindWorld(World);
+        const auto Placed = [&World](const char* InName, const Vector3& InPosition, const Vector3& InRotation, const Vector3& InScale)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InPosition;
+            Transform.Rotation = InRotation;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            return Each;
+        };
+        RenderComponent FloorMesh;
+        std::snprintf(FloorMesh.Mesh, sizeof(FloorMesh.Mesh), "%s", "Engine/Content/Meshes/Plane.nmmesh");
+        const GameCore::Entity Floor = Placed("Floor", Vector3(), Vector3(), Vector3(3000.0, 1.0, 3000.0));
+        Floor.AddComponent(FloorMesh);
+        Floor.SetMobility(GameCore::EMobility::Static);
+        RenderComponent BoxMesh;
+        std::snprintf(BoxMesh.Mesh, sizeof(BoxMesh.Mesh), "%s", "Engine/Content/Meshes/Box.nmmesh");
+        std::vector<GameCore::Entity> Boxes;
+        for(int Index = 0; Index < 6; ++Index)
+        {
+            char Name[16];
+            std::snprintf(Name, sizeof(Name), "Box%d", Index);
+            const GameCore::Entity Box = Placed(Name, Vector3(100.0 + 150.0 * Index, 60.0 + 10.0 * Index, 40.0 * (Index % 3)),
+                                                Vector3(0.0, 25.0 * Index, 0.0), Vector3(60.0, 80.0 + 20.0 * Index, 50.0));
+            Box.AddComponent(BoxMesh);
+            Box.SetMobility(GameCore::EMobility::Static);
+            Boxes.push_back(Box);
+        }
+        DirectionalLightComponent SunInit;
+        SunInit.ShadowTechnique = LST_Standard;
+        SunInit.ShadowDistance  = 3000.0f;
+        GameCore::Entity Sun = World.CreateEntity("Sun");
+        GameCore::TransformComponent SunAt;
+        SunAt.Rotation = Vector3(55.0, 90.0, 0.0);
+        Sun.AddComponent(SunAt);
+        Sun.AddComponent(SunInit);
+        Placed("Sky", Vector3(), Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(SkyLightComponent());
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](EngineCore::Image& OutPixels)
+        {
+            for(int Each = 0; Each < 3; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            const uint64_t Request = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto Differing = [](const EngineCore::Image& InA, const EngineCore::Image& InB)
+        {
+            int Count = 0;
+            for(int Y = 0; Y < 256; ++Y)
+            {
+                const uint8_t* A = InA.GetData() + InA.GetStride() * Y;
+                const uint8_t* B = InB.GetData() + InB.GetStride() * Y;
+                for(int X = 0; X < 256 * 4; X += 4)
+                {
+                    Count += (A[X] != B[X] || A[X + 1] != B[X + 1] || A[X + 2] != B[X + 2]) ? 1 : 0;
+                }
+            }
+            return Count;
+        };
+
+        const bool bWasOn = Auto->GetBool();
+        EngineCore::Image Separate, Instanced, OneOut;
+        Auto->SetBool(false);
+        const bool bSeparate = Capture(Separate);
+        RenderStats Off;
+        Rend.GetStats(Off);
+        Auto->SetBool(true);
+        const bool bInstanced = Capture(Instanced);
+        RenderStats On;
+        Rend.GetStats(On);
+        std::printf("    static proxies drawn: %llu off, %llu on; %d pixels differ\n", (unsigned long long)Off.StaticProxiesDrawn,
+                    (unsigned long long)On.StaticProxiesDrawn, bSeparate && bInstanced ? Differing(Separate, Instanced) : -1);
+        Expect(bSeparate && Off.StaticProxiesDrawn == 7, "off, the floor and six boxes draw one by one");
+        Expect(bInstanced && On.StaticProxiesDrawn == 2, "on, the six boxes draw as one cluster");
+        Expect(bSeparate && bInstanced && Differing(Separate, Instanced) == 0, "and the frame is pixel for pixel the same, shadows and all");
+
+        Boxes[2].SetMobility(GameCore::EMobility::Dynamic);
+        const bool bOneOut = Capture(OneOut);
+        RenderStats Out;
+        Rend.GetStats(Out);
+        Expect(bOneOut && Out.StaticProxiesDrawn == 2 && Differing(Instanced, OneOut) == 0,
+               "a box made dynamic leaves the cluster and draws where it was");
+
+        Auto->SetBool(bWasOn);
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+}
+
+/*
  * The shadow cache on the GPU (RENDERPIPELINE.md, "Shadow cache"): a point
  * light over a static floor and box and a dynamic box. With [Rendering]
  * ShadowCache on, every frame is pixel for pixel the one drawn with it off --
@@ -7921,6 +8051,7 @@ int main()
     TestParticlesOnGpu();
     TestStatFrameOnGpu();
     TestStaticDrawListsOnGpu();
+    TestAutoInstancingOnGpu();
     TestShadowCacheOnGpu();
     TestOcclusionCulling();
     TestOcclusionCullingOnGpu();

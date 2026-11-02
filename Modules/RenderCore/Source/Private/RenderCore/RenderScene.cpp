@@ -18,6 +18,7 @@
 #include "Public/RenderCore/TextureAsset.h"
 #include "Private/RenderCore/CaptureScheduler.h"
 #include "Private/RenderCore/DrawPolicy.h"
+#include "Private/RenderCore/InstanceClusters.h"
 #include "Private/RenderCore/MaterialPreview.h"
 #include "Private/RenderCore/SceneCapture.h"
 #include "Public/RenderCore/Components/SceneCaptureProbeComponent.h"
@@ -303,6 +304,10 @@ namespace RenderCore
         };
         std::unordered_map<const RenderProxy*, StaticDrawList> StaticLists;
         uint64_t                                               StaticBuilds = 0;   // lifetime captures
+
+        /* AUTO INSTANCING (RENDERPIPELINE.md, "Auto instancing"): static proxies sharing a mesh and
+         * materials, drawn by one cluster proxy per cell. */
+        InstanceClusters Clusters;
 
         /*
          * SHADOW CACHE (RENDERPIPELINE.md, "Shadow cache"). This scene's id there, and the casters
@@ -2211,6 +2216,7 @@ namespace RenderCore
 
         InProxy->ReleaseRenderResources(InContext);
         P->StaticLists.erase(InProxy);
+        P->Clusters.Forget(InProxy);
         const auto Caster = P->ShadowCasters.find(InProxy);
         if(Caster != P->ShadowCasters.end())
         {
@@ -2449,7 +2455,9 @@ namespace RenderCore
             InContext.WriteGpuTimestamp(RGT_Particles, true);
         }
 
-        /* The shadow cache's lights that a static caster's change reaches, drawn again this frame. */
+        /* Auto instancing's clusters for this frame's static proxies; then the shadow cache's
+         * lights that a static caster's change reaches (a cluster made or unmade is one), drawn again. */
+        P->Clusters.Update(*this, P->Proxies, InContext);
         P->TrackShadowCasters(InContext);
 
 #if WITH_EDITOR

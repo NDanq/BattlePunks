@@ -57,6 +57,8 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/RenderPipeline.cpp
         Source/Private/RenderCore/SceneTargets.h
         Source/Private/RenderCore/RenderProxy.cpp
+        Source/Private/RenderCore/InstanceClusters.h
+        Source/Private/RenderCore/InstanceClusters.cpp
         Source/Private/RenderCore/RenderScene.cpp
         Source/Private/RenderCore/RenderComponentProxy.h
         Source/Private/RenderCore/MaterialPreview.h
