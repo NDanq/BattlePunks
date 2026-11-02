@@ -566,6 +566,18 @@ if(NIMBLEEDITOR_BUILD_TESTS)
             "NIMBLEEDITOR_CMAKE_COMMAND=\"${CMAKE_COMMAND}\""
             "NIMBLEEDITOR_NEW_PROJECT_SCRIPT=\"${NM_EDITOR_NEW_PROJECT_SCRIPT}\""
             "NIMBLEEDITOR_NEW_PLUGIN_SCRIPT=\"${NM_EDITOR_NEW_PLUGIN_SCRIPT}\"")
+    # And example projects: the Tiny fixture, unpacked by NewProject.cmake
+    # -DEXAMPLE=, and packed again by Engine/Examples/pack_example.py (with a
+    # Python that has compression.zstd; skipped otherwise).
+    get_filename_component(NM_EDITOR_PACK_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/../../Examples/pack_example.py" ABSOLUTE)
+    target_compile_definitions(NimbleEditorProjectTests PRIVATE
+            "NIMBLEEDITOR_EXAMPLES_FIXTURE=\"${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Examples\""
+            "NIMBLEEDITOR_EXAMPLE_PROJECT_FIXTURE=\"${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/ExampleProject/Tiny\""
+            "NIMBLEEDITOR_PACK_SCRIPT=\"${NM_EDITOR_PACK_SCRIPT}\"")
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        target_compile_definitions(NimbleEditorProjectTests PRIVATE "NIMBLEEDITOR_PYTHON=\"${Python3_EXECUTABLE}\"")
+    endif()
     add_dependencies(NimbleEditorProjectTests NimbleEditor)
     add_test(NAME Editor.Project COMMAND NimbleEditorProjectTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorProjectTests>")

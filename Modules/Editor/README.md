@@ -116,8 +116,8 @@ uses it.
 | `Content/ImportWizard` (private) | File > Import and drops from outside: the wizard that turns glTF and images into `.nmmesh` / `.nmtexture` |
 | `Content/AssetImport`, `GltfImporter` (private) | The conversions themselves, no widgets (cgltf, `Engine/ThirdParty/Source/cgltf-1.15`, reads glTF); tested by `NimbleEditorImportTests` |
 | `Content/ContentPaths` (private) | Project files as the engine names them: runtime-relative paths (the engine's content as `Engine/Content/...`), material names, staging beside the executable |
-| `Project/NewProjectWizard` (private) | File > New Project: a new game in `Games/<Name>` from `Engine/Templates/Game` -- module, level, game mode, game state, launcher, `Config/`, `Scripts/`, `Content/` -- configured standalone, so the engine is never edited |
-| `Project/ProjectTemplate` (private) | The copy itself, no widgets: name checks, `@PROJECT_NAME@` / `@ENGINE_DIR@` / `__PROJECT__` replaced; tested by `NimbleEditorProjectTests`, which also checks `Engine/Binaries/NewProject.cmake` (the same, without the editor) writes an identical project |
+| `Project/NewProjectWizard` (private) | File > New Project: a new game in `Games/<Name>` from `Engine/Templates/Game` -- module, level, game mode, game state, launcher, `Config/`, `Scripts/`, `Content/` -- configured standalone, so the engine is never edited. Or an example project from `Engine/Examples` (Demo Lab), unpacked, renamed and optionally configured, built and cooked by running `Engine/Binaries/NewProject.cmake -DEXAMPLE=` step by step, with its log, Stop and Retry Step |
+| `Project/ProjectTemplate` (private) | The copy itself, no widgets: name checks, `@PROJECT_NAME@` / `@ENGINE_DIR@` / `__PROJECT__` replaced; tested by `NimbleEditorProjectTests`, which also checks `Engine/Binaries/NewProject.cmake` (the same, without the editor) writes an identical project. Also the examples' index (`ListExamples`) and the script's command line (`ExampleScriptArgs`); the tests unpack, rename and repack a tiny example (`Tests/Data`) |
 
 ## Content Browser
 
