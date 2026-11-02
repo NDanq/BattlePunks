@@ -32,19 +32,32 @@ bool D3D12DescriptorAllocator::Initialize(D3D12Device* InDevice, const uint32_t 
 
     if(!CreateSamplers()) return false;
 
-    RingSlots  = InSlots < 1 ? 1u : InSlots;
-    RingBuffer = D3D12Ops::CreateBuffer(Device, UINT64(kRingCapacity) * RingSlots, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
-    if(!RingBuffer) return false;
+    RingSlots = InSlots < 1 ? 1u : InSlots;
+    RingChunks.resize(RingSlots);
+    for(std::array<RingChunk, kRingChunkMax>& Chunks : RingChunks)
+    {
+        if(!CreateRingChunk(Chunks[0])) return false;
+    }
+    Reset(0);
+    return true;
+}
+
+bool D3D12DescriptorAllocator::CreateRingChunk(RingChunk& OutChunk)
+{
+    Microsoft::WRL::ComPtr<ID3D12Resource> Buffer =
+        D3D12Ops::CreateBuffer(Device, kRingCapacity, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+    if(!Buffer) return false;
 
     const D3D12_RANGE NoRead{ 0, 0 };
     void* Mapped = nullptr;
-    if(FAILED(RingBuffer->Map(0, &NoRead, &Mapped)))
+    if(FAILED(Buffer->Map(0, &NoRead, &Mapped)))
     {
-        GDI_LOG_ERROR("[D3D12DescriptorAllocator] Failed to map the constant-buffer ring.")
+        GDI_LOG_ERROR("[D3D12DescriptorAllocator] Failed to map a constant-buffer ring chunk.")
         return false;
     }
-    RingMapped = static_cast<uint8_t*>(Mapped);
-    Reset(0);
+    OutChunk.Mapped     = static_cast<uint8_t*>(Mapped);
+    OutChunk.GPUAddress = Buffer->GetGPUVirtualAddress();
+    OutChunk.Buffer     = std::move(Buffer);
     return true;
 }
 
@@ -103,47 +116,69 @@ bool D3D12DescriptorAllocator::CreateSamplers()
 
 void D3D12DescriptorAllocator::Shutdown()
 {
-    if(RingBuffer && RingMapped)
+    for(std::array<RingChunk, kRingChunkMax>& Chunks : RingChunks)
     {
-        RingBuffer->Unmap(0, nullptr);
+        for(RingChunk& Chunk : Chunks)
+        {
+            if(Chunk.Buffer && Chunk.Mapped) { Chunk.Buffer->Unmap(0, nullptr); }
+        }
     }
-    RingMapped = nullptr;
-    RingBuffer.Reset();
+    RingChunks.clear();
     SamplerHeap.Reset();
     SRVHeap.Reset();
     FreeSRVSlots.clear();
-    RingOffset = 0;
-    Device     = nullptr;
+    RingCursor  = 0;
+    bWarnedFull = false;
+    Device      = nullptr;
 }
 
 void D3D12DescriptorAllocator::Reset(const uint32_t InSlot)
 {
-    const uint32_t Slot = InSlot < RingSlots ? InSlot : 0u;
-    RingBase   = Slot * kRingCapacity;
-    RingEnd    = RingBase + kRingCapacity;
-    RingOffset = RingBase;
-    ++Epoch;   // an upload from another slot's region, or this one's last frame, is stale
+    RingSlot   = InSlot < RingSlots ? InSlot : 0u;
+    RingCursor = 0;
+    ++Epoch;   // an upload from another slot's chunks, or this one's last frame, is stale
 }
 
 D3D12CBAllocation D3D12DescriptorAllocator::AllocateCB(uint32_t Size)
 {
     D3D12CBAllocation Out;
     const uint32_t Aligned = (Size + kCBAlignment - 1) & ~(kCBAlignment - 1);
-    if(!RingMapped || Aligned > kRingCapacity)
+    if(RingChunks.empty() || Aligned > kRingCapacity)
     {
         return Out;
     }
 
-    /* Claimed whole, by whichever thread gets there: past the region's end,
-     * nothing (the offset stays past it until Reset). */
-    const uint32_t Offset = RingOffset.fetch_add(Aligned, std::memory_order_relaxed);
-    if(Offset > RingEnd - Aligned)
+    std::array<RingChunk, kRingChunkMax>& Chunks = RingChunks[RingSlot];
+    for(;;)
     {
-        return Out;
+        /* Claimed whole, by whichever thread gets there. */
+        const uint64_t Cursor = RingCursor.fetch_add(Aligned);
+        const uint32_t Chunk  = uint32_t(Cursor >> 32);
+        const uint32_t Offset = uint32_t(Cursor);
+        if(Offset <= kRingCapacity - Aligned)
+        {
+            Out.GPUAddress = Chunks[Chunk].GPUAddress + Offset;
+            Out.MappedPtr  = Chunks[Chunk].Mapped + Offset;
+            return Out;
+        }
+
+        /* Past the chunk's end: the first thread here moves every thread on
+         * to the next chunk, made if this frame is the first to need it. */
+        std::lock_guard<std::mutex> Lock(RingGrowLock);
+        if(uint32_t(RingCursor.load() >> 32) != Chunk) continue;   // moved on already
+        if(Chunk + 1 >= kRingChunkMax || (!Chunks[Chunk + 1].Buffer && !CreateRingChunk(Chunks[Chunk + 1])))
+        {
+            if(!bWarnedFull)
+            {
+                bWarnedFull = true;
+                GDI_LOG_ERROR("[D3D12DescriptorAllocator] Constant-buffer ring full at "
+                              + std::to_string(uint64_t(kRingChunkMax) * (kRingCapacity / 1024))
+                              + " KB this frame; draws past it are dropped.")
+            }
+            return Out;
+        }
+        RingCursor = uint64_t(Chunk + 1) << 32;
     }
-    Out.GPUAddress = RingBuffer->GetGPUVirtualAddress() + Offset;
-    Out.MappedPtr  = RingMapped + Offset;
-    return Out;
 }
 
 uint32_t D3D12DescriptorAllocator::AllocateSRV()
