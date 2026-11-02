@@ -191,6 +191,62 @@ namespace RenderCore
             Vector3( 0.0, 1.0, 0.0), Vector3( 0.0, -1.0, 0.0),
             Vector3( 0.0, 0.0, 1.0), Vector3( 0.0, 0.0, -1.0),
         };
+
+        /* The shadowed point and spot lights' views, in the local atlas's tiles, in Locals order: at
+         * most MaxShadowedLights, and (with InRegion) only those whose reach overlaps it. Returns the
+         * next free tile. OutFrame.AtlasSize must be set. */
+        uint32_t AddLocalShadowViews(const RenderLighting& InLighting, ShadowFrame& OutFrame, const GameCore::AABB* InRegion)
+        {
+            const uint32_t Atlas     = OutFrame.AtlasSize;
+            const uint32_t TileSize  = Atlas / SHADOW_LOCAL_ATLAS_COLUMNS;
+            const uint32_t TileCount = SHADOW_LOCAL_ATLAS_COLUMNS * SHADOW_LOCAL_ATLAS_ROWS;
+            const uint32_t MaxLights = uint32_t(std::clamp(InLighting.Shadows.MaxShadowedLights, 0, int32_t(RENDER_SHADOWED_LOCAL_LIGHT_MAX)));
+            uint32_t NextTile = 0;
+            uint32_t Shadowed = 0;
+            const uint32_t LocalCount = std::min<uint32_t>(InLighting.LocalCount, RENDER_LOCAL_LIGHT_MAX);
+            for(uint32_t LightIndex = 0; LightIndex < LocalCount && Shadowed < MaxLights; ++LightIndex)
+            {
+                const RenderLocalLight& Light = InLighting.Locals[LightIndex];
+                if(!Light.bCastShadows || Light.Range <= 1.0f || Light.Intensity <= 0.0f)
+                {
+                    continue;
+                }
+                if(InRegion && !InRegion->IsEmpty())
+                {
+                    const Vector3 Reach(Light.Range, Light.Range, Light.Range);
+                    if(!GameCore::AABB(Light.Position - Reach, Light.Position + Reach).Overlaps(*InRegion))
+                    {
+                        continue;
+                    }
+                }
+                const bool     bSpot = Light.Type == RLL_Spot;
+                const uint32_t Faces = bSpot ? 1u : uint32_t(SHADOW_POINT_FACES);
+                if(NextTile + Faces > TileCount)
+                {
+                    break;
+                }
+
+                const double Far  = double(Light.Range);
+                const double Near = std::max(1.0, Far * 0.005);
+                OutFrame.LocalFirstView[LightIndex] = int32_t(OutFrame.ViewCount);
+                for(uint32_t Face = 0; Face < Faces; ++Face)
+                {
+                    ShadowView& View = OutFrame.Views[OutFrame.ViewCount++];
+                    View.Atlas    = SA_Local;
+                    View.Inset    = -1;
+                    View.TileSize = TileSize;
+                    View.TileX    = (NextTile % SHADOW_LOCAL_ATLAS_COLUMNS) * TileSize;
+                    View.TileY    = (NextTile / SHADOW_LOCAL_ATLAS_COLUMNS) * TileSize;
+                    ++NextTile;
+
+                    const Vector3 Forward = bSpot ? Light.Direction.GetNormalize() : POINT_FACES[Face];
+                    const double  Fov     = bSpot ? std::clamp(2.0 * double(Light.OuterConeAngle) + 2.0, 2.0, 170.0) : 90.0;
+                    FinishView(View, LookAlong(Light.Position, Forward), Perspective(Fov, Near, Far), Atlas);
+                }
+                ++Shadowed;
+            }
+            return NextTile;
+        }
     }
 
     void InsetScreenNdc(const InsetShadowCaster& InCaster, const Vector3& InDirection, const double InPad,
@@ -373,6 +429,7 @@ namespace RenderCore
                           const InsetShadowCaster* InCasters, const uint32_t InCasterCount, const GameCore::AABB* InReceivers)
     {
         OutFrame.ViewCount            = 0;
+        OutFrame.CacheFillCount       = 0;
         OutFrame.InsetFirstView       = -1;
         OutFrame.InsetCount           = 0;
         OutFrame.AtlasSize            = 0;
@@ -438,45 +495,9 @@ namespace RenderCore
         }
 
         // --- Point and spot lights, in the local atlas's tiles -------------------
+        uint32_t NextTile = AddLocalShadowViews(InLighting, OutFrame, nullptr);
         const uint32_t TileSize  = Atlas / SHADOW_LOCAL_ATLAS_COLUMNS;
         const uint32_t TileCount = SHADOW_LOCAL_ATLAS_COLUMNS * SHADOW_LOCAL_ATLAS_ROWS;
-        const uint32_t MaxLights = uint32_t(std::clamp(Settings.MaxShadowedLights, 0, int32_t(RENDER_SHADOWED_LOCAL_LIGHT_MAX)));
-        uint32_t NextTile = 0;
-        uint32_t Shadowed = 0;
-        const uint32_t LocalCount = std::min<uint32_t>(InLighting.LocalCount, RENDER_LOCAL_LIGHT_MAX);
-        for(uint32_t LightIndex = 0; LightIndex < LocalCount && Shadowed < MaxLights; ++LightIndex)
-        {
-            const RenderLocalLight& Light = InLighting.Locals[LightIndex];
-            if(!Light.bCastShadows || Light.Range <= 1.0f || Light.Intensity <= 0.0f)
-            {
-                continue;
-            }
-            const bool     bSpot = Light.Type == RLL_Spot;
-            const uint32_t Faces = bSpot ? 1u : uint32_t(SHADOW_POINT_FACES);
-            if(NextTile + Faces > TileCount)
-            {
-                break;
-            }
-
-            const double Far  = double(Light.Range);
-            const double Near = std::max(1.0, Far * 0.005);
-            OutFrame.LocalFirstView[LightIndex] = int32_t(OutFrame.ViewCount);
-            for(uint32_t Face = 0; Face < Faces; ++Face)
-            {
-                ShadowView& View = OutFrame.Views[OutFrame.ViewCount++];
-                View.Atlas    = SA_Local;
-                View.Inset    = -1;
-                View.TileSize = TileSize;
-                View.TileX    = (NextTile % SHADOW_LOCAL_ATLAS_COLUMNS) * TileSize;
-                View.TileY    = (NextTile / SHADOW_LOCAL_ATLAS_COLUMNS) * TileSize;
-                ++NextTile;
-
-                const Vector3 Forward = bSpot ? Light.Direction.GetNormalize() : POINT_FACES[Face];
-                const double  Fov     = bSpot ? std::clamp(2.0 * double(Light.OuterConeAngle) + 2.0, 2.0, 170.0) : 90.0;
-                FinishView(View, LookAlong(Light.Position, Forward), Perspective(Fov, Near, Far), Atlas);
-            }
-            ++Shadowed;
-        }
 
         // --- Inset shadows, in the local atlas's tiles the lights left -------
         const double InsetLength = InLighting.InsetLightDirection.GetLength();
@@ -514,5 +535,57 @@ namespace RenderCore
             InsetScreenNdc(InCasters[Caster], InsetDirection, Pad, InCamera, View.ScreenNdc, InReceivers);
             ++OutFrame.InsetCount;
         }
+    }
+
+    void BuildCaptureShadowFrame(const RenderLighting& InLighting, const GameCore::AABB& InRegion, ShadowFrame& OutFrame)
+    {
+        OutFrame.ViewCount            = 0;
+        OutFrame.CacheFillCount       = 0;
+        OutFrame.InsetFirstView       = -1;
+        OutFrame.InsetCount           = 0;
+        OutFrame.AtlasSize            = 0;
+        OutFrame.DirectionalFirstView = -1;
+        OutFrame.CascadeCount         = 0;
+        for(int32_t& Each : OutFrame.LocalFirstView) { Each = -1; }
+        for(float& Each : OutFrame.CascadeSplits) { Each = 0.0f; }
+
+        const RenderShadowSettings& Settings = InLighting.Shadows;
+        if(!Settings.bEnabled || InRegion.IsEmpty())
+        {
+            return;
+        }
+        const uint32_t Atlas = uint32_t(std::clamp(Settings.Resolution, 256, 8192));
+        OutFrame.AtlasSize = Atlas;
+
+        /* The sun: one view over the whole atlas holding the region's sphere, its casters reaching
+         * as far again toward the sun; one "cascade" whose split no view depth reaches. */
+        const double DirectionLength = InLighting.LightDirection.GetLength();
+        if(InLighting.bLightCastShadows && InLighting.LightIntensity > 0.0f && DirectionLength > 1e-9)
+        {
+            const Vector3 Direction = InLighting.LightDirection * (1.0 / DirectionLength);
+            const Vector3 Centre    = (InRegion.Min + InRegion.Max) * 0.5;
+            const double  Radius    = std::max(1.0, std::ceil(double((InRegion.Max - InRegion.Min).GetLength()) * 0.5 * 16.0) / 16.0);
+            const double  Reach     = std::max(Radius, 2000.0);
+
+            OutFrame.DirectionalFirstView = int32_t(OutFrame.ViewCount);
+            OutFrame.CascadeCount         = 1;
+            OutFrame.CascadeSplits[0]     = 1.0e30f;
+            ShadowView& View = OutFrame.Views[OutFrame.ViewCount++];
+            View.Atlas    = SA_Directional;
+            View.Inset    = -1;
+            View.TileSize = Atlas;
+            View.TileX    = 0;
+            View.TileY    = 0;
+
+            const Matrix4x4 Orient = LookAlong(Vector3(0.0, 0.0, 0.0), Direction);
+            const double TexelWorld = 2.0 * Radius / double(Atlas);
+            Vector3 LightSpace = Orient * Centre;
+            LightSpace = Vector3(std::floor(LightSpace.GetX() / TexelWorld) * TexelWorld,
+                                 std::floor(LightSpace.GetY() / TexelWorld) * TexelWorld, LightSpace.GetZ());
+            const Vector3 Snapped = Orient.Transpose() * LightSpace;
+            const double  Half    = Radius + TexelWorld;
+            FinishView(View, LookAlong(Snapped, Direction), Orthographic(Half, Half, -Radius - Reach, Radius), Atlas);
+        }
+        AddLocalShadowViews(InLighting, OutFrame, &InRegion);
     }
 }

@@ -33,9 +33,12 @@ vec3 ToWeighted(vec3 InC)   { return InC / (1.0 + MaxOf(InC)); }
 vec3 FromWeighted(vec3 InC) { return InC / max(1.0 - MaxOf(InC), 1e-4); }
 
 // Catmull-Rom from 5 bilinear taps (the corners' weights are dropped: tiny, and negative).
-vec3 SampleHistory(vec2 InUV, vec2 InSize)
+// InUV is view UV: the history was drawn last frame, at last frame's scale, so its texels are
+// counted over last frame's drawn area and the taps kept inside it (Scene_PrevViewUv).
+vec3 SampleHistory(vec2 InUV)
 {
-    vec2 Position = InUV * InSize;
+    vec2 InSize   = vec2(textureSize(History, 0));
+    vec2 Position = InUV * floor(InSize * Scene_Spare[3].zw + 0.5);   // last frame's drawn size, texels
     vec2 Centre   = floor(Position - 0.5) + 0.5;
     vec2 F  = Position - Centre;
     vec2 W0 = F * (-0.5 + F * (1.0 - 0.5 * F));
@@ -49,11 +52,12 @@ vec3 SampleHistory(vec2 InUV, vec2 InSize)
     vec2 UV12 = (Centre + Offset12) / InSize;
     vec3 Sum = vec3(0.0);
     float Weight = 0.0;
-    Sum += texture(History, vec2(UV12.x, UV0.y)).rgb  * (W12.x * W0.y);  Weight += W12.x * W0.y;
-    Sum += texture(History, vec2(UV0.x, UV12.y)).rgb  * (W0.x * W12.y);  Weight += W0.x * W12.y;
-    Sum += texture(History, UV12).rgb                 * (W12.x * W12.y); Weight += W12.x * W12.y;
-    Sum += texture(History, vec2(UV3.x, UV12.y)).rgb  * (W3.x * W12.y);  Weight += W3.x * W12.y;
-    Sum += texture(History, vec2(UV12.x, UV3.y)).rgb  * (W12.x * W3.y);  Weight += W12.x * W3.y;
+    vec2 Edge = Scene_Spare[5].xy;
+    Sum += texture(History, min(vec2(UV12.x, UV0.y), Edge)).rgb  * (W12.x * W0.y);  Weight += W12.x * W0.y;
+    Sum += texture(History, min(vec2(UV0.x, UV12.y), Edge)).rgb  * (W0.x * W12.y);  Weight += W0.x * W12.y;
+    Sum += texture(History, min(UV12, Edge)).rgb                 * (W12.x * W12.y); Weight += W12.x * W12.y;
+    Sum += texture(History, min(vec2(UV3.x, UV12.y), Edge)).rgb  * (W3.x * W12.y);  Weight += W3.x * W12.y;
+    Sum += texture(History, min(vec2(UV12.x, UV3.y), Edge)).rgb  * (W12.x * W3.y);  Weight += W12.x * W3.y;
     return max(Sum / max(Weight, 1e-4), vec3(0.0));
 }
 
@@ -111,7 +115,7 @@ void main(void)
     vec3 Spread = sqrt(max(SumSquares / 9.0 - Mean * Mean, vec3(0.0)));
     vec3 Low    = Mean - Spread * PP_Taa.z;
     vec3 High   = Mean + Spread * PP_Taa.z;
-    vec3 Before = clamp(ToWeighted(SampleHistory(HistoryUV, Size)), Low, High);
+    vec3 Before = clamp(ToWeighted(SampleHistory(HistoryUV)), Low, High);
 
     // Less history the faster it moves (pixels a frame): a moving edge keeps up.
     float Pixels = length(Shift * Size);

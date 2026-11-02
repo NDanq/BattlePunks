@@ -13,6 +13,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QDebug>
+#include <QDialog>
 #include <QTimer>
 #include <QActionGroup>
 #include <QCloseEvent>
@@ -108,6 +109,11 @@
 #include "Private/Editor/Prefab/PrefabEditorWindow.h"
 #include "Private/Editor/Project/NewProjectWizard.h"
 #include "Private/Editor/ProjectSettingsDialog.h"
+#include "Private/Editor/Project/PluginTemplate.h"
+#include "Private/Editor/Project/ProjectTemplate.h"
+#include "Private/Editor/Project/PluginsPage.h"
+#include "Public/NimbleEngine/Plugin.h"
+#include "Public/NimbleEngine/PluginCatalog.h"
 #include "Private/Editor/Build/ContentCook.h"
 #include "Private/Editor/Build/ProjectBuildDialog.h"
 #include "Private/Editor/WorldSettingsDialog.h"
@@ -416,6 +422,14 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     PlayLabel->setStyleSheet(QStringLiteral("QLabel { color: rgb(90, 200, 110); font-weight: bold; }"));
     statusBar()->addPermanentWidget(PlayLabel);
 
+    /* [Plugins] says one thing, this build another: build and restart. */
+    PluginNotice = new QToolButton(this);
+    PluginNotice->setAutoRaise(true);
+    PluginNotice->setStyleSheet(QStringLiteral("QToolButton { color: rgb(230, 170, 60); }"));
+    connect(PluginNotice, &QToolButton::clicked, this, [this]() { OpenPluginSettings(); });
+    statusBar()->addPermanentWidget(PluginNotice);
+    UpdatePluginNotice();
+
     /* The tier the viewport renders entities at (GameCore's DetailMode.h):
      * Show > World Detail's preview, the World Settings lock, or the
      * project's / player's Scalability.DetailMode. Before the stats. */
@@ -514,12 +528,16 @@ void EditorMainWindow::BuildMenus()
     QMenu* File = menuBar()->addMenu(QStringLiteral("&File"));
 
     QAction* NewProject = File->addAction(QStringLiteral("New Pro&ject..."));
-    NewProject->setToolTip(QStringLiteral("A new game in Games/, from Engine/Templates/Game"));
+    NewProject->setToolTip(QStringLiteral("A new game in Games/, from Engine/Templates/Game or an example in Engine/Examples"));
     connect(NewProject, &QAction::triggered, this, [this]()
     {
         NewProjectWizard Wizard(this);
         Wizard.exec();
     });
+
+    QAction* NewPlugin = File->addAction(QStringLiteral("New Plu&gin..."));
+    NewPlugin->setToolTip(QStringLiteral("A new plugin from a starter in Engine/Templates/Plugin (Project Settings > Plugins)"));
+    connect(NewPlugin, &QAction::triggered, this, [this]() { OpenPluginSettings(true); });
 
     File->addSeparator();
 
@@ -1170,6 +1188,30 @@ void EditorMainWindow::CompileSource()
         }
     }
 
+    /* Every enabled plugin's modules, as the project's config has them now:
+     * loaded, never linked, so nothing else asks for them. The editor loads
+     * shadow copies (Plugin.h), so they can be rebuilt while it runs. */
+    {
+        QFile Config(ProjectSettingsDialog::GetProjectConfigPath());
+        const std::string Text = Config.open(QIODevice::ReadOnly) ? Config.readAll().toStdString() : std::string();
+        std::vector<std::string> Roots = NimbleEngine::Plugins::GetSearchRoots();
+        const auto Found  = NimbleEngine::PluginCatalog::Find(Roots);
+        const auto Result = NimbleEngine::PluginCatalog::Resolve(Found, NimbleEngine::PluginCatalog::ReadPluginsSection(Text),
+                                                                 NimbleEngine::PluginCatalog::GetEngineVersion());
+        if(!Result.Error.empty())
+        {
+            CORE_LOG_WARN("[Build] plugins: " + Result.Error + " -- the configure will stop; Project Settings > Plugins says more")
+        }
+        for(const std::string& Name : Result.Order)
+        {
+            for(const auto& Info : Found)
+            {
+                if(Info.Name != Name) { continue; }
+                for(const auto& Module : Info.Modules) { Targets << QString::fromStdString(Module.Name); }
+            }
+        }
+    }
+
     FirstCompileError.clear();
     if(!Compiler->Start(Targets))
     {
@@ -1280,6 +1322,25 @@ void EditorMainWindow::OnCompileFinished(const bool bInSucceeded)
 
     const QString Module = Compiler->GetTarget();
     using ESeverity = EditorNotifications::ESeverity;
+
+    /* A build for plugins: what it built loads only at startup. */
+    if(bOfferPluginRestart)
+    {
+        bOfferPluginRestart = false;
+        if(bInSucceeded)
+        {
+            EditorNotifications::Notification Restart;
+            Restart.Severity   = ESeverity::Success;
+            Restart.Title      = QStringLiteral("Plugins built");
+            Restart.Body       = QStringLiteral("Restart the editor to load them.");
+            Restart.Source     = QStringLiteral("Build");
+            Restart.ReplaceKey = QStringLiteral("plugins.restart");
+            Restart.bSticky    = true;
+            Restart.Actions    = { { QStringLiteral("Restart"), [this]() { RestartEditor(); } } };
+            EditorNotifications::Get()->Post(std::move(Restart));
+        }
+    }
+
     if(!bInSucceeded && Compiler->WasCancelled())
     {
         PostCompileResult(ESeverity::Info, QStringLiteral("Compile of %1 cancelled").arg(Module));
@@ -1342,6 +1403,63 @@ void EditorMainWindow::OpenSettings(const QString& InPage)
     auto* Dialog = new SettingsDialog(this);   // deletes itself on close
     if(!InPage.isEmpty()) { Dialog->ShowPage(InPage); }
     Dialog->show();
+}
+
+void EditorMainWindow::RebuildForPlugins()
+{
+    bOfferPluginRestart = true;
+    CompileSource();
+    if(!Compiler->IsRunning())
+    {
+        bOfferPluginRestart = false;   // it did not start; CompileSource said why
+    }
+}
+
+void EditorMainWindow::RestartEditor()
+{
+    if(!MaybeSaveLevel(QStringLiteral("Restart")))
+    {
+        return;
+    }
+    /* The level was just saved or let go; the rest (open graphs, sequences)
+     * may still cancel the close, and then nothing restarts. */
+    const bool bWasDiscarding = bDiscardLevelOnClose;
+    bDiscardLevelOnClose = true;
+    bRestartOnClose      = true;
+    if(!close())
+    {
+        bDiscardLevelOnClose = bWasDiscarding;
+        bRestartOnClose      = false;
+    }
+}
+
+void EditorMainWindow::OpenPluginSettings(const bool bInNewPlugin, const QString& InName, const QString& InStarter)
+{
+    OpenProjectSettings();
+    auto* Dialog = findChild<ProjectSettingsDialog*>();
+    if(!Dialog) { return; }
+    Dialog->ShowPage(QStringLiteral("Plugins"));
+    if(bInNewPlugin && Dialog->GetPluginsPage())
+    {
+        Dialog->GetPluginsPage()->OpenNewPluginDialog(InName, InStarter);
+    }
+}
+
+void EditorMainWindow::UpdatePluginNotice()
+{
+    if(!PluginNotice) { return; }
+    const std::vector<NimbleEngine::Plugins::ConfigMismatch> Mismatches = NimbleEngine::Plugins::GetConfigMismatches();
+    PluginNotice->setVisible(!Mismatches.empty());
+    if(Mismatches.empty()) { return; }
+    QStringList Lines;
+    for(const auto& Each : Mismatches)
+    {
+        Lines << QStringLiteral("%1: %2").arg(QString::fromStdString(Each.Name),
+                                              Each.bWanted ? QStringLiteral("enabled, not in this build") : QStringLiteral("disabled, still in this build"));
+    }
+    PluginNotice->setText(QStringLiteral("Plugins: rebuild and restart"));
+    PluginNotice->setToolTip(Lines.join(QLatin1Char('\n')) + QStringLiteral("\n\nBuild > Compile Source builds them; they load when "
+                                                                            "the editor starts. Click for Project Settings > Plugins."));
 }
 
 void EditorMainWindow::OpenProjectSettings(const bool bInWorlds)
@@ -1553,6 +1671,45 @@ void EditorMainWindow::RegisterConsoleCommands()
         Console.Print(QStringLiteral("Destroyed %1").arg(Name));
     });
 
+    /* A scripted session's (--command) gizmo drag: what tests of moving things use. */
+    Console.Register(QStringLiteral("move"), QStringLiteral("<name | #index> <x> <y> <z> [yaw]"),
+                     QStringLiteral("Put an entity at a world position (and turn it yaw degrees about Y), as a gizmo drag would"),
+                     [this, Resolve](const QStringList& InArgs)
+    {
+        bool bOk = InArgs.size() >= 4;
+        double Values[4] = {};
+        for(int Index = 1; bOk && Index < std::min<int>(int(InArgs.size()), 5); ++Index)
+        {
+            Values[Index - 1] = InArgs[Index].toDouble(&bOk);
+        }
+        if(!bOk)
+        {
+            Console.PrintError(QStringLiteral("Usage: move <name | #index> <x> <y> <z> [yaw]"));
+            return;
+        }
+        GameCore::World& World = Level.GetWorld();
+        const EntityID Target = Resolve(InArgs.front());
+        if(!Target.IsSet() || !World.IsAlive(Target))
+        {
+            Console.PrintError(QStringLiteral("No entity '%1'").arg(InArgs.front()));
+            return;
+        }
+        GameCore::TransformPose Pose = World.GetEntity(Target).GetWorldPose();
+        Pose.Position = EngineCore::Vector3(Values[0], Values[1], Values[2]);
+        if(InArgs.size() >= 5)
+        {
+            Pose.Rotation = EngineCore::Vector3(Pose.Rotation.GetX(), Values[3], Pose.Rotation.GetZ());
+        }
+        if(!World.GetEntity(Target).SetWorldPose(Pose))
+        {
+            Console.PrintError(QStringLiteral("'%1' has no Transform").arg(InArgs.front()));
+            return;
+        }
+        World.RefreshEntityBounds(Target);
+        Level.NotifyPropertyEdited(Target, GameCore::TransformComponent::StaticType().ID);
+        Console.Print(QStringLiteral("Moved %1").arg(Level.GetDisplayName(Target)));
+    });
+
     Console.Register(QStringLiteral("camera"), QStringLiteral("[<x> <y> <z> [yaw] [pitch]]"),
                      QStringLiteral("Put the viewport's camera at a position, turned yaw degrees about Y and pitched up; "
                                     "with nothing, print where it is"),
@@ -1574,6 +1731,37 @@ void EditorMainWindow::RegisterConsoleCommands()
         Camera.Yaw   = 0.0f;
         Camera.Pitch = 0.0f;
         Camera.AddYawPitch(InArgs.value(3).toFloat(), InArgs.value(4).toFloat());
+    });
+
+    /* A fixed render size for a scripted measurement (--command "after N viewport 2560 1440"):
+     * the viewport is pinned to that many pixels and the window grows round it. Under
+     * QT_QPA_PLATFORM=offscreen nothing appears on the desktop, whatever the size. */
+    Console.Register(QStringLiteral("viewport"), QStringLiteral("[<width> <height> | free]"),
+                     QStringLiteral("Pin the viewport to a render size in pixels, or free it; with nothing, print its size"),
+                     [this](const QStringList& InArgs)
+    {
+        const qreal Ratio = Viewport->devicePixelRatioF();
+        if(InArgs.size() == 1 && InArgs.front().compare(QStringLiteral("free"), Qt::CaseInsensitive) == 0)
+        {
+            Viewport->setMinimumSize(0, 0);
+            Viewport->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+        }
+        else if(InArgs.size() >= 2)
+        {
+            const int Width  = InArgs[0].toInt();
+            const int Height = InArgs[1].toInt();
+            if(Width < 16 || Height < 16)
+            {
+                Console.PrintError(QStringLiteral("Usage: viewport [<width> <height> | free]"));
+                return;
+            }
+            Viewport->setFixedSize(int(std::lround(Width / Ratio)), int(std::lround(Height / Ratio)));
+            resize(size().expandedTo(minimumSizeHint()));
+        }
+        const QString Line = QStringLiteral("viewport %1x%2").arg(int(std::lround(Viewport->width() * Ratio)))
+                                                              .arg(int(std::lround(Viewport->height() * Ratio)));
+        Console.Print(Line);
+        CORE_LOG("[Editor] " + Line.toStdString())
     });
 
     Console.Register(QStringLiteral("frame"), QStringLiteral("[all]"),
@@ -1952,6 +2140,140 @@ void EditorMainWindow::RegisterConsoleCommands()
         }
         if(!grab().save(File)) { Console.PrintError(QStringLiteral("Could not write %1").arg(File)); }
         else                   { Console.Print(QStringLiteral("Saved %1").arg(QDir::toNativeSeparators(File))); }
+    });
+
+    Console.Register(QStringLiteral("dialogshot"), QStringLiteral("[-close] <file.png>"),
+                     QStringLiteral("Save the dialog in front (Project Settings, New Plugin...) as an image; -close closes it after"),
+                     [this](QStringList InArgs)
+    {
+        const bool bClose = !InArgs.isEmpty() && InArgs.front() == QLatin1String("-close");
+        if(bClose) { InArgs.removeFirst(); }
+        if(InArgs.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("Usage: dialogshot [-close] <file.png>"));
+            return;
+        }
+        /* A modal one first (it is in front), else the newest dialog shown. */
+        QWidget* Front = QApplication::activeModalWidget();
+        if(!Front)
+        {
+            for(QWidget* Each : QApplication::topLevelWidgets())
+            {
+                if(Each != this && Each->isVisible() && qobject_cast<QDialog*>(Each)) { Front = Each; }
+            }
+        }
+        if(!Front)
+        {
+            Console.PrintError(QStringLiteral("No dialog is open"));
+            return;
+        }
+        const QString File = QFileInfo(InArgs.join(QLatin1Char(' '))).absoluteFilePath();
+        if(!Front->grab().save(File)) { Console.PrintError(QStringLiteral("Could not write %1").arg(File)); }
+        else                          { Console.Print(QStringLiteral("Saved %1").arg(QDir::toNativeSeparators(File))); }
+        if(bClose)
+        {
+            if(auto* Dialog = qobject_cast<QDialog*>(Front)) { Dialog->reject(); }
+            else                                            { Front->close(); }
+        }
+    });
+
+    Console.Register(QStringLiteral("plugins"), QStringLiteral("[rebuild | restart]"),
+                     QStringLiteral("Every plugin in the search folders: enabled, built, loaded (Project Settings > Plugins); "
+                                    "rebuild: Compile Source, offering a restart; restart: start the editor again"),
+                     [this](const QStringList& InArgs)
+    {
+        if(!InArgs.isEmpty() && InArgs.front().compare(QStringLiteral("rebuild"), Qt::CaseInsensitive) == 0)
+        {
+            RebuildForPlugins();
+            return;
+        }
+        if(!InArgs.isEmpty() && InArgs.front().compare(QStringLiteral("restart"), Qt::CaseInsensitive) == 0)
+        {
+            RestartEditor();
+            return;
+        }
+        QFile Config(ProjectSettingsDialog::GetProjectConfigPath());
+        const std::string Text = Config.open(QIODevice::ReadOnly) ? Config.readAll().toStdString() : std::string();
+        const auto Section = NimbleEngine::PluginCatalog::ReadPluginsSection(Text);
+        const auto Found = NimbleEngine::PluginCatalog::Find(NimbleEngine::Plugins::GetSearchRoots());
+        if(Found.empty())
+        {
+            Console.Print(QStringLiteral("No plugins in the search folders"));
+        }
+        for(const auto& Info : Found)
+        {
+            const bool bOn = NimbleEngine::PluginCatalog::IsEnabled(Info, Section);
+            const QString State = !Info.Error.empty() ? QStringLiteral("ERROR %1").arg(QString::fromStdString(Info.Error))
+                                : QStringLiteral("%1, %2, %3").arg(bOn ? QStringLiteral("enabled") : QStringLiteral("disabled"),
+                                    NimbleEngine::Plugins::IsBuilt(Info.Name) ? QStringLiteral("built") : QStringLiteral("not built"),
+                                    NimbleEngine::Plugins::IsLoaded(Info.Name) ? QStringLiteral("loaded") : QStringLiteral("not loaded"));
+            Console.Print(QStringLiteral("%1 %2 -- %3 (%4)").arg(QString::fromStdString(Info.Name), QString::fromStdString(Info.Version),
+                                                              State, QDir::toNativeSeparators(QString::fromStdString(Info.Dir))));
+        }
+        const auto Result = NimbleEngine::PluginCatalog::Resolve(Found, Section, NimbleEngine::PluginCatalog::GetEngineVersion());
+        if(!Result.Error.empty())
+        {
+            Console.PrintError(QStringLiteral("The next build will stop: %1").arg(QString::fromStdString(Result.Error)));
+        }
+    });
+
+    Console.Register(QStringLiteral("plugin.new"), QStringLiteral("<Name> [Empty|Component|RenderPass] [project|engine]"),
+                     QStringLiteral("Make a plugin from a starter, without the dialog; a project one is enabled in [Plugins]"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("Usage: plugin.new <Name> [Empty|Component|RenderPass] [project|engine]"));
+            return;
+        }
+        const QString Engine = EditorProject::GetEngineDir();
+        const bool bEngine = InArgs.size() > 2 && InArgs[2].compare(QStringLiteral("engine"), Qt::CaseInsensitive) == 0;
+        QDir ProjectDir = QFileInfo(ProjectSettingsDialog::GetProjectConfigPath()).absoluteDir();
+        ProjectDir.cdUp();
+        const QString Dest = bEngine ? QDir(Engine).filePath(QStringLiteral("Plugins")) : ProjectDir.filePath(QStringLiteral("Plugins"));
+
+        QStringList Taken = EditorPlugins::GetReservedNames(Engine);
+        for(const auto& Info : NimbleEngine::PluginCatalog::Find(NimbleEngine::Plugins::GetSearchRoots()))
+        {
+            Taken << QString::fromStdString(Info.Name);
+        }
+        EditorPlugins::NewPluginOptions Options;
+        Options.Name          = InArgs[0];
+        Options.Starter       = InArgs.size() > 1 ? InArgs[1] : QStringLiteral("Component");
+        Options.EngineVersion = QString::fromUtf8(NimbleEngine::PluginCatalog::GetEngineVersion());
+        QString Dir, Error;
+        QStringList Files;
+        if(!EditorPlugins::CreatePlugin(EditorPlugins::GetPluginTemplateDir(), Dest, Options, Taken, Dir, Error, &Files))
+        {
+            Console.PrintError(Error);
+            return;
+        }
+        Console.Print(QStringLiteral("Made %1 (%2 files)").arg(QDir::toNativeSeparators(Dir)).arg(Files.size()));
+        if(!bEngine)
+        {
+            if(!EditorPlugins::SetPluginEnabled(ProjectSettingsDialog::GetProjectConfigPath(), Options.Name, true, Error))
+            {
+                Console.PrintError(QStringLiteral("Could not enable it in [Plugins]: %1").arg(Error));
+                return;
+            }
+            EngineCore::LoadConfigText("[Plugins]\n" + Options.Name.toStdString() + "=true\n");
+            Console.Print(QStringLiteral("Enabled in [Plugins]: Build > Compile Source, then restart, to load it"));
+            UpdatePluginNotice();
+        }
+        if(auto* Dialog = findChild<ProjectSettingsDialog*>(); Dialog && Dialog->GetPluginsPage())
+        {
+            Dialog->GetPluginsPage()->Refresh();
+        }
+    });
+
+    Console.Register(QStringLiteral("plugin.newdialog"), QStringLiteral("[Name] [Starter]"),
+                     QStringLiteral("File > New Plugin, filled in"),
+                     [this](const QStringList& InArgs)
+    {
+        /* Modal: queued, so this command returns first and the Console stays responsive to 'after'. */
+        const QString Name    = InArgs.size() > 0 ? InArgs[0] : QString();
+        const QString Starter = InArgs.size() > 1 ? InArgs[1] : QString();
+        QTimer::singleShot(0, this, [this, Name, Starter]() { OpenPluginSettings(true, Name, Starter); });
     });
 
     Console.Register(QStringLiteral("quit"), QStringLiteral("[discard]"),
@@ -2811,13 +3133,33 @@ void EditorMainWindow::RegisterConsoleCommands()
             Console.PrintError(QStringLiteral("The renderer is not running"));
             return;
         }
-        Console.Print(QStringLiteral("%1: %2 frames rendered, %3 proxies live; frame %4 ms, game %5 ms, render %6 ms")
-                      .arg(QString::fromLatin1(BackendName(Backend)))
-                      .arg(Stats.FramesRendered)
-                      .arg(Stats.ProxiesLive)
-                      .arg(double(Stats.FrameMs), 0, 'f', 2)
-                      .arg(double(Stats.GameThreadMs), 0, 'f', 2)
-                      .arg(double(Stats.RenderThreadMs), 0, 'f', 2));
+        const QString Counters = QStringLiteral("%1: %2 frames rendered, %3 proxies live; frame %4 ms, game %5 ms, render %6 ms, "
+                                                "wait %7 ms, present %8 ms, idle %9 ms")
+                                 .arg(QString::fromLatin1(BackendName(Backend)))
+                                 .arg(Stats.FramesRendered)
+                                 .arg(Stats.ProxiesLive)
+                                 .arg(double(Stats.FrameMs), 0, 'f', 2)
+                                 .arg(double(Stats.GameThreadMs), 0, 'f', 2)
+                                 .arg(double(Stats.RenderThreadMs), 0, 'f', 2)
+                                 .arg(double(Stats.WaitMs), 0, 'f', 2)
+                                 .arg(double(Stats.PresentMs), 0, 'f', 2)
+                                 .arg(double(Stats.IdleMs), 0, 'f', 2);
+        Console.Print(Counters);
+        CORE_LOG("[Editor] stats " + Counters.toStdString())
+        /* The render thread's side of each span, and its draws. */
+        QStringList Cpu;
+        for(uint32_t Timer = 0; Timer < RenderCore::RGT_Count; ++Timer)
+        {
+            if(Stats.CpuMs[Timer] < 0.0f) { continue; }
+            Cpu << QStringLiteral("%1 %2/%3").arg(QString::fromLatin1(RenderCore::GetRenderGpuTimerName(RenderCore::ERenderGpuTimer(Timer))))
+                                              .arg(double(Stats.CpuMs[Timer]), 0, 'f', 3).arg(Stats.StageDraws[Timer]);
+        }
+        if(!Cpu.isEmpty())
+        {
+            const QString Line = QStringLiteral("CPU ms/draws: Queue %1, ").arg(double(Stats.QueueCpuMs), 0, 'f', 3) + Cpu.join(QStringLiteral(", "));
+            Console.Print(Line);
+            CORE_LOG("[Editor] stats " + Line.toStdString())
+        }
         /* With "stat frame" on: each span's GPU time, also written to the run log so a
          * scripted session (--command) can measure a change. */
         QStringList Spans;
@@ -2830,6 +3172,17 @@ void EditorMainWindow::RegisterConsoleCommands()
         if(!Spans.isEmpty())
         {
             const QString Line = QStringLiteral("GPU ms: ") + Spans.join(QStringLiteral(", "));
+            Console.Print(Line);
+            CORE_LOG("[Editor] stats " + Line.toStdString())
+        }
+        /* The shadow cache (RenderCore's RENDERPIPELINE.md, "Shadow cache"), when it has an atlas. */
+        if(Stats.ShadowCacheBytes > 0 || Stats.ShadowCacheSunBytes > 0)
+        {
+            const QString Line = QStringLiteral("Shadow cache: %1 lights cached, %2 filled, %3 MB; sun %4 cascades cached, %5 filled, %6 MB")
+                                 .arg(Stats.ShadowCacheLights).arg(Stats.ShadowCacheFilled)
+                                 .arg(double(Stats.ShadowCacheBytes) / (1024.0 * 1024.0), 0, 'f', 1)
+                                 .arg(Stats.ShadowCacheSunCascades).arg(Stats.ShadowCacheSunFilled)
+                                 .arg(double(Stats.ShadowCacheSunBytes) / (1024.0 * 1024.0), 0, 'f', 1);
             Console.Print(Line);
             CORE_LOG("[Editor] stats " + Line.toStdString())
         }
@@ -3151,6 +3504,21 @@ void EditorMainWindow::closeEvent(QCloseEvent* InEvent)
     }
 
     CORE_LOG(std::string("[Editor] closing -- ") + (InEvent->spontaneous() ? "requested by the window system" : "requested by the editor"))
+
+    /* RestartEditor: the close is going through, so the next one may start. */
+    if(bRestartOnClose)
+    {
+        QStringList Args;
+        if(!CurrentPath.isEmpty()) { Args << CurrentPath; }
+        if(QProcess::startDetached(QCoreApplication::applicationFilePath(), Args, QDir::currentPath()))
+        {
+            CORE_LOG("[Editor] restarting, to load the plugins just built")
+        }
+        else
+        {
+            CORE_LOG_ERROR("[Editor] could not start the editor again; start it yourself")
+        }
+    }
 
     DocumentationWindow::CloseIfOpen();
     SaveLayout();

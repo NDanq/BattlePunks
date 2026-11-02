@@ -196,12 +196,63 @@ namespace RenderCore
         return Padding;
     }
 
+    bool RenderComponentProxy::GetInstanceKey(std::string& OutKey) const
+    {
+        if(!MeshSource || bSkinned || ParameterCount > 0 || bCastInsetShadow || bRevealPlayers || Instances
+           || GetCustomPassGroups() != 0 || GetBakedDraw().Mode != 0)
+        {
+            return false;
+        }
+        OutKey = MeshPath;
+        for(const char (&Slot)[RENDER_MATERIAL_PATH_MAX] : Materials)
+        {
+            OutKey += '|';
+            OutKey += Slot;
+        }
+        OutKey += bCastShadows ? "|S" : "|-";
+        OutKey += bOccluder ? "O" : "-";
+        return true;
+    }
+
+    RenderProxy* RenderComponentProxy::CreateInstanced(RenderContext& InContext, const RenderInstance* InInstances, const uint32_t InCount) const
+    {
+        RenderInstanceBuffer* Buffer = InCount > 0 && InContext.SupportsInstancing()
+                                     ? InContext.CreateInstanceBuffer(InInstances, InCount, "RenderCore.AutoInstancing")
+                                     : nullptr;
+        if(!Buffer)
+        {
+            return nullptr;
+        }
+        RenderComponentProxy* Out = EngineCore::Memory::Alloc<RenderComponentProxy>(GameCore::EntityID(), RenderComponent());
+        Out->bCastShadows   = bCastShadows;
+        Out->bOccluder      = bOccluder;
+        std::memcpy(Out->Materials, Materials, sizeof(Materials));
+        Out->MeshPath       = MeshPath;
+        Out->MeshSource     = MeshSource;
+        Out->bBoundsAreMesh = true;
+        Out->Instances      = Buffer;
+        Out->InstanceCount  = InCount;
+        return Out;
+    }
+
+    void RenderComponentProxy::ReleaseRenderResources(RenderContext& InContext)
+    {
+        if(Instances)
+        {
+            InContext.ReleaseInstanceBuffer(Instances);
+            Instances = nullptr;
+            InstanceCount = 0;
+        }
+    }
+
     void RenderComponentProxy::Draw(RenderContext& InContext)
     {
         MaterialParameterOverrides Overrides;
         Overrides.Items = Parameters;
         Overrides.Count = ParameterCount;
         Overrides.Baked = &GetBakedDraw();
+        Overrides.Instances     = Instances;
+        Overrides.InstanceCount = InstanceCount;
         if(bSkinned && !SkinPalette.empty())
         {
             Overrides.SkinPalette = SkinPalette.data();
@@ -216,6 +267,10 @@ namespace RenderCore
         if(MeshSource && InContext.DrawMesh(GetTransform(), MeshPath.c_str(), WHITE, Slots, uint32_t(RENDER_MATERIAL_SLOTS), Overrides))
         {
             return;
+        }
+        if(Instances)
+        {
+            return;   // a cluster's mesh is not ready: no quad stands in for many
         }
         if(Materials[0][0] != '\0')
         {
@@ -247,6 +302,8 @@ namespace RenderCore
         MaterialParameterOverrides Overrides;
         Overrides.Items = Parameters;
         Overrides.Count = ParameterCount;
+        Overrides.Instances     = Instances;
+        Overrides.InstanceCount = InstanceCount;
         if(bSkinned && !SkinPalette.empty())
         {
             Overrides.SkinPalette = SkinPalette.data();

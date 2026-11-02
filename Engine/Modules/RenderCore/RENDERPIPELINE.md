@@ -241,6 +241,12 @@ Shadows edits it and applies it at once): Enabled, Resolution,
 Filter, MaxShadowedLights, DistanceScale, MaxInsetShadows and InsetFilter,
 and the sun's [contact shadows](#contact-shadows).
 
+A local light's shadow views (a spot's cone, a point light's six cube faces)
+draw only the casters inside their frustum's six planes
+(`RenderContext::ShadowViewSees`; `[Rendering] ShadowFrustumCulling`, on). Off,
+a caster was kept when it touched the box round the frustum, so each cube face
+drew about half of what the light reaches.
+
 | Technique | Lights | What it draws |
 |---|---|---|
 | **Standard** | all | the shadow takes away that light's own contribution |
@@ -288,6 +294,108 @@ Shadows cast into opacity shadow maps that everything receives
 (LIT_TRANSLUCENCY.md, Phase 7); Metal, which cannot sample a
 depth target, draws no shadows (warned once). A material preview never draws
 shadows.
+
+### Shadow cache
+
+Every shadow view redraws every caster it sees every frame, though nearly all
+of them are level geometry that never moves. In Demo Lab's L2 about 5,300 of a
+frame's 7,700 draws were shadow casters: some 5,100 of them its sun's four
+cascades over the whole lab, the rest one point light's six faces. With
+`[Rendering] ShadowCache` (on by default) each shadowed point or spot light's
+**static casters** are drawn once into a cache atlas, and each frame its tiles
+are copied from there into the local atlas before its **movable casters** are
+drawn over them; with `[Rendering] SunShadowCache` (on) the sun's cascades too,
+while their fit holds (below).
+
+- **Static or movable.** The rule is the entity's existing mobility
+  (GameCore's `Mobility.h`) and nothing guessed per frame: a caster is cached
+  when its proxy is static (`RenderProxy::IsStatic`: Static mobility, and a
+  proxy type that keeps static draw lists, so never a skinned mesh, particles,
+  terrain or a Procedural Spawner), visible, with no World Position Offset
+  padding (wind and swell move with time), and with no Translucent shadow
+  caster among its sections. Everything else is movable and drawn every frame:
+  Dynamic entities (characters, physics bodies, movers, debris, Calm/Alarm
+  groups that toggle), skinned meshes, particle shadows (their opacity atlas is
+  drawn every frame as before). An entity that moves in play must be Dynamic;
+  a Static one moved anyway (the editor, a tool) is still right, just redrawn.
+- **The cache atlas** (`RenderCore.ShadowLocalCache`) has the local atlas's
+  tile size, six tiles across and as many rows as `[Rendering]
+  ShadowCacheBudgetMB` allows (at most 8; depth D32 plus the render target's
+  RGBA8 colour, 8 bytes a texel). At High (2048 atlas, 341-texel tiles) a row
+  -- one point light, or six spot lights -- is 5.6 MB, so the default 32 MB
+  holds five rows (27.9 MB). The tier rows: Low 8, Medium 16, High 32, Ultra 96
+  MB (Ultra's 4096 atlas: 22.3 MB a row, four rows). A light the budget cannot
+  hold is drawn every frame, as before; with a budget under one row there is
+  no cache at all.
+- **A light's key** is what its depth depends on: its kind, position, range,
+  and for a spot its direction and outer cone, plus its shadow technique and
+  biases (`SameShadowKey`). Its colour and intensity are not in it, so
+  dimming, recolouring, or switching a light off and on again (`bActive`; a
+  breaker powering a room, an alarm swap) keeps its tiles: a light seen again
+  after an enable draws from them if nothing static in its reach changed
+  meanwhile, and fills them once if it did or has none. A light that moves
+  gets a new key, so is drawn into a new slot; when no tile is free a light
+  takes the least recently used slot only once its key has held for two
+  frames, so a light moving every frame never pushes the steady ones out.
+- **Invalidation.** Once a frame, before any view, `RenderScene::TrackShadowCasters`
+  compares every cacheable caster with last frame's record (its change serial
+  and world box). One added, removed (`RemoveProxy`), moved, edited (a static
+  entity's changed record bumps its serial: transform, mesh, materials,
+  visibility, a tier's detail bucket) or no longer cacheable sends its old and
+  new boxes to `RenderContext::InvalidateShadowCache`, and every cached light
+  whose reach (a sphere of its range) touches one is filled again that frame.
+  A scene's first frame (a world loaded) invalidates all its lights; a content
+  generation change (a mesh or material reloaded) all of them; a new shadow
+  resolution or budget starts the atlas empty; `ReleaseAll` drops a scene's.
+- **The sun's cascades** (`[Rendering] SunShadowCache`, with ShadowCache) have
+  a cache atlas of the directional atlas's size (32 MB at High's 2048), each
+  cascade at its own quarter. A cascade is fitted to the camera's slice every
+  frame and texel-snapped across the light, so its static casters can be kept
+  only while that fit holds: `HoldSunCascades` keeps the cascade's last fit
+  (puts its matrices back in the frame's view, before the scene block takes
+  them) while the new one is within a texel of it, as large to a part in a
+  thousand, along the same sun -- TAA's jitter moves the slice a hair every
+  frame, enough to flip the snap a texel. A new fit is drawn as before the
+  frame it appears and cached from the next, so a still camera (or one moving
+  less than a texel of a cascade) draws its cascades from the cache, and a
+  moving one costs what it did. `[Rendering] SunShadowCacheHoldFrames` (0, off)
+  keeps the far half of the cascades on a cached fit that many frames whatever
+  the camera does, at the price of their coverage lagging the camera by that
+  many frames at the slice's edge. A cascade is filled again when its fit
+  changes, or a static caster changes inside the box it sees; casters with Cast
+  Inset Shadow are drawn every frame (their inset is chosen per frame).
+- **Per frame.** `PrepareShadows` plans the cache for the view
+  (`PlanShadowCache`): a cached light's views take only movable casters
+  (`ShadowViewCachesStatics`), and a light whose tiles need filling gets fill
+  views after the frame's views (`GetShadowCacheFillViews`) that take only the
+  cacheable casters. The Shadows sub-stage, after clearing the atlases, draws
+  the fills into the cache atlas (each tile first set to the far plane), then
+  copies every cached view's tile into the local atlas (`ShadowCacheCopy.fsh`,
+  a full-tile quad writing `gl_FragDepth` from the cache's depth with the depth
+  test always passing), then draws the remaining casters as before. Scene
+  captures, the capture shadow maps and inset views are never cached.
+- **Backends.** The copy is a shader pass over GDI's existing calls, so it
+  needs nothing per backend: Vulkan and OpenGL are built and run on Linux;
+  D3D12 takes the same cooked shader (SPIR-V Cross's `SV_Depth`) but is not
+  compiled or run here; Metal draws no shadows at all.
+- **Stats.** `RenderStats::ShadowCacheLights` (cached lights last frame),
+  `ShadowCacheFilled` (of those, filled) and `ShadowCacheBytes`, and the same
+  for the sun (`ShadowCacheSunCascades`, `ShadowCacheSunFilled`,
+  `ShadowCacheSunBytes`); the editor's `stats` prints them.
+
+Measured (Demo Lab, RelWithDebInfo editor offscreen at 2560 x 1440 High,
+fixed cameras, interleaved on/off, medians of 6 samples a view; Intel Arc B390,
+its clock 700-2000 MHz): L2's draws a frame fell from 6,800-8,800 to 2,800-3,150
+(shadow casters 3,900-6,500 to 290-780), the Shadows span's GPU time from 1.7-3.5
+ms to 0.6-1.2 ms, and the render thread by 2-6 ms; L1's shadow draws by about
+half (its terrain and Procedural Spawner foliage are never static), the span from
+3.3-6.4 ms to 1.5-4.5 ms; L3 (one shadowed spot light) 138 to 46.
+
+Verified: `RenderCore.Smoke` with `NIMBLE_SMOKE_GPU=Vulkan` draws a point light
+and a cascaded sun over static and dynamic boxes pixel for pixel the same with
+the cache on and off -- after the dynamic box moves through the light (no fill), the static box
+is moved or hidden (one fill each), and the light is recoloured or switched off
+and on (no fill).
 
 ### Contact shadows
 
@@ -665,6 +773,13 @@ reflect what is on screen, over the probes' specular.
   their pixel shader against a copy of the opaque depth
   (`ForwardReflections.glsl`; LIT_TRANSLUCENCY.md, Phase 4), with the
   node's settings; `[Rendering] ForwardReflections` turns that off alone.
+- **Half size** (`[Rendering] HalfResReflections`, on): the march and its
+  history run at half size each way (`ReflectionsHalf`,
+  `ReflectionHistoryHalf`; the G-buffer is read at the full-size texel under
+  each pixel), and the IBL pass upsamples them by depth as it does the
+  screen-space GI. A quarter of the rays: at 2560 x 1440 on the Arc B390 the
+  pass fell from about 4 ms to 0.8-1.6 ms (Demo Lab's L3 tunnel and L2
+  workshop). Off: full size, as before.
 - **Limits:** what is off screen or hidden reflects the probes; a forward
   surface's reflection is one ray, not accumulated, so it bands a little
   where the G-buffer's would be smoothed.
@@ -700,13 +815,48 @@ that the lights shine through.
   becomes scene x transmittance + scattered light, translucent surfaces
   included.
 - **Volumes:** from off, the density rises from 0.
-- **Cost:** the march's grain is smoothed by TAA; the point and spot lights
-  are each sampled at every step, so Steps and the light count set it.
+- **Cost:** the march's grain is smoothed by TAA. The point and spot lights
+  (the scene block's first 16) are tested once a pixel against its ray --
+  `[Rendering] FogLightCulling`, on: a light whose sphere of reach the ray
+  misses is skipped at every step, the picture unchanged -- so Steps times
+  the lights each ray actually crosses sets it. In Demo Lab's L3 tunnel
+  (2560 x 1440, Arc B390) that took the fog from about 4.3 ms to 2.7.
 
 Measured on LightLab's Courtyard (1280 x 720, Arc B390, Vulkan), all of the
 above on at once -- auto exposure, TAA, reflections (32 steps), fog (24
 steps, 11 local lights) and point and spot contact shadows: about 2.4 ms
 more GPU a frame (4.0 to 6.4), fog the most (about 1.2).
+
+### Weather
+
+A World's weather reaches the renderer as values, not a system
+(`RenderWeather.h`): `SetRenderWeather(World, ...)`, keyed by the World's
+address like `SetPostProcessOverride`, cleared with `ClearRenderWeather`. The
+Weather plugin (`Engine/Plugins/Weather`) sets it from its component each
+frame; nothing in RenderCore simulates weather.
+
+- **Wind:** the scene block's `Scene_Wind` (xyz the unit direction it blows,
+  w strength), read by the material graph's **Wind** node (MATERIALS.md). With
+  no weather: a breeze of 1 toward (0.8, 0, 0.6).
+- **Wetness:** `Scene_Weather.x`. `Wetness.glsl` applies it to what the
+  G-buffer holds, in the Lighting stage, image-based lighting and
+  screen-space reflections alike, so a surface's light and both kinds of
+  reflection agree: where the normal faces up (fading out from about 80 to 45
+  degrees off vertical) a wet dielectric darkens by its roughness (porosity),
+  to 0.35 of its linear albedo when soaked, and every wet surface's roughness
+  falls to half (no smoother than 0.2). Default, Clear Coat and Anisotropic
+  pixels only: foliage cards (Subsurface), skin, cloth and volumes keep their
+  look. No material authoring.
+  Limits: forward-lit surfaces (Translucent Lit, the forward path) are not
+  wetted; nothing knows what is under a roof, so a floor indoors gets wet
+  too (keep interiors in their own World, or set Wetness 0 there); no
+  puddles or ripples.
+- **Rain:** `Scene_Weather.y`, for materials and passes that want it.
+- **Mist:** with `bMist`, `WorldBridge::BuildBlendedPostProcess` turns on
+  Volumetric Fog at the weather's density, base height and height falloff,
+  after the Post Process volumes blend and before a sequence's override, so a
+  cinematic still wins. The fog's other settings are the volumes' (or the
+  node's defaults), and its scalability cap still applies.
 
 ### Image-based lighting
 
@@ -728,9 +878,36 @@ strip** (6S x S, the scene-capture face order). It places texels by
 backend.
 
 **The sky block** is rebuilt whenever the sky changes (`SkyHashOf`):
-- the Sky Light's **Environment** HDRI if it has one: an equirectangular RGBE8
+- a module's **Sky passes** if the World has any: custom render passes at
+  `ERenderHook::Sky` (see [Custom render passes](#custom-render-passes)),
+  drawn into a 128-texel cube (`RenderSkyPassesToStrip`: the six faces'
+  views, each face cleared to black, then copied into the strip) -- so a
+  drawn sky, such as the TimeOfDay plugin's atmosphere, is what surfaces
+  reflect and take their diffuse sky light from;
+- else the Sky Light's **Environment** HDRI if it has one: an equirectangular RGBE8
   texture, times Environment Intensity, turned Environment Rotation;
 - otherwise its sky and ground colours (`IBLSky.fsh`).
+
+A Sky pass says when its sky changed through `GetContentVersion` (0: no sky
+now, the Sky Light's is used). The block is captured again when the versions'
+sum changes, but at most once every `[Rendering] SkyCaptureFrames` frames
+(8), and each new capture marks every reflection probe due
+(`[Rendering] ProbesFollowSky`, on), so they recapture one at a time within
+the capture budget and see the new sky too -- with `[Rendering] StaticCaptures`
+(on), only those whose lighting moved since their last capture (the sun by
+`CaptureSunStepDegrees`). `[Rendering] SkyPassLighting`
+off ignores Sky passes (an A/B switch). The capture is in "stat frame"'s
+Captures span.
+
+Measured (2026-10-31, Intel Arc B390, Vulkan, RelWithDebInfo editor Play,
+WorldsLab's DayCycle world with TimeOfDay -- since removed; Demo Lab's L1 and
+main menu use the same sky -- medians of 18 half-second samples over three
+interleaved launches, spread about 0.05 ms): a capture of the TimeOfDay sky
+costs about 0.6 ms GPU and 0.3 ms render-thread CPU in the frame it runs
+(Captures 0.64 ms captured every frame, against 0.02 ms between captures). At
+a two-minute day that is about three captures a second: Captures averages
+0.04 ms. The Sky Light's colour sky it replaces was rebuilt every frame,
+since TimeOfDay changes its colours every tick: 0.34 ms.
 
 With Draw Background on, an HDRI is also drawn behind the scene along each view
 ray (`Sky.fsh`).
@@ -743,19 +920,27 @@ ray (`Sky.fsh`).
   probe that is due, or new to a block, one at a time, taking turns round the
   list. A capture is six 90-degree HDR views, shadows included unless Capture
   Shadows is off, lit by the sky alone so no probe sees another. The sky is
-  drawn behind. `[Rendering] ProbeFacesPerFrame` of them render a frame (1 by
-  default), each one's linear scene colour copied into the strip; after the
-  sixth the strip is prefiltered into the probe's block, its old capture
-  lighting until then.
+  drawn behind. The faces render within the frame's capture budget
+  (`[Rendering] CaptureBudgetMs`, shared with the GI Volume; at 0,
+  `ProbeFacesPerFrame` a frame, 1 by default), each one's linear scene colour
+  copied into the strip; after the sixth the strip is prefiltered into the
+  probe's block, its old capture lighting until then. With `StaticCaptures`, a
+  due probe whose view has not changed (its static meshes' serials, its
+  dynamic ones' places, the lighting) is skipped. GLOBAL_ILLUMINATION.md,
+  Phase 7, has the budget, the shared capture shadow maps and the simple
+  capture views.
 - **Their data** (centre, radius, box, intensity, block) is in the light block
   (`LightList_Probes`), the scene block having room for only four.
 
 **GI Volumes** (GLOBAL_ILLUMINATION.md, Phase 6; `DDGI.glsl`): inside one, the
 IBL pass takes non-baked pixels' diffuse ambient from a grid of irradiance
-probes in place of the reflection probes'. `RenderScene` renders a few probes
-a frame (`[Rendering] GIProbesPerFrame`) in six 16 x 16 views, lit by the
-volume too, into an octahedral irradiance tile and a distance-moments tile
-each; the lookup weights the eight probes round a point by visibility.
+probes in place of the reflection probes'. `RenderScene` renders its probes'
+16 x 16 cube faces within the frame's capture budget (GLOBAL_ILLUMINATION.md,
+Phase 7), lit by the volume too, into an octahedral irradiance tile and a
+distance-moments tile each; the lookup weights the eight probes round a point
+by visibility. A converged volume stops; a lighting change relights its
+probes from what their faces saw (`DDGIRelight.fsh`), without drawing the
+scene.
 
 **Lighting** (`IBL_Light`):
 - **`IBLLighting.fsh` pass:** added (one, one) over the Lighting stage, from
@@ -937,6 +1122,76 @@ editor's Show > View Mode):
   and every render target asset captured.
 
 The screenshot (`Renderer::RequestSceneCapture`) reads what the mode shows.
+
+### Resolution scale
+
+`[Rendering] ResolutionScale` (1; 0.5 to 1, a detail-tier row in
+SCALABILITY.md) draws each view's scene -- every stage, the post process stack
+included -- at that fraction of its viewport on each axis. The scene's
+targets are allocated that size and TAA's jitter is a pixel of them. The final
+colour is then upscaled into the scene's composite at the viewport's size
+(`RenderContext::CompositeViews`, `ViewTarget.fsh` mode 3: a nine-tap
+Catmull-Rom), and the UI, the editor's lines and `stat` panels draw over that
+at full size. At 0.67 a frame costs about 45 % of the pixels, so a GPU-bound
+frame costs roughly half as much; texture streaming still picks mips for the full
+viewport. Splitscreen views are scaled the same way and the composite
+stretches them.
+
+**Dynamic resolution.** `[Rendering] DynamicResolution` (off; on at the Low
+and Medium tiers) picks the scale each frame instead, to keep the scene's GPU
+time near `DynamicResolutionTargetMs` (15: 60 fps with room for the UI and the
+present), between `DynamicResolutionMin` and `DynamicResolutionMax` (0.5 and
+1). `ResolutionScale` is where it starts.
+
+- **The targets keep their size.** With it on, a view's targets are allocated
+  at the viewport's size once (`SceneTargets::AllocWidth`, `AllocHeight`) and
+  the scene draws in their top-left `Width` x `Height`, in steps of 8 pixels
+  so the half-size and smaller targets line up. A change of scale moves the
+  viewport of every stage and reallocates nothing. Every stage counts pixels
+  in `Width` x `Height` as before.
+- **View UV.** A full-screen pass still gets 0 to 1 across what it draws
+  (`Interpolants.TexCoord`), and turns that into a scene target's UV with
+  `Scene_ViewUv` (`SceneUniforms.glsl`; `Scene_ViewUvHalf` for the half-size
+  targets). These scale by the drawn share of the target and clamp to its
+  drawn area, so no tap reaches the texels past its edge, which a larger
+  scale left behind. `Scene_PrevViewUv` does the same for last frame's
+  targets (TAA's history, the reflections' and screen GI's history,
+  `LastColor`), drawn at last frame's scale. The scene block carries both
+  frames' shares (`Scene_Spare[3]` to `[5]`), all 1 when unscaled.
+  `texelFetch` at `gl_FragCoord` needs nothing: the drawn area starts at the
+  target's top-left. Bloom passes each level its own edge (`PP_Sizes.zw`).
+- **History across a change.** TAA reprojects into last frame's drawn area
+  and resamples it (Catmull-Rom) at this frame's, so a scale change does not
+  restart the history and the picture does not pop. The same goes for the
+  reflections' and screen GI's resolves.
+- **The controller** (`RenderScene::Impl::UpdateDynamicResolution`). It reads
+  stat frame's GPU times of the frame the GPU finished last, a few frames
+  behind, and matches them with the scale that frame drew at. `Total` is
+  taken as what scales with the pixels, `Captures` and `Particles` as what
+  does not. It smooths the full-size cost (`Total / scale^2`) and works out
+  the scale that would land on the target. It steps down after two frames
+  over the target (or one 15 % over), by up to 8 % a step. It steps up only
+  after half a second with room to spare, by 2 % a step and short of the
+  ideal, so a GPU whose clock swings (an integrated one throttling) does not
+  make it hunt. Its choice draws the next frame: the targets are sized before
+  this frame's times are known.
+- **Seeing it.** `stat unit` adds a `Res` line, and `RenderStats` has
+  `ResolutionScale`, `bDynamicResolution` and `DynamicResolutionTargetMs`.
+  `Rendering.DynamicResolutionLog` logs a line a second: the scale, the
+  measured frames' median and worst GPU time, and how many went over the
+  target. It also runs with dynamic resolution off, for an A/B.
+- **Custom passes and materials.** A custom pass's targets sized from the
+  view (`RenderPassTargetDesc` with no `Width`) are allocated like the scene's
+  and drawn in the same share (`RenderContext::Impl::PassDrawnSize`). A pass
+  shader that samples a scene texture or such a target with
+  `Interpolants.TexCoord` should go through `Scene_ViewUv`
+  (`CustomRenderPassGuide.md`). A PostProcess material's Scene Texture node
+  generates `Material_SceneColorAt`, which does; graphs saved before it
+  need regenerating (`NodeGraphGenerate`).
+- **Limits.** It holds the GPU time only. A frame bound by the render thread
+  (draw calls) is as slow at any scale. Below the minimum, the frame simply
+  runs over. The Render Target view mode shows a scene target whole,
+  undrawn margin included.
 
 ### Views
 
@@ -1146,6 +1401,66 @@ from frame to frame instead of rebuilding them:
 Verified: the GPU smoke check draws a lit, shadowed scene static and dynamic
 pixel for pixel alike, and a static box moved by a tool lands exactly where a
 dynamic one does.
+
+### Auto instancing
+
+Static entities that draw the same mesh with the same materials are drawn
+together: one instanced draw per stage for a group, instead of one each. A
+kit-built level -- hundreds of identical walls, floors, pipes -- is mostly
+such groups (Demo Lab's L2 Laboratory: 1,072 visible mesh entities, 91
+mesh and material pairs).
+
+- **Who:** a proxy whose `RenderProxy::GetInstanceKey` takes it -- for a
+  Render component, a mesh with no material parameter overrides, no skin,
+  no baked lighting, no inset shadow, no player reveal and no custom pass
+  groups -- and which is Static, visible and not detail-hidden. The key is
+  its mesh, its eight material slots, and whether it casts shadows and
+  occludes.
+- **Where:** grouped by key and by the cell of an `[Rendering]
+  AutoInstancingCell` grid (world units, default 2000) its box's centre
+  falls in, so a cluster stays small enough to cull. A cell needs
+  `AutoInstancingMin` members (default 2).
+- **How (`InstanceClusters`, once a frame before any view):** each cell's
+  cluster is a proxy of its own (`RenderProxy::CreateInstanced`): the
+  members' world transforms in an instance buffer, its transform the
+  identity, its box their union, Static. It is then culled, occlusion
+  queried, captured into static draw lists, shadow cached and drawn into
+  scene captures like any proxy. Its members, while it stands, are not
+  renderable (`RenderProxy::IsRenderable`), so no view, shadow, capture or
+  shadow cache pass sees them twice.
+- **Rebuilds:** each frame a cell's members and their change serials make a
+  fingerprint; a cell whose fingerprint moves (one moved, changed, hidden,
+  shown, added or removed) gets its cluster made again, the others keep
+  theirs and their buffers. A cluster made or unmade counts as a static
+  caster change for the shadow cache.
+- **What it costs:** culling is per cluster, so a visible cluster draws all
+  of its members (vertex work for the off-screen ones; their pixels are
+  clipped), and the GPU's same-frame occlusion predicate covers the
+  cluster's box rather than each member's. Translucent members sort as one.
+- **Off by default** for now: a machine hang during a Demo Lab L2 run with it
+  on (2026-11-01) is not yet ruled out. `[Rendering] AutoInstancing=true`
+  turns it on.
+- **Off:** `[Rendering] AutoInstancing=false`, or a backend without
+  instancing (`RenderContext::SupportsInstancing`; Metal so far), draws every
+  entity on its own as before. A scene capture that excludes an entity
+  (`SceneCaptureRequest::Excluded`) still sees it if it is in a cluster.
+- **Log:** `auto instancing: <n> clusters draw <m> static entities` when the
+  counts change.
+
+Measured (Arc B390, 2560 x 1440 High, RelWithDebInfo, the editor offscreen,
+off then on, medians of three samples a view):
+
+| Demo Lab | Clusters (entities) | All draws | Base Pass draws | CPU recording ms | Render thread ms |
+|---|---|---|---|---|---|
+| L2 calm, five views | 105 (719) | 3,070-3,546 -> 1,401-1,677 | 2,307 -> 819 | 7.1-8.4 -> 4.9-5.0 | 12.2-21.4 -> 9.6-18.2 |
+| L2 alarm, five views | 108 (727) | 2,825-3,629 -> 1,315-1,950 | ~2,435 -> ~930 | 6.8-8.0 -> 4.5-5.3 | 13.8-20.6 -> 9.4-19.2 |
+| L3, default camera | 29 (125) | 646 -> 431 | 561 -> 348 | 2.4 -> 1.9 | 9.1 -> 8.5 |
+| L1, default camera | 23 (71) | 263 -> 215 | 36 -> 36 | 1.2 -> 1.1 | 8.1 -> 8.2 |
+
+GPU time moved within this iGPU's throttling noise. The L2 workshop frame is
+pixel for pixel alike (mean difference 1.1 of 255, TAA's noise), and
+`RenderCore.Smoke`'s GPU test (`NIMBLE_SMOKE_GPU=Vulkan`) checks six
+instanced boxes against six separate ones exactly.
 
 ### Terrain
 
@@ -1700,6 +2015,13 @@ was drawn):
 | `BeforePostProcess` | before TAA and the tone map | the final linear scene colour |
 | `AfterToneMap` | before the post process stack | the picture in display space; `SetCurrent` replaces it |
 | `AfterPostProcess` | before the UI | the finished picture; `SetCurrent` replaces it |
+| `Sky` | out of frame order: only while image-based lighting captures the sky, once per cube face, when the pass's `GetContentVersion` changes | a cleared linear HDR face (`GetView` is the face); no depth, G-buffer or picture |
+
+A pass at `Sky` provides the sky that Lit surfaces reflect and are lit by
+(see [Image-based lighting](#image-based-lighting)): it draws its sky along
+each pixel's view ray, as it would behind a view, and its `GetContentVersion`
+(render thread) changes when the sky does -- in steps big enough to see, as
+each change costs a capture. `ShouldRun`'s default runs it.
 
 Passes at one hook run by their `Order`, then in registration order. Every
 stage after a hook binds its own targets, and the backend moves a target's

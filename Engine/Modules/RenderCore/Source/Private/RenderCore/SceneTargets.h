@@ -1,6 +1,7 @@
 #ifndef RENDERCORE_SCENETARGETS_H
 #define RENDERCORE_SCENETARGETS_H
 
+#include <algorithm>
 #include <string>
 #include <utility>
 
@@ -54,7 +55,16 @@ namespace RenderCore
         GDIRenderTarget* Distance   = nullptr;
         GDIRenderTarget* Strip      = nullptr;
         uint32_t         Rows       = 0;
+
+        /* RELIGHTING (GLOBAL_ILLUMINATION.md, "Relighting"; EnsureDDGICache): what each probe's
+         * faces saw (DDGIStore.fsh: Cache[0] albedo and distance, RGBA16F; Cache[1] emissive and
+         * normal, RGBA32F) and their radiance lit again from it (DDGIRelight.fsh, RGBA16F) --
+         * probe i's six faces side by side in its row, CachePerColumn probes a column. */
+        GDIRenderTarget* Cache[2]       = {};
+        GDIRenderTarget* Radiance       = nullptr;
+        uint32_t         CachePerColumn = 0;
     };
+    constexpr uint32_t DDGI_CACHE_PER_COLUMN = 1024;   // a column of the cache: 16384 texels high
 
     struct SceneTargets
     {
@@ -99,6 +109,10 @@ namespace RenderCore
         GDIRenderTarget* ReflectionHistory[2] = {};
         uint32_t         ReflectionCurrent = 0;
         bool             bReflectionValid  = false;
+        /* The same at half size ([Rendering] HalfResReflections): the march, and its history. */
+        GDIRenderTarget* ReflectionsHalf = nullptr;
+        GDIRenderTarget* ReflectionHistoryHalf[2] = {};
+        bool             bReflectionHalf = false;   // which set the history in bReflectionValid is
         /* Screen-space GI (PPScreenGI.fsh; GLOBAL_ILLUMINATION.md, Phase 5): this frame's bounce
          * and its history, half size, half float; the resolve ping-pongs GIHistory likewise. */
         GDIRenderTarget* GI = nullptr;
@@ -115,8 +129,18 @@ namespace RenderCore
         GDIRenderTarget* Exposure[2]  = {};
         uint32_t         ExposureCurrent = 0;
         bool             bExposureValid  = false;               // Exposure[ExposureCurrent] holds the last frame's
+        /* What this frame draws (RENDERPIPELINE.md, "Resolution scale"): the top-left Width x
+         * Height of targets AllocWidth x AllocHeight big, so dynamic resolution moves the drawn
+         * area and reallocates nothing, and the histories survive the change. Every stage
+         * draws and counts pixels in Width x Height; the shaders turn view UV into a target's
+         * with Scene_ViewUv (SceneUniforms.glsl). PrevWidth x PrevHeight: what the frame before
+         * drew, for the histories it left (TAA's, the reflections', LastColor). */
         uint             Width  = 0;
         uint             Height = 0;
+        uint             AllocWidth  = 0;
+        uint             AllocHeight = 0;
+        uint             PrevWidth   = 0;
+        uint             PrevHeight  = 0;
 
         explicit SceneTargets(std::string InName) : Name(std::move(InName)) {}
         ~SceneTargets() { Release(); }
@@ -128,78 +152,96 @@ namespace RenderCore
          * empty size or a backend that made no target. */
         bool Allocate(const uint InWidth, const uint InHeight)
         {
-            if(InWidth == 0 || InHeight == 0)
+            return Allocate(InWidth, InHeight, InWidth, InHeight);
+        }
+
+        /* The targets InAllocWidth x InAllocHeight, drawn this frame in their top-left
+         * InWidth x InHeight (no bigger). Only a new allocation size resizes anything. */
+        bool Allocate(const uint InAllocWidth, const uint InAllocHeight, const uint InWidth, const uint InHeight)
+        {
+            if(InAllocWidth == 0 || InAllocHeight == 0 || InWidth == 0 || InHeight == 0)
             {
                 return false;
             }
-            if(InWidth != Width || InHeight != Height)
+            PrevWidth  = Width;
+            PrevHeight = Height;
+            if(InAllocWidth != AllocWidth || InAllocHeight != AllocHeight)
             {
                 if(!SceneColor)
                 {
                     /* Half float where the backend can: lit light past 1 survives to the tone map. */
                     bHDR = GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F);
-                    SceneColor = bHDR ? GDICreateRenderTargetFormat(Name + ".SceneColor", InWidth, InHeight, GDI_RTF_RGBA16F)
-                                      : GDICreateRenderTarget(Name + ".SceneColor", InWidth, InHeight);
+                    SceneColor = bHDR ? GDICreateRenderTargetFormat(Name + ".SceneColor", InAllocWidth, InAllocHeight, GDI_RTF_RGBA16F)
+                                      : GDICreateRenderTarget(Name + ".SceneColor", InAllocWidth, InAllocHeight);
                     bHDR = bHDR && SceneColor;
                 }
                 else
                 {
-                    SceneColor->Resize(InWidth, InHeight);
+                    SceneColor->Resize(InAllocWidth, InAllocHeight);
                 }
                 for(GDIRenderTarget* Each : GBuffer)
                 {
-                    if(Each) { Each->Resize(InWidth, InHeight); }
+                    if(Each) { Each->Resize(InAllocWidth, InAllocHeight); }
                 }
                 if(Velocity)
                 {
-                    Velocity->Resize(InWidth, InHeight);
+                    Velocity->Resize(InAllocWidth, InAllocHeight);
                 }
                 if(PostProcess)
                 {
-                    PostProcess->Resize(InWidth, InHeight);
+                    PostProcess->Resize(InAllocWidth, InAllocHeight);
                 }
                 if(PostProcessB)
                 {
-                    PostProcessB->Resize(InWidth, InHeight);
+                    PostProcessB->Resize(InAllocWidth, InAllocHeight);
                 }
                 for(GDIRenderTarget* Each : Half)
                 {
-                    if(Each) { Each->Resize(HalfSize(InWidth, 1), HalfSize(InHeight, 1)); }
+                    if(Each) { Each->Resize(HalfSize(InAllocWidth, 1), HalfSize(InAllocHeight, 1)); }
                 }
                 for(GDIRenderTarget* Each : History)
                 {
-                    if(Each) { Each->Resize(InWidth, InHeight); }
+                    if(Each) { Each->Resize(InAllocWidth, InAllocHeight); }
                 }
                 bHistoryValid = false;
-                if(Reflections) { Reflections->Resize(InWidth, InHeight); }
+                if(Reflections) { Reflections->Resize(InAllocWidth, InAllocHeight); }
                 for(GDIRenderTarget* Each : ReflectionHistory)
                 {
-                    if(Each) { Each->Resize(InWidth, InHeight); }
+                    if(Each) { Each->Resize(InAllocWidth, InAllocHeight); }
                 }
                 bReflectionValid = false;
+                for(GDIRenderTarget* Each : { ReflectionsHalf, ReflectionHistoryHalf[0], ReflectionHistoryHalf[1] })
+                {
+                    if(Each) { Each->Resize(HalfSize(InAllocWidth, 1), HalfSize(InAllocHeight, 1)); }
+                }
                 for(GDIRenderTarget* Each : { GI, GIHistory[0], GIHistory[1] })
                 {
-                    if(Each) { Each->Resize(HalfSize(InWidth, 1), HalfSize(InHeight, 1)); }
+                    if(Each) { Each->Resize(HalfSize(InAllocWidth, 1), HalfSize(InAllocHeight, 1)); }
                 }
                 bGIValid = false;
-                if(Subsurface)     { Subsurface->Resize(InWidth, InHeight); }
-                if(SubsurfaceBlur) { SubsurfaceBlur->Resize(InWidth, InHeight); }
-                if(Fog)         { Fog->Resize(HalfSize(InWidth, 1), HalfSize(InHeight, 1)); }
-                if(DepthCopy)   { DepthCopy->Resize(HalfSize(InWidth, 1), HalfSize(InHeight, 1)); }
-                if(OpaqueCopy)  { OpaqueCopy->Resize(InWidth, InHeight); }
-                if(LastCopy)    { LastCopy->Resize(InWidth, InHeight); }
+                if(Subsurface)     { Subsurface->Resize(InAllocWidth, InAllocHeight); }
+                if(SubsurfaceBlur) { SubsurfaceBlur->Resize(InAllocWidth, InAllocHeight); }
+                if(Fog)         { Fog->Resize(HalfSize(InAllocWidth, 1), HalfSize(InAllocHeight, 1)); }
+                if(DepthCopy)   { DepthCopy->Resize(HalfSize(InAllocWidth, 1), HalfSize(InAllocHeight, 1)); }
+                if(OpaqueCopy)  { OpaqueCopy->Resize(InAllocWidth, InAllocHeight); }
+                if(LastCopy)    { LastCopy->Resize(InAllocWidth, InAllocHeight); }
                 LastColor = nullptr;
                 for(uint32_t Level = 0; Level < 6; ++Level)
                 {
-                    if(Bloom[Level]) { Bloom[Level]->Resize(HalfSize(InWidth, Level + 1), HalfSize(InHeight, Level + 1)); }
+                    if(Bloom[Level]) { Bloom[Level]->Resize(HalfSize(InAllocWidth, Level + 1), HalfSize(InAllocHeight, Level + 1)); }
                     if(Level < 5 && BloomUp[Level])
                     {
-                        BloomUp[Level]->Resize(HalfSize(InWidth, Level + 1), HalfSize(InHeight, Level + 1));
+                        BloomUp[Level]->Resize(HalfSize(InAllocWidth, Level + 1), HalfSize(InAllocHeight, Level + 1));
                     }
                 }
-                Width  = InWidth;
-                Height = InHeight;
+                AllocWidth  = InAllocWidth;
+                AllocHeight = InAllocHeight;
+                PrevWidth   = 0;   // the histories went with the old targets
+                PrevHeight  = 0;
             }
+            Width  = std::min(InWidth, AllocWidth);
+            Height = std::min(InHeight, AllocHeight);
+            if(PrevWidth == 0 || PrevHeight == 0) { PrevWidth = Width; PrevHeight = Height; }
             return SceneColor != nullptr;
         }
 
@@ -210,12 +252,12 @@ namespace RenderCore
         {
             for(uint32_t Index = 0; Index < RENDER_GBUFFER_TARGETS; ++Index)
             {
-                if(!GBuffer[Index] && Width > 0 && Height > 0)
+                if(!GBuffer[Index] && AllocWidth > 0 && AllocHeight > 0)
                 {
                     const std::string TargetName = Name + ".GBuffer" + std::to_string(Index);
                     GBuffer[Index] = Index == 1 && GDISupportsRenderTargetFormat(GDI_RTF_RGB10A2)
-                                         ? GDICreateRenderTargetFormat(TargetName, Width, Height, GDI_RTF_RGB10A2)
-                                         : GDICreateRenderTarget(TargetName, Width, Height);
+                                         ? GDICreateRenderTargetFormat(TargetName, AllocWidth, AllocHeight, GDI_RTF_RGB10A2)
+                                         : GDICreateRenderTarget(TargetName, AllocWidth, AllocHeight);
                 }
                 if(!GBuffer[Index] || !GBuffer[Index]->IsValid())
                 {
@@ -228,12 +270,12 @@ namespace RenderCore
         /* The velocity target, made once with the G-buffer; null if the backend cannot. */
         GDIRenderTarget* EnsureVelocity()
         {
-            if(!Velocity && !bVelocityTried && Width > 0 && Height > 0)
+            if(!Velocity && !bVelocityTried && AllocWidth > 0 && AllocHeight > 0)
             {
                 bVelocityTried = true;
                 if(GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
                 {
-                    Velocity = GDICreateRenderTargetFormat(Name + ".Velocity", Width, Height, GDI_RTF_RGBA16F);
+                    Velocity = GDICreateRenderTargetFormat(Name + ".Velocity", AllocWidth, AllocHeight, GDI_RTF_RGBA16F);
                 }
             }
             return Velocity && Velocity->IsValid() ? Velocity : nullptr;
@@ -248,9 +290,9 @@ namespace RenderCore
 
         GDIRenderTarget* EnsurePostProcessB()
         {
-            if(!PostProcessB && Width > 0 && Height > 0)
+            if(!PostProcessB && AllocWidth > 0 && AllocHeight > 0)
             {
-                PostProcessB = GDICreateRenderTarget(Name + ".PostProcessB", Width, Height);
+                PostProcessB = GDICreateRenderTarget(Name + ".PostProcessB", AllocWidth, AllocHeight);
             }
             return PostProcessB;
         }
@@ -260,9 +302,9 @@ namespace RenderCore
         {
             for(uint32_t Index = 0; Index < 2; ++Index)
             {
-                if(!Half[Index] && Width > 0 && Height > 0)
+                if(!Half[Index] && AllocWidth > 0 && AllocHeight > 0)
                 {
-                    Half[Index] = GDICreateRenderTarget(Name + ".Half" + std::to_string(Index), HalfSize(Width, 1), HalfSize(Height, 1));
+                    Half[Index] = GDICreateRenderTarget(Name + ".Half" + std::to_string(Index), HalfSize(AllocWidth, 1), HalfSize(AllocHeight, 1));
                 }
                 if(!Half[Index] || !Half[Index]->IsValid()) { return false; }
             }
@@ -275,18 +317,18 @@ namespace RenderCore
         {
             for(uint32_t Level = 0; Level < InLevels && Level < 6; ++Level)
             {
-                if(!Bloom[Level] && Width > 0 && Height > 0)
+                if(!Bloom[Level] && AllocWidth > 0 && AllocHeight > 0)
                 {
                     Bloom[Level] = GDICreateRenderTarget(Name + ".Bloom" + std::to_string(Level),
-                                                         HalfSize(Width, Level + 1), HalfSize(Height, Level + 1));
+                                                         HalfSize(AllocWidth, Level + 1), HalfSize(AllocHeight, Level + 1));
                 }
                 if(!Bloom[Level] || !Bloom[Level]->IsValid()) { return false; }
                 if(Level + 1 < InLevels)
                 {
-                    if(!BloomUp[Level] && Width > 0 && Height > 0)
+                    if(!BloomUp[Level] && AllocWidth > 0 && AllocHeight > 0)
                     {
                         BloomUp[Level] = GDICreateRenderTarget(Name + ".BloomUp" + std::to_string(Level),
-                                                               HalfSize(Width, Level + 1), HalfSize(Height, Level + 1));
+                                                               HalfSize(AllocWidth, Level + 1), HalfSize(AllocHeight, Level + 1));
                     }
                     if(!BloomUp[Level] || !BloomUp[Level]->IsValid()) { return false; }
                 }
@@ -297,12 +339,12 @@ namespace RenderCore
         /* Temporal antialiasing's pair, full size, half float; false if they cannot be made. */
         bool EnsureHistory()
         {
-            if(!GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F) || Width == 0 || Height == 0) { return false; }
+            if(!GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F) || AllocWidth == 0 || AllocHeight == 0) { return false; }
             for(uint32_t Index = 0; Index < 2; ++Index)
             {
                 if(!History[Index])
                 {
-                    History[Index] = GDICreateRenderTargetFormat(Name + ".History" + std::to_string(Index), Width, Height, GDI_RTF_RGBA16F);
+                    History[Index] = GDICreateRenderTargetFormat(Name + ".History" + std::to_string(Index), AllocWidth, AllocHeight, GDI_RTF_RGBA16F);
                 }
                 if(!History[Index] || !History[Index]->IsValid()) { return false; }
             }
@@ -312,19 +354,19 @@ namespace RenderCore
         /* A full-size half-float target, made on first use: Reflections, ReflectionHistory, LastCopy, OpaqueCopy. */
         GDIRenderTarget* EnsureFullHalfFloat(GDIRenderTarget*& InOutTarget, const char* InName)
         {
-            if(!InOutTarget && Width > 0 && Height > 0 && GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
+            if(!InOutTarget && AllocWidth > 0 && AllocHeight > 0 && GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
             {
-                InOutTarget = GDICreateRenderTargetFormat(Name + "." + InName, Width, Height, GDI_RTF_RGBA16F);
+                InOutTarget = GDICreateRenderTargetFormat(Name + "." + InName, AllocWidth, AllocHeight, GDI_RTF_RGBA16F);
             }
             return InOutTarget && InOutTarget->IsValid() ? InOutTarget : nullptr;
         }
 
-        /* A half-size half-float target, made on first use: GI, GIHistory. */
+        /* A half-size half-float target, made on first use: GI, GIHistory, ReflectionsHalf, ReflectionHistoryHalf. */
         GDIRenderTarget* EnsureHalfHalfFloat(GDIRenderTarget*& InOutTarget, const char* InName)
         {
-            if(!InOutTarget && Width > 0 && Height > 0 && GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
+            if(!InOutTarget && AllocWidth > 0 && AllocHeight > 0 && GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
             {
-                InOutTarget = GDICreateRenderTargetFormat(Name + "." + InName, HalfSize(Width, 1), HalfSize(Height, 1), GDI_RTF_RGBA16F);
+                InOutTarget = GDICreateRenderTargetFormat(Name + "." + InName, HalfSize(AllocWidth, 1), HalfSize(AllocHeight, 1), GDI_RTF_RGBA16F);
             }
             return InOutTarget && InOutTarget->IsValid() ? InOutTarget : nullptr;
         }
@@ -334,14 +376,14 @@ namespace RenderCore
          * float cannot hold depth. */
         GDIRenderTarget* EnsureDepthCopy()
         {
-            if(!DepthCopy && Width > 0 && Height > 0)
+            if(!DepthCopy && AllocWidth > 0 && AllocHeight > 0)
             {
                 const EGDIRenderTargetFormat Format = GDISupportsRenderTargetFormat(GDI_RTF_R32F) ? GDI_RTF_R32F
                                                     : GDISupportsRenderTargetFormat(GDI_RTF_RGBA32F) ? GDI_RTF_RGBA32F
                                                     : GDI_RTF_RGBA8;
                 if(Format != GDI_RTF_RGBA8)
                 {
-                    DepthCopy = GDICreateRenderTargetFormat(Name + ".DepthCopy", HalfSize(Width, 1), HalfSize(Height, 1), Format);
+                    DepthCopy = GDICreateRenderTargetFormat(Name + ".DepthCopy", HalfSize(AllocWidth, 1), HalfSize(AllocHeight, 1), Format);
                 }
             }
             return DepthCopy && DepthCopy->IsValid() ? DepthCopy : nullptr;
@@ -350,9 +392,9 @@ namespace RenderCore
         /* Volumetric fog's half-size half-float target, made on first use. */
         GDIRenderTarget* EnsureFog()
         {
-            if(!Fog && Width > 0 && Height > 0 && GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
+            if(!Fog && AllocWidth > 0 && AllocHeight > 0 && GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
             {
-                Fog = GDICreateRenderTargetFormat(Name + ".Fog", HalfSize(Width, 1), HalfSize(Height, 1), GDI_RTF_RGBA16F);
+                Fog = GDICreateRenderTargetFormat(Name + ".Fog", HalfSize(AllocWidth, 1), HalfSize(AllocHeight, 1), GDI_RTF_RGBA16F);
             }
             return Fog && Fog->IsValid() ? Fog : nullptr;
         }
@@ -388,9 +430,9 @@ namespace RenderCore
 
         GDIRenderTarget* EnsurePostProcess()
         {
-            if(!PostProcess && Width > 0 && Height > 0)
+            if(!PostProcess && AllocWidth > 0 && AllocHeight > 0)
             {
-                PostProcess = GDICreateRenderTarget(Name + ".PostProcess", Width, Height);
+                PostProcess = GDICreateRenderTarget(Name + ".PostProcess", AllocWidth, AllocHeight);
             }
             return PostProcess;
         }
@@ -401,7 +443,8 @@ namespace RenderCore
                                            &Half[0], &Half[1], &Bloom[0], &Bloom[1], &Bloom[2], &Bloom[3], &Bloom[4], &Bloom[5],
                                            &BloomUp[0], &BloomUp[1], &BloomUp[2], &BloomUp[3], &BloomUp[4],
                                            &Luminance[0], &Luminance[1], &Luminance[2], &Exposure[0], &Exposure[1],
-                                           &History[0], &History[1], &Reflections, &ReflectionHistory[0], &ReflectionHistory[1], &GI, &GIHistory[0], &GIHistory[1], &LastCopy, &Fog, &DepthCopy, &OpaqueCopy, &Subsurface, &SubsurfaceBlur })
+                                           &History[0], &History[1], &Reflections, &ReflectionHistory[0], &ReflectionHistory[1],
+                                           &ReflectionsHalf, &ReflectionHistoryHalf[0], &ReflectionHistoryHalf[1], &GI, &GIHistory[0], &GIHistory[1], &LastCopy, &Fog, &DepthCopy, &OpaqueCopy, &Subsurface, &SubsurfaceBlur })
             {
                 if(*Each)
                 {
@@ -419,6 +462,10 @@ namespace RenderCore
             LastColor       = nullptr;
             Width  = 0;
             Height = 0;
+            AllocWidth  = 0;
+            AllocHeight = 0;
+            PrevWidth   = 0;
+            PrevHeight  = 0;
         }
     };
 }

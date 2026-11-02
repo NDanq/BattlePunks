@@ -34,14 +34,14 @@ namespace RenderCore
     {
         static const char* const Names[size_t(ERenderHook::Count)] = {
             "BeforeScene", "AfterPrePass", "AfterBasePass", "AfterLighting",
-            "AfterForward", "BeforePostProcess", "AfterToneMap", "AfterPostProcess",
+            "AfterForward", "BeforePostProcess", "AfterToneMap", "AfterPostProcess", "Sky",
         };
         return InHook < ERenderHook::Count ? Names[size_t(InHook)] : "";
     }
 
     bool CustomRenderPass::ShouldRun(const RenderPassContext& InContext) const
     {
-        return InContext.IsMainView();
+        return InContext.IsMainView() || InContext.GetHook() == ERenderHook::Sky;
     }
 
     RenderPassHandle RegisterCustomRenderPass(const void* InWorld, std::shared_ptr<CustomRenderPass> InPass,

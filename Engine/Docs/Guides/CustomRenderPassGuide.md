@@ -90,7 +90,7 @@ UBO_BLOCK_END(PP_Block)
 void main(void)
 {
     vec2  UV     = Interpolants.TexCoord;
-    vec3  Colour = texture(Picture, UV).rgb;
+    vec3  Colour = texture(Picture, Scene_ViewUv(UV)).rgb;
     float Edge   = smoothstep(PP_Vignette.y, 1.0, length(UV - 0.5) * 1.41421);
     Output = vec4(Colour * (1.0 - PP_Vignette.x * Edge), 1.0);
 }
@@ -100,7 +100,8 @@ What a full-screen pass shader gets:
 
 | | |
 |---|---|
-| `PostProcessCommon.glsl` | the full-screen interpolants (`Interpolants.TexCoord`: 0,0 is the target's top left), `Output`, the scene block |
+| `PostProcessCommon.glsl` | the full-screen interpolants (`Interpolants.TexCoord`: 0,0 is the top left of what the pass draws), `Output`, the scene block |
+| `Scene_ViewUv(UV)` | `Interpolants.TexCoord` as a UV in a scene texture, or in a target you acquired with no `Width` (sized from the view). Under dynamic resolution the scene draws in the top-left part of those targets (RENDERPIPELINE.md, "Resolution scale"), so sample them through this: it scales the UV and keeps taps inside the drawn part. `Scene_ViewUvHalf` is for half-size ones. A target with its own `Width` and `Height`, and `texelFetch` at `gl_FragCoord`, need nothing |
 | inputs | `DrawFullscreen`'s textures, in order, as material textures 0-6: `MATERIAL_SAMPLER2D(4 + slot, Name)` |
 | slot 7 | always the scene depth: `MATERIAL_SAMPLER2D(11, SceneDepth)` (window depth, 0 near) |
 | `PP_Block` (binding 2) | `RenderPassParams`, std140: `mat4 Matrix; vec4 A; vec4 B;`. Name the members whatever you like, but keep the layout: 96 bytes |

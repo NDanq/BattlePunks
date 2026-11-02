@@ -18,6 +18,7 @@
 #include "Private/Editor/PlaySession.h"
 #include "Private/Editor/PlayProcesses.h"
 #include "Public/NimbleEngine/GameModule.h"
+#include "Public/NimbleEngine/Plugin.h"
 #include "Private/Editor/ViewportSDLInput.h"
 
 #include <QColor>
@@ -36,8 +37,10 @@ EditorContext::EditorContext(QObject* InParent)
     /* Before anything asks for an asset -- the Renderer loads its cooked
      * shaders through this on the render thread. */
     EngineCore::SetFileProvider(&LayeredAssets);
+    NimbleEngine::Plugins::MountContent(LayeredAssets);   // "<Name>:/..." (NimbleEngine/Plugin.h)
 
     Level = new EditorDocument(this);
+    NimbleEngine::Plugins::AttachEditorWorld(Level->GetEditedWorld());   // what plugins draw while it is edited
 
     FrameTimer.setTimerType(Qt::PreciseTimer);
     FrameTimer.setInterval(16);
@@ -48,6 +51,7 @@ EditorContext::EditorContext(QObject* InParent)
      * and the Renderer is the game's. */
     connect(Level, &EditorDocument::EditedWorldAboutToBeDestroyed, this, [this]()
     {
+        NimbleEngine::Plugins::DetachEditorWorld(Level->GetEditedWorld());
         if(Renderer && !Play)
         {
             Renderer->UnbindWorld();
@@ -55,6 +59,7 @@ EditorContext::EditorContext(QObject* InParent)
     });
     connect(Level, &EditorDocument::EditedWorldCreated, this, [this]()
     {
+        NimbleEngine::Plugins::AttachEditorWorld(Level->GetEditedWorld());
         if(bRendererReady && !Play)
         {
             Renderer->BindWorld(Level->GetEditedWorld());
@@ -72,6 +77,7 @@ EditorContext::~EditorContext()
     Level = nullptr;
 
     /* Last: the render thread's shader loads read through it until Shutdown. */
+    NimbleEngine::Plugins::UnmountContent(LayeredAssets);
     EngineCore::SetFileProvider(nullptr);
 }
 
@@ -90,6 +96,7 @@ bool EditorContext::InitializeRenderer(const RenderCore::ERenderBackend InBacken
         CORE_LOG_ERROR("[Editor] RenderCore failed to initialize; the viewport will not draw")
         return false;
     }
+    NimbleEngine::Plugins::MountShaderCaches(*Renderer);   // the plugins' custom passes and materials
 
     Renderer->BindWorld(Level->GetEditedWorld());
     Renderer->SetViewMode(RenderCore::RENDER_DEFAULT_SCENE, ViewMode, ViewTarget.toStdString());
@@ -247,6 +254,10 @@ void EditorContext::Shutdown()
      * which needs the World still alive. Null-safe on a failed Initialize. */
     if(Renderer)
     {
+        if(bRendererReady)
+        {
+            NimbleEngine::Plugins::UnmountShaderCaches(*Renderer);
+        }
         Renderer->Shutdown();
         EngineCore::Memory::Dealloc(Renderer);
         Renderer = nullptr;

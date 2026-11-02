@@ -88,11 +88,15 @@ Two rules decide which value applies:
 | `Shadows.DistanceScale` | 0.5 | 0.75 | 1 | 1.5 |
 | `Shadows.ContactShadows` | off | off | off | on |
 | `Shadows.TranslucentShadows` | off | on | on | on |
+| `Rendering.ShadowCacheBudgetMB` (the static shadow cache's atlas, MB; lights it cannot hold draw every frame; RENDERPIPELINE.md, "Shadow cache") | 8 | 16 | 32 | 96 |
+| `Rendering.ResolutionScale` (the scene drawn at this fraction of the viewport each axis, then upscaled under the UI; RENDERPIPELINE.md, "Resolution scale") | 0.5 | 0.75 | 1 | 1 |
+| `Rendering.DynamicResolution` (the scale chosen each frame to hold `DynamicResolutionTargetMs`, starting at `ResolutionScale`; same section) | on | on | off | off |
 | `Rendering.ScreenSpaceGI` | off | off | on | on |
 | `Rendering.StochasticReflections` | off | off | on | on |
 | `Rendering.SubsurfaceScattering` | off | on | on | on |
 | `Rendering.DynamicGI` | off | on | on | on |
-| `Rendering.GIProbesPerFrame` | 1 | 1 | 1 | 2 |
+| `Rendering.GIProbesPerFrame` (only with `CaptureBudgetMs` 0) | 1 | 1 | 1 | 2 |
+| `Rendering.CaptureBudgetMs` (GI Volume and reflection probe captures a frame; GLOBAL_ILLUMINATION.md, Phase 7) | 0.5 | 1 | 2 | 3 |
 | `Rendering.TextureStreamingPoolMB` | 256 | 384 | 512 | 1024 |
 | `Rendering.TextureStreamingMipBias` | 1 | 0 | 0 | 0 |
 | `Rendering.Anisotropy` (applies at the next start) | 2 | 4 | 8 | 16 |

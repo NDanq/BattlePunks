@@ -5,13 +5,18 @@
  * shaders"; Engine/cmake/NimbleMaterials.cmake).
  *
  *   NimbleCook shaders [-engine <Engine dir>] [-project <dir> [-module <name>]]
- *                      [-target <OpenGL|Vulkan|D3D12>]... [-editor] [-shipping]
- *                      [-force] [-jobs <N>] [-python <exe>]
+ *                      [-plugin <dir>]... [-target <OpenGL|Vulkan|D3D12>]...
+ *                      [-editor] [-shipping] [-force] [-jobs <N>] [-python <exe>]
  *
  * The engine always; with -project, that project's Content/Materials too, and
  * its Content/Shaders (plain shaders: custom render passes), by file name.
  * -module names the project's shader cache (default: its
- * Config/DefaultEngine.ini [Game] Module). Each is cooked below its own
+ * Config/DefaultEngine.ini [Game] Module). With -project, also every plugin
+ * the project enables ([Plugins], else the descriptor's EnabledByDefault;
+ * <project>/Plugins, then Engine/Plugins -- Engine/cmake/NimblePlugins.cmake)
+ * that has Content/Shaders or Content/Materials, each into a cache of its own
+ * named for the plugin; -plugin <dir> cooks one more, enabled or not (a
+ * NIMBLE_PLUGIN_DIRS one). Each is cooked below its own
  * <root>/Saved/Cooked/Shaders/, laid out as the runtime reads it:
  *
  *   Runtime/   every build stages it beside the executable (or in its pack)
@@ -45,6 +50,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -73,6 +79,7 @@ namespace
         fs::path                 EngineDir;
         fs::path                 ProjectDir;
         std::string              Module;
+        std::vector<fs::path>    PluginDirs;
         std::vector<std::string> Targets;
         std::string              Python;
         int                      Jobs      = 32;   // shaders compiling at once, across every run
@@ -120,6 +127,81 @@ namespace
             }
         }
         return std::string();
+    }
+
+    std::string Lower(std::string InText)
+    {
+        std::transform(InText.begin(), InText.end(), InText.begin(), [](unsigned char C) { return char(std::tolower(C)); });
+        return InText;
+    }
+
+    bool IsTrue(const std::string& InValue)
+    {
+        const std::string Value = Lower(Trim(InValue));
+        return Value == "true" || Value == "1" || Value == "yes" || Value == "on";
+    }
+
+    /* Every [InSection] Key=Value of an .ini, keys lowercased. */
+    std::vector<std::pair<std::string, std::string>> ReadIniSection(const fs::path& InFile, const std::string& InSection)
+    {
+        std::vector<std::pair<std::string, std::string>> Result;
+        std::ifstream File(InFile);
+        std::string Line;
+        bool bInSection = false;
+        while(std::getline(File, Line))
+        {
+            Line = Trim(Line);
+            if(Line.empty() || Line[0] == ';' || Line[0] == '#') { continue; }
+            if(Line[0] == '[')
+            {
+                bInSection = Lower(Line) == "[" + Lower(InSection) + "]";
+                continue;
+            }
+            const size_t Equals = Line.find('=');
+            if(bInSection && Equals != std::string::npos)
+            {
+                Result.emplace_back(Lower(Trim(Line.substr(0, Equals))), Trim(Line.substr(Equals + 1)));
+            }
+        }
+        return Result;
+    }
+
+    /* The plugins InProjectDir enables, as NimblePlugins.cmake decides it:
+     * found in <project>/Plugins then <engine>/Plugins (first wins), enabled
+     * by [Plugins] in its config, else by the descriptor's EnabledByDefault. */
+    std::vector<fs::path> FindEnabledPlugins(const fs::path& InProjectDir, const fs::path& InEngineDir)
+    {
+        const auto Wanted = ReadIniSection(InProjectDir / "Config" / "DefaultEngine.ini", "Plugins");
+        std::vector<fs::path>    Result;
+        std::vector<std::string> Seen;
+        for(const fs::path& Root : { InProjectDir / "Plugins", InEngineDir / "Plugins" })
+        {
+            std::error_code Error;
+            if(!fs::is_directory(Root, Error)) { continue; }
+            std::vector<fs::path> Folders;
+            for(const fs::directory_entry& Entry : fs::directory_iterator(Root, Error))
+            {
+                if(Entry.is_directory(Error)) { Folders.push_back(Entry.path()); }
+            }
+            std::sort(Folders.begin(), Folders.end());
+            for(const fs::path& Folder : Folders)
+            {
+                const std::string Name = ToUtf8(Folder.filename());
+                if(!fs::is_regular_file(Folder / (Name + ".nmplugin"), Error)
+                   || std::find(Seen.begin(), Seen.end(), Lower(Name)) != Seen.end())
+                {
+                    continue;
+                }
+                Seen.push_back(Lower(Name));
+                bool bEnabled = IsTrue(ReadIni(Folder / (Name + ".nmplugin"), "Plugin", "EnabledByDefault"));
+                for(const auto& Each : Wanted)
+                {
+                    if(Each.first == Lower(Name)) { bEnabled = IsTrue(Each.second); }
+                }
+                if(bEnabled) { Result.push_back(Folder); }
+            }
+        }
+        return Result;
     }
 
     /* The newest modification time of InPath, or of any file below it. */
@@ -388,34 +470,71 @@ namespace
 
         void CookProject()
         {
-            const fs::path Materials = Opts.ProjectDir / "Content" / "Materials";
-            std::error_code Error;
-            if(!fs::is_directory(Materials, Error))
+            CookTree(Opts.ProjectDir, Opts.Module);
+        }
+
+        /* Each plugin the project enables, and each -plugin, into a cache
+         * named for it: Shaders/Cache/<Plugin>.<Platform>.nmsc. */
+        void CookPlugins()
+        {
+            std::vector<fs::path> Plugins;
+            if(!Opts.ProjectDir.empty())
             {
-                std::printf("NimbleCook: %s has no Content/Materials; no project shaders to cook\n", ToUtf8(Opts.ProjectDir).c_str());
+                Plugins = FindEnabledPlugins(Opts.ProjectDir, Opts.EngineDir);
+            }
+            for(const fs::path& Extra : Opts.PluginDirs)
+            {
+                if(std::find(Plugins.begin(), Plugins.end(), Extra) == Plugins.end()) { Plugins.push_back(Extra); }
+            }
+            for(const fs::path& Plugin : Plugins)
+            {
+                std::error_code Error;
+                if(fs::is_directory(Plugin / "Content" / "Materials", Error) || fs::is_directory(Plugin / "Content" / "Shaders", Error))
+                {
+                    CookTree(Plugin, ToUtf8(Plugin.filename()));
+                }
+            }
+        }
+
+        /* InDir's Content/Materials and Content/Shaders (plain shaders:
+         * custom render passes, by file name) below <InDir>/Saved/Cooked/Shaders,
+         * cached as InModule. */
+        void CookTree(const fs::path& InDir, const std::string& InModule)
+        {
+            const fs::path Materials = InDir / "Content" / "Materials";
+            const fs::path Shaders   = InDir / "Content" / "Shaders";
+            std::error_code Error;
+            const bool bMaterials = fs::is_directory(Materials, Error);
+            const bool bShaders   = fs::is_directory(Shaders, Error);
+            if(!bMaterials && !bShaders)
+            {
+                std::printf("NimbleCook: %s has no Content/Materials or Content/Shaders; nothing of its to cook\n", ToUtf8(InDir).c_str());
                 return;
             }
-            const fs::path Root = Opts.ProjectDir / "Saved" / "Cooked" / "Shaders";
-            Args Source{ "-src", ToUtf8(Materials), "-root", ToUtf8(Opts.ProjectDir) };
-            std::vector<fs::path> Inputs{ Materials };
-            /* Its own plain shaders too (custom render passes): Content/Shaders, by file name. */
-            const fs::path Shaders = Opts.ProjectDir / "Content" / "Shaders";
-            if(fs::is_directory(Shaders, Error))
+            const fs::path Root = InDir / "Saved" / "Cooked" / "Shaders";
+            Args Source{ "-root", ToUtf8(InDir) };
+            std::vector<fs::path> Inputs;
+            if(bMaterials)
+            {
+                Source.insert(Source.end(), { "-src", ToUtf8(Materials) });
+                Inputs.push_back(Materials);
+            }
+            if(bShaders)
             {
                 Source.insert(Source.end(), { "-src", ToUtf8(Shaders) });
                 Inputs.push_back(Shaders);
             }
-            const std::string What = Opts.Module.empty() ? std::string("Project") : Opts.Module;
+            const std::string What = InModule.empty() ? std::string("Project") : InModule;
 
             // Without a module there is no cache to cook: only an editor's loose files.
-            if(!Opts.Module.empty())
+            if(!InModule.empty())
             {
-                CookVariant(What, Root, "Runtime", Inputs, WithCache({}, Source, Opts.Module, false));
+                CookVariant(What, Root, "Runtime", Inputs, WithCache({}, Source, InModule, false));
             }
             else
             {
                 std::printf("NimbleCook: %s names no [Game] Module; its materials are cooked loose only\n",
-                            ToUtf8(Opts.ProjectDir).c_str());
+                            ToUtf8(InDir).c_str());
             }
             if(Opts.bEditor)
             {
@@ -423,9 +542,9 @@ namespace
                 Loose.insert(Loose.end(), { "-out", "{out}/Shaders/Cooked", "-data-out", "{out}" });
                 CookVariant(What, Root, "Editor", Inputs, { Loose });
             }
-            if(Opts.bShipping && !Opts.Module.empty())
+            if(Opts.bShipping && !InModule.empty())
             {
-                CookVariant(What, Root, "Shipping", Inputs, WithCache({}, Source, Opts.Module, true));
+                CookVariant(What, Root, "Shipping", Inputs, WithCache({}, Source, InModule, true));
             }
         }
 
@@ -446,7 +565,7 @@ int main(int argc, char** argv)
     if(argc < 2 || std::string(argv[1]) != "shaders")
     {
         std::fprintf(stderr,
-                     "Usage: NimbleCook shaders [-engine <dir>] [-project <dir> [-module <name>]]\n"
+                     "Usage: NimbleCook shaders [-engine <dir>] [-project <dir> [-module <name>]] [-plugin <dir>]...\n"
                      "                          [-target <OpenGL|Vulkan|D3D12>]... [-editor] [-shipping] [-force]\n"
                      "                          [-jobs <N>] [-python <exe>]\n");
         return 2;
@@ -465,6 +584,7 @@ int main(int argc, char** argv)
         else if(bHasValue && Name == "-engine")  { Opts.EngineDir = fs::u8path(argv[++Index]); }
         else if(bHasValue && Name == "-project") { Opts.ProjectDir = fs::u8path(argv[++Index]); }
         else if(bHasValue && Name == "-module")  { Opts.Module = argv[++Index]; }
+        else if(bHasValue && Name == "-plugin")  { Opts.PluginDirs.push_back(fs::u8path(argv[++Index])); }
         else if(bHasValue && Name == "-python")  { Opts.Python = argv[++Index]; }
         else if(bHasValue && Name == "-jobs")
         {
@@ -534,7 +654,12 @@ int main(int argc, char** argv)
     Cook.CommonInputs = { Opts.EngineDir / "Content" / "Shaders", Script,
                           Opts.EngineDir / "Modules" / "GDI" / "Scripts" / "cook_shaders.py" };
     Cook.CookEngine();
+    for(fs::path& Plugin : Opts.PluginDirs)
+    {
+        Plugin = fs::absolute(Plugin, Error);
+    }
     if(!Opts.ProjectDir.empty()) { Cook.CookProject(); }
+    Cook.CookPlugins();
     Cook.Run();
 
     std::printf("NimbleCook: %d cooked, %d up to date, %d failed\n", Cook.Cooked, Cook.Skipped, int(Cook.Failures.size()));

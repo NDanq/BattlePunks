@@ -16,8 +16,8 @@ UBO_BLOCK_END(PP_Block)
 void main(void)
 {
     vec2  UV      = Interpolants.TexCoord;
-    vec3  Sharp   = texture(SceneColor, UV).rgb;
-    vec4  Blur    = texture(Blurred, UV);
+    vec3  Sharp   = texture(SceneColor, Scene_ViewUv(UV)).rgb;
+    vec4  Blur    = texture(Blurred, Scene_ViewUvHalf(UV));
     float Coc     = abs(Blur.a * 2.0 - 1.0);
     // Under about a pixel of blur, the sharp image is the better one.
     float Amount  = smoothstep(0.0, 1.0, Coc * PP_Focus.z * 0.5);

@@ -11,6 +11,36 @@ namespace Sequencer
 {
     enum : size_t { SEQUENCE_PATH_MAX = 128 };   // including the NUL
 
+    /* SequencePlayerComponent::BlendEase: the curve of a blend in or out.
+     * Smooth is a smoothstep, as camera cuts blend; the rest are
+     * UIAnimation.h's eases. */
+    enum ESequenceBlendEase : uint8_t
+    {
+        SBE_Smooth = 0,
+        SBE_Linear,
+        SBE_QuadIn,
+        SBE_QuadOut,
+        SBE_QuadInOut,
+        SBE_CubicIn,
+        SBE_CubicOut,
+        SBE_CubicInOut,
+        SBE_Count
+    };
+
+    /* InT (clamped to 0..1) through the curve InEase (an ESequenceBlendEase;
+     * Smooth for an unknown value). */
+    SEQUENCER_API float SequenceBlendEase(uint8_t InEase, float InT);
+
+    /* SequencePlayerComponent::ReleaseControl: when a Cinematic player hands
+     * the players their input back and takes the letterbox away. */
+    enum ESequenceControlRelease : uint8_t
+    {
+        SCR_AfterBlend = 0,   // when the blend out has finished (with no Blend Out: as the sequence ends)
+        SCR_BlendStart,       // as the sequence ends, so the player moves while the view eases in
+        SCR_BeforeEnd,        // ReleaseBeforeEnd seconds of the sequence before its end
+        SCR_Count
+    };
+
     /*
      * "Sequence Player". Plays a sequence (.nmseq) in its entity's World:
      * by itself as the level starts (AutoPlay), or when told -- from Lua
@@ -43,6 +73,19 @@ namespace Sequencer
          * skips it, as Sequence.Skip does. */
         uint8_t bCinematic  = 0;
         uint8_t bSkippable  = 1;
+
+        /* HANDING THE VIEW OVER (README.md, "Blending in and out"). Seconds
+         * the view eases from the view it took (the gameplay camera, tracked
+         * as it moves) into the first shot, and from the last shot back to
+         * the view it gives back when the sequence finishes. A skip blends
+         * out over half of BlendOut. 0 (the default) cuts. */
+        uint8_t BlendEase      = 0;      // ESequenceBlendEase, both ways
+        uint8_t ReleaseControl = 0;      // ESequenceControlRelease: when a Cinematic player lets go of input and letterbox
+        float   BlendIn        = 0.0f;
+        float   BlendOut       = 0.0f;
+        /* With ReleaseControl SCR_BeforeEnd: this many seconds of the
+         * sequence before its end. */
+        float   ReleaseBeforeEnd = 0.0f;
 
         // === Engine-written: never saved ====================================
         /* The server's playback, replicated: a client's copy follows it

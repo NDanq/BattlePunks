@@ -57,6 +57,8 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/RenderPipeline.cpp
         Source/Private/RenderCore/SceneTargets.h
         Source/Private/RenderCore/RenderProxy.cpp
+        Source/Private/RenderCore/InstanceClusters.h
+        Source/Private/RenderCore/InstanceClusters.cpp
         Source/Private/RenderCore/RenderScene.cpp
         Source/Private/RenderCore/RenderComponentProxy.h
         Source/Private/RenderCore/MaterialPreview.h
@@ -79,8 +81,11 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/Components/RectLightComponent.cpp
         Source/Private/RenderCore/ShadowSetup.h
         Source/Private/RenderCore/ShadowSetup.cpp
+        Source/Private/RenderCore/CaptureScheduler.h
+        Source/Private/RenderCore/CaptureScheduler.cpp
         Source/Private/RenderCore/ShadowSettings.cpp
         Source/Private/RenderCore/PostProcessStack.cpp
+        Source/Private/RenderCore/RenderWeather.cpp
         Source/Private/RenderCore/Components/PostProcessComponent.cpp
         Source/Private/RenderCore/Components/SceneCaptureProbeComponent.cpp
         Source/Private/RenderCore/Components/ReflectionProbeComponent.cpp
@@ -163,6 +168,7 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/Components/RectLightComponent.h
         Source/Public/RenderCore/Components/LightShadow.h
         Source/Public/RenderCore/PostProcessStack.h
+        Source/Public/RenderCore/RenderWeather.h
         Source/Public/RenderCore/Components/PostProcessComponent.h
         Source/Public/RenderCore/Components/SceneCaptureProbeComponent.h
         Source/Public/RenderCore/Components/ReflectionProbeComponent.h

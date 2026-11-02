@@ -6,6 +6,12 @@
 # engine-level aggregate produces, which no subtree can know about.
 # ===========================================================================
 
+# Games/ holds the projects you make (File > New Project) or unpack from an
+# example archive (Engine/Examples): yours, never tracked. Only the
+# placeholder that keeps the folder is.
+/Games/*
+!/Games/EMPTY.txt
+
 # The flat runtime layout Engine/CMakeLists.txt sets up, and the per-generation
 # shadow copies CoreModuleManager writes underneath it during hot reload.
 #
@@ -14,7 +20,8 @@
 # NIMBLE_BINARIES_DIR defaults to the Sandbox host's. Engine/Binaries stays
 # listed so that older build trees, and anyone pointing NIMBLE_BINARIES_DIR back
 # at it, do not start showing up as untracked output -- all but the tracked
-# NewProject scripts, which make a game without the editor.
+# NewProject scripts, which make a game without the editor, NewPlugin.cmake, a plugin,
+# and the NimbleLauncher scripts, which build and start the launcher.
 /Games/*/Binaries/
 
 # What the tools make on each machine, never source: cooked content
@@ -23,6 +30,10 @@
 /Games/*/Saved/
 # And the engine's: its shaders, cooked by NimbleCook (Saved/Cooked/Shaders/).
 /Engine/Saved/
+# And each plugin's (Engine/cmake/NimblePlugins.cmake): its shaders, cooked
+# by NimbleCook into <plugin>/Saved/Cooked/Shaders/.
+/Engine/Plugins/*/Saved/
+/Games/*/Plugins/*/Saved/
 
 # The vendored libraries, built once per toolchain and shared by every build
 # tree (Engine/cmake/NimbleThirdParty.cmake).
@@ -32,6 +43,9 @@
 !/Engine/Binaries/NewProject.cmake
 !/Engine/Binaries/NewProject.sh
 !/Engine/Binaries/NewProject.bat
+!/Engine/Binaries/NewPlugin.cmake
+!/Engine/Binaries/NimbleLauncher.sh
+!/Engine/Binaries/NimbleLauncher.bat
 
 # Smoke-test scratch output. The test writes it relative to its working
 # directory, and the executable can be run from anywhere -- including here.
@@ -71,6 +85,8 @@
 *.user
 .cache/
 .claude/settings.local.json
+__pycache__/
+*.pyc
 
 # Locally generated MSVC environment. vcvars64.bat cannot always be driven
 # through cmd.exe (some shells get its banner and no variables), so these lift

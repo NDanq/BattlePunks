@@ -43,6 +43,7 @@ include(NimbleModule)
 include(NimbleMaterials)
 include(NimbleProject)
 include(NimblePack)
+include(NimblePlugins)
 
 enable_testing()
 
@@ -703,6 +704,8 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/PlayerStart.cpp
         Source/Private/NimbleEngine/CharacterMover.cpp
         Source/Private/NimbleEngine/GameModule.cpp
+        Source/Private/NimbleEngine/Plugin.cpp
+        Source/Private/NimbleEngine/PluginCatalog.cpp
         Source/Private/NimbleEngine/Level.cpp
         Source/Private/NimbleEngine/SaveGame.cpp
         Source/Private/NimbleEngine/WorldList.cpp
@@ -737,6 +740,8 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/SplitCamera.h
         Source/Public/NimbleEngine/GameConsole.h
         Source/Public/NimbleEngine/GameModule.h
+        Source/Public/NimbleEngine/Plugin.h
+        Source/Public/NimbleEngine/PluginCatalog.h
         Source/Public/NimbleEngine/NimbleEngineAPI.h
         Source/Public/NimbleEngine/Level.h
         Source/Public/NimbleEngine/GameState.h
@@ -761,6 +766,10 @@ set(NIMBLEENGINE_SOURCES
 nimble_add_module(NimbleEngine SHARED
         PREFIX  NIMBLEENGINE
         SOURCES ${NIMBLEENGINE_SOURCES})
+
+# The engine's version, what a plugin's EngineVersion is checked against
+# (PluginCatalog.h; NimblePlugins.cmake checks PROJECT_VERSION itself).
+target_compile_definitions(NimbleEngine PRIVATE "NIMBLE_ENGINE_VERSION=\"${PROJECT_VERSION}\"")
 
 # Where a development build finds NimbleCook's output (ShaderCook.h): the
 # Engine folder it was built from. Not in Shipping, which names no source path.
@@ -883,6 +892,23 @@ if(NIMBLEENGINE_BUILD_TESTS)
     add_test(NAME NimbleEngine.InputTests COMMAND NimbleEngineInputTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineInputTests>")
     set_tests_properties(NimbleEngine.InputTests PROPERTIES TIMEOUT 120 LABELS "smoke")
+
+    # Plugins, in C++: PluginCatalog on Plugins.Resolve's cases, and the
+    # host's shadow copies on the plugins built beside it.
+    add_executable(NimbleEnginePluginCatalogTests Tests/PluginCatalogTests.cpp)
+    target_link_libraries(NimbleEnginePluginCatalogTests PRIVATE NimbleEngine::NimbleEngine)
+    set_target_properties(NimbleEnginePluginCatalogTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
+    add_test(NAME Plugins.Catalog COMMAND NimbleEnginePluginCatalogTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEnginePluginCatalogTests>")
+    set_tests_properties(Plugins.Catalog PROPERTIES TIMEOUT 120 LABELS "plugin;smoke")
+
+    # Plugins: descriptor parsing, enabling, overrides and dependency order
+    # (cmake/NimblePlugins.cmake), in script mode -- no plugin needs to exist.
+    add_test(NAME Plugins.Resolve
+             COMMAND ${CMAKE_COMMAND} "-DNIMBLE_CMAKE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/cmake"
+                     "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/PluginResolveTest"
+                     -P "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Plugins/PluginResolveTest.cmake")
+    set_tests_properties(Plugins.Resolve PROPERTIES TIMEOUT 120 LABELS "plugin;smoke")
 
     # Collision: overlaps, events, layers, queries, and shapes from meshes.
     add_executable(NimbleEngineTerrainTests Tests/TerrainTests.cpp)
@@ -1173,6 +1199,17 @@ if(NIMBLE_BUILD_EDITOR AND NIMBLE_WITH_EDITOR AND TARGET RenderCore
     add_subdirectory(Modules/Editor)
 elseif(NOT NIMBLE_WITH_EDITOR)
     message(STATUS "NimbleEditor: not built for a ${NIMBLE_TARGET} target")
+endif()
+
+# === Plugins ===============================================================
+# Drop-in modules (cmake/NimblePlugins.cmake): every <Project>/Plugins,
+# NIMBLE_PLUGIN_DIRS and Engine/Plugins folder with a <Name>.nmplugin, built
+# when the project's [Plugins] section (or the descriptor's default) enables
+# it. Below NimbleEngine, which every plugin module links, and the editor;
+# above Games/, whose game modules link the plugins they use. Nothing here
+# names a plugin: adding one never edits this file.
+if(TARGET NimbleEngine)
+    nimble_add_plugins()
 endif()
 
 # === Games/ ================================================================

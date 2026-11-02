@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="5299e22712ac99f808d921d2525a8fd0" Name="Patrol_3">
-  <Component Type="Transform" Version="1">
-    <Position X="600" Y="0" Z="-2600" />
-    <Rotation X="0" Y="0" Z="0" />
-    <Scale X="1" Y="1" Z="1" />
-  </Component>
-</Entity>

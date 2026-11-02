@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Instance Guid="533fcb0a93e5ca9512bcae4c610aeca0" Name="Dummy2" Prefab="Content/Prefabs/ShootingRange/RangeDummy.nmprefab">
-  <Entity Id="1">
-    <Component Type="Transform" Version="1">
-      <Position X="-165" Y="0" Z="500" />
-      <Rotation X="0" Y="0" Z="0" />
-    </Component>
-  </Entity>
-</Instance>

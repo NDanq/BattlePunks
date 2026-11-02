@@ -23,7 +23,7 @@ UBO_BLOCK_BEGIN(2, PP_Block)
     vec4 PP_Fog;        // x: density, per world unit, at and below y; y: its fall-off upward, per world unit; z: y; w: Max Distance
     vec4 PP_Scatter;    // x: phase anisotropy (0 even, toward 1 forward); y: sun; z: sky; w: point and spot lights
     vec4 PP_Albedo;     // rgb: the fog's colour (what it scatters); a: 1 to shadow the sun's light
-    vec4 PP_Steps;      // x: samples along each ray
+    vec4 PP_Steps;      // x: samples along each ray; y: 1 to walk only the lights whose reach the ray crosses
     vec4 PP_Unused;
     vec4 PP_Sizes;      // zw: full resolution
 UBO_BLOCK_END(PP_Block)
@@ -86,6 +86,17 @@ void main(void)
     vec3  Albedo   = PP_Albedo.rgb;
     int   Locals   = PP_Scatter.w > 0.0 ? int(Scene_LocalCounts.x) : 0;
 
+    // The lights whose sphere of reach the ray (eye to Length) passes through, once a pixel: a step
+    // outside a light's reach gets nothing from it, so the others are skipped at every step.
+    uint Reach = 0u;
+    for(int L = 0; L < Locals; ++L)
+    {
+        vec4  PositionRange = Scene_Locals[L * 6 + 0];
+        vec3  ToLight = PositionRange.xyz - Eye;
+        vec3  Across  = ToLight - D * clamp(dot(ToLight, D), 0.0, Length);
+        if(PP_Steps.y < 0.5 || dot(Across, Across) < PositionRange.w * PositionRange.w) { Reach |= 1u << uint(L); }
+    }
+
     vec3  Scattered     = vec3(0.0);
     float Transmittance = 1.0;
     for(int Index = 0; Index < Steps; ++Index)
@@ -94,8 +105,9 @@ void main(void)
         float Sigma = Density(P);
         if(Sigma <= 1e-9) { continue; }
         vec3 Light = Sun * SunVisibility(P) + Sky;
-        for(int L = 0; L < Locals; ++L)
+        for(uint Mask = Reach; Mask != 0u; Mask &= Mask - 1u)
         {
+            int   L              = findLSB(Mask);
             vec4  PositionRange  = Scene_Locals[L * 6 + 0];
             vec4  ColorIntensity = Scene_Locals[L * 6 + 1];
             vec4  DirectionType  = Scene_Locals[L * 6 + 2];

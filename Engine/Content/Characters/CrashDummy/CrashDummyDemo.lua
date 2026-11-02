@@ -1,7 +1,8 @@
 -- CrashDummyDemo.nmprefab's script: walks the dummy through everything its
 -- anim state does (ANIMATION.md, "Engine characters"), on a loop --
 --
---   idle -> walk -> draw the pistol while walking -> armed run -> stop ->
+--   idle -> walk -> draw the pistol while walking, fire three shots -> armed run,
+--   hit from the front, then hard from the left -> stop ->
 --   jump, fall, land -> holster -> again
 --
 -- and moves the pistol between holster and hand as the clips' notifies say:
@@ -15,8 +16,10 @@
 -- clamped to -40..55).
 --
 -- A game drives the same parameters from its own movement instead:
--- Speed (units/s), Grounded, Jump (a trigger) and Armed -- and AimPitch from
--- its camera's pitch.
+-- Speed (units/s), Grounded, Jump (a trigger) and Armed -- AimPitch from
+-- its camera's pitch, Fire (a trigger, the Recoil layer's kick) on each shot,
+-- and on each hit taken HitDir (0 front, 1 back, 2 left, 3 right), HitWeight
+-- (0..1) and Hit (a trigger, the HitReact layer's jolt).
 
 local HOLSTER = { Bone = "DEF-spine",  Position = { -19.719, 0.128, -4.773 }, Rotation = { -75.407,  7.744,   2.009 } }
 local HAND    = { Bone = "DEF-hand.R", Position = {  -2.110, 7.087, -0.769 }, Rotation = { -85.592, 13.264, 175.197 } }
@@ -26,7 +29,12 @@ local TIMELINE = {
     { At =  0.0, Speed =   0 },
     { At =  2.0, Speed = 150 },
     { At =  4.0, Armed = true },
+    { At =  5.6, Fire  = true },
+    { At =  5.9, Fire  = true },
+    { At =  6.3, Fire  = true },
     { At =  7.0, Speed = 400 },
+    { At =  8.0, Hit   = 0, Weight = 0.6 },
+    { At =  9.0, Hit   = 2, Weight = 1.0 },
     { At = 10.0, Speed =   0 },
     { At = 11.5, Jump  = true },
     { At = 14.5, Armed = false },
@@ -80,6 +88,12 @@ return {
             if step.Speed ~= nil then self.Target = step.Speed end
             if step.Armed ~= nil then self.Animation:SetBool("Armed", step.Armed) end
             if step.Jump then self.Animation:SetTrigger("Jump") end
+            if step.Fire then self.Animation:SetTrigger("Fire") end
+            if step.Hit ~= nil then
+                self.Animation:SetFloat("HitDir", step.Hit)
+                self.Animation:SetFloat("HitWeight", step.Weight)
+                self.Animation:SetTrigger("Hit")
+            end
             self.Next = self.Next + 1
         end
 

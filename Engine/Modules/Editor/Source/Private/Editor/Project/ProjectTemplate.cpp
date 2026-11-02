@@ -2,11 +2,16 @@
 
 #include "Private/Editor/Project/ProjectTemplate.h"
 
+#include <algorithm>
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QRegularExpression>
 
 namespace EditorProject
@@ -151,6 +156,88 @@ namespace EditorProject
         Written.sort(Qt::CaseInsensitive);
         if(OutFiles) { *OutFiles = Written; }
         OutProjectDir = ProjectDir;
+        return true;
+    }
+
+    QString GetExamplesDir()
+    {
+        const QString Engine = GetEngineDir();
+        if(Engine.isEmpty()) { return QString(); }
+        const QString Dir = QDir(Engine).filePath(QStringLiteral("Examples"));
+        return QFileInfo(QDir(Dir).filePath(QStringLiteral("Examples.json"))).isFile() ? Dir : QString();
+    }
+
+    QString GetNewProjectScript()
+    {
+        const QString Engine = GetEngineDir();
+        if(Engine.isEmpty()) { return QString(); }
+        const QString Script = QDir(Engine).filePath(QStringLiteral("Binaries/NewProject.cmake"));
+        return QFileInfo(Script).isFile() ? Script : QString();
+    }
+
+    QList<ExampleInfo> ListExamples(const QString& InExamplesDir, QString* OutError)
+    {
+        QList<ExampleInfo> Examples;
+        if(InExamplesDir.isEmpty()) { return Examples; }
+        const QString Path = QDir(InExamplesDir).filePath(QStringLiteral("Examples.json"));
+        QFile File(Path);
+        if(!File.open(QIODevice::ReadOnly))
+        {
+            if(OutError) { *OutError = QStringLiteral("Could not read %1").arg(QDir::toNativeSeparators(Path)); }
+            return Examples;
+        }
+        QJsonParseError Parse;
+        const QJsonObject Index = QJsonDocument::fromJson(File.readAll(), &Parse).object();
+        if(Parse.error != QJsonParseError::NoError || Index.value(QStringLiteral("Schema")).toInt() != 1)
+        {
+            if(OutError) { *OutError = QStringLiteral("%1 is not an example index this editor reads").arg(QDir::toNativeSeparators(Path)); }
+            return Examples;
+        }
+        for(const QJsonValue& Value : Index.value(QStringLiteral("Examples")).toArray())
+        {
+            const QJsonObject Entry = Value.toObject();
+            ExampleInfo Info;
+            Info.Name          = Entry.value(QStringLiteral("Name")).toString();
+            Info.Title         = Entry.value(QStringLiteral("Title")).toString(Info.Name);
+            Info.Description   = Entry.value(QStringLiteral("Description")).toString();
+            Info.EngineVersion = Entry.value(QStringLiteral("EngineVersion")).toString();
+            Info.UnpackedBytes = qint64(Entry.value(QStringLiteral("UnpackedBytes")).toDouble());
+            Info.Files         = Entry.value(QStringLiteral("Files")).toInt();
+            for(const QJsonValue& Part : Entry.value(QStringLiteral("Parts")).toArray())
+            {
+                Info.PackedBytes += qint64(Part.toObject().value(QStringLiteral("Bytes")).toDouble());
+            }
+            if(ValidateName(Info.Name).isEmpty()) { Examples << Info; }
+        }
+        std::sort(Examples.begin(), Examples.end(), [](const ExampleInfo& A, const ExampleInfo& B) { return A.Name < B.Name; });
+        return Examples;
+    }
+
+    QStringList GetExampleSteps(const bool bInBuild)
+    {
+        return bInBuild ? QStringList{ QStringLiteral("unpack"), QStringLiteral("configure"), QStringLiteral("build"), QStringLiteral("cook") }
+                        : QStringList{ QStringLiteral("unpack") };
+    }
+
+    QStringList ExampleScriptArgs(const QString& InScript, const QString& InExamplesDir, const QString& InExample,
+                                  const QString& InParentDir, const QString& InName, const QStringList& InSteps)
+    {
+        return { QStringLiteral("-DEXAMPLE=") + InExample,
+                 QStringLiteral("-DNAME=") + InName,
+                 QStringLiteral("-DLOCATION=") + QDir::fromNativeSeparators(InParentDir),
+                 QStringLiteral("-DEXAMPLES_DIR=") + QDir::fromNativeSeparators(InExamplesDir),
+                 QStringLiteral("-DSTEPS=") + InSteps.join(QLatin1Char(';')),
+                 QStringLiteral("-P"), InScript };
+    }
+
+    bool ParseExampleStep(const QString& InLine, int& OutIndex, int& OutCount, QString& OutWhat)
+    {
+        static const QRegularExpression Step(QStringLiteral("NewProject: \\[(\\d+)/(\\d+)\\] (.*)$"));
+        const QRegularExpressionMatch Match = Step.match(InLine);
+        if(!Match.hasMatch()) { return false; }
+        OutIndex = Match.captured(1).toInt();
+        OutCount = Match.captured(2).toInt();
+        OutWhat  = Match.captured(3).trimmed();
         return true;
     }
 }

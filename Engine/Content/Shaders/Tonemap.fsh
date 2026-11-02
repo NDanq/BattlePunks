@@ -21,15 +21,16 @@ float MaxOf(vec3 InC) { return max(InC.r, max(InC.g, InC.b)); }
 
 // The scene colour here, sharpened against its four neighbours by PP_Sharpen.x --
 // in a tone-weighted space (c / (1 + max(c))), so a bright edge does not ring.
+// InUV: a target UV (Scene_ViewUv), the taps kept inside the drawn area.
 vec3 SceneAt(vec2 InUV)
 {
     vec3 C = max(texture(Source, InUV).rgb, vec3(0.0));
     if(PP_Sharpen.x <= 0.0) { return C; }
     vec2 Texel = 1.0 / vec2(textureSize(Source, 0));
     vec3 Sum = vec3(0.0);
-    Sum += max(texture(Source, InUV + vec2(Texel.x, 0.0)).rgb, vec3(0.0));
+    Sum += max(texture(Source, Scene_ClampUv(InUV + vec2(Texel.x, 0.0))).rgb, vec3(0.0));
     Sum += max(texture(Source, InUV - vec2(Texel.x, 0.0)).rgb, vec3(0.0));
-    Sum += max(texture(Source, InUV + vec2(0.0, Texel.y)).rgb, vec3(0.0));
+    Sum += max(texture(Source, Scene_ClampUv(InUV + vec2(0.0, Texel.y))).rgb, vec3(0.0));
     Sum += max(texture(Source, InUV - vec2(0.0, Texel.y)).rgb, vec3(0.0));
     vec3 W  = C / (1.0 + MaxOf(C));
     vec3 Nb = Sum * 0.25;
@@ -48,7 +49,7 @@ void main(void)
         float Average = texelFetch(Adapted, ivec2(0), 0).r;
         Auto = exp2(clamp(log2(max(PP_Exposure.y, 1e-4)) - Average, PP_Exposure.z, PP_Exposure.w));
     }
-    vec3 Linear = SceneAt(Interpolants.TexCoord) * Scene_Output.y * Auto;
+    vec3 Linear = SceneAt(Scene_ViewUv(Interpolants.TexCoord)) * Scene_Output.y * Auto;
     vec3 Mapped = ToneMap(Linear, Scene_Output.z);
     Output = vec4(LinearToSrgb(Mapped), 1.0);
 }

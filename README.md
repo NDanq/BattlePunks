@@ -105,6 +105,45 @@ players as `PlayerState` components, all reachable from Lua and script graphs
 (`Engine/Source/GAMEFRAMEWORK.md`). `[Game] StartLevel=Sandbox` runs the older
 demo level instead.
 
+### Demo Lab
+
+Demo Lab is the sample project: a 15-minute third-person slice that shows
+the renderer (dynamic GI, procedural foliage, shading models, the TimeOfDay
+and Weather plugins), the Sequencer, AICore and the UI module. It ships as
+an example archive in `Engine/Examples`, not as a folder in the repository:
+make it with the editor's **File > New Project > Example: Demo Lab**, or
+
+```bash
+Engine/Binaries/NewProject.sh --example DemoLab --build      # NewProject.bat on Windows
+```
+
+which unpacks it into `Games/DemoLab`, then configures, builds and cooks it.
+
+On a fresh clone, **NimbleLauncher** gives you the same File > New Project
+window without compiling the editor first. It builds only EngineCore and
+itself:
+
+```bash
+Engine/Binaries/NimbleLauncher.sh      # NimbleLauncher.bat on Windows (finds MSVC itself)
+```
+
+The first run configures `Engine/Build/launcher`. That also prebuilds the
+third-party libraries, which every game's tree on the same toolchain reuses.
+Pick **Example: Demo Lab** there. Unpacking takes seconds. **Build and cook**
+still compiles the engine and Demo Lab's own editor in its tree
+(`editor-relwithdebinfo`), which is the long part. While the launcher is open,
+it also builds the engine modules in a warm-up tree of its own
+(`Engine/Intermediate/LauncherWarmup`, `--no-warmup` to skip). It pauses that
+while a project builds. A game's tree does not reuse those objects yet: that
+would need a prebuilt engine SDK.
+
+Its `Docs/Guide.md` then says how to run it, what each level shows, how to
+regenerate its content and how to test and measure it. **Worlds Lab**
+(`--example WorldsLab`) is the older test bed it replaced, trimmed to the
+worlds the engine's docs and tests use; the tests that read it skip until it
+is unpacked. `Games/` itself is not tracked: what you make or unpack there
+stays yours (`Engine/Examples/README.md` says how to repack an example).
+
 ### LightLab
 
 `Games/LightLab` is a second game, laid out as File > New Project lays one out: a fly-around scene
@@ -265,7 +304,7 @@ A game launcher from an Editor-target build records itself with
 `-record=<file.mp4>`:
 
 ```
-WorldsLab -Game.StartLevel=SteampunkPvP -record=match.mp4 -Record.Seconds=30 -Record.StartSeconds=5
+DemoLab -Game.StartLevel=L1_Foothills -record=foothills.mp4 -Record.Seconds=30 -Record.StartSeconds=5
 ```
 
 Each frame is the finished picture with the UI over it, but without the

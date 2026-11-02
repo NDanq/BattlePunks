@@ -73,7 +73,9 @@ What changes the picture is mostly scale: SSGI and SSR scale with pixels
    - update probes by importance (near the camera, near changed lights)
      rather than round the grid, so fewer a frame suffice.
    Until then, `GIProbesPerFrame 1` is the setting; 0 holds a settled
-   volume for free (the lookup's 0.14 ms only).
+   volume for free (the lookup's 0.14 ms only). Phase 7 (below, "Captures")
+   did the first and more: kept capture shadow maps, simple views, a time
+   budget, and volumes that stop once converged and relight on a change.
 2. **D3D12 costs more than Vulkan for the same shaders**: area lights 2.3x,
    GI Volume updates 1.7x. The area-light gap points at DXC's code for the
    LTC edge integral (`acos` and the horizon clip) and is worth a look in
@@ -87,6 +89,69 @@ What changes the picture is mostly scale: SSGI and SSR scale with pixels
    than 1.5 to 1.9.
 5. **The clustered list is a clear win** with many lights, and the only path
    past the old 16-light cap.
+
+## Captures (Phase 7)
+
+GLOBAL_ILLUMINATION.md, Phase 7: the capture budget, shared and kept capture
+shadow maps, simple capture views, static captures and relighting.
+
+**Setup.** Intel Arc B390 (Vulkan), RelWithDebInfo DemoLab editor, viewport
+1967 x 1278 (the editor's window; the captures do not scale with it),
+`stat frame` and the `stats` console command, `[Scalability] PowerProfile
+PowerMax`, High tier. Demo Lab's dressed L1 (the WIP branch's content,
+1125-probe GI Volume, three Once reflection probes) from the dock, and L2's
+core room (264-probe volume, six more volumes, three probes). Every config
+launched once per round, interleaved, two rounds, three samples a launch
+(10, 13, 16 s); medians. The GPU is shared with other work on this machine:
+the spread within a config is about +-1 ms on the legacy rows, +-0.2 ms on
+the new ones.
+
+**One GI probe a frame** (`CaptureBudgetMs` 0, so 6 faces of one probe a
+frame; L1, Captures span):
+
+| Config | Captures | Main view (Total) |
+|---|---|---|
+| Legacy (budget 0, every Phase 7 switch off) | **43.0 ms** | 22.3 ms |
+| Legacy, `[Shadows] Enabled` off (no shadow maps anywhere) | 21.9 ms | 18.0 ms |
+| + `SharedCaptureShadows` (kept from frame to frame) | 21.7 ms | 22.3 ms |
+| + `SimpleCaptures` alone (per-view shadows still) | 14.0 ms | 22.3 ms |
+| + both | 8.6 ms | 22.4 ms |
+| **Defaults** (`CaptureBudgetMs` 2, `StaticCaptures`, `GIRelight`) | **1.45 ms** | 23.0 ms |
+
+So a legacy probe was half shadow maps (the sun's cascades and the local
+lights' cubes drawn again for each of six faces, about 3.5 ms a face) and half
+draws (every proxy to 20000 units). The kept capture shadow maps remove the
+first half entirely; the simple views (2-pixel cull, static only, 8 spacings,
+no translucency or custom passes) cut the second by about 60 %; the budget
+then holds the frame to about 1.5 ms while the volume fills (about 1.3 faces
+a frame here, a face 1 ms GPU and 0.4 ms render thread). The main view's
+Total does not change (Total 22-23 ms either way; the GPU's clock moves with
+the load).
+
+**Convergence.** L1's 1125-probe volume fills in about two minutes (six probes
+a second; probes that see only sky and terrain are cheap, those by the cliffs
+and the gatehouse about 2 ms a face) and stops; Captures is then 0.005 ms. L2's 264-probe room: the first fill takes about 50 s
+(its faces are dense: 150-600 draws, 1.5-3 ms of render thread, so one a
+frame), Captures 0.6-2 ms meanwhile, then 0.005 ms once it and the
+background fill of the rooms round it are done. Legacy: about 28 ms every
+frame, forever (one probe a frame, round and round).
+
+**A lighting change** (forced with `config Rendering CaptureSunStepDegrees`,
+which changes the lighting's signature and nothing else): L2's room relit
+and converged (two rounds, 528 relit probes) in **0.13 s**, within the
+budget; a relit probe costs 0.010-0.018 ms GPU. L1 (1125 probes, filled after
+133 s): 0.26 s. Before, the same change
+reached every probe after one round at one probe a frame: 264 frames at about
+28 ms of captures each.
+
+**Look.** L2's room, converged, viewport screenshots (1967 x 1278): relit
+against drawn every round (`GIRelight` off) 51.6 dB PSNR, 0.02 % of pixels off
+by more than 8 of 255; the new defaults against legacy 47.4 dB, 0.3 %. The
+volume itself matters: against `DynamicGI` off, 30.4 dB, 18.5 %.
+
+**Not covered.** D3D12 (not built here); 1440p (the captures do not scale
+with the view); L3 (its dressed branch replaced DDGI with SSGI); WorldsLab's
+LightingLab (another build tree); a game build's frame pacing.
 
 ## What these numbers do not cover
 

@@ -244,6 +244,12 @@ function(_nimble_add_launcher NM_TARGET NM_MODULE NM_GAME_NAME NM_SOURCES)
         target_compile_definitions(${NM_TARGET} PRIVATE "$<$<NOT:$<CONFIG:Shipping>>:NIMBLE_RUN_UNCOOKED=1>")
     endif()
     add_dependencies(${NM_TARGET} ${NM_MODULE})
+    # The enabled plugins' libraries, which the launcher loads by the
+    # manifest (NimblePlugins.cmake) whether or not the game links them.
+    get_property(NM_PLUGIN_MODULES GLOBAL PROPERTY NIMBLE_PLUGIN_MODULE_TARGETS)
+    if(NM_PLUGIN_MODULES)
+        add_dependencies(${NM_TARGET} ${NM_PLUGIN_MODULES})
+    endif()
 
     # One link: NimbleEngine brings its include directory, cxx_std_17 and
     # EngineCore. GameWindow and GDI stay private to the engine layer.

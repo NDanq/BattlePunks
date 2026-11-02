@@ -164,7 +164,7 @@ namespace RenderCore
             {
                 const RenderView& View = InContext.GetView();
                 const EngineCore::Matrix4x4 Clip = View.Projection * View.View * GetLocalToWorld();
-                ChooseLODs(bFocus ? Focus : View.Origin);   // the rings round the focus, if the game set one
+                ChooseLODs(bFocus ? Focus : View.Origin, InContext.GetLodDistanceScale());   // the rings round the focus, if the game set one
                 const float Pad = GetBoundsPadding(InContext);
                 for(const Cell& Each : Cells)
                 {
@@ -182,7 +182,7 @@ namespace RenderCore
             void DrawShadow(RenderContext& InContext) override
             {
                 if(!bCastShadows) { return; }
-                ChooseLODs(bFocus ? Focus : InContext.GetView().Origin);
+                ChooseLODs(bFocus ? Focus : InContext.GetView().Origin, InContext.GetLodDistanceScale());
                 for(const Cell& Each : Cells)
                 {
                     if(!Each.bCulled) { DrawCell(InContext, Each, true); }
@@ -241,8 +241,9 @@ namespace RenderCore
                 }
             }
 
-            /* Each cell's LOD and culling by its box's distance, in world units, from InEye: the camera, or the component's LODFocus. */
-            void ChooseLODs(const EngineCore::Vector3& InEye)
+            /* Each cell's LOD and culling by its box's distance, in world units, from InEye: the camera, or the component's LODFocus;
+             * times InLodScale (RenderContext::GetLodDistanceScale: more for a capture's small faces). */
+            void ChooseLODs(const EngineCore::Vector3& InEye, const float InLodScale)
             {
                 if(Cells.empty()) { return; }
                 const EngineCore::Matrix4x4& World = GetLocalToWorld();
@@ -269,7 +270,7 @@ namespace RenderCore
                         const float Out = std::max({ Each.Min[Axis] - Eye[Axis], 0.0f, Eye[Axis] - Each.Max[Axis] });
                         Distance2 += Out * Out;
                     }
-                    const float Distance = std::sqrt(Distance2) * WorldPerLocal;
+                    const float Distance = std::sqrt(Distance2) * WorldPerLocal * InLodScale;
                     Each.bCulled = CullDistance > 0.0f && Distance > CullDistance;
                     Each.Lod     = Distance < Near ? 0u : (Distance < Near * 2.0f ? 1u : 2u);
                 }

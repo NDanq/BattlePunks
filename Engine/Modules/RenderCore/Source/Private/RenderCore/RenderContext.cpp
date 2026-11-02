@@ -96,10 +96,28 @@ NIMBLE_CONFIG_BOOL(GRenderForwardReflections, "Rendering", "ForwardReflections",
 NIMBLE_CONFIG_BOOL(GRenderRefraction, "Rendering", "Refraction", true, nullptr);
 /* Screen-space GI where a stack has it (GLOBAL_ILLUMINATION.md, Phase 5); off, the stack's node is ignored. */
 NIMBLE_CONFIG_BOOL(GRenderScreenGI, "Rendering", "ScreenSpaceGI", true, nullptr);
+/* Volumetric fog walks, at each step, only the point and spot lights whose reach its ray crosses
+ * (found once a pixel); off, every light at every step, as before. The picture is the same. */
+NIMBLE_CONFIG_BOOL(GRenderFogLightCulling, "Rendering", "FogLightCulling", true, nullptr);
+/* Screen-space reflections marched at half size each way and upsampled by depth in the image-based
+ * lighting pass (RENDERPIPELINE.md, "Screen-space reflections"); off, at full size as before. */
+NIMBLE_CONFIG_BOOL(GRenderHalfResReflections, "Rendering", "HalfResReflections", true, nullptr);
 /* Seconds the render clock advances a frame -- particles, material Time, exposure --
  * whatever the wall clock did; 0 follows the wall clock. For captures that must be
  * the same frame every run (LIT_TRANSLUCENCY.md, "Validation"). */
 NIMBLE_CONFIG_FLOAT(GRenderFixedStep, "Rendering", "FixedStep", 0.0f, nullptr);
+/* SHADOW CACHE (RENDERPIPELINE.md, "Shadow cache"): a shadowed point or spot light's static casters
+ * drawn once into a cache atlas and copied into its tiles each frame, its movable casters alone
+ * drawn over them; off, every caster every frame, as before. The cache atlas's size cap in MB
+ * (depth and colour together): lights it cannot hold draw every frame as before. */
+NIMBLE_CONFIG_BOOL(GRenderShadowCache, "Rendering", "ShadowCache", true, nullptr);
+NIMBLE_CONFIG_INT(GRenderShadowCacheBudgetMB, "Rendering", "ShadowCacheBudgetMB", 32, nullptr);
+/* The sun's cascades in the shadow cache too (with ShadowCache): a cascade whose fit held since the frame
+ * before -- a still camera, or one moving less than a texel of it -- copies its static casters from a
+ * cache atlas the directional atlas's size; off, every cascade draws every caster. HoldFrames: the far
+ * half of the cascades keep a cached fit that many frames though the camera moves (0: never). */
+NIMBLE_CONFIG_BOOL(GRenderSunShadowCache, "Rendering", "SunShadowCache", true, nullptr);
+NIMBLE_CONFIG_INT(GRenderSunShadowCacheHold, "Rendering", "SunShadowCacheHoldFrames", 0, nullptr);
 
 namespace RenderCore
 {
@@ -181,7 +199,7 @@ namespace RenderCore
             PP_IBLSky, PP_IBLPrefilter, PP_IBLLighting, PP_Sky, PP_ViewTarget, PP_UI,
             PP_Luminance, PP_LuminanceReduce, PP_AdaptExposure, PP_TemporalAA, PP_ScreenReflections, PP_Copy,
             PP_VolumetricFog, PP_FogComposite, PP_ViewSites, PP_AmbientApply, PP_Subsurface, PP_LTCDecode,
-            PP_ReflectionResolve, PP_ScreenGI, PP_DDGICopy, PP_DDGIUpdate, PP_DepthHalf, PP_PassCount
+            PP_ReflectionResolve, PP_ScreenGI, PP_DDGICopy, PP_DDGIUpdate, PP_DepthHalf, PP_DDGIStore, PP_DDGIRelight, PP_PassCount
         };
         const char* const POST_PASS_SHADERS[PP_PassCount] = {
             "PPDofPrepare.fsh", "PPDofBlur.fsh", "PPDofComposite.fsh", "PPMotionBlur.fsh",
@@ -191,6 +209,7 @@ namespace RenderCore
             "PPLuminance.fsh", "PPLuminanceReduce.fsh", "PPAdaptExposure.fsh", "PPTemporalAA.fsh", "PPScreenReflections.fsh",
             "PPCopy.fsh", "PPVolumetricFog.fsh", "PPFogComposite.fsh", "ViewSites.fsh", "PPAmbientApply.fsh", "PPSubsurface.fsh", "LTCDecode.fsh",
             "PPReflectionResolve.fsh", "PPScreenGI.fsh", "DDGICopy.fsh", "DDGIUpdate.fsh", "PPDepthHalf.fsh",
+            "DDGIStore.fsh", "DDGIRelight.fsh",
         };
         /* Each pass's draw event (DrawPost). */
         const char* const POST_PASS_NAMES[PP_PassCount] = {
@@ -201,6 +220,7 @@ namespace RenderCore
             "Luminance", "LuminanceReduce", "AdaptExposure", "TemporalAA", "ScreenReflections", "Copy",
             "VolumetricFog", "FogComposite", "ViewSites", "AmbientApply", "Subsurface", "LTCDecode",
             "ReflectionResolve", "ScreenGI", "DDGICopy", "DDGIUpdate", "DepthHalf",
+            "DDGIStore", "DDGIRelight",
         };
 
         /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
@@ -293,7 +313,7 @@ namespace RenderCore
             float IBL[4]                = {};                           // on, probes, sky block weight (IBLCommon.glsl)
             float PrevViewProjection[16] = {};                          // forward reflections' (Phase 4): the last frame's view
             float ForwardReflections[2][4] = {};                        // their settings; [1][1] 1 while on
-            float Spare[6][4]           = {};
+            float Spare[6][4]           = { {}, {}, {}, { 1.0f, 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f } };   // [3]-[5] the drawn area: Scene_ViewUv
             float Baked[4]              = {};                           // drawing with a bake, it has the sky (BakedLighting.glsl)
             float View[4]               = {};                           // 1: Unlit (ERenderViewMode)
             float ViewProjection[16]    = {};                           // world to clip: contact shadows' march (Lighting.glsl)
@@ -301,6 +321,8 @@ namespace RenderCore
             float ContactLocal[4]       = {};                           // 1: shadowed point and spot lights' too
             float RevealParams[4]       = {};                           // the reveal: points, aspect, kept in the middle, depth margin
             float Reveal[4][4]          = {};                           // each point: NDC xy, radius (NDC y), view depth
+            float Wind[4]               = { 0.8f, 0.0f, 0.6f, 1.0f };  // toward which it blows (unit), strength (RenderWeather.h)
+            float Weather[4]            = {};                           // wetness, rain
         };
         static_assert(offsetof(SceneUniforms, Time) == 16 && offsetof(SceneUniforms, LightDirection) == 32
                       && offsetof(SceneUniforms, GroundColor) == 80 && offsetof(SceneUniforms, InvViewProjection) == 96,
@@ -321,7 +343,9 @@ namespace RenderCore
         static_assert(offsetof(SceneUniforms, ContactLocal) == 3936, "Scene_ContactLocal comes after Scene_ContactShadow");
         static_assert(offsetof(SceneUniforms, RevealParams) == 3952 && offsetof(SceneUniforms, Reveal) == 3968,
                       "Scene_RevealParams and Scene_Reveal come last");
-        static_assert(sizeof(SceneUniforms) == 4032 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
+        static_assert(offsetof(SceneUniforms, Wind) == 4032 && offsetof(SceneUniforms, Weather) == 4048,
+                      "Scene_Wind and Scene_Weather come last");
+        static_assert(sizeof(SceneUniforms) == 4064 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
                       "SceneUniforms must match Scene_Block (SceneUniforms.glsl) and fit the scene block");
 
         /* Row-major InMatrix into a GLSL mat4's column-major floats. */
@@ -708,6 +732,79 @@ namespace RenderCore
         GDIShader*       ShadowDepthShader     = nullptr;
         bool             bShadowDepthTried     = false;
         int32_t          CasterView            = -1;
+
+        /* SHADOW CACHE (RENDERPIPELINE.md, "Shadow cache"). Each cached light: whose it is (a
+         * scene's id), what its depth depends on (SameShadowKey: where it is, which way, how far,
+         * its cone and shadow settings -- not its colour or intensity), its tiles in the cache
+         * atlas (one a spot light's, six a point light's faces), whether they hold its static
+         * casters, and the frame it was last drawn with. The atlas is SHADOW_LOCAL_ATLAS_COLUMNS
+         * tiles of the local atlas's tile size across, and as many rows as [Rendering]
+         * ShadowCacheBudgetMB allows (at most SHADOW_CACHE_ROWS_MAX). */
+        struct ShadowCacheSlot
+        {
+            uint64_t         Owner = 0;
+            RenderLocalLight Key;
+            uint32_t         Faces = 0;
+            uint16_t         Tiles[SHADOW_POINT_FACES] = {};
+            bool             bValid   = false;
+            uint64_t         LastUsed = 0;
+        };
+        static constexpr uint32_t    SHADOW_CACHE_ROWS_MAX = 8;
+        std::vector<ShadowCacheSlot> CacheSlots;
+        std::vector<uint8_t>         CacheTileUsed;
+        GDIRenderTarget*             CacheAtlas      = nullptr;
+        uint32_t                     CacheTileSize   = 0;
+        uint32_t                     CacheRows       = 0;
+        uint64_t                     CacheGeneration = ~0ull;
+        GDIShader*                   CacheCopyShader = nullptr;
+        bool                         bCacheCopyTried = false;
+        /* The current view's plan (PlanShadowCache): where each view's static casters come from
+         * (CacheKindOf: SCK_None, all drawn as before; SCK_Local, the local cache atlas; SCK_Sun,
+         * the sun cache atlas) and that tile's corner there; each fill view's kind and slot (a
+         * local slot's index, or its cascade for the sun). */
+        enum EShadowCacheKind : uint8_t { SCK_None = 0, SCK_Local = 1, SCK_Sun = 2 };
+        uint8_t                      CacheKindOf[SHADOW_VIEW_MAX] = {};
+        uint32_t                     CacheXOf[SHADOW_VIEW_MAX] = {};
+        uint32_t                     CacheYOf[SHADOW_VIEW_MAX] = {};
+        uint8_t                      CacheFillKind[SHADOW_CACHE_FILL_MAX] = {};
+        int32_t                      CacheFillSlot[SHADOW_CACHE_FILL_MAX] = {};
+
+        /* SUN SHADOW CACHE ([Rendering] SunShadowCache): each cascade's last fit (its matrices,
+         * place in the atlas and the box it sees), the frame it was first seen, and whether the
+         * sun cache atlas -- the directional atlas's size, each cascade at its own quarter --
+         * holds its static casters. A fit is cached once it has held for a frame (a still camera,
+         * or one moving less than a texel of the cascade: the fits are texel-snapped), so a
+         * moving camera draws as before; [Rendering] SunShadowCacheHoldFrames keeps the far half
+         * of the cascades' fits that many frames even so. */
+        struct SunCacheSlot
+        {
+            uint64_t              Owner = 0;
+            EngineCore::Matrix4x4 View;
+            EngineCore::Matrix4x4 Projection;
+            EngineCore::Matrix4x4 WorldToAtlas;
+            GameCore::AABB        Bounds;
+            uint32_t              TileX = 0, TileY = 0, TileSize = 0;
+            uint64_t              SeenFrame = 0;   // when this fit was first seen
+            bool                  bValid    = false;
+        };
+        SunCacheSlot                 SunSlots[RENDER_CASCADE_MAX];
+        GDIRenderTarget*             SunCacheAtlas   = nullptr;
+        uint32_t                     CacheSunServed  = 0;
+        uint32_t                     CacheSunFilled  = 0;
+        /* A light without a slot when no tile is free takes the least recently used slot's only
+         * once it has held still since the frame before: one moving every frame never churns the
+         * cache. */
+        struct ShadowCacheSighting
+        {
+            uint64_t         Owner = 0;
+            RenderLocalLight Key;
+            uint64_t         Frame = 0;
+        };
+        std::vector<ShadowCacheSighting> CacheSightings;
+        /* This frame's (CacheStatsFrame's) lights drawn from the cache, and of those, filled. */
+        uint64_t                     CacheStatsFrame   = ~0ull;
+        uint32_t                     CacheLightsServed = 0;
+        uint32_t                     CacheLightsFilled = 0;
 
         /* POST PROCESS (RENDERPIPELINE.md, "Post process"). The settings and
          * last frame's view-projection the next RenderSceneStages runs the
@@ -1443,6 +1540,7 @@ namespace RenderCore
         {
             GDIRenderTarget*  Target = nullptr;
             ERenderPassFormat Format = ERenderPassFormat::RGBA8;
+            float             SceneScale = 0.0f;   // > 0: the view's size times this (drawn like the scene's); 0: a fixed size
         };
         struct PassResources
         {
@@ -1454,6 +1552,31 @@ namespace RenderCore
         std::unordered_map<RenderPassHandle, PassResources>& PassPoolsOfView()
         {
             return PassPools[std::min<uint32_t>(View.ViewIndex, RENDER_VIEWS_MAX - 1)];
+        }
+        /* What a custom pass draws of InTarget (dynamic resolution, SceneTargets): the drawn
+         * area of the scene's own targets and of a pass target sized from the view; all of
+         * any other. */
+        void PassDrawnSize(const SceneTargets& InTargets, GDIRenderTarget* InTarget, uint& OutWidth, uint& OutHeight)
+        {
+            OutWidth  = InTarget ? InTarget->GetWidth() : 0;
+            OutHeight = InTarget ? InTarget->GetHeight() : 0;
+            if(!InTarget || InTargets.AllocWidth == 0) { return; }
+            if(InTarget->GetWidth() == InTargets.AllocWidth && InTarget->GetHeight() == InTargets.AllocHeight)
+            {
+                OutWidth  = InTargets.Width;
+                OutHeight = InTargets.Height;
+                return;
+            }
+            for(const auto& Pool : PassPoolsOfView())
+            {
+                for(const auto& Each : Pool.second.Targets)
+                {
+                    if(Each.second.Target != InTarget || Each.second.SceneScale <= 0.0f) { continue; }
+                    OutWidth  = std::clamp<uint>(uint(float(InTargets.Width) * Each.second.SceneScale + 0.5f), 1u, InTarget->GetWidth());
+                    OutHeight = std::clamp<uint>(uint(float(InTargets.Height) * Each.second.SceneScale + 0.5f), 1u, InTarget->GetHeight());
+                    return;
+                }
+            }
         }
         std::unordered_map<std::string, GDIShader*>         PassShaders;
 
@@ -1927,6 +2050,8 @@ namespace RenderCore
             Scene.Baked[0] = Lighting.bBaked ? 1.0f : 0.0f;
             Scene.Baked[1] = Lighting.bBaked && Lighting.bBakedSky ? 1.0f : 0.0f;
             Scene.Baked[2] = Lighting.bBaked && Lighting.bBakedDirectional ? 1.0f : 0.0f;
+            std::memcpy(Scene.Wind, Lighting.Wind, sizeof(Scene.Wind));
+            std::memcpy(Scene.Weather, Lighting.Weather, sizeof(Scene.Weather));
 
             /* Clip back to world, for the Lighting stage: the inverse of
              * Projection * View, column-major as GDI uploads a mat4. */
@@ -2026,6 +2151,18 @@ namespace RenderCore
 
         void ReleaseShadowAtlases()
         {
+            BindCaptureAtlases(false);
+            for(GDIRenderTarget*& Atlas : CaptureAtlas)
+            {
+                if(Atlas)
+                {
+                    GDIReleaseRenderTarget(Atlas);
+                    delete Atlas;
+                    Atlas = nullptr;
+                }
+            }
+            CaptureAtlasSize    = 0;
+            bCaptureShadowsKept = false;
             for(GDIRenderTarget*& Atlas : ShadowAtlas)
             {
                 if(Atlas)
@@ -2043,12 +2180,623 @@ namespace RenderCore
             }
             ForwardOpacityAtlas = nullptr;
             ShadowAtlasSize = 0;
+            ReleaseShadowCacheAtlas();
         }
 
         /* The frame's shadow views from View, Lighting and InCasters, into the scene block. */
-        void PrepareShadows(const InsetShadowCaster* InCasters, const uint32_t InCasterCount, const GameCore::AABB* InReceivers)
+        void PrepareShadows(const InsetShadowCaster* InCasters, const uint32_t InCasterCount, const GameCore::AABB* InReceivers,
+                            const uint64_t InCacheOwner = 0)
         {
             BuildShadowFrame(Lighting, View, Shadows, InCasters, InCasterCount, InReceivers);
+            HoldSunCascades(InCacheOwner);
+            ApplyShadowFrame();
+            PlanShadowCache(InCacheOwner);
+        }
+
+        // === Shadow cache (RENDERPIPELINE.md, "Shadow cache") ======================
+
+        /* Whether InA and InB draw the same shadow depth: the same kind of light, at the same
+         * place, as far, the same way and as wide (a spot), with the same shadow settings. Not
+         * its colour or intensity, which the depth does not see. */
+        static bool SameShadowKey(const RenderLocalLight& InA, const RenderLocalLight& InB)
+        {
+            const auto Same = [](const EngineCore::Vector3& InX, const EngineCore::Vector3& InY)
+            {
+                return InX.GetX() == InY.GetX() && InX.GetY() == InY.GetY() && InX.GetZ() == InY.GetZ();
+            };
+            if(InA.Type != InB.Type || !Same(InA.Position, InB.Position) || InA.Range != InB.Range
+               || InA.bCastShadows != InB.bCastShadows || InA.ShadowTechnique != InB.ShadowTechnique
+               || InA.ShadowBias != InB.ShadowBias || InA.ShadowNormalBias != InB.ShadowNormalBias)
+            {
+                return false;
+            }
+            return InA.Type != RLL_Spot || (Same(InA.Direction, InB.Direction) && InA.OuterConeAngle == InB.OuterConeAngle);
+        }
+
+        static bool SameMatrix(const EngineCore::Matrix4x4& InA, const EngineCore::Matrix4x4& InB)
+        {
+            for(int Row = 0; Row < 4; ++Row)
+            {
+                for(int Col = 0; Col < 4; ++Col)
+                {
+                    if(InA.Data[Row][Col] != InB.Data[Row][Col]) { return false; }
+                }
+            }
+            return true;
+        }
+
+        void ReleaseShadowCacheAtlas()
+        {
+            for(GDIRenderTarget** Each : { &CacheAtlas, &SunCacheAtlas })
+            {
+                if(*Each)
+                {
+                    GDIReleaseRenderTarget(*Each);
+                    delete *Each;
+                    *Each = nullptr;
+                }
+            }
+            CacheSlots.clear();
+            CacheTileUsed.clear();
+            CacheSightings.clear();
+            for(SunCacheSlot& Each : SunSlots) { Each = SunCacheSlot(); }
+            CacheTileSize = 0;
+            CacheRows     = 0;
+        }
+
+        /* The local cache atlas for the local atlas's tiles as they are now (EnsureShadowAtlases
+         * ran), as many rows as the budget allows; false (and none) if it allows none or the
+         * backend cannot make or sample one. A new tile size or row count starts it empty. */
+        bool EnsureShadowCacheAtlas()
+        {
+            const uint32_t Tile = ShadowAtlasSize / SHADOW_LOCAL_ATLAS_COLUMNS;
+            /* Each texel: the depth (32-bit) and the render target's colour (RGBA8) beside it. */
+            const double RowBytes = double(SHADOW_LOCAL_ATLAS_COLUMNS) * double(Tile) * double(Tile) * 8.0;
+            const double Budget   = double(std::max(GRenderShadowCacheBudgetMB.GetInt(), 0)) * 1024.0 * 1024.0;
+            const uint32_t Rows   = Tile == 0 ? 0u : uint32_t(std::min<double>(std::floor(Budget / RowBytes), double(SHADOW_CACHE_ROWS_MAX)));
+            if(CacheAtlas && (Rows == 0 || CacheTileSize != Tile || CacheRows != Rows))
+            {
+                GDIReleaseRenderTarget(CacheAtlas);
+                delete CacheAtlas;
+                CacheAtlas = nullptr;
+                CacheSlots.clear();
+                CacheTileUsed.clear();
+                CacheSightings.clear();
+            }
+            if(Rows == 0)
+            {
+                CacheTileSize = 0;
+                CacheRows     = 0;
+                return false;
+            }
+            if(!CacheAtlas)
+            {
+                CacheAtlas = GDICreateRenderTarget("RenderCore.ShadowLocalCache", Tile * SHADOW_LOCAL_ATLAS_COLUMNS, Tile * Rows);
+                CacheTileSize = Tile;
+                CacheRows     = Rows;
+                CacheTileUsed.assign(size_t(SHADOW_LOCAL_ATLAS_COLUMNS) * Rows, 0);
+                CacheSlots.clear();
+            }
+            if(!CacheAtlas || !CacheAtlas->IsValid() || !CacheAtlas->ToDepthTexture2D())
+            {
+                WarnOnce("|shadow-cache-atlas", "Shadow cache: this backend cannot make or sample its atlas; every caster is drawn every frame");
+                ReleaseShadowCacheAtlas();
+                return false;
+            }
+            return true;
+        }
+
+        /* The sun cache atlas, the directional atlas's size; false (and none) with [Rendering]
+         * SunShadowCache off or where it cannot be made. A new size starts it empty. */
+        bool EnsureSunCacheAtlas()
+        {
+            const bool bWanted = GRenderSunShadowCache.GetBool() && ShadowAtlasSize > 0;
+            if(SunCacheAtlas && (!bWanted || SunCacheAtlas->GetWidth() != ShadowAtlasSize))
+            {
+                GDIReleaseRenderTarget(SunCacheAtlas);
+                delete SunCacheAtlas;
+                SunCacheAtlas = nullptr;
+                for(SunCacheSlot& Each : SunSlots) { Each = SunCacheSlot(); }
+            }
+            if(!bWanted)
+            {
+                return false;
+            }
+            if(!SunCacheAtlas)
+            {
+                SunCacheAtlas = GDICreateRenderTarget("RenderCore.ShadowDirectionalCache", ShadowAtlasSize, ShadowAtlasSize);
+            }
+            if(!SunCacheAtlas || !SunCacheAtlas->IsValid() || !SunCacheAtlas->ToDepthTexture2D())
+            {
+                WarnOnce("|sun-cache-atlas", "Sun shadow cache: this backend cannot make or sample its atlas; every caster is drawn every frame");
+                if(SunCacheAtlas) { GDIReleaseRenderTarget(SunCacheAtlas); delete SunCacheAtlas; SunCacheAtlas = nullptr; }
+                return false;
+            }
+            return true;
+        }
+
+        GDIShader* GetShadowCacheShader()
+        {
+            if(!bCacheCopyTried)
+            {
+                bCacheCopyTried = true;
+                CacheCopyShader = LoadShader("ShadowCacheCopy.fsh", ST_Pixel, "the shadow cache", false);
+            }
+            return CacheCopyShader;
+        }
+
+        void FreeShadowCacheSlot(const size_t InSlot)
+        {
+            const ShadowCacheSlot& Slot = CacheSlots[InSlot];
+            for(uint32_t Face = 0; Face < Slot.Faces; ++Face)
+            {
+                if(Slot.Tiles[Face] < CacheTileUsed.size()) { CacheTileUsed[Slot.Tiles[Face]] = 0; }
+            }
+            CacheSlots.erase(CacheSlots.begin() + std::ptrdiff_t(InSlot));
+        }
+
+        /* A slot for InLight (InFaces tiles), from the free tiles -- or, once InLight has held
+         * still since the frame before, from the least recently used slots not used this frame.
+         * -1 if the cache cannot hold it: it is drawn as before. */
+        int32_t AllocateShadowCacheSlot(const uint64_t InOwner, const RenderLocalLight& InLight, const uint32_t InFaces, const uint64_t InFrame)
+        {
+            bool bSteady = false;
+            bool bSeen   = false;
+            for(ShadowCacheSighting& Each : CacheSightings)
+            {
+                if(Each.Owner != InOwner || !SameShadowKey(Each.Key, InLight)) { continue; }
+                bSteady = Each.Frame + 1 == InFrame;   // seen the frame before, and unchanged
+                if(Each.Frame != InFrame) { Each.Frame = InFrame; }
+                bSeen = true;
+                break;
+            }
+            if(!bSeen) { CacheSightings.push_back({ InOwner, InLight, InFrame }); }
+
+            const auto FreeTiles = [this]()
+            {
+                return uint32_t(std::count(CacheTileUsed.begin(), CacheTileUsed.end(), uint8_t(0)));
+            };
+            while(FreeTiles() < InFaces && bSteady)
+            {
+                size_t Oldest = CacheSlots.size();
+                for(size_t Index = 0; Index < CacheSlots.size(); ++Index)
+                {
+                    if(CacheSlots[Index].LastUsed >= InFrame) { continue; }   // in use this frame
+                    if(Oldest == CacheSlots.size() || CacheSlots[Index].LastUsed < CacheSlots[Oldest].LastUsed) { Oldest = Index; }
+                }
+                if(Oldest == CacheSlots.size()) { break; }
+                FreeShadowCacheSlot(Oldest);
+            }
+            if(FreeTiles() < InFaces)
+            {
+                return -1;
+            }
+            ShadowCacheSlot Slot;
+            Slot.Owner = InOwner;
+            Slot.Key   = InLight;
+            Slot.Faces = InFaces;
+            uint32_t Face = 0;
+            for(size_t Tile = 0; Tile < CacheTileUsed.size() && Face < InFaces; ++Tile)
+            {
+                if(CacheTileUsed[Tile] == 0)
+                {
+                    CacheTileUsed[Tile] = 1;
+                    Slot.Tiles[Face++]  = uint16_t(Tile);
+                }
+            }
+            CacheSlots.push_back(Slot);
+            return int32_t(CacheSlots.size() - 1);
+        }
+
+        /* A fill view for frame view InView: its copy, its tile at InX, InY in the cache atlas of
+         * InKind, filling InSlot. False if the frame has no room for another. */
+        bool AddCacheFill(const uint32_t InView, const uint8_t InKind, const uint32_t InX, const uint32_t InY, const int32_t InSlot)
+        {
+            if(Shadows.CacheFillCount >= uint32_t(SHADOW_CACHE_FILL_MAX))
+            {
+                return false;
+            }
+            const uint32_t FillIndex = Shadows.CacheFillCount++;
+            ShadowView& Fill = Shadows.Views[Shadows.ViewCount + FillIndex];
+            Fill       = Shadows.Views[InView];
+            Fill.TileX = InX;
+            Fill.TileY = InY;
+            CacheFillKind[FillIndex] = InKind;
+            CacheFillSlot[FillIndex] = InSlot;
+            return true;
+        }
+
+        /*
+         * Before the scene block takes the frame's cascades: each keeps its last fit (its slot's
+         * matrices put back in the frame's view) while the new one is within a texel of it, the
+         * same sun and size -- the fits are texel-snapped, but a camera's TAA jitter moves its
+         * slice a hair every frame, which can flip the snap a texel either way. With [Rendering]
+         * SunShadowCacheHoldFrames the far half of the cascades keep a cached fit that many frames
+         * from when it was first seen, whatever the camera does.
+         */
+        void HoldSunCascades(const uint64_t InOwner)
+        {
+            if(InOwner == 0 || !GRenderShadowCache.GetBool() || !GRenderSunShadowCache.GetBool() || Shadows.DirectionalFirstView < 0
+               || !SunCacheAtlas)
+            {
+                return;
+            }
+            const int32_t  Hold  = GRenderSunShadowCacheHold.GetInt();
+            const uint64_t Frame = GDIGetRenderingSerial();
+            for(uint32_t Cascade = 0; Cascade < Shadows.CascadeCount && Cascade < RENDER_CASCADE_MAX; ++Cascade)
+            {
+                const SunCacheSlot& Slot = SunSlots[Cascade];
+                ShadowView& View = Shadows.Views[uint32_t(Shadows.DirectionalFirstView) + Cascade];
+                if(Slot.Owner != InOwner || Slot.TileX != View.TileX || Slot.TileY != View.TileY || Slot.TileSize != View.TileSize
+                   || Slot.TileSize == 0)
+                {
+                    continue;
+                }
+                /* The same sun: a fit's view looks along it, so its rotation is the light's. */
+                bool bSameSun = true;
+                for(int Row = 0; Row < 3 && bSameSun; ++Row)
+                {
+                    for(int Col = 0; Col < 3 && bSameSun; ++Col) { bSameSun = Slot.View.Data[Row][Col] == View.View.Data[Row][Col]; }
+                }
+                if(!bSameSun)
+                {
+                    continue;
+                }
+                const bool bHeld = Hold > 0 && Slot.bValid && Cascade >= Shadows.CascadeCount / 2 && Frame < Slot.SeenFrame + uint64_t(Hold);
+                /* Within a texel of it, and as large to a part in a thousand: TAA's jitter moves the camera's slice
+                 * a hair, which can flip the snap a texel either way and its sphere's size a 1/16 step. */
+                const double SlotScale = std::abs(double(Slot.Projection.Data[0][0]));
+                const double Scale     = std::abs(double(View.Projection.Data[0][0]));
+                bool bSameFit = SlotScale > 1e-12 && std::abs(SlotScale - Scale) <= SlotScale * 1e-3
+                             && std::abs(double(Slot.Projection.Data[2][2]) - double(View.Projection.Data[2][2]))
+                                    <= std::abs(double(Slot.Projection.Data[2][2])) * 1e-3;
+                if(bSameFit)
+                {
+                    const double Texel = 2.0 / SlotScale / double(View.TileSize);
+                    bSameFit = std::abs(double(Slot.View.Data[0][3]) - double(View.View.Data[0][3])) <= Texel * 1.01
+                            && std::abs(double(Slot.View.Data[1][3]) - double(View.View.Data[1][3])) <= Texel * 1.01
+                            && std::abs(double(Slot.View.Data[2][3]) - double(View.View.Data[2][3])) <= Texel;
+                }
+                if(!bSameFit && !bHeld)
+                {
+                    continue;
+                }
+                View.View         = Slot.View;
+                View.Projection   = Slot.Projection;
+                View.WorldToAtlas = Slot.WorldToAtlas;
+                View.WorldBounds  = Slot.Bounds;
+            }
+        }
+
+        /*
+         * Which of the frame's views take their static casters from the caches (CacheKindOf), and
+         * the fill views of those whose tiles do not hold them yet (after Shadows' views). Nothing
+         * for InOwner 0 (a capture, a preview), with [Rendering] ShadowCache off, or where the
+         * cache cannot be made.
+         */
+        void PlanShadowCache(const uint64_t InOwner)
+        {
+            for(uint8_t& Each : CacheKindOf) { Each = SCK_None; }
+            Shadows.CacheFillCount = 0;
+            if(!GRenderShadowCache.GetBool())
+            {
+                if(CacheAtlas || SunCacheAtlas) { ReleaseShadowCacheAtlas(); }
+                return;
+            }
+            if(InOwner == 0 || Shadows.ViewCount == 0 || Backend == ERenderBackend::Null || !GetShadowCacheShader()
+               || !GetDefaultVertex(EMaterialVertexInput::Fullscreen))
+            {
+                return;
+            }
+
+            const uint64_t Frame = GDIGetRenderingSerial();
+            if(Frame != CacheStatsFrame)
+            {
+                CacheStatsFrame   = Frame;
+                CacheLightsServed = 0;
+                CacheLightsFilled = 0;
+                CacheSunServed    = 0;
+                CacheSunFilled    = 0;
+                CacheSightings.erase(std::remove_if(CacheSightings.begin(), CacheSightings.end(),
+                                                    [Frame](const ShadowCacheSighting& InEach) { return InEach.Frame + 1 < Frame; }),
+                                     CacheSightings.end());
+            }
+            /* A kept draw's mesh or material replaced: what the tiles hold may be stale. */
+            const uint64_t Generation = ContentGeneration + MeshAssetCache::GetGeneration();
+            if(Generation != CacheGeneration)
+            {
+                for(ShadowCacheSlot& Slot : CacheSlots) { Slot.bValid = false; }
+                for(SunCacheSlot& Slot : SunSlots) { Slot.bValid = false; }
+                CacheGeneration = Generation;
+            }
+
+            /* The sun's cascades: a fit seen in an earlier frame is cached. */
+            if(Shadows.DirectionalFirstView >= 0 && EnsureSunCacheAtlas())
+            {
+                for(uint32_t Cascade = 0; Cascade < Shadows.CascadeCount && Cascade < RENDER_CASCADE_MAX; ++Cascade)
+                {
+                    const uint32_t ViewIndex = uint32_t(Shadows.DirectionalFirstView) + Cascade;
+                    const ShadowView& View   = Shadows.Views[ViewIndex];
+                    SunCacheSlot& Slot = SunSlots[Cascade];
+                    const bool bSame = Slot.Owner == InOwner && Slot.TileX == View.TileX && Slot.TileY == View.TileY
+                                    && Slot.TileSize == View.TileSize && SameMatrix(Slot.View, View.View)
+                                    && SameMatrix(Slot.Projection, View.Projection);
+                    if(!bSame)
+                    {
+                        Slot = SunCacheSlot();
+                        Slot.Owner        = InOwner;
+                        Slot.View         = View.View;
+                        Slot.Projection   = View.Projection;
+                        Slot.WorldToAtlas = View.WorldToAtlas;
+                        Slot.Bounds       = View.WorldBounds;
+                        Slot.TileX        = View.TileX;
+                        Slot.TileY        = View.TileY;
+                        Slot.TileSize     = View.TileSize;
+                        Slot.SeenFrame    = Frame;
+                        continue;   // drawn as before until it holds
+                    }
+                    if(Slot.SeenFrame >= Frame && !Slot.bValid)
+                    {
+                        continue;   // first seen this frame (another view's)
+                    }
+                    if(!Slot.bValid && !AddCacheFill(ViewIndex, SCK_Sun, View.TileX, View.TileY, int32_t(Cascade)))
+                    {
+                        continue;
+                    }
+                    CacheKindOf[ViewIndex] = SCK_Sun;
+                    CacheXOf[ViewIndex]    = View.TileX;
+                    CacheYOf[ViewIndex]    = View.TileY;
+                    ++CacheSunServed;
+                    if(!Slot.bValid) { ++CacheSunFilled; }
+                }
+            }
+
+            /* The shadowed point and spot lights. */
+            if(!EnsureShadowCacheAtlas())
+            {
+                return;
+            }
+            const uint32_t LocalCount = std::min<uint32_t>(Lighting.LocalCount, RENDER_LOCAL_LIGHT_MAX);
+            for(uint32_t LightIndex = 0; LightIndex < LocalCount; ++LightIndex)
+            {
+                const int32_t First = Shadows.LocalFirstView[LightIndex];
+                if(First < 0)
+                {
+                    continue;
+                }
+                const RenderLocalLight& Light = Lighting.Locals[LightIndex];
+                const uint32_t Faces = Light.Type == RLL_Spot ? 1u : uint32_t(SHADOW_POINT_FACES);
+                if(uint32_t(First) + Faces > Shadows.ViewCount || uint32_t(First) + Faces > uint32_t(SHADOW_VIEW_MAX)
+                   || Shadows.Views[uint32_t(First)].TileSize != CacheTileSize)
+                {
+                    continue;
+                }
+                int32_t Found = -1;
+                for(size_t Index = 0; Index < CacheSlots.size() && Found < 0; ++Index)
+                {
+                    if(CacheSlots[Index].Owner == InOwner && SameShadowKey(CacheSlots[Index].Key, Light)) { Found = int32_t(Index); }
+                }
+                if(Found < 0)
+                {
+                    Found = AllocateShadowCacheSlot(InOwner, Light, Faces, Frame);
+                }
+                if(Found < 0)
+                {
+                    continue;
+                }
+                ShadowCacheSlot& Slot = CacheSlots[size_t(Found)];
+                if(!Slot.bValid && Shadows.CacheFillCount + Faces > uint32_t(SHADOW_CACHE_FILL_MAX))
+                {
+                    continue;
+                }
+                Slot.LastUsed = Frame;
+                Slot.Key      = Light;   // its colour and intensity as they are now (not compared)
+                for(uint32_t Face = 0; Face < Faces; ++Face)
+                {
+                    const uint32_t ViewIndex = uint32_t(First) + Face;
+                    const uint32_t Tile      = Slot.Tiles[Face];
+                    CacheKindOf[ViewIndex] = SCK_Local;
+                    CacheXOf[ViewIndex]    = (Tile % SHADOW_LOCAL_ATLAS_COLUMNS) * CacheTileSize;
+                    CacheYOf[ViewIndex]    = (Tile / SHADOW_LOCAL_ATLAS_COLUMNS) * CacheTileSize;
+                    if(!Slot.bValid)
+                    {
+                        AddCacheFill(ViewIndex, SCK_Local, CacheXOf[ViewIndex], CacheYOf[ViewIndex], Found);
+                    }
+                }
+                ++CacheLightsServed;
+                if(!Slot.bValid) { ++CacheLightsFilled; }
+            }
+        }
+
+        /* InOwner's cached lights and cascades that see any of InBoxes (all of them with bInAll)
+         * drawn again. */
+        void InvalidateShadowCache(const uint64_t InOwner, const GameCore::AABB* InBoxes, const uint32_t InCount, const bool bInAll)
+        {
+            const auto Touches = [&](const GameCore::AABB& InReach)
+            {
+                for(uint32_t Index = 0; Index < InCount; ++Index)
+                {
+                    if(InBoxes[Index].IsEmpty() || InReach.IsEmpty() || InBoxes[Index].Overlaps(InReach)) { return true; }
+                }
+                return false;
+            };
+            for(ShadowCacheSlot& Slot : CacheSlots)
+            {
+                if(Slot.Owner != InOwner || !Slot.bValid) { continue; }
+                const EngineCore::Vector3 Reach(Slot.Key.Range, Slot.Key.Range, Slot.Key.Range);
+                if(bInAll || Touches(GameCore::AABB(Slot.Key.Position - Reach, Slot.Key.Position + Reach))) { Slot.bValid = false; }
+            }
+            for(SunCacheSlot& Slot : SunSlots)
+            {
+                if(Slot.Owner != InOwner || !Slot.bValid) { continue; }
+                if(bInAll || Touches(Slot.Bounds))
+                {
+                    Slot.bValid = false;
+                }
+            }
+        }
+
+        /* A cache tile drawn over the bound viewport: the bound cache atlas's depth InOffset
+         * texels away (bInCopy), or the far plane. The depth test passes everywhere and writes. */
+        void DrawShadowCacheQuad(const float InOffsetX, const float InOffsetY, const bool bInCopy)
+        {
+            GDIShader* Vertex = GetDefaultVertex(EMaterialVertexInput::Fullscreen);
+            GDIShader* Pixel  = GetShadowCacheShader();
+            if(!Vertex || !Pixel)
+            {
+                return;
+            }
+            EnsureInitialised();
+            Bind(Vertex, Pixel);
+            const float Block[4] = { InOffsetX, InOffsetY, bInCopy ? 1.0f : 0.0f, 0.0f };
+            GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, Block, uint(sizeof(Block)));
+            GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &Scene, uint(sizeof(Scene)));
+            IDepthStateDesc Depth;
+            Depth.bDepthTest = true;
+            Depth.bDepthMask = true;
+            Depth.DepthMode  = CTM_ALWAYS;
+            GDISetDepthState(Depth);
+            GDISetBlendState(IBlendStateDesc());
+            GDIDrawObject(ScreenObject);
+            DrawCallCount.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        GDIRenderTarget* CacheAtlasFor(const uint8_t InKind) const
+        {
+            return InKind == SCK_Sun ? SunCacheAtlas : InKind == SCK_Local ? CacheAtlas : nullptr;
+        }
+
+        /*
+         * The Shadows stage's cache work, after the atlases are cleared and before any other
+         * caster: each fill view's tile of its cache atlas set to the far plane and its static
+         * casters drawn into it (its slot then holds them), then every cached view's tile copied
+         * from its cache into the frame's atlas -- where its movable casters are then drawn over
+         * it, with the rest. Takes the fill views' draws out of InOutOrder.
+         */
+        void IssueShadowCache(const DrawPolicy& InPolicy, std::vector<uint32_t>& InOutOrder)
+        {
+            const int32_t FirstFill = int32_t(Shadows.ViewCount);
+            const int32_t EndFill   = FirstFill + int32_t(Shadows.CacheFillCount);
+            std::vector<std::vector<uint32_t>> Fills(Shadows.CacheFillCount);
+            for(const uint32_t Index : InOutOrder)
+            {
+                const DrawCommand& Item = InPolicy[Index];
+                if(Item.ShadowView >= FirstFill && Item.ShadowView < EndFill && Item.Mesh && !IsTranslucentCaster(Item))
+                {
+                    Fills[size_t(Item.ShadowView - FirstFill)].push_back(Index);
+                }
+            }
+            InOutOrder.erase(std::remove_if(InOutOrder.begin(), InOutOrder.end(),
+                                            [&](const uint32_t InIndex) { return InPolicy[InIndex].ShadowView >= FirstFill; }),
+                             InOutOrder.end());
+            bool bRestore = false;
+            for(uint32_t ViewIndex = 0; ViewIndex < Shadows.ViewCount && ViewIndex < uint32_t(SHADOW_VIEW_MAX) && !bRestore; ++ViewIndex)
+            {
+                bRestore = CacheKindOf[ViewIndex] != SCK_None;
+            }
+            if(!bRestore && Fills.empty())
+            {
+                return;
+            }
+
+            SCOPED_DRAW_EVENT("ShadowCache");
+            for(const uint8_t Kind : { uint8_t(SCK_Sun), uint8_t(SCK_Local) })
+            {
+                GDIRenderTarget* Cache = CacheAtlasFor(Kind);
+                bool bAny = false;
+                for(uint32_t Fill = 0; Fill < Shadows.CacheFillCount && !bAny; ++Fill) { bAny = CacheFillKind[Fill] == Kind; }
+                if(!bAny || !Cache)
+                {
+                    continue;
+                }
+                SCOPED_DRAW_EVENT(Kind == SCK_Sun ? "FillSun" : "FillLocal");
+                GDIRenderTarget* Target = Cache;
+                GDISetRenderTargets(&Target, 1, Target);
+                GDISetColorMask(EColM_None);
+                for(uint32_t Fill = 0; Fill < Shadows.CacheFillCount; ++Fill)
+                {
+                    if(CacheFillKind[Fill] != Kind) { continue; }
+                    const ShadowView& View = Shadows.Views[Shadows.ViewCount + Fill];
+                    GDISetViewport(View.TileX, View.TileY, View.TileSize, View.TileSize);
+                    DrawShadowCacheQuad(0.0f, 0.0f, false);
+                    PlaceProjection = &View.Projection;
+                    PlaceView       = &View.View;
+                    for(const uint32_t Index : Fills[Fill]) { IssueShadowCaster(InPolicy[Index]); }
+                    PlaceProjection = nullptr;
+                    PlaceView       = nullptr;
+                    const int32_t Slot = CacheFillSlot[Fill];
+                    if(Kind == SCK_Sun && Slot >= 0 && Slot < int32_t(RENDER_CASCADE_MAX)) { SunSlots[Slot].bValid = true; }
+                    if(Kind == SCK_Local && Slot >= 0 && size_t(Slot) < CacheSlots.size()) { CacheSlots[size_t(Slot)].bValid = true; }
+                }
+            }
+            for(const uint8_t Kind : { uint8_t(SCK_Sun), uint8_t(SCK_Local) })
+            {
+                GDIRenderTarget* Cache  = CacheAtlasFor(Kind);
+                GDIRenderTarget* Target = ShadowAtlas[Kind == SCK_Sun ? SA_Directional : SA_Local];
+                bool bAny = false;
+                for(uint32_t ViewIndex = 0; ViewIndex < Shadows.ViewCount && ViewIndex < uint32_t(SHADOW_VIEW_MAX) && !bAny; ++ViewIndex)
+                {
+                    bAny = CacheKindOf[ViewIndex] == Kind;
+                }
+                if(!bAny || !Cache || !Target)
+                {
+                    continue;
+                }
+                SCOPED_DRAW_EVENT(Kind == SCK_Sun ? "RestoreSun" : "RestoreLocal");
+                GDISetRenderTargets(&Target, 1, Target);
+                GDISetColorMask(EColM_None);
+                GDISetMaterialTexture(0, Cache->ToDepthTexture2D()->Resource);
+                for(uint32_t ViewIndex = 0; ViewIndex < Shadows.ViewCount && ViewIndex < uint32_t(SHADOW_VIEW_MAX); ++ViewIndex)
+                {
+                    if(CacheKindOf[ViewIndex] != Kind) { continue; }
+                    const ShadowView& View = Shadows.Views[ViewIndex];
+                    GDISetViewport(View.TileX, View.TileY, View.TileSize, View.TileSize);
+                    DrawShadowCacheQuad(float(CacheXOf[ViewIndex]) - float(View.TileX), float(CacheYOf[ViewIndex]) - float(View.TileY), true);
+                }
+                GDISetMaterialTexture(0, nullptr);
+            }
+        }
+
+        /* CAPTURE SHADOWS (BeginCaptureShadows): the frame's capture views' shared shadow maps, and
+         * whether they are drawn (every capture view then samples them); a capture view's stages. */
+        ShadowFrame CaptureShadows;
+        bool        bCaptureShadowsReady = false;
+        bool        bCaptureRendering    = false;
+        float       LodDistanceScale     = 1.0f;   // SetLodDistanceScale
+
+        /* The capture shadow maps' own atlases, swapped in for ShadowAtlas while captures render
+         * (BindCaptureAtlases), so they outlive the frame: what they hold (CaptureShadows, drawn
+         * for CaptureShadowKey) is used again while the key stays the same. */
+        GDIRenderTarget* CaptureAtlas[SA_Count] = {};
+        uint32_t         CaptureAtlasSize       = 0;
+        bool             bCaptureAtlasesBound   = false;
+        uint64_t         CaptureShadowKey       = 0;
+        uint64_t         PendingShadowKey       = 0;
+        bool             bCaptureShadowsKept    = false;
+
+        void BindCaptureAtlases(const bool bInBound)
+        {
+            if(bInBound == bCaptureAtlasesBound) { return; }
+            for(uint32_t Atlas = 0; Atlas < SA_Count; ++Atlas) { std::swap(ShadowAtlas[Atlas], CaptureAtlas[Atlas]); }
+            std::swap(ShadowAtlasSize, CaptureAtlasSize);
+            bCaptureAtlasesBound = bInBound;
+        }
+
+        /* The captures' shadow maps for the current view: their views, then the scene block's
+         * matrices, with no contact shadows (a capture's faces are too small to march). */
+        void RestoreCaptureShadows()
+        {
+            Shadows = CaptureShadows;
+            ApplyShadowFrame();
+            Scene.ContactShadow[0] = 0.0f;
+            Scene.ContactLocal[0]  = 0.0f;
+        }
+
+        /* Shadows' views into the scene block, the atlases made for them. */
+        void ApplyShadowFrame()
+        {
+            /* No view draws from the shadow cache until PlanShadowCache says so (a capture's never). */
+            for(uint8_t& Each : CacheKindOf) { Each = SCK_None; }
             if(Shadows.ViewCount == 0)
             {
                 return;
@@ -2480,6 +3228,23 @@ namespace RenderCore
             {
                 return;
             }
+            /* A capture view samples the captures' shadow maps, drawn once (DrawCaptureShadows). */
+            if(bCaptureShadowsReady)
+            {
+                for(uint32_t Atlas = 0; Atlas < SA_Count; ++Atlas)
+                {
+                    GDITexture2D* Map = Shadows.UsesAtlas(EShadowAtlas(Atlas)) && ShadowAtlas[Atlas] ? ShadowAtlas[Atlas]->ToDepthTexture2D() : nullptr;
+                    ForwardShadowAtlas[Atlas] = Map ? Map->Resource : nullptr;
+                }
+                for(uint32_t Index = 0; Index < RENDER_SCENE_LOCAL_LIGHT_MAX; ++Index)
+                {
+                    Scene.Locals[Index * SCENE_LOCAL_VEC4S + 5][2] = 0.0f;
+                    Scene.Locals[Index * SCENE_LOCAL_VEC4S + 5][3] = 0.0f;
+                }
+                std::memset(Scene.Spare, 0, sizeof(float) * 12);
+                ForwardOpacityAtlas = nullptr;
+                return;
+            }
 
             SCOPED_DRAW_EVENT(GetRenderStageName(ERenderStage::Shadows));
             const uint Size = uint(Shadows.AtlasSize);
@@ -2504,7 +3269,8 @@ namespace RenderCore
              * atlas's casters are recorded in parallel chunks where they can
              * be (IssueInParallel), each chunk setting a view's tile and
              * matrices as its casters reach it; else serially, view by view. */
-            const std::vector<uint32_t> Order = Policy.GetIssueOrder();
+            std::vector<uint32_t> Order = Policy.GetIssueOrder();
+            IssueShadowCache(Policy, Order);   // the shadow cache's fills and copies first; its fill draws out of Order
             const auto ViewOf = [&](const size_t InAt) { return Policy[Order[InAt]].ShadowView; };
             const auto Valid  = [&](const int32_t InView) { return InView >= 0 && uint32_t(InView) < Shadows.ViewCount; };
             for(size_t AtlasStart = 0; AtlasStart < Order.size();)
@@ -3754,9 +4520,19 @@ namespace RenderCore
             bool bChain = true;
             GDIRenderTarget* From = Source;
             uint FromW = Width, FromH = Height;
+            /* Each level's own edge (PPBloomDownsample.fsh's PP_Sizes.zw): the largest UV its drawn
+             * area may be sampled at, which the shared scale alone would round past at the small levels. */
+            const auto Edge = [&InTargets](PostBlock& OutBlock, const uint32_t InLevel)
+            {
+                const uint DrawnW = SceneTargets::HalfSize(InTargets.Width, InLevel), DrawnH = SceneTargets::HalfSize(InTargets.Height, InLevel);
+                const uint AllocW = SceneTargets::HalfSize(InTargets.AllocWidth, InLevel), AllocH = SceneTargets::HalfSize(InTargets.AllocHeight, InLevel);
+                OutBlock.Sizes[2] = DrawnW >= AllocW ? 1.0f : (float(DrawnW) - 0.5f) / float(AllocW);
+                OutBlock.Sizes[3] = DrawnH >= AllocH ? 1.0f : (float(DrawnH) - 0.5f) / float(AllocH);
+            };
             for(uint32_t Level = 0; Level < Levels && bChain; ++Level)
             {
                 Sizes(Block, FromW, FromH);
+                Edge(Block, Level);
                 const uint W = SceneTargets::HalfSize(Width, Level + 1), H = SceneTargets::HalfSize(Height, Level + 1);
                 bChain = DrawPost(PP_BloomDownsample, InTargets.Bloom[Level], W, H,
                                   { Texture(From), Level == 0 && Emissive ? Emissive->Resource : nullptr }, Block);
@@ -3772,6 +4548,7 @@ namespace RenderCore
             for(uint32_t Level = Levels - 1; Level > 0 && bChain; --Level)
             {
                 Sizes(Block, SceneTargets::HalfSize(Width, Level + 1), SceneTargets::HalfSize(Height, Level + 1));
+                Edge(Block, Level + 1);
                 bChain = DrawPost(PP_BloomUpsample, InTargets.BloomUp[Level - 1], SceneTargets::HalfSize(Width, Level),
                                   SceneTargets::HalfSize(Height, Level), { Texture(Summed), Texture(InTargets.Bloom[Level - 1]) }, Block);
                 Summed = InTargets.BloomUp[Level - 1];
@@ -4428,10 +5205,108 @@ namespace RenderCore
     }
 
     uint32_t RenderContext::PrepareShadows(const InsetShadowCaster* InCasters, const uint32_t InCasterCount,
-                                           const GameCore::AABB* InReceivers)
+                                           const GameCore::AABB* InReceivers, const uint64_t InCacheOwner)
     {
-        P->PrepareShadows(InCasters, InCasterCount, InReceivers);
+        if(P->bCaptureShadowsReady)
+        {
+            P->RestoreCaptureShadows();
+            return 0;   // drawn already: no casters to queue
+        }
+        P->PrepareShadows(InCasters, InCasterCount, InReceivers, InCacheOwner);
         return P->Shadows.ViewCount;
+    }
+
+    bool RenderContext::ShadowViewCachesStatics(const uint32_t InView) const
+    {
+        return InView < P->Shadows.ViewCount && InView < uint32_t(SHADOW_VIEW_MAX) && P->CacheKindOf[InView] != Impl::SCK_None;
+    }
+
+    uint32_t RenderContext::GetShadowCacheFillViews() const
+    {
+        return P->Shadows.CacheFillCount;
+    }
+
+    void RenderContext::InvalidateShadowCache(const uint64_t InOwner, const GameCore::AABB* InBoxes, const uint32_t InCount, const bool bInAll)
+    {
+        P->InvalidateShadowCache(InOwner, InBoxes, InCount, bInAll);
+    }
+
+    void RenderContext::ReleaseShadowCache(const uint64_t InOwner)
+    {
+        for(size_t Index = P->CacheSlots.size(); Index-- > 0;)
+        {
+            if(P->CacheSlots[Index].Owner == InOwner) { P->FreeShadowCacheSlot(Index); }
+        }
+    }
+
+    bool RenderContext::HasTranslucentShadowCaster(const std::vector<StagedDraw>& InDraws)
+    {
+        return std::any_of(InDraws.begin(), InDraws.end(), [](const StagedDraw& InEach)
+        {
+            return InEach.Stage == ERenderStage::Shadows && Impl::IsTranslucentCaster(InEach.Item);
+        });
+    }
+
+    void RenderContext::GetShadowCacheStats(uint32_t& OutLights, uint32_t& OutFilled, uint64_t& OutBytes) const
+    {
+        const bool bThisFrame = P->CacheStatsFrame == GDIGetRenderingSerial();
+        OutLights = bThisFrame ? P->CacheLightsServed : 0;
+        OutFilled = bThisFrame ? P->CacheLightsFilled : 0;
+        OutBytes  = P->CacheAtlas ? uint64_t(P->CacheAtlas->GetWidth()) * P->CacheAtlas->GetHeight() * 8u : 0u;
+    }
+
+    void RenderContext::GetSunShadowCacheStats(uint32_t& OutCascades, uint32_t& OutFilled, uint64_t& OutBytes) const
+    {
+        const bool bThisFrame = P->CacheStatsFrame == GDIGetRenderingSerial();
+        OutCascades = bThisFrame ? P->CacheSunServed : 0;
+        OutFilled   = bThisFrame ? P->CacheSunFilled : 0;
+        OutBytes    = P->SunCacheAtlas ? uint64_t(P->SunCacheAtlas->GetWidth()) * P->SunCacheAtlas->GetHeight() * 8u : 0u;
+    }
+
+    uint32_t RenderContext::BeginCaptureShadows(const GameCore::AABB& InRegion, const uint64_t InKey)
+    {
+        P->BindCaptureAtlases(true);
+        P->PendingShadowKey = InKey;
+        if(InKey != 0 && P->bCaptureShadowsKept && InKey == P->CaptureShadowKey && P->CaptureShadows.ViewCount > 0)
+        {
+            P->bCaptureShadowsReady = true;   // what the atlases hold still stands
+            return 0;
+        }
+        P->bCaptureShadowsReady = false;
+        P->bCaptureShadowsKept  = false;
+        BuildCaptureShadowFrame(P->Lighting, InRegion, P->Shadows);
+        P->ApplyShadowFrame();
+        return P->Shadows.ViewCount;
+    }
+
+    bool RenderContext::DrawCaptureShadows()
+    {
+        bool bDrawn = P->bCaptureShadowsReady;   // kept from an earlier frame
+        if(!bDrawn && P->Shadows.ViewCount > 0)
+        {
+            SCOPED_DRAW_EVENT("CaptureShadows");
+            P->IssueShadows();
+            P->CaptureShadows       = P->Shadows;   // as ApplyShadowFrame left it (no atlas: no views)
+            P->bCaptureShadowsReady = P->CaptureShadows.ViewCount > 0;
+            P->bCaptureShadowsKept  = P->bCaptureShadowsReady && P->PendingShadowKey != 0;
+            P->CaptureShadowKey     = P->PendingShadowKey;
+            bDrawn = P->bCaptureShadowsReady;
+        }
+        for(DrawPolicy& Policy : P->Policies) { Policy.Clear(); }
+        for(std::vector<DrawCommand>& Group : P->GroupDraws) { Group.clear(); }
+        P->CasterView = -1;
+        return bDrawn;
+    }
+
+    void RenderContext::EndCaptureShadows()
+    {
+        P->bCaptureShadowsReady = false;
+        P->BindCaptureAtlases(false);
+    }
+
+    void RenderContext::SetCaptureRendering(const bool bInCapture)
+    {
+        P->bCaptureRendering = bInCapture;
     }
 
     int32_t RenderContext::GetShadowViewInset(const uint32_t InView) const
@@ -4441,18 +5316,48 @@ namespace RenderCore
 
     bool RenderContext::IsSunShadowView(const uint32_t InView) const
     {
+        if(InView >= P->Shadows.ViewCount && InView < P->Shadows.ViewCount + P->Shadows.CacheFillCount)
+        {
+            return P->CacheFillKind[InView - P->Shadows.ViewCount] == Impl::SCK_Sun;   // a sun cascade's cache fill
+        }
         return InView < P->Shadows.ViewCount && P->Shadows.IsSunView(InView);
+    }
+
+    bool RenderContext::ShadowViewSees(const uint32_t InView, const GameCore::AABB& InBounds) const
+    {
+        if(InView >= P->Shadows.ViewCount + P->Shadows.CacheFillCount || InBounds.IsEmpty())
+        {
+            return true;
+        }
+        /* Clip = M * p (GL clip space): the planes are the last row plus or minus each other row
+         * (Gribb and Hartmann); a box is outside when its corner farthest along a plane's normal is behind it. */
+        const ShadowView& View = P->Shadows.Views[InView];
+        const EngineCore::Matrix4x4 M = View.Projection * View.View;
+        const double Min[3] = { InBounds.Min.GetX(), InBounds.Min.GetY(), InBounds.Min.GetZ() };
+        const double Max[3] = { InBounds.Max.GetX(), InBounds.Max.GetY(), InBounds.Max.GetZ() };
+        for(int Row = 0; Row < 3; ++Row)
+        {
+            for(const double Sign : { 1.0, -1.0 })
+            {
+                double Plane[4];
+                for(int Col = 0; Col < 4; ++Col) { Plane[Col] = double(M.Data[3][Col]) + Sign * double(M.Data[Row][Col]); }
+                double Far = Plane[3];
+                for(int Axis = 0; Axis < 3; ++Axis) { Far += Plane[Axis] * (Plane[Axis] >= 0.0 ? Max[Axis] : Min[Axis]); }
+                if(Far < 0.0) { return false; }
+            }
+        }
+        return true;
     }
 
     const GameCore::AABB& RenderContext::GetShadowViewBounds(const uint32_t InView) const
     {
         static const GameCore::AABB None;
-        return InView < P->Shadows.ViewCount ? P->Shadows.Views[InView].WorldBounds : None;
+        return InView < P->Shadows.ViewCount + P->Shadows.CacheFillCount ? P->Shadows.Views[InView].WorldBounds : None;
     }
 
     void RenderContext::SetShadowCasterView(const int32_t InView)
     {
-        P->CasterView = InView >= 0 && uint32_t(InView) < P->Shadows.ViewCount ? InView : -1;
+        P->CasterView = InView >= 0 && uint32_t(InView) < P->Shadows.ViewCount + P->Shadows.CacheFillCount ? InView : -1;
     }
 
     bool RenderContext::Impl::QueueDepthSections(const RenderTransform& InTransform, const char* InMeshPath,
@@ -4718,6 +5623,16 @@ namespace RenderCore
         P->DrawPixelsPerWorld = InPixelsPerWorldUnit;
     }
 
+    void RenderContext::SetLodDistanceScale(const float InScale)
+    {
+        P->LodDistanceScale = std::max(InScale, 1e-3f);
+    }
+
+    float RenderContext::GetLodDistanceScale() const
+    {
+        return P->LodDistanceScale;
+    }
+
     void RenderContext::SetDrawReveal(const bool bInReveal)
     {
         P->bDrawReveal = bInReveal;
@@ -4784,6 +5699,10 @@ namespace RenderCore
                                       GDIRenderTarget** InOutCurrent)
     {
         bool bRan = false;
+        if(bCaptureRendering)
+        {
+            return false;   // a capture view runs no custom passes (SetCaptureRendering)
+        }
         for(const CustomPassEntry& Entry : FramePasses)
         {
             if(Entry.Hook != InHook || !Entry.Pass)
@@ -4886,9 +5805,11 @@ namespace RenderCore
             return Out;
         }
         const SceneTargets& Targets = *F->Targets;
+        /* From the view: allocated as the scene's targets are, at their full size, and drawn in
+         * the part this frame's resolution scale draws (PassDrawnSize). */
         const float    Scale  = InDesc.Scale > 0.0f ? InDesc.Scale : 1.0f;
-        const uint32_t Width  = InDesc.Width  > 0 ? InDesc.Width  : std::max<uint32_t>(1u, uint32_t(float(Targets.Width) * Scale + 0.5f));
-        const uint32_t Height = InDesc.Height > 0 ? InDesc.Height : std::max<uint32_t>(1u, uint32_t(float(Targets.Height) * Scale + 0.5f));
+        const uint32_t Width  = InDesc.Width  > 0 ? InDesc.Width  : std::max<uint32_t>(1u, uint32_t(float(Targets.AllocWidth) * Scale + 0.5f));
+        const uint32_t Height = InDesc.Height > 0 ? InDesc.Height : std::max<uint32_t>(1u, uint32_t(float(Targets.AllocHeight) * Scale + 0.5f));
         if(Width == 0 || Height == 0 || Width > RENDER_TARGET_MAX_SIZE || Height > RENDER_TARGET_MAX_SIZE)
         {
             return Out;
@@ -4936,6 +5857,7 @@ namespace RenderCore
         {
             Entry.Target->Resize(Width, Height);
         }
+        Entry.SceneScale = InDesc.Width > 0 || InDesc.Height > 0 ? 0.0f : Scale;
         if(Entry.Target && Entry.Target->IsValid())
         {
             Out.Handle = Entry.Target;
@@ -4992,7 +5914,9 @@ namespace RenderCore
             return false;
         }
         GDISetRenderTargets(&Target, 1, bInDepth ? Target : nullptr);
-        GDISetViewport(0, 0, Target->GetWidth(), Target->GetHeight());
+        uint Width = 0, Height = 0;
+        F->P->PassDrawnSize(*F->Targets, Target, Width, Height);
+        GDISetViewport(0, 0, Width, Height);
         GDISetColorMask(EColM_RGBA);
         GDIClear(bInDepth ? (CM_Color | CM_Depth) : CM_Color, ClearColorOf(InColor));
         return true;
@@ -5026,7 +5950,9 @@ namespace RenderCore
         const Blends Blend = InBlend == ERenderPassBlend::Additive   ? Blends::Additive
                            : InBlend == ERenderPassBlend::AlphaBlend ? Blends::AlphaBlend : Blends::Opaque;
         GDIShader* Pixel = F->P->GetPassShader(InPixelShader, ST_Pixel, F->PassName());
-        return F->P->DrawFullscreenShader(Pixel, InPixelShader, Target, Target->GetWidth(), Target->GetHeight(), Textures,
+        uint Width = 0, Height = 0;
+        F->P->PassDrawnSize(*F->Targets, Target, Width, Height);
+        return F->P->DrawFullscreenShader(Pixel, InPixelShader, Target, Width, Height, Textures,
                                           GDI_MATERIAL_TEXTURE_SLOTS, &InParams, uint(sizeof(InParams)), Blend);
     }
 
@@ -5061,7 +5987,9 @@ namespace RenderCore
 
         SCOPED_DRAW_EVENT("MeshGroup" + std::to_string(InGroup));
         GDISetRenderTargets(&Target, 1, DepthFrom);
-        GDISetViewport(0, 0, Target->GetWidth(), Target->GetHeight());
+        uint Width = 0, Height = 0;
+        P.PassDrawnSize(*F->Targets, Target, Width, Height);
+        GDISetViewport(0, 0, Width, Height);
         GDISetColorMask(EColM_RGBA);
         if(bInClear)
         {
@@ -5185,7 +6113,7 @@ namespace RenderCore
         return P->Backend != ERenderBackend::Null && GDISupportsGPUTimestamps();
     }
 
-    const void* RenderContext::BeginTimedBlock(const void* InOwner, const bool bInTime, float (&OutGpuMs)[RGT_Count])
+    const void* RenderContext::BeginTimedBlock(const void* InOwner, const bool bInTime, float (&OutGpuMs)[RGT_Count], uint64_t* OutSerials)
     {
         /* The times GDI hands back are the block FramesInFlight back's (its
          * frame slot, just reused): that block's owner, if one timed it. */
@@ -5198,6 +6126,7 @@ namespace RenderCore
         P->TimedBlocks[Serial % 4] = { Serial, P->TimedOwner, 1 };
         P->TimedViews = 0;
         for(float& Each : OutGpuMs) { Each = -1.0f; }
+        if(OutSerials) { OutSerials[0] = Serial; OutSerials[1] = 0; }
         if(!Previous)
         {
             return nullptr;
@@ -5237,6 +6166,7 @@ namespace RenderCore
             double Ms = 0.0;
             OutGpuMs[RGT_Total] = Span(uint32_t(RGT_Total) * 2, Impl::VIEWS_END_TIMESTAMP, Ms) ? float(Ms) : -1.0f;
         }
+        if(OutSerials && Written) { OutSerials[1] = Serial - Behind; }
         return Written ? Previous : nullptr;
     }
 
@@ -5353,7 +6283,7 @@ namespace RenderCore
     }
 
     void RenderContext::CompositeViews(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewRect* InRects,
-                                       const uint32_t InCount)
+                                       const uint32_t InCount, const RenderViewRect* InDrawn)
     {
         if(!InTarget)
         {
@@ -5380,13 +6310,28 @@ namespace RenderCore
             }
             const uint ClippedWidth  = std::min(uint(Rect.Width), Width - uint(X));
             const uint ClippedHeight = std::min(uint(Rect.Height), Height - uint(Y));
+            /* A view drawn smaller than its rectangle ([Rendering] ResolutionScale, DynamicResolution):
+             * its drawn area Catmull-Rom up to it (PP_View.x 3), sharper than the sampler's bilinear,
+             * the taps kept inside that area; the same size, as it is. */
+            const uint DrawnW = InDrawn ? uint(std::clamp<int32_t>(InDrawn[Index].Width, 1, int32_t(Source->GetWidth()))) : Source->GetWidth();
+            const uint DrawnH = InDrawn ? uint(std::clamp<int32_t>(InDrawn[Index].Height, 1, int32_t(Source->GetHeight()))) : Source->GetHeight();
+            const bool bUpscale = DrawnW < uint(Rect.Width) || DrawnH < uint(Rect.Height)
+                               || DrawnW < Source->GetWidth() || DrawnH < Source->GetHeight();
+            Block.A[0]     = bUpscale ? 3.0f : 0.0f;
+            Block.A[1]     = (float(DrawnW) - 0.5f) / float(Source->GetWidth());
+            Block.A[2]     = (float(DrawnH) - 0.5f) / float(Source->GetHeight());
+            Block.Sizes[0] = float(Source->GetWidth());
+            Block.Sizes[1] = float(Source->GetHeight());
+            Block.Sizes[2] = float(DrawnW) / float(Source->GetWidth());
+            Block.Sizes[3] = float(DrawnH) / float(Source->GetHeight());
             P->DrawFullscreenShader(P->GetPostShader(PP_ViewTarget), "View", InTarget, ClippedWidth, ClippedHeight,
                                     &Texture->Resource, 1, Block.A, uint(sizeof(Block) - sizeof(Block.Matrix)),
                                     Impl::EFullscreenBlend::Opaque, uint(X), uint(Y));
         }
     }
 
-    void RenderContext::CompositeViewSites(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewSites& InSites)
+    void RenderContext::CompositeViewSites(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewSites& InSites,
+                                           const float (&InDrawnShare)[2])
     {
         const uint32_t Count = std::min<uint32_t>(InSites.Count, RENDER_VIEWS_MAX);
         if(!InTarget || Count < 2)
@@ -5418,6 +6363,8 @@ namespace RenderCore
         Block.Color[3]  = 1.0f;
         Block.Sizes[0]  = float(InTarget->GetWidth());
         Block.Sizes[1]  = float(InTarget->GetHeight());
+        Block.Sizes[2]  = InDrawnShare[0];
+        Block.Sizes[3]  = InDrawnShare[1];
 
         /* A view not drawn this frame shows view 0 (never expected: each site is a drawn view). */
         GDITextureResource* Textures[RENDER_VIEWS_MAX] = {};
@@ -5541,6 +6488,26 @@ namespace RenderCore
 
         const uint Width  = InTargets.Width;
         const uint Height = InTargets.Height;
+
+        /* The drawn area of the targets, this frame's and last frame's (SceneTargets; Scene_ViewUv,
+         * SceneUniforms.glsl): their share of the targets, and the largest UV a tap may take in a
+         * full-size and a half-size one. All 1 while the whole of the targets is drawn. */
+        {
+            const auto Share = [](const uint InDrawn, const uint InAlloc) { return InAlloc > 0 ? float(InDrawn) / float(InAlloc) : 1.0f; };
+            const auto Edge  = [](const uint InDrawn, const uint InAlloc)
+            {
+                return InDrawn >= InAlloc || InAlloc == 0 ? 1.0f : (float(InDrawn) - 0.5f) / float(InAlloc);
+            };
+            const uint AllocW = InTargets.AllocWidth, AllocH = InTargets.AllocHeight;
+            const uint HalfAW = SceneTargets::HalfSize(AllocW, 1), HalfAH = SceneTargets::HalfSize(AllocH, 1);
+            const uint PrevW  = InTargets.PrevWidth > 0 ? InTargets.PrevWidth : Width;
+            const uint PrevH  = InTargets.PrevHeight > 0 ? InTargets.PrevHeight : Height;
+            const float Area[3][4] = {
+                { Share(Width, AllocW), Share(Height, AllocH), Share(PrevW, AllocW), Share(PrevH, AllocH) },
+                { Edge(Width, AllocW), Edge(Height, AllocH), Edge(SceneTargets::HalfSize(Width, 1), HalfAW), Edge(SceneTargets::HalfSize(Height, 1), HalfAH) },
+                { Edge(PrevW, AllocW), Edge(PrevH, AllocH), Edge(SceneTargets::HalfSize(PrevW, 1), HalfAW), Edge(SceneTargets::HalfSize(PrevH, 1), HalfAH) } };
+            std::memcpy(P->Scene.Spare[3], Area, sizeof(Area));
+        }
 
         /* This view's light list (LightList.glsl), for the Lighting stage and forward Lit draws. */
         P->EnsureLTC();
@@ -5692,7 +6659,7 @@ namespace RenderCore
             /* Skin (SHADING_MODELS.md): where a Skin material drew and the scene is HDR, its
              * diffuse goes to its own target, cleared first, for PPSubsurface to blur. */
             GDIRenderTarget* Subsurface = nullptr;
-            if(GRenderSubsurfaceScattering.GetBool() && InTargets.bHDR && P->BasePassHasModel(EMaterialShadingModel::Skin))
+            if(GRenderSubsurfaceScattering.GetBool() && InTargets.bHDR && !P->bCaptureRendering && P->BasePassHasModel(EMaterialShadingModel::Skin))
             {
                 Subsurface = InTargets.EnsureFullHalfFloat(InTargets.Subsurface, "Subsurface");
                 if(Subsurface)
@@ -5727,8 +6694,19 @@ namespace RenderCore
                 GDITexture2D* Motion = InTargets.Velocity ? InTargets.Velocity->ToGDITexture2D() : nullptr;
                 if(Stack.bScreenReflections && InTargets.LastColor && P->bHasPrevViewProjection && Depth && Motion)
                 {
-                    if(GDIRenderTarget* Reflections = InTargets.EnsureFullHalfFloat(InTargets.Reflections, "Reflections"))
+                    /* Half size ([Rendering] HalfResReflections): its own targets, a quarter of the rays. */
+                    const bool bHalf = GRenderHalfResReflections.GetBool();
+                    if(bHalf != InTargets.bReflectionHalf) { InTargets.bReflectionValid = false; InTargets.bReflectionHalf = bHalf; }
+                    const auto Ensure = [&InTargets, bHalf](GDIRenderTarget*& InFull, GDIRenderTarget*& InHalf, const char* InName)
                     {
+                        return bHalf ? InTargets.EnsureHalfHalfFloat(InHalf, (std::string(InName) + "Half").c_str())
+                                     : InTargets.EnsureFullHalfFloat(InFull, InName);
+                    };
+                    GDIRenderTarget** History = bHalf ? InTargets.ReflectionHistoryHalf : InTargets.ReflectionHistory;
+                    if(GDIRenderTarget* Reflections = Ensure(InTargets.Reflections, InTargets.ReflectionsHalf, "Reflections"))
+                    {
+                        const uint MarchW = bHalf ? SceneTargets::HalfSize(Width, 1) : Width;   // the drawn area (SceneTargets)
+                        const uint MarchH = bHalf ? SceneTargets::HalfSize(Height, 1) : Height;
                         PostBlock Ssr;
                         PutMatrix(Ssr.Matrix, P->PrevViewProjection);
                         Ssr.A[0]     = std::clamp(Stack.SsrIntensity, 0.0f, 1.0f);
@@ -5737,12 +6715,12 @@ namespace RenderCore
                         Ssr.A[3]     = std::max(Stack.SsrThickness, 0.1f);
                         Ssr.Sizes[0] = std::max(Stack.SsrMaxDistance, 10.0f);
                         const bool bStochastic = GRenderStochasticReflections.GetBool()
-                                              && InTargets.EnsureFullHalfFloat(InTargets.ReflectionHistory[0], "ReflectionHistory0")
-                                              && InTargets.EnsureFullHalfFloat(InTargets.ReflectionHistory[1], "ReflectionHistory1");
+                                              && Ensure(InTargets.ReflectionHistory[0], InTargets.ReflectionHistoryHalf[0], "ReflectionHistory0")
+                                              && Ensure(InTargets.ReflectionHistory[1], InTargets.ReflectionHistoryHalf[1], "ReflectionHistory1");
                         Ssr.Sizes[1] = bStochastic ? 2.0f : 1.0f;
                         Ssr.Sizes[2] = float(Width);
                         Ssr.Sizes[3] = float(Height);
-                        if(P->DrawPost(PP_ScreenReflections, Reflections, Width, Height,
+                        if(P->DrawPost(PP_ScreenReflections, Reflections, MarchW, MarchH,
                                        { Texture(InTargets.GBuffer[1]), Texture(InTargets.GBuffer[2]), Depth->Resource,
                                          Texture(InTargets.LastColor), Motion->Resource, Texture(InTargets.GBuffer[4]) }, Ssr))
                         {
@@ -5758,17 +6736,17 @@ namespace RenderCore
                             PutMatrix(Resolve.Matrix, P->PrevViewProjection);
                             Resolve.A[0]     = InTargets.bReflectionValid ? 1.0f : 0.0f;
                             Resolve.A[1]     = 0.9f;   // about ten frames' rays
-                            Resolve.Sizes[2] = float(Width);
-                            Resolve.Sizes[3] = float(Height);
-                            const bool bResolved = P->DrawPost(PP_ReflectionResolve, InTargets.ReflectionHistory[Write], Width, Height,
-                                                               { Screen, Texture(InTargets.ReflectionHistory[InTargets.ReflectionCurrent]),
+                            Resolve.Sizes[2] = float(MarchW);
+                            Resolve.Sizes[3] = float(MarchH);
+                            const bool bResolved = P->DrawPost(PP_ReflectionResolve, History[Write], MarchW, MarchH,
+                                                               { Screen, Texture(History[InTargets.ReflectionCurrent]),
                                                                  Depth->Resource, Motion->Resource }, Resolve);
                             for(uint32_t Slot = 0; Slot < 4; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
                             InTargets.bReflectionValid = bResolved;
                             if(bResolved)
                             {
                                 InTargets.ReflectionCurrent = Write;
-                                Screen = Texture(InTargets.ReflectionHistory[Write]);
+                                Screen = Texture(History[Write]);
                             }
                         }
                         else
@@ -5791,7 +6769,7 @@ namespace RenderCore
                    && InTargets.EnsureHalfHalfFloat(InTargets.GIHistory[0], "GIHistory0")
                    && InTargets.EnsureHalfHalfFloat(InTargets.GIHistory[1], "GIHistory1"))
                 {
-                    const uint HalfW = InTargets.GI->GetWidth(), HalfH = InTargets.GI->GetHeight();
+                    const uint HalfW = SceneTargets::HalfSize(Width, 1), HalfH = SceneTargets::HalfSize(Height, 1);   // the drawn area
                     PostBlock Gi;
                     PutMatrix(Gi.Matrix, P->PrevViewProjection);
                     Gi.A[0]     = std::clamp(Stack.GiIntensity, 0.0f, 1.0f);
@@ -5838,6 +6816,7 @@ namespace RenderCore
                 Block.A[0] = Subsurface ? 1.0f : 0.0f;
                 Block.A[1] = Screen ? 1.0f : 0.0f;
                 Block.A[2] = Bounce ? 1.0f : 0.0f;
+                Block.A[3] = Screen && InTargets.bReflectionHalf ? 1.0f : 0.0f;   // the reflections at half size: upsampled by depth
                 GDITextureResource* IBLTextures[] = { Texture(InTargets.GBuffer[0]), Texture(InTargets.GBuffer[1]), Texture(InTargets.GBuffer[2]),
                                                       Texture(InTargets.GBuffer[4]), Depth ? Depth->Resource : nullptr,
                                                       P->IBLAtlasTexture(), Screen, Bounce };
@@ -5916,7 +6895,14 @@ namespace RenderCore
 
         BindTargets(&SceneColor, 1, SceneColor);
         P->IssueStage(ERenderStage::Unlit);
-        P->IssueStage(ERenderStage::Translucent);
+        if(!P->bCaptureRendering)   // a capture view leaves out glass, smoke and particles
+        {
+            P->IssueStage(ERenderStage::Translucent);
+        }
+        else
+        {
+            P->StageDrawCounts[size_t(ERenderStage::Translucent)] = uint32_t(P->PolicyFor(ERenderStage::Translucent).Num());
+        }
         for(GDITextureResource*& Each : P->ForwardReflectionTextures) { Each = nullptr; }
         P->Scene.ForwardReflections[1][1] = 0.0f;
         P->Scene.Spare[2][1] = 0.0f;
@@ -5939,11 +6925,11 @@ namespace RenderCore
                     FogStack.FogDensity, FogStack.FogHeightFalloff, FogStack.FogBaseHeight, std::max(FogStack.FogMaxDistance, 10.0f),
                     std::clamp(FogStack.FogAnisotropy, 0.0f, 0.95f), FogStack.FogSun, FogStack.FogSky, FogStack.FogLights,
                     FogStack.FogAlbedo[0], FogStack.FogAlbedo[1], FogStack.FogAlbedo[2], FogStack.bFogShadows && Sun ? 1.0f : 0.0f,
-                    std::clamp(FogStack.FogSteps, 4.0f, 64.0f), 0.0f, 0.0f, 0.0f };
+                    std::clamp(FogStack.FogSteps, 4.0f, 64.0f), GRenderFogLightCulling.GetBool() ? 1.0f : 0.0f, 0.0f, 0.0f };
                 std::memcpy(March.Matrix, Settings, sizeof(Settings));   // PPVolumetricFog.fsh's four vec4s, in the matrix's place
                 March.Sizes[2] = float(Width);
                 March.Sizes[3] = float(Height);
-                const uint HalfW = Fog->GetWidth(), HalfH = Fog->GetHeight();
+                const uint HalfW = SceneTargets::HalfSize(Width, 1), HalfH = SceneTargets::HalfSize(Height, 1);   // the drawn area
                 GDISetMaterialTexture(OPACITY_SHADOW_SLOT, P->ForwardOpacityAtlas);   // shafts through the casting plumes (TranslucentShadows.glsl)
                 const bool bMarched = P->DrawPost(PP_VolumetricFog, Fog, HalfW, HalfH, { Depth->Resource, Sun ? Sun->Resource : nullptr }, March);
                 GDISetMaterialTexture(0, nullptr);
@@ -6117,6 +7103,62 @@ namespace RenderCore
         return bDrawn;
     }
 
+    bool RenderContext::GetSkyPassVersion(uint64_t& OutVersion) const
+    {
+        OutVersion = 0;
+        if(!P->PassWorld)
+        {
+            return false;
+        }
+        std::vector<CustomPassEntry> Passes;
+        GatherCustomRenderPasses(P->PassWorld, Passes);
+        bool bAny = false;
+        for(const CustomPassEntry& Entry : Passes)
+        {
+            if(Entry.Hook != ERenderHook::Sky || !Entry.Pass) { continue; }
+            const uint64_t Version = Entry.Pass->GetContentVersion();
+            if(Version == 0) { continue; }
+            OutVersion = OutVersion * 1099511628211ull + Version;
+            bAny = true;
+        }
+        return bAny;
+    }
+
+    bool RenderContext::RenderSkyPassesToStrip(IBLResources& InResources, SceneTargets& InStages, const RenderView (&InFaces)[6])
+    {
+        GDIRenderTarget* SceneColor = InStages.SceneColor;
+        if(!SceneColor || !InResources.Strip || InResources.StripFace == 0 || !P->PassWorld)
+        {
+            return false;
+        }
+        /* The Sky passes alone (FramePasses is the stages' list, empty between them), with
+         * nothing of a frame bound: no G-buffer, no post hooks' picture. */
+        P->FramePasses.clear();
+        GatherCustomRenderPasses(P->PassWorld, P->FramePasses);
+        P->FramePasses.erase(std::remove_if(P->FramePasses.begin(), P->FramePasses.end(),
+                                            [](const CustomPassEntry& InEntry)
+                                            { return InEntry.Hook != ERenderHook::Sky || !InEntry.Pass
+                                                     || InEntry.Pass->GetContentVersion() == 0; }),
+                             P->FramePasses.end());
+        const bool bGBuffer = P->bGBufferThisFrame, bVelocity = P->bVelocityThisFrame;
+        P->bGBufferThisFrame = P->bVelocityThisFrame = false;
+        bool bDrawn = !P->FramePasses.empty();
+        for(uint32_t Face = 0; Face < 6 && bDrawn; ++Face)
+        {
+            SCOPED_DRAW_EVENT(GetCubeFaceName(Face));
+            SetView(InFaces[Face]);
+            GDISetRenderTargets(&SceneColor, 1, SceneColor);
+            GDISetViewport(0, 0, InStages.Width, InStages.Height);
+            GDISetColorMask(EColM_RGBA);
+            GDIClear(CM_Color | CM_Depth, EngineCore::Color(0, 0, 0, 255));
+            bDrawn = P->RunHook(ERenderHook::Sky, InStages, false, nullptr) && CopyCaptureToStrip(InStages, InResources, Face);
+        }
+        P->FramePasses.clear();
+        P->bGBufferThisFrame  = bGBuffer;
+        P->bVelocityThisFrame = bVelocity;
+        return bDrawn;
+    }
+
     bool RenderContext::CopyCaptureToStrip(SceneTargets& InStages, IBLResources& InResources, const uint32_t InFace)
     {
         GDITexture2D* Source = InStages.SceneColor ? InStages.SceneColor->ToGDITexture2D() : nullptr;
@@ -6196,7 +7238,8 @@ namespace RenderCore
     void RenderContext::ReleaseDDGIResources(DDGIResources& InOut)
     {
         if(P->DDGI == &InOut) { P->DDGI = nullptr; }
-        for(GDIRenderTarget** Each : { &InOut.Irradiance, &InOut.Distance, &InOut.Strip })
+        InOut.CachePerColumn = 0;
+        for(GDIRenderTarget** Each : { &InOut.Irradiance, &InOut.Distance, &InOut.Strip, &InOut.Cache[0], &InOut.Cache[1], &InOut.Radiance })
         {
             if(*Each)
             {
@@ -6245,6 +7288,137 @@ namespace RenderCore
         bDrawn = P->DrawPost(PP_DDGIUpdate, InResources.Distance, InResources.Distance->GetWidth(), InResources.Distance->GetHeight(),
                              { Strip->Resource }, Block) && bDrawn;
         GDISetMaterialTexture(0, nullptr);
+        return bDrawn;
+    }
+
+    bool RenderContext::EnsureDDGICache(DDGIResources& InOut, const uint32_t InProbes)
+    {
+        if(!CanImageBasedLight() || InProbes == 0 || !GDISupportsRenderTargetFormat(GDI_RTF_RGBA32F))
+        {
+            return false;
+        }
+        const uint32_t PerColumn = std::min<uint32_t>(InProbes, DDGI_CACHE_PER_COLUMN);
+        const uint32_t Columns   = (InProbes + PerColumn - 1) / PerColumn;
+        const uint32_t Width = Columns * DDGI_FACE * 6, Height = PerColumn * DDGI_FACE;
+        const auto Make = [Width, Height](GDIRenderTarget*& InOutTarget, const char* InName, const EGDIRenderTargetFormat InFormat)
+        {
+            if(!InOutTarget)
+            {
+                InOutTarget = GDICreateRenderTargetFormat(InName, Width, Height, InFormat);
+            }
+            else if(InOutTarget->GetWidth() != Width || InOutTarget->GetHeight() != Height)
+            {
+                InOutTarget->Resize(Width, Height);
+            }
+            return InOutTarget && InOutTarget->IsValid();
+        };
+        const bool bMade = Make(InOut.Cache[0], "RenderCore.DDGICache0", GDI_RTF_RGBA16F)
+                        && Make(InOut.Cache[1], "RenderCore.DDGICache1", GDI_RTF_RGBA32F)
+                        && Make(InOut.Radiance, "RenderCore.DDGIRadiance", GDI_RTF_RGBA16F);
+        InOut.CachePerColumn = bMade ? PerColumn : 0;
+        return bMade;
+    }
+
+    bool RenderContext::StoreDDGIFace(SceneTargets& InStages, DDGIResources& InResources, const uint32_t InProbe, const uint32_t InFace)
+    {
+        if(!InResources.Cache[0] || !InResources.Cache[1] || InResources.CachePerColumn == 0 || InFace >= 6 || !InStages.SceneColor)
+        {
+            return false;
+        }
+        const auto Texture = [](GDIRenderTarget* InTarget) -> GDITextureResource*
+        {
+            GDITexture2D* Each = InTarget ? InTarget->ToGDITexture2D() : nullptr;
+            return Each ? Each->Resource : nullptr;
+        };
+        GDITexture2D* Depth = InStages.SceneColor->ToDepthTexture2D();
+        GDITextureResource* Inputs[6] = { Texture(InStages.GBuffer[0]), Texture(InStages.GBuffer[1]), Texture(InStages.GBuffer[2]),
+                                          Texture(InStages.GBuffer[3]), Depth ? Depth->Resource : nullptr, Texture(InStages.SceneColor) };
+        for(GDITextureResource* Each : Inputs) { if(!Each) { return false; } }
+        const uint X = (InProbe / InResources.CachePerColumn) * DDGI_FACE * 6 + InFace * DDGI_FACE;
+        const uint Y = (InProbe % InResources.CachePerColumn) * DDGI_FACE;
+        PostBlock Block;
+        Block.A[0] = float(X);
+        Block.A[1] = float(Y);
+        const bool bDrawn = P->DrawFullscreenShader(P->GetPostShader(PP_DDGIStore), POST_PASS_NAMES[PP_DDGIStore], InResources.Cache[0],
+                                                    DDGI_FACE, DDGI_FACE, Inputs, 6, Block.A, uint(sizeof(Block) - sizeof(Block.Matrix)),
+                                                    Impl::EFullscreenBlend::Opaque, X, Y, InResources.Cache[1]);
+        return bDrawn;
+    }
+
+    bool RenderContext::RelightDDGI(DDGIResources& InResources, const uint32_t InFirst, const uint32_t InCount, const float InLongest)
+    {
+        const uint32_t PerColumn = InResources.CachePerColumn;
+        if(PerColumn == 0 || InCount == 0 || !InResources.Radiance || !InResources.Irradiance || !P->DDGI
+           || InFirst / PerColumn != (InFirst + InCount - 1) / PerColumn)
+        {
+            return false;
+        }
+        const auto Texture = [](GDIRenderTarget* InTarget) -> GDITextureResource*
+        {
+            GDITexture2D* Each = InTarget ? InTarget->ToGDITexture2D() : nullptr;
+            return Each ? Each->Resource : nullptr;
+        };
+        SCOPED_DRAW_EVENT("GIRelight");
+
+        /* What the Lighting and IBL passes would light by: the scene block (HDR, the capture shadow
+         * maps), the light block (every light; its tiles a view's, unused here), the atlases. */
+        if(P->bCaptureShadowsReady) { P->RestoreCaptureShadows(); }
+        P->Scene.Output[0] = 1.0f;
+        P->Scene.Output[1] = 1.0f;
+        P->Scene.Output[2] = 0.0f;
+        const bool bIBL = P->IBL && P->IBL->Atlas && P->IBLAtlasTexture();
+        P->Scene.IBL[0] = bIBL ? 1.0f : 0.0f;
+        P->Scene.IBL[1] = bIBL ? float(P->IBLProbeCount) : 0.0f;
+        P->Scene.IBL[2] = bIBL && P->bIBLSky ? 1.0f : 0.0f;
+        P->EnsureLTC();
+        P->BuildLightList(DDGI_FACE, DDGI_FACE);
+        std::memcpy(P->LightList.Probes, P->IBLProbes, sizeof(P->LightList.Probes));
+        std::memcpy(P->LightList.DDGI, P->DDGIHeader, sizeof(P->LightList.DDGI));
+        GDISetUniformBlock(GDI_LIGHT_BLOCK_BINDING, &P->LightList, uint(sizeof(P->LightList)));
+
+        GDITextureResource* Maps[SA_Count] = {};
+        for(uint32_t Atlas = 0; Atlas < SA_Count; ++Atlas)
+        {
+            GDITexture2D* Map = P->Shadows.ViewCount > 0 && P->ShadowAtlas[Atlas] ? P->ShadowAtlas[Atlas]->ToDepthTexture2D() : nullptr;
+            Maps[Atlas] = Map ? Map->Resource : nullptr;
+        }
+        GDITextureResource* Inputs[8] = { Texture(InResources.Cache[0]), Texture(InResources.Cache[1]), bIBL ? P->IBLAtlasTexture() : nullptr,
+                                          nullptr, nullptr, nullptr, Maps[SA_Directional], Maps[SA_Local] };
+        GDISetMaterialTexture(LIGHTING_LTC_SLOT, P->LTCTable);
+        GDISetMaterialTexture(FORWARD_DDGI_SLOT, Texture(P->DDGI->Irradiance));
+        GDISetMaterialTexture(FORWARD_DDGI_SLOT + 1, Texture(P->DDGI->Distance));
+        PostBlock Block;
+        Block.A[1] = InLongest;
+        Block.A[2] = float(PerColumn);
+        const uint X = (InFirst / PerColumn) * DDGI_FACE * 6;
+        const uint Y = (InFirst % PerColumn) * DDGI_FACE;
+        bool bDrawn = P->DrawFullscreenShader(P->GetPostShader(PP_DDGIRelight), POST_PASS_NAMES[PP_DDGIRelight], InResources.Radiance,
+                                              DDGI_FACE * 6, InCount * DDGI_FACE, Inputs, 8, Block.A, uint(sizeof(Block) - sizeof(Block.Matrix)),
+                                              Impl::EFullscreenBlend::Opaque, X, Y);
+        GDISetMaterialTexture(LIGHTING_LTC_SLOT, nullptr);
+        GDISetMaterialTexture(FORWARD_DDGI_SLOT, nullptr);
+        GDISetMaterialTexture(FORWARD_DDGI_SLOT + 1, nullptr);
+
+        /* Their irradiance tiles, all at once: the rows of tiles they are in (DDGIUpdate.fsh, batched). */
+        GDITexture2D* Radiance = InResources.Radiance->ToGDITexture2D();
+        if(bDrawn && Radiance)
+        {
+            const uint32_t RowFirst = InFirst / DDGI_TILES_PER_ROW, RowLast = (InFirst + InCount - 1) / DDGI_TILES_PER_ROW;
+            PostBlock Update;
+            Update.A[0]     = -1.0f;
+            Update.A[1]     = float(DDGI_IRRADIANCE_TILE);
+            Update.A[2]     = 0.0f;
+            Update.A[3]     = float(DDGI_TILES_PER_ROW);
+            Update.Sizes[0] = InLongest;
+            Update.Sizes[1] = float(InFirst);
+            Update.Sizes[2] = float(InCount);
+            Update.Sizes[3] = float(PerColumn);
+            GDITextureResource* Strip[1] = { Radiance->Resource };
+            bDrawn = P->DrawFullscreenShader(P->GetPostShader(PP_DDGIUpdate), POST_PASS_NAMES[PP_DDGIUpdate], InResources.Irradiance,
+                                             InResources.Irradiance->GetWidth(), (RowLast - RowFirst + 1) * DDGI_IRRADIANCE_TILE, Strip, 1,
+                                             Update.A, uint(sizeof(Update) - sizeof(Update.Matrix)), Impl::EFullscreenBlend::Opaque,
+                                             0, RowFirst * DDGI_IRRADIANCE_TILE);
+        }
         return bDrawn;
     }
 

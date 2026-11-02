@@ -8,6 +8,7 @@
 #include "Public/NimbleEngine/NimbleEngineAPI.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/Input.h"
+#include "Public/NimbleEngine/LevelTravel.h"
 #include "Public/NimbleEngine/SplitCamera.h"
 #include "Public/GameCore/ComponentType.h"   // ComponentTypeID
 #include "Public/GameCore/Delegate.h"        // DelegateHandle
@@ -183,6 +184,10 @@ namespace NimbleEngine
          */
         bool LoadLevel(ILevel& InLevel);
 
+        /* LoadLevel, carrying InTravel in (GetTravel; its Entry places the
+         * players' avatars, PlayerStart.h). */
+        bool LoadLevel(ILevel& InLevel, const LevelTravel& InTravel);
+
         /* Mode OnUnload, level OnUnload, unbind scripts and renderer, destroy
          * the World. Idempotent. */
         void UnloadLevel();
@@ -205,6 +210,46 @@ namespace NimbleEngine
          * ApplyPendingLevel(): a World cannot be destroyed inside its own Tick.
          * The outgoing level unloads first. The last request in a frame wins. */
         void RequestLevel(ILevel& InLevel);
+
+        /*
+         * LEVEL TRAVEL (LevelTravel.h; GameModeGuide.md, "Changing level"):
+         * RequestLevel with an entry point and travel state for the next
+         * level. Its avatars come in at InTravel.Entry's Player Start
+         * (FindPlayerStart prefers it; placed, auto-possessed avatars are
+         * moved there before IGameMode::OnStart), and GetTravel() returns
+         * InTravel from the start of the next ILevel::OnLoad until the level
+         * after it loads. Also Game.OpenLevel in Lua.
+         */
+        void RequestLevel(ILevel& InLevel, const LevelTravel& InTravel);
+
+        /* RequestLevel by registered name ([World_Name], as [Game] StartLevel
+         * and the console's `open`). False (logged) if no level has that name. */
+        bool OpenLevel(const char* InLevelName, const LevelTravel& InTravel = LevelTravel());
+
+        /* What the loaded level came in with: its entry, its travel state and
+         * the level before it. Empty for a level loaded without one. */
+        const LevelTravel& GetTravel() const { return Travel; }
+
+        /* GetTravel().Get(InKey, InDefault). */
+        const char* GetTravelValue(const char* InKey, const char* InDefault = "") const { return Travel.Get(InKey, InDefault); }
+
+        /*
+         * LEVEL TRAVEL's TRANSITION (GameModeGuide.md, "The transition
+         * screen"): with [LevelTransition] Enabled, or a travel's TT_Fade, a
+         * level change asked for while a level is loaded is not applied at
+         * once. The screen fades to black over FadeOut seconds while the old
+         * level still runs; the loading card opens (a document made in code,
+         * or the game's [LevelTransition] Document, bound to Transition.Title,
+         * Transition.Tip and Transition.Level); the next ApplyPendingLevel
+         * swaps behind it; once the new level has ticked RevealFrames frames
+         * the card closes and the screen fades in over FadeIn. The players'
+         * input is held back until the fade in. Another request while it
+         * runs retargets it.
+         */
+        bool IsInTransition() const { return TransitionStage != 0; }
+
+        /* The transition's black, 0 to 1, as last drawn: a test's view of it. */
+        float GetTransitionFade() const { return TransitionFade; }
 
         /* The game is finished. The host finishes the frame in flight. */
         void RequestQuit() { bQuitRequested = true; }
@@ -434,6 +479,37 @@ namespace NimbleEngine
 
         /* Set by RequestLevel, consumed by the next ApplyPendingLevel. */
         ILevel*           PendingLevel = nullptr;
+
+        /* The travel PendingLevel will load with, and the loaded level's.
+         * (C4251 on these private members is harmless.) */
+        LevelTravel       PendingTravel;
+        LevelTravel       Travel;
+
+        /* LoadLevel's: InTravel.Entry's start for the local players' placed avatars. */
+        void PlaceAvatarsAtEntry();
+
+        /* The transition (IsInTransition): its stage (GameSession.cpp's
+         * TS_*), the time and frames in it, and where it is going. */
+        void UpdateTransition(float InDeltaSeconds);
+        void SetTransitionFade(float InAlpha);
+        void OpenTransitionCard();
+        void CloseTransitionCard();
+        void EndTransition();
+        /* The reveal's warm-up ([LevelTransition] WarmupSeconds): the card held, the World still,
+         * while the renderer's captures fill at their warm-up budget; false when it is over. */
+        bool UpdateTransitionWarmup(float InDeltaSeconds);
+        void SetCaptureWarmup(bool bInOn);
+        uint8_t     TransitionStage  = 0;
+        float       TransitionTime   = 0.0f;
+        float       TransitionFade   = 0.0f;
+        int32_t     TransitionFrames = 0;
+        bool        bTransitionWarming    = false;
+        float       TransitionWarmupTime  = 0.0f;
+        int32_t     TransitionWarmupFrames = 0;
+        uint64_t    TransitionWarmupStart  = 0;   // the renderer's FramesRendered when the level loaded
+        ILevel*     TransitionLevel  = nullptr;
+        LevelTravel TransitionTravel;
+        std::string TransitionCard;   // the open card's document path; "" none
 
         /* Armed with PendingLevel by LoadGameFromFile, cleared by the LoadLevel
          * that consumes it. (C4251 on this private member is harmless.) */

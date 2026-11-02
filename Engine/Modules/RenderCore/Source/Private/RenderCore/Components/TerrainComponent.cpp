@@ -250,7 +250,7 @@ namespace RenderCore
             {
                 const RenderView& View = InContext.GetView();
                 const EngineCore::Matrix4x4 Clip = View.Projection * View.View * GetLocalToWorld();
-                ChooseLODs(View.Origin);
+                ChooseLODs(View.Origin, InContext.GetLodDistanceScale());
                 const char* Slots[1] = { Material.c_str() };
                 for(const Chunk& Each : Chunks)
                 {
@@ -273,7 +273,7 @@ namespace RenderCore
              * this one at all (the proxy culled from the camera, its shadow still in view). */
             void DrawShadow(RenderContext& InContext) override
             {
-                ChooseLODs(InContext.GetView().Origin);
+                ChooseLODs(InContext.GetView().Origin, InContext.GetLodDistanceScale());
                 const char* Slots[1] = { Material.c_str() };
                 for(const Chunk& Each : Chunks)
                 {
@@ -288,7 +288,7 @@ namespace RenderCore
                 if(!bShowTerrain) { return; }
                 const RenderView& View = InContext.GetView();
                 const EngineCore::Matrix4x4 Clip = View.Projection * View.View * GetLocalToWorld();
-                ChooseLODs(View.Origin);
+                ChooseLODs(View.Origin, InContext.GetLodDistanceScale());
                 const char* Slots[1] = { Material.c_str() };
                 for(const Chunk& Each : Chunks)
                 {
@@ -622,8 +622,9 @@ namespace RenderCore
             }
 
             /* Each chunk's LOD for a view from InEye: by the distance from the eye to its box, in
-             * terrain units (LODDistance is the world's; the entity's ground scale converts). */
-            void ChooseLODs(const EngineCore::Vector3& InEye)
+             * terrain units (LODDistance is the world's; the entity's ground scale converts), times
+             * InLodScale (RenderContext::GetLodDistanceScale: more for a capture's small faces). */
+            void ChooseLODs(const EngineCore::Vector3& InEye, const float InLodScale)
             {
                 if(Chunks.empty() || !Data) { return; }
                 const EngineCore::Matrix4x4& World = GetLocalToWorld();
@@ -639,6 +640,7 @@ namespace RenderCore
                 const double ScaleZ = std::sqrt(double(World.Data[0][2]) * World.Data[0][2] + double(World.Data[1][2]) * World.Data[1][2]
                                                 + double(World.Data[2][2]) * World.Data[2][2]);
                 Scale = float(std::max(0.5 * (ScaleX + ScaleZ), 1e-6));
+                const float LodScale = InLodScale;
                 const float Near = LODDistance > 0.0f ? LODDistance / Scale
                                                       : 1.5f * float(GameCore::TERRAIN_CHUNK_QUADS) * Data->GetSpacing();
                 for(Chunk& Each : Chunks)
@@ -650,7 +652,7 @@ namespace RenderCore
                         const float Out = std::max({ Each.Min[Axis] - Eye[Axis], 0.0f, Eye[Axis] - Top });
                         Distance2 += Out * Out;
                     }
-                    Each.Distance = std::sqrt(Distance2);
+                    Each.Distance = std::sqrt(Distance2) * LodScale;
                     Each.Lod = Each.Distance < Near ? 0u : (Each.Distance < Near * 2.0f ? 1u : 2u);
                 }
             }

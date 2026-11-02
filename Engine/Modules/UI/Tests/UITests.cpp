@@ -1502,6 +1502,12 @@ end
 static void TestWorldsLabRangeUI()
 {
     std::printf("[worldslab range ui]\n");
+    /* WorldsLab is an example archive (Engine/Examples), in Games/ only once unpacked. */
+    if(!std::filesystem::is_directory(std::string(UI_REPO_ROOT) + "/Games/WorldsLab/Content/UI/ShootingRange"))
+    {
+        std::printf("  (skipped: Games/WorldsLab is not unpacked)\n");
+        return;
+    }
     EngineCore::ConfigVar* Shadows = EngineCore::ConfigFindVarByPath("Shadows.Enabled");
     Expect(Shadows != nullptr, "the shadows config var is there to set");
     if(!Shadows) return;
@@ -2323,7 +2329,9 @@ static void TestOnGpu()
 
         /* WorldsLab's Shooting Range UI at 1080p, from the source tree, for the docs (Engine/Docs/Guides/UI):
          * the HUD, the pause menu over it, and the settings over that. Their logic does not run here, so the
-         * values the game and its graph would publish are set by hand. */
+         * values the game and its graph would publish are set by hand. Skipped until the WorldsLab example
+         * is unpacked into Games/. */
+        if(std::filesystem::is_directory(std::string(UI_REPO_ROOT) + "/Games/WorldsLab/Content/UI/ShootingRange"))
         {
             const EngineCore::Size SavedViewport = Viewport;
             Viewport = EngineCore::Size(1920, 1080);

@@ -744,6 +744,34 @@ namespace Sequencer
         }
     }
 
+    SequenceShot BlendShots(const SequenceShot& InA, const SequenceShot& InB, const float InT)
+    {
+        SequenceShot Out = InB;
+        Out.Pose  = BlendPoses(InA.Pose, InB.Pose, InT);
+        Out.FovY  = InA.FovY + (InB.FovY - InA.FovY) * InT;
+        Out.ZNear = InA.ZNear > 0.0f && InB.ZNear > 0.0f ? InA.ZNear + (InB.ZNear - InA.ZNear) * InT : InB.ZNear;
+        Out.ZFar  = InA.ZFar + (InB.ZFar - InA.ZFar) * InT;
+        return Out;
+    }
+
+    bool ReadCameraView(GameCore::World& InWorld, GameCore::EntityID InCamera, SequenceShot& OutShot)
+    {
+        for(int Depth = 0; InCamera.IsSet() && InWorld.IsAlive(InCamera) && Depth < 16; ++Depth)
+        {
+            const GameCore::Entity Node = InWorld.GetEntity(InCamera);
+            if(const RenderCore::CameraComponent* Camera = Node.GetComponent<RenderCore::CameraComponent>())
+            {
+                OutShot.Pose  = Node.GetWorldPose();
+                OutShot.FovY  = Camera->FovY;
+                OutShot.ZNear = Camera->ZNear;
+                OutShot.ZFar  = Camera->ZFar;
+                return true;
+            }
+            InCamera = Node.GetFirstChild();
+        }
+        return false;
+    }
+
     GameCore::EntityID SequenceInstance::GetCameraEntity() const
     {
         return CameraEntity.IsSet() && World.IsAlive(CameraEntity) ? CameraEntity : GameCore::EntityID();

@@ -12,10 +12,12 @@ namespace RenderCore
 {
     /* "GI Volume". Dynamic diffuse GI (GLOBAL_ILLUMINATION.md, Phase 6; DDGI):
      * a grid of irradiance probes filling a box Extent (half sizes) round its
-     * entity, Probe Spacing apart -- at most 32 x 8 x 32 of them. A few probes a
-     * frame render the scene round them ([Rendering] GIProbesPerFrame), lit by
-     * the live lights, the sky and the volume itself, so light bounces again
-     * with each round. Inside it, Lit surfaces that are not baked take their
+     * entity, Probe Spacing apart -- at most 32 x 8 x 32 of them. Its probes
+     * render the scene round them a face at a time, within the frame's capture
+     * budget ([Rendering] CaptureBudgetMs; GLOBAL_ILLUMINATION.md, Phase 7), lit
+     * by the live lights, the sky and the volume itself, so light bounces again
+     * with each round; once converged it stops, and a lighting change relights
+     * the probes from what they saw. Inside it, Lit surfaces that are not baked take their
      * diffuse ambient from the eight probes round them, weighted so a probe
      * behind a wall does not light through it, in place of the reflection
      * probes'. Intensity scales that light. One volume lights the scene: the

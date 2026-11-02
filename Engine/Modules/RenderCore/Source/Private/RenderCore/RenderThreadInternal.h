@@ -52,8 +52,20 @@ namespace RenderCore
 
     /* The reporting scene's occlusion culling (RenderStats::ProxiesOccludedLastFrame
      * and OcclusionQueriesLastFrame). */
+    /* The reporting scene's shadow cache (RenderStats::ShadowCacheLights, ShadowCacheFilled, ShadowCacheBytes). */
+    void SetShadowCacheStats(uint32_t InLights, uint32_t InFilled, uint64_t InBytes, uint32_t InSunCascades, uint32_t InSunFilled,
+                             uint64_t InSunBytes);
+    void GetShadowCacheStats(RenderStats& OutStats);
+
     void SetOcclusionStats(uint64_t InOccluded, uint64_t InQueries);
     void GetOcclusionStats(uint64_t& OutOccluded, uint64_t& OutQueries);
+
+    /* The reporting scene's captures (RenderStats::GIProbesUnlit, GIProbesTotal, bCapturesBusy). */
+    void SetCaptureStats(uint32_t InUnlit, uint32_t InTotal, bool bInBusy);
+    void GetCaptureStats(uint32_t& OutUnlit, uint32_t& OutTotal, bool& bOutBusy);
+    /* The reporting scene's resolution scale (RenderStats' ResolutionScale and the two after it). */
+    void SetResolutionStats(float InScale, bool bInDynamic, float InTargetMs);
+    void GetResolutionStats(float& OutScale, bool& bOutDynamic, float& OutTargetMs);
 
     /* "stat unit": Renderer::EndFrame publishes the averaged times and
      * whether to show them (Stats.Unit); RenderScene::Render draws them and

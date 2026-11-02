@@ -20,6 +20,10 @@
 #
 # The engine is never edited: the game configures standalone and adds the
 # Engine tree itself.
+#
+# With -DEXAMPLE=<Example> it unpacks an example project (Engine/Examples)
+# instead, and with -DBUILD=ON also configures, builds and cooks it:
+# Engine/Examples/UnpackExample.cmake says how.
 # ===========================================================================
 
 cmake_minimum_required(VERSION 3.18)   # file(CONFIGURE)
@@ -32,6 +36,9 @@ function(np_fail NP_MESSAGE)
 endfunction()
 
 # --- Arguments ---------------------------------------------------------------
+if(DEFINED EXAMPLE AND NOT EXAMPLE STREQUAL "" AND (NOT DEFINED NAME OR NAME STREQUAL ""))
+    set(NAME "${EXAMPLE}")   # an example keeps its own name unless given another
+endif()
 if(NOT DEFINED NAME OR NAME STREQUAL "")
     np_fail("no name. Usage: cmake -DNAME=<Name> [-DLOCATION=<folder>] -P ${CMAKE_CURRENT_LIST_FILE}")
 endif()
@@ -60,9 +67,6 @@ if(NOT DEFINED LOCATION OR LOCATION STREQUAL "")
 endif()
 get_filename_component(NP_LOCATION "${LOCATION}" ABSOLUTE)   # relative to the caller's directory
 set(NP_PROJECT_DIR "${NP_LOCATION}/${NAME}")
-if(EXISTS "${NP_PROJECT_DIR}")
-    np_fail("${NP_PROJECT_DIR} already exists")
-endif()
 
 # --- @ENGINE_DIR@ ------------------------------------------------------------
 # Relative where there is a relative path (Sandbox's "../../Engine"); absolute
@@ -73,6 +77,15 @@ if(IS_ABSOLUTE "${NP_ENGINE_REL}")
 else()
     set(NP_ENGINE_FOR_CMAKE [=[${CMAKE_CURRENT_SOURCE_DIR}/]=])
     string(APPEND NP_ENGINE_FOR_CMAKE "${NP_ENGINE_REL}")
+endif()
+
+if(DEFINED EXAMPLE AND NOT EXAMPLE STREQUAL "")
+    include("${NP_ENGINE_DIR}/Examples/UnpackExample.cmake")
+    return()
+endif()
+
+if(EXISTS "${NP_PROJECT_DIR}")
+    np_fail("${NP_PROJECT_DIR} already exists")
 endif()
 
 # --- Copy --------------------------------------------------------------------

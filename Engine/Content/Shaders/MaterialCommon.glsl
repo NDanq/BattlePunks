@@ -90,6 +90,13 @@ MaterialSurface DefaultMaterialSurface(in MaterialInputs Inputs)
 MATERIAL_SAMPLER2D(4, Material_SceneColor)
 MATERIAL_SAMPLER2D(11, Material_SceneDepth)
 
+// The scene's colour at InViewUv (the full-screen quad's UV): what the view drew is the top-left
+// of the target at dynamic resolution (Scene_ViewUv, SceneUniforms.glsl).
+vec4 Material_SceneColorAt(vec2 InViewUv)
+{
+    return texture(Material_SceneColor, Scene_ViewUv(InViewUv));
+}
+
 // Window depth, 0 near to 1 far.
 float Material_SceneDepthAt(vec2 InFragCoord)
 {

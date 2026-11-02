@@ -439,10 +439,12 @@ gripped at its origin). Clips, in place (no root travel):
 
 | Clip | Frames | |
 |---|---|---|
-| `FB_Idle`, `FB_Walk`, `FB_Run` | 60, 32, 24 | full body, looping; the walk's planted foot moves about 145 units/s |
+| `FB_Idle`, `FB_Walk`, `FB_Run` | 60, 30, 24 | full body, looping; the walk's planted foot moves 150 units/s, each foot down 58% of the cycle |
 | `FB_JumpStart`, `FB_Fall`, `FB_Land` | 24 each | full body |
-| `UB_Idle`, `UB_Walk`, `UB_Run` | 60, 32, 24 | upper body (`DEF-spine.002` and below it) |
-| `UB_Idle_Armed`, `UB_Walk_Armed`, `UB_Run_Armed` | 60, 32, 24 | upper body, holding the pistol |
+| `UB_Idle`, `UB_Walk`, `UB_Run` | 60, 30, 24 | upper body (`DEF-spine.002` and below it) |
+| `UB_Idle_Armed`, `UB_Walk_Armed`, `UB_Run_Armed` | 60, 30, 24 | upper body, holding the pistol; the walk's chest held steady, the gun settling after each step |
+| `UB_Fire` | 10 | additive, from the armed idle: the gun hand flips up and back, the chest gives (Recoil layer) |
+| `UB_Hit_Front`, `UB_Hit_Back`, `UB_Hit_Left`, `UB_Hit_Right` | 18 each | additive, from the armed idle: a hit from that side jolts the chest back, forward or twisted, the head and arms a frame behind (HitReact layer) |
 | `UB_EquipWeapon` | 40 | the right hand draws from the holster; notify `WeaponToHand` at 0.333 s (frame 11, the hand on the grip) |
 | `UB_HolsterWeapon` | 36 | and puts it back; notify `WeaponToHolster` at 0.633 s (frame 20, the gun in the holster) |
 
@@ -450,7 +452,8 @@ gripped at its origin). Clips, in place (no root travel):
 
 ```
 Parameters   Speed (float, units/s), Grounded (bool, 1), Jump (trigger), Armed (bool),
-             AimPitch (float, degrees, up positive)
+             AimPitch (float, degrees, up positive), Fire (trigger),
+             Hit (trigger), HitDir (float: 0 front, 1 back, 2 left, 3 right), HitWeight (float, 1)
 Layer FullBody
   Locomotion   blend space on Speed: FB_Idle 0, FB_Walk 150, FB_Run 400    sync group Locomotion
   JumpStart    once     Locomotion -> JumpStart when Jump triggered, 0.1 s
@@ -461,6 +464,15 @@ Layer UpperBody   mask DEF-spine.002; weight scaled by Grounded (in the air the 
   Equip        once     Unarmed -> Equip when Armed; Equip -> Armed at end
   Armed        blend space on Speed: UB_*_Armed at 0, 150, 400              sync group Locomotion
   Holster      once     Armed (or Equip) -> Holster when not Armed; Holster -> Unarmed at end
+Layer Recoil      additive from each clip's first frame, mask DEF-spine.002
+  Rest         no clip (adds nothing)
+  Fire, Fire2  UB_Fire, once    Rest -> Fire when Fire triggered; Fire <-> Fire2 when Fire triggered
+                                (a shot mid-kick starts it again); both -> Rest at end
+Layer HitReact    additive from each clip's first frame, mask DEF-spine.001; weight scaled by HitWeight
+  Rest         no clip (adds nothing)
+  Front, Back, Left, Right (and a second of each)   UB_Hit_*, once
+               any -> the direction's state when Hit triggered and HitDir equals it, 0.05 s
+               (a hit mid-reaction goes to the other of the pair); all -> Rest at end, 0.1 s
 Look-at      AimPitch, -40..55 deg about model X, response 15:
              DEF-spine.001 0.25, DEF-spine.002 0.35, DEF-spine.003 0.40
 ```
@@ -472,10 +484,20 @@ is down-positive) and the gun points where the camera does.
 The run's 400 is a guess (its foot is planted for two frames); set the
 blend positions to the speeds the character moves at.
 
+`Source/` holds what made them: `make_crashdummy_clips.py` generates the
+walks, `UB_Fire` and the `UB_Hit_*` in Blender on the source `.blend` and exports the `.glb`
+(header comment: the command), and `add_recoil_layer.py` added the Recoil
+layer and `add_hit_layer.py` the HitReact layer through `nmanimstate.py`, a
+reader and writer for the format. A game sets `Fire` on each shot (WorldsLab's
+Shooting Range and DemoLab do), and on each hit taken sets `HitDir` from the
+hit's direction against the body's facing, `HitWeight` (DemoLab: 0.6 light,
+1 heavy or head) and `Hit` -- at most every 0.3 s or so, so automatic fire
+does not restart the jolt every frame.
+
 **`CrashDummyDemo.nmprefab`** shows it working: the dummy (Render,
 Animation on the anim state) and a child **Pistol** (Render, Anim Socket),
 with `CrashDummyDemo.lua` walking it round a 17-second loop -- idle, walk,
-draw while walking, armed run, stop, jump, land, holster -- nodding AimPitch
+draw while walking, three shots, armed run, two hits, stop, jump, land, holster -- nodding AimPitch
 35 degrees up and down every 4 seconds throughout. The script moves the
 pistol as the notifies fire:
 

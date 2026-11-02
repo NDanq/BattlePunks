@@ -65,6 +65,7 @@
 #include "Private/RenderCore/RenderThreadInternal.h"
 #include "Private/RenderCore/ParticleSimulation.h"
 #include "Private/RenderCore/ShadowSetup.h"
+#include "Private/RenderCore/CaptureScheduler.h"
 #include "Private/RenderCore/TextureStreaming.h"
 
 using namespace RenderCore;
@@ -882,8 +883,10 @@ static void TestCustomRenderPasses()
     Rend.WaitForPreviousFrame();
     FlushRenderCommands();
 
+    /* Every hook but Sky, which runs only when image-based lighting captures the sky (not on Null). */
+    Expect(std::string(GetRenderHookName(ERenderHook::Sky)) == "Sky", "the Sky hook has its name");
     std::vector<std::string> Expected;
-    for(int Hook = 0; Hook < int(ERenderHook::Count); ++Hook)
+    for(int Hook = 0; Hook < int(ERenderHook::Sky); ++Hook)
     {
         const std::string Name = GetRenderHookName(ERenderHook(Hook));
         if(ERenderHook(Hook) == ERenderHook::AfterForward) { Expected.push_back("Early@" + Name); }
@@ -897,7 +900,7 @@ static void TestCustomRenderPasses()
         for(const std::string& Each : Ran) { std::printf("    ran: %s\n", Each.c_str()); }
     }
     Expect(Log.Extracts.load() == int(ERenderHook::Count) + 2, "Extract ran once a frame for each of the World's passes");
-    Expect(Log.Targets.load() == int(ERenderHook::Count) + 2, "AcquireTarget made each pass's target once and handed it back");
+    Expect(Log.Targets.load() == int(ERenderHook::Count) + 1, "AcquireTarget made each pass's target once and handed it back");
 
     /* Unregistered: gone from the next frame on. */
     Expect(UnregisterCustomRenderPass(Late), "UnregisterCustomRenderPass finds the pass");
@@ -4647,6 +4650,330 @@ static void TestStaticDrawListsOnGpu()
 }
 
 /*
+ * Auto instancing on the GPU (RENDERPIPELINE.md, "Auto instancing"): six
+ * static boxes in one cell, scaled unevenly and turned, over a static floor under a
+ * shadowing sun draw as one cluster -- two static proxies drawn, not seven --
+ * and the frame is pixel for pixel the one drawn with [Rendering]
+ * AutoInstancing off; one box made dynamic leaves the cluster.
+ */
+static void TestAutoInstancingOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[auto instancing on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[auto instancing on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    ConfigVar* Auto = ConfigFindVarByPath("Rendering.AutoInstancing");
+    Expect(Auto != nullptr, "[Rendering] AutoInstancing is a config var");
+
+    Renderer Rend;
+    const bool bInit = Auto && Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = RenderView::MakePerspective(Viewport, Vector3(0.0, 700.0, -600.0), Vector3(0.0, -700.0, 600.0),
+                                                            50.0f, 10.0f, 5000.0f);
+        Rend.SetViewOverride(&View);
+        GameCore::World World;
+        Rend.BindWorld(World);
+        const auto Placed = [&World](const char* InName, const Vector3& InPosition, const Vector3& InRotation, const Vector3& InScale)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InPosition;
+            Transform.Rotation = InRotation;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            return Each;
+        };
+        RenderComponent FloorMesh;
+        std::snprintf(FloorMesh.Mesh, sizeof(FloorMesh.Mesh), "%s", "Engine/Content/Meshes/Plane.nmmesh");
+        const GameCore::Entity Floor = Placed("Floor", Vector3(), Vector3(), Vector3(3000.0, 1.0, 3000.0));
+        Floor.AddComponent(FloorMesh);
+        Floor.SetMobility(GameCore::EMobility::Static);
+        RenderComponent BoxMesh;
+        std::snprintf(BoxMesh.Mesh, sizeof(BoxMesh.Mesh), "%s", "Engine/Content/Meshes/Box.nmmesh");
+        std::vector<GameCore::Entity> Boxes;
+        for(int Index = 0; Index < 6; ++Index)
+        {
+            char Name[16];
+            std::snprintf(Name, sizeof(Name), "Box%d", Index);
+            const GameCore::Entity Box = Placed(Name, Vector3(100.0 + 150.0 * Index, 60.0 + 10.0 * Index, 40.0 * (Index % 3)),
+                                                Vector3(0.0, 25.0 * Index, 0.0), Vector3(60.0, 80.0 + 20.0 * Index, 50.0));
+            Box.AddComponent(BoxMesh);
+            Box.SetMobility(GameCore::EMobility::Static);
+            Boxes.push_back(Box);
+        }
+        DirectionalLightComponent SunInit;
+        SunInit.ShadowTechnique = LST_Standard;
+        SunInit.ShadowDistance  = 3000.0f;
+        GameCore::Entity Sun = World.CreateEntity("Sun");
+        GameCore::TransformComponent SunAt;
+        SunAt.Rotation = Vector3(55.0, 90.0, 0.0);
+        Sun.AddComponent(SunAt);
+        Sun.AddComponent(SunInit);
+        Placed("Sky", Vector3(), Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(SkyLightComponent());
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](EngineCore::Image& OutPixels)
+        {
+            for(int Each = 0; Each < 3; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            const uint64_t Request = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto Differing = [](const EngineCore::Image& InA, const EngineCore::Image& InB)
+        {
+            int Count = 0;
+            for(int Y = 0; Y < 256; ++Y)
+            {
+                const uint8_t* A = InA.GetData() + InA.GetStride() * Y;
+                const uint8_t* B = InB.GetData() + InB.GetStride() * Y;
+                for(int X = 0; X < 256 * 4; X += 4)
+                {
+                    Count += (A[X] != B[X] || A[X + 1] != B[X + 1] || A[X + 2] != B[X + 2]) ? 1 : 0;
+                }
+            }
+            return Count;
+        };
+
+        const bool bWasOn = Auto->GetBool();
+        EngineCore::Image Separate, Instanced, OneOut;
+        Auto->SetBool(false);
+        const bool bSeparate = Capture(Separate);
+        RenderStats Off;
+        Rend.GetStats(Off);
+        Auto->SetBool(true);
+        const bool bInstanced = Capture(Instanced);
+        RenderStats On;
+        Rend.GetStats(On);
+        std::printf("    static proxies drawn: %llu off, %llu on; %d pixels differ\n", (unsigned long long)Off.StaticProxiesDrawn,
+                    (unsigned long long)On.StaticProxiesDrawn, bSeparate && bInstanced ? Differing(Separate, Instanced) : -1);
+        Expect(bSeparate && Off.StaticProxiesDrawn == 7, "off, the floor and six boxes draw one by one");
+        Expect(bInstanced && On.StaticProxiesDrawn == 2, "on, the six boxes draw as one cluster");
+        Expect(bSeparate && bInstanced && Differing(Separate, Instanced) == 0, "and the frame is pixel for pixel the same, shadows and all");
+
+        Boxes[2].SetMobility(GameCore::EMobility::Dynamic);
+        const bool bOneOut = Capture(OneOut);
+        RenderStats Out;
+        Rend.GetStats(Out);
+        Expect(bOneOut && Out.StaticProxiesDrawn == 2 && Differing(Instanced, OneOut) == 0,
+               "a box made dynamic leaves the cluster and draws where it was");
+
+        Auto->SetBool(bWasOn);
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+}
+
+/*
+ * The shadow cache on the GPU (RENDERPIPELINE.md, "Shadow cache"): a point
+ * light over a static floor and box and a dynamic box. With [Rendering]
+ * ShadowCache on, every frame is pixel for pixel the one drawn with it off --
+ * after the dynamic box moves through the light, the static box is moved by a
+ * tool, hidden, or the light's colour changes or it is switched off and on --
+ * and only the first, the tool's move and the hide fill the cache again.
+ */
+static void TestShadowCacheOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[shadow cache on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[shadow cache on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    ConfigVar* Cache = ConfigFindVarByPath("Rendering.ShadowCache");
+    Expect(Cache != nullptr, "[Rendering] ShadowCache is a config var");
+
+    Renderer Rend;
+    const bool bInit = Cache && Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = RenderView::MakePerspective(Viewport, Vector3(0.0, 700.0, -600.0), Vector3(0.0, -700.0, 600.0),
+                                                            50.0f, 10.0f, 5000.0f);
+        Rend.SetViewOverride(&View);
+        GameCore::World World;
+        Rend.BindWorld(World);
+        const auto Placed = [&World](const char* InName, const Vector3& InPosition, const Vector3& InScale)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InPosition;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            return Each;
+        };
+        const auto Mesh = [](const char* InPath)
+        {
+            RenderComponent Render;
+            std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", InPath);
+            return Render;
+        };
+        const GameCore::Entity Floor = Placed("Floor", Vector3(), Vector3(3000.0, 1.0, 3000.0));
+        Floor.AddComponent(Mesh("Engine/Content/Meshes/Plane.nmmesh"));
+        const GameCore::Entity Box = Placed("StaticBox", Vector3(-150.0, 90.0, 0.0), Vector3(120.0, 120.0, 120.0));
+        Box.AddComponent(Mesh("Engine/Content/Meshes/Box.nmmesh"));
+        const GameCore::Entity Mover = Placed("DynamicBox", Vector3(150.0, 60.0, -100.0), Vector3(80.0, 80.0, 80.0));
+        Mover.AddComponent(Mesh("Engine/Content/Meshes/Box.nmmesh"));
+        Placed("Sky", Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(SkyLightComponent());
+        PointLightComponent PointInit;
+        PointInit.Intensity    = 30.0f;
+        PointInit.Radius       = 1500.0f;
+        PointInit.bCastShadows = 1;
+        const GameCore::Entity Point = Placed("Point", Vector3(0.0, 450.0, -60.0), Vector3(1.0, 1.0, 1.0));
+        Point.AddComponent(PointInit);
+        /* A cascaded sun too, dim, so its cascades go through the sun cache ([Rendering] SunShadowCache). */
+        DirectionalLightComponent SunInit;
+        SunInit.ShadowTechnique = LST_Cascaded;
+        SunInit.ShadowDistance  = 3000.0f;
+        SunInit.Intensity       = 0.8f;
+        const GameCore::Entity Sun = World.CreateEntity("Sun");
+        GameCore::TransformComponent SunAt;
+        SunAt.Rotation = Vector3(55.0, 60.0, 0.0);
+        Sun.AddComponent(SunAt);
+        Sun.AddComponent(SunInit);
+        Floor.SetMobility(GameCore::EMobility::Static);
+        Box.SetMobility(GameCore::EMobility::Static);
+
+        uint64_t Frame = 1;
+        uint32_t Filled = 0;
+        const auto Capture = [&](EngineCore::Image& OutPixels)
+        {
+            Filled = 0;
+            RenderStats Stats;
+            for(int Each = 0; Each < 4; ++Each)
+            {
+                Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+                Rend.WaitForPreviousFrame();
+                Rend.GetStats(Stats);
+                Filled += Stats.ShadowCacheFilled;
+            }
+            const uint64_t Request = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 2; ++Each)
+            {
+                Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+                Rend.WaitForPreviousFrame();
+                Rend.GetStats(Stats);
+                Filled += Stats.ShadowCacheFilled;
+            }
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto Differing = [](const EngineCore::Image& InA, const EngineCore::Image& InB)
+        {
+            int Count = 0;
+            for(int Y = 0; Y < 256; ++Y)
+            {
+                const uint8_t* A = InA.GetData() + InA.GetStride() * Y;
+                const uint8_t* B = InB.GetData() + InB.GetStride() * Y;
+                for(int X = 0; X < 256 * 4; X += 4)
+                {
+                    Count += (A[X] != B[X] || A[X + 1] != B[X + 1] || A[X + 2] != B[X + 2]) ? 1 : 0;
+                }
+            }
+            return Count;
+        };
+        /* InName's frame with the cache on (how many lights it filled meanwhile) against it off. */
+        const auto Check = [&](const char* InName, uint32_t& OutFilled)
+        {
+            EngineCore::Image On, Off;
+            Cache->SetFromString("true");
+            const bool bOn = Capture(On);
+            OutFilled = Filled;
+            RenderStats Stats;
+            Rend.GetStats(Stats);
+            const uint32_t Lights   = Stats.ShadowCacheLights;
+            const uint32_t Cascades = Stats.ShadowCacheSunCascades;
+            Cache->SetFromString("false");
+            const bool bOff = Capture(Off);
+            Cache->SetFromString("true");
+            const int Changed = bOn && bOff ? Differing(On, Off) : -1;
+            std::printf("    %s: %d pixels differ from the cache off; %u light(s) and %u cascade(s) cached, %u light fill(s)\n", InName, Changed,
+                        Lights, Cascades, OutFilled);
+            Expect(bOn && bOff && Lights == 1, (std::string(InName) + ": the point light draws from the cache").c_str());
+            Expect(Cascades >= 1, (std::string(InName) + ": and the sun's cascades").c_str());
+            Expect(Changed == 0, (std::string(InName) + ": pixel for pixel the frame without the cache").c_str());
+            return On;
+        };
+
+        uint32_t Fills = 0;
+        const EngineCore::Image First = Check("first", Fills);
+        Expect(Fills >= 1, "the first frames fill the cache");
+
+        /* Off drops the cache, so after each Check the first frames on fill it again (Prime). */
+        EngineCore::Image Steady;
+        const auto Prime = [&]()
+        {
+            Cache->SetFromString("true");
+            Capture(Steady);
+            Capture(Steady);
+        };
+        Prime();
+        Expect(Filled == 0, "a still scene draws from the cache without filling it");
+
+        Mover.GetComponent<GameCore::TransformComponent>()->Position = Vector3(-20.0, 60.0, -150.0);
+        EngineCore::Image MovedOn;
+        Capture(MovedOn);
+        Expect(Filled == 0, "a dynamic caster moving through the light fills nothing");
+        Expect(Differing(Steady, MovedOn) > 100, "and its shadow moves");
+        Check("dynamic box moved", Fills);
+
+        Prime();
+        Box.GetComponent<GameCore::TransformComponent>()->Position = Vector3(-250.0, 90.0, 100.0);
+        Capture(MovedOn);
+        Expect(Filled >= 1, "a static caster moved by a tool fills the light again");
+        Check("static box moved", Fills);
+
+        Prime();
+        Box.GetComponent<RenderComponent>()->bVisible = 0;
+        Capture(MovedOn);
+        Expect(Filled >= 1, "a static caster hidden fills the light again");
+        Check("static box hidden", Fills);
+        Box.GetComponent<RenderComponent>()->bVisible = 1;
+
+        Prime();
+        Point.GetComponent<PointLightComponent>()->Color = EngineCore::Color(255, 120, 60);
+        Capture(MovedOn);
+        Expect(Filled == 0, "the light's colour changed fills nothing");
+        Point.GetComponent<PointLightComponent>()->bActive = 0;
+        Capture(MovedOn);
+        Point.GetComponent<PointLightComponent>()->bActive = 1;
+        Capture(MovedOn);
+        Expect(Filled == 0, "nor the light switched off and on");
+        Check("light recoloured, off and on", Fills);
+
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    if(Cache) { Cache->ResetToDefault(); }
+    SetFileProvider(PreviousProvider);
+}
+
+/*
  * The background gradient (Renderer::SetClearGradient): top colour at the top
  * of the view, bottom at the bottom, under what is drawn; SetClearColor back
  * to one colour.
@@ -6747,6 +7074,99 @@ static void TestPostProcessStack()
  * ShadowSetup.h: where each shadow map looks from, and its atlas tile. Pure
  * math -- no GPU.
  */
+/* The capture budget (GLOBAL_ILLUMINATION.md, "Capture budget"): the shared capture shadow
+ * maps' views, the budget's controller, convergence and the lighting signature. */
+static void TestCaptureScheduler()
+{
+    std::printf("[capture scheduler]\n");
+    using EngineCore::Vector3;
+
+    /* The capture shadow maps: one sun view over the whole atlas holding the region, no cascade split
+     * any view depth reaches; local lights only where they reach the region. */
+    RenderLighting Lighting;
+    Lighting.LightDirection    = Vector3(0.3, -1.0, 0.2);
+    Lighting.bLightCastShadows = 1;
+    Lighting.LightShadowTechnique = LST_Cascaded;
+    Lighting.LightCascadeCount = 4;
+    Lighting.Shadows.bEnabled   = 1;
+    Lighting.Shadows.Resolution = 2048;
+    RenderLocalLight Near;
+    Near.Type = RLL_Point; Near.Position = Vector3(100.0, 50.0, 0.0); Near.Range = 400.0f; Near.bCastShadows = 1;
+    RenderLocalLight Far = Near;
+    Far.Position = Vector3(20000.0, 0.0, 0.0);
+    Lighting.Locals[0] = Far; Lighting.Locals[1] = Near;
+    Lighting.LocalCount = 2;
+    const GameCore::AABB Region(Vector3(-1000.0, -200.0, -1000.0), Vector3(1000.0, 400.0, 1000.0));
+    ShadowFrame Frame;
+    BuildCaptureShadowFrame(Lighting, Region, Frame);
+    Expect(Frame.CascadeCount == 1 && Frame.DirectionalFirstView == 0 && Frame.Views[0].TileSize == 2048
+               && Frame.CascadeSplits[0] > 1.0e20f, "a capture's sun is one view over the whole atlas, its split out of reach");
+    Expect(Frame.LocalFirstView[0] == -1 && Frame.LocalFirstView[1] == 1 && Frame.ViewCount == 1 + SHADOW_POINT_FACES,
+           "only the local light reaching the region gets capture shadow views");
+    bool bHolds = true;
+    for(int Corner = 0; Corner < 8; ++Corner)
+    {
+        const Vector3 Point((Corner & 1) ? Region.Max.GetX() : Region.Min.GetX(), (Corner & 2) ? Region.Max.GetY() : Region.Min.GetY(),
+                            (Corner & 4) ? Region.Max.GetZ() : Region.Min.GetZ());
+        const EngineCore::Vector4 Clip = Frame.Views[0].WorldToAtlas * EngineCore::Vector4(Point.GetX(), Point.GetY(), Point.GetZ(), 1.0);
+        const double U = Clip.GetX() / Clip.GetW(), V = Clip.GetY() / Clip.GetW(), D = Clip.GetZ() / Clip.GetW();
+        bHolds = bHolds && U >= 0.0 && U <= 1.0 && V >= 0.0 && V <= 1.0 && D > 0.0 && D < 1.0;
+    }
+    Expect(bHolds, "the capture sun view holds every corner of the region");
+    ShadowFrame None;
+    Lighting.Shadows.bEnabled = 0;
+    BuildCaptureShadowFrame(Lighting, Region, None);
+    Expect(None.ViewCount == 0 && None.AtlasSize == 0, "no capture shadow views while [Shadows] is off");
+    Lighting.Shadows.bEnabled = 1;
+
+    /* The budget: a unit's cost learned from the span of the frame that spent them, matched by
+     * serial; the allowance then fills the budget; never below one face. */
+    Expect(std::abs(CaptureFaceUnits(16) - 1.0039f) < 1e-3f && std::abs(CaptureFaceUnits(256) - 2.0f) < 1e-3f, "face units: 1 + pixels / 65536");
+    CaptureBudget Budget;
+    Expect(std::abs(Budget.GetAllowance(2.0f) - 2.0f / CaptureBudget::DEFAULT_UNIT_MS) < 1e-3f, "unmeasured, a unit is taken at the default cost");
+    Budget.Record(10, 20.0f);
+    Budget.Record(11, 0.0f);
+    Budget.Measured(9, 50.0f);    // a frame it never recorded
+    Budget.Measured(11, 50.0f);   // one that spent nothing
+    Expect(!Budget.HasMeasured(), "a span is learned from only for a recorded frame that spent units");
+    Budget.Measured(10, 4.0f);
+    Expect(Budget.HasMeasured() && std::abs(Budget.GetUnitMs() - 0.2f) < 1e-4f, "the first measured frame sets a unit's cost");
+    Expect(std::abs(Budget.GetAllowance(2.0f) - 10.0f) < 1e-3f, "the allowance is the budget over a unit's cost");
+    Budget.Measured(10, 40.0f);
+    Expect(std::abs(Budget.GetUnitMs() - 0.2f) < 1e-4f, "a frame's span is learned from once");
+    Budget.Record(12, 10.0f);
+    Budget.Measured(12, 4.0f);   // 0.4 a unit: a quarter of the way there
+    Expect(std::abs(Budget.GetUnitMs() - 0.25f) < 1e-4f, "later frames are smoothed in");
+    Expect(Budget.GetAllowance(0.01f) == 1.0f, "never under one face");
+    Budget.MeasuredCpu(4.0f, 4.0f);
+    Expect(std::abs(Budget.GetAllowance(2.0f) - 2.0f) < 1e-3f, "a dearer render thread sets the allowance");
+
+    /* Convergence: rounds of updates since the signature last changed. */
+    CaptureConvergence Converge;
+    Expect(Converge.Observe(7) && !Converge.IsConverged(10, 2), "the first signature is a change");
+    Converge.Updated(19);
+    Expect(!Converge.Observe(7) && !Converge.IsConverged(10, 2), "19 updates are not two rounds of 10");
+    Converge.Updated();
+    Expect(Converge.IsConverged(10, 2), "two rounds in: converged");
+    Expect(Converge.Observe(8) && !Converge.IsConverged(10, 2), "a new signature starts the rounds over");
+
+    /* The lighting's signature: the sun in whole steps, local lights in any order. */
+    Lighting.LightDirection = Vector3(std::cos(0.30), -0.5, std::sin(0.30));
+    const uint64_t Base = CaptureLightingSignature(Lighting, 1.0f);
+    RenderLighting Nudged = Lighting;
+    Nudged.LightDirection = Vector3(std::cos(0.3001), -0.5, std::sin(0.3001));   // well under a degree
+    RenderLighting Moved = Lighting;
+    Moved.LightDirection = Vector3(std::cos(0.36), -0.5, std::sin(0.36));        // over three degrees
+    RenderLighting Swapped = Lighting;
+    Swapped.Locals[0] = Lighting.Locals[1]; Swapped.Locals[1] = Lighting.Locals[0];
+    RenderLighting Brighter = Lighting;
+    Brighter.Locals[1].Intensity *= 2.0f;
+    Expect(CaptureLightingSignature(Nudged, 1.0f) == Base, "a sun moving under a step changes nothing");
+    Expect(CaptureLightingSignature(Moved, 1.0f) != Base, "a sun moving several steps changes the signature");
+    Expect(CaptureLightingSignature(Swapped, 1.0f) == Base, "the local lights' order does not count");
+    Expect(CaptureLightingSignature(Brighter, 1.0f) != Base, "a local light turned up changes the signature");
+}
+
 static void TestShadowSetup()
 {
     std::printf("[shadow setup]\n");
@@ -7610,6 +8030,7 @@ int main()
     TestStatUnit();
     TestStaticDrawLists();
     TestShadowSetup();
+    TestCaptureScheduler();
     TestLightComponents();
     TestParticleSystem();
     TestParticleSystemAsset();
@@ -7630,6 +8051,8 @@ int main()
     TestParticlesOnGpu();
     TestStatFrameOnGpu();
     TestStaticDrawListsOnGpu();
+    TestAutoInstancingOnGpu();
+    TestShadowCacheOnGpu();
     TestOcclusionCulling();
     TestOcclusionCullingOnGpu();
     TestClearGradientOnGpu();

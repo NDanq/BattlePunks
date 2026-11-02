@@ -2,12 +2,44 @@
 rem A new game from Engine\Templates\Game, without the editor (NewProject.cmake).
 rem
 rem     Engine\Binaries\NewProject.bat <Name> [<folder>]
+rem     Engine\Binaries\NewProject.bat --example <Example> [--build [--jobs <N>]] [<Name> [<folder>]]
 rem
-rem <folder> defaults to Games\ beside Engine\. Needs cmake on PATH (or %CMAKE%).
+rem <folder> defaults to Games\ beside Engine\. --example unpacks an example
+rem project from Engine\Examples instead (its own name unless <Name> is given);
+rem --build then configures, builds and cooks it, --jobs capping the build's jobs. Needs cmake on PATH (or %CMAKE%).
 setlocal
+rem Before the options: shift moves %0 too, so %~dp0 is gone after them.
+set "HERE=%~dp0"
 
-if "%~1"=="" (
+set "EXAMPLE="
+set "BUILD=OFF"
+set "JOBS="
+:options
+if /i "%~1"=="--example" (
+    if "%~2"=="" (
+        echo %~nx0: --example needs a name 1>&2
+        exit /b 2
+    )
+    set "EXAMPLE=%~2"
+    shift
+    shift
+    goto options
+)
+if /i "%~1"=="--jobs" (
+    set "JOBS=%~2"
+    shift
+    shift
+    goto options
+)
+if /i "%~1"=="--build" (
+    set "BUILD=ON"
+    shift
+    goto options
+)
+
+if not defined EXAMPLE if "%~1"=="" (
     echo Usage: %~nx0 ^<Name^> [^<folder^>] 1>&2
+    echo        %~nx0 --example ^<Example^> [--build [--jobs ^<N^>]] [^<Name^> [^<folder^>]] 1>&2
     exit /b 2
 )
 
@@ -17,5 +49,5 @@ where "%CMAKE%" >nul 2>nul || if not exist "%CMAKE%" (
     exit /b 1
 )
 
-"%CMAKE%" "-DNAME=%~1" "-DLOCATION=%~2" -P "%~dp0NewProject.cmake"
+"%CMAKE%" "-DNAME=%~1" "-DLOCATION=%~2" "-DEXAMPLE=%EXAMPLE%" "-DBUILD=%BUILD%" "-DJOBS=%JOBS%" -P "%HERE%NewProject.cmake"
 exit /b %ERRORLEVEL%

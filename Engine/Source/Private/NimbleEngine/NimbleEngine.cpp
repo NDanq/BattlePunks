@@ -14,6 +14,7 @@
 #include "Public/NimbleEngine/AudioFacade.h"
 #include "Public/NimbleEngine/GameModule.h"
 #include "Public/NimbleEngine/Level.h"
+#include "Public/NimbleEngine/Plugin.h"
 #include "Public/NimbleEngine/ShaderCook.h"
 
 
@@ -49,8 +50,22 @@ extern "C" __declspec(dllimport) unsigned int __stdcall timeEndPeriod(unsigned i
 extern "C" __declspec(dllimport) int __stdcall SetConsoleCtrlHandler(int (__stdcall* InHandler)(unsigned long), int bInAdd);
 #endif
 
-NIMBLE_CONFIG_INT(GResolutionX, "Display", "ResolutionX", 1280, nullptr);
-NIMBLE_CONFIG_INT(GResolutionY, "Display", "ResolutionY", 720, nullptr);
+/* A set of the window's size or mode -- a game's Display settings, the console
+ * -- from any thread; the game loop applies it at its next frame
+ * (ApplyDisplaySettings), on the thread that pumps the window. */
+namespace
+{
+    std::atomic<bool> GDisplayChanged{false};
+    void OnDisplayChanged(const EngineCore::ConfigVar&) { GDisplayChanged.store(true); }
+}
+
+/* The window's size in windowed mode. Applies live. */
+NIMBLE_CONFIG_INT(GResolutionX, "Display", "ResolutionX", 1280, &OnDisplayChanged);
+NIMBLE_CONFIG_INT(GResolutionY, "Display", "ResolutionY", 720, &OnDisplayChanged);
+/* 0 a window, 1 borderless fullscreen at the desktop's mode, 2 fullscreen
+ * (GameWindow's exclusive mode; for now the same as 1 on every platform).
+ * Applies live. */
+NIMBLE_CONFIG_INT(GWindowMode, "Display", "WindowMode", 0, &OnDisplayChanged);
 NIMBLE_CONFIG_STRING(GTitle,    "Application", "Title", "NimbleEngine", nullptr);
 
 /* RenderCore::ERenderBackend::Null draws nothing and needs no GPU, which
@@ -96,6 +111,17 @@ using namespace EngineCore;
 
 namespace
 {
+    /* [Display] WindowMode as the window's mode. */
+    EWindowMode WindowModeFromConfig()
+    {
+        switch(GWindowMode.GetInt())
+        {
+            case 1:  return WM_FullscreenDesktop;
+            case 2:  return WM_FullscreenExclusive;
+            default: return WM_Windowed;
+        }
+    }
+
     /*
      * Raises the OS timer resolution, lazily, so an unlimited run never pays
      * for it. Lowered again when this leaves scope.
@@ -461,6 +487,12 @@ namespace NimbleEngine
         /* Run uncooked: the project's raw files over everything, config included. */
         const std::string UncookedRoot = MountUncookedProject();
 
+        /* Plugins (Plugin.h): each one's Config/Default<Name>.ini before the
+         * project's file, which then wins, and its content as "<Name>:/..."
+         * only. Read from each plugin's source folder when running uncooked. */
+        const int PluginCount = Plugins::Discover(ExecutableDir, !UncookedRoot.empty());
+        Plugins::MountContent(LayeredAssets);
+
         ConfigLoadStats Stats;
         const bool bConfigLoaded = LoadConfigFile("Config/DefaultEngine.ini", &Stats);
 
@@ -494,6 +526,15 @@ namespace NimbleEngine
             if(!CookedShaders.empty())
             {
                 CORE_LOG("Shaders from " + CookedShaders + " (NimbleCook's), over the staged ones")
+            }
+            if(PluginCount > 0)
+            {
+                std::string Names;
+                for(size_t Index = 0; Index < Plugins::GetCount(); ++Index)
+                {
+                    Names += (Index ? ", " : "") + Plugins::GetNameAt(Index);
+                }
+                CORE_LOG("Plugins: " + Names)
             }
         }
         if(!bConfigLoaded)
@@ -531,8 +572,14 @@ namespace NimbleEngine
             }
         }
 
-        /* [Modules] edited since this build was configured (GameSession.h). */
+        /* After every config layer, so their vars register onto the final
+         * values; before the game module, which may link them. */
+        Plugins::LoadModules();
+
+        /* [Modules] and [Plugins] edited since this build was configured
+         * (GameSession.h, Plugin.h). */
         WarnModuleConfigMismatch();
+        Plugins::WarnConfigMismatch();
 
         if(Desc.bHeadless)
         {
@@ -548,6 +595,7 @@ namespace NimbleEngine
             WinDesc.Height = GResolutionY.GetInt();
             WinDesc.Title = GTitle.GetString();
             WinDesc.Flags = WF_Resizable | WF_HighDPI;
+            WinDesc.Mode = WindowModeFromConfig();
 
             Window = GameWindowSystem::CreateGameWindow(WinDesc);
             if(!Window)
@@ -591,6 +639,8 @@ namespace NimbleEngine
             CORE_LOG_ERROR("Failed to initialize RenderCore")
             return false;
         }
+        /* The plugins' own shaders (their custom passes and materials). */
+        Plugins::MountShaderCaches(*Rendering);
 
         /* -record: the game as a video, from the first frame (or [Record] StartSeconds in). */
         if(!Desc.bHeadless)
@@ -637,6 +687,26 @@ namespace NimbleEngine
     {
         CORE_CHECK(Session != nullptr, "Application::GetSession() called outside Exec")
         return *Session;
+    }
+
+    /* [Display] WindowMode, ResolutionX and ResolutionY onto the window (the
+     * size only while windowed). On the pump thread. */
+    static void ApplyDisplaySettings(GameWindow* Window)
+    {
+        if(!Window) { return; }
+        const EWindowMode Mode = WindowModeFromConfig();
+        if(Window->GetWindowMode() != Mode) { Window->SetWindowMode(Mode); }
+        if(Mode == WM_Windowed)
+        {
+            const int Width = std::max(320, int(GResolutionX.GetInt()));
+            const int Height = std::max(200, int(GResolutionY.GetInt()));
+            const Size Now = Window->GetLogicalSize();
+            if(Now.Width != Width || Now.Height != Height)
+            {
+                Window->SetSize(Width, Height);
+                Window->Center();
+            }
+        }
     }
 
     void Application::SetFrameRateLimit(uint32_t InFramesPerSecond)
@@ -718,6 +788,9 @@ namespace NimbleEngine
 
             /* What arrived in the pump becomes this frame's input. */
             Router->Latch(FrameNumber);
+
+            /* [Display] WindowMode / Resolution set since the last frame. */
+            if(GDisplayChanged.exchange(false)) { ApplyDisplaySettings(Window); }
         }
 
         /* Connections, spawns, state and RPCs, before the World sees the frame. */
@@ -906,9 +979,15 @@ namespace NimbleEngine
         /* After the level (its code), before the engine (OnShutdown may log). */
         Game.Unload();
 
+        /* After the game module, which may link them; their libraries stay
+         * open until the engine is done with what they registered. */
+        Plugins::ShutdownModules();
+
         /* Unconditional -- null-safe and idempotent, so a failed Initialize()
          * still shuts SDL down. */
         Shutdown();
+        Plugins::UnmountContent(LayeredAssets);
+        Plugins::Close();
         CloseRunLog();
     }
 
@@ -951,6 +1030,7 @@ namespace NimbleEngine
         }
         if(Rendering)
         {
+            Plugins::UnmountShaderCaches(*Rendering);
             Rendering->Shutdown();
             EngineCore::Memory::Dealloc(Rendering);
             Rendering = nullptr;

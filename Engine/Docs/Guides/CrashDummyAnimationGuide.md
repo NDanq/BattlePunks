@@ -5,7 +5,7 @@ with the arms in step with the legs. This guide follows the engine's CrashDummy
 (`Engine/Content/Characters/CrashDummy`) and drives it three ways: C++, Lua and
 a ScriptGraph.
 
-**74** bones · **14** clips · **2** layers · **5** parameters · **2** notifies · **1** sync group · **1** look-at
+**74** bones · **19** clips · **4** layers · **9** parameters · **2** notifies · **1** sync group · **1** look-at
 
 Reference: [ANIMATION.md](../../Modules/RenderCore/ANIMATION.md) (the animation
 system), [Editor README](../../Modules/Editor/README.md) (the tools).
@@ -73,8 +73,17 @@ ancestor: thighs under `DEF-spine`, shoulders under `DEF-spine.003`.
 Name full-body clips `FB_` and upper-body clips `UB_`. Upper-body clips should
 key only the spine from the masked bone up, plus the arms. The engine bakes
 every bone anyway, but a clean split makes the mask boundary obvious. Give
-cyclic clips that blend together the same length (walk 32 frames on both
-layers, run 24) so their steps line up.
+cyclic clips that blend together the same length (walk 30 frames on both
+layers, run 24) so their steps line up, and end a cyclic clip's range on the
+frame that repeats its first: the export then closes the loop instead of
+skipping a frame as it wraps.
+
+The walk, armed walk, recoil and hit reactions are generated rather than keyed by hand:
+`Source/make_crashdummy_clips.py` (run in Blender on the source `.blend`) plants
+each foot for 58% of the cycle -- heel strike, flat, off the ball -- solves the
+FK legs onto it, and lays a bob, sway, hip roll, counter-twist and trailing
+arms over the body. Change its constants and re-export rather than editing
+the keys.
 
 ### Record prop offsets as constraints
 
@@ -120,6 +129,8 @@ picked state's form; Locomotion is a 1D blend space on Speed in sync group
 |---|---|---|
 | **FullBody** (every bone) | Locomotion: blend on Speed, Idle 0 · Walk 150 · Run 400, sync `Locomotion`; JumpStart (once) · Fall (loop) · Land (once) | Locomotion → JumpStart when `Jump` triggered; JumpStart → Fall at end; Locomotion → Fall when not `Grounded`; Fall → Land when `Grounded`; Land → Locomotion at end |
 | **UpperBody** (mask `DEF-spine.002`, weight × `Grounded`) | Unarmed: blend on Speed (UB_Idle/Walk/Run), sync `Locomotion`; Equip (once, holds) · Armed: blend (UB_*_Armed), sync `Locomotion` · Holster (once) | Unarmed → Equip when `Armed`; Equip → Armed at end; Armed or Equip → Holster when not `Armed`; Holster → Unarmed at end |
+| **Recoil** (additive, mask `DEF-spine.002`) | Rest (no clip: adds nothing) · Fire · Fire2: `UB_Fire` once, from its first frame | Rest → Fire when `Fire` triggered; Fire ⇄ Fire2 when `Fire` triggered (a shot mid-kick starts it again); Fire, Fire2 → Rest at end |
+| **HitReact** (additive, mask `DEF-spine.001`, weight × `HitWeight`) | Rest · Front/Front2 · Back/Back2 · Left/Left2 · Right/Right2: `UB_Hit_*` once, from its first frame | Any → the direction's state when `Hit` triggered and `HitDir` equals it (a hit mid-reaction goes to the other of the pair); each → Rest at end |
 
 ### Why the sync group matters
 
@@ -588,6 +599,10 @@ end,
 | `Jump` | trigger | 0 | take off; spent by the transition | `SetTrigger` | `animation:SetTrigger` | Animation: Set Trigger |
 | `Armed` | bool | 0 | draw (true) or holster (false) | `SetBool` | `animation:SetBool` | Animation: Set Bool |
 | `AimPitch` | float | 0 | the look-at's angle, degrees, up positive (clamped -40..55) | `SetFloat` | `animation:SetFloat` | Animation: Set Float |
+| `Fire` | trigger | 0 | a shot: the Recoil layer kicks the gun hand and chest | `SetTrigger` | `animation:SetTrigger` | Animation: Set Trigger |
+| `Hit` | trigger | 0 | a hit taken: the HitReact layer jolts the upper body; set `HitDir` and `HitWeight` first | `SetTrigger` | `animation:SetTrigger` | Animation: Set Trigger |
+| `HitDir` | float | 0 | where the hit came from: 0 front, 1 back, 2 left, 3 right | `SetFloat` | `animation:SetFloat` | Animation: Set Float |
+| `HitWeight` | float | 1 | how hard: scales the HitReact layer (0..1) | `SetFloat` | `animation:SetFloat` | Animation: Set Float |
 
 ### Events
 

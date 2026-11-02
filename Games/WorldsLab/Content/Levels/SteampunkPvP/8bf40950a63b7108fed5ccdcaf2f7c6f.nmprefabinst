@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Instance Guid="8bf40950a63b7108fed5ccdcaf2f7c6f" Name="SteamVent_2" Prefab="Content/Prefabs/Steampunk/SteamVent.nmprefab">
-  <Entity Id="1">
-    <Component Type="Transform" Version="1">
-      <Position X="-2100" Y="0" Z="-1645" />
-      <Rotation X="0" Y="0" Z="0" />
-    </Component>
-  </Entity>
-</Instance>

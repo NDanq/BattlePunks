@@ -9,8 +9,8 @@ hill, moss on top of a boulder. Two components do it:
 | **Spline** | GameCore `Components/SplineComponent.h`, curve math `Spline.h` | A curve through up to 64 points in its entity's space; open or closed, Catmull-Rom or linear, with a Width. Drawn and edited in the editor; sampled by games. |
 | **Procedural Spawner** | RenderCore `Components/ProceduralSpawnerComponent.h` | Rules: where candidate points come from, what they are dropped onto, which survive, what each becomes. Its instances are made from the rules, never saved, and drawn as instanced meshes. |
 
-`Engine/Docs/Guides/ProceduralGuide.md` is the walkthrough (the Meadow
-level, with pictures). This page is the reference.
+`Engine/Docs/Guides/ProceduralGuide.md` is the walkthrough (Demo Lab's L1
+Foothills, with pictures). This page is the reference.
 
 ```
  game thread, once a frame (WorldBridge)                  worker thread
@@ -62,7 +62,7 @@ local length = road:GetLength()
 local x, y, z = road:GetLocationAtDistance(length * 0.5)     -- a Vector3 is three numbers
 local dx, dy, dz = road:GetDirectionAtDistance(length * 0.5) -- unit length
 local along = road:FindDistanceClosestTo(px, py, pz)         -- distance along the curve
-local inside = World.FindEntity("Meadow"):GetComponent("Spline"):IsInside(px, py, pz)   -- closed splines
+local inside = World.FindEntity("Foliage_Meadow"):GetComponent("Spline"):IsInside(px, py, pz)   -- closed splines
 ```
 
 ## The spawner's rules
@@ -169,8 +169,8 @@ of a generation's inputs (`std::allocate_shared` with the same allocator).
 So it shows in Core's pool stats and leak report; `pcg stats` and each
 spawner's first log line print its size. The generator's scratch
 (candidates, the mesh grid) is freed before it returns and stays on the
-plain heap. The Meadow level holds 3.65 MB there: its ~47,000 instances at
-80 bytes each.
+plain heap. A meadow of ~47,000 instances holds 3.65 MB there, 80 bytes
+each (measured on WorldsLab's former Meadow level).
 
 The handle is a `std::shared_ptr`, **not a `TRef`**. A result is shared by
 the worker that builds it, the game thread that publishes it and the render
@@ -236,13 +236,24 @@ Console, for scripts and tests (points in world space):
 
 ## Numbers
 
-Linux, Vulkan, RelWithDebInfo, the WorldsLab Meadow level (257² terrain,
-`Games/WorldsLab/Tools/Procedural/make_meadow_level.py`):
+Linux, Vulkan, RelWithDebInfo editor (2026-11-01), Intel Arc B390, Demo Lab's
+L1 Foothills (`Games/DemoLab/Tools/Levels/dress_l1.py`; the spawners at the
+Foliage density setting's default, 1): the generation time each spawner logs
+(`[RenderCore] Procedural Spawner '...'`), on its worker thread, at load. Two
+launches; where they differ, both are given.
 
-| Spawner | Instances | Generation (worker thread) |
-|---|---|---|
-| Meadow (Spline Area, 55-unit grass, terrain + layer + noise + exclusion) | 45,700 from 70,800 points | 57 ms |
-| Woods, Rocks, Road lamps, Boulder moss | 30 – 600 each | under 1 ms each |
+| Spawner | Source and filters | Instances | Generation |
+|---|---|---|---|
+| Foliage_Meadow | Spline Area, terrain layer, noise, exclusions (grass) | 7,944 from 14,700 points | 69.5 / 71.2 ms |
+| Foliage_Flowers | Spline Area, terrain layer, noise, exclusions | 1,153 from 4,371 points | 7.8 / 8.5 ms |
+| Foliage_FarWoods | Box, slope and height, noise, exclusions | 242 from 457 points | 1.3 ms |
+| Foliage_Highland | Box, slope and height, noise | 204 from 419 points | 0.6 / 0.8 ms |
+| Foliage_Forest | Box, slope and height, noise, exclusions | 108 from 160 points | 0.5 ms |
+| Foliage_Scree | Box, terrain layer, slope | 119 from 749 points | 0.6 / 0.7 ms |
+| Road, Road_Rails, Road_Fence | the road Spline (Path) | 9 to 56 each | 0.2 / 0.3 ms |
+| Plaza_Paving | a small Box grid | 32 | under 0.1 ms |
+
+The procedural pool held 0.77-0.81 MB with all of them in.
 
 ## Files
 

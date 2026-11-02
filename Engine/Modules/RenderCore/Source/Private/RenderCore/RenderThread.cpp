@@ -1,6 +1,7 @@
 #include "Public/RenderCore/RenderThread.h"
 #include "Public/RenderCore/ParallelRecording.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -433,6 +434,9 @@ namespace RenderCore
         OutStats.ParallelPasses              = P->Context.GetParallelPassCount();
         GetStaticDrawStats(OutStats.StaticProxiesDrawn, OutStats.StaticListBuilds);
         GetOcclusionStats(OutStats.ProxiesOccludedLastFrame, OutStats.OcclusionQueriesLastFrame);
+        GetShadowCacheStats(OutStats);
+        GetCaptureStats(OutStats.GIProbesUnlit, OutStats.GIProbesTotal, OutStats.bCapturesBusy);
+        GetResolutionStats(OutStats.ResolutionScale, OutStats.bDynamicResolution, OutStats.DynamicResolutionTargetMs);
         OutStats.TextureStreaming = P->Context.GetTextureStreamingStats();
     }
 
@@ -494,6 +498,37 @@ namespace RenderCore
 
     namespace
     {
+        std::atomic<uint32_t> GShadowCacheLights{0};
+        std::atomic<uint32_t> GShadowCacheFilled{0};
+        std::atomic<uint64_t> GShadowCacheBytes{0};
+        std::atomic<uint32_t> GShadowCacheSunCascades{0};
+        std::atomic<uint32_t> GShadowCacheSunFilled{0};
+        std::atomic<uint64_t> GShadowCacheSunBytes{0};
+    }
+
+    void SetShadowCacheStats(const uint32_t InLights, const uint32_t InFilled, const uint64_t InBytes, const uint32_t InSunCascades,
+                             const uint32_t InSunFilled, const uint64_t InSunBytes)
+    {
+        GShadowCacheLights.store(InLights, std::memory_order_relaxed);
+        GShadowCacheFilled.store(InFilled, std::memory_order_relaxed);
+        GShadowCacheBytes.store(InBytes, std::memory_order_relaxed);
+        GShadowCacheSunCascades.store(InSunCascades, std::memory_order_relaxed);
+        GShadowCacheSunFilled.store(InSunFilled, std::memory_order_relaxed);
+        GShadowCacheSunBytes.store(InSunBytes, std::memory_order_relaxed);
+    }
+
+    void GetShadowCacheStats(RenderStats& OutStats)
+    {
+        OutStats.ShadowCacheLights      = GShadowCacheLights.load(std::memory_order_relaxed);
+        OutStats.ShadowCacheFilled      = GShadowCacheFilled.load(std::memory_order_relaxed);
+        OutStats.ShadowCacheBytes       = GShadowCacheBytes.load(std::memory_order_relaxed);
+        OutStats.ShadowCacheSunCascades = GShadowCacheSunCascades.load(std::memory_order_relaxed);
+        OutStats.ShadowCacheSunFilled   = GShadowCacheSunFilled.load(std::memory_order_relaxed);
+        OutStats.ShadowCacheSunBytes    = GShadowCacheSunBytes.load(std::memory_order_relaxed);
+    }
+
+    namespace
+    {
         std::atomic<uint64_t> GOccluded{0};
         std::atomic<uint64_t> GOcclusionQueries{0};
     }
@@ -508,6 +543,46 @@ namespace RenderCore
     {
         OutOccluded = GOccluded.load(std::memory_order_relaxed);
         OutQueries  = GOcclusionQueries.load(std::memory_order_relaxed);
+    }
+
+    namespace
+    {
+        std::atomic<uint64_t> GCaptureStats{0};   // unlit probes, total probes, busy: one word, read whole
+    }
+
+    void SetCaptureStats(const uint32_t InUnlit, const uint32_t InTotal, const bool bInBusy)
+    {
+        const uint64_t Packed = (uint64_t(InUnlit & 0x7fffffffu) << 32) | (uint64_t(InTotal & 0x7fffffffu) << 1) | (bInBusy ? 1u : 0u);
+        GCaptureStats.store(Packed, std::memory_order_relaxed);
+    }
+
+    void GetCaptureStats(uint32_t& OutUnlit, uint32_t& OutTotal, bool& bOutBusy)
+    {
+        const uint64_t Packed = GCaptureStats.load(std::memory_order_relaxed);
+        OutUnlit = uint32_t(Packed >> 32);
+        OutTotal = uint32_t((Packed >> 1) & 0x7fffffffu);
+        bOutBusy = (Packed & 1u) != 0;
+    }
+
+    namespace
+    {
+        /* Scale in thousandths, the target in hundredths of a ms, dynamic: one word, read whole. */
+        std::atomic<uint64_t> GResolutionStats{uint64_t(1000) << 32};
+    }
+
+    void SetResolutionStats(const float InScale, const bool bInDynamic, const float InTargetMs)
+    {
+        const uint64_t Scale  = uint64_t(std::clamp(InScale, 0.0f, 4.0f) * 1000.0f + 0.5f);
+        const uint64_t Target = uint64_t(std::clamp(InTargetMs, 0.0f, 1000.0f) * 100.0f + 0.5f);
+        GResolutionStats.store((Scale << 32) | (Target << 1) | (bInDynamic ? 1u : 0u), std::memory_order_relaxed);
+    }
+
+    void GetResolutionStats(float& OutScale, bool& bOutDynamic, float& OutTargetMs)
+    {
+        const uint64_t Packed = GResolutionStats.load(std::memory_order_relaxed);
+        OutScale    = float(Packed >> 32) / 1000.0f;
+        OutTargetMs = float((Packed >> 1) & 0x7fffffffu) / 100.0f;
+        bOutDynamic = (Packed & 1u) != 0;
     }
 
     namespace
@@ -566,6 +641,17 @@ namespace RenderCore
                       "Idle:    %7.2f ms\nFPS:     %7.1f",
                       double(InSnapshot.FrameMs), double(InSnapshot.GameThreadMs), double(InSnapshot.RenderThreadMs),
                       double(InSnapshot.WaitMs), double(InSnapshot.PresentMs), double(InSnapshot.IdleMs), double(Fps));
+        /* The resolution scale, while there is one (RENDERPIPELINE.md, "Resolution scale"). */
+        float Scale = 1.0f, TargetMs = 0.0f;
+        bool  bDynamic = false;
+        GetResolutionStats(Scale, bDynamic, TargetMs);
+        if(bDynamic || Scale < 0.999f)
+        {
+            char Line[64];
+            if(bDynamic) { std::snprintf(Line, sizeof(Line), "\nRes:     %5.1f %% (dynamic, %.1f ms)", double(Scale * 100.0f), double(TargetMs)); }
+            else         { std::snprintf(Line, sizeof(Line), "\nRes:     %5.1f %%", double(Scale * 100.0f)); }
+            return std::string(Text) + Line;
+        }
         return Text;
     }
 

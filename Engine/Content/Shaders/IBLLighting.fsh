@@ -10,10 +10,12 @@
 #include <DDGI.glsl>
 #include <ShadingModels.glsl>
 #include <IBLShading.glsl>
+#include <Wetness.glsl>
 
 UBO_BLOCK_BEGIN(2, PP_Block)
     vec4 PP_Settings;   // x: 1 if Subsurface (output 1) is bound: a Skin pixel's diffuse goes there;
-                        // y: 1 if ScreenReflections holds this frame's; z: 1 if ScreenGI does (half size)
+                        // y: 1 if ScreenReflections holds this frame's; z: 1 if ScreenGI does (half size);
+                        // w: 1 if ScreenReflections is half size too
 UBO_BLOCK_END(PP_Block)
 
 MATERIAL_SAMPLER2D(4, GBuffer0)          // rgb: Base Color; a: Ambient Occlusion, the screen's folded in
@@ -25,13 +27,13 @@ MATERIAL_SAMPLER2D(9, Atlas)
 MATERIAL_SAMPLER2D(10, ScreenReflections)   // rgb: reflected radiance; a: trust (PPScreenReflections.fsh)
 MATERIAL_SAMPLER2D(11, ScreenGI)            // rgb: bounced light; a: its rays' share that hit (PPScreenGI.fsh), half size
 
-// Screen-space GI up to full size: the four half-size texels round this pixel,
-// bilinear, each weighted by how near its surface's depth is to this pixel's,
-// so the bounce does not bleed across silhouettes.
+// A half-size target up to full size (screen-space GI; the reflections at half size): the four
+// half-size texels round this pixel, bilinear, each weighted by how near its surface's depth is to
+// this pixel's, so the light does not bleed across silhouettes.
 float ViewDepthAt(vec2 InNdc, float InDepth) { return dot(PP_WorldAt(InNdc, InDepth), Scene_CameraForward.xyz) - Scene_CameraForward.w; }
-vec4 ScreenGIAt(ivec2 InTexel, float InDepth)
+vec4 HalfSizeAt(sampler2D InHalf, ivec2 InTexel, float InDepth)
 {
-    vec2  Half   = vec2(textureSize(ScreenGI, 0));
+    vec2  Half   = Scene_DrawnSize(vec2(textureSize(InHalf, 0)));   // the drawn area (dynamic resolution)
     vec2  At     = (vec2(InTexel) + 0.5) * 0.5 - 0.5;
     ivec2 Base   = ivec2(floor(At));
     vec2  Frac   = At - vec2(Base);
@@ -47,7 +49,7 @@ vec4 ScreenGIAt(ivec2 InTexel, float InDepth)
             float There  = ViewDepthAt(Ndc, texelFetch(SceneDepth, min(Each * 2, textureSize(SceneDepth, 0) - 1), 0).r);
             float Weight = (X == 1 ? Frac.x : 1.0 - Frac.x) * (Y == 1 ? Frac.y : 1.0 - Frac.y)
                          / (1e-3 + abs(There - Linear) / max(Linear, 1.0) * 50.0);
-            Sum   += texelFetch(ScreenGI, Each, 0) * Weight;
+            Sum   += texelFetch(InHalf, Each, 0) * Weight;
             Total += Weight;
         }
     }
@@ -68,9 +70,14 @@ void main(void)
     vec4 World    = Scene_InvViewProjection * vec4(Interpolants.Position.xy, Depth * 2.0 - 1.0, 1.0);
     vec3 Position = World.xyz / World.w;
 
-    int Model = DecodeShadingModel(Gb2.a);
-    LightingSurface S = MakeLightingSurface(Model, SrgbToLinear(Gb0.rgb), Gb2.r, Gb2.g, Gb2.b,
-                                            DecodeGBufferNormal(Gb1), normalize(Scene_CameraPosition.xyz - Position));
+    // Wet as the Lighting stage made it (Wetness.glsl).
+    int   Model     = DecodeShadingModel(Gb2.a);
+    vec3  Normal    = DecodeGBufferNormal(Gb1);
+    vec3  Albedo    = SrgbToLinear(Gb0.rgb);
+    float Roughness = Gb2.g;
+    ApplyWetness(WetAmount(Model, Normal), Gb2.r, Albedo, Roughness);
+    LightingSurface S = MakeLightingSurface(Model, Albedo, Gb2.r, Roughness, Gb2.b,
+                                            Normal, normalize(Scene_CameraPosition.xyz - Position));
     if(Model != SHADING_MODEL_DEFAULT)
     {
         DecodeGBufferCustom(S, texelFetch(GBuffer4, Texel, 0));
@@ -78,8 +85,9 @@ void main(void)
 
     // A baked surface (alpha 2/3, BakedLighting.glsl) has its diffuse ambient already.
     float AmbientDiffuse = Gb1.a < 0.875 ? 0.0 : 1.0;
-    vec4 Screen = PP_Settings.y > 0.5 ? texelFetch(ScreenReflections, Texel, 0) : vec4(0.0);
-    vec4 Bounce = PP_Settings.z > 0.5 && AmbientDiffuse > 0.0 ? ScreenGIAt(Texel, Depth) : vec4(0.0);
+    vec4 Screen = PP_Settings.y < 0.5 ? vec4(0.0)
+                : PP_Settings.w > 0.5 ? HalfSizeAt(ScreenReflections, Texel, Depth) : texelFetch(ScreenReflections, Texel, 0);
+    vec4 Bounce = PP_Settings.z > 0.5 && AmbientDiffuse > 0.0 ? HalfSizeAt(ScreenGI, Texel, Depth) : vec4(0.0);
     vec3 Diffuse, Specular;
     IBL_LightModelBounce(Atlas, Position, S, Gb0.a, AmbientDiffuse, Screen, Bounce, Diffuse, Specular);
 

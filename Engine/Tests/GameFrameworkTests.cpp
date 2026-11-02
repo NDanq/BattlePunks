@@ -20,6 +20,7 @@
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/World.h"
+#include "Public/NimbleEngine/Avatar.h"
 #include "Public/NimbleEngine/GameConsole.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameSession.h"
@@ -29,6 +30,7 @@
 #include "Public/NimbleEngine/NetFacade.h"
 #include "Public/NimbleEngine/PhysicsFacade.h"
 #include "Public/NimbleEngine/NimbleEngine.h"
+#include "Public/NimbleEngine/PlayerStart.h"
 #include "Public/NimbleEngine/PlayerState.h"
 #include "Public/NimbleEngine/SaveGame.h"
 #include "Public/NimbleEngine/WorldList.h"
@@ -1061,6 +1063,268 @@ static void TestModeContext()
     Expect(!Level.Mode.HasSession(), "and its session");
 }
 
+/* LEVEL TRAVEL (LevelTravel.h): open a level at a named entry with travel state. */
+namespace
+{
+    class TravelMode : public IGameMode
+    {
+    public:
+        bool OnLoad(GameSession& InSession) override
+        {
+            SeenOnLoad = InSession.GetTravel().ToText() + "@" + InSession.GetTravel().Entry;
+            return true;
+        }
+        void OnTick(const FrameContext&) override {}
+        std::string SeenOnLoad;
+    };
+
+    class TravelLevel : public ILevel
+    {
+    public:
+        explicit TravelLevel(const char* InName) : Name(InName) {}
+        const char* GetName() const override { return Name; }
+        IGameMode*  GetGameMode() override { return &Mode; }
+
+        bool OnLoad(GameSession&) override
+        {
+            GameCore::World& World = GetWorld();
+            /* The usual start, an entry by name and one by its Entry tag. */
+            MakeStart(World, "Start", "", EngineCore::Vector3(0.0, 0.0, 0.0), 0.0);
+            MakeStart(World, "Airlock", "", EngineCore::Vector3(-300.0, 0.0, 40.0), 180.0);
+            MakeStart(World, "LiftStart", "FreightLift", EngineCore::Vector3(500.0, 20.0, 0.0), 90.0);
+            /* A placed avatar for player 1, at the usual start. */
+            GameCore::Entity Hero = World.CreateEntity("Hero");
+            GameCore::TransformComponent T;
+            T.Position = EngineCore::Vector3(0.0, 0.0, 0.0);
+            Hero.AddComponent(T);
+            AvatarHarnessComponent Harness;
+            Harness.AutoPossess = 1;
+            Hero.AddComponent(Harness);
+            HeroId = Hero.GetID();
+            return true;
+        }
+
+        static void MakeStart(GameCore::World& InWorld, const char* InName, const char* InEntry, const EngineCore::Vector3& InAt,
+                              const double InYaw)
+        {
+            GameCore::Entity Start = InWorld.CreateEntity(InName);
+            GameCore::TransformComponent T;
+            T.Position = InAt;
+            T.Rotation = EngineCore::Vector3(0.0, InYaw, 0.0);
+            Start.AddComponent(T);
+            PlayerStartComponent Spawn;
+            std::snprintf(Spawn.Entry, sizeof(Spawn.Entry), "%s", InEntry);
+            Start.AddComponent(Spawn);
+        }
+
+        EngineCore::Vector3 HeroAt() { return GetWorld().GetEntity(HeroId).GetComponent<GameCore::TransformComponent>()->Position; }
+
+        const char*        Name;
+        TravelMode         Mode;
+        GameCore::EntityID HeroId;
+    };
+
+    bool Near(const EngineCore::Vector3& InA, const EngineCore::Vector3& InB)
+    {
+        return std::fabs(InA.GetX() - InB.GetX()) < 0.01 && std::fabs(InA.GetY() - InB.GetY()) < 0.01
+            && std::fabs(InA.GetZ() - InB.GetZ()) < 0.01;
+    }
+
+    void TestLevelTravel()
+    {
+        std::printf("[level travel]\n");
+
+        LevelTravel Parsed;
+        Parsed.SetFromText(" Alarm = 1 ; Lift=B,Visited ;;");
+        Expect(std::string(Parsed.Get("Alarm")) == "1" && std::string(Parsed.Get("Lift")) == "B"
+                   && std::string(Parsed.Get("Visited")) == "1" && Parsed.Values.size() == 3,
+               "SetFromText reads Key=Value pairs; a bare key is 1");
+        Expect(Parsed.GetNumber("Alarm") == 1.0 && Parsed.GetNumber("Lift", -1.0) == -1.0 && !Parsed.Has("Nope")
+                   && std::string(Parsed.Get("Nope", "x")) == "x",
+               "GetNumber and defaults");
+        Parsed.Set("Alarm", "0");
+        Expect(Parsed.ToText() == "Alarm=0;Lift=B;Visited=1", "Set replaces; ToText round-trips");
+
+        Fixture F;
+        TravelLevel Exterior("TravelExterior"), Lab("TravelLab");
+        RegisterLevel(Exterior);
+        RegisterLevel(Lab);
+
+        Expect(F.Session->LoadLevel(Exterior), "the first level loads");
+        Expect(F.Session->GetTravel().Entry.empty() && F.Session->GetTravel().Values.empty()
+                   && F.Session->GetTravel().Previous.empty(),
+               "a level loaded directly has no travel");
+        Expect(Near(Exterior.HeroAt(), EngineCore::Vector3(0.0, 0.0, 0.0)), "without an entry the placed avatar stays put");
+
+        Expect(!F.Session->OpenLevel("NoSuchLevel"), "OpenLevel refuses an unknown name");
+
+        LevelTravel Travel;
+        Travel.Entry = "FreightLift";
+        Travel.Set("Alarm", "1");
+        Expect(F.Session->OpenLevel("TravelLab", Travel), "OpenLevel accepts a registered level");
+        Expect(F.Session->HasPendingLevel(), "and defers it");
+        F.Session->ApplyPendingLevel();
+        Expect(F.Session->GetLevel() == &Lab, "the lab is loaded");
+        Expect(std::string(F.Session->GetTravelValue("Alarm")) == "1" && F.Session->GetTravel().Entry == "FreightLift",
+               "GetTravel carries the entry and the state in");
+        Expect(F.Session->GetTravel().Previous == "TravelExterior", "and the level travelled from");
+        Expect(Lab.Mode.SeenOnLoad == "Alarm=1@FreightLift", "the mode reads it in OnLoad (" + Lab.Mode.SeenOnLoad + ")");
+        Expect(F.Session->GetWorld().GetEntity(FindPlayerStart(F.Session->GetWorld(), 0)).GetName() == std::string("LiftStart"),
+               "FindPlayerStart prefers the entry (by its Entry tag)");
+        Expect(Near(Lab.HeroAt(), EngineCore::Vector3(500.0, 20.0, 0.0)), "the placed avatar is moved to the entry");
+
+        /* Lua: read it, then travel back at an entry named by its entity. */
+        const bool bLua = F.Scripts.RunString(R"(
+            assert(Game.GetTravelValue("Alarm") == "1")
+            assert(Game.GetTravelValue("Missing", "none") == "none")
+            assert(Game.GetTravelNumber("Alarm") == 1)
+            assert(Game.GetTravelNumber("Missing", 7) == 7)
+            assert(Game.GetEntryPoint() == "FreightLift")
+            assert(Game.GetPreviousLevel() == "TravelExterior")
+            assert(Game.OpenLevel("NoSuchLevel") == false)
+            assert(Game.OpenLevel("TravelExterior", "Airlock", "Alarm=0;Visits=2") == true)
+        )", "travel-1");
+        Expect(bLua, "the Game library reads travel and opens a level from Lua");
+        F.Session->ApplyPendingLevel();
+        Expect(F.Session->GetLevel() == &Exterior && F.Session->GetTravel().Entry == "Airlock"
+                   && std::string(F.Session->GetTravelValue("Visits")) == "2" && F.Session->GetTravel().Previous == "TravelLab",
+               "Game.OpenLevel's entry and state arrive");
+        Expect(Near(Exterior.HeroAt(), EngineCore::Vector3(-300.0, 0.0, 40.0)), "an entry by entity name places the avatar");
+
+        /* An entry the level does not have: the usual start, and a warning. */
+        LevelTravel Lost;
+        Lost.Entry = "Nowhere";
+        F.Session->RequestLevel(Lab, Lost);
+        F.Session->ApplyPendingLevel();
+        Expect(Near(Lab.HeroAt(), EngineCore::Vector3(0.0, 0.0, 0.0)), "an unknown entry leaves the avatar where it was placed");
+        Expect(F.Session->GetWorld().GetEntity(FindPlayerStart(F.Session->GetWorld(), 0)).GetName() == std::string("Start"),
+               "and FindPlayerStart falls back to the usual start");
+
+        /* The console's open. */
+        F.Session->GetConsole().Execute("open TravelExterior LiftStart Alarm=1");
+        F.Session->ApplyPendingLevel();
+        Expect(F.Session->GetLevel() == &Exterior && F.Session->GetTravel().Entry == "LiftStart"
+                   && std::string(F.Session->GetTravelValue("Alarm")) == "1",
+               "open <level> <entry> <state> travels too");
+
+        Expect(F.Scripts.GetErrorCount() == 0, "no Lua errors");
+        F.Session->UnloadLevel();
+        UnregisterLevel(Lab);
+        UnregisterLevel(Exterior);
+    }
+
+    /* LEVEL TRANSITION: fade out, the card, the swap behind it, fade in. Driven
+     * as a host does: ApplyPendingLevel, then Tick, each frame. */
+    void TestLevelTransition()
+    {
+        std::printf("[level transition]\n");
+        const std::string FadeDoc = "Engine/Transition/Fade.nmui";
+        const std::string CardDoc = "Engine/Transition/Card.nmui";
+
+        Fixture F;
+        TravelLevel Exterior("TransitionExterior"), Lab("TransitionLab");
+        RegisterLevel(Exterior);
+        RegisterLevel(Lab);
+        F.Session->LoadLevel(Exterior);
+        UI::UISystem& UI = F.Session->GetUI();
+
+        /* Off by default: a straight swap, as ever. */
+        F.Session->RequestLevel(Lab);
+        Expect(!F.Session->IsInTransition() && F.Session->HasPendingLevel(), "without a transition a request swaps next frame");
+        F.Session->ApplyPendingLevel();
+        Expect(F.Session->GetLevel() == &Lab, "and does");
+
+        LevelTravel Travel;
+        Travel.Transition = TT_Fade;
+        Travel.Title      = "The Lab";
+        Travel.Tip        = "Mind the airlock";
+        Travel.Entry      = "FreightLift";
+        Travel.Set("Alarm", "1");
+        Expect(F.Session->OpenLevel("TransitionExterior", Travel), "a travel with TT_Fade is accepted");
+        Expect(F.Session->IsInTransition() && !F.Session->HasPendingLevel(), "it fades out first: nothing pending yet");
+
+        int  Frame = 0, SwapFrame = -1, CardClosedFrame = -1, EndFrame = -1;
+        bool bFadeRose = true, bFadeFell = true, bCardAtSwap = false, bBlackAtSwap = false, bFadeOpenAtSwap = false;
+        float LastFade = 0.0f;
+        for(; Frame < 400 && EndFrame < 0; ++Frame)
+        {
+            F.Session->ApplyPendingLevel();
+            if(SwapFrame < 0 && F.Session->GetLevel() == &Exterior)
+            {
+                SwapFrame       = Frame;
+                bCardAtSwap     = UI.IsOpen(CardDoc);
+                bFadeOpenAtSwap = UI.IsOpen(FadeDoc);
+                bBlackAtSwap    = F.Session->GetTransitionFade() >= 1.0f;
+            }
+            F.Tick(1.0 / 60.0);
+            const float Fade = F.Session->GetTransitionFade();
+            if(SwapFrame < 0 && Fade + 1e-6f < LastFade) { bFadeRose = false; }
+            if(CardClosedFrame >= 0 && Fade > LastFade + 1e-6f) { bFadeFell = false; }
+            if(SwapFrame >= 0 && CardClosedFrame < 0 && !UI.IsOpen(CardDoc)) { CardClosedFrame = Frame; }
+            LastFade = Fade;
+            if(!F.Session->IsInTransition()) { EndFrame = Frame; }
+        }
+        Expect(SwapFrame >= 20 && SwapFrame <= 30, "the swap waits for the 0.4 s fade out (frame " + std::to_string(SwapFrame) + ")");
+        Expect(bFadeRose, "the black only deepens before the swap");
+        Expect(bCardAtSwap && bFadeOpenAtSwap && bBlackAtSwap, "the swap happens behind the card, on black");
+        Expect(CardClosedFrame == SwapFrame + 2, "the card stays while the new level draws two frames (closed at "
+                                                     + std::to_string(CardClosedFrame - SwapFrame) + ")");
+        Expect(bFadeFell, "then the black only lifts");
+        Expect(EndFrame > CardClosedFrame + 30 && EndFrame < CardClosedFrame + 45, "over the 0.6 s fade in");
+        Expect(!UI.IsOpen(FadeDoc) && !UI.IsOpen(CardDoc) && F.Session->GetTransitionFade() == 0.0f, "and closes its documents");
+        const UI::UIValue* Title = UI.GetValue("Transition.Title");
+        const UI::UIValue* Tip   = UI.GetValue("Transition.Tip");
+        const UI::UIValue* Next  = UI.GetValue("Transition.Level");
+        Expect(Title && Title->AsString() == "The Lab" && Tip && Tip->AsString() == "Mind the airlock" && Next
+                   && Next->AsString() == "TransitionExterior",
+               "the card's text came from the travel");
+        Expect(F.Session->GetTravel().Entry == "FreightLift" && std::string(F.Session->GetTravelValue("Alarm")) == "1"
+                   && Near(Exterior.HeroAt(), EngineCore::Vector3(500.0, 20.0, 0.0)),
+               "the travel arrives through a transition too");
+
+        /* On for every change from the config; the card's text from it too. Lua says when. */
+        EngineCore::LoadConfigText("[LevelTransition]\nEnabled = true\nTitle = Please wait\nRevealFrames = 1\n");
+        F.Session->RequestLevel(Lab);
+        Expect(F.Session->IsInTransition(), "[LevelTransition] Enabled fades a plain RequestLevel");
+        Expect(F.Scripts.RunString("assert(Game.IsInTransition() == true)", "transition-1"), "Game.IsInTransition sees it");
+        /* A request mid-fade retargets it. */
+        F.Session->RequestLevel(Exterior);
+        for(Frame = 0; Frame < 400 && F.Session->IsInTransition(); ++Frame)
+        {
+            F.Session->ApplyPendingLevel();
+            F.Tick(1.0 / 60.0);
+        }
+        Title = UI.GetValue("Transition.Title");
+        Expect(F.Session->GetLevel() == &Exterior && F.Session->GetTravel().Previous == "TransitionExterior",
+               "the later request wins");
+        Expect(Title && Title->AsString() == "Please wait", "the config's title when the travel gives none");
+
+        LevelTravel Cut;
+        Cut.Transition = TT_Cut;
+        F.Session->RequestLevel(Lab, Cut);
+        Expect(!F.Session->IsInTransition() && F.Session->HasPendingLevel(), "TT_Cut swaps straight away even when enabled");
+        F.Session->ApplyPendingLevel();
+
+        /* The game's own card document; one that does not open falls back to the engine's. */
+        EngineCore::LoadConfigText("[LevelTransition]\nDocument = UI/NoSuchCard.nmui\n");
+        F.Session->RequestLevel(Exterior);
+        bool bEngineCard = false;
+        for(Frame = 0; Frame < 400 && F.Session->IsInTransition(); ++Frame)
+        {
+            F.Session->ApplyPendingLevel();
+            F.Tick(1.0 / 60.0);
+            bEngineCard = bEngineCard || UI.IsOpen(CardDoc);
+        }
+        Expect(bEngineCard && F.Session->GetLevel() == &Exterior, "a missing card document falls back to the engine's");
+
+        EngineCore::LoadConfigText("[LevelTransition]\nEnabled = false\nTitle = Loading\nRevealFrames = 2\nDocument =\n");
+        Expect(F.Scripts.GetErrorCount() == 0, "no Lua errors");
+        F.Session->UnloadLevel();
+        UnregisterLevel(Lab);
+        UnregisterLevel(Exterior);
+    }
+}
+
 int main()
 {
     std::printf("NimbleEngineGameFrameworkTests\n");
@@ -1070,6 +1334,8 @@ int main()
     TestScripts();
     TestStartupScript();
     TestSave();
+    TestLevelTravel();
+    TestLevelTransition();
     TestLevelByWorldFile();
     TestWorldList();
     TestModeContext();

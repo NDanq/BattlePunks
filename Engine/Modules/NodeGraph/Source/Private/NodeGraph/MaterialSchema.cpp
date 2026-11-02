@@ -2079,9 +2079,16 @@ namespace
         Pure("Input.Time", "Time", "Inputs", { Out("Time", "float", "Scene_Time.x"), Out("Delta", "float", "Scene_Time.y") },
              {}, "seconds clock animate elapsed")
             .Tooltip = "Seconds since the renderer started, and the last frame's length.";
+        Pure("Input.Wind", "Wind", "Inputs",
+             { Out("Direction", "vec3", "Scene_Wind.xyz"), Out("Strength", "float", "Scene_Wind.w"),
+               Out("Vector", "vec3", "(Scene_Wind.xyz * Scene_Wind.w)") },
+             {}, "weather breeze sway foliage gust")
+            .Tooltip = "The world's wind (the Weather plugin sets it): Direction, unit, the way it blows; Strength, "
+                       "1 the breeze foliage is made for, 0 calm; Vector, the two multiplied. With no weather, "
+                       "a breeze of 1 toward (0.8, 0, 0.6).";
         {
             NodeDefinition& Def = Pure("Input.SceneTexture", "Scene Texture", "Inputs",
-                                       { Out("Color", "vec4", "texture(Material_SceneColor, Inputs.TexCoord)") }, {},
+                                       { Out("Color", "vec4", "Material_SceneColorAt(Inputs.TexCoord)") }, {},
                                        "scene color screen post process");
             Def.Op = MOP_SceneTexture;
             PixelOnly(Def, "PostProcess only: the scene drawn so far, at this pixel.");

@@ -244,6 +244,10 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/Content/TextureViewerWindow.h
         Source/Private/Editor/Content/ImportWizard.cpp
         Source/Private/Editor/Content/ImportWizard.h
+        Source/Private/Editor/Project/NewPluginDialog.cpp
+        Source/Private/Editor/Project/NewPluginDialog.h
+        Source/Private/Editor/Project/PluginsPage.cpp
+        Source/Private/Editor/Project/PluginsPage.h
         Source/Private/Editor/Project/NewProjectWizard.cpp
         Source/Private/Editor/Project/NewProjectWizard.h
 )
@@ -258,6 +262,8 @@ list(APPEND NIMBLE_EDITOR_SOURCES ${NIMBLE_EDITOR_GIT_SOURCES})
 
 # File > New Project's generator. Widget-free, so the project tests build it alone.
 set(NIMBLE_EDITOR_PROJECT_SOURCES
+        Source/Private/Editor/Project/PluginTemplate.cpp
+        Source/Private/Editor/Project/PluginTemplate.h
         Source/Private/Editor/Project/ProjectTemplate.cpp
         Source/Private/Editor/Project/ProjectTemplate.h
 )
@@ -554,9 +560,24 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     # And Engine/Binaries/NewProject.cmake, the same without the editor: its
     # output must match file for file.
     get_filename_component(NM_EDITOR_NEW_PROJECT_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/../../Binaries/NewProject.cmake" ABSOLUTE)
+    # And NewPlugin.cmake, File > New Plugin's twin, the same way.
+    get_filename_component(NM_EDITOR_NEW_PLUGIN_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/../../Binaries/NewPlugin.cmake" ABSOLUTE)
     target_compile_definitions(NimbleEditorProjectTests PRIVATE
             "NIMBLEEDITOR_CMAKE_COMMAND=\"${CMAKE_COMMAND}\""
-            "NIMBLEEDITOR_NEW_PROJECT_SCRIPT=\"${NM_EDITOR_NEW_PROJECT_SCRIPT}\"")
+            "NIMBLEEDITOR_NEW_PROJECT_SCRIPT=\"${NM_EDITOR_NEW_PROJECT_SCRIPT}\""
+            "NIMBLEEDITOR_NEW_PLUGIN_SCRIPT=\"${NM_EDITOR_NEW_PLUGIN_SCRIPT}\"")
+    # And example projects: the Tiny fixture, unpacked by NewProject.cmake
+    # -DEXAMPLE=, and packed again by Engine/Examples/pack_example.py (with a
+    # Python that has compression.zstd; skipped otherwise).
+    get_filename_component(NM_EDITOR_PACK_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/../../Examples/pack_example.py" ABSOLUTE)
+    target_compile_definitions(NimbleEditorProjectTests PRIVATE
+            "NIMBLEEDITOR_EXAMPLES_FIXTURE=\"${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Examples\""
+            "NIMBLEEDITOR_EXAMPLE_PROJECT_FIXTURE=\"${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/ExampleProject/Tiny\""
+            "NIMBLEEDITOR_PACK_SCRIPT=\"${NM_EDITOR_PACK_SCRIPT}\"")
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        target_compile_definitions(NimbleEditorProjectTests PRIVATE "NIMBLEEDITOR_PYTHON=\"${Python3_EXECUTABLE}\"")
+    endif()
     add_dependencies(NimbleEditorProjectTests NimbleEditor)
     add_test(NAME Editor.Project COMMAND NimbleEditorProjectTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorProjectTests>")
@@ -878,6 +899,56 @@ if(WIN32)
 endif()
 
 source_group("Editor" FILES ${NIMBLE_EDITOR_SOURCES})
+
+# === NimbleLauncher =============================================================
+# File > New Project as a program of its own (Source/Private/Launcher): the
+# editor's NewProjectWizard and ProjectTemplate, SourceBuild for the cmake path
+# and the engine warm-up, Qt Widgets and EngineCore -- none of the rest of the
+# editor, so a fresh clone makes a game (Blank, or an example from
+# Engine/Examples) after building EngineCore alone. The same source files as
+# the editor's, never copies. Engine/Binaries/NimbleLauncher.bat / .sh build
+# just this target in Engine/Build/launcher and start it.
+option(NIMBLE_BUILD_LAUNCHER "Build NimbleLauncher, File > New Project without the editor (Editor targets with Qt)" ON)
+if(NIMBLE_BUILD_LAUNCHER)
+    add_executable(NimbleLauncher WIN32
+            Source/Private/Launcher/LauncherMain.cpp
+            Source/Private/Launcher/LauncherWindow.cpp
+            Source/Private/Launcher/LauncherWindow.h
+            Source/Private/Editor/Project/NewProjectWizard.cpp
+            Source/Private/Editor/Project/NewProjectWizard.h
+            Source/Private/Editor/SourceBuild.cpp
+            Source/Private/Editor/SourceBuild.h
+            Source/Private/Editor/Project/ProjectTemplate.cpp
+            Source/Private/Editor/Project/ProjectTemplate.h)
+    if(WIN32)
+        target_sources(NimbleLauncher PRIVATE Resources/AppIcon/NimbleEditor.rc)
+    endif()
+    set_target_properties(NimbleLauncher PROPERTIES
+            AUTOMOC ON
+            AUTOUIC OFF
+            AUTORCC OFF
+            FOLDER  "Editor")
+    target_include_directories(NimbleLauncher PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source "${CMAKE_CURRENT_BINARY_DIR}/Generated")
+    target_link_libraries(NimbleLauncher PRIVATE EngineCore::EngineCore Qt6::Core Qt6::Gui Qt6::Widgets)
+    # The warm-up configures with Ninja, as a game's presets do; this tree's
+    # Ninja when it has one.
+    set(NM_LAUNCHER_NINJA "")
+    if(CMAKE_GENERATOR MATCHES "Ninja" AND CMAKE_MAKE_PROGRAM)
+        set(NM_LAUNCHER_NINJA "${CMAKE_MAKE_PROGRAM}")
+    endif()
+    set_property(SOURCE Source/Private/Launcher/LauncherWindow.cpp APPEND PROPERTY
+            COMPILE_DEFINITIONS "NIMBLELAUNCHER_NINJA=\"${NM_LAUNCHER_NINJA}\"")
+    if(WIN32 AND NM_WINDEPLOYQT)
+        add_custom_command(TARGET NimbleLauncher POST_BUILD
+                COMMAND "${NM_WINDEPLOYQT}" --no-translations --no-compiler-runtime
+                        --no-opengl-sw --no-system-d3d-compiler
+                        "$<TARGET_FILE:NimbleLauncher>"
+                COMMENT "NimbleLauncher: deploying Qt beside the executable"
+                VERBATIM)
+    endif()
+    source_group("Launcher" FILES Source/Private/Launcher/LauncherMain.cpp
+            Source/Private/Launcher/LauncherWindow.cpp Source/Private/Launcher/LauncherWindow.h)
+endif()
 
 # The Details, UI Designer, Particle and Sequencer tests compile the editor's sources, so they need
 # its generated headers too (build info, project config); made by

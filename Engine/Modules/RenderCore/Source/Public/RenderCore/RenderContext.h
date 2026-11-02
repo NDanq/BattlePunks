@@ -286,6 +286,13 @@ namespace RenderCore
         void                  FlushTextureStreaming();
         TextureStreamingStats GetTextureStreamingStats() const;
 
+        /* LOD DISTANCE: what a proxy choosing its detail by distance from the
+         * view (Terrain chunks and foliage, Procedural Spawner cells) multiplies
+         * that distance by: 1 for a scene's views, more for a capture's (its
+         * faces a few pixels wide; [Rendering] CaptureLodScale). */
+        void  SetLodDistanceScale(float InScale);
+        float GetLodDistanceScale() const;
+
     private:
         friend class RenderThread;
         friend class RenderScene;
@@ -321,13 +328,19 @@ namespace RenderCore
         /* SPLITSCREEN (RenderScene::Render): InTarget cleared to black, then
          * each of InCount views' final colours (InSources, null skipped)
          * stretched over its rectangle InRects in it, opaque. Leaves InTarget
-         * bound, for the UI and overlays over the whole window. */
-        void CompositeViews(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewRect* InRects, uint32_t InCount);
+         * bound, for the UI and overlays over the whole window. InDrawn: each
+         * source's drawn area, its top-left (dynamic resolution, SceneTargets);
+         * null for all of it. */
+        void CompositeViews(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewRect* InRects, uint32_t InCount,
+                            const RenderViewRect* InDrawn = nullptr);
 
         /* SPLITSCREEN's dynamic split: InTarget, window-sized, each pixel from
          * the view whose site is nearest (InSites.Count views, each as large
-         * as InTarget), the divider along the cells' edges (ViewSites.fsh). */
-        void CompositeViewSites(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewSites& InSites);
+         * as InTarget), the divider along the cells' edges (ViewSites.fsh).
+         * InDrawnShare: the share of each source drawn this frame (dynamic
+         * resolution: every view's the same), x and y. */
+        void CompositeViewSites(GDIRenderTarget* InTarget, GDIRenderTarget* const* InSources, const RenderViewSites& InSites,
+                                const float (&InDrawnShare)[2] = { 1.0f, 1.0f });
 
         /* A view appearing in the dynamic split: InFrom's TAA history and
          * exposure copied into InTo (the same size), as if InTo had drawn
@@ -424,6 +437,12 @@ namespace RenderCore
          *
          *   EnsureIBLResources   the atlas, and the strip at InFace a side
          *   RenderSkyToStrip     the current lighting's sky (its HDRI, else its colours)
+         *   GetSkyPassVersion    whether the World set by SetCustomPassWorld has custom passes
+         *                        at ERenderHook::Sky providing a sky (a nonzero
+         *                        GetContentVersion), and their versions summed
+         *   RenderSkyPassesToStrip  those passes, each of InFaces (six cube views) drawn into
+         *                        InStages' scene colour and copied into the strip's face;
+         *                        leaves the context on the last face's view
          *   CopyCaptureToStrip   a cube face InStages rendered (its linear scene colour)
          *   PrefilterIBLBlock    the strip into atlas block InBlock (0-15 probes, 16 the sky)
          *   SetImageBasedLighting  what lights the next RenderSceneStages: InResources'
@@ -436,6 +455,8 @@ namespace RenderCore
         bool EnsureIBLResources(IBLResources& InOut, uint32_t InFace);
         void ReleaseIBLResources(IBLResources& InOut);
         bool RenderSkyToStrip(IBLResources& InResources);
+        bool GetSkyPassVersion(uint64_t& OutVersion) const;
+        bool RenderSkyPassesToStrip(IBLResources& InResources, SceneTargets& InStages, const RenderView (&InFaces)[6]);
         bool CopyCaptureToStrip(SceneTargets& InStages, IBLResources& InResources, uint32_t InFace);
         bool PrefilterIBLBlock(IBLResources& InResources, uint32_t InBlock);
         void SetImageBasedLighting(const IBLResources* InResources, const float (*InProbes)[4], uint32_t InCount, bool bInSky);
@@ -456,6 +477,22 @@ namespace RenderCore
         bool CopyDDGIFace(SceneTargets& InStages, DDGIResources& InResources, uint32_t InFace, float InLongest);
         bool UpdateDDGIProbe(DDGIResources& InResources, uint32_t InProbe, float InLongest);
         void SetDDGI(const DDGIResources* InResources, const float (*InHeader)[4]);
+
+        /*
+         * RELIGHTING (GLOBAL_ILLUMINATION.md, "Relighting"): a GI Volume's probes lit again from what
+         * their faces saw, without drawing the scene.
+         *
+         *   EnsureDDGICache  the cache and the radiance atlas for InProbes probes; false where the
+         *                    backend has no RGBA32F target (the volume is only ever drawn)
+         *   StoreDDGIFace    a face InStages rendered (its G-buffer, depth and lit colour) into the
+         *                    cache, at probe InProbe's face InFace
+         *   RelightDDGI      probes InFirst to InFirst + InCount - 1 (one column of the cache) lit from
+         *                    the cache by the current lighting -- the capture shadow maps, the image-based
+         *                    lighting and the volume SetDDGI set -- and their irradiance updated
+         */
+        bool EnsureDDGICache(DDGIResources& InOut, uint32_t InProbes);
+        bool StoreDDGIFace(SceneTargets& InStages, DDGIResources& InResources, uint32_t InProbe, uint32_t InFace);
+        bool RelightDDGI(DDGIResources& InResources, uint32_t InFirst, uint32_t InCount, float InLongest);
         void          FinishTargetFace(const char* InPath, uint32_t InFace);
         bool          ReadRenderTarget(const char* InPath, EngineCore::Image& OutPixels);
 
@@ -475,10 +512,68 @@ namespace RenderCore
          * InReceivers: the box round everything the view draws, if known --
          * where an inset's shadow can land, so how much screen it covers. */
         uint32_t              PrepareShadows(const InsetShadowCaster* InCasters = nullptr, uint32_t InCasterCount = 0,
-                                             const GameCore::AABB* InReceivers = nullptr);
+                                             const GameCore::AABB* InReceivers = nullptr, uint64_t InCacheOwner = 0);
+
+        /*
+         * SHADOW CACHE (RENDERPIPELINE.md, "Shadow cache"; [Rendering] ShadowCache): a shadowed
+         * point or spot light's static casters are drawn once into a cache atlas and copied
+         * into its tiles each frame; only its movable casters are drawn on top. PrepareShadows
+         * plans it for InCacheOwner (a RenderScene's id; 0: no cache, everything drawn as
+         * before) -- after it:
+         *
+         *   ShadowViewCachesStatics  a light view whose cacheable casters come from the cache:
+         *                            queue only the others into it
+         *   GetShadowCacheFillViews  how many cache views follow the frame's views (at
+         *                            PrepareShadows' return value onwards): each wants only the
+         *                            cacheable casters, once, to fill its light's cache tile.
+         *                            GetShadowViewBounds, ShadowViewSees and SetShadowCasterView
+         *                            take their indices as any view's
+         *   InvalidateShadowCache    before PrepareShadows: InOwner's cached lights whose reach
+         *                            touches any of InBoxes (or all of them, bInAll) are drawn
+         *                            again -- a static caster there was added, removed, moved,
+         *                            changed or shown or hidden
+         *   ReleaseShadowCache       InOwner's cached lights forgotten (its scene is going)
+         */
+        bool     ShadowViewCachesStatics(uint32_t InView) const;
+        uint32_t GetShadowCacheFillViews() const;
+        void     InvalidateShadowCache(uint64_t InOwner, const GameCore::AABB* InBoxes, uint32_t InCount, bool bInAll);
+        void     ReleaseShadowCache(uint64_t InOwner);
+        /* Whether any of InDraws (a static proxy's captured shadow list) is a translucent caster,
+         * which the cache cannot hold (its opacity map is drawn every frame). */
+        static bool HasTranslucentShadowCaster(const std::vector<StagedDraw>& InDraws);
+        /* This frame's lights drawn from the cache, how many of them were (re)filled, and the
+         * cache atlas's size in bytes (depth and colour). */
+        void GetShadowCacheStats(uint32_t& OutLights, uint32_t& OutFilled, uint64_t& OutBytes) const;
+        /* Likewise the sun's cascades drawn from the sun cache ([Rendering] SunShadowCache), filled, and its atlas's bytes. */
+        void GetSunShadowCacheStats(uint32_t& OutCascades, uint32_t& OutFilled, uint64_t& OutBytes) const;
+        /*
+         * CAPTURE SHADOWS (GLOBAL_ILLUMINATION.md, "Capture budget"): one set of shadow maps
+         * every capture view of a frame samples, instead of each view drawing its own.
+         *
+         *   BeginCaptureShadows  after BeginSceneDraws: the views (BuildCaptureShadowFrame) for
+         *                        InRegion, from the current lighting. RenderScene queues each
+         *                        one's casters as PrepareShadows' callers do; returns how many.
+         *                        They have atlases of their own, kept from frame to frame: with
+         *                        InKey (nonzero) the same as the last drawn's, those are used
+         *                        again and it returns 0 (nothing to queue)
+         *   DrawCaptureShadows   draws them into the atlases and drops the queued draws; until
+         *                        EndCaptureShadows, PrepareShadows hands every view these
+         *                        (returning 0: nothing to queue) and the Shadows stage draws none
+         *   EndCaptureShadows    back to each view's own (before the frame's main views)
+         *   SetCaptureRendering  a capture view's stages: no custom passes, no Translucent
+         *                        stage, no subsurface; the capture shadows have no contact shadows
+         */
+        uint32_t BeginCaptureShadows(const GameCore::AABB& InRegion, uint64_t InKey = 0);
+        bool     DrawCaptureShadows();
+        void     EndCaptureShadows();
+        void     SetCaptureRendering(bool bInCapture);
+
         const GameCore::AABB& GetShadowViewBounds(uint32_t InView) const;
         int32_t               GetShadowViewInset(uint32_t InView) const;
         bool                  IsSunShadowView(uint32_t InView) const;
+        /* Whether InBounds is inside shadow view InView's frustum (its six planes; a point light's
+         * cube face sees far less than its bounding box); true for an unknown view. */
+        bool                  ShadowViewSees(uint32_t InView, const GameCore::AABB& InBounds) const;
         void                  SetShadowCasterView(int32_t InView);
         /* InClearBottom: the background is a gradient, InClearColor at the
          * top to it at the bottom (ClearGradient.fsh), under everything.
@@ -493,8 +588,10 @@ namespace RenderCore
          * stage times (ms per ERenderGpuTimer, -1 where not timed) of the GDI
          * block GDIGetFramesInFlight() back -- the latest the GPU has surely
          * finished -- and the scene that wrote them, null if none did; and
-         * notes InOwner as this block's, if bInTime and the backend can time. */
-        const void* BeginTimedBlock(const void* InOwner, bool bInTime, float (&OutGpuMs)[RGT_Count]);
+         * notes InOwner as this block's, if bInTime and the backend can time.
+         * OutSerials, if given: this block's GDI serial, then the one whose
+         * times these are (0: none). */
+        const void* BeginTimedBlock(const void* InOwner, bool bInTime, float (&OutGpuMs)[RGT_Count], uint64_t* OutSerials = nullptr);
 
         /* SPLITSCREEN: after the last of a frame's timed views, so "stat
          * frame"'s Total spans them all (RenderScene::Render). */

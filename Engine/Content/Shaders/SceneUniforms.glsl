@@ -47,7 +47,8 @@ UBO_BLOCK_BEGIN(3, Scene_Block)
     vec4 Scene_ForwardReflections[2];
     vec4 Scene_Spare[6];         // translucent shadows (Shadows.glsl, Phase 7): [0] cascades 0 and 1's casters' depth span
                                  // (near, far), [1] cascades 2 and 3's, [2].x 1 while the opacity atlas is bound;
-                                 // [2].y 1 while this frame's opaque colour and depth are (engine slots 13, 14; Phase 10)
+                                 // [2].y 1 while this frame's opaque colour and depth are (engine slots 13, 14; Phase 10);
+                                 // [3]-[5] the drawn area of the scene's targets (Scene_ViewUv below)
 
     // Baked lighting (BakedLighting.glsl): x 1 if the view draws with a bake; y 1 if that bake
     // has the sky in it, so a baked surface takes no live sky ambient; z 1 if its lightmaps
@@ -72,4 +73,29 @@ UBO_BLOCK_BEGIN(3, Scene_Block)
     // NDC y, w its view depth.
     vec4 Scene_RevealParams;
     vec4 Scene_Reveal[4];
+
+    // The World's weather (RenderCore's RenderWeather.h; RENDERPIPELINE.md, "Weather"): the
+    // material graph's Wind node, and Wetness.glsl. With no weather set, the calm default:
+    // a breeze of 1 toward (0.8, 0, 0.6), dry.
+    vec4 Scene_Wind;             // xyz: unit, the way it blows; w: strength (1 the breeze foliage was made for)
+    vec4 Scene_Weather;          // x: wetness 0-1; y: rain 0-1
 UBO_BLOCK_END(Scene_Block)
+
+// DYNAMIC RESOLUTION (RENDERPIPELINE.md, "Resolution scale"): a view draws into the top-left
+// of its targets, which keep their full size, so a scale change reallocates nothing and the
+// histories survive it. A pass works in view UV -- 0 to 1 over what was drawn, the UV a
+// full-screen pass's interpolants carry -- and these turn that into a UV in a scene target,
+// clamped to the drawn area so no tap reaches the stale texels past its edge. The Prev ones
+// are for last frame's targets (TAA's history, LastColor), drawn at last frame's scale.
+// [3] xy: this frame's drawn size over the targets' size; zw: last frame's.
+// [4] the largest UV a sample may take, xy: a full-size target, zw: a half-size one.
+// [5] the same for last frame's. Outside a scene's stages, and unscaled: 1s throughout.
+vec2 Scene_ViewUv(vec2 InViewUv)         { return min(InViewUv * Scene_Spare[3].xy, Scene_Spare[4].xy); }
+vec2 Scene_ViewUvHalf(vec2 InViewUv)     { return min(InViewUv * Scene_Spare[3].xy, Scene_Spare[4].zw); }
+vec2 Scene_PrevViewUv(vec2 InViewUv)     { return min(InViewUv * Scene_Spare[3].zw, Scene_Spare[5].xy); }
+vec2 Scene_PrevViewUvHalf(vec2 InViewUv) { return min(InViewUv * Scene_Spare[3].zw, Scene_Spare[5].zw); }
+// A target UV already scaled (a tap offset from one), kept inside the drawn area.
+vec2 Scene_ClampUv(vec2 InTargetUv)      { return min(InTargetUv, Scene_Spare[4].xy); }
+vec2 Scene_ClampUvHalf(vec2 InTargetUv)  { return min(InTargetUv, Scene_Spare[4].zw); }
+// The drawn area in texels of a target InSize texels big (textureSize of a scene target).
+vec2 Scene_DrawnSize(vec2 InSize)        { return floor(InSize * Scene_Spare[3].xy + 0.5); }
