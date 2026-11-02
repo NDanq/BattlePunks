@@ -19,15 +19,18 @@ namespace GameCore { class World; }
  */
 
 /* The SteamDummy: a steampunk mesh skinned to the CrashDummy's rig (same 74
- * bones), so it plays the CrashDummy's clips and the engine's CrashDummy anim
- * state unchanged. Imported from BattlePunks (Dev-BattlePunks fad1c7d6);
+ * bones), so it plays the CrashDummy's clips. Its anim state is the engine's
+ * CrashDummy one but for the OffHand IK, weighted by TwoHand rather than
+ * Armed: a pistol or a wrench is held in one hand, the off arm left as
+ * animated, instead of reaching across the body for it (LabCombat sets
+ * TwoHand from the weapon's AnimSet). Imported from BattlePunks (Dev-BattlePunks fad1c7d6);
  * SteamDummy_PBR is the same skin and skeleton with the art pass's UV atlas
  * (Tools/Art). Every character's look is its material in slot 0 -- the
  * player's, the Watchman's (Clear Coat, red eyes) or the Brute's
  * (Anisotropic) -- each keeping the CRT eyes' EyeColor, EyeIntensity and
  * BlinkInterval parameters. */
 #define LAB_DEFAULT_MESH      "Content/Characters/SteamDummy/SteamDummy_PBR.nmmesh"
-#define LAB_DEFAULT_ANIMSTATE "Engine/Content/Characters/CrashDummy/CrashDummy.nmanimstate"
+#define LAB_DEFAULT_ANIMSTATE "Content/Characters/SteamDummy/SteamDummy.nmanimstate"
 #define LAB_DEFAULT_MATERIAL  "Content/Materials/Characters/SteamDummy_Player.material.nmgraph"
 #define LAB_WATCHMAN_MATERIAL "Content/Materials/Characters/SteamDummy_Watchman.material.nmgraph"
 #define LAB_BRUTE_MATERIAL    "Content/Materials/Characters/SteamDummy_Brute.material.nmgraph"
