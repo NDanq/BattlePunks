@@ -808,7 +808,7 @@ def dress_gameplay(d):
     d.hide(r'Calm_Breaker')
     d.highlight(r'Calm_Breaker', 'K_BreakerPanel')
     d.restyle(r'Calm_Keycard', material=MAT.format('BrassAged'), scale=(9, 0.8, 6))
-    d.restyle(r'Calm_KeycardReader', material=MAT.format('PanelCream'), scale=(18, 26, 8))
+    # Calm_KeycardReader is a prefab instance: its look is in Content/Prefabs/Lab/KeycardReader.nmprefab.
     d.restyle(r'Calm_ElevatorPanel', material=MAT.format('PanelGreen'), scale=(45, 70, 14))
     d.restyle(r'Alarm_RoofHatch', mesh=CYL, material=MAT.format('BrassAged'), scale=(160, 12, 160))
     d.restyle(r'Alarm_AmmoCrate_\w+', material=MAT.format('Planks'))

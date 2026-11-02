@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The turbine hall's valve controller (L2): no mesh, only a script graph (ValveControl.script.nmgraph)
+     that hears the three valves and finishes the puzzle. Placed by Tools/Levels/make_levels.py as Calm_ValveControl. -->
+<Prefab Format="1" Name="ValveControl" NextId="2">
+  <Script Path="Content/Prefabs/Lab/ValveControl.script.nmgraph" />
+  <Tick Mode="EventsOnly" />
+  <Entity Id="1" Name="ValveControl">
+    <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+    </Component>
+  </Entity>
+</Prefab>

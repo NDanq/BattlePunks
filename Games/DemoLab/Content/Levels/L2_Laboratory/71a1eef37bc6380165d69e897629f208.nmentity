@@ -5,7 +5,7 @@
     <Radius Value="170" />
     <WeaponID Value="0" />
     <Ammo Value="0" />
-    <Channel Value="L2.ValvesDone" />
+    <Channel Value="L2.Valve3" />
     <Toggle Value="false" />
     <Sequence Value="" />
     <EnableOn Value="L2.Valve2" />

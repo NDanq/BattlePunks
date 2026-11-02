@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The archive's keycard reader (L2): a LabInteractable whose use is decided in Lua (KeycardReader.lua).
+     Placed by Tools/Levels/make_levels.py as Calm_KeycardReader. -->
+<Prefab Format="1" Name="KeycardReader" NextId="2">
+  <Script Path="Content/Prefabs/Lab/KeycardReader.lua" />
+  <Tick Mode="EventsOnly" />
+  <Entity Id="1" Name="KeycardReader">
+    <Component Type="LabInteractable" Version="1">
+      <Prompt Value="Keycard reader" />
+      <Radius Value="170" />
+      <WeaponID Value="0" />
+      <Ammo Value="0" />
+      <Channel Value="L2.ReaderSwiped" />
+      <Toggle Value="false" />
+      <Sequence Value="" />
+      <EnableOn Value="" />
+      <Once Value="false" />
+      <HideWhenUsed Value="false" />
+      <HoldSeconds Value="0" />
+      <Sound Value="" />
+      <Highlight Value="none" />
+    </Component>
+    <Component Type="Render" Version="7">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/Kit/PanelCream.material.nmgraph" />
+      <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+      <CastShadows Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="18" Y="26" Z="8" />
+    </Component>
+  </Entity>
+</Prefab>

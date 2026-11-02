@@ -2,6 +2,7 @@
 
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/ComponentReplication.h"
+#include "Public/GameCore/ComponentScript.h"
 #include "Public/GameCore/ComponentSerializer.h"
 #include "Public/GameCore/Components/TransformComponent.h"
 #include "Public/GameCore/Entity.h"
@@ -188,6 +189,18 @@ GAMECORE_DEFINE_COMPONENT_PROPERTIES(LabInteractableComponent) {
     Props.Flag("On", &LabInteractableComponent::bOn);
 }
 #endif
+
+/* What Lua and script graphs see: e:GetComponent("LabInteractable"):SetPrompt(...)
+ * (Content/Prefabs/Lab/KeycardReader.lua). */
+GAMECORE_DEFINE_COMPONENT_SCRIPT(LabInteractableComponent)
+{
+    Bind.Field("Prompt", &LabInteractableComponent::Prompt);
+    Bind.Field("Channel", &LabInteractableComponent::Channel);
+    Bind.Field("Highlight", &LabInteractableComponent::Highlight);
+    Bind.Flag("Once", &LabInteractableComponent::bOnce);
+    Bind.ReadOnly("Used", &LabInteractableComponent::bUsed);
+    Bind.ReadOnly("On", &LabInteractableComponent::bOn);
+}
 
 GAMECORE_DEFINE_COMPONENT(LabGateComponent, "LabGate")
 

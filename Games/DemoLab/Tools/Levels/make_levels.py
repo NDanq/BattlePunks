@@ -58,6 +58,7 @@ class Level:
     def __init__(self, name, mode):
         self.name, self.mode = ('Review_' + name if REVIEW else name), mode
         self.entities = []
+        self.instances = []   # prefab instances: (guid, .nmprefabinst text)
         self.names = set()
         self.counter = 0
 
@@ -113,6 +114,21 @@ class Level:
                 + (' Mobility="Static"' if static else '') + '>')
         body = [x for c in comps for x in c]
         self.entities.append((g, '\n'.join(['<?xml version="1.0" encoding="UTF-8"?>', head] + body + ['</Entity>']) + '\n'))
+        return name
+
+    def instance(self, name, prefab, pos, yaw=0.0):
+        """A prefab instance (an .nmprefabinst): its root renamed to name and placed at pos. The
+        prefab carries the components and the script (Content/Prefabs/Lab: Lua or a script graph)."""
+        name = self.unique(name)
+        self.names.add(name)
+        g = self.guid(name)
+        self.instances.append((g, '\n'.join([
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            f'<Instance Guid="{g}" Name="{name}" Prefab="{prefab}">',
+            f'  <Entity Id="1" Name="{name}">',
+            '    <Component Type="Transform" Version="1">',
+            '    ' + vec('Position', pos), '    ' + vec('Rotation', (0, yaw, 0)),
+            '    </Component>', '  </Entity>', '</Instance>']) + '\n'))
         return name
 
     def box(self, name, centre, size, yaw=0.0, collide=True, visible=True, mesh=BOX, motion=2, extra=(), parent=None):
@@ -378,16 +394,20 @@ class Level:
         folder = os.path.join(LEVELS, self.name)
         os.makedirs(folder, exist_ok=True)
         for old in os.listdir(folder):
-            if old.endswith('.nmentity'):
+            if old.endswith(('.nmentity', '.nmprefabinst')):
                 os.remove(os.path.join(folder, old))
         for g, text in self.entities:
             with open(os.path.join(folder, g + '.nmentity'), 'w') as out:
                 out.write(text)
+        for g, text in self.instances:
+            with open(os.path.join(folder, g + '.nmprefabinst'), 'w') as out:
+                out.write(text)
         manifest = ['<?xml version="1.0" encoding="UTF-8"?>', '<World Format="1">', f'  <Settings GameMode="{self.mode}" />']
-        manifest += [f'  <Entity Guid="{g}" />' for g, _ in self.entities] + ['</World>']
+        manifest += [f'  <Entity Guid="{g}" />' for g, _ in self.entities]
+        manifest += [f'  <Instance Guid="{g}" />' for g, _ in self.instances] + ['</World>']
         with open(os.path.join(LEVELS, self.name + '.nmworld'), 'w') as out:
             out.write('\n'.join(manifest) + '\n')
-        print(f'{self.name}: {len(self.entities)} entities')
+        print(f'{self.name}: {len(self.entities)} entities, {len(self.instances)} prefab instances')
 
 
 def channel_keys(name, keys):
@@ -581,15 +601,19 @@ def make_l2():
     lv.gate('Calm_FoyerDoor', (0, 165, -1215), (300, 330, 30), 'L2.Powered', sound=SND + 'World/Lift_Stop.nmsound')
     lv.interactable('Calm_Keycard', p['Keycard'], 'Take the keycard', channel='L2.Keycard', hide=True,
                     sound=SND + 'UI/UI_Confirm.nmsound')
-    lv.interactable('Calm_KeycardReader', p['KeycardReader'], 'Swipe the keycard', channel='L2.ArchiveOpen',
-                    enable_on='L2.Keycard', sound=SND + 'World/Keycard_Accept.nmsound')
+    # The reader is a prefab whose use is decided in Lua (Content/Prefabs/Lab/KeycardReader.lua): it opens
+    # the archive with the keycard and denies access without it.
+    lv.instance('Calm_KeycardReader', 'Content/Prefabs/Lab/KeycardReader.nmprefab', p['KeycardReader'][:3], p['KeycardReader'][3])
     lv.gate('Calm_KeycardDoor', (-2200, 165, 900), (240, 330, 40), 'L2.ArchiveOpen', sound=SND + 'World/Lift_Stop.nmsound')
     lv.interactable('Calm_Valve1', p['Valve1'], 'Open valve 1', channel='L2.Valve1', handle=True,
                     sound=SND + 'World/Valve_Squeak_01.nmsound')
     lv.interactable('Calm_Valve2', p['Valve2'], 'Open valve 2', channel='L2.Valve2', enable_on='L2.Valve1', handle=True,
                     sound=SND + 'World/Valve_Squeak_02.nmsound')
-    lv.interactable('Calm_Valve3', p['Valve3'], 'Open valve 3', channel='L2.ValvesDone', enable_on='L2.Valve2',
+    lv.interactable('Calm_Valve3', p['Valve3'], 'Open valve 3', channel='L2.Valve3', enable_on='L2.Valve2',
                     handle=True, sound=SND + 'World/Valve_Squeak_01.nmsound')
+    # The valves' banners and L2.ValvesDone come from a script graph
+    # (Content/Prefabs/Lab/ValveControl.script.nmgraph) on this prefab.
+    lv.instance('Calm_ValveControl', 'Content/Prefabs/Lab/ValveControl.nmprefab', (0, 0, 0))
     lv.interactable('Calm_ElevatorPanel', p['ElevatorPanel'], 'Call the elevator', channel='L2.Elevator',
                     enable_on='L2.ValvesDone', sequence='Calm_C4_Descent', sound=SND + 'World/Lift_Start.nmsound')
     lv.sound('Calm_Amb', SND + 'Ambience/Amb_L2_Calm.nmsound')

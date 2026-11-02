@@ -101,6 +101,7 @@ nimble_add_hot_module(${GAME_MODULE}
                     Source/World/LabLogic.cpp
                     Source/World/LabMotion.h
                     Source/World/LabMotion.cpp
+                    Source/World/LabScripting.cpp
                     Source/Flow/LabTravel.h
                     Source/Flow/LabTravel.cpp
                     Source/Flow/LabFlow.h

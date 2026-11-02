@@ -1556,7 +1556,7 @@ void LabCombat::TickPresentation(World& InWorld, const float InSeconds, Presente
                         if(P.HitReactTimer <= 0.f || Combat->LastHitHeavy)
                         {
                             SetAnimFloat(InWorld, Avatar, *Anim, "HitDir", HitDirection(InWorld, Avatar, Combat->LastHitDir));
-                            SetAnimFloat(InWorld, Avatar, *Anim, "HitWeight", bHard ? 1.f : 0.6f);
+                            SetAnimFloat(InWorld, Avatar, *Anim, "HitWeight", bHard ? 1.f : 0.8f);
                             TriggerAnim(InWorld, Avatar, "Hit");
                             P.HitReactTimer = HIT_REACT_GAP;
                         }
