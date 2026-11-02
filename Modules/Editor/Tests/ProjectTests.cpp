@@ -419,8 +419,6 @@ static void TestExamples(const QDir& InRoot)
            "a step after unpack needs the project");
     Expect(ListFiles(Parent).size() == 2 * Files.size(), "and none of them writes anything");
 
-    /* The packer: the fixture again, with a build's leftovers, packs to the
-     * very bytes committed -- reproducible, and the leftovers left out. */
 #ifdef NIMBLEEDITOR_PYTHON
     QProcess Probe;
     Probe.start(QStringLiteral(NIMBLEEDITOR_PYTHON), { QStringLiteral("-c"), QStringLiteral("import compression.zstd") });
@@ -429,6 +427,41 @@ static void TestExamples(const QDir& InRoot)
         std::printf("  (packer check skipped: %s has no compression.zstd)\n", NIMBLEEDITOR_PYTHON);
         return;
     }
+    const auto PacksToFixture = [&](const QStringList& InArgs, const QString& InOut, const char* InWhat)
+    {
+        QProcess Pack;
+        Pack.setProcessChannelMode(QProcess::MergedChannels);
+        Pack.start(QStringLiteral(NIMBLEEDITOR_PYTHON), QStringList{ QStringLiteral("-I"), QStringLiteral(NIMBLEEDITOR_PACK_SCRIPT) }
+                                                            + InArgs + QStringList{ QStringLiteral("--out"), InOut });
+        const bool bPacked = Pack.waitForFinished(120000) && Pack.exitCode() == 0;
+        if(!bPacked) { std::printf("%s\n", Pack.readAll().constData()); }
+        Expect(bPacked, InWhat);
+        for(const char* Part : { "Tiny.Source.tar.zst", "Tiny.Content.1.tar.zst" })
+        {
+            const QByteArray Packed = ReadBytes(QDir(InOut).filePath(QString::fromLatin1(Part)));
+            Expect(!Packed.isEmpty() && Packed == ReadBytes(QDir(Fixture).filePath(QString::fromLatin1(Part))),
+                   "into the committed archive, byte for byte");
+        }
+    };
+
+    /* As committed (--rev): git's bytes and modes, whatever the checkout's
+     * line endings -- the way to pack on Windows. */
+    QProcess Git;
+    Git.start(QStringLiteral("git"), { QStringLiteral("-C"), Source, QStringLiteral("rev-parse"), QStringLiteral("HEAD") });
+    if(Git.waitForFinished(30000) && Git.exitStatus() == QProcess::NormalExit && Git.exitCode() == 0)
+    {
+        PacksToFixture({ Source, QStringLiteral("--rev"), QStringLiteral("HEAD") }, InRoot.filePath(QStringLiteral("PackedRev")),
+                       "pack_example.py --rev HEAD packs it");
+    }
+    else
+    {
+        std::printf("  (--rev check skipped: no git checkout)\n");
+    }
+
+#if !defined(_WIN32)
+    /* From disk: the fixture again, with a build's leftovers, packs to the
+     * very bytes committed -- reproducible, and the leftovers left out. (Not
+     * on Windows, where the disk has no executable bits.) */
     const QString Copy = InRoot.filePath(QStringLiteral("PackSource/Tiny"));
     Expect(CopyTree(Source, Copy), "the fixture project is copied");
     for(const char* Junk : { "Saved/Logs/run.log", "Build/editor/x.o", "Binaries/Linux/Tiny", "Tools/__pycache__/x.pyc", "CMakeUserPresets.json" })
@@ -438,20 +471,8 @@ static void TestExamples(const QDir& InRoot)
         QFile Out(Path);
         Expect(Out.open(QIODevice::WriteOnly) && Out.write("junk") == 4, "a leftover is written");
     }
-    const QString Out = InRoot.filePath(QStringLiteral("Packed"));
-    QProcess Pack;
-    Pack.setProcessChannelMode(QProcess::MergedChannels);
-    Pack.start(QStringLiteral(NIMBLEEDITOR_PYTHON), { QStringLiteral("-I"), QStringLiteral(NIMBLEEDITOR_PACK_SCRIPT), Copy,
-                                                      QStringLiteral("--out"), Out });
-    const bool bPacked = Pack.waitForFinished(120000) && Pack.exitCode() == 0;
-    if(!bPacked) { std::printf("%s\n", Pack.readAll().constData()); }
-    Expect(bPacked, "pack_example.py packs it");
-    for(const char* Part : { "Tiny.Source.tar.zst", "Tiny.Content.1.tar.zst" })
-    {
-        const QByteArray Packed = ReadBytes(QDir(Out).filePath(QString::fromLatin1(Part)));
-        Expect(!Packed.isEmpty() && Packed == ReadBytes(QDir(Fixture).filePath(QString::fromLatin1(Part))),
-               "into the committed archive, byte for byte");
-    }
+    PacksToFixture({ Copy }, InRoot.filePath(QStringLiteral("Packed")), "pack_example.py packs it");
+#endif
 #endif
 }
 
