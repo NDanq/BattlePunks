@@ -103,6 +103,20 @@ int main(int argc, char* argv[])
     const QCommandLineOption DocsOption(QStringLiteral("generate-component-docs"),
                                         QStringLiteral("Write Engine/Docs/Components/<Name>.md for every component without one, then exit."));
     Parser.addOption(DocsOption);
+    const QCommandLineOption ImportOption(QStringLiteral("import"),
+                                          QStringLiteral("Import a glTF or GLB as the Import Wizard would, with its default options "
+                                                         "(meshlets built), into --import-to, then exit."),
+                                          QStringLiteral("file"));
+    Parser.addOption(ImportOption);
+    const QCommandLineOption ImportToOption(QStringLiteral("import-to"),
+                                            QStringLiteral("--import's folder, under the project (default Content/Meshes)."),
+                                            QStringLiteral("folder"));
+    Parser.addOption(ImportToOption);
+    const QCommandLineOption ImportSettingsOption(QStringLiteral("import-settings"),
+                                                  QStringLiteral("--import's options changed from the defaults, as recorded settings: "
+                                                                 "\"GenerateLightmapUVs=0\". Repeatable."),
+                                                  QStringLiteral("key=value"));
+    Parser.addOption(ImportSettingsOption);
     Parser.addPositionalArgument(QStringLiteral("world"), QStringLiteral("A .nmworld file to open."), QStringLiteral("[world]"));
     Parser.process(App);
 
@@ -120,9 +134,31 @@ int main(int argc, char* argv[])
     {
         InitialWorld = QFileInfo(Parser.positionalArguments().front()).absoluteFilePath();
     }
+    const QString ImportSource = Parser.isSet(ImportOption) ? QFileInfo(Parser.value(ImportOption)).absoluteFilePath() : QString();
 
     /* Asset paths are relative to the exe's folder, as for the game hosts. */
     QDir::setCurrent(QCoreApplication::applicationDirPath());
+
+    /* --import: the Import Wizard's mesh import with its defaults, no window; for art scripts. */
+    if(!ImportSource.isEmpty())
+    {
+        const QString ProjectRoot = EditorGraphs::GetProjectRoot();
+        const QString Folder = QDir(ProjectRoot).absoluteFilePath(Parser.isSet(ImportToOption) ? Parser.value(ImportToOption)
+                                                                                               : QStringLiteral("Content/Meshes"));
+        /* The defaults, written out as settings, then the changes after them (the last of a key wins). */
+        EditorContent::MeshImportOptions Defaults;
+        Defaults.bImportTextures = false;
+        QString Settings = Defaults.ToSettings();
+        for(const QString& Each : Parser.values(ImportSettingsOption)) { Settings += Each + QLatin1Char('\n'); }
+        const EditorContent::MeshImportOptions Options = EditorContent::MeshImportOptions::FromSettings(Settings);
+        const EditorContent::ImportResult Result =
+            EditorContent::ImportMesh(ImportSource, Folder, QFileInfo(ImportSource).completeBaseName(), Options,
+                                      EditorContent::TextureImportOptions(), ProjectRoot);
+        qInfo().noquote() << Result.Message;
+        for(const QString& Warning : Result.Warnings) { qWarning().noquote() << Warning; }
+        for(const QString& Written : Result.Written) { qInfo().noquote() << "wrote" << Written; }
+        return Result.bOK ? 0 : 1;
+    }
 
     /* This session's log: <project>/Saved/Logs/Editor-<time>.log (CoreLog.h). */
     if(EngineCore::OpenRunLog(EditorCook::GetLogsDir(EditorGraphs::GetProjectRoot()).toUtf8().toStdString(), "Editor"))
