@@ -5,7 +5,7 @@ project(NimbleThirdParty LANGUAGES C CXX)
 # ===========================================================================
 # NimbleThirdParty -- every vendored library the engine compiles, in one
 # project: SDL3, Jolt, Lua, pugixml, ENet, miniaudio, bc7enc_rdo, xatlas,
-# Recast Navigation and zstd.
+# Recast Navigation, zstd and meshoptimizer.
 # Their sources are under Source/, each a faithful copy of its upstream release
 # (SDL carries one local patch; Modules/GameWindow/README.md lists it).
 #
@@ -346,6 +346,18 @@ target_compile_definitions(Zstd PRIVATE ZSTD_DISABLE_ASM ZSTD_LEGACY_SUPPORT=0 Z
 nm_tp_library_properties(Zstd)
 source_group(TREE "${NIMBLE_THIRDPARTY_ZSTD_DIR}/lib" PREFIX "Zstd" FILES ${NM_TP_ZSTD_SOURCES})
 
+# === meshoptimizer ==========================================================
+# meshoptimizer 0.25 (MIT) at zeux/meshoptimizer v0.25, for RenderCore's
+# MeshletBuild.cpp: meshlets and their culling bounds. Only src/ is vendored,
+# and it is the source list, so it is globbed.
+if(NOT EXISTS "${NIMBLE_THIRDPARTY_MESHOPT_DIR}/src/meshoptimizer.h")
+    message(FATAL_ERROR "Vendored meshoptimizer not found at ${NIMBLE_THIRDPARTY_MESHOPT_DIR}.")
+endif()
+file(GLOB NM_TP_MESHOPT_SOURCES CONFIGURE_DEPENDS "${NIMBLE_THIRDPARTY_MESHOPT_DIR}/src/*.cpp")
+add_library(NimbleMeshopt STATIC ${NM_TP_MESHOPT_SOURCES})
+nimble_thirdparty_usage(Meshopt NimbleMeshopt BUILD)
+nm_tp_library_properties(NimbleMeshopt)
+
 # === Manifest (standalone) ==================================================
 # Per configuration, the files the engine's IMPORTED targets point at:
 # <output>/<Config>/NimbleThirdPartyManifest.cmake. Written at generate time
@@ -356,7 +368,7 @@ if(NM_TP_STANDALONE)
     # Keyed by the names in NIMBLE_THIRDPARTY_LIBRARIES; SDL3's real target is SDL3-shared.
     foreach(NM_PAIR SDL3:SDL3-shared Jolt:Jolt Lua:Lua PugiXml:PugiXml ENet:ENet miniaudio:miniaudio
                     Bc7enc:NimbleBc7enc Xatlas:NimbleXatlas
-                    RecastNav:RecastNav Zstd:Zstd)
+                    RecastNav:RecastNav Zstd:Zstd Meshopt:NimbleMeshopt)
         string(REPLACE ":" ";" NM_PAIR "${NM_PAIR}")
         list(GET NM_PAIR 0 NM_NAME)
         list(GET NM_PAIR 1 NM_TARGET)

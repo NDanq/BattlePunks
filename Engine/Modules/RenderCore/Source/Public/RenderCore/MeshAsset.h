@@ -30,10 +30,15 @@ namespace EngineCore
  *                          inverse bind matrix per skeleton bone, then four
  *                          bone indices (uint16) and four weights per vertex
  *     MTAN v1 (optional)   tangents, four floats per vertex (MeshData::Tangents)
+ *     MLET v1 (optional)   meshlets (BuildMeshlets): the fingerprint of the
+ *                          indices they were built from, the meshlets, then
+ *                          their vertices (uint32) and triangles (uint8)
  *     ISRC v1 (optional)   AssetImportInfo, for Reimport
  *
  * Every vertex has a normal and UV. Loading bounds-checks indices and
- * sections. Positions are engine convention (left-handed, +Y up), world units.
+ * sections; meshlets that fail the same checks, or were built from other
+ * indices, are dropped (warned) and the mesh still loads. Positions are engine
+ * convention (left-handed, +Y up), world units.
  */
 namespace RenderCore
 {
@@ -43,6 +48,34 @@ namespace RenderCore
         std::string Material;      // the source's material name; may not exist as a material here
         uint32_t    FirstIndex = 0;
         uint32_t    IndexCount = 0;
+    };
+
+    /*
+     * A small piece of one section -- at most MESHLET_MAX_VERTICES vertices
+     * and MESHLET_MAX_TRIANGLES triangles -- that the GPU culls on its own
+     * (RENDERPIPELINE.md, Meshlets). Its triangles are three corners each,
+     * indices into its own vertices, which are indices into the mesh's.
+     */
+    constexpr uint32_t MESHLET_MAX_VERTICES  = 64;
+    constexpr uint32_t MESHLET_MAX_TRIANGLES = 124;
+
+    struct MeshMeshlet
+    {
+        uint32_t Section        = 0;
+        uint32_t VertexOffset   = 0;   // into MeshData::MeshletVertices
+        uint32_t VertexCount    = 0;
+        uint32_t TriangleOffset = 0;   // into MeshData::MeshletTriangles, three a triangle
+        uint32_t TriangleCount  = 0;
+
+        /* A sphere round its vertices, in mesh space. */
+        float    Center[3]      = {0.0f, 0.0f, 0.0f};
+        float    Radius         = 0.0f;
+
+        /* Its normal cone: seen from P, every triangle faces away when
+         * dot(Center - P, ConeAxis) >= ConeCutoff * |Center - P| + Radius.
+         * ConeCutoff 1 or more: the cone is too wide to cull by. */
+        float    ConeAxis[3]    = {0.0f, 0.0f, 0.0f};
+        float    ConeCutoff     = 1.0f;
     };
 
     struct MeshData
@@ -69,6 +102,16 @@ namespace RenderCore
         std::vector<uint16_t>    Joints;        // 4 per vertex
         std::vector<float>       Weights;       // 4 per vertex
 
+        /* Meshlets, the optional MLET chunk (BuildMeshlets); all empty: none,
+         * and the mesh draws by section. Every section's triangles are in its
+         * meshlets exactly once. MeshletSource is MeshletFingerprint of the
+         * indices they were built from: anything that changes the indices
+         * leaves it stale, and a stale set is neither saved nor loaded. */
+        std::vector<MeshMeshlet> Meshlets;
+        std::vector<uint32_t>    MeshletVertices;    // indices into the mesh's vertices
+        std::vector<uint8_t>     MeshletTriangles;   // 3 per triangle, indices into its meshlet's vertices
+        uint64_t                 MeshletSource = 0;
+
         float                    BoundsMin[3] = {0.0f, 0.0f, 0.0f};
         float                    BoundsMax[3] = {0.0f, 0.0f, 0.0f};
         AssetImportInfo          ImportInfo;
@@ -76,6 +119,7 @@ namespace RenderCore
         uint32_t GetVertexCount()   const { return uint32_t(Positions.size() / 3); }
         uint32_t GetTriangleCount() const { return uint32_t(Indices.size() / 3); }
         bool     IsSkinned()        const { return !Joints.empty(); }
+        bool     HasMeshlets()      const { return !Meshlets.empty(); }
     };
 
     /* What LoadMeshHeader reads: enough to describe a mesh, or bound it. */
@@ -100,6 +144,23 @@ namespace RenderCore
     /* The palette (Skinning.glsl: 12 floats a bone) that draws InMesh in
      * InSkeleton's reference pose. Empty if InMesh is not skinned. */
     RENDERCORE_API void MakeRefPosePalette(const MeshData& InMesh, const SkeletonData& InSkeleton, std::vector<float>& OutPalette);
+
+    /*
+     * Splits every section into meshlets (meshoptimizer's clusterizer
+     * [Kapoulkine], vertices reordered within each for locality) and bounds
+     * them. Replaces any meshlets it had; leaves the mesh's own vertices,
+     * indices and sections alone. False, and the mesh untouched, if it has no
+     * triangles or an index is out of range.
+     */
+    RENDERCORE_API bool BuildMeshlets(MeshData& InOutMesh);
+
+    /* A hash of InMesh's indices and vertex count, which MeshletSource is
+     * compared with. */
+    RENDERCORE_API uint64_t MeshletFingerprint(const MeshData& InMesh);
+
+    /* Why InMesh's meshlets could not be drawn as its sections; null if they
+     * can (or it has none). */
+    RENDERCORE_API const char* FindMeshletDefect(const MeshData& InMesh);
 
     /* Both directions. False, logged, for an invalid mesh. */
     RENDERCORE_API bool SerializeMesh(EngineCore::Archive& Ar, MeshData& InOutMesh);

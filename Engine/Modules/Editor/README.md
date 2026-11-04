@@ -819,7 +819,7 @@ Settings instead.
 | Viewport | Background gradient, top and bottom colours (a swatch opens a colour picker; applies at once to every editor viewport) | `Editor.ViewportGradient` (on), `ViewportTopColor` (`#4b515d`), `ViewportBottomColor` (`#1b1d22`) |
 | Rendering | Render backend (on restart) | `Editor.RHI` |
 | Build | Restart a running game after Compile | `Editor.ReloadAfterCompile` |
-| Import | The Import Wizard's starting options: mesh scale, convert axes, generate normals, generate lightmap UVs, combine meshes, import a mesh's textures, sRGB, largest texture, texture mipmaps | `Editor.ImportMeshScale`, `ImportConvertCoordinates`, `ImportGenerateNormals`, `ImportLightmapUVs`, `ImportCombineMeshes`, `ImportMeshTextures`, `ImportTextureSRGB`, `ImportTextureMaxSize`, `ImportTextureMipGen` |
+| Import | The Import Wizard's starting options: mesh scale, convert axes, generate normals, generate lightmap UVs, build meshlets, combine meshes, import a mesh's textures, sRGB, largest texture, texture mipmaps | `Editor.ImportMeshScale`, `ImportConvertCoordinates`, `ImportGenerateNormals`, `ImportLightmapUVs`, `ImportMeshlets`, `ImportCombineMeshes`, `ImportMeshTextures`, `ImportTextureSRGB`, `ImportTextureMaxSize`, `ImportTextureMipGen` |
 
 The settings are those config vars themselves; the dialog keeps no copy.
 **Apply** and **OK** set them the way the Console would and save them;
