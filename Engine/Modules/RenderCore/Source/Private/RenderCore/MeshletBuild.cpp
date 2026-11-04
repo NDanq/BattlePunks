@@ -136,6 +136,25 @@ namespace RenderCore
                 }
                 Meshlet.Radius     = Bounds.radius;
                 Meshlet.ConeCutoff = Bounds.cone_cutoff;
+
+                /* The cone is the triangles' winding's; a mesh wound the other
+                 * way round (the importer's mirror into engine space) has it
+                 * pointing in. Turned to agree with the vertex normals, so
+                 * "faces away" means what it shows. */
+                if(InOutMesh.Normals.size() == size_t(VertexCount) * 3)
+                {
+                    double Agree = 0.0;
+                    for(uint32_t Vertex = 0; Vertex < Source.vertex_count; ++Vertex)
+                    {
+                        const float* Normal = &InOutMesh.Normals[size_t(BuiltVertices[Source.vertex_offset + Vertex]) * 3];
+                        Agree += double(Normal[0]) * Bounds.cone_axis[0] + double(Normal[1]) * Bounds.cone_axis[1]
+                               + double(Normal[2]) * Bounds.cone_axis[2];
+                    }
+                    if(Agree < 0.0)
+                    {
+                        for(float& Axis : Meshlet.ConeAxis) { Axis = -Axis; }
+                    }
+                }
                 Meshlets.push_back(Meshlet);
 
                 MeshletVertices.insert(MeshletVertices.end(), BuiltVertices.begin() + Source.vertex_offset,

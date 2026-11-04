@@ -1558,6 +1558,67 @@ culling off; with the wall moved aside the box is drawn again, and that frame
 too matches. D3D12 is written against its backend's patterns but was not
 compiled here (Linux).
 
+### Meshlets
+
+A mesh's sections can be split into **meshlets** -- at most 64 vertices and
+124 triangles, never across a section -- each with a bounding sphere and a
+normal cone (`MeshAsset.h`: `MeshData::Meshlets`, `BuildMeshlets`, the
+optional `MLET` chunk). The glTF importer builds them for every static mesh
+(Build meshlets, on by default); a mesh without them that has at least two
+meshlets' worth of triangles (a primitive, a mesh made in memory) builds its
+own the first time a view culls it. Skinned meshes have none: their bounds are
+the bind pose's.
+
+With **`[Rendering] Meshlets`** on (off by default until measured), a scene's
+own views -- not its captures, previews or shadow views -- cull the Base Pass
+sections of meshes with meshlets **meshlet by meshlet on the GPU**:
+
+- **Queueing:** `Submit` gives each such section a record in the view's
+  `MeshletBatch` (MeshletCulling.h): its placement, its meshlets, its largest
+  axis scale and its material's World Position Offset reach (which pad each
+  meshlet's sphere), a region of the batch's index buffer as large as the
+  section, and an indirect argument slot. A static draw list's replay queues
+  the same way, each frame.
+- **Culling:** before any stage, outside the render passes,
+  `GDIUpdateBuffer` uploads the records and the arguments (no indices, one
+  instance, from the section's region), then `MeshletCull.csh` runs once per
+  mesh, a thread a meshlet, a row of workgroups a section. A meshlet whose
+  sphere is outside one of the view's six planes writes nothing. A survivor
+  adds its triangles to its section's index count (an atomic) and writes their
+  corners into the region, as the mesh's own vertex indices.
+- **Drawing:** the section draws as before -- its material, vertex shaders,
+  World Position Offset, velocity, G-buffer -- but from the batch's indices
+  (`GDISetIndexBuffer`) with the GPU's count (`GDISetIndirectArgs`). On D3D12
+  the Base Pass then records serially (GDI, below: a chunk's list cannot move
+  what compute wrote into the states a draw reads).
+
+`[Rendering] MeshletCones` also culls meshlets all of whose triangles face
+away from the eye (the cone test of [Kapoulkine], not with World Position
+Offset). It is off by default: the Base Pass draws back faces, so a one-sided
+open mesh seen from behind would lose them. The cones are turned to agree with
+the vertex normals at build time, whichever way the mesh is wound.
+`[Rendering] MeshletFreezeCulling` keeps culling against the view as it was
+when it turned on: walk round a mesh and see what was culled.
+
+`RenderStats::MeshletSectionsLastFrame`, `MeshletsSubmittedLastFrame` and
+`MeshletTrianglesLastFrame` count the last view's sections, their meshlets and
+triangles; `MeshletTrianglesDrawnLastFrame` is what the cull kept, read back
+only with `[Rendering] MeshletStats` (a wait for the GPU: a debugging aid), -1
+otherwise.
+
+| Backend | Meshlet culling |
+|---|---|
+| Vulkan, D3D12 | `GDISupportsMeshletCulling()`: culled and drawn indirectly |
+| Null | queued, dispatched and drawn from the batch's indices (counted); dispatches run nothing |
+| Metal, OpenGL | not yet: sections draw whole, as before |
+
+Verified: RenderCoreMeshletTests (headless) checks the build -- every
+triangle once, the limits, the spheres, the chunk round trip, stale and
+corrupt sets dropped. The smoke test's Null check counts what is queued; its
+GPU check (Vulkan and D3D12) draws a 6144-triangle sphere half off the side
+of the view: 4419 triangles are kept (2389 with cones), none looking away, and
+the frame is pixel for pixel the one drawn whole.
+
 ### UI
 
 A scene's UI -- HUDs and menus, Engine/Modules/UI/README.md -- is drawn over
@@ -2281,6 +2342,11 @@ Hardware shadow comparison, depth bias and front-face culling in GDI (then
 drop most of the receiver bias); Masked casters clipped in the Shadows
 sub-stage; shadows for Translucent Lit; a tiled or clustered light list past 16
 lights; per-section bounds for culling; RGBA16F G-buffer and scene colour.
+
+Meshlets: occlusion of meshlets against a depth pyramid (the frame before's,
+then two passes); shadow views culled by meshlet; meshlets on Metal and
+OpenGL; one multi-draw per mesh instead of a draw per section; a level of
+detail graph (the next phase).
 
 Occlusion culling: Masked occluders with their clip; occlusion queries on
 Metal and OpenGL; a hierarchical depth buffer tested on the GPU, so nothing

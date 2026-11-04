@@ -434,6 +434,7 @@ namespace RenderCore
         OutStats.ParallelPasses              = P->Context.GetParallelPassCount();
         GetStaticDrawStats(OutStats.StaticProxiesDrawn, OutStats.StaticListBuilds);
         GetOcclusionStats(OutStats.ProxiesOccludedLastFrame, OutStats.OcclusionQueriesLastFrame);
+        GetMeshletStats(OutStats);
         GetShadowCacheStats(OutStats);
         GetCaptureStats(OutStats.GIProbesUnlit, OutStats.GIProbesTotal, OutStats.bCapturesBusy);
         GetResolutionStats(OutStats.ResolutionScale, OutStats.bDynamicResolution, OutStats.DynamicResolutionTargetMs);
@@ -543,6 +544,30 @@ namespace RenderCore
     {
         OutOccluded = GOccluded.load(std::memory_order_relaxed);
         OutQueries  = GOcclusionQueries.load(std::memory_order_relaxed);
+    }
+
+    namespace
+    {
+        std::atomic<uint32_t> GMeshletSections{0};
+        std::atomic<uint64_t> GMeshlets{0};
+        std::atomic<uint64_t> GMeshletTriangles{0};
+        std::atomic<int64_t>  GMeshletTrianglesDrawn{-1};
+    }
+
+    void SetMeshletStats(const RenderStats& InStats)
+    {
+        GMeshletSections.store(InStats.MeshletSectionsLastFrame, std::memory_order_relaxed);
+        GMeshlets.store(InStats.MeshletsSubmittedLastFrame, std::memory_order_relaxed);
+        GMeshletTriangles.store(InStats.MeshletTrianglesLastFrame, std::memory_order_relaxed);
+        GMeshletTrianglesDrawn.store(InStats.MeshletTrianglesDrawnLastFrame, std::memory_order_relaxed);
+    }
+
+    void GetMeshletStats(RenderStats& OutStats)
+    {
+        OutStats.MeshletSectionsLastFrame       = GMeshletSections.load(std::memory_order_relaxed);
+        OutStats.MeshletsSubmittedLastFrame     = GMeshlets.load(std::memory_order_relaxed);
+        OutStats.MeshletTrianglesLastFrame      = GMeshletTriangles.load(std::memory_order_relaxed);
+        OutStats.MeshletTrianglesDrawnLastFrame = GMeshletTrianglesDrawn.load(std::memory_order_relaxed);
     }
 
     namespace
