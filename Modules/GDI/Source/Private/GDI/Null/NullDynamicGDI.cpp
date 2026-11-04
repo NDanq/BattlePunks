@@ -153,11 +153,20 @@ void NullDynamicGDI::DrawObject(class GDIViewObject*)
 {
     Stats.DrawObjectCalls++;
     Stats.PredicatedDrawCalls += bPredicated ? 1 : 0;
+    Stats.IndexBufferDrawCalls += IndexBuffer ? 1 : 0;
     if(InstanceBuffer)
     {
         Stats.InstancedDrawCalls++;
         Stats.LastInstanceCount = InstanceCount;
     }
+}
+
+bool NullDynamicGDI::UpdateBuffer(GDIBuffer* InBuffer, const uint32_t InOffset, const void* InData, const uint32_t InBytes)
+{
+    std::memcpy(static_cast<NullBuffer*>(InBuffer)->Data.data() + InOffset, InData, InBytes);
+    Stats.BufferUpdates++;
+    Stats.BufferUpdateBytes += InBytes;
+    return true;
 }
 
 GDIBuffer* NullDynamicGDI::CreateBuffer(const uint32_t InBytes, const uint8_t InUsage, const void* InInitialData)
@@ -234,6 +243,7 @@ void NullDynamicGDI::DrawObject(class GDIViewObject*, class GDIView*)
 {
     Stats.DrawObjectCalls++;
     Stats.PredicatedDrawCalls += bPredicated ? 1 : 0;
+    Stats.IndexBufferDrawCalls += IndexBuffer ? 1 : 0;
 }
 
 void NullDynamicGDI::BeginDrawEvent(const std::string& EventName)
@@ -325,6 +335,7 @@ bool NullDynamicGDI::BeginParallelPass(const uint32_t InChunks, GDIRecordingCont
         Context.BoundPixelShader  = BoundPixelShader;
         Context.InstanceBuffer    = InstanceBuffer;
         Context.InstanceCount     = InstanceCount;
+        Context.IndexBuffer       = IndexBuffer;
         Context.Index             = Chunk;
         OutContexts[Chunk]        = &Context;
     }
@@ -340,6 +351,7 @@ void NullDynamicGDI::EndParallelPass()
         Stats.DrawObjectCalls     += Context.Draws;
         Stats.PredicatedDrawCalls += Context.Predicated;
         Stats.InstancedDrawCalls  += Context.Instanced;
+        Stats.IndexBufferDrawCalls += Context.IndexBufferDraws;
         if(Context.Instanced > 0) { Stats.LastInstanceCount = Context.LastInstanceCount; }
     }
     Stats.ParallelPasses += OpenChunks > 0 ? 1 : 0;
@@ -352,6 +364,7 @@ void NullDynamicGDI::RecordDrawObject(GDIRecordingContext* InContext, class GDIV
     auto& Context = *static_cast<NullRecordingContext*>(InContext);
     ++Context.Draws;
     Context.Predicated += Context.PredicateSet && Context.PredicateIndex >= 0 ? 1 : 0;
+    Context.IndexBufferDraws += Context.IndexBuffer ? 1 : 0;
     if(Context.InstanceBuffer)
     {
         ++Context.Instanced;

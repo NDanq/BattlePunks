@@ -1618,6 +1618,7 @@ void VulkanDynamicGDI::MakeImmediateInputs(VKDrawInputs& Out)
     Out.InstanceCount      = InstanceCount;
     Out.IndirectArgs       = IndirectArgs;
     Out.IndirectArgsOffset = IndirectArgsOffset;
+    Out.IndexBuffer        = IndexBuffer;
     Out.PredicateSet       = PredicateSet;
     Out.PredicateIndex     = PredicateIndex;
     Out.Caches             = &Immediate;

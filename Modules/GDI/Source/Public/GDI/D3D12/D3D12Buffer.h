@@ -35,7 +35,7 @@ public:
     bool            IsValid()     const { return Resource != nullptr; }
     ID3D12Resource* GetResource() const { return Resource.Get(); }
 
-    /** The read state its usage needs in a draw: vertex buffer and/or indirect arguments. */
+    /** The read state its usage needs in a draw: vertex buffer, indirect arguments and/or index buffer. */
     D3D12_RESOURCE_STATES GetDrawReadState() const;
 
     /**

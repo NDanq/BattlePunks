@@ -281,6 +281,7 @@ struct VKDrawInputs
     uint32_t                    InstanceCount  = 0;
     GDIBuffer*                  IndirectArgs   = nullptr;
     uint32_t                    IndirectArgsOffset = 0;
+    GDIBuffer*                  IndexBuffer    = nullptr;   // GDISetIndexBuffer's; null: the mesh's own
     const class VKBlendState*        Blend = nullptr;
     const class VKDepthStencilState* Depth = nullptr;
     bool                        bHasTarget = false;
@@ -375,6 +376,9 @@ public:
                                GDIBuffer* const* InBuffers, uint32_t InBufferCount,
                                uint32_t InX, uint32_t InY, uint32_t InZ) override;
     bool       ReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes) override;
+    /** vkCmdUpdateBuffer, in 64 KB pieces, between the same barriers as a dispatch. */
+    bool       UpdateBuffer(GDIBuffer* InBuffer, uint32_t InOffset, const void* InData, uint32_t InBytes) override;
+    bool       SupportsIndexBuffers() const override { return SupportsCompute(); }
 
     bool     SupportsGPUTimestamps() const override { return TimestampPool != VK_NULL_HANDLE; }
     void     WriteGPUTimestamp(uint32_t InIndex) override;

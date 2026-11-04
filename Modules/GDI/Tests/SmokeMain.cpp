@@ -317,7 +317,32 @@ static void TestComputeAndInstancing()
     GDIDrawObject(nullptr);
     Expect(Null->GetStats().InstancedDrawCalls == 1 && Null->GetStats().DrawObjectCalls == 5, "and null goes back to one");
 
-    for(GDIBuffer* Each : { Storage, Zeroed, InstanceOnly, Instances }) { if(Each) Each->Release(); }
+    /* Updates in frame order (GDIUpdateBuffer) and draws from a buffer's indices (GDISetIndexBuffer). */
+    Expect(GDISupportsIndexBuffers() && GDISupportsMeshletCulling(), "Null reports index buffers and meshlet culling");
+    const uint32_t Later[2] = { 7, 8 };
+    Expect(GDIUpdateBuffer(Storage, 8, Later, sizeof(Later)) && GDIReadBuffer(Storage, Bytes) && Bytes.size() == sizeof(Initial)
+           && std::memcmp(Bytes.data() + 8, Later, sizeof(Later)) == 0 && std::memcmp(Bytes.data(), Initial, 8) == 0
+           && Null->GetStats().BufferUpdates == 1 && Null->GetStats().BufferUpdateBytes == sizeof(Later),
+           "an update writes its bytes at its offset, and leaves the rest");
+    Expect(!GDIUpdateBuffer(Storage, 12, Later, sizeof(Later)) && !GDIUpdateBuffer(Storage, 2, Later, 4)
+           && !GDIUpdateBuffer(Storage, 0, Later, 6) && !GDIUpdateBuffer(Storage, 0, nullptr, 4)
+           && !GDIUpdateBuffer(nullptr, 0, Later, 4) && !GDIUpdateBuffer(Storage, 0, Later, 0)
+           && Null->GetStats().BufferUpdates == 1,
+           "past the end, unaligned, empty or missing: refused, and nothing reaches the backend");
+
+    GDIBuffer* Indices = GDICreateBuffer(64, GDI_BU_Storage | GDI_BU_Index);
+    Expect(Indices && (Indices->GetUsage() & GDI_BU_Index) != 0, "an index buffer is a buffer like any other");
+    GDISetIndexBuffer(Indices);
+    GDIDrawObject(nullptr);
+    Expect(Null->GetStats().IndexBufferDrawCalls == 1, "after GDISetIndexBuffer a draw reads its indices");
+    GDISetIndexBuffer(Storage);
+    GDIDrawObject(nullptr);
+    Expect(Null->GetStats().IndexBufferDrawCalls == 1, "a buffer without GDI_BU_Index is not taken");
+    GDISetIndexBuffer(nullptr);
+    GDIDrawObject(nullptr);
+    Expect(Null->GetStats().IndexBufferDrawCalls == 1, "and null goes back to the mesh's own");
+
+    for(GDIBuffer* Each : { Storage, Zeroed, InstanceOnly, Instances, Indices }) { if(Each) Each->Release(); }
 }
 
 /*

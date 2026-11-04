@@ -540,7 +540,16 @@ void VKMesh::Record(const VKDrawInputs& In)
             const VkDeviceSize SkinOffsets[2] = { 0, 0 };
             vkCmdBindVertexBuffers(Cmd, 6, 2, SkinBuffers, SkinOffsets);
         }
-        vkCmdBindIndexBuffer(Cmd, IndexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        // GDISetIndexBuffer's indices, into these vertices, or the mesh's own.
+        if(auto* Indices = static_cast<VKBuffer*>(In.IndexBuffer))
+        {
+            if(!Indices->IsValid()) return;
+            vkCmdBindIndexBuffer(Cmd, Indices->GetBuffer(), 0, VK_INDEX_TYPE_UINT32);
+        }
+        else
+        {
+            vkCmdBindIndexBuffer(Cmd, IndexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        }
 
         // Instanced (GDISetInstanceBuffer): vertex layout 3 reads binding 5 per instance.
         uint32_t Instances = 1;
@@ -551,14 +560,14 @@ void VKMesh::Record(const VKDrawInputs& In)
             const VkDeviceSize InstanceOffset = 0;
             vkCmdBindVertexBuffers(Cmd, 5, 1, &InstanceBuffer, &InstanceOffset);
             Instances = In.InstanceCount;
+        }
 
-            // Indirect (GDISetIndirectArgs): the counts and range from a buffer the GPU wrote.
-            if(auto* Args = static_cast<VKBuffer*>(In.IndirectArgs))
-            {
-                if(!Args->IsValid()) return;
-                vkCmdDrawIndexedIndirect(Cmd, Args->GetBuffer(), In.IndirectArgsOffset, 1, GDI_INDIRECT_ARGS_STRIDE);
-                return;
-            }
+        // Indirect (GDISetIndirectArgs): the counts and range from a buffer the GPU wrote.
+        if(auto* Args = static_cast<VKBuffer*>(In.IndirectArgs))
+        {
+            if(!Args->IsValid()) return;
+            vkCmdDrawIndexedIndirect(Cmd, Args->GetBuffer(), In.IndirectArgsOffset, 1, GDI_INDIRECT_ARGS_STRIDE);
+            return;
         }
         // A dynamic mesh's last update sits at its base vertex and index; 0 otherwise.
         vkCmdDrawIndexed(Cmd, Count, Instances, GetDynamicBaseIndex() + First, int32_t(GetDynamicBaseVertex()), 0);
