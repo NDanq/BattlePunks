@@ -176,9 +176,11 @@ GDIBuffer* NullDynamicGDI::CreateBuffer(const uint32_t InBytes, const uint8_t In
 }
 
 bool NullDynamicGDI::DispatchCompute(GDIShader*, const void*, const uint32_t InParamBytes, GDIBuffer* const*,
-                                     const uint32_t InBufferCount, const uint32_t InX, const uint32_t InY, const uint32_t InZ)
+                                     const uint32_t InBufferCount, GDITextureResource* InTexture, const uint32_t InX, const uint32_t InY,
+                                     const uint32_t InZ)
 {
     Stats.DispatchCalls++;
+    Stats.TexturedDispatchCalls += InTexture ? 1 : 0;
     Stats.LastDispatchGroups[0] = InX;
     Stats.LastDispatchGroups[1] = InY;
     Stats.LastDispatchGroups[2] = InZ;

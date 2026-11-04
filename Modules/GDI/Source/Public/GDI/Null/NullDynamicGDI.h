@@ -61,6 +61,7 @@ struct NullGDIStats
     uint64_t DynamicMeshesCreated  = 0;
     uint64_t BuffersCreated        = 0;
     uint64_t DispatchCalls         = 0;
+    uint64_t TexturedDispatchCalls = 0;   // dispatches with a texture (GDIDispatchCompute's InTexture)
     uint32_t LastDispatchGroups[3] = {};
     uint32_t LastDispatchBuffers   = 0;
     uint32_t LastDispatchParamBytes = 0;
@@ -205,7 +206,7 @@ public:
     bool       SupportsCompute() const override { return true; }
     GDIBuffer* CreateBuffer(uint32_t InBytes, uint8_t InUsage, const void* InInitialData) override;
     bool       DispatchCompute(GDIShader* InShader, const void* InParams, uint32_t InParamBytes,
-                               GDIBuffer* const* InBuffers, uint32_t InBufferCount,
+                               GDIBuffer* const* InBuffers, uint32_t InBufferCount, GDITextureResource* InTexture,
                                uint32_t InX, uint32_t InY, uint32_t InZ) override;
     bool       ReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes) override;
     /* Updates write the CPU copy (ReadBuffer returns them); index buffers and

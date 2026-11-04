@@ -82,6 +82,9 @@ NIMBLE_CONFIG_BOOL(GRenderDrawLabels, "Rendering", "DrawLabels", true, nullptr);
 NIMBLE_CONFIG_BOOL(GRenderMeshlets, "Rendering", "Meshlets", false, nullptr);
 NIMBLE_CONFIG_BOOL(GRenderMeshletCones, "Rendering", "MeshletCones", false, nullptr);
 NIMBLE_CONFIG_BOOL(GRenderMeshletFreeze, "Rendering", "MeshletFreezeCulling", false, nullptr);
+/* Also the meshlets behind what the view drew the frame before: its depth pyramid, built after
+ * each Base Pass. Off by default: what comes out from behind something shows a frame late. */
+NIMBLE_CONFIG_BOOL(GRenderMeshletOcclusion, "Rendering", "MeshletOcclusion", false, nullptr);
 /* The triangles the cull kept, read back after each view's Base Pass for RenderStats (and "stat
  * meshlets"): a wait for the GPU, so a debugging aid, off by default. */
 NIMBLE_CONFIG_BOOL(GRenderMeshletStats, "Rendering", "MeshletStats", false, nullptr);
@@ -6601,10 +6604,18 @@ namespace RenderCore
         P->LastMeshlets        = P->bMeshletView ? P->MeshletQueue.GetMeshletCount() : 0u;
         P->LastMeshletIndices  = P->bMeshletView ? P->MeshletQueue.GetIndexCount() : 0u;
         P->LastMeshletDrawn    = -1;
+        /* The last frame's depth pyramid too, unless off, the view frozen, the size changed, or
+         * the view did not draw the frame before (a capture drawn now and then). */
+        const bool bMeshletOcclusion = P->bMeshletView && GRenderMeshletOcclusion.GetBool() && !P->bMeshletsFrozen;
+        if(!bMeshletOcclusion || InTargets.Width != InTargets.PrevWidth || InTargets.Height != InTargets.PrevHeight
+           || InTargets.MeshletPyramid.Frame + 1 != P->FrameNumber)
+        {
+            InTargets.MeshletPyramid.bValid = false;
+        }
         if(P->bMeshletView && P->MeshletQueue.GetSectionCount() > 0 && InTargets.SceneColor)
         {
             P->MeshletQueue.Dispatch(P->GetComputeShader("MeshletCull.csh"), P->MeshletViewProjection, P->MeshletEye,
-                                     GRenderMeshletCones.GetBool());
+                                     GRenderMeshletCones.GetBool(), bMeshletOcclusion ? &InTargets.MeshletPyramid : nullptr);
         }
 
         /* The World's custom render passes for these stages (CustomRenderPass.h);
@@ -6755,6 +6766,19 @@ namespace RenderCore
             BindTargets(Targets, P->bVelocityThisFrame ? RENDER_GBUFFER_TARGETS + 1 : RENDER_GBUFFER_TARGETS, SceneColor);
             GDIClear(CM_Color, EngineCore::Color(0, 0, 0, 0));   // alpha 0 in GBuffer1: no lit surface
             P->IssueStage(ERenderStage::BasePass);
+
+            /* GPU MESHLET OCCLUSION: the opaque depth's pyramid, for the next
+             * frame's cull -- the depth sampleable while the G-buffer alone is
+             * bound, then the Base Pass's targets back for what follows. */
+            GDITexture2D* Depth = bMeshletOcclusion && GDISupportsMeshletCulling() ? SceneColor->ToDepthTexture2D() : nullptr;
+            if(Depth && Depth->Resource)
+            {
+                BindTargets(Targets, 1, nullptr);
+                InTargets.MeshletPyramid.Build(P->GetComputeShader("MeshletHzbFirst.csh"), P->GetComputeShader("MeshletHzbDown.csh"),
+                                               Depth->Resource, Width, Height, P->View.Projection * P->View.View);
+                InTargets.MeshletPyramid.Frame = P->FrameNumber;
+                BindTargets(Targets, P->bVelocityThisFrame ? RENDER_GBUFFER_TARGETS + 1 : RENDER_GBUFFER_TARGETS, SceneColor);
+            }
             P->StageTimestamp(RGT_BasePass, true);
         }
         else if(!Base.IsEmpty())

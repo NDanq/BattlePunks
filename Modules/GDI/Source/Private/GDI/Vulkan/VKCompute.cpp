@@ -10,6 +10,7 @@
 #include "Public/GDI/Vulkan/VKPipelineCache.h"
 #include "Public/GDI/Vulkan/VKDescriptorAllocator.h"
 #include "Public/GDI/Vulkan/VKRenderTarget.h"
+#include "Public/GDI/Vulkan/VKTexture.h"
 #include "Private/GDI/Vulkan/VKTransientOps.h"
 
 #include <algorithm>
@@ -65,7 +66,7 @@ GDIBuffer* VulkanDynamicGDI::CreateBuffer(const uint32_t InBytes, const uint8_t 
 }
 
 bool VulkanDynamicGDI::DispatchCompute(GDIShader* InShader, const void* InParams, const uint32_t InParamBytes,
-                                       GDIBuffer* const* InBuffers, const uint32_t InBufferCount,
+                                       GDIBuffer* const* InBuffers, const uint32_t InBufferCount, GDITextureResource* InTexture,
                                        const uint32_t InX, const uint32_t InY, const uint32_t InZ)
 {
     if(!CurrentStateData || !PipelineCache || !DescAlloc || !DeviceObj) return false;
@@ -76,8 +77,11 @@ bool VulkanDynamicGDI::DispatchCompute(GDIShader* InShader, const void* InParams
     {
         if(!static_cast<VKBuffer*>(InBuffers[Each])->IsValid()) return false;
     }
+    /* The texture, sampled as a material's is: SHADER_READ_ONLY (SetRenderTargets made it so). */
+    auto* Texture = InTexture ? dynamic_cast<VKTextureResource*>(InTexture) : nullptr;
+    if(InTexture && (!Texture || Texture->GetImageView() == VK_NULL_HANDLE)) return false;
 
-    const VKPipelineCache::PipelineFetch Fetch = PipelineCache->GetOrCreateCompute(Module, InBufferCount);
+    const VKPipelineCache::PipelineFetch Fetch = PipelineCache->GetOrCreateCompute(Module, InBufferCount, Texture != nullptr);
     if(Fetch.Pipeline == VK_NULL_HANDLE) return false;
 
     /* The parameters, in this frame's UBO ring (at least 16 bytes: a block is never empty). */
@@ -89,7 +93,7 @@ bool VulkanDynamicGDI::DispatchCompute(GDIShader* InShader, const void* InParams
     if(InParamBytes > 0) { std::memcpy(Params.MappedPtr, InParams, InParamBytes); }
 
     VkDescriptorBufferInfo Infos[GDI_COMPUTE_MAX_STORAGE_BUFFERS + 1]{};
-    VkWriteDescriptorSet   Writes[GDI_COMPUTE_MAX_STORAGE_BUFFERS + 1]{};
+    VkWriteDescriptorSet   Writes[GDI_COMPUTE_MAX_STORAGE_BUFFERS + 2]{};
     Infos[0].buffer = Params.Buffer;
     Infos[0].offset = Params.Offset;
     Infos[0].range  = ParamBytes;
@@ -108,7 +112,22 @@ bool VulkanDynamicGDI::DispatchCompute(GDIShader* InShader, const void* InParams
         Writes[Each].descriptorType  = Each == 0 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         Writes[Each].pBufferInfo     = &Infos[Each];
     }
-    vkUpdateDescriptorSets(DeviceObj->GetDevice(), InBufferCount + 1, Writes, 0, nullptr);
+    uint32_t WriteCount = InBufferCount + 1;
+    VkDescriptorImageInfo Image{};
+    if(Texture)
+    {
+        Image.sampler     = Texture->GetSampler();
+        Image.imageView   = Texture->GetImageView();
+        Image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        Writes[WriteCount].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        Writes[WriteCount].dstSet          = Set;
+        Writes[WriteCount].dstBinding      = GDI_COMPUTE_TEXTURE_BINDING;
+        Writes[WriteCount].descriptorCount = 1;
+        Writes[WriteCount].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        Writes[WriteCount].pImageInfo      = &Image;
+        ++WriteCount;
+    }
+    vkUpdateDescriptorSets(DeviceObj->GetDevice(), WriteCount, Writes, 0, nullptr);
 
     /* Outside a frame (a render command): on its own command buffer, at once, waited for. */
     if(CurrentStateData->CurrentCmd == VK_NULL_HANDLE)

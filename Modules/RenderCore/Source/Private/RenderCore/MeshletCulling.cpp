@@ -20,8 +20,21 @@ namespace RenderCore
             float    Planes[6][4];   // the view's, world space, inward: dot(N, P) + D >= 0 inside
             float    Eye[4];         // xyz: the view's position; w: 1 to cull by the normal cones
             uint32_t Layout[4];      // first record, records, vertex base, triangle base
+            float    HzbRows[4][4];  // the depth pyramid's view projection, by row
+            uint32_t Hzb[4];         // levels (0: no pyramid), the first level's width and height
+            uint32_t HzbLevels[MESHLET_HZB_LEVELS_MAX][4];   // each level's offset (floats), width, height
         };
-        static_assert(sizeof(CullParams) == 128, "MeshletCull.csh's MeshletCullParams");
+        static_assert(sizeof(CullParams) == 464, "MeshletCull.csh's MeshletCullParams");
+
+        /* MeshletHzbFirst.csh's and MeshletHzbDown.csh's MeshletHzbParams (std140). */
+        struct HzbParams
+        {
+            uint32_t Source[4];        // width, height, offset (floats; the first: unused)
+            uint32_t Destination[4];   // width, height, offset (floats)
+        };
+
+        /* The pyramid's workgroups: 8 x 8 texels. */
+        constexpr uint32_t HZB_GROUP_SIZE = 8;
 
         uint32_t FloatBits(const float InValue)
         {
@@ -29,6 +42,70 @@ namespace RenderCore
             std::memcpy(&Bits, &InValue, sizeof(Bits));
             return Bits;
         }
+    }
+
+    bool MeshletHzb::Build(GDIShader* InFirst, GDIShader* InDown, GDITextureResource* InDepth, const uint32_t InWidth,
+                           const uint32_t InHeight, const EngineCore::Matrix4x4& InViewProjection)
+    {
+        bValid = false;
+        if(!InFirst || !InDown || !InDepth || InWidth == 0 || InHeight == 0)
+        {
+            return false;
+        }
+
+        /* Half the drawn size each way, rounded up, then halving to 1 x 1. */
+        uint32_t Floats = 0;
+        Levels = 0;
+        uint32_t Width = (InWidth + 1) / 2, Height = (InHeight + 1) / 2;
+        while(Levels < MESHLET_HZB_LEVELS_MAX)
+        {
+            Offsets[Levels] = Floats;
+            Size[Levels][0] = Width;
+            Size[Levels][1] = Height;
+            Floats += Width * Height;
+            ++Levels;
+            if(Width == 1 && Height == 1) { break; }
+            Width  = (Width + 1) / 2;
+            Height = (Height + 1) / 2;
+        }
+        const uint32_t Bytes = Floats * uint32_t(sizeof(float));
+        if(!Buffer || Buffer->GetSize() < Bytes)
+        {
+            if(Buffer) { Buffer->Release(); }
+            Buffer = GDICreateBuffer(Bytes, GDI_BU_Storage);
+            GDISetDebugName(Buffer, "RenderCore.Meshlets.DepthPyramid");
+            if(!Buffer) { return false; }
+        }
+
+        SCOPED_DRAW_EVENT("MeshletDepthPyramid");
+        GDIBuffer* Buffers[1] = { Buffer };
+        for(uint32_t Level = 0; Level < Levels; ++Level)
+        {
+            HzbParams Params{};
+            Params.Source[0]      = Level == 0 ? InWidth : Size[Level - 1][0];
+            Params.Source[1]      = Level == 0 ? InHeight : Size[Level - 1][1];
+            Params.Source[2]      = Level == 0 ? 0u : Offsets[Level - 1];
+            Params.Destination[0] = Size[Level][0];
+            Params.Destination[1] = Size[Level][1];
+            Params.Destination[2] = Offsets[Level];
+            const uint32_t X = (Size[Level][0] + HZB_GROUP_SIZE - 1) / HZB_GROUP_SIZE;
+            const uint32_t Y = (Size[Level][1] + HZB_GROUP_SIZE - 1) / HZB_GROUP_SIZE;
+            const bool bDone = Level == 0
+                             ? GDIDispatchCompute(InFirst, &Params, uint32_t(sizeof(Params)), Buffers, 1, InDepth, X, Y)
+                             : GDIDispatchCompute(InDown, &Params, uint32_t(sizeof(Params)), Buffers, 1, X, Y);
+            if(!bDone) { return false; }
+        }
+        ViewProjection = InViewProjection;
+        bValid = true;
+        return true;
+    }
+
+    void MeshletHzb::Release()
+    {
+        if(Buffer) { Buffer->Release(); }   // deferred past any frame still reading it
+        Buffer = nullptr;
+        Levels = 0;
+        bValid = false;
     }
 
     MeshletGpuMesh::~MeshletGpuMesh()
@@ -201,7 +278,7 @@ namespace RenderCore
     }
 
     bool MeshletBatch::Dispatch(GDIShader* InCull, const EngineCore::Matrix4x4& InViewProjection, const EngineCore::Vector3& InEye,
-                                const bool bInCones)
+                                const bool bInCones, const MeshletHzb* InHzb)
     {
         if(Records.empty() || !InCull)
         {
@@ -256,6 +333,26 @@ namespace RenderCore
         Params.Eye[2] = float(InEye.GetZ());
         Params.Eye[3] = bInCones ? 1.0f : 0.0f;
 
+        /* The last frame's depth pyramid; the shader declares a fifth buffer either way. */
+        const bool bHzb = InHzb && InHzb->bValid && InHzb->Buffer;
+        if(bHzb)
+        {
+            for(int Row = 0; Row < 4; ++Row)
+            {
+                for(int Column = 0; Column < 4; ++Column) { Params.HzbRows[Row][Column] = float(InHzb->ViewProjection.Data[Row][Column]); }
+            }
+            Params.Hzb[0] = InHzb->Levels;
+            Params.Hzb[1] = InHzb->Size[0][0];
+            Params.Hzb[2] = InHzb->Size[0][1];
+            for(uint32_t Level = 0; Level < InHzb->Levels; ++Level)
+            {
+                Params.HzbLevels[Level][0] = InHzb->Offsets[Level];
+                Params.HzbLevels[Level][1] = InHzb->Size[Level][0];
+                Params.HzbLevels[Level][2] = InHzb->Size[Level][1];
+            }
+        }
+        GDIBuffer* Pyramid = bHzb ? InHzb->Buffer : RecordBuffer;
+
         SCOPED_DRAW_EVENT("MeshletCull");
         for(uint32_t First = 0; First < Order.size();)
         {
@@ -270,8 +367,8 @@ namespace RenderCore
             Params.Layout[1] = Count;
             Params.Layout[2] = Mesh->VertexBase;
             Params.Layout[3] = Mesh->TriangleBase;
-            GDIBuffer* Buffers[4] = { Mesh->Data, RecordBuffer, Indices, Args };
-            if(!GDIDispatchCompute(InCull, &Params, uint32_t(sizeof(Params)), Buffers, 4,
+            GDIBuffer* Buffers[5] = { Mesh->Data, RecordBuffer, Indices, Args, Pyramid };
+            if(!GDIDispatchCompute(InCull, &Params, uint32_t(sizeof(Params)), Buffers, 5,
                                    (Widest + CULL_GROUP_SIZE - 1) / CULL_GROUP_SIZE, Count))
             {
                 return false;

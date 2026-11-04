@@ -43,14 +43,17 @@ enum ED3D12RootParam : UINT
 
 /**
  * Root parameters of the compute root signature (GDIDispatchCompute): the
- * parameter block at b0, then one root UAV per storage buffer at u1-u4 --
- * spirv-cross makes each std430 buffer a RWByteAddressBuffer at its binding.
+ * parameter block at b0, then one root UAV per storage buffer at u1-u6 --
+ * spirv-cross makes each std430 buffer a RWByteAddressBuffer at its binding --
+ * then the texture's SRV and sampler tables at t8 and s8.
  */
 enum ED3D12ComputeRootParam : UINT
 {
     CRP_Params = 0,
     CRP_Storage0,
-    CRP_Count = CRP_Storage0 + 4   // GDI_COMPUTE_MAX_STORAGE_BUFFERS
+    CRP_Texture = CRP_Storage0 + GDI_COMPUTE_MAX_STORAGE_BUFFERS,
+    CRP_Sampler,
+    CRP_Count
 };
 
 /**

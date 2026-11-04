@@ -11,6 +11,7 @@
 
 class GDIBuffer;
 class GDIShader;
+class GDITextureResource;
 
 /*
  * GPU MESHLET CULLING (RENDERPIPELINE.md, "Meshlets"): a mesh's meshlets on
@@ -53,6 +54,45 @@ namespace RenderCore
         static std::unique_ptr<MeshletGpuMesh> Create(const MeshData& InMesh, const std::string& InName);
     };
 
+    /* Levels a depth pyramid has at most: 2^16 pixels across at its first. */
+    constexpr uint32_t MESHLET_HZB_LEVELS_MAX = 16;
+
+    /*
+     * A view's depth pyramid (RENDERPIPELINE.md, "Meshlets"): the farthest
+     * depth (near 0, far 1) of each region of its opaque scene, a level per
+     * halving from half the drawn size down to 1 x 1, all in one storage
+     * buffer (Offsets[k] floats in, Size[k] across and down), and the view
+     * projection it was drawn with. Built after the Base Pass; the next
+     * frame's cull reads it. A level's texel covers its 2 x 2 at the level
+     * before (and, at the edge of an odd size, the row or column after), so
+     * every depth is under one texel of each level.
+     */
+    struct MeshletHzb
+    {
+        GDIBuffer*            Buffer = nullptr;
+        uint32_t              Levels = 0;
+        uint32_t              Offsets[MESHLET_HZB_LEVELS_MAX] = {};
+        uint32_t              Size[MESHLET_HZB_LEVELS_MAX][2] = {};
+        EngineCore::Matrix4x4 ViewProjection;
+        uint64_t              Frame  = 0;       // the renderer frame it was built in (RenderContext's FrameNumber)
+        bool                  bValid = false;
+
+        MeshletHzb() = default;
+        MeshletHzb(const MeshletHzb&) = delete;
+        MeshletHzb& operator=(const MeshletHzb&) = delete;
+        ~MeshletHzb() { Release(); }
+
+        /* From InDepth (a scene depth, sampleable: no target writing it bound),
+         * its top-left InWidth x InHeight drawn with InViewProjection: InFirst
+         * (MeshletHzbFirst.csh) reads it into the first level, InDown
+         * (MeshletHzbDown.csh) each level into the next. False, invalid, if a
+         * shader, the buffer or a dispatch failed. */
+        bool Build(GDIShader* InFirst, GDIShader* InDown, GDITextureResource* InDepth, uint32_t InWidth, uint32_t InHeight,
+                   const EngineCore::Matrix4x4& InViewProjection);
+
+        void Release();
+    };
+
     class MeshletBatch
     {
     public:
@@ -81,11 +121,13 @@ namespace RenderCore
          * Uploads the records and the arguments (no indices yet: each draws
          * nothing until the cull adds its survivors) and culls each mesh's
          * records in one dispatch of InCull against InViewProjection's planes
-         * -- with the normal cones too if bInCones, seen from InEye. Outside
-         * the stages' render passes, before the Base Pass. False, nothing
-         * queued drawn, if a buffer or the dispatch failed.
+         * -- with the normal cones too if bInCones, seen from InEye, and
+         * against InHzb (the last frame's depth pyramid; null or invalid:
+         * not) too. Outside the stages' render passes, before the Base Pass.
+         * False, nothing queued drawn, if a buffer or the dispatch failed.
          */
-        bool Dispatch(GDIShader* InCull, const EngineCore::Matrix4x4& InViewProjection, const EngineCore::Vector3& InEye, bool bInCones);
+        bool Dispatch(GDIShader* InCull, const EngineCore::Matrix4x4& InViewProjection, const EngineCore::Vector3& InEye, bool bInCones,
+                      const MeshletHzb* InHzb = nullptr);
 
         /* What the draws read: the survivors' indices, and the arguments (GDI_INDIRECT_ARGS_STRIDE a slot). */
         GDIBuffer* GetIndices() const { return bDispatched ? Indices : nullptr; }

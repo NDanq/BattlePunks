@@ -373,7 +373,7 @@ public:
     bool       SupportsIndirectDraw() const override { return SupportsCompute(); }
     GDIBuffer* CreateBuffer(uint32_t InBytes, uint8_t InUsage, const void* InInitialData) override;
     bool       DispatchCompute(GDIShader* InShader, const void* InParams, uint32_t InParamBytes,
-                               GDIBuffer* const* InBuffers, uint32_t InBufferCount,
+                               GDIBuffer* const* InBuffers, uint32_t InBufferCount, GDITextureResource* InTexture,
                                uint32_t InX, uint32_t InY, uint32_t InZ) override;
     bool       ReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes) override;
     /** vkCmdUpdateBuffer, in 64 KB pieces, between the same barriers as a dispatch. */
