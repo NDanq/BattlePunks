@@ -2201,6 +2201,32 @@ the query (`GDISupportsOcclusionPredication()`; ignored elsewhere), and
 `GDIReadOcclusionResults` hands the CPU a round's answers once its block has
 finished on the GPU, never waiting. A query never ended answers "visible".
 
+Meshlet culling (### Meshlets) needed three more, where
+`GDISupportsIndexBuffers()` says so -- Vulkan, D3D12 and Null so far;
+`GDISupportsMeshletCulling()` is that, compute and indirect draws together:
+
+- **Buffer updates.** `GDIUpdateBuffer(Buffer, Offset, Data, Bytes)` writes a
+  buffer in frame order, as a dispatch is recorded: the dispatches and draws
+  after it see the bytes. Offset and size are multiples of 4.
+- **Index buffers.** A `GDI_BU_Index` buffer holds uint32 indices;
+  `GDISetIndexBuffer(Buffer)` makes the indexed draws after it read them
+  instead of their mesh's, with the mesh's vertices, until it is set to null.
+- **Indirect draws without instances.** `GDISetIndirectArgs` now applies to
+  any indexed draw, not only an instanced one.
+
+| Backend | Updates | Index buffers |
+|---|---|---|
+| Vulkan | `vkCmdUpdateBuffer` in 64 KB pieces, the render pass closed around them and reopened (as a dispatch); the dispatch barrier, which now also covers index reads, either side | `INDEX_BUFFER` usage; `vkCmdBindIndexBuffer` in place of the mesh's, then `vkCmdDrawIndexedIndirect` or `vkCmdDrawIndexed` |
+| D3D12 | an upload buffer of its own, `CopyBufferRegion`, released past the frame; the buffer moves to `COPY_DEST` and on to its readers' states | an IBV over the buffer, moved to `INDEX_BUFFER` on the serial path (as instance and argument buffers are: implicit promotion cannot leave `UNORDERED_ACCESS`, so a parallel pass must not draw from a buffer compute wrote) |
+| Null | written into the CPU copy, counted (`NullGDIStats::BufferUpdates`) | counted (`IndexBufferDrawCalls`); indirect args stay ignored |
+| Metal, OpenGL | not yet: `GDISupportsIndexBuffers()` is false | -- |
+
+Verification: GDI's smoke test (Null) covers updates (written at their
+offset; past the end, unaligned, empty or missing refused) and index buffers
+(taken with `GDI_BU_Index`, refused without, null restoring the mesh's).
+Vulkan, D3D12 and OpenGL compile on Windows; RenderCore's GPU smoke checks
+give the same results with these changes as without them.
+
 ## Tests
 
 - Routing (Null backend, materials from memory): each domain/shading pair lands

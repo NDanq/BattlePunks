@@ -809,6 +809,7 @@ bool D3D12DynamicGDI::MakeDrawInputs(D3D12DrawInputs& OutIn)
     OutIn.InstanceCount      = GetInstanceCount();
     OutIn.IndirectArgs       = GetIndirectArgs();
     OutIn.IndirectArgsOffset = GetIndirectArgsOffset();
+    OutIn.IndexBuffer        = GetIndexBuffer();
     OutIn.Blend              = &CurrentStateData->BlendState;
     OutIn.ColorMask          = CurrentStateData->ColorMask;
     OutIn.Depth              = &CurrentStateData->DepthState;

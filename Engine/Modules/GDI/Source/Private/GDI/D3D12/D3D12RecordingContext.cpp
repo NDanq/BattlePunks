@@ -153,6 +153,7 @@ bool D3D12DynamicGDI::BeginParallelPass(const uint32_t InChunks, GDIRecordingCon
         Context.InstanceCount      = InstanceCount;
         Context.IndirectArgs       = IndirectArgs;
         Context.IndirectArgsOffset = IndirectArgsOffset;
+        Context.IndexBuffer        = IndexBuffer;
         Context.PredicateSet       = ImmediatePredicateSet();
         Context.PredicateIndex     = PredicateIndex;
         Context.ViewportX          = ViewportX;
@@ -324,6 +325,7 @@ void D3D12DynamicGDI::RecordDrawObject(GDIRecordingContext* InContext, GDIViewOb
     In.InstanceCount      = Context.InstanceCount;
     In.IndirectArgs       = Context.IndirectArgs;
     In.IndirectArgsOffset = Context.IndirectArgsOffset;
+    In.IndexBuffer        = Context.IndexBuffer;
     In.Blend              = &Context.Blend;
     In.ColorMask          = Context.ColorMask;
     In.Depth              = &Context.Depth;

@@ -263,7 +263,7 @@ class GDIBuffer;
  * path's GDI* setters -- GDISetBoundShader, GDISetUniformBlock,
  * GDISetMaterialTexture, the depth, blend, stencil and colour-mask states,
  * GDISetViewport and the scissor, GDISetInstanceBuffer, GDISetIndirectArgs,
- * GDISetOcclusionPredicate, GDISetDrawRange -- write into it instead of the
+ * GDISetIndexBuffer, GDISetOcclusionPredicate, GDISetDrawRange -- write into it instead of the
  * driver, and GDIDrawObject records into its own command buffer. So several
  * threads record at once, each into its own context, with no shared state.
  * Anything else (render targets, clears, queries, dispatches, resources) is
@@ -287,6 +287,7 @@ public:
     uint32_t              InstanceCount      = 0;
     GDIBuffer*            IndirectArgs       = nullptr;
     uint32_t              IndirectArgsOffset = 0;
+    GDIBuffer*            IndexBuffer        = nullptr;
     GDIOcclusionQueries*  PredicateSet       = nullptr;
     int32_t               PredicateIndex     = -1;
     uint                  ViewportX = 0, ViewportY = 0, ViewportWidth = 0, ViewportHeight = 0;
@@ -669,17 +670,35 @@ public:
                                        uint32_t /*InX*/, uint32_t /*InY*/, uint32_t /*InZ*/) { return false; }
     /* InBuffer's bytes as the GPU left them, waiting for it: for tests and tools. */
     virtual bool       ReadBuffer(GDIBuffer* /*InBuffer*/, std::vector<uint8_t>& /*OutBytes*/) { return false; }
+    /* InBytes of InData into InBuffer at InOffset, recorded in frame order as
+     * a dispatch is. Validated by GDIUpdateBuffer. */
+    virtual bool       UpdateBuffer(GDIBuffer* /*InBuffer*/, uint32_t /*InOffset*/, const void* /*InData*/, uint32_t /*InBytes*/)
+    {
+        return false;
+    }
 
     /* GDISetInstanceBuffer's buffer and count, which indexed draws read. */
     GDIBuffer* GetInstanceBuffer() const { return InstanceBuffer; }
     uint32_t   GetInstanceCount()  const { return InstanceCount; }
 
-    /* Whether an instanced indexed draw can take its counts from a buffer
+    /* Whether an indexed draw can take its counts from a buffer
      * (GDISetIndirectArgs). No by default. */
     virtual bool SupportsIndirectDraw() const { return false; }
     /* GDISetIndirectArgs's buffer and byte offset; null: the draws' own counts. */
     GDIBuffer* GetIndirectArgs()       const { return IndirectArgs; }
     uint32_t   GetIndirectArgsOffset() const { return IndirectArgsOffset; }
+
+    /* Whether an indexed draw can read its indices from a GDIBuffer
+     * (GDISetIndexBuffer), and the CPU write buffers in frame order
+     * (UpdateBuffer). No by default. */
+    virtual bool SupportsIndexBuffers() const { return false; }
+    /* GDISetIndexBuffer's buffer; null: the meshes' own indices. */
+    GDIBuffer* GetIndexBuffer() const { return IndexBuffer; }
+
+    /* What GPU meshlet culling needs (RenderCore's RENDERPIPELINE.md,
+     * Meshlets): compute, buffers updated in frame order, indexed draws from
+     * a buffer's indices with the GPU's counts. */
+    virtual bool SupportsMeshletCulling() const { return SupportsCompute() && SupportsIndirectDraw() && SupportsIndexBuffers(); }
 
     /* Where the backend keeps texture memory, for stats (GDIGetTextureMemoryStats);
      * false from a backend that does not say. */
@@ -758,6 +777,10 @@ protected:
     friend uint64_t GDIGetRenderingSerial();
     friend void GDISetInstanceBuffer(GDIBuffer*, uint32_t);
     friend void GDISetIndirectArgs(GDIBuffer*, uint32_t);
+    friend void GDISetIndexBuffer(GDIBuffer*);
+
+    /* GDISetIndexBuffer's: null, the meshes' own indices. */
+    GDIBuffer*            IndexBuffer = nullptr;
 
     /* GDISetInstanceBuffer's: null and 0 draw one instance, as before. */
     GDIBuffer*            InstanceBuffer = nullptr;
@@ -994,6 +1017,16 @@ bool       GDIDispatchCompute(GDIShader* InShader, const void* InParams, uint32_
 bool       GDIReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes);
 
 /*
+ * InBytes of InData into InBuffer at InOffset, where GDISupportsIndexBuffers():
+ * recorded in frame order as a dispatch is (between GDIBeginRendering and
+ * GDIEndRendering, closing and reopening the render pass; outside, at once),
+ * so the dispatches and draws after it see the bytes and the ones before saw
+ * the old. Offset and size are multiples of 4. False, with nothing done, if
+ * anything is invalid or past the buffer's end.
+ */
+bool       GDIUpdateBuffer(GDIBuffer* InBuffer, uint32_t InOffset, const void* InData, uint32_t InBytes);
+
+/*
  * Instancing: the indexed draws after this (GDIDrawObject of a GDICreateMesh
  * mesh) each draw InCount instances, reading InBuffer (GDI_BU_Instance) as
  * GDIBuffer.h lays an instance out -- until it is called again; null or 0
@@ -1003,8 +1036,8 @@ bool       GDIReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes);
 void       GDISetInstanceBuffer(GDIBuffer* InBuffer, uint32_t InCount);
 
 /*
- * Indirect instancing: while set, an instanced indexed draw (one with
- * GDISetInstanceBuffer) takes its index count, instance count, first index,
+ * Indirect draws: while set, an indexed draw (of a GDICreateMesh mesh,
+ * instanced or not) takes its index count, instance count, first index,
  * vertex offset and first instance from InArgs (GDI_BU_Indirect) at
  * InOffsetBytes, laid out as GDI_INDIRECT_ARGS_STRIDE says -- the GPU's own
  * count, written by a compute shader, with no readback. Its mesh's draw
@@ -1013,6 +1046,21 @@ void       GDISetInstanceBuffer(GDIBuffer* InBuffer, uint32_t InCount);
  */
 bool       GDISupportsIndirectDraw();
 void       GDISetIndirectArgs(GDIBuffer* InArgs, uint32_t InOffsetBytes = 0);
+
+/*
+ * Index buffers: while set, indexed draws read their indices from InBuffer
+ * (GDI_BU_Index, uint32 each) instead of their mesh's, with the mesh's
+ * vertices -- a compute shader's list of the triangles to draw. The draw
+ * range (or GDISetIndirectArgs's first index and count) is into InBuffer.
+ * Null goes back to the meshes' own. Only where GDISupportsIndexBuffers();
+ * elsewhere it is ignored.
+ *
+ * GDISupportsMeshletCulling: compute, GDIUpdateBuffer, index buffers and
+ * indirect draws, all of which RenderCore's GPU meshlet culling needs.
+ */
+bool       GDISupportsIndexBuffers();
+void       GDISetIndexBuffer(GDIBuffer* InBuffer);
+bool       GDISupportsMeshletCulling();
 
 /* GPU timestamps: GDIDynamicDriver::WriteGPUTimestamp's contract. */
 bool     GDISupportsGPUTimestamps();

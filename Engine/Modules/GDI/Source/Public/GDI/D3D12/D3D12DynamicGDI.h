@@ -147,6 +147,7 @@ struct D3D12DrawInputs
     uint32_t                   InstanceCount      = 0;
     GDIBuffer*                 IndirectArgs       = nullptr;
     uint32_t                   IndirectArgsOffset = 0;
+    GDIBuffer*                 IndexBuffer        = nullptr;   // GDISetIndexBuffer's; null: the mesh's own
 
     const IBlendStateDesc*     Blend     = nullptr;
     EColorMask                 ColorMask = EColM_RGBA;
@@ -244,6 +245,9 @@ public:
                                uint32_t InX, uint32_t InY, uint32_t InZ) override;
     bool       ReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes) override;
     bool       SupportsIndirectDraw() const override { return SupportsCompute(); }
+    /* A copy from an upload buffer of its own, released past the frame. */
+    bool       UpdateBuffer(GDIBuffer* InBuffer, uint32_t InOffset, const void* InData, uint32_t InBytes) override;
+    bool       SupportsIndexBuffers() const override { return SupportsCompute(); }
 
     /* Occlusion queries (D3D12Query.cpp): binary occlusion, predicated with
      * SetPredication -- core at every feature level. */

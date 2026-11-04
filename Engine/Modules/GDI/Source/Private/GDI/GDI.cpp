@@ -967,6 +967,13 @@ bool GDIReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes)
     return GDISupportsCompute() && InBuffer && GDynamicGDI->ReadBuffer(InBuffer, OutBytes);
 }
 
+bool GDIUpdateBuffer(GDIBuffer* InBuffer, const uint32_t InOffset, const void* InData, const uint32_t InBytes)
+{
+    if(!GDISupportsIndexBuffers() || !InBuffer || !InData || InBytes == 0) { return false; }
+    if(InOffset % 4 != 0 || InBytes % 4 != 0 || uint64_t(InOffset) + InBytes > InBuffer->GetSize()) { return false; }
+    return GDynamicGDI->UpdateBuffer(InBuffer, InOffset, InData, InBytes);
+}
+
 void GDISetInstanceBuffer(GDIBuffer* InBuffer, const uint32_t InCount)
 {
     if(!GDynamicGDI) { return; }
@@ -1001,6 +1008,28 @@ void GDISetIndirectArgs(GDIBuffer* InArgs, const uint32_t InOffsetBytes)
     }
     GDynamicGDI->IndirectArgs       = bValid ? InArgs : nullptr;
     GDynamicGDI->IndirectArgsOffset = bValid ? InOffsetBytes : 0;
+}
+
+bool GDISupportsIndexBuffers()
+{
+    return GDynamicGDI && GDynamicGDI->SupportsIndexBuffers();
+}
+
+void GDISetIndexBuffer(GDIBuffer* InBuffer)
+{
+    if(!GDynamicGDI) { return; }
+    const bool bValid = GDynamicGDI->SupportsIndexBuffers() && InBuffer && (InBuffer->GetUsage() & GDI_BU_Index) != 0;
+    if(GDIRecordingContext* Rec = GCurrentRecording)
+    {
+        Rec->IndexBuffer = bValid ? InBuffer : nullptr;
+        return;
+    }
+    GDynamicGDI->IndexBuffer = bValid ? InBuffer : nullptr;
+}
+
+bool GDISupportsMeshletCulling()
+{
+    return GDynamicGDI && GDynamicGDI->SupportsMeshletCulling();
 }
 
 bool GDISupportsGPUTimestamps()

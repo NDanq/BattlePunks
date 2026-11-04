@@ -181,6 +181,7 @@ bool VulkanDynamicGDI::BeginParallelPass(const uint32_t InChunks, GDIRecordingCo
         Context.InstanceCount      = InstanceCount;
         Context.IndirectArgs       = IndirectArgs;
         Context.IndirectArgsOffset = IndirectArgsOffset;
+        Context.IndexBuffer        = IndexBuffer;
         Context.PredicateSet       = ImmediatePredicateSet();
         Context.PredicateIndex     = PredicateIndex;
         Context.ViewportX          = ViewportX;
@@ -346,6 +347,7 @@ void VulkanDynamicGDI::RecordDrawObject(GDIRecordingContext* InContext, GDIViewO
     In.InstanceCount      = Context.InstanceCount;
     In.IndirectArgs       = Context.IndirectArgs;
     In.IndirectArgsOffset = Context.IndirectArgsOffset;
+    In.IndexBuffer        = Context.IndexBuffer;
     In.Blend              = &Context.Blend;
     In.Depth              = &Context.Depth;
     In.bHasTarget         = true;
