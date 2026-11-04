@@ -24,6 +24,41 @@ namespace RenderCore
         constexpr uint32_t TAG_UV1      = EngineCore::MakeArchiveTag('M','U','V','1');   // optional
         constexpr uint32_t TAG_SKIN     = EngineCore::MakeArchiveTag('M','S','K','N');   // optional
         constexpr uint32_t TAG_TANGENTS = EngineCore::MakeArchiveTag('M','T','A','N');   // optional
+        constexpr uint32_t TAG_MESHLETS = EngineCore::MakeArchiveTag('M','L','E','T');   // optional
+
+        /* MLET's body. A meshlet is 13 four-byte fields on disk. */
+        void SerializeMeshlets(EngineCore::Archive& Ar, MeshData& InOutMesh)
+        {
+            uint32_t MeshletCount  = uint32_t(InOutMesh.Meshlets.size());
+            uint32_t VertexCount   = uint32_t(InOutMesh.MeshletVertices.size());
+            uint32_t TriangleBytes = uint32_t(InOutMesh.MeshletTriangles.size());
+            Ar << InOutMesh.MeshletSource << MeshletCount << VertexCount << TriangleBytes;
+            if(Ar.IsLoading())
+            {
+                if(!CanHoldElements(Ar, MeshletCount, 13 * sizeof(uint32_t), "mesh: meshlet count is past the end of the file")
+                   || !CanHoldElements(Ar, VertexCount, sizeof(uint32_t), "mesh: meshlet vertex count is past the end of the file")
+                   || !CanHoldElements(Ar, TriangleBytes, 1, "mesh: meshlet triangle count is past the end of the file"))
+                {
+                    return;
+                }
+                InOutMesh.Meshlets.assign(MeshletCount, MeshMeshlet());
+                InOutMesh.MeshletVertices.assign(VertexCount, 0u);
+                InOutMesh.MeshletTriangles.assign(TriangleBytes, 0);
+            }
+            for(MeshMeshlet& Meshlet : InOutMesh.Meshlets)
+            {
+                Ar << Meshlet.Section << Meshlet.VertexOffset << Meshlet.VertexCount << Meshlet.TriangleOffset << Meshlet.TriangleCount;
+                for(float& Value : Meshlet.Center) { Ar << Value; }
+                Ar << Meshlet.Radius;
+                for(float& Value : Meshlet.ConeAxis) { Ar << Value; }
+                Ar << Meshlet.ConeCutoff;
+            }
+            for(uint32_t& Vertex : InOutMesh.MeshletVertices) { Ar << Vertex; }
+            if(TriangleBytes > 0)
+            {
+                Ar.SerializeBytes(InOutMesh.MeshletTriangles.data(), TriangleBytes);
+            }
+        }
 
         void SerializeFloats(EngineCore::Archive& Ar, std::vector<float>& InOutValues)
         {
@@ -284,6 +319,24 @@ namespace RenderCore
             Ar.CloseChunk();
         }
 
+        /* Meshlets, the same way: a file without them draws by section. A set
+         * that no longer fits the mesh (its indices changed since
+         * BuildMeshlets) is not written. */
+        bool bMeshlets = Ar.IsSaving() ? InOutMesh.HasMeshlets() : Ar.PeekChunkTag() == TAG_MESHLETS;
+        if(Ar.IsSaving() && bMeshlets)
+        {
+            if(const char* Defect = FindMeshletDefect(InOutMesh))
+            {
+                RENDERCORE_LOG_WARN(std::string(Defect) + "; saving the mesh without them")
+                bMeshlets = false;
+            }
+        }
+        if(!Ar.HasError() && bMeshlets && OpenRequiredChunk(Ar, TAG_MESHLETS, 1, "mesh: bad MLET chunk"))
+        {
+            SerializeMeshlets(Ar, InOutMesh);
+            Ar.CloseChunk();
+        }
+
         if(!Ar.HasError())
         {
             SerializeImportInfo(Ar, InOutMesh.ImportInfo);
@@ -296,6 +349,15 @@ namespace RenderCore
             if(const char* Defect = FindDefect(InOutMesh))
             {
                 Ar.SetError(Defect);
+            }
+            else if(const char* MeshletDefect = FindMeshletDefect(InOutMesh))
+            {
+                /* The mesh is sound without them. */
+                RENDERCORE_LOG_WARN(std::string(MeshletDefect) + "; drawing the mesh by section")
+                InOutMesh.Meshlets.clear();
+                InOutMesh.MeshletVertices.clear();
+                InOutMesh.MeshletTriangles.clear();
+                InOutMesh.MeshletSource = 0;
             }
         }
         return !Ar.HasError();

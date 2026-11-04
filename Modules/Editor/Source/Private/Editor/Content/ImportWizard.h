@@ -67,6 +67,7 @@ private:
     QCheckBox*      ConvertAxes   = nullptr;
     QCheckBox*      GenNormals    = nullptr;
     QCheckBox*      LightmapUVs   = nullptr;
+    QCheckBox*      Meshlets      = nullptr;
     QCheckBox*      Combine       = nullptr;
     QCheckBox*      MeshTextures  = nullptr;
     QCheckBox*      MaterialColors = nullptr;

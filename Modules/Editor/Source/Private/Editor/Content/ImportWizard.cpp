@@ -38,6 +38,7 @@ NIMBLE_CONFIG_FLOAT(GEditorImportMeshScale,          "Editor", "ImportMeshScale"
 NIMBLE_CONFIG_BOOL (GEditorImportConvertCoordinates, "Editor", "ImportConvertCoordinates", true,   nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportGenerateNormals,    "Editor", "ImportGenerateNormals",    true,   nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportLightmapUVs,        "Editor", "ImportLightmapUVs",        true,   nullptr);
+NIMBLE_CONFIG_BOOL (GEditorImportMeshlets,           "Editor", "ImportMeshlets",           true,   nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportCombineMeshes,      "Editor", "ImportCombineMeshes",      true,   nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportMeshTextures,       "Editor", "ImportMeshTextures",       true,   nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportMaterialColors,     "Editor", "ImportMaterialColors",     true,   nullptr);
@@ -224,6 +225,11 @@ QWizardPage* ImportWizard::BuildMeshPage()
     LightmapUVs->setToolTip(QStringLiteral("A static entity drawing this mesh is lit by Build > Bake Lightmaps only if it has them"));
     LightmapUVs->setChecked(GEditorImportLightmapUVs.GetBool());
 
+    Meshlets = new QCheckBox(QStringLiteral("Build meshlets (static meshes)"), Page);
+    Meshlets->setToolTip(QStringLiteral("Small pieces the GPU culls one by one where [Rendering] Meshlets is on: a dense mesh "
+                                        "draws only what is in view"));
+    Meshlets->setChecked(GEditorImportMeshlets.GetBool());
+
     Combine = new QCheckBox(QStringLiteral("Combine the scene into one mesh (off: one .nmmesh per glTF mesh)"), Page);
     Combine->setChecked(GEditorImportCombineMeshes.GetBool());
 
@@ -272,6 +278,7 @@ QWizardPage* ImportWizard::BuildMeshPage()
     Form->addRow(QString(), ConvertAxes);
     Form->addRow(QString(), GenNormals);
     Form->addRow(QString(), LightmapUVs);
+    Form->addRow(QString(), Meshlets);
     Form->addRow(QString(), Combine);
     Form->addRow(QString(), MaterialColors);
     Form->addRow(QString(), MeshTextures);
@@ -434,6 +441,7 @@ void ImportWizard::SaveOptions()
     GEditorImportConvertCoordinates.SetBool(ConvertAxes->isChecked());
     GEditorImportGenerateNormals.SetBool(GenNormals->isChecked());
     GEditorImportLightmapUVs.SetBool(LightmapUVs->isChecked());
+    GEditorImportMeshlets.SetBool(Meshlets->isChecked());
     GEditorImportCombineMeshes.SetBool(Combine->isChecked());
     GEditorImportMeshTextures.SetBool(MeshTextures->isChecked());
     GEditorImportMaterialColors.SetBool(MaterialColors->isChecked());
@@ -454,6 +462,7 @@ void ImportWizard::StartImport()
     Mesh.bConvertCoordinates = ConvertAxes->isChecked();
     Mesh.bGenerateNormals    = GenNormals->isChecked();
     Mesh.bGenerateLightmapUVs = LightmapUVs->isChecked();
+    Mesh.bBuildMeshlets      = Meshlets->isChecked();
     Mesh.bCombineMeshes      = Combine->isChecked();
     Mesh.bImportTextures     = MeshTextures->isChecked();
     Mesh.bBakeMaterialColors = MaterialColors->isChecked();

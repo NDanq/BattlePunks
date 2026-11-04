@@ -690,6 +690,7 @@ namespace EditorContent
                .arg(double(Scale)).arg(int(bConvertCoordinates)).arg(int(bGenerateNormals))
                .arg(int(bCombineMeshes)).arg(int(bImportTextures)).arg(int(bGenerateLightmapUVs))
                .arg(int(bImportAnimations)).arg(double(AnimationSampleRate)).arg(int(bBakeMaterialColors))
+             + QStringLiteral("BuildMeshlets=%1\n").arg(int(bBuildMeshlets))
              + (ExistingSkeleton.isEmpty() ? QString() : QStringLiteral("ExistingSkeleton=%1\n").arg(ExistingSkeleton))
              + (CreateRetargetTo.isEmpty() ? QString() : QStringLiteral("CreateRetargetTo=%1\n").arg(CreateRetargetTo));
     }
@@ -708,6 +709,7 @@ namespace EditorContent
         Out.bGenerateLightmapUVs = ReadBool(Map, QStringLiteral("GenerateLightmapUVs"), Out.bGenerateLightmapUVs);
         Out.bImportAnimations   = ReadBool(Map, QStringLiteral("ImportAnimations"), Out.bImportAnimations);
         Out.bBakeMaterialColors = ReadBool(Map, QStringLiteral("BakeMaterialColors"), false);   // absent: settings from before, as recorded
+        Out.bBuildMeshlets      = ReadBool(Map, QStringLiteral("BuildMeshlets"), false);        // the same
         bool bRateOK = false;
         const float Rate = Map.value(QStringLiteral("AnimationSampleRate")).toFloat(&bRateOK);
         if(bRateOK && Rate >= 1.0f && Rate <= 240.0f) { Out.AnimationSampleRate = Rate; }

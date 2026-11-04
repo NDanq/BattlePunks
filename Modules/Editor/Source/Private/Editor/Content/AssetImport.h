@@ -53,6 +53,11 @@ namespace EditorContent
          * TEXCOORD_1; without them it is not lightmapped. */
         bool bGenerateLightmapUVs = true;
 
+        /* Meshlets (MeshAsset.h BuildMeshlets) for each static mesh, so the
+         * GPU can cull it piece by piece (RENDERPIPELINE.md, Meshlets).
+         * Recorded settings without it reimport as before (off). */
+        bool bBuildMeshlets = true;
+
         /* One .nmmesh for the scene (primitives as sections), or one per mesh. */
         bool bCombineMeshes = true;
 

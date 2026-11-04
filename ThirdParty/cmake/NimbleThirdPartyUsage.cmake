@@ -35,6 +35,7 @@ set(NIMBLE_THIRDPARTY_MIKKTSPACE_DIR "${NIMBLE_THIRDPARTY_SOURCE_DIR}/mikktspace
 set(NIMBLE_THIRDPARTY_STB_DIR      "${NIMBLE_THIRDPARTY_SOURCE_DIR}/stb")
 set(NIMBLE_THIRDPARTY_RECAST_DIR   "${NIMBLE_THIRDPARTY_SOURCE_DIR}/recastnavigation-1.6.0")
 set(NIMBLE_THIRDPARTY_ZSTD_DIR     "${NIMBLE_THIRDPARTY_SOURCE_DIR}/zstd-1.5.7")
+set(NIMBLE_THIRDPARTY_MESHOPT_DIR  "${NIMBLE_THIRDPARTY_SOURCE_DIR}/meshoptimizer-0.25")
 
 # The compiled libraries: <Name> <target> pairs. <Name> is the key both sides
 # use (manifest variables, nimble_thirdparty_usage); <target> is the name the
@@ -49,7 +50,8 @@ set(NIMBLE_THIRDPARTY_LIBRARIES
         Bc7enc    NimbleBc7enc
         Xatlas    NimbleXatlas
         RecastNav RecastNav::RecastNav
-        Zstd      Zstd::Zstd)
+        Zstd      Zstd::Zstd
+        Meshopt   NimbleMeshopt)
 
 # nimble_thirdparty_usage(<Name> <target> BUILD|IMPORTED)
 #   Applies <Name>'s usage requirements to <target>. BUILD: the real library
@@ -150,6 +152,9 @@ function(nimble_thirdparty_usage NM_NAME NM_TARGET NM_MODE)
     elseif(NM_NAME STREQUAL "Zstd")
         # zstd.h and zstd_errors.h only; nothing outside lib/ is vendored.
         target_include_directories(${NM_TARGET} ${NM_PUBLIC} "${NIMBLE_THIRDPARTY_ZSTD_DIR}/lib")
+
+    elseif(NM_NAME STREQUAL "Meshopt")
+        target_include_directories(${NM_TARGET} ${NM_PUBLIC} "${NIMBLE_THIRDPARTY_MESHOPT_DIR}/src")
 
     else()
         message(FATAL_ERROR "nimble_thirdparty_usage: no library named '${NM_NAME}'")
