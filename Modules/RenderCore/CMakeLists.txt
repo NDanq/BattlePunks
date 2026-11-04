@@ -94,6 +94,8 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/AssetFileCommon.h
         Source/Private/RenderCore/MeshAsset.cpp
         Source/Private/RenderCore/MeshletBuild.cpp
+        Source/Private/RenderCore/MeshletCulling.h
+        Source/Private/RenderCore/MeshletCulling.cpp
         Source/Private/RenderCore/MeshFracture.cpp
         Source/Private/RenderCore/AssetCacheCommon.h
         Source/Private/RenderCore/SkeletonAsset.cpp

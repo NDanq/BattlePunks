@@ -37,6 +37,7 @@
 #include "Private/RenderCore/CustomRenderPassInternal.h"
 #include "Private/RenderCore/DrawPolicy.h"
 #include "Private/RenderCore/MaterialPreview.h"
+#include "Private/RenderCore/MeshletCulling.h"
 #include "Private/RenderCore/OverlayFont.h"
 #include "Private/RenderCore/UIRenderer.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
@@ -73,6 +74,17 @@ namespace
  * for capture tools; off saves building the names. Only where the backend records
  * regions (GDIHasDrawEvents: Vulkan with VK_EXT_debug_utils, as under RenderDoc). */
 NIMBLE_CONFIG_BOOL(GRenderDrawLabels, "Rendering", "DrawLabels", true, nullptr);
+/* GPU MESHLET CULLING (RENDERPIPELINE.md, "Meshlets"): a scene view's Base Pass sections of static
+ * meshes culled meshlet by meshlet on the GPU against the view, each drawn from the survivors.
+ * MeshletCones: also the meshlets all of whose triangles face away -- off by default, since the Base
+ * Pass draws back faces. MeshletFreezeCulling: the view culled against stays the one it was when
+ * this turned on, to walk round and see what was culled. */
+NIMBLE_CONFIG_BOOL(GRenderMeshlets, "Rendering", "Meshlets", false, nullptr);
+NIMBLE_CONFIG_BOOL(GRenderMeshletCones, "Rendering", "MeshletCones", false, nullptr);
+NIMBLE_CONFIG_BOOL(GRenderMeshletFreeze, "Rendering", "MeshletFreezeCulling", false, nullptr);
+/* The triangles the cull kept, read back after each view's Base Pass for RenderStats (and "stat
+ * meshlets"): a wait for the GPU, so a debugging aid, off by default. */
+NIMBLE_CONFIG_BOOL(GRenderMeshletStats, "Rendering", "MeshletStats", false, nullptr);
 /* Skin's screen-space subsurface scattering (SHADING_MODELS.md, PPSubsurface.fsh): on, and the
  * diffusion profile's width in world units (1.2: skin, in centimetres). Off, Skin lights as
  * Subsurface does: its diffuse in place, with its transmission. */
@@ -438,8 +450,47 @@ namespace RenderCore
              * section (one for a mesh of none), its triangles' areas
              * averaged; 0 where UV0 has no area. */
             std::vector<float>                  WorldPerUV;
+
+            /* Its meshlets on the GPU (FindMeshlets): made the first time a
+             * view culls it, null if it has none (or cannot). */
+            std::unique_ptr<MeshletGpuMesh>     Meshlets;
+            bool                                bMeshletsTried = false;
         };
         std::unordered_map<std::string, GpuMesh> Meshes;
+
+        /* GPU MESHLET CULLING (SetMeshletCulling): whether the scene being
+         * queued culls its Base Pass meshlet sections, the view it culls
+         * against (a frozen one, MeshletFreezeCulling), and the batch of them
+         * Submit queued; the last view's counts, for the stats; meshes'
+         * meshlets dropped by a rebuild, kept until the next scene queues
+         * (a draw queued before it may still name them). */
+        bool                                         bMeshletView = false;
+        bool                                         bMeshletsFrozen = false;
+        EngineCore::Matrix4x4                        MeshletViewProjection;
+        EngineCore::Vector3                          MeshletEye;
+        MeshletBatch                                 MeshletQueue;
+        uint32_t                                     LastMeshletSections = 0;
+        uint64_t                                     LastMeshlets        = 0;
+        uint64_t                                     LastMeshletIndices  = 0;   // the sections' own
+        int64_t                                      LastMeshletDrawn    = -1;  // what the cull kept; -1: not read (MeshletStats)
+        std::vector<std::unique_ptr<MeshletGpuMesh>> RetiredMeshlets;
+
+        /* InPath's meshlets, made on first use; null if it has none. */
+        MeshletGpuMesh* FindMeshlets(const std::string& InPath)
+        {
+            const auto Found = Meshes.find(InPath);
+            if(Found == Meshes.end() || !Found->second.Source || !Found->second.Gpu)
+            {
+                return nullptr;
+            }
+            GpuMesh& Entry = Found->second;
+            if(!Entry.bMeshletsTried)
+            {
+                Entry.bMeshletsTried = true;
+                Entry.Meshlets = MeshletGpuMesh::Create(*Entry.Source, InPath);
+            }
+            return Entry.Meshlets.get();
+        }
 
         /* InPath's reference-pose palette; null if it is not skinned or has no skeleton. */
         const std::vector<float>* FindRefPalette(const std::string& InPath)
@@ -974,6 +1025,8 @@ namespace RenderCore
 
             delete Entry.Gpu;   // each backend defers the buffers past any frame still using them
             Entry.Gpu    = nullptr;
+            if(Entry.Meshlets) { RetiredMeshlets.push_back(std::move(Entry.Meshlets)); }
+            Entry.bMeshletsTried = false;
             ++ContentGeneration;
             Entry.Source = OutSource;
             if(!OutSource)
@@ -3698,9 +3751,22 @@ namespace RenderCore
                 }
             }
 
+            /* Culled meshlet by meshlet (MeshletQueue): the survivors' indices
+             * and the GPU's count of them; the section as it is otherwise. */
+            GDIBuffer* MeshletArgs = InItem.MeshletSlot >= 0 ? MeshletQueue.GetArgs() : nullptr;
+            if(MeshletArgs)
+            {
+                GDISetIndexBuffer(MeshletQueue.GetIndices());
+                GDISetIndirectArgs(MeshletArgs, uint32_t(InItem.MeshletSlot) * GDI_INDIRECT_ARGS_STRIDE);
+            }
             GDISetDrawRange(InItem.Mesh, InItem.First, InItem.Count);
             GDIDrawObject(MeshObject);
             GDISetDrawRange(InItem.Mesh, 0, 0);
+            if(MeshletArgs)
+            {
+                GDISetIndirectArgs(nullptr);
+                GDISetIndexBuffer(nullptr);
+            }
             MeshObject->Mesh = nullptr;
             DrawCallCount.fetch_add(1, std::memory_order_relaxed);
         }
@@ -3817,6 +3883,14 @@ namespace RenderCore
             {
                 Issue(InItem);
                 return;
+            }
+            /* GPU MESHLET CULLING: a Base Pass section of a view that culls
+             * them, drawn from its survivors (a static list's replay too). */
+            InItem.MeshletSlot = -1;
+            if(InItem.Meshlets && bMeshletView && InStage == ERenderStage::BasePass && GRenderMeshlets.GetBool())
+            {
+                InItem.MeshletSlot = MeshletQueue.Add(InItem.Meshlets, InItem.MeshletSection, InItem.Transform.ToMatrix(),
+                                                      InItem.MeshletScale, InItem.MeshletPad, InItem.Count);
             }
             const EngineCore::Vector3 Offset = (InItem.Instances ? InItem.SortOrigin : InItem.Transform.Position) - View.Origin;
             InItem.Depth = float(Offset.Dot(ViewForward(View)));
@@ -4035,9 +4109,12 @@ namespace RenderCore
             const std::vector<uint32_t> Order = Policy.GetIssueOrder();
             if(InStage == ERenderStage::BasePass)
             {
-                /* In the same order serially or in chunks: static, then dynamic. */
-                if(IssueInParallel(Policy, MobilityOrder(Policy, Order.data(), Order.data() + Order.size()), false,
-                                   [this](const DrawCommand& InItem) { Issue(InItem); }))
+                /* In the same order serially or in chunks: static, then dynamic.
+                 * D3D12 draws culled meshlets serially: a chunk's list cannot
+                 * move the buffers compute wrote to the states drawing reads. */
+                const bool bSerialMeshlets = Backend == ERenderBackend::D3D12 && MeshletQueue.GetArgs();
+                if(!bSerialMeshlets && IssueInParallel(Policy, MobilityOrder(Policy, Order.data(), Order.data() + Order.size()), false,
+                                                       [this](const DrawCommand& InItem) { Issue(InItem); }))
                 {
                     return;
                 }
@@ -4954,6 +5031,11 @@ namespace RenderCore
         const std::vector<MeshSection>& Sections = Source->Sections;
         const size_t SectionCount = Sections.empty() ? 1 : Sections.size();
 
+        /* Its meshlets, where they may be culled: a static mesh drawn once
+         * (Submit decides per view). */
+        MeshletGpuMesh* Meshlets = GRenderMeshlets.GetBool() && !InOverrides.Instances && !Source->IsSkinned() && GDISupportsMeshletCulling()
+                                 ? P->FindMeshlets(InMeshPath) : nullptr;
+
         for(size_t Index = 0; Index < SectionCount; ++Index)
         {
             const MeshSection& Section = Sections.empty() ? Everything : Sections[Index];
@@ -4986,6 +5068,13 @@ namespace RenderCore
                 Item.Instances     = InOverrides.Instances->Buffer;
                 Item.InstanceCount = std::min(InOverrides.InstanceCount, InOverrides.Instances->Count);
                 Item.SortOrigin    = InTransform.Position;
+            }
+            if(Meshlets && !Sections.empty())
+            {
+                Item.Meshlets       = Meshlets;
+                Item.MeshletSection = uint32_t(Index);
+                Item.MeshletScale   = MaxScale;
+                Item.MeshletPad     = Chosen && Chosen->Description.bHasOffset ? Chosen->Description.MaxOffset : 0.0f;
             }
             P->Submit(Item, Impl::StageOf(Chosen));
         }
@@ -5029,6 +5118,7 @@ namespace RenderCore
         const auto Found = P->Meshes.find(InMeshPath);
         if(Found == P->Meshes.end()) { return; }
         delete Found->second.Gpu;   // each backend defers the buffers past any frame still using them
+        if(Found->second.Meshlets) { P->RetiredMeshlets.push_back(std::move(Found->second.Meshlets)); }
         P->Meshes.erase(Found);
         ++P->ContentGeneration;     // static draw lists hold the pointer
     }
@@ -5190,6 +5280,9 @@ namespace RenderCore
     {
         for(DrawPolicy& Policy : P->Policies) { Policy.Clear(); }
         P->ForgetOcclusion();   // a scene's own, set again by RenderScene
+        P->bMeshletView      = false;   // the same: SetMeshletCulling
+        P->MeshletQueue.Reset();
+        P->RetiredMeshlets.clear();
         P->bDeferring        = true;
         P->DrawPixelsPerWorld = 0.0f;   // a scene's RenderScene sets it per proxy
         P->Shadows.ViewCount = 0;   // a preview has none; a scene's PrepareShadows adds them
@@ -5479,6 +5572,32 @@ namespace RenderCore
         }
         return P->QueueDepthSections(InTransform, InMeshPath, InSlots, InSlotCount, InOverrides,
                                   EDepthSections::Opaque, ERenderStage::PrePass, -1);
+    }
+
+    void RenderContext::SetMeshletCulling(const bool bInCull)
+    {
+        P->bMeshletView = bInCull && GRenderMeshlets.GetBool() && GDISupportsMeshletCulling();
+        P->MeshletQueue.Reset();
+        if(!P->bMeshletView)
+        {
+            return;
+        }
+        /* Frozen: the view as it was when freezing turned on, until it turns off. */
+        const bool bFreeze = GRenderMeshletFreeze.GetBool();
+        if(!bFreeze || !P->bMeshletsFrozen)
+        {
+            P->MeshletViewProjection = P->View.Projection * P->View.View;
+            P->MeshletEye            = P->View.Origin;
+        }
+        P->bMeshletsFrozen = bFreeze;
+    }
+
+    void RenderContext::GetMeshletStats(uint32_t& OutSections, uint64_t& OutMeshlets, uint64_t& OutTriangles, int64_t& OutDrawn) const
+    {
+        OutSections  = P->LastMeshletSections;
+        OutMeshlets  = P->LastMeshlets;
+        OutTriangles = P->LastMeshletIndices / 3;
+        OutDrawn     = P->LastMeshletDrawn >= 0 ? P->LastMeshletDrawn / 3 : -1;
     }
 
     void RenderContext::SetOcclusionQueries(GDIOcclusionQueries* InQueries)
@@ -6467,7 +6586,26 @@ namespace RenderCore
             for(std::vector<DrawCommand>& Group : P->GroupDraws) { Group.clear(); }
             P->FramePasses.clear();
             P->ForgetOcclusion();
+            uint64_t Drawn = 0;
+            if(P->bMeshletView && GRenderMeshletStats.GetBool() && P->MeshletQueue.ReadDrawnIndices(Drawn))
+            {
+                P->LastMeshletDrawn = int64_t(Drawn);
+            }
+            P->bMeshletView = false;
+            P->MeshletQueue.Reset();
         };
+
+        /* GPU MESHLET CULLING: the view's meshlet sections culled before any
+         * stage, outside the render passes; their draws read what it wrote. */
+        P->LastMeshletSections = P->bMeshletView ? P->MeshletQueue.GetSectionCount() : 0u;
+        P->LastMeshlets        = P->bMeshletView ? P->MeshletQueue.GetMeshletCount() : 0u;
+        P->LastMeshletIndices  = P->bMeshletView ? P->MeshletQueue.GetIndexCount() : 0u;
+        P->LastMeshletDrawn    = -1;
+        if(P->bMeshletView && P->MeshletQueue.GetSectionCount() > 0 && InTargets.SceneColor)
+        {
+            P->MeshletQueue.Dispatch(P->GetComputeShader("MeshletCull.csh"), P->MeshletViewProjection, P->MeshletEye,
+                                     GRenderMeshletCones.GetBool());
+        }
 
         /* The World's custom render passes for these stages (CustomRenderPass.h);
          * the GPU resources of those unregistered since, freed first. */
@@ -8100,7 +8238,9 @@ namespace RenderCore
         P->FinalTarget = nullptr;
 
         for(auto& Each : P->Meshes) { delete Each.second.Gpu; }
-        P->Meshes.clear();
+        P->Meshes.clear();   // and their meshlets' buffers
+        P->RetiredMeshlets.clear();
+        P->MeshletQueue.Release();
         delete P->OcclusionBox;
         P->OcclusionBox = nullptr;
         P->ForgetOcclusion();

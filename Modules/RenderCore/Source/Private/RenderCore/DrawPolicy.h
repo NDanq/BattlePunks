@@ -16,6 +16,7 @@ namespace RenderCore
 {
     struct RenderMaterial;   // RenderContext.cpp: a loaded material's description and shaders
     struct RenderMaterialParameter;
+    struct MeshletGpuMesh;   // MeshletCulling.h
 
     /* One draw, queued in its stage's policy. */
     struct DrawCommand
@@ -73,6 +74,17 @@ namespace RenderCore
         GDIBuffer*                     IndirectArgs   = nullptr;
         uint32_t                       IndirectOffset = 0;
         EngineCore::Vector3            SortOrigin;
+
+        /* MeshSection of a mesh with meshlets (RENDERPIPELINE.md, "Meshlets"):
+         * its meshlets, which section it is, and what pads its meshlets'
+         * spheres (its largest axis scale; its material's World Position
+         * Offset). Where a view culls them, Submit gives it MeshletSlot: its
+         * arguments in that view's batch, which it is then drawn from. */
+        MeshletGpuMesh*                Meshlets      = nullptr;
+        uint32_t                       MeshletSection = 0;
+        float                          MeshletScale  = 1.0f;
+        float                          MeshletPad    = 0.0f;
+        int32_t                        MeshletSlot   = -1;
     };
 
     /* A draw as a proxy queued it, kept with its stage: what a static draw
