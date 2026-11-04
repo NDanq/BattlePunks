@@ -70,6 +70,7 @@ D3D12_RESOURCE_STATES D3D12Buffer::GetDrawReadState() const
     D3D12_RESOURCE_STATES Read = D3D12_RESOURCE_STATE_COMMON;
     if(Usage & GDI_BU_Instance) { Read |= D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER; }
     if(Usage & GDI_BU_Indirect) { Read |= D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT; }
+    if(Usage & GDI_BU_Index)    { Read |= D3D12_RESOURCE_STATE_INDEX_BUFFER; }
     return Read;
 }
 

@@ -295,6 +295,16 @@ namespace RenderCore
         uint64_t ProxiesOccludedLastFrame  = 0;
         uint64_t OcclusionQueriesLastFrame = 0;
 
+        /* GPU meshlet culling (RENDERPIPELINE.md, "Meshlets"): the last view's
+         * Base Pass sections culled meshlet by meshlet on the GPU, the
+         * meshlets they were tested as, their triangles, and the triangles the
+         * cull kept -- read back only with [Rendering] MeshletStats (a wait
+         * for the GPU), -1 otherwise. */
+        uint32_t MeshletSectionsLastFrame       = 0;
+        uint64_t MeshletsSubmittedLastFrame     = 0;
+        uint64_t MeshletTrianglesLastFrame      = 0;
+        int64_t  MeshletTrianglesDrawnLastFrame = -1;
+
         /* Shadow cache (RENDERPIPELINE.md, "Shadow cache"): shadowed point and spot lights whose
          * static casters came from the cache last frame, how many of those were (re)drawn into it,
          * and the cache atlas's size in bytes (depth and colour; 0 with none). */

@@ -5,9 +5,11 @@
 #include <string>
 
 /*
- * A GPU buffer the CPU fills once and shaders then own (GDICreateBuffer):
- * read and written by compute shaders (GDIDispatchCompute), and read by
- * instanced draws as per-instance vertex data (GDISetInstanceBuffer).
+ * A GPU buffer the CPU fills at creation, or in frame order with
+ * GDIUpdateBuffer, and shaders otherwise own (GDICreateBuffer): read and
+ * written by compute shaders (GDIDispatchCompute), read by instanced draws as
+ * per-instance vertex data (GDISetInstanceBuffer), and by indexed draws as
+ * their indices (GDISetIndexBuffer).
  *
  * Only on a backend with GDISupportsCompute(). Created on the render
  * thread; Release defers the free until the GPU is done with it, as for
@@ -17,7 +19,8 @@ enum EGDIBufferUsage : uint8_t
 {
     GDI_BU_Storage  = 1 << 0,   // compute shaders read and write it
     GDI_BU_Instance = 1 << 1,   // instanced draws read it, GDI_INSTANCE_STRIDE bytes an instance
-    GDI_BU_Indirect = 1 << 2,   // instanced draws read their counts from it (GDISetIndirectArgs)
+    GDI_BU_Indirect = 1 << 2,   // indexed draws read their counts from it (GDISetIndirectArgs)
+    GDI_BU_Index    = 1 << 3,   // indexed draws read their indices from it, uint32 each (GDISetIndexBuffer)
 };
 
 /*
@@ -39,8 +42,8 @@ constexpr uint32_t GDI_INSTANCE_STRIDE = 80;
  *   uint32 index count, uint32 instance count, uint32 first index,
  *   int32 vertex offset, uint32 first instance
  *
- * Typically the CPU fills the range once and a compute shader writes the
- * instance count each frame.
+ * Typically the CPU fills the range once (or each frame, GDIUpdateBuffer) and
+ * a compute shader writes the instance or index count.
  */
 constexpr uint32_t GDI_INDIRECT_ARGS_STRIDE = 20;
 

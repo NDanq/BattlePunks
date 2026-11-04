@@ -1558,6 +1558,89 @@ culling off; with the wall moved aside the box is drawn again, and that frame
 too matches. D3D12 is written against its backend's patterns but was not
 compiled here (Linux).
 
+### Meshlets
+
+What it costs, and why it is off by default: [MESHLETS_PERF.md](MESHLETS_PERF.md).
+Importing meshes with them and turning it on:
+[the meshlet import guide](../../Docs/Guides/MeshletImportGuide.md).
+
+A mesh's sections can be split into **meshlets** -- at most 64 vertices and
+124 triangles, never across a section -- each with a bounding sphere and a
+normal cone (`MeshAsset.h`: `MeshData::Meshlets`, `BuildMeshlets`, the
+optional `MLET` chunk). The glTF importer builds them for every static mesh
+(Build meshlets, on by default); a mesh without them that has at least two
+meshlets' worth of triangles (a primitive, a mesh made in memory) builds its
+own the first time a view culls it. Skinned meshes have none: their bounds are
+the bind pose's.
+
+With **`[Rendering] Meshlets`** on (off by default until measured), a scene's
+own views -- not its captures, previews or shadow views -- cull the Base Pass
+sections of meshes with meshlets **meshlet by meshlet on the GPU**:
+
+- **Queueing:** `Submit` gives each such section a record in the view's
+  `MeshletBatch` (MeshletCulling.h): its placement, its meshlets, its largest
+  axis scale and its material's World Position Offset reach (which pad each
+  meshlet's sphere), a region of the batch's index buffer as large as the
+  section, and an indirect argument slot. A static draw list's replay queues
+  the same way, each frame.
+- **Culling:** before any stage, outside the render passes,
+  `GDIUpdateBuffer` uploads the records and the arguments (no indices, one
+  instance, from the section's region), then `MeshletCull.csh` runs once per
+  mesh, a thread a meshlet, a row of workgroups a section. A meshlet whose
+  sphere is outside one of the view's six planes writes nothing. A survivor
+  adds its triangles to its section's index count (an atomic) and writes their
+  corners into the region, as the mesh's own vertex indices.
+- **Drawing:** the section draws as before -- its material, vertex shaders,
+  World Position Offset, velocity, G-buffer -- but from the batch's indices
+  (`GDISetIndexBuffer`) with the GPU's count (`GDISetIndirectArgs`), in
+  parallel chunks like any Base Pass (on D3D12 by implicit promotion, GDI,
+  below).
+
+`[Rendering] MeshletCones` also culls meshlets all of whose triangles face
+away from the eye (the cone test of [Kapoulkine], not with World Position
+Offset). It is off by default: the Base Pass draws back faces, so a one-sided
+open mesh seen from behind would lose them. The cones are turned to agree with
+the vertex normals at build time, whichever way the mesh is wound.
+`[Rendering] MeshletFreezeCulling` keeps culling against the view as it was
+when it turned on: walk round a mesh and see what was culled.
+
+**`[Rendering] MeshletOcclusion`** (off by default) also culls meshlets
+behind what the view drew the frame before. After each Base Pass, with the
+G-buffer alone bound (so the scene depth is sampleable),
+`MeshletHzbFirst.csh` reads the depth into a **depth pyramid** -- the farthest
+depth of each 2 x 2, half the drawn size each way, in one storage buffer
+(`MeshletHzb`, kept in the view's `SceneTargets`) -- and `MeshletHzbDown.csh`
+halves it level by level to 1 x 1. The next frame, `MeshletCull.csh` projects
+each surviving meshlet's box through that frame's view projection, picks the
+level where it spans two texels at most, and drops it if its nearest depth is
+behind the farthest of those four. Depths compare as the depth buffer holds
+them: clip z taken as -w to w, written 0 to 1. The pyramid is used only by a
+view that drew the frame before at the same size, never frozen. What comes out
+from behind something shows a frame late, as with the CPU's occlusion queries;
+a meshlet off the last frame's view, or with a corner behind the eye, is never
+hidden by it.
+
+`RenderStats::MeshletSectionsLastFrame`, `MeshletsSubmittedLastFrame` and
+`MeshletTrianglesLastFrame` count the last view's sections, their meshlets and
+triangles; `MeshletTrianglesDrawnLastFrame` is what the cull kept, read back
+only with `[Rendering] MeshletStats` (a wait for the GPU: a debugging aid), -1
+otherwise.
+
+| Backend | Meshlet culling |
+|---|---|
+| Vulkan, D3D12 | `GDISupportsMeshletCulling()`: culled and drawn indirectly |
+| Null | queued, dispatched and drawn from the batch's indices (counted); dispatches run nothing |
+| Metal, OpenGL | not yet: sections draw whole, as before |
+
+Verified: RenderCoreMeshletTests (headless) checks the build -- every
+triangle once, the limits, the spheres, the chunk round trip, stale and
+corrupt sets dropped. The smoke test's Null check counts what is queued; its
+GPU check (Vulkan and D3D12) draws a 6144-triangle sphere half off the side
+of the view: 4419 triangles are kept (2389 with cones), none looking away, and
+the frame is pixel for pixel the one drawn whole. With occlusion, a wall in
+front of the sphere leaves none of it drawn and the wall moved aside all of
+it, each frame identical to the one drawn without occlusion.
+
 ### UI
 
 A scene's UI -- HUDs and menus, Engine/Modules/UI/README.md -- is drawn over
@@ -2201,6 +2284,42 @@ the query (`GDISupportsOcclusionPredication()`; ignored elsewhere), and
 `GDIReadOcclusionResults` hands the CPU a round's answers once its block has
 finished on the GPU, never waiting. A query never ended answers "visible".
 
+Meshlet occlusion (### Meshlets) needed compute to read a texture and two more
+buffers: `GDIDispatchCompute` takes one texture (null: none) sampled at
+`GDI_COMPUTE_TEXTURE_BINDING` (8; ComputeCommon.glsl's `COMPUTE_TEXTURE`), and
+`GDI_COMPUTE_MAX_STORAGE_BUFFERS` is 6. A render target must not be bound for
+writing when a dispatch samples it: binding other targets makes the ones
+before sampleable, now for compute as well. Vulkan keeps a compute layout per
+buffer count with and without the texture (a combined image sampler); D3D12's
+compute root signature adds an SRV and a sampler table at t8 and s8 (where
+spirv-cross puts binding 8). Null counts textured dispatches.
+
+Meshlet culling (### Meshlets) needed three more, where
+`GDISupportsIndexBuffers()` says so -- Vulkan, D3D12 and Null so far;
+`GDISupportsMeshletCulling()` is that, compute and indirect draws together:
+
+- **Buffer updates.** `GDIUpdateBuffer(Buffer, Offset, Data, Bytes)` writes a
+  buffer in frame order, as a dispatch is recorded: the dispatches and draws
+  after it see the bytes. Offset and size are multiples of 4.
+- **Index buffers.** A `GDI_BU_Index` buffer holds uint32 indices;
+  `GDISetIndexBuffer(Buffer)` makes the indexed draws after it read them
+  instead of their mesh's, with the mesh's vertices, until it is set to null.
+- **Indirect draws without instances.** `GDISetIndirectArgs` now applies to
+  any indexed draw, not only an instanced one.
+
+| Backend | Updates | Index buffers |
+|---|---|---|
+| Vulkan | `vkCmdUpdateBuffer` in 64 KB pieces, the render pass closed around them and reopened (as a dispatch); the dispatch barrier, which now also covers index reads, either side | `INDEX_BUFFER` usage; `vkCmdBindIndexBuffer` in place of the mesh's, then `vkCmdDrawIndexedIndirect` or `vkCmdDrawIndexed` |
+| D3D12 | an upload buffer of its own, `CopyBufferRegion`, released past the frame; the buffer moves to `COPY_DEST` and on to its readers' states | an IBV over the buffer, moved to `INDEX_BUFFER` on the frame list; a parallel pass's chunk lists run after the frame list's first half is submitted, when every buffer has decayed to `COMMON` (from `UNORDERED_ACCESS` too), and promote it implicitly, as they do instance and argument buffers. Recording a meshlet view's Base Pass serially instead cost DemoLab's L2 about 10 ms of render thread |
+| Null | written into the CPU copy, counted (`NullGDIStats::BufferUpdates`) | counted (`IndexBufferDrawCalls`); indirect args stay ignored |
+| Metal, OpenGL | not yet: `GDISupportsIndexBuffers()` is false | -- |
+
+Verification: GDI's smoke test (Null) covers updates (written at their
+offset; past the end, unaligned, empty or missing refused) and index buffers
+(taken with `GDI_BU_Index`, refused without, null restoring the mesh's).
+Vulkan, D3D12 and OpenGL compile on Windows; RenderCore's GPU smoke checks
+give the same results with these changes as without them.
+
 ## Tests
 
 - Routing (Null backend, materials from memory): each domain/shading pair lands
@@ -2255,6 +2374,12 @@ Hardware shadow comparison, depth bias and front-face culling in GDI (then
 drop most of the receiver bias); Masked casters clipped in the Shadows
 sub-stage; shadows for Translucent Lit; a tiled or clustered light list past 16
 lights; per-section bounds for culling; RGBA16F G-buffer and scene colour.
+
+Meshlets: two-pass occlusion (the last frame's survivors drawn first, a
+pyramid of them, then the rest tested), so nothing shows late; the pyramid
+built in fewer dispatches (shared memory); shadow views culled by meshlet; meshlets on Metal and
+OpenGL; one multi-draw per mesh instead of a draw per section; a level of
+detail graph (the next phase).
 
 Occlusion culling: Masked occluders with their clip; occlusion queries on
 Metal and OpenGL; a hierarchical depth buffer tested on the GPU, so nothing

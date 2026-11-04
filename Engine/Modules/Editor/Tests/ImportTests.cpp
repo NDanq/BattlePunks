@@ -520,6 +520,8 @@ static void TestClassify()
            "mesh options survive their settings text");
     Expect(MeshBack.bBakeMaterialColors && !MeshImportOptions::FromSettings(QStringLiteral("Scale=1\n")).bBakeMaterialColors,
            "material colours are baked unless older settings, recorded without them, say otherwise");
+    Expect(MeshBack.bBuildMeshlets && !MeshImportOptions::FromSettings(QStringLiteral("Scale=1\n")).bBuildMeshlets,
+           "meshlets are built unless older settings, recorded without them, say otherwise");
 
     TextureImportOptions Texture;
     Texture.bSRGB = false;
@@ -768,6 +770,8 @@ static void TestTangentImport(const QDir& InRoot)
         Expect(bAll, "MikkTSpace's runs along +U, its bitangent w * cross(N, T) along +V");
     }
     Expect(Given.Tangents == Made.Tangents, "glTF's TANGENT converts to the same frame MikkTSpace makes (its w turned to +V's)");
+    Expect(Made.HasMeshlets() && Mirrored.HasMeshlets() && RenderCore::FindMeshletDefect(Made) == nullptr
+           && RenderCore::FindMeshletDefect(Mirrored) == nullptr, "a static mesh gets meshlets, built after the tangents' splits");
 
     /* The seam's two vertices are in both halves, whose frames differ: each
      * gets a copy, and the right half's corners use them. */

@@ -10,6 +10,7 @@
 #include "Public/GDI/Vulkan/VKPipelineCache.h"
 #include "Public/GDI/Vulkan/VKDescriptorAllocator.h"
 #include "Public/GDI/Vulkan/VKRenderTarget.h"
+#include "Public/GDI/Vulkan/VKTexture.h"
 #include "Private/GDI/Vulkan/VKTransientOps.h"
 
 #include <algorithm>
@@ -28,15 +29,16 @@ namespace
     void RecordBufferBarrier(VkCommandBuffer InCmd)
     {
         constexpr VkPipelineStageFlags2 Stages = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT
-                                               | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT
-                                               | VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT;
+                                               | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT
+                                               | VK_PIPELINE_STAGE_2_TRANSFER_BIT | VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT;
         VkMemoryBarrier2 Barrier{};
         Barrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
         Barrier.srcStageMask  = Stages;
         Barrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT;
         Barrier.dstStageMask  = Stages;
         Barrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT
-                              | VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_TRANSFER_READ_BIT
+                              | VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT
+                              | VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT
                               | VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT;
         VkDependencyInfo Dep{};
         Dep.sType              = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
@@ -64,7 +66,7 @@ GDIBuffer* VulkanDynamicGDI::CreateBuffer(const uint32_t InBytes, const uint8_t 
 }
 
 bool VulkanDynamicGDI::DispatchCompute(GDIShader* InShader, const void* InParams, const uint32_t InParamBytes,
-                                       GDIBuffer* const* InBuffers, const uint32_t InBufferCount,
+                                       GDIBuffer* const* InBuffers, const uint32_t InBufferCount, GDITextureResource* InTexture,
                                        const uint32_t InX, const uint32_t InY, const uint32_t InZ)
 {
     if(!CurrentStateData || !PipelineCache || !DescAlloc || !DeviceObj) return false;
@@ -75,8 +77,11 @@ bool VulkanDynamicGDI::DispatchCompute(GDIShader* InShader, const void* InParams
     {
         if(!static_cast<VKBuffer*>(InBuffers[Each])->IsValid()) return false;
     }
+    /* The texture, sampled as a material's is: SHADER_READ_ONLY (SetRenderTargets made it so). */
+    auto* Texture = InTexture ? dynamic_cast<VKTextureResource*>(InTexture) : nullptr;
+    if(InTexture && (!Texture || Texture->GetImageView() == VK_NULL_HANDLE)) return false;
 
-    const VKPipelineCache::PipelineFetch Fetch = PipelineCache->GetOrCreateCompute(Module, InBufferCount);
+    const VKPipelineCache::PipelineFetch Fetch = PipelineCache->GetOrCreateCompute(Module, InBufferCount, Texture != nullptr);
     if(Fetch.Pipeline == VK_NULL_HANDLE) return false;
 
     /* The parameters, in this frame's UBO ring (at least 16 bytes: a block is never empty). */
@@ -88,7 +93,7 @@ bool VulkanDynamicGDI::DispatchCompute(GDIShader* InShader, const void* InParams
     if(InParamBytes > 0) { std::memcpy(Params.MappedPtr, InParams, InParamBytes); }
 
     VkDescriptorBufferInfo Infos[GDI_COMPUTE_MAX_STORAGE_BUFFERS + 1]{};
-    VkWriteDescriptorSet   Writes[GDI_COMPUTE_MAX_STORAGE_BUFFERS + 1]{};
+    VkWriteDescriptorSet   Writes[GDI_COMPUTE_MAX_STORAGE_BUFFERS + 2]{};
     Infos[0].buffer = Params.Buffer;
     Infos[0].offset = Params.Offset;
     Infos[0].range  = ParamBytes;
@@ -107,7 +112,22 @@ bool VulkanDynamicGDI::DispatchCompute(GDIShader* InShader, const void* InParams
         Writes[Each].descriptorType  = Each == 0 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         Writes[Each].pBufferInfo     = &Infos[Each];
     }
-    vkUpdateDescriptorSets(DeviceObj->GetDevice(), InBufferCount + 1, Writes, 0, nullptr);
+    uint32_t WriteCount = InBufferCount + 1;
+    VkDescriptorImageInfo Image{};
+    if(Texture)
+    {
+        Image.sampler     = Texture->GetSampler();
+        Image.imageView   = Texture->GetImageView();
+        Image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        Writes[WriteCount].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        Writes[WriteCount].dstSet          = Set;
+        Writes[WriteCount].dstBinding      = GDI_COMPUTE_TEXTURE_BINDING;
+        Writes[WriteCount].descriptorCount = 1;
+        Writes[WriteCount].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        Writes[WriteCount].pImageInfo      = &Image;
+        ++WriteCount;
+    }
+    vkUpdateDescriptorSets(DeviceObj->GetDevice(), WriteCount, Writes, 0, nullptr);
 
     /* Outside a frame (a render command): on its own command buffer, at once, waited for. */
     if(CurrentStateData->CurrentCmd == VK_NULL_HANDLE)
@@ -138,6 +158,50 @@ bool VulkanDynamicGDI::DispatchCompute(GDIShader* InShader, const void* InParams
     vkCmdBindDescriptorSets(Cmd, VK_PIPELINE_BIND_POINT_COMPUTE, Fetch.PipeLayout, 0, 1, &Set, 0, nullptr);
     vkCmdDispatch(Cmd, InX, InY, InZ);
     RecordBufferBarrier(Cmd);
+
+    if(bWasActive && ColorCount > 0) { SetRenderTargets(Colors, ColorCount, Depth); }
+    return true;
+}
+
+bool VulkanDynamicGDI::UpdateBuffer(GDIBuffer* InBuffer, const uint32_t InOffset, const void* InData, const uint32_t InBytes)
+{
+    auto* Buffer = static_cast<VKBuffer*>(InBuffer);
+    if(!CurrentStateData || !DeviceObj || !Buffer->IsValid()) return false;
+
+    /* The bytes go in the command buffer itself, at most 64 KB a command. */
+    const auto Record = [&](VkCommandBuffer InCmd)
+    {
+        RecordBufferBarrier(InCmd);
+        const auto* Bytes = static_cast<const uint8_t*>(InData);
+        for(uint32_t Done = 0; Done < InBytes;)
+        {
+            const uint32_t Piece = (std::min)(InBytes - Done, 65536u);
+            vkCmdUpdateBuffer(InCmd, Buffer->GetBuffer(), VkDeviceSize(InOffset) + Done, Piece, Bytes + Done);
+            Done += Piece;
+        }
+        RecordBufferBarrier(InCmd);
+    };
+
+    /* Outside a frame: on its own command buffer, at once, waited for. */
+    if(CurrentStateData->CurrentCmd == VK_NULL_HANDLE)
+    {
+        VkCommandPool   Pool = VK_NULL_HANDLE;
+        VkCommandBuffer Cmd  = VK_NULL_HANDLE;
+        if(!BeginTransientCmd(DeviceObj, Pool, Cmd)) return false;
+        Record(Cmd);
+        EndAndSubmitTransientCmd(DeviceObj, Pool, Cmd);
+        return true;
+    }
+
+    /* Transfers are not allowed in a render pass: closed around it and reopened, as for a dispatch. */
+    const bool       bWasActive = CurrentStateData->bRenderingActive;
+    GDIRenderTarget* Colors[GDI_MAX_COLOR_TARGETS] = {};
+    const uint32_t   ColorCount = CurrentStateData->ActiveColorCount;
+    for(uint32_t Index = 0; Index < ColorCount; ++Index) { Colors[Index] = CurrentStateData->ActiveColors[Index]; }
+    GDIRenderTarget* Depth = CurrentStateData->ActiveDepth;
+    EndActiveRenderingRegion();
+
+    Record(CurrentStateData->CurrentCmd);
 
     if(bWasActive && ColorCount > 0) { SetRenderTargets(Colors, ColorCount, Depth); }
     return true;

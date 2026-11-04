@@ -60,6 +60,10 @@ namespace RenderCore
     void SetOcclusionStats(uint64_t InOccluded, uint64_t InQueries);
     void GetOcclusionStats(uint64_t& OutOccluded, uint64_t& OutQueries);
 
+    /* The reporting scene's GPU meshlet culling (RenderStats' Meshlet* fields). */
+    void SetMeshletStats(const RenderStats& InStats);
+    void GetMeshletStats(RenderStats& OutStats);
+
     /* The reporting scene's captures (RenderStats::GIProbesUnlit, GIProbesTotal, bCapturesBusy). */
     void SetCaptureStats(uint32_t InUnlit, uint32_t InTotal, bool bInBusy);
     void GetCaptureStats(uint32_t& OutUnlit, uint32_t& OutTotal, bool& bOutBusy);

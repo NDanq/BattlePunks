@@ -61,10 +61,14 @@ struct NullGDIStats
     uint64_t DynamicMeshesCreated  = 0;
     uint64_t BuffersCreated        = 0;
     uint64_t DispatchCalls         = 0;
+    uint64_t TexturedDispatchCalls = 0;   // dispatches with a texture (GDIDispatchCompute's InTexture)
     uint32_t LastDispatchGroups[3] = {};
     uint32_t LastDispatchBuffers   = 0;
     uint32_t LastDispatchParamBytes = 0;
     uint64_t InstancedDrawCalls    = 0;   // draws with GDISetInstanceBuffer's buffer set
+    uint64_t IndexBufferDrawCalls  = 0;   // draws with GDISetIndexBuffer's buffer set
+    uint64_t BufferUpdates         = 0;   // GDIUpdateBuffer calls, done
+    uint64_t BufferUpdateBytes     = 0;
     uint64_t ParallelPasses        = 0;   // GDIBeginParallelPass ... GDIEndParallelPass, done
     uint64_t ParallelChunks        = 0;   // their chunks, over every pass
     uint32_t LastInstanceCount     = 0;
@@ -202,9 +206,15 @@ public:
     bool       SupportsCompute() const override { return true; }
     GDIBuffer* CreateBuffer(uint32_t InBytes, uint8_t InUsage, const void* InInitialData) override;
     bool       DispatchCompute(GDIShader* InShader, const void* InParams, uint32_t InParamBytes,
-                               GDIBuffer* const* InBuffers, uint32_t InBufferCount,
+                               GDIBuffer* const* InBuffers, uint32_t InBufferCount, GDITextureResource* InTexture,
                                uint32_t InX, uint32_t InY, uint32_t InZ) override;
     bool       ReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes) override;
+    /* Updates write the CPU copy (ReadBuffer returns them); index buffers and
+     * meshlet culling "supported", their draws counted. Indirect draws are
+     * not: GDISetIndirectArgs is ignored, so a draw keeps its own counts. */
+    bool       UpdateBuffer(GDIBuffer* InBuffer, uint32_t InOffset, const void* InData, uint32_t InBytes) override;
+    bool       SupportsIndexBuffers() const override { return true; }
+    bool       SupportsMeshletCulling() const override { return true; }
 
     /* Occlusion queries "supported": a round's queries read back, a block
      * later, as SetOcclusionAnswer says every one found (visible unless told
@@ -239,7 +249,7 @@ private:
 
     struct NullRecordingContext : public GDIRecordingContext
     {
-        uint64_t Draws = 0, Predicated = 0, Instanced = 0;
+        uint64_t Draws = 0, Predicated = 0, Instanced = 0, IndexBufferDraws = 0;
         uint32_t LastInstanceCount = 0;
     };
     std::vector<NullRecordingContext*> Contexts;   // made on first need, kept

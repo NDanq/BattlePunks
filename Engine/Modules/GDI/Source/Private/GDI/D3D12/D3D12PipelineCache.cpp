@@ -192,7 +192,7 @@ bool D3D12PipelineCache::BuildRootSignature()
 
 bool D3D12PipelineCache::BuildComputeRootSignature()
 {
-    static_assert(CRP_Count - CRP_Storage0 == GDI_COMPUTE_MAX_STORAGE_BUFFERS, "one root UAV per storage buffer");
+    static_assert(CRP_Texture - CRP_Storage0 == GDI_COMPUTE_MAX_STORAGE_BUFFERS, "one root UAV per storage buffer");
 
     D3D12_ROOT_PARAMETER Params[CRP_Count]{};
     Params[CRP_Params].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -203,6 +203,19 @@ bool D3D12PipelineCache::BuildComputeRootSignature()
         Params[CRP_Storage0 + Each].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_UAV;
         Params[CRP_Storage0 + Each].Descriptor.ShaderRegister = 1 + Each;
         Params[CRP_Storage0 + Each].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
+    }
+    /* The one texture (COMPUTE_TEXTURE): a combined image sampler at binding 8, which spirv-cross splits into t8 and s8. */
+    D3D12_DESCRIPTOR_RANGE TextureRanges[2]{};
+    for(UINT Kind = 0; Kind < 2; ++Kind)
+    {
+        TextureRanges[Kind].RangeType          = Kind == 0 ? D3D12_DESCRIPTOR_RANGE_TYPE_SRV : D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
+        TextureRanges[Kind].NumDescriptors     = 1;
+        TextureRanges[Kind].BaseShaderRegister = GDI_COMPUTE_TEXTURE_BINDING;
+        D3D12_ROOT_PARAMETER& P               = Params[Kind == 0 ? CRP_Texture : CRP_Sampler];
+        P.ParameterType                       = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        P.DescriptorTable.NumDescriptorRanges = 1;
+        P.DescriptorTable.pDescriptorRanges   = &TextureRanges[Kind];
+        P.ShaderVisibility                    = D3D12_SHADER_VISIBILITY_ALL;
     }
 
     D3D12_ROOT_SIGNATURE_DESC Desc{};

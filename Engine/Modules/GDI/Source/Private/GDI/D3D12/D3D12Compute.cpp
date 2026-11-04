@@ -12,6 +12,7 @@
 #include "Public/GDI/D3D12/D3D12Shader.h"
 #include "Public/GDI/D3D12/D3D12PipelineCache.h"
 #include "Public/GDI/D3D12/D3D12DescriptorAllocator.h"
+#include "Public/GDI/D3D12/D3D12Texture.h"
 #include "Private/GDI/D3D12/D3D12TransientOps.h"
 
 #include <algorithm>
@@ -48,9 +49,15 @@ GDIBuffer* D3D12DynamicGDI::CreateBuffer(const uint32_t InBytes, const uint8_t I
 }
 
 bool D3D12DynamicGDI::DispatchCompute(GDIShader* InShader, const void* InParams, const uint32_t InParamBytes,
-                                      GDIBuffer* const* InBuffers, const uint32_t InBufferCount,
+                                      GDIBuffer* const* InBuffers, const uint32_t InBufferCount, GDITextureResource* InTexture,
                                       const uint32_t InX, const uint32_t InY, const uint32_t InZ)
 {
+    /* Every texture resource this backend makes is a D3D12TextureResource; with none, the null
+     * texture fills the tables (a shader that declares none never reads them). Render targets are
+     * left sampleable by SetRenderTargets, which covers non-pixel shaders (D3D12_STATE_SAMPLED). */
+    auto* Texture = static_cast<D3D12TextureResource*>(InTexture);
+    if(Texture && Texture->GetSRVSlot() == UINT32_MAX) return false;
+    if(!Texture) Texture = NullTexture;
     if(!CurrentStateData || !PipelineCache || !DescAlloc || !DeviceObj) return false;
     const auto* Resource = static_cast<D3D12ShaderResource*>(InShader->Resource);
     if(!Resource || !Resource->IsValid()) return false;
@@ -80,6 +87,14 @@ bool D3D12DynamicGDI::DispatchCompute(GDIShader* InShader, const void* InParams,
         {
             InList->SetComputeRootUnorderedAccessView(CRP_Storage0 + Slot,
                                                       Buffers[(std::min)(Slot, InBufferCount - 1)]->GetResource()->GetGPUVirtualAddress());
+        }
+        if(Texture && Texture->GetSRVSlot() != UINT32_MAX)
+        {
+            /* The frame's list has the heaps set already; a transient one (outside a frame) has not. */
+            ID3D12DescriptorHeap* Heaps[2] = { DescAlloc->GetSRVHeap(), DescAlloc->GetSamplerHeap() };
+            InList->SetDescriptorHeaps(2, Heaps);
+            InList->SetComputeRootDescriptorTable(CRP_Texture, DescAlloc->GetSRVGPUHandle(Texture->GetSRVSlot()));
+            InList->SetComputeRootDescriptorTable(CRP_Sampler, DescAlloc->GetSamplerGPUHandle(Texture->GetBorder(), Texture->GetFilter()));
         }
         InList->Dispatch(InX, InY, InZ);
         RecordUAVBarrier(InList);
@@ -114,6 +129,43 @@ bool D3D12DynamicGDI::DispatchCompute(GDIShader* InShader, const void* InParams,
     if(InParamBytes > 0) { std::memcpy(Params.MappedPtr, InParams, InParamBytes); }
     Record(CurrentStateData->CurrentCmd, GetListSerial(), Params.GPUAddress);
     DrawCaches.BoundPipeline = nullptr;   // the compute pipeline replaced the graphics one on the list
+    return true;
+}
+
+bool D3D12DynamicGDI::UpdateBuffer(GDIBuffer* InBuffer, const uint32_t InOffset, const void* InData, const uint32_t InBytes)
+{
+    auto* Buffer = static_cast<D3D12Buffer*>(InBuffer);
+    if(!CurrentStateData || !DeviceObj || !Buffer->IsValid()) return false;
+
+    /* The bytes in an upload buffer of their own: the frame's ring rewinds
+     * per frame and has no resource to copy from. */
+    Microsoft::WRL::ComPtr<ID3D12Resource> Upload = D3D12Ops::CreateBuffer(DeviceObj, InBytes, D3D12_HEAP_TYPE_UPLOAD,
+                                                                          D3D12_RESOURCE_STATE_GENERIC_READ);
+    void* Mapped = nullptr;
+    const D3D12_RANGE NoRead{ 0, 0 };
+    if(!Upload || FAILED(Upload->Map(0, &NoRead, &Mapped))) return false;
+    std::memcpy(Mapped, InData, InBytes);
+    Upload->Unmap(0, nullptr);
+
+    const auto Record = [&](ID3D12GraphicsCommandList* InList, const uint64_t InSerial)
+    {
+        Buffer->Transition(InList, InSerial, D3D12_RESOURCE_STATE_COPY_DEST);
+        InList->CopyBufferRegion(Buffer->GetResource(), InOffset, Upload.Get(), 0, InBytes);
+    };
+
+    /* Outside a frame: on its own list, at once, waited for. */
+    if(!CurrentStateData->CurrentCmd)
+    {
+        TransientCmd Cmd;
+        if(!BeginTransientCmd(DeviceObj, Cmd)) return false;
+        Record(Cmd.List.Get(), AllocateListSerial());
+        EndAndSubmitTransientCmd(DeviceObj, Cmd);
+        return true;
+    }
+
+    /* The draws and dispatches after it move the buffer to their own states (Transition). */
+    Record(CurrentStateData->CurrentCmd, GetListSerial());
+    DeferRelease(Upload);
     return true;
 }
 

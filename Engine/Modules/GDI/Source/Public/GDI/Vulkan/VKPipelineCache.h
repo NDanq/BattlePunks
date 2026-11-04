@@ -205,9 +205,11 @@ public:
     /**
      * The compute pipeline for InModule with InStorageCount storage buffers
      * (bindings 1..InStorageCount) after its parameter block (binding 0),
-     * with that layout; created on first use. All null if creation fails.
+     * and with bInTexture a combined image sampler at
+     * GDI_COMPUTE_TEXTURE_BINDING, with that layout; created on first use.
+     * All null if creation fails.
      */
-    PipelineFetch GetOrCreateCompute(VkShaderModule InModule, uint32_t InStorageCount);
+    PipelineFetch GetOrCreateCompute(VkShaderModule InModule, uint32_t InStorageCount, bool bInTexture = false);
 
     /** InModule is being destroyed: its compute pipelines leave the cache, so
      *  a later module given the same handle never finds them. They are
@@ -254,8 +256,9 @@ private:
     mutable std::shared_mutex                         EntriesLock;
 
     // Compute: one layout per storage-buffer count (0..GDI_COMPUTE_MAX_STORAGE_BUFFERS),
-    // made on first use; pipelines by module and count.
-    static constexpr uint32_t kComputeLayouts = GDI_COMPUTE_MAX_STORAGE_BUFFERS + 1;
+    // without a texture then with one, made on first use; pipelines by module, count and texture.
+    static constexpr uint32_t kComputeCounts  = GDI_COMPUTE_MAX_STORAGE_BUFFERS + 1;
+    static constexpr uint32_t kComputeLayouts = kComputeCounts * 2;
     VkDescriptorSetLayout ComputeSetLayouts [kComputeLayouts]{};
     VkPipelineLayout      ComputePipeLayouts[kComputeLayouts]{};
     std::unordered_map<uint64_t, VkPipeline> ComputePipelines;

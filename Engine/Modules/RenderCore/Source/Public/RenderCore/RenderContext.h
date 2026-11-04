@@ -401,6 +401,21 @@ namespace RenderCore
          * RenderSceneStages then draws the occluders, runs the queries and
          * resolves them before the Base Pass, and forgets all of it.
          */
+        /*
+         * GPU MESHLET CULLING (RENDERPIPELINE.md, "Meshlets"), for the scene
+         * being queued -- BeginSceneDraws forgets it, so a capture or preview
+         * culls none. With bInCull (and [Rendering] Meshlets, and a backend
+         * that can), the Base Pass sections of static meshes with meshlets
+         * that queue next are culled meshlet by meshlet against the view set
+         * now (or the one frozen by [Rendering] MeshletFreezeCulling) before
+         * the stages run, and drawn from the survivors.
+         * GetMeshletStats: the last view's sections culled so, their meshlets
+         * and triangles, and the triangles the cull kept (-1: not read back,
+         * [Rendering] MeshletStats off).
+         */
+        void    SetMeshletCulling(bool bInCull);
+        void    GetMeshletStats(uint32_t& OutSections, uint64_t& OutMeshlets, uint64_t& OutTriangles, int64_t& OutDrawn) const;
+
         void    SetOcclusionQueries(GDIOcclusionQueries* InQueries);
         int32_t AddOcclusionQuery(const GameCore::AABB& InBox);
         void    SetDrawOcclusion(int32_t InQuery);

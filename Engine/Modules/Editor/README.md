@@ -169,8 +169,9 @@ dropped on, or the one shown -- `Content/` when the browser is at the root.
 2. **Mesh options**: scale (glTF is in metres; 100 by default), convert axes
    (glTF is right-handed and the engine left-handed, both +Y up: z flips, with
    the winding, so the model faces the default camera), generate missing normals, generate
-   lightmap UVs (UV1, for baked lighting) where the file has no `TEXCOORD_1`, combine the scene into
-   one mesh or one per glTF mesh, and import the textures it uses -- listed.
+   lightmap UVs (UV1, for baked lighting) where the file has no `TEXCOORD_1`, build meshlets for
+   each static mesh (for GPU meshlet culling: [the guide](../../Docs/Guides/MeshletImportGuide.md)),
+   combine the scene into one mesh or one per glTF mesh, and import the textures it uses -- listed.
 3. **Texture options**:
    - sRGB, plus data maps by name: an image whose name has a word like normal,
      rough, metal, AO, height, mask or ORM imports linear whatever sRGB says.
@@ -314,6 +315,14 @@ NimbleEditor [--rhi N] [--play] [world.nmworld]
 ```
 
 `--play` starts Play-in-Editor as soon as the viewport is up.
+
+`--import <file> [--import-to <folder>] [--import-settings key=value ...]`
+imports one glTF or GLB as the Import Wizard would, with its default options
+(textures not imported), into the folder (default `Content/Meshes`), prints
+what it wrote and exits -- no window, for art scripts. Each
+`--import-settings` changes one option, as the asset records them
+(`GenerateLightmapUVs=0`, `BuildMeshlets=1`, ...):
+[the meshlet import guide](../../Docs/Guides/MeshletImportGuide.md), section 3.
 
 The backend is `[Editor] RHI` in `Config/DefaultEngine.ini` (default 2, Vulkan),
 then the user's settings (see Editor settings), then `--rhi` -- a separate key from the game's `[Display] RHI`. With no
@@ -819,7 +828,7 @@ Settings instead.
 | Viewport | Background gradient, top and bottom colours (a swatch opens a colour picker; applies at once to every editor viewport) | `Editor.ViewportGradient` (on), `ViewportTopColor` (`#4b515d`), `ViewportBottomColor` (`#1b1d22`) |
 | Rendering | Render backend (on restart) | `Editor.RHI` |
 | Build | Restart a running game after Compile | `Editor.ReloadAfterCompile` |
-| Import | The Import Wizard's starting options: mesh scale, convert axes, generate normals, generate lightmap UVs, combine meshes, import a mesh's textures, sRGB, largest texture, texture mipmaps | `Editor.ImportMeshScale`, `ImportConvertCoordinates`, `ImportGenerateNormals`, `ImportLightmapUVs`, `ImportCombineMeshes`, `ImportMeshTextures`, `ImportTextureSRGB`, `ImportTextureMaxSize`, `ImportTextureMipGen` |
+| Import | The Import Wizard's starting options: mesh scale, convert axes, generate normals, generate lightmap UVs, build meshlets, combine meshes, import a mesh's textures, sRGB, largest texture, texture mipmaps | `Editor.ImportMeshScale`, `ImportConvertCoordinates`, `ImportGenerateNormals`, `ImportLightmapUVs`, `ImportMeshlets`, `ImportCombineMeshes`, `ImportMeshTextures`, `ImportTextureSRGB`, `ImportTextureMaxSize`, `ImportTextureMipGen` |
 
 The settings are those config vars themselves; the dialog keeps no copy.
 **Apply** and **OK** set them the way the Console would and save them;

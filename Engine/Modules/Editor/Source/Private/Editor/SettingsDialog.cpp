@@ -316,6 +316,8 @@ SettingsDialog::SettingsDialog(QWidget* InParent)
              QStringLiteral("Convert a glTF's right-handed axes to the engine's left-handed ones (z flips), facing the default camera"));
     AddCheck(Import, "Editor.ImportGenerateNormals", QStringLiteral("Generate missing normals"),
              QStringLiteral("Smooth normals for a primitive that has none"));
+    AddCheck(Import, "Editor.ImportMeshlets", QStringLiteral("Build meshlets"),
+             QStringLiteral("Meshlets for each static mesh, so the GPU culls it piece by piece where [Rendering] Meshlets is on"));
     AddCheck(Import, "Editor.ImportCombineMeshes", QStringLiteral("Combine meshes"),
              QStringLiteral("One .nmmesh for a whole glTF scene, or one per glTF mesh"));
     AddCheck(Import, "Editor.ImportMeshTextures", QStringLiteral("Import a mesh's textures"),

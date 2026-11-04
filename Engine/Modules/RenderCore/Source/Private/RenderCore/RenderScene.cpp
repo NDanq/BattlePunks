@@ -487,6 +487,8 @@ namespace RenderCore
                         ViewOcclusion* InOcclusion = nullptr)
         {
             InContext.BeginSceneDraws();
+            /* GPU meshlet culling for the scene's own views (those with occlusion), not its captures. */
+            InContext.SetMeshletCulling(InOcclusion != nullptr && InCapture == nullptr);
 
             /* This set's last round's answers -- complete, as its block has
              * finished (FramesInFlight blocks back) -- then this round's queries. Without answers nothing is hidden on
@@ -2686,6 +2688,12 @@ namespace RenderCore
             uint64_t SunBytes = 0;
             InContext.GetSunShadowCacheStats(SunCascades, SunFilled, SunBytes);
             SetShadowCacheStats(CacheLights, CacheFilled, CacheBytes, SunCascades, SunFilled, SunBytes);
+            RenderStats Meshlets;
+            int64_t     Drawn = -1;
+            InContext.GetMeshletStats(Meshlets.MeshletSectionsLastFrame, Meshlets.MeshletsSubmittedLastFrame,
+                                      Meshlets.MeshletTrianglesLastFrame, Drawn);
+            Meshlets.MeshletTrianglesDrawnLastFrame = Drawn;
+            SetMeshletStats(Meshlets);
         }
 
 #if WITH_EDITOR

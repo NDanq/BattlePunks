@@ -7989,6 +7989,292 @@ static void TestOcclusionCullingOnGpu()
     }
     SetFileProvider(PreviousProvider);
 }
+
+/*
+ * GPU meshlet culling (RENDERPIPELINE.md, "Meshlets"): a dense sphere made in
+ * memory with its meshlets, half off the side of a perspective view, beside a
+ * box (too few triangles to gain from meshlets). On the Null backend this
+ * checks what is queued and dispatched; with NIMBLE_SMOKE_GPU set, what the
+ * GPU keeps, and that culling changes no pixel.
+ */
+struct MeshletScene
+{
+    static constexpr const char* SpherePath = "@test/MeshletSphere";
+    GameCore::World  World;
+    GameCore::Entity Sphere, Box;
+    uint32_t         Meshlets  = 0;
+    uint32_t         Triangles = 0;
+
+    /* InMaterial: the sphere's (null: its section's none, so DefaultLit). */
+    explicit MeshletScene(const char* InMaterial = nullptr)
+    {
+        auto Mesh = std::make_shared<MeshData>();
+        constexpr uint32_t Rings = 48, Segments = 64;
+        for(uint32_t Ring = 0; Ring <= Rings; ++Ring)
+        {
+            const float Theta = 3.14159265f * float(Ring) / float(Rings);
+            for(uint32_t Segment = 0; Segment <= Segments; ++Segment)
+            {
+                const float Phi = 6.28318531f * float(Segment) / float(Segments);
+                const float X = std::sin(Theta) * std::cos(Phi), Y = std::cos(Theta), Z = std::sin(Theta) * std::sin(Phi);
+                Mesh->Positions.insert(Mesh->Positions.end(), { X, Y, Z });
+                Mesh->Normals.insert(Mesh->Normals.end(), { X, Y, Z });
+                Mesh->UV0.insert(Mesh->UV0.end(), { float(Segment) / float(Segments), float(Ring) / float(Rings) });
+            }
+        }
+        for(uint32_t Ring = 0; Ring < Rings; ++Ring)
+        {
+            for(uint32_t Segment = 0; Segment < Segments; ++Segment)
+            {
+                const uint32_t A = Ring * (Segments + 1) + Segment, B = A + 1, C = A + Segments + 1, D = C + 1;
+                Mesh->Indices.insert(Mesh->Indices.end(), { A, B, C, B, D, C });
+            }
+        }
+        MeshSection All;
+        All.Name       = "Surface";
+        All.IndexCount = uint32_t(Mesh->Indices.size());
+        Mesh->Sections.push_back(All);
+        ComputeMeshBounds(*Mesh);
+        BuildMeshlets(*Mesh);
+        Meshlets  = uint32_t(Mesh->Meshlets.size());
+        Triangles = Mesh->GetTriangleCount();
+        MeshAssetCache::Store(SpherePath, Mesh);
+
+        const auto Placed = [this](const char* InName, const char* InMesh, const EngineCore::Vector3& InAt, const double InScale,
+                                   const char* InSlot)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InAt;
+            Transform.Scale    = EngineCore::Vector3(InScale, InScale, InScale);
+            Each.AddComponent(Transform);
+            RenderComponent Render;
+            std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", InMesh);
+            if(InSlot) { std::snprintf(Render.Materials[0], sizeof(Render.Materials[0]), "%s", InSlot); }
+            Each.AddComponent(Render);
+            return Each;
+        };
+        /* From (0, 0, -1500) along +Z the view's left edge, at depth 1500, is
+         * about 700 to the left: the sphere straddles it. */
+        Sphere = Placed("Sphere", SpherePath, EngineCore::Vector3(-700.0, 0.0, 0.0), 300.0, InMaterial);
+        Box    = Placed("Box", "Engine/Content/Meshes/Box.nmmesh", EngineCore::Vector3(300.0, 0.0, 0.0), 200.0, InMaterial);
+    }
+
+    ~MeshletScene() { MeshAssetCache::Remove(SpherePath); }
+
+    /* From (0, 0, -1500) along InForward: +Z by default. A hand-made view
+     * has no bounds, so the CPU culls nothing (RenderView::MakePerspective). */
+    static RenderView MakeView(const EngineCore::Size InViewport, const EngineCore::Vector3& InForward = EngineCore::Vector3(0.0, 0.0, 1.0))
+    {
+        return RenderView::MakePerspective(InViewport, EngineCore::Vector3(0.0, 0.0, -1500.0), InForward, 50.0f, 10.0f, 10000.0f);
+    }
+};
+
+static void TestMeshletCulling()
+{
+    std::printf("[meshlet culling]\n");
+    /* An Opaque Lit material (the Base Pass) Null can load: its description alone. */
+    const std::filesystem::path Root = std::filesystem::temp_directory_path() / "NimbleRenderCoreMeshlets";
+    std::error_code Ignored;
+    std::filesystem::remove_all(Root, Ignored);
+    std::filesystem::create_directories(Root / "Materials", Ignored);
+    std::ofstream(Root / "Materials" / "LitOpaque.material") << "NimbleMaterial 3\nDomain Opaque\nShading Lit\nBlockSize 160\n";
+    FilesystemProvider Provider(Root.generic_string());
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Provider);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(ERenderBackend::Null, WindowHandle());
+    Expect(bInit, "Renderer::Initialize(Null) for meshlet culling");
+    ConfigVar* Enabled = ConfigFindVarByPath("Rendering.Meshlets");
+    ConfigVar* Readback = ConfigFindVarByPath("Rendering.MeshletStats");
+    Expect(Enabled && Readback && ConfigFindVarByPath("Rendering.MeshletCones") && ConfigFindVarByPath("Rendering.MeshletFreezeCulling"),
+           "[Rendering] Meshlets, MeshletCones, MeshletFreezeCulling and MeshletStats are settings");
+    if(bInit && Enabled && Readback)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = MeshletScene::MakeView(Viewport);
+        Rend.SetViewOverride(&View);
+        MeshletScene Scene("Materials/LitOpaque.material.nmgraph");
+        Rend.BindWorld(Scene.World);
+
+        uint64_t Frame = 1;
+        const auto Stats = [&]()
+        {
+            for(int Each = 0; Each < 3; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            RenderStats Out;
+            Rend.GetStats(Out);
+            return Out;
+        };
+
+        Expect(Scene.Meshlets > 2, "the sphere has meshlets");
+        Expect(Stats().MeshletSectionsLastFrame == 0, "off by default: nothing is culled by meshlet");
+
+        Enabled->SetBool(true);
+        const RenderStats On = Stats();
+        std::printf("    on: %u section(s), %llu of %u meshlets, %llu of %u triangles\n", On.MeshletSectionsLastFrame,
+                    (unsigned long long)On.MeshletsSubmittedLastFrame, Scene.Meshlets, (unsigned long long)On.MeshletTrianglesLastFrame,
+                    Scene.Triangles);
+        Expect(On.MeshletSectionsLastFrame == 1 && On.MeshletsSubmittedLastFrame == Scene.Meshlets
+               && On.MeshletTrianglesLastFrame == Scene.Triangles,
+               "on, the sphere's one section is culled, all its meshlets tested; the box (too few triangles) is drawn as before");
+        Expect(On.MeshletTrianglesDrawnLastFrame == -1, "what the cull kept is not read back unless asked");
+        Expect(Stats().MeshletSectionsLastFrame == 1, "and again the frames after (a static list's replay too)");
+
+        Readback->SetBool(true);
+        Expect(Stats().MeshletTrianglesDrawnLastFrame == 0, "read back on Null, whose dispatches run nothing: nothing kept");
+        Readback->SetBool(false);
+
+        Enabled->SetBool(false);
+        Expect(Stats().MeshletSectionsLastFrame == 0, "turned off again, nothing is");
+
+        Rend.UnbindWorld();
+        Rend.SetViewOverride(nullptr);
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+    std::filesystem::remove_all(Root, Ignored);
+}
+
+static void TestMeshletCullingOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[meshlet culling on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[meshlet culling on the GPU: %s]\n", GetShaderPlatformName(Backend));
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    ConfigVar* Enabled  = ConfigFindVarByPath("Rendering.Meshlets");
+    ConfigVar* Readback = ConfigFindVarByPath("Rendering.MeshletStats");
+    ConfigVar* Cones    = ConfigFindVarByPath("Rendering.MeshletCones");
+    if(bInit && Enabled && Readback && Cones)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = MeshletScene::MakeView(Viewport);
+        Rend.SetViewOverride(&View);
+        MeshletScene Scene;
+        Rend.BindWorld(Scene.World);
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](EngineCore::Image& OutPixels, RenderStats& OutStats)
+        {
+            for(int Each = 0; Each < 3; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            const uint64_t Request = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            Rend.GetStats(OutStats);
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto Differing = [](const EngineCore::Image& InA, const EngineCore::Image& InB)
+        {
+            int Count = 0;
+            for(int Y = 0; Y < 256; ++Y)
+            {
+                const uint8_t* A = InA.GetData() + InA.GetStride() * Y;
+                const uint8_t* B = InB.GetData() + InB.GetStride() * Y;
+                for(int X = 0; X < 256 * 4; X += 4)
+                {
+                    Count += (A[X] != B[X] || A[X + 1] != B[X + 1] || A[X + 2] != B[X + 2]) ? 1 : 0;
+                }
+            }
+            return Count;
+        };
+
+        EngineCore::Image Culled, Whole, WithCones;
+        RenderStats CulledStats, WholeStats, ConeStats;
+        Enabled->SetBool(true);
+        Readback->SetBool(true);
+        const bool bCulled = Capture(Culled, CulledStats);
+        std::printf("    half off screen: %lld of %llu triangles kept, %llu meshlets tested\n",
+                    (long long)CulledStats.MeshletTrianglesDrawnLastFrame, (unsigned long long)CulledStats.MeshletTrianglesLastFrame,
+                    (unsigned long long)CulledStats.MeshletsSubmittedLastFrame);
+        Expect(bCulled && CulledStats.MeshletSectionsLastFrame == 1, "the sphere is culled by meshlet");
+        Expect(bCulled && CulledStats.MeshletTrianglesDrawnLastFrame > 0
+               && uint64_t(CulledStats.MeshletTrianglesDrawnLastFrame) < CulledStats.MeshletTrianglesLastFrame * 3 / 4,
+               "the half off screen is not drawn: well under its triangles are kept, and some are");
+
+        Enabled->SetBool(false);
+        const bool bWhole = Capture(Whole, WholeStats);
+        std::printf("    culled vs not: %d pixels differ\n", Differing(Culled, Whole));
+        Expect(bCulled && bWhole && WholeStats.MeshletSectionsLastFrame == 0 && Differing(Culled, Whole) == 0,
+               "and the frame is pixel for pixel the one drawn whole");
+
+        /* Cones too: a sphere's far side faces away. The Base Pass draws back
+         * faces, but a closed sphere's are behind its front: still no change. */
+        Enabled->SetBool(true);
+        Cones->SetBool(true);
+        const bool bCones = Capture(WithCones, ConeStats);
+        Cones->SetBool(false);
+        std::printf("    with cones: %lld triangles kept; %d pixels differ\n", (long long)ConeStats.MeshletTrianglesDrawnLastFrame,
+                    Differing(WithCones, Whole));
+        Expect(bCones && ConeStats.MeshletTrianglesDrawnLastFrame > 0
+               && ConeStats.MeshletTrianglesDrawnLastFrame < CulledStats.MeshletTrianglesDrawnLastFrame && Differing(WithCones, Whole) == 0,
+               "the normal cones cull the far side as well, and nothing that shows");
+
+        /* Looking away: the CPU lets it through (the view has no bounds); the GPU keeps none of it. */
+        const RenderView Away = MeshletScene::MakeView(Viewport, EngineCore::Vector3(0.0, 0.0, -1.0));
+        Rend.SetViewOverride(&Away);
+        EngineCore::Image Behind;
+        RenderStats BehindStats;
+        const bool bBehind = Capture(Behind, BehindStats);
+        Expect(bBehind && BehindStats.MeshletSectionsLastFrame == 1 && BehindStats.MeshletTrianglesDrawnLastFrame == 0,
+               "looking away, the GPU keeps nothing of the sphere");
+        Rend.SetViewOverride(&View);
+
+        /* Occlusion (the last frame's depth pyramid): the sphere in the middle, the box a wall
+         * in front of it, then moved aside. */
+        ConfigVar* Occlusion = ConfigFindVarByPath("Rendering.MeshletOcclusion");
+        Expect(Occlusion != nullptr, "[Rendering] MeshletOcclusion is a setting");
+        if(Occlusion)
+        {
+            Scene.Sphere.GetComponent<GameCore::TransformComponent>()->Position = EngineCore::Vector3(0.0, 0.0, 300.0);
+            GameCore::TransformComponent* Wall = Scene.Box.GetComponent<GameCore::TransformComponent>();
+            Wall->Position = EngineCore::Vector3(0.0, 0.0, -500.0);
+            Wall->Scale    = EngineCore::Vector3(3000.0, 3000.0, 20.0);   // past every edge of the view
+
+            EngineCore::Image Hidden, HiddenWhole, Shown, ShownWhole;
+            RenderStats HiddenStats, ShownStats, Ignored;
+            Occlusion->SetBool(true);
+            const bool bHidden = Capture(Hidden, HiddenStats);
+            Occlusion->SetBool(false);
+            const bool bHiddenWhole = Capture(HiddenWhole, Ignored);
+            std::printf("    behind a wall: %lld triangles kept; %d pixels differ from no occlusion\n",
+                        (long long)HiddenStats.MeshletTrianglesDrawnLastFrame, Differing(Hidden, HiddenWhole));
+            Expect(bHidden && HiddenStats.MeshletSectionsLastFrame == 1 && HiddenStats.MeshletTrianglesDrawnLastFrame == 0,
+                   "behind a wall, the depth pyramid hides the whole sphere");
+            Expect(bHidden && bHiddenWhole && Differing(Hidden, HiddenWhole) == 0, "and the frame is the one drawn without it");
+
+            Wall->Position = EngineCore::Vector3(3000.0, 0.0, -500.0);
+            Occlusion->SetBool(true);
+            const bool bShown = Capture(Shown, ShownStats);
+            Occlusion->SetBool(false);
+            const bool bShownWhole = Capture(ShownWhole, Ignored);
+            std::printf("    wall moved aside: %lld triangles kept; %d pixels differ from no occlusion\n",
+                        (long long)ShownStats.MeshletTrianglesDrawnLastFrame, Differing(Shown, ShownWhole));
+            Expect(bShown && ShownStats.MeshletTrianglesDrawnLastFrame > ShownStats.MeshletTrianglesLastFrame / 3,
+                   "with the wall moved aside the sphere is drawn again");
+            Expect(bShown && bShownWhole && Differing(Shown, ShownWhole) == 0, "exactly as without occlusion");
+        }
+
+        Enabled->SetBool(false);
+        Readback->SetBool(false);
+        Rend.UnbindWorld();
+        Rend.SetViewOverride(nullptr);
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+}
 #endif // WITH_EDITOR
 
 int main()
@@ -8055,6 +8341,8 @@ int main()
     TestShadowCacheOnGpu();
     TestOcclusionCulling();
     TestOcclusionCullingOnGpu();
+    TestMeshletCulling();
+    TestMeshletCullingOnGpu();
     TestClearGradientOnGpu();
     TestSceneCaptureOnGpu();
     TestToneMappingOnGpu();

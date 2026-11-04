@@ -1024,6 +1024,12 @@ namespace EditorContent
                                                   "theirs from the UVs per pixel").arg(Each.Name);
                 }
             }
+            /* Last of the steps that touch the indices. A skinned mesh moves:
+             * its meshlets' bounds would be the bind pose's, so it has none. */
+            if(InOptions.bBuildMeshlets && !Mesh.IsSkinned() && !RenderCore::BuildMeshlets(Mesh))
+            {
+                OutWarnings << QStringLiteral("%1: no meshlets -- it draws by section").arg(Each.Name);
+            }
             RenderCore::ComputeMeshBounds(Mesh);
             if(Mesh.IsSkinned())
             {

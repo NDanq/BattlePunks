@@ -339,14 +339,25 @@ void D3D12Mesh::Record(const D3D12DrawInputs& InIn)
             List->IASetVertexBuffers(6, 2, SkinViews);
         }
 
+        // GDISetIndexBuffer's indices, into these vertices, or the mesh's own.
+        // A recording context's list (ListSerial 0) leaves buffers to implicit promotion (D3D12DrawInputs).
         D3D12_INDEX_BUFFER_VIEW IndexView{};
-        IndexView.BufferLocation = IndexBuffer->GetGPUVirtualAddress();
-        IndexView.SizeInBytes    = IndexBytes;
-        IndexView.Format         = DXGI_FORMAT_R32_UINT;
+        if(auto* Indices = static_cast<D3D12Buffer*>(InIn.IndexBuffer))
+        {
+            if(!Indices->IsValid()) return;
+            if(InIn.ListSerial != 0) { Indices->Transition(List, InIn.ListSerial, Indices->GetDrawReadState()); }
+            IndexView.BufferLocation = Indices->GetResource()->GetGPUVirtualAddress();
+            IndexView.SizeInBytes    = Indices->GetSize();
+        }
+        else
+        {
+            IndexView.BufferLocation = IndexBuffer->GetGPUVirtualAddress();
+            IndexView.SizeInBytes    = IndexBytes;
+        }
+        IndexView.Format = DXGI_FORMAT_R32_UINT;
         List->IASetIndexBuffer(&IndexView);
 
         // Instanced (GDISetInstanceBuffer): vertex layout 3 reads slot 5 per instance.
-        // A recording context's list (ListSerial 0) leaves buffers to implicit promotion (D3D12DrawInputs).
         UINT Instances = 1;
         if(auto* Instance = static_cast<D3D12Buffer*>(InIn.InstanceBuffer))
         {
@@ -359,16 +370,16 @@ void D3D12Mesh::Record(const D3D12DrawInputs& InIn)
             InstanceView.StrideInBytes  = GDI_INSTANCE_STRIDE;
             List->IASetVertexBuffers(5, 1, &InstanceView);
             Instances = InIn.InstanceCount;
+        }
 
-            // Indirect (GDISetIndirectArgs): the counts and range from a buffer the GPU wrote.
-            if(auto* Args = static_cast<D3D12Buffer*>(InIn.IndirectArgs))
-            {
-                if(!Args->IsValid() || !GDI->GetPipelineCache()->GetDrawIndexedSignature()) return;
-                if(InIn.ListSerial != 0) { Args->Transition(List, InIn.ListSerial, Args->GetDrawReadState()); }
-                List->ExecuteIndirect(GDI->GetPipelineCache()->GetDrawIndexedSignature(), 1, Args->GetResource(),
-                                      InIn.IndirectArgsOffset, nullptr, 0);
-                return;
-            }
+        // Indirect (GDISetIndirectArgs): the counts and range from a buffer the GPU wrote.
+        if(auto* Args = static_cast<D3D12Buffer*>(InIn.IndirectArgs))
+        {
+            if(!Args->IsValid() || !GDI->GetPipelineCache()->GetDrawIndexedSignature()) return;
+            if(InIn.ListSerial != 0) { Args->Transition(List, InIn.ListSerial, Args->GetDrawReadState()); }
+            List->ExecuteIndirect(GDI->GetPipelineCache()->GetDrawIndexedSignature(), 1, Args->GetResource(),
+                                  InIn.IndirectArgsOffset, nullptr, 0);
+            return;
         }
         // A dynamic mesh's last update sits at its base vertex and index; 0 otherwise.
         List->DrawIndexedInstanced(Count, Instances, GetDynamicBaseIndex() + First, INT(GetDynamicBaseVertex()), 0);

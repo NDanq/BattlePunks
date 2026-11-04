@@ -32,6 +32,7 @@ option(RENDERCORE_BUILD_SMOKETEST "Build RenderCoreSmokeTest" OFF)
 option(RENDERCORE_BUILD_ANIMATION_TESTS "Build RenderCoreAnimationTests (headless; no window or GPU)" ON)
 option(RENDERCORE_BUILD_PROCEDURAL_TESTS "Build RenderCoreProceduralTests (headless; no window or GPU)" ON)
 option(RENDERCORE_BUILD_FRACTURE_TESTS "Build RenderCoreFractureTests (headless; no window or GPU)" ON)
+option(RENDERCORE_BUILD_MESHLET_TESTS "Build RenderCoreMeshletTests (headless; no window or GPU)" ON)
 
 # ===========================================================================
 # Sources
@@ -92,6 +93,9 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/Components/GIVolumeComponent.cpp
         Source/Private/RenderCore/AssetFileCommon.h
         Source/Private/RenderCore/MeshAsset.cpp
+        Source/Private/RenderCore/MeshletBuild.cpp
+        Source/Private/RenderCore/MeshletCulling.h
+        Source/Private/RenderCore/MeshletCulling.cpp
         Source/Private/RenderCore/MeshFracture.cpp
         Source/Private/RenderCore/AssetCacheCommon.h
         Source/Private/RenderCore/SkeletonAsset.cpp
@@ -214,6 +218,12 @@ nimble_add_module(RenderCore SHARED
 # NimbleBc7enc. Every build decodes; only an editor build encodes.
 target_link_libraries(RenderCore PRIVATE NimbleBc7enc)
 
+# meshoptimizer 0.25 (MIT), for MeshletBuild.cpp: meshlets and their bounds.
+# Built by Engine/ThirdParty/CMakeLists.txt as NimbleMeshopt. In every build,
+# not just the editor's: meshes made at runtime (terrain, fracture) and
+# primitives without an MLET chunk build their meshlets on load.
+target_link_libraries(RenderCore PRIVATE NimbleMeshopt)
+
 # PRIVATE, not PUBLIC: RenderCoreInternal.h is included as
 # "Private/RenderCore/RenderCoreInternal.h" from this module's own .cpp files
 # and must not be reachable from a consumer. nimble_add_module already added
@@ -285,6 +295,18 @@ if(RENDERCORE_BUILD_FRACTURE_TESTS)
     enable_testing()
     add_test(NAME RenderCore.Fracture COMMAND RenderCoreFractureTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:RenderCoreFractureTests>")
+endif()
+
+# Meshlets, headless (MeshAsset.h): BuildMeshlets over hand-made meshes, and
+# the MLET chunk saved, loaded, and dropped when it no longer fits.
+if(RENDERCORE_BUILD_MESHLET_TESTS)
+    add_executable(RenderCoreMeshletTests Tests/MeshletTests.cpp)
+    target_link_libraries(RenderCoreMeshletTests PRIVATE RenderCore::RenderCore)
+    set_target_properties(RenderCoreMeshletTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "RenderCore")
+
+    enable_testing()
+    add_test(NAME RenderCore.Meshlets COMMAND RenderCoreMeshletTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:RenderCoreMeshletTests>")
 endif()
 
 source_group("RenderCore" FILES ${RENDERCORE_SOURCES})

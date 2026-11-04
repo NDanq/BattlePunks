@@ -371,10 +371,13 @@ constexpr unsigned GDI_FRAMES_IN_FLIGHT_MAX     = 3;    // [Rendering] FramesInF
 
 /*
  * A compute dispatch's bindings (GDIDispatchCompute): its parameters as a
- * uniform block at binding 0, then its storage buffers at bindings 1, 2, ...
- * Shaders declare them with COMPUTE_PARAMS_BEGIN/END and STORAGE_BUFFER.
+ * uniform block at binding 0, then its storage buffers at bindings 1, 2, ...,
+ * and its one texture, if it has one, at GDI_COMPUTE_TEXTURE_BINDING. Shaders
+ * declare them with COMPUTE_PARAMS_BEGIN/END, STORAGE_BUFFER and COMPUTE_TEXTURE.
  */
 constexpr unsigned GDI_COMPUTE_PARAMS_MAX_BYTES     = 1024;
-constexpr unsigned GDI_COMPUTE_MAX_STORAGE_BUFFERS  = 4;
+constexpr unsigned GDI_COMPUTE_MAX_STORAGE_BUFFERS  = 6;
+constexpr unsigned GDI_COMPUTE_TEXTURE_BINDING      = 8;
+static_assert(GDI_COMPUTE_TEXTURE_BINDING > GDI_COMPUTE_MAX_STORAGE_BUFFERS, "the texture comes after the buffers");
 
 #endif //CORECLIENT_GDIDEFINITIONS_H
