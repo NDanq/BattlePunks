@@ -14,6 +14,7 @@ The editor's Help > Documentation shows only this folder.
 - [Crash dummy animation guide](Guides/CrashDummyAnimationGuide.md)
 - [Retargeting](Guides/RetargetGuide.md): a clip pack made for another rig, played on your character, then baked
 - [Procedural content: splines and Procedural Spawners](Guides/ProceduralGuide.md), built on Demo Lab's L1 Foothills
+- [Importing meshes with meshlets](Guides/MeshletImportGuide.md): building them at import (the wizard or `--import`), turning GPU meshlet culling on, checking it, and when it is worth it; Demo Lab's statue as the example
 - [Custom render passes](Guides/CustomRenderPassGuide.md): your own GPU work at hooks in the frame, built on WorldsLab's GrassLab
 - [Plugins](Guides/PluginGuide.md): drop-in modules a project enables in one line; a worked example (Spinner), and TimeOfDay and Weather as Demo Lab uses them
 

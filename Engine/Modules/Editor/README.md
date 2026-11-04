@@ -169,8 +169,9 @@ dropped on, or the one shown -- `Content/` when the browser is at the root.
 2. **Mesh options**: scale (glTF is in metres; 100 by default), convert axes
    (glTF is right-handed and the engine left-handed, both +Y up: z flips, with
    the winding, so the model faces the default camera), generate missing normals, generate
-   lightmap UVs (UV1, for baked lighting) where the file has no `TEXCOORD_1`, combine the scene into
-   one mesh or one per glTF mesh, and import the textures it uses -- listed.
+   lightmap UVs (UV1, for baked lighting) where the file has no `TEXCOORD_1`, build meshlets for
+   each static mesh (for GPU meshlet culling: [the guide](../../Docs/Guides/MeshletImportGuide.md)),
+   combine the scene into one mesh or one per glTF mesh, and import the textures it uses -- listed.
 3. **Texture options**:
    - sRGB, plus data maps by name: an image whose name has a word like normal,
      rough, metal, AO, height, mask or ORM imports linear whatever sRGB says.
@@ -314,6 +315,14 @@ NimbleEditor [--rhi N] [--play] [world.nmworld]
 ```
 
 `--play` starts Play-in-Editor as soon as the viewport is up.
+
+`--import <file> [--import-to <folder>] [--import-settings key=value ...]`
+imports one glTF or GLB as the Import Wizard would, with its default options
+(textures not imported), into the folder (default `Content/Meshes`), prints
+what it wrote and exits -- no window, for art scripts. Each
+`--import-settings` changes one option, as the asset records them
+(`GenerateLightmapUVs=0`, `BuildMeshlets=1`, ...):
+[the meshlet import guide](../../Docs/Guides/MeshletImportGuide.md), section 3.
 
 The backend is `[Editor] RHI` in `Config/DefaultEngine.ini` (default 2, Vulkan),
 then the user's settings (see Editor settings), then `--rhi` -- a separate key from the game's `[Display] RHI`. With no
