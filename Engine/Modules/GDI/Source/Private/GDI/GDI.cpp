@@ -950,6 +950,13 @@ bool GDIDispatchCompute(GDIShader* InShader, const void* InParams, const uint32_
                         GDIBuffer* const* InBuffers, const uint32_t InBufferCount,
                         const uint32_t InX, const uint32_t InY, const uint32_t InZ)
 {
+    return GDIDispatchCompute(InShader, InParams, InParamBytes, InBuffers, InBufferCount, nullptr, InX, InY, InZ);
+}
+
+bool GDIDispatchCompute(GDIShader* InShader, const void* InParams, const uint32_t InParamBytes,
+                        GDIBuffer* const* InBuffers, const uint32_t InBufferCount, GDITextureResource* InTexture,
+                        const uint32_t InX, const uint32_t InY, const uint32_t InZ)
+{
     if(!GDISupportsCompute() || !InShader || !InShader->Resource || InShader->GetShaderType() != ST_Compute) { return false; }
     if(InParamBytes > GDI_COMPUTE_PARAMS_MAX_BYTES || (InParamBytes > 0 && !InParams)) { return false; }
     if(InBufferCount > GDI_COMPUTE_MAX_STORAGE_BUFFERS || (InBufferCount > 0 && !InBuffers)) { return false; }
@@ -958,7 +965,7 @@ bool GDIDispatchCompute(GDIShader* InShader, const void* InParams, const uint32_
         if(!InBuffers[Each] || (InBuffers[Each]->GetUsage() & GDI_BU_Storage) == 0) { return false; }
     }
     if(InX == 0 || InY == 0 || InZ == 0) { return false; }
-    return GDynamicGDI->DispatchCompute(InShader, InParams, InParamBytes, InBuffers, InBufferCount, InX, InY, InZ);
+    return GDynamicGDI->DispatchCompute(InShader, InParams, InParamBytes, InBuffers, InBufferCount, InTexture, InX, InY, InZ);
 }
 
 bool GDIReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes)

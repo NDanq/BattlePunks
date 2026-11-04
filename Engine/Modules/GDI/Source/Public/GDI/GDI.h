@@ -664,9 +664,10 @@ public:
     virtual GDIBuffer* CreateBuffer(uint32_t /*InBytes*/, uint8_t /*InUsage*/, const void* /*InInitialData*/) { return nullptr; }
     /* InShader (ST_Compute) over InX x InY x InZ workgroups, recorded in
      * frame order: what earlier draws and dispatches wrote it sees, and what
-     * it writes the next ones see. Validated by GDIDispatchCompute. */
+     * it writes the next ones see. InTexture (null: none) is sampled at
+     * GDI_COMPUTE_TEXTURE_BINDING. Validated by GDIDispatchCompute. */
     virtual bool       DispatchCompute(GDIShader* /*InShader*/, const void* /*InParams*/, uint32_t /*InParamBytes*/,
-                                       GDIBuffer* const* /*InBuffers*/, uint32_t /*InBufferCount*/,
+                                       GDIBuffer* const* /*InBuffers*/, uint32_t /*InBufferCount*/, GDITextureResource* /*InTexture*/,
                                        uint32_t /*InX*/, uint32_t /*InY*/, uint32_t /*InZ*/) { return false; }
     /* InBuffer's bytes as the GPU left them, waiting for it: for tests and tools. */
     virtual bool       ReadBuffer(GDIBuffer* /*InBuffer*/, std::vector<uint8_t>& /*OutBytes*/) { return false; }
@@ -1013,6 +1014,13 @@ bool       GDISupportsCompute();
 GDIBuffer* GDICreateBuffer(uint32_t InBytes, uint8_t InUsage, const void* InInitialData = nullptr);
 bool       GDIDispatchCompute(GDIShader* InShader, const void* InParams, uint32_t InParamBytes,
                               GDIBuffer* const* InBuffers, uint32_t InBufferCount,
+                              uint32_t InX, uint32_t InY = 1, uint32_t InZ = 1);
+/* The same with InTexture -- a render target's colour or depth, or any texture
+ * -- sampled at GDI_COMPUTE_TEXTURE_BINDING (ComputeCommon.glsl's
+ * COMPUTE_TEXTURE). A render target must not be bound for writing: binding
+ * other targets makes the ones before sampleable. */
+bool       GDIDispatchCompute(GDIShader* InShader, const void* InParams, uint32_t InParamBytes,
+                              GDIBuffer* const* InBuffers, uint32_t InBufferCount, GDITextureResource* InTexture,
                               uint32_t InX, uint32_t InY = 1, uint32_t InZ = 1);
 bool       GDIReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes);
 

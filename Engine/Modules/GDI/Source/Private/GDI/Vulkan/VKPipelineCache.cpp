@@ -750,16 +750,18 @@ VkPipeline VKPipelineCache::CreatePipeline(const PipelineKey& Key) const
 //  Compute pipelines (GDIDispatchCompute)
 // ---------------------------------------------------------------------------
 
-VKPipelineCache::PipelineFetch VKPipelineCache::GetOrCreateCompute(const VkShaderModule InModule, const uint32_t InStorageCount)
+VKPipelineCache::PipelineFetch VKPipelineCache::GetOrCreateCompute(const VkShaderModule InModule, const uint32_t InStorageCount,
+                                                                   const bool bInTexture)
 {
     PipelineFetch Out;
-    if(!Device || !Device->IsValid() || InModule == VK_NULL_HANDLE || InStorageCount >= kComputeLayouts) return Out;
+    if(!Device || !Device->IsValid() || InModule == VK_NULL_HANDLE || InStorageCount >= kComputeCounts) return Out;
     VkDevice Dev = Device->GetDevice();
+    const uint32_t Layout = InStorageCount + (bInTexture ? kComputeCounts : 0u);
 
-    // The layout for this many storage buffers: the parameter block at 0, the buffers at 1..
-    if(ComputePipeLayouts[InStorageCount] == VK_NULL_HANDLE)
+    // The layout for this many storage buffers: the parameter block at 0, the buffers at 1.., the texture after.
+    if(ComputePipeLayouts[Layout] == VK_NULL_HANDLE)
     {
-        VkDescriptorSetLayoutBinding Bindings[kComputeLayouts]{};
+        VkDescriptorSetLayoutBinding Bindings[kComputeCounts + 1]{};
         Bindings[0].binding         = 0;
         Bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         Bindings[0].descriptorCount = 1;
@@ -771,11 +773,20 @@ VKPipelineCache::PipelineFetch VKPipelineCache::GetOrCreateCompute(const VkShade
             Bindings[Each].descriptorCount = 1;
             Bindings[Each].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
         }
+        uint32_t BindingCount = InStorageCount + 1;
+        if(bInTexture)
+        {
+            Bindings[BindingCount].binding         = GDI_COMPUTE_TEXTURE_BINDING;
+            Bindings[BindingCount].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            Bindings[BindingCount].descriptorCount = 1;
+            Bindings[BindingCount].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+            ++BindingCount;
+        }
         VkDescriptorSetLayoutCreateInfo SetInfo{};
         SetInfo.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        SetInfo.bindingCount = InStorageCount + 1;
+        SetInfo.bindingCount = BindingCount;
         SetInfo.pBindings    = Bindings;
-        if(vkCreateDescriptorSetLayout(Dev, &SetInfo, nullptr, &ComputeSetLayouts[InStorageCount]) != VK_SUCCESS)
+        if(vkCreateDescriptorSetLayout(Dev, &SetInfo, nullptr, &ComputeSetLayouts[Layout]) != VK_SUCCESS)
         {
             GDI_LOG("[VKPipelineCache] vkCreateDescriptorSetLayout failed for a compute layout.")
             return Out;
@@ -783,15 +794,15 @@ VKPipelineCache::PipelineFetch VKPipelineCache::GetOrCreateCompute(const VkShade
         VkPipelineLayoutCreateInfo LayoutInfo{};
         LayoutInfo.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         LayoutInfo.setLayoutCount = 1;
-        LayoutInfo.pSetLayouts    = &ComputeSetLayouts[InStorageCount];
-        if(vkCreatePipelineLayout(Dev, &LayoutInfo, nullptr, &ComputePipeLayouts[InStorageCount]) != VK_SUCCESS)
+        LayoutInfo.pSetLayouts    = &ComputeSetLayouts[Layout];
+        if(vkCreatePipelineLayout(Dev, &LayoutInfo, nullptr, &ComputePipeLayouts[Layout]) != VK_SUCCESS)
         {
             GDI_LOG("[VKPipelineCache] vkCreatePipelineLayout failed for a compute layout.")
             return Out;
         }
     }
 
-    const uint64_t Key = (uint64_t(reinterpret_cast<uintptr_t>(InModule)) << 3) ^ InStorageCount;
+    const uint64_t Key = (uint64_t(reinterpret_cast<uintptr_t>(InModule)) << 4) ^ Layout;
     auto Found = ComputePipelines.find(Key);
     if(Found == ComputePipelines.end())
     {
@@ -801,7 +812,7 @@ VKPipelineCache::PipelineFetch VKPipelineCache::GetOrCreateCompute(const VkShade
         Info.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
         Info.stage.module = InModule;
         Info.stage.pName  = "main";
-        Info.layout       = ComputePipeLayouts[InStorageCount];
+        Info.layout       = ComputePipeLayouts[Layout];
         VkPipeline Pipeline = VK_NULL_HANDLE;
         if(vkCreateComputePipelines(Dev, VKCache, 1, &Info, nullptr, &Pipeline) != VK_SUCCESS)
         {
@@ -814,8 +825,8 @@ VKPipelineCache::PipelineFetch VKPipelineCache::GetOrCreateCompute(const VkShade
 
     if(Found->second == VK_NULL_HANDLE) return Out;
     Out.Pipeline   = Found->second;
-    Out.PipeLayout = ComputePipeLayouts[InStorageCount];
-    Out.DescLayout = ComputeSetLayouts[InStorageCount];
+    Out.PipeLayout = ComputePipeLayouts[Layout];
+    Out.DescLayout = ComputeSetLayouts[Layout];
     return Out;
 }
 

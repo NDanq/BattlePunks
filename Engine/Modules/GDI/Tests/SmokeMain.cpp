@@ -280,7 +280,8 @@ static void TestComputeAndInstancing()
     Pixel.InitResource(ST_Pixel, "Test.fsh");
     const float Params[4] = { 1.0f, 2.0f, 3.0f, 4.0f };
     GDIBuffer* Both[2] = { Storage, Zeroed };
-    GDIBuffer* Five[5] = { Storage, Storage, Storage, Storage, Storage };
+    GDIBuffer* TooMany[GDI_COMPUTE_MAX_STORAGE_BUFFERS + 1] = {};
+    for(GDIBuffer*& Each : TooMany) { Each = Storage; }
     GDIBuffer* None[1] = { nullptr };
 
     Expect(GDIDispatchCompute(&Compute, Params, sizeof(Params), Both, 2, 4, 2, 1) && Null->GetStats().DispatchCalls == 1
@@ -291,7 +292,7 @@ static void TestComputeAndInstancing()
            && !GDIDispatchCompute(nullptr, Params, sizeof(Params), Both, 2, 1),
            "only a compute shader dispatches");
     Expect(!GDIDispatchCompute(&Compute, Params, GDI_COMPUTE_PARAMS_MAX_BYTES + 4, Both, 2, 1)
-           && !GDIDispatchCompute(&Compute, Five, 0, Five, 5, 1)
+           && !GDIDispatchCompute(&Compute, nullptr, 0, TooMany, GDI_COMPUTE_MAX_STORAGE_BUFFERS + 1, 1)
            && !GDIDispatchCompute(&Compute, nullptr, 0, None, 1, 1)
            && !GDIDispatchCompute(&Compute, nullptr, 0, Both, 2, 0),
            "too many parameter bytes or buffers, a missing buffer, or no groups: refused");
@@ -299,6 +300,18 @@ static void TestComputeAndInstancing()
     GDIBuffer* WithInstance[1] = { InstanceOnly };
     Expect(InstanceOnly && !GDIDispatchCompute(&Compute, nullptr, 0, WithInstance, 1, 1), "a buffer a shader writes must be a storage buffer");
     Expect(Null->GetStats().DispatchCalls == 1, "a refused dispatch reaches no backend");
+    Expect(GDIDispatchCompute(&Compute, nullptr, 0, TooMany, GDI_COMPUTE_MAX_STORAGE_BUFFERS, 1)
+           && Null->GetStats().LastDispatchBuffers == GDI_COMPUTE_MAX_STORAGE_BUFFERS, "as many buffers as the most allowed go through");
+    const EngineCore::Image SampledImage(4, 4, EngineCore::EImageFormat::RGBA8);
+    GDITextureResource* Sampled = GDICreateTextureResource(SampledImage);
+    Expect(Sampled && GDIDispatchCompute(&Compute, nullptr, 0, Both, 2, Sampled, 1)
+           && Null->GetStats().TexturedDispatchCalls == 1 && Null->GetStats().DispatchCalls == 3,
+           "a dispatch with a texture goes through, counted as one");
+    if(Sampled)
+    {
+        Sampled->Release();
+        delete Sampled;
+    }
 
     /* Zeroed holds 64 bytes: no whole instance (80). */
     GDIBuffer* Instances = GDICreateBuffer(2 * GDI_INSTANCE_STRIDE, GDI_BU_Storage | GDI_BU_Instance);

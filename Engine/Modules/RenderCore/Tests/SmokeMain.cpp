@@ -8232,6 +8232,41 @@ static void TestMeshletCullingOnGpu()
                "looking away, the GPU keeps nothing of the sphere");
         Rend.SetViewOverride(&View);
 
+        /* Occlusion (the last frame's depth pyramid): the sphere in the middle, the box a wall
+         * in front of it, then moved aside. */
+        ConfigVar* Occlusion = ConfigFindVarByPath("Rendering.MeshletOcclusion");
+        Expect(Occlusion != nullptr, "[Rendering] MeshletOcclusion is a setting");
+        if(Occlusion)
+        {
+            Scene.Sphere.GetComponent<GameCore::TransformComponent>()->Position = EngineCore::Vector3(0.0, 0.0, 300.0);
+            GameCore::TransformComponent* Wall = Scene.Box.GetComponent<GameCore::TransformComponent>();
+            Wall->Position = EngineCore::Vector3(0.0, 0.0, -500.0);
+            Wall->Scale    = EngineCore::Vector3(3000.0, 3000.0, 20.0);   // past every edge of the view
+
+            EngineCore::Image Hidden, HiddenWhole, Shown, ShownWhole;
+            RenderStats HiddenStats, ShownStats, Ignored;
+            Occlusion->SetBool(true);
+            const bool bHidden = Capture(Hidden, HiddenStats);
+            Occlusion->SetBool(false);
+            const bool bHiddenWhole = Capture(HiddenWhole, Ignored);
+            std::printf("    behind a wall: %lld triangles kept; %d pixels differ from no occlusion\n",
+                        (long long)HiddenStats.MeshletTrianglesDrawnLastFrame, Differing(Hidden, HiddenWhole));
+            Expect(bHidden && HiddenStats.MeshletSectionsLastFrame == 1 && HiddenStats.MeshletTrianglesDrawnLastFrame == 0,
+                   "behind a wall, the depth pyramid hides the whole sphere");
+            Expect(bHidden && bHiddenWhole && Differing(Hidden, HiddenWhole) == 0, "and the frame is the one drawn without it");
+
+            Wall->Position = EngineCore::Vector3(3000.0, 0.0, -500.0);
+            Occlusion->SetBool(true);
+            const bool bShown = Capture(Shown, ShownStats);
+            Occlusion->SetBool(false);
+            const bool bShownWhole = Capture(ShownWhole, Ignored);
+            std::printf("    wall moved aside: %lld triangles kept; %d pixels differ from no occlusion\n",
+                        (long long)ShownStats.MeshletTrianglesDrawnLastFrame, Differing(Shown, ShownWhole));
+            Expect(bShown && ShownStats.MeshletTrianglesDrawnLastFrame > ShownStats.MeshletTrianglesLastFrame / 3,
+                   "with the wall moved aside the sphere is drawn again");
+            Expect(bShown && bShownWhole && Differing(Shown, ShownWhole) == 0, "exactly as without occlusion");
+        }
+
         Enabled->SetBool(false);
         Readback->SetBool(false);
         Rend.UnbindWorld();

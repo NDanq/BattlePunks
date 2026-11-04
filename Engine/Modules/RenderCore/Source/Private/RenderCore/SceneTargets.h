@@ -5,6 +5,7 @@
 #include <string>
 #include <utility>
 
+#include "Private/RenderCore/MeshletCulling.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
 
 /*
@@ -141,6 +142,9 @@ namespace RenderCore
         uint             AllocHeight = 0;
         uint             PrevWidth   = 0;
         uint             PrevHeight  = 0;
+        /* GPU meshlet occlusion ([Rendering] MeshletOcclusion): this view's depth pyramid from
+         * the last frame it drew, which its next frame's meshlets are tested against. */
+        MeshletHzb       MeshletPyramid;
 
         explicit SceneTargets(std::string InName) : Name(std::move(InName)) {}
         ~SceneTargets() { Release(); }
@@ -454,6 +458,7 @@ namespace RenderCore
                 }
             }
             Final  = nullptr;
+            MeshletPyramid.Release();
             bVelocityTried = false;
             ExposureCurrent = 0;
             bExposureValid  = false;

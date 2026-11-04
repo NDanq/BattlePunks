@@ -1600,6 +1600,22 @@ the vertex normals at build time, whichever way the mesh is wound.
 `[Rendering] MeshletFreezeCulling` keeps culling against the view as it was
 when it turned on: walk round a mesh and see what was culled.
 
+**`[Rendering] MeshletOcclusion`** (off by default) also culls meshlets
+behind what the view drew the frame before. After each Base Pass, with the
+G-buffer alone bound (so the scene depth is sampleable),
+`MeshletHzbFirst.csh` reads the depth into a **depth pyramid** -- the farthest
+depth of each 2 x 2, half the drawn size each way, in one storage buffer
+(`MeshletHzb`, kept in the view's `SceneTargets`) -- and `MeshletHzbDown.csh`
+halves it level by level to 1 x 1. The next frame, `MeshletCull.csh` projects
+each surviving meshlet's box through that frame's view projection, picks the
+level where it spans two texels at most, and drops it if its nearest depth is
+behind the farthest of those four. Depths compare as the depth buffer holds
+them: clip z taken as -w to w, written 0 to 1. The pyramid is used only by a
+view that drew the frame before at the same size, never frozen. What comes out
+from behind something shows a frame late, as with the CPU's occlusion queries;
+a meshlet off the last frame's view, or with a corner behind the eye, is never
+hidden by it.
+
 `RenderStats::MeshletSectionsLastFrame`, `MeshletsSubmittedLastFrame` and
 `MeshletTrianglesLastFrame` count the last view's sections, their meshlets and
 triangles; `MeshletTrianglesDrawnLastFrame` is what the cull kept, read back
@@ -1617,7 +1633,9 @@ triangle once, the limits, the spheres, the chunk round trip, stale and
 corrupt sets dropped. The smoke test's Null check counts what is queued; its
 GPU check (Vulkan and D3D12) draws a 6144-triangle sphere half off the side
 of the view: 4419 triangles are kept (2389 with cones), none looking away, and
-the frame is pixel for pixel the one drawn whole.
+the frame is pixel for pixel the one drawn whole. With occlusion, a wall in
+front of the sphere leaves none of it drawn and the wall moved aside all of
+it, each frame identical to the one drawn without occlusion.
 
 ### UI
 
@@ -2262,6 +2280,16 @@ the query (`GDISupportsOcclusionPredication()`; ignored elsewhere), and
 `GDIReadOcclusionResults` hands the CPU a round's answers once its block has
 finished on the GPU, never waiting. A query never ended answers "visible".
 
+Meshlet occlusion (### Meshlets) needed compute to read a texture and two more
+buffers: `GDIDispatchCompute` takes one texture (null: none) sampled at
+`GDI_COMPUTE_TEXTURE_BINDING` (8; ComputeCommon.glsl's `COMPUTE_TEXTURE`), and
+`GDI_COMPUTE_MAX_STORAGE_BUFFERS` is 6. A render target must not be bound for
+writing when a dispatch samples it: binding other targets makes the ones
+before sampleable, now for compute as well. Vulkan keeps a compute layout per
+buffer count with and without the texture (a combined image sampler); D3D12's
+compute root signature adds an SRV and a sampler table at t8 and s8 (where
+spirv-cross puts binding 8). Null counts textured dispatches.
+
 Meshlet culling (### Meshlets) needed three more, where
 `GDISupportsIndexBuffers()` says so -- Vulkan, D3D12 and Null so far;
 `GDISupportsMeshletCulling()` is that, compute and indirect draws together:
@@ -2343,8 +2371,9 @@ drop most of the receiver bias); Masked casters clipped in the Shadows
 sub-stage; shadows for Translucent Lit; a tiled or clustered light list past 16
 lights; per-section bounds for culling; RGBA16F G-buffer and scene colour.
 
-Meshlets: occlusion of meshlets against a depth pyramid (the frame before's,
-then two passes); shadow views culled by meshlet; meshlets on Metal and
+Meshlets: two-pass occlusion (the last frame's survivors drawn first, a
+pyramid of them, then the rest tested), so nothing shows late; the pyramid
+built in fewer dispatches (shared memory); shadow views culled by meshlet; meshlets on Metal and
 OpenGL; one multi-draw per mesh instead of a draw per section; a level of
 detail graph (the next phase).
 
