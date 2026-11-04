@@ -4113,11 +4113,14 @@ namespace RenderCore
             if(InStage == ERenderStage::BasePass)
             {
                 /* In the same order serially or in chunks: static, then dynamic.
-                 * D3D12 draws culled meshlets serially: a chunk's list cannot
-                 * move the buffers compute wrote to the states drawing reads. */
-                const bool bSerialMeshlets = Backend == ERenderBackend::D3D12 && MeshletQueue.GetArgs();
-                if(!bSerialMeshlets && IssueInParallel(Policy, MobilityOrder(Policy, Order.data(), Order.data() + Order.size()), false,
-                                                       [this](const DrawCommand& InItem) { Issue(InItem); }))
+                 * Culled meshlets draw in chunks too: on D3D12 a chunk's list runs
+                 * after the frame list's first half (the cull) is submitted, so the
+                 * indices and arguments compute wrote are promoted implicitly to
+                 * the states drawing reads, as particles' arguments are
+                 * (D3D12RecordingContext.cpp). Serially, the Base Pass's draws
+                 * cost D3D12's render thread about 10 ms more on DemoLab's L2. */
+                if(IssueInParallel(Policy, MobilityOrder(Policy, Order.data(), Order.data() + Order.size()), false,
+                                   [this](const DrawCommand& InItem) { Issue(InItem); }))
                 {
                     return;
                 }
@@ -6598,8 +6601,8 @@ namespace RenderCore
             P->MeshletQueue.Reset();
         };
 
-        /* GPU MESHLET CULLING: the view's meshlet sections culled before any
-         * stage, outside the render passes; their draws read what it wrote. */
+        /* GPU MESHLET CULLING: the view's meshlet sections, counted for the stats; culled at
+         * the start of the Base Pass, below. */
         P->LastMeshletSections = P->bMeshletView ? P->MeshletQueue.GetSectionCount() : 0u;
         P->LastMeshlets        = P->bMeshletView ? P->MeshletQueue.GetMeshletCount() : 0u;
         P->LastMeshletIndices  = P->bMeshletView ? P->MeshletQueue.GetIndexCount() : 0u;
@@ -6611,11 +6614,6 @@ namespace RenderCore
            || InTargets.MeshletPyramid.Frame + 1 != P->FrameNumber)
         {
             InTargets.MeshletPyramid.bValid = false;
-        }
-        if(P->bMeshletView && P->MeshletQueue.GetSectionCount() > 0 && InTargets.SceneColor)
-        {
-            P->MeshletQueue.Dispatch(P->GetComputeShader("MeshletCull.csh"), P->MeshletViewProjection, P->MeshletEye,
-                                     GRenderMeshletCones.GetBool(), bMeshletOcclusion ? &InTargets.MeshletPyramid : nullptr);
         }
 
         /* The World's custom render passes for these stages (CustomRenderPass.h);
@@ -6757,6 +6755,13 @@ namespace RenderCore
         if(bDeferred)
         {
             P->StageTimestamp(RGT_BasePass, false);
+            /* GPU MESHLET CULLING: the view's meshlet sections culled first, in the Base Pass's
+             * span (stat frame), outside its render pass; their draws read what it wrote. */
+            if(P->bMeshletView && P->MeshletQueue.GetSectionCount() > 0)
+            {
+                P->MeshletQueue.Dispatch(P->GetComputeShader("MeshletCull.csh"), P->MeshletViewProjection, P->MeshletEye,
+                                         GRenderMeshletCones.GetBool(), bMeshletOcclusion ? &InTargets.MeshletPyramid : nullptr);
+            }
             /* And the velocity beside it, where the backend has one: what
              * nothing here writes stays 0, not moving (the camera's motion
              * alone, to Motion Blur). */

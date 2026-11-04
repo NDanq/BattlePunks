@@ -1560,6 +1560,8 @@ compiled here (Linux).
 
 ### Meshlets
 
+What it costs, and why it is off by default: [MESHLETS_PERF.md](MESHLETS_PERF.md).
+
 A mesh's sections can be split into **meshlets** -- at most 64 vertices and
 124 triangles, never across a section -- each with a bounding sphere and a
 normal cone (`MeshAsset.h`: `MeshData::Meshlets`, `BuildMeshlets`, the
@@ -1588,9 +1590,9 @@ sections of meshes with meshlets **meshlet by meshlet on the GPU**:
   corners into the region, as the mesh's own vertex indices.
 - **Drawing:** the section draws as before -- its material, vertex shaders,
   World Position Offset, velocity, G-buffer -- but from the batch's indices
-  (`GDISetIndexBuffer`) with the GPU's count (`GDISetIndirectArgs`). On D3D12
-  the Base Pass then records serially (GDI, below: a chunk's list cannot move
-  what compute wrote into the states a draw reads).
+  (`GDISetIndexBuffer`) with the GPU's count (`GDISetIndirectArgs`), in
+  parallel chunks like any Base Pass (on D3D12 by implicit promotion, GDI,
+  below).
 
 `[Rendering] MeshletCones` also culls meshlets all of whose triangles face
 away from the eye (the cone test of [Kapoulkine], not with World Position
@@ -2306,7 +2308,7 @@ Meshlet culling (### Meshlets) needed three more, where
 | Backend | Updates | Index buffers |
 |---|---|---|
 | Vulkan | `vkCmdUpdateBuffer` in 64 KB pieces, the render pass closed around them and reopened (as a dispatch); the dispatch barrier, which now also covers index reads, either side | `INDEX_BUFFER` usage; `vkCmdBindIndexBuffer` in place of the mesh's, then `vkCmdDrawIndexedIndirect` or `vkCmdDrawIndexed` |
-| D3D12 | an upload buffer of its own, `CopyBufferRegion`, released past the frame; the buffer moves to `COPY_DEST` and on to its readers' states | an IBV over the buffer, moved to `INDEX_BUFFER` on the serial path (as instance and argument buffers are: implicit promotion cannot leave `UNORDERED_ACCESS`, so a parallel pass must not draw from a buffer compute wrote) |
+| D3D12 | an upload buffer of its own, `CopyBufferRegion`, released past the frame; the buffer moves to `COPY_DEST` and on to its readers' states | an IBV over the buffer, moved to `INDEX_BUFFER` on the frame list; a parallel pass's chunk lists run after the frame list's first half is submitted, when every buffer has decayed to `COMMON` (from `UNORDERED_ACCESS` too), and promote it implicitly, as they do instance and argument buffers. Recording a meshlet view's Base Pass serially instead cost DemoLab's L2 about 10 ms of render thread |
 | Null | written into the CPU copy, counted (`NullGDIStats::BufferUpdates`) | counted (`IndexBufferDrawCalls`); indirect args stay ignored |
 | Metal, OpenGL | not yet: `GDISupportsIndexBuffers()` is false | -- |
 
