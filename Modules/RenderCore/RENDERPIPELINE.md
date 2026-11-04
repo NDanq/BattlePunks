@@ -1561,6 +1561,8 @@ compiled here (Linux).
 ### Meshlets
 
 What it costs, and why it is off by default: [MESHLETS_PERF.md](MESHLETS_PERF.md).
+Importing meshes with them and turning it on:
+[the meshlet import guide](../../Docs/Guides/MeshletImportGuide.md).
 
 A mesh's sections can be split into **meshlets** -- at most 64 vertices and
 124 triangles, never across a section -- each with a bounding sphere and a
