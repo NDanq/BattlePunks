@@ -9,8 +9,8 @@
       "Parts": [
         {
           "File": "DemoLab.Source.tar.zst",
-          "Bytes": 347823,
-          "Sha256": "6e492625ed27f76610151b2b349f5090223d38781f216091ccf18b99189e3563"
+          "Bytes": 348724,
+          "Sha256": "a2a857e7cd30ff7415dbf50eb789493c70d5bc0f8a1948aa37d59daa98522174"
         },
         {
           "File": "DemoLab.Content.1.tar.zst",
@@ -29,7 +29,7 @@
         }
       ],
       "Files": 3008,
-      "UnpackedBytes": 397410647,
+      "UnpackedBytes": 397414370,
       "EngineVersion": "0.1"
     },
     {
