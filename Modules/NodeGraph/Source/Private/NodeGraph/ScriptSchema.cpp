@@ -5,6 +5,7 @@
 #include <mutex>
 #include <set>
 
+#include "Public/GameCore/ComponentRpc.h"
 #include "Public/GameCore/ComponentScript.h"
 #include "Public/GameCore/ComponentType.h"
 #include "Public/GameCore/ScriptLibrary.h"
@@ -27,9 +28,19 @@
  * so the runtime needs nothing graph-specific.
  *
  * EXEC FLOW AND VALUES. Event nodes start a function; "Then" chains
- * statements. Pure nodes are re-evaluated per statement that uses them (so a
- * Get after a Set sees the new value) into `local tN`. A statement's outputs
- * are function-level locals.
+ * statements. A pure node becomes `local tN` where first needed; later
+ * statements reuse it (VALUE CACHE). Statement outputs are function locals.
+ *
+ * VALUE CACHE. Each value is tagged with what it read, inputs' tags included:
+ *
+ *     var:<Name>   dropped by its Set or an opaque statement
+ *     out:<guid>   dropped when that statement runs again
+ *     world        component Get / Has; dropped by an opaque statement
+ *     volatile     other engine calls; dropped before the next statement
+ *
+ * Untagged values last the whole function. Opaque = any statement call but
+ * SOP_CallInert, plus Emit. Values made in an if arm or loop body end with
+ * it; entering a loop body drops every tagged value.
  *
  * LANES. As in the Lua bindings, Vector3 / Color / AABB are 3 / 4 / 6
  * numbers, never tables; vector math is written per component.
@@ -84,6 +95,11 @@ namespace
         SOP_UIOpen,       // a UI graph's On Document Open
         SOP_UIClose,      // On Document Close
         SOP_UIHandler,    // UI Event: a Graph: action's handler, named by its Handler property
+
+        /* SOP_Call variants for the value cache; plain SOP_Call is volatile / opaque. */
+        SOP_CallStable,   // pure, depends on inputs only
+        SOP_CallHandle,   // pure, component Get / Has
+        SOP_CallInert,    // statement that changes nothing cached (Print, Raycast, field Set)
     };
 
     /* What a script graph is the logic of: a prefab's entities, or a UI
@@ -322,18 +338,52 @@ namespace
         /* A UI graph's table: OnOpen / OnClose / OnTick and its handlers. */
         void RunUI();
 
+        using Tags = std::set<std::string>;   // VALUE CACHE, at the top
+
+        struct CachedValue
+        {
+            Lanes Value;
+            Tags  Deps;
+            int   Depth = 0;   // block it was declared in
+        };
+
         /* One generated function. */
         struct Scope
         {
-            CodeWriter               Body;
-            std::vector<std::string> Declared;    // statement outputs, declared `local` at the top
-            std::map<PinRef, Lanes>  Available;   // statement outputs and event parameters readable here
-            std::set<NodeGuid>       ExecPath;    // the statements on the current path, to catch a loop
-            int                      NextTemp = 0;
-            const GraphFunction*     Function = nullptr;   // the graph function this is the body of, if any
+            CodeWriter                    Body;
+            std::vector<std::string>      Declared;    // statement outputs, declared `local` at the top
+            std::map<PinRef, Lanes>       Available;   // statement outputs and event parameters readable here
+            std::set<NodeGuid>            ExecPath;    // the statements on the current path, to catch a loop
+            std::map<PinRef, CachedValue> Values;      // evaluated pure outputs
+            std::set<PinRef>              InFlight;    // mid-evaluation, to catch a cycle
+            int                           Depth = 0;   // current block nesting
+            int                           NextTemp = 0;
+            const GraphFunction*          Function = nullptr;   // the graph function this is the body of, if any
         };
 
-        using ValueCache = std::map<PinRef, Lanes>;
+        /* Drops cached values with a tag InMatch accepts. */
+        template<typename F>
+        static void Forget(Scope& S, F InMatch)
+        {
+            for(auto It = S.Values.begin(); It != S.Values.end();)
+            {
+                const bool bMatch = std::any_of(It->second.Deps.begin(), It->second.Deps.end(), InMatch);
+                It = bMatch ? S.Values.erase(It) : std::next(It);
+            }
+        }
+
+        /* An if arm or loop body: its locals end with it. */
+        static void EnterBlock(Scope& S) { ++S.Depth; }
+        static void LeaveBlock(Scope& S)
+        {
+            --S.Depth;
+            for(auto It = S.Values.begin(); It != S.Values.end();)
+            {
+                It = It->second.Depth > S.Depth ? S.Values.erase(It) : std::next(It);
+            }
+        }
+
+        static std::string OutputTag(const NodeGuid& InNode) { return "out:" + GuidToString(InNode); }
 
         struct Resolved
         {
@@ -351,12 +401,13 @@ namespace
         void EmitChain(Scope& S, const Node& InFrom, const std::string& InExecPin);
         void EmitStatement(Scope& S, const Node& InNode, const NodeDefinition& InDef);
 
-        Lanes Input(Scope& S, ValueCache& Cache, const Node& InNode, const NodeDefinition& InDef, const std::string& InPin);
-        Lanes Output(Scope& S, ValueCache& Cache, const Node& InNode, const NodeDefinition& InDef, const PinDefinition& InPin);
+        /* Each adds the value's tags to OutDeps. */
+        Lanes Input(Scope& S, Tags& OutDeps, const Node& InNode, const NodeDefinition& InDef, const std::string& InPin);
+        Lanes Output(Scope& S, Tags& OutDeps, const Node& InNode, const NodeDefinition& InDef, const PinDefinition& InPin);
         Lanes Literal(const Node& InNode, const PinDefinition& InPin, const std::string& InType);
         Lanes Convert(const Lanes& InValue, const std::string& InFrom, const std::string& InTo);
 
-        std::string ExpandCall(Scope& S, ValueCache& Cache, const Node& InNode, const NodeDefinition& InDef);
+        std::string ExpandCall(Scope& S, Tags& OutDeps, const Node& InNode, const NodeDefinition& InDef);
         std::string Temp(Scope& S) { return "t" + std::to_string(++S.NextTemp); }
         std::string StatementOutputBase(const Node& InNode, const PinDefinition& InPin);
 
@@ -911,23 +962,34 @@ namespace
             return;
         }
 
-        ValueCache Cache;
+        const auto ForgetVolatile = [&S]() { Forget(S, [](const std::string& T) { return T == "volatile"; }); };
+        const auto ForgetOpaque = [&S]()
+        {
+            Forget(S, [](const std::string& T) { return T == "world" || T == "volatile" || T.compare(0, 4, "var:") == 0; });
+        };
+        ForgetVolatile();
+
+        Tags Deps;
         CodeWriter& W = S.Body;
 
         switch(InDef.Op)
         {
             case SOP_Branch:
             {
-                const Lanes Condition = Input(S, Cache, InNode, InDef, "Condition");
+                const Lanes Condition = Input(S, Deps, InNode, InDef, "Condition");
                 W.Line("if " + Condition[0] + " then", InNode.Id);
                 W.Indent();
+                EnterBlock(S);
                 EmitChain(S, InNode, "True");
+                LeaveBlock(S);
                 W.Outdent();
                 if(!Index.LinksOutOf(InNode.Id, "False").empty())
                 {
                     W.Line("else", InNode.Id);
                     W.Indent();
+                    EnterBlock(S);
                     EmitChain(S, InNode, "False");
+                    LeaveBlock(S);
                     W.Outdent();
                 }
                 W.Line("end", InNode.Id);
@@ -945,15 +1007,18 @@ namespace
 
             case SOP_ForLoop:
             {
-                const Lanes First = Input(S, Cache, InNode, InDef, "First");
-                const Lanes Last  = Input(S, Cache, InNode, InDef, "Last");
+                const Lanes First = Input(S, Deps, InNode, InDef, "First");
+                const Lanes Last  = Input(S, Deps, InNode, InDef, "Last");
                 const PinDefinition* IndexPin = InDef.FindPin("Index", EPinDirection::Output);
                 const std::string Counter = StatementOutputBase(InNode, *IndexPin);
 
                 W.Line("for " + Counter + " = " + First[0] + ", " + Last[0] + " do", InNode.Id);
                 W.Indent();
                 S.Available[PinRef{ InNode.Id, "Index" }] = { Counter };
+                Forget(S, [](const std::string&) { return true; });   // the body repeats: keep only constants
+                EnterBlock(S);
                 EmitChain(S, InNode, "Body");
+                LeaveBlock(S);
                 S.Available.erase(PinRef{ InNode.Id, "Index" });   // the loop variable ends with the loop
                 W.Outdent();
                 W.Line("end", InNode.Id);
@@ -983,7 +1048,7 @@ namespace
                 for(const PinDefinition& Pin : InDef.Pins)
                 {
                     if(Pin.IsExec() || !Pin.IsInput()) { continue; }
-                    const Lanes Value = Input(S, Cache, InNode, InDef, Pin.Name);
+                    const Lanes Value = Input(S, Deps, InNode, InDef, Pin.Name);
                     Values.insert(Values.end(), Value.begin(), Value.end());
                 }
                 W.Line(Values.empty() ? "do return end" : "do return " + Join(Values) + " end", InNode.Id);
@@ -993,8 +1058,10 @@ namespace
             case SOP_VarSet:
             {
                 const std::string Name = InNode.GetProperty("Variable");
-                const Lanes Value = Input(S, Cache, InNode, InDef, "Value");
+                const Lanes Value = Input(S, Deps, InNode, InDef, "Value");
                 W.Line(Join(VariableLanes(Name)) + " = " + Join(Value), InNode.Id);
+                const std::string Tag = "var:" + Name;
+                Forget(S, [&Tag](const std::string& T) { return T == Tag; });
                 EmitChain(S, InNode, EXEC_OUT);
                 break;
             }
@@ -1010,16 +1077,17 @@ namespace
                     for(const PinDefinition& Pin : InDef.Pins)
                     {
                         if(Pin.IsExec() || !Pin.IsInput()) { continue; }
-                        const Lanes Value = Input(S, Cache, InNode, InDef, Pin.Name);
+                        const Lanes Value = Input(S, Deps, InNode, InDef, Pin.Name);
                         Arguments.insert(Arguments.end(), Value.begin(), Value.end());
                     }
                     W.Line("Events.Emit(" + Join(Arguments) + ")", InNode.Id);
+                    ForgetOpaque();   // handlers run now
                     EmitChain(S, InNode, EXEC_OUT);
                     break;
                 }
 
                 /* Up to the last linked argument: a trailing nil arrives as 0. */
-                const Lanes Name = Input(S, Cache, InNode, InDef, "Event");
+                const Lanes Name = Input(S, Deps, InNode, InDef, "Event");
                 int LastArg = 0;
                 for(int Arg = 1; Arg <= CUSTOM_EVENT_ARGS; ++Arg)
                 {
@@ -1028,16 +1096,17 @@ namespace
                 Arguments = Name;
                 for(int Arg = 1; Arg <= LastArg; ++Arg)
                 {
-                    const Lanes Value = Input(S, Cache, InNode, InDef, "Arg " + std::to_string(Arg));
+                    const Lanes Value = Input(S, Deps, InNode, InDef, "Arg " + std::to_string(Arg));
                     Arguments.insert(Arguments.end(), Value.begin(), Value.end());
                 }
                 W.Line("Events.Emit(" + Join(Arguments) + ")", InNode.Id);
+                ForgetOpaque();
                 EmitChain(S, InNode, EXEC_OUT);
                 break;
             }
 
             case SOP_FunctionCall:
-            default:   // SOP_Call
+            default:   // SOP_Call, SOP_CallInert
             {
                 std::string Call;
                 if(InDef.Op == SOP_FunctionCall)
@@ -1047,14 +1116,14 @@ namespace
                     for(const PinDefinition& Pin : InDef.Pins)
                     {
                         if(Pin.IsExec() || !Pin.IsInput()) { continue; }
-                        const Lanes Value = Input(S, Cache, InNode, InDef, Pin.Name);
+                        const Lanes Value = Input(S, Deps, InNode, InDef, Pin.Name);
                         for(const std::string& Lane : Value) { Call += ", " + Lane; }
                     }
                     Call += ")";
                 }
                 else
                 {
-                    Call = ExpandCall(S, Cache, InNode, InDef);
+                    Call = ExpandCall(S, Deps, InNode, InDef);
                 }
 
                 Lanes Targets;
@@ -1076,6 +1145,9 @@ namespace
                 }
 
                 W.Line(Targets.empty() ? Call : Join(Targets) + " = " + Call, InNode.Id);
+                const std::string Tag = OutputTag(InNode.Id);   // outputs reassigned
+                Forget(S, [&Tag](const std::string& T) { return T == Tag; });
+                if(InDef.Op != SOP_CallInert) { ForgetOpaque(); }
                 EmitChain(S, InNode, EXEC_OUT);
                 break;
             }
@@ -1085,7 +1157,7 @@ namespace
     }
 
     /* A Call template with each {Pin} replaced by that input's lanes. */
-    std::string ScriptCompiler::ExpandCall(Scope& S, ValueCache& Cache, const Node& InNode, const NodeDefinition& InDef)
+    std::string ScriptCompiler::ExpandCall(Scope& S, Tags& OutDeps, const Node& InNode, const NodeDefinition& InDef)
     {
         const std::string& T = InDef.Template;
         std::string Out;
@@ -1105,14 +1177,14 @@ namespace
             }
             else
             {
-                Out += Join(Input(S, Cache, InNode, InDef, Name));
+                Out += Join(Input(S, OutDeps, InNode, InDef, Name));
             }
             Pos = Close + 1;
         }
         return Out;
     }
 
-    Lanes ScriptCompiler::Input(Scope& S, ValueCache& Cache, const Node& InNode, const NodeDefinition& InDef, const std::string& InPin)
+    Lanes ScriptCompiler::Input(Scope& S, Tags& OutDeps, const Node& InNode, const NodeDefinition& InDef, const std::string& InPin)
     {
         const PinDefinition* Pin = InDef.FindPin(InPin, EPinDirection::Input);
         if(!Pin) { return { "nil" }; }
@@ -1125,11 +1197,11 @@ namespace
         const PinDefinition* SourcePin = Source.Def ? Source.Def->FindPin(Into->From.Pin, EPinDirection::Output) : nullptr;
         if(!SourcePin) { return Literal(InNode, *Pin, Type); }
 
-        const Lanes Value = Output(S, Cache, *Source.N, *Source.Def, *SourcePin);
+        const Lanes Value = Output(S, OutDeps, *Source.N, *Source.Def, *SourcePin);
         return Convert(Value, Index.PinType(*Source.N, *SourcePin), Type);
     }
 
-    Lanes ScriptCompiler::Output(Scope& S, ValueCache& Cache, const Node& InNode, const NodeDefinition& InDef, const PinDefinition& InPin)
+    Lanes ScriptCompiler::Output(Scope& S, Tags& OutDeps, const Node& InNode, const NodeDefinition& InDef, const PinDefinition& InPin)
     {
         const PinRef Key{ InNode.Id, InPin.Name };
         const std::string Type = Index.PinType(InNode, InPin);
@@ -1139,26 +1211,31 @@ namespace
         if(InDef.Role != ENodeRole::Pure)
         {
             const auto Found = S.Available.find(Key);
-            if(Found != S.Available.end()) { return Found->second; }
+            if(Found != S.Available.end())
+            {
+                if(InDef.Role == ENodeRole::Statement) { OutDeps.insert(OutputTag(InNode.Id)); }
+                return Found->second;
+            }
             Result.Error(InNode.Id, InPin.Name, "'" + InDef.DisplayName + "'s " + InPin.Name
                          + " is used where it has not run -- in another event, or outside its loop");
             return Fallback;
         }
 
-        /* Marks a node mid-evaluation, to detect cycles. */
-        static const Lanes InFlight = { "\x01" };
-
-        const auto Cached = Cache.find(Key);
-        if(Cached != Cache.end())
+        /* Cached and still valid. */
+        const auto Cached = S.Values.find(Key);
+        if(Cached != S.Values.end())
         {
-            if(Cached->second == InFlight)
-            {
-                Result.Error(InNode.Id, InPin.Name, "'" + InDef.DisplayName + "' depends on its own output (a cycle)");
-                return Fallback;
-            }
-            return Cached->second;
+            OutDeps.insert(Cached->second.Deps.begin(), Cached->second.Deps.end());
+            return Cached->second.Value;
         }
-        Cache[Key] = InFlight;
+        if(!S.InFlight.insert(Key).second)
+        {
+            Result.Error(InNode.Id, InPin.Name, "'" + InDef.DisplayName + "' depends on its own output (a cycle)");
+            return Fallback;
+        }
+
+        Tags Deps;
+        std::map<std::string, Lanes> Produced;   // a call or Break gives every output at once
 
         Lanes Value;
         switch(InDef.Op)
@@ -1168,15 +1245,19 @@ namespace
                 break;
 
             case SOP_VarGet:
-                Value = VariableLanes(InNode.GetProperty("Variable"));
+            {
+                const std::string Name = InNode.GetProperty("Variable");
+                Value = VariableLanes(Name);
+                Deps.insert("var:" + Name);
                 break;
+            }
 
             case SOP_Compose:
             {
                 for(const PinDefinition& Pin : InDef.Pins)
                 {
                     if(!Pin.IsInput()) { continue; }
-                    const Lanes Part = Input(S, Cache, InNode, InDef, Pin.Name);
+                    const Lanes Part = Input(S, Deps, InNode, InDef, Pin.Name);
                     Value.insert(Value.end(), Part.begin(), Part.end());
                 }
                 break;
@@ -1186,7 +1267,7 @@ namespace
             {
                 const PinDefinition* Source = nullptr;
                 for(const PinDefinition& Pin : InDef.Pins) { if(Pin.IsInput()) { Source = &Pin; break; } }
-                const Lanes All = Source ? Input(S, Cache, InNode, InDef, Source->Name) : Lanes();
+                const Lanes All = Source ? Input(S, Deps, InNode, InDef, Source->Name) : Lanes();
 
                 size_t Offset = 0;
                 for(const PinDefinition& Pin : InDef.Pins)
@@ -1196,10 +1277,9 @@ namespace
                     Lanes Part;
                     for(size_t Lane = 0; Lane < Count; ++Lane) { Part.push_back(Offset + Lane < All.size() ? All[Offset + Lane] : "0"); }
                     Offset += Count;
-                    Cache[PinRef{ InNode.Id, Pin.Name }] = Part;
-                    if(Pin.Name == InPin.Name) { Value = Part; }
+                    Produced[Pin.Name] = Part;
                 }
-                return Value;
+                break;
             }
 
             case SOP_Lanewise:
@@ -1207,7 +1287,7 @@ namespace
                 std::map<std::string, Lanes> Inputs;
                 for(const PinDefinition& Pin : InDef.Pins)
                 {
-                    if(Pin.IsInput()) { Inputs[Pin.Name] = Input(S, Cache, InNode, InDef, Pin.Name); }
+                    if(Pin.IsInput()) { Inputs[Pin.Name] = Input(S, Deps, InNode, InDef, Pin.Name); }
                 }
 
                 Lanes Expressions;
@@ -1240,8 +1320,8 @@ namespace
             case SOP_Dot:
             {
                 const bool bDot = InDef.Op == SOP_Dot;
-                const Lanes A = Input(S, Cache, InNode, InDef, bDot ? "A" : "V");
-                const Lanes B = bDot ? Input(S, Cache, InNode, InDef, "B") : A;
+                const Lanes A = Input(S, Deps, InNode, InDef, bDot ? "A" : "V");
+                const Lanes B = bDot ? Input(S, Deps, InNode, InDef, "B") : A;
                 std::string Sum;
                 for(size_t Lane = 0; Lane < A.size() && Lane < B.size(); ++Lane)
                 {
@@ -1268,9 +1348,11 @@ namespace
                 break;
             }
 
-            default:   // SOP_Call: every output at once, from one call
+            default:   // SOP_Call*: every output from one call
             {
-                const std::string Call = ExpandCall(S, Cache, InNode, InDef);
+                const std::string Call = ExpandCall(S, Deps, InNode, InDef);
+                if(InDef.Op == SOP_CallHandle)      { Deps.insert("world"); }
+                else if(InDef.Op != SOP_CallStable) { Deps.insert("volatile"); }
                 const std::string Base = Temp(S);
 
                 Lanes Targets;
@@ -1280,16 +1362,23 @@ namespace
                     const bool bOnly = std::count_if(InDef.Pins.begin(), InDef.Pins.end(), [](const PinDefinition& P) { return P.IsOutput(); }) == 1;
                     const Lanes Names = LaneVariables(bOnly ? Base : Base + "_" + SanitizeIdentifier(Pin.Name), Index.PinType(InNode, Pin));
                     Targets.insert(Targets.end(), Names.begin(), Names.end());
-                    Cache[PinRef{ InNode.Id, Pin.Name }] = Names;
-                    if(Pin.Name == InPin.Name) { Value = Names; }
+                    Produced[Pin.Name] = Names;
                 }
                 S.Body.Line("local " + Join(Targets) + " = " + Call, InNode.Id);
-                return Value;
+                break;
             }
         }
 
-        Cache[Key] = Value;
-        return Value;
+        if(Produced.empty()) { Produced[InPin.Name] = Value; }
+        for(const auto& Each : Produced)
+        {
+            S.Values[PinRef{ InNode.Id, Each.first }] = CachedValue{ Each.second, Deps, S.Depth };
+        }
+        S.InFlight.erase(Key);
+        OutDeps.insert(Deps.begin(), Deps.end());
+
+        const auto Found = Produced.find(InPin.Name);
+        return Found != Produced.end() ? Found->second : Fallback;
     }
 
     Lanes ScriptCompiler::Literal(const Node& InNode, const PinDefinition& InPin, const std::string& InType)
@@ -1598,14 +1687,14 @@ namespace
         Pure("Entity.IsValid", "Is Valid", "Entity", SOP_Call, { In("Entity", "Entity"), Out("Valid", "bool") }, "{Entity}:IsValid()", {}, "alive");
         /* Entities are handles: two for one entity are not == in Lua, so compare their ids -- "is this
          * event's entity mine?" (On AnimNotify's Entity against Self or Prefab Root). */
-        Pure("Entity.Same", "Same Entity", "Entity", SOP_Call, { In("A", "Entity"), In("B", "Entity"), Out("Same", "bool") },
+        Pure("Entity.Same", "Same Entity", "Entity", SOP_CallStable, { In("A", "Entity"), In("B", "Entity"), Out("Same", "bool") },
              "({A}):GetID() == ({B}):GetID()", {}, "equal equals compare is mine same");
         Statement("Entity.SetName", "Set Name", "Entity", SOP_Call, { In("Entity", "Entity"), In("Name", "string") }, "{Entity}:SetName({Name})");
         Statement("Entity.Destroy", "Destroy", "Entity", SOP_Call, { In("Entity", "Entity") }, "{Entity}:Destroy()", "delete remove kill");
         /* A prefab's script: its root, its entities by template name, and how it ticks. */
         if(!IsUI())
         {
-            Pure("Prefab.Root", "Prefab Root", "Prefab", SOP_Call, { Out("Root", "Entity") }, "self.Root", {}, "instance self owner");
+            Pure("Prefab.Root", "Prefab Root", "Prefab", SOP_CallStable, { Out("Root", "Entity") }, "self.Root", {}, "instance self owner");
             Pure("Prefab.Find", "Find Prefab Entity", "Prefab", SOP_Call, { In("Name", "string"), Out("Entity", "Entity") },
                  "self.Instance:Find({Name})", {}, "instance child template lookup");
             Statement("Prefab.SetTickMode", "Set Tick Mode", "Prefab", SOP_Call, { In("Mode", "string", "EventsOnly") },
@@ -1619,14 +1708,14 @@ namespace
         {
             /* The document this graph is the logic of: self.Document is its path,
              * which the UI library's functions take first. */
-            Pure("UI.Document", "This Document", "Document", SOP_Call, { Out("Path", "string") }, "self.Document", {},
+            Pure("UI.Document", "This Document", "Document", SOP_CallStable, { Out("Path", "string") }, "self.Document", {},
                  "self path ui document").Tooltip = "The path of the document this graph is the logic of: the UI library's Path.";
             Statement("UI.CloseDocument", "Close This Document", "Document", SOP_Call, {}, "UI.Close(self.Document)",
                       "close dismiss exit").Tooltip = "Closes the document (its On Document Close runs).";
-            Pure("UI.Key", "Key", "Document", SOP_Call, { In("Key", "string", "Name"), Out("Full", "string") },
+            Pure("UI.Key", "Key", "Document", SOP_CallStable, { In("Key", "string", "Name"), Out("Full", "string") },
                  "((self.Prefix or \"\") .. {Key})", {}, "binding prefix include store")
                 .Tooltip = "A data store key as this document's {Bind:Key} reads it: its Include's Prefix + Key.";
-            Pure("UI.ListItemKey", "List Item Key", "Document", SOP_Call,
+            Pure("UI.ListItemKey", "List Item Key", "Document", SOP_CallStable,
                  { In("List", "string", "Items"), In("Index", "integer", "0"), In("Field", "string", "Name"), Out("Key", "string") },
                  "({List} .. \".\" .. math.floor({Index}) .. \".\" .. {Field})", {}, "list view item row store")
                 .Tooltip = "A ListView item's key: List.Index.Field (set List.Count too: UI Set Count).";
@@ -1666,7 +1755,7 @@ namespace
                   "World.CreateEntity({Name})", "spawn new");
         Statement("World.SpawnPrefab", "Spawn Prefab", "World", SOP_Call, { In("Prefab", "string"), In("Position", "Vector3"), Out("Root", "Entity") },
                   "World.SpawnPrefab({Prefab}, {Position})", "spawn instantiate create prefab");
-        Statement("World.Raycast", "Raycast", "World", SOP_Call,
+        Statement("World.Raycast", "Raycast", "World", SOP_CallInert,
                   { In("Origin", "Vector3"), In("Direction", "Vector3", "1 0 0"), In("MaxDistance", "number", "1000"),
                     Out("Hit", "Entity"), Out("Distance", "number") },
                   "World.Raycast({Origin}, {Direction}, {MaxDistance})", "trace line hit");
@@ -1677,7 +1766,7 @@ namespace
             Statement("Events.Emit", "Emit Event", "Events", SOP_Emit, std::move(Pins), std::string(), "send broadcast fire");
         }
 
-        Statement("Debug.Print", "Print", "Debug", SOP_Call, { In("Value", "string", "Hello") }, "print({Value})", "log");
+        Statement("Debug.Print", "Print", "Debug", SOP_CallInert, { In("Value", "string", "Hello") }, "print({Value})", "log");
         Pure("Utility.IsSet", "Is Set", "Utility", SOP_Lanewise, { In("Value", "Any"), Out("Set", "bool") }, "{Value} ~= nil", {}, "nil null exists");
 
         // --- Math ----------------------------------------------------------------
@@ -1786,8 +1875,17 @@ namespace
             AddType({ TypeName, Name, 0x4F9FD9, "", false });
             AddConversion(TypeName, "Any");
 
+            /* An RPC overrides a Set<Field> of its name: not inert then. */
+            size_t RpcCount = 0;
+            const GameCore::RpcEntry* Rpcs = GameCore::FindComponentRpcs(GameCore::ComponentTypeID(Id), RpcCount);
+            const auto IsRpc = [&](const std::string& InMember)
+            {
+                for(size_t Rpc = 0; Rpc < RpcCount; ++Rpc) { if(InMember == Rpcs[Rpc].Name) { return true; } }
+                return false;
+            };
+
             const auto Make = [&](const std::string& InType, const std::string& InName, const ENodeRole InRole,
-                                  std::vector<PinDefinition> InPins, const std::string& InTemplate)
+                                  std::vector<PinDefinition> InPins, const std::string& InTemplate, const uint32_t InOp = SOP_Call)
             {
                 NodeDefinition Def;
                 Def.Type        = Prefix + InType;
@@ -1795,7 +1893,7 @@ namespace
                 Def.Category    = Category;
                 Def.Keywords    = Name;
                 Def.Role        = InRole;
-                Def.Op          = SOP_Call;
+                Def.Op          = InOp;
                 Def.Template    = InTemplate;
                 if(InRole == ENodeRole::Statement)
                 {
@@ -1806,11 +1904,11 @@ namespace
                 AddNode(std::move(Def));
             };
 
-            Make("Get",    "Get " + Name,    ENodeRole::Pure,      { In("Entity", "Entity"), Out(Name, TypeName) }, "{Entity}:GetComponent(" + Quoted + ")");
-            Make("Has",    "Has " + Name,    ENodeRole::Pure,      { In("Entity", "Entity"), Out("Has", "bool") }, "{Entity}:HasComponent(" + Quoted + ")");
+            Make("Get",    "Get " + Name,    ENodeRole::Pure,      { In("Entity", "Entity"), Out(Name, TypeName) }, "{Entity}:GetComponent(" + Quoted + ")", SOP_CallHandle);
+            Make("Has",    "Has " + Name,    ENodeRole::Pure,      { In("Entity", "Entity"), Out("Has", "bool") }, "{Entity}:HasComponent(" + Quoted + ")", SOP_CallHandle);
             Make("Add",    "Add " + Name,    ENodeRole::Statement, { In("Entity", "Entity"), Out(Name, TypeName) }, "{Entity}:AddComponent(" + Quoted + ")");
             Make("Remove", "Remove " + Name, ENodeRole::Statement, { In("Entity", "Entity") }, "{Entity}:RemoveComponent(" + Quoted + ")");
-            Make("GetEntity", Name + ": Get Entity", ENodeRole::Pure, { In("Target", TypeName), Out("Entity", "Entity") }, "{Target}:GetEntity()");
+            Make("GetEntity", Name + ": Get Entity", ENodeRole::Pure, { In("Target", TypeName), Out("Entity", "Entity") }, "{Target}:GetEntity()", SOP_CallStable);
 
             size_t Count = 0;
             const GameCore::ScriptBindingEntry* Entries = GameCore::FindComponentScript(GameCore::ComponentTypeID(Id), Count);
@@ -1827,7 +1925,8 @@ namespace
                     if(!Entry.bReadOnly)
                     {
                         Make("Set" + Member, Name + ": Set " + Member, ENodeRole::Statement,
-                             { In("Target", TypeName), In(Member, FieldType) }, "{Target}:Set" + Member + "({" + Member + "})");
+                             { In("Target", TypeName), In(Member, FieldType) }, "{Target}:Set" + Member + "({" + Member + "})",
+                             IsRpc("Set" + Member) ? SOP_Call : SOP_CallInert);
                     }
                     continue;
                 }

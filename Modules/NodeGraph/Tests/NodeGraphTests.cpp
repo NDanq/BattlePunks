@@ -2130,6 +2130,116 @@ namespace
         }
     }
 
+    size_t CountOf(const std::string& InText, const std::string& InWhat)
+    {
+        size_t Count = 0;
+        for(size_t Pos = InText.find(InWhat); Pos != std::string::npos; Pos = InText.find(InWhat, Pos + InWhat.size())) { ++Count; }
+        return Count;
+    }
+
+    /* ScriptSchema.cpp's VALUE CACHE. */
+    void TestValueCache()
+    {
+        std::printf("[value cache]\n");
+        Graph G;
+        G.SchemaName = "Script";
+        G.Name       = "Cache";
+        G.Variables.push_back({ "Speed", "number", "60" });
+
+        AddNode(G, 1, "Event.OnTick");
+        AddNode(G, 2, "Flow.Sequence");
+        AddNode(G, 10, "Math.Add").Constants["B"] = "1";       // dt + 1: untagged
+        AddNode(G, 11, "Variable.Get").Properties["Variable"] = "Speed";
+        AddNode(G, 12, "Math.Multiply");                         // Speed * dt: var:Speed
+        Connect(G, 1, "DeltaSeconds", 10, "A");
+        Connect(G, 11, "Value", 12, "A");
+        Connect(G, 1, "DeltaSeconds", 12, "B");
+        Connect(G, 1, "Then", 2, "Exec");
+
+        /* Then 1: first made in an if arm. */
+        AddNode(G, 3, "Flow.Branch").Constants["Condition"] = "true";
+        AddNode(G, 4, "Debug.Print");
+        Connect(G, 2, "Then 1", 3, "Exec");
+        Connect(G, 3, "True", 4, "Exec");
+        Connect(G, 10, "Out", 4, "Value");
+
+        /* Then 2: remade after the arm, then reused. */
+        AddNode(G, 5, "Debug.Print");
+        AddNode(G, 6, "Debug.Print");
+        Connect(G, 2, "Then 2", 5, "Exec");
+        Connect(G, 5, "Then", 6, "Exec");
+        Connect(G, 10, "Out", 5, "Value");
+        Connect(G, 10, "Out", 6, "Value");
+
+        /* Then 3: a variable's value is remade in a loop body and after its Set. */
+        AddNode(G, 7, "Debug.Print");
+        AddNode(G, 8, "Flow.ForLoop").Constants["Last"] = "2";
+        AddNode(G, 9, "Debug.Print");
+        AddNode(G, 13, "Debug.Print");
+        AddNode(G, 14, "Variable.Set").Properties["Variable"] = "Speed";
+        AddNode(G, 15, "Debug.Print");
+        Connect(G, 2, "Then 3", 7, "Exec");
+        Connect(G, 12, "Out", 7, "Value");
+        Connect(G, 7, "Then", 8, "Exec");
+        Connect(G, 8, "Body", 9, "Exec");
+        Connect(G, 12, "Out", 9, "Value");
+        Connect(G, 9, "Then", 13, "Exec");
+        Connect(G, 10, "Out", 13, "Value");
+        Connect(G, 8, "Completed", 14, "Exec");
+        Connect(G, 12, "Out", 14, "Value");
+        Connect(G, 14, "Then", 15, "Exec");
+        Connect(G, 12, "Out", 15, "Value");
+
+        /* Then 4: a component handle is refetched after a method call. */
+        AddNode(G, 16, "Component.Transform.Get");
+        AddNode(G, 17, "Vector.Make");
+        AddNode(G, 18, "Component.Transform.Translate");
+        AddNode(G, 19, "Debug.Print");
+        AddNode(G, 20, "Component.Transform.Translate");
+        Connect(G, 10, "Out", 17, "X");
+        Connect(G, 2, "Then 4", 18, "Exec");
+        Connect(G, 16, "Transform", 18, "Target");
+        Connect(G, 17, "Vector", 18, "Delta");
+        Connect(G, 18, "Then", 19, "Exec");
+        Connect(G, 19, "Then", 20, "Exec");
+        Connect(G, 16, "Transform", 20, "Target");
+        Connect(G, 17, "Vector", 20, "Delta");
+
+        const int FailuresBefore = GFailures;
+        CompileResult R;
+        CompileGraph(G, R);
+        Expect(!R.HasErrors(), "the cache graph compiles");
+        if(R.HasErrors()) { std::printf("%s\n", FormatDiagnostics(G, R).c_str()); }
+
+        Expect(CountOf(R.Code, "= dt + 1") == 2,
+               "a value made in an if arm is made again after it, then reused -- even inside a loop (got "
+               + std::to_string(CountOf(R.Code, "= dt + 1")) + ")");
+        Expect(CountOf(R.Code, "= self.Speed * dt") == 4,
+               "a variable's value is made again in a loop body and after its Set (got "
+               + std::to_string(CountOf(R.Code, "= self.Speed * dt")) + ")");
+        Expect(CountOf(R.Code, "GetComponent(\"Transform\")") == 2,
+               "a component handle is fetched again after a method call, which may remove it");
+        if(GFailures != FailuresBefore) { std::printf("%s\n", R.Code.c_str()); }
+
+        /* Runs: a local read outside its block would be nil. */
+        const std::string Path = TempDir() + "/Cache.lua";
+        WriteFile(Path, R.Code);
+        GameCore::World W;
+        GameCore::ScriptEngine Scripts;
+        Expect(Scripts.Initialize(), "ScriptEngine::Initialize");
+        Scripts.BindWorld(&W);
+        GameCore::Entity E = W.CreateEntity("Cached");
+        E.AddComponent<GameCore::TransformComponent>();
+        E = AttachScript(W, E, Path.c_str());
+        W.Tick(0.5f);
+        const GameCore::TransformComponent* T = E.GetComponent<GameCore::TransformComponent>();
+        const double X = T ? double(T->Position.GetX()) : -1.0;
+        Expect(std::fabs(X - 3.0) < 0.01 && Scripts.GetErrorCount() == 0,
+               "the cached script runs without Lua errors and moves twice by dt + 1 (got " + std::to_string(X) + ")");
+        Scripts.UnbindWorld();
+        Scripts.Shutdown();
+    }
+
     void TestOverlapEvents()
     {
         std::printf("[overlap events]\n");
@@ -2587,6 +2697,7 @@ int main()
     TestScriptRuntime();
     TestLibraries();
     TestScriptStructs();
+    TestValueCache();
     TestOverlapEvents();
     TestPhaseEvents();
     TestGraphFunctions();

@@ -14,10 +14,9 @@ return {
         local t2_Hits, t2_Scale, t2_Where_X, t2_Where_Y, t2_Where_Z, t2_Lucky = t1:GetStats()
         local t3 = t2_Hits + 1
         t1:SetStats(math.floor(t3), t2_Scale, t2_Where_X, t2_Where_Y, t2_Where_Z, true)
-        local t4 = self.Entity:GetComponent("TestStatsHolder")
-        local t5_Hits, t5_Scale, t5_Where_X, t5_Where_Y, t5_Where_Z, t5_Lucky = t4:GetStats()
-        local t6_Hits, t6_Scale, t6_Where_X, t6_Where_Y, t6_Where_Z, t6_Lucky = TestLib.Merge(self.Best_Hits, self.Best_Scale, self.Best_Where_X, self.Best_Where_Y, self.Best_Where_Z, self.Best_Lucky, t5_Hits, t5_Scale, t5_Where_X, t5_Where_Y, t5_Where_Z, t5_Lucky)
-        self.Best_Hits, self.Best_Scale, self.Best_Where_X, self.Best_Where_Y, self.Best_Where_Z, self.Best_Lucky = t6_Hits, t6_Scale, t6_Where_X, t6_Where_Y, t6_Where_Z, t6_Lucky
+        local t4_Hits, t4_Scale, t4_Where_X, t4_Where_Y, t4_Where_Z, t4_Lucky = t1:GetStats()
+        local t5_Hits, t5_Scale, t5_Where_X, t5_Where_Y, t5_Where_Z, t5_Lucky = TestLib.Merge(self.Best_Hits, self.Best_Scale, self.Best_Where_X, self.Best_Where_Y, self.Best_Where_Z, self.Best_Lucky, t4_Hits, t4_Scale, t4_Where_X, t4_Where_Y, t4_Where_Z, t4_Lucky)
+        self.Best_Hits, self.Best_Scale, self.Best_Where_X, self.Best_Where_Y, self.Best_Where_Z, self.Best_Lucky = t5_Hits, t5_Scale, t5_Where_X, t5_Where_Y, t5_Where_Z, t5_Lucky
         TestLib.SetStats(self.Best_Hits, self.Best_Scale, self.Best_Where_X, self.Best_Where_Y, self.Best_Where_Z, self.Best_Lucky)
     end,
 }

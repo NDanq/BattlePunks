@@ -158,8 +158,12 @@ Details > Type overrides it.
   `OnOverlapEnd(self, other, mine)`, which GameCore's overlap pass calls; their
   outputs are Other and Mine (which of the instance's entities was touched).
 - A statement's **Then** leads to the next statement.
-- Pure nodes are evaluated where a statement needs them, into `local tN`,
-  once per statement. So a Get after a Set sees the new value.
+- Pure nodes become `local tN` where first needed, and later statements
+  reuse them until something they read may change (`ScriptSchema.cpp`,
+  VALUE CACHE). Variable reads last until their Set; component Get / Has
+  until an opaque statement (a method, library or graph function, Emit);
+  other engine calls are re-asked per statement. Values made in an if arm or
+  loop body end with it.
 - A statement's own outputs (a Raycast's Hit) are locals declared at the top
   of its function. They can be read only in that function.
 - Values travel as **lanes**, as the bindings pass them. A Vector3 is three
