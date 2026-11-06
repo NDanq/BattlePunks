@@ -15,6 +15,15 @@ if(APPLE AND NOT DEFINED Python3_FIND_FRAMEWORK)
     set(Python3_FIND_FRAMEWORK LAST)
 endif()
 
+# Qt 6.8's FindWrapOpenGL links AGL on a Mac, and falls back to "-framework AGL"
+# when it cannot find it -- which it cannot from the macOS 26 SDK on, where AGL
+# is gone, so every Qt GUI target fails to link. Nothing here uses AGL: point
+# Qt's lookup at the OpenGL framework (linked anyway) before Qt is found.
+if(APPLE AND NOT WrapOpenGL_AGL)
+    find_library(NM_OPENGL_FRAMEWORK OpenGL)
+    set(WrapOpenGL_AGL "${NM_OPENGL_FRAMEWORK}" CACHE FILEPATH "Stands in for AGL, which recent macOS SDKs lack" FORCE)
+endif()
+
 # ===========================================================================
 # NimbleEngine -- the engine-level aggregate.
 #

@@ -1,5 +1,8 @@
 #if WITH_EDITOR
 
+#if defined(__APPLE__)
+#include "Private/Editor/Platform/MacMouseHold.h"
+#endif
 #include "Public/NimbleEngine/Input.h"
 #include "Public/NimbleEngine/PlayerStart.h"
 #include "Public/NimbleEngine/TerrainFacade.h"
@@ -466,6 +469,31 @@ void ViewportWidget::UpdateMouseHold()
     setCursor(Qt::BlankCursor);
     grabMouse();
     QCursor::setPos(mapToGlobal(rect().center()));
+#if defined(__APPLE__)
+    /* The cursor stays at the centre, detached from the mouse, and the moves'
+     * own deltas feed the game (MacMouseHold.h says why not mouseMoveEvent). */
+    MacMouseHold::Start([this](const double InDX, const double InDY)
+    {
+        NimbleEngine::InputState* Game = Context.GetPlayFallbackInput();
+        if(!Game || !bHoldingMouse)
+        {
+            return;
+        }
+        const double Ratio  = devicePixelRatioF();
+        const QPoint At     = (QPointF(rect().center()) * Ratio).toPoint();
+        MacMouseRemainder[0] += InDX * Ratio;
+        MacMouseRemainder[1] += InDY * Ratio;
+        const int DX = int(MacMouseRemainder[0]);   // whole pixels; the fraction carries over
+        const int DY = int(MacMouseRemainder[1]);
+        MacMouseRemainder[0] -= DX;
+        MacMouseRemainder[1] -= DY;
+        if(DX != 0 || DY != 0)
+        {
+            Game->MoveMouse(At.x(), At.y(), DX, DY);
+            FallbackMousePos = At;
+        }
+    });
+#endif
 }
 
 void ViewportWidget::ReleaseMouseHold()
@@ -475,6 +503,10 @@ void ViewportWidget::ReleaseMouseHold()
         return;
     }
     bHoldingMouse = false;
+#if defined(__APPLE__)
+    MacMouseHold::Stop();
+    MacMouseRemainder[0] = MacMouseRemainder[1] = 0.0;
+#endif
     releaseMouse();
     unsetCursor();
 }
@@ -1103,6 +1135,12 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* InEvent)
     {
         /* Physical pixels, as SDL reports them. */
         const double Ratio = devicePixelRatioF();
+#if defined(__APPLE__)
+        if(bHoldingMouse)
+        {
+            return;   // MacMouseHold's monitor feeds the game while held
+        }
+#endif
         if(bHoldingMouse)
         {
             /* Held: each move is its distance from the centre, and the cursor

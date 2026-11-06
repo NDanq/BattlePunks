@@ -80,7 +80,7 @@ namespace
     }
 
     /* cook_material_graphs.py's -target for a backend; empty for one it
-     * cannot cook (Null draws nothing; Metal's cook is not wired up). */
+     * cannot cook (Null draws nothing). */
     QString CookTarget(const RenderCore::ERenderBackend InBackend)
     {
         switch(InBackend)
@@ -88,6 +88,7 @@ namespace
             case RenderCore::ERenderBackend::OpenGL: return QStringLiteral("OpenGL");
             case RenderCore::ERenderBackend::Vulkan: return QStringLiteral("Vulkan");
             case RenderCore::ERenderBackend::D3D12:  return QStringLiteral("D3D12");
+            case RenderCore::ERenderBackend::Metal:  return QStringLiteral("Metal");
             default:                                 return QString();
         }
     }

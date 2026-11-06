@@ -384,21 +384,54 @@ private:
 // ===========================================================================
 // Swapchains
 // ===========================================================================
+@class NSView;
+
 class MTLSwapchainImpl
 {
 public:
+    ~MTLSwapchainImpl();
     bool Initialize(id<MTLDevice> InDevice, id<MTLCommandQueue> InQueue, EngineCore::WindowHandle InWindow);
     void Present(MTLRenderTargetImpl* InSource);
 
 private:
     void UpdateDrawableSize();
+    void FitOwnLayer();
 
+    NSView*                    View     = nil;
+    bool                       bOwnLayer = false;   // a sublayer of a view not backed by Metal (the editor's)
     id<MTLDevice>              Device   = nil;
     id<MTLCommandQueue>        Queue    = nil;
     CAMetalLayer*              Layer    = nil;
     id<MTLRenderPipelineState> Pipeline = nil;
     id<MTLSamplerState>        Sampler  = nil;
     EngineCore::WindowHandle   Window;
+};
+
+// ===========================================================================
+// Occlusion queries (MTLQueries.mm)
+// ===========================================================================
+/*
+ * A set's round is a range of its frame slot's visibility buffer, which every
+ * render pass of the frame carries (MetalState::Visibility). Boolean mode: a
+ * query's word is nonzero if anything passed. Read on the CPU once the frame
+ * has completed.
+ */
+class MTLOcclusionQueriesImpl final : public GDIOcclusionQueries
+{
+public:
+    explicit MTLOcclusionQueriesImpl(const uint32_t InCapacity) : GDIOcclusionQueries(InCapacity), Ended(InCapacity, 0), Split(InCapacity, 0) {}
+    void Release() override;
+
+    id<MTLBuffer>        Buffer;            // the slot's visibility buffer of this round
+    NSUInteger           Base     = 0;      // first word
+    uint32_t             Count    = 0;
+    uint32_t             Slot     = 0;
+    uint64_t             Serial   = 0;      // the frame it was recorded in
+    int32_t              Open     = -1;
+    bool                 bResolved = false;
+    bool                 bPending  = false;
+    std::vector<uint8_t> Ended;
+    std::vector<uint8_t> Split;             // spanned two passes: answered visible
 };
 
 // ===========================================================================
@@ -459,6 +492,41 @@ struct MetalState
         void Forget() { *this = EncoderCache(); }
     } Bound;
 
+    // Frames, for answers read back after completion.
+    uint64_t              FrameSerial = 0;            // the open block's
+    std::atomic<uint64_t> CompletedSerial{0};
+
+    // Occlusion: a visibility buffer per frame slot (MTLQueries.mm).
+    id<MTLBuffer>            Visibility[GDI_FRAMES_IN_FLIGHT_MAX];
+    NSUInteger               VisibilityUsed[GDI_FRAMES_IN_FLIGHT_MAX] = {};
+    __unsafe_unretained id<MTLBuffer> EncoderVisibility = nil;   // what the open render encoder carries
+    MTLOcclusionQueriesImpl* OpenQuerySet   = nullptr;
+    uint32_t                 OpenQueryIndex = 0;
+
+    // GPU timestamps: samples at encoder boundaries (MTLQueries.mm).
+    id<MTLCounterSampleBuffer> Samples[GDI_FRAMES_IN_FLIGHT_MAX];   // one per slot: Metal caps each at 32 KB
+    uint32_t              SamplesPerSlot = 0;
+    uint32_t              SamplesUsed[GDI_FRAMES_IN_FLIGHT_MAX] = {};
+    int32_t               TimestampSample[GDI_FRAMES_IN_FLIGHT_MAX][GDI_GPU_TIMESTAMP_MAX];
+    uint64_t              TimestampsWritten[GDI_FRAMES_IN_FLIGHT_MAX] = {};
+    std::vector<uint32_t> PendingTimestamps;           // written before any encoder ran: the next one's start
+    int32_t               LastEndSample    = -1;        // the last ended encoder's end sample (in its slot's buffer)
+    int32_t               EncoderEndSample = -1;        // the open render encoder's
+    bool                  bTiming          = false;     // a timestamp has been asked for: encoders sample
+    uint64_t              PreviousTimestamps = 0;
+    double                PreviousTimestampMs[GDI_GPU_TIMESTAMP_MAX] = {};
+
+    /* A start/end sample pair for an encoder about to open (-1, -1 when not
+     * timing or out of room); hands the start to any pending timestamps. */
+    void AllocateSamples(int32_t& OutStart, int32_t& OutEnd);
+    /* An encoder with InEnd as its end sample has ended. */
+    void EncoderEnded(int32_t InEnd) { if(InEnd >= 0) LastEndSample = InEnd; }
+    /* This slot's frame has completed: its timestamps become the previous block's. */
+    void CollectTimestamps(uint32_t InSlot);
+    /* A compute or blit encoder in the frame, sampled while timing. */
+    id<MTLComputeCommandEncoder> ComputeEncoder(id<MTLCommandBuffer> InCmd, bool bInTransient, int32_t& OutEnd);
+    id<MTLBlitCommandEncoder>    BlitEncoder(id<MTLCommandBuffer> InCmd, bool bInTransient, int32_t& OutEnd);
+
     MTLTextureResourceImpl* NullTexture = nullptr;
     GDIMesh*                ScreenMesh  = nullptr;
 
@@ -478,6 +546,9 @@ struct MetalState
      * a frame, a fresh one the caller commits and waits for (bOutTransient). */
     id<MTLCommandBuffer> CommandBufferForWork(bool& bOutTransient);
 };
+
+/* The timestamp sample buffer, where the device samples at stage boundaries (MTLQueries.mm). */
+void MTLCreateTimestampSamples(MetalState& InState);
 
 /* The driver, when it is the Metal backend. */
 MetalDynamicGDI* GetMetalDriver();

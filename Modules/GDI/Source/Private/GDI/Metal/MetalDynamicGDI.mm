@@ -59,9 +59,33 @@ id<MTLRenderCommandEncoder> MetalState::RenderEncoder()
     bClearColor = false;
     bClearDepth = false;
 
+    // Every pass of the frame carries its slot's visibility buffer (occlusion queries).
+    Pass.visibilityResultBuffer = Visibility[FrameSlot];
+    // While timing: samples at the pass's start and end (MTLQueries.mm).
+    int32_t StartSample = -1, EndSample = -1;
+    AllocateSamples(StartSample, EndSample);
+    if(StartSample >= 0)
+    {
+        MTLRenderPassSampleBufferAttachmentDescriptor* Sampling = Pass.sampleBufferAttachments[0];
+        Sampling.sampleBuffer               = Samples[FrameSlot];
+        Sampling.startOfVertexSampleIndex   = NSUInteger(StartSample);
+        Sampling.endOfVertexSampleIndex     = MTLCounterDontSample;
+        Sampling.startOfFragmentSampleIndex = MTLCounterDontSample;
+        Sampling.endOfFragmentSampleIndex   = NSUInteger(EndSample);
+    }
+
     Encoder = [Cmd renderCommandEncoderWithDescriptor:Pass];
     if(!Encoder) return nil;
     Bound.Forget();
+    EncoderEndSample  = EndSample;
+    EncoderVisibility = Visibility[FrameSlot];
+    // A query open across passes: counted on in this one, and answered visible (Boolean mode overwrites per pass).
+    if(OpenQuerySet && OpenQuerySet->Buffer == EncoderVisibility)
+    {
+        OpenQuerySet->Split[OpenQueryIndex] = 1;
+        [Encoder setVisibilityResultMode:MTLVisibilityResultModeBoolean
+                                  offset:(OpenQuerySet->Base + OpenQueryIndex) * sizeof(uint64_t)];
+    }
 
     // Counter-clockwise on the target as stored is front (EGDICullMode), as D3D12's FrontCounterClockwise.
     [Encoder setFrontFacingWinding:MTLWindingCounterClockwise];
@@ -93,7 +117,10 @@ void MetalState::EndPass()
     {
         [Encoder endEncoding];
         Encoder = nil;
+        EncoderEnded(EncoderEndSample);
     }
+    EncoderEndSample  = -1;
+    EncoderVisibility = nil;
     Bound.Forget();
 }
 
@@ -190,6 +217,7 @@ void MetalDynamicGDI::Allocate()
         // What a draw samples where nothing is bound (D3D12's null texture: 1x1, zeroed).
         Image NullImage(1, 1, EImageFormat::RGBA8);
         S->NullTexture = new MTLTextureResourceImpl(S, nullptr, &NullImage, 1, GDI_TB_Repeat, GDI_TF_Nearest);
+        MTLCreateTimestampSamples(*S);
 
         bInitialized = true;
         GDI_LOG("[MetalDynamicGDI] " + std::string([[S->Device name] UTF8String]) + ", "
@@ -255,6 +283,12 @@ void MetalDynamicGDI::BeginRendering()
     dispatch_semaphore_wait(S->FrameSemaphore, DISPATCH_TIME_FOREVER);
     FrameSlot = S->FrameSlot;
     S->Ring.Rewind(S->FrameSlot);
+    // The slot's last frame is done: its timestamps are the previous block's, its visibility buffer free.
+    S->CollectTimestamps(S->FrameSlot);
+    S->VisibilityUsed[S->FrameSlot] = 0;
+    S->LastEndSample = -1;
+    S->PendingTimestamps.clear();
+    ++S->FrameSerial;
 
     S->Cmd = [S->Queue commandBuffer];
     S->Cmd.label = @"Nimble.Frame";
@@ -277,8 +311,20 @@ void MetalDynamicGDI::EndRendering()
         --S->DebugGroupDepth;
     }
 
-    dispatch_semaphore_t Semaphore = S->FrameSemaphore;
-    [S->Cmd addCompletedHandler:^(id<MTLCommandBuffer>) { dispatch_semaphore_signal(Semaphore); }];
+    // Timestamps written after the last encoder: its end.
+    for(const uint32_t Index : S->PendingTimestamps)
+    {
+        if(S->LastEndSample >= 0) S->TimestampSample[S->FrameSlot][Index] = S->LastEndSample;
+    }
+    S->PendingTimestamps.clear();
+
+    dispatch_semaphore_t   Semaphore = S->FrameSemaphore;
+    std::atomic<uint64_t>* Completed = &S->CompletedSerial;
+    const uint64_t         Serial    = S->FrameSerial;
+    [S->Cmd addCompletedHandler:^(id<MTLCommandBuffer>) {
+        Completed->store(Serial, std::memory_order_release);
+        dispatch_semaphore_signal(Semaphore);
+    }];
     [S->Cmd commit];
     {
         std::lock_guard<std::mutex> Lock(S->CommitLock);
@@ -946,7 +992,8 @@ bool MetalDynamicGDI::DispatchCompute(GDIShader* InShader, const void* InParams,
         const MTLUploadRing::Allocation Params = S->Upload(InParams, InParamBytes, ParamBytes);
         if(!Params.Buffer) return false;
 
-        id<MTLComputeCommandEncoder> Encoder = [Cmd computeCommandEncoder];
+        int32_t EndSample = -1;
+        id<MTLComputeCommandEncoder> Encoder = S->ComputeEncoder(Cmd, bTransient, EndSample);
         [Encoder setComputePipelineState:Pipeline];
         [Encoder setBuffer:Params.Buffer offset:Params.Offset atIndex:0];
         // Storage at 1.. in order; the unused slots repeat the last, as D3D12's root UAVs do.
@@ -959,6 +1006,7 @@ bool MetalDynamicGDI::DispatchCompute(GDIShader* InShader, const void* InParams,
                          atIndex:MTLBindings::Sampler(GDI_COMPUTE_TEXTURE_BINDING)];
         [Encoder dispatchThreadgroups:MTLSizeMake(InX, InY, InZ) threadsPerThreadgroup:CS->GetWorkGroupSize()];
         [Encoder endEncoding];
+        S->EncoderEnded(EndSample);
 
         if(bTransient)
         {
@@ -981,9 +1029,11 @@ bool MetalDynamicGDI::UpdateBuffer(GDIBuffer* InBuffer, const uint32_t InOffset,
         const MTLUploadRing::Allocation Staging = S->Upload(InData, InBytes);
         if(!Staging.Buffer) return false;
         // In frame order: a blit between the passes before and after.
-        id<MTLBlitCommandEncoder> Blit = [Cmd blitCommandEncoder];
+        int32_t EndSample = -1;
+        id<MTLBlitCommandEncoder> Blit = S->BlitEncoder(Cmd, bTransient, EndSample);
         [Blit copyFromBuffer:Staging.Buffer sourceOffset:Staging.Offset toBuffer:Buffer->GetBuffer() destinationOffset:InOffset size:InBytes];
         [Blit endEncoding];
+        S->EncoderEnded(EndSample);
         if(bTransient)
         {
             [Cmd commit];

@@ -23,8 +23,10 @@
  * Metal index -- a block at binding N is buffer(N), a sampler2D texture(N) and
  * sampler(N % 16). The backend compiles the MSL source as it loads it.
  *
- * Not yet here (each GDI default: refused, or drawn without): occlusion
- * queries and predication, GPU timestamps, parallel recording.
+ * Occlusion queries read back on the CPU; Metal has no draw predication, so
+ * SupportsOcclusionPredication is false and RenderCore culls from the answers.
+ * GPU timestamps are sampled at encoder boundaries (all Apple GPUs offer).
+ * Not yet: parallel recording.
  */
 
 class MetalGDIContext : public GDIContext
@@ -93,6 +95,19 @@ public:
 
     void BeginDrawEvent(const std::string& EventName) override;
     void EndDrawEvent() override;
+
+    bool     SupportsGPUTimestamps() const override;
+    void     WriteGPUTimestamp(uint32_t InIndex) override;
+    uint64_t GetPreviousGPUTimestamps(double* OutMilliseconds) override;
+
+    bool                 SupportsOcclusionQueries() const override { return bInitialized; }
+    bool                 SupportsOcclusionPredication() const override { return false; }
+    GDIOcclusionQueries* CreateOcclusionQueries(uint32_t InCapacity) override;
+    void                 BeginOcclusionRound(GDIOcclusionQueries* InSet, uint32_t InCount) override;
+    void                 BeginOcclusionQuery(GDIOcclusionQueries* InSet, uint32_t InIndex) override;
+    void                 EndOcclusionQuery(GDIOcclusionQueries* InSet, uint32_t InIndex) override;
+    void                 ResolveOcclusionQueries(GDIOcclusionQueries* InSet) override;
+    bool                 ReadOcclusionResults(GDIOcclusionQueries* InSet, std::vector<uint8_t>& OutVisible) override;
 
     bool       SupportsCompute() const override;
     GDIBuffer* CreateBuffer(uint32_t InBytes, uint8_t InUsage, const void* InInitialData) override;

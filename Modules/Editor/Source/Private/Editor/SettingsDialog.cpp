@@ -247,12 +247,20 @@ SettingsDialog::SettingsDialog(QWidget* InParent)
              QStringLiteral("The background at the bottom of the viewport"));
 
     QFormLayout* Rendering = AddGroup(QStringLiteral("Rendering"));
-    /* OpenGL does not start yet and Metal is Apple-only (DefaultEngine.ini);
-     * a file that sets either still shows as Other. */
+    /* OpenGL does not start yet; Metal is the one GPU backend on Apple, and
+     * Vulkan and D3D12 the ones elsewhere (DefaultEngine.ini). A file that sets
+     * another still shows as Other. */
+#if defined(__APPLE__)
+    AddChoice(Rendering, "Editor.RHI", QStringLiteral("Render backend"),
+              QStringLiteral("The viewport's renderer. --rhi on the command line overrides it"),
+              { { "Metal", 3 }, { "Null (draws nothing)", 0 } },
+              true);
+#else
     AddChoice(Rendering, "Editor.RHI", QStringLiteral("Render backend"),
               QStringLiteral("The viewport's renderer. --rhi on the command line overrides it"),
               { { "Vulkan", 2 }, { "D3D12", 4 }, { "Null (draws nothing)", 0 } },
               true);
+#endif
 
     /* GDI's (GDI.h): what capture tools (RenderDoc, PIX) are given. */
     QFormLayout* Shaders = AddGroup(QStringLiteral("Shaders"));

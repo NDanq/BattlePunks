@@ -572,7 +572,8 @@ void MTLRenderTargetImpl::ResolveRenderTarget(GDIRenderTarget* Dest)
     State->ColorCount = 0;
     State->DepthRT    = nullptr;
 
-    id<MTLBlitCommandEncoder> Blit = [Cmd blitCommandEncoder];
+    int32_t EndSample = -1;
+    id<MTLBlitCommandEncoder> Blit = State->BlitEncoder(Cmd, bTransient, EndSample);
     const NSUInteger W = std::min<NSUInteger>(Width, Target->GetWidth());
     const NSUInteger H = std::min<NSUInteger>(Height, Target->GetHeight());
     if(Color.pixelFormat == Target->GetColor().pixelFormat)
@@ -581,6 +582,7 @@ void MTLRenderTargetImpl::ResolveRenderTarget(GDIRenderTarget* Dest)
                     toTexture:Target->GetColor() destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
     }
     [Blit endEncoding];
+    State->EncoderEnded(EndSample);
     Target->MarkContent();
     if(bTransient)
     {

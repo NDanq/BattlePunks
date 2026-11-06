@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #import <AppKit/AppKit.h>
+#import <QuartzCore/QuartzCore.h>
 
 #include "Public/GDI/GDIPlatform.h"
 #include "Public/GDI/GDILog.h"
@@ -49,15 +50,27 @@ bool MTLSwapchainImpl::Initialize(id<MTLDevice> InDevice, id<MTLCommandQueue> In
     Window = InWindow;
     if(!Device || !Queue || !Window.IsValid()) return false;
 
-    // GameWindowNativeMac.cpp's NSView, backed by a CAMetalLayer (SDL_Metal_CreateView).
-    NSView*  View    = (__bridge NSView*)Window.Native;
-    CALayer* Backing = [View layer];
-    if(![Backing isKindOfClass:[CAMetalLayer class]])
+    /*
+     * The game's NSView is backed by a CAMetalLayer already (GameWindowNativeMac.cpp,
+     * SDL_Metal_CreateView). Another host's view -- the editor's Qt viewport, a
+     * native QWidget -- gets one of its own as a sublayer, kept to the view's
+     * size at every present (UI thread, which AppKit wants for layers).
+     */
+    View = (__bridge NSView*)Window.Native;
+    if(!View) return false;
+    if([[View layer] isKindOfClass:[CAMetalLayer class]])
     {
-        GDI_LOG_ERROR("[MTLSwapchain] The window's view is not backed by a CAMetalLayer (was it made with SDL_WINDOW_METAL?)")
-        return false;
+        Layer = (CAMetalLayer*)[View layer];
     }
-    Layer = (CAMetalLayer*)Backing;
+    else
+    {
+        View.wantsLayer = YES;
+        Layer = [CAMetalLayer layer];
+        Layer.opaque = YES;
+        [[View layer] addSublayer:Layer];
+        bOwnLayer = true;
+        FitOwnLayer();
+    }
     Layer.device          = Device;
     Layer.pixelFormat     = MTLPixelFormatBGRA8Unorm;
     Layer.framebufferOnly = YES;
@@ -92,8 +105,25 @@ bool MTLSwapchainImpl::Initialize(id<MTLDevice> InDevice, id<MTLCommandQueue> In
     return Sampler != nil;
 }
 
+void MTLSwapchainImpl::FitOwnLayer()
+{
+    if(!bOwnLayer || !Layer || !View) return;
+    const CGFloat Scale = View.window ? View.window.backingScaleFactor : 1.0;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];   // no implicit animation of the resize
+    Layer.frame         = View.layer.bounds;
+    Layer.contentsScale = Scale;
+    [CATransaction commit];
+}
+
+MTLSwapchainImpl::~MTLSwapchainImpl()
+{
+    if(bOwnLayer && Layer) [Layer removeFromSuperlayer];
+}
+
 void MTLSwapchainImpl::UpdateDrawableSize()
 {
+    FitOwnLayer();
     uint32_t Width = 0, Height = 0;
     if(!Layer || !GDIPlatform::appGetWindowPixelSize(Window, Width, Height)) return;
     const CGSize Wanted = CGSizeMake(std::max<uint32_t>(1, Width), std::max<uint32_t>(1, Height));

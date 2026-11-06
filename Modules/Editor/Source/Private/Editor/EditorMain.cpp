@@ -207,6 +207,17 @@ int main(int argc, char* argv[])
         }
     }
 
+#if defined(__APPLE__)
+    /* Metal is the only GPU backend on Apple (GDI's CMakeLists, "Backend
+     * selection"): [Editor] RHI -- Vulkan by default -- or --rhi naming another
+     * runs the viewport on Metal, as the game does. */
+    if(Rhi != int(RenderCore::ERenderBackend::Null) && Rhi != int(RenderCore::ERenderBackend::Metal))
+    {
+        CORE_LOG("[Editor] RHI " + std::to_string(Rhi) + " is not built on this platform; using Metal")
+        Rhi = int(RenderCore::ERenderBackend::Metal);
+    }
+#endif
+
     /* The shaders cooked -- whatever changed since last time -- behind a
      * splash, before the window and its renderer exist (StartupCook.h). */
     EditorStartupCook::Run(RenderCore::ERenderBackend(Rhi));

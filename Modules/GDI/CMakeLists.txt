@@ -260,6 +260,7 @@ if(GDI_WITH_METAL)
             Source/Private/GDI/Metal/MTLPipelines.mm
             Source/Private/GDI/Metal/MTLResources.mm
             Source/Private/GDI/Metal/MTLSwapchain.mm
+            Source/Private/GDI/Metal/MTLQueries.mm
             Source/Private/GDI/Metal/MTLInternal.h
             Source/Public/GDI/Metal/MetalDynamicGDI.h
             Source/Public/GDI/Metal/MTLSync.h

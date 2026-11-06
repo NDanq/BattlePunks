@@ -270,6 +270,7 @@ private:
     QSet<int>           HeldKeys;
 
     bool bHoldingMouse    = false;   // UpdateMouseHold
+    double MacMouseRemainder[2] = {};   // macOS: the fractions of a pixel the held mouse has moved
     bool bShowAllBounds   = false;
     bool bShowLightGizmos = true;
     bool bShowPlayerStarts = true;
