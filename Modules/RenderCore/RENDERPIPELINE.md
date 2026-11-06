@@ -236,7 +236,7 @@ Each light has a **Shadows** section: Cast Shadows, a Technique, a Modulated
 Tint and two biases. A Render component's **Cast Shadows** says whether its
 mesh casts, and **Cast Inset Shadow** gives it a sun shadow map of its own (see
 [Inset shadows](#inset-shadows)). Every scene's quality is the `[Shadows]` config section, a
-project setting (the game's DefaultEngine.ini; Edit > Project Settings >
+project setting (the game's DefaultEngine.ini; File > Project Settings >
 Shadows edits it and applies it at once): Enabled, Resolution,
 Filter, MaxShadowedLights, DistanceScale, MaxInsetShadows and InsetFilter,
 and the sun's [contact shadows](#contact-shadows).

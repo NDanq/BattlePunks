@@ -261,7 +261,7 @@ palette.
 
 ### Project Settings > Plugins
 
-Edit > Project Settings > **Plugins** lists every plugin in the build's
+File > Project Settings > **Plugins** lists every plugin in the build's
 search folders, enabled or not:
 
 ![Project Settings > Plugins: every plugin found, its status and details](Images/Plugins/plugins_page.jpg)

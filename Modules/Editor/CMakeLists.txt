@@ -845,7 +845,7 @@ configure_file("${CMAKE_CURRENT_SOURCE_DIR}/Source/Private/Editor/EditorBuildTre
                "${CMAKE_CURRENT_BINARY_DIR}/Generated/EditorBuildTree.h" @ONLY)
 
 # === The project ================================================================
-# Edit > Project Settings edits the game's master Config/DefaultEngine.ini,
+# File > Project Settings edits the game's master Config/DefaultEngine.ini,
 # not the staged copy. The game's CMakeLists sets:
 #
 #   set_property(TARGET NimbleEditor PROPERTY NIMBLE_PROJECT_CONFIG "<path>")

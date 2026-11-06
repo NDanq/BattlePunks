@@ -42,12 +42,12 @@ up to start there.
 | Path | What | Made with |
 |------|------|-----------|
 | `@PROJECT_NAME@Game.cpp` | Game module: level, game mode, game state, native prefabs | Your IDE |
-| `Config/DefaultEngine.ini` | Settings: window, renderer, start level, startup script | Edit > Project Settings |
+| `Config/DefaultEngine.ini` | Settings: window, renderer, start level, startup script | File > Project Settings |
 | `Scripts/` | Lua (`.lua`) and script graphs (`.script.nmgraph`) | File > New Script Graph |
 | `Content/Materials/` | Material graphs (`.material.nmgraph`) | File > New Material Graph |
 | `Content/Prefabs/` | Prefabs (`.nmprefab`) | File > New Prefab, World > Convert Selection to Prefab |
 | `Content/Levels/` | Worlds (`.nmworld`) | File > Save World As |
-| `Content/Meshes/`, `Content/Textures/` | Imported assets (`.nmmesh`, `.nmtexture`) | File > Import (glTF, images) |
+| `Content/Meshes/`, `Content/Textures/` | Imported assets (`.nmmesh`, `.nmtexture`) | Tools > Import (glTF, images) |
 
 The build copies `Config/`, `Scripts/` and `Content/` into `Binaries/` at the
 same relative paths, and that path is the asset's name at runtime:
@@ -126,7 +126,7 @@ shows them in the graph editor. `Engine/Modules/GameCore/README.md`
 
 ## 6. Config
 
-`Config/DefaultEngine.ini` is the master copy; Edit > Project Settings edits
+`Config/DefaultEngine.ini` is the master copy; File > Project Settings edits
 it. The keys that matter first:
 
 | Key | Default | |

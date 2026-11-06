@@ -399,7 +399,7 @@ Graph Editor.
 - `Editor/Prefab/`: `PrefabEditorWindow` (one window, a tab per prefab, as
   the Graph Editor), `PrefabEditorTab` (one prefab), `PrefabScriptPanel` (the
   Script dock), `PrefabAssets` (open / create / close, paths, staging).
-- Opened by double-clicking a `.nmprefab` in the Content Browser, File > Open
+- Opened by double-clicking a `.nmprefab` in the Content Browser, Tools > Open
   Prefab, or the `prefab <path>` console command. Made by Content Browser
   right-click > New Prefab... or `prefab new`: a name,
   then a one-entity prefab ("Root", a Transform) in that folder.

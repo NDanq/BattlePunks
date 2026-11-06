@@ -47,7 +47,7 @@ chunk is 8.7 MB of its 62.9 MB.
 
 ## 2. Import with the wizard
 
-Drop a `.gltf` or `.glb` on the Content Browser, or use File > Import
+Drop a `.gltf` or `.glb` on the Content Browser, or use Tools > Import
 (Ctrl+I). On the wizard's **Mesh options** page:
 
 - **Build meshlets (static meshes)**: on by default. Leave it on.
