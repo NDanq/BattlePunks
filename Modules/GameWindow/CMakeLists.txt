@@ -60,13 +60,16 @@ set(GAMEWINDOW_SOURCES
 # nothing else -- the arrangement GDI's Source/Private/GDI/Platform/ uses.
 #
 # Linux is X11-only (XWayland on a Wayland desktop); GameWindowNativeLinux.cpp
-# says why. The Mac file is still to come. Failing the configure is the honest
+# says why; GameWindowNativeMac.cpp hands GDI a Metal-backed NSView. Failing the configure is the honest
 # response until it exists: the alternative is a module that builds and hands
 # GDI a null window handle.
 if(WIN32)
     list(APPEND GAMEWINDOW_SOURCES Source/Private/GameWindow/Platform/GameWindowNativeWindows.cpp)
 elseif(UNIX AND NOT APPLE)
     list(APPEND GAMEWINDOW_SOURCES Source/Private/GameWindow/Platform/GameWindowNativeLinux.cpp)
+elseif(APPLE)
+    # An NSView* backed by a CAMetalLayer, made by SDL_Metal_CreateView.
+    list(APPEND GAMEWINDOW_SOURCES Source/Private/GameWindow/Platform/GameWindowNativeMac.cpp)
 else()
     message(FATAL_ERROR
             "GameWindow has no native-handle implementation for this platform yet. "

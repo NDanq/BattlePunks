@@ -19,7 +19,7 @@ Usage:
         as is, a .mtl.glsl in every permutation it needs. Prints each
         failure's compiler output; exits 1 if any failed.
 
-    python cook_material_graphs.py -target <OpenGL|Vulkan|D3D12> -src PATH [-src PATH ...]
+    python cook_material_graphs.py -target <OpenGL|Vulkan|D3D12|Metal> -src PATH [-src PATH ...]
                                    (-out DIR [-data-out DIR] | -cache FILE -module NAME)
                                    [-root DIR] [-subdir NAME] [-defaults] [-pdb DIR]
         Cook every .vsh/.fsh/.csh (compute), .mtl.glsl and .material.nmgraph given, or under
@@ -28,6 +28,7 @@ Usage:
             OpenGL  <name>          preprocessed GLSL
             Vulkan  <name>.spv      SPIR-V
             D3D12   <name>.cso      DXIL, shader model 6.0 (via spirv-cross and dxc)
+            Metal   <name>.metal    MSL 2.3 source (via spirv-cross), compiled as it loads
         A material's permutations are named <Name>@<key>.vsh/.fsh, the key
         8 hex digits (MaterialPermutation.h). -defaults adds the shared
         vertex shaders, MaterialDefault@<key>.vsh.
@@ -53,6 +54,7 @@ Usage:
             D3D12   <name>.pdb      dxc's PDB (-Zi -Fd); the .cso is stripped
                                     and names it. <name>.hlsl beside it
             OpenGL  nothing         the cooked file is already source
+            Metal   nothing         the same
         Without -out or -cache, only these are kept.
 
     -jobs N (either command) compiles up to N shaders at once, default 32:
@@ -208,19 +210,21 @@ STAGE_SUFFIX  = {"vertex": ".vert", "pixel": ".frag", "compute": ".comp"}   # wh
 STAGE_PROFILE = {"vertex": "vs_6_0", "pixel": "ps_6_0", "compute": "cs_6_0"}   # cook_shaders.py's DXIL_PROFILE
 
 
-def _preprocess(cs, job, platform_define):
+def _preprocess(cs, job, platform_define, extra_defines=None):
     shader_type = getattr(cs, STAGE_TYPES[job.stage])
-    defines = {shader_type: "1", platform_define: "1", **job.defines}
+    defines = {shader_type: "1", platform_define: "1", **(extra_defines or {}), **job.defines}
     _current_material.path = job.material or DEFAULT_MATERIAL
     return cs.preprocess(job.source, shader_type, ENGINE_SHADERS_DIR, defines)
 
 
-def _spirv(cs, glslc, job, spv_path, debug_source=None):
+def _spirv(cs, glslc, job, spv_path, debug_source=None, extra_defines=None):
     """GLSL -> SPIR-V; the stage from a temporary file's extension, as glslc reads it.
     With debug_source, the preprocessed source is kept there and the SPIR-V
-    carries it (-g), named after it rather than a temporary file."""
+    carries it (-g), named after it rather than a temporary file. Metal's
+    SPIR-V is Vulkan's (WITH_VULKAN) with WITH_METAL also defined
+    (extra_defines), so a shader can tell the two apart where it must."""
     try:
-        processed = _preprocess(cs, job, "WITH_VULKAN")
+        processed = _preprocess(cs, job, "WITH_VULKAN", extra_defines)
     except SystemExit:
         return False
 
@@ -321,6 +325,9 @@ def cook_job(cs, tools, target, job, out_dir, pdb_dir=None):
         return not pdb_dir or _spirv(cs, tools["glslc"], job, pdb_dir / (job.out_name + ".spv"),
                                      debug_source=pdb_dir / (job.out_name + ".glsl"))
 
+    if target == "Metal":
+        return _metal(cs, tools, job, out_dir / (job.out_name + ".metal"))
+
     # D3D12: GLSL -> SPIR-V -> HLSL -> DXBC, as cook_shaders.cook_d3d12.
     with tempfile.TemporaryDirectory() as tmp_dir:
         spv_path  = Path(tmp_dir) / "shader.spv"
@@ -347,12 +354,41 @@ def cook_job(cs, tools, target, job, out_dir, pdb_dir=None):
     return True
 
 
+# Metal: MSL source, compiled by the backend as it loads it (MTLShader.mm).
+# spirv-cross keeps the SPIR-V bindings (--msl-decoration-binding): a block at
+# binding N is buffer(N), a sampler2D texture(N) and sampler(N). Metal allows
+# 16 samplers a stage, and the material textures reach binding 19, so a sampler
+# index is its binding modulo 16 -- no shader uses two bindings 16 apart (the
+# Metal backend binds samplers by the same rule, MTLBindings in MTLPipelineCache.h).
+MSL_SAMPLER_RE = re.compile(r"\[\[sampler\((\d+)\)\]\]")
+
+
+def _metal(cs, tools, job, metal_path):
+    """GLSL -> SPIR-V -> MSL; False (reported) on failure."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        spv_path = Path(tmp_dir) / "shader.spv"
+        if not _spirv(cs, tools["glslc"], job, spv_path, extra_defines={"WITH_METAL": "1"}):
+            return False
+        cross_args = [tools["spirv-cross"], "--msl", "--msl-version", cs.MSL_VERSION, "--msl-decoration-binding",
+                      "--msl-pad-fragment-output", str(spv_path), "--output", str(metal_path)]
+        result = subprocess.run(cross_args, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"ERROR: spirv-cross failed for {job.label()}:\n{result.stdout}{result.stderr}", file=sys.stderr)
+            return False
+    text = metal_path.read_text(encoding="utf-8")
+    remapped = MSL_SAMPLER_RE.sub(lambda m: f"[[sampler({int(m.group(1)) % 16})]]", text)
+    if remapped != text:
+        metal_path.write_text(remapped, encoding="utf-8")
+    return True
+
+
 def find_tools(cs, target):
     tools = {}
-    if target in ("Vulkan", "D3D12"):
+    if target in ("Vulkan", "D3D12", "Metal"):
         tools["glslc"] = cs._find_glslc()
-    if target == "D3D12":
+    if target in ("D3D12", "Metal"):
         tools["spirv-cross"] = cs._find_spirv_cross()
+    if target == "D3D12":
         tools["dxc"] = cs._find_dxc()
     return tools
 
@@ -590,7 +626,7 @@ def cook(cs, target, src_paths, out_root=None, subdir="", defaults=False, cache=
         tools = find_tools(cs, target)
         out_dir = Path(out_root) / target if out_root and not cache else Path(tmp_dir) / target
         out_dir.mkdir(parents=True, exist_ok=True)
-        pdb_dir = Path(pdb) / target if pdb and target != "OpenGL" else None
+        pdb_dir = Path(pdb) / target if pdb and target not in ("OpenGL", "Metal") else None
 
         print(f"[{target}] {len(jobs)} shader(s) -> {cache or (out_dir if out_root else pdb_dir)}"
               + (f" (debug info -> {pdb_dir})" if pdb_dir and (cache or out_root) else ""))
@@ -628,7 +664,7 @@ def cook(cs, target, src_paths, out_root=None, subdir="", defaults=False, cache=
 def main():
     parser = argparse.ArgumentParser(description="Check or cook engine shaders and material functions.")
     parser.add_argument("-check", nargs="+", metavar="FILE", help="compile these to SPIR-V and report errors")
-    parser.add_argument("-target", choices=("OpenGL", "Vulkan", "D3D12"), help="cook for this platform")
+    parser.add_argument("-target", choices=("OpenGL", "Vulkan", "D3D12", "Metal"), help="cook for this platform")
     parser.add_argument("-src", action="append", metavar="PATH", help="a shader or material function, or a directory of them (repeatable)")
     parser.add_argument("-out", metavar="DIR", help="cooked output root; <Platform>/ is created below it")
     parser.add_argument("-subdir", default="", metavar="NAME", help="a folder below <Platform>/ for loose .mtl.glsl files and -defaults (the runtime uses Materials)")

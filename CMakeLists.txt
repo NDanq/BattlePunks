@@ -8,6 +8,13 @@ endif()
 
 project(NimbleEngine VERSION 0.1 LANGUAGES CXX)
 
+# On a Mac the first Python framework found is Xcode's 3.9, older than the cook
+# scripts need (NimbleCook below): search frameworks last, for every
+# find_package(Python3) in the tree, so Homebrew's python3 wins.
+if(APPLE AND NOT DEFINED Python3_FIND_FRAMEWORK)
+    set(Python3_FIND_FRAMEWORK LAST)
+endif()
+
 # ===========================================================================
 # NimbleEngine -- the engine-level aggregate.
 #
@@ -1042,7 +1049,7 @@ endif()
 # Single-config only (needs CMAKE_RUNTIME_OUTPUT_DIRECTORY), as the copy it
 # replaces was.
 if(TARGET GDI AND CMAKE_RUNTIME_OUTPUT_DIRECTORY
-   AND (GDI_WITH_OPENGL OR GDI_WITH_VULKAN OR GDI_WITH_D3D12))
+   AND (GDI_WITH_OPENGL OR GDI_WITH_VULKAN OR GDI_WITH_D3D12 OR GDI_WITH_METAL))
     # Packaged: staged into the Engine pack's folder, not beside the executable.
     set(NM_SHADER_ROOT "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
     if(NIMBLE_PACKAGE_CONTENT)
@@ -1158,9 +1165,11 @@ set_target_properties(NimblePak PROPERTIES FOLDER "Engine")
 # so it is the one tool that needs Python and the shader toolchain; the build
 # needs neither. It defaults to this tree's GDI backends, Engine folder and
 # Python (-target, -engine and -python override them).
-find_package(Python3 COMPONENTS Interpreter QUIET)
+# 3.10 or later: the cook scripts use Path.write_text(newline=). Frameworks
+# are searched last on a Mac (Python3_FIND_FRAMEWORK, set at the top).
+find_package(Python3 3.10 COMPONENTS Interpreter QUIET)
 set(NM_COOK_TARGETS)
-foreach(NM_COOK_PLATFORM OpenGL Vulkan D3D12)
+foreach(NM_COOK_PLATFORM OpenGL Vulkan D3D12 Metal)
     string(TOUPPER "${NM_COOK_PLATFORM}" NM_COOK_PLATFORM_UPPER)
     if(GDI_WITH_${NM_COOK_PLATFORM_UPPER})
         list(APPEND NM_COOK_TARGETS ${NM_COOK_PLATFORM})

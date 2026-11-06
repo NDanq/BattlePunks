@@ -1,58 +1,155 @@
-#include "Public/GDI/Metal/MetalDynamicGDI.h"
+#include "Private/GDI/Metal/MTLInternal.h"
+
 #include <algorithm>
-#include "Public/GDI/Metal/MTLDevice.h"
-#include "Public/GDI/Metal/MTLSync.h"
-#include "Public/GDI/Metal/MTLShader.h"
-#include "Public/GDI/Metal/MTLTexture.h"
-#include "Public/GDI/Metal/MTLMesh.h"
-#include "Public/GDI/Metal/MTLRenderTarget.h"
-#include "Public/GDI/Metal/MTLCommandManager.h"
-#include "Public/GDI/Metal/MTLSwapchain.h"
-#include "Private/GDI/Metal/MTLPipelineCache.h"
-#include "Private/GDI/Metal/MTLUtil.h"
+#include <cstring>
+
+#include "Private/GDI/GDICorePack.h"
 #include "Public/GDI/GDIShader.h"
 #include "Public/GDI/GDIView.h"
-
-
-#include <cstring>
-#include <cstdlib>
 #include "Public/GDI/GDILog.h"
+#include "Public/GDI/Metal/MTLSync.h"
 
-// Qt types used by this file. These were arriving implicitly through
-// Public/Odessa.h until GDI stopped including application headers;
-// they are explicit now, and each one disappears as its type converts.
-#include <string>
-#include <unordered_map>
-#include "Public/Core/CoreString.h"
+using namespace EngineCore;
 
-extern GDISync* GSync;
+/*
+ * The Metal driver. Its shape follows D3D12DynamicGDI, with Metal's encoder
+ * model underneath:
+ *
+ *  - PASSES OPEN LAZILY. SetRenderTargets only records the targets; the first
+ *    draw opens a render encoder on them. A Clear before that becomes the
+ *    pass's load action (no draw needed); a Clear after ends the encoder and
+ *    the next pass loads with a clear. Anything that is not a draw -- a
+ *    dispatch, a buffer update, a copy, new targets -- ends the encoder first,
+ *    and a pass still waiting to clear is opened and closed so the clear
+ *    happens in order.
+ *  - FRAMES IN FLIGHT: [Rendering] FramesInFlight blocks may run on the GPU at
+ *    once; BeginRendering waits for the oldest. Each slot has its own upload
+ *    ring for blocks and instance data.
+ *  - LIFETIMES: command buffers retain what they reference, so a resource
+ *    released while the GPU still reads it lives until that work is done --
+ *    no deferred-destruction queues.
+ */
 
 // ===========================================================================
-//  MetalGDIContext
+// MetalState helpers
 // ===========================================================================
 
-MetalGDIContext::MetalGDIContext()
+id<MTLRenderCommandEncoder> MetalState::RenderEncoder()
 {
-    ContextType = GDIContext::MetalContext;
+    if(Encoder) return Encoder;
+    if(!Cmd || !bPassBound || ColorCount == 0 || !Colors[0] || !Colors[0]->GetColor()) return nil;
+
+    MTLRenderPassDescriptor* Pass = [MTLRenderPassDescriptor renderPassDescriptor];
+    for(uint32_t Index = 0; Index < ColorCount; ++Index)
+    {
+        MTLRenderPassColorAttachmentDescriptor* Color = Pass.colorAttachments[Index];
+        Color.texture     = Colors[Index]->GetColor();
+        Color.loadAction  = bClearColor ? MTLLoadActionClear : MTLLoadActionLoad;
+        Color.clearColor  = ClearColor;
+        Color.storeAction = MTLStoreActionStore;
+        Colors[Index]->MarkContent();
+    }
+    if(DepthRT && DepthRT->GetDepth())
+    {
+        Pass.depthAttachment.texture     = DepthRT->GetDepth();
+        Pass.depthAttachment.loadAction  = bClearDepth ? MTLLoadActionClear : MTLLoadActionLoad;
+        Pass.depthAttachment.clearDepth  = ClearDepth;
+        Pass.depthAttachment.storeAction = MTLStoreActionStore;
+    }
+    bClearColor = false;
+    bClearDepth = false;
+
+    Encoder = [Cmd renderCommandEncoderWithDescriptor:Pass];
+    if(!Encoder) return nil;
+    Bound.Forget();
+
+    // Counter-clockwise on the target as stored is front (EGDICullMode), as D3D12's FrontCounterClockwise.
+    [Encoder setFrontFacingWinding:MTLWindingCounterClockwise];
+
+    // The viewport and scissor, inside the attachment (Metal refuses a scissor past its edge).
+    const NSUInteger Width  = Colors[0]->GetColor().width;
+    const NSUInteger Height = Colors[0]->GetColor().height;
+    [Encoder setViewport:Viewport];
+    MTLScissorRect Clipped = Scissor;
+    Clipped.x      = std::min<NSUInteger>(Clipped.x, Width);
+    Clipped.y      = std::min<NSUInteger>(Clipped.y, Height);
+    Clipped.width  = std::min<NSUInteger>(Clipped.width, Width - Clipped.x);
+    Clipped.height = std::min<NSUInteger>(Clipped.height, Height - Clipped.y);
+    if(Clipped.width == 0 || Clipped.height == 0)
+    {
+        Clipped = MTLScissorRect{ 0, 0, 0, 0 };   // a zero scissor draws nothing, as asked
+    }
+    [Encoder setScissorRect:Clipped];
+    return Encoder;
 }
 
-MetalGDIContext::~MetalGDIContext()
+void MetalState::EndPass()
 {
-    // Base ~GDIContext deletes the QOffscreenSurface.
+    if(!Encoder && Cmd && bPassBound && (bClearColor || bClearDepth))
+    {
+        RenderEncoder();   // opened with its clear as the load action, so the clear happens
+    }
+    if(Encoder)
+    {
+        [Encoder endEncoding];
+        Encoder = nil;
+    }
+    Bound.Forget();
+}
+
+MTLUploadRing::Allocation MetalState::Upload(const void* InData, const NSUInteger InBytes, const NSUInteger InPadTo)
+{
+    const NSUInteger Bytes = std::max<NSUInteger>({ InBytes, InPadTo, 16 });
+    MTLUploadRing::Allocation Out;
+    if(Cmd)
+    {
+        Out = Ring.Allocate(FrameSlot, Bytes);
+    }
+    else
+    {
+        // Outside a block: its own buffer, kept alive by the command buffer that reads it.
+        Out.Buffer = [Device newBufferWithLength:Bytes options:MTLResourceStorageModeShared];
+        Out.Offset = 0;
+        Out.CPU    = Out.Buffer.contents;
+    }
+    if(Out.CPU)
+    {
+        if(InData && InBytes) std::memcpy(Out.CPU, InData, InBytes);
+        if(Bytes > InBytes)   std::memset(static_cast<uint8_t*>(Out.CPU) + InBytes, 0, Bytes - InBytes);
+    }
+    return Out;
+}
+
+id<MTLCommandBuffer> MetalState::CommandBufferForWork(bool& bOutTransient)
+{
+    if(Cmd)
+    {
+        EndPass();
+        bOutTransient = false;
+        return Cmd;
+    }
+    bOutTransient = true;
+    id<MTLCommandBuffer> Transient = [Queue commandBuffer];
+    Transient.label = @"Nimble.Immediate";
+    return Transient;
 }
 
 // ===========================================================================
-//  Life-cycle
+// Lifetime
 // ===========================================================================
 
-MetalDynamicGDI::MetalDynamicGDI(EngineCore::WindowHandle InWindow)
+MetalDynamicGDI::MetalDynamicGDI(WindowHandle InWindow)
     : GDIDynamicDriver(InWindow)
+    , S(new MetalState())
 {
+    S->Driver = this;
 }
 
 MetalDynamicGDI::~MetalDynamicGDI()
 {
     Destroy();
+    delete S;
+    S = nullptr;
 }
 
 void MetalDynamicGDI::AssignContext(GDIContext* InContext)
@@ -63,233 +160,261 @@ void MetalDynamicGDI::AssignContext(GDIContext* InContext)
 void MetalDynamicGDI::Allocate()
 {
     if(bInitialized) return;
+    SetThreadID(appThreadID());
 
-    SetThreadID(EngineCore::appThreadID());
-
-    DeviceObj = new MTLDevice();
-    if(!DeviceObj->Initialize())
+    if(!Context || Context->ContextType != GDIContext::MetalContext)
     {
-        GDI_LOG("[MetalDynamicGDI] Metal device initialization failed.")
-        delete DeviceObj;
-        DeviceObj = nullptr;
+        GDI_LOG_ERROR("[MetalDynamicGDI] No MetalGDIContext assigned.")
         return;
     }
 
-    CommandManager = new MTLCommandManager();
-    if(!CommandManager->Initialize(DeviceObj))
+    @autoreleasepool
     {
-        GDI_LOG("[MetalDynamicGDI] CommandManager init failed.")
-        return;
+        S->Device = MTLCreateSystemDefaultDevice();
+        if(!S->Device)
+        {
+            GDI_LOG_ERROR("[MetalDynamicGDI] No Metal device.")
+            return;
+        }
+        S->Queue = [S->Device newCommandQueue];
+        S->Queue.label = @"Nimble.Graphics";
+
+        S->FramesInFlight = GDIGetConfiguredFramesInFlight();
+        FramesInFlight    = S->FramesInFlight;
+        FrameSlot         = 0;
+        S->FrameSlot      = 0;
+        S->FrameSemaphore = dispatch_semaphore_create(long(S->FramesInFlight));
+        S->Ring.Initialize(S->Device, S->FramesInFlight);
+        S->Pipelines = new MTLPipelineCache(S->Device);
+
+        // What a draw samples where nothing is bound (D3D12's null texture: 1x1, zeroed).
+        Image NullImage(1, 1, EImageFormat::RGBA8);
+        S->NullTexture = new MTLTextureResourceImpl(S, nullptr, &NullImage, 1, GDI_TB_Repeat, GDI_TF_Nearest);
+
+        bInitialized = true;
+        GDI_LOG("[MetalDynamicGDI] " + std::string([[S->Device name] UTF8String]) + ", "
+                + std::to_string(S->FramesInFlight) + " frame(s) in flight ([Rendering] FramesInFlight).")
     }
-
-    PipelineCache = new MTLPipelineCache();
-    if(!PipelineCache->Initialize(DeviceObj))
-    {
-        GDI_LOG("[MetalDynamicGDI] PipelineCache init failed.")
-        return;
-    }
-
-    // Each window's layer is adopted lazily on its first present (UI thread) --
-    // the same deferral the Vulkan backend applies to surface creation.
-
-    // Bind the global GDISync to the device so the renderer can fence on it.
-    if(auto* Sync = dynamic_cast<MTLSync*>(GSync))
-    {
-        Sync->Bind(DeviceObj);
-    }
-
-    // 1x1 transparent fallback for shaders that declare a sampler but were handed
-    // no texture -- without it the draw would sample an unbound slot.
-    {
-        EngineCore::Image NullImg(1, 1, EngineCore::EImageFormat::RGBA8);
-        // Zero-initialised by construction, i.e. transparent black -- the same
-        // thing QImage::fill(Qt::transparent) produced.
-        NullTexture = new MTLTextureResource(DeviceObj, NullImg, GDI_TB_Repeat, GDI_TF_Nearest);
-    }
-
-    CurrentStateData = new MTLCurrentStateData();
-
-    bInitialized = true;
-    GDI_LOG("[MetalDynamicGDI] Allocate complete.")
 }
 
 void MetalDynamicGDI::Destroy()
 {
-    /* BEFORE the early-out, and before the device goes: cached shaders and
-     * textures hold a raw device pointer -- see ~GDIDynamicDriver. */
+    // Before the device goes: cached shaders and textures hold Metal objects (GDI.h).
     ReleaseCachedResources();
+    if(!S || !S->Device) return;
 
-    if(!bInitialized) return;
-
-    WaitIdle();
-
-    if(GSync)
+    if(S->Cmd)
     {
-        GSync->DestroySync();
+        S->EndPass();
+        [S->Cmd commit];
+        [S->Cmd waitUntilCompleted];
+        S->Cmd = nil;
     }
+    WaitForCommitted();
 
-    if(CurrentStateData)
-    {
-        EndActiveEncoder();
-        delete CurrentStateData;
-        CurrentStateData = nullptr;
-    }
-
-    if(ScreenMesh)  { ScreenMesh->Release();  delete ScreenMesh;  ScreenMesh  = nullptr; }
-    if(NullTexture) { NullTexture->Release(); delete NullTexture; NullTexture = nullptr; }
-
-    for(auto& Entry : Swapchains) { Entry.second->Shutdown(); delete Entry.second; }
-    Swapchains.clear();
-    if(PipelineCache)  { PipelineCache->Shutdown();  delete PipelineCache;  PipelineCache  = nullptr; }
-    if(CommandManager) { CommandManager->Shutdown(); delete CommandManager; CommandManager = nullptr; }
-
-    if(DeviceObj)
-    {
-        DeviceObj->Shutdown();
-        delete DeviceObj;
-        DeviceObj = nullptr;
-    }
-
+    if(S->ScreenMesh)  { S->ScreenMesh->Release(); delete S->ScreenMesh; S->ScreenMesh = nullptr; }
+    if(S->NullTexture) { delete S->NullTexture; S->NullTexture = nullptr; }
+    for(auto& Entry : S->Swapchains) { delete Entry.second; }
+    S->Swapchains.clear();
+    S->LiveRenderTargets.clear();
+    delete S->Pipelines;
+    S->Pipelines = nullptr;
+    S->FrameSemaphore = nullptr;
+    S->Queue  = nil;
+    S->Device = nil;
     bInitialized = false;
 }
 
 void MetalDynamicGDI::SwapBuffers()
 {
-    // No-op on the render thread. Present is performed by the UI thread via
-    // PresentToWindow, exactly as in the Vulkan backend.
 }
 
 void MetalDynamicGDI::Flush()
 {
-    // No-op: EndRendering already commits the frame.
 }
 
-void MetalDynamicGDI::WaitIdle()
+void MetalDynamicGDI::SetResizing(const bool bInResizing)
 {
-    if(CommandManager) CommandManager->WaitIdle();
+    S->bResizing.store(bInResizing);
+}
+
+bool MetalDynamicGDI::CheckError(const std::string&)
+{
+    return false;
 }
 
 // ===========================================================================
-//  Present
+// Frames
 // ===========================================================================
 
-void MetalDynamicGDI::PresentToWindow(EngineCore::WindowHandle InWindow)
+void MetalDynamicGDI::BeginRendering()
 {
-    // The renderer always rebinds Main right before EndRendering, so the last
-    // bound RT is the main RT. Reading it from the UI thread is a benign stale
-    // read at worst -- and unlike Vulkan there is no layout to corrupt, because
-    // ordering against the render thread comes from both submitting to the same
-    // MTLCommandQueue (see the class comment).
-    PresentToSwapchain(InWindow, CurrentStateData ? CurrentStateData->ActiveRenderTarget : nullptr);
+    if(!bInitialized || S->Cmd) return;
+
+    // The slot's last frame must be done before its upload ring is reused.
+    dispatch_semaphore_wait(S->FrameSemaphore, DISPATCH_TIME_FOREVER);
+    FrameSlot = S->FrameSlot;
+    S->Ring.Rewind(S->FrameSlot);
+
+    S->Cmd = [S->Queue commandBuffer];
+    S->Cmd.label = @"Nimble.Frame";
+    S->bPassBound  = false;
+    S->ColorCount  = 0;
+    S->DepthRT     = nullptr;
+    S->bClearColor = false;
+    S->bClearDepth = false;
+    S->DebugGroupDepth = 0;
+    S->Bound.Forget();
 }
 
-void MetalDynamicGDI::PresentRenderTargetToWindow(EngineCore::WindowHandle InWindow, GDIRenderTarget* InSource)
+void MetalDynamicGDI::EndRendering()
 {
-    PresentToSwapchain(InWindow, static_cast<MTLRenderTarget*>(InSource));
+    if(!S->Cmd) return;
+    S->EndPass();
+    while(S->DebugGroupDepth > 0)
+    {
+        [S->Cmd popDebugGroup];
+        --S->DebugGroupDepth;
+    }
+
+    dispatch_semaphore_t Semaphore = S->FrameSemaphore;
+    [S->Cmd addCompletedHandler:^(id<MTLCommandBuffer>) { dispatch_semaphore_signal(Semaphore); }];
+    [S->Cmd commit];
+    {
+        std::lock_guard<std::mutex> Lock(S->CommitLock);
+        S->LastCommitted = S->Cmd;
+    }
+    S->Cmd        = nil;
+    S->bPassBound = false;
+    S->FrameSlot  = (S->FrameSlot + 1) % S->FramesInFlight;
+    S->bResizing.store(false);
 }
 
-void MetalDynamicGDI::PresentToSwapchain(EngineCore::WindowHandle InWindow, MTLRenderTarget* InRT)
+void MetalDynamicGDI::FlushAndWait(const bool bInResume)
 {
-    if(!bInitialized || !InWindow.IsValid() || !InRT) return;
-
-    // Skip while render targets are being resized -- they're mid-recreation on the
-    // render thread. EndRendering clears this once a full frame has been rendered
-    // into the new targets.
-    if(bResizing.load()) return;
-
-    // Nothing committed yet: there is no frame to show.
-    if(FramesCommitted.load() == 0) return;
-
-    if(MTLSwapchain* Swapchain = FindOrCreateSwapchain(InWindow))
+    if(!S->Cmd)
     {
-        Swapchain->PresentFrame(InRT);
+        WaitForCommitted();
+        return;
+    }
+
+    MTLRenderTargetImpl* Colors[GDI_MAX_COLOR_TARGETS] = {};
+    const uint32_t       ColorCount = S->ColorCount;
+    std::copy(S->Colors, S->Colors + GDI_MAX_COLOR_TARGETS, Colors);
+    MTLRenderTargetImpl* Depth  = S->DepthRT;
+    const bool           bBound = S->bPassBound;
+
+    S->EndPass();
+    const int Groups = S->DebugGroupDepth;
+    for(int Each = 0; Each < Groups; ++Each) { [S->Cmd popDebugGroup]; }
+    [S->Cmd commit];
+    [S->Cmd waitUntilCompleted];
+    {
+        std::lock_guard<std::mutex> Lock(S->CommitLock);
+        S->LastCommitted = S->Cmd;
+    }
+
+    // The block goes on in a new command buffer, in the same frame slot.
+    S->Cmd = [S->Queue commandBuffer];
+    S->Cmd.label = @"Nimble.Frame";
+    S->DebugGroupDepth = 0;
+    S->bPassBound = false;
+    S->ColorCount = 0;
+    S->DepthRT    = nullptr;
+    if(bInResume && bBound && ColorCount > 0)
+    {
+        std::copy(Colors, Colors + GDI_MAX_COLOR_TARGETS, S->Colors);
+        S->ColorCount = ColorCount;
+        S->DepthRT    = Depth;
+        S->bPassBound = true;
     }
 }
 
-MTLSwapchain* MetalDynamicGDI::FindOrCreateSwapchain(EngineCore::WindowHandle InWindow)
+void MetalDynamicGDI::WaitForCommitted()
 {
-    MTLSwapchain* Swapchain = nullptr;
-    for(const auto& Entry : Swapchains)
+    id<MTLCommandBuffer> Last = nil;
     {
-        if(Entry.first == InWindow.Native) { Swapchain = Entry.second; break; }
+        std::lock_guard<std::mutex> Lock(S->CommitLock);
+        Last = S->LastCommitted;
     }
-    if(!Swapchain)
-    {
-        Swapchain = new MTLSwapchain();
-        Swapchains.emplace_back(InWindow.Native, Swapchain);
-    }
-
-    if(!Swapchain->IsValid())
-    {
-        // Initialize() logs and latches unrecoverable failures itself, so this can
-        // safely run every frame: a not-yet-created platform window retries, a
-        // misconfigured one gives up after the first attempt.
-        if(Swapchain->HasFailed() || !Swapchain->Initialize(DeviceObj, InWindow))
-        {
-            return nullptr;
-        }
-    }
-    return Swapchain;
+    if(Last) [Last waitUntilCompleted];
 }
 
-void MetalDynamicGDI::ReleaseWindow(EngineCore::WindowHandle InWindow)
+void MTLSync::WaitSync()
 {
-    for(auto It = Swapchains.begin(); It != Swapchains.end(); ++It)
-    {
-        if(It->first == InWindow.Native)
-        {
-            It->second->Shutdown();
-            delete It->second;
-            Swapchains.erase(It);
-            return;
-        }
-    }
+    if(!bFenced) return;
+    if(MetalDynamicGDI* Driver = GetMetalDriver()) Driver->WaitForCommitted();
+    bFenced = false;
 }
 
 // ===========================================================================
-//  Render targets
+// Render targets and clears
 // ===========================================================================
 
 GDIRenderTarget* MetalDynamicGDI::CreateRenderTarget(std::string Name, uint InWidth, uint InHeight)
 {
-    if(!DeviceObj) return nullptr;
-    auto* RT = new MTLRenderTarget(DeviceObj, Name, InWidth, InHeight);
-    RegisterRenderTarget(RT);
-    return RT;
+    return CreateRenderTargetFormat(std::move(Name), InWidth, InHeight, GDI_RTF_RGBA8);
 }
 
 GDIRenderTarget* MetalDynamicGDI::CreateRenderTargetFormat(std::string Name, uint InWidth, uint InHeight, EGDIRenderTargetFormat InFormat)
 {
-    if(!DeviceObj) return nullptr;
-    auto* RT = new MTLRenderTarget(DeviceObj, Name, InWidth, InHeight, InFormat == GDI_RTF_RGBA16F);
-    RegisterRenderTarget(RT);
+    if(!bInitialized) return nullptr;
+    auto* RT = new MTLRenderTargetImpl(S, Name, InWidth, InHeight, MTLUtil::RenderTargetFormat(InFormat));
+    S->LiveRenderTargets.insert(RT);
     return RT;
 }
 
 bool MetalDynamicGDI::SupportsRenderTargetFormat(const EGDIRenderTargetFormat InFormat) const
 {
-    /* RGBA16Float is renderable, blendable and filterable on every Metal GPU family. RGBA32Float
-     * and R32Float do not filter on Apple GPUs, so the full floats are not offered: callers fall
-     * back to RGBA16F. */
-    return InFormat == GDI_RTF_RGBA8 || InFormat == GDI_RTF_RGBA16F;
+    return InFormat == GDI_RTF_RGBA8 || InFormat == GDI_RTF_RGBA16F || InFormat == GDI_RTF_RGB10A2
+        || InFormat == GDI_RTF_RGBA32F || InFormat == GDI_RTF_R32F;
 }
 
 void MetalDynamicGDI::SetRenderTarget(GDIRenderTarget* InRenderTarget)
 {
-    auto* MTLRT = dynamic_cast<MTLRenderTarget*>(InRenderTarget);
-    if(!MTLRT || !CurrentStateData) return;
-    if(CurrentStateData->CurrentCmd == nullptr) return;
+    SetRenderTargets(&InRenderTarget, 1, InRenderTarget);
+}
 
-    // Everything the Vulkan backend does here -- sweeping every live RT back to
-    // SHADER_READ_ONLY, barriering the new one into COLOR_ATTACHMENT -- has no
-    // Metal counterpart: there are no layouts, and Metal hazard-tracks reads and
-    // writes of these textures across encoders itself. Binding a target is simply
-    // closing the current encoder and opening one on the new attachment.
-    EndActiveEncoder();
+namespace
+{
+    MTLRenderTargetImpl* GActiveTarget = nullptr;   // colour 0 of the last targets bound: what PresentToWindow shows
+}
 
-    // A target that has never been rendered into holds uninitialized private
-    // memory, so its first pass must clear rather than load.
-    BeginEncoderForRT(MTLRT, /*bClear*/ !MTLRT->HasContent(), EngineCore::Color(0, 0, 0, 0));
+void MetalDynamicGDI::SetRenderTargets(GDIRenderTarget* const* InColors, uint InCount, GDIRenderTarget* InDepthFrom)
+{
+    if(!S->Cmd || !InColors || InCount == 0) return;
+    InCount = std::min<uint>(InCount, GDI_MAX_COLOR_TARGETS);
+
+    MTLRenderTargetImpl* Colors[GDI_MAX_COLOR_TARGETS] = {};
+    for(uint Index = 0; Index < InCount; ++Index)
+    {
+        Colors[Index] = dynamic_cast<MTLRenderTargetImpl*>(InColors[Index]);
+        if(!Colors[Index] || !Colors[Index]->IsValid()) return;
+        if(Colors[Index]->GetWidth() != Colors[0]->GetWidth() || Colors[Index]->GetHeight() != Colors[0]->GetHeight())
+        {
+            GDI_LOG("[MetalDynamicGDI] SetRenderTargets: targets of different sizes; nothing bound")
+            return;
+        }
+    }
+    auto* Depth = dynamic_cast<MTLRenderTargetImpl*>(InDepthFrom);
+    if(Depth && (!Depth->GetDepth() || Depth->GetWidth() != Colors[0]->GetWidth() || Depth->GetHeight() != Colors[0]->GetHeight()))
+    {
+        Depth = nullptr;
+    }
+
+    S->EndPass();
+    std::copy(Colors, Colors + GDI_MAX_COLOR_TARGETS, S->Colors);
+    S->ColorCount  = InCount;
+    S->DepthRT     = Depth;
+    S->bPassBound  = true;
+    S->bClearColor = false;
+    S->bClearDepth = false;
+    if(Depth && Depth->TakeDepthNeedsClear())
+    {
+        S->bClearDepth = true;
+        S->ClearDepth  = 1.0;
+    }
+    GActiveTarget = Colors[0];
 }
 
 void MetalDynamicGDI::ReleaseRenderTarget(GDIRenderTarget* InRenderTarget)
@@ -297,636 +422,629 @@ void MetalDynamicGDI::ReleaseRenderTarget(GDIRenderTarget* InRenderTarget)
     if(InRenderTarget) InRenderTarget->Release();
 }
 
-void MetalDynamicGDI::RegisterRenderTarget(MTLRenderTarget* InRT)
+void MetalDynamicGDI::ForgetRenderTarget(MTLRenderTargetImpl* InRT)
 {
-    LiveRenderTargets.insert(InRT);
+    if(!S) return;
+    S->LiveRenderTargets.erase(InRT);
+    bool bBound = S->DepthRT == InRT;
+    for(uint32_t Index = 0; Index < S->ColorCount; ++Index) { bBound = bBound || S->Colors[Index] == InRT; }
+    if(bBound)
+    {
+        S->EndPass();
+        S->bPassBound = false;
+        S->ColorCount = 0;
+        S->DepthRT    = nullptr;
+    }
+    if(GActiveTarget == InRT) GActiveTarget = nullptr;
 }
 
-void MetalDynamicGDI::UnregisterRenderTarget(MTLRenderTarget* InRT)
+void MetalDynamicGDI::Clear(uint InClearMode, Color InClearColor, float InDepth, uint /*InStencilMask*/)
 {
-    LiveRenderTargets.remove(InRT);
-
-    // Never leave the current state pointing at a destroyed target -- the UI-thread
-    // present reads ActiveRenderTarget.
-    if(CurrentStateData && CurrentStateData->ActiveRenderTarget == InRT)
+    if(!S->Cmd || !S->bPassBound) return;
+    // An open pass ends; the next opens with the clear as its load action.
+    if(S->Encoder) S->EndPass();
+    if(InClearMode & CM_Color)
     {
-        EndActiveEncoder();
-        CurrentStateData->ActiveRenderTarget = nullptr;
+        S->bClearColor = true;
+        S->ClearColor  = MTLClearColorMake(InClearColor.Rf(), InClearColor.Gf(), InClearColor.Bf(), InClearColor.Af());
+    }
+    if((InClearMode & CM_Depth) && S->DepthRT)
+    {
+        S->bClearDepth = true;
+        S->ClearDepth  = InDepth;
     }
 }
 
-// ===========================================================================
-//  Mid-frame flush / resolve
-// ===========================================================================
-
-void MetalDynamicGDI::FlushForReadback(bool bResumeActiveRegion)
+void MetalDynamicGDI::SetViewport(uint InX, uint InY, uint InWidth, uint InHeight)
 {
-    if(!CommandManager || !CurrentStateData || !DeviceObj) return;
-    if(CurrentStateData->CurrentCmd == nullptr) return;   // no frame recording
-
-    MTLRenderTarget*  RT         = CurrentStateData->ActiveRenderTarget;
-    const bool        bWasActive = CurrentStateData->bRenderingActive;
-
-    EndActiveEncoder();
-    CloseDebugGroups();
-    CommandManager->EndFrame();
-    CommandManager->Commit();
-
-    // Block until the flushed work is complete -- the readback (or the resize that
-    // is about to destroy this target) depends on it having actually executed.
-    CommandManager->WaitIdle();
-
-    MTLCommandBufferRef NewCmd = CommandManager->BeginFrame();
-    CurrentStateData->CurrentCmd         = NewCmd;
-    CurrentStateData->CurrentEncoder     = nullptr;
-    CurrentStateData->ActiveRenderTarget = nullptr;
-    CurrentStateData->bRenderingActive   = false;
-    CurrentStateData->DebugLabelDepth    = 0;
-
-    // Re-open the pass on the RT that was active so the frame continues exactly as
-    // before the flush (loadAction Load preserves its contents). Skipped for a
-    // resize, where the target is about to be destroyed.
-    if(bResumeActiveRegion && bWasActive && RT && NewCmd != nullptr)
+    // Rows from the top, as Metal's viewport counts them (GDI.h's orientation).
+    S->Viewport = MTLViewport{ double(InX), double(InY), double(std::max<uint>(InWidth, 1)), double(std::max<uint>(InHeight, 1)), 0.0, 1.0 };
+    S->Scissor  = MTLScissorRect{ InX, InY, InWidth, InHeight };
+    if(S->Encoder)
     {
-        BeginEncoderForRT(RT, /*bClear*/ false, EngineCore::Color(0, 0, 0, 0));
+        [S->Encoder setViewport:S->Viewport];
+        SetScissorRect(InX, InY, InWidth, InHeight);
     }
 }
 
-void MetalDynamicGDI::RecordResolve(MTLRenderTarget* Src, MTLRenderTarget* Dst)
+void MetalDynamicGDI::SetScissorRect(uint InX, uint InY, uint InWidth, uint InHeight)
 {
-    if(!Src || !Dst || !CurrentStateData || !DeviceObj) return;
-    // Self-resolve is a no-op: the OpenGL path self-blits an FBO onto itself, but a
-    // same-texture full-extent copy is invalid here (as it is in Vulkan).
-    if(Src == Dst) return;
-    if(CurrentStateData->CurrentCmd == nullptr) return;
-    if(!Src->IsValid() || !Dst->IsValid())      return;
-    if(!Src->HasContent())                      return;
+    S->Scissor = MTLScissorRect{ InX, InY, InWidth, InHeight };
+    if(S->Encoder && S->ColorCount > 0 && S->Colors[0])
+    {
+        const NSUInteger W = S->Colors[0]->GetColor().width, H = S->Colors[0]->GetColor().height;
+        MTLScissorRect Clipped = S->Scissor;
+        Clipped.x      = std::min<NSUInteger>(Clipped.x, W);
+        Clipped.y      = std::min<NSUInteger>(Clipped.y, H);
+        Clipped.width  = std::min<NSUInteger>(Clipped.width, W - Clipped.x);
+        Clipped.height = std::min<NSUInteger>(Clipped.height, H - Clipped.y);
+        [S->Encoder setScissorRect:Clipped];
+    }
+}
 
-    // A copy cannot be recorded inside a render encoder.
-    EndActiveEncoder();
-    CurrentStateData->ActiveRenderTarget = nullptr;
+void MetalDynamicGDI::SetDepthState(IDepthStateDesc InDesc)   { S->DepthState = InDesc; }
+void MetalDynamicGDI::SetBlendState(IBlendStateDesc InDesc)   { S->BlendState = InDesc; }
+void MetalDynamicGDI::SetStencilState(IStencilStateDesc InDesc) { S->StencilState = InDesc; }
+void MetalDynamicGDI::SetColorMask(EColorMask InMask)         { S->ColorMask = InMask; }
 
-    const NSUInteger W = std::min(Src->GetWidth(),  Dst->GetWidth());
-    const NSUInteger H = std::min(Src->GetHeight(), Dst->GetHeight());
-    if(W == 0 || H == 0) return;
+void MetalDynamicGDI::BeginDrawEvent(const std::string& EventName)
+{
+    if(!S->Cmd || !GDIShaderDebugEnabled()) return;
+    [S->Cmd pushDebugGroup:MTLUtil::ToNS(EventName)];
+    ++S->DebugGroupDepth;
+}
 
-    id<MTLBlitCommandEncoder> Blit =
-        [(id<MTLCommandBuffer>)CurrentStateData->CurrentCmd blitCommandEncoder];
-    [Blit copyFromTexture:(id<MTLTexture>)Src->GetTexture()
-              sourceSlice:0
-              sourceLevel:0
-             sourceOrigin:MTLOriginMake(0, 0, 0)
-               sourceSize:MTLSizeMake(W, H, 1)
-                toTexture:(id<MTLTexture>)Dst->GetTexture()
-         destinationSlice:0
-         destinationLevel:0
-        destinationOrigin:MTLOriginMake(0, 0, 0)];
-    [Blit endEncoding];
-
-    Dst->SetHasContent(true);
+void MetalDynamicGDI::EndDrawEvent()
+{
+    if(!S->Cmd || S->DebugGroupDepth <= 0) return;
+    [S->Cmd popDebugGroup];
+    --S->DebugGroupDepth;
 }
 
 // ===========================================================================
-//  Shader resources
+// Resources
 // ===========================================================================
 
 GDIShaderResource* MetalDynamicGDI::CreateShaderResource(EShaderType InType, const std::string& InSrcPath)
 {
-    if(!DeviceObj) return nullptr;
-    const std::string MslPath = ProcessShaderFromSource(InSrcPath, ERenderPlatform::ERP_Metal);
-    return new MTLShaderResource(DeviceObj, InType, MslPath);
-}
-
-void MetalDynamicGDI::SetBoundShader(GDIShader* In_VS, GDIShader* In_PS)
-{
-    BoundVertexShader = In_VS;
-    BoundPixelShader  = In_PS;
-    if(!CurrentStateData) return;
-
-    auto ExtractFunction = [](GDIShader* Shader) -> MTLFunctionRef
+    @autoreleasepool
     {
-        if(!Shader || !Shader->Resource) return nullptr;
-        return static_cast<MTLShaderResource*>(Shader->Resource)->GetFunction();
-    };
-    CurrentStateData->BoundVSFunction = ExtractFunction(In_VS);
-    CurrentStateData->BoundFSFunction = ExtractFunction(In_PS);
+        return new MTLShaderResourceImpl(S->Device, InType, ProcessShaderFromSource(InSrcPath, ERP_Metal));
+    }
 }
 
-// ===========================================================================
-//  Mesh creation
-// ===========================================================================
-
-GDIMesh* MetalDynamicGDI::CreateQuadMesh(const float* VertData, const float* TexData,
-                                          const int InNumVerts, const int InNumTexCoords,
-                                          bool bIsInstanced)
+void MetalDynamicGDI::SetBoundShader(GDIShader* InVS, GDIShader* InPS)
 {
-    if(!DeviceObj || !CurrentStateData) return nullptr;
+    BoundVertexShader = InVS;
+    BoundPixelShader  = InPS;
+    S->BoundVS = (InVS && InVS->Resource) ? static_cast<MTLShaderResourceImpl*>(InVS->Resource) : nullptr;
+    S->BoundPS = (InPS && InPS->Resource) ? static_cast<MTLShaderResourceImpl*>(InPS->Resource) : nullptr;
+}
 
+GDIMesh* MetalDynamicGDI::CreateQuadMesh(const float* VertData, const float* TexData, const int InNumVerts, const int InNumTexCoords,
+                                         bool bIsInstanced)
+{
+    if(!bInitialized) return nullptr;
     GDIMesh::ORenderData RenderData;
+    RenderData.Position = static_cast<float*>(malloc(sizeof(float) * size_t(InNumVerts)));
+    std::memcpy(RenderData.Position, VertData, sizeof(float) * size_t(InNumVerts));
+    RenderData.TexCoord = static_cast<float*>(malloc(sizeof(float) * size_t(InNumTexCoords)));
+    std::memcpy(RenderData.TexCoord, TexData, sizeof(float) * size_t(InNumTexCoords));
+    RenderData.NumVertices = uint(InNumVerts);
 
-    const size_t VertArraySize = sizeof(float) * static_cast<size_t>(InNumVerts);
-    RenderData.Position = static_cast<float*>(malloc(VertArraySize));
-    memcpy(RenderData.Position, VertData, VertArraySize);
-
-    const size_t TexArraySize = sizeof(float) * static_cast<size_t>(InNumTexCoords);
-    RenderData.TexCoord = static_cast<float*>(malloc(TexArraySize));
-    memcpy(RenderData.TexCoord, TexData, TexArraySize);
-
-    RenderData.NumVertices = static_cast<uint>(InNumVerts);
-
-    auto* Mesh = new MTLMesh(DeviceObj, CurrentStateData);
+    auto* Mesh = new MTLMeshImpl(S);
     Mesh->SetRenderData(RenderData);
     Mesh->SetSupportsInstanced(bIsInstanced);
     Mesh->InitResource();
     return Mesh;
 }
 
-GDIMesh* MetalDynamicGDI::CreateMesh(const GDIMeshDesc& /*InDesc*/)
+GDIMesh* MetalDynamicGDI::CreateQuadMesh(const float& InWidth, const float& InHeight, bool bIsInstanced)
 {
-    static bool bWarned = false;
-    if(!bWarned)
+    const float HW = InWidth * 0.5f, HH = InHeight * 0.5f;
+    const float Verts[] = { -HW, -HH, 0.f,  -HW, HH, 0.f,  HW, HH, 0.f,  HW, HH, 0.f,  HW, -HH, 0.f,  -HW, -HH, 0.f };
+    const float UVs[]   = { 0.f, 0.f,  0.f, 1.f,  1.f, 1.f,  1.f, 1.f,  1.f, 0.f,  0.f, 0.f };
+    return CreateQuadMesh(Verts, UVs, 18, 12, bIsInstanced);
+}
+
+GDIMesh* MetalDynamicGDI::CreateMesh(const GDIMeshDesc& InDesc)
+{
+    if(!bInitialized) return nullptr;
+    GDIMesh::ORenderData RenderData;
+    if(!GDIMakeIndexedRenderData(InDesc, RenderData)) return nullptr;
+    auto* Mesh = new MTLMeshImpl(S);
+    Mesh->SetRenderData(RenderData);
+    Mesh->InitResource();
+    return Mesh;
+}
+
+GDIMesh* MetalDynamicGDI::CreateDynamicMesh(const uint32_t InMaxVertices, const uint32_t InMaxIndices)
+{
+    if(!bInitialized) return nullptr;
+    auto* Mesh = new MTLMeshImpl(S);
+    if(!Mesh->InitDynamic(InMaxVertices, InMaxIndices, S->FramesInFlight))
     {
-        GDI_LOG("[MetalDynamicGDI] indexed meshes are not supported on Metal yet; meshes draw as quads")
-        bWarned = true;
+        delete Mesh;
+        return nullptr;
     }
-    return nullptr;
+    return Mesh;
 }
 
-GDIMesh* MetalDynamicGDI::CreateQuadMesh(const float& InWidth, const float& InHeight,
-                                          bool bIsInstanced)
+GDITextureResource* MetalDynamicGDI::CreateTextureResource(const Image& InImage, const EGDITextureBorder InBorder, const EGDITextureFilter InFilter)
 {
-    const float HalfWidth  = InWidth  * 0.5f;
-    const float HalfHeight = InHeight * 0.5f;
-
-    const float VertQuadData[] = {
-        -HalfWidth, -HalfHeight, 0.f,
-        -HalfWidth,  HalfHeight, 0.f,
-         HalfWidth,  HalfHeight, 0.f,
-         HalfWidth,  HalfHeight, 0.f,
-         HalfWidth, -HalfHeight, 0.f,
-        -HalfWidth, -HalfHeight, 0.f
-    };
-    const float VertTexData[] = {
-        0.0f, 0.0f,
-        0.0f, 1.0f,
-        1.0f, 1.0f,
-        1.0f, 1.0f,
-        1.0f, 0.0f,
-        0.0f, 0.0f
-    };
-
-    return CreateQuadMesh(VertQuadData, VertTexData, 18, 12, bIsInstanced);
+    if(!bInitialized) return nullptr;
+    @autoreleasepool { return new MTLTextureResourceImpl(S, nullptr, &InImage, 1, InBorder, InFilter); }
 }
 
-// ===========================================================================
-//  Texture creation
-// ===========================================================================
-
-GDITextureResource* MetalDynamicGDI::CreateTextureResource(
-        const EngineCore::Image& InImage,
-        const EGDITextureBorder InBorder,
-        const EGDITextureFilter InFilter)
+GDITextureResource* MetalDynamicGDI::CreateTextureResource(GDITexture2D* InParent, const Image& InImage, const EGDITextureBorder InBorder,
+                                                           const EGDITextureFilter InFilter)
 {
-    if(!DeviceObj) return nullptr;
-    return new MTLTextureResource(DeviceObj, InImage, InBorder, InFilter);
+    if(!bInitialized) return nullptr;
+    @autoreleasepool { return new MTLTextureResourceImpl(S, InParent, &InImage, 1, InBorder, InFilter); }
 }
 
-GDITextureResource* MetalDynamicGDI::CreateTextureResource(
-        GDITexture2D* InParent,
-        const EngineCore::Image& InImage,
-        const EGDITextureBorder InBorder,
-        const EGDITextureFilter InFilter)
+GDITextureResource* MetalDynamicGDI::CreateTextureResource(GDITexture2D* InParent, const EGDITextureBorder InBorder, const EGDITextureFilter InFilter)
 {
-    if(!DeviceObj) return nullptr;
-    return new MTLTextureResource(DeviceObj, InParent, InImage, InBorder, InFilter);
+    if(!bInitialized) return nullptr;
+    return new MTLTextureResourceImpl(S, InParent, InBorder, InFilter);
 }
 
-GDITextureResource* MetalDynamicGDI::CreateTextureResource(
-        GDITexture2D* InParent,
-        const EGDITextureBorder InBorder,
-        const EGDITextureFilter InFilter)
+GDITextureResource* MetalDynamicGDI::CreateTextureResourceMips(const Image* InLevels, const uint32_t InCount, EGDITextureBorder InBorder,
+                                                               EGDITextureFilter InFilter)
 {
-    if(!DeviceObj) return nullptr;
-    return new MTLTextureResource(DeviceObj, InParent, InBorder, InFilter);
+    if(!bInitialized || !InLevels || InCount == 0) return nullptr;
+    @autoreleasepool { return new MTLTextureResourceImpl(S, nullptr, InLevels, InCount, InBorder, InFilter); }
 }
 
-// ===========================================================================
-//  Uniform packing
-//
-//  The byte layouts below are NOT re-derived for Metal: the MSL structs are
-//  transpiled from the very same SPIR-V the Vulkan backend consumes, so
-//  spirv-cross emits std140-compatible layouts and the offsets are identical to
-//  VulkanDynamicGDI's. Keep the two in sync.
-// ===========================================================================
-
-/** Pack one scalar into a raw byte buffer at Offset; returns the new offset. */
-static uint32_t PackScalar(const MTLUniformValue& V, uint8_t* Dst, uint32_t Offset, uint32_t MaxBytes)
+namespace
 {
-    uint32_t    Size = 0;
-    const void* Ptr  = nullptr;
-
-    float IntAsFloat = 0.f;   // temporary for the INT conversion
-
-    switch(V.Tag)
+    MTLPixelFormat ToMetalCompressed(const EGDICompressedFormat InFormat)
     {
-        case MTLUniformValue::INT:
-            IntAsFloat = static_cast<float>(V.Data.i);
-            Size = 4;  Ptr = &IntAsFloat;   break;
-        case MTLUniformValue::FLOAT:
-            Size = 4;  Ptr = &V.Data.f;     break;
-        case MTLUniformValue::VEC2:
-            Size = 8;  Ptr = V.Data.v;      break;
-        case MTLUniformValue::VEC3:
-            Size = 12; Ptr = V.Data.v;      break;
-        case MTLUniformValue::VEC4:
-            Size = 16; Ptr = V.Data.v;      break;
-        case MTLUniformValue::MAT:
-            Size = 64; Ptr = V.Data.v;      break;
-        default:
-            return Offset;
-    }
-    if(Offset + Size > MaxBytes) return Offset;
-    memcpy(Dst + Offset, Ptr, Size);
-    return Offset + Size;
-}
-
-/**
- * Pack the ViewParameters struct into a 160-byte block:
- *   offset   0: mat4  Projection   (64)
- *   offset  64: mat4  View         (64)
- *   offset 128: vec3  MouseCoords  (12 + 4 pad)
- *   offset 144: vec4  Resolution   (16)
- *
- * The camera builds a GL projection. GL clips z to [-1,1]; Metal (like Vulkan)
- * clips to [0,1], so geometry would be discarded outright: remap
- * z' = 0.5*z + 0.5*w. Y is left alone: Metal's NDC +Y is the attachment's row
- * 0, its top, which is GDI's convention on every backend (render targets
- * stored top-down, GDI.h) -- for projected and full-screen geometry alike.
- *
- * Floats are column-major (D[Col*4 + Row]).
- */
-static void PackViewParamsUBO(const std::unordered_map<std::string, MTLUniformValue>& S, void* Dst)
-{
-    float* D = static_cast<float*>(Dst);
-    memset(D, 0, 160);
-
-    auto Write = [&](const std::string& Name, float* Out, int Count)
-    {
-        auto It = S.find(Name);
-        if(It != S.end())
-            memcpy(Out, It->second.Data.v, static_cast<size_t>(Count) * sizeof(float));
-    };
-
-    Write("ViewParameters.Projection",  D + 0,  16);  // offset   0, 64 bytes
-    Write("ViewParameters.View",        D + 16, 16);  // offset  64, 64 bytes
-    Write("ViewParameters.MouseCoords", D + 32,  3);  // offset 128, 12 bytes (+ 4 pad)
-    Write("ViewParameters.Resolution",  D + 36,  4);  // offset 144, 16 bytes
-
-    for(int Col = 0; Col < 4; ++Col)
-    {
-        const float Z = D[Col * 4 + 2];
-        const float W = D[Col * 4 + 3];
-        D[Col * 4 + 2] = 0.5f * Z + 0.5f * W;   // GL depth range -> Metal
-    }
-}
-
-/**
- * Pack the Transform struct into a 144-byte block:
- *   offset  0: vec3  PositionWorldSpace (12 + 4 pad)
- *   offset 16: mat4  Model              (64)
- *   offset 80: mat4  PrevModel          (64; the frame before's, for velocity)
- */
-static void PackTransformUBO(const std::unordered_map<std::string, MTLUniformValue>& S, void* Dst)
-{
-    float* D = static_cast<float*>(Dst);
-    memset(D, 0, 144);
-
-    auto Write = [&](const std::string& Name, float* Out, int Count)
-    {
-        auto It = S.find(Name);
-        if(It != S.end())
-            memcpy(Out, It->second.Data.v, static_cast<size_t>(Count) * sizeof(float));
-    };
-
-    Write("Transform.PositionWorldSpace", D + 0, 3);   // offset  0, 12 bytes (+ 4 pad)
-    Write("Transform.Model",              D + 4, 16);  // offset 16, 64 bytes
-    Write("Transform.Model",              D + 20, 16); // offset 80: as Model, unless...
-    Write("Transform.PrevModel",          D + 20, 16); // ...the frame before's was set
-}
-
-/**
- * Pack every non-core scalar from S into Dst.
- * QHash iteration is unordered, which is safe only because every custom UBO in
- * the shader set has exactly ONE member (Basic_Block, LayersBlit_Block,
- * UberBrush_Block). A second member would need an explicit offset table -- do not
- * rely on iteration order if one is ever added.
- */
-static void PackCustomUBO(const std::unordered_map<std::string, MTLUniformValue>& S, void* Dst, uint32_t MaxBytes)
-{
-    uint8_t* D = static_cast<uint8_t*>(Dst);
-    memset(D, 0, MaxBytes);
-    uint32_t Offset = 0;
-    for(auto It = S.begin(); It != S.end(); ++It)
-    {
-        const std::string& N = It->first;
-        if(EngineCore::StartsWith(N, "ViewParameters.") || EngineCore::StartsWith(N, "Transform.")) continue;
-        Offset = PackScalar(It->second, D, Offset, MaxBytes);
-    }
-}
-
-// ===========================================================================
-//  Core draw path
-// ===========================================================================
-
-bool MetalDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
-{
-    if(!CurrentStateData || !CurrentStateData->bRenderingActive) return false;
-    if(!InMesh || !PipelineCache || !DeviceObj)                  return false;
-
-    id<MTLRenderCommandEncoder> Enc = (id<MTLRenderCommandEncoder>)CurrentStateData->CurrentEncoder;
-    if(Enc == nil) return false;
-
-    if(CurrentStateData->BoundVSFunction == nullptr ||
-       CurrentStateData->BoundFSFunction == nullptr) return false;
-
-    // ----------------------------------------------------------------
-    // 1. Gather shader resources
-    // ----------------------------------------------------------------
-    MTLShaderResource* PSRes = nullptr;
-    MTLShaderResource* VSRes = nullptr;
-    if(BoundPixelShader  && BoundPixelShader->Resource)
-        PSRes = static_cast<MTLShaderResource*>(BoundPixelShader->Resource);
-    if(BoundVertexShader && BoundVertexShader->Resource)
-        VSRes = static_cast<MTLShaderResource*>(BoundVertexShader->Resource);
-
-    static const std::unordered_map<std::string, MTLUniformValue> EmptyScalars;
-    // Prefer the PS for the core blocks -- both stages receive identical core data.
-    const std::unordered_map<std::string, MTLUniformValue>& CoreScalars =
-        PSRes ? PSRes->GetScalars() : (VSRes ? VSRes->GetScalars() : EmptyScalars);
-
-    // ----------------------------------------------------------------
-    // 2. Work out which slots this shader pair actually uses
-    //
-    // The binding indices are fixed by the SPIR-V (preserved through
-    // --msl-decoration-binding): a fragment shader with a custom UBO puts it at
-    // buffer(2) and pushes its sampler to 2->3. This is the same decision the
-    // Vulkan backend expresses as an EDescriptorLayoutGroup; Metal needs no
-    // pre-declared layout, just the right index.
-    // ----------------------------------------------------------------
-    bool bHasCustomUBO     = false;
-    bool bHasCustomSampler = false;
-    if(PSRes)
-    {
-        for(auto It = PSRes->GetScalars().begin(); It != PSRes->GetScalars().end(); ++It)
+        switch(InFormat)
         {
-            const std::string& N = It->first;
-            if(!EngineCore::StartsWith(N, "ViewParameters.") && !EngineCore::StartsWith(N, "Transform."))
-            {
-                bHasCustomUBO = true;
-                break;
-            }
+            case GDI_CF_BC1: return MTLPixelFormatBC1_RGBA;
+            case GDI_CF_BC3: return MTLPixelFormatBC3_RGBA;
+            case GDI_CF_BC4: return MTLPixelFormatBC4_RUnorm;
+            case GDI_CF_BC5: return MTLPixelFormatBC5_RGUnorm;
+            case GDI_CF_BC7: return MTLPixelFormatBC7_RGBAUnorm;
+            default:         return MTLPixelFormatInvalid;
         }
-        bHasCustomSampler = !PSRes->GetTextures().empty();
     }
-    const NSUInteger SamplerIndex = bHasCustomUBO ? 3u : 2u;
+}
 
-    // ----------------------------------------------------------------
-    // 3. Pipeline state
-    // ----------------------------------------------------------------
-    MTLPipelineCache::PipelineKey Key;
-    Key.VertexFunction   = CurrentStateData->BoundVSFunction;
-    Key.FragmentFunction = CurrentStateData->BoundFSFunction;
-    Key.VertexLayoutID   = bIsInstanced ? MVL_Instanced : MVL_Standard;
+bool MetalDynamicGDI::SupportsCompressedFormat(const EGDICompressedFormat InFormat) const
+{
+    if(!S->Device || ToMetalCompressed(InFormat) == MTLPixelFormatInvalid) return false;
+    if(@available(macOS 11.0, *)) { return S->Device.supportsBCTextureCompression; }
+    return false;
+}
 
-    const IBlendStateDesc& Blend = CurrentStateData->BlendState;
-    Key.BlendEnable   = Blend.bBlend;
-    Key.SrcColorBlend = MTLUtil::DecodeBlendFactor(Blend.Source);
-    Key.DstColorBlend = MTLUtil::DecodeBlendFactor(Blend.Dest);
-    // glBlendFunc applies the same factors to colour AND alpha; without mirroring
-    // them here the alpha channel would blend with the pipeline default (ONE/ZERO)
-    // and every draw would REPLACE destination alpha instead of accumulating it.
-    Key.SrcAlphaBlend = Key.SrcColorBlend;
-    Key.DstAlphaBlend = Key.DstColorBlend;
-    Key.ColorBlendOp  = MTLUtil::DecodeBlendOp(Blend.Op);
-    Key.AlphaBlendOp  = MTLUtil::DecodeBlendOp(Blend.AlphaOp);
-    Key.ColorWriteMask = MTLUtil::DecodeColorMask(CurrentStateData->ColorMask);
-
-    if(MTLRenderTarget* RT = CurrentStateData->ActiveRenderTarget)
+GDITextureResource* MetalDynamicGDI::CreateCompressedTextureResource(EGDICompressedFormat InFormat, const GDICompressedLevel* InLevels,
+                                                                     uint32_t InCount, EGDITextureBorder InBorder, EGDITextureFilter InFilter)
+{
+    if(!SupportsCompressedFormat(InFormat) || !InLevels || InCount == 0) return nullptr;
+    if(InLevels[0].Width % 4 != 0 || InLevels[0].Height % 4 != 0) return nullptr;
+    @autoreleasepool
     {
-        Key.RTFormat = [(id<MTLTexture>)RT->GetTexture() pixelFormat];
-    }
-
-    id<MTLRenderPipelineState> Pipeline = PipelineCache->GetOrCreatePipeline(Key);
-    if(Pipeline == nil) return false;
-    [Enc setRenderPipelineState:Pipeline];
-
-    // ----------------------------------------------------------------
-    // 4. Depth / stencil state
-    // ----------------------------------------------------------------
-    MTLPipelineCache::DepthStencilKey DSKey;
-    const IDepthStateDesc&   Depth   = CurrentStateData->DepthState;
-    const IStencilStateDesc& Stencil = CurrentStateData->StencilState;
-    DSKey.DepthTest        = Depth.bDepthTest;
-    DSKey.DepthWrite       = Depth.bDepthMask;
-    DSKey.DepthCompare     = MTLUtil::DecodeCompareFunction(Depth.DepthMode);
-    DSKey.StencilTest      = Stencil.bStencilTest;
-    DSKey.StencilCompare   = MTLUtil::DecodeCompareFunction(Stencil.StencilMode);
-    DSKey.StencilFail      = MTLUtil::DecodeStencilOp(Stencil.SrcFail);
-    DSKey.DepthFail        = MTLUtil::DecodeStencilOp(Stencil.DestFail);
-    DSKey.DepthStencilPass = MTLUtil::DecodeStencilOp(Stencil.SDPass);
-    DSKey.StencilMask      = Stencil.Mask;
-
-    if(id<MTLDepthStencilState> DSState = PipelineCache->GetOrCreateDepthStencil(DSKey))
-    {
-        [Enc setDepthStencilState:DSState];
-    }
-    [Enc setCullMode:(Depth.CullMode == GDI_CULL_FRONT ? MTLCullModeFront
-                      : Depth.CullMode == GDI_CULL_BACK ? MTLCullModeBack : MTLCullModeNone)];
-    if(Stencil.bStencilTest)
-    {
-        [Enc setStencilReferenceValue:(uint32_t)Stencil.Reference];
-    }
-
-    // A fresh encoder carries no viewport/scissor, and encoders restart often.
-    ApplyViewportToEncoder();
-
-    // ----------------------------------------------------------------
-    // 5. Uniform blocks
-    //
-    // setVertexBytes/setFragmentBytes copies straight into the command buffer, so
-    // the Vulkan backend's descriptor sets and UBO ring allocator are unnecessary
-    // -- every block here is far below the 4 KB inline limit.
-    // ----------------------------------------------------------------
-    alignas(16) uint8_t VPBlock[160];
-    alignas(16) uint8_t TransformBlock[144];
-    PackViewParamsUBO(CoreScalars, VPBlock);
-    PackTransformUBO(CoreScalars, TransformBlock);
-
-    [Enc setVertexBytes:VPBlock        length:sizeof(VPBlock)        atIndex:MTLBindings::ViewParamsBuffer];
-    [Enc setVertexBytes:TransformBlock length:sizeof(TransformBlock) atIndex:MTLBindings::TransformBuffer];
-    [Enc setFragmentBytes:VPBlock        length:sizeof(VPBlock)        atIndex:MTLBindings::ViewParamsBuffer];
-    [Enc setFragmentBytes:TransformBlock length:sizeof(TransformBlock) atIndex:MTLBindings::TransformBuffer];
-
-    if(bHasCustomUBO && PSRes)
-    {
-        // Always send the full block rather than just the packed bytes: Metal
-        // validates that the bound buffer covers everything the shader's struct
-        // declares, and std140 padding makes the struct larger than the payload
-        // (e.g. Basic_Block's vec3 occupies 16 bytes).
-        alignas(16) uint8_t CustomBlock[256];
-        PackCustomUBO(PSRes->GetScalars(), CustomBlock, sizeof(CustomBlock));
-        [Enc setVertexBytes:CustomBlock   length:sizeof(CustomBlock) atIndex:MTLBindings::CustomUBOBuffer];
-        [Enc setFragmentBytes:CustomBlock length:sizeof(CustomBlock) atIndex:MTLBindings::CustomUBOBuffer];
-    }
-
-    // ----------------------------------------------------------------
-    // 6. Texture + sampler
-    // ----------------------------------------------------------------
-    if(bHasCustomSampler)
-    {
-        GDITextureResource* TexRes = NullTexture;
-        if(PSRes)
+        auto* Texture = new MTLTextureResourceImpl(S, ToMetalCompressed(InFormat), InLevels, InCount, InBorder, InFilter);
+        if(!Texture->GetTexture())
         {
-            for(auto It = PSRes->GetTextures().begin();
-                It != PSRes->GetTextures().end(); ++It)
+            delete Texture;
+            return nullptr;
+        }
+        return Texture;
+    }
+}
+
+// ===========================================================================
+// The draw path
+// ===========================================================================
+
+namespace
+{
+    using ScalarMap = std::unordered_map<std::string, MTLUniformValue>;
+
+    bool StartsWith(const std::string& InText, const char* InPrefix)
+    {
+        return InText.rfind(InPrefix, 0) == 0;
+    }
+
+    void WriteScalar(const ScalarMap& InScalars, const char* InName, float* OutData, const int InCount)
+    {
+        const auto It = InScalars.find(InName);
+        if(It != InScalars.end()) std::memcpy(OutData, It->second.Data.v, size_t(InCount) * sizeof(float));
+    }
+
+    /* ViewParameters, 160 bytes: 0 Projection, 64 View, 128 MouseCoords (+4), 144 Resolution. */
+    void PackViewParams(const ScalarMap& InScalars, float (&OutView)[40])
+    {
+        std::memset(OutView, 0, sizeof(OutView));
+        WriteScalar(InScalars, "ViewParameters.Projection",  OutView + 0,  16);
+        WriteScalar(InScalars, "ViewParameters.View",        OutView + 16, 16);
+        WriteScalar(InScalars, "ViewParameters.MouseCoords", OutView + 32, 3);
+        WriteScalar(InScalars, "ViewParameters.Resolution",  OutView + 36, 4);
+    }
+
+    /* Transform, 144 bytes: 0 PositionWorldSpace (+4), 16 Model, 80 PrevModel (Model unless set). */
+    void PackTransform(const ScalarMap& InScalars, float (&OutTransform)[36])
+    {
+        std::memset(OutTransform, 0, sizeof(OutTransform));
+        WriteScalar(InScalars, "Transform.PositionWorldSpace", OutTransform + 0, 3);
+        WriteScalar(InScalars, "Transform.Model",              OutTransform + 4, 16);
+        WriteScalar(InScalars, "Transform.Model",              OutTransform + 20, 16);
+        WriteScalar(InScalars, "Transform.PrevModel",          OutTransform + 20, 16);
+    }
+
+    /* Every non-core scalar in map order, as D3D12's PackCustom: each custom block holds one today. */
+    constexpr uint32_t kCustomBytes = 256;
+    void PackCustom(const ScalarMap& InScalars, uint8_t (&OutBytes)[kCustomBytes])
+    {
+        std::memset(OutBytes, 0, sizeof(OutBytes));
+        uint32_t Offset = 0;
+        for(const auto& Entry : InScalars)
+        {
+            if(StartsWith(Entry.first, "ViewParameters.") || StartsWith(Entry.first, "Transform.")) continue;
+            const MTLUniformValue& V = Entry.second;
+            float       IntAsFloat = 0.f;
+            uint32_t    Size = 0;
+            const void* Ptr  = nullptr;
+            switch(V.Tag)
             {
-                if(It->second.Index == 0)
-                {
-                    TexRes = It->second.Resource ? It->second.Resource : NullTexture;
-                    break;
-                }
+                case MTLUniformValue::INT:   IntAsFloat = float(V.Data.i); Size = 4; Ptr = &IntAsFloat; break;
+                case MTLUniformValue::FLOAT: Size = 4;  Ptr = &V.Data.f; break;
+                case MTLUniformValue::VEC2:  Size = 8;  Ptr = V.Data.v;  break;
+                case MTLUniformValue::VEC3:  Size = 12; Ptr = V.Data.v;  break;
+                case MTLUniformValue::VEC4:  Size = 16; Ptr = V.Data.v;  break;
+                case MTLUniformValue::MAT:   Size = 64; Ptr = V.Data.v;  break;
             }
+            if(!Ptr || Offset + Size > kCustomBytes) continue;
+            std::memcpy(OutBytes + Offset, Ptr, Size);
+            Offset += Size;
+        }
+    }
+
+    void SetBothBytes(id<MTLRenderCommandEncoder> InEncoder, const void* InData, const NSUInteger InBytes, const NSUInteger InIndex)
+    {
+        [InEncoder setVertexBytes:InData length:InBytes atIndex:InIndex];
+        [InEncoder setFragmentBytes:InData length:InBytes atIndex:InIndex];
+    }
+
+    void SetBothBuffer(id<MTLRenderCommandEncoder> InEncoder, const MTLUploadRing::Allocation& InAt, const NSUInteger InIndex)
+    {
+        [InEncoder setVertexBuffer:InAt.Buffer offset:InAt.Offset atIndex:InIndex];
+        [InEncoder setFragmentBuffer:InAt.Buffer offset:InAt.Offset atIndex:InIndex];
+    }
+
+    void SetBothTexture(id<MTLRenderCommandEncoder> InEncoder, MTLTextureResourceImpl* InTexture, id<MTLSamplerState> InSampler,
+                        const NSUInteger InBinding)
+    {
+        [InEncoder setVertexTexture:InTexture->GetTexture() atIndex:InBinding];
+        [InEncoder setFragmentTexture:InTexture->GetTexture() atIndex:InBinding];
+        [InEncoder setVertexSamplerState:InSampler atIndex:MTLBindings::Sampler(InBinding)];
+        [InEncoder setFragmentSamplerState:InSampler atIndex:MTLBindings::Sampler(InBinding)];
+    }
+}
+
+void MetalDynamicGDI::DrawMesh(MTLMeshImpl* InMesh)
+{
+    if(!InMesh || !InMesh->IsValid() || !S->Cmd) return;
+    MTLShaderResourceImpl* VS = S->BoundVS;
+    MTLShaderResourceImpl* PS = S->BoundPS;
+    if(!VS || !PS || !VS->IsValid() || !PS->IsValid()) return;
+
+    @autoreleasepool
+    {
+        id<MTLRenderCommandEncoder> Encoder = S->RenderEncoder();
+        if(!Encoder) return;
+
+        // The pipeline.
+        MTLPipelineCache::Key Key;
+        Key.VertexID   = VS->GetID();
+        Key.FragmentID = PS->GetID();
+        Key.Layout     = InMesh->GetLayout(GetInstanceBuffer() != nullptr);
+        Key.bBlend     = S->BlendState.bBlend;
+        Key.Src        = MTLUtil::BlendFactor(S->BlendState.Source);
+        Key.Dst        = MTLUtil::BlendFactor(S->BlendState.Dest);
+        Key.ColorOp    = MTLUtil::BlendOp(S->BlendState.Op);
+        Key.AlphaOp    = MTLUtil::BlendOp(S->BlendState.AlphaOp);
+        Key.WriteMask  = MTLUtil::ColorMask(S->ColorMask);
+        Key.ColorCount = S->ColorCount;
+        for(uint32_t Index = 0; Index < S->ColorCount; ++Index) { Key.Colors[Index] = S->Colors[Index]->GetFormat(); }
+        Key.DepthFormat = (S->DepthRT && S->DepthRT->GetDepth()) ? MTLPixelFormatDepth32Float : MTLPixelFormatInvalid;
+
+        id<MTLRenderPipelineState> Pipeline = S->Pipelines->GetRender(Key, VS, PS);
+        if(!Pipeline) return;
+        if(S->Bound.Pipeline != Pipeline)
+        {
+            [Encoder setRenderPipelineState:Pipeline];
+            S->Bound.Pipeline = Pipeline;
         }
 
-        auto* MTLTex = dynamic_cast<MTLTextureResource*>(TexRes);
-        if(!MTLTex) MTLTex = NullTexture;
-        if(!MTLTex) return false;   // no fallback available
-
-#ifdef QT_DEBUG
-        // A draw that expected a real texture but got the 1x1 transparent fallback
-        // renders nothing (the brush/blit shaders discard on alpha 0) -- log it.
-        if(MTLTex == NullTexture)
+        const bool bDepth = Key.DepthFormat != MTLPixelFormatInvalid && S->DepthState.bDepthTest;
+        id<MTLDepthStencilState> DepthStencil = S->Pipelines->GetDepthStencil(bDepth, S->DepthState.bDepthMask,
+                                                                              MTLUtil::Compare(S->DepthState.DepthMode));
+        if(S->Bound.DepthStencil != DepthStencil)
         {
-            static int NullTexWarnCount = 0;
-            if(NullTexWarnCount < 20)
-            {
-                ++NullTexWarnCount;
-                GDI_LOG(std::string("[MetalDynamicGDI] Draw uses NullTexture fallback (PS textures=%1)")
-                     .arg(PSRes ? PSRes->GetTextures().size() : -1))
-            }
+            [Encoder setDepthStencilState:DepthStencil];
+            S->Bound.DepthStencil = DepthStencil;
         }
-#endif
+        const MTLCullMode Cull = S->DepthState.CullMode == GDI_CULL_FRONT ? MTLCullModeFront
+                               : S->DepthState.CullMode == GDI_CULL_BACK  ? MTLCullModeBack : MTLCullModeNone;
+        if(!S->Bound.bCullKnown || S->Bound.Cull != Cull)
+        {
+            [Encoder setCullMode:Cull];
+            S->Bound.Cull       = Cull;
+            S->Bound.bCullKnown = true;
+        }
 
-        [Enc setFragmentTexture:(id<MTLTexture>)MTLTex->GetTexture() atIndex:SamplerIndex];
-        [Enc setFragmentSamplerState:(id<MTLSamplerState>)MTLTex->GetSampler() atIndex:SamplerIndex];
+        // The core blocks: both stages carry them; the pixel shader's copy has the custom scalars too.
+        const ScalarMap& Scalars = PS->GetScalars();
+        const MTLShaderResourceImpl::CoreBlocks& Core = PS->GetCoreBlocks();
+        alignas(16) float View[40];
+        if(Core.bView) std::memcpy(View, Core.View, sizeof(View));
+        else           PackViewParams(Scalars, View);
+        GDICorePack::RemapClipZ(View);   // GL's z in [-1, 1] to Metal's [0, 1]; no y flip (GDI.h)
+        alignas(16) float Transform[36];
+        if(Core.bTransform) std::memcpy(Transform, Core.Transform, sizeof(Transform));
+        else                PackTransform(Scalars, Transform);
+        SetBothBytes(Encoder, View, sizeof(View), MTLBindings::View);
+        SetBothBytes(Encoder, Transform, sizeof(Transform), MTLBindings::Transform);
+
+        if(IsMaterialDraw())
+        {
+            // The material layout's blocks, uploaded when their serial changes (the scene: once a frame).
+            struct BlockSpec { uint32_t Block; NSUInteger Binding; NSUInteger PadTo; uint64_t* BoundSerial; };
+            const BlockSpec Blocks[] = {
+                { 0, MTLBindings::Custom,   256,                      &S->Bound.MaterialSerial },
+                { 1, MTLBindings::Scene,    256,                      &S->Bound.SceneSerial },
+                { 2, MTLBindings::Skin,     GDI_SKIN_BLOCK_MAX_BYTES, &S->Bound.SkinSerial[0] },
+                { 3, MTLBindings::PrevSkin, GDI_SKIN_BLOCK_MAX_BYTES, &S->Bound.SkinSerial[1] },
+                { 4, MTLBindings::Light,    GDI_LIGHT_BLOCK_MAX_BYTES, &S->Bound.LightSerial },
+            };
+            for(const BlockSpec& Each : Blocks)
+            {
+                if(*Each.BoundSerial == MaterialBlockSerials[Each.Block]) continue;
+                const std::vector<uint8_t>& Bytes = MaterialBlocks[Each.Block];
+                const NSUInteger Size = (std::max<NSUInteger>(Bytes.size(), Each.PadTo) + 255) & ~NSUInteger(255);
+                const MTLUploadRing::Allocation At = S->Upload(Bytes.empty() ? nullptr : Bytes.data(), Bytes.size(), Size);
+                if(!At.Buffer) return;
+                SetBothBuffer(Encoder, At, Each.Binding);
+                *Each.BoundSerial = MaterialBlockSerials[Each.Block];
+            }
+
+            for(uint32_t Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot)
+            {
+                GDITextureResource* Resource = MaterialTextures[Slot];
+                if(S->Bound.bMaterialTexturesKnown && Resource && S->Bound.MaterialTextures[Slot] == Resource) continue;
+                auto* Texture = static_cast<MTLTextureResourceImpl*>(Resource);
+                if(!Texture || !Texture->GetTexture()) Texture = S->NullTexture;
+                SetBothTexture(Encoder, Texture, S->Pipelines->GetSampler(Texture->GetBorder(), Texture->GetFilter(), Texture->HasMips()),
+                               GDI_MATERIAL_TEXTURE_BINDING + Slot);
+                S->Bound.MaterialTextures[Slot] = Resource;
+            }
+            S->Bound.bMaterialTexturesKnown = true;
+        }
+        else
+        {
+            uint8_t Custom[kCustomBytes];
+            PackCustom(Scalars, Custom);
+            SetBothBytes(Encoder, Custom, sizeof(Custom), MTLBindings::Custom);
+            S->Bound.MaterialSerial = ~0ull;   // binding 2 no longer holds the material block
+            S->Bound.bMaterialTexturesKnown = false;
+
+            // The one texture, at 2 and 3: a shader samples one or the other as it declares a custom block or not.
+            auto* Texture = static_cast<MTLTextureResourceImpl*>(PS->GetTexture0());
+            if(!Texture || !Texture->GetTexture()) Texture = S->NullTexture;
+            id<MTLSamplerState> Sampler = S->Pipelines->GetSampler(Texture->GetBorder(), Texture->GetFilter(), Texture->HasMips());
+            SetBothTexture(Encoder, Texture, Sampler, 2);
+            SetBothTexture(Encoder, Texture, Sampler, 3);
+        }
+
+        InMesh->Encode(Encoder, *S);
     }
-
-    return true;
 }
 
 void MetalDynamicGDI::DrawObject(GDIViewObject* InObject, GDIView* InView)
 {
     if(!InObject || !InObject->Mesh) return;
 
-    if(BoundVertexShader)
-        BoundVertexShader->UpdateCoreUniforms(InView, InObject->Transform);
-    if(BoundPixelShader)
-        BoundPixelShader->UpdateCoreUniforms(InView, InObject->Transform);
-
+    // The core blocks packed once onto both shaders (GDICorePack), the user uniforms by name.
+    alignas(16) float View[40];
+    alignas(16) float Transform[36];
+    if(InView) GDICorePack::PackCoreView(InView, View);
+    if(InObject->Transform) GDICorePack::PackCoreTransform(InObject->Transform, Transform);
+    for(GDIShader* Shader : { BoundVertexShader, BoundPixelShader })
+    {
+        if(!Shader || !Shader->Resource) continue;
+        MTLShaderResourceImpl::CoreBlocks& Core = static_cast<MTLShaderResourceImpl*>(Shader->Resource)->GetCoreBlocks();
+        if(InView)
+        {
+            std::memcpy(Core.View, View, sizeof(View));
+            Core.bView = true;
+        }
+        if(InObject->Transform)
+        {
+            std::memcpy(Core.Transform, Transform, sizeof(Transform));
+            Core.bTransform = true;
+        }
+        Shader->UpdateUserDefinedUniforms();
+    }
     InObject->Mesh->Draw();
 }
 
 void MetalDynamicGDI::DrawScreenQuadPrimitive()
 {
-    if(!DeviceObj || !CurrentStateData) return;
-
-    // Flush the bound pixel shader's user uniforms into its resource, exactly like
-    // the OpenGL and Vulkan paths. Without this the screen-blit texture set via
-    // Screen_PS::SetScreenBlitTexture never reaches the shader resource, so
-    // BindDrawState finds no sampler and DrawTexture (the flood-fill / restore
-    // write-back path) draws nothing.
-    if(BoundPixelShader)
-        BoundPixelShader->UpdateUserDefinedUniforms();
-
-    if(!ScreenMesh)
+    if(!bInitialized) return;
+    if(BoundPixelShader) BoundPixelShader->UpdateUserDefinedUniforms();
+    if(!S->ScreenMesh)
     {
-        // 6 verts covering the full NDC square. v = 0 at NDC +1, which is
-        // Metal's attachment row 0 natively: an identity copy, as on every
-        // backend.
-        const float Verts[] = {
-            -1.f, -1.f, 0.f,
-            -1.f,  1.f, 0.f,
-             1.f,  1.f, 0.f,
-             1.f,  1.f, 0.f,
-             1.f, -1.f, 0.f,
-            -1.f, -1.f, 0.f
-        };
-        const float UVs[] = {
-            0.f, 1.f,
-            0.f, 0.f,
-            1.f, 0.f,
-            1.f, 0.f,
-            1.f, 1.f,
-            0.f, 1.f
-        };
-        ScreenMesh = CreateQuadMesh(Verts, UVs, 18, 12, false);
+        const float Verts[] = { -1.f, -1.f, 0.f,  -1.f, 1.f, 0.f,  1.f, 1.f, 0.f,  1.f, 1.f, 0.f,  1.f, -1.f, 0.f,  -1.f, -1.f, 0.f };
+        // v = 0 at NDC +1, the target's row 0: an identity copy.
+        const float UVs[]   = { 0.f, 1.f,  0.f, 0.f,  1.f, 0.f,  1.f, 0.f,  1.f, 1.f,  0.f, 1.f };
+        S->ScreenMesh = CreateQuadMesh(Verts, UVs, 18, 12, false);
     }
+    if(S->ScreenMesh) S->ScreenMesh->Draw();
+}
 
-    if(!ScreenMesh) return;
-    ScreenMesh->Draw();
+Color MetalDynamicGDI::GetColorFromSamplePoint(const EngineCore::Point& InPoint, const EngineCore::Size& /*InSize*/)
+{
+    MTLRenderTargetImpl* RT = GActiveTarget;
+    if(!RT || !RT->IsValid()) return Color();
+    const Image Pixels = RT->ToImage();
+    if(InPoint.X < 0 || InPoint.Y < 0 || InPoint.X >= Pixels.GetWidth() || InPoint.Y >= Pixels.GetHeight()) return Color();
+    const uint8_t* P = Pixels.GetData() + (size_t(InPoint.Y) * size_t(Pixels.GetWidth()) + size_t(InPoint.X)) * 4;
+    return Color(P[0], P[1], P[2]);
 }
 
 // ===========================================================================
-//  Misc
+// Compute and buffers
 // ===========================================================================
 
-bool MetalDynamicGDI::CheckError(const std::string&)
+bool MetalDynamicGDI::SupportsCompute() const
 {
-    // Metal reports failures per command buffer rather than through a global error
-    // flag; MTLCommandManager surfaces those. Nothing to poll here.
-    return false;
+    return bInitialized && S->Pipelines != nullptr;
 }
 
-EngineCore::Color MetalDynamicGDI::GetColorFromSamplePoint(const EngineCore::Point& InPoint, const EngineCore::Size& /*InSize*/)
+GDIBuffer* MetalDynamicGDI::CreateBuffer(const uint32_t InBytes, const uint8_t InUsage, const void* InInitialData)
 {
-    if(!DeviceObj || !CurrentStateData) return EngineCore::Color();
+    if(!SupportsCompute()) return nullptr;
+    auto* Buffer = new MTLBufferImpl(S->Device, InBytes, InUsage, InInitialData);
+    if(!Buffer->IsValid())
+    {
+        delete Buffer;
+        return nullptr;
+    }
+    return Buffer;
+}
 
-    // Make sure the just-composited frame has actually executed before sampling it.
-    FlushForReadback();
+bool MetalDynamicGDI::DispatchCompute(GDIShader* InShader, const void* InParams, const uint32_t InParamBytes, GDIBuffer* const* InBuffers,
+                                      const uint32_t InBufferCount, GDITextureResource* InTexture, const uint32_t InX, const uint32_t InY,
+                                      const uint32_t InZ)
+{
+    if(!SupportsCompute() || !InShader || !InShader->Resource) return false;
+    auto* CS = static_cast<MTLShaderResourceImpl*>(InShader->Resource);
+    id<MTLComputePipelineState> Pipeline = S->Pipelines->GetCompute(CS);
+    if(!Pipeline) return false;
 
-    MTLRenderTarget* RT = CurrentStateData->ActiveRenderTarget;
-    if(!RT || !RT->IsValid() || !RT->HasContent()) return EngineCore::Color();
+    MTLBufferImpl* Buffers[GDI_COMPUTE_MAX_STORAGE_BUFFERS] = {};
+    for(uint32_t Each = 0; Each < InBufferCount; ++Each)
+    {
+        Buffers[Each] = static_cast<MTLBufferImpl*>(InBuffers[Each]);
+        if(!Buffers[Each] || !Buffers[Each]->IsValid()) return false;
+    }
+    auto* Texture = static_cast<MTLTextureResourceImpl*>(InTexture);
+    if(Texture && !Texture->GetTexture()) return false;
+    if(!Texture) Texture = S->NullTexture;
 
-    // RT memory is top-down (GDI.h), as Qt's screen space: the point is the row.
-    const int X = InPoint.X;
-    const int Y = InPoint.Y;
-    if(X < 0 || Y < 0 || X >= int(RT->GetWidth()) || Y >= int(RT->GetHeight()))
-        return EngineCore::Color();
+    @autoreleasepool
+    {
+        bool bTransient = false;
+        id<MTLCommandBuffer> Cmd = S->CommandBufferForWork(bTransient);
+        if(!Cmd) return false;
 
-    // 256-byte row stride: buffer<->texture blits have per-device row alignment
-    // requirements, and 256 satisfies every one of them for a single-row copy.
-    static constexpr NSUInteger kRowBytes = 256;
-    id<MTLBuffer> Readback = [DeviceObj->GetDevice() newBufferWithLength:kRowBytes
-                                                                 options:MTLResourceStorageModeShared];
-    if(Readback == nil) return EngineCore::Color();
+        const NSUInteger ParamBytes = (std::max<NSUInteger>(256, InParamBytes) + 255) & ~NSUInteger(255);
+        const MTLUploadRing::Allocation Params = S->Upload(InParams, InParamBytes, ParamBytes);
+        if(!Params.Buffer) return false;
 
-    id<MTLCommandBuffer>      Cmd  = [DeviceObj->GetGraphicsQueue() commandBuffer];
-    id<MTLBlitCommandEncoder> Blit = [Cmd blitCommandEncoder];
-    [Blit copyFromTexture:(id<MTLTexture>)RT->GetTexture()
-              sourceSlice:0
-              sourceLevel:0
-             sourceOrigin:MTLOriginMake((NSUInteger)X, (NSUInteger)Y, 0)
-               sourceSize:MTLSizeMake(1, 1, 1)
-                 toBuffer:Readback
-        destinationOffset:0
-   destinationBytesPerRow:kRowBytes
- destinationBytesPerImage:kRowBytes];
-    [Blit endEncoding];
-    [Cmd commit];
-    [Cmd waitUntilCompleted];
+        id<MTLComputeCommandEncoder> Encoder = [Cmd computeCommandEncoder];
+        [Encoder setComputePipelineState:Pipeline];
+        [Encoder setBuffer:Params.Buffer offset:Params.Offset atIndex:0];
+        // Storage at 1.. in order; the unused slots repeat the last, as D3D12's root UAVs do.
+        for(uint32_t Slot = 0; InBufferCount > 0 && Slot < GDI_COMPUTE_MAX_STORAGE_BUFFERS; ++Slot)
+        {
+            [Encoder setBuffer:Buffers[std::min(Slot, InBufferCount - 1)]->GetBuffer() offset:0 atIndex:1 + Slot];
+        }
+        [Encoder setTexture:Texture->GetTexture() atIndex:GDI_COMPUTE_TEXTURE_BINDING];
+        [Encoder setSamplerState:S->Pipelines->GetSampler(Texture->GetBorder(), Texture->GetFilter(), Texture->HasMips())
+                         atIndex:MTLBindings::Sampler(GDI_COMPUTE_TEXTURE_BINDING)];
+        [Encoder dispatchThreadgroups:MTLSizeMake(InX, InY, InZ) threadsPerThreadgroup:CS->GetWorkGroupSize()];
+        [Encoder endEncoding];
 
-    const auto* Px = static_cast<const uchar*>([Readback contents]);
-    EngineCore::Color Out(Px[0], Px[1], Px[2]);   // MTLPixelFormatRGBA8Unorm byte order
-    [Readback release];
-    return Out;
+        if(bTransient)
+        {
+            [Cmd commit];
+            [Cmd waitUntilCompleted];
+        }
+    }
+    return true;
+}
+
+bool MetalDynamicGDI::UpdateBuffer(GDIBuffer* InBuffer, const uint32_t InOffset, const void* InData, const uint32_t InBytes)
+{
+    auto* Buffer = static_cast<MTLBufferImpl*>(InBuffer);
+    if(!SupportsCompute() || !Buffer || !Buffer->IsValid() || !InData || InBytes == 0) return false;
+    @autoreleasepool
+    {
+        bool bTransient = false;
+        id<MTLCommandBuffer> Cmd = S->CommandBufferForWork(bTransient);
+        if(!Cmd) return false;
+        const MTLUploadRing::Allocation Staging = S->Upload(InData, InBytes);
+        if(!Staging.Buffer) return false;
+        // In frame order: a blit between the passes before and after.
+        id<MTLBlitCommandEncoder> Blit = [Cmd blitCommandEncoder];
+        [Blit copyFromBuffer:Staging.Buffer sourceOffset:Staging.Offset toBuffer:Buffer->GetBuffer() destinationOffset:InOffset size:InBytes];
+        [Blit endEncoding];
+        if(bTransient)
+        {
+            [Cmd commit];
+            [Cmd waitUntilCompleted];
+        }
+    }
+    return true;
+}
+
+bool MetalDynamicGDI::ReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes)
+{
+    auto* Buffer = static_cast<MTLBufferImpl*>(InBuffer);
+    if(!Buffer || !Buffer->IsValid()) return false;
+    FlushAndWait(true);   // what the open block recorded runs first
+    const uint8_t* Data = static_cast<const uint8_t*>(Buffer->GetBuffer().contents);
+    OutBytes.assign(Data, Data + Buffer->GetSize());
+    return true;
+}
+
+// ===========================================================================
+// Present
+// ===========================================================================
+
+void MetalDynamicGDI::PresentToWindow(WindowHandle InWindow)
+{
+    PresentRenderTargetToWindow(InWindow, GActiveTarget);
+}
+
+void MetalDynamicGDI::PresentRenderTargetToWindow(WindowHandle InWindow, GDIRenderTarget* InSource)
+{
+    auto* Source = dynamic_cast<MTLRenderTargetImpl*>(InSource);
+    if(!bInitialized || !InWindow.IsValid() || !Source || S->bResizing.load()) return;
+
+    MTLSwapchainImpl* Swapchain = nullptr;
+    for(const auto& Entry : S->Swapchains)
+    {
+        if(Entry.first == InWindow.Native) Swapchain = Entry.second;
+    }
+    if(!Swapchain)
+    {
+        Swapchain = new MTLSwapchainImpl();
+        if(!Swapchain->Initialize(S->Device, S->Queue, InWindow))
+        {
+            delete Swapchain;
+            return;
+        }
+        S->Swapchains.emplace_back(InWindow.Native, Swapchain);
+    }
+    Swapchain->Present(Source);
+}
+
+void MetalDynamicGDI::ReleaseWindow(WindowHandle InWindow)
+{
+    for(auto It = S->Swapchains.begin(); It != S->Swapchains.end(); ++It)
+    {
+        if(It->first == InWindow.Native)
+        {
+            WaitForCommitted();
+            delete It->second;
+            S->Swapchains.erase(It);
+            return;
+        }
+    }
 }

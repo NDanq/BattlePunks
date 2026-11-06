@@ -52,7 +52,7 @@ namespace GameCore
         {
             const float DX = InB.GetX() - InA.GetX(), DZ = InB.GetZ() - InA.GetZ();
             const float Length2 = DX * DX + DZ * DZ;
-            OutT = Length2 > 1e-12f ? std::clamp(((InX - InA.GetX()) * DX + (InZ - InA.GetZ()) * DZ) / Length2, 0.0f, 1.0f) : 0.0f;
+            OutT = Length2 > 1e-12f ? std::clamp<float>(((InX - InA.GetX()) * DX + (InZ - InA.GetZ()) * DZ) / Length2, 0.0f, 1.0f) : 0.0f;
             const float PX = InA.GetX() + DX * OutT - InX, PZ = InA.GetZ() + DZ * OutT - InZ;
             return PX * PX + PZ * PZ;
         }
@@ -62,7 +62,7 @@ namespace GameCore
             const float DX = InB.GetX() - InA.GetX(), DY = InB.GetY() - InA.GetY(), DZ = InB.GetZ() - InA.GetZ();
             const float Length2 = DX * DX + DY * DY + DZ * DZ;
             OutT = Length2 > 1e-12f
-                 ? std::clamp(((InP.GetX() - InA.GetX()) * DX + (InP.GetY() - InA.GetY()) * DY + (InP.GetZ() - InA.GetZ()) * DZ) / Length2,
+                 ? std::clamp<float>(((InP.GetX() - InA.GetX()) * DX + (InP.GetY() - InA.GetY()) * DY + (InP.GetZ() - InA.GetZ()) * DZ) / Length2,
                               0.0f, 1.0f)
                  : 0.0f;
             const float PX = InA.GetX() + DX * OutT - InP.GetX();
