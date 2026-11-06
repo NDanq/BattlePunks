@@ -1,0 +1,434 @@
+#include "Public/GDI/D3D12/D3D12PipelineCache.h"
+#include "Public/GDI/D3D12/D3D12Device.h"
+#include "Public/GDI/D3D12/D3D12Shader.h"
+
+#include <climits>
+#include <string>
+
+#include "Public/GDI/GDIBuffer.h"
+#include "Public/GDI/GDILog.h"
+
+using Microsoft::WRL::ComPtr;
+
+namespace
+{
+    constexpr uint32_t kLayoutInstanced     = 1;
+    constexpr uint32_t kLayoutMesh          = 2;
+    constexpr uint32_t kLayoutMeshInstanced = 3;   // kLayoutMesh + an instance buffer (GDISetInstanceBuffer)
+    constexpr uint32_t kLayoutMeshSkinned   = 4;   // kLayoutMesh + bone indices and weights (slots 6, 7)
+
+    // spirv-cross emits TEXCOORD<location> for every stage input, matrices
+    // flattened one column per location (--hlsl-flatten-matrix-vertex-input-semantics).
+    const D3D12_INPUT_ELEMENT_DESC GStandardLayout[] = {
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT,    1, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+    };
+
+    // An indexed mesh (GDICreateMesh): the normal at location 8, slot 2; colour 9, slot 3; UV1 10, slot 4;
+    // tangent 13, slot 8.
+    const D3D12_INPUT_ELEMENT_DESC GMeshLayout[] = {
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT,    1, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 8, DXGI_FORMAT_R32G32B32_FLOAT,    2, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 9, DXGI_FORMAT_R32G32B32A32_FLOAT, 3, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 10, DXGI_FORMAT_R32G32_FLOAT,      4, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 13, DXGI_FORMAT_R32G32B32A32_FLOAT, 8, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+    };
+
+    // The mesh layout plus a skinned vertex's bone indices (location 11, slot 6) and weights (12, slot 7).
+    const D3D12_INPUT_ELEMENT_DESC GMeshSkinnedLayout[] = {
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT,    1, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 8, DXGI_FORMAT_R32G32B32_FLOAT,    2, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 9, DXGI_FORMAT_R32G32B32A32_FLOAT, 3, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 10, DXGI_FORMAT_R32G32_FLOAT,      4, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 13, DXGI_FORMAT_R32G32B32A32_FLOAT, 8, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 11, DXGI_FORMAT_R32G32B32A32_FLOAT, 6, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 12, DXGI_FORMAT_R32G32B32A32_FLOAT, 7, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+    };
+
+    // The mesh layout plus slot 5: one GDI_INSTANCE_STRIDE record per instance (GDIBuffer.h) --
+    // a float4x4 transform at locations 2-5, a float4 colour at location 7.
+    const D3D12_INPUT_ELEMENT_DESC GMeshInstancedLayout[] = {
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT,    1, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 8, DXGI_FORMAT_R32G32B32_FLOAT,    2, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 9, DXGI_FORMAT_R32G32B32A32_FLOAT, 3, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 10, DXGI_FORMAT_R32G32_FLOAT,      4, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 13, DXGI_FORMAT_R32G32B32A32_FLOAT, 8, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 5, 0,  D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+        { "TEXCOORD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 5, 16, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+        { "TEXCOORD", 4, DXGI_FORMAT_R32G32B32A32_FLOAT, 5, 32, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+        { "TEXCOORD", 5, DXGI_FORMAT_R32G32B32A32_FLOAT, 5, 48, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+        { "TEXCOORD", 7, DXGI_FORMAT_R32G32B32A32_FLOAT, 5, 64, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+    };
+
+    const D3D12_INPUT_ELEMENT_DESC GInstancedLayout[] = {
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,   0 },
+        { "TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT,       1, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,   0 },
+        { "TEXCOORD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 2, 0,  D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+        { "TEXCOORD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 2, 16, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+        { "TEXCOORD", 4, DXGI_FORMAT_R32G32B32A32_FLOAT, 2, 32, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+        { "TEXCOORD", 5, DXGI_FORMAT_R32G32B32A32_FLOAT, 2, 48, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+        { "TEXCOORD", 6, DXGI_FORMAT_R32_FLOAT,          3, 0,  D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+        { "TEXCOORD", 7, DXGI_FORMAT_R32G32B32_FLOAT,    4, 0,  D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+    };
+
+    // *_COLOR factors are illegal in the alpha blend slots; the alpha channel of
+    // the colour factor is the same quantity.
+    D3D12_BLEND ToAlphaBlend(D3D12_BLEND InBlend)
+    {
+        switch(InBlend)
+        {
+            case D3D12_BLEND_SRC_COLOR:      return D3D12_BLEND_SRC_ALPHA;
+            case D3D12_BLEND_INV_SRC_COLOR:  return D3D12_BLEND_INV_SRC_ALPHA;
+            case D3D12_BLEND_DEST_COLOR:     return D3D12_BLEND_DEST_ALPHA;
+            case D3D12_BLEND_INV_DEST_COLOR: return D3D12_BLEND_INV_DEST_ALPHA;
+            default:                         return InBlend;
+        }
+    }
+}
+
+bool D3D12PipelineCache::Initialize(D3D12Device* InDevice)
+{
+    Device = InDevice;
+    if(!Device || !Device->IsValid()) return false;
+    return BuildRootSignature() && BuildComputeRootSignature() && BuildDrawIndexedSignature();
+}
+
+void D3D12PipelineCache::Shutdown()
+{
+    Pipelines.clear();
+    ComputePipelines.clear();
+    DrawIndexedSignature.Reset();
+    ComputeRootSignature.Reset();
+    RootSignature.Reset();
+    Device = nullptr;
+}
+
+bool D3D12PipelineCache::BuildRootSignature()
+{
+    static_assert(RP_MaterialSampler0 - RP_MaterialTexture0 == GDI_MATERIAL_TEXTURE_SLOTS, "one root table per material texture");
+
+    D3D12_ROOT_PARAMETER Params[RP_Count]{};
+    D3D12_DESCRIPTOR_RANGE Ranges[4 + 2 * GDI_MATERIAL_TEXTURE_SLOTS]{};
+
+    for(UINT CB = 0; CB < 3; ++CB)
+    {
+        Params[RP_ViewParameters + CB].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        Params[RP_ViewParameters + CB].Descriptor.ShaderRegister = CB;
+        Params[RP_ViewParameters + CB].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
+    }
+    Params[RP_Scene].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    Params[RP_Scene].Descriptor.ShaderRegister = GDI_SCENE_BLOCK_BINDING;
+    Params[RP_Scene].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
+    Params[RP_Skin].ParameterType              = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    Params[RP_Skin].Descriptor.ShaderRegister  = GDI_SKIN_BLOCK_BINDING;
+    Params[RP_Skin].ShaderVisibility           = D3D12_SHADER_VISIBILITY_VERTEX;
+    Params[RP_PrevSkin].ParameterType              = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    Params[RP_PrevSkin].Descriptor.ShaderRegister  = GDI_PREV_SKIN_BLOCK_BINDING;
+    Params[RP_PrevSkin].ShaderVisibility           = D3D12_SHADER_VISIBILITY_VERTEX;
+    Params[RP_Light].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    Params[RP_Light].Descriptor.ShaderRegister = GDI_LIGHT_BLOCK_BINDING;
+    Params[RP_Light].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;   // a particle's vertex lighting reads it too
+
+    for(UINT Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot)
+    {
+        for(UINT Kind = 0; Kind < 2; ++Kind)
+        {
+            D3D12_DESCRIPTOR_RANGE& Range = Ranges[4 + Slot * 2 + Kind];
+            Range.RangeType          = Kind == 0 ? D3D12_DESCRIPTOR_RANGE_TYPE_SRV : D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
+            Range.NumDescriptors     = 1;
+            Range.BaseShaderRegister = GDI_MATERIAL_TEXTURE_BINDING + Slot;
+
+            D3D12_ROOT_PARAMETER& P               = Params[(Kind == 0 ? RP_MaterialTexture0 : RP_MaterialSampler0) + Slot];
+            P.ParameterType                       = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            P.DescriptorTable.NumDescriptorRanges = 1;
+            P.DescriptorTable.pDescriptorRanges   = &Range;
+            P.ShaderVisibility                    = D3D12_SHADER_VISIBILITY_ALL;
+        }
+    }
+
+    const struct { ED3D12RootParam Param; D3D12_DESCRIPTOR_RANGE_TYPE Type; UINT Register; } Tables[4] = {
+        { RP_Texture2, D3D12_DESCRIPTOR_RANGE_TYPE_SRV,     2 },
+        { RP_Texture3, D3D12_DESCRIPTOR_RANGE_TYPE_SRV,     3 },
+        { RP_Sampler2, D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 2 },
+        { RP_Sampler3, D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 3 },
+    };
+    for(int i = 0; i < 4; ++i)
+    {
+        Ranges[i].RangeType          = Tables[i].Type;
+        Ranges[i].NumDescriptors     = 1;
+        Ranges[i].BaseShaderRegister = Tables[i].Register;
+
+        D3D12_ROOT_PARAMETER& P                 = Params[Tables[i].Param];
+        P.ParameterType                         = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        P.DescriptorTable.NumDescriptorRanges   = 1;
+        P.DescriptorTable.pDescriptorRanges     = &Ranges[i];
+        P.ShaderVisibility                      = D3D12_SHADER_VISIBILITY_ALL;   // the vertex stage samples too
+    }
+
+    D3D12_ROOT_SIGNATURE_DESC Desc{};
+    Desc.NumParameters = RP_Count;
+    Desc.pParameters   = Params;
+    Desc.Flags         = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+    ComPtr<ID3DBlob> Blob, Error;
+    if(FAILED(D3D12SerializeRootSignature(&Desc, D3D_ROOT_SIGNATURE_VERSION_1, &Blob, &Error)))
+    {
+        GDI_LOG_ERROR(std::string("[D3D12PipelineCache] Root signature serialization failed: ")
+                      + (Error ? static_cast<const char*>(Error->GetBufferPointer()) : ""))
+        return false;
+    }
+
+    if(FAILED(Device->GetDevice()->CreateRootSignature(0, Blob->GetBufferPointer(), Blob->GetBufferSize(),
+                                                       IID_PPV_ARGS(&RootSignature))))
+    {
+        GDI_LOG_ERROR("[D3D12PipelineCache] CreateRootSignature failed.")
+        return false;
+    }
+    return true;
+}
+
+bool D3D12PipelineCache::BuildComputeRootSignature()
+{
+    static_assert(CRP_Texture - CRP_Storage0 == GDI_COMPUTE_MAX_STORAGE_BUFFERS, "one root UAV per storage buffer");
+
+    D3D12_ROOT_PARAMETER Params[CRP_Count]{};
+    Params[CRP_Params].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    Params[CRP_Params].Descriptor.ShaderRegister = 0;
+    Params[CRP_Params].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
+    for(UINT Each = 0; Each < GDI_COMPUTE_MAX_STORAGE_BUFFERS; ++Each)
+    {
+        Params[CRP_Storage0 + Each].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_UAV;
+        Params[CRP_Storage0 + Each].Descriptor.ShaderRegister = 1 + Each;
+        Params[CRP_Storage0 + Each].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
+    }
+    /* The one texture (COMPUTE_TEXTURE): a combined image sampler at binding 8, which spirv-cross splits into t8 and s8. */
+    D3D12_DESCRIPTOR_RANGE TextureRanges[2]{};
+    for(UINT Kind = 0; Kind < 2; ++Kind)
+    {
+        TextureRanges[Kind].RangeType          = Kind == 0 ? D3D12_DESCRIPTOR_RANGE_TYPE_SRV : D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
+        TextureRanges[Kind].NumDescriptors     = 1;
+        TextureRanges[Kind].BaseShaderRegister = GDI_COMPUTE_TEXTURE_BINDING;
+        D3D12_ROOT_PARAMETER& P               = Params[Kind == 0 ? CRP_Texture : CRP_Sampler];
+        P.ParameterType                       = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        P.DescriptorTable.NumDescriptorRanges = 1;
+        P.DescriptorTable.pDescriptorRanges   = &TextureRanges[Kind];
+        P.ShaderVisibility                    = D3D12_SHADER_VISIBILITY_ALL;
+    }
+
+    D3D12_ROOT_SIGNATURE_DESC Desc{};
+    Desc.NumParameters = CRP_Count;
+    Desc.pParameters   = Params;
+
+    ComPtr<ID3DBlob> Blob, Error;
+    if(FAILED(D3D12SerializeRootSignature(&Desc, D3D_ROOT_SIGNATURE_VERSION_1, &Blob, &Error)) ||
+       FAILED(Device->GetDevice()->CreateRootSignature(0, Blob->GetBufferPointer(), Blob->GetBufferSize(),
+                                                       IID_PPV_ARGS(&ComputeRootSignature))))
+    {
+        GDI_LOG_ERROR(std::string("[D3D12PipelineCache] The compute root signature failed: ")
+                      + (Error ? static_cast<const char*>(Error->GetBufferPointer()) : ""))
+        ComputeRootSignature.Reset();
+        return false;
+    }
+    return true;
+}
+
+bool D3D12PipelineCache::BuildDrawIndexedSignature()
+{
+    static_assert(sizeof(D3D12_DRAW_INDEXED_ARGUMENTS) == GDI_INDIRECT_ARGS_STRIDE, "GDI's indirect args are D3D12's");
+
+    D3D12_INDIRECT_ARGUMENT_DESC Argument{};
+    Argument.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED;
+
+    D3D12_COMMAND_SIGNATURE_DESC Desc{};
+    Desc.ByteStride       = GDI_INDIRECT_ARGS_STRIDE;
+    Desc.NumArgumentDescs = 1;
+    Desc.pArgumentDescs   = &Argument;
+    // A draw-only signature changes no root arguments, so it needs no root signature.
+    if(FAILED(Device->GetDevice()->CreateCommandSignature(&Desc, nullptr, IID_PPV_ARGS(&DrawIndexedSignature))))
+    {
+        GDI_LOG_ERROR("[D3D12PipelineCache] CreateCommandSignature failed for indexed draws.")
+        return false;
+    }
+    return true;
+}
+
+ID3D12PipelineState* D3D12PipelineCache::GetOrCreateCompute(const D3D12ShaderResource* InCS)
+{
+    if(!InCS || !InCS->IsValid() || !ComputeRootSignature) return nullptr;
+
+    auto It = ComputePipelines.find(InCS->GetID());
+    if(It != ComputePipelines.end())
+    {
+        return It->second.Get();
+    }
+
+    D3D12_COMPUTE_PIPELINE_STATE_DESC Desc{};
+    Desc.pRootSignature = ComputeRootSignature.Get();
+    Desc.CS             = { InCS->GetBytecode().data(), InCS->GetBytecode().size() };
+
+    ComPtr<ID3D12PipelineState> Pipeline;
+    const HRESULT Result = Device->GetDevice()->CreateComputePipelineState(&Desc, IID_PPV_ARGS(&Pipeline));
+    if(FAILED(Result))
+    {
+        GDI_LOG_ERROR("[D3D12PipelineCache] CreateComputePipelineState failed (" + GDIHex(uint32_t(Result)) + ").")
+    }
+    ID3D12PipelineState* Out = Pipeline.Get();
+    ComputePipelines.emplace(InCS->GetID(), std::move(Pipeline));
+    return Out;
+}
+
+uint64_t D3D12PipelineCache::HashKey(const PipelineKey& K)
+{
+    uint64_t H = 0xcbf29ce484222325ULL;
+    auto Mix = [&H](const void* Data, size_t N)
+    {
+        const auto* B = static_cast<const uint8_t*>(Data);
+        for(size_t i = 0; i < N; ++i)
+        {
+            H ^= static_cast<uint64_t>(B[i]);
+            H *= 0x00000100000001B3ULL;
+        }
+    };
+
+    Mix(&K.VertexShaderID, sizeof(K.VertexShaderID));
+    Mix(&K.PixelShaderID,  sizeof(K.PixelShaderID));
+    Mix(&K.VertexLayoutID, sizeof(K.VertexLayoutID));
+    Mix(&K.BlendEnable,    sizeof(K.BlendEnable));
+    Mix(&K.SrcBlend,       sizeof(K.SrcBlend));
+    Mix(&K.DestBlend,      sizeof(K.DestBlend));
+    Mix(&K.BlendOp,        sizeof(K.BlendOp));
+    Mix(&K.BlendOpAlpha,   sizeof(K.BlendOpAlpha));
+    Mix(&K.WriteMask,      sizeof(K.WriteMask));
+    Mix(&K.RTFormat,       sizeof(K.RTFormat));
+    Mix(&K.ColorCount,     sizeof(K.ColorCount));
+    Mix(&K.ColorFormats,   sizeof(K.ColorFormats));
+    Mix(&K.DSVFormat,      sizeof(K.DSVFormat));
+    Mix(&K.DepthEnable,    sizeof(K.DepthEnable));
+    Mix(&K.DepthWrite,     sizeof(K.DepthWrite));
+    Mix(&K.DepthFunc,      sizeof(K.DepthFunc));
+    Mix(&K.CullMode,       sizeof(K.CullMode));
+    return H;
+}
+
+bool D3D12PipelineCache::PipelineKey::operator==(const PipelineKey& InOther) const
+{
+    for(UINT Index = 0; Index < GDI_MAX_COLOR_TARGETS; ++Index)
+    {
+        if(ColorFormats[Index] != InOther.ColorFormats[Index]) return false;
+    }
+    return VertexShaderID == InOther.VertexShaderID && PixelShaderID == InOther.PixelShaderID
+        && VertexLayoutID == InOther.VertexLayoutID && BlendEnable == InOther.BlendEnable
+        && SrcBlend == InOther.SrcBlend && DestBlend == InOther.DestBlend && BlendOp == InOther.BlendOp
+        && BlendOpAlpha == InOther.BlendOpAlpha && WriteMask == InOther.WriteMask && RTFormat == InOther.RTFormat
+        && ColorCount == InOther.ColorCount && DSVFormat == InOther.DSVFormat && DepthEnable == InOther.DepthEnable
+        && DepthWrite == InOther.DepthWrite && DepthFunc == InOther.DepthFunc && CullMode == InOther.CullMode;
+}
+
+ID3D12PipelineState* D3D12PipelineCache::GetOrCreate(const PipelineKey& Key,
+                                                     const D3D12ShaderResource* VS,
+                                                     const D3D12ShaderResource* PS)
+{
+    if(!VS || !PS || !VS->IsValid() || !PS->IsValid() || !RootSignature) return nullptr;
+
+    const uint64_t H = HashKey(Key);
+    const auto Find = [this, H, &Key]() -> const PipelineEntry*
+    {
+        const auto Range = Pipelines.equal_range(H);
+        for(auto It = Range.first; It != Range.second; ++It)
+        {
+            if(It->second.Key == Key) return &It->second;
+        }
+        return nullptr;
+    };
+    {
+        std::shared_lock<std::shared_mutex> Read(PipelinesLock);
+        if(const PipelineEntry* Entry = Find()) return Entry->Pipeline.Get();
+    }
+
+    /* Made outside the lock (it compiles), kept unless another thread made it first. */
+    ComPtr<ID3D12PipelineState> New = CreatePipeline(Key, VS, PS);
+    std::unique_lock<std::shared_mutex> Write(PipelinesLock);
+    if(const PipelineEntry* Entry = Find()) return Entry->Pipeline.Get();
+    ID3D12PipelineState* Result = New.Get();
+    Pipelines.emplace(H, PipelineEntry{ Key, std::move(New) });
+    return Result;
+}
+
+ComPtr<ID3D12PipelineState> D3D12PipelineCache::CreatePipeline(const PipelineKey& Key,
+                                                               const D3D12ShaderResource* VS,
+                                                               const D3D12ShaderResource* PS) const
+{
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC Desc{};
+    Desc.pRootSignature        = RootSignature.Get();
+    Desc.VS                    = { VS->GetBytecode().data(), VS->GetBytecode().size() };
+    Desc.PS                    = { PS->GetBytecode().data(), PS->GetBytecode().size() };
+
+    if(Key.VertexLayoutID == kLayoutMeshInstanced)
+    {
+        Desc.InputLayout = { GMeshInstancedLayout, UINT(sizeof(GMeshInstancedLayout) / sizeof(GMeshInstancedLayout[0])) };
+    }
+    else if(Key.VertexLayoutID == kLayoutMeshSkinned)
+    {
+        Desc.InputLayout = { GMeshSkinnedLayout, UINT(sizeof(GMeshSkinnedLayout) / sizeof(GMeshSkinnedLayout[0])) };
+    }
+    else if(Key.VertexLayoutID == kLayoutMesh)
+    {
+        Desc.InputLayout = { GMeshLayout, UINT(sizeof(GMeshLayout) / sizeof(GMeshLayout[0])) };
+    }
+    else if(Key.VertexLayoutID == kLayoutInstanced)
+    {
+        Desc.InputLayout = { GInstancedLayout, UINT(sizeof(GInstancedLayout) / sizeof(GInstancedLayout[0])) };
+    }
+    else
+    {
+        Desc.InputLayout = { GStandardLayout, UINT(sizeof(GStandardLayout) / sizeof(GStandardLayout[0])) };
+    }
+
+    D3D12_RENDER_TARGET_BLEND_DESC& Blend = Desc.BlendState.RenderTarget[0];
+    Blend.BlendEnable           = Key.BlendEnable;
+    Blend.SrcBlend              = Key.SrcBlend;
+    Blend.DestBlend             = Key.DestBlend;
+    Blend.BlendOp               = Key.BlendOp;
+    Blend.SrcBlendAlpha         = ToAlphaBlend(Key.SrcBlend);
+    Blend.DestBlendAlpha        = ToAlphaBlend(Key.DestBlend);
+    Blend.BlendOpAlpha          = Key.BlendOpAlpha;
+    Blend.LogicOp               = D3D12_LOGIC_OP_NOOP;
+    Blend.RenderTargetWriteMask = Key.WriteMask;
+
+    Desc.RasterizerState.FillMode        = D3D12_FILL_MODE_SOLID;
+    Desc.RasterizerState.CullMode        = Key.CullMode;
+    /* Counter-clockwise on the target as stored, top-down (GDI.h): a GL front
+     * face, as Vulkan's COUNTER_CLOCKWISE under its negative viewport --
+     * gl_FrontFacing (Two Sided) and GDI_CULL_FRONT mean the same faces. */
+    Desc.RasterizerState.FrontCounterClockwise = TRUE;
+    Desc.RasterizerState.DepthClipEnable = TRUE;
+
+    // Depth testing needs a depth buffer.
+    const bool bDepth = Key.DSVFormat != DXGI_FORMAT_UNKNOWN && Key.DepthEnable;
+    Desc.DepthStencilState.DepthEnable    = bDepth ? TRUE : FALSE;
+    Desc.DepthStencilState.DepthWriteMask = (bDepth && Key.DepthWrite) ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
+    Desc.DepthStencilState.DepthFunc      = Key.DepthFunc;
+    Desc.DepthStencilState.StencilEnable  = FALSE;
+
+    Desc.SampleMask            = UINT_MAX;
+    Desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    // RenderTarget[0]'s blend covers them all (IndependentBlendEnable is off).
+    Desc.NumRenderTargets      = Key.ColorCount == 0 ? 1u : (Key.ColorCount > GDI_MAX_COLOR_TARGETS ? GDI_MAX_COLOR_TARGETS : Key.ColorCount);
+    for(UINT Index = 0; Index < Desc.NumRenderTargets; ++Index)
+    {
+        Desc.RTVFormats[Index] = Key.ColorFormats[Index] != DXGI_FORMAT_UNKNOWN ? Key.ColorFormats[Index] : Key.RTFormat;
+    }
+    Desc.DSVFormat             = Key.DSVFormat;
+    Desc.SampleDesc.Count      = 1;
+
+    ComPtr<ID3D12PipelineState> Pipeline;
+    const HRESULT Result = Device->GetDevice()->CreateGraphicsPipelineState(&Desc, IID_PPV_ARGS(&Pipeline));
+    if(FAILED(Result))
+    {
+        GDI_LOG_ERROR("[D3D12PipelineCache] CreateGraphicsPipelineState failed (" + GDIHex(uint32_t(Result)) + ").")
+    }
+    return Pipeline;
+}

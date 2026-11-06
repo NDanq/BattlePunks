@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Script">
+  <Properties>
+    <Property Name="TickPhase" Value="PostPhysics" />
+  </Properties>
+  <Variables>
+    <Variable Name="Speed" Type="number" Default="60" />
+  </Variables>
+  <Nodes>
+    <Node Id="6e6f6465677261700000000000000001" Type="Event.OnStart" Version="1" X="-400" Y="-120" />
+    <Node Id="6e6f6465677261700000000000000002" Type="Debug.Print" Version="1" X="-120" Y="-120" />
+    <Node Id="6e6f6465677261700000000000000003" Type="Entity.GetName" Version="1" X="-400" Y="-40" />
+    <Node Id="6e6f6465677261700000000000000004" Type="String.Append" Version="1" X="-260" Y="-40">
+      <Const Pin="A" Value="Mover started on " />
+    </Node>
+    <Node Id="6e6f646567726170000000000000000a" Type="Event.OnTick" Version="1" X="-400" Y="80" />
+    <Node Id="6e6f646567726170000000000000000b" Type="Variable.Get" Version="1" X="-400" Y="200">
+      <Prop Name="Variable" Value="Speed" />
+    </Node>
+    <Node Id="6e6f646567726170000000000000000c" Type="Math.Multiply" Version="1" X="-200" Y="160" />
+    <Node Id="6e6f646567726170000000000000000d" Type="Vector.Make" Version="1" X="-40" Y="160" />
+    <Node Id="6e6f646567726170000000000000000e" Type="Component.Transform.Get" Version="1" X="-40" Y="60" />
+    <Node Id="6e6f646567726170000000000000000f" Type="Component.Transform.Translate" Version="1" X="200" Y="80" />
+  </Nodes>
+  <Links>
+    <Link From="6e6f6465677261700000000000000001.Then" To="6e6f6465677261700000000000000002.Exec" />
+    <Link From="6e6f6465677261700000000000000003.Name" To="6e6f6465677261700000000000000004.B" />
+    <Link From="6e6f6465677261700000000000000004.Out" To="6e6f6465677261700000000000000002.Value" />
+    <Link From="6e6f646567726170000000000000000a.DeltaSeconds" To="6e6f646567726170000000000000000c.B" />
+    <Link From="6e6f646567726170000000000000000a.Then" To="6e6f646567726170000000000000000f.Exec" />
+    <Link From="6e6f646567726170000000000000000b.Value" To="6e6f646567726170000000000000000c.A" />
+    <Link From="6e6f646567726170000000000000000c.Out" To="6e6f646567726170000000000000000d.X" />
+    <Link From="6e6f646567726170000000000000000d.Vector" To="6e6f646567726170000000000000000f.Delta" />
+    <Link From="6e6f646567726170000000000000000e.Transform" To="6e6f646567726170000000000000000f.Target" />
+  </Links>
+  <Comments>
+    <Comment X="-420" Y="40" Width="820" Height="260" Text="Slide along +x" />
+  </Comments>
+</NodeGraph>

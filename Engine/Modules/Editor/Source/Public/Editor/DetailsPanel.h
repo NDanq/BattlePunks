@@ -1,0 +1,201 @@
+#ifndef NIMBLEEDITOR_DETAILSPANEL_H
+#define NIMBLEEDITOR_DETAILSPANEL_H
+
+#if WITH_EDITOR
+
+#include <cstdint>
+#include <map>
+#include <memory>
+#include <vector>
+
+#include <QTimer>
+#include <QWidget>
+
+#include "Public/GameCore/ComponentProperties.h"
+#include "Public/GameCore/ComponentType.h"
+#include "Public/GameCore/EntityID.h"
+
+class EditorDocument;
+class PropertyEditor;
+class QCheckBox;
+class QFormLayout;
+class QLabel;
+class QLineEdit;
+class QScrollArea;
+class QToolButton;
+class QVBoxLayout;
+
+/*
+ * The selected entity: its members (name, script), then one collapsible
+ * section per component with its registered properties (a header even if it
+ * has none).
+ *
+ *   Selection      several selected: the primary's values are shown, and an
+ *                  edit is copied to every selected entity with that
+ *                  component, as one undo step. A property whose value
+ *                  differs among them is italic.
+ *   Search         narrows the sections to the properties (or components)
+ *                  whose name holds the text.
+ *   Collapsing     a component or category folded stays folded, for every
+ *                  entity, between runs (EditorLayoutSettings.h).
+ *   Header menu    Copy / Paste a component's values, Collapse / Expand All.
+ *
+ *   Entity         Name, and the prefab an instance's entity came from.
+ *   Per property   a reset arrow while the value differs from the default.
+ *   Per array      a list: the entries in use, each removable (later ones
+ *                  move up), and "+ Add" for the next.
+ *   Per component  Reset and Remove in the header.
+ *   At the bottom  Add Component: a searchable picker of addable types, by
+ *                  category (ComponentPicker).
+ *
+ * Rebuilt when the selection or component set changes; values are re-read on
+ * a short timer to pick up outside changes.
+ */
+class DetailsPanel : public QWidget
+{
+    Q_OBJECT
+
+public:
+    explicit DetailsPanel(EditorDocument& InDocument, QWidget* InParent = nullptr);
+
+    /* Every component section collapsed but InTypeName's ("Character Mover"),
+     * which is opened and scrolled to: the console's "details focus", for a
+     * documentation screenshot. False if the shown entity has none. */
+    bool FocusComponent(const QString& InTypeName);
+
+    /* The Search box's text, as if typed: the console's "details search". */
+    void SetSearchText(const QString& InText);
+
+private:
+    /* One property's editor and its reset arrow. */
+    struct PropertyRow
+    {
+        PropertyEditor*                   Editor = nullptr;
+        QLabel*                           Label  = nullptr;   // bold while it overrides the prefab, italic while mixed
+        QToolButton*                      Reset  = nullptr;   // null for a read-only property
+        GameCore::ComponentTypeID         Type   = GameCore::COMPONENT_TYPE_INVALID;
+        GameCore::ComponentPropertyEntry  Entry;
+    };
+
+    /* An array property's list as built: rebuilt when it must show more. */
+    struct ArrayList
+    {
+        GameCore::ComponentTypeID        Type  = GameCore::COMPONENT_TYPE_INVALID;
+        GameCore::ComponentPropertyEntry Entry;
+        size_t                           Shown = 0;
+    };
+
+    /* One component section: its default bytes and its header Reset; on a
+     * prefab instance's entity, what the prefab holds and Revert to Prefab. */
+    struct ComponentSection
+    {
+        GameCore::ComponentTypeID                   Type = GameCore::COMPONENT_TYPE_INVALID;
+        std::shared_ptr<const std::vector<uint8_t>> Defaults;       // empty if the type has none
+        QToolButton*                                ResetAll = nullptr;
+        std::shared_ptr<const std::vector<uint8_t>> PrefabValues;   // empty unless the prefab has this component here
+        QToolButton*                                RevertAll = nullptr;
+        QToolButton*                                Toggle = nullptr;    // the header's collapse arrow
+        QWidget*                                    Frame  = nullptr;    // the whole section
+        QWidget*                                    Content = nullptr;   // what the arrow folds
+        QString                                     TypeName;
+    };
+
+    /* One form row, for Search: the property's (or array's) name. */
+    struct FilterRow
+    {
+        QFormLayout*              Form  = nullptr;
+        QWidget*                  Label = nullptr;
+        GameCore::ComponentTypeID Type  = GameCore::COMPONENT_TYPE_INVALID;
+        QString                   Name;
+        int                       Category = -1;   // index into Categories, or -1
+    };
+
+    /* A category's collapsible box. */
+    struct CategoryBox
+    {
+        QWidget*     Box     = nullptr;
+        QToolButton* Toggle  = nullptr;
+        QWidget*     Content = nullptr;
+    };
+
+    void Rebuild();
+    void RebuildIfComponentsChanged();
+    void RefreshValues();
+    void UpdateHeader();
+
+    /* The component types InEntity carries, in type-id order. */
+    std::vector<GameCore::ComponentTypeID> CollectComponentTypes(GameCore::EntityID InEntity) const;
+
+    QWidget* BuildEntitySection(GameCore::EntityID InEntity);
+    void     RefreshEntitySection();
+    QWidget* BuildComponentSection(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType);
+    QWidget* BuildAddComponentButton();
+
+    /* The live bytes of InType on the shown entity, or null. */
+    uint8_t* ResolveComponent(GameCore::ComponentTypeID InType) const;
+    const ComponentSection* FindSection(GameCore::ComponentTypeID InType) const;
+
+    /* Copies InRow's default into the live component and tells the context. */
+    void ResetProperty(const PropertyRow& InRow);
+    void ResetComponent(GameCore::ComponentTypeID InType);
+
+    /* OVERRIDES: on a prefab instance's entity, a property that differs from
+     * what the prefab holds. Reverting copies the prefab's value back, as an
+     * ordinary (undoable) property edit. The root's Transform is the
+     * instance's placement, not an override. */
+    bool IsOverridden(const PropertyRow& InRow) const;
+    void RevertPropertyToPrefab(const PropertyRow& InRow);
+    void RevertComponentToPrefab(GameCore::ComponentTypeID InType);
+
+    /* Erases element InIndex: the later ones move up, the last is the default. */
+    void RemoveArrayElement(GameCore::ComponentTypeID InType, const GameCore::ComponentPropertyEntry& InEntry, size_t InIndex);
+
+    /* Rebuild once the current event is done (a button may be deleting itself). */
+    void QueueRebuild();
+
+    /* Shows the rows Search matches, and the sections and categories holding them. */
+    void ApplyFilter();
+
+    /* InType's bytes [InOffset, +InSize) written on the shown entity: told to
+     * the document, and copied to the other selected entities with InType. */
+    void PropagateEdit(GameCore::ComponentTypeID InType, uint32_t InOffset, uint32_t InSize);
+
+    /* The header's menu: the component's editable values through the clipboard. */
+    void CopyComponentValues(GameCore::ComponentTypeID InType) const;
+    bool CanPasteComponentValues(GameCore::ComponentTypeID InType) const;
+    void PasteComponentValues(GameCore::ComponentTypeID InType);
+    void SetAllCollapsed(bool bInCollapsed);
+
+    EditorDocument& Document;
+
+    QLabel*      Header      = nullptr;
+    QLineEdit*   Search      = nullptr;
+    QScrollArea* Scroll      = nullptr;
+    QWidget*     Body        = nullptr;
+    QVBoxLayout* BodyLayout  = nullptr;
+
+    /* The Entity section's editors; null when nothing is shown. */
+    QLineEdit* NameEdit     = nullptr;
+    class QComboBox* MobilityCombo = nullptr;
+    class QComboBox* DetailModeCombo = nullptr;
+
+    GameCore::EntityID                     ShownEntity;
+    std::vector<GameCore::EntityID>        ShownOthers;   // the rest of the selection
+    std::vector<GameCore::ComponentTypeID> ShownTypes;
+    std::vector<FilterRow>                 FilterRows;
+    std::vector<CategoryBox>               Categories;
+    std::vector<PropertyRow>               Rows;
+    std::vector<ComponentSection>          Sections;
+    std::vector<ArrayList>                 Arrays;
+
+    /* How many entries each array shows for the shown entity, by
+     * (type << 32 | offset): at least those in use, plus any added. */
+    std::map<uint64_t, size_t> ArrayShown;
+    bool                       bRebuildQueued = false;
+
+    QTimer RefreshTimer;
+};
+
+#endif // WITH_EDITOR
+
+#endif //NIMBLEEDITOR_DETAILSPANEL_H

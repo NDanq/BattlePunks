@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Script">
+  <Nodes>
+    <Node Id="436f696e527573680000000000000001" Type="Library.Game.OnScoreChanged" Version="1" X="0" Y="0" />
+    <Node Id="436f696e527573680000000000000002" Type="Compare.Equal" Version="1" X="300" Y="280">
+      <Const Pin="B" Value="2" />
+    </Node>
+    <Node Id="436f696e527573680000000000000003" Type="Flow.Branch" Version="1" X="560" Y="0" />
+    <Node Id="436f696e527573680000000000000004" Type="Library.Game.AddLives" Version="1" X="820" Y="240">
+      <Const Pin="Amount" Value="1" />
+    </Node>
+    <Node Id="436f696e52757368000000000000000a" Type="Library.Game.OnPhaseChanged" Version="1" X="0" Y="560" />
+    <Node Id="436f696e52757368000000000000000b" Type="String.Append" Version="1" X="300" Y="720">
+      <Const Pin="A" Value="Coin Rush phase: " />
+    </Node>
+    <Node Id="436f696e52757368000000000000000c" Type="Debug.Print" Version="1" X="620" Y="560" />
+  </Nodes>
+  <Links>
+    <Link From="436f696e527573680000000000000001.Player" To="436f696e527573680000000000000004.Player" />
+    <Link From="436f696e527573680000000000000001.Score" To="436f696e527573680000000000000002.A" />
+    <Link From="436f696e527573680000000000000001.Then" To="436f696e527573680000000000000003.Exec" />
+    <Link From="436f696e527573680000000000000002.Out" To="436f696e527573680000000000000003.Condition" />
+    <Link From="436f696e527573680000000000000003.True" To="436f696e527573680000000000000004.Exec" />
+    <Link From="436f696e52757368000000000000000a.Phase" To="436f696e52757368000000000000000b.B" />
+    <Link From="436f696e52757368000000000000000a.Then" To="436f696e52757368000000000000000c.Exec" />
+    <Link From="436f696e52757368000000000000000b.Out" To="436f696e52757368000000000000000c.Value" />
+  </Links>
+</NodeGraph>

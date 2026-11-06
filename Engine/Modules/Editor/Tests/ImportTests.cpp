@@ -1,0 +1,1008 @@
+/*
+ * NimbleEditorImportTests -- glTF -> .nmmesh, images -> .nmtexture, Reimport.
+ * The glTF is built inline so expected numbers sit beside their source.
+ */
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <vector>
+
+#include <QBuffer>
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QImage>
+#include <QTemporaryDir>
+
+#include "Public/Core/CoreArchive.h"
+#include "Public/RenderCore/AnimClipAsset.h"
+#include "Public/RenderCore/AnimRetarget.h"
+#include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/RetargetAsset.h"
+#include "Public/RenderCore/SkeletonAsset.h"
+#include "Public/RenderCore/TextureAsset.h"
+#include "Private/Editor/Content/AssetImport.h"
+#include "Private/Editor/Content/GltfImporter.h"
+#include "Private/Editor/Content/LightmapUVs.h"
+#if WITH_AUDIO
+#include "Public/Audio/SoundAsset.h"
+#endif
+
+using namespace EditorContent;
+
+static int GChecks   = 0;
+static int GFailures = 0;
+
+static void Expect(const bool bCondition, const char* What)
+{
+    ++GChecks;
+    if(!bCondition)
+    {
+        ++GFailures;
+        std::printf("  FAIL  %s\n", What);
+    }
+}
+
+static bool Near(const float A, const float B) { return std::fabs(A - B) < 1e-4f; }
+
+/* Reads a written asset back the way the editor's Reimport does. */
+template<typename TData, typename TSerialize>
+static bool ReadAsset(const QString& InPath, TData& OutData, TSerialize InSerialize)
+{
+    QFile File(InPath);
+    if(!File.open(QIODevice::ReadOnly)) { return false; }
+    const QByteArray Bytes = File.readAll();
+    EngineCore::Archive Ar = EngineCore::Archive::ForReading(std::vector<uint8_t>(Bytes.begin(), Bytes.end()));
+    return InSerialize(Ar, OutData);
+}
+
+static bool ReadMesh(const QString& InPath, RenderCore::MeshData& OutMesh)
+{
+    return ReadAsset(InPath, OutMesh, &RenderCore::SerializeMesh);
+}
+
+static bool ReadTexture(const QString& InPath, RenderCore::TextureData& OutTexture)
+{
+    return ReadAsset(InPath, OutTexture, &RenderCore::SerializeTexture);
+}
+
+/*
+ * Scene.gltf, beside Checker.png:
+ *   node "Moved"  (translation 1,2,3)  -> mesh "Box", two primitives:
+ *       0: a triangle at z=0, indexed, normals +Z, material "Red" (base
+ *          colour 1,0,0 and no texture: baked into its vertex colours)
+ *       1: a triangle at z=1, no indices, no normals, COLOR_0 as
+ *          normalised bytes: red, green, half-transparent blue
+ *   node "Mirror" (scale -1,1,1)       -> mesh "Tri": primitive 0's data again
+ */
+static void WriteScene(const QDir& InFolder)
+{
+    const float PosA[9]  = { 0, 0, 0,   1, 0, 0,   0, 1, 0 };
+    const float NrmA[9]  = { 0, 0, 1,   0, 0, 1,   0, 0, 1 };
+    const float UVA[6]   = { 0, 0,      1, 0,      0, 1 };
+    const uint16_t Idx[4] = { 0, 1, 2, 0 };   // the 4th is padding, to keep the next view aligned
+    const float PosB[9]  = { 0, 0, 1,   1, 0, 1,   0, 1, 1 };
+    const uint8_t ColB[12] = { 255, 0, 0, 255,   0, 255, 0, 255,   0, 0, 255, 128 };
+
+    QByteArray Buffer;
+    Buffer.append(reinterpret_cast<const char*>(PosA), sizeof(PosA));   //   0..36
+    Buffer.append(reinterpret_cast<const char*>(NrmA), sizeof(NrmA));   //  36..72
+    Buffer.append(reinterpret_cast<const char*>(UVA),  sizeof(UVA));    //  72..96
+    Buffer.append(reinterpret_cast<const char*>(Idx),  sizeof(Idx));    //  96..104 (6 used)
+    Buffer.append(reinterpret_cast<const char*>(PosB), sizeof(PosB));   // 104..140
+    Buffer.append(reinterpret_cast<const char*>(ColB), sizeof(ColB));   // 140..152
+
+    const QString Json = QStringLiteral(R"({
+  "asset": { "version": "2.0" },
+  "scene": 0,
+  "scenes": [ { "nodes": [0, 1] } ],
+  "nodes": [
+    { "name": "Moved",  "mesh": 0, "translation": [1, 2, 3] },
+    { "name": "Mirror", "mesh": 1, "scale": [-1, 1, 1] }
+  ],
+  "meshes": [
+    { "name": "Box", "primitives": [
+        { "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 }, "indices": 3, "material": 0 },
+        { "attributes": { "POSITION": 4, "COLOR_0": 5 } } ] },
+    { "name": "Tri", "primitives": [
+        { "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 }, "indices": 3 } ] }
+  ],
+  "materials": [ { "name": "Red", "pbrMetallicRoughness": { "baseColorFactor": [1, 0, 0, 1] } } ],
+  "images": [ { "uri": "Checker.png" } ],
+  "textures": [ { "source": 0 } ],
+  "buffers": [ { "byteLength": %1, "uri": "data:application/octet-stream;base64,%2" } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0,   "byteLength": 36 },
+    { "buffer": 0, "byteOffset": 36,  "byteLength": 36 },
+    { "buffer": 0, "byteOffset": 72,  "byteLength": 24 },
+    { "buffer": 0, "byteOffset": 96,  "byteLength": 6 },
+    { "buffer": 0, "byteOffset": 104, "byteLength": 36 },
+    { "buffer": 0, "byteOffset": 140, "byteLength": 12 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [1,1,0] },
+    { "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3" },
+    { "bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC2" },
+    { "bufferView": 3, "componentType": 5123, "count": 3, "type": "SCALAR" },
+    { "bufferView": 4, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,1], "max": [1,1,1] },
+    { "bufferView": 5, "componentType": 5121, "normalized": true, "count": 3, "type": "VEC4" }
+  ]
+})").arg(Buffer.size()).arg(QString::fromLatin1(Buffer.toBase64()));
+
+    QFile File(InFolder.filePath(QStringLiteral("Scene.gltf")));
+    File.open(QIODevice::WriteOnly);
+    File.write(Json.toUtf8());
+    File.close();
+
+    /* 8 x 4 blue, the top-right 2x2 block green -- one pixel of the 4 x 2 it
+     * scales down to, so a vertical flip shows. */
+    QImage Checker(8, 4, QImage::Format_RGBA8888);
+    Checker.fill(QColor(0, 0, 255));
+    for(int Y = 0; Y < 2; ++Y)
+    {
+        for(int X = 6; X < 8; ++X) { Checker.setPixelColor(X, Y, QColor(0, 255, 0)); }
+    }
+    Checker.save(InFolder.filePath(QStringLiteral("Checker.png")));
+}
+
+/*
+ * Skinned.gltf: a two-bone arm and one animation.
+ *   node "Root" (at the origin)  -> child "Arm" (translation 1,0,0)
+ *   node "Body" (translation 5,5,5 -- ignored: a skinned mesh is in bind
+ *       space) -> mesh "Arm", skin 0: joints [Root, Arm], inverse binds
+ *       identity and translation(-1,0,0)
+ *   one triangle: (0,0,0) on Root, (2,0,0) on Arm, (0,1,0) half each
+ *   animation "Bend": Arm turns 90 degrees about Z over one second
+ */
+/* A 2 x 2 PNG, for an embedded image with no name. */
+static QByteArray TinyPng()
+{
+    QImage Image(2, 2, QImage::Format_RGBA8888);
+    Image.fill(QColor(200, 120, 40));
+    QByteArray Bytes;
+    QBuffer Out(&Bytes);
+    Out.open(QIODevice::WriteOnly);
+    Image.save(&Out, "PNG");
+    return Bytes;
+}
+
+static void WriteSkinnedScene(const QDir& InFolder)
+{
+    const float    Pos[9]     = { 0, 0, 0,   2, 0, 0,   0, 1, 0 };
+    const uint8_t  Joints[12] = { 0, 0, 0, 0,   1, 0, 0, 0,   0, 1, 0, 0 };
+    const float    Weights[12] = { 1, 0, 0, 0,   1, 0, 0, 0,   0.5f, 0.5f, 0, 0 };
+    const float    InvBind[32] = { 1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1,
+                                   1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0, -1, 0, 0, 1 };
+    const float    Times[2]   = { 0, 1 };
+    const float    S = std::sqrt(0.5f);
+    const float    Rot[8]     = { 0, 0, 0, 1,   0, 0, S, S };
+
+    QByteArray Buffer;
+    Buffer.append(reinterpret_cast<const char*>(Pos),     sizeof(Pos));       //   0..36
+    Buffer.append(reinterpret_cast<const char*>(Joints),  sizeof(Joints));    //  36..48
+    Buffer.append(reinterpret_cast<const char*>(Weights), sizeof(Weights));   //  48..96
+    Buffer.append(reinterpret_cast<const char*>(InvBind), sizeof(InvBind));   //  96..224
+    Buffer.append(reinterpret_cast<const char*>(Times),   sizeof(Times));     // 224..232
+    Buffer.append(reinterpret_cast<const char*>(Rot),     sizeof(Rot));       // 232..264
+
+    const QString Json = QStringLiteral(R"({
+  "asset": { "version": "2.0" },
+  "scene": 0,
+  "scenes": [ { "nodes": [0, 2] } ],
+  "nodes": [
+    { "name": "Root", "children": [1] },
+    { "name": "Arm", "translation": [1, 0, 0] },
+    { "name": "Body", "mesh": 0, "skin": 0, "translation": [5, 5, 5] }
+  ],
+  "skins": [ { "joints": [0, 1], "inverseBindMatrices": 3 } ],
+  "images": [ { "uri": "data:image/png;base64,%3" } ],
+  "meshes": [ { "name": "Arm", "primitives": [ { "attributes": { "POSITION": 0, "JOINTS_0": 1, "WEIGHTS_0": 2 } } ] } ],
+  "animations": [ { "name": "Bend",
+      "samplers": [ { "input": 4, "output": 5, "interpolation": "LINEAR" } ],
+      "channels": [ { "sampler": 0, "target": { "node": 1, "path": "rotation" } } ] } ],
+  "buffers": [ { "byteLength": %1, "uri": "data:application/octet-stream;base64,%2" } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0,   "byteLength": 36 },
+    { "buffer": 0, "byteOffset": 36,  "byteLength": 12 },
+    { "buffer": 0, "byteOffset": 48,  "byteLength": 48 },
+    { "buffer": 0, "byteOffset": 96,  "byteLength": 128 },
+    { "buffer": 0, "byteOffset": 224, "byteLength": 8 },
+    { "buffer": 0, "byteOffset": 232, "byteLength": 32 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [2,1,0] },
+    { "bufferView": 1, "componentType": 5121, "count": 3, "type": "VEC4" },
+    { "bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC4" },
+    { "bufferView": 3, "componentType": 5126, "count": 2, "type": "MAT4" },
+    { "bufferView": 4, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1] },
+    { "bufferView": 5, "componentType": 5126, "count": 2, "type": "VEC4" }
+  ]
+})").arg(Buffer.size()).arg(QString::fromLatin1(Buffer.toBase64())).arg(QString::fromLatin1(TinyPng().toBase64()));
+
+    QFile File(InFolder.filePath(QStringLiteral("Skinned.gltf")));
+    File.open(QIODevice::WriteOnly);
+    File.write(Json.toUtf8());
+    File.close();
+}
+
+/*
+ * <InName>.gltf: no mesh, no skin -- a clip pack's file. Nodes Root -> Arm
+ * (translation 1,0,0) -> InTip (translation 1,0,0); animation "Wave": Arm
+ * turns 90 degrees about Z over one second.
+ */
+static void WriteAnimationOnly(const QDir& InFolder, const QString& InName, const QString& InTip)
+{
+    const float Times[2] = { 0, 1 };
+    const float S = std::sqrt(0.5f);
+    const float Rot[8] = { 0, 0, 0, 1,   0, 0, S, S };
+    QByteArray Buffer;
+    Buffer.append(reinterpret_cast<const char*>(Times), sizeof(Times));   // 0..8
+    Buffer.append(reinterpret_cast<const char*>(Rot),   sizeof(Rot));     // 8..40
+    const QString Json = QStringLiteral(R"({
+  "asset": { "version": "2.0" },
+  "scene": 0,
+  "scenes": [ { "nodes": [0] } ],
+  "nodes": [
+    { "name": "Root", "children": [1] },
+    { "name": "Arm", "translation": [1, 0, 0], "children": [2] },
+    { "name": "%3", "translation": [1, 0, 0] }
+  ],
+  "animations": [ { "name": "Wave",
+      "samplers": [ { "input": 0, "output": 1, "interpolation": "LINEAR" } ],
+      "channels": [ { "sampler": 0, "target": { "node": 1, "path": "rotation" } } ] } ],
+  "buffers": [ { "byteLength": %1, "uri": "data:application/octet-stream;base64,%2" } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 8 },
+    { "buffer": 0, "byteOffset": 8, "byteLength": 32 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1] },
+    { "bufferView": 1, "componentType": 5126, "count": 2, "type": "VEC4" }
+  ]
+})").arg(Buffer.size()).arg(QString::fromLatin1(Buffer.toBase64())).arg(InTip);
+    QFile File(InFolder.filePath(InName + QStringLiteral(".gltf")));
+    File.open(QIODevice::WriteOnly);
+    File.write(Json.toUtf8());
+}
+
+static void TestAnimationOnlyImport(const QDir& InRoot)
+{
+    std::printf("[animation-only import]\n");
+    const QDir Source(InRoot.filePath(QStringLiteral("Source")));
+    WriteAnimationOnly(Source, QStringLiteral("Clips"), QStringLiteral("Hand"));
+    WriteAnimationOnly(Source, QStringLiteral("Other"), QStringLiteral("Claw"));
+    const QString Content = InRoot.filePath(QStringLiteral("Content/Clips"));
+
+    /* Its own skeleton: the nodes the clip moves and their ancestors. */
+    MeshImportOptions Options;
+    const ImportResult Own = ImportMesh(Source.filePath(QStringLiteral("Clips.gltf")), Content, QStringLiteral("Pack"), Options,
+                                        TextureImportOptions(), InRoot.absolutePath());
+    Expect(Own.bOK, "a glTF of animations and no mesh imports");
+    if(!Own.bOK) { std::printf("        %s\n", qPrintable(Own.Message)); return; }
+    Expect(Own.Written.size() == 2, "as a skeleton and a clip, no mesh");
+    RenderCore::SkeletonData Skeleton;
+    Expect(ReadAsset(QDir(Content).filePath(QStringLiteral("Pack_Skeleton.nmskel")), Skeleton, &RenderCore::SerializeSkeleton)
+           && Skeleton.Bones.size() == 2 && Skeleton.Bones[0].Name == "Root" && Skeleton.Bones[1].Name == "Arm",
+           "its skeleton is the animated bone and its ancestors");
+    RenderCore::AnimClipData Clip;
+    Expect(ReadAsset(QDir(Content).filePath(QStringLiteral("Pack_Wave.nmanim")), Clip, &RenderCore::SerializeAnimClip)
+           && Clip.Skeleton == "Content/Clips/Pack_Skeleton.nmskel" && Clip.Tracks.size() == 1 && Clip.Tracks[0].Bone == "Arm",
+           "the clip names it and moves the arm");
+
+    /* Onto an existing skeleton (the skinned arm's, Root -> Arm): no skeleton written. */
+    MeshImportOptions Onto;
+    Onto.ExistingSkeleton = QStringLiteral("Content/Anim/Arm_Skeleton.nmskel");
+    const ImportResult Existing = ImportMesh(Source.filePath(QStringLiteral("Clips.gltf")), Content, QStringLiteral("OnArm"), Onto,
+                                             TextureImportOptions(), InRoot.absolutePath());
+    Expect(Existing.bOK && Existing.Written.size() == 1 && !QFile::exists(QDir(Content).filePath(QStringLiteral("OnArm_Skeleton.nmskel"))),
+           "onto an existing skeleton, only the clip is written");
+    if(!Existing.bOK) { std::printf("        %s\n", qPrintable(Existing.Message)); }
+    RenderCore::AnimClipData OnArm;
+    Expect(ReadAsset(QDir(Content).filePath(QStringLiteral("OnArm_Wave.nmanim")), OnArm, &RenderCore::SerializeAnimClip)
+           && OnArm.Skeleton == "Content/Anim/Arm_Skeleton.nmskel", "and it names the existing skeleton");
+    const ImportResult Reimported = Reimport(QDir(Content).filePath(QStringLiteral("OnArm_Wave.nmanim")), InRoot.absolutePath());
+    RenderCore::AnimClipData Back;
+    Expect(Reimported.bOK && ReadAsset(QDir(Content).filePath(QStringLiteral("OnArm_Wave.nmanim")), Back, &RenderCore::SerializeAnimClip)
+           && Back.Skeleton == "Content/Anim/Arm_Skeleton.nmskel", "a reimport keeps naming it");
+
+    /* A file with a bone the skeleton lacks: refused, the bone named, a retarget suggested. */
+    Onto.ExistingSkeleton = QStringLiteral("Content/Clips/Pack_Skeleton.nmskel");
+    WriteAnimationOnly(Source, QStringLiteral("Deeper"), QStringLiteral("Claw"));
+    QFile Deeper(Source.filePath(QStringLiteral("Deeper.gltf")));
+    Deeper.open(QIODevice::ReadOnly);
+    QString Text = QString::fromUtf8(Deeper.readAll());
+    Deeper.close();
+    Text.replace(QStringLiteral("\"node\": 1"), QStringLiteral("\"node\": 2"));   // the claw moves: it is a bone
+    Deeper.open(QIODevice::WriteOnly | QIODevice::Truncate);
+    Deeper.write(Text.toUtf8());
+    Deeper.close();
+    const ImportResult Mismatch = ImportMesh(Source.filePath(QStringLiteral("Deeper.gltf")), Content, QStringLiteral("Deeper"), Onto,
+                                             TextureImportOptions(), InRoot.absolutePath());
+    Expect(!Mismatch.bOK && Mismatch.Message.contains(QStringLiteral("Claw")) && Mismatch.Message.contains(QStringLiteral("retarget")),
+           "bones the existing skeleton lacks fail the import, named, with a retarget suggested");
+    Expect(!QFile::exists(QDir(Content).filePath(QStringLiteral("Deeper_Wave.nmanim"))), "and nothing is written");
+
+    /* Create Retarget To: an auto-mapped retarget onto the skinned arm's skeleton. */
+    MeshImportOptions Retargeted;
+    Retargeted.CreateRetargetTo = QStringLiteral("Content/Anim/Arm_Skeleton.nmskel");
+    const ImportResult WithRetarget = ImportMesh(Source.filePath(QStringLiteral("Clips.gltf")), Content, QStringLiteral("Pack"), Retargeted,
+                                                 TextureImportOptions(), InRoot.absolutePath());
+    const QString RetargetPath = QDir(Content).filePath(QStringLiteral("Pack_to_Arm.nmretarget"));
+    Expect(WithRetarget.bOK && WithRetarget.Written.contains(RetargetPath), "Create Retarget To writes a retarget beside the clips");
+    RenderCore::RetargetData Retarget;
+    Expect(ReadAsset(RetargetPath, Retarget, &RenderCore::SerializeRetarget) && Retarget.Target == "Content/Anim/Arm_Skeleton.nmskel"
+           && Retarget.Sources.size() == 1 && Retarget.Sources[0].Skeleton == "Content/Clips/Pack_Skeleton.nmskel",
+           "from the pack's skeleton to the target");
+    Expect(!Retarget.Sources.empty() && Retarget.Sources[0].Bones.size() == 2 && Retarget.Sources[0].FindBone("Arm")
+           && Retarget.Sources[0].FindBone("Arm")->Source == "Arm", "its bones mapped (by name: not a humanoid)");
+    const ImportResult Again = ImportMesh(Source.filePath(QStringLiteral("Clips.gltf")), Content, QStringLiteral("Pack"), Retargeted,
+                                          TextureImportOptions(), InRoot.absolutePath());
+    RenderCore::RetargetData AgainData;
+    Expect(Again.bOK && ReadAsset(RetargetPath, AgainData, &RenderCore::SerializeRetarget) && AgainData.Sources.size() == 1,
+           "importing again replaces its source rather than adding one");
+
+    /* Bake: the pack's clip through that retarget, an ordinary clip on the arm's skeleton. */
+    const QString ClipFile  = QDir(Content).filePath(QStringLiteral("Pack_Wave.nmanim"));
+    const QString BakedFile = QDir(Content).filePath(QStringLiteral("Pack_Wave_Arm.nmanim"));
+    const ImportResult Baked = BakeRetargetClip(ClipFile, RetargetPath, BakedFile, InRoot.absolutePath());
+    Expect(Baked.bOK && Baked.Written.size() == 1, "a clip bakes through a retarget");
+    if(!Baked.bOK) { std::printf("        %s\n", qPrintable(Baked.Message)); return; }
+    RenderCore::AnimClipData Out, Made;
+    RenderCore::SkeletonData Arm, PackSkeleton;
+    Expect(ReadAsset(BakedFile, Out, &RenderCore::SerializeAnimClip) && Out.Skeleton == "Content/Anim/Arm_Skeleton.nmskel"
+           && Out.FrameCount == 31, "on the target skeleton, frame for frame");
+    ReadAsset(ClipFile, Made, &RenderCore::SerializeAnimClip);
+    ReadAsset(QDir(InRoot.filePath(QStringLiteral("Content/Anim"))).filePath(QStringLiteral("Arm_Skeleton.nmskel")), Arm, &RenderCore::SerializeSkeleton);
+    ReadAsset(QDir(Content).filePath(QStringLiteral("Pack_Skeleton.nmskel")), PackSkeleton, &RenderCore::SerializeSkeleton);
+    RenderCore::RetargetBinding Binding;
+    bool bSame = RenderCore::BindClipRetargeted(Made, PackSkeleton, Arm, AgainData.Sources[0], Binding);
+    RenderCore::AnimClipBinding Plain;
+    RenderCore::BindClip(Out, Arm, Plain);
+    RenderCore::RetargetScratch Scratch;
+    for(uint32_t Frame = 0; bSame && Frame < Out.FrameCount; ++Frame)
+    {
+        RenderCore::AnimLocalPose Runtime, Played;
+        RenderCore::GetRefPose(Arm, Runtime);
+        RenderCore::GetRefPose(Arm, Played);
+        RenderCore::SampleClipRetargeted(Made, Binding, float(Frame) / Out.SampleRate, Scratch, Runtime);
+        RenderCore::SampleClip(Out, Plain, float(Frame) / Out.SampleRate, Played);
+        for(size_t Bone = 0; Bone < Runtime.size(); ++Bone)
+        {
+            bSame = bSame && std::fabs(std::fabs(RenderCore::AnimMath::Dot(Runtime[Bone].Rotation, Played[Bone].Rotation)) - 1.0f) < 1e-5f
+                          && Near(Runtime[Bone].Translation.X, Played[Bone].Translation.X);
+        }
+    }
+    Expect(bSame, "it plays as the clip does through the retarget, at every frame");
+
+    /* Reimport bakes it again -- from the clip and retarget, not a glTF -- keeping what the editor set. */
+    Out.Notifies.push_back({ "Wave", 0.5f });
+    {
+        EngineCore::Archive Ar = EngineCore::Archive::ForWriting();
+        RenderCore::SerializeAnimClip(Ar, Out);
+        QFile File(BakedFile);
+        File.open(QIODevice::WriteOnly);
+        File.write(reinterpret_cast<const char*>(Ar.GetBytes().data()), qint64(Ar.GetBytes().size()));
+    }
+    const ImportResult Rebake = Reimport(BakedFile, InRoot.absolutePath());
+    RenderCore::AnimClipData Rebaked;
+    Expect(Rebake.bOK && Rebake.Message.contains(QStringLiteral("baked")), "a baked clip reimports by baking again");
+    Expect(ReadAsset(BakedFile, Rebaked, &RenderCore::SerializeAnimClip) && Rebaked.Notifies.size() == 1 && Rebaked.Tracks.size() == Out.Tracks.size()
+           && Rebaked.ImportInfo.Settings.find("BakedVia=") != std::string::npos, "keeping its notifies, and where it came from");
+}
+
+static void TestAnimationImport(const QDir& InRoot)
+{
+    std::printf("[animation import]\n");
+
+    /* The defaults: scale 100, z flipped. */
+    MeshImportOptions Options;
+    const QString Source  = InRoot.filePath(QStringLiteral("Source/Skinned.gltf"));
+    const QString Content = InRoot.filePath(QStringLiteral("Content/Anim"));
+    const ImportResult Result = ImportMesh(Source, Content, QStringLiteral("Arm"), Options, TextureImportOptions(), InRoot.absolutePath());
+    Expect(Result.bOK, "a skinned glTF imports");
+    if(!Result.bOK) { std::printf("        %s\n", qPrintable(Result.Message)); return; }
+    Expect(Result.Written.size() == 4, "a skeleton, a clip, a mesh and its image are written");
+    Expect(QFile::exists(QDir(Content).filePath(QStringLiteral("Skinned_Image0.nmtexture"))),
+           "an unnamed embedded image is named for its glTF, so another file's does not overwrite it");
+
+    RenderCore::SkeletonData Skeleton;
+    Expect(ReadAsset(QDir(Content).filePath(QStringLiteral("Arm_Skeleton.nmskel")), Skeleton, &RenderCore::SerializeSkeleton),
+           "the skeleton reads back");
+    Expect(Skeleton.Bones.size() == 2 && Skeleton.Bones[0].Name == "Root" && Skeleton.Bones[1].Name == "Arm"
+           && Skeleton.Bones[0].Parent == -1 && Skeleton.Bones[1].Parent == 0, "its bones are the joints, parents first");
+    Expect(Near(Skeleton.Bones[1].RefPose.Translation.X, 100.0f), "bone translations are scaled like vertices");
+
+    RenderCore::MeshData Mesh;
+    Expect(ReadMesh(QDir(Content).filePath(QStringLiteral("Arm.nmmesh")), Mesh), "the skinned mesh reads back");
+    Expect(Mesh.IsSkinned() && Mesh.Skeleton == "Content/Anim/Arm_Skeleton.nmskel", "it is skinned, and names its skeleton by runtime path");
+    Expect(Mesh.InverseBind.size() == 2 && Near(Mesh.InverseBind[1].M[0][3], -100.0f), "it carries the converted inverse binds");
+    Expect(Mesh.GetVertexCount() == 3 && Near(Mesh.Positions[3], 200.0f) && Near(Mesh.Positions[4], 0.0f),
+           "its vertices are in bind space: the node's own transform is ignored");
+    Expect(Mesh.Joints[4] == 1 && Near(Mesh.Weights[4], 1.0f) && Mesh.Joints[8] == 0 && Mesh.Joints[9] == 1
+           && Near(Mesh.Weights[8] + Mesh.Weights[9], 1.0f), "each vertex keeps its bones and weights");
+
+    RenderCore::AnimClipData Clip;
+    const QString ClipPath = QDir(Content).filePath(QStringLiteral("Arm_Bend.nmanim"));
+    Expect(ReadAsset(ClipPath, Clip, &RenderCore::SerializeAnimClip), "the clip reads back");
+    Expect(Clip.FrameCount == 31 && Near(Clip.GetDuration(), 1.0f), "one second at 30 fps is 31 frames");
+    Expect(Clip.Tracks.size() == 1 && Clip.Tracks[0].Bone == "Arm", "only the bone that moves has a track");
+    Expect(Clip.Tracks[0].Translations.size() == 1 && Clip.Tracks[0].Rotations.size() == 31, "a constant channel collapses to one key");
+
+    /* The whole chain: at the end, the Arm's vertex (2,0,0) has swung to
+     * (1,1,0) -- engine (100, 100, 0). */
+    const RenderCore::AnimMatrix ArmModel = RenderCore::AnimMath::Mul(RenderCore::AnimMath::ToMatrix(Skeleton.Bones[0].RefPose),
+                                                                      RenderCore::AnimMath::ToMatrix(Clip.SampleTrack(0, 1.0f)));
+    const RenderCore::AnimVec3 Moved = RenderCore::AnimMath::TransformPoint(RenderCore::AnimMath::Mul(ArmModel, Mesh.InverseBind[1]),
+                                                                            { Mesh.Positions[3], Mesh.Positions[4], Mesh.Positions[5] });
+    Expect(std::fabs(Moved.X - 100.0f) < 0.01f && std::fabs(Moved.Y - 100.0f) < 0.01f && std::fabs(Moved.Z) < 0.01f,
+           "skinning with the imported bones moves a vertex where glTF says");
+
+    /* A lightmap split (seams duplicate vertices) carries the bones with the copies. */
+    RenderCore::MeshData Seamed = Mesh;
+    std::string SeamError;
+    Expect(GenerateLightmapUVs(Seamed, SeamError) && Seamed.Joints.size() == size_t(Seamed.GetVertexCount()) * 4
+           && Seamed.Weights.size() == Seamed.Joints.size(), "a lightmap split keeps every vertex's bones");
+
+    /* What the editor sets on a clip survives a reimport. */
+    Clip.Notifies.push_back({ "Footstep", 0.5f });
+    Clip.bLoop = false;
+    {
+        EngineCore::Archive Ar = EngineCore::Archive::ForWriting();
+        RenderCore::SerializeAnimClip(Ar, Clip);
+        QFile File(ClipPath);
+        File.open(QIODevice::WriteOnly);
+        File.write(reinterpret_cast<const char*>(Ar.GetBytes().data()), qint64(Ar.GetBytes().size()));
+    }
+    const ImportResult Again = Reimport(ClipPath, InRoot.absolutePath());
+    Expect(Again.bOK, "the clip reimports");
+    RenderCore::AnimClipData Back;
+    Expect(ReadAsset(ClipPath, Back, &RenderCore::SerializeAnimClip) && Back.Notifies.size() == 1 && !Back.bLoop,
+           "keeping its notifies and looping");
+    const ImportResult Fresh = ImportMesh(Source, Content, QStringLiteral("Arm"), Options, TextureImportOptions(), InRoot.absolutePath());
+    RenderCore::AnimClipData FreshBack;
+    Expect(Fresh.bOK && ReadAsset(ClipPath, FreshBack, &RenderCore::SerializeAnimClip) && FreshBack.Notifies.size() == 1 && !FreshBack.bLoop,
+           "importing the file again over the clip keeps them too");
+    Expect(Reimport(QDir(Content).filePath(QStringLiteral("Arm_Skeleton.nmskel")), InRoot.absolutePath()).bOK, "the skeleton reimports");
+    const ImportResult MeshAgain = Reimport(QDir(Content).filePath(QStringLiteral("Arm.nmmesh")), InRoot.absolutePath());
+    RenderCore::MeshData MeshBack;
+    Expect(MeshAgain.bOK && ReadMesh(QDir(Content).filePath(QStringLiteral("Arm.nmmesh")), MeshBack) && MeshBack.Skeleton == Mesh.Skeleton,
+           "the mesh reimports, still naming its skeleton");
+
+    /* Into the engine's content (outside the project): what it refers to is
+     * named "Engine/Content/...", its source too, so it reimports anywhere. */
+    {
+        const QString EngineContent = InRoot.filePath(QStringLiteral("EngineTree/Content"));
+        const QString Folder        = QDir(EngineContent).filePath(QStringLiteral("Characters/Arm"));
+        QDir().mkpath(Folder);
+        QFile::remove(QDir(Folder).filePath(QStringLiteral("Skinned.gltf")));
+        QFile::copy(Source, QDir(Folder).filePath(QStringLiteral("Skinned.gltf")));
+        SetImportEngineContentRoot(EngineContent);
+        const QString Project = InRoot.filePath(QStringLiteral("SomeProject"));
+        const ImportResult Engine = ImportMesh(QDir(Folder).filePath(QStringLiteral("Skinned.gltf")), Folder, QStringLiteral("Arm"),
+                                               Options, TextureImportOptions(), Project);
+        RenderCore::MeshData EngineMesh;
+        Expect(Engine.bOK && ReadMesh(QDir(Folder).filePath(QStringLiteral("Arm.nmmesh")), EngineMesh)
+               && EngineMesh.Skeleton == "Engine/Content/Characters/Arm/Arm_Skeleton.nmskel"
+               && EngineMesh.ImportInfo.SourcePath == "Engine/Content/Characters/Arm/Skinned.gltf",
+               "imported into the engine's content, it names its skeleton and source as Engine/Content/...");
+        Expect(Reimport(QDir(Folder).filePath(QStringLiteral("Arm_Bend.nmanim")), Project).bOK,
+               "and reimports from its Engine/Content source");
+        SetImportEngineContentRoot(QString());
+    }
+
+    /* Without animation import, the same file is a static mesh. */
+    MeshImportOptions Static;
+    Static.bImportAnimations = false;
+    const ImportResult Plain = ImportMesh(Source, InRoot.filePath(QStringLiteral("Content/Plain")), QStringLiteral("Arm"), Static,
+                                          TextureImportOptions(), InRoot.absolutePath());
+    RenderCore::MeshData PlainMesh;
+    Expect(Plain.bOK && Plain.Written.size() == 2 && ReadMesh(Plain.Written[0], PlainMesh) && !PlainMesh.IsSkinned(),
+           "with animations off, it imports static");
+}
+
+static void TestClassify()
+{
+    std::printf("[classify]\n");
+    Expect(ClassifySource(QStringLiteral("a/b/Crate.GLB")) == EImportKind::Mesh, ".glb is a mesh, case-insensitively");
+    Expect(ClassifySource(QStringLiteral("Crate.gltf")) == EImportKind::Mesh, ".gltf is a mesh");
+    Expect(ClassifySource(QStringLiteral("Bricks.png")) == EImportKind::Texture, ".png is a texture");
+    Expect(ClassifySource(QStringLiteral("Notes.txt")) == EImportKind::None, ".txt is not importable");
+    Expect(GetImportFileFilter().contains(QStringLiteral("*.glb")), "the file filter offers .glb");
+
+    MeshImportOptions Mesh;
+    Mesh.Scale = 2.5f;
+    Mesh.bCombineMeshes = false;
+    const MeshImportOptions MeshBack = MeshImportOptions::FromSettings(Mesh.ToSettings());
+    Expect(Near(MeshBack.Scale, 2.5f) && !MeshBack.bCombineMeshes && MeshBack.bConvertCoordinates,
+           "mesh options survive their settings text");
+    Expect(MeshBack.bBakeMaterialColors && !MeshImportOptions::FromSettings(QStringLiteral("Scale=1\n")).bBakeMaterialColors,
+           "material colours are baked unless older settings, recorded without them, say otherwise");
+    Expect(MeshBack.bBuildMeshlets && !MeshImportOptions::FromSettings(QStringLiteral("Scale=1\n")).bBuildMeshlets,
+           "meshlets are built unless older settings, recorded without them, say otherwise");
+
+    TextureImportOptions Texture;
+    Texture.bSRGB = false;
+    Texture.Wrap  = RenderCore::ETextureWrap::Clamp;
+    Texture.MaxDimension = 512;
+    const TextureImportOptions TextureBack = TextureImportOptions::FromSettings(Texture.ToSettings());
+    Expect(!TextureBack.bSRGB && TextureBack.Wrap == RenderCore::ETextureWrap::Clamp && TextureBack.MaxDimension == 512,
+           "texture options survive their settings text");
+    Texture.MipGen      = RenderCore::ETextureMipGen::Kaiser;
+    Texture.Compression = RenderCore::ETextureCompression::BC5;
+    const TextureImportOptions MipsBack = TextureImportOptions::FromSettings(Texture.ToSettings());
+    Expect(MipsBack.MipGen == RenderCore::ETextureMipGen::Kaiser && MipsBack.Compression == RenderCore::ETextureCompression::BC5,
+           "mip generation and compression too");
+    const TextureImportOptions Older = TextureImportOptions::FromSettings(QStringLiteral("SRGB=1\nFilter=1\nWrap=0\n"));
+    Expect(Older.MipGen == RenderCore::ETextureMipGen::None && Older.Compression == RenderCore::ETextureCompression::None,
+           "settings from before mips read as none: a reimport makes what it made");
+    Expect(TextureImportOptions::IsDataMapName(QStringLiteral("brick-wall_normal-ogl.png"))
+           && TextureImportOptions::IsDataMapName(QStringLiteral("Metal_Roughness.jpg"))
+           && TextureImportOptions::IsDataMapName(QStringLiteral("rockAO.png"))
+           && TextureImportOptions::IsDataMapName(QStringLiteral("T_Crate_ORM.tga"))
+           && !TextureImportOptions::IsDataMapName(QStringLiteral("brick-wall_albedo.png"))
+           && !TextureImportOptions::IsDataMapName(QStringLiteral("Bricks.png"))
+           && !TextureImportOptions::IsDataMapName(QStringLiteral("Normandy.png")), "data maps are told by whole words of the name");
+    TextureImportOptions Detect;
+    Expect(!Detect.ResolvedFor(QStringLiteral("wall_normal.png")).bSRGB && Detect.ResolvedFor(QStringLiteral("wall_albedo.png")).bSRGB,
+           "a data map imports linear, a colour map sRGB");
+    Expect(!Detect.ResolvedFor(QStringLiteral("wall_normal.png")).bDetectDataMaps, "and the recorded settings keep the decision");
+}
+
+static void TestMeshImport(const QDir& InRoot)
+{
+    std::printf("[mesh import]\n");
+
+    MeshImportOptions Options;
+    Options.Scale = 1.0f;
+    TextureImportOptions TextureOptions;
+    const QString Source = InRoot.filePath(QStringLiteral("Source/Scene.gltf"));
+    const QString Content = InRoot.filePath(QStringLiteral("Content"));
+
+    const ImportResult Result = ImportMesh(Source, Content, QStringLiteral("Scene"), Options, TextureOptions, InRoot.absolutePath());
+    Expect(Result.bOK, "a glTF imports");
+    if(!Result.bOK) { std::printf("        %s\n", qPrintable(Result.Message)); return; }
+    Expect(Result.Written.size() == 2, "one combined mesh and its one texture are written");
+    Expect(Result.Images.size() == 1 && Result.Images[0].SourcePath.endsWith(QStringLiteral("Checker.png")),
+           "the referenced image is found beside the glTF");
+
+    RenderCore::MeshData Mesh;
+    Expect(ReadMesh(QDir(Content).filePath(QStringLiteral("Scene.nmmesh")), Mesh), "the .nmmesh loads");
+    Expect(Mesh.GetVertexCount() == 9 && Mesh.Indices.size() == 9, "every primitive's vertices and indices, combined");
+    Expect(Mesh.Sections.size() == 3, "a section per primitive");
+    if(Mesh.Sections.size() == 3 && Mesh.GetVertexCount() == 9)
+    {
+        Expect(Mesh.Sections[0].Name == "Box.0" && Mesh.Sections[0].Material == "Red" && Mesh.Sections[1].Material.empty(),
+               "sections are named after their mesh, with the glTF material name");
+        Expect(Near(Mesh.Positions[0], 1.0f) && Near(Mesh.Positions[1], 2.0f) && Near(Mesh.Positions[2], -3.0f),
+               "the node's translation is baked in, then z flips into the engine's left-handed space");
+        Expect(Near(Mesh.Normals[2], -1.0f), "a +Z normal faces -Z in engine space");
+        Expect(Mesh.Colors.size() == 9 * 4, "one primitive's colours give the whole mesh colours");
+        if(Mesh.Colors.size() == 9 * 4)
+        {
+            Expect(Near(Mesh.Colors[0], 1.0f) && Near(Mesh.Colors[1], 0.0f) && Near(Mesh.Colors[2], 0.0f)
+                   && Near(Mesh.Colors[2 * 4 + 1], 0.0f) && Near(Mesh.Colors[3], 1.0f),
+                   "the first primitive's untextured base colour is baked into its vertex colours");
+            Expect(Near(Mesh.Colors[3 * 4 + 0], 1.0f) && Near(Mesh.Colors[3 * 4 + 1], 0.0f) && Near(Mesh.Colors[3 * 4 + 3], 1.0f),
+                   "normalised byte colours read as 0-1 floats");
+            Expect(std::fabs(Mesh.Colors[5 * 4 + 3] - 128.0f / 255.0f) < 1e-3f, "alpha comes through");
+            Expect(Near(Mesh.Colors[6 * 4 + 0], 1.0f) && Near(Mesh.Colors[8 * 4 + 3], 1.0f),
+                   "a later primitive without colours is white");
+        }
+        Expect(Near(Mesh.Normals[3 * 3 + 2], -1.0f) && Near(Mesh.Normals[3 * 3 + 0], 0.0f),
+               "a primitive with no normals gets generated ones, facing the same way");
+        Expect(Mesh.Indices[0] == 0 && Mesh.Indices[1] == 2 && Mesh.Indices[2] == 1,
+               "the axis conversion is a mirror, so it swaps a triangle's winding");
+        Expect(Mesh.Indices[6] == 6 && Mesh.Indices[7] == 7 && Mesh.Indices[8] == 8,
+               "a mirroring node transform and the conversion cancel: its winding is kept");
+        Expect(Near(Mesh.BoundsMin[0], -1.0f) && Near(Mesh.BoundsMax[0], 2.0f), "bounds span both nodes");
+        Expect(Near(Mesh.UV0[2], 1.0f), "UVs carry over");
+    }
+
+    /* No TEXCOORD_1 in the file, so lightmap UVs are generated: one per
+     * vertex, in 0-1, and no texel centre (at the smallest lightmap
+     * resolution, 32) inside two triangles. */
+    Expect(Mesh.UV1.size() == size_t(Mesh.GetVertexCount()) * 2, "lightmap UVs are generated for every vertex");
+    if(Mesh.UV1.size() == size_t(Mesh.GetVertexCount()) * 2)
+    {
+        bool bInRange = true;
+        for(const float Each : Mesh.UV1) { bInRange &= Each >= 0.0f && Each <= 1.0f; }
+        Expect(bInRange, "lightmap UVs are in 0-1");
+
+        constexpr int Size = 32;
+        std::vector<int> Covered(Size * Size, 0);
+        for(size_t At = 0; At + 2 < Mesh.Indices.size(); At += 3)
+        {
+            const float* A = &Mesh.UV1[size_t(Mesh.Indices[At]) * 2];
+            const float* B = &Mesh.UV1[size_t(Mesh.Indices[At + 1]) * 2];
+            const float* C = &Mesh.UV1[size_t(Mesh.Indices[At + 2]) * 2];
+            const auto Edge = [](const float* P, const float* Q, const float X, const float Y)
+            {
+                return (Q[0] - P[0]) * (Y - P[1]) - (Q[1] - P[1]) * (X - P[0]);
+            };
+            for(int Y = 0; Y < Size; ++Y)
+            {
+                for(int X = 0; X < Size; ++X)
+                {
+                    const float U = (float(X) + 0.5f) / Size, V = (float(Y) + 0.5f) / Size;
+                    const float E0 = Edge(A, B, U, V), E1 = Edge(B, C, U, V), E2 = Edge(C, A, U, V);
+                    if((E0 >= 0.0f && E1 >= 0.0f && E2 >= 0.0f) || (E0 <= 0.0f && E1 <= 0.0f && E2 <= 0.0f)) { ++Covered[size_t(Y * Size + X)]; }
+                }
+            }
+        }
+        Expect(*std::max_element(Covered.begin(), Covered.end()) <= 1, "lightmap UV charts do not overlap");
+    }
+    Expect(Mesh.ImportInfo.SourcePath == "Source/Scene.gltf", "the source is recorded relative to the project");
+
+    RenderCore::TextureData Texture;
+    Expect(ReadTexture(QDir(Content).filePath(QStringLiteral("Checker.nmtexture")), Texture)
+           && Texture.Pixels.GetWidth() == 8, "the referenced image becomes a .nmtexture");
+
+    /* Split: a file per glTF mesh. */
+    Options.bCombineMeshes  = false;
+    Options.bImportTextures = false;
+    const ImportResult Split = ImportMesh(Source, Content, QStringLiteral("Split"), Options, TextureOptions, InRoot.absolutePath());
+    Expect(Split.bOK && Split.Written.size() == 2, "split, a file per mesh");
+    RenderCore::MeshData Tri;
+    Expect(ReadMesh(QDir(Content).filePath(QStringLiteral("Split_Tri.nmmesh")), Tri) && Tri.GetTriangleCount() == 1,
+           "named <base>_<mesh>");
+
+    /* Reimport: the same file, from its own record; scale 100 is the default,
+     * so prove the recorded scale (1) is the one used. */
+    const ImportResult Again = Reimport(QDir(Content).filePath(QStringLiteral("Split_Tri.nmmesh")), InRoot.absolutePath());
+    Expect(Again.bOK, "a split mesh reimports");
+    RenderCore::MeshData TriAgain;
+    Expect(ReadMesh(QDir(Content).filePath(QStringLiteral("Split_Tri.nmmesh")), TriAgain)
+           && TriAgain.Positions == Tri.Positions, "with the options it was imported with");
+
+    const ImportResult TextureAgain = Reimport(QDir(Content).filePath(QStringLiteral("Checker.nmtexture")), InRoot.absolutePath());
+    Expect(TextureAgain.bOK, "a texture reimports");
+}
+
+/*
+ * Tangents.gltf, three meshes facing +Z (the viewer), UV's U along +X and V
+ * down the image (-Y), glTF's way:
+ *   "Made"     a unit quad without TANGENT: MikkTSpace's
+ *   "Given"    the same quad with TANGENT (1,0,0,1): +X, its bitangent
+ *              cross(+Z, +X) = +Y up the image, as glTF's runs
+ *   "Mirrored" a 2 x 1 strip whose right half's U runs back (a mirrored UV
+ *              island), sharing the seam's two vertices with the left
+ */
+static void WriteTangentScene(const QDir& InFolder)
+{
+    const float QuadPos[12] = { 0, 0, 0,   1, 0, 0,   1, 1, 0,   0, 1, 0 };
+    const float QuadNrm[12] = { 0, 0, 1,   0, 0, 1,   0, 0, 1,   0, 0, 1 };
+    const float QuadUV[8]   = { 0, 1,      1, 1,      1, 0,      0, 0 };
+    const float QuadTan[16] = { 1, 0, 0, 1,   1, 0, 0, 1,   1, 0, 0, 1,   1, 0, 0, 1 };
+    const uint16_t QuadIdx[6] = { 0, 1, 2,   0, 2, 3 };
+    const float StripPos[18] = { 0, 0, 0,   1, 0, 0,   2, 0, 0,   0, 1, 0,   1, 1, 0,   2, 1, 0 };
+    const float StripNrm[18] = { 0, 0, 1,   0, 0, 1,   0, 0, 1,   0, 0, 1,   0, 0, 1,   0, 0, 1 };
+    const float StripUV[12]  = { 0, 1,      1, 1,      0, 1,      0, 0,      1, 0,      0, 0 };
+    const uint16_t StripIdx[12] = { 0, 1, 4,   0, 4, 3,   1, 2, 5,   1, 5, 4 };
+
+    QByteArray Buffer;
+    const auto Add = [&Buffer](const void* InData, const int InBytes) { Buffer.append(static_cast<const char*>(InData), InBytes); };
+    Add(QuadPos, sizeof(QuadPos));     //   0..48
+    Add(QuadNrm, sizeof(QuadNrm));     //  48..96
+    Add(QuadUV, sizeof(QuadUV));       //  96..128
+    Add(QuadTan, sizeof(QuadTan));     // 128..192
+    Add(QuadIdx, sizeof(QuadIdx));     // 192..204
+    Add(StripPos, sizeof(StripPos));   // 204..276
+    Add(StripNrm, sizeof(StripNrm));   // 276..348
+    Add(StripUV, sizeof(StripUV));     // 348..396
+    Add(StripIdx, sizeof(StripIdx));   // 396..420
+
+    const QString Json = QStringLiteral(R"({
+  "asset": { "version": "2.0" },
+  "scene": 0,
+  "scenes": [ { "nodes": [0, 1, 2] } ],
+  "nodes": [ { "name": "Made", "mesh": 0 }, { "name": "Given", "mesh": 1 }, { "name": "Mirrored", "mesh": 2 } ],
+  "meshes": [
+    { "name": "Made",     "primitives": [ { "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 }, "indices": 4 } ] },
+    { "name": "Given",    "primitives": [ { "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2, "TANGENT": 3 }, "indices": 4 } ] },
+    { "name": "Mirrored", "primitives": [ { "attributes": { "POSITION": 5, "NORMAL": 6, "TEXCOORD_0": 7 }, "indices": 8 } ] }
+  ],
+  "buffers": [ { "byteLength": %1, "uri": "data:application/octet-stream;base64,%2" } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0,   "byteLength": 48 },
+    { "buffer": 0, "byteOffset": 48,  "byteLength": 48 },
+    { "buffer": 0, "byteOffset": 96,  "byteLength": 32 },
+    { "buffer": 0, "byteOffset": 128, "byteLength": 64 },
+    { "buffer": 0, "byteOffset": 192, "byteLength": 12 },
+    { "buffer": 0, "byteOffset": 204, "byteLength": 72 },
+    { "buffer": 0, "byteOffset": 276, "byteLength": 72 },
+    { "buffer": 0, "byteOffset": 348, "byteLength": 48 },
+    { "buffer": 0, "byteOffset": 396, "byteLength": 24 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 4, "type": "VEC3", "min": [0,0,0], "max": [1,1,0] },
+    { "bufferView": 1, "componentType": 5126, "count": 4, "type": "VEC3" },
+    { "bufferView": 2, "componentType": 5126, "count": 4, "type": "VEC2" },
+    { "bufferView": 3, "componentType": 5126, "count": 4, "type": "VEC4" },
+    { "bufferView": 4, "componentType": 5123, "count": 6, "type": "SCALAR" },
+    { "bufferView": 5, "componentType": 5126, "count": 6, "type": "VEC3", "min": [0,0,0], "max": [2,1,0] },
+    { "bufferView": 6, "componentType": 5126, "count": 6, "type": "VEC3" },
+    { "bufferView": 7, "componentType": 5126, "count": 6, "type": "VEC2" },
+    { "bufferView": 8, "componentType": 5123, "count": 12, "type": "SCALAR" }
+  ]
+})").arg(Buffer.size()).arg(QString::fromLatin1(Buffer.toBase64()));
+
+    QFile File(InFolder.filePath(QStringLiteral("Tangents.gltf")));
+    File.open(QIODevice::WriteOnly);
+    File.write(Json.toUtf8());
+}
+
+static void TestTangentImport(const QDir& InRoot)
+{
+    std::printf("[tangents]\n");
+    WriteTangentScene(QDir(InRoot.filePath(QStringLiteral("Source"))));
+
+    MeshImportOptions Options;
+    Options.Scale                = 1.0f;
+    Options.bCombineMeshes       = false;
+    Options.bGenerateLightmapUVs = false;   // its seams would split vertices too
+    QList<GltfMesh> Meshes;
+    QList<ReferencedImage> Images;
+    QStringList Warnings;
+    QString Error;
+    const bool bLoaded = LoadGltf(InRoot.filePath(QStringLiteral("Source/Tangents.gltf")), Options, Meshes, Images, Warnings, Error);
+    Expect(bLoaded && Meshes.size() == 3, "the tangent scene loads, a mesh per node");
+    if(!bLoaded || Meshes.size() != 3) { return; }
+    const RenderCore::MeshData& Made     = Meshes[0].Data;
+    const RenderCore::MeshData& Given    = Meshes[1].Data;
+    const RenderCore::MeshData& Mirrored = Meshes[2].Data;
+
+    const auto IsFrame = [](const RenderCore::MeshData& InMesh, const uint32_t InVertex, const float InX, const float InW)
+    {
+        const float* T = &InMesh.Tangents[size_t(InVertex) * 4];
+        return Near(T[0], InX) && Near(T[1], 0.0f) && Near(T[2], 0.0f) && T[3] == InW;
+    };
+
+    /* Engine space: the normal is -Z, +X stays, and +V (down the image) is -Y:
+     * cross(-Z, +X) = -Y, so w is +1. */
+    Expect(Made.Tangents.size() == 4 * 4 && Made.GetVertexCount() == 4, "a mesh without TANGENT gets one per vertex, no splits");
+    if(Made.Tangents.size() == 4 * 4)
+    {
+        bool bAll = true;
+        for(uint32_t Vertex = 0; Vertex < 4; ++Vertex) { bAll &= IsFrame(Made, Vertex, 1.0f, 1.0f); }
+        Expect(bAll, "MikkTSpace's runs along +U, its bitangent w * cross(N, T) along +V");
+    }
+    Expect(Given.Tangents == Made.Tangents, "glTF's TANGENT converts to the same frame MikkTSpace makes (its w turned to +V's)");
+    Expect(Made.HasMeshlets() && Mirrored.HasMeshlets() && RenderCore::FindMeshletDefect(Made) == nullptr
+           && RenderCore::FindMeshletDefect(Mirrored) == nullptr, "a static mesh gets meshlets, built after the tangents' splits");
+
+    /* The seam's two vertices are in both halves, whose frames differ: each
+     * gets a copy, and the right half's corners use them. */
+    Expect(Mirrored.GetVertexCount() == 8 && Mirrored.Tangents.size() == 8 * 4, "a mirrored UV seam splits its vertices");
+    if(Mirrored.GetVertexCount() == 8 && Mirrored.Tangents.size() == 8 * 4)
+    {
+        bool bLeft = true, bRight = true;
+        for(size_t Corner = 0; Corner < 6; ++Corner)  { bLeft  &= IsFrame(Mirrored, Mirrored.Indices[Corner], 1.0f, 1.0f); }
+        for(size_t Corner = 6; Corner < 12; ++Corner) { bRight &= IsFrame(Mirrored, Mirrored.Indices[Corner], -1.0f, -1.0f); }
+        Expect(bLeft && bRight, "the left half's tangent is +X, the mirrored half's -X with the other handedness");
+        /* The copies (6, 7) are the seam's (1 and 4, at x = 1), in either order. */
+        const auto SameVertex = [&Mirrored](const uint32_t InA, const uint32_t InB)
+        {
+            for(int Axis = 0; Axis < 3; ++Axis)
+            {
+                if(!Near(Mirrored.Positions[InA * 3 + Axis], Mirrored.Positions[InB * 3 + Axis])) { return false; }
+            }
+            return Near(Mirrored.UV0[InA * 2], Mirrored.UV0[InB * 2]) && Near(Mirrored.UV0[InA * 2 + 1], Mirrored.UV0[InB * 2 + 1]);
+        };
+        Expect(Mirrored.Positions.size() == 8 * 3 && Mirrored.UV0.size() == 8 * 2 && Mirrored.Normals.size() == 8 * 3
+               && ((SameVertex(6, 1) && SameVertex(7, 4)) || (SameVertex(6, 4) && SameVertex(7, 1))),
+               "the copies carry their vertex's other streams");
+        Expect(Mirrored.Sections.size() == 1 && Mirrored.Sections[0].IndexCount == 12, "and the section keeps its range");
+    }
+}
+
+static void TestTextureImport(const QDir& InRoot)
+{
+    std::printf("[texture import]\n");
+
+    TextureImportOptions Options;
+    Options.MaxDimension    = 4;
+    Options.bFlipVertically = true;
+    Options.bSRGB           = false;
+    Options.Filter          = RenderCore::ETextureFilter::Nearest;
+    const QString Content = InRoot.filePath(QStringLiteral("Content"));
+
+    const ImportResult Result = ImportTexture(InRoot.filePath(QStringLiteral("Source/Checker.png")), Content,
+                                              QStringLiteral("Small"), Options, InRoot.absolutePath());
+    Expect(Result.bOK, "a PNG imports");
+    Expect(Result.Warnings.size() == 1, "and says it was scaled down");
+
+    RenderCore::TextureData Texture;
+    Expect(ReadTexture(QDir(Content).filePath(QStringLiteral("Small.nmtexture")), Texture), "the .nmtexture loads");
+    Expect(Texture.Pixels.GetWidth() == 4 && Texture.Pixels.GetHeight() == 2, "scaled to fit 4, keeping its shape");
+    Expect(!Texture.bSRGB && Texture.Filter == RenderCore::ETextureFilter::Nearest, "with its sampling options");
+    Expect(Texture.MipGen == RenderCore::ETextureMipGen::Box && Texture.GetMipCount() == 3,
+           "and Box mips by default: 4 x 2, 2 x 1, 1 x 1");
+    if(Texture.Pixels.GetWidth() == 4)
+    {
+        /* Flipped: the top-right green pixel is now in the bottom row. */
+        const uint8_t* Top    = Texture.Pixels.GetScanline(0);
+        const uint8_t* Bottom = Texture.Pixels.GetScanline(1);
+        Expect(Bottom[3 * 4 + 1] > 200 && Bottom[3 * 4 + 2] < 50 && Top[3 * 4 + 2] > 200,
+               "flipped vertically, rows in RGBA order");
+    }
+
+    QFile Garbage(InRoot.filePath(QStringLiteral("Source/Broken.gltf")));
+    Garbage.open(QIODevice::WriteOnly);
+    Garbage.write("this is not json");
+    Garbage.close();
+    const ImportResult Broken = ImportMesh(Garbage.fileName(), Content, QStringLiteral("Broken"), MeshImportOptions(),
+                                           TextureImportOptions(), InRoot.absolutePath());
+    Expect(!Broken.bOK && !Broken.Message.isEmpty(), "a broken glTF fails, saying why");
+    Expect(!QFile::exists(QDir(Content).filePath(QStringLiteral("Broken.nmmesh"))), "and writes nothing");
+
+    const ImportResult Missing = ImportTexture(InRoot.filePath(QStringLiteral("Source/None.png")), Content,
+                                               QStringLiteral("None"), Options, InRoot.absolutePath());
+    Expect(!Missing.bOK, "a missing image fails");
+}
+
+#if WITH_AUDIO
+/* A 16-bit mono WAV of a 220 Hz sine, InSeconds long. */
+static void WriteWav(const QString& InPath, const double InSeconds)
+{
+    const uint32_t Rate = 22050, Frames = uint32_t(InSeconds * Rate), Data = Frames * 2;
+    QByteArray Out;
+    const auto U32 = [&Out](const uint32_t V) { for(int I = 0; I < 4; ++I) { Out.append(char(V >> (8 * I))); } };
+    const auto U16 = [&Out](const uint16_t V) { Out.append(char(V)); Out.append(char(V >> 8)); };
+    Out.append("RIFF"); U32(36 + Data); Out.append("WAVE");
+    Out.append("fmt "); U32(16); U16(1); U16(1); U32(Rate); U32(Rate * 2); U16(2); U16(16);
+    Out.append("data"); U32(Data);
+    for(uint32_t Frame = 0; Frame < Frames; ++Frame)
+    {
+        U16(uint16_t(int16_t(std::lround(0.5 * 32767.0 * std::sin(2.0 * 3.14159265358979 * 220.0 * Frame / Rate)))));
+    }
+    QFile File(InPath);
+    File.open(QIODevice::WriteOnly);
+    File.write(Out);
+}
+
+static bool ReadSound(const QString& InPath, Audio::SoundData& OutSound)
+{
+    return ReadAsset(InPath, OutSound, [](EngineCore::Archive& Ar, Audio::SoundData& Data) { return Audio::SerializeSound(Ar, Data); });
+}
+
+static void TestSoundImport(const QDir& InRoot)
+{
+    std::printf("Sound import\n");
+    Expect(ClassifySource(QStringLiteral("Engine.WAV")) == EImportKind::Sound, ".wav is a sound, case-insensitively");
+    Expect(ClassifySource(QStringLiteral("Music.ogg")) == EImportKind::Sound, ".ogg is a sound");
+    Expect(GetImportFileFilter().contains(QStringLiteral("*.flac")), "the file filter offers .flac");
+    Expect(GetAssetExtension(EImportKind::Sound) == QStringLiteral(".nmsound"), "sounds become .nmsound");
+
+    const QString Source  = InRoot.filePath(QStringLiteral("Source/Engine.wav"));
+    const QString Content = InRoot.filePath(QStringLiteral("Content/Sounds"));
+    InRoot.mkpath(QStringLiteral("Content/Sounds"));
+    WriteWav(Source, 1.0);
+
+    const ImportResult Result = ImportSound(Source, Content, QStringLiteral("EngineLoop"), InRoot.path());
+    Expect(Result.bOK && Result.Written.size() == 1, "a WAV imports");
+    const QString Asset = QDir(Content).filePath(QStringLiteral("EngineLoop.nmsound"));
+
+    Audio::SoundData Sound;
+    Expect(ReadSound(Asset, Sound), "the .nmsound loads");
+    Expect(Sound.IsCooked() && Sound.Cooked.Mode == Audio::ESoundLoadMode::Decompressed, "cooked, Decompressed");
+    Expect(Sound.Settings.bSpatial && Sound.Settings.Bus == Audio::EAudioBus::SFX, "short: a spatial SFX");
+    Expect(Sound.Import.SourcePath == "Source/Engine.wav", "its source recorded project-relative");
+
+    /* An author's settings survive a reimport from a changed source. */
+    Sound.Settings.bLoop  = true;
+    Sound.Settings.Volume = 0.4f;
+    Expect(Audio::SaveSoundFile(Asset.toStdString(), Sound), "settings changed and saved");
+    WriteWav(Source, 1.5);
+    const ImportResult Again = Reimport(Asset, InRoot.path());
+    Expect(Again.bOK, "it reimports");
+    Audio::SoundData After;
+    Expect(ReadSound(Asset, After) && After.Settings.bLoop && Near(After.Settings.Volume, 0.4f), "keeping its settings");
+    Expect(std::fabs(After.Cooked.GetDuration() - 1.5) < 0.01, "with the new source's length");
+}
+#endif
+
+int main(int argc, char** argv)
+{
+    QCoreApplication App(argc, argv);   // image format plugins load through it
+    std::printf("Editor import tests\n");
+
+    QTemporaryDir Temp;
+    const QDir Root(Temp.path());
+
+    /* NimbleEditorImportTests [--into <project> <folder>] <file.gltf|glb>...:
+     * import each into a scratch folder (or <project>/<folder>) and say what
+     * came out -- a quick look at a real asset, or test content. */
+    QString IntoRoot = Root.absolutePath();
+    QString IntoFolder = Root.filePath(QStringLiteral("Look"));
+    int FirstFile = 1;
+    if(argc > 3 && std::strcmp(argv[1], "--into") == 0)
+    {
+        IntoRoot   = QFileInfo(QString::fromLocal8Bit(argv[2])).absoluteFilePath();
+        IntoFolder = QDir(IntoRoot).filePath(QString::fromLocal8Bit(argv[3]));
+        FirstFile  = 4;
+    }
+    for(int Arg = FirstFile; Arg < argc; ++Arg)
+    {
+        const QString Path = QString::fromLocal8Bit(argv[Arg]);
+        const ImportResult Each = ImportMesh(Path, IntoFolder, QFileInfo(Path).completeBaseName(),
+                                             MeshImportOptions(), TextureImportOptions(), IntoRoot);
+        std::printf("%s: %s\n", qPrintable(Path), qPrintable(Each.Message));
+        for(const QString& Warning : Each.Warnings) { std::printf("  warning: %s\n", qPrintable(Warning)); }
+        for(const QString& Written : Each.Written)  { std::printf("  wrote %s\n", qPrintable(QFileInfo(Written).fileName())); }
+
+        /* A skinned mesh's extent at rest and posed: a mesh that binds wrong shows it here. */
+        RenderCore::SkeletonData Skeleton;
+        RenderCore::MeshData     Mesh;
+        std::vector<RenderCore::AnimClipData> Clips;
+        for(const QString& Written : Each.Written)
+        {
+            if(Written.endsWith(QStringLiteral(".nmskel"))) { ReadAsset(Written, Skeleton, &RenderCore::SerializeSkeleton); }
+            if(Written.endsWith(QStringLiteral(".nmmesh"))) { ReadMesh(Written, Mesh); }
+            if(Written.endsWith(QStringLiteral(".nmanim"))) { Clips.emplace_back(); ReadAsset(Written, Clips.back(), &RenderCore::SerializeAnimClip); }
+        }
+        if(!Mesh.IsSkinned() || Skeleton.Bones.empty()) { continue; }
+        const auto Extent = [&](const std::vector<RenderCore::AnimMatrix>* InModel, const char* InWhat)
+        {
+            float Min[3] = { 1e30f, 1e30f, 1e30f }, Max[3] = { -1e30f, -1e30f, -1e30f };
+            for(uint32_t Vertex = 0; Vertex < Mesh.GetVertexCount(); ++Vertex)
+            {
+                const RenderCore::AnimVec3 P{ Mesh.Positions[Vertex * 3], Mesh.Positions[Vertex * 3 + 1], Mesh.Positions[Vertex * 3 + 2] };
+                RenderCore::AnimVec3 Out{ 0, 0, 0 };
+                for(int Influence = 0; Influence < 4; ++Influence)
+                {
+                    const float Weight = Mesh.Weights[Vertex * 4 + Influence];
+                    const uint16_t Bone = Mesh.Joints[Vertex * 4 + Influence];
+                    const RenderCore::AnimVec3 Moved = InModel
+                        ? RenderCore::AnimMath::TransformPoint(RenderCore::AnimMath::Mul((*InModel)[Bone], Mesh.InverseBind[Bone]), P) : P;
+                    Out = RenderCore::AnimMath::Add(Out, RenderCore::AnimMath::Scale(Moved, Weight));
+                }
+                const float At[3] = { Out.X, Out.Y, Out.Z };
+                for(int Axis = 0; Axis < 3; ++Axis) { Min[Axis] = std::min(Min[Axis], At[Axis]); Max[Axis] = std::max(Max[Axis], At[Axis]); }
+            }
+            std::printf("  %-22s x %8.1f..%8.1f  y %8.1f..%8.1f  z %8.1f..%8.1f\n", InWhat, Min[0], Max[0], Min[1], Max[1], Min[2], Max[2]);
+        };
+        Extent(nullptr, "bind space");
+        std::vector<RenderCore::AnimMatrix> Model;
+        Skeleton.ComputeRefPoseModel(Model);
+        Extent(&Model, "reference pose");
+        for(const RenderCore::AnimClipData& Clip : Clips)
+        {
+            std::vector<RenderCore::AnimTransform> Local(Skeleton.Bones.size());
+            for(size_t Bone = 0; Bone < Skeleton.Bones.size(); ++Bone) { Local[Bone] = Skeleton.Bones[Bone].RefPose; }
+            for(size_t Track = 0; Track < Clip.Tracks.size(); ++Track)
+            {
+                const int32_t Bone = Skeleton.FindBone(Clip.Tracks[Track].Bone);
+                if(Bone >= 0) { Local[size_t(Bone)] = Clip.SampleTrack(Track, 0.0f); }
+            }
+            for(size_t Bone = 0; Bone < Skeleton.Bones.size(); ++Bone)
+            {
+                const RenderCore::AnimMatrix L = RenderCore::AnimMath::ToMatrix(Local[Bone]);
+                Model[Bone] = Skeleton.Bones[Bone].Parent >= 0 ? RenderCore::AnimMath::Mul(Model[size_t(Skeleton.Bones[Bone].Parent)], L) : L;
+            }
+            Extent(&Model, "clip frame 0");
+        }
+    }
+    if(argc > 1)
+    {
+        return 0;
+    }
+    Root.mkpath(QStringLiteral("Source"));
+    WriteScene(QDir(Root.filePath(QStringLiteral("Source"))));
+    WriteSkinnedScene(QDir(Root.filePath(QStringLiteral("Source"))));
+
+    TestClassify();
+    TestMeshImport(Root);
+    TestTangentImport(Root);
+    TestTextureImport(Root);
+    TestAnimationImport(Root);
+    TestAnimationOnlyImport(Root);
+#if WITH_AUDIO
+    TestSoundImport(Root);
+#endif
+
+    std::printf("%d checks, %d failures\n", GChecks, GFailures);
+    return GFailures == 0 ? 0 : 1;
+}

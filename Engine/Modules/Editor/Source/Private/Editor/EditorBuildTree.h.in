@@ -1,0 +1,20 @@
+#pragma once
+// ==========================================================================
+// Generated from this template by the Editor's CMakeLists.txt at configure
+// time. DO NOT EDIT the generated header, and DO NOT commit it -- it lands in
+// the build tree (Generated/EditorBuildTree.h). Only SourceBuild.cpp and
+// NimbleLauncher's LauncherMain.cpp include it.
+//
+// Where this editor was built from, so Build > Compile Source can run the same
+// build again: the CMake that configured the tree, the tree itself, and (MSVC
+// only) the vcvarsall.bat that sets up the compiler's environment when the
+// editor was not started from one. The configuration arrives as a compile
+// definition instead (NIMBLE_BUILD_CONFIG), as it does for AboutDialog.cpp.
+// ==========================================================================
+
+#define NIMBLEEDITOR_CMAKE_COMMAND   "@CMAKE_COMMAND@"
+#define NIMBLEEDITOR_BUILD_DIR       "@CMAKE_BINARY_DIR@"
+
+// Empty unless the compiler is MSVC.
+#define NIMBLEEDITOR_VCVARSALL       "@NM_EDITOR_VCVARSALL@"
+#define NIMBLEEDITOR_VCVARS_ARGS     "@NM_EDITOR_VCVARS_ARGS@"

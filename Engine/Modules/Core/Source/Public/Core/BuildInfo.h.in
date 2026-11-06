@@ -1,0 +1,27 @@
+#pragma once
+// ==========================================================================
+// Generated from this template by cmake/GitVersion.cmake, at configure time
+// and again on every build. DO NOT EDIT the generated header, and DO NOT
+// commit it -- it lands in the build tree (Generated/BuildInfo.h).
+//
+// Only produced when EngineCore is built as its own top-level project. Inside
+// Odessa, CoreClient stamps the combined build and records this tree's SHA.
+// ==========================================================================
+
+#define ENGINECORE_VERSION           "@ENGINECORE_VERSION@"
+
+// `git describe`: "v0.2.0-14-gabc123def456[-dirty]" once release tags exist,
+// a bare short SHA (optionally "-dirty") until then.
+#define ENGINECORE_GIT_DESCRIBE      "@ENGINECORE_GIT_DESCRIBE@"
+#define ENGINECORE_GIT_SHA           "@ENGINECORE_GIT_SHA@"
+#define ENGINECORE_GIT_SHA_SHORT     "@ENGINECORE_GIT_SHA_SHORT@"
+#define ENGINECORE_GIT_BRANCH        "@ENGINECORE_GIT_BRANCH@"
+#define ENGINECORE_GIT_COMMIT_DATE   "@ENGINECORE_GIT_COMMIT_DATE@"   // ISO 8601 UTC
+#define ENGINECORE_GIT_DIRTY         @ENGINECORE_GIT_DIRTY@           // 0 or 1
+
+// Monotonic build counter from CI ($BUILD_NUMBER, else $GITHUB_RUN_NUMBER);
+// 0 for local developer builds.
+#define ENGINECORE_BUILD_NUMBER      @ENGINECORE_BUILD_NUMBER@
+
+// One-line summary for logs / diagnostics.
+#define ENGINECORE_VERSION_STRING    "@ENGINECORE_VERSION_STRING@"

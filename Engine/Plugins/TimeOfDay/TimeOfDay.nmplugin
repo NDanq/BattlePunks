@@ -1,0 +1,13 @@
+; TimeOfDay -- a day/night cycle: the sun's path, its colour and the sky's
+; through a 24 hour day. The pilot plugin for Engine/cmake/NimblePlugins.cmake.
+
+[Plugin]
+Name=TimeOfDay
+Version=0.1.0
+EngineVersion=0.1
+Category=Rendering
+Description=Day/night cycle: drives a Directional Light and Sky Light from a preset of keys
+EnabledByDefault=false
+
+[Module_TimeOfDay]
+Type=Runtime

@@ -1,0 +1,318 @@
+# RenderCore
+
+The render stack: a render thread RenderCore owns and runs, a game-thread ->
+render-thread command queue (`ENQUEUE_RENDER_COMMAND`), and `RenderProxy`, the
+render-thread mirror of a GameCore entity that draws.
+
+`RenderCore` is written for this repository, the same as `GameCore` and
+`GameWindow` -- not a vendored subtree, free to use `nimble_add_module()`.
+
+---
+
+## Position in the tree
+
+```
+Host exe --> NimbleEngine --> GameCore  --> EngineCore
+                \-----------> RenderCore --> GameCore --> EngineCore
+                \-----------> RenderCore --> GDI      --> EngineCore
+                \-----------> GameWindow --> EngineCore
+```
+
+**RenderCore is the only image in the process that links GDI.** GDI is a
+STATIC library, so two images linking it would each get their own
+`GDynamicGDI`, their own render-thread latch and their own command queue,
+with nothing to say so -- see `RenderCoreInternal.h`'s own comment for the
+detail. `NimbleEngine` no longer links GDI at all; every GDI call in the
+engine now lives inside `RenderCore.dll`, reached only through this module's
+own public headers, none of which names a GDI type.
+
+`RenderCore` is linked **PUBLIC** into `NimbleEngine`, alongside `GameCore` --
+`Renderer`, `RenderProxy` and `ENQUEUE_RENDER_COMMAND` are the game-facing
+surface, so the dependency has to be visible past `NimbleEngine`, not hidden
+behind it. See the PUBLIC link's own comment in `Engine/CMakeLists.txt` for
+the full reasoning.
+
+---
+
+## File layout
+
+```
+Engine/Modules/RenderCore/
+|-- CMakeLists.txt
+|-- README.md                       (this file)
+|-- DESIGN.md                       the long-form "why"
+|-- ANIMATION.md                    skeletal meshes, skinning, clips, anim states, sockets
+|-- TEXTURE_STREAMING.md            material textures' mips on the GPU by distance
+|-- SCALABILITY.md                  detail tiers, entity buckets, power profiles
+|-- PROCEDURAL.md                   splines and Procedural Spawners: meshes placed by rules
+|-- Source/
+|   |-- Public/RenderCore/
+|   |   |-- RenderCoreAPI.h         RENDERCORE_API three-state export macro (always SHARED)
+|   |   |-- RenderCoreLog.h         RENDERCORE_LOG / _WARN / _ERROR over CoreLog
+|   |   |-- RenderCoreVersion.h     GetModuleName() -- the skeleton's one export; see DESIGN.md
+|   |   |-- RenderTypes.h           ERenderBackend, FrameInfo, RenderTransform, RenderStats
+|   |   |-- RenderView.h            RenderView POD + MakeOrthographic()
+|   |   |-- RenderCommand.h         RenderCommandHeader, ENQUEUE_RENDER_COMMAND, IsInRenderThread, FlushRenderCommands
+|   |   |-- RenderThread.h          class RenderThread: Start/Stop, Enqueue, EndFrame, WaitForFrame, Flush, stats
+|   |   |-- RenderContext.h         the render-thread draw interface a proxy uses; NO GDI types
+|   |   |-- RenderProxy.h           class RenderProxy, RenderProxyHandle, the PROXY_BODY/DEFINE_PROXY_COMPONENT macros
+|   |   |-- RenderScene.h           render-thread container of proxies: Add/Remove/SetView/Render
+|   |   |-- RenderComponents.h      includes every component header below
+|   |   |-- Components/             RenderComponent.h, CameraComponent.h, DirectionalLightComponent.h,
+|   |   |                           PointLightComponent.h, SpotLightComponent.h, SkyLightComponent.h,
+|   |   |                           LightShadow.h, PostProcessComponent.h,
+|   |   |                           ParticleSystemComponent.h (GPU particles) (GameCore components)
+|   |   |-- ParticleTypes.h         particle types, billboards, bursts; an emitter's settings; what ReadParticles returns
+|   |   |-- ParticleSystemAsset.h   .nmparticle: emitters as text, Parse/Write/Load/Save, ParticleSystemCache
+|   |   |-- MeshAsset.h             .nmmesh: MeshData, Save/Load, MeshAssetCache
+|   |   |-- TextureAsset.h          .nmtexture: TextureData, Save/Load
+|   |   |-- AssetImportInfo.h       where an imported asset came from (for Reimport)
+|   |   `-- Renderer.h              the facade a host owns: Initialize/Shutdown/BindWorld/EndFrame
+|   `-- Private/RenderCore/
+|       |-- RenderCoreInternal.h    the ONLY header that includes a GDI header
+|       |-- RenderThreadInternal.h  the process-wide RenderThread locator
+|       |-- RenderThread.cpp        the drain loop, GDI lifetime, markers, present
+|       |-- RenderCommand.cpp       EnqueueRenderCommand, IsInRenderThread, FlushRenderCommands
+|       |-- RenderContext.cpp       the shared unit quad + Basic shaders; DrawQuad; DrawMesh; the material and mesh libraries
+|       |-- RenderProxy.cpp         the fixed proxy-type table
+|       |-- RenderScene.cpp         the proxy vector, culling, Render()
+|       |-- RenderComponentProxy.h/.cpp   a RenderComponent's mesh, or its quad
+|       |-- ParticleSimulation.h/.cpp     an emitter's GPU buffers, its spawn bookkeeping, its two dispatches
+|       |-- MeshAsset.cpp, TextureAsset.cpp, AssetFileCommon.h   the asset formats
+|       |-- Components/             one .cpp per component: registration, serializer, Lua, editor;
+|       |                           MaterialPathUpgrade.h for the old bare material names
+|       |-- WorldBridge.h/.cpp      game-thread side: proxy lifecycle, extraction, view build, light gathering
+|       |-- ShadowSetup.h/.cpp      a frame's shadow views and atlas tiles (pure math)
+|       |-- ShadowSettings.cpp      the [Shadows] config vars
+|       |-- OverlayFont.h           the stat overlay's 5 x 7 font
+|       `-- Renderer.cpp
+`-- Tests/
+    `-- SmokeMain.cpp
+```
+
+Include paths are Source-relative -- `#include "Public/RenderCore/RenderThread.h"` --
+matching GameCore, GDI and GameWindow exactly.
+
+---
+
+## The two rules the whole design falls out of
+
+**RenderCore is ALWAYS SHARED.** There is no `RENDERCORE_SHARED` option,
+matching GameCore's own stance. It owns process-global state -- the render
+command queue, the render-thread identity behind `IsInRenderThread()`, the
+proxy-type registry -- that must exist exactly once per process. A STATIC
+RenderCore pulled PUBLIC through `NimbleEngine.dll` would give
+`NimbleEngine.dll` and `Sandbox.exe` each their own copy of all three, so a
+command enqueued from one image would sit in a queue the render thread
+(latched against the *other* copy) never drains.
+
+**RenderCore.dll is the only image allowed to link GDI.** GDI is STATIC.
+`RenderCoreInternal.h` is the one header that includes a GDI header, and it
+lives under `Private/` so it cannot be reached from outside -- exactly the
+discipline `GameCoreInternal.h` states for `lua.h`. `RenderCoreSmokeTest`
+links `RenderCore` and nothing else -- **not** `GDI::GDI` -- which is the
+structural check that this stays true.
+
+---
+
+## One frame of lag, not a fence
+
+Unlike a design where command submission is fenced behind the render thread
+going idle, a game thread caller may `ENQUEUE_RENDER_COMMAND` at **any
+point** during its tick -- there is no rule that the render thread must be
+idle first. `RenderThread::EndFrame` enqueues a **frame marker**; a command
+enqueued after that call sits behind the marker and is not touched until the
+render thread reaches it on a later drain. Frame N's simulation still
+overlaps the render thread draining frame N-1's commands -- that overlap is
+the whole point of the split -- but drawing code is no longer funnelled
+through one designated place.
+
+```cpp
+ENQUEUE_RENDER_COMMAND(UpdateColor)([Proxy, NewColor](RenderCore::RenderContext& Ctx)
+{
+    Proxy->SetTint(NewColor);
+});
+```
+
+**Captures must be trivially copyable and trivially destructible** -- values,
+POD, a `RenderProxy*` or `RenderProxyHandle`. No `std::string`, no `TRef`: the
+payload is never destructed, only freed, so anything non-trivial would leak,
+and a captured `TRef` would be refcount traffic off the collector's thread
+with nothing to catch it. `ENQUEUE_RENDER_COMMAND`'s own `static_assert`
+enforces both.
+
+A command issued from inside another command already executing on the
+render thread runs **inline**, synchronously -- not through the queue --
+which is what preserves "enqueued from inside Execute() runs the same
+frame" without the drain loop needing to know the difference.
+
+---
+
+## Drawing an entity
+
+A `GameCore::World` is bound once, through `Renderer::BindWorld`. From then
+on, drawing is one of three doors, none of which is an `OnRender` method:
+
+```cpp
+GameCore::World& World = App.GetWorld();
+GameCore::Entity E = World.CreateEntity("Box");
+E.AddComponent<GameCore::TransformComponent>()->Scale = EngineCore::Vector3(32.0, 32.0, 1.0);
+E.AddComponent<RenderCore::RenderComponent>();
+```
+
+With no mesh it draws a unit quad (1 x 1, centred), white; the Transform's
+Scale sizes it, as it does a mesh.
+
+Adding the component is the whole of it: `Renderer`'s `WorldBridge` sees the
+addition through `World`'s own `OnComponentAdded` delegate, constructs a
+`RenderCore::RenderComponentProxy` mirroring it, and from then on extracts the
+component's current transform and bytes into that proxy once per frame.
+Removing the component or destroying the entity removes the proxy the same
+way, through `OnComponentRemoved`.
+
+**A material** replaces the plain white: set slot 0 of the component's
+`Materials` to a material graph's runtime path, e.g.
+`std::strcpy(Render.Materials[0], "Materials/Glow.material.nmgraph");`. The
+quad then draws with Glow's cooked permutations and its parameters from
+`Materials/Glow.material` (both cooked from the graph's `<gen_code>`), in the
+stage Glow's domain and shading name; a component's Instance Tint is white
+(the editor's Preview dock sets its own). A material that is missing or not
+cooked for the running backend is warned about once and drawn plain. See MATERIALS.md, RENDERPIPELINE.md and NodeGraph's README.
+
+**A mesh** replaces the quad: set `Prim.Mesh` to a `.nmmesh`'s runtime-relative
+path, e.g. `"Content/Props/Crate.nmmesh"` (NimbleEditor's Import Wizard makes
+them from glTF; the game stages `Content/` beside the executable). It draws at
+its own size times the Transform's scale, one draw per section. Section *i* draws with `Materials[i]` when set (eight
+slots), else with its imported material name if a material of that name
+exists, else with the engine's DefaultLit -- or, when that is unavailable, lit
+by one fixed light in white (`Engine/Content/Shaders/Mesh.fsh`). Each section
+draws in its own material's stage. A mesh that cannot be loaded, or a backend
+without indexed meshes (Metal, so far), draws the quad instead, warned once.
+Meshes are loaded through `MeshAssetCache`, shared with the game thread (the
+editor's picking and bounds); `MeshAssetCache::Invalidate` makes the next frame
+load the file again.
+
+**Depth.** The opaque stages test and write depth (less-or-equal, so quads in
+one plane still draw in submission order) into the scene colour target's depth
+buffer, which the Lighting stage then reads; editor debug lines draw over it. Before meshes there was no depth
+buffer at all, and draws landed in submission order.
+
+**Asset formats.** `.nmmesh` and `.nmtexture` are `EngineCore::Archive` chunk
+files (tags in MeshAsset.h / TextureAsset.h; `ArchiveTextDump` knows them).
+Loading checks every index against the vertex count and every section against
+the index range. Textures are imported and stored but not yet sampled by any
+shader -- materials have no texture input yet.
+
+A camera works the same way -- the first entity with an active
+`CameraComponent` wins, and its position comes from its own sibling
+`TransformComponent`:
+
+```cpp
+GameCore::Entity Cam = World.CreateEntity("Camera");
+Cam.AddComponent<GameCore::TransformComponent>();
+Cam.AddComponent<RenderCore::CameraComponent>();
+```
+
+With no active camera, the view is an orthographic projection over the whole
+viewport, centred at GDI's own default origin `(0, 1, -1)`.
+
+**A game's own drawable type** registers the same way `RenderComponent`
+does:
+
+```cpp
+// MyComponent.h
+struct MyComponent
+{
+    GAMECORE_COMPONENT_BODY()
+    RENDERCORE_PROXY_BODY()      // second, always -- right after the line above
+    float Value = 0.0f;
+};
+
+// MyComponent.cpp
+class MyProxy : public RenderCore::RenderProxy
+{
+public:
+    MyProxy(GameCore::EntityID InOwner, const MyComponent& InInit) : RenderProxy(InOwner) { ApplyComponent(&InInit); }
+    void ApplyComponent(const void* InBytes) override { Value = static_cast<const MyComponent*>(InBytes)->Value; }
+    void Draw(RenderCore::RenderContext& Ctx) override { /* ... */ }
+private:
+    float Value = 0.0f;
+};
+
+RENDERCORE_DEFINE_PROXY_COMPONENT(MyComponent, "My", MyProxy)
+
+// The macro's own generated factory (MyComponent_CreateProxy) has internal
+// linkage -- exactly like GAMECORE_DEFINE_COMPONENT's StaticType(), it is
+// meant to be defined once, in this one .cpp. RegisterProxyType therefore
+// has to be called from HERE too (or through a small exported wrapper, the
+// way Components/RenderComponent.h's GetRenderComponentFactory() does for
+// RenderComponent) -- not from an arbitrary caller elsewhere that only
+// has MyComponent.h.
+void RegisterMyComponentProxyType()
+{
+    RegisterProxyType(MyComponent::StaticType().ID, &MyComponent_CreateProxy);
+}
+```
+
+Call `RegisterMyComponentProxyType()` (or whatever a game names its own
+wrapper) once, before `Renderer::BindWorld`.
+
+**A proxy is a promise to remove** -- the same rule `Delegate.h` states for a
+binding: a proxy the factory allocates carries its defining image's tag, and
+the image barrier would destroy it out from under the render thread the
+instant that image unloads. A module that registers a proxy type
+unregisters it before it unloads.
+
+---
+
+## Animation
+
+A Render component with a skinned mesh (imported from glTF with its
+skeleton) is animated by an **Animation** component beside it: a clip, or an
+anim state of layered state machines driven by parameters. Skinning runs on
+the GPU; an **Anim Socket** holds a child entity on a bone. See ANIMATION.md.
+
+## Threading contract
+
+Every `Renderer`/`RenderCommand.h`/`RenderProxy` free function or method is
+either **game thread only** or **render thread only** -- stated on each one,
+never both. `RenderProxyHandle::Resolve<T>()` and `GetRenderThreadContext()`
+both `CORE_CHECK` `IsInRenderThread()` for exactly this reason: a proxy
+pointer is only meaningful inside a render command's own lambda.
+
+`WorldBridge`, `Renderer`'s own facade methods, and everything reached
+through `GameSession::GetWorld()`/`GetRenderer()` run on the game thread --
+the same thread that runs `IGameMode::OnTick`, matching `GameCoreSmokeTest` and
+`GameWindowSystem`'s own single-thread contracts.
+
+---
+
+## Lua
+
+Each component binds itself with `GAMECORE_DEFINE_COMPONENT_SCRIPT`, beside
+its registration in `Private/RenderCore/Components/`, so Lua and script
+graphs see the same members. A change made from a script reaches the screen
+the way a C++ one does: WorldBridge copies the component into its proxy every
+frame.
+
+**Render** (`RenderComponent`):
+
+| Member | What it does |
+|---|---|
+| `GetVisible` / `SetVisible`, `GetMesh` / `SetMesh` | fields |
+| `GetMaterial(Index)`, `SetMaterial(Index, Path)` | material slots 0-7 by index; `SetMaterial` returns false outside them |
+| `GetNumRegisteredMaterials()` | how many slots name a material |
+| `SetMaterialParameter(Slot, Name, X[, Y, Z, W])` | overrides a parameter of slot `Slot`'s material for this entity only; missing components are 0 |
+| `SetMaterialColor(Slot, Name, Color)` | the same from a Color (0-255 per channel), for script graphs' Color pins |
+| `GetMaterialParameter(Slot, Name)` | returns `x, y, z, w, set`: the override, or zeros and `false` if none |
+| `ClearMaterialParameter(Slot, Name)` | goes back to the material's default |
+
+```lua
+local render = brick:GetComponent("Render")
+for slot = 0, render:GetNumRegisteredMaterials() - 1 do print(render:GetMaterial(slot)) end
+render:SetMaterialParameter(0, "Color", 1, 0.3, 0.3, 1)   -- this brick red; the others keep the default
+```
+
+Material parameters are per entity, and MATERIALS.md's **Per-entity
+parameters** section explains how they reach a draw. **Camera** binds
+`ZNear`, `ZFar` and `Active`.

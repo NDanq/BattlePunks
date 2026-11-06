@@ -1,0 +1,41 @@
+#ifndef NIMBLEEDITOR_GRAPHVIEW_H
+#define NIMBLEEDITOR_GRAPHVIEW_H
+
+#if WITH_EDITOR
+
+#include <QGraphicsView>
+#include <QPoint>
+
+/*
+ * The canvas's camera: wheel to zoom about the cursor, middle-drag or left-drag
+ * on empty canvas to pan, Shift/Ctrl+left-drag on empty canvas to box-select.
+ */
+class GraphView : public QGraphicsView
+{
+    Q_OBJECT
+
+public:
+    explicit GraphView(QGraphicsScene* InScene, QWidget* InParent = nullptr);
+
+    /* Fits InRect (scene coordinates) in view, never zooming in past 1:1. */
+    void Frame(const QRectF& InRect);
+
+    /* Under the cursor, else the view centre: where new nodes appear. */
+    QPointF CursorScenePos() const;
+
+protected:
+    void wheelEvent(QWheelEvent* InEvent) override;
+    void mousePressEvent(QMouseEvent* InEvent) override;
+    void mouseMoveEvent(QMouseEvent* InEvent) override;
+    void mouseReleaseEvent(QMouseEvent* InEvent) override;
+
+private:
+    bool            bPanning    = false;
+    bool            bPanPending = false;   // left pressed on empty canvas, not yet moved far enough
+    Qt::MouseButton PanButton   = Qt::MiddleButton;
+    QPoint          PanStart, PanLast;
+};
+
+#endif // WITH_EDITOR
+
+#endif //NIMBLEEDITOR_GRAPHVIEW_H

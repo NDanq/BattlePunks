@@ -1,0 +1,373 @@
+# Avatars
+
+*New to avatars? Start with `AVATARS_GUIDE.md`, the step-by-step walkthrough.*
+
+An **avatar** is an entity a player drives: a pawn, a character, a vehicle,
+a turret. Any entity or prefab with an **Avatar Harness** can be one. It reads
+its player's input in the same way standalone, in split-screen, on a listen or
+dedicated server, and on a client. Public API: `Public/NimbleEngine/Avatar.h`
+and `Public/NimbleEngine/PlayerStart.h`.
+
+```
+player (PlayerState, Net, Possessor) ──possesses──► avatar (AvatarHarness, Net, Transform, ...)
+        LocalPlayer: whose pad                           InputMap: how its input is read
+                                                         Down / Pressed / Released / Axes
+```
+
+## Pieces
+
+| Piece | Where | Role |
+|---|---|---|
+| `AvatarHarnessComponent` | `"AvatarHarness"` | Makes an entity possessable. Records who drives it (`Possessor`) and its input this frame. Read it the way you read an Input component: `IsDown`, `WasPressed`, `WasReleased`, `GetAxis`. |
+| `PossessorComponent` | `"Possessor"` | On the player: the avatar it drives, and which local player's pad it reads (`LocalPlayer`). |
+| `Possess` / `Unpossess` | `Avatar.h` | Possession, which is the server's to change. |
+| `PlayerStartComponent` | `"PlayerStart"` | A place an avatar spawns, optionally kept for one player and naming the prefab. |
+| `NetGameMode` | `PlayerStart.h` | The default rules: every local player and every joining client gets an avatar at a start. |
+| `AvatarWorld` | `Avatar.h` | Each level's avatars. Runs as the `Engine.Avatar` system. `GameSession::GetAvatars()`. |
+
+## The player and the avatar
+
+The player is the entity with the PlayerState: its score, its lives and its
+client. The avatar is the body it drives at the moment. Keeping them apart
+means a player can do these things without its score or ownership moving:
+
+- get into a vehicle and out again: `Possess(Player, Car)`, then `Possess(Player, Pawn)`
+- respawn: the old body is destroyed, then `SpawnAvatarFor(Player)`
+- spectate: `Unpossess(Player)`, then `GameSession::SetViewTarget(Camera)`
+
+Where players come from:
+
+- **Clients.** The server makes a player for each client that joins
+  (`[Net] SpawnPlayerPerClient`): PlayerState, Net owned by the client, and
+  Possessor.
+- **Local users.** `CreateLocalPlayer(World, N)` gives the same three
+  components, with Net owned by nobody (the server's). `NetGameMode` and
+  `AutoPossess` call it for you.
+
+## Possession
+
+`Possess(World, Player, Avatar)` works only where there is authority (the
+server or a standalone game). It does the following:
+
+1. Refuses entities that are not alive, which includes a stale id. Refuses an
+   avatar with no harness, or one another player drives (unless
+   `POSSESS_Steal` is passed).
+2. Lets go of the player's previous avatar.
+3. Gives the avatar's Net component to the player's client (`OwnerClient`).
+   `IsLocallyOwned` is then true on that client, and the server accepts that
+   client's Server RPCs on the avatar. What it owned before is kept as
+   `RestOwner`.
+4. Links both ends (`Possessor.Avatar` and `AvatarHarness.Possessor`, both
+   replicated).
+5. Notifies listeners: the World event `Possessed(Player, Avatar)`, the
+   avatar's prefab script `OnPossessed(self, player)`, and the mode's
+   `IGameMode::OnAvatarPossessed`.
+
+`Unpossess` reverses these steps: the owner goes back to `RestOwner`, then
+`Unpossessed`, `OnUnpossessed` and `OnAvatarUnpossessed` are emitted. Both
+also happen automatically when either end is destroyed or loses its
+component.
+
+An avatar whose prefab script starts after the possession (spawned and
+possessed as the level starts) gets `OnPossessed` in the frame its script
+starts, after `OnStart`.
+
+A client hears `Possessed` and `Unpossessed` too, as each replicated change
+arrives. A script or HUD therefore reacts the same way everywhere.
+
+**Who owns an avatar nobody drives** is its `RestOwner`, and that decides what
+happens when a client leaves:
+
+- An avatar spawned for a client (`SpawnAvatarFor`) is owned by that client
+  from the start. It is destroyed with the client.
+- A level's vehicle is the server's. A client driving it when it leaves gives
+  it back (`ReleaseClientAvatars`, before the client's entities go), so it
+  stays in the level.
+
+**A client asks** to drive something rather than taking it. It calls
+`possessor:Possess(car)` (or `Game.Possess`), which sends `ServerRequestPossess`.
+The server accepts only an avatar marked **Requestable** that nobody drives,
+and then asks the mode (`IGameMode::CanPossess`: close enough, same team).
+
+## Input
+
+Every frame, in `TP_PrePhysics` just after Input components and before any
+script, each harness is filled according to where it is running:
+
+| Where | Its input |
+|---|---|
+| The process that drives it: a client for its own avatar, a server or standalone game for a local player's | Its player's devices through `InputMap`: the keyboard and mouse, and pad `LocalPlayer`. Then the optional input filter (`AvatarWorld::SetInputFilter`: a bot, aim assist, a menu blocking the game). |
+| A server, for a client's avatar | What that client sent since the last tick. |
+| Anywhere else, or undriven | Nothing held. |
+
+**The input stream.** On a client, the harness also sends each frame to the
+server, numbered, in its built-in Server RPC `ServerInput`. The server merges
+everything that arrived since its last tick:
+
+- presses and releases add up, so a tap between two ticks of a 30 Hz server
+  is still a press
+- held keys and stick positions take the latest value
+- mouse motion (an axis bound to a mouse axis) sums
+
+Frames that are old or repeated are dropped. The newest one sent is
+acknowledged in `NetComponent::InputAck`. A client that goes quiet for
+`[Avatar] InputTimeoutMs` (500) reads as nothing held. A run of idle frames is
+sent once, unless the harness has a simulation.
+
+So avatar code is written once:
+
+```cpp
+void JumpSystem(GameCore::World& InWorld, float, void*)
+{
+    InWorld.Each<NimbleEngine::AvatarHarnessComponent>([](GameCore::Entity InAvatar, NimbleEngine::AvatarHarnessComponent& InHarness)
+    {
+        if(NimbleEngine::HasAuthority() && InHarness.WasPressed("Jump")) { Jump(InAvatar); }
+    });
+}
+```
+
+```lua
+return {
+    TickPhase = TickPhase.PrePhysics,
+    OnStart = function(self) self.Harness = self.Entity:GetComponent("AvatarHarness") end,
+    OnTick = function(self, dt)
+        if self.Harness:WasPressed("Jump") then print("jump") end
+    end,
+    OnPossessed = function(self, player) print("driven by " .. player:GetName()) end,
+}
+```
+
+**Local players.** Pad N belongs to local player N. The keyboard and mouse
+belong to one local player, player 1 by default (`[Input] KeyboardMousePlayer`,
+INPUT.md "Local players"). So in split-screen, player 1 plays on the keyboard
+or pad 1, and the others on their own pads.
+
+## Prediction
+
+Give a harness a **Simulation**: a function that moves the avatar by one frame
+of input.
+
+```cpp
+NIMBLE_DEFINE_AVATAR_SIMULATION(CapsuleMove, 0.1f)   // name, longest frame a client may claim
+{
+    static const int MoveX = NimbleEngine::FindInputAxis("Default", "MoveX");
+    GameCore::TransformComponent* T = InWorld.GetEntity(InAvatar).GetComponent<GameCore::TransformComponent>();
+    T->Position.SetX(T->Position.GetX() + 450.0 * InFrame.Axes[MoveX] * InFrame.Seconds);
+}
+```
+
+Set **Simulation** on the harness to `CapsuleMove`. The engine then runs it:
+
+- on the server, once for every frame its client sends, with the seconds
+  clamped
+- on a server or standalone game for a local player's avatar, each frame
+- on the owning client at once, when the avatar's Net component is
+  **Predicted**. The client keeps each frame until the server acknowledges
+  it. When the server's state arrives it replays the frames not yet
+  acknowledged on top of that state.
+
+Same code from the same place means the replay lands where the avatar already
+was. `AvatarWorld::TakePredictionStats` reports how far a correction moved it
+(NetArena logs `worst correction 0u`). No `SetNetCorrectionHandler` is needed.
+The handler still receives corrections for anything that is not a simulated
+avatar.
+
+Predict only what the client can know. Walls it also has are fine. Being hit
+by another player is the server's to say.
+
+## Character Mover
+
+You do not have to write the walker. The engine has one: the **Character
+Mover** component (`"Character Mover"`) and the **`CharacterMove`**
+simulation (`Public/NimbleEngine/CharacterMover.h`). It is a predicted
+third-person walker on the world's physics, made of raycasts:
+
+- **Ground.** Rays down around the feet find the highest walkable surface
+  within **Step Height**: floors, ramps, stairs. **Snap Down** keeps it on a
+  surface going down. Anything steeper than **Max Slope** is a wall.
+- **Walls.** Rays across, at three heights, slide the move along what they
+  hit. Rays around the body push it out of anything it is inside.
+- **Air.** Gravity, **Jump Speed**, **Air Control**, and a head check.
+- **View.** The look axes turn the view (degrees per frame). Holding **Aim**
+  blends the camera in over the shoulder, narrows the field of view, slows
+  the look and the walk, and faces the body to the view.
+- **Body.** The body turns at **Turn Rate** toward where it walks, or toward
+  the view while aiming or with **Face View**. **Crouch** lowers it to
+  **Crouch Height**, and it stands only when there is room.
+
+Setup on the avatar:
+
+1. An AvatarHarness with **Simulation** `CharacterMove`, and a predicted Net
+   component for a networked game.
+2. A Character Mover. Its **Input** names are looked up in the harness's
+   **InputMap**: axes `MoveForward`, `MoveRight`, `LookX`, `LookY`, and actions
+   `Run`, `Jump`, `Crouch`, `Aim`. A name the map lacks, or an empty one, is
+   not used.
+3. Optionally a `CameraBoom` child with a `Camera` child, for the
+   third-person view.
+
+The rest is done for you:
+
+| Where | What |
+|---|---|
+| The step (`StepCharacter`), `TP_PrePhysics` | the Transform and the mover's state, from one frame of input. It touches nothing else. |
+| `Engine.CharacterMover`, `TP_PostPhysics`, every process | the Animation component's params (**Speed**, **Grounded**, **AimPitch**, the **Jump** trigger, an optional **Crouch** param) from the replicated state. Then the `CameraBoom`'s yaw and pitch, and its `Camera` placed back and to the right, pulled in front of walls. The pull-in is skipped for another process's player. |
+
+Everything the step carries between frames is a replicated field of the
+component. That is what lets the replay work: prediction restores only
+components. The view and the velocity are `Smooth()`. So another player's
+spine pitch and stride blend between updates, as its Transform does. The
+Jump trigger fires from a `JumpCount`, never from the step, so a replay does
+not fire it twice. The tunables come from the prefab and are not sent.
+
+Functions (`CharacterMover.h`, all `NE_API`):
+
+| Function | |
+|---|---|
+| `StepCharacter(World, Avatar, Frame)` | one frame of the walk. Call it from your own simulation to add to it. |
+| `TeleportCharacter(World, Avatar, Position, Yaw)` | a respawn: there, facing Yaw, at rest |
+| `GetCharacterAim(World, Avatar, Origin, Dir)` | the camera's place (without the wall pull-in) and the view. Every process computes the same from the replicated state, so a server traces the shot its client saw. |
+| `UpdateCharacterMovers(World, Seconds)` | the presentation system's body, for a host without a GameSession |
+
+**Bots** drive it the same way players do. AICore's `SteerInput` fills the
+same `MoveForward`, `MoveRight` and `LookX` axes (`SteerInputMap` in
+`AIFacade.h`). Take its indices from the mover's names in the harness's map.
+
+**Without physics** the rays hit Bounds. A hit there has no normal, so a ray
+down treats it as walkable and a ray across treats it as a wall. Keep the
+avatar's own Bounds out of the way in such a game (a ray from inside a box
+hits it).
+
+From Lua: `mover:Teleport(position, yaw)`, `mover:GetAim() -> origin, dir`,
+`mover:GetSpeed()`. The common tunables can be read and written. The state
+(`Grounded`, `Crouched`, `Pitch`, ...) can only be read.
+
+`Engine/Docs/Guides/CharacterMoverGuide.md` walks through it with
+screenshots.
+
+## Spawning
+
+- **Player Start** (`"PlayerStart"`): an entity with a Transform. It can be
+  kept for one player (`PlayerSlot` 1..4, by join order) and can name the
+  `AvatarPrefab` to spawn there. Add one with the editor's World > Add
+  Player Start. The viewport draws each one as a capsule with an arrow the
+  way the avatar will face (its yaw). A `NetGameMode` level with no enabled
+  start spawns at the origin: it logs a warning once, and the content report
+  lists it as a problem.
+- **`SpawnAvatarFor(World, Player, Prefab, Start)`** works only with
+  authority. The prefab is the one passed, else the start's, else
+  `[Avatar] DefaultPrefab`. It spawns at the start, gives the avatar's Net
+  component to the player's client before the avatar is first sent, then
+  possesses it.
+- **`NetGameMode`.** Derive from it.
+  - Its `OnStart` gives each of `[Avatar] LocalPlayers` (1) local players an
+    avatar, unless one was placed for that player.
+  - Its `OnClientConnected` gives each joining client one.
+  - `GetAvatarPrefab(Player)` picks the prefab. `OnAvatarSpawned(Player,
+    Avatar, Ordinal)` dresses it (NetArena colours its capsules there).
+- **AutoPossess** on a placed harness (Player 1..4). Local player N takes it as
+  the level starts, before the mode's `OnStart`, with any mode and in the
+  editor's Play. Not on a client or a dedicated server.
+
+## The view
+
+Each local player's possessed avatar is viewed through when its harness has
+**View Target** set. The camera used is the avatar's own Camera component, or
+the first one among its children. The camera is used whether or not it is
+Active, so give avatar cameras Active off: other players' avatars then never
+win the level's first-active rule.
+
+`GameSession::SetViewTarget(Entity, LocalPlayer)` (Lua
+`Game.SetViewTarget(camera, player)`) overrides this for a cutscene or a death
+cam. An unset target goes back to the avatar's camera. Without either, local
+player 1 sees the level's first active camera, as before. The listener follows
+the same choice when the level has no Audio Listener.
+
+**Split-screen:** the window shows one view per local player, up to the last
+local player that has a camera. Two players are laid out top and bottom (or
+side by side with `[Splitscreen] SideBySide`), three as one across the top
+and two below, four as quadrants. See SPLITSCREEN.md.
+- A sequence's camera cut or a cinematic shows one view.
+- `GameSession::SetViewCount(n)` (Lua `Game.SetViewCount`) fixes the count.
+- `[Splitscreen] Enabled=false` always shows one view.
+- Players 2-4 can join and leave during play: `GameSession::JoinLocalPlayer`
+  and `LeaveLocalPlayer`, or Start and unplugging with `[Splitscreen] DropIn`.
+  `NetGameMode` spawns and removes their avatars.
+
+## From scripts
+
+| Lua / graph | |
+|---|---|
+| `harness:IsDown("Jump")`, `:WasPressed`, `:WasReleased`, `:GetAxis("MoveX")` | its player's input |
+| `harness:IsPossessed()`, `:IsLocallyControlled()`, `:GetPossessor()` | |
+| `possessor:GetAvatar()`, `:Possess(avatar)`, `:Unpossess()` | on a client, a request |
+| `Game.Possess(player, avatar)`, `Game.Unpossess(player)` | the same, by player |
+| `Game.GetAvatar(player)`, `Game.GetPossessor(avatar)` | |
+| `Game.GetLocalPlayer(n)`, `Game.GetLocalAvatar(n)` | this machine's local player n (0 first) |
+| `Game.SetViewTarget(camera [, player])` | nil goes back to the avatar's; player 0 by default |
+| `Game.GetViewCount()`, `Game.SetViewCount(n)` | split-screen views; 0 counts the players' cameras |
+| `Events.On(Game.Possessed, function(player, avatar) ... end)`, `Game.Unpossessed` | every process |
+| `OnPossessed = function(self, player)`, `OnUnpossessed` | in the avatar's prefab script |
+
+## Config
+
+| Key | Default | |
+|---|---|---|
+| `[Avatar] InputTimeoutMs` | 500 | a remote client's avatar reads nothing after this long without input |
+| `[Avatar] DefaultPrefab` | "" | what `SpawnAvatarFor` spawns when nothing else names a prefab |
+| `[Avatar] LocalPlayers` | 1 | local players `NetGameMode` gives avatars |
+| `[Splitscreen] Enabled` | true | a view per local player; off, one view |
+| `[Splitscreen] SideBySide` | false | two players left and right, not top and bottom |
+
+## Not here yet
+
+- One player per networked client: NetHost makes one per connection.
+- A prefab **spawned** on the server reaches clients as its components, not
+  as a prefab instance. Its descendants without a Net component (a camera
+  boom, a weapon) come with its spawn, as they were then; the owning client
+  moves them itself after (a simulation's step does). Its script runs on the
+  server only. An avatar's
+  `OnPossessed` and its Lua or graph therefore run on clients only for avatars
+  placed in the level (NetArena's karts). For spawned pawns, react on clients
+  from a placed or startup script (`Events.On(Game.Possessed, ...)`), or in
+  C++ (`IGameMode::OnAvatarPossessed` runs on every process).
+- The input stream is one reliable RPC per frame. Batching frames into an
+  unreliable send that carries recent history would cost less bandwidth.
+
+## Example
+
+`Games/NetArena`: `Content/Prefabs/Pawn.nmprefab` is a harness with the
+`NetArenaMove` simulation and a predicted Net component.
+`Content/Levels/NetArena.nmworld` has four Player Starts. `NetArenaGameMode`
+is an `NetGameMode` that colours the capsules and reports.
+
+## Tests
+
+`Engine/Tests/AvatarTests.cpp` (`NimbleEngine.AvatarTests`, label `smoke`)
+covers:
+
+- possession and its rules
+- giving a vehicle back when a client leaves
+- local input and filters
+- the server's half of the input stream
+- simulations
+- AutoPossess, the view target and NetGameMode through a GameSession
+
+`Engine/Tests/CharacterMoverTests.cpp` (`NimbleEngine.CharacterMoverTests`,
+label `smoke`) covers the Character Mover:
+
+- the step is deterministic, and a replay from the components alone lands
+  where the first run did
+- walking, running, turning, jumping and landing, walls, steps, crouching
+  under a ceiling, aiming
+- teleport, the aim, and the presentation system
+- the guide's examples
+
+`WorldsLab.MoverParity` (Games/WorldsLab, `WorldsLabMoverParity.cpp`) runs
+the Character Mover and WorldsLab's RangeMove on the same input along the
+Shooting Range's autoplay walk, on its physics, and compares them frame by
+frame.
+
+The client half runs in NetArena's unattended runs (`NetCore/GUIDE.md` §9).
+`Engine/Tests/AvatarGuideTests.cpp` builds and runs every example in
+`AVATARS_GUIDE.md`, the step-by-step guide: C++, Lua and a script graph.
