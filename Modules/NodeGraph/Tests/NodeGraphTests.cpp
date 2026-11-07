@@ -1237,6 +1237,104 @@ namespace
         }
     }
 
+    /* Docs/Guides/ReplayGuide.md's script graph (Replay/InstantReplay.script.nmgraph
+     * there is this graph, saved): the Lua example's instant replay, wired
+     * from the Replay library's nodes. */
+    Graph MakeInstantReplayGraph()
+    {
+        Graph G;
+        G.SchemaName = "Script";
+        G.Name       = "InstantReplay";
+
+        /* On Start: record what is seen, the last 10 s. */
+        AddNode(G, 1, "Event.OnStart", 0, 0);
+        AddNode(G, 2, "Library.Replay.RecordOnly", 260, 0).Constants["Components"] = "Transform,Render,Animation";
+        Node& Record = AddNode(G, 3, "Library.Replay.StartRecording", 560, 0);
+        Record.Constants["MaxSeconds"] = "10";
+        Record.Constants["SampleRate"] = "30";
+        Connect(G, 1, "Then", 2, "Exec");
+        Connect(G, 2, "Then", 3, "Exec");
+
+        /* On Match.Goal: save, then play at half speed over the live level. */
+        AddNode(G, 10, "Event.Custom", 0, 240).Properties["EventName"] = "Match.Goal";
+        AddNode(G, 11, "Library.Replay.StopRecording", 260, 240);
+        AddNode(G, 12, "Library.Replay.Save", 520, 240).Constants["Path"] = "Saved/Replays/LastGoal.nmreplay";
+        AddNode(G, 13, "Library.Replay.Play", 780, 240).Constants["Hold"] = "true";
+        AddNode(G, 14, "Library.Replay.SetRate", 1040, 240).Constants["Rate"] = "0.5";
+        Connect(G, 10, "Then", 11, "Exec");
+        Connect(G, 11, "Then", 12, "Exec");
+        Connect(G, 12, "Then", 13, "Exec");
+        Connect(G, 13, "Then", 14, "Exec");
+
+        /* On ReplayFinished: clean up and record again. */
+        AddNode(G, 20, "Library.Replay.OnReplayFinished", 0, 480);
+        AddNode(G, 21, "Library.Replay.Stop", 260, 480).Constants["DestroySpawned"] = "true";
+        AddNode(G, 22, "Library.Replay.SetRate", 520, 480).Constants["Rate"] = "1";
+        Node& Again = AddNode(G, 23, "Library.Replay.StartRecording", 780, 480);
+        Again.Constants["MaxSeconds"] = "10";
+        Again.Constants["SampleRate"] = "30";
+        Connect(G, 20, "Then", 21, "Exec");
+        Connect(G, 21, "Then", 22, "Exec");
+        Connect(G, 22, "Then", 23, "Exec");
+        return G;
+    }
+
+    void TestReplayLibraryGraph()
+    {
+        std::printf("Replay library in a script graph\n");
+        const Schema* Script = FindSchema("Script");
+        Expect(Script && Script->FindNode("Library.Replay.StartRecording") && Script->FindNode("Library.Replay.OnReplayFinished")
+               && Script->FindNode("Library.Replay.GetTime"), "the Replay library has nodes in the Script palette");
+
+        Graph G = MakeInstantReplayGraph();
+        CompileResult Result;
+        CompileGraph(G, Result);
+        Expect(!Result.HasErrors(), "the instant replay graph compiles");
+        if(Result.HasErrors()) { std::printf("%s\n", FormatDiagnostics(G, Result).c_str()); return; }
+        StoreGeneratedCode(G, Result);
+        const std::string GraphPath = TempDir() + "/InstantReplay.script.nmgraph";
+        std::string Error;
+        Expect(SaveGraphFile(GraphPath, G, Error), "and saves: " + Error);
+
+        std::error_code Ignored;
+        std::filesystem::remove("Saved/Replays/LastGoal.nmreplay", Ignored);
+        {
+            GameCore::World W;
+            GameCore::ScriptEngine Scripts;
+            Scripts.Initialize();
+            Scripts.BindWorld(&W);
+
+            GameCore::Entity Ball = W.CreateEntity("Ball");
+            Ball.AddComponent<GameCore::TransformComponent>();
+            GameCore::Entity Director = W.CreateEntity("Director");
+            Director.AddComponent<GameCore::TransformComponent>();
+            AttachScript(W, Director, GraphPath.c_str());
+
+            for(int Frame = 0; Frame < 60; ++Frame)
+            {
+                Ball.GetComponent<GameCore::TransformComponent>()->Position = EngineCore::Vector3(float(Frame), 0.0f, 0.0f);
+                W.Tick(1.0f / 30.0f);
+            }
+            Expect(Scripts.RunString("assert(Replay.IsRecording())", "graph-recording"), "On Start started recording");
+
+            W.GetEvents().Emit("Match.Goal");
+            Expect(Scripts.RunString("assert(Replay.IsPlaying())", "graph-playing")
+                   && std::filesystem::exists("Saved/Replays/LastGoal.nmreplay"), "Match.Goal saved the clip and played it");
+            W.Tick(1.0f / 30.0f);
+            const double X = double(Ball.GetComponent<GameCore::TransformComponent>()->Position.GetX());
+            Expect(X < 5.0, "the ball is back near the clip's start (x=" + std::to_string(X) + ")");
+
+            for(int Frame = 0; Frame < 150; ++Frame) { W.Tick(1.0f / 30.0f); }
+            Expect(Scripts.RunString("assert(Replay.IsRecording() and not Replay.IsPlaying())", "graph-back"),
+                   "On ReplayFinished went back to recording");
+            Expect(Scripts.GetErrorCount() == 0, "the graph raised no Lua errors");
+
+            Scripts.UnbindWorld();
+            Scripts.Shutdown();
+        }
+        std::filesystem::remove("Saved/Replays/LastGoal.nmreplay", Ignored);
+    }
+
     void TestLibraries()
     {
         std::printf("[script libraries]\n");
@@ -2696,6 +2794,7 @@ int main()
     TestScriptCodegen();
     TestScriptRuntime();
     TestLibraries();
+    TestReplayLibraryGraph();
     TestScriptStructs();
     TestValueCache();
     TestOverlapEvents();

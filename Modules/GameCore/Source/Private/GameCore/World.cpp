@@ -153,6 +153,7 @@ namespace GameCore
 
         TMulticastDelegate<PrefabInstanceID> InstanceSpawned;
         TMulticastDelegate<PrefabInstanceID> InstanceDestroyed;
+        TMulticastDelegate<World*>           WorldDestroyed;
 
         // --- components --------------------------------------------------------
 
@@ -162,6 +163,57 @@ namespace GameCore
 
         std::vector<SystemEntry> Systems[TP_MAX];
         std::vector<SystemEntry> EarlySystems[TP_MAX];   // SO_BeforeScripts
+
+        /* A bucket is being walked (TickPhase's RunSystems): removals leave a
+         * null entry the walk skips, erased once no walk is running, so a
+         * system unregistering itself or another never shifts the bucket
+         * under the walk. */
+        int  SystemWalkDepth  = 0;
+        bool bSystemTombstones = false;
+
+        /* Removes (or, mid-walk, nulls) every entry InMatch accepts. */
+        template<typename TMatch>
+        size_t RemoveSystems(TMatch InMatch)
+        {
+            size_t RemovedCount = 0;
+            for(int BucketIndex = 0; BucketIndex < 2 * TP_MAX; ++BucketIndex)
+            {
+                std::vector<SystemEntry>& Bucket = BucketIndex < TP_MAX ? Systems[BucketIndex] : EarlySystems[BucketIndex - TP_MAX];
+                for(size_t Index = 0; Index < Bucket.size(); )
+                {
+                    if(Bucket[Index].Fn && InMatch(Bucket[Index]))
+                    {
+                        ++RemovedCount;
+                        if(SystemWalkDepth > 0)
+                        {
+                            Bucket[Index] = SystemEntry();
+                            bSystemTombstones = true;
+                            ++Index;
+                        }
+                        else
+                        {
+                            Bucket.erase(Bucket.begin() + long(Index));
+                        }
+                    }
+                    else
+                    {
+                        ++Index;
+                    }
+                }
+            }
+            return RemovedCount;
+        }
+
+        void CompactSystems()
+        {
+            if(!bSystemTombstones || SystemWalkDepth > 0) { return; }
+            for(int BucketIndex = 0; BucketIndex < 2 * TP_MAX; ++BucketIndex)
+            {
+                std::vector<SystemEntry>& Bucket = BucketIndex < TP_MAX ? Systems[BucketIndex] : EarlySystems[BucketIndex - TP_MAX];
+                Bucket.erase(std::remove_if(Bucket.begin(), Bucket.end(), [](const SystemEntry& E) { return E.Fn == nullptr; }), Bucket.end());
+            }
+            bSystemTombstones = false;
+        }
 
         bool       bTicking      = false;
         ETickPhase CurrentPhase  = TP_PrePhysics;
@@ -564,6 +616,7 @@ namespace GameCore
 
     World::~World()
     {
+        P->WorldDestroyed.Broadcast(this);
         delete P;
     }
 
@@ -1203,6 +1256,7 @@ namespace GameCore
 
     TMulticastDelegate<PrefabInstanceID>& World::OnInstanceSpawned()   { return P->InstanceSpawned; }
     TMulticastDelegate<PrefabInstanceID>& World::OnInstanceDestroyed() { return P->InstanceDestroyed; }
+    TMulticastDelegate<World*>&           World::OnWorldDestroyed()    { return P->WorldDestroyed; }
 
     PrefabInstanceID World::GetEntityInstance(const EntityID InEntity) const
     {
@@ -1519,43 +1573,12 @@ namespace GameCore
 
     void World::UnregisterSystem(const SystemFn InFn, void* InUserData)
     {
-        for(int BucketIndex = 0; BucketIndex < 2 * TP_MAX; ++BucketIndex)
-        {
-            std::vector<SystemEntry>& Bucket = BucketIndex < TP_MAX ? P->Systems[BucketIndex] : P->EarlySystems[BucketIndex - TP_MAX];
-            for(size_t Index = 0; Index < Bucket.size(); )
-            {
-                if(Bucket[Index].Fn == InFn && Bucket[Index].UserData == InUserData)
-                {
-                    Bucket.erase(Bucket.begin() + long(Index));
-                }
-                else
-                {
-                    ++Index;
-                }
-            }
-        }
+        P->RemoveSystems([InFn, InUserData](const SystemEntry& E) { return E.Fn == InFn && E.UserData == InUserData; });
     }
 
     size_t World::UnregisterAllSystems(void* InUserData)
     {
-        size_t RemovedCount = 0;
-        for(int BucketIndex = 0; BucketIndex < 2 * TP_MAX; ++BucketIndex)
-        {
-            std::vector<SystemEntry>& Bucket = BucketIndex < TP_MAX ? P->Systems[BucketIndex] : P->EarlySystems[BucketIndex - TP_MAX];
-            for(size_t Index = 0; Index < Bucket.size(); )
-            {
-                if(Bucket[Index].UserData == InUserData)
-                {
-                    Bucket.erase(Bucket.begin() + long(Index));
-                    ++RemovedCount;
-                }
-                else
-                {
-                    ++Index;
-                }
-            }
-        }
-        return RemovedCount;
+        return P->RemoveSystems([InUserData](const SystemEntry& E) { return E.UserData == InUserData; });
     }
 
     void World::Tick(const float InDeltaSeconds)
@@ -1588,9 +1611,12 @@ namespace GameCore
 
         /* Snapshot the count: a system registered mid-walk is picked up next
          * tick, not this one -- see DESIGN.md. Copied: a bucket may reallocate
-         * if the system itself registers one. */
+         * if the system itself registers one. A system unregistered mid-walk
+         * is nulled, not erased (Impl::RemoveSystems), so the bucket never
+         * shrinks under the walk, and it does not run later in this walk. */
         const auto RunSystems = [&](const std::vector<SystemEntry>& InBucket)
         {
+            ++P->SystemWalkDepth;
             const size_t SystemCount = InBucket.size();
             for(size_t Index = 0; Index < SystemCount; ++Index)
             {
@@ -1600,6 +1626,8 @@ namespace GameCore
                     Entry.Fn(*this, InDeltaSeconds, Entry.UserData);
                 }
             }
+            --P->SystemWalkDepth;
+            P->CompactSystems();
         };
 
         /* What this phase's scripts must already see -- input, at PrePhysics. */
