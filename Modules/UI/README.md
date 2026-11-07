@@ -8,7 +8,7 @@ a button is clicked. Its values can follow a data store the game fills.
 opens from the Content Browser.
 
 A walkthrough, in three pages built on WorldsLab's Shooting Range (menu, HUD, settings;
-C++, Lua and script graphs): `Engine/Docs/Guides/UI/`.
+C++, Lua and script graphs), and a fourth on animating Demo Lab's: `Engine/Docs/Guides/UI/`.
 
 Documents move: keyframed `<Animations>` (played from C++, Lua, an action, or
 when a document opens and closes) and `<VisualStates>` that buttons and other
@@ -729,6 +729,9 @@ widget of a `Class`:
 - A Button with visual states always paints its `Normal` brush: animate
   `Normal.Tint` and `Normal.OutlineColor`. Without states it switches brushes as
   before.
+
+How to use them, step by step on Demo Lab's interface:
+[`Docs/Guides/UI/AnimationUIGuide.md`](../../Docs/Guides/UI/AnimationUIGuide.md).
 
 **Not yet:** a timeline in the UI Designer (the sections are kept as written and
 play in its Preview), rotation (scissors are axis-aligned, so it needs stencil

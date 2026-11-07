@@ -1,4 +1,4 @@
-# UI guide 3 of 3: settings that control the game's `.ini`
+# UI guide 3 of 4: settings that control the game's `.ini`
 
 A settings menu is a document whose controls read and write **config vars**: the
 named, typed values the engine and the game declare in C++ and that a `.ini`
@@ -11,6 +11,7 @@ the player's changes are kept. Logic in a **script graph** first, then the same 
 1. [A menu](MenuUIGuide.md)
 2. [A HUD](HudGuide.md)
 3. **Settings** (this page)
+4. [Animation](AnimationUIGuide.md)
 
 [![The Shooting Range's Settings: sliders for master volume 0.8, effects volume 1 and look sensitivity 1.5x, check boxes for Shadows and Show the controls hint, and Defaults and Back buttons](../Images/UI/range_settings.png)](../Images/UI/range_settings.png)
 
@@ -446,4 +447,4 @@ editor until the module loads**, so a Preview reads a default and warns.
 | A volume slider is silent | `Audio` is built out of this game (`[Modules] Audio`), or the output device is offline. |
 | `Graph:X did not run: has no UI graph running` | The document's `Graph` is unset or the graph did not load. |
 
-Back to [the menu](MenuUIGuide.md), or [the HUD](HudGuide.md).
+Back to [the menu](MenuUIGuide.md) or [the HUD](HudGuide.md), or on to [animation](AnimationUIGuide.md).
