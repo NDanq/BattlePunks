@@ -8,10 +8,11 @@
 
 /*
  * The cooked .nmui: "NMUI", a version, then chunks (CoreArchive) -- SETT the
- * root's settings, WIDG the widgets, RSRV the reserved sections -- each a
- * list of strings. Text, not packed values: a property's text is what every
- * build parses already, and a property this build does not know stays as it
- * was written rather than breaking the file.
+ * root's settings, WIDG the widgets, RSRV <Animations> and <VisualStates>
+ * as written -- each a list of strings -- and ANIM those two read, for a build
+ * that has no XML reader (Shipping). Text, not packed values: a property's
+ * text is what every build parses already, and a property this build does not
+ * know stays as it was written rather than breaking the file.
  */
 namespace UI
 {
@@ -27,6 +28,80 @@ namespace UI
         constexpr uint32_t TAG_SETTINGS = Tag('S', 'E', 'T', 'T');
         constexpr uint32_t TAG_WIDGETS  = Tag('W', 'I', 'D', 'G');
         constexpr uint32_t TAG_RESERVED = Tag('R', 'S', 'R', 'V');
+        constexpr uint32_t TAG_ANIMATION = Tag('A', 'N', 'I', 'M');
+
+        /* A list's count, checked against InMax when reading. */
+        template<typename T>
+        bool SerializeCount(EngineCore::Archive& Ar, std::vector<T>& InOutList, const uint32_t InMax)
+        {
+            uint32_t Count = uint32_t(InOutList.size());
+            Ar << Count;
+            if(Ar.IsLoading())
+            {
+                if(Count > InMax) { Ar.SetError("an impossible count"); return false; }
+                InOutList.resize(Count);
+            }
+            return !Ar.HasError();
+        }
+
+        void SerializeEasing(EngineCore::Archive& Ar, EUIEasing& InOutEasing)
+        {
+            uint8_t Value = uint8_t(InOutEasing);
+            Ar << Value;
+            InOutEasing = EUIEasing(Value);
+        }
+
+        void SerializeAnimations(EngineCore::Archive& Ar, std::vector<UIAnimationAsset>& InOutAnimations,
+                                 std::vector<UIVisualStateGroup>& InOutGroups)
+        {
+            if(!SerializeCount(Ar, InOutAnimations, 10000)) return;
+            for(UIAnimationAsset& Animation : InOutAnimations)
+            {
+                Ar << Animation.Name;
+                Ar << Animation.Duration;
+                Ar << Animation.bLoop;
+                Ar << Animation.OnFinished;
+                if(!SerializeCount(Ar, Animation.Tracks, 10000)) return;
+                for(UIAnimationTrack& Track : Animation.Tracks)
+                {
+                    Ar << Track.Target;
+                    Ar << Track.Class;
+                    Ar << Track.Property;
+                    SerializeEasing(Ar, Track.Easing);
+                    if(!SerializeCount(Ar, Track.Keys, 100000)) return;
+                    for(UIAnimationKey& Key : Track.Keys)
+                    {
+                        Ar << Key.Time;
+                        Ar << Key.Value;
+                    }
+                }
+            }
+            if(!SerializeCount(Ar, InOutGroups, 10000)) return;
+            for(UIVisualStateGroup& Group : InOutGroups)
+            {
+                Ar << Group.Target;
+                Ar << Group.Class;
+                if(!SerializeCount(Ar, Group.States, 1000)) return;
+                for(UIVisualStateDesc& State : Group.States)
+                {
+                    Ar << State.Name;
+                    if(!SerializeCount(Ar, State.Setters, 1000)) return;
+                    for(UIStateSetter& Set : State.Setters)
+                    {
+                        Ar << Set.Property;
+                        Ar << Set.Value;
+                    }
+                }
+                if(!SerializeCount(Ar, Group.Transitions, 1000)) return;
+                for(UIStateTransition& Transition : Group.Transitions)
+                {
+                    Ar << Transition.From;
+                    Ar << Transition.To;
+                    Ar << Transition.Duration;
+                    SerializeEasing(Ar, Transition.Easing);
+                }
+            }
+        }
 
         void SerializeTexts(EngineCore::Archive& Ar, std::vector<UIPropertyText>& InOutTexts)
         {
@@ -94,6 +169,15 @@ namespace UI
             for(std::string& Each : Asset.Reserved) { Ar << Each; }
             Ar.CloseChunk();
         }
+        if(!Asset.Animations.empty() || !Asset.VisualStates.empty())
+        {
+            ChunkVersion = 1;
+            if(Ar.OpenChunk(TAG_ANIMATION, ChunkVersion))
+            {
+                SerializeAnimations(Ar, Asset.Animations, Asset.VisualStates);
+                Ar.CloseChunk();
+            }
+        }
         return Ar.GetBytes();
     }
 
@@ -145,6 +229,11 @@ namespace UI
                 if(Count > 10000) { return Fail("an impossible reserved count"); }
                 Asset.Reserved.resize(Count);
                 for(std::string& Each : Asset.Reserved) { Ar << Each; }
+                Ar.CloseChunk();
+            }
+            else if(Ar.OpenChunk(TAG_ANIMATION, ChunkVersion))
+            {
+                SerializeAnimations(Ar, Asset.Animations, Asset.VisualStates);
                 Ar.CloseChunk();
             }
             else

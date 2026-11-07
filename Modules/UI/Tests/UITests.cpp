@@ -396,7 +396,9 @@ static void TestStylesAndFiles()
     auto Asset = Parse(MENU_XML, "the menu document parses");
     Expect(Asset->Styles.size() == 3 && Asset->Widgets.size() == 6 && Asset->Reserved.size() == 2, "styles, widgets and reserved sections are read");
     Expect(Asset->Animations.size() == 1 && Asset->Animations[0].Tracks.size() == 1 && Asset->Animations[0].Tracks[0].Keys.size() == 2
-           && Asset->Animations[0].Tracks[0].Easing == EUIEasing::CubicOut, "the reserved animation is read into its stub");
+           && Asset->Animations[0].Tracks[0].Easing == EUIEasing::CubicOut, "the animation is read");
+    Expect(Asset->VisualStates.size() == 1 && Asset->VisualStates[0].Target == "Play" && Asset->VisualStates[0].States.size() == 1
+           && Asset->VisualStates[0].States[0].Setters.size() == 1, "the visual states are read");
 
     UIDocumentInstance Doc(Asset);
     UIWidget* Options = Doc.FindWidget("Options");
@@ -422,6 +424,9 @@ static void TestStylesAndFiles()
     Expect(ReadUIBinary(Cooked, FromCooked, &Error), "the cooked form reads back");
     Expect(FromCooked.Styles.empty() && FromCooked.Widgets.size() == 6 && FromCooked.Reserved.size() == 2
            && FromCooked.Settings.InputMode == EUIInputMode::UIOnly, "it has its widgets, settings and reserved sections, no styles");
+    Expect(FromCooked.Animations.size() == 1 && FromCooked.Animations[0].Tracks[0].Keys.size() == 2
+           && FromCooked.Animations[0].Tracks[0].Easing == EUIEasing::CubicOut && FromCooked.VisualStates.size() == 1
+           && FromCooked.VisualStates[0].States[0].Name == "Hovered", "its animations and visual states are cooked as data");
     const std::string* Size = FromCooked.Widgets[size_t(FromCooked.FindWidget("Options"))].Find("Size");
     Expect(Size && *Size == "500,80", "a style's values are written into the widget");
     UIDocumentInstance CookedDoc(std::make_shared<UIDocumentAsset>(FromCooked));
@@ -1121,7 +1126,7 @@ static void TestInputAndActions()
     Expect(HudDoc.GetProperty(*Score, "Text").AsString() == "fixed", "a plain value replaces a binding");
     Expect(System.GetSubmitCount() == Submits, "without a renderer nothing is submitted");
 
-    Expect(!HudDoc.PlayAnimation("Intro"), "PlayAnimation is reserved: false");
+    Expect(HudDoc.PlayAnimation("Intro") == UI_ANIMATION_INVALID, "an animation a document does not have does not play");
     System.CloseAll(true);
     Expect(System.GetDocumentCount() == 0, "CloseAll closes everything");
 }
@@ -2090,6 +2095,217 @@ static void TestHotReload()
 
 // === Cost =====================================================================
 
+// === Animations and visual states ===============================================
+
+static const char* const ANIMATED_XML = R"XML(<UI ReferenceSize="1920,1080" InputMode="UIOnly" OpenAnimation="Fade" CloseAnimation="Out">
+  <Styles>
+    <Style Name="MenuButton" Type="Button" Size="300,60"/>
+  </Styles>
+  <Canvas Name="Root">
+    <Border Name="Panel" Position="100,100" Size="400,400" Opacity="{Bind:PanelAlpha}"/>
+    <Text Name="Title" Position="0,0" AutoSize="true" Text="Title" Opacity="0.8"/>
+    <Button Name="Play" Class="MenuButton" Position="100,600"/>
+    <Button Name="Quit" Class="MenuButton" Position="100,700" IsEnabled="false"/>
+  </Canvas>
+  <Animations>
+    <Animation Name="Fade" Duration="1" OnFinished="Native:UI.SetValue('Faded', 1)">
+      <Track Target="Panel" Property="Opacity"><Key Time="0" Value="0"/><Key Time="1" Value="1"/></Track>
+    </Animation>
+    <Animation Name="Out" Duration="0.5">
+      <Track Target="Panel" Property="Opacity"><Key Time="0" Value="*"/><Key Time="0.5" Value="0"/></Track>
+    </Animation>
+    <Animation Name="Slide">
+      <Track Target="Title" Property="Position" Easing="CubicOut"><Key Time="0" Value="0,0"/><Key Time="0.5" Value="100,0"/></Track>
+    </Animation>
+    <Animation Name="Stagger" Duration="1">
+      <Track Class="MenuButton" Property="RenderTranslate"><Key Time="0.5" Value="-50,0"/><Key Time="1" Value="0,0"/></Track>
+      <Track Target="Title" Property="Text"><Key Time="0" Value="x"/></Track>
+    </Animation>
+    <Animation Name="Pulse" Duration="0.4" Loop="true">
+      <Track Target="Panel" Property="RenderScale"><Key Time="0" Value="1,1"/><Key Time="0.2" Value="1.2,1.2"/><Key Time="0.4" Value="1,1"/></Track>
+    </Animation>
+    <Animation Name="Dim" Duration="0.5">
+      <Track Target="Title" Property="Opacity"><Key Time="0" Value="*"/><Key Time="0.5" Value="0"/></Track>
+    </Animation>
+  </Animations>
+  <VisualStates Class="MenuButton">
+    <State Name="Hovered"><Set Property="RenderScale" Value="1.1,1.1"/></State>
+    <State Name="Pressed"><Set Property="RenderScale" Value="0.9,0.9"/></State>
+    <State Name="Disabled"><Set Property="Opacity" Value="0.4"/></State>
+    <Transition From="*" To="*" Duration="0.2" Easing="QuadOut"/>
+  </VisualStates>
+</UI>
+)XML";
+
+static void TestAnimations()
+{
+    std::printf("[animations and visual states]\n");
+    Expect(Near(Ease(EUIEasing::QuadOut, 0.5f), 0.75f) && Ease(EUIEasing::Step, 0.99f) == 0.0f && Near(Ease(EUIEasing::BackOut, 1.0f), 1.0f),
+           "easing curves");
+
+    auto Asset = Parse(ANIMATED_XML, "the animated document parses");
+    Expect(Asset->Animations.size() == 6 && Asset->Animations[0].OnFinished == "Native:UI.SetValue('Faded', 1)"
+           && Asset->Animations[3].Tracks[0].Class == "MenuButton" && Asset->Animations[2].GetLength() == 0.5f,
+           "animations read: OnFinished, a class track, a length from the last key");
+    Expect(Asset->Settings.OpenAnimation == "Fade" && Asset->Settings.CloseAnimation == "Out", "open and close animations are settings");
+
+    const UIVec2 Viewport{ 1920, 1080 };
+    UISystem System;
+    Expect(System.GetAnimationStepLimit() == 0.1f, "a long frame moves animations a tenth of a second at most, by default");
+    System.SetAnimationStepLimit(0.0f);   // these checks step in big ticks
+    System.SetValue("PanelAlpha", UIValue::Number(1.0));
+    const UIDocumentHandle Handle = System.OpenAsset(Asset, "Test/Animated.nmui");
+    UIDocumentInstance& Doc = *System.Find(Handle);
+    UIWidget& Panel = *Doc.FindWidget("Panel");
+    UIWidget& Title = *Doc.FindWidget("Title");
+    UIWidget& Play  = *Doc.FindWidget("Play");
+    UIWidget& Quit  = *Doc.FindWidget("Quit");
+    const auto Opacity = [&](const UIWidget& InWidget) { return float(Doc.GetProperty(InWidget, "Opacity").AsNumber()); };
+    const auto Vec2Of  = [&](const UIWidget& InWidget, const char* InName) { return Doc.GetProperty(InWidget, InName).AsVec2(); };
+
+    /* OpenAnimation: its first frame at once, so nothing flashes. */
+    Expect(Opacity(Panel) == 0.0f && Doc.IsAnimationPlaying("Fade"), "the OpenAnimation plays from its first frame");
+    System.Update(Viewport);
+    System.Tick(0.5f);
+    Expect(Near(Opacity(Panel), 0.5f) && Doc.IsPaintDirty() && !Doc.IsLayoutDirty(), "half way, and a repaint, not a relayout");
+    System.Update(Viewport);
+    System.Tick(0.6f);
+    Expect(Opacity(Panel) == 1.0f && !Doc.IsAnimationPlaying("Fade"), "it ends on its last key");
+    System.Update(Viewport);
+    Expect(System.GetValue("Faded") && System.GetValue("Faded")->AsNumber() == 1.0, "its OnFinished ran");
+
+    /* The binding stays: the store's next change writes again. */
+    System.SetValue("PanelAlpha", UIValue::Number(0.3));
+    System.Tick(0.0f);
+    Expect(Near(Opacity(Panel), 0.3f), "an animated property keeps its binding");
+
+    /* Layout properties relayout. */
+    System.Update(Viewport);
+    Expect(Doc.PlayAnimation("Slide") != UI_ANIMATION_INVALID, "Slide plays");
+    System.Update(Viewport);
+    System.Tick(0.25f);
+    Expect(Doc.IsLayoutDirty() && Vec2Of(Title, "Position").X > 50.0f && Vec2Of(Title, "Position").X < 100.0f,
+           "Position eases (CubicOut is past half at half time) and relayouts");
+    System.Update(Viewport);
+    System.Tick(0.5f);
+    System.Update(Viewport);
+    Expect(Near(Doc.GetRect(Title.GetIndex()).X, 100.0f), "the slid widget is laid out where it ended");
+
+    /* A class track drives every widget of the class; before its first key it holds it. */
+    const UIAnimationHandle Stagger = Doc.PlayAnimation("Stagger");
+    Expect(Stagger != UI_ANIMATION_INVALID && Vec2Of(Play, "RenderTranslate").X == -50.0f && Vec2Of(Quit, "RenderTranslate").X == -50.0f,
+           "a Class track finds every MenuButton, holding its first key before it starts");
+    Expect(Title.GetType()->Name == "Text" && Doc.GetProperty(Title, "Text").AsString() == "Title", "a track on a property that cannot animate is skipped");
+    System.Tick(0.75f);
+    Expect(Near(Vec2Of(Play, "RenderTranslate").X, -25.0f), "keys that start later stagger");
+    const UIAnimationHandle Again = Doc.PlayAnimation("Stagger");
+    Expect(Again != Stagger && !Doc.GetAnimator().IsPlaying(Stagger) && Vec2Of(Play, "RenderTranslate").X == -50.0f, "playing it again restarts it");
+    System.Tick(2.0f);
+    Expect(Vec2Of(Play, "RenderTranslate").X == 0.0f && !Doc.GetAnimator().IsAnyPlaying(), "and it ends");
+
+    /* "*" starts where the property is. */
+    Doc.PlayAnimation("Dim");
+    System.Tick(0.25f);
+    Expect(Near(Opacity(Title), 0.4f), "a \"*\" key is the value it started from (0.8 to 0, half way)");
+    System.Tick(1.0f);
+
+    /* Options: speed and reverse. */
+    UIPlayOptions Fast;
+    Fast.Speed = 2.0f;
+    Doc.PlayAnimation("Fade", Fast);
+    System.Tick(0.25f);
+    Expect(Near(Opacity(Panel), 0.5f), "Speed 2 is twice as fast");
+    UIPlayOptions Back;
+    Back.bReverse = true;
+    Doc.PlayAnimation("Fade", Back);
+    Expect(Opacity(Panel) == 1.0f, "reversed, it starts from its end");
+    System.Tick(0.75f);
+    Expect(Near(Opacity(Panel), 0.25f), "and runs back");
+    System.Tick(1.0f);
+
+    /* The last started takes a property over. */
+    Doc.PlayAnimation("Fade");
+    Doc.PlayAnimation("Out");
+    Expect(!Doc.IsAnimationPlaying("Fade") && Doc.IsAnimationPlaying("Out"), "an animation driving the same property takes it over");
+    System.Tick(1.0f);
+
+    /* Loops, and Stop. */
+    Doc.PlayAnimation("Pulse");
+    System.Tick(0.5f);
+    Expect(Doc.IsAnimationPlaying("Pulse") && Near(Vec2Of(Panel, "RenderScale").X, 1.1f), "a loop wraps (0.5 is 0.1 into it)");
+    Expect(Doc.StopAnimation("Pulse") && !Doc.IsAnimationPlaying("Pulse") && Near(Vec2Of(Panel, "RenderScale").X, 1.1f),
+           "Stop leaves it where it is");
+    const int WarningsBefore = GWarnings;
+    Expect(Doc.PlayAnimation("Nope") == UI_ANIMATION_INVALID && Doc.PlayAnimation("Nope") == UI_ANIMATION_INVALID
+           && GWarnings == WarningsBefore + 1, "an unknown animation is refused, warned once");
+
+    /* A running animation, warm, allocates nothing per frame. */
+    Doc.PlayAnimation("Pulse");
+    for(int Warm = 0; Warm < 5; ++Warm) { System.Tick(0.016f); System.Update(Viewport); }
+    const uint64_t Before = GAllocations.load();
+    for(int Frame = 0; Frame < 60; ++Frame) { System.Tick(0.016f); System.Update(Viewport); }
+    Expect(GAllocations.load() == Before, "a playing animation allocates nothing per frame");
+    Doc.StopAnimation("Pulse");
+
+    /* The step limit: a long frame does not skip an animation. */
+    System.SetAnimationStepLimit(0.1f);
+    Doc.PlayAnimation("Fade");
+    System.Tick(5.0f);
+    Expect(Near(Opacity(Panel), 0.1f) && Doc.IsAnimationPlaying("Fade"), "a 5 s frame moves it 0.1 s");
+    System.SetAnimationStepLimit(0.0f);
+    System.Tick(1.0f);
+
+    /* Visual states, by Class. */
+    Expect(Doc.HasVisualStates(Play.GetIndex()) && !Doc.HasVisualStates(Panel.GetIndex()), "a Class group finds its widgets");
+    Expect(Quit.GetVisualState() == "Disabled" && Near(Opacity(Quit), 0.4f), "a disabled widget starts Disabled, shown at once");
+    Expect(Play.GetVisualState() == "Normal" && Vec2Of(Play, "RenderScale").X == 1.0f, "an idle one is Normal");
+    Doc.SetHovered(int32_t(Play.GetIndex()));
+    Expect(Play.GetVisualState() == "Hovered", "hovered goes to Hovered");
+    System.Tick(0.1f);
+    const float Mid = Vec2Of(Play, "RenderScale").X;
+    Expect(Mid > 1.05f && Mid < 1.1f, "through its transition (QuadOut: past half at half time)");
+    System.Tick(0.2f);
+    Expect(Near(Vec2Of(Play, "RenderScale").X, 1.1f), "and there");
+    Doc.SetPressed(int32_t(Play.GetIndex()));
+    System.Tick(0.05f);
+    Doc.SetPressed(-1);
+    Expect(Play.GetVisualState() == "Hovered", "released, back to Hovered");
+    const float Turned = Vec2Of(Play, "RenderScale").X;
+    Expect(Turned < 1.1f && Turned > 0.9f, "a transition cut short turns back from where it is");
+    Doc.SetHovered(-1);
+    System.Tick(0.3f);
+    Expect(Play.GetVisualState() == "Normal" && Near(Vec2Of(Play, "RenderScale").X, 1.0f), "unhovered, back to what it was made with");
+    Doc.SetFocus(int32_t(Play.GetIndex()));
+    Expect(Play.GetVisualState() == "Hovered", "focus shows Hovered when there is no Focused");
+    Play.GoToState("Pressed");
+    System.Tick(0.3f);
+    Expect(Play.GetVisualState() == "Pressed" && Near(Vec2Of(Play, "RenderScale").X, 0.9f), "GoToState goes to a state by name");
+    Doc.SetFocus(-1);
+    Doc.SetPropertyText(Quit, "IsEnabled", "true");
+    System.Tick(0.3f);
+    Expect(Quit.GetVisualState() == "Normal" && Near(Opacity(Quit), 1.0f), "enabled again, back to Normal");
+
+    /* CloseAnimation: it plays, takes no input, then the document goes. */
+    System.Update(Viewport);
+    Expect(System.Close(Handle) && System.GetDocumentCount() == 1 && !System.IsOpen("Test/Animated.nmui") && Doc.IsAnimationPlaying("Out"),
+           "Close plays the CloseAnimation, the document no longer found by path");
+    const UIInputResult During = System.ProcessInput(Pointer(UIVec2{ 250, 630 }, true, false));
+    Expect(!During.bOverWidget && Doc.GetPressed() < 0, "a closing document takes no input");
+    System.Tick(0.6f);
+    Expect(System.GetDocumentCount() == 0, "it goes when the CloseAnimation ends");
+
+    /* CloseAll does not wait; the designer's view (actions off) does not play OpenAnimation. */
+    System.OpenAsset(Asset, "Test/Animated.nmui");
+    System.CloseAll(true);
+    Expect(System.GetDocumentCount() == 0, "CloseAll closes at once");
+    System.SetExecuteActions(false);
+    const UIDocumentHandle Design = System.OpenAsset(Asset, "Test/Animated.nmui");
+    Expect(Near(float(System.Find(Design)->GetProperty(*System.Find(Design)->FindWidget("Panel"), "Opacity").AsNumber()), 0.3f)
+           && !System.Find(Design)->GetAnimator().IsAnyPlaying(), "with actions off, the OpenAnimation does not play");
+    System.Close(Design);
+    Expect(System.GetDocumentCount() == 0, "nor the CloseAnimation");
+}
+
 static void TestCost()
 {
     std::printf("[cost]\n");
@@ -2433,6 +2649,7 @@ int main()
     TestPaint();
     TestText();
     TestStylesAndFiles();
+    TestAnimations();
     TestSwitcher();
     TestInputWidgets();
     TestScrollBox();

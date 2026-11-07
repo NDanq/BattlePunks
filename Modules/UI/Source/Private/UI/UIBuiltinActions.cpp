@@ -4,7 +4,8 @@
 
 /*
  * The UI.* native actions every document can name: opening and closing
- * documents, switching a Switcher's page, and setting data store values.
+ * documents, switching a Switcher's page, setting data store values, and
+ * playing a document's animations.
  * They need only the UISystem, so they work in a game, a test and the
  * editor's preview alike (where they are logged, not run).
  */
@@ -71,4 +72,23 @@ UI_DEFINE_ACTIONS(UI)
         }
         InContext.System->SetValue(Args.Args[0].String, Set);
     }, "Sets a data store value: UI.SetValue('Key', value)");
+
+    Actions.Add("PlayAnimation", [](const UI::UIActionContext& InContext)
+    {
+        /* ('Name') in this document, or ('Name', 'Content/UI/Other.nmui'). */
+        const std::string Name  = StringArg(InContext, 0);
+        const std::string Other = StringArg(InContext, 1);
+        UI::UIDocumentInstance* Document = InContext.Document;
+        if(!Other.empty() && InContext.System) { Document = InContext.System->Find(Other); }
+        if(Document && !Name.empty()) { Document->PlayAnimation(Name); }
+    }, "Plays an animation: UI.PlayAnimation('Pulse'), or in another document UI.PlayAnimation('Pulse', 'Content/UI/HUD.nmui')");
+
+    Actions.Add("StopAnimation", [](const UI::UIActionContext& InContext)
+    {
+        const std::string Name  = StringArg(InContext, 0);
+        const std::string Other = StringArg(InContext, 1);
+        UI::UIDocumentInstance* Document = InContext.Document;
+        if(!Other.empty() && InContext.System) { Document = InContext.System->Find(Other); }
+        if(Document) { Document->StopAnimation(Name); }
+    }, "Stops an animation where it is: UI.StopAnimation('Pulse')");
 }

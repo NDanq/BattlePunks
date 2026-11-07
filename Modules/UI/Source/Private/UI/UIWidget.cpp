@@ -141,8 +141,10 @@ namespace UI
 
     void UIWidget::GoToState(const char* InState)
     {
-        /* RESERVED (UIVisualState.h): the name only; nothing transitions yet. */
-        VisualState = InState ? InState : "";
+        /* Through its document's group (UIVisualState.h); without one, the name only. */
+        const std::string State = InState ? InState : "";
+        if(Document && Document->GoToVisualState(Index, State)) return;
+        VisualState = State;
     }
 
     bool UIWidget::IsHovered() const { return Document && Document->GetHovered() == int32_t(Index); }

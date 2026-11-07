@@ -10,9 +10,10 @@ opens from the Content Browser.
 A walkthrough, in three pages built on WorldsLab's Shooting Range (menu, HUD, settings;
 C++, Lua and script graphs): `Engine/Docs/Guides/UI/`.
 
-The MVP is a static UI. Animations and visual-state transitions are specified,
-parsed and kept in every save and cook, but they do not play yet. See
-[Reserved: animations and visual states](#reserved-animations-and-visual-states).
+Documents move: keyframed `<Animations>` (played from C++, Lua, an action, or
+when a document opens and closes) and `<VisualStates>` that buttons and other
+interactive widgets go through by themselves. See
+[Animations and visual states](#animations-and-visual-states).
 
 ```
  Content/UI/Pause.nmui ──(editor: XML)──┐          ┌── GameSession::GetUI()  (one per game session)
@@ -54,9 +55,11 @@ A `.nmui` holds one `<UI>` root element. Its attributes are the document's setti
 | `Script` | none | A `.lua` file run once, the first time the document opens. Its handlers go here. |
 | `DefaultFont` | the engine's | A `.ttf` used by Text widgets that name no font. |
 | `OnOpen`, `OnClose`, `OnBack` | none | Actions run on open, on close, and on Back (Escape or the gamepad's East button) while the document has input. |
+| `OpenAnimation` | none | An animation played when the document opens, in a game or the designer's Preview. |
+| `CloseAnimation` | none | Played when it closes. The document takes no input meanwhile and goes (its `OnClose` runs) when the animation ends. |
 
 Inside the root element come `<Styles>`, exactly one root widget (usually a
-`Canvas`), and the reserved `<Animations>` and `<VisualStates>`:
+`Canvas`), and any `<Animations>` and `<VisualStates>`:
 
 ```xml
 <UI Format="1" ReferenceSize="1920,1080" ScaleMode="FitHeight" InputMode="UIOnly" Script="Content/UI/MainMenu.lua">
@@ -312,6 +315,7 @@ OnClick="Lua:Menu.Select('Arena', 2); Event:Menu.Changed($self)"
 | `UI.Open('path')`, `UI.Close('path')`, `UI.Toggle('path')` | Open, close or toggle a document. With no path, `UI.Close` closes its own document. |
 | `UI.ShowPage('Switcher', page)` | Shows a Switcher's page, by name or number, in the same document. |
 | `UI.SetValue('Key', value)` | Sets a value in the data store. |
+| `UI.PlayAnimation('Name'[, 'path'])`, `UI.StopAnimation('Name'[, 'path'])` | Plays (from the start) or stops one of this document's animations, or another open document's. |
 
 ## Data binding
 
@@ -402,7 +406,9 @@ The `UI` library acts on the session's system:
 | `UI.ShowPage(path, switcher, page)` | Shows a Switcher's page, by name or number. |
 | `UI.SetNumber`, `UI.SetString`, `UI.SetBool` | Set data store values. |
 | `UI.GetNumber`, `UI.GetString`, `UI.GetBool` | Read data store values. |
-| `UI.PlayAnimation(path, name)` | Reserved. Returns false. |
+| `UI.PlayAnimation(path, name[, speed, reverse])` | Plays one of the document's animations from the start. False if it has none by that name. |
+| `UI.StopAnimation(path, name)`, `UI.IsAnimationPlaying(path, name)` | Stops it where it is (its `OnFinished` does not run); whether it plays. |
+| `UI.GoToState(path, widget, state)` | Moves a widget to one of its visual states. |
 
 The `Game` library also gains `Game.SetPaused(bool)` and `Game.IsPaused()`.
 
@@ -554,7 +560,8 @@ apart. A game build has no XML parser, so it reads only the cooked form.
   nothing cooked. Shipping and packaged builds stage `Saved/Cooked/Content/UI/`,
   and the game's CMakeLists warns when nothing is cooked.
 - The cooked form has styles applied, keeps every property as text so an
-  unknown property survives, and keeps the reserved sections as written. It is
+  unknown property survives, and keeps `<Animations>` and `<VisualStates>` both
+  as written and read, so a Shipping build (no XML reader) plays them. It is
   deterministic: the same document always cooks to the same bytes.
 - XML is written deterministically too: two-space indent, LF line endings, and
   attributes in the order they were read.
@@ -652,36 +659,80 @@ How it gets there:
   - A font atlas keeps a white texel, so flat fills after text join the text's draw.
   - A document is typically 1-3 draw calls.
 
-## Reserved: animations and visual states
+## Animations and visual states
 
 ```xml
-<Animations>
-  <Animation Name="Intro" Duration="0.6">
-    <Track Target="Title" Property="Opacity" Easing="CubicOut">
-      <Key Time="0" Value="0"/><Key Time="0.6" Value="1"/>
-    </Track>
-  </Animation>
-</Animations>
-<VisualStates Target="Play">
-  <State Name="Hovered"><Set Property="RenderScale" Value="1.05,1.05"/></State>
-  <Transition From="*" To="Hovered" Duration="0.1" Easing="QuadOut"/>
-</VisualStates>
+<UI ... OpenAnimation="Intro" CloseAnimation="Out">
+  ...
+  <Animations>
+    <Animation Name="Intro" Duration="0.6" OnFinished="Native:Menu.IntroDone">
+      <Track Target="Title" Property="Opacity" Easing="CubicOut">
+        <Key Time="0" Value="0"/><Key Time="0.6" Value="1"/>
+      </Track>
+      <Track Class="MenuButton" Property="RenderTranslate" Easing="BackOut">
+        <Key Time="0.2" Value="-120,0"/><Key Time="0.5" Value="0,0"/>
+      </Track>
+    </Animation>
+    <Animation Name="Pulse" Duration="1" Loop="true">...</Animation>
+  </Animations>
+  <VisualStates Class="MenuButton">
+    <State Name="Hovered"><Set Property="Normal.Tint" Value="#C9822EF2"/><Set Property="RenderScale" Value="1.04,1.04"/></State>
+    <State Name="Pressed"><Set Property="RenderScale" Value="0.97,0.97"/></State>
+    <Transition To="Pressed" Duration="0.05"/>
+    <Transition Duration="0.15" Easing="QuadOut"/>
+  </VisualStates>
+</UI>
 ```
 
-Both sections are parsed and kept, as written, through load, save and cook.
-`UIAnimation.h` (`UIAnimationAsset`, `EUIEasing` with working `Ease` curves, and
-`UIAnimator`) and `UIVisualState.h` define the shapes.
+**Animations** (`UIAnimation.h`):
 
-What is not implemented yet:
+- A track drives one property of the widget named `Target`, or of every widget
+  whose `Class` names a style (`Class="MenuButton"`). The property must be a
+  number, a colour or a vector: `Opacity`, `RenderTranslate`, `RenderScale`,
+  tints, `Color`, `Position`, a progress bar's `Value`, `FontSize`.
+- Between keys, the track's `Easing`: `Linear`, `QuadIn`, `QuadOut`,
+  `QuadInOut`, `CubicIn`, `CubicOut`, `CubicInOut`, `BackOut`, `ElasticOut`
+  (both overshoot) or `Step`.
+- Before its first key a track holds that key, after its last the last, so
+  keys that start later stagger. `Value="*"` is what the property held when the
+  animation started (an outro from wherever things are).
+- `Duration` defaults to the last key's time. `Loop="true"` repeats it.
+  `OnFinished` holds actions run when it ends (not when it is stopped).
+- When it ends, every property keeps its last value. Playing an animation again
+  restarts it. A property two animations drive belongs to the one started last.
+- A bound property (`{Bind:...}`) keeps its binding: the animation wins while it
+  runs, and the binding writes again on the store's next change.
+- Played with `UIDocumentInstance::PlayAnimation(name[, UIPlayOptions])`
+  (`Speed`, `bReverse`, `StartTime`), `StopAnimation`, `IsAnimationPlaying`; Lua's
+  `UI.PlayAnimation`; the `Native:UI.PlayAnimation('Name')` action; and the
+  document's `OpenAnimation` and `CloseAnimation`.
+- Time is the frame's, not the game's: a paused game's menus move. A long frame
+  (a level load) moves animations on 0.1 s at most
+  (`UISystem::SetAnimationStepLimit`), so an intro is not skipped.
+- Cost: a document with nothing playing costs one check per frame. Targets and
+  key values are resolved when an animation starts; a frame then eases numbers
+  and writes them, allocating nothing (a gating test). Render transforms,
+  opacity and colours repaint; `Position` and other layout properties relayout.
 
-- `UIAnimator::Play` refuses.
-- `UIDocumentInstance::PlayAnimation` returns false and warns once.
-- `UIWidget::GoToState` records the state's name only.
+**Visual states** (`UIVisualState.h`), for the widget named `Target` or every
+widget of a `Class`:
 
-Properties flagged `UPF_Animatable` (Float, Color, Vec2: `Opacity`, tints,
-`RenderTranslate`, `RenderScale`, `Position`, `Value`) are what tracks will
-drive. Render transforms already draw and hit test, so animating them needs no
-layout. Rotation will need stencil clipping, because scissors are axis-aligned.
+- An interactive widget goes by itself to `Disabled`, `Pressed` (held with the
+  pointer over it), `Focused` (if the group has it), `Hovered` (under the
+  pointer, or focused when there is no `Focused`) or `Normal`.
+  `UIWidget::GoToState` and Lua's `UI.GoToState` go to any state by name.
+- A state sets properties. A property it does not set goes back to what the
+  widget was made with.
+- The first `<Transition>` matching `From` and `To` (`*` or left out: any) gives
+  the duration and easing. It starts from where the properties are, so a hover
+  cut short turns back smoothly. With no match, the state shows at once.
+- A Button with visual states always paints its `Normal` brush: animate
+  `Normal.Tint` and `Normal.OutlineColor`. Without states it switches brushes as
+  before.
+
+**Not yet:** a timeline in the UI Designer (the sections are kept as written and
+play in its Preview), rotation (scissors are axis-aligned, so it needs stencil
+clipping), SDF text for scaling text without blur, and easing per key.
 
 ## Fonts
 
@@ -699,7 +750,7 @@ layout. Rotation will need stencil clipping, because scissors are axis-aligned.
 
 | Test | What it checks |
 |---|---|
-| `UITests` (`UI.Core`, editor builds) | Registry, values, actions, layout across viewports and every scale mode, paint and batching, text, styles, round-trips of XML and cooked files (byte-identical, deterministic), structure editing, input routing, check boxes and sliders (clicks, drags, keys, two-way binding), scroll boxes, grids and wrap boxes, text input, Include and ListView (prefixes, focus across, row reuse), the Sandbox Profile page end to end, native/Lua/Event/Graph actions, UI graphs (per-document instances, lifecycle, hot reload, LightLab's menu end to end), the Lua library, hot reload, and cost (zero allocations per unchanged frame). |
+| `UITests` (`UI.Core`, editor builds) | Registry, values, actions, layout across viewports and every scale mode, paint and batching, text, styles, round-trips of XML and cooked files (byte-identical, deterministic), structure editing, input routing, check boxes and sliders (clicks, drags, keys, two-way binding), scroll boxes, grids and wrap boxes, text input, Include and ListView (prefixes, focus across, row reuse), the Sandbox Profile page end to end, native/Lua/Event/Graph actions, UI graphs (per-document instances, lifecycle, hot reload, LightLab's menu end to end), the Lua library, hot reload, animations and visual states (easing, staggered and class tracks, "*" keys, speed and reverse, take-over, loops, bindings kept, open and close animations, the step limit, zero allocations while one plays), and cost (zero allocations per unchanged frame). |
 | `UI_TESTS_GPU=Vulkan UI_TESTS_DUMP=<dir> ./UITests`, from a runtime directory | Draws the shipped documents on a GPU and checks pixels. |
 | RenderCore smoke test | `UIDrawList` batching, clipping, nine-slice and packing. `NIMBLE_SMOKE_GPU=Vulkan` checks orientation, scissor, blending, the retained list, and clearing. |
 | GDI smoke test | Scissor rows and clipping, and the dynamic mesh's append and rewind. |
