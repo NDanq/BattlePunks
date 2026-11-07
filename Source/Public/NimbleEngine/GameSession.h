@@ -226,6 +226,23 @@ namespace NimbleEngine
          * and the console's `open`). False (logged) if no level has that name. */
         bool OpenLevel(const char* InLevelName, const LevelTravel& InTravel = LevelTravel());
 
+        /*
+         * NETWORKED LEVEL TRAVEL (NetCore/README.md, "Level travel"): a
+         * server's level change takes its clients with it -- the host tells
+         * them when it is asked for, with its travel. A connected client
+         * follows its server and cannot change level itself: RequestLevel
+         * and OpenLevel (the console's `open`, Game.OpenLevel) refuse there,
+         * logged. FollowServerLevel is the host's way through.
+         */
+        bool FollowServerLevel(const char* InLevelName, const LevelTravel& InTravel);
+
+        /* Bumped by every accepted RequestLevel (OpenLevel too), with the level
+         * and travel it asked for: what a server's host announces to its
+         * clients. Null before any request. */
+        uint32_t           GetLevelRequestCount() const { return LevelRequestCount; }
+        ILevel*            GetRequestedLevel() const    { return RequestedLevel; }
+        const LevelTravel& GetRequestedTravel() const   { return RequestedTravel; }
+
         /* What the loaded level came in with: its entry, its travel state and
          * the level before it. Empty for a level loaded without one. */
         const LevelTravel& GetTravel() const { return Travel; }
@@ -484,6 +501,13 @@ namespace NimbleEngine
          * (C4251 on these private members is harmless.) */
         LevelTravel       PendingTravel;
         LevelTravel       Travel;
+
+        /* The last request (GetLevelRequestCount), and whether the host's
+         * FollowServerLevel is making it -- a client's only way to travel. */
+        uint32_t          LevelRequestCount = 0;
+        ILevel*           RequestedLevel    = nullptr;
+        LevelTravel       RequestedTravel;
+        bool              bFollowingServer  = false;
 
         /* LoadLevel's: InTravel.Entry's start for the local players' placed avatars. */
         void PlaceAvatarsAtEntry();

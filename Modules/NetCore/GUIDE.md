@@ -29,9 +29,10 @@ NimbleEngine networking is **server-authoritative**:
 
 - **One process is the server.** It is either a headless `<Game>Server` (a
   dedicated server) or a windowed game that also plays (a listen server).
-- **Every process runs the same game module and the same start level.** The
+- **Every process runs the same game module and the server's level.** The
   level's own entities (floor, lights, camera) exist everywhere, built by
-  each process.
+  each process. When the server changes level, its clients follow; a client
+  that joins in another level is sent to the server's.
 - **The server owns everything networked.** An entity with a
   `GameCore::NetComponent` is created on the server and *replicated*: clients
   receive it, with its components, when it appears. After that they receive
@@ -463,7 +464,8 @@ Net.Call(player, "Ship", "ServerFire", aimX, aimY, aimZ)  -- the same by name: t
 **Events, server only:**
 
 ```lua
-Events.On("ClientConnected", function(client, player) ... end)      -- after IGameMode::OnClientConnected
+Events.On("ClientConnected", function(client, player) ... end)      -- after IGameMode::OnClientConnected,
+                                                                    -- and for each client after a level change
 Events.On("ClientDisconnected", function(client, player) ... end)   -- before its entities are destroyed
 ```
 
@@ -537,7 +539,7 @@ if you follow one rule: **use only GameCore and NimbleEngine headers.**
   run locally.
 - `NetComponent` still exists, so levels and prefabs with it still load.
 - `NetFacade.h` answers Standalone.
-- `OnClientConnected` and `OnClientDisconnected` are never called.
+- `OnClientConnected`, `OnClientDisconnected` and `OnClientTravelled` are never called.
 
 To turn it off, in your game's `CMakeLists.txt` before the engine is added:
 
@@ -585,8 +587,12 @@ The client is writing a replicated field. Only the server writes; clients
 send requests.
 
 **Clients see different levels.**
-Every process must start the same level (`[Game] StartLevel`). Level changes
-during a session are not supported yet.
+They should not for long: the server's level changes take its clients with
+it, and a client that joins in another level is sent to the server's
+(README.md, "Level travel"). If one stays behind, its log says why: most
+often "which this game does not have", a level the client's build lacks.
+A client's own `OpenLevel` is refused while it is connected ("a networked
+client follows its server's level changes").
 
 **"its replicated components or RPCs differ from the server's (a different build of the game)".**
 The handshake compares every replicated field and RPC, so client and server

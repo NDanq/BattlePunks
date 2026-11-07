@@ -93,6 +93,19 @@ struct NetSession::Impl final : public INetEntityMap
     bool        bWelcomed   = false;
     NetClientID LocalClient = NET_CLIENT_NONE;
 
+    /* LEVEL TRAVEL, a client's side. The level sequence its World is (0: none
+     * the server named); the one the server's stream to it is about (Welcome,
+     * LevelStart) -- World messages count only while the two agree; and the
+     * LevelChange it is loading, until a BindWorld with that name. */
+    uint32_t      ClientLevelSeq   = 0;
+    uint32_t      StreamSeq        = 0;
+    uint32_t      PendingLevelSeq  = 0;
+    std::string   PendingLevelName;
+    LevelChangeFn OnLevelChange       = nullptr;
+    void*         LevelChangeUserData = nullptr;
+
+    bool ClientInStream() const { return BoundWorld && StreamSeq != 0 && StreamSeq == ClientLevelSeq; }
+
     struct PendingParent
     {
         EntityID           Child;
@@ -186,6 +199,9 @@ struct NetSession::Impl final : public INetEntityMap
     {
         NetClientID ID        = NET_CLIENT_NONE;
         bool        bWelcomed = false;
+        /* The level sequence it last said its World is (LevelReady, or the
+         * Welcome's): in step -- sent to, heard from -- while it is LevelSeq. */
+        uint32_t    ReadySeq  = 0;
 
         Bucket                                 RpcBudget;
         std::unordered_map<uint32_t, Bucket>   RpcLimits;     // by wire type << 8 | rpc index
@@ -228,6 +244,17 @@ struct NetSession::Impl final : public INetEntityMap
         uint32_t    ExpiresMs = 0;
     };
     std::vector<AwayClient> Away;
+
+    /* LEVEL TRAVEL, the server's side. The bound World's level sequence and
+     * the travel it was announced with; the newest announced, its level and
+     * travel (ahead of LevelSeq while clients are being sent on). */
+    uint32_t             LevelSeq     = 0;
+    std::vector<uint8_t> BoundTravel;
+    uint32_t             AnnouncedSeq = 0;
+    std::string          AnnouncedLevel;
+    std::vector<uint8_t> AnnouncedTravel;
+
+    bool InStep(const ClientInfo& InClient) const { return InClient.bWelcomed && BoundWorld && InClient.ReadySeq == LevelSeq; }
 
     ClientEventFn OnConnected    = nullptr;
     ClientEventFn OnDisconnected = nullptr;
@@ -726,29 +753,156 @@ struct NetSession::Impl final : public INetEntityMap
         if(!Ar.HasError()) { Transport.Send(InPeer, NET_CHANNEL_GAME, Ar.GetBytes()); }
     }
 
-    /* Every welcomed client. */
+    /* Every client in step: welcomed, and in the bound level. */
     void Broadcast(const EngineCore::Archive& Ar)
     {
         if(Ar.HasError()) { return; }
         for(const auto& Entry : Clients)
         {
-            if(Entry.second.bWelcomed) { Transport.Send(Entry.first, NET_CHANNEL_GAME, Ar.GetBytes()); }
+            if(InStep(Entry.second)) { Transport.Send(Entry.first, NET_CHANNEL_GAME, Ar.GetBytes()); }
         }
     }
 
-    NetPeerID PeerOfClient(const NetClientID InClient) const
+    /* InClient's peer: welcomed, and with InStepOnly in the bound level too. */
+    NetPeerID PeerOfClient(const NetClientID InClient, const bool InStepOnly = false) const
     {
         for(const auto& Entry : Clients)
         {
-            if(Entry.second.bWelcomed && Entry.second.ID == InClient) { return Entry.first; }
+            if(Entry.second.bWelcomed && Entry.second.ID == InClient && (!InStepOnly || InStep(Entry.second))) { return Entry.first; }
         }
         return NET_PEER_NONE;
     }
 
-    bool HasWelcomedClients() const
+    bool HasClientsInStep() const
     {
-        for(const auto& Entry : Clients) { if(Entry.second.bWelcomed) { return true; } }
+        for(const auto& Entry : Clients) { if(InStep(Entry.second)) { return true; } }
         return false;
+    }
+
+    // === Level travel ====================================================
+
+    void SendLevelChange(const NetPeerID InPeer, const uint32_t InSeq, const std::string& InLevel, const std::vector<uint8_t>& InTravel)
+    {
+        EngineCore::Archive Ar = BeginMessage(ENetMessage::LevelChange);
+        uint32_t    Seq   = InSeq;
+        std::string Level = InLevel;
+        uint32_t    Size  = uint32_t(InTravel.size());
+        Ar << Seq << Level << Size;
+        if(Size > 0)
+        {
+            std::vector<uint8_t> Copy = InTravel;
+            Ar.SerializeBytes(Copy.data(), Size);
+        }
+        SendTo(InPeer, Ar);
+    }
+
+    /* InClient is in the bound level: what follows is that level's. Its
+     * batches start afresh from here, and everything it is told is new. */
+    void StartLevelFor(const NetPeerID InPeer, ClientInfo& InClient, const bool InSendSnapshot)
+    {
+        InClient.Baselines.clear();
+        InClient.InFlight.clear();
+        InClient.UnackedKeys.clear();
+        InClient.DeferredKeys.clear();
+        InClient.Waiting.clear();
+        InClient.ViewEntity     = EntityID();
+        InClient.bNeedsFullPass = true;
+
+        EngineCore::Archive Ar = BeginMessage(ENetMessage::LevelStart);
+        uint32_t Seq   = LevelSeq;
+        uint32_t First = InClient.NextBatch;
+        Ar << Seq << First;
+        SendTo(InPeer, Ar);
+        if(InSendSnapshot)
+        {
+            SendSnapshot(InPeer);
+            SendTo(InPeer, BeginMessage(ENetMessage::SnapshotDone));
+        }
+        CORE_LOG("NetCore: client " + std::to_string(InClient.ID) + " is in level '" + LevelName + "'")
+    }
+
+    /* A client's LevelReady: its World is level InSeq. The bound one: send it
+     * that level, as to a client joining. Ahead of the server: kept, and it
+     * is in step when the server binds that level. */
+    void ServerLevelReady(const NetPeerID InPeer, ClientInfo& InClient, EngineCore::Archive& Ar)
+    {
+        uint32_t Seq = 0;
+        Ar << Seq;
+        if(Ar.HasError() || Seq == 0 || Seq > AnnouncedSeq || Seq == InClient.ReadySeq) { return; }
+        InClient.ReadySeq = Seq;
+        if(Seq == LevelSeq && BoundWorld) { StartLevelFor(InPeer, InClient, true); }
+    }
+
+    /* The server bound a World: its level's sequence, the announced one if
+     * this is it. One it did not announce is announced now. Clients that
+     * loaded it already are in step at once (its entities spawn to them in
+     * the next flush, like any new ones). */
+    void ServerBoundLevel()
+    {
+        const bool bAnnounced = AnnouncedSeq > LevelSeq && AnnouncedLevel == LevelName;
+        if(bAnnounced)
+        {
+            LevelSeq    = AnnouncedSeq;
+            BoundTravel = AnnouncedTravel;
+        }
+        else
+        {
+            LevelSeq        = std::max(LevelSeq, AnnouncedSeq) + 1;
+            AnnouncedSeq    = LevelSeq;
+            AnnouncedLevel  = LevelName;
+            AnnouncedTravel.clear();
+            BoundTravel.clear();
+        }
+        if(!bStarted || Role != ENetRole::Server) { return; }
+        for(auto& Entry : Clients)
+        {
+            if(!Entry.second.bWelcomed) { continue; }
+            if(Entry.second.ReadySeq == LevelSeq) { StartLevelFor(Entry.first, Entry.second, false); }
+            else if(!bAnnounced) { SendLevelChange(Entry.first, LevelSeq, LevelName, BoundTravel); }
+        }
+    }
+
+    /* A client told to load a level: ask the game for it. */
+    void ClientLevelChange(EngineCore::Archive& Ar)
+    {
+        uint32_t             Seq  = 0;
+        std::string          Level;
+        uint32_t             Size = 0;
+        Ar << Seq << Level << Size;
+        if(Ar.HasError() || Size > Ar.GetSize() - Ar.GetCursor()) { Ar.SetError("a level change's travel runs past the packet"); return; }
+        std::vector<uint8_t> Travel(Size);
+        if(Size > 0) { Ar.SerializeBytes(Travel.data(), Size); }
+        if(Ar.HasError() || Seq == 0) { return; }
+        if(Seq == ClientLevelSeq || Seq < PendingLevelSeq) { return; }   // there already, or an older order
+
+        PendingLevelSeq  = Seq;
+        PendingLevelName = Level;
+        CORE_LOG("NetCore: the server is changing level to '" + Level + "'")
+        if(OnLevelChange) { OnLevelChange(Level.c_str(), Travel, LevelChangeUserData); }
+        else { CORE_LOG_WARN("NetCore: no level change handler; this client cannot follow its server to '" + Level + "'") }
+    }
+
+    /* A client: the server's stream is level InSeq's from here. */
+    void ClientLevelStart(EngineCore::Archive& Ar)
+    {
+        uint32_t Seq = 0, First = 0;
+        Ar << Seq << First;
+        if(Ar.HasError()) { return; }
+        StreamSeq = Seq;
+        if(!ClientInStream()) { return; }
+        ResetBatches();
+        HighestBatch = First > 0 ? First - 1 : 0;
+        bHadSession  = true;   // a later welcome in this World is a rejoin
+    }
+
+    /* A client whose World now is the level it was sent to: say so. */
+    void SendLevelReady()
+    {
+        if(!bWelcomed || ServerPeer == NET_PEER_NONE || ClientLevelSeq == 0) { return; }
+        EngineCore::Archive Ar = BeginMessage(ENetMessage::LevelReady);
+        uint32_t Seq = ClientLevelSeq;
+        Ar << Seq;
+        SendTo(ServerPeer, Ar);
     }
 
     // === The server's stream =============================================
@@ -1365,14 +1519,14 @@ struct NetSession::Impl final : public INetEntityMap
 
         /* Then what changed on the ones already sent -- kept current with no one to tell, too. */
         SendStructureChanges();
-        if(!HasWelcomedClients()) { return; }
+        if(!HasClientsInStep()) { return; }
 
         /* Then each client's state, unreliably. */
         BuildTickItems();
         const uint32_t Now = NowMs();
         for(auto& Client : Clients)
         {
-            if(Client.second.bWelcomed) { SendBatches(Client.first, Client.second, Now); }
+            if(InStep(Client.second)) { SendBatches(Client.first, Client.second, Now); }
         }
     }
 
@@ -1394,7 +1548,9 @@ struct NetSession::Impl final : public INetEntityMap
         uint64_t    Hash    = Schema.GetHash();
         std::string Level   = LevelName;
         uint64_t    Rejoin  = Token;
-        Ar << Version << Hash << Level << Rejoin;
+        /* Which instance of the level, when rejoining: the server may have left it and come back. */
+        uint32_t    Seq     = Token != 0 && BoundWorld ? ClientLevelSeq : 0;
+        Ar << Version << Hash << Level << Rejoin << Seq;
         SendTo(InPeer, Ar);
         CORE_LOG("NetCore: connected to " + Transport.DescribePeer(InPeer) + (Token ? "; asking to rejoin" : "; saying hello"))
     }
@@ -1589,17 +1745,20 @@ struct NetSession::Impl final : public INetEntityMap
             return;
         }
         uint64_t Rejoin = 0;
-        Ar << Rejoin;
+        uint32_t InSeq  = 0;
+        Ar << Rejoin << InSeq;
         if(Ar.HasError()) { return; }
         if(Hash != Schema.GetHash())
         {
             Reject(InPeer, "its replicated components or RPCs differ from the server's (a different build of the game)");
             return;
         }
-        if(Level != LevelName)
+        /* In this level already -- this instance of it, if it says which -- or to be sent to it. */
+        const bool bReady = BoundWorld && Level == LevelName && (InSeq == 0 || InSeq == LevelSeq);
+        if(!bReady)
         {
-            CORE_LOG_WARN("NetCore: " + Transport.DescribePeer(InPeer) + " is in level '" + Level
-                          + "', the server in '" + LevelName + "'")
+            CORE_LOG("NetCore: " + Transport.DescribePeer(InPeer) + " is in level '" + Level + "'; sending it to '"
+                     + (AnnouncedSeq > LevelSeq ? AnnouncedLevel : LevelName) + "'")
         }
         /* A token the server knows: that client, back -- from its kept place,
          * or over a connection the server has not yet noticed is dead. */
@@ -1641,12 +1800,23 @@ struct NetSession::Impl final : public INetEntityMap
         int32_t  ID    = Found->second.ID;
         uint64_t Given = Found->second.Token;
         uint8_t  bBack = bReturning ? 1 : 0;
-        Welcome << ID << Given << bBack;
+        uint32_t Seq   = LevelSeq;
+        std::string Bound = LevelName;
+        uint8_t  bIn   = bReady ? 1 : 0;
+        Welcome << ID << Given << bBack << Seq << Bound << bIn;
         SendTo(InPeer, Welcome);
         CORE_LOG("NetCore: " + Transport.DescribePeer(InPeer) + " is client " + std::to_string(ID) + (bReturning ? ", back" : ""))
 
-        SendSnapshot(InPeer);
-        SendTo(InPeer, BeginMessage(ENetMessage::SnapshotDone));
+        /* Its level: the snapshot if it is there; else where to go -- the
+         * announced level if the server is on its way to one. */
+        Found->second.ReadySeq = bReady ? LevelSeq : 0;
+        if(bReady)
+        {
+            SendSnapshot(InPeer);
+            SendTo(InPeer, BeginMessage(ENetMessage::SnapshotDone));
+        }
+        if(AnnouncedSeq > LevelSeq)    { SendLevelChange(InPeer, AnnouncedSeq, AnnouncedLevel, AnnouncedTravel); }
+        else if(!bReady && BoundWorld) { SendLevelChange(InPeer, LevelSeq, LevelName, BoundTravel); }
         if(bReturning) { if(OnReturned) { OnReturned(ID, EventUserData); } }
         else if(OnConnected) { OnConnected(ID, EventUserData); }
     }
@@ -1662,8 +1832,24 @@ struct NetSession::Impl final : public INetEntityMap
      * session before this one in the same World leaves entities: a new
      * client drops what it spawned; one back keeps everything until the
      * snapshot says what is still there. */
-    void ClientWelcome(const int32_t InId, const uint64_t InToken, const bool bInReturning)
+    void ClientWelcome(const int32_t InId, const uint64_t InToken, const bool bInReturning, const uint32_t InSeq, const bool bInReady)
     {
+        /* In the server's level, its stream is this World's from here; if
+         * not, nothing counts until this client has loaded the level a
+         * LevelChange names and the server starts it. */
+        StreamSeq      = InSeq;
+        ClientLevelSeq = bInReady ? InSeq : 0;
+        PendingLevelSeq = 0;
+        if(!bInReady)
+        {
+            bWelcomed     = true;
+            bReconnecting = false;
+            LocalClient   = InId;
+            Token         = InToken;
+            CORE_LOG(std::string("NetCore: the server ") + (bInReturning ? "took this process back" : "welcomed this process")
+                     + " as client " + std::to_string(InId) + ", in another level")
+            return;
+        }
         if(bHadSession && BoundWorld)
         {
             if(!bInReturning) { ForgetSession(); }
@@ -2207,11 +2393,15 @@ struct NetSession::Impl final : public INetEntityMap
         {
             const auto Found = Clients.find(InPeer);
             const bool bWelcomedPeer = Found != Clients.end() && Found->second.bWelcomed;
+            /* Acks and RPCs count only from a client in the bound level: anything
+             * else names another level's entities. */
+            const bool bInStepPeer = bWelcomedPeer && InStep(Found->second);
             switch(ENetMessage(Type))
             {
-                case ENetMessage::Hello:    if(!Ar.HasError()) { ServerHello(InPeer, Ar); } break;
-                case ENetMessage::StateAck: if(bWelcomedPeer && !Ar.HasError()) { ReceiveStateAck(Found->second, Ar); } break;
-                case ENetMessage::Rpc:      if(bWelcomedPeer && !Ar.HasError()) { ReceiveRpc(InPeer, Ar); } break;
+                case ENetMessage::Hello:      if(!Ar.HasError()) { ServerHello(InPeer, Ar); } break;
+                case ENetMessage::StateAck:   if(bInStepPeer && !Ar.HasError()) { ReceiveStateAck(Found->second, Ar); } break;
+                case ENetMessage::Rpc:        if(bInStepPeer && !Ar.HasError()) { ReceiveRpc(InPeer, Ar); } break;
+                case ENetMessage::LevelReady: if(bWelcomedPeer && !Ar.HasError()) { ServerLevelReady(InPeer, Found->second, Ar); } break;
                 default:                    Ar.SetError("a message a client does not send"); break;
             }
         }
@@ -2221,13 +2411,18 @@ struct NetSession::Impl final : public INetEntityMap
             {
                 case ENetMessage::Welcome:
                 {
-                    int32_t  ID    = NET_CLIENT_NONE;
-                    uint64_t Given = 0;
-                    uint8_t  bBack = 0;
-                    Ar << ID << Given << bBack;
-                    if(!Ar.HasError()) { ClientWelcome(ID, Given, bBack != 0); }
+                    int32_t     ID    = NET_CLIENT_NONE;
+                    uint64_t    Given = 0;
+                    uint8_t     bBack = 0;
+                    uint32_t    Seq   = 0;
+                    std::string Level;
+                    uint8_t     bIn   = 0;
+                    Ar << ID << Given << bBack << Seq << Level << bIn;
+                    if(!Ar.HasError()) { ClientWelcome(ID, Given, bBack != 0, Seq, bIn != 0); }
                     break;
                 }
+                case ENetMessage::LevelChange: ClientLevelChange(Ar); break;
+                case ENetMessage::LevelStart:  ClientLevelStart(Ar);  break;
                 case ENetMessage::Reject:
                 {
                     std::string Reason;
@@ -2235,15 +2430,31 @@ struct NetSession::Impl final : public INetEntityMap
                     CORE_LOG_ERROR("NetCore: the server refused this client: " + Reason)
                     break;
                 }
-                case ENetMessage::Spawn:   ClientSpawn(Ar);         break;
-                case ENetMessage::Destroy: ClientDestroy(Ar);       break;
-                case ENetMessage::AddComponents:    ClientAddComponents(Ar);    break;
-                case ENetMessage::RemoveComponents: ClientRemoveComponents(Ar); break;
-                case ENetMessage::Reparent:         ClientReparent(Ar);         break;
-                case ENetMessage::SnapshotDone:     ClientSnapshotDone();       break;
-                case ENetMessage::StateBatch: ReceiveStateBatch(Ar); break;
-                case ENetMessage::Rpc:     ReceiveRpc(InPeer, Ar);  break;
-                default:                   Ar.SetError("a message a server does not send"); break;
+                default:
+                {
+                    /* The World's messages: only for the level this client's World is. Another
+                     * level's -- still in flight from before a swap, or ahead of this
+                     * client's load -- are dropped. */
+                    const ENetMessage Message = ENetMessage(Type);
+                    const bool bWorldMessage = Message == ENetMessage::Spawn || Message == ENetMessage::Destroy
+                                            || Message == ENetMessage::AddComponents || Message == ENetMessage::RemoveComponents
+                                            || Message == ENetMessage::Reparent || Message == ENetMessage::SnapshotDone
+                                            || Message == ENetMessage::StateBatch || Message == ENetMessage::Rpc;
+                    if(!bWorldMessage) { Ar.SetError("a message a server does not send"); break; }
+                    if(!ClientInStream()) { break; }
+                    switch(Message)
+                    {
+                        case ENetMessage::Spawn:            ClientSpawn(Ar);            break;
+                        case ENetMessage::Destroy:          ClientDestroy(Ar);          break;
+                        case ENetMessage::AddComponents:    ClientAddComponents(Ar);    break;
+                        case ENetMessage::RemoveComponents: ClientRemoveComponents(Ar); break;
+                        case ENetMessage::Reparent:         ClientReparent(Ar);         break;
+                        case ENetMessage::SnapshotDone:     ClientSnapshotDone();       break;
+                        case ENetMessage::StateBatch:       ReceiveStateBatch(Ar);      break;
+                        default:                            ReceiveRpc(InPeer, Ar);     break;
+                    }
+                    break;
+                }
             }
         }
 
@@ -2308,7 +2519,7 @@ struct NetSession::Impl final : public INetEntityMap
                 if(!SimulateLoss()) { Transport.Send(InTo, NET_CHANNEL_UNRELIABLE, Ar.GetBytes(), false, true); }
             };
             if(!bInBroadcast) { Send(InPeer); return; }
-            for(const auto& Entry : Clients) { if(Entry.second.bWelcomed) { Send(Entry.first); } }
+            for(const auto& Entry : Clients) { if(InStep(Entry.second)) { Send(Entry.first); } }
             return;
         }
         if(bInBroadcast) { Broadcast(Ar); }
@@ -2337,7 +2548,8 @@ struct NetSession::Impl final : public INetEntityMap
                         GameCore::InvokeRpc(InWorld, InEntity, InType, InRpc, InArgs, NET_CLIENT_NONE, false);
                         break;
                     }
-                    const NetPeerID Peer = PeerOfClient(OwnerClient);
+                    if(PeerOfClient(OwnerClient) != NET_PEER_NONE && PeerOfClient(OwnerClient, true) == NET_PEER_NONE) { break; }   // still loading this level
+                    const NetPeerID Peer = PeerOfClient(OwnerClient, true);
                     if(Peer == NET_PEER_NONE || NetId == 0)
                     {
                         CORE_LOG_WARN(std::string("NetCore: Client RPC ") + InRpc.Name + ": its owner is not connected, "
@@ -2362,6 +2574,7 @@ struct NetSession::Impl final : public INetEntityMap
             return;
         }
         if(!bWelcomed && bReconnecting) { return; }   // its input, while it rejoins: nowhere to go
+        if(bWelcomed && !ClientInStream()) { return; } // between levels: nothing it names exists on the server
         if(!bWelcomed || NetId == 0)
         {
             CORE_LOG_WARN(std::string("NetCore: Server RPC ") + InRpc.Name
@@ -2512,6 +2725,9 @@ void NetSession::Stop()
     P->ServerPeer  = NET_PEER_NONE;
     P->bWelcomed   = false;
     P->LocalClient = NET_CLIENT_NONE;
+    P->StreamSeq        = 0;
+    P->PendingLevelSeq  = 0;
+    P->PendingLevelName.clear();
     P->bStarted    = false;
     P->bHaveServerTime  = false;
     P->LastServerTimeMs = 0;
@@ -2561,6 +2777,58 @@ void NetSession::BindWorld(GameCore::World& InWorld, const char* InLevelName)
     P->DestroyedHandle        = InWorld.OnEntityDestroyed().Add(&Impl::OnEntityDestroyed, P);
     P->ComponentAddedHandle   = InWorld.OnComponentAdded().Add(&Impl::OnComponentChanged, P);
     P->ComponentRemovedHandle = InWorld.OnComponentRemoved().Add(&Impl::OnComponentChanged, P);
+
+    if(P->Role == ENetRole::Client)
+    {
+        /* The level the server sent it to: it is there. Any other is none the server named. */
+        if(P->PendingLevelSeq != 0 && P->PendingLevelName == P->LevelName)
+        {
+            P->ClientLevelSeq  = P->PendingLevelSeq;
+            P->PendingLevelSeq = 0;
+            P->PendingLevelName.clear();
+            P->SendLevelReady();
+        }
+        else
+        {
+            P->ClientLevelSeq = 0;
+        }
+    }
+    else
+    {
+        P->ServerBoundLevel();
+    }
+}
+
+void NetSession::AnnounceLevel(const char* InLevelName, const std::vector<uint8_t>& InTravel)
+{
+    if(!P->bStarted || P->Role != ENetRole::Server || !InLevelName) { return; }
+    P->AnnouncedSeq    = std::max(P->AnnouncedSeq, P->LevelSeq) + 1;
+    P->AnnouncedLevel  = InLevelName;
+    P->AnnouncedTravel = InTravel;
+    CORE_LOG(std::string("NetCore: sending clients to level '") + InLevelName + "'")
+    for(const auto& Entry : P->Clients)
+    {
+        if(Entry.second.bWelcomed) { P->SendLevelChange(Entry.first, P->AnnouncedSeq, P->AnnouncedLevel, P->AnnouncedTravel); }
+    }
+}
+
+void NetSession::SetLevelChangeHandler(const LevelChangeFn InFn, void* InUserData)
+{
+    P->OnLevelChange       = InFn;
+    P->LevelChangeUserData = InUserData;
+}
+
+bool NetSession::IsInLevel() const
+{
+    return P->Role == ENetRole::Client ? P->ClientInStream() && P->PendingLevelSeq == 0 : P->BoundWorld != nullptr;
+}
+
+void NetSession::GetClientIds(std::vector<NetClientID>& OutClients, const bool InIncludeAway) const
+{
+    OutClients.clear();
+    for(const auto& Entry : P->Clients) { if(Entry.second.bWelcomed) { OutClients.push_back(Entry.second.ID); } }
+    if(InIncludeAway) { for(const auto& Kept : P->Away) { OutClients.push_back(Kept.ID); } }
+    std::sort(OutClients.begin(), OutClients.end());
 }
 
 void NetSession::UnbindWorld()
