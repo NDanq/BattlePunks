@@ -61,6 +61,7 @@ Engine/Modules/GameCore/
 |   |   |-- ComponentSerializer.h   ComponentArchive (named fields), the serializer macro and registry
 |   |   |-- WorldSerializer.h       SerializeWorld: the binary world (cooked data, save games)
 |   |   |-- WorldPackage.h          .nmworld files: text package save/load, cooking, format detection
+|   |   |-- Replay.h                ReplayClip, ReplayRecorder, ReplayPlayer: state replays and their files
 |   |   |-- PrefabInstanceID.h      PrefabInstanceID {Index, Generation}
 |   |   |-- Prefab.h                PrefabAsset, CapturePrefab, .nmprefab files, the registry, the PrefabInstance handle
 |   |   |-- NativePrefab.h          native prefabs: PrefabBuilder, NativePrefabBehavior, the DEFINE macros
@@ -859,6 +860,53 @@ is positional, so new fields go at the end behind a version check.
 pugixml 1.16 is vendored at `Engine/ThirdParty/Source/pugixml-1.16/` (MIT,
 `LICENSE.md` there) the way Lua is, built by `Engine/ThirdParty` with
 `PUGIXML_NO_XPATH`, and linked by every build but Shipping. `pugixml.hpp` is included only by `WorldPackage.cpp`.
+
+---
+
+## Replays
+
+`Replay.h` records a World's state over time and plays it back into a World:
+match replays, kill cams, a bug's last seconds.
+
+```cpp
+ReplayClip     Clip;
+ReplayRecorder Recorder(Clip);          // ReplayRecordSettings: SampleRate, KeyframeInterval, MaxDuration
+Recorder.Start(World);                  // a TP_PostUpdate system; or Capture(World, Time) yourself
+// ... play ...
+Recorder.Stop();
+SaveReplayClip("Saved/Replays/Match.nmreplay", Clip);
+
+ReplayPlayer Player(World, Clip);       // the level loaded fresh, gameplay not ticking
+Player.Play();
+Player.Advance(DeltaSeconds);           // or Seek(Time); SetRate (negative plays back), SetLooping
+```
+
+- **State, not input.** A frame is what each entity's components held, through
+  their serializers -- nothing is re-simulated, so nothing has to be
+  deterministic. Playback writes into the World; keep the game's own systems
+  and scripts from fighting it.
+- **What is recorded:** every live entity that is not Static and passes the
+  entity filter (name, parent, mobility), with every component whose type has
+  a serializer and is not excluded. Entities are named by GUID, types by name,
+  entity references by GUID, so a clip plays into another run.
+- **Keyframes and deltas.** A keyframe holds everything; frames between hold
+  only what changed, compared by serialized bytes. A seek rebuilds from the
+  keyframe at or before it; playing forward applies one delta at a time.
+- **Playing into the level** binds an entity the World already has by GUID
+  (its unserialized per-run fields are left alone) and spawns a plain-entity
+  puppet for one it lacks; `DestroySpawnedEntities()` removes those.
+- **Interpolation:** Transform Position, Scale and (per axis, the short way)
+  Rotation blend between frames; every other field steps. Never across a
+  reparent.
+- **Rolling clips:** `MaxDuration > 0` keeps only the last that many seconds.
+- **Not recorded:** events, sounds, particles, prefab membership and scripts.
+
+- **From Lua and script graphs:** the `Replay` script library (one recording
+  and one playback per World).
+
+The integration guide, with C++, Lua and script-graph examples:
+`Engine/Docs/Guides/ReplayGuide.md`. Tests: `Engine/Tests/ReplayTests.cpp`
+(`NimbleEngine.ReplayTests`) and `NodeGraph.Tests`.
 
 ---
 

@@ -129,6 +129,12 @@ function(nimble_add_hot_module NM_TARGET)
             AUTOUIC OFF
             AUTORCC OFF)
 
+    # A MODULE is a .so on a Mac by CMake's default; the loader looks for the
+    # platform's shared-library name (.dylib, GameModule.cpp's ModuleSuffix).
+    if(APPLE)
+        set_target_properties(${NM_TARGET} PROPERTIES SUFFIX ".dylib")
+    endif()
+
     target_include_directories(${NM_TARGET}
             PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Source>)
     target_compile_features(${NM_TARGET} PUBLIC cxx_std_17)

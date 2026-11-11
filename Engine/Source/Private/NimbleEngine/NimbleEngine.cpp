@@ -581,6 +581,20 @@ namespace NimbleEngine
         WarnModuleConfigMismatch();
         Plugins::WarnConfigMismatch();
 
+#if defined(__APPLE__)
+        /* Metal is the only GPU backend an Apple build has (GDI's CMakeLists,
+         * "Backend selection"), so a project's [Display] RHI naming another --
+         * Vulkan, the default every project ships with -- runs on Metal.
+         * (__APPLE__ rather than WITH_METAL_GDI: GDI's definitions do not reach
+         * this module.) */
+        if(!Desc.bHeadless && GRenderPlatform.GetInt() != int(RenderCore::ERenderBackend::Null)
+           && GRenderPlatform.GetInt() != int(RenderCore::ERenderBackend::Metal))
+        {
+            CORE_LOG("[Display] RHI " + std::to_string(GRenderPlatform.GetInt()) + " is not built on this platform; using Metal")
+            GRenderPlatform.SetFromString(std::to_string(int(RenderCore::ERenderBackend::Metal)));
+        }
+#endif
+
         if(Desc.bHeadless)
         {
             /* No window to draw to, so nothing to draw: the Null backend
@@ -596,6 +610,12 @@ namespace NimbleEngine
             WinDesc.Title = GTitle.GetString();
             WinDesc.Flags = WF_Resizable | WF_HighDPI;
             WinDesc.Mode = WindowModeFromConfig();
+            /* The backend flag has to be right when the window is made: a Metal
+             * window gets the CAMetalLayer-backed view GDI presents into. */
+            if(GRenderPlatform.GetInt() == int(RenderCore::ERenderBackend::Metal))
+            {
+                WinDesc.Backend = RPH_Metal;
+            }
 
             Window = GameWindowSystem::CreateGameWindow(WinDesc);
             if(!Window)

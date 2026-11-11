@@ -320,6 +320,14 @@ set_source_files_properties(
         Source/Private/Editor/Content/MikkTSpaceImpl.cpp
         PROPERTIES INCLUDE_DIRECTORIES "${NIMBLE_THIRDPARTY_MIKKTSPACE_DIR}")
 
+# macOS: Play-in-Editor's held mouse (MacMouseHold.h). ARC, for its monitor.
+if(APPLE)
+    enable_language(OBJCXX)
+    list(APPEND NIMBLE_EDITOR_SOURCES
+            Source/Private/Editor/Platform/MacMouseHold.mm
+            Source/Private/Editor/Platform/MacMouseHold.h)
+    set_source_files_properties(Source/Private/Editor/Platform/MacMouseHold.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+endif()
 add_executable(NimbleEditor WIN32 ${NIMBLE_EDITOR_SOURCES})
 # The application icon: the .exe's own icon on Windows (Explorer, the taskbar
 # before Qt is up); every platform gets the window icon from :/app (EditorMain).
@@ -845,7 +853,7 @@ configure_file("${CMAKE_CURRENT_SOURCE_DIR}/Source/Private/Editor/EditorBuildTre
                "${CMAKE_CURRENT_BINARY_DIR}/Generated/EditorBuildTree.h" @ONLY)
 
 # === The project ================================================================
-# Edit > Project Settings edits the game's master Config/DefaultEngine.ini,
+# File > Project Settings edits the game's master Config/DefaultEngine.ini,
 # not the staged copy. The game's CMakeLists sets:
 #
 #   set_property(TARGET NimbleEditor PROPERTY NIMBLE_PROJECT_CONFIG "<path>")

@@ -5,6 +5,8 @@ class GDISync
 {
 public:
     explicit GDISync() {  }
+    /* Virtual: GSync is a backend's subclass, deleted through this base. */
+    virtual ~GDISync() = default;
     virtual void Initialize() = 0;
     virtual void Fence() = 0;
     virtual void WaitSync() = 0;

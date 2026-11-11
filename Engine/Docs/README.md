@@ -8,7 +8,7 @@ The editor's Help > Documentation shows only this folder.
 - Guides built on WorldsLab's worlds (the Shooting Range, GrassLab, the Toon Arena) the same way: unpack it with File > New Project > Example: Worlds Lab (or `NewProject --example WorldsLab`)
 - [Game modes: a usage guide](Guides/GameModeGuide.md)
 - [The Character Mover](Guides/CharacterMoverGuide.md): the engine's predicted third-person walker, for players and bots
-- UI, built on the Shooting Range: [a menu](Guides/UI/MenuUIGuide.md), [a HUD](Guides/UI/HudGuide.md), [settings that control the game's .ini](Guides/UI/SettingsUIGuide.md)
+- UI, built on the Shooting Range: [a menu](Guides/UI/MenuUIGuide.md), [a HUD](Guides/UI/HudGuide.md), [settings that control the game's .ini](Guides/UI/SettingsUIGuide.md); and [animation](Guides/UI/AnimationUIGuide.md), on Demo Lab
 - [Sequencer implementation guide](Guides/SequencerImplementationGuide.md)
 - [AICore implementation guide](Guides/AICoreImplementationGuide.md): navigation, crowds, behavior trees, utility, perception
 - [Crash dummy animation guide](Guides/CrashDummyAnimationGuide.md)

@@ -484,6 +484,7 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     BuildMenus();
     BuildPlayControls();
     BuildBuildMenu();
+    BuildToolsMenu();
     BuildHelpMenu();   // last, so Help is the rightmost menu
     connect(&Context, &EditorContext::PlayStateChanged, this, &EditorMainWindow::OnPlayStateChanged);
 
@@ -551,14 +552,14 @@ void EditorMainWindow::BuildMenus()
         UpdateTitle();
     });
 
-    File->addSeparator();
-
     QAction* Open = File->addAction(QStringLiteral("&Open World..."));
     Open->setShortcut(QKeySequence::Open);
     connect(Open, &QAction::triggered, this, &EditorMainWindow::OpenWorld);
 
     RecentMenu = File->addMenu(QStringLiteral("Open &Recent"));
     connect(RecentMenu, &QMenu::aboutToShow, this, &EditorMainWindow::FillRecentMenu);
+
+    File->addSeparator();
 
     QAction* Save = File->addAction(EditorIcons::Get(EditorIcons::EIcon::Save), QStringLiteral("&Save World"));
     Save->setShortcut(QKeySequence::Save);
@@ -573,66 +574,9 @@ void EditorMainWindow::BuildMenus()
 
     File->addSeparator();
 
-    QAction* Import = File->addAction(QStringLiteral("&Import..."));
-    Import->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
-    Import->setToolTip(QStringLiteral("glTF meshes and images into engine assets, in the Content Browser's folder"));
-    connect(Import, &QAction::triggered, this, [this]() { ContentArea->ImportWithDialog(); });
-
-    QAction* OpenPrefab = File->addAction(QStringLiteral("Open Pre&fab..."));
-    connect(OpenPrefab, &QAction::triggered, this, [this]()
-    {
-        const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Prefab"), EditorPrefabs::GetDefaultFolder(),
-                                                          QStringLiteral("Prefabs (*.nmprefab)"));
-        if(!Path.isEmpty()) { EditorPrefabs::OpenPrefab(Path, this); }
-    });
-
-    QAction* OpenParticles = File->addAction(QStringLiteral("Open Particle S&ystem..."));
-    connect(OpenParticles, &QAction::triggered, this, [this]()
-    {
-        const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Particle System"), EditorParticles::GetDefaultFolder(),
-                                                          QStringLiteral("Particle Systems (*.nmparticle)"));
-        if(!Path.isEmpty()) { EditorParticles::OpenParticleSystem(Path, this); }
-    });
-
-    QAction* OpenSequence = File->addAction(QStringLiteral("Open Se&quence..."));
-    connect(OpenSequence, &QAction::triggered, this, [this]()
-    {
-        const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Sequence"), EditorSequencer::GetDefaultFolder(),
-                                                          QStringLiteral("Sequences (*.nmseq)"));
-        if(!Path.isEmpty()) { EditorSequencer::OpenSequence(Path, this); }
-    });
-    QAction* NewSequence = File->addAction(QStringLiteral("New Sequence..."));
-    connect(NewSequence, &QAction::triggered, this, [this]() { EditorSequencer::CreateSequence(QString(), this); });
-
-    QAction* OpenGraph = File->addAction(QStringLiteral("Open Grap&h..."));
-    OpenGraph->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
-    connect(OpenGraph, &QAction::triggered, this, [this]()
-    {
-        const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Graph"), EditorGraphs::GetProjectRoot(),
-                                                          EditorGraphs::GetFileFilter());
-        if(!Path.isEmpty()) { EditorGraphs::OpenGraph(Path, this); }
-    });
-
-    File->addSeparator();
-
-    /* The collaboration session: the Session dock, and leaving it. */
-    QAction* JoinSession = File->addAction(QStringLiteral("Collaboration &Session..."));
-    JoinSession->setToolTip(QStringLiteral("Join others working on this project through NimbleEditorServer (the Session dock)"));
-    connect(JoinSession, &QAction::triggered, this, [this]()
-    {
-        if(auto* Dock = findChild<CollabSessionWindow*>())
-        {
-            Dock->show();
-            Dock->raise();
-            Dock->GetAddressEdit()->setFocus();
-        }
-    });
-    QAction* LeaveSession = File->addAction(QStringLiteral("&Leave Session"));
-    connect(LeaveSession, &QAction::triggered, this, [this]() { CollabSession->Leave(); });
-    connect(File, &QMenu::aboutToShow, this, [this, LeaveSession]()
-    {
-        LeaveSession->setEnabled(CollabSession->GetState() != ::Collab::CollabClient::EState::Idle);
-    });
+    QAction* ProjectSettings = File->addAction(QStringLiteral("&Project Settings..."));
+    ProjectSettings->setToolTip(QStringLiteral("The project's Config/DefaultEngine.ini: the game's and the engine's settings"));
+    connect(ProjectSettings, &QAction::triggered, this, [this]() { OpenProjectSettings(); });
 
     File->addSeparator();
 
@@ -672,10 +616,6 @@ void EditorMainWindow::BuildMenus()
     Settings->setMenuRole(QAction::PreferencesRole);
     Settings->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma));
     connect(Settings, &QAction::triggered, this, [this]() { OpenSettings(); });
-
-    QAction* ProjectSettings = Edit->addAction(QStringLiteral("&Project Settings..."));
-    ProjectSettings->setToolTip(QStringLiteral("The project's Config/DefaultEngine.ini: the game's and the engine's settings"));
-    connect(ProjectSettings, &QAction::triggered, this, [this]() { OpenProjectSettings(); });
 
     QMenu* World = menuBar()->addMenu(QStringLiteral("&World"));
 
@@ -835,6 +775,76 @@ void EditorMainWindow::BuildMenus()
     connect(InputProbeAction, &QAction::toggled, this, &EditorMainWindow::SetSDLInputProbe);
 }
 
+void EditorMainWindow::BuildToolsMenu()
+{
+    /* What is neither the project nor the level: importing assets, the asset
+     * editors' files, and the collaboration session. */
+    QMenu* Tools = menuBar()->addMenu(QStringLiteral("&Tools"));
+
+    QAction* Import = Tools->addAction(QStringLiteral("&Import..."));
+    Import->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
+    Import->setToolTip(QStringLiteral("glTF meshes and images into engine assets, in the Content Browser's folder"));
+    connect(Import, &QAction::triggered, this, [this]() { ContentArea->ImportWithDialog(); });
+
+    Tools->addSeparator();
+
+    QAction* OpenPrefab = Tools->addAction(QStringLiteral("Open Pre&fab..."));
+    connect(OpenPrefab, &QAction::triggered, this, [this]()
+    {
+        const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Prefab"), EditorPrefabs::GetDefaultFolder(),
+                                                          QStringLiteral("Prefabs (*.nmprefab)"));
+        if(!Path.isEmpty()) { EditorPrefabs::OpenPrefab(Path, this); }
+    });
+
+    QAction* OpenParticles = Tools->addAction(QStringLiteral("Open Particle S&ystem..."));
+    connect(OpenParticles, &QAction::triggered, this, [this]()
+    {
+        const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Particle System"), EditorParticles::GetDefaultFolder(),
+                                                          QStringLiteral("Particle Systems (*.nmparticle)"));
+        if(!Path.isEmpty()) { EditorParticles::OpenParticleSystem(Path, this); }
+    });
+
+    QAction* OpenSequence = Tools->addAction(QStringLiteral("Open Se&quence..."));
+    connect(OpenSequence, &QAction::triggered, this, [this]()
+    {
+        const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Sequence"), EditorSequencer::GetDefaultFolder(),
+                                                          QStringLiteral("Sequences (*.nmseq)"));
+        if(!Path.isEmpty()) { EditorSequencer::OpenSequence(Path, this); }
+    });
+    QAction* NewSequence = Tools->addAction(QStringLiteral("&New Sequence..."));
+    connect(NewSequence, &QAction::triggered, this, [this]() { EditorSequencer::CreateSequence(QString(), this); });
+
+    QAction* OpenGraph = Tools->addAction(QStringLiteral("Open Grap&h..."));
+    OpenGraph->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
+    connect(OpenGraph, &QAction::triggered, this, [this]()
+    {
+        const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Graph"), EditorGraphs::GetProjectRoot(),
+                                                          EditorGraphs::GetFileFilter());
+        if(!Path.isEmpty()) { EditorGraphs::OpenGraph(Path, this); }
+    });
+
+    Tools->addSeparator();
+
+    /* The collaboration session: the Session dock, and leaving it. */
+    QAction* JoinSession = Tools->addAction(QStringLiteral("Collaboration &Session..."));
+    JoinSession->setToolTip(QStringLiteral("Join others working on this project through NimbleEditorServer (the Session dock)"));
+    connect(JoinSession, &QAction::triggered, this, [this]()
+    {
+        if(auto* Dock = findChild<CollabSessionWindow*>())
+        {
+            Dock->show();
+            Dock->raise();
+            Dock->GetAddressEdit()->setFocus();
+        }
+    });
+    QAction* LeaveSession = Tools->addAction(QStringLiteral("&Leave Session"));
+    connect(LeaveSession, &QAction::triggered, this, [this]() { CollabSession->Leave(); });
+    connect(Tools, &QMenu::aboutToShow, this, [this, LeaveSession]()
+    {
+        LeaveSession->setEnabled(CollabSession->GetState() != ::Collab::CollabClient::EState::Idle);
+    });
+}
+
 void EditorMainWindow::BuildHelpMenu()
 {
     QMenu* Help = menuBar()->addMenu(QStringLiteral("&Help"));
@@ -907,7 +917,7 @@ void EditorMainWindow::BuildPlayControls()
     QMenu*   NetMenu = PlayMenu->addMenu(QStringLiteral("&Net"));
     QAction* LocalServer = NetMenu->addAction(QStringLiteral("Launch &Local Server"));
     LocalServer->setToolTip(QStringLiteral("Start NimbleEditorServer on this machine for this project's checkout; join it "
-                                           "with File > Collaboration Session. It stops when this editor closes."));
+                                           "with Tools > Collaboration Session. It stops when this editor closes."));
     connect(LocalServer, &QAction::triggered, this, &EditorMainWindow::ToggleLocalSessionServer);
     connect(NetMenu, &QMenu::aboutToShow, this, [this, LocalServer]()
     {
@@ -2285,7 +2295,7 @@ void EditorMainWindow::RegisterConsoleCommands()
     });
 
     Console.Register(QStringLiteral("projectsettings"), QStringLiteral("[page]"),
-                     QStringLiteral("Open Edit > Project Settings, on a page if named (Net, Shadows, Worlds...)"),
+                     QStringLiteral("Open File > Project Settings, on a page if named (Net, Shadows, Worlds...)"),
                      [this](const QStringList& InArgs)
     {
         OpenProjectSettings();

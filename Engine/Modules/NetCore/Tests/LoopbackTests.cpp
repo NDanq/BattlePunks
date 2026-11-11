@@ -826,6 +826,182 @@ namespace
                   "one that quits is gone at once, no place kept");
         }
     }
+
+    // === Level travel ========================================================
+
+    /* What a client was told to load. */
+    struct TravelOrders
+    {
+        int                  Count = 0;
+        std::string          Level;
+        std::vector<uint8_t> Travel;
+
+        static void Handle(const char* InLevel, const std::vector<uint8_t>& InTravel, void* InUser)
+        {
+            TravelOrders& Self = *static_cast<TravelOrders*>(InUser);
+            ++Self.Count;
+            Self.Level  = InLevel;
+            Self.Travel = InTravel;
+        }
+    };
+
+    int CountNetworked(World& InWorld)
+    {
+        int Count = 0;
+        InWorld.Each<NetComponent>([&](Entity, NetComponent&) { ++Count; });
+        return Count;
+    }
+
+    Entity MakeNetPawn(World& InWorld, const char* InName, const int32_t InHealth, const NetClientID InOwner = NET_CLIENT_NONE,
+                       const EntityGuid& InGuid = EntityGuid::Generate())
+    {
+        Entity Made = InWorld.CreateEntity(InName, InGuid);
+        NetComponent Net;
+        Net.OwnerClient = InOwner;
+        Made.AddComponent(Net);
+        PawnComponent Pawn;
+        Pawn.Health = InHealth;
+        Made.AddComponent(Pawn);
+        return Made;
+    }
+
+    /*
+     * The server changes level; its clients follow. Announced ahead of the
+     * swap, the server swapping first; the client loading first; a swap not
+     * announced; a client joining in another level. Nothing of one level
+     * reaches a World of another, either way.
+     */
+    void TestLevelTravel()
+    {
+        std::printf("[level travel]\n");
+        World ServerAlpha, ServerBeta, ServerGamma, ServerDelta;
+        World ClientAlpha, ClientBeta, ClientGamma, ClientDelta;
+        World LateAlpha, LateDelta;
+        NetSession Server, Client, Late;
+        const Pair Both{ &Server, &Client };
+        TravelOrders Orders, LateOrders;
+        World* const SavedServerWorld = GServerWorld;
+
+        NetConfig ServerConfig;
+        ServerConfig.Port = 0;
+        Check(Server.Start(ENetRole::Server, ServerConfig), "travel: the server listens");
+        Server.BindWorld(ServerAlpha, "Alpha");
+        int Connected = 0;
+        Server.SetClientEvents([](NetClientID, void* U) { ++*static_cast<int*>(U); }, [](NetClientID, void*) {}, &Connected);
+
+        NetConfig ClientConfig;
+        std::strcpy(ClientConfig.ServerAddress, "127.0.0.1");
+        ClientConfig.Port = Server.GetPort();
+        Client.SetLevelChangeHandler(&TravelOrders::Handle, &Orders);
+        Check(Client.Start(ENetRole::Client, ClientConfig), "travel: the client starts");
+        Client.BindWorld(ClientAlpha, "Alpha");
+        Check(StepUntil(Both, [&] { return Client.IsConnected() && Connected == 1; }), "travel: the client joins in the same level");
+        const NetClientID Id = Client.GetLocalClientId();
+
+        Entity Crate = MakeNetPawn(ServerAlpha, "Crate", 10);
+        const auto OnClient = [&](const Entity& InServer) { return Client.FindEntityByNetId(Server.GetNetId(InServer.GetID())); };
+        Check(StepUntil(Both, [&] { return OnClient(Crate).IsSet(); }) && Client.IsInLevel(), "travel: the first level plays");
+        Check(Orders.Count == 0, "travel: a client in the server's level is not sent anywhere");
+
+        // --- announced; the server swaps first ------------------------------------
+        Server.AnnounceLevel("Beta", { 1, 2, 3 });
+        Check(StepUntil(Both, [&] { return Orders.Count == 1; }), "travel: an announced level reaches the client");
+        Check(Orders.Level == "Beta" && Orders.Travel == std::vector<uint8_t>({ 1, 2, 3 }), "travel: with its name and the game's travel");
+        Check(!Client.IsInLevel(), "travel: the client is between levels from the order on");
+        Crate.GetComponent<PawnComponent>()->Health = 11;
+        Check(StepUntil(Both, [&]
+        {
+            const PawnComponent* Pawn = Entity(&ClientAlpha, OnClient(Crate)).GetComponent<PawnComponent>();
+            return Pawn && Pawn->Health == 11;
+        }), "travel: until the server swaps, the old level still plays");
+
+        const int AlphaCount = CountNetworked(ClientAlpha);
+        const EntityGuid GateGuid = EntityGuid::Generate();
+        Server.UnbindWorld();
+        Entity ServerGate = MakeNetPawn(ServerBeta, "Gate", 70, NET_CLIENT_NONE, GateGuid);
+        Entity Fresh      = MakeNetPawn(ServerBeta, "Fresh", 5, Id);
+        Server.BindWorld(ServerBeta, "Beta");
+        for(int Index = 0; Index < 60; ++Index) { Step(Both); }
+        Check(CountNetworked(ClientAlpha) == AlphaCount, "travel: nothing of the new level reaches a client still in the old one");
+
+        Client.UnbindWorld();
+        Entity ClientGate = ClientBeta.CreateEntity("Gate", GateGuid);
+        ClientGate.AddComponent<NetComponent>();
+        ClientGate.AddComponent<PawnComponent>();
+        Client.BindWorld(ClientBeta, "Beta");
+        Check(StepUntil(Both, [&] { return Client.IsInLevel() && OnClient(Fresh).IsSet() && OnClient(ServerGate).IsSet(); }),
+              "travel: once the client has loaded it, the new level is sent");
+        Check(OnClient(ServerGate) == ClientGate.GetID(), "travel: the level's own entities are matched, as on joining");
+        Check(StepUntil(Both, [&] { return ClientGate.GetComponent<PawnComponent>()->Health == 70; }), "travel: and brought up to date");
+        Check(CountNetworked(ClientAlpha) == AlphaCount, "travel: the old World is left alone");
+        Fresh.GetComponent<PawnComponent>()->Health = 6;
+        Check(StepUntil(Both, [&]
+        {
+            const PawnComponent* Pawn = Entity(&ClientBeta, OnClient(Fresh)).GetComponent<PawnComponent>();
+            return Pawn && Pawn->Health == 6;
+        }), "travel: the new level's state replicates");
+        GServerWorld = &ServerBeta;
+        GServerLog = RpcLog();
+        GAMECORE_RPC(PawnComponent, ServerMove)(Entity(&ClientBeta, OnClient(Fresh)), EngineCore::Vector3(1.0f, 2.0f, 3.0f));
+        Check(StepUntil(Both, [&] { return GServerLog.ServerMoves == 1; }), "travel: the client's RPCs reach the server in the new level");
+        Check(GServerLog.LastMoveSender == Id, "travel: as the same client");
+
+        // --- announced; the client loads first ------------------------------------
+        Server.AnnounceLevel("Gamma", {});
+        Check(StepUntil(Both, [&] { return Orders.Count == 2 && Orders.Level == "Gamma"; }), "travel: a second level is announced");
+        Client.UnbindWorld();
+        Client.BindWorld(ClientGamma, "Gamma");
+        for(int Index = 0; Index < 60; ++Index) { Step(Both); }
+        Check(CountNetworked(ClientGamma) == 0 && !Client.IsInLevel(), "travel: a client ahead of its server is sent nothing of the old level");
+        Server.UnbindWorld();
+        Entity Lone = MakeNetPawn(ServerGamma, "Lone", 1);
+        Server.BindWorld(ServerGamma, "Gamma");
+        Check(StepUntil(Both, [&] { return Client.IsInLevel() && OnClient(Lone).IsSet(); }), "travel: it is in step once the server arrives");
+
+        // --- not announced -----------------------------------------------------------
+        Server.UnbindWorld();
+        Entity Tower = MakeNetPawn(ServerDelta, "Tower", 2);
+        Server.BindWorld(ServerDelta, "Delta");
+        Check(StepUntil(Both, [&] { return Orders.Count == 3 && Orders.Level == "Delta"; }), "travel: a swap not announced is sent at the bind");
+        Client.UnbindWorld();
+        Client.BindWorld(ClientDelta, "Delta");
+        Check(StepUntil(Both, [&] { return Client.IsInLevel() && OnClient(Tower).IsSet(); }), "travel: and followed the same way");
+
+        // --- a client joining in another level -------------------------------------
+        Late.SetLevelChangeHandler(&TravelOrders::Handle, &LateOrders);
+        Check(Late.Start(ENetRole::Client, ClientConfig), "travel: a late client starts, in the first level");
+        Late.BindWorld(LateAlpha, "Alpha");
+        const auto StepAll = [&]
+        {
+            Server.PollIncoming(); Client.PollIncoming(); Late.PollIncoming();
+            Server.FlushOutgoing(); Client.FlushOutgoing(); Late.FlushOutgoing();
+            EngineCore::Threads::SleepMs(1);
+        };
+        for(int Index = 0; Index < 3000 && LateOrders.Count == 0; ++Index) { StepAll(); }
+        Check(Late.IsConnected() && LateOrders.Count == 1 && LateOrders.Level == "Delta", "travel: a client joining in another level is sent to the server's");
+        for(int Index = 0; Index < 60; ++Index) { StepAll(); }
+        Check(CountNetworked(LateAlpha) == 0, "travel: and is sent nothing until it is there");
+        Late.UnbindWorld();
+        Late.BindWorld(LateDelta, "Delta");
+        bool bLateIn = false;
+        for(int Index = 0; Index < 3000 && !bLateIn; ++Index)
+        {
+            StepAll();
+            bLateIn = Late.IsInLevel() && Late.FindEntityByNetId(Server.GetNetId(Tower.GetID())).IsSet();
+        }
+        Check(bLateIn, "travel: then it gets the level, as on joining");
+        std::vector<NetClientID> Ids;
+        Server.GetClientIds(Ids, true);
+        Check(Ids.size() == 2, "travel: the server lists both clients");
+
+        GServerWorld = SavedServerWorld;
+        Late.Stop();
+        Client.Stop();
+        Server.UnbindWorld();
+        Server.Stop();
+        Client.UnbindWorld();
+        Late.UnbindWorld();
+    }
 }
 
 namespace
@@ -1502,10 +1678,16 @@ int main()
         World      StrangerWorld;   // first, so it outlives the session bound to it
         NetSession Stranger;
         NetConfig  StrangerConfig = ClientConfig;
+        TravelOrders StrangerOrders;
+        Stranger.SetLevelChangeHandler(&TravelOrders::Handle, &StrangerOrders);
         Check(Stranger.Start(ENetRole::Client, StrangerConfig), "a second client starts connecting");
-        Stranger.BindWorld(StrangerWorld, "Elsewhere");   // a level mismatch is only a warning
+        Stranger.BindWorld(StrangerWorld, "Elsewhere");   // another level: it is sent to the server's
         const Pair Three{ &Server, &Stranger };
         Check(StepUntil(Three, [&] { return Stranger.IsConnected(); }), "a second client with the same build is welcomed");
+        Check(StepUntil(Three, [&] { return StrangerOrders.Count == 1; }) && StrangerOrders.Level == "Loopback",
+              "in another level, it is told to load the server's");
+        Check(StrangerWorld.GetEntityCount() == 0, "and is sent nothing of it before");
+        Stranger.BindWorld(StrangerWorld, "Loopback");   // as if loaded
         Check(StepUntil(Three, [&] { return StrangerWorld.GetEntityCount() == 2; }), "and gets a snapshot of every networked entity");
         Stranger.Stop();
         Check(StepUntil(Both, [&] { return Disconnected == 1; }), "its disconnect reaches the server");
@@ -1614,6 +1796,7 @@ int main()
     TestSpawnedParts();
     TestRpcLimits();
     TestReconnect();
+    TestLevelTravel();
     TestViewTime();
     TestQuantization();
     TestBandwidthBudget();

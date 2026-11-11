@@ -196,7 +196,7 @@ namespace UI
         /* A property was set: drop anything cached from it (a Text's glyphs). */
         virtual void OnPropertyChanged(const UIPropertyDesc& /*InProperty*/) {}
 
-        /* UIVisualState.h's: records InState; transitions are not played yet. */
+        /* UIVisualState.h's: to its state InState, through its group's transition. */
         void GoToState(const char* InState);
         const std::string& GetVisualState() const { return VisualState; }
 

@@ -81,6 +81,7 @@ private:
     void BuildMenus();
     void BuildPlayControls();
     void BuildBuildMenu();
+    void BuildToolsMenu();
     void BuildHelpMenu();
     void RegisterConsoleCommands();
 

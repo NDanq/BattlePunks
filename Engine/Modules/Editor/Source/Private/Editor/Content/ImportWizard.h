@@ -17,7 +17,7 @@ class QTableWidget;
 
 /*
  * Files from outside the project -- dropped on the Content Browser or picked
- * with File > Import -- converted into engine assets (AssetImport.h):
+ * with Tools > Import -- converted into engine assets (AssetImport.h):
  *
  *   Sources           each file, what it is, the name it gets; the folder
  *   Mesh Options      only with a mesh: scale, axes, normals, split, textures

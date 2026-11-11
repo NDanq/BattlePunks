@@ -13,7 +13,7 @@
 
 /*
  * The authored .nmui: one <UI> root holding <Styles>, exactly one root widget
- * element, and the reserved <Animations> and <VisualStates>. A widget element
+ * element, and <Animations> and <VisualStates> (kept as written, and read). A widget element
  * is its type's XML name; its attributes are its properties, as text, in the
  * order written; its child elements are its children.
  *
@@ -39,7 +39,7 @@ namespace UI
             return Text;
         }
 
-        /* <Animations> into Animations, where it reads; the text stays in Reserved either way. */
+        /* <Animations> into Animations; the text stays in Reserved, what a save writes. */
         void ReadAnimations(const pugi::xml_node& InNode, std::vector<UIAnimationAsset>& OutAnimations)
         {
             for(pugi::xml_node Animation = InNode.child("Animation"); Animation; Animation = Animation.next_sibling("Animation"))
@@ -48,10 +48,12 @@ namespace UI
                 Made.Name     = Animation.attribute("Name").as_string();
                 Made.Duration = Animation.attribute("Duration").as_float();
                 Made.bLoop    = Animation.attribute("Loop").as_bool();
+                Made.OnFinished = Animation.attribute("OnFinished").as_string();
                 for(pugi::xml_node Track = Animation.child("Track"); Track; Track = Track.next_sibling("Track"))
                 {
                     UIAnimationTrack T;
                     T.Target   = Track.attribute("Target").as_string();
+                    T.Class    = Track.attribute("Class").as_string();
                     T.Property = Track.attribute("Property").as_string();
                     T.Easing   = ParseEasing(Track.attribute("Easing").as_string("Linear"));
                     for(pugi::xml_node Key = Track.child("Key"); Key; Key = Key.next_sibling("Key"))
@@ -62,6 +64,34 @@ namespace UI
                 }
                 OutAnimations.push_back(std::move(Made));
             }
+        }
+
+        /* <VisualStates Target|Class> into a group. */
+        void ReadVisualStates(const pugi::xml_node& InNode, std::vector<UIVisualStateGroup>& OutGroups)
+        {
+            UIVisualStateGroup Group;
+            Group.Target = InNode.attribute("Target").as_string();
+            Group.Class  = InNode.attribute("Class").as_string();
+            for(pugi::xml_node State = InNode.child("State"); State; State = State.next_sibling("State"))
+            {
+                UIVisualStateDesc Made;
+                Made.Name = State.attribute("Name").as_string();
+                for(pugi::xml_node Set = State.child("Set"); Set; Set = Set.next_sibling("Set"))
+                {
+                    Made.Setters.push_back({ Set.attribute("Property").as_string(), Set.attribute("Value").as_string() });
+                }
+                Group.States.push_back(std::move(Made));
+            }
+            for(pugi::xml_node Transition = InNode.child("Transition"); Transition; Transition = Transition.next_sibling("Transition"))
+            {
+                UIStateTransition Made;
+                Made.From     = Transition.attribute("From").as_string("*");
+                Made.To       = Transition.attribute("To").as_string("*");
+                Made.Duration = Transition.attribute("Duration").as_float();
+                Made.Easing   = ParseEasing(Transition.attribute("Easing").as_string("Linear"));
+                Group.Transitions.push_back(std::move(Made));
+            }
+            OutGroups.push_back(std::move(Group));
         }
 
         /* InElement and its subtree onto OutWidgets, in document order. */
@@ -161,6 +191,7 @@ namespace UI
             {
                 Asset.Reserved.push_back(NodeText(Child));
                 if(std::strcmp(Name, "Animations") == 0) { ReadAnimations(Child, Asset.Animations); }
+                else                                     { ReadVisualStates(Child, Asset.VisualStates); }
             }
             else
             {

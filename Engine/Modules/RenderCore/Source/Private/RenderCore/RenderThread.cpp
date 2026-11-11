@@ -18,6 +18,9 @@
 
 /* Here rather than in RenderCoreInternal.h: d3d12.h brings windows.h, whose
  * macros break GameCore headers in the files that include both. */
+#if WITH_METAL_GDI
+#include "Public/GDI/Metal/MetalDynamicGDI.h"
+#endif
 #if WITH_D3D12_GDI
 #include "Public/GDI/D3D12/D3D12DynamicGDI.h"
 #endif
@@ -231,7 +234,7 @@ namespace RenderCore
         /*
          * WHICH BACKENDS CAN BE HANDED A CONTEXT FROM HERE.
          *
-         * Null, Vulkan and D3D12 can: none needs a drawable at this point.
+         * Null, Vulkan, D3D12 and Metal can: none needs a drawable at this point.
          * VulkanGDIContext's constructor only creates the process-wide
          * VkInstance; the surface comes much later, from VKSwapchain::Initialize
          * out of the WindowHandle InitializeGDI stored above. Without this
@@ -240,7 +243,7 @@ namespace RenderCore
          * draw call. D3D12 is the same: its device needs no window, and its
          * swapchain is made by the first PresentToWindow.
          *
-         * OpenGL and Metal cannot: a GL context wants an HDC made current on
+         * OpenGL cannot: a GL context wants an HDC made current on
          * THIS thread, which this function has no way to build. They get no
          * context, and Start's readiness check below turns that into a clean
          * startup failure rather than a fatal GDI_CHECK three calls later.
@@ -264,6 +267,14 @@ namespace RenderCore
         else if(InBackend == ERenderBackend::D3D12)
         {
             AssignContextGDI(new D3D12GDIContext());
+        }
+#endif
+#if WITH_METAL_GDI
+        /* Metal's device needs no window either; the CAMetalLayer it presents
+         * into is the window's view's, adopted at the first PresentToWindow. */
+        else if(InBackend == ERenderBackend::Metal)
+        {
+            AssignContextGDI(new MetalGDIContext());
         }
 #endif
         else if(!InWindow.IsValid())

@@ -140,7 +140,7 @@ NimbleEditorServer [--port 7788] [--password TEXT] [--logs Saved/Logs]
 ```
 
 `NIMBLE_COLLAB_PASSWORD` can stand in for `--password`, so it stays out of
-process listings. In the editor: **File > Collaboration Session**, the Session
+process listings. In the editor: **Tools > Collaboration Session**, the Session
 dock, or `collab.connect host[:port] [name] [password]`, `collab.leave`,
 `collab.status` in the console.
 

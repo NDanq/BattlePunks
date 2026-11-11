@@ -115,7 +115,7 @@ Editor's Details panel; nothing else is needed.
 
 | Library | Useful for UI |
 |---|---|
-| `UI` | `Open`, `Close`, `IsOpen`, `SetText`, `SetVisible`, `SetEnabled`, `SetProperty`, `SetFocus`, `ShowPage`, `SetNumber` / `SetString` / `SetBool`, `GetNumber` / `GetString` / `GetBool`, `SetCount` (a ListView's length) |
+| `UI` | `Open`, `Close`, `IsOpen`, `SetText`, `SetVisible`, `SetEnabled`, `SetProperty`, `SetFocus`, `ShowPage`, `SetNumber` / `SetString` / `SetBool`, `GetNumber` / `GetString` / `GetBool`, `SetCount` (a ListView's length), `PlayAnimation` / `StopAnimation` / `IsAnimationPlaying`, `GoToState` |
 | `Config` | `GetBool` / `GetNumber` / `GetString`, `SetBool` / `SetNumber` / `SetString`, `Has`, `Save` (the player's User.ini). Every `NIMBLE_CONFIG_*` var, by `"Section.Key"` |
 | `Game` | `SetPaused`, `IsPaused`, the phase, score and lives, and the `PhaseChanged` / `ScoreChanged` / `LivesChanged` events |
 | `Input` | `SetMouseCaptured`, `IsKeyDown`, `GetMousePosition`, ... |

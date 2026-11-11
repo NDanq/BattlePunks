@@ -153,7 +153,7 @@ local bare repo in a test.
   **dirty file paths** (paths only, sent as diffs). Two people with unsaved
   edits to the same binary or level file get a warning before git has a
   conflict to report. Content Browser shows a badge on files someone else has dirty.
-- **Editor UI:** a Session dock (connect, users and their state), File menu
+- **Editor UI:** a Session dock (connect, users and their state), Tools menu
   entries, `collab.connect/leave/status` console commands. The
   `NetEditorLink` stub and `net.host/join` are retired; P6 takes over its road.
 

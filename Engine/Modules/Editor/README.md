@@ -69,7 +69,7 @@ uses it.
 | `EditorMainWindow` | Docks, menus (File / Edit / View / Play / Build / Help), status bar; starts and stops the Renderer |
 | `EditorTheme` (private) | `Editor.Theme`: light, dark or the system's, applied live through Fusion and an explicit palette |
 | `EditorIcons` (private) | The editor's icons: Lucide (ISC, `External/lucide-1.53.0`, compiled in as `:/lucide/*.svg`), drawn in the palette's button text so they follow `Editor.Theme`; the style's standard icons without Qt Svg. Play, pause, stop, undo, redo, save, the transport, loop, record, key, camera cuts, pilot, snap, add, zoom and fit, the notification bell and severities, and source control; `Get(icon, colour)` draws one in a fixed colour. Undo and Redo also sit at the front of the viewport toolbar |
-| `ProjectSettingsDialog` + `ConfigIniFile` (private) | Edit > Project Settings: the project's `DefaultEngine.ini` as pages of settings, edited line by line so its comments stay |
+| `ProjectSettingsDialog` + `ConfigIniFile` (private) | File > Project Settings: the project's `DefaultEngine.ini` as pages of settings, edited line by line so its comments stay |
 | `SettingsDialog` (private) | Edit > Editor Settings: the `[Editor]` config vars as a form, saved to the user's `EditorSettings.ini` |
 | `EditorLayoutSettings` (private) | Window state kept between runs in `EditorLayout.ini` beside it: dock layout and window size (View > Reset Layout), File > Open Recent, folded Details sections |
 | `SourceControl/SourceControlWindow`, `GitClient`, `GitStatus` (private) | The **Source Control** dock (View > Source Control, tabbed with the Console): the project's git repository -- branch, upstream, ahead/behind, Fetch / Pull / Push, the commit message, and changed files grouped as Content, Scripts, GameModule source, Config, Engine (flagged: not supported in a collaboration session) and Other; a box stages or unstages a file or group, and the split pane shows the selected file's diff. Pull is fast-forward only, a rebase (autostashed) with local commits, never a merge; conflicts go to your own `git mergetool`. The session branch is `[Collaboration] Branch` in the project's config, with a banner when HEAD is elsewhere. Git runs one command at a time with `GIT_TERMINAL_PROMPT=0` (credentials stay with your helper; commit messages go on stdin); status is `--porcelain=v2 -z`, parsed without Qt. Refreshes on `.git/HEAD` and `.git/index` changes, saves and focus. LFS locks shown when `.gitattributes` uses LFS. Tested by `NimbleEditorSourceControlTests` (fixtures, then a real bare repository) |
@@ -92,7 +92,7 @@ uses it.
 | `PlaySession` (private) | Play-in-Editor: the editor as an `IGameHost` -- game module, ScriptEngine, `GameSession`, `InputRouter` |
 | `ViewportSDLInput` (private) | The viewport as an SDL window (focus hand-over, text forwarding, pumping), for the game's input and the input probe |
 | `DetailsPanel` + `PropertyWidgets` | The entity's name and **Mobility** (Dynamic / Static / Stationary -- applies to every selected entity, one undo step), then one section per component, one editor per property type, lists for array properties, reset-to-default, add/remove component |
-| `Graph/GraphEditorWindow` (private) | The graph editor: one window, a closable, movable tab per open `.nmgraph` (Content Browser right-click > New Material / Script Graph, File > Open Graph, or double-click in the Content Browser). Ctrl+Tab steps through them; closing the window offers to save each |
+| `Graph/GraphEditorWindow` (private) | The graph editor: one window, a closable, movable tab per open `.nmgraph` (Content Browser right-click > New Material / Script Graph, Tools > Open Graph, or double-click in the Content Browser). Ctrl+Tab steps through them; closing the window offers to save each |
 | `Graph/GraphEditorTab` (private) | One graph, with its own menus and docks. It has the canvas, Details, the generated code (live) and Messages; clicking a code line or a message selects its node. Save writes the graph with its generated code inside it, `<gen_code>` (see `Modules/NodeGraph`); nothing is written beside it |
 | `Graph/GraphDocument` (private) | One open graph and its own undo history, separate from the scene's; every edit is a before/after snapshot |
 | `Sequencer/SequencerWindow`, `SequencerTab` (private) | The **Sequencer** dock: a tab per open `.nmseq`, its timeline, curves and details, previewed on the level (see Sequencer) |
@@ -103,7 +103,7 @@ uses it.
 | `Graph/GraphScene`, `GraphView`, `GraphItems`, `NodePalette`, `GraphDetailsPanel` (private) | The canvas: nodes, links and comments. Drag between pins to link; Alt+click a pin breaks its links; drag a linked input's link off to move it. Right-click or Tab opens the node palette, and a link dropped on empty space opens it filtered. Wheel zooms; middle-drag, or left-drag on empty canvas, pans; Shift/Ctrl+drag box-selects |
 | `Graph/GraphAssets` (private) | Graphs as project files: where new ones go, compiling into `<gen_code>` on save, a script graph **staged beside the executable** so the next Play runs it without a build, the background glslc check, Build > Cook Content regenerating every graph's `<gen_code>`. A material is named by its graph's path, **cooked for the viewport's backend** from the compiled code, then reloaded into the renderer |
 | Material graph **Preview** dock, Material > Live Preview, Apply to Selected Entity | In a material graph's window. The **Preview** dock shows the material on one of the engine's meshes -- **Shape**: Sphere (the default), Box, Cylinder, Capsule or Plane, to orbit (drag, wheel, double-click resets) -- or a flat Quad, drawn by the viewport's own renderer into an offscreen target and read back (`Renderer::RequestMeshPreview`, `RequestMaterialPreview`), so it is the backend and cooked shader the level uses. A PostProcess material always fills it. It has an Instance Tint picker and **Animate** (keep drawing, for materials that use Time). Live Preview (on by default) cooks every clean recompile, refreshing the dock and every primitive in the level whose `Material` is the graph's name; closing with the change discarded puts the saved one back. Apply to Selected Entity sets the selection's RenderComponent Material (adding one if needed), undoably |
-| `Collab/EditorCollabSession`, `CollabSessionWindow` (private) | This editor in a collaboration session (`Modules/Collab`, `NimbleEditorServer`): **File > Collaboration Session** and the **Session** dock (server, name, password; who is in it, their HEAD, open level, play state and changed files), `collab.connect` / `collab.leave` / `collab.status`. Connecting asks git for origin, HEAD and the engine tree (`HEAD:Engine`, refused if Engine/ has uncommitted changes); the branch is the session branch. Presence is the open level, Play, and the files git sees changed plus the level while unsaved; a file someone else also has changed is a warning, and their changed files get a badge in the Content Browser. With a content worker on the server (`NimbleEditorServer --repo`), its builds of the session branch are toasts -- building, built, or failed with the first error and whose commit -- and the Session dock shows the last one with its schema hash; content problems the worker finds in your push are a warning toast. **Play > Play Together** starts a run of the open level on the server host's game server and invites everyone (Join / Decline, or why you can't yet: Compile Source, Pull & Reload); its starter ends it with Stop Play Together, or it ends once nobody plays. When someone pushes the session branch, one toast says who and what changed (content, scripts, GameModule source, config) with **Pull & Reload**: pull (fast-forward, or a rebase over local commits), reload the open level (asking first if it has unsaved edits), Compile Source if GameModule source changed, reload Config, and restage everything else; engine changes are never pulled -- the editor says a rebuild and restart are needed and leaves the session. Address and name are Editor Settings > Collaboration. Tested by `NimbleEditorCollabTests` |
+| `Collab/EditorCollabSession`, `CollabSessionWindow` (private) | This editor in a collaboration session (`Modules/Collab`, `NimbleEditorServer`): **Tools > Collaboration Session** and the **Session** dock (server, name, password; who is in it, their HEAD, open level, play state and changed files), `collab.connect` / `collab.leave` / `collab.status`. Connecting asks git for origin, HEAD and the engine tree (`HEAD:Engine`, refused if Engine/ has uncommitted changes); the branch is the session branch. Presence is the open level, Play, and the files git sees changed plus the level while unsaved; a file someone else also has changed is a warning, and their changed files get a badge in the Content Browser. With a content worker on the server (`NimbleEditorServer --repo`), its builds of the session branch are toasts -- building, built, or failed with the first error and whose commit -- and the Session dock shows the last one with its schema hash; content problems the worker finds in your push are a warning toast. **Play > Play Together** starts a run of the open level on the server host's game server and invites everyone (Join / Decline, or why you can't yet: Compile Source, Pull & Reload); its starter ends it with Stop Play Together, or it ends once nobody plays. When someone pushes the session branch, one toast says who and what changed (content, scripts, GameModule source, config) with **Pull & Reload**: pull (fast-forward, or a rebase over local commits), reload the open level (asking first if it has unsaved edits), Compile Source if GameModule source changed, reload Config, and restage everything else; engine changes are never pulled -- the editor says a rebuild and restart are needed and leaves the session. Address and name are Editor Settings > Collaboration. Tested by `NimbleEditorCollabTests` |
 | `EditorContentEvents` | The editor-wide "files changed under you" event (a pull): the main window restages the changed assets and graphs (`EditorGraphs::RestageGraph`) and warns about open graphs that changed |
 | `EditorLog` | EngineCore's log handler: a thread-safe, bounded history of every log line, still forwarded to Qt/the debugger |
 | `EditorNotifications` + `NotificationWidgets` (private) | What finished, failed or needs an answer: toasts over the viewport's corner (three at most, the rest queued; errors and anything with actions stay, the rest fade after 6 s), the **Notifications** dock (history, unread in bold, right-click for actions) and the status bar's Do Not Disturb toggle and bell with the unread count. A post with the same replace key updates the existing one. `Post` works from any thread. Compile Source, Play failures and Bake Lightmaps report here; plain confirmations ("Saved") stay in the status bar. Tested offscreen by `NimbleEditorNotificationTests` |
@@ -113,7 +113,7 @@ uses it.
 | `Content/MeshViewerWindow` (private) | A `.nmmesh` opened from the Content Browser: the mesh, its statistics, and a material per section (see Content Browser) |
 | `Content/TextureViewerWindow` (private) | A `.nmtexture` opened from the Content Browser: the image by mip level and channel, its statistics, and its settings -- sRGB, filter, wrap, mip generation, compression (see Content Browser) |
 | `Content/MeshPreviewView` (private) | The image both of those draw into: one renderer preview at a time at the widget's size, drag to orbit, wheel to zoom |
-| `Content/ImportWizard` (private) | File > Import and drops from outside: the wizard that turns glTF and images into `.nmmesh` / `.nmtexture` |
+| `Content/ImportWizard` (private) | Tools > Import and drops from outside: the wizard that turns glTF and images into `.nmmesh` / `.nmtexture` |
 | `Content/AssetImport`, `GltfImporter` (private) | The conversions themselves, no widgets (cgltf, `Engine/ThirdParty/Source/cgltf-1.15`, reads glTF); tested by `NimbleEditorImportTests` |
 | `Content/ContentPaths` (private) | Project files as the engine names them: runtime-relative paths (the engine's content as `Engine/Content/...`), material names, staging beside the executable |
 | `Project/NewProjectWizard` (private) | File > New Project: a new game in `Games/<Name>` from `Engine/Templates/Game` -- module, level, game mode, game state, launcher, `Config/`, `Scripts/`, `Content/` -- configured standalone, so the engine is never edited. Or an example project from `Engine/Examples` (Demo Lab), unpacked, renamed and optionally configured, built and cooked by running `Engine/Binaries/NewProject.cmake -DEXAMPLE=` step by step, with its log, Stop and Retry Step |
@@ -148,7 +148,7 @@ build. Dragging one into a project folder copies it there.
 | Delete | Del: confirmed, then moved to the Recycle Bin -- never deleted outright |
 | Move | Drag items onto a folder (in the list) |
 | Open | Double-click: a graph opens in its window, a world in the viewport (not while playing), a mesh in the mesh viewer, a texture in the texture viewer, a UI document (`.nmui`) in the UI Designer, a particle system (`.nmparticle`) in the Particle Editor, a sequence (`.nmseq`) in the Sequencer, anything else with the system's own application |
-| Import | Drop files from Explorer, the toolbar's Import..., or File > Import (Ctrl+I) |
+| Import | Drop files from Explorer, the toolbar's Import..., or Tools > Import (Ctrl+I) |
 | Reimport | The context menu on a `.nmmesh` / `.nmtexture`: the same source, the same options |
 
 **Companions travel together.** A world's entity folder is renamed, moved and
@@ -538,13 +538,13 @@ World's (RenderCore's RENDERPIPELINE.md, "Particles").
 ## Sequencer
 
 A `.nmseq` (a cutscene: `Modules/Sequencer`) opens in the **Sequencer dock**, a
-tab per sequence, from a double-click in the Content Browser, File > Open
+tab per sequence, from a double-click in the Content Browser, Tools > Open
 Sequence, or a Sequence Player's Sequence field's **Edit**. The dock starts
 hidden, tabbed with the Content Browser along the bottom, and shows itself when
 a sequence opens. Like the other docks it floats out, docks on any side, and is
 in View; closing it (its x) asks about unsaved sequences and closes them,
 putting the level back. Content Browser right-click >
-**New Sequence...** (or File > New Sequence...) writes a five-second one with an
+**New Sequence...** (or Tools > New Sequence...) writes a five-second one with an
 empty camera cut track.
 
 | Part | What it does |
@@ -640,7 +640,7 @@ The full reference is `Engine/Modules/AICore/README.md`, and the walkthrough is
 
 A `.nmparticle` (a particle system: RenderCore's `ParticleSystemAsset.h`) opens
 in its own window, a tab per system, from a double-click in the Content
-Browser, File > Open Particle System, a System field's **Edit**, or the console
+Browser, Tools > Open Particle System, a System field's **Edit**, or the console
 (`particles <path>`). Content Browser right-click > **New Particle System...**
 writes one of a single default emitter in the current folder.
 
@@ -743,7 +743,7 @@ registered:
 | `ui <path \| new \| close \| select <name> \| resolution <w>x<h> \| preview <on\|off> \| screenshot <file.png>>` | Open a `.nmui` in the UI Designer, make one, or drive the one in front -- from `--command` scripts too |
 | `compile [cancel]` | As Build > Compile Source, or cancel the build running |
 | `settings` | Open Edit > Editor Settings, and print where they are saved |
-| `projectsettings` | Open Edit > Project Settings, and print the file it saves to |
+| `projectsettings` | Open File > Project Settings, and print the file it saves to |
 | `stats` | The renderer's counters, with the frame, game thread and render thread times |
 | `stat <unit \| frame \| physics \| audio \| none>` | `unit` toggles the frame, game thread and render thread times over the viewport (`Stats.Unit`); `frame` toggles each render stage's GPU time (`Stats.Frame`); `physics` and `audio` the playing level's simulation and sound (`Stats.Physics`, `Stats.Audio`); `none` hides them all |
 | `gizmo [none \| move \| rotate \| scale] [world \| local]` | Set the transform handles, or print them |
@@ -855,7 +855,7 @@ too.
 
 ## Project settings
 
-**Edit > Project Settings...** (`projectsettings` in the Console) edits the
+**File > Project Settings...** (`projectsettings` in the Console) edits the
 project's `Config/DefaultEngine.ini` -- the game's and the engine's settings,
 shared by everyone on the project, where Editor Settings are one person's.
 

@@ -253,33 +253,16 @@ if(GDI_WITH_D3D12)
 endif()
 
 if(GDI_WITH_METAL)
-    # Objective-C++ sources. Everything that sends a Metal message lives in a
-    # .mm; the public headers use only the MTLForward.h typedefs so plain C++
-    # translation units can still include them.
+    # Objective-C++ (ARC, below). Every Metal object lives behind MTLInternal.h;
+    # the public headers are plain C++, so GDI.cpp can include them.
     set( GDI_METAL_SOURCES
             Source/Private/GDI/Metal/MetalDynamicGDI.mm
-            Source/Private/GDI/Metal/MTLCommands.mm
-            Source/Private/GDI/Metal/MTLDevice.mm
-            Source/Private/GDI/Metal/MTLCommandManager.mm
+            Source/Private/GDI/Metal/MTLPipelines.mm
+            Source/Private/GDI/Metal/MTLResources.mm
             Source/Private/GDI/Metal/MTLSwapchain.mm
-            Source/Private/GDI/Metal/MTLPipelineCache.mm
-            Source/Private/GDI/Metal/MTLRenderTarget.mm
-            Source/Private/GDI/Metal/MTLTexture.mm
-            Source/Private/GDI/Metal/MTLMesh.mm
-            Source/Private/GDI/Metal/MTLShader.mm
-            Source/Private/GDI/Metal/MTLSync.mm
-            Source/Private/GDI/Metal/MTLUtil.mm
-            Source/Private/GDI/Metal/MTLUtil.h
-            Source/Private/GDI/Metal/MTLPipelineCache.h
-            Source/Public/GDI/Metal/MTLForward.h
+            Source/Private/GDI/Metal/MTLQueries.mm
+            Source/Private/GDI/Metal/MTLInternal.h
             Source/Public/GDI/Metal/MetalDynamicGDI.h
-            Source/Public/GDI/Metal/MTLDevice.h
-            Source/Public/GDI/Metal/MTLCommandManager.h
-            Source/Public/GDI/Metal/MTLSwapchain.h
-            Source/Public/GDI/Metal/MTLRenderTarget.h
-            Source/Public/GDI/Metal/MTLTexture.h
-            Source/Public/GDI/Metal/MTLMesh.h
-            Source/Public/GDI/Metal/MTLShader.h
             Source/Public/GDI/Metal/MTLSync.h
     )
 endif()
@@ -296,6 +279,9 @@ elseif(UNIX AND NOT APPLE)
     # from SDL.
     find_package(X11 REQUIRED)
     set( GDI_PLATFORM_SOURCES Source/Private/GDI/Platform/GDIPlatformLinux.cpp )
+elseif(APPLE)
+    # WindowHandle::Native is an NSView* backed by a CAMetalLayer.
+    set( GDI_PLATFORM_SOURCES Source/Private/GDI/Platform/GDIPlatformMac.mm )
 else()
     set( GDI_PLATFORM_SOURCES )
 endif()
@@ -425,12 +411,11 @@ if(GDI_WITH_METAL)
         target_link_libraries(GDI PUBLIC "-framework AppKit")
     endif()
 
-    # The backend manages Objective-C lifetimes explicitly (MTLRetained /
-    # retain-release), matching Vulkan's explicit handle management. ARC must
-    # stay off or every one of those calls becomes a compile error.
+    # ARC: the backend's Metal objects are strong references in its own types
+    # (MTLInternal.h refuses to compile without it).
     foreach(MM_SOURCE IN LISTS GDI_METAL_SOURCES)
         if(MM_SOURCE MATCHES "\\.mm$")
-            set_source_files_properties("${MM_SOURCE}" PROPERTIES COMPILE_OPTIONS "-fno-objc-arc")
+            set_source_files_properties("${MM_SOURCE}" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
         endif()
     endforeach()
 endif()

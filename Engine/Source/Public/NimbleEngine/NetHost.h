@@ -66,6 +66,13 @@ namespace NimbleEngine
      * IGameMode::OnClientConnected; when it leaves, OnClientDisconnected,
      * then everything the client owned is destroyed.
      *
+     * LEVEL TRAVEL (NetCore/README.md, "Level travel"): a server's level
+     * request (GameSession::OpenLevel / RequestLevel) is announced to its
+     * clients in BeginFrame, with its LevelTravel; each client's host
+     * follows it (GameSession::FollowServerLevel). After the swap the
+     * server makes every client's player again, its PlayerState carried
+     * over, and calls IGameMode::OnClientTravelled.
+     *
      * Game thread only.
      */
     class NE_API NetHost

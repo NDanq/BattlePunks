@@ -106,6 +106,8 @@ namespace UI
         if(!OnOpen.empty())               Out.push_back({ "OnOpen", OnOpen });
         if(!OnClose.empty())              Out.push_back({ "OnClose", OnClose });
         if(!OnBack.empty())               Out.push_back({ "OnBack", OnBack });
+        if(!OpenAnimation.empty())        Out.push_back({ "OpenAnimation", OpenAnimation });
+        if(!CloseAnimation.empty())       Out.push_back({ "CloseAnimation", CloseAnimation });
         return Out;
     }
 
@@ -122,10 +124,21 @@ namespace UI
         if(InName == "OnOpen")        { OnOpen = InValue; return true; }
         if(InName == "OnClose")       { OnClose = InValue; return true; }
         if(InName == "OnBack")        { OnBack = InValue; return true; }
+        if(InName == "OpenAnimation") { OpenAnimation = InValue; return true; }
+        if(InName == "CloseAnimation"){ CloseAnimation = InValue; return true; }
         return false;
     }
 
     // === UIDocumentAsset ==========================================================
+
+    const UIAnimationAsset* UIDocumentAsset::FindAnimation(const std::string& InName) const
+    {
+        for(const UIAnimationAsset& Each : Animations)
+        {
+            if(Each.Name == InName) return &Each;
+        }
+        return nullptr;
+    }
 
     int32_t UIDocumentAsset::FindWidget(const std::string& InName) const
     {
@@ -492,6 +505,7 @@ namespace UI
         {
             if(Widgets[At]->IsEmbedHost()) EmbedHosts.push_back(uint32_t(At));
         }
+        BuildVisualStates();
 
         for(size_t At = 0; At < Count; ++At)
         {
@@ -530,6 +544,10 @@ namespace UI
         if(!Desc.Set || !Desc.Set(InWidget, InValue)) return false;
         InWidget.OnPropertyChanged(Desc);
         KeepFocusShown();
+        if(!StateBindings.empty() && Desc.Name == "IsEnabled")
+        {
+            for(const StateBinding& Each : StateBindings) { RefreshVisualState(Each.Widget); }
+        }
         if(Desc.Flags & UPF_Layout)
         {
             MarkLayoutDirty();
@@ -843,8 +861,8 @@ namespace UI
         const int32_t Previous = Focused;
         Focused = InIndex;
         MarkPaintDirty();
-        if(Previous >= 0 && size_t(Previous) < Widgets.size()) { Widgets[size_t(Previous)]->OnFocusChanged(false); }
-        if(InIndex >= 0) { Widgets[size_t(InIndex)]->OnFocusChanged(true); }
+        if(Previous >= 0 && size_t(Previous) < Widgets.size()) { Widgets[size_t(Previous)]->OnFocusChanged(false); RefreshVisualState(uint32_t(Previous)); }
+        if(InIndex >= 0) { Widgets[size_t(InIndex)]->OnFocusChanged(true); RefreshVisualState(uint32_t(InIndex)); }
         for(int32_t Up = InIndex >= 0 ? Parents[size_t(InIndex)] : -1; Up >= 0; Up = Parents[size_t(Up)])
         {
             Widgets[size_t(Up)]->OnDescendantFocused(uint32_t(InIndex));   // scroll boxes bring it into view
@@ -923,13 +941,18 @@ namespace UI
         if(Previous >= 0 && size_t(Previous) < Widgets.size()) Widgets[size_t(Previous)]->OnPointer({ UIPointerEvent::PE_Leave, UIVec2() });
         if(Hovered >= 0 && size_t(Hovered) < Widgets.size())  Widgets[size_t(Hovered)]->OnPointer({ UIPointerEvent::PE_Enter, UIVec2() });
         MarkPaintDirty();
+        if(Previous >= 0) RefreshVisualState(uint32_t(Previous));
+        if(Hovered >= 0)  RefreshVisualState(uint32_t(Hovered));
     }
 
     void UIDocumentInstance::SetPressed(const int32_t InIndex)
     {
         if(InIndex == Pressed) return;
+        const int32_t Previous = Pressed;
         Pressed = InIndex;
         MarkPaintDirty();
+        if(Previous >= 0) RefreshVisualState(uint32_t(Previous));
+        if(Pressed >= 0)  RefreshVisualState(uint32_t(Pressed));
     }
 
     // --- Embedding ---------------------------------------------------------------
@@ -1195,6 +1218,10 @@ namespace UI
                 {
                     W.OnPropertyChanged(Desc);
                     KeepFocusShown();
+                    if(!StateBindings.empty() && Desc.Name == "IsEnabled")
+                    {
+                        for(const StateBinding& State : StateBindings) { RefreshVisualState(State.Widget); }
+                    }
                     if(Desc.Flags & UPF_Layout) MarkLayoutDirty(); else MarkPaintDirty();
                     bChanged = true;
                 }
@@ -1205,13 +1232,153 @@ namespace UI
 
     // --- Animation ---------------------------------------------------------------
 
-    bool UIDocumentInstance::PlayAnimation(const std::string& InName)
+    UIAnimationHandle UIDocumentInstance::PlayAnimation(const std::string& InName, const UIPlayOptions& InOptions)
     {
-        if(!bWarnedAnimation)
+        const UIAnimationAsset* Animation = Asset->FindAnimation(InName);
+        if(!Animation)
         {
-            bWarnedAnimation = true;
-            UI_LOG_WARN("'" + Path + "': animations do not play yet (asked for '" + InName + "')")
+            if(std::find(WarnedAnimations.begin(), WarnedAnimations.end(), InName) == WarnedAnimations.end())
+            {
+                WarnedAnimations.push_back(InName);
+                UI_LOG_WARN("'" + Path + "' has no animation '" + InName + "'")
+            }
+            return UI_ANIMATION_INVALID;
         }
-        return Animator.Play(UIAnimationAsset()) != UI_ANIMATION_INVALID;
+        return Animator.Play(*Animation, InOptions);
+    }
+
+    bool UIDocumentInstance::StopAnimation(const std::string& InName)
+    {
+        const UIAnimationHandle Handle = Animator.Find(InName);
+        if(Handle == UI_ANIMATION_INVALID) return false;
+        Animator.Stop(Handle);
+        return true;
+    }
+
+    bool UIDocumentInstance::ApplyAnimatedValue(const uint32_t InWidget, const int32_t InProperty, const UIValue& InValue)
+    {
+        if(InWidget >= Widgets.size()) return false;
+        UIWidget& W = *Widgets[InWidget];
+        if(InProperty < 0 || size_t(InProperty) >= W.Type->Properties.size()) return false;
+        const UIPropertyDesc& Desc = W.Type->Properties[size_t(InProperty)];
+        if(!Desc.Set || !Desc.Get) return false;
+        /* Compared as the property holds it: an unchanged value costs nothing. */
+        const UIValue Before = Desc.Get(W);
+        if(!Desc.Set(W, InValue) || Desc.Get(W) == Before) return false;
+        W.OnPropertyChanged(Desc);
+        if(Desc.Flags & UPF_Layout) MarkLayoutDirty(); else MarkPaintDirty();
+        return true;
+    }
+
+    // --- Visual states -----------------------------------------------------------
+
+    void UIDocumentInstance::BuildVisualStates()
+    {
+        StateBindings.clear();
+        StateOf.assign(Widgets.size(), -1);
+        if(Asset->VisualStates.empty()) return;
+
+        for(uint32_t At = 0; At < Widgets.size(); ++At)
+        {
+            UIWidget& W = *Widgets[At];
+            /* A group naming it wins over one for its class. */
+            const UIVisualStateGroup* Group = nullptr;
+            for(const UIVisualStateGroup& Each : Asset->VisualStates)
+            {
+                if(!Each.Target.empty() && Each.Target == W.Name) { Group = &Each; break; }
+                if(!Group && ClassListHas(W.Class, Each.Class)) { Group = &Each; }
+            }
+            if(!Group) continue;
+
+            StateBinding Made;
+            Made.Widget = At;
+            Made.Group  = Group;
+            for(const UIVisualStateDesc& State : Group->States)
+            {
+                for(const UIStateSetter& Set : State.Setters)
+                {
+                    const int32_t Property = W.Type->FindProperty(Set.Property.c_str());
+                    const EUIPropertyType Type = Property >= 0 ? W.Type->Properties[size_t(Property)].Type : EUIPropertyType::String;
+                    if(Type != EUIPropertyType::Float && Type != EUIPropertyType::Color && Type != EUIPropertyType::Vec2)
+                    {
+                        UI_LOG_WARN("'" + Path + "': visual state '" + State.Name + "' of '" + W.Name + "' sets " + Set.Property + ", which "
+                                    + W.Type->Name + (Property < 0 ? " does not have" : " cannot animate (a number, a colour or a vector can)"))
+                        continue;
+                    }
+                    if(std::find(Made.Properties.begin(), Made.Properties.end(), Property) != Made.Properties.end()) continue;
+                    Made.Properties.push_back(Property);
+                    Made.Base.push_back(W.Type->Properties[size_t(Property)].Get(W));
+                }
+            }
+            Made.StateValues.resize(Group->States.size(), std::vector<UIValue>(Made.Properties.size()));
+            for(size_t S = 0; S < Group->States.size(); ++S)
+            {
+                for(const UIStateSetter& Set : Group->States[S].Setters)
+                {
+                    const int32_t Property = W.Type->FindProperty(Set.Property.c_str());
+                    const auto Found = std::find(Made.Properties.begin(), Made.Properties.end(), Property);
+                    if(Found == Made.Properties.end()) continue;
+                    UIValue Value;
+                    if(ParsePropertyValue(W.Type->Properties[size_t(Property)], Set.Value, Value))
+                    {
+                        Made.StateValues[S][size_t(Found - Made.Properties.begin())] = Value;
+                    }
+                }
+            }
+            StateOf[At] = int32_t(StateBindings.size());
+            StateBindings.push_back(std::move(Made));
+            W.VisualState = "Normal";
+        }
+        /* Where each starts (a disabled one Disabled), shown at once. */
+        for(const StateBinding& Each : StateBindings)
+        {
+            const std::string Current = Each.Current;
+            RefreshVisualState(Each.Widget);
+            if(Each.Current != Current) { GoToVisualState(Each.Widget, Each.Current, true); }
+        }
+    }
+
+    bool UIDocumentInstance::GoToVisualState(const uint32_t InIndex, const std::string& InState, const bool bInInstant)
+    {
+        if(!HasVisualStates(InIndex)) return false;
+        StateBinding& Binding = StateBindings[size_t(StateOf[InIndex])];
+        const UIVisualStateGroup& Group = *Binding.Group;
+
+        int32_t StateIndex = -1;
+        for(size_t S = 0; S < Group.States.size(); ++S)
+        {
+            if(Group.States[S].Name == InState) { StateIndex = int32_t(S); break; }
+        }
+
+        /* What the state sets, and what it was made with for the rest. */
+        std::vector<UITransitionTarget> Targets;
+        Targets.reserve(Binding.Properties.size());
+        for(size_t P = 0; P < Binding.Properties.size(); ++P)
+        {
+            const UIValue* Set = StateIndex >= 0 && !Binding.StateValues[size_t(StateIndex)][P].IsNone()
+                               ? &Binding.StateValues[size_t(StateIndex)][P] : nullptr;
+            Targets.push_back({ InIndex, Binding.Properties[P], Set ? *Set : Binding.Base[P] });
+        }
+        const UIStateTransition* Transition = bInInstant ? nullptr : Group.FindTransition(Binding.Current, InState);
+        Binding.Current = InState;
+        Widgets[InIndex]->VisualState = InState;
+        Animator.PlayTransition(Targets, Transition ? Transition->Duration : 0.0f, Transition ? Transition->Easing : EUIEasing::Linear);
+        MarkPaintDirty();
+        return true;
+    }
+
+    void UIDocumentInstance::RefreshVisualState(const uint32_t InIndex)
+    {
+        if(!HasVisualStates(InIndex)) return;
+        const StateBinding& Binding = StateBindings[size_t(StateOf[InIndex])];
+        const UIWidget& W = *Widgets[InIndex];
+        const int32_t Index = int32_t(InIndex);
+
+        const char* State = "Normal";
+        if(!W.IsEnabledInHierarchy())                                    State = "Disabled";
+        else if(Pressed == Index && Hovered == Index)                     State = "Pressed";
+        else if(Focused == Index && Binding.Group->FindState("Focused"))  State = "Focused";
+        else if(Hovered == Index || Focused == Index)                     State = "Hovered";
+        if(Binding.Current != State) { GoToVisualState(InIndex, State); }
     }
 }

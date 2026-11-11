@@ -73,6 +73,8 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/ComponentProperties.cpp
         Source/Private/GameCore/ComponentReplication.cpp
         Source/Private/GameCore/ComponentRpc.cpp
+        Source/Private/GameCore/Replay.cpp
+        Source/Private/GameCore/ReplayScriptLibrary.cpp
         Source/Public/GameCore/GameCoreAPI.h
         Source/Public/GameCore/GameCoreLog.h
         Source/Public/GameCore/EntityID.h
@@ -119,6 +121,7 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/ComponentProperties.h
         Source/Public/GameCore/ComponentReplication.h
         Source/Public/GameCore/ComponentRpc.h
+        Source/Public/GameCore/Replay.h
 )
 
 # ===========================================================================

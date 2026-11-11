@@ -4,8 +4,10 @@
 #include <cstdio>
 #include <vector>
 
+#include "Public/Core/CoreArchive.h"
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
+#include "Public/NimbleEngine/LevelTravel.h"
 #include "Public/GameCore/Components/NetComponent.h"
 #include "Private/NimbleEngine/NetInternal.h"
 #include "Public/GameCore/Entity.h"
@@ -96,6 +98,59 @@ namespace NimbleEngine
             Args.Count   = 2;
             InWorld.GetEvents().Emit(InName, Args);
         }
+
+#if WITH_NETCORE
+        /* A LevelTravel on the wire (NetSession's LevelChange carries it opaque):
+         * u32 field count first, so a later field can be added behind it. */
+        std::vector<uint8_t> WriteTravel(const LevelTravel& InTravel)
+        {
+            EngineCore::Archive Ar = EngineCore::Archive::ForWriting();
+            uint32_t    Fields     = 5;
+            std::string Entry      = InTravel.Entry;
+            std::string Title      = InTravel.Title;
+            std::string Tip        = InTravel.Tip;
+            uint8_t     Transition = InTravel.Transition;
+            uint32_t    Count      = uint32_t(InTravel.Values.size());
+            Ar << Fields << Entry << Title << Tip << Transition << Count;
+            for(const std::pair<std::string, std::string>& Each : InTravel.Values)
+            {
+                std::string Key = Each.first, Value = Each.second;
+                Ar << Key << Value;
+            }
+            return Ar.HasError() ? std::vector<uint8_t>() : Ar.GetBytes();
+        }
+
+        LevelTravel ReadTravel(const std::vector<uint8_t>& InBytes)
+        {
+            LevelTravel Travel;
+            if(InBytes.empty()) { return Travel; }
+            EngineCore::Archive Ar = EngineCore::Archive::ForReading(InBytes);
+            uint32_t Fields = 0, Count = 0;
+            Ar << Fields << Travel.Entry << Travel.Title << Travel.Tip << Travel.Transition << Count;
+            for(uint32_t Index = 0; Index < Count && !Ar.HasError(); ++Index)
+            {
+                std::string Key, Value;
+                Ar << Key << Value;
+                if(!Ar.HasError()) { Travel.Values.emplace_back(std::move(Key), std::move(Value)); }
+            }
+            if(Ar.HasError())
+            {
+                CORE_LOG_WARN("[Net] the server's level travel did not read; following without it")
+                return LevelTravel();
+            }
+            return Travel;
+        }
+
+        bool IsPlayerIndexFree(GameCore::World& InWorld, const uint8_t InIndex)
+        {
+            bool bFree = true;
+            InWorld.Each<PlayerStateComponent>([&](GameCore::Entity, PlayerStateComponent& InState)
+            {
+                if(InState.PlayerIndex == InIndex) { bFree = false; }
+            });
+            return bFree;
+        }
+#endif
     }
 
     struct NetHost::Impl
@@ -106,14 +161,112 @@ namespace NimbleEngine
         NetCore::NetSession* Net       = nullptr;
         uint32_t             BoundLoad = 0;
 
-        /* The session's World, once per load. */
+        /* LEVEL TRAVEL. The session's level requests already announced (a
+         * server's), and each client player's PlayerState as the old level
+         * left it, for the same player in the next. */
+        uint32_t                                                       SeenRequests = 0;
+        std::vector<std::pair<GameCore::NetClientID, PlayerStateComponent>> Carried;
+
+        /* The session's World, once per load. A server's later loads are
+         * level travel: its clients' players are made again in the new one. */
         void Rebind()
         {
             if(!Net || !Session || !Session->HasWorld()) { return; }
             if(Net->GetBoundWorld() && BoundLoad == Session->GetLoadCount()) { return; }
+            const bool bTravelled = BoundLoad != 0;
             ILevel* Level = Session->GetLevel();
             Net->BindWorld(Session->GetWorld(), Level ? Level->GetName() : "");
             BoundLoad = Session->GetLoadCount();
+            if(bTravelled && Net->IsServer()) { WelcomeTravelledClients(); }
+        }
+
+        /* A server, before its level goes: each client player's standing. */
+        void CarryPlayerStates(GameCore::World& InWorld)
+        {
+            Carried.clear();
+            InWorld.Each<GameCore::NetComponent>([&](GameCore::Entity InEntity, GameCore::NetComponent& InNet)
+            {
+                if(InNet.OwnerClient == GameCore::NET_CLIENT_NONE) { return; }
+                const PlayerStateComponent* State = InEntity.GetComponent<PlayerStateComponent>();
+                if(!State) { return; }
+                for(const auto& Each : Carried) { if(Each.first == InNet.OwnerClient) { return; } }
+                Carried.emplace_back(InNet.OwnerClient, *State);
+            });
+        }
+
+        /* InClient's player entity, with InCarried's standing if it had one;
+         * unset without [Net] SpawnPlayerPerClient. */
+        GameCore::EntityID MakeClientPlayer(const GameCore::NetClientID InClient, const PlayerStateComponent* InCarried)
+        {
+            if(!Desc.bSpawnPlayerPerClient) { return GameCore::EntityID(); }
+            GameCore::World& World = Session->GetWorld();
+
+            /* Net first, so the player is already networked -- and owned --
+             * when OnPlayerAdded sees it. */
+            char Name[32];
+            std::snprintf(Name, sizeof(Name), "Player %d", int(InClient));
+            const GameCore::Entity Entity = World.CreateEntity(Name);
+            GameCore::NetComponent Net;
+            Net.OwnerClient = InClient;
+            Entity.AddComponent(Net);
+            Entity.AddComponent<PossessorComponent>();   // a client's own player is its local player 1
+            PlayerStateComponent State;
+            if(InCarried)
+            {
+                State = *InCarried;
+                if(!IsPlayerIndexFree(World, State.PlayerIndex)) { State.PlayerIndex = FindFreePlayerIndex(World); }
+            }
+            else
+            {
+                std::snprintf(State.PlayerName, sizeof(State.PlayerName), "%s", Name);
+                State.PlayerIndex = FindFreePlayerIndex(World);   // not the host's
+            }
+            Entity.AddComponent(State);
+            return Entity.GetID();
+        }
+
+        /* The server is in its new level: every client it had -- the ones
+         * still loading it, and those away -- is a player in it now. */
+        void WelcomeTravelledClients()
+        {
+            std::vector<GameCore::NetClientID> Present, All;
+            Net->GetClientIds(Present, false);
+            Net->GetClientIds(All, true);
+            GameCore::World& World = Session->GetWorld();
+            for(const GameCore::NetClientID Client : All)
+            {
+                const PlayerStateComponent* Standing = nullptr;
+                for(const auto& Each : Carried) { if(Each.first == Client) { Standing = &Each.second; } }
+                const GameCore::EntityID Player = MakeClientPlayer(Client, Standing);
+
+                ILevel*    Level = Session->GetLevel();
+                IGameMode* Mode  = Level ? Level->GetGameMode() : nullptr;
+                if(Mode) { Mode->OnClientTravelled(Client, Player); }
+                EmitClientEvent(World, "ClientConnected", Client, Player);
+                if(std::find(Present.begin(), Present.end(), Client) == Present.end())
+                {
+                    if(Mode) { Mode->OnClientAway(Client, Player); }
+                    EmitClientEvent(World, "ClientAway", Client, Player);
+                }
+            }
+            if(!All.empty())
+            {
+                CORE_LOG("[Net] " + std::to_string(All.size()) + " client(s) brought to level '"
+                         + std::string(Session->GetLevel() ? Session->GetLevel()->GetName() : "") + "'")
+            }
+            Carried.clear();
+        }
+
+        /* A client: the server is changing level; go too. */
+        static void OnLevelChange(const char* InLevelName, const std::vector<uint8_t>& InTravel, void* InUserData)
+        {
+            Impl& Self = *static_cast<Impl*>(InUserData);
+            if(!Self.Session) { return; }
+            if(!Self.Session->FollowServerLevel(InLevelName, ReadTravel(InTravel)))
+            {
+                CORE_LOG_ERROR(std::string("[Net] the server went to level '") + (InLevelName ? InLevelName : "")
+                               + "', which this game does not have; this client cannot follow")
+            }
         }
 
         static void OnClientConnected(const GameCore::NetClientID InClient, void* InUserData)
@@ -121,25 +274,7 @@ namespace NimbleEngine
             Impl& Self = *static_cast<Impl*>(InUserData);
             if(!Self.Session || !Self.Session->HasWorld()) { return; }
 
-            GameCore::EntityID Player;
-            if(Self.Desc.bSpawnPlayerPerClient)
-            {
-                /* Net first, so the player is already networked -- and owned --
-                 * when OnPlayerAdded sees it. */
-                char Name[32];
-                std::snprintf(Name, sizeof(Name), "Player %d", int(InClient));
-                const GameCore::Entity Entity = Self.Session->GetWorld().CreateEntity(Name);
-                GameCore::NetComponent Net;
-                Net.OwnerClient = InClient;
-                Entity.AddComponent(Net);
-                Entity.AddComponent<PossessorComponent>();   // a client's own player is its local player 1
-                PlayerStateComponent State;
-                std::snprintf(State.PlayerName, sizeof(State.PlayerName), "%s", Name);
-                State.PlayerIndex = FindFreePlayerIndex(Self.Session->GetWorld());   // not the host's
-                Entity.AddComponent(State);
-                Player = Entity.GetID();
-            }
-
+            const GameCore::EntityID Player = Self.MakeClientPlayer(InClient, nullptr);
             ILevel* Level = Self.Session->GetLevel();
             if(IGameMode* Mode = Level ? Level->GetGameMode() : nullptr) { Mode->OnClientConnected(InClient, Player); }
             EmitClientEvent(Self.Session->GetWorld(), "ClientConnected", InClient, Player);
@@ -253,6 +388,9 @@ namespace NimbleEngine
         P->Net->SetClientEvents(&Impl::OnClientConnected, &Impl::OnClientDisconnected, P);
         P->Net->SetClientAwayEvents(&Impl::OnClientAway, &Impl::OnClientReturned);   // SetClientEvents's user data
         P->Net->SetCorrectionHandler(&Impl::OnCorrection, P);
+        P->Net->SetLevelChangeHandler(&Impl::OnLevelChange, P);
+        P->SeenRequests = InSession.GetLevelRequestCount();   // only what is asked for from now on goes to clients
+        P->Carried.clear();
 
         /* Bound before starting, so a client's handshake names its level. */
         P->Rebind();
@@ -292,10 +430,28 @@ namespace NimbleEngine
     void NetHost::BeginFrame()
     {
 #if WITH_NETCORE
-        /* The World is about to be freed: let go of it first. */
-        if(P->Net && P->Session && P->Session->HasPendingLevel())
+        if(!P->Net || !P->Session) { return; }
+
+        /* A server asked for a level: its clients are told now, ahead of the
+         * swap, so a fade-out runs on both (NetCore/README.md, "Level travel"). */
+        if(P->Net->IsServer() && P->Session->GetLevelRequestCount() != P->SeenRequests)
         {
-            if(GameCore::World* Bound = P->Net->GetBoundWorld()) { ClearLagCompensation(*Bound); }
+            P->SeenRequests = P->Session->GetLevelRequestCount();
+            if(ILevel* Next = P->Session->GetRequestedLevel())
+            {
+                P->Net->AnnounceLevel(Next->GetName(), WriteTravel(P->Session->GetRequestedTravel()));
+            }
+        }
+
+        /* The World is about to be freed: let go of it first -- a server
+         * keeping its clients' standing for the next level. */
+        if(P->Session->HasPendingLevel())
+        {
+            if(GameCore::World* Bound = P->Net->GetBoundWorld())
+            {
+                if(P->Net->IsServer()) { P->CarryPlayerStates(*Bound); }
+                ClearLagCompensation(*Bound);
+            }
             P->Net->UnbindWorld();
         }
 #endif

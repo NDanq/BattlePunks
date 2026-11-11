@@ -11,6 +11,7 @@
 #include "Public/UI/UIAPI.h"
 #include "Public/UI/UIBinding.h"
 #include "Public/UI/UITypes.h"
+#include "Public/UI/UIVisualState.h"
 #include "Public/UI/UIWidget.h"
 
 /*
@@ -89,6 +90,8 @@ namespace UI
         std::string  OnOpen;                // actions, as text
         std::string  OnClose;
         std::string  OnBack;                // Back (Escape, gamepad East) while it has input
+        std::string  OpenAnimation;         // an animation played when it opens (a game or a preview)
+        std::string  CloseAnimation;        // played when it closes; it goes when that ends, taking no input meanwhile
 
         /* The attributes in order, as text, and set by name: the XML and the editor's. */
         std::vector<UIPropertyText> ToText() const;
@@ -102,10 +105,14 @@ namespace UI
         UIDocumentSettings        Settings;
         std::vector<UIStyle>      Styles;
         std::vector<UIWidgetDesc> Widgets;    // document order; [0] the root
-        /* RESERVED sections (<Animations>, <VisualStates>), their XML as
-         * written: kept through load, save and cook, not run (UIAnimation.h). */
-        std::vector<std::string>       Reserved;
-        std::vector<UIAnimationAsset>  Animations;   // the <Animations> read, where they parse
+        /* <Animations> and <VisualStates>, their XML as written: what a save
+         * writes back (the designer does not edit them yet). */
+        std::vector<std::string>         Reserved;
+        std::vector<UIAnimationAsset>    Animations;     // read from them (UIAnimation.h); cooked as data
+        std::vector<UIVisualStateGroup>  VisualStates;   // (UIVisualState.h)
+
+        /* Null if it has no animation InName. */
+        const UIAnimationAsset* FindAnimation(const std::string& InName) const;
 
         /* -1 if no widget has InName. */
         int32_t FindWidget(const std::string& InName) const;
@@ -356,11 +363,32 @@ namespace UI
         bool    GetGraphTicks() const  { return bGraphTicks; }
         void    SetGraphObject(int32_t InObject, bool bInTicks) { GraphObject = InObject; bGraphTicks = bInTicks; }
 
-        // === Animation (RESERVED: UIAnimation.h) ==============================
+        // === Animation (UIAnimation.h) ========================================
 
-        /* False, warned once: animations do not play yet. */
-        bool PlayAnimation(const std::string& InName);
-        UIAnimator& GetAnimator() { return Animator; }
+        /* Its animation InName from the start (restarted if playing);
+         * UI_ANIMATION_INVALID, warned once per name, if it has none. */
+        UIAnimationHandle PlayAnimation(const std::string& InName, const UIPlayOptions& InOptions = UIPlayOptions());
+        /* Stopped where it is (its OnFinished not run); false if not playing. */
+        bool StopAnimation(const std::string& InName);
+        bool IsAnimationPlaying(const std::string& InName) const { return Animator.Find(InName) != UI_ANIMATION_INVALID; }
+        UIAnimator&       GetAnimator()       { return Animator; }
+        const UIAnimator& GetAnimator() const { return Animator; }
+
+        /* An animation's write: InWidget's property InProperty (an index into
+         * its type's) to InValue, its binding kept, relaying out or
+         * repainting only if it changed. */
+        bool ApplyAnimatedValue(uint32_t InWidget, int32_t InProperty, const UIValue& InValue);
+
+        // === Visual states (UIVisualState.h) ====================================
+
+        /* Whether InIndex has a group of visual states (Target or Class). */
+        bool HasVisualStates(uint32_t InIndex) const { return InIndex < StateOf.size() && StateOf[InIndex] >= 0; }
+        /* InIndex to its state InState, through the group's transition; false
+         * if it has no states. A state the group lacks shows what it was made with. */
+        bool GoToVisualState(uint32_t InIndex, const std::string& InState, bool bInInstant = false);
+        /* InIndex to the state its input says (Disabled, Pressed, Focused,
+         * Hovered, Normal), if that is not where it is. */
+        void RefreshVisualState(uint32_t InIndex);
 
     private:
         void Build();
@@ -371,6 +399,7 @@ namespace UI
         void PaintWidget(uint32_t InIndex, UIPaintContext& InContext);
         int32_t HitTestWidget(uint32_t InIndex, const UIVec2& InPixels, const RenderCore::UIClipRect& InClip, bool bInDesign) const;
         bool ApplyProperty(UIWidget& InWidget, int32_t InProperty, const UIValue& InValue);
+        void BuildVisualStates();
 
         std::shared_ptr<const UIDocumentAsset> Asset;
         std::string                            Path;
@@ -403,8 +432,22 @@ namespace UI
 
         int32_t Hovered = -1, Pressed = -1, Focused = -1;
 
-        UIAnimator Animator;
-        bool       bWarnedAnimation = false;
+        UIAnimator               Animator{ this };
+        std::vector<std::string> WarnedAnimations;   // names asked for that it does not have
+
+        /* A widget's visual states: its group, what it was made with (each
+         * property any state sets), and each state's values over those. */
+        struct StateBinding
+        {
+            uint32_t                          Widget = 0;
+            const UIVisualStateGroup*         Group  = nullptr;   // into Asset
+            std::vector<int32_t>              Properties;
+            std::vector<UIValue>              Base;
+            std::vector<std::vector<UIValue>> StateValues;        // [state][property]; None: not set
+            std::string                       Current = "Normal";
+        };
+        std::vector<StateBinding> StateBindings;
+        std::vector<int32_t>      StateOf;   // per widget: into StateBindings, -1 none
 
         // Embedding (Include): its host, and the documents it hosts.
         UIDocumentInstance*   ParentInstance = nullptr;

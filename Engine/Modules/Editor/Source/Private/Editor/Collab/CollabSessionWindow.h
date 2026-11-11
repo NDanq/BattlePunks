@@ -12,7 +12,7 @@ class QPushButton;
 class QTreeWidget;
 
 /*
- * The Session dock (View > Session; File > Collaboration Session): the
+ * The Session dock (View > Session; Tools > Collaboration Session): the
  * server's address, your name and the session password, Join / Leave, and
  * everyone in the session -- their HEAD, open level, whether they're playing,
  * and how many files they have changed (the tooltip lists them; a file you

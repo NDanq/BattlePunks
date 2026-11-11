@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include "Public/GameCore/ComponentRpc.h"
 #include "Public/GameCore/EntityID.h"
@@ -48,6 +49,14 @@ namespace GameCore { class World; }
  *     Session.FlushOutgoing();   // after: the server diffs and sends
  *
  * and BindWorld/UnbindWorld around each level.
+ *
+ * LEVEL TRAVEL (README.md, "Level travel"). The server changes level; its
+ * clients follow. AnnounceLevel tells them early (a server binding a level it
+ * did not announce tells them then); each client's LevelChangeFn loads it,
+ * and its next BindWorld with that level's name tells the server it is there.
+ * Only then is the new level sent to it -- a snapshot, as to a joining client
+ * -- and its RPCs accepted. A client that joins, or rejoins, in another level
+ * is sent the server's the same way.
  */
 namespace NetCore
 {
@@ -111,6 +120,28 @@ namespace NetCore
         void BindWorld(GameCore::World& InWorld, const char* InLevelName);
         void UnbindWorld();
         GameCore::World* GetBoundWorld() const;
+
+        /* A server: its clients are to follow it to InLevelName, with InTravel
+         * (the game's, opaque here) -- sent now, ahead of the swap, so they
+         * can fade out with it. The next BindWorld with that name is that
+         * level. Another before then retargets them. Not a server: nothing. */
+        void AnnounceLevel(const char* InLevelName, const std::vector<uint8_t>& InTravel);
+
+        /* A client: the server says load InLevelName (with its InTravel).
+         * The handler asks for the level; BindWorld with that name, once it
+         * has loaded, is the answer. Without one the client cannot follow. */
+        using LevelChangeFn = void (*)(const char* InLevelName, const std::vector<uint8_t>& InTravel, void* InUserData);
+        void SetLevelChangeHandler(LevelChangeFn InFn, void* InUserData);
+
+        /* A client: its World is the server's current level, that level's
+         * stream has begun, and no LevelChange is waiting -- false from the
+         * order to travel until the new level has started. A server: a World
+         * is bound. */
+        bool IsInLevel() const;
+
+        /* A server: its welcomed clients' ids; InIncludeAway adds those whose
+         * places are kept while they try to rejoin. */
+        void GetClientIds(std::vector<GameCore::NetClientID>& OutClients, bool InIncludeAway) const;
 
         /* Connections, handshakes, spawns, state and RPCs that arrived. Before
          * the World ticks. */

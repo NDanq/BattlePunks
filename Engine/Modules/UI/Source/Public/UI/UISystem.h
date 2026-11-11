@@ -27,7 +27,7 @@ namespace GameCore { class ScriptEngine; class World; }
  *     ProcessInput   pointer and navigation to the documents, top layer
  *                    first; actions queued; what was consumed returned
  *     RunQueuedActions
- *     Tick           hot reload, bindings, animations (reserved)
+ *     Tick           hot reload, bindings, animations (and their OnFinished queued)
  *     Update         layout and paint what changed, and give the renderer
  *                    the merged list -- only when it changed
  *
@@ -83,6 +83,9 @@ namespace UI
         UIDocumentHandle OpenAsset(std::shared_ptr<const UIDocumentAsset> InAsset, const std::string& InPath, bool bInPersistent = false,
                                    bool bInFollowCache = true, int32_t InPlayer = -1);
 
+        /* Plays its CloseAnimation first, if it has one (in a game or a
+         * preview): it takes no input meanwhile, is no longer found by path,
+         * and goes when that ends. CloseAll closes at once. */
         bool Close(UIDocumentHandle InHandle);
         bool Close(const std::string& InPath);   // every player's copy
         bool Close(const std::string& InPath, int32_t InPlayer);
@@ -119,6 +122,12 @@ namespace UI
         void QueueActions(const UIActionList& InActions, UIDocumentInstance* InDocument, UIWidget* InSender);
 
         void Tick(float InDeltaSeconds);
+
+        /* The most a Tick moves animations on (0: no limit). A long frame --
+         * a level load -- then slows an intro down for a frame instead of
+         * skipping it. A tenth of a second by default. */
+        void  SetAnimationStepLimit(float InSeconds) { AnimationStepLimit = InSeconds; }
+        float GetAnimationStepLimit() const { return AnimationStepLimit; }
 
         /* Lays out and paints for InViewportPixels what changed; submits the
          * merged list to the renderer when it changed. */
@@ -161,6 +170,7 @@ namespace UI
         struct QueuedAction;
 
         Document* FindDocument(UIDocumentHandle InHandle) const;
+        bool      CloseNow(UIDocumentHandle InHandle);
         void      SortDocuments();
         void      RunAction(const QueuedAction& InAction);
         void      Rebuild(Document& InDocument, std::shared_ptr<const UIDocumentAsset> InAsset);
@@ -175,6 +185,7 @@ namespace UI
         void      ReleaseTreeGraphObjects(UIDocumentInstance& InRoot, bool bInCallClose);
 
         std::vector<int32_t> TickingScratch;   // graph objects with an OnTick, this frame
+        std::vector<UIDocumentHandle> OutroScratch;   // documents whose CloseAnimation ended, this frame
 
         std::vector<std::unique_ptr<Document>> Documents;   // draw order: bottom first
         UIDocumentHandle         NextHandle = 1;
@@ -198,6 +209,7 @@ namespace UI
         std::string                              ClipboardOwn;
 
         RenderCore::UIDrawList Merged;
+        float                  AnimationStepLimit = 0.1f;
         bool                   bMergedDirty = true;
         bool                   bSubmitted   = false;   // the renderer holds Merged
         uint64_t               MergedSerial = 0;

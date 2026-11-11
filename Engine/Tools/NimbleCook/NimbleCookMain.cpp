@@ -5,7 +5,7 @@
  * shaders"; Engine/cmake/NimbleMaterials.cmake).
  *
  *   NimbleCook shaders [-engine <Engine dir>] [-project <dir> [-module <name>]]
- *                      [-plugin <dir>]... [-target <OpenGL|Vulkan|D3D12>]...
+ *                      [-plugin <dir>]... [-target <OpenGL|Vulkan|D3D12|Metal>]...
  *                      [-editor] [-shipping] [-force] [-jobs <N>] [-python <exe>]
  *
  * The engine always; with -project, that project's Content/Materials too, and
@@ -304,7 +304,7 @@ namespace
     /* The slowest platform first, so its long runs start while the cores are free. */
     int PlatformOrder(const std::string& InTarget)
     {
-        return InTarget == "D3D12" ? 0 : InTarget == "Vulkan" ? 1 : 2;
+        return InTarget == "D3D12" ? 0 : InTarget == "Metal" ? 1 : InTarget == "Vulkan" ? 2 : 3;
     }
 
     struct Cooker
@@ -566,7 +566,7 @@ int main(int argc, char** argv)
     {
         std::fprintf(stderr,
                      "Usage: NimbleCook shaders [-engine <dir>] [-project <dir> [-module <name>]] [-plugin <dir>]...\n"
-                     "                          [-target <OpenGL|Vulkan|D3D12>]... [-editor] [-shipping] [-force]\n"
+                     "                          [-target <OpenGL|Vulkan|D3D12|Metal>]... [-editor] [-shipping] [-force]\n"
                      "                          [-jobs <N>] [-python <exe>]\n");
         return 2;
     }
@@ -599,9 +599,9 @@ int main(int argc, char** argv)
         else if(bHasValue && Name == "-target")
         {
             const std::string Target = argv[++Index];
-            if(Target != "OpenGL" && Target != "Vulkan" && Target != "D3D12")
+            if(Target != "OpenGL" && Target != "Vulkan" && Target != "D3D12" && Target != "Metal")
             {
-                std::fprintf(stderr, "NimbleCook: unknown -target %s (OpenGL, Vulkan or D3D12)\n", Target.c_str());
+                std::fprintf(stderr, "NimbleCook: unknown -target %s (OpenGL, Vulkan, D3D12 or Metal)\n", Target.c_str());
                 return 2;
             }
             Opts.Targets.push_back(Target);
@@ -627,7 +627,7 @@ int main(int argc, char** argv)
     }
     if(Opts.Targets.empty())
     {
-        std::printf("NimbleCook: no shader targets (this build has no OpenGL, Vulkan or D3D12 backend); nothing to cook\n");
+        std::printf("NimbleCook: no shader targets (this build has no OpenGL, Vulkan, D3D12 or Metal backend); nothing to cook\n");
         return 0;
     }
     if(Opts.Python.empty()) { Opts.Python = "python"; }

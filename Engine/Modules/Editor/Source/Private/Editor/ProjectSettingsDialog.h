@@ -25,7 +25,7 @@ class QWidget;
 namespace EngineCore { class ConfigVar; }
 
 /*
- * Edit > Project Settings: the project's Config/DefaultEngine.ini and
+ * File > Project Settings: the project's Config/DefaultEngine.ini and
  * Config/DefaultGame.ini (shared), as opposed to per-user Editor Settings.
  *
  * Edits the master copy in the game's source tree (EditorProject.h), then

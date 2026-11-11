@@ -103,8 +103,33 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(UI)
     {
         UI::UISystem* System = UI::GetScriptUISystem();
         UI::UIDocumentInstance* Document = System ? System->Find(std::string(Call.GetString(1))) : nullptr;
-        Call.PushBool(Document && Document->PlayAnimation(Call.GetString(2)));
-    }, "Path:string, Animation:string -> Playing:bool").Tooltip("Reserved: animations do not play yet (false)");
+        UI::UIPlayOptions Options;
+        if(Call.HasArg(3)) { Options.Speed    = float(Call.GetNumber(3)); }
+        if(Call.HasArg(4)) { Options.bReverse = Call.GetBool(4); }
+        Call.PushBool(Document && Document->PlayAnimation(Call.GetString(2), Options) != UI::UI_ANIMATION_INVALID);
+    }, "Path:string, Animation:string, Speed:number?, Reverse:bool? -> Playing:bool")
+      .Tooltip("One of the document's <Animations>, from the start (restarted if playing); its OnFinished runs when it ends");
+
+    Lib.Function("StopAnimation", [](GameCore::ScriptCall& Call)
+    {
+        UI::UISystem* System = UI::GetScriptUISystem();
+        UI::UIDocumentInstance* Document = System ? System->Find(std::string(Call.GetString(1))) : nullptr;
+        Call.PushBool(Document && Document->StopAnimation(Call.GetString(2)));
+    }, "Path:string, Animation:string -> Stopped:bool").Tooltip("Stops it where it is; its OnFinished does not run");
+
+    Lib.Pure("IsAnimationPlaying", [](GameCore::ScriptCall& Call)
+    {
+        UI::UISystem* System = UI::GetScriptUISystem();
+        const UI::UIDocumentInstance* Document = System ? System->Find(std::string(Call.GetString(1))) : nullptr;
+        Call.PushBool(Document && Document->IsAnimationPlaying(Call.GetString(2)));
+    }, "Path:string, Animation:string -> Playing:bool");
+
+    Lib.Function("GoToState", [](GameCore::ScriptCall& Call)
+    {
+        UI::UIDocumentInstance* Document = nullptr;
+        UI::UIWidget* Widget = FindWidget(Call, Document);
+        Call.PushBool(Widget && Document->GoToVisualState(Widget->GetIndex(), Call.GetString(3)));
+    }, "Path:string, Widget:string, State:string -> Done:bool").Tooltip("A widget to one of its <VisualStates>, through its transition");
 
     // === Data store ==========================================================
 

@@ -1,327 +1,166 @@
-#include "Public/GDI/Metal/MTLSwapchain.h"
-#include "Public/GDI/GDIPlatform.h"
-#include "Public/GDI/GDI.h"
-#include "Public/Core/CoreFileProvider.h"
-#include <vector>
+#include "Private/GDI/Metal/MTLInternal.h"
+
 #include <algorithm>
-#include "Public/GDI/Metal/MTLDevice.h"
-#include "Public/GDI/Metal/MTLRenderTarget.h"
-#include "Private/GDI/Metal/MTLPipelineCache.h"   // MTLBindings
 
-#import <QuartzCore/CAMetalLayer.h>
-#if TARGET_OS_OSX
 #import <AppKit/AppKit.h>
-#else
-#import <UIKit/UIKit.h>
-#endif
+#import <QuartzCore/QuartzCore.h>
 
+#include "Public/GDI/GDIPlatform.h"
 #include "Public/GDI/GDILog.h"
-#include <string>
 
-// Qt types used by this file. These were arriving implicitly through
-// Public/Odessa.h until GDI stopped including application headers;
-// they are explicit now, and each one disappears as its type converts.
-
-/**
- * Full-screen NDC quad, interleaved {float3 position, float2 texcoord}.
+/*
+ * The present: the finished render target drawn into the window's CAMetalLayer
+ * drawable by a full-screen triangle. UI thread (GDI.h), on the driver's queue,
+ * so it runs after the frames committed before it.
  *
- * V mapping: Metal's NDC +Y is the TOP of the drawable (row 0), and the
- * offscreen RT's row 0 is its top too (GDI.h). So the drawable's top row
- * samples v=0, i.e. v = (1-y)/2: the rows copy as they are.
+ * The blit shader is the backend's own, not a cooked one: it needs no engine
+ * block, only the source texture, and does not depend on the cook having run.
+ * Both are top-down (GDI.h), so the rows copy as they are.
  */
-static const float kQuadVerts[] = {
-    // pos.x pos.y pos.z    u     v
-    -1.f, -1.f, 0.f,       0.f,  1.f,
-    -1.f,  1.f, 0.f,       0.f,  0.f,
-     1.f,  1.f, 0.f,       1.f,  0.f,
-     1.f,  1.f, 0.f,       1.f,  0.f,
-     1.f, -1.f, 0.f,       1.f,  1.f,
-    -1.f, -1.f, 0.f,       0.f,  1.f,
-};
 
-/** Sampler/texture index for Screen.fsh -- SAMPLER2D(2, ScreenTexture). */
-static constexpr NSUInteger kScreenTextureIndex = 2;
-
-MTLSwapchain::~MTLSwapchain()
+namespace
 {
-    Shutdown();
+    NSString* const kBlitSource = @R"MSL(
+#include <metal_stdlib>
+using namespace metal;
+
+struct Interp { float4 Position [[position]]; float2 UV; };
+
+vertex Interp BlitVS(uint Id [[vertex_id]])
+{
+    // One triangle covering the screen; v = 0 at the top row.
+    const float2 UV = float2((Id << 1) & 2, Id & 2);
+    Interp Out;
+    Out.Position = float4(UV * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+    Out.UV       = UV;
+    return Out;
 }
 
-bool MTLSwapchain::Initialize(MTLDevice* InDevice, EngineCore::WindowHandle InWindow)
+fragment float4 BlitPS(Interp In [[stage_in]], texture2d<float> Source [[texture(0)]], sampler Linear [[sampler(0)]])
 {
-    if(bInitFailed) return false;
+    return float4(Source.sample(Linear, In.UV).rgb, 1.0);
+}
+)MSL";
+}
 
+bool MTLSwapchainImpl::Initialize(id<MTLDevice> InDevice, id<MTLCommandQueue> InQueue, const EngineCore::WindowHandle InWindow)
+{
     Device = InDevice;
+    Queue  = InQueue;
     Window = InWindow;
-    if(!Device || !Device->IsValid() || !Window.IsValid())
-    {
-        bInitFailed = true;
-        return false;
-    }
+    if(!Device || !Queue || !Window.IsValid()) return false;
 
-    // Grab the layer lazily on the first present: winId() forces window creation,
-    // and the CAMetalLayer only exists once the platform window is up. This mirrors
-    // the Vulkan backend deferring surfaceForWindow() to the first PresentToWindow.
-    // WindowHandle already carries the platform's native view handle -- on
-    // Apple that is the NSView*/UIView* the Qt bridge obtained from winId().
-    // There is no QWindow to dereference here any more.
-#if TARGET_OS_OSX
-    NSView* View = reinterpret_cast<NSView*>(Window.Native);
-#else
-    UIView* View = reinterpret_cast<UIView*>(Window.Native);
-#endif
-    if(View == nil)
+    /*
+     * The game's NSView is backed by a CAMetalLayer already (GameWindowNativeMac.cpp,
+     * SDL_Metal_CreateView). Another host's view -- the editor's Qt viewport, a
+     * native QWidget -- gets one of its own as a sublayer, kept to the view's
+     * size at every present (UI thread, which AppKit wants for layers).
+     */
+    View = (__bridge NSView*)Window.Native;
+    if(!View) return false;
+    if([[View layer] isKindOfClass:[CAMetalLayer class]])
     {
-        // Not latched as a failure: the platform window may simply not be up yet,
-        // and the next present will retry.
-        GDI_LOG("[MTLSwapchain] Window has no native view yet.")
-        return false;
+        Layer = (CAMetalLayer*)[View layer];
     }
-
-    CALayer* BackingLayer = [View layer];
-    if(BackingLayer == nil || ![BackingLayer isKindOfClass:[CAMetalLayer class]])
+    else
     {
-        GDI_LOG("[MTLSwapchain] Window's backing layer is not a CAMetalLayer -- "
-             "was the host's surface type set to a Metal surface before the window was created?")
-        bInitFailed = true;
-        return false;
+        View.wantsLayer = YES;
+        Layer = [CAMetalLayer layer];
+        Layer.opaque = YES;
+        [[View layer] addSublayer:Layer];
+        bOwnLayer = true;
+        FitOwnLayer();
     }
-
-    Layer = (CAMetalLayer*)BackingLayer;
-    Layer.device          = Device->GetDevice();
+    Layer.device          = Device;
     Layer.pixelFormat     = MTLPixelFormatBGRA8Unorm;
-    // The drawable is only ever a render target here, never sampled or copied.
     Layer.framebufferOnly = YES;
-    /* [Rendering] SwapchainExtraImages: 0 is two drawables, anything more
-     * three -- all a CAMetalLayer allows (and its default). */
+    // [Rendering] SwapchainExtraImages: 0 is two drawables, more is three (a CAMetalLayer's most).
     Layer.maximumDrawableCount = GDIGetConfiguredSwapchainExtraImages() == 0 ? 2 : 3;
     UpdateDrawableSize();
 
-    if(!CreateBlitPipeline())
+    NSError* Error = nil;
+    id<MTLLibrary> Library = [Device newLibraryWithSource:kBlitSource options:nil error:&Error];
+    if(!Library)
     {
-        Layer       = nullptr;
-        bInitFailed = true;
+        MTLUtil::LogError("the present blit shader", Error);
         return false;
     }
-
+    MTLRenderPipelineDescriptor* Desc = [[MTLRenderPipelineDescriptor alloc] init];
+    Desc.vertexFunction   = [Library newFunctionWithName:@"BlitVS"];
+    Desc.fragmentFunction = [Library newFunctionWithName:@"BlitPS"];
+    Desc.colorAttachments[0].pixelFormat = Layer.pixelFormat;
+    Pipeline = [Device newRenderPipelineStateWithDescriptor:Desc error:&Error];
+    if(!Pipeline)
+    {
+        MTLUtil::LogError("the present pipeline", Error);
+        return false;
+    }
+    MTLSamplerDescriptor* SamplerDesc = [[MTLSamplerDescriptor alloc] init];
+    SamplerDesc.minFilter    = MTLSamplerMinMagFilterLinear;
+    SamplerDesc.magFilter    = MTLSamplerMinMagFilterLinear;
+    SamplerDesc.sAddressMode = MTLSamplerAddressModeClampToEdge;
+    SamplerDesc.tAddressMode = MTLSamplerAddressModeClampToEdge;
+    Sampler = [Device newSamplerStateWithDescriptor:SamplerDesc];
     GDI_LOG("[MTLSwapchain] Present layer ready.")
-    return true;
+    return Sampler != nil;
 }
 
-void MTLSwapchain::Shutdown()
+void MTLSwapchainImpl::FitOwnLayer()
 {
-    DestroyBlitPipeline();
-    // The layer is owned by the NSView/Qt; just drop the reference.
-    Layer  = nullptr;
-    Window = nullptr;
-    Device = nullptr;
+    if(!bOwnLayer || !Layer || !View) return;
+    const CGFloat Scale = View.window ? View.window.backingScaleFactor : 1.0;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];   // no implicit animation of the resize
+    Layer.frame         = View.layer.bounds;
+    Layer.contentsScale = Scale;
+    [CATransaction commit];
 }
 
-void MTLSwapchain::UpdateDrawableSize()
+MTLSwapchainImpl::~MTLSwapchainImpl()
 {
-    if(Layer == nullptr || !Window.IsValid()) return;
+    if(bOwnLayer && Layer) [Layer removeFromSuperlayer];
+}
 
-    // Physical pixels straight from the platform, replacing
-    // width()/height() * devicePixelRatio(). See appGetWindowPixelSize.
-    uint32_t PixelWidth = 0, PixelHeight = 0;
-    if(!GDIPlatform::appGetWindowPixelSize(Window, PixelWidth, PixelHeight)) return;
-
-    const CGSize Wanted = CGSizeMake(std::max<double>(1.0, double(PixelWidth)),
-                                     std::max<double>(1.0, double(PixelHeight)));
-
-    // Assigning drawableSize reallocates the drawable pool, so only do it when the
-    // size actually changed -- this runs on every present.
-    const CGSize Current = Layer.drawableSize;
-    if(Current.width != Wanted.width || Current.height != Wanted.height)
+void MTLSwapchainImpl::UpdateDrawableSize()
+{
+    FitOwnLayer();
+    uint32_t Width = 0, Height = 0;
+    if(!Layer || !GDIPlatform::appGetWindowPixelSize(Window, Width, Height)) return;
+    const CGSize Wanted = CGSizeMake(std::max<uint32_t>(1, Width), std::max<uint32_t>(1, Height));
+    // Assigning drawableSize remakes the drawable pool: only when it changed.
+    if(!CGSizeEqualToSize(Layer.drawableSize, Wanted))
     {
         Layer.drawableSize = Wanted;
     }
 }
 
-// ---------------------------------------------------------------------------
-//  Blit pipeline
-// ---------------------------------------------------------------------------
-
-MTLFunctionRef MTLSwapchain::LoadFunction(const std::string& MslResourcePath, MTLLibraryRef& OutLibrary) const
+void MTLSwapchainImpl::Present(MTLRenderTargetImpl* InSource)
 {
-    EngineCore::IFileProvider* Provider = EngineCore::GetFileProvider();
-    if(Provider == nullptr)
-    {
-        GDI_LOG("[MTLSwapchain] No file provider installed for: " + MslResourcePath)
-        return nullptr;
-    }
+    if(!Layer || !Pipeline || !InSource || !InSource->GetColor() || !InSource->HasContent()) return;
 
-    std::vector<uint8_t> Bytes;
-    if(!Provider->ReadAll(MslResourcePath, Bytes))
-    {
-        GDI_LOG("[MTLSwapchain] Failed to open MSL resource: " + MslResourcePath)
-        return nullptr;
-    }
-    if(Bytes.empty())
-    {
-        GDI_LOG("[MTLSwapchain] MSL resource is empty: " + MslResourcePath)
-        return nullptr;
-    }
-
-    NSString* Source = [[[NSString alloc] initWithBytes:Bytes.data()
-                                                 length:(NSUInteger)Bytes.size()
-                                               encoding:NSUTF8StringEncoding] autorelease];
-    NSError* Error = nil;
-    id<MTLLibrary> Library = [Device->GetDevice() newLibraryWithSource:Source
-                                                               options:nil
-                                                                 error:&Error];   // +1
-    if(Library == nil)
-    {
-        const char* Reason = Error ? [[Error localizedDescription] UTF8String] : "unknown error";
-        GDI_LOG("[MTLSwapchain] newLibraryWithSource failed for " + MslResourcePath
-             + ": " + ::GDILogDetail::ToLogString(Reason))
-        return nullptr;
-    }
-
-    id<MTLFunction> Function = [Library newFunctionWithName:@"main0"];   // +1
-    if(Function == nil)
-    {
-        GDI_LOG("[MTLSwapchain] Entry point 'main0' not found in: " + MslResourcePath)
-        [Library release];
-        return nullptr;
-    }
-
-    OutLibrary = Library;
-    return Function;
-}
-
-bool MTLSwapchain::CreateBlitPipeline()
-{
-    BlitVS = LoadFunction("Shaders/Cooked/Metal/Screen.vsh.metal", BlitVSLibrary);
-    BlitFS = LoadFunction("Shaders/Cooked/Metal/Screen.fsh.metal", BlitFSLibrary);
-    if(BlitVS == nullptr || BlitFS == nullptr)
-    {
-        DestroyBlitPipeline();
-        return false;
-    }
-
-    // Interleaved quad: both attributes come from one buffer, unlike the render
-    // thread's split position/texcoord streams.
-    MTLVertexDescriptor* VtxDesc = [MTLVertexDescriptor vertexDescriptor];
-    VtxDesc.attributes[0].format      = MTLVertexFormatFloat3;
-    VtxDesc.attributes[0].offset      = 0;
-    VtxDesc.attributes[0].bufferIndex = MTLBindings::PositionBuffer;
-    VtxDesc.attributes[1].format      = MTLVertexFormatFloat2;
-    VtxDesc.attributes[1].offset      = sizeof(float) * 3;
-    VtxDesc.attributes[1].bufferIndex = MTLBindings::PositionBuffer;
-    VtxDesc.layouts[MTLBindings::PositionBuffer].stride       = sizeof(float) * 5;
-    VtxDesc.layouts[MTLBindings::PositionBuffer].stepFunction = MTLVertexStepFunctionPerVertex;
-
-    MTLRenderPipelineDescriptor* Desc = [[[MTLRenderPipelineDescriptor alloc] init] autorelease];
-    Desc.vertexFunction                  = (id<MTLFunction>)BlitVS;
-    Desc.fragmentFunction                = (id<MTLFunction>)BlitFS;
-    Desc.vertexDescriptor                = VtxDesc;
-    Desc.colorAttachments[0].pixelFormat = Layer.pixelFormat;
-
-    NSError* Error = nil;
-    BlitPipeline = [Device->GetDevice() newRenderPipelineStateWithDescriptor:Desc error:&Error];   // +1
-    if(BlitPipeline == nullptr)
-    {
-        const char* Reason = Error ? [[Error localizedDescription] UTF8String] : "unknown error";
-        GDI_LOG(std::string("[MTLSwapchain] Blit pipeline creation failed: ") + ::GDILogDetail::ToLogString(Reason))
-        DestroyBlitPipeline();
-        return false;
-    }
-
-    MTLSamplerDescriptor* SamplerDesc = [[[MTLSamplerDescriptor alloc] init] autorelease];
-    SamplerDesc.minFilter    = MTLSamplerMinMagFilterLinear;
-    SamplerDesc.magFilter    = MTLSamplerMinMagFilterLinear;
-    SamplerDesc.sAddressMode = MTLSamplerAddressModeClampToEdge;
-    SamplerDesc.tAddressMode = MTLSamplerAddressModeClampToEdge;
-    BlitSampler = [Device->GetDevice() newSamplerStateWithDescriptor:SamplerDesc];   // +1
-    if(BlitSampler == nullptr)
-    {
-        DestroyBlitPipeline();
-        return false;
-    }
-
-    QuadBuffer = [Device->GetDevice() newBufferWithBytes:kQuadVerts
-                                                  length:sizeof(kQuadVerts)
-                                                 options:MTLResourceStorageModeShared];   // +1
-    if(QuadBuffer == nullptr)
-    {
-        DestroyBlitPipeline();
-        return false;
-    }
-    return true;
-}
-
-void MTLSwapchain::DestroyBlitPipeline()
-{
-    if(QuadBuffer   != nullptr) { [(id<MTLBuffer>)QuadBuffer release];                    QuadBuffer   = nullptr; }
-    if(BlitSampler  != nullptr) { [(id<MTLSamplerState>)BlitSampler release];             BlitSampler  = nullptr; }
-    if(BlitPipeline != nullptr) { [(id<MTLRenderPipelineState>)BlitPipeline release];     BlitPipeline = nullptr; }
-    if(BlitVS       != nullptr) { [(id<MTLFunction>)BlitVS release];                      BlitVS       = nullptr; }
-    if(BlitFS       != nullptr) { [(id<MTLFunction>)BlitFS release];                      BlitFS       = nullptr; }
-    if(BlitVSLibrary!= nullptr) { [(id<MTLLibrary>)BlitVSLibrary release];                BlitVSLibrary= nullptr; }
-    if(BlitFSLibrary!= nullptr) { [(id<MTLLibrary>)BlitFSLibrary release];                BlitFSLibrary= nullptr; }
-}
-
-// ---------------------------------------------------------------------------
-//  Present
-// ---------------------------------------------------------------------------
-
-void MTLSwapchain::PresentFrame(MTLRenderTarget* InMainRT)
-{
-    if(!IsValid() || !InMainRT || !InMainRT->IsValid()) return;
-
-    // Nothing has been rendered into this target yet -- presenting it would show
-    // uninitialized private memory.
-    if(!InMainRT->HasContent()) return;
-
-    // nextDrawable / present must run inside an autorelease pool: without one the
-    // drawables accumulate until the UI event loop drains, and the layer stalls.
+    // nextDrawable and present inside a pool, or drawables pile up until the event loop drains.
     @autoreleasepool
     {
         UpdateDrawableSize();
-
-        // VSync (GDIGetVSync): on, the layer presents at the display's refresh
-        // and nextDrawable blocks once its pool is queued up, which is what
-        // holds the game loop to the display. Off, a drawable is shown as soon
-        // as it is ready. Read every present, so a change applies at the next.
-#if TARGET_OS_OSX
+        // VSync (GDIGetVSync), read every present so a change applies at the next.
         const BOOL bVSync = GDIGetVSync() ? YES : NO;
-        if(Layer.displaySyncEnabled != bVSync)
-        {
-            Layer.displaySyncEnabled = bVSync;
-        }
-#endif
+        if(Layer.displaySyncEnabled != bVSync) Layer.displaySyncEnabled = bVSync;
 
         id<CAMetalDrawable> Drawable = [Layer nextDrawable];
-        if(Drawable == nil) return;   // pool exhausted this vsync; try again next frame
+        if(!Drawable) return;
 
-        id<MTLCommandBuffer> Cmd = [Device->GetGraphicsQueue() commandBuffer];
-        Cmd.label = @"Odessa.Present";
-
+        id<MTLCommandBuffer> Cmd = [Queue commandBuffer];
+        Cmd.label = @"Nimble.Present";
         MTLRenderPassDescriptor* Pass = [MTLRenderPassDescriptor renderPassDescriptor];
         Pass.colorAttachments[0].texture     = Drawable.texture;
-        Pass.colorAttachments[0].loadAction  = MTLLoadActionDontCare;   // quad covers everything
+        Pass.colorAttachments[0].loadAction  = MTLLoadActionDontCare;
         Pass.colorAttachments[0].storeAction = MTLStoreActionStore;
-
         id<MTLRenderCommandEncoder> Encoder = [Cmd renderCommandEncoderWithDescriptor:Pass];
-        Encoder.label = @"Odessa.PresentBlit";
-
-        MTLViewport VP;
-        VP.originX = 0.0;
-        VP.originY = 0.0;
-        VP.width   = double(Drawable.texture.width);
-        VP.height  = double(Drawable.texture.height);
-        VP.znear   = 0.0;
-        VP.zfar    = 1.0;
-        [Encoder setViewport:VP];
-
-        [Encoder setRenderPipelineState:(id<MTLRenderPipelineState>)BlitPipeline];
-        [Encoder setVertexBuffer:(id<MTLBuffer>)QuadBuffer offset:0 atIndex:MTLBindings::PositionBuffer];
-        [Encoder setFragmentTexture:(id<MTLTexture>)InMainRT->GetTexture() atIndex:kScreenTextureIndex];
-        [Encoder setFragmentSamplerState:(id<MTLSamplerState>)BlitSampler atIndex:kScreenTextureIndex];
-        [Encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:6];
+        [Encoder setRenderPipelineState:Pipeline];
+        [Encoder setFragmentTexture:InSource->GetColor() atIndex:0];
+        [Encoder setFragmentSamplerState:Sampler atIndex:0];
+        [Encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
         [Encoder endEncoding];
-
         [Cmd presentDrawable:Drawable];
         [Cmd commit];
     }

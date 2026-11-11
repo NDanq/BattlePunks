@@ -200,6 +200,15 @@ namespace NimbleEngine
          * here. Without, InPlayer is unset and the mode makes what it wants. */
         virtual void OnClientConnected(int32_t InClient, GameCore::EntityID InPlayer) { (void)InClient; (void)InPlayer; }
 
+        /* LEVEL TRAVEL: the server changed level, and InClient -- connected
+         * before -- is a player in this one, as soon as it loads (the host
+         * makes InPlayer as for a joining client, its PlayerState carried
+         * over: name, index, score, lives). The default treats it as joining
+         * (OnClientConnected), which gives it its pawn; a mode that welcomes
+         * players by name, or scores per level, tells the two apart here.
+         * A client away at the time gets this, then OnClientAway. */
+        virtual void OnClientTravelled(int32_t InClient, GameCore::EntityID InPlayer) { OnClientConnected(InClient, InPlayer); }
+
         /* A client left. Its entities -- every NetComponent it owned -- are
          * still alive, and are destroyed when this returns. A client that
          * lost its connection (not one that quit) is first Away, and this

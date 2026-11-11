@@ -12,9 +12,30 @@
  * GAME CHANNEL (NetTransport.h's NET_CHANNEL_GAME): reliable, in order.
  *
  *   Hello          C->S  u32 version, u64 schema hash, string level,
- *                        u64 reconnect token (0: a new client)
+ *                        u64 reconnect token (0: a new client), u32 level
+ *                        sequence (the one its World is, when rejoining; 0 else)
  *   Welcome        S->C  i32 client id, u64 reconnect token, u8 returning
- *                        (1: the token's client, back -- same id, same entities)
+ *                        (1: the token's client, back -- same id, same entities),
+ *                        u32 the server's level sequence, string its level,
+ *                        u8 ready (1: the client is in that level already; the
+ *                        snapshot follows. 0: a LevelChange follows instead)
+ *
+ * LEVEL TRAVEL (README.md, "Level travel"). Every World a server binds has a
+ * level sequence, never reused in a session. A client follows; until it says
+ * it is in the new level, nothing of that level is sent to it, and what it
+ * sends is dropped. A client drops the World messages below (Spawn to Rpc,
+ * StateBatch) unless the server's stream and its own World are on the same
+ * sequence.
+ *
+ *   LevelChange    S->C  u32 sequence, string level, u32 bytes, bytes: the
+ *                        game's travel (opaque to NetCore). Load that level.
+ *                        Sent when the server asks for it (ahead of its own
+ *                        swap, so both can fade out together) and to anyone
+ *                        joining in another level. A later one retargets
+ *   LevelReady     C->S  u32 sequence: this client's World is that level now
+ *   LevelStart     S->C  u32 sequence, u32 first batch: what follows is that
+ *                        level's (its snapshot, then its stream); state
+ *                        batches before the first batch are an older level's
  *   SnapshotDone   S->C  (nothing): every networked entity has been sent;
  *                        a returning client drops what was not
  *   Reject         S->C  string reason; the server then disconnects
@@ -80,7 +101,7 @@
 
 namespace NetCore
 {
-    constexpr uint32_t NET_PROTOCOL_VERSION = 10;   // 9 on feat-netcore alone (64-field masks); 10 adds a spawn's parts
+    constexpr uint32_t NET_PROTOCOL_VERSION = 11;   // 9 on feat-netcore alone (64-field masks); 10 adds a spawn's parts; 11 level travel
 
     enum class ENetMessage : uint8_t
     {
@@ -96,6 +117,9 @@ namespace NetCore
         RemoveComponents,     // S->C: components it lost
         Reparent,             // S->C: its new parent
         SnapshotDone,         // S->C: the snapshot a (re)joining client gets is complete
+        LevelChange,          // S->C: load this level
+        LevelReady,           // C->S: loaded it
+        LevelStart,           // S->C: what follows is that level's
     };
 }
 

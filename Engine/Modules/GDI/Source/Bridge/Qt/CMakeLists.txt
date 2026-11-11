@@ -18,9 +18,13 @@ set( GDI_QT_BRIDGE_SOURCES
         GDIQtWindow.h
         GDIQtTexture.cpp
         GDIQtTexture.h
-        GDIQtVulkanInstance.cpp
-        GDIQtVulkanInstance.h
 )
+
+# QVulkanInstance exists only in a Qt built with Vulkan, and only beside the
+# Vulkan backend: not on Apple, where Metal is the backend.
+if(GDI_WITH_VULKAN)
+    list(APPEND GDI_QT_BRIDGE_SOURCES GDIQtVulkanInstance.cpp GDIQtVulkanInstance.h)
+endif()
 
 # The GL context wrapper includes GDIOpenGL.h, which is WGL-only, so it exists
 # only alongside the GL backend.

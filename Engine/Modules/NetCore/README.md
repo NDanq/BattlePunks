@@ -26,7 +26,7 @@ Game code never includes a NetCore header. It networks through:
 | `GAMECORE_DEFINE_COMPONENT_REPLICATION` -- which fields replicate | `GameCore/ComponentReplication.h` | compiles, registers nothing |
 | `GAMECORE_DEFINE_COMPONENT_RPCS`, `GAMECORE_RPC` -- RPCs | `GameCore/ComponentRpc.h` | every call runs locally |
 | `IsServer()`, `HasAuthority()`, `IsLocallyOwned()`... | `NimbleEngine/NetFacade.h` | Standalone answers |
-| `IGameMode::OnClientConnected` / `OnClientDisconnected` | `NimbleEngine/GameMode.h` | never called |
+| `IGameMode::OnClientConnected` / `OnClientDisconnected` / `OnClientTravelled` | `NimbleEngine/GameMode.h` | never called |
 
 `NimbleEngine` links NetCore PRIVATE, so turning NetCore off cannot break a
 game's include or link line.
@@ -460,6 +460,63 @@ the token can rejoin after the client itself restarts. A dropped
 connection is noticed only after `TimeoutMs`, and lost clients count
 against `MaxClients` until their grace ends.
 
+### Level travel
+
+The server changes level and its clients follow it: a server's
+`GameSession::OpenLevel` (or `RequestLevel`, the console's `open`, Lua's
+`Game.OpenLevel`) takes everyone, with its `LevelTravel` (entry, values,
+transition, card title and tip).
+
+1. **Announced.** When the server's game asks for a level, its host
+   (`NetHost`) calls `NetSession::AnnounceLevel` at once, ahead of the swap.
+   Each client gets `LevelChange` and its host calls
+   `GameSession::FollowServerLevel`, so with a transition both fade out
+   together. A later request before the swap retargets everyone.
+2. **The server swaps.** It stops sending to clients, binds the new World and
+   gives it a new **level sequence** (never reused in a session). A server
+   that binds a level it did not announce sends `LevelChange` then.
+3. **Each client swaps.** Its next `BindWorld` with the announced name sends
+   `LevelReady`. If the server is there, it sends `LevelStart` and the level's
+   snapshot, as to a joining client: the level's own entities are matched by
+   GUID, the rest created. A client that loads first waits, and is in step
+   the moment the server binds the level.
+4. **Players are made again.** The old World's entities are gone on both
+   ends. The server's host makes each client's player in the new level, with
+   its `PlayerStateComponent` carried over (name, index, score, lives), then
+   calls `IGameMode::OnClientTravelled(Client, Player)`. That defaults to
+   `OnClientConnected`, so `NetGameMode` gives each one a pawn as on joining.
+   The Lua `ClientConnected` event fires too. A client away at the time gets
+   its player as well, then `OnClientAway`.
+
+Nothing of one level reaches a World of another. Until a client says it is
+in the bound level, the server sends it nothing and drops its RPCs and acks.
+A client drops World messages (spawns to RPCs, state batches) whose level is
+not its World's. `LevelStart` names the first state batch of the new level,
+so a late unreliable batch from the old one is ignored too.
+
+**Joining in another level.** The handshake compares levels. A client in
+the server's level (by name, and by sequence when rejoining) gets the
+snapshot as before. Any other client is welcomed, then sent `LevelChange`,
+and gets the snapshot once it has loaded. One that joins while the server
+is on its way to a level is sent to that one.
+
+**A connected client cannot change level itself.** `RequestLevel` and
+`OpenLevel` refuse on a client that is connected or rejoining, with a
+warning. They work again once it has disconnected.
+
+| | Server | Client |
+|---|---|---|
+| `NetSession::AnnounceLevel(Level, Travel)` | tell clients now | |
+| `NetSession::SetLevelChangeHandler` | | load what the server names |
+| `NetSession::IsInLevel()` | a World is bound | in the server's level, its stream begun |
+| `NetSession::GetClientIds` | welcomed (and away) clients | |
+| `IGameMode::OnClientTravelled(Client, Player)` | each client, in the new level | |
+| `GameSession::FollowServerLevel` | | the host's way to travel |
+
+Not done yet: the server does not wait for slow clients before its new
+level starts playing, so a client that loads slowly arrives in a level
+already under way.
+
 ### Lag compensation
 
 A client shows other players in the past: its interpolation delay, plus the
@@ -534,7 +591,9 @@ started: snapshots, edits as data, applying them undoably, ownership).
 
 - **Relevancy and interest management.** Every client gets every networked
   entity.
-- **Level travel during a session.** Both ends must run the same start level.
+- **Waiting for every client at a level change.** Clients follow the
+  server's level changes ("Level travel"), but the new level starts playing
+  without waiting for the slowest one to load.
 - **RPCs and replicated fields declared in Lua.** Lua can call any C++ RPC and
   query roles (the `Net` library, GUIDE.md), but cannot declare its own yet.
 
@@ -552,6 +611,10 @@ a client in one process over 127.0.0.1. It covers:
   turned off and on, clean and under 50% loss
 - replicated and initial-only fields, and entity references
 - all three RPC targets, and the ownership check
+- level travel: announced with the server swapping first and with the client
+  loading first, a swap not announced, a client joining in another level;
+  nothing of one level reaching a World of another, and the new level's
+  spawns, matching, state and RPCs
 - RPC limits: a RateLimit and its refill, the overall budget, a flood
   disconnect, and MaxRpcBytes
 - a 6 s client stall

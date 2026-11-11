@@ -8,6 +8,22 @@ endif()
 
 project(NimbleEngine VERSION 0.1 LANGUAGES CXX)
 
+# On a Mac the first Python framework found is Xcode's 3.9, older than the cook
+# scripts need (NimbleCook below): search frameworks last, for every
+# find_package(Python3) in the tree, so Homebrew's python3 wins.
+if(APPLE AND NOT DEFINED Python3_FIND_FRAMEWORK)
+    set(Python3_FIND_FRAMEWORK LAST)
+endif()
+
+# Qt 6.8's FindWrapOpenGL links AGL on a Mac, and falls back to "-framework AGL"
+# when it cannot find it -- which it cannot from the macOS 26 SDK on, where AGL
+# is gone, so every Qt GUI target fails to link. Nothing here uses AGL: point
+# Qt's lookup at the OpenGL framework (linked anyway) before Qt is found.
+if(APPLE AND NOT WrapOpenGL_AGL)
+    find_library(NM_OPENGL_FRAMEWORK OpenGL)
+    set(WrapOpenGL_AGL "${NM_OPENGL_FRAMEWORK}" CACHE FILEPATH "Stands in for AGL, which recent macOS SDKs lack" FORCE)
+endif()
+
 # ===========================================================================
 # NimbleEngine -- the engine-level aggregate.
 #
@@ -925,6 +941,15 @@ if(NIMBLEENGINE_BUILD_TESTS)
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineCollisionTests>")
     set_tests_properties(NimbleEngine.CollisionTests PROPERTIES TIMEOUT 120 LABELS "smoke")
 
+    # Replays: GameCore's state recorder and player, keyframes, deltas,
+    # seeking, interpolation, rolling clips and the clip file.
+    add_executable(NimbleEngineReplayTests Tests/ReplayTests.cpp)
+    target_link_libraries(NimbleEngineReplayTests PRIVATE NimbleEngine::NimbleEngine)
+    set_target_properties(NimbleEngineReplayTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
+    add_test(NAME NimbleEngine.ReplayTests COMMAND NimbleEngineReplayTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineReplayTests>")
+    set_tests_properties(NimbleEngine.ReplayTests PROPERTIES TIMEOUT 120 LABELS "smoke")
+
     # The game framework: phases, rules, PlayerState, the Game library, saves.
     add_executable(NimbleEngineGameFrameworkTests Tests/GameFrameworkTests.cpp)
     target_link_libraries(NimbleEngineGameFrameworkTests PRIVATE NimbleEngine::NimbleEngine)
@@ -1042,7 +1067,7 @@ endif()
 # Single-config only (needs CMAKE_RUNTIME_OUTPUT_DIRECTORY), as the copy it
 # replaces was.
 if(TARGET GDI AND CMAKE_RUNTIME_OUTPUT_DIRECTORY
-   AND (GDI_WITH_OPENGL OR GDI_WITH_VULKAN OR GDI_WITH_D3D12))
+   AND (GDI_WITH_OPENGL OR GDI_WITH_VULKAN OR GDI_WITH_D3D12 OR GDI_WITH_METAL))
     # Packaged: staged into the Engine pack's folder, not beside the executable.
     set(NM_SHADER_ROOT "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
     if(NIMBLE_PACKAGE_CONTENT)
@@ -1158,9 +1183,11 @@ set_target_properties(NimblePak PROPERTIES FOLDER "Engine")
 # so it is the one tool that needs Python and the shader toolchain; the build
 # needs neither. It defaults to this tree's GDI backends, Engine folder and
 # Python (-target, -engine and -python override them).
-find_package(Python3 COMPONENTS Interpreter QUIET)
+# 3.10 or later: the cook scripts use Path.write_text(newline=). Frameworks
+# are searched last on a Mac (Python3_FIND_FRAMEWORK, set at the top).
+find_package(Python3 3.10 COMPONENTS Interpreter QUIET)
 set(NM_COOK_TARGETS)
-foreach(NM_COOK_PLATFORM OpenGL Vulkan D3D12)
+foreach(NM_COOK_PLATFORM OpenGL Vulkan D3D12 Metal)
     string(TOUPPER "${NM_COOK_PLATFORM}" NM_COOK_PLATFORM_UPPER)
     if(GDI_WITH_${NM_COOK_PLATFORM_UPPER})
         list(APPEND NM_COOK_TARGETS ${NM_COOK_PLATFORM})

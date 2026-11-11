@@ -17,6 +17,9 @@ class GDIShaderResource
 {
 public:
     GDIShaderResource() = default;
+    /* Virtual: GDIShader deletes its resource through this base, and each
+     * backend's subclass owns API objects its own destructor must free. */
+    virtual ~GDIShaderResource() = default;
     GDIShaderResource(EShaderType InShaderType, const std::string& SrcCodePath) :
         bInitialized(false)
     {
@@ -91,7 +94,11 @@ public:
         Resource = nullptr;
     }
 
-    ~GDIShader()
+    /* Virtual, and load-bearing: GDIShader is abstract (InitUniformBindings),
+     * so every object is a subclass deleted through this base. Without it the
+     * delete is undefined, and Apple clang 21 compiles RenderCore's
+     * `delete Shader` to a trap. */
+    virtual ~GDIShader()
     {
         CleanupAllocatedUniformData();
         if(Resource)

@@ -161,8 +161,10 @@ namespace UI
 
     void UIButton::Paint(UIPaintContext& InContext, const UIRect& InRect) const
     {
+        /* With visual states, they own its look: Normal, animated. */
         const UIBrush* Brush = &Normal;
-        if(!IsEnabledInHierarchy())                { Brush = &Disabled; }
+        if(GetDocument() && GetDocument()->HasVisualStates(GetIndex())) { Brush = &Normal; }
+        else if(!IsEnabledInHierarchy())           { Brush = &Disabled; }
         else if(IsPressed() && IsHovered())        { Brush = &Pressed; }
         else if(IsHovered() || IsFocused())        { Brush = &Hovered; }
         InContext.DrawBrush(*Brush, InRect);
