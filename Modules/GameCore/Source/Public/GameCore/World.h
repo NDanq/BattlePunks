@@ -200,6 +200,10 @@ namespace GameCore
         /* When the root starts to go: every entity is still there. */
         TMulticastDelegate<PrefabInstanceID>& OnInstanceDestroyed();
 
+        /* First thing in ~World, while everything is still alive: for per-World
+         * state kept outside the World (the Replay script library's) to let go. */
+        TMulticastDelegate<World*>& OnWorldDestroyed();
+
         // === Components ======================================================
         // Added, fetched and removed through Entity (Entity.h) only -- World
         // owns the pools but exposes no per-entity component calls.
@@ -221,6 +225,8 @@ namespace GameCore
 
         void RegisterSystem(const char* InName, ETickPhase InPhase, SystemFn InFn, void* InUserData = nullptr,
                             ESystemOrder InOrder = SO_AfterScripts);
+        /* Safe at any time, from inside a system too: one removed during a
+         * phase's walk does not run later in it, and the rest still do. */
         void UnregisterSystem(SystemFn InFn, void* InUserData);
         size_t UnregisterAllSystems(void* InUserData);
 

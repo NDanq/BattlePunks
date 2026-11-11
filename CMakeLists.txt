@@ -941,6 +941,15 @@ if(NIMBLEENGINE_BUILD_TESTS)
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineCollisionTests>")
     set_tests_properties(NimbleEngine.CollisionTests PROPERTIES TIMEOUT 120 LABELS "smoke")
 
+    # Replays: GameCore's state recorder and player, keyframes, deltas,
+    # seeking, interpolation, rolling clips and the clip file.
+    add_executable(NimbleEngineReplayTests Tests/ReplayTests.cpp)
+    target_link_libraries(NimbleEngineReplayTests PRIVATE NimbleEngine::NimbleEngine)
+    set_target_properties(NimbleEngineReplayTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
+    add_test(NAME NimbleEngine.ReplayTests COMMAND NimbleEngineReplayTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineReplayTests>")
+    set_tests_properties(NimbleEngine.ReplayTests PROPERTIES TIMEOUT 120 LABELS "smoke")
+
     # The game framework: phases, rules, PlayerState, the Game library, saves.
     add_executable(NimbleEngineGameFrameworkTests Tests/GameFrameworkTests.cpp)
     target_link_libraries(NimbleEngineGameFrameworkTests PRIVATE NimbleEngine::NimbleEngine)

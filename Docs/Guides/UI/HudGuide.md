@@ -1,4 +1,4 @@
-# UI guide 2 of 3: a HUD
+# UI guide 2 of 4: a HUD
 
 A HUD is a document that sits over the game and shows it: ammo, score, a clock, a
 crosshair. Unlike a menu it takes no input, and what it shows is *pushed into it*
@@ -8,6 +8,7 @@ it from all three places: **Lua**, **C++** and a **script graph**.
 1. [A menu](MenuUIGuide.md)
 2. **A HUD** (this page)
 3. [Settings](SettingsUIGuide.md)
+4. [Animation](AnimationUIGuide.md)
 
 [![The Shooting Range's HUD: HITS, SHOTS, ACCURACY and TIME top left, a crosshair with RELOADING under it, the controls hint along the bottom, and the magazine count 12 of 68 with a bar bottom right](../Images/UI/range_hud.png)](../Images/UI/range_hud.png)
 

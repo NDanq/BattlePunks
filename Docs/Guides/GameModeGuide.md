@@ -769,7 +769,18 @@ level -- the Demo Lab's lab, entered once at the airlock and later at the
 freight lift with the alarm on -- are one world with two Player Starts and
 one travel value.
 
-Checked by `NimbleEngine.GameFrameworkTests` ("level travel").
+**In a networked game** the server's level change takes its clients along,
+with the same travel (NetCore/README.md, "Level travel"). They fade out with
+it, load the level, and come in at its entry. Every client gets a player in
+the new level, its `PlayerState` carried over, and the mode hears
+`OnClientTravelled(client, player)`. By default that is `OnClientConnected`,
+so `NetGameMode` gives each one its pawn. A mode that scores per level
+resets the carried score there. A connected client cannot change level
+itself: its `OpenLevel`, its console's `open` and its `Game.OpenLevel` are
+refused with a warning.
+
+Checked by `NimbleEngine.GameFrameworkTests` ("level travel") and, networked,
+by `NetCore.Loopback` ("level travel").
 
 ### The transition screen
 

@@ -980,8 +980,17 @@ namespace NimbleEngine
             CORE_LOG_WARN(std::string("[Level] OpenLevel: no level named '") + (InLevelName ? InLevelName : "") + "'")
             return false;
         }
+        const uint32_t Before = LevelRequestCount;
         RequestLevel(*Level, InTravel);
-        return true;
+        return LevelRequestCount != Before;   // a client may be refused
+    }
+
+    bool GameSession::FollowServerLevel(const char* InLevelName, const LevelTravel& InTravel)
+    {
+        bFollowingServer = true;
+        const bool bOpened = OpenLevel(InLevelName, InTravel);
+        bFollowingServer = false;
+        return bOpened;
     }
 
     void GameSession::RouteInputThroughUI()
@@ -1692,6 +1701,17 @@ namespace NimbleEngine
 
     void GameSession::RequestLevel(ILevel& InLevel, const LevelTravel& InTravel)
     {
+        /* A connected client goes where its server goes (FollowServerLevel). */
+        if(IsClient() && (IsNetConnected() || IsNetReconnecting()) && !bFollowingServer)
+        {
+            CORE_LOG_WARN(std::string("[Level] '") + InLevel.GetName() + "' not opened: a networked client follows its "
+                          "server's level changes and cannot change level itself")
+            return;
+        }
+        ++LevelRequestCount;
+        RequestedLevel  = &InLevel;
+        RequestedTravel = InTravel;
+
         /* With a transition, from a loaded level: fade out first (UpdateTransition
          * arms the swap). Once armed (TS_Loading), a request just retargets it. */
         const bool bFade = InTravel.Transition == TT_Fade || (InTravel.Transition == TT_Default && GTransitionEnabled.GetBool());

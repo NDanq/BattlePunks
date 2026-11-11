@@ -1,11 +1,12 @@
-# UI guide 1 of 3: a menu
+# UI guide 1 of 4: a menu
 
-This is the first of three pages that build the **Shooting Range's** interface
+This is the first of four pages that build the **Shooting Range's** interface
 (`Games/WorldsLab`) and use it to teach the UI system:
 
 1. **A menu** (this page): the pause menu, opened with Escape.
 2. [A HUD](HudGuide.md): rounds, score and a clock over the game.
 3. [Settings](SettingsUIGuide.md): sliders and check boxes that control the game's `.ini` values.
+4. [Animation](AnimationUIGuide.md): intros, outros, hover and press states, and motion the game triggers (on Demo Lab's interface).
 
 Each page does the same job three ways, so you can pick the tool that suits the
 person writing the logic: **C++** (a game module), **Lua** (a script), and a

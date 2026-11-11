@@ -55,6 +55,8 @@ namespace UI
         uint64_t                            AssetGeneration = 0;
 
         bool                                bClosing    = false;
+        bool                                bOutro      = false;   // its CloseAnimation playing: no input, closed when it ends
+        UIAnimationHandle                   Outro       = UI_ANIMATION_INVALID;
         bool                                bFollowCache = true;   // rebuilt when UIAssetCache's copy moves
 
         /* The last hit test, kept while the pointer and the painted
@@ -230,12 +232,36 @@ namespace UI
         bMergedDirty = true;
         CreateTreeGraphObjects(*Opened.Instance);
 
+        /* Its OpenAnimation, in a game or a preview (not the designer's canvas). */
+        if(bExecuteActions && !InAsset->Settings.OpenAnimation.empty()) { Instance->PlayAnimation(InAsset->Settings.OpenAnimation); }
+
         UIActionList OnOpen;
         if(OnOpen.Parse(InAsset->Settings.OnOpen)) { QueueActions(OnOpen, Instance, nullptr); }
         return Handle;
     }
 
     bool UISystem::Close(const UIDocumentHandle InHandle)
+    {
+        /* Its CloseAnimation first, in a game or a preview: it goes when that ends. */
+        Document* Closing = FindDocument(InHandle);
+        if(!Closing || Closing->bClosing) return false;
+        if(Closing->bOutro) return true;
+        const std::string& Outro = Closing->Instance->GetAsset().Settings.CloseAnimation;
+        if(bExecuteActions && !Outro.empty())
+        {
+            Closing->Outro = Closing->Instance->PlayAnimation(Outro);
+            if(Closing->Outro != UI_ANIMATION_INVALID)
+            {
+                Closing->bOutro = true;
+                Closing->Instance->SetTreeHovered(UIWidgetRef());
+                Closing->Instance->SetTreePressed(UIWidgetRef());
+                return true;
+            }
+        }
+        return CloseNow(InHandle);
+    }
+
+    bool UISystem::CloseNow(const UIDocumentHandle InHandle)
     {
         /* Its logic's OnClose first: it may open or close others (so the
          * document is found again after), not this one again (bClosing). */
@@ -279,7 +305,7 @@ namespace UI
         const int32_t Player = InPlayer >= 0 && InPlayer < UI_PLAYERS_MAX ? InPlayer : -1;
         for(const auto& Each : Documents)
         {
-            if(Each->Path == InPath && Each->Player == Player && !Each->bClosing) return Each->Handle;
+            if(Each->Path == InPath && Each->Player == Player && !Each->bClosing && !Each->bOutro) return Each->Handle;
         }
         return UI_DOCUMENT_INVALID;
     }
@@ -308,7 +334,7 @@ namespace UI
         {
             if(bInPersistentToo || !Each->bPersistent) Closing.push_back(Each->Handle);
         }
-        for(const UIDocumentHandle Each : Closing) { Close(Each); }
+        for(const UIDocumentHandle Each : Closing) { CloseNow(Each); }   // a level change: no outros
     }
 
     bool UISystem::IsOpen(const std::string& InPath) const
@@ -341,7 +367,7 @@ namespace UI
         if(InPath.empty()) return UI_DOCUMENT_INVALID;
         for(const auto& Each : Documents)
         {
-            if(Each->Path == InPath) return Each->Handle;
+            if(Each->Path == InPath && !Each->bOutro) return Each->Handle;   // one closing is as good as gone
         }
         return UI_DOCUMENT_INVALID;
     }
@@ -445,7 +471,7 @@ namespace UI
             Document&           Entry = *Documents[At];
             UIDocumentInstance& Doc   = *Entry.Instance;
             const EUIInputMode Mode = Doc.GetAsset().Settings.InputMode;
-            if(bBlocked || Mode == EUIInputMode::GameOnly)
+            if(bBlocked || Mode == EUIInputMode::GameOnly || Entry.bOutro)
             {
                 Doc.SetTreeHovered(UIWidgetRef());
                 Doc.SetTreePressed(UIWidgetRef());
@@ -748,8 +774,33 @@ namespace UI
                 }
             }
             Doc.Instance->ApplyBindings(Store);
-            Doc.Instance->GetAnimator().Tick(InDeltaSeconds);
         }
+
+        /* Animations, embedded documents' too; then what ended runs its
+         * OnFinished, and a document whose outro ended goes. Nothing playing
+         * costs a check per instance. */
+        std::vector<UIDocumentHandle>& Outros = OutroScratch;
+        Outros.clear();
+        /* A long frame (a level load) moves them on AnimationStepLimit at
+         * most, so an intro is seen rather than skipped. */
+        const float AnimationSeconds = AnimationStepLimit > 0.0f ? std::min(InDeltaSeconds, AnimationStepLimit) : InDeltaSeconds;
+        for(size_t At = 0; At < Documents.size(); ++At)
+        {
+            Document& Doc = *Documents[At];
+            Doc.Instance->ForEachInstance([this, AnimationSeconds](UIDocumentInstance& InEach)
+            {
+                UIAnimator& Animator = InEach.GetAnimator();
+                if(!Animator.IsAnyPlaying() && Animator.GetFinished().empty()) return;
+                Animator.Tick(AnimationSeconds);
+                for(const UIAnimator::Finished& Ended : Animator.GetFinished())
+                {
+                    UIActionList OnFinished;
+                    if(Ended.OnFinished && OnFinished.Parse(*Ended.OnFinished)) { QueueActions(OnFinished, &InEach, nullptr); }
+                }
+            });
+            if(Doc.bOutro && !Doc.Instance->GetAnimator().IsPlaying(Doc.Outro)) { Outros.push_back(Doc.Handle); }
+        }
+        for(const UIDocumentHandle Each : Outros) { CloseNow(Each); }
 
         /* Embedded documents made, reloaded or dropped (Include); the focused widget's tick (a caret's blink). */
         for(size_t At = 0; At < Documents.size(); ++At)
