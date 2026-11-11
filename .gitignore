@@ -11,6 +11,9 @@
 # placeholder that keeps the folder is.
 /Games/*
 !/Games/EMPTY.txt
+# BattlePunks' own game is tracked (its Binaries, Build and Saved folders stay
+# ignored by the per-game rules below).
+!/Games/CoreGame/
 
 # The flat runtime layout Engine/CMakeLists.txt sets up, and the per-generation
 # shadow copies CoreModuleManager writes underneath it during hot reload.
